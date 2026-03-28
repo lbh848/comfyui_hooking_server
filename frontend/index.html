@@ -1,0 +1,2091 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ComfyUI Proxy Dashboard</title>
+    <style>
+        :root {
+            --bg: #1a1a2e;
+            --surface: #16213e;
+            --surface2: #0f3460;
+            --accent: #e94560;
+            --accent2: #533483;
+            --text: #eee;
+            --text2: #aaa;
+            --border: #333;
+            --success: #4caf50;
+            --warn: #ff9800;
+            --error: #f44336;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: 'Segoe UI', 'Malgun Gothic', sans-serif;
+            min-height: 100vh;
+        }
+
+        header {
+            background: var(--surface);
+            padding: 16px 24px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+
+        header h1 {
+            font-size: 1.3rem;
+            font-weight: 600;
+        }
+
+        header .controls {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        header .controls button {
+            background: var(--surface2);
+            color: var(--text);
+            border: 1px solid var(--border);
+            padding: 6px 14px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            transition: background 0.2s;
+        }
+
+        header .controls button:hover {
+            background: var(--accent2);
+        }
+
+        .status-bar {
+            background: var(--surface);
+            border-bottom: 1px solid var(--border);
+            padding: 10px 24px;
+            font-size: 0.85rem;
+            color: var(--text2);
+        }
+
+        .status-bar .info-grid {
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+
+        .status-bar .info-item {
+            display: flex;
+            gap: 6px;
+            align-items: center;
+        }
+
+        .status-bar .info-item .label {
+            color: var(--text2);
+        }
+
+        .status-bar .info-item .value {
+            color: var(--text);
+            font-weight: 600;
+        }
+
+        .status-bar .warn {
+            color: var(--warn);
+        }
+
+        .status-bar .error {
+            color: var(--error);
+        }
+
+        main {
+            padding: 20px 24px;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: var(--text2);
+        }
+
+        .empty-state h2 {
+            font-size: 1.2rem;
+            margin-bottom: 8px;
+        }
+
+        /* ─── 이미지 카드 그리드 ─── */
+        .backup-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+            gap: 16px;
+        }
+
+        .backup-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            overflow: hidden;
+            transition: border-color 0.2s;
+        }
+
+        .backup-card:hover {
+            border-color: var(--accent2);
+        }
+
+        .backup-card.current-batch {
+            border: 3px solid var(--success);
+            box-shadow: 0 0 15px rgba(76, 175, 80, 0.4);
+        }
+
+        .backup-card.scheduled-batch {
+            border: 3px solid var(--accent);
+            box-shadow: 0 0 15px rgba(233, 69, 96, 0.4);
+        }
+
+        .card-image-area {
+            position: relative;
+            background: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 200px;
+        }
+
+        .card-image-area img {
+            max-width: 100%;
+            max-height: 400px;
+            object-fit: contain;
+            cursor: pointer;
+        }
+
+        .card-image-area .regen-result {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: none;
+            justify-content: center;
+            align-items: center;
+            background: rgba(0,0,0,0.85);
+        }
+
+        .card-image-area .regen-result.visible {
+            display: flex;
+        }
+
+        .card-image-area .regen-result img {
+            max-width: 100%;
+            max-height: 400px;
+        }
+
+        .card-image-area .regen-result .close-btn {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            background: rgba(0,0,0,0.7);
+            color: #fff;
+            border: none;
+            border-radius: 50%;
+            width: 28px;
+            height: 28px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        .card-body {
+            padding: 12px 14px;
+        }
+
+        .card-meta {
+            font-size: 0.78rem;
+            color: var(--text2);
+            margin-bottom: 8px;
+        }
+
+        .card-actions {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 10px;
+            flex-wrap: wrap;
+        }
+
+        .card-actions button {
+            flex: 1;
+            padding: 7px 10px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: var(--surface2);
+            color: var(--text);
+            cursor: pointer;
+            font-size: 0.8rem;
+            transition: background 0.2s;
+            min-width: 100px;
+        }
+
+        .card-actions button:hover:not(:disabled) {
+            background: var(--accent2);
+        }
+
+        .card-actions button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .card-actions button.regen-btn {
+            background: var(--accent);
+            border-color: var(--accent);
+        }
+
+        .card-actions button.regen-btn:hover:not(:disabled) {
+            background: #c73a50;
+        }
+
+        .card-actions button.reschedule-btn {
+            background: var(--surface2);
+            border-color: var(--border);
+        }
+
+        .card-actions button.reschedule-btn.scheduled {
+            background: var(--success);
+            border-color: var(--success);
+            color: #fff;
+        }
+
+        .card-actions button.reschedule-btn:hover:not(:disabled) {
+            background: var(--accent2);
+        }
+
+        .card-actions button.reschedule-btn.scheduled:hover:not(:disabled) {
+            background: #3e8e41;
+        }
+
+        /* ─── 변환 정보 영역 ─── */
+        .conversion-info {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 8px 10px;
+            font-size: 0.78rem;
+            max-height: 120px;
+            overflow-y: auto;
+            line-height: 1.5;
+        }
+
+        .conversion-info .section-title {
+            color: var(--accent);
+            font-weight: 600;
+            margin-bottom: 2px;
+        }
+
+        .conversion-info .node-item {
+            color: var(--warn);
+            padding-left: 8px;
+        }
+
+        .conversion-info .error-item {
+            color: var(--error);
+            padding-left: 8px;
+        }
+
+        .conversion-info .ok-text {
+            color: var(--success);
+        }
+
+        /* ─── 프롬프트 표시 ─── */
+        .prompt-preview {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 8px 10px;
+            font-size: 0.75rem;
+            color: var(--text2);
+            max-height: 150px;
+            overflow-y: auto;
+            margin-top: 8px;
+            white-space: pre-wrap;
+            word-break: break-all;
+            font-family: 'Consolas', monospace;
+            transition: max-height 0.3s ease;
+        }
+
+        .prompt-preview.expanded {
+            max-height: 600px;
+        }
+
+        .prompt-toggle-btn {
+            background: var(--surface2);
+            color: var(--text2);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 3px 10px;
+            font-size: 0.75rem;
+            cursor: pointer;
+            margin-top: 8px;
+            transition: background 0.2s;
+        }
+
+        .prompt-toggle-btn:hover {
+            background: var(--accent2);
+            color: var(--text);
+        }
+
+        /* ─── 스피너 ─── */
+        .spinner {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid var(--text2);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            vertical-align: middle;
+            margin-right: 4px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* ─── 라이트박스 ─── */
+        .lightbox {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.9);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+            cursor: pointer;
+        }
+
+        .lightbox.visible {
+            display: flex;
+        }
+
+        .lightbox img {
+            max-width: 95vw;
+            max-height: 95vh;
+            object-fit: contain;
+        }
+
+        /* ─── 토스트 알림 ─── */
+        .toast {
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 0.9rem;
+            font-weight: 600;
+            z-index: 2000;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s;
+        }
+
+        .toast.visible {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .toast.success {
+            background: var(--success);
+            color: #fff;
+        }
+
+        .toast.error {
+            background: var(--error);
+            color: #fff;
+        }
+
+        /* ─── 모달 공통 ─── */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.85);
+            z-index: 1500;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .modal.visible {
+            display: flex;
+        }
+
+        .modal-content {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            max-width: 700px;
+            width: 100%;
+            max-height: 90vh;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .modal-header {
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-header h2 {
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin: 0;
+        }
+
+        .modal-close {
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            color: var(--text);
+            width: 32px;
+            height: 32px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 18px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background 0.2s;
+        }
+
+        .modal-close:hover {
+            background: var(--accent);
+            border-color: var(--accent);
+        }
+
+        .modal-body {
+            padding: 20px;
+            flex: 1;
+            overflow-y: auto;
+        }
+
+        .modal-footer {
+            padding: 16px 20px;
+            border-top: 1px solid var(--border);
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+        }
+
+        .form-group {
+            margin-bottom: 16px;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 0.85rem;
+            font-weight: 600;
+            margin-bottom: 6px;
+            color: var(--text);
+        }
+
+        .form-group textarea {
+            width: 100%;
+            min-height: 120px;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 10px 12px;
+            color: var(--text);
+            font-family: 'Consolas', monospace;
+            font-size: 0.85rem;
+            resize: vertical;
+            transition: border-color 0.2s;
+        }
+
+        .form-group textarea:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        .form-group textarea::placeholder {
+            color: var(--text2);
+        }
+
+        .form-group input[type="text"],
+        .form-group input[type="number"] {
+            width: 100%;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 10px 12px;
+            color: var(--text);
+            font-size: 0.85rem;
+            transition: border-color 0.2s;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        .form-group .hint {
+            font-size: 0.75rem;
+            color: var(--text2);
+            margin-top: 4px;
+        }
+
+        .modal-footer button {
+            padding: 8px 16px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            transition: background 0.2s;
+        }
+
+        .modal-footer button.cancel {
+            background: var(--surface2);
+            color: var(--text);
+        }
+
+        .modal-footer button.cancel:hover {
+            background: var(--accent2);
+        }
+
+        .modal-footer button.confirm {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: #fff;
+        }
+
+        .modal-footer button.confirm:hover {
+            background: #c73a50;
+        }
+
+        .modal-footer button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .preview-area {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 12px;
+            margin-bottom: 16px;
+            display: flex;
+            gap: 12px;
+            align-items: center;
+        }
+
+        .preview-area img {
+            width: 80px;
+            height: 80px;
+            object-fit: contain;
+            border-radius: 4px;
+            background: #000;
+        }
+
+        .preview-info {
+            flex: 1;
+            font-size: 0.8rem;
+            color: var(--text2);
+        }
+
+        .preview-info .name {
+            font-weight: 600;
+            color: var(--text);
+            margin-bottom: 4px;
+        }
+
+        /* ─── 설정 모달 ─── */
+        .settings-modal .modal-content {
+            max-width: 600px;
+        }
+
+        .setting-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 0;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .setting-row:last-child {
+            border-bottom: none;
+        }
+
+        .setting-label {
+            flex: 1;
+        }
+
+        .setting-label .title {
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+
+        .setting-label .desc {
+            font-size: 0.75rem;
+            color: var(--text2);
+        }
+
+        .setting-control {
+            margin-left: 16px;
+        }
+
+        /* 토글 스위치 */
+        .toggle-switch {
+            position: relative;
+            width: 50px;
+            height: 26px;
+        }
+
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background-color: var(--border);
+            transition: 0.3s;
+            border-radius: 26px;
+        }
+
+        .toggle-slider:before {
+            position: absolute;
+            content: "";
+            height: 20px;
+            width: 20px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: 0.3s;
+            border-radius: 50%;
+        }
+
+        .toggle-switch input:checked + .toggle-slider {
+            background-color: var(--accent);
+        }
+
+        .toggle-switch input:checked + .toggle-slider:before {
+            transform: translateX(24px);
+        }
+
+        /* 토글 상태 텍스트 */
+        .toggle-status {
+            font-size: 0.8rem;
+            font-weight: 600;
+            min-width: 35px;
+            text-align: center;
+            padding: 4px 8px;
+            border-radius: 4px;
+            transition: all 0.2s;
+        }
+
+        .toggle-status.on {
+            color: var(--success);
+            background: rgba(76, 175, 80, 0.15);
+        }
+
+        .toggle-status.off {
+            color: var(--text2);
+            background: rgba(170, 170, 170, 0.1);
+        }
+
+        /* 슬라이더 */
+        .quality-slider {
+            width: 150px;
+        }
+
+        .quality-slider input[type="range"] {
+            width: 100%;
+            height: 6px;
+            border-radius: 3px;
+            background: var(--border);
+            outline: none;
+            -webkit-appearance: none;
+        }
+
+        .quality-slider input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: var(--accent);
+            cursor: pointer;
+        }
+
+        .quality-value {
+            text-align: center;
+            font-size: 0.85rem;
+            margin-top: 4px;
+            color: var(--text);
+        }
+
+        /* 자동완성 */
+        .autocomplete-wrapper {
+            position: relative;
+        }
+
+        .autocomplete-list {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            max-height: 200px;
+            overflow-y: auto;
+            z-index: 100;
+            display: none;
+        }
+
+        .autocomplete-list.visible {
+            display: block;
+        }
+
+        .autocomplete-item {
+            padding: 8px 12px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .autocomplete-item:last-child {
+            border-bottom: none;
+        }
+
+        .autocomplete-item:hover {
+            background: var(--surface2);
+        }
+
+        .autocomplete-item .filename {
+            font-weight: 600;
+        }
+
+        .autocomplete-item .path {
+            font-size: 0.75rem;
+            color: var(--text2);
+            margin-top: 2px;
+        }
+
+        /* 로딩 인디케이터 */
+        .loading-more {
+            text-align: center;
+            padding: 20px;
+            color: var(--text2);
+        }
+
+        .load-more-btn {
+            display: block;
+            width: 100%;
+            max-width: 400px;
+            margin: 20px auto;
+            padding: 12px 20px;
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text);
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .load-more-btn:hover {
+            background: var(--accent2);
+        }
+
+        .load-more-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        /* 통계 표시 */
+        .stats-bar {
+            background: var(--surface);
+            border-bottom: 1px solid var(--border);
+            padding: 8px 24px;
+            font-size: 0.8rem;
+            color: var(--text2);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .stats-bar .count {
+            color: var(--text);
+            font-weight: 600;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>ComfyUI Proxy Dashboard</h1>
+        <div class="controls">
+            <button onclick="openSettingsModal()">⚙️ 설정</button>
+            <button onclick="reloadWorkflow()">📂 워크플로우 가져오기</button>
+            <button onclick="toggleBatchMode()" id="batch-mode-btn">🔄 배치모드: <span id="batch-mode-status">OFF</span></button>
+            <button onclick="scheduleBatchResend()" id="batch-schedule-btn">📦 배치 재전송 예약</button>
+            <button onclick="cancelBatchResend()" id="batch-cancel-btn" style="display:none;">❌ 예약 취소</button>
+        </div>
+    </header>
+
+    <!-- 토스트 알림 -->
+    <div id="toast" class="toast"></div>
+
+    <div class="status-bar" id="status-bar">
+        <div class="info-grid" id="conversion-status">
+            <div class="info-item">
+                <span class="label">상태:</span>
+                <span class="value" id="conv-status">로딩중...</span>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 배치 상태 고정 바 -->
+    <div class="status-bar" id="batch-info-bar" style="display:none; background:var(--surface2); border-bottom: 2px solid var(--accent);">
+        <div class="info-grid">
+            <div class="info-item">
+                <span class="label">⏳ 배치 모드 진행상황:</span>
+                <span class="value" id="batch-progress-text" style="color:var(--text);">-</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="stats-bar" id="stats-bar" style="display:none;">
+        <span>총 <span class="count" id="total-count">0</span>개의 백업</span>
+        <span id="loaded-count">0개 로드됨</span>
+    </div>
+
+    <main>
+        <div id="content">
+            <div class="empty-state">
+                <h2>로딩중...</h2>
+            </div>
+        </div>
+        <button id="load-more-btn" class="load-more-btn" style="display:none;" onclick="loadMore()">
+            더 불러오기
+        </button>
+    </main>
+
+    <!-- 라이트박스 -->
+    <div class="lightbox" id="lightbox" onclick="closeLightbox()">
+        <img id="lightbox-img" src="" alt="">
+    </div>
+
+    <!-- 프롬프트 수정 모달 -->
+    <div class="modal" id="prompt-modal" onclick="if (event.target === this) closePromptModal()">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>✏️ 프롬프트 수정 후 재전송</h2>
+                <button class="modal-close" onclick="closePromptModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="preview-area">
+                    <img id="modal-preview-img" src="" alt="Preview">
+                    <div class="preview-info">
+                        <div class="name" id="modal-backup-name"></div>
+                        <div>프롬프트를 수정하여 새 이미지를 생성합니다.</div>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>긍정 프롬프트 (Positive)</label>
+                    <textarea id="modal-positive" placeholder="긍정 프롬프트를 입력하세요..."></textarea>
+                </div>
+                <div class="form-group">
+                    <label>부정 프롬프트 (Negative)</label>
+                    <textarea id="modal-negative" placeholder="부정 프롬프트를 입력하세요..."></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="cancel" onclick="closePromptModal()">취소</button>
+                <button class="confirm" id="modal-submit-btn" onclick="submitModifiedPrompt()">
+                    <span id="modal-submit-text">프롬프트 수정 후 재생성</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 설정 모달 -->
+    <div class="modal settings-modal" id="settings-modal" onclick="if (event.target === this) closeSettingsModal()">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>⚙️ 설정</h2>
+                <button class="modal-close" onclick="closeSettingsModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="setting-row">
+                    <div class="setting-label">
+                        <div class="title">데이터 절약 모드</div>
+                        <div class="desc">이미지를 압축하여 전송합니다 (트래픽 절약)</div>
+                    </div>
+                    <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="setting-data-saving" onchange="updateDataSavingStatus(this.checked)">
+                            <span class="toggle-slider"></span>
+                        </label>
+                        <span id="data-saving-status" class="toggle-status">OFF</span>
+                    </div>
+                </div>
+
+                <div class="setting-row">
+                    <div class="setting-label">
+                        <div class="title">WebP 품질</div>
+                        <div class="desc">데이터 절약 모드 사용 시 이미지 품질 (1-100)</div>
+                    </div>
+                    <div class="setting-control quality-slider">
+                        <input type="range" min="1" max="100" value="85" id="setting-webp-quality"
+                               oninput="document.getElementById('quality-value').textContent = this.value">
+                        <div class="quality-value" id="quality-value">85</div>
+                    </div>
+                </div>
+
+                <div class="setting-row">
+                    <div class="setting-label">
+                        <div class="title">워크플로우 소스 경로</div>
+                        <div class="desc">"워크플로우 가져오기" 시 불러올 파일 경로</div>
+                    </div>
+                </div>
+                <div class="form-group" style="margin-top: -8px;">
+                    <label style="font-size: 0.8rem; margin-bottom: 4px;">베이스 경로 (폴더)</label>
+                    <input type="text" id="setting-workflow-base-dir" placeholder="예: E:\wsl2\matrix\Packages\ComfyUI\user\default\workflows"
+                           oninput="updateWorkflowPath()">
+                    <div class="hint" style="margin-bottom: 8px;">워크플로우 파일이 있는 폴더 경로</div>
+                </div>
+                <div class="form-group" style="margin-top: -8px;">
+                    <label style="font-size: 0.8rem; margin-bottom: 4px;">워크플로우 파일명</label>
+                    <div class="autocomplete-wrapper">
+                        <input type="text" id="setting-workflow-filename" placeholder="예: 0310고속워크플로우_나친척.json"
+                               oninput="onWorkflowFilenameInput(this.value)" onfocus="onWorkflowFilenameInput(this.value)">
+                        <div class="autocomplete-list" id="workflow-autocomplete"></div>
+                    </div>
+                    <div class="hint">검색어를 입력하면 자동으로 파일 목록이 표시됩니다</div>
+                </div>
+                <input type="hidden" id="setting-workflow-path">
+
+                <div class="setting-row">
+                    <div class="setting-label">
+                        <div class="title">백업 저장 경로</div>
+                        <div class="desc">비워두면 기본 경로(workflow_backup) 사용</div>
+                    </div>
+                </div>
+                <div class="form-group" style="margin-top: -8px;">
+                    <input type="text" id="setting-backup-dir" placeholder="예: D:\backups\comfyui">
+                    <div class="hint">절대 경로를 입력하세요</div>
+                </div>
+
+                <div class="setting-row">
+                    <div class="setting-label">
+                        <div class="title">배치 모드 타임아웃</div>
+                        <div class="desc">마지막 입력 후 배치 처리까지 대기 시간 (초)</div>
+                    </div>
+                    <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                        <input type="number" id="setting-batch-timeout" min="1" max="60" step="0.5" value="5"
+                               style="width: 80px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text);">
+                        <span>초</span>
+                    </div>
+                </div>
+
+                <div class="setting-row">
+                    <div class="setting-label">
+                        <div class="title">가중치 클램프</div>
+                        <div class="desc">프롬프트에서 과도하게 설정된 가중치를 제한합니다 (예: :2 → :1.2)</div>
+                    </div>
+                    <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="setting-clamp-enabled" onchange="updateClampStatus(this.checked)">
+                            <span class="toggle-slider"></span>
+                        </label>
+                        <span id="clamp-status" class="toggle-status">OFF</span>
+                    </div>
+                </div>
+
+                <div class="setting-row" id="clamp-value-row" style="display: none;">
+                    <div class="setting-label">
+                        <div class="title">클램프 수치</div>
+                        <div class="desc">가중치의 최대 허용값 (양수)</div>
+                    </div>
+                    <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                        <input type="number" id="setting-clamp-value" min="0.1" max="5" step="0.1" value="1.2"
+                               style="width: 80px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text);">
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="cancel" onclick="closeSettingsModal()">취소</button>
+                <button class="confirm" onclick="saveSettings()">저장</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let autoRefreshTimer = null;
+        let backupsData = [];
+        let frontendWs = null;
+        
+        // 페이지네이션 상태
+        let paginationState = {
+            offset: 0,
+            limit: 20,
+            total: 0,
+            hasMore: true,
+            isLoading: false
+        };
+        
+        // 설정 상태
+        let currentConfig = {};
+
+        // ─── WebSocket 연결 ───
+        function connectFrontendWs() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/api/frontend_ws`;
+            
+            frontendWs = new WebSocket(wsUrl);
+            
+            frontendWs.onopen = function() {
+                console.log('[Frontend WS] 연결됨');
+            };
+            
+            frontendWs.onmessage = function(event) {
+                try {
+                    const msg = JSON.parse(event.data);
+                    console.log('[Frontend WS] 메시지:', msg);
+                    
+                    switch (msg.type) {
+                        case 'reschedule_changed':
+                            handleRescheduleChanged(msg.data);
+                            break;
+                        case 'reschedule_used':
+                            handleRescheduleUsed(msg.data);
+                            break;
+                        case 'backup_created':
+                            handleBackupCreated(msg.data);
+                            break;
+                        case 'batch_processing_started':
+                            showToast(`배치 처리 시작 (${msg.data.request_count}개)`, 'info');
+                            batchModeState.processing_batch = {
+                                batch_id: msg.data.batch_id,
+                                total: msg.data.request_count,
+                                index: 0
+                            };
+                            updateBatchModeUI();
+                            break;
+                        case 'batch_request_added':
+                            showToast(`더미 이미지 전송됨 (${msg.data.count}개 대기중)`, 'info');
+                            loadBatchModeStatus();
+                            break;
+                        case 'batch_request_completed':
+                            showToast(`배치 처리 중... (${msg.data.index + 1}/${msg.data.total})`, 'info');
+                            if (batchModeState.processing_batch) {
+                                batchModeState.processing_batch.index = msg.data.index + 1;
+                            }
+                            updateBatchModeUI();
+                            break;
+                        case 'batch_completed':
+                            showToast(`배치 완료 (${msg.data.completed}개 성공, ${msg.data.failed}개 실패)`, msg.data.failed > 0 ? 'warn' : 'success');
+                            batchModeState.processing_batch = null;
+                            loadBatchModeStatus();
+                            loadBackups(true);
+                            break;
+                        case 'batch_resend_scheduled':
+                            batchModeState.scheduled_batch = msg.data;
+                            updateBatchModeUI();
+                            showToast('배치 재전송 예약이 완료되었습니다', 'success');
+                            loadBackups(true);
+                            break;
+                        case 'batch_resend_cancelled':
+                            batchModeState.scheduled_batch = null;
+                            updateBatchModeUI();
+                            showToast('배치 재전송 예약이 취소되었습니다', 'info');
+                            loadBackups(true);
+                            break;
+                        case 'batch_resend_used':
+                            showToast(`예약된 이미지 전송 (${msg.data.index + 1}/${msg.data.total})`, 'success');
+                            if (batchModeState.scheduled_batch) {
+                                batchModeState.scheduled_batch.sent = msg.data.index + 1;
+                                batchModeState.scheduled_batch.remaining = msg.data.total - (msg.data.index + 1);
+                                updateBatchModeUI();
+                            }
+                            break;
+                        case 'batch_resend_completed':
+                            batchModeState.scheduled_batch = null;
+                            updateBatchModeUI();
+                            showToast('재전송 예약이 모두 완료되었습니다', 'success');
+                            loadBackups(true);
+                            break;
+                    }
+                } catch (e) {
+                    console.error('[Frontend WS] 메시지 처리 실패:', e);
+                }
+            };
+            
+            frontendWs.onclose = function() {
+                console.log('[Frontend WS] 연결 종료, 3초 후 재연결...');
+                setTimeout(connectFrontendWs, 3000);
+            };
+            
+            frontendWs.onerror = function(error) {
+                console.error('[Frontend WS] 에러:', error);
+            };
+        }
+
+        // ─── WebSocket 이벤트 핸들러 ───
+        function handleRescheduleChanged(data) {
+            // 모든 버튼 상태 업데이트
+            const buttons = document.querySelectorAll('.reschedule-btn');
+            buttons.forEach(btn => {
+                const cardName = btn.closest('.backup-card').dataset.name;
+                if (data.scheduled && cardName === data.name) {
+                    btn.classList.add('scheduled');
+                    btn.innerHTML = '✅ 예약됨 (취소)';
+                } else {
+                    btn.classList.remove('scheduled');
+                    btn.innerHTML = '📅 재전송 예약';
+                }
+            });
+        }
+
+        function handleRescheduleUsed(data) {
+            // 예약된 이미지가 사용되었을 때 버튼 상태 업데이트
+            const buttons = document.querySelectorAll('.reschedule-btn');
+            buttons.forEach(btn => {
+                const cardName = btn.closest('.backup-card').dataset.name;
+                if (cardName === data.name) {
+                    btn.classList.remove('scheduled');
+                    btn.innerHTML = '📅 재전송 예약';
+                    showToast('재전송 예약된 이미지가 전송되었습니다', 'success');
+                }
+            });
+        }
+
+        async function handleBackupCreated(data) {
+            // 새 백업이 생성되었을 때 목록 갱신
+            console.log('[Backup] 새 백업 생성:', data.name);
+            await loadBackups(true);
+        }
+
+        // ─── API 호출 ───
+        async function fetchJSON(url, options) {
+            const resp = await fetch(url, options);
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            return resp.json();
+        }
+
+        // ─── 변환 정보 로드 ───
+        async function loadConversionInfo() {
+            try {
+                const info = await fetchJSON('/api/conversion_info');
+                renderConversionStatus(info);
+            } catch (e) {
+                document.getElementById('conv-status').textContent = '연결 실패';
+                document.getElementById('conv-status').classList.add('error');
+            }
+        }
+
+        function renderConversionStatus(info) {
+            const container = document.getElementById('conversion-status');
+            if (info.error) {
+                container.innerHTML = `
+                    <div class="info-item">
+                        <span class="label">상태:</span>
+                        <span class="value error">변환 오류</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="label">에러:</span>
+                        <span class="value error">${escapeHtml(info.error)}</span>
+                    </div>`;
+                return;
+            }
+
+            const unused = info.unused_nodes || [];
+            const apiCount = info.api_node_count || 0;
+            const origCount = info.original_node_count || 0;
+            const note = info.note || '';
+            const nodeErrors = info.submit_node_errors || {};
+            const nodeErrorCount = Object.keys(nodeErrors).length;
+
+            let statusHtml = `
+                <div class="info-item">
+                    <span class="label">API 노드:</span>
+                    <span class="value">${apiCount}개</span>
+                </div>`;
+
+            if (origCount > 0 && origCount !== apiCount) {
+                statusHtml += `
+                    <div class="info-item">
+                        <span class="label">원본 노드:</span>
+                        <span class="value">${origCount}개</span>
+                    </div>`;
+            }
+
+            if (unused.length > 0) {
+                statusHtml += `
+                    <div class="info-item">
+                        <span class="label">미사용 노드:</span>
+                        <span class="value warn">${unused.length}개</span>
+                    </div>`;
+            }
+
+            if (nodeErrorCount > 0) {
+                statusHtml += `
+                    <div class="info-item">
+                        <span class="label">에러 노드:</span>
+                        <span class="value error">${nodeErrorCount}개</span>
+                    </div>`;
+            }
+
+            if (note) {
+                statusHtml += `
+                    <div class="info-item">
+                        <span class="label">참고:</span>
+                        <span class="value">${escapeHtml(note)}</span>
+                    </div>`;
+            }
+
+            if (unused.length === 0 && nodeErrorCount === 0 && !info.error) {
+                statusHtml += `
+                    <div class="info-item">
+                        <span class="label">상태:</span>
+                        <span class="value" style="color:var(--success)">정상</span>
+                    </div>`;
+            }
+
+            container.innerHTML = statusHtml;
+        }
+
+        // ─── 백업 목록 로드 (페이지네이션) ───
+        async function loadBackups(reset = false) {
+            if (paginationState.isLoading) return;
+            
+            if (reset) {
+                paginationState.offset = 0;
+                paginationState.hasMore = true;
+                backupsData = [];
+            }
+            
+            paginationState.isLoading = true;
+            
+            try {
+                // 배치 모드 상태 갱신 (초록색 표시를 위해)
+                await loadBatchModeStatus();
+
+                const params = new URLSearchParams({
+                    offset: paginationState.offset,
+                    limit: paginationState.limit
+                });
+
+                const data = await fetchJSON(`/api/backups?${params}`);
+                
+                if (reset) {
+                    backupsData = data.backups;
+                } else {
+                    backupsData = backupsData.concat(data.backups);
+                }
+                
+                paginationState.total = data.total;
+                paginationState.offset = data.offset + data.limit;
+                paginationState.hasMore = data.has_more;
+                
+                renderBackups(backupsData);
+                updateStatsBar();
+                await loadConversionInfo();
+                await loadRescheduleStatus();
+            } catch (e) {
+                document.getElementById('content').innerHTML =
+                    `<div class="empty-state"><h2>서버 연결 실패</h2><p>${escapeHtml(e.message)}</p></div>`;
+            } finally {
+                paginationState.isLoading = false;
+            }
+        }
+
+        function updateStatsBar() {
+            const statsBar = document.getElementById('stats-bar');
+            const totalCount = document.getElementById('total-count');
+            const loadedCount = document.getElementById('loaded-count');
+            const loadMoreBtn = document.getElementById('load-more-btn');
+            
+            if (paginationState.total > 0) {
+                statsBar.style.display = 'flex';
+                totalCount.textContent = paginationState.total;
+                loadedCount.textContent = `${backupsData.length}개 로드됨`;
+                
+                if (paginationState.hasMore) {
+                    loadMoreBtn.style.display = 'block';
+                    loadMoreBtn.textContent = `더 불러오기 (${paginationState.total - backupsData.length}개 남음)`;
+                } else {
+                    loadMoreBtn.style.display = 'none';
+                }
+            } else {
+                statsBar.style.display = 'none';
+                loadMoreBtn.style.display = 'none';
+            }
+        }
+
+        async function loadMore() {
+            if (!paginationState.hasMore || paginationState.isLoading) return;
+            await loadBackups(false);
+        }
+
+        function renderBackups(backups) {
+            const content = document.getElementById('content');
+            if (!backups || backups.length === 0) {
+                content.innerHTML = '<div class="empty-state"><h2>백업 이미지 없음</h2><p>이미지가 생성되면 여기에 표시됩니다</p></div>';
+                return;
+            }
+
+            // 현재 배치/예약된 배치의 파일명 목록
+            const currentBatchFiles = new Set(batchModeState.current_batch?.backup_filenames || []);
+            const scheduledBatchFiles = new Set(batchModeState.scheduled_batch?.backup_filenames || []);
+
+            let html = '<div class="backup-grid">';
+            for (const b of backups) {
+                const dateStr = formatDate(b.mtime);
+                const info = b.conversion_info || {};
+                const positive = b.positive || '';
+                const negative = b.negative || '';
+                const hasPrompt = positive || negative;
+                const isScheduled = b.is_scheduled || false;
+
+                // 현재 배치 또는 예약된 배치에 속한 카드인지 확인
+                const isInCurrentBatch = currentBatchFiles.has(b.name);
+                const isInScheduledBatch = scheduledBatchFiles.has(b.name);
+                const cardClass = isInScheduledBatch ? 'backup-card scheduled-batch' :
+                                     isInCurrentBatch ? 'backup-card current-batch' : 'backup-card';
+
+                html += `
+                <div class="${cardClass}" data-name="${escapeAttr(b.name)}">
+                    <div class="card-image-area">
+                        <img src="${escapeAttr(b.image_url)}" alt="${escapeAttr(b.name)}"
+                             loading="lazy" onclick="openLightbox(this.src)">
+                        <div class="regen-result" id="regen-${escapeAttr(b.name)}">
+                            <img src="" alt="재생성 결과">
+                            <button class="close-btn" onclick="closeRegen('${escapeAttr(b.name)}')">&times;</button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="card-meta">${escapeHtml(dateStr)} &mdash; ${escapeHtml(b.name)}${info.generation_time ? ` · ⏱️ ${info.generation_time.toFixed(1)}초` : ''}</div>
+                        <div class="card-actions">
+                            <button class="regen-btn" onclick="regenerate('${escapeAttr(b.name)}', this)"
+                                    ${b.has_prompt ? '' : 'disabled title="프롬프트 없음"'}>
+                                🔄 재생성
+                            </button>
+                            <button class="edit-prompt-btn" onclick="event.stopPropagation(); openPromptModal(this)"
+                                    data-name="${escapeAttr(b.name)}"
+                                    data-image-url="${escapeAttr(b.image_url)}"
+                                    data-positive="${escapeAttr(b.positive)}"
+                                    data-negative="${escapeAttr(b.negative)}"
+                                    ${b.has_prompt ? '' : 'disabled title="프롬프트 없음"'}>
+                                ✏️ 수정
+                            </button>
+                            <button class="reschedule-btn ${isScheduled ? 'scheduled' : ''}" onclick="reschedule('${escapeAttr(b.name)}', this)"
+                                    ${b.has_prompt ? '' : 'disabled title="프롬프트 없음"'}>
+                                ${isScheduled ? '✅ 예약됨' : '📅 예약'}
+                            </button>
+                            <button onclick="toggleUnusedNodes('${escapeAttr(b.name)}')">
+                                🔍 노드
+                            </button>
+                        </div>
+                        ${hasPrompt ? `
+                            <button class="prompt-toggle-btn" onclick="togglePrompt('${escapeAttr(b.name)}')" id="prompt-btn-${escapeAttr(b.name)}">📝 프롬프트 펼치기</button>
+                            <div class="prompt-preview" id="prompt-${escapeAttr(b.name)}">[긍정]\n${escapeHtml(positive)}\n\n[부정]\n${escapeHtml(negative)}</div>
+                        ` : '<div class="prompt-preview" style="color:var(--text2)">프롬프트 없음</div>'}
+                        <div class="conversion-info" id="conv-${escapeAttr(b.name)}" style="display:none; margin-top:8px;">
+                            ${renderConversionInfoContent(info)}
+                        </div>
+                    </div>
+                </div>`;
+            }
+            html += '</div>';
+            content.innerHTML = html;
+        }
+
+        function renderConversionInfoContent(info) {
+            if (!info || Object.keys(info).length === 0) {
+                return '<span class="ok-text">변환 정보 없음</span>';
+            }
+
+            let html = '';
+
+            // 에러
+            if (info.error) {
+                html += `<div class="section-title">⚠ 변환 에러</div>`;
+                html += `<div class="error-item">${escapeHtml(info.error)}</div>`;
+            }
+
+            // 미사용 노드
+            const unused = info.unused_nodes || [];
+            if (unused.length > 0) {
+                html += `<div class="section-title">미사용 노드 (${unused.length}개)</div>`;
+                for (const n of unused) {
+                    html += `<div class="node-item">[${escapeHtml(n.id)}] ${escapeHtml(n.type)} — ${escapeHtml(n.title)}</div>`;
+                }
+            }
+
+            // 제출 시 노드 에러
+            const nodeErrors = info.submit_node_errors || {};
+            const errorKeys = Object.keys(nodeErrors);
+            if (errorKeys.length > 0) {
+                html += `<div class="section-title">노드 에러 (${errorKeys.length}개)</div>`;
+                for (const key of errorKeys) {
+                    const err = nodeErrors[key];
+                    const msg = typeof err === 'string' ? err : JSON.stringify(err);
+                    html += `<div class="error-item">[${escapeHtml(key)}] ${escapeHtml(msg.substring(0, 200))}</div>`;
+                }
+            }
+
+            // 정상
+            if (!info.error && unused.length === 0 && errorKeys.length === 0) {
+                html += `<span class="ok-text">✓ 변환 정상 (API 노드 ${info.api_node_count || '?'}개)</span>`;
+            }
+
+            return html;
+        }
+
+        // ─── 프롬프트 펼치기/접기 ───
+        function togglePrompt(name) {
+            const el = document.getElementById('prompt-' + name);
+            const btn = document.getElementById('prompt-btn-' + name);
+            if (el) {
+                el.classList.toggle('expanded');
+                if (el.classList.contains('expanded')) {
+                    btn.textContent = '📝 프롬프트 접기';
+                } else {
+                    btn.textContent = '📝 프롬프트 펼치기';
+                }
+            }
+        }
+
+        // ─── 미사용 노드 토글 ───
+        function toggleUnusedNodes(name) {
+            const el = document.getElementById('conv-' + name);
+            if (el) {
+                el.style.display = el.style.display === 'none' ? 'block' : 'none';
+            }
+        }
+
+        // ─── 재생성 ───
+        async function regenerate(name, btn) {
+            const originalText = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner"></span>';
+
+            try {
+                const data = await fetchJSON('/api/regenerate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: name })
+                });
+
+                if (data.error) {
+                    alert('재생성 실패: ' + data.error);
+                    return;
+                }
+
+                // 라이트박스로 결과 이미지 표시
+                openLightbox(data.image);
+                showToast('재생성 완료', 'success');
+                
+                // 백업 목록 새로고침 (새로 생성된 백업을 표시하기 위해)
+                await loadBackups(true);
+            } catch (e) {
+                alert('재생성 실패: ' + e.message);
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = originalText;
+            }
+        }
+
+        // ─── 재전송 예약 ───
+        async function loadRescheduleStatus() {
+            try {
+                const data = await fetchJSON('/api/reschedule');
+                if (data.scheduled) {
+                    console.log('Reschedule status:', data);
+                }
+            } catch (e) {
+                console.error('Failed to load reschedule status:', e);
+            }
+        }
+
+        async function reschedule(name, btn) {
+            const originalText = btn.innerHTML;
+            const isScheduled = btn.classList.contains('scheduled');
+            
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner"></span>';
+
+            try {
+                const data = await fetchJSON('/api/reschedule', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: name, action: 'toggle' })
+                });
+
+                if (data.error) {
+                    alert('재전송 예약 실패: ' + data.error);
+                    btn.disabled = false;
+                    btn.innerHTML = originalText;
+                    return;
+                }
+
+                // 버튼 상태는 WebSocket 이벤트로 업데이트됨
+                if (data.scheduled) {
+                    showToast('재전송 예약 완료', 'success');
+                } else {
+                    showToast('재전송 예약 취소', 'success');
+                }
+
+                // 전체 목록을 다시 로드하지 않고 버튼만 업데이트
+                // WebSocket 이벤트가 도착하면 버튼 상태가 자동으로 업데이트됨
+                btn.disabled = false;
+            } catch (e) {
+                alert('재전송 예약 실패: ' + e.message);
+                btn.disabled = false;
+                btn.innerHTML = originalText;
+            }
+        }
+
+        // ─── 프롬프트 수정 모달 ───
+        let currentModalBackupName = null;
+        
+        function openPromptModal(btn) {
+            const card = btn.closest('.backup-card');
+            const name = card.dataset.name;
+            const imageUrl = btn.dataset.imageUrl;
+            const positive = btn.dataset.positive || '';
+            const negative = btn.dataset.negative || '';
+            
+            currentModalBackupName = name;
+            document.getElementById('modal-backup-name').textContent = name;
+            document.getElementById('modal-preview-img').src = imageUrl;
+            document.getElementById('modal-positive').value = positive;
+            document.getElementById('modal-negative').value = negative;
+            document.getElementById('modal-submit-btn').disabled = false;
+            document.getElementById('modal-submit-text').textContent = '프롬프트 수정 후 재생성';
+            document.getElementById('prompt-modal').classList.add('visible');
+        }
+
+        function closePromptModal() {
+            document.getElementById('prompt-modal').classList.remove('visible');
+            currentModalBackupName = null;
+        }
+
+        async function submitModifiedPrompt() {
+            if (!currentModalBackupName) return;
+
+            const positive = document.getElementById('modal-positive').value.trim();
+            const negative = document.getElementById('modal-negative').value.trim();
+
+            if (!positive && !negative) {
+                alert('적어도 하나의 프롬프트를 입력해야 합니다.');
+                return;
+            }
+
+            const submitBtn = document.getElementById('modal-submit-btn');
+            const originalText = document.getElementById('modal-submit-text').textContent;
+            submitBtn.disabled = true;
+            document.getElementById('modal-submit-text').textContent = '생성중...';
+
+            try {
+                const data = await fetchJSON('/api/reschedule_with_modified_prompt', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name: currentModalBackupName,
+                        positive: positive,
+                        negative: negative
+                    })
+                });
+
+                if (data.error) {
+                    alert('프롬프트 수정 후 재생성 실패: ' + data.error);
+                    submitBtn.disabled = false;
+                    document.getElementById('modal-submit-text').textContent = originalText;
+                    return;
+                }
+
+                // 성공: 모달 닫고 결과 표시
+                closePromptModal();
+                
+                // 라이트박스로 생성된 이미지 표시
+                if (data.image) {
+                    openLightbox(data.image);
+                }
+                
+                showToast('프롬프트 수정 후 재생성 완료', 'success');
+                
+                // 백업 목록 새로고침
+                await loadBackups(true);
+            } catch (e) {
+                alert('프롬프트 수정 후 재생성 실패: ' + e.message);
+                submitBtn.disabled = false;
+                document.getElementById('modal-submit-text').textContent = originalText;
+            }
+        }
+
+        function closeRegen(name) {
+            const overlay = document.getElementById('regen-' + name);
+            if (overlay) {
+                overlay.classList.remove('visible');
+                overlay.querySelector('img').src = '';
+            }
+        }
+
+        // ─── 워크플로우 가져오기 ───
+        async function reloadWorkflow() {
+            try {
+                const data = await fetchJSON('/api/reload_workflow', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({})
+                });
+                if (data.error) {
+                    showToast(data.error, 'error');
+                } else {
+                    showToast(data.message || '워크플로우를 성공적으로 가져왔습니다', 'success');
+                    await loadConversionInfo();
+                }
+            } catch (e) {
+                showToast('워크플로우 가져오기 실패: ' + e.message, 'error');
+            }
+        }
+
+        // ─── 설정 모달 ───
+        async function openSettingsModal() {
+            // 현재 설정 로드
+            try {
+                currentConfig = await fetchJSON('/api/config');
+            } catch (e) {
+                console.error('설정 로드 실패:', e);
+                currentConfig = {};
+            }
+
+            // 폼에 값 설정
+            const dataSaving = currentConfig.data_saving_mode || false;
+            document.getElementById('setting-data-saving').checked = dataSaving;
+            updateDataSavingStatus(dataSaving);
+            document.getElementById('setting-webp-quality').value = currentConfig.webp_quality || 85;
+            document.getElementById('quality-value').textContent = currentConfig.webp_quality || 85;
+
+            // 워크플로우 경로를베이스 경로와 파일명으로 분리
+            const workflowPath = currentConfig.comfy_workflow_source_path || '';
+            const pathParts = splitWorkflowPath(workflowPath);
+            document.getElementById('setting-workflow-base-dir').value = pathParts.baseDir;
+            document.getElementById('setting-workflow-filename').value = pathParts.filename;
+            document.getElementById('setting-workflow-path').value = workflowPath;
+
+            document.getElementById('setting-backup-dir').value = currentConfig.backup_base_dir || '';
+
+            // 배치 모드 타임아웃 설정
+            document.getElementById('setting-batch-timeout').value = currentConfig.batch_timeout_seconds || 5.0;
+
+            // 가중치 클램프 설정
+            const clampEnabled = currentConfig.clamp_enabled || false;
+            document.getElementById('setting-clamp-enabled').checked = clampEnabled;
+            document.getElementById('setting-clamp-value').value = currentConfig.clamp_value || 1.2;
+            document.getElementById('clamp-value-row').style.display = clampEnabled ? 'flex' : 'none';
+            updateClampStatus(clampEnabled);
+
+            document.getElementById('settings-modal').classList.add('visible');
+        }
+
+        // 워크플로우 경로를베이스 경로와 파일명으로 분리
+        function splitWorkflowPath(fullPath) {
+            if (!fullPath) {
+                return { baseDir: '', filename: '' };
+            }
+            // 경로를 / 또는 \로 분리
+            const normalized = fullPath.replace(/\//g, '\\');
+            const lastSepIndex = Math.max(
+                normalized.lastIndexOf('\\'),
+                normalized.lastIndexOf('/')
+            );
+            if (lastSepIndex === -1) {
+                return { baseDir: '', filename: fullPath };
+            }
+            return {
+                baseDir: fullPath.substring(0, lastSepIndex),
+                filename: fullPath.substring(lastSepIndex + 1)
+            };
+        }
+
+        // 워크플로우 경로 업데이트
+        function updateWorkflowPath() {
+            const baseDir = document.getElementById('setting-workflow-base-dir').value;
+            const filename = document.getElementById('setting-workflow-filename').value;
+            const fullPath = combineWorkflowPath(baseDir, filename);
+            document.getElementById('setting-workflow-path').value = fullPath;
+        }
+
+        // 베이스 경로와 파일명을 결합
+        function combineWorkflowPath(baseDir, filename) {
+            if (!baseDir && !filename) return '';
+            if (!baseDir) return filename;
+            if (!filename) return baseDir;
+            
+            // 경로 구분자 정규화
+            const normalizedBase = baseDir.replace(/\//g, '\\');
+            if (normalizedBase.endsWith('\\')) {
+                return normalizedBase + filename;
+            }
+            return baseDir + '\\' + filename;
+        }
+
+        // 데이터 절약 모드 상태 업데이트
+        function updateDataSavingStatus(checked) {
+            const statusEl = document.getElementById('data-saving-status');
+            if (checked) {
+                statusEl.textContent = 'ON';
+                statusEl.className = 'toggle-status on';
+            } else {
+                statusEl.textContent = 'OFF';
+                statusEl.className = 'toggle-status off';
+            }
+        }
+
+        // 가중치 클램프 상태 업데이트
+        function updateClampStatus(checked) {
+            const statusEl = document.getElementById('clamp-status');
+            const valueRow = document.getElementById('clamp-value-row');
+            if (checked) {
+                statusEl.textContent = 'ON';
+                statusEl.className = 'toggle-status on';
+                valueRow.style.display = 'flex';
+            } else {
+                statusEl.textContent = 'OFF';
+                statusEl.className = 'toggle-status off';
+                valueRow.style.display = 'none';
+            }
+        }
+
+        function closeSettingsModal() {
+            document.getElementById('settings-modal').classList.remove('visible');
+            // 자동완성 닫기
+            document.getElementById('workflow-autocomplete').classList.remove('visible');
+        }
+
+        async function saveSettings() {
+            const config = {
+                data_saving_mode: document.getElementById('setting-data-saving').checked,
+                webp_quality: parseInt(document.getElementById('setting-webp-quality').value) || 85,
+                comfy_workflow_source_path: document.getElementById('setting-workflow-path').value,
+                backup_base_dir: document.getElementById('setting-backup-dir').value,
+                batch_timeout_seconds: parseFloat(document.getElementById('setting-batch-timeout').value) || 5.0,
+                clamp_enabled: document.getElementById('setting-clamp-enabled').checked,
+                clamp_value: parseFloat(document.getElementById('setting-clamp-value').value) || 1.2
+            };
+
+            try {
+                const result = await fetchJSON('/api/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(config)
+                });
+
+                if (result.success) {
+                    showToast('설정이 저장되었습니다', 'success');
+                    closeSettingsModal();
+                    currentConfig = result.config;
+                    // 배치 모드 상태 갱신
+                    loadBatchModeStatus();
+                } else {
+                    showToast('설정 저장 실패', 'error');
+                }
+            } catch (e) {
+                showToast('설정 저장 실패: ' + e.message, 'error');
+            }
+        }
+
+        // ─── 워크플로우 파일 자동완성 ───
+        let autocompleteTimeout = null;
+
+        async function onWorkflowFilenameInput(value) {
+            const autocompleteList = document.getElementById('workflow-autocomplete');
+            
+            // 전체 경로 업데이트 (파일명 변경 시)
+            updateWorkflowPath();
+            
+            // 디바운싱
+            clearTimeout(autocompleteTimeout);
+            autocompleteTimeout = setTimeout(async () => {
+                if (value.length < 1) {
+                    autocompleteList.classList.remove('visible');
+                    return;
+                }
+                
+                try {
+                    // 베이스 경로를 사용하여 검색
+                    const baseDir = document.getElementById('setting-workflow-base-dir').value;
+                    const params = new URLSearchParams({
+                        search: value,
+                        base_dir: baseDir
+                    });
+                    
+                    const data = await fetchJSON(`/api/workflow_files?${params}`);
+                    
+                    if (data.files && data.files.length > 0) {
+                        let html = '';
+                        for (const file of data.files.slice(0, 10)) {
+                            html += `
+                                <div class="autocomplete-item" onclick="selectWorkflowFile('${escapeAttr(file.path)}', '${escapeAttr(file.filename)}')">
+                                    <div class="filename">${escapeHtml(file.filename)}</div>
+                                    <div class="path">${escapeHtml(file.rel_path)}</div>
+                                </div>
+                            `;
+                        }
+                        autocompleteList.innerHTML = html;
+                        autocompleteList.classList.add('visible');
+                    } else {
+                        autocompleteList.innerHTML = '<div class="autocomplete-item">검색 결과 없음</div>';
+                        autocompleteList.classList.add('visible');
+                    }
+                } catch (e) {
+                    console.error('워크플로우 파일 검색 실패:', e);
+                    autocompleteList.classList.remove('visible');
+                }
+            }, 300);
+        }
+
+        function selectWorkflowFile(fullPath, filename) {
+            // 파일명 필드 업데이트
+            document.getElementById('setting-workflow-filename').value = filename;
+            // 전체 경로업데이트
+            document.getElementById('setting-workflow-path').value = fullPath;
+            document.getElementById('workflow-autocomplete').classList.remove('visible');
+        }
+
+        // 클릭 시 자동완성 닫기
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('.autocomplete-wrapper')) {
+                document.querySelectorAll('.autocomplete-list').forEach(el => {
+                    el.classList.remove('visible');
+                });
+            }
+        });
+
+        // ─── 토스트 알림 ───
+        function showToast(message, type) {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.className = 'toast visible ' + type;
+            clearTimeout(toast._timer);
+            toast._timer = setTimeout(() => {
+                toast.className = 'toast';
+            }, 5000);
+        }
+
+        // ─── 라이트박스 ───
+        function openLightbox(src) {
+            document.getElementById('lightbox-img').src = src;
+            document.getElementById('lightbox').classList.add('visible');
+        }
+
+        function closeLightbox() {
+            document.getElementById('lightbox').classList.remove('visible');
+            document.getElementById('lightbox-img').src = '';
+        }
+
+        document.addEventListener('keydown', e => {
+            if (e.key === 'Escape') {
+                closeLightbox();
+                closePromptModal();
+                closeSettingsModal();
+            }
+        });
+
+        // ─── 자동 새로고침 ───
+        function toggleAutoRefresh() {
+            const span = document.getElementById('auto-refresh-status');
+            if (autoRefreshTimer) {
+                clearInterval(autoRefreshTimer);
+                autoRefreshTimer = null;
+                span.textContent = 'OFF';
+                showToast('자동 새로고침 비활성화', 'success');
+            } else {
+                // WebSocket이 연결되어 있으면 주기적 폴링을 사용하지 않음
+                if (frontendWs && frontendWs.readyState === WebSocket.OPEN) {
+                    span.textContent = 'ON (WS)';
+                    showToast('WebSocket 실시간 업데이트 활성화', 'success');
+                    // WebSocket 모드에서도 타이머를 설정하여 토글 가능하게 함
+                    autoRefreshTimer = setInterval(() => {}, 10000);
+                } else {
+                    autoRefreshTimer = setInterval(() => loadBackups(true), 10000);
+                    span.textContent = 'ON (10s)';
+                    showToast('10초마다 자동 새로고침 활성화', 'success');
+                }
+            }
+        }
+
+        // ─── 무한 스크롤 ───
+        window.addEventListener('scroll', () => {
+            if (paginationState.isLoading || !paginationState.hasMore) return;
+            
+            const scrollTop = window.scrollY;
+            const windowHeight = window.innerHeight;
+            const docHeight = document.documentElement.scrollHeight;
+            
+            // 스크롤이 하단에 가까워지면 더 불러오기
+            if (scrollTop + windowHeight >= docHeight - 500) {
+                loadMore();
+            }
+        });
+
+        // ─── 유틸 ───
+        function escapeHtml(s) {
+            if (!s) return '';
+            return String(s).replace(/&/g,'&').replace(/</g,'<').replace(/>/g,'>').replace(/"/g,'"');
+        }
+
+        function escapeAttr(s) {
+            return escapeHtml(s);
+        }
+
+        function formatDate(ts) {
+            const d = new Date(ts * 1000);
+            return d.toLocaleString('ko-KR', {
+                year: 'numeric', month: '2-digit', day: '2-digit',
+                hour: '2-digit', minute: '2-digit', second: '2-digit'
+            });
+        }
+
+        // ─── 배치 모드 관련 ───
+        let batchModeState = {
+            enabled: false,
+            timeout_seconds: 5.0,
+            scheduled_batch: null,
+            current_batch: null,
+            processing_batch: null  // frontend-only state for processing
+        };
+
+        async function loadBatchModeStatus() {
+            try {
+                const resp = await fetch('/api/batch_mode/status');
+                const data = await resp.json();
+                
+                // Preserve frontend-only states
+                const processingBatch = batchModeState.processing_batch;
+                batchModeState = data;
+                batchModeState.processing_batch = processingBatch;
+                
+                updateBatchModeUI();
+            } catch (e) {
+                console.error('배치 모드 상태 로드 실패:', e);
+            }
+        }
+
+        function updateBatchModeUI() {
+            const statusSpan = document.getElementById('batch-mode-status');
+            const btn = document.getElementById('batch-mode-btn');
+            const scheduleBtn = document.getElementById('batch-schedule-btn');
+            const cancelBtn = document.getElementById('batch-cancel-btn');
+            const batchInfoBar = document.getElementById('batch-info-bar');
+            const batchProgressText = document.getElementById('batch-progress-text');
+
+            if (statusSpan) {
+                statusSpan.textContent = batchModeState.enabled ? 'ON' : 'OFF';
+            }
+            if (btn) {
+                btn.style.background = batchModeState.enabled ? 'var(--success)' : '';
+            }
+
+            // 배치 정보 바 표시/숨김
+            if (batchInfoBar) {
+                if (batchModeState.enabled || batchModeState.current_batch || batchModeState.scheduled_batch || batchModeState.processing_batch) {
+                    batchInfoBar.style.display = 'block';
+                    let progressStr = '';
+                    if (batchModeState.scheduled_batch) {
+                         progressStr = `재전송 예약 중... (남음: ${batchModeState.scheduled_batch.remaining}개 / 총: ${batchModeState.scheduled_batch.total}개)`;
+                    } else if (batchModeState.processing_batch) {
+                         progressStr = `실제 이미지 생성 중... (${batchModeState.processing_batch.index}/${batchModeState.processing_batch.total})`;
+                    } else if (batchModeState.current_batch) {
+                         const statusStr = batchModeState.current_batch.status === 'collecting' ? '요청 취합 중' : '대기 중';
+                         progressStr = `리스트 생성 중 (${statusStr}, ${batchModeState.current_batch.request_count}개)`;
+                    } else if (batchModeState.enabled) {
+                         progressStr = '수신 대기 중 (더미 이미지 전송 준비완료)';
+                    }
+                    batchProgressText.textContent = progressStr || '-';
+                } else {
+                    batchInfoBar.style.display = 'none';
+                }
+            }
+
+            // 예약 상태 표시
+            if (scheduleBtn && cancelBtn) {
+                if (batchModeState.scheduled_batch) {
+                    scheduleBtn.style.display = 'none';
+                    cancelBtn.style.display = '';
+                    cancelBtn.textContent = `❌ 예약 취소 (${batchModeState.scheduled_batch.remaining}개 남음)`;
+                } else {
+                    scheduleBtn.style.display = '';
+                    cancelBtn.style.display = 'none';
+                }
+            }
+        }
+
+        async function toggleBatchMode() {
+            try {
+                const newEnabled = !batchModeState.enabled;
+                const resp = await fetch('/api/batch_mode/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ enabled: newEnabled })
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    batchModeState = data.status;
+                    updateBatchModeUI();
+                    showToast(`배치 모드 ${newEnabled ? '활성화' : '비활성화'}`, 'success');
+                }
+            } catch (e) {
+                showToast('배치 모드 설정 실패: ' + e.message, 'error');
+            }
+        }
+
+        async function scheduleBatchResend() {
+            try {
+                const resp = await fetch('/api/batch_mode/schedule_resend', {
+                    method: 'POST'
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    batchModeState = data.status;
+                    updateBatchModeUI();
+                    showToast(`재전송 예약 완료 (${data.status.scheduled_batch.total}개)`, 'success');
+                } else {
+                    showToast(data.message || 'warn');
+                }
+            } catch (e) {
+                showToast('재전송 예약 실패: ' + e.message, 'error');
+            }
+        }
+
+        async function cancelBatchResend() {
+            try {
+                const resp = await fetch('/api/batch_mode/cancel_resend', {
+                    method: 'POST'
+                });
+                const data = await resp.json();
+                batchModeState = data.status;
+                updateBatchModeUI();
+                showToast('재전송 예약 취소됨', 'success');
+            } catch (e) {
+                showToast('예약 취소 실패: ' + e.message, 'error');
+            }
+        }
+
+        // ─── 초기 로드 ───
+        loadBackups(true);
+        loadBatchModeStatus();
+        connectFrontendWs();
+    </script>
+</body>
+</html>

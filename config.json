@@ -1,0 +1,11 @@
+{
+  "comfy_workflow_source_path": "E:\\wsl2\\matrix\\Packages\\ComfyUI\\user\\default\\workflows\\0324워크플로우_나친적v3.json",
+  "data_saving_mode": false,
+  "webp_quality": 85,
+  "backup_base_dir": "",
+  "workflow_filename": "",
+  "batch_mode_enabled": true,
+  "batch_timeout_seconds": 5,
+  "clamp_enabled": true,
+  "clamp_value": 1.2
+}

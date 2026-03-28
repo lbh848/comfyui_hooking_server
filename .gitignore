@@ -1,0 +1,8 @@
+.claude/
+__pycache__/
+current_work/
+logs/
+venv/
+workflow/
+workflow_backup/
+요구사항/

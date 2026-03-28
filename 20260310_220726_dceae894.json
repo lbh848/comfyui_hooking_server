@@ -1,0 +1,1284 @@
+{
+  "prompt": {
+    "4": {
+      "inputs": {
+        "samples": [
+          "7:81",
+          0
+        ],
+        "vae": [
+          "5:15",
+          0
+        ]
+      },
+      "class_type": "VAEDecode",
+      "_meta": {
+        "title": "VAE Decode"
+      }
+    },
+    "8": {
+      "inputs": {
+        "text": [
+          "135",
+          0
+        ],
+        "clip": [
+          "5:45",
+          0
+        ]
+      },
+      "class_type": "CLIPTextEncode",
+      "_meta": {
+        "title": "CLIP Text Encode (Negative Prompt)"
+      }
+    },
+    "11": {
+      "inputs": {
+        "text": [
+          "624",
+          0
+        ],
+        "clip": [
+          "5:45",
+          0
+        ]
+      },
+      "class_type": "CLIPTextEncode",
+      "_meta": {
+        "title": "CLIP Text Encode (Positive Prompt)"
+      }
+    },
+    "133": {
+      "inputs": {
+        "seed": 783458648
+      },
+      "class_type": "Seed (rgthree)",
+      "_meta": {
+        "title": "Seed (rgthree)"
+      }
+    },
+    "134": {
+      "inputs": {
+        "value": "(@azbchan1221:1.05), ( @hassai:0.8), (@epi zero:0.75), (@1=2, @healthyman:0.6), (@unitedunti, @taitanic6242:0.58), (@naga u:0.55),\nmasterpiece, best quality, very aesthetic, highres, high detail, best illustration, novel illustration, 2d,\nfrom above, upper body, high angle, magazine cover style, 1girl, 1boy, exterior, school rooftop, shade, concrete, sunlight, noon, magazine cover, emotional tension, best quality.\nthe boy on the left is adolescent, boku wa tomodachi ga sukunai, hasegawa kodaka, dirty blonde messy hair, grey eyes, intimidating face, tall, school uniform, sitting, neutral expression, 172cm\n\nthe girl on the right is adolescent, yahari ore no seishun lovecome wa machigatteiru., large breasts, yuigahama yui, shoulder-length pink hair, messy bun, odango, brown eyes, fair skin, school uniform, tense, sitting, lunch bag, small size, 158cm.\nThe taller boy and smaller girl sit in the deep shade, facing away from each other; school uniforms, lunch bag in girl's lap, sunlight rim-lights their hair, emotional distance palpable.\n\n[ILXL]\nfrom above, upper body, high angle, magazine cover style, 1girl, 1boy, exterior, school rooftop, shade, concrete, sunlight, noon, magazine cover, emotional tension, best quality.\nthe boy on the left is adolescent, boku wa tomodachi ga sukunai, hasegawa kodaka, dirty blonde messy hair, grey eyes, intimidating face, tall, school uniform, sitting, neutral expression, 172cm\n\nthe girl on the right is adolescent, yahari ore no seishun lovecome wa machigatteiru., large breasts, yuigahama yui, shoulder-length pink hair, messy bun, odango, brown eyes, fair skin, school uniform, tense, sitting, lunch bag, small size, 158cm."
+      },
+      "class_type": "PrimitiveStringMultiline",
+      "_meta": {
+        "title": "긍정프롬프트"
+      }
+    },
+    "135": {
+      "inputs": {
+        "value": "bad quality, worst quality, low quality, lowres, score_1, score_2, score_3, western comics, bad anatomy, bad perspective, unfinished, disembodied, blank eyes, text, artist collaboration,  cencorsed,\n\n"
+      },
+      "class_type": "PrimitiveStringMultiline",
+      "_meta": {
+        "title": "부정프롬프트"
+      }
+    },
+    "620": {
+      "inputs": {
+        "shift": 8,
+        "model": [
+          "621",
+          0
+        ]
+      },
+      "class_type": "ModelSamplingAuraFlow",
+      "_meta": {
+        "title": "ModelSamplingAuraFlow"
+      }
+    },
+    "621": {
+      "inputs": {
+        "lora_name": "anima_preview_rdbt_finetuned_cfg_distilled_v0.12.safetensors",
+        "strength_model": 1,
+        "model": [
+          "622:257:161",
+          0
+        ]
+      },
+      "class_type": "LoraLoaderModelOnly",
+      "_meta": {
+        "title": "아니마 고속 로라 로드"
+      }
+    },
+    "624": {
+      "inputs": {
+        "regex_pattern": "[\\s\\S]*?(?=\\[ILXL\\])",
+        "mode": "First Match",
+        "case_insensitive": false,
+        "multiline": true,
+        "dotall": true,
+        "group_index": 1,
+        "string": [
+          "134",
+          0
+        ]
+      },
+      "class_type": "RegexExtract",
+      "_meta": {
+        "title": "Regex Extract"
+      }
+    },
+    "626": {
+      "inputs": {
+        "filename_prefix": "ComfyUI",
+        "images": [
+          "4",
+          0
+        ]
+      },
+      "class_type": "SaveImage",
+      "_meta": {
+        "title": "Save Image"
+      }
+    },
+    "5:59": {
+      "inputs": {
+        "sage_attention": "auto",
+        "allow_compile": false,
+        "model": [
+          "5:44",
+          0
+        ]
+      },
+      "class_type": "PathchSageAttentionKJ",
+      "_meta": {
+        "title": "Patch Sage Attention KJ"
+      }
+    },
+    "5:45": {
+      "inputs": {
+        "clip_name": "qwen_3_06b_base.safetensors",
+        "type": "stable_diffusion",
+        "device": "default"
+      },
+      "class_type": "CLIPLoader",
+      "_meta": {
+        "title": "Load CLIP"
+      }
+    },
+    "5:15": {
+      "inputs": {
+        "vae_name": "qwen_image_vae.safetensors"
+      },
+      "class_type": "VAELoader",
+      "_meta": {
+        "title": "Load VAE"
+      }
+    },
+    "5:44": {
+      "inputs": {
+        "unet_name": "anima-preview.safetensors",
+        "weight_dtype": "default"
+      },
+      "class_type": "UNETLoader",
+      "_meta": {
+        "title": "Load Diffusion Model"
+      }
+    },
+    "622:209": {
+      "inputs": {
+        "anything": [
+          "622:208:156",
+          0
+        ]
+      },
+      "class_type": "easy showAnything",
+      "_meta": {
+        "title": "Show Any"
+      }
+    },
+    "622:229": {
+      "inputs": {
+        "anything": [
+          "622:228:156",
+          0
+        ]
+      },
+      "class_type": "easy showAnything",
+      "_meta": {
+        "title": "Show Any"
+      }
+    },
+    "622:231": {
+      "inputs": {
+        "anything": [
+          "622:230:156",
+          0
+        ]
+      },
+      "class_type": "easy showAnything",
+      "_meta": {
+        "title": "Show Any"
+      }
+    },
+    "622:233": {
+      "inputs": {
+        "anything": [
+          "622:232:156",
+          0
+        ]
+      },
+      "class_type": "easy showAnything",
+      "_meta": {
+        "title": "Show Any"
+      }
+    },
+    "622:241": {
+      "inputs": {
+        "anything": [
+          "622:240:156",
+          0
+        ]
+      },
+      "class_type": "easy showAnything",
+      "_meta": {
+        "title": "Show Any"
+      }
+    },
+    "622:235": {
+      "inputs": {
+        "anything": [
+          "622:234:156",
+          0
+        ]
+      },
+      "class_type": "easy showAnything",
+      "_meta": {
+        "title": "Show Any"
+      }
+    },
+    "622:237": {
+      "inputs": {
+        "anything": [
+          "622:236:156",
+          0
+        ]
+      },
+      "class_type": "easy showAnything",
+      "_meta": {
+        "title": "Show Any"
+      }
+    },
+    "622:239": {
+      "inputs": {
+        "anything": [
+          "622:238:156",
+          0
+        ]
+      },
+      "class_type": "easy showAnything",
+      "_meta": {
+        "title": "Show Any"
+      }
+    },
+    "622:247": {
+      "inputs": {
+        "anything": [
+          "622:246:156",
+          0
+        ]
+      },
+      "class_type": "easy showAnything",
+      "_meta": {
+        "title": "Show Any"
+      }
+    },
+    "622:245": {
+      "inputs": {
+        "anything": [
+          "622:244:156",
+          0
+        ]
+      },
+      "class_type": "easy showAnything",
+      "_meta": {
+        "title": "Show Any"
+      }
+    },
+    "622:243": {
+      "inputs": {
+        "anything": [
+          "622:242:156",
+          0
+        ]
+      },
+      "class_type": "easy showAnything",
+      "_meta": {
+        "title": "Show Any"
+      }
+    },
+    "622:248": {
+      "inputs": {
+        "anything": [
+          "622:249:156",
+          0
+        ]
+      },
+      "class_type": "easy showAnything",
+      "_meta": {
+        "title": "Show Any"
+      }
+    },
+    "622:250": {
+      "inputs": {
+        "anything": [
+          "622:251:156",
+          0
+        ]
+      },
+      "class_type": "easy showAnything",
+      "_meta": {
+        "title": "Show Any"
+      }
+    },
+    "622:252": {
+      "inputs": {
+        "anything": [
+          "622:253:156",
+          0
+        ]
+      },
+      "class_type": "easy showAnything",
+      "_meta": {
+        "title": "Show Any"
+      }
+    },
+    "622:254": {
+      "inputs": {
+        "anything": [
+          "622:255:156",
+          0
+        ]
+      },
+      "class_type": "easy showAnything",
+      "_meta": {
+        "title": "Show Any"
+      }
+    },
+    "622:256": {
+      "inputs": {
+        "anything": [
+          "622:257:156",
+          0
+        ]
+      },
+      "class_type": "easy showAnything",
+      "_meta": {
+        "title": "Show Any"
+      }
+    },
+    "622:238:158": {
+      "inputs": {
+        "output_type": "string",
+        "*": [
+          "624",
+          0
+        ]
+      },
+      "class_type": "easy convertAnything",
+      "_meta": {
+        "title": "Convert Any"
+      }
+    },
+    "622:238:156": {
+      "inputs": {
+        "substring": "Minami Sagami",
+        "case_sensitive": false,
+        "string": [
+          "622:238:158",
+          0
+        ]
+      },
+      "class_type": "StringContains",
+      "_meta": {
+        "title": "Contains"
+      }
+    },
+    "622:238:161": {
+      "inputs": {
+        "lora_name": "내청코_캐릭별로라_28step\\Sagami_lora-000028.safetensors",
+        "strength_model": 0.4,
+        "strength_clip": 1,
+        "model": [
+          "622:236:161",
+          0
+        ],
+        "clip": [
+          "622:236:161",
+          1
+        ],
+        "enabled": [
+          "622:238:156",
+          0
+        ]
+      },
+      "class_type": "WF_ConditionalLoraLoader",
+      "_meta": {
+        "title": "Conditional LoRA Loader"
+      }
+    },
+    "622:232:158": {
+      "inputs": {
+        "output_type": "string",
+        "*": [
+          "624",
+          0
+        ]
+      },
+      "class_type": "easy convertAnything",
+      "_meta": {
+        "title": "Convert Any"
+      }
+    },
+    "622:232:156": {
+      "inputs": {
+        "substring": "orimoto kaori",
+        "case_sensitive": false,
+        "string": [
+          "622:232:158",
+          0
+        ]
+      },
+      "class_type": "StringContains",
+      "_meta": {
+        "title": "Contains"
+      }
+    },
+    "622:232:161": {
+      "inputs": {
+        "lora_name": "내청코_캐릭별로라_28step\\Kaori_lora-000028.safetensors",
+        "strength_model": 0.4,
+        "strength_clip": 1,
+        "model": [
+          "622:230:161",
+          0
+        ],
+        "clip": [
+          "622:230:161",
+          1
+        ],
+        "enabled": [
+          "622:232:156",
+          0
+        ]
+      },
+      "class_type": "WF_ConditionalLoraLoader",
+      "_meta": {
+        "title": "Conditional LoRA Loader"
+      }
+    },
+    "622:244:158": {
+      "inputs": {
+        "output_type": "string",
+        "*": [
+          "624",
+          0
+        ]
+      },
+      "class_type": "easy convertAnything",
+      "_meta": {
+        "title": "Convert Any"
+      }
+    },
+    "622:244:156": {
+      "inputs": {
+        "substring": "tsurumi rumi",
+        "case_sensitive": false,
+        "string": [
+          "622:244:158",
+          0
+        ]
+      },
+      "class_type": "StringContains",
+      "_meta": {
+        "title": "Contains"
+      }
+    },
+    "622:244:161": {
+      "inputs": {
+        "lora_name": "내청코_캐릭별로라_28step\\Rumi_lora-000028.safetensors",
+        "strength_model": 0.4,
+        "strength_clip": 1,
+        "model": [
+          "622:242:161",
+          0
+        ],
+        "clip": [
+          "622:242:161",
+          1
+        ],
+        "enabled": [
+          "622:244:156",
+          0
+        ]
+      },
+      "class_type": "WF_ConditionalLoraLoader",
+      "_meta": {
+        "title": "Conditional LoRA Loader"
+      }
+    },
+    "622:249:158": {
+      "inputs": {
+        "output_type": "string",
+        "*": [
+          "624",
+          0
+        ]
+      },
+      "class_type": "easy convertAnything",
+      "_meta": {
+        "title": "Convert Any"
+      }
+    },
+    "622:249:156": {
+      "inputs": {
+        "substring": "kawasaki saki",
+        "case_sensitive": false,
+        "string": [
+          "622:249:158",
+          0
+        ]
+      },
+      "class_type": "StringContains",
+      "_meta": {
+        "title": "Contains"
+      }
+    },
+    "622:249:161": {
+      "inputs": {
+        "lora_name": "내청코_캐릭별로라_28step\\Saki_lora-000028.safetensors",
+        "strength_model": 0.4,
+        "strength_clip": 1,
+        "model": [
+          "622:246:161",
+          0
+        ],
+        "clip": [
+          "622:246:161",
+          1
+        ],
+        "enabled": [
+          "622:249:156",
+          0
+        ]
+      },
+      "class_type": "WF_ConditionalLoraLoader",
+      "_meta": {
+        "title": "Conditional LoRA Loader"
+      }
+    },
+    "622:242:158": {
+      "inputs": {
+        "output_type": "string",
+        "*": [
+          "624",
+          0
+        ]
+      },
+      "class_type": "easy convertAnything",
+      "_meta": {
+        "title": "Convert Any"
+      }
+    },
+    "622:242:156": {
+      "inputs": {
+        "substring": "Mrs.yukinoshita",
+        "case_sensitive": false,
+        "string": [
+          "622:242:158",
+          0
+        ]
+      },
+      "class_type": "StringContains",
+      "_meta": {
+        "title": "Contains"
+      }
+    },
+    "622:242:161": {
+      "inputs": {
+        "lora_name": "내청코_캐릭별로라_28step\\Mrs_Yukinoshita_lora-000028.safetensors",
+        "strength_model": 0.4,
+        "strength_clip": 1,
+        "model": [
+          "622:240:161",
+          0
+        ],
+        "clip": [
+          "622:240:161",
+          1
+        ],
+        "enabled": [
+          "622:242:156",
+          0
+        ]
+      },
+      "class_type": "WF_ConditionalLoraLoader",
+      "_meta": {
+        "title": "Conditional LoRA Loader"
+      }
+    },
+    "622:240:158": {
+      "inputs": {
+        "output_type": "string",
+        "*": [
+          "624",
+          0
+        ]
+      },
+      "class_type": "easy convertAnything",
+      "_meta": {
+        "title": "Convert Any"
+      }
+    },
+    "622:240:156": {
+      "inputs": {
+        "substring": "Mrs.yuigahama",
+        "case_sensitive": false,
+        "string": [
+          "622:240:158",
+          0
+        ]
+      },
+      "class_type": "StringContains",
+      "_meta": {
+        "title": "Contains"
+      }
+    },
+    "622:240:161": {
+      "inputs": {
+        "lora_name": "내청코_캐릭별로라_28step\\Mrs_Yuigahama_lora-000028.safetensors",
+        "strength_model": 0.4,
+        "strength_clip": 1,
+        "model": [
+          "622:238:161",
+          0
+        ],
+        "clip": [
+          "622:238:161",
+          1
+        ],
+        "enabled": [
+          "622:240:156",
+          0
+        ]
+      },
+      "class_type": "WF_ConditionalLoraLoader",
+      "_meta": {
+        "title": "Conditional LoRA Loader"
+      }
+    },
+    "622:236:158": {
+      "inputs": {
+        "output_type": "string",
+        "*": [
+          "624",
+          0
+        ]
+      },
+      "class_type": "easy convertAnything",
+      "_meta": {
+        "title": "Convert Any"
+      }
+    },
+    "622:236:156": {
+      "inputs": {
+        "substring": "hikigaya komachi",
+        "case_sensitive": false,
+        "string": [
+          "622:236:158",
+          0
+        ]
+      },
+      "class_type": "StringContains",
+      "_meta": {
+        "title": "Contains"
+      }
+    },
+    "622:236:161": {
+      "inputs": {
+        "lora_name": "내청코_캐릭별로라_28step\\Komachi_lora-000028.safetensors",
+        "strength_model": 0.4,
+        "strength_clip": 1,
+        "model": [
+          "622:234:161",
+          0
+        ],
+        "clip": [
+          "622:234:161",
+          1
+        ],
+        "enabled": [
+          "622:236:156",
+          0
+        ]
+      },
+      "class_type": "WF_ConditionalLoraLoader",
+      "_meta": {
+        "title": "Conditional LoRA Loader"
+      }
+    },
+    "622:228:158": {
+      "inputs": {
+        "output_type": "string",
+        "*": [
+          "624",
+          0
+        ]
+      },
+      "class_type": "easy convertAnything",
+      "_meta": {
+        "title": "Convert Any"
+      }
+    },
+    "622:228:156": {
+      "inputs": {
+        "substring": "ebina hina",
+        "case_sensitive": false,
+        "string": [
+          "622:228:158",
+          0
+        ]
+      },
+      "class_type": "StringContains",
+      "_meta": {
+        "title": "Contains"
+      }
+    },
+    "622:228:161": {
+      "inputs": {
+        "lora_name": "내청코_캐릭별로라_28step\\hina_lora-000028.safetensors",
+        "strength_model": 0.4,
+        "strength_clip": 1,
+        "model": [
+          "622:208:161",
+          0
+        ],
+        "clip": [
+          "622:208:161",
+          1
+        ],
+        "enabled": [
+          "622:228:156",
+          0
+        ]
+      },
+      "class_type": "WF_ConditionalLoraLoader",
+      "_meta": {
+        "title": "Conditional LoRA Loader"
+      }
+    },
+    "622:257:156": {
+      "inputs": {
+        "substring": "miura yumiko",
+        "case_sensitive": false,
+        "string": [
+          "622:257:158",
+          0
+        ]
+      },
+      "class_type": "StringContains",
+      "_meta": {
+        "title": "Contains"
+      }
+    },
+    "622:257:161": {
+      "inputs": {
+        "lora_name": "내청코_캐릭별로라_28step\\Miura_lora-000028.safetensors",
+        "strength_model": 0.4,
+        "strength_clip": 1,
+        "model": [
+          "622:255:161",
+          0
+        ],
+        "clip": [
+          "622:255:161",
+          1
+        ],
+        "enabled": [
+          "622:257:156",
+          0
+        ]
+      },
+      "class_type": "WF_ConditionalLoraLoader",
+      "_meta": {
+        "title": "Conditional LoRA Loader"
+      }
+    },
+    "622:257:158": {
+      "inputs": {
+        "output_type": "string",
+        "*": [
+          "624",
+          0
+        ]
+      },
+      "class_type": "easy convertAnything",
+      "_meta": {
+        "title": "Convert Any"
+      }
+    },
+    "622:251:158": {
+      "inputs": {
+        "output_type": "string",
+        "*": [
+          "624",
+          0
+        ]
+      },
+      "class_type": "easy convertAnything",
+      "_meta": {
+        "title": "Convert Any"
+      }
+    },
+    "622:251:156": {
+      "inputs": {
+        "substring": "hiratsuka shizuka",
+        "case_sensitive": false,
+        "string": [
+          "622:251:158",
+          0
+        ]
+      },
+      "class_type": "StringContains",
+      "_meta": {
+        "title": "Contains"
+      }
+    },
+    "622:251:161": {
+      "inputs": {
+        "lora_name": "내청코_캐릭별로라_28step\\shizuka_lora-000028.safetensors",
+        "strength_model": 0.4,
+        "strength_clip": 1,
+        "model": [
+          "622:249:161",
+          0
+        ],
+        "clip": [
+          "622:249:161",
+          1
+        ],
+        "enabled": [
+          "622:251:156",
+          0
+        ]
+      },
+      "class_type": "WF_ConditionalLoraLoader",
+      "_meta": {
+        "title": "Conditional LoRA Loader"
+      }
+    },
+    "622:230:156": {
+      "inputs": {
+        "substring": "isshiki iroha",
+        "case_sensitive": false,
+        "string": [
+          "622:230:158",
+          0
+        ]
+      },
+      "class_type": "StringContains",
+      "_meta": {
+        "title": "Contains"
+      }
+    },
+    "622:230:161": {
+      "inputs": {
+        "lora_name": "내청코_캐릭별로라_28step\\Iroha_lora-000028.safetensors",
+        "strength_model": 0.4,
+        "strength_clip": 1,
+        "model": [
+          "622:228:161",
+          0
+        ],
+        "clip": [
+          "622:228:161",
+          1
+        ],
+        "enabled": [
+          "622:230:156",
+          0
+        ]
+      },
+      "class_type": "WF_ConditionalLoraLoader",
+      "_meta": {
+        "title": "Conditional LoRA Loader"
+      }
+    },
+    "622:230:158": {
+      "inputs": {
+        "output_type": "string",
+        "*": [
+          "624",
+          0
+        ]
+      },
+      "class_type": "easy convertAnything",
+      "_meta": {
+        "title": "Convert Any"
+      }
+    },
+    "622:253:158": {
+      "inputs": {
+        "output_type": "string",
+        "*": [
+          "624",
+          0
+        ]
+      },
+      "class_type": "easy convertAnything",
+      "_meta": {
+        "title": "Convert Any"
+      }
+    },
+    "622:253:156": {
+      "inputs": {
+        "substring": "yuigahama yui",
+        "case_sensitive": false,
+        "string": [
+          "622:253:158",
+          0
+        ]
+      },
+      "class_type": "StringContains",
+      "_meta": {
+        "title": "Contains"
+      }
+    },
+    "622:253:161": {
+      "inputs": {
+        "lora_name": "내청코_캐릭별로라_28step\\yui_lora-000028.safetensors",
+        "strength_model": 0.4,
+        "strength_clip": 1,
+        "model": [
+          "622:251:161",
+          0
+        ],
+        "clip": [
+          "622:251:161",
+          1
+        ],
+        "enabled": [
+          "622:253:156",
+          0
+        ]
+      },
+      "class_type": "WF_ConditionalLoraLoader",
+      "_meta": {
+        "title": "Conditional LoRA Loader"
+      }
+    },
+    "622:255:158": {
+      "inputs": {
+        "output_type": "string",
+        "*": [
+          "624",
+          0
+        ]
+      },
+      "class_type": "easy convertAnything",
+      "_meta": {
+        "title": "Convert Any"
+      }
+    },
+    "622:255:161": {
+      "inputs": {
+        "lora_name": "내청코_캐릭별로라_28step\\yukino_lora-000028.safetensors",
+        "strength_model": 0.4,
+        "strength_clip": 1,
+        "model": [
+          "622:253:161",
+          0
+        ],
+        "clip": [
+          "622:253:161",
+          1
+        ],
+        "enabled": [
+          "622:255:156",
+          0
+        ]
+      },
+      "class_type": "WF_ConditionalLoraLoader",
+      "_meta": {
+        "title": "Conditional LoRA Loader"
+      }
+    },
+    "622:255:156": {
+      "inputs": {
+        "substring": "yukinoshita yukino",
+        "case_sensitive": false,
+        "string": [
+          "622:255:158",
+          0
+        ]
+      },
+      "class_type": "StringContains",
+      "_meta": {
+        "title": "Contains"
+      }
+    },
+    "622:234:158": {
+      "inputs": {
+        "output_type": "string",
+        "*": [
+          "624",
+          0
+        ]
+      },
+      "class_type": "easy convertAnything",
+      "_meta": {
+        "title": "Convert Any"
+      }
+    },
+    "622:234:156": {
+      "inputs": {
+        "substring": "shiromeguri meguri",
+        "case_sensitive": false,
+        "string": [
+          "622:234:158",
+          0
+        ]
+      },
+      "class_type": "StringContains",
+      "_meta": {
+        "title": "Contains"
+      }
+    },
+    "622:234:161": {
+      "inputs": {
+        "lora_name": "내청코_캐릭별로라_28step\\Meguri_lora-000028.safetensors",
+        "strength_model": 0.6,
+        "strength_clip": 1,
+        "model": [
+          "622:232:161",
+          0
+        ],
+        "clip": [
+          "622:232:161",
+          1
+        ],
+        "enabled": [
+          "622:234:156",
+          0
+        ]
+      },
+      "class_type": "WF_ConditionalLoraLoader",
+      "_meta": {
+        "title": "Conditional LoRA Loader"
+      }
+    },
+    "622:246:158": {
+      "inputs": {
+        "output_type": "string",
+        "*": [
+          "624",
+          0
+        ]
+      },
+      "class_type": "easy convertAnything",
+      "_meta": {
+        "title": "Convert Any"
+      }
+    },
+    "622:246:156": {
+      "inputs": {
+        "substring": "totsuka saika",
+        "case_sensitive": false,
+        "string": [
+          "622:246:158",
+          0
+        ]
+      },
+      "class_type": "StringContains",
+      "_meta": {
+        "title": "Contains"
+      }
+    },
+    "622:246:161": {
+      "inputs": {
+        "lora_name": "내청코_캐릭별로라_28step\\Saika_lora-000028.safetensors",
+        "strength_model": 0.4,
+        "strength_clip": 1,
+        "model": [
+          "622:244:161",
+          0
+        ],
+        "clip": [
+          "622:244:161",
+          1
+        ],
+        "enabled": [
+          "622:246:156",
+          0
+        ]
+      },
+      "class_type": "WF_ConditionalLoraLoader",
+      "_meta": {
+        "title": "Conditional LoRA Loader"
+      }
+    },
+    "622:208:158": {
+      "inputs": {
+        "output_type": "string",
+        "*": [
+          "624",
+          0
+        ]
+      },
+      "class_type": "easy convertAnything",
+      "_meta": {
+        "title": "Convert Any"
+      }
+    },
+    "622:208:156": {
+      "inputs": {
+        "substring": "yukinoshita haruno",
+        "case_sensitive": false,
+        "string": [
+          "622:208:158",
+          0
+        ]
+      },
+      "class_type": "StringContains",
+      "_meta": {
+        "title": "Contains"
+      }
+    },
+    "622:208:161": {
+      "inputs": {
+        "lora_name": "내청코_캐릭별로라_28step\\Haruno_lora-000028.safetensors",
+        "strength_model": 0.4,
+        "strength_clip": 1,
+        "model": [
+          "5:59",
+          0
+        ],
+        "clip": [
+          "5:45",
+          0
+        ],
+        "enabled": [
+          "622:208:156",
+          0
+        ]
+      },
+      "class_type": "WF_ConditionalLoraLoader",
+      "_meta": {
+        "title": "Conditional LoRA Loader"
+      }
+    },
+    "12:1": {
+      "inputs": {
+        "width": 768,
+        "height": 768,
+        "batch_size": 1
+      },
+      "class_type": "EmptyLatentImage",
+      "_meta": {
+        "title": "Empty Latent Image"
+      }
+    },
+    "12:2": {
+      "inputs": {
+        "rotation": "none",
+        "samples": [
+          "12:1",
+          0
+        ]
+      },
+      "class_type": "LatentRotate",
+      "_meta": {
+        "title": "Rotate Latent"
+      }
+    },
+    "7:80": {
+      "inputs": {
+        "sampler_name": "er_sde"
+      },
+      "class_type": "KSamplerSelect",
+      "_meta": {
+        "title": "KSamplerSelect"
+      }
+    },
+    "7:110": {
+      "inputs": {
+        "cfg": 4,
+        "start_percent": 0,
+        "end_percent": 0.6,
+        "model": [
+          "620",
+          0
+        ],
+        "positive": [
+          "11",
+          0
+        ],
+        "negative": [
+          "8",
+          0
+        ]
+      },
+      "class_type": "ScheduledCFGGuidance",
+      "_meta": {
+        "title": "Scheduled CFG Guidance"
+      }
+    },
+    "7:109": {
+      "inputs": {
+        "scheduler": "simple",
+        "steps": 16,
+        "denoise": 1,
+        "model": [
+          "620",
+          0
+        ]
+      },
+      "class_type": "BasicScheduler",
+      "_meta": {
+        "title": "BasicScheduler"
+      }
+    },
+    "7:81": {
+      "inputs": {
+        "noise": [
+          "7:86",
+          0
+        ],
+        "guider": [
+          "7:110",
+          0
+        ],
+        "sampler": [
+          "7:80",
+          0
+        ],
+        "sigmas": [
+          "7:109",
+          0
+        ],
+        "latent_image": [
+          "12:2",
+          0
+        ]
+      },
+      "class_type": "SamplerCustomAdvanced",
+      "_meta": {
+        "title": "SamplerCustomAdvanced"
+      }
+    },
+    "7:86": {
+      "inputs": {
+        "noise_seed": [
+          "133",
+          0
+        ]
+      },
+      "class_type": "RandomNoise",
+      "_meta": {
+        "title": "RandomNoise"
+      }
+    }
+  }
+}
