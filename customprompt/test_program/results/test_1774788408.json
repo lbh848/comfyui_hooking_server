@@ -1,0 +1,58 @@
+{
+  "timestamp": "2026-03-29 21:46:48",
+  "prompt_file": "haganai_extract_outfit_prompt.py",
+  "model": "gpt-4.1",
+  "results": [
+    {
+      "name": "hasegawa kobato",
+      "success": true,
+      "elapsed": 2.25,
+      "is_json": true,
+      "has_all_keys": true,
+      "parsed_output": {
+        "headgear": "black lace headband",
+        "clothing": "gothic lolita dress",
+        "shoes": "black mary jane shoes",
+        "accessories": "black ribbon choker",
+        "memo": "Outfit[1] is the newest extraction; no chat evidence suggests a change from this outfit."
+      },
+      "raw_result": "{\n  \"headgear\": \"black lace headband\",\n  \"clothing\": \"gothic lolita dress\",\n  \"shoes\": \"black mary jane shoes\",\n  \"accessories\": \"black ribbon choker\",\n  \"memo\": \"Outfit[1] is the newest extraction; no chat evidence suggests a change from this outfit.\"\n}"
+    },
+    {
+      "name": "kashiwazaki sena",
+      "success": true,
+      "elapsed": 2.31,
+      "is_json": true,
+      "has_all_keys": true,
+      "parsed_output": {
+        "headgear": "blue butterfly hair ornament",
+        "clothing": "school uniform (white blouse, blue pleated skirt)",
+        "shoes": "brown loafers",
+        "accessories": "None",
+        "memo": "Outfit[1] matches description; chat[1] implies she's wearing her current outfit."
+      },
+      "raw_result": "{\n  \"headgear\": \"blue butterfly hair ornament\",\n  \"clothing\": \"school uniform (white blouse, blue pleated skirt)\",\n  \"shoes\": \"brown loafers\",\n  \"accessories\": \"None\",\n  \"memo\": \"Outfit[1] matches description; chat[1] implies she's wearing her current outfit.\"\n}"
+    },
+    {
+      "name": "kusunoki yukimura",
+      "success": true,
+      "elapsed": 4.42,
+      "is_json": true,
+      "has_all_keys": true,
+      "parsed_output": {
+        "headgear": "white headband",
+        "clothing": "maid dress, white apron, black stockings",
+        "shoes": "black shoes",
+        "accessories": "None",
+        "memo": "Outfit#1 is the newest extraction and chat line indicates the character is currently wearing it ('오늘은 이 옷으로 왔습니다' refers to current outfit)."
+      },
+      "raw_result": "{\n  \"headgear\": \"white headband\",\n  \"clothing\": \"maid dress, white apron, black stockings\",\n  \"shoes\": \"black shoes\",\n  \"accessories\": \"None\",\n  \"memo\": \"Outfit#1 is the newest extraction and chat line indicates the character is currently wearing it ('오늘은 이 옷으로 왔습니다' refers to current outfit).\"\n}"
+    },
+    {
+      "name": "unknown",
+      "success": true,
+      "elapsed": 0.0,
+      "raw_result": "LLM 작업 건너뜀"
+    }
+  ]
+}

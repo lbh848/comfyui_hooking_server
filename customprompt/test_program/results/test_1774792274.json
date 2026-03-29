@@ -1,0 +1,58 @@
+{
+  "timestamp": "2026-03-29 22:51:14",
+  "prompt_file": "haganai_extract_outfit_prompt.py",
+  "model": "gpt-4.1",
+  "results": [
+    {
+      "name": "hasegawa kobato",
+      "success": true,
+      "elapsed": 4.68,
+      "is_json": true,
+      "has_all_keys": true,
+      "parsed_output": {
+        "headgear": "black lace headband",
+        "clothing": "gothic lolita dress, white knee-high socks, black ribbon choker",
+        "shoes": "black mary jane shoes",
+        "accessories": "None",
+        "memo": "Outfit#1 base, no chat evidence of clothing change. Chat line only references 'this outfit' with no specifics, so defaulting to most recent extraction."
+      },
+      "raw_result": "{\n  \"headgear\": \"black lace headband\",\n  \"clothing\": \"gothic lolita dress, white knee-high socks, black ribbon choker\",\n  \"shoes\": \"black mary jane shoes\",\n  \"accessories\": \"None\",\n  \"memo\": \"Outfit#1 base, no chat evidence of clothing change. Chat line only references 'this outfit' with no specifics, so defaulting to most recent extraction.\"\n}"
+    },
+    {
+      "name": "kashiwazaki sena",
+      "success": true,
+      "elapsed": 9.38,
+      "is_json": true,
+      "has_all_keys": true,
+      "parsed_output": {
+        "headgear": "blue butterfly hair ornament",
+        "clothing": "school_uniform, white blouse, blue pleated skirt, black knee-high socks",
+        "shoes": "brown loafers",
+        "accessories": "None",
+        "memo": "Outfit#1 base, no chat evidence of change. Sena mentions 'this outfit' in chat, confirming she's currently in this attire."
+      },
+      "raw_result": "{\n  \"headgear\": \"blue butterfly hair ornament\",\n  \"clothing\": \"school_uniform, white blouse, blue pleated skirt, black knee-high socks\",\n  \"shoes\": \"brown loafers\",\n  \"accessories\": \"None\",\n  \"memo\": \"Outfit#1 base, no chat evidence of change. Sena mentions 'this outfit' in chat, confirming she's currently in this attire.\"\n}"
+    },
+    {
+      "name": "kusunoki yukimura",
+      "success": true,
+      "elapsed": 2.63,
+      "is_json": true,
+      "has_all_keys": true,
+      "parsed_output": {
+        "headgear": "white headband",
+        "clothing": "maid dress, white apron, black stockings",
+        "shoes": "black shoes",
+        "accessories": "None",
+        "memo": "Outfit#1 base, no chat evidence of outfit change. Chat indicates she arrived in her current outfit, consistent with Outfit#1."
+      },
+      "raw_result": "{\n  \"headgear\": \"white headband\",\n  \"clothing\": \"maid dress, white apron, black stockings\",\n  \"shoes\": \"black shoes\",\n  \"accessories\": \"None\",\n  \"memo\": \"Outfit#1 base, no chat evidence of outfit change. Chat indicates she arrived in her current outfit, consistent with Outfit#1.\"\n}"
+    },
+    {
+      "name": "unknown",
+      "success": true,
+      "elapsed": 0.0,
+      "raw_result": "LLM 작업 건너뜀"
+    }
+  ]
+}

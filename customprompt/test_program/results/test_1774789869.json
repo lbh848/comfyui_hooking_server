@@ -1,0 +1,58 @@
+{
+  "timestamp": "2026-03-29 22:11:09",
+  "prompt_file": "haganai_extract_outfit_prompt.py",
+  "model": "gpt-4.1",
+  "results": [
+    {
+      "name": "kashiwazaki sena",
+      "success": true,
+      "elapsed": 3.21,
+      "is_json": true,
+      "has_all_keys": true,
+      "parsed_output": {
+        "headgear": "blue butterfly hair clip, blue hair accessories",
+        "clothing": "white short-sleeved shirt with black collar and black tie, short plaid pleated skirt",
+        "shoes": "Not specified",
+        "accessories": "None",
+        "memo": "All clothing and accessories extracted from outfit#1, the most recent extraction. No evidence from chat or subsequent context indicates an outfit change."
+      },
+      "raw_result": "{\n  \"headgear\": \"blue butterfly hair clip, blue hair accessories\",\n  \"clothing\": \"white short-sleeved shirt with black collar and black tie, short plaid pleated skirt\",\n  \"shoes\": \"Not specified\",\n  \"accessories\": \"None\",\n  \"memo\": \"All clothing and accessories extracted from outfit#1, the most recent extraction. No evidence from chat or subsequent context indicates an outfit change.\"\n}"
+    },
+    {
+      "name": "mikazuki yozora",
+      "success": true,
+      "elapsed": 2.56,
+      "is_json": true,
+      "has_all_keys": true,
+      "parsed_output": {
+        "headgear": "None",
+        "clothing": "white short-sleeved button-up shirt, plaid pleated skirt",
+        "shoes": "None",
+        "accessories": "None",
+        "memo": "Evidence from outfit#1: specifies white short-sleeved button-up shirt and plaid pleated skirt. No mention of shoes, headgear, or accessories."
+      },
+      "raw_result": "{\n  \"headgear\": \"None\",\n  \"clothing\": \"white short-sleeved button-up shirt, plaid pleated skirt\",\n  \"shoes\": \"None\",\n  \"accessories\": \"None\",\n  \"memo\": \"Evidence from outfit#1: specifies white short-sleeved button-up shirt and plaid pleated skirt. No mention of shoes, headgear, or accessories.\"\n}"
+    },
+    {
+      "name": "oreki houtarou",
+      "success": true,
+      "elapsed": 2.58,
+      "is_json": true,
+      "has_all_keys": true,
+      "parsed_output": {
+        "headgear": "None",
+        "clothing": "white short-sleeved shirt with a pocket on the left side",
+        "shoes": "Unknown",
+        "accessories": "None",
+        "memo": "Based on outfit#1 description, Oreki Houtarou is currently wearing a white short-sleeved shirt with a pocket on the left side. No evidence from chat or other outfits indicates a change from this attire. Shoes are not described in any extraction."
+      },
+      "raw_result": "{\n  \"headgear\": \"None\",\n  \"clothing\": \"white short-sleeved shirt with a pocket on the left side\",\n  \"shoes\": \"Unknown\",\n  \"accessories\": \"None\",\n  \"memo\": \"Based on outfit#1 description, Oreki Houtarou is currently wearing a white short-sleeved shirt with a pocket on the left side. No evidence from chat or other outfits indicates a change from this attire. Shoes are not described in any extraction.\"\n}"
+    },
+    {
+      "name": "unknown",
+      "success": true,
+      "elapsed": 0.0,
+      "raw_result": "LLM 작업 건너뜀"
+    }
+  ]
+}

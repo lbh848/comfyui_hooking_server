@@ -1,0 +1,23 @@
+{
+  "timestamp": "2026-03-30 00:27:25",
+  "prompt_file": "haganai_extract_outfit_prompt.py",
+  "model": "gpt-4.1",
+  "model2": "gemini-3-flash-preview",
+  "results": [
+    {
+      "name": "hasegawa kobato",
+      "success": true,
+      "elapsed": 7.0,
+      "is_json": true,
+      "has_all_keys": true,
+      "parsed_output": {
+        "headgear": "black lace headband",
+        "clothing": "gothic lolita dress, white knee-high socks, black ribbon choker",
+        "shoes": "black mary jane shoes",
+        "accessories": "None",
+        "memo": "Outfit#1 base, no chat evidence of change; description matches current style, and no reference to changing into or out of another outfit."
+      },
+      "raw_result": "{\n  \"headgear\": \"black lace headband\",\n  \"clothing\": \"gothic lolita dress, white knee-high socks, black ribbon choker\",\n  \"shoes\": \"black mary jane shoes\",\n  \"accessories\": \"None\",\n  \"memo\": \"Outfit#1 base, no chat evidence of change; description matches current style, and no reference to changing into or out of another outfit.\"\n}"
+    }
+  ]
+}

@@ -136,7 +136,7 @@
             border-color: var(--accent2);
         }
 
-        .backup-card.current-batch {
+        .backup-card.current-batch, .backup-card.completed-batch {
             border: 3px solid var(--success);
             box-shadow: 0 0 15px rgba(76, 175, 80, 0.4);
         }
@@ -276,6 +276,20 @@
             line-height: 1.5;
         }
 
+        .chat-content {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 8px 10px;
+            font-size: 0.78rem;
+            max-height: 300px;
+            overflow-y: auto;
+            line-height: 1.5;
+            white-space: pre-wrap;
+            word-break: break-word;
+            overflow-wrap: break-word;
+        }
+
         .conversion-info .section-title {
             color: var(--accent);
             font-weight: 600;
@@ -308,6 +322,8 @@
             overflow-y: auto;
             margin-top: 8px;
             white-space: pre-wrap;
+            word-break: break-word;
+            overflow-wrap: break-word;
             word-break: break-all;
             font-family: 'Consolas', monospace;
             transition: max-height 0.3s ease;
@@ -332,6 +348,51 @@
         .prompt-toggle-btn:hover {
             background: var(--accent2);
             color: var(--text);
+        }
+
+        .enhanced-toggle-btn {
+            background: var(--surface2);
+            color: #ffd700;
+            border: 1px solid #ffd70060;
+            border-radius: 4px;
+            padding: 3px 10px;
+            font-size: 0.75rem;
+            cursor: pointer;
+            margin-top: 4px;
+            margin-left: 6px;
+            transition: background 0.2s;
+        }
+
+        .enhanced-toggle-btn:hover {
+            background: #ffd70020;
+            color: #ffe44d;
+        }
+
+        .enhanced-preview {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 0 10px;
+            margin-top: 4px;
+            font-size: 0.8rem;
+            white-space: pre-wrap;
+            word-break: break-all;
+            line-height: 1.5;
+        }
+
+        .enhanced-preview.expanded {
+            max-height: 600px;
+            padding: 10px;
+            overflow-y: auto;
+        }
+
+        .diff-highlight {
+            background: #ffd70040;
+            border-radius: 2px;
+            padding: 0 1px;
         }
 
         /* ─── 스피너 ─── */
@@ -376,7 +437,7 @@
         /* ─── 토스트 알림 ─── */
         .toast {
             position: fixed;
-            top: 20px;
+            top: 80px;
             left: 50%;
             transform: translateX(-50%);
             padding: 12px 24px;
@@ -402,6 +463,55 @@
         .toast.error {
             background: var(--error);
             color: #fff;
+        }
+
+        /* ─── 복장 추출 진행 토스트 (우측 하단 고정) ─── */
+        .outfit-progress-toast {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            min-width: 280px;
+            max-width: 380px;
+            background: var(--surface);
+            border: 1px solid var(--accent);
+            border-left: 4px solid var(--accent);
+            border-radius: 10px;
+            padding: 14px 18px;
+            z-index: 2100;
+            display: none;
+            box-shadow: 0 4px 24px rgba(0,0,0,0.5);
+            font-size: 0.85rem;
+            color: var(--text);
+        }
+        .outfit-progress-toast.visible {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .outfit-progress-toast .spinner {
+            width: 20px;
+            height: 20px;
+            border: 3px solid var(--border);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: outfit-spin 0.8s linear infinite;
+            flex-shrink: 0;
+        }
+        @keyframes outfit-spin {
+            to { transform: rotate(360deg); }
+        }
+        .outfit-progress-toast .progress-body {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .outfit-progress-toast .progress-title {
+            font-weight: 700;
+            font-size: 0.9rem;
+        }
+        .outfit-progress-toast .progress-detail {
+            font-size: 0.78rem;
+            color: var(--text2);
         }
 
         /* ─── 모달 공통 ─── */
@@ -700,6 +810,21 @@
             background: rgba(170, 170, 170, 0.1);
         }
 
+        /* Beta 뱃지 */
+        .beta-badge {
+            display: inline-block;
+            font-size: 0.6rem;
+            font-weight: 700;
+            color: #fff;
+            background: var(--accent2);
+            padding: 1px 5px;
+            border-radius: 3px;
+            vertical-align: middle;
+            margin-left: 6px;
+            letter-spacing: 0.5px;
+            line-height: 1.4;
+        }
+
         /* 슬라이더 */
         .quality-slider {
             width: 150px;
@@ -834,13 +959,24 @@
             <button onclick="openSettingsModal()">⚙️ 설정</button>
             <button onclick="reloadWorkflow()">📂 워크플로우 가져오기</button>
             <button onclick="toggleBatchMode()" id="batch-mode-btn">🔄 배치모드: <span id="batch-mode-status">OFF</span></button>
-            <button onclick="scheduleBatchResend()" id="batch-schedule-btn">📦 배치 재전송 예약</button>
+            <button onclick="scheduleBatchResend()" id="batch-schedule-btn" style="display:none;">📦 배치 재전송 예약</button>
             <button onclick="cancelBatchResend()" id="batch-cancel-btn" style="display:none;">❌ 예약 취소</button>
+            <button onclick="openOutfitResultsModal()" id="outfit-btn" style="display:none;">👕 복장 추출</button>
+            <button onclick="openModeLogModal()">📋 모드 로그</button>
         </div>
     </header>
 
     <!-- 토스트 알림 -->
     <div id="toast" class="toast"></div>
+
+    <!-- 복장 추출 진행 토스트 (우측 하단) -->
+    <div id="outfit-progress-toast" class="outfit-progress-toast">
+        <div class="spinner"></div>
+        <div class="progress-body">
+            <div class="progress-title" id="outfit-progress-title">복장 추출 진행중</div>
+            <div class="progress-detail" id="outfit-progress-detail">-</div>
+        </div>
+    </div>
 
     <div class="status-bar" id="status-bar">
         <div class="info-grid" id="conversion-status">
@@ -983,18 +1119,7 @@
                     <div class="hint">절대 경로를 입력하세요</div>
                 </div>
 
-                <div class="setting-row">
-                    <div class="setting-label">
-                        <div class="title">배치 모드 타임아웃</div>
-                        <div class="desc">마지막 입력 후 배치 처리까지 대기 시간 (초)</div>
-                    </div>
-                    <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
-                        <input type="number" id="setting-batch-timeout" min="1" max="60" step="0.5" value="5"
-                               style="width: 80px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text);">
-                        <span>초</span>
-                    </div>
-                </div>
-
+                <!-- 가중치 클램프 -->
                 <div class="setting-row">
                     <div class="setting-label">
                         <div class="title">가중치 클램프</div>
@@ -1019,6 +1144,174 @@
                                style="width: 80px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text);">
                     </div>
                 </div>
+
+                <!-- LLM 설정 -->
+                <div class="setting-row">
+                    <div class="setting-label">
+                        <div class="title">LLM 서비스 선택</div>
+                        <div class="desc">외부 LLM 요청에 사용할 서비스</div>
+                    </div>
+                    <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                        <select id="setting-llm-service" onchange="onLlmServiceChange()"
+                                style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: 0.85rem;">
+                            <option value="copilot">Copilot</option>
+                            <option value="vertex">Vertex</option>
+                            <option value="customapi">CustomAPI</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="setting-row">
+                    <div class="setting-label">
+                        <div class="title">LLM 모델명</div>
+                        <div class="desc">사용할 모델 (예: gpt-4.1, gemini-3-flash-preview)</div>
+                    </div>
+                    <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                        <input type="text" id="setting-llm-model" value="gpt-4.1" placeholder="gpt-4.1"
+                               style="width: 200px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text);">
+                    </div>
+                </div>
+
+                <div class="setting-row" id="customapi-url-row" style="display: none;">
+                    <div class="setting-label">
+                        <div class="title">CustomAPI 접속 경로</div>
+                        <div class="desc">CustomAPI 서비스의 베이스 URL</div>
+                    </div>
+                    <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                        <input type="text" id="setting-custom-api-url" placeholder="예: http://localhost:8190/copilot"
+                               style="width: 300px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text);">
+                    </div>
+                </div>
+
+                <div class="setting-row">
+                    <div class="setting-label">
+                        <div class="title">LLM2 서비스 선택</div>
+                        <div class="desc">폴백 LLM 서비스 (비워두면 LLM1 서비스 사용)</div>
+                    </div>
+                    <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                        <select id="setting-llm-service2" onchange="onLlmServiceChange()"
+                                style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: .85rem;">
+                            <option value="">(LLM1과 동일)</option>
+                            <option value="copilot">Copilot</option>
+                            <option value="vertex">Vertex</option>
+                            <option value="customapi">CustomAPI</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="setting-row">
+                    <div class="setting-label">
+                        <div class="title">LLM2 모델명</div>
+                        <div class="desc">폴백 모델 (LLM 실패 시 자동 시도, 비워두면 비활성)</div>
+                    </div>
+                    <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                        <input type="text" id="setting-llm-model2" placeholder="예: gemini-3-flash-preview"
+                               style="width: 200px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text);">
+                    </div>
+                </div>
+
+                <div class="setting-row" id="customapi-url2-row" style="display: none;">
+                    <div class="setting-label">
+                        <div class="title">LLM2 CustomAPI 접속 경로</div>
+                        <div class="desc">LLM2 전용 CustomAPI 베이스 URL (비워두면 LLM1 경로 사용)</div>
+                    </div>
+                    <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                        <input type="text" id="setting-custom-api-url2" placeholder="예: http://localhost:8191/copilot"
+                               style="width: 300px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text);">
+                    </div>
+                </div>
+
+                <hr style="border: none; border-top: 1px solid var(--border); margin: 16px 0;">
+                <div style="text-align: center; margin-bottom: 12px;">
+                    <span style="display: inline-block; background: var(--accent); color: #fff; font-size: 0.95rem; font-weight: 700; padding: 4px 18px; border-radius: 8px; letter-spacing: 2px;">모드</span>
+                </div>
+
+                <div class="setting-row">
+                    <div class="setting-label">
+                        <div class="title">배치 모드 타임아웃</div>
+                        <div class="desc">마지막 입력 후 배치 처리까지 대기 시간 (초)</div>
+                    </div>
+                    <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                        <input type="number" id="setting-batch-timeout" min="1" max="60" step="0.5" value="5"
+                               style="width: 80px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text);">
+                        <span>초</span>
+                    </div>
+                </div>
+
+                <!-- 복장 추출 모드 -->
+                <div class="setting-row">
+                    <div class="setting-label">
+                        <div class="title">👕 복장 추출 모드 <span class="beta-badge">BETA</span></div>
+                        <div class="desc">배치 모드에서 이미지 생성 후 자동으로 복장/캐릭터 추출 (배치 모드 활성화 시에만 작동)</div>
+                    </div>
+                    <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="setting-outfit-enabled" onchange="updateOutfitStatus(this.checked)">
+                            <span class="toggle-slider"></span>
+                        </label>
+                        <span id="outfit-status" class="toggle-status">OFF</span>
+                    </div>
+                </div>
+
+                <div class="form-group" style="margin-top: 4px;">
+                    <label style="font-size: 0.8rem; margin-bottom: 4px;">복장 추출 워크플로우 파일명 (위 베이스 경로 공유)</label>
+                    <div class="autocomplete-wrapper">
+                        <input type="text" id="setting-outfit-workflow-filename" placeholder="예: 복장추출워크플로우.json"
+                               oninput="onOutfitFilenameInput(this.value)" onfocus="onOutfitFilenameInput(this.value)">
+                        <div class="autocomplete-list" id="outfit-workflow-autocomplete"></div>
+                    </div>
+                    <div class="hint">위 '워크플로우 소스 경로'의 베이스 경로에서 검색됩니다</div>
+                </div>
+                <input type="hidden" id="setting-outfit-workflow-source-path">
+
+                <!-- 복장정리프롬프트 선택 -->
+                <div class="form-group" style="margin-top: 8px;">
+                    <label style="font-size: 0.8rem; margin-bottom: 4px;">복장정리프롬프트 선택 (customprompt/)</label>
+                    <select id="setting-outfit-prompt-file" onchange="onOutfitPromptFileChange(this.value)"
+                            style="width: 100%; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: 0.85rem;">
+                        <option value="">(선택 안함)</option>
+                    </select>
+                    <div class="hint">customprompt/ 폴더의 파이썬 파일을 선택하면 LLM으로 복장 통합 결과를 생성합니다</div>
+                </div>
+
+                <hr style="border: none; border-top: 1px solid var(--border); margin: 12px 0;">
+
+                <!-- 프롬프트 강화 모드 -->
+                <div class="setting-row">
+                    <div class="setting-label">
+                        <div class="title">✨ 프롬프트 강화 모드 <span class="beta-badge">BETA</span></div>
+                        <div class="desc">배치 프롬프트의 캐릭터 복장 묘사를 LLM으로 자동 강화 (배치 모드 필수, 복장 추출 모드와 함께 사용하면 더 정확)</div>
+                    </div>
+                    <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="setting-enhance-enabled" onchange="updateEnhanceStatus(this.checked)">
+                            <span class="toggle-slider"></span>
+                        </label>
+                        <span id="enhance-status" class="toggle-status">OFF</span>
+                    </div>
+                </div>
+
+                <!-- 프롬프트 강화 파일 선택 -->
+                <div class="form-group" style="margin-top: 8px;">
+                    <label style="font-size: 0.8rem; margin-bottom: 4px;">프롬프트 강화 파일 선택 (customprompt/)</label>
+                    <select id="setting-enhance-prompt-file"
+                            style="width: 100%; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: 0.85rem;">
+                        <option value="">(선택 안함)</option>
+                    </select>
+                    <div class="hint">customprompt/ 폴더의 강화 프롬프트 파일을 선택합니다 (기본: enhance_outfit_prompt.py)</div>
+                </div>
+
+                <hr style="border: none; border-top: 1px solid var(--border); margin: 12px 0;">
+
+                <!-- 워크플로우 복원 프롬프트 선택 -->
+                <div class="form-group" style="margin-top: 8px;">
+                    <label style="font-size: 0.8rem; margin-bottom: 4px;">워크플로우 복원 프롬프트 (customprompt/)</label>
+                    <select id="setting-restore-prompt-file"
+                            style="width: 100%; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: 0.85rem;">
+                        <option value="">(선택 안함 - 복원 안함)</option>
+                    </select>
+                    <div class="hint">모드(복장 추출 등) 종료 후 원래 워크플로우를 자동 실행하여 가중치를 VRAM에 프리로드합니다</div>
+                </div>
             </div>
             <div class="modal-footer">
                 <button class="cancel" onclick="closeSettingsModal()">취소</button>
@@ -1027,9 +1320,80 @@
         </div>
     </div>
 
+    <!-- 복장 추출 결과 모달 -->
+    <div class="modal" id="outfit-results-modal" onclick="if (event.target === this) closeOutfitResultsModal()">
+        <div class="modal-content" style="max-width: 1200px;">
+            <div class="modal-header">
+                <h2>👕 복장 추출 결과</h2>
+                <button class="modal-close" onclick="closeOutfitResultsModal()">&times;</button>
+            </div>
+            <!-- 이미지 업로드 영역 -->
+            <div style="padding: 12px 20px; border-bottom: 1px solid var(--border);">
+                <div style="display: flex; gap: 10px; align-items: center;">
+                    <label style="cursor: pointer; padding: 6px 14px; background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-size: 0.85rem;">
+                        📁 이미지 선택
+                        <input type="file" id="outfit-upload-input" accept="image/*" style="display: none;" onchange="onOutfitImageSelected(this)">
+                    </label>
+                    <span id="outfit-upload-filename" style="font-size: 0.8rem; color: var(--text2);">이미지를 선택하세요</span>
+                    <button id="outfit-upload-btn" onclick="uploadAndExtractOutfit()" disabled style="padding: 6px 14px; background: var(--accent); color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 0.85rem; opacity: 0.5;">
+                        🧪 추출 실행
+                    </button>
+                </div>
+                <div id="outfit-upload-preview" style="display: none; margin-top: 8px; max-height: 150px; overflow: hidden;">
+                    <img id="outfit-preview-img" style="max-height: 150px; border-radius: 4px;">
+                </div>
+            </div>
+            <div class="modal-body" id="outfit-results-body" style="max-height: 60vh; overflow-y: auto;">
+                <div class="empty-state">
+                    <p>복장 추출 결과가 없습니다</p>
+                    <p style="font-size: 0.8rem; color: var(--text2); margin-top: 8px;">배치 모드 + 복장 추출 모드 활성화 후 이미지를 생성하면 자동으로 결과가 표시됩니다</p>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="outfit-extract-btn" onclick="manualOutfitExtract()">🧪 복장 추출 실행</button>
+                <button id="llm-run-btn" onclick="openLlmCharacterSelect()">🤖 LLM 복장정리 실행</button>
+                <button class="cancel" onclick="closeOutfitResultsModal()">닫기</button>
+                <button class="confirm" onclick="refreshOutfitResults()">새로고침</button>
+                <button style="background: var(--error); color: #fff; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer;" onclick="clearOutfitResults()">🗑️ 초기화</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- LLM 캐릭터 선택 모달 -->
+    <div class="modal" id="llm-character-select-modal" onclick="if (event.target === this) closeLlmCharacterSelectModal()">
+        <div class="modal-content" style="max-width: 420px;">
+            <div class="modal-header">
+                <h2>🤖 LLM 복장정리 대상 선택</h2>
+                <button class="modal-close" onclick="closeLlmCharacterSelectModal()">&times;</button>
+            </div>
+            <div class="modal-body" id="llm-character-select-body" style="padding: 16px;">
+                <!-- 동적으로 생성됨 -->
+            </div>
+        </div>
+    </div>
+
+    <!-- 모드 로그 모달 -->
+    <div class="modal" id="mode-log-modal" onclick="if (event.target === this) closeModeLogModal()">
+        <div class="modal-content" style="max-width: 900px;">
+            <div class="modal-header">
+                <h2>📋 모드 작동 로그</h2>
+                <button class="modal-close" onclick="closeModeLogModal()">&times;</button>
+            </div>
+            <div class="modal-body" id="mode-log-body" style="max-height: 70vh; overflow-y: auto;">
+                <div class="empty-state"><p>로그 로딩중...</p></div>
+            </div>
+            <div class="modal-footer">
+                <button class="cancel" onclick="closeModeLogModal()">닫기</button>
+                <button class="confirm" onclick="exportModeLogs()">전체 내보내기</button>
+                <button class="confirm" onclick="refreshModeLogs()">새로고침</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         let autoRefreshTimer = null;
         let backupsData = [];
+        let promptDataMap = new Map(); // name -> { positive, negative }
         let frontendWs = null;
         
         // 페이지네이션 상태
@@ -1095,6 +1459,8 @@
                             batchModeState.processing_batch = null;
                             loadBatchModeStatus();
                             loadBackups(true);
+                            // 복장 추출 버튼 표시 (활성화된 경우)
+                            updateHeaderButtonsVisibility();
                             break;
                         case 'batch_resend_scheduled':
                             batchModeState.scheduled_batch = msg.data;
@@ -1121,6 +1487,51 @@
                             updateBatchModeUI();
                             showToast('재전송 예약이 모두 완료되었습니다', 'success');
                             loadBackups(true);
+                            break;
+                        // 복장 추출 이벤트
+                        case 'outfit_processing_started':
+                            showToast(`복장 추출 시작 (배치 ${msg.data.batch_id}, ${msg.data.total}개)`, 'info');
+                            showOutfitProgress('복장 추출 진행중', `0 / ${msg.data.total} 처리 대기`);
+                            autoRefreshOutfitResults();
+                            break;
+                        case 'outfit_image_processing':
+                            showToast(`복장 추출 처리 중... (${msg.data.index + 1}/${msg.data.total})`, 'info');
+                            updateOutfitProgress(undefined, `${msg.data.index + 1} / ${msg.data.total} 처리 중...`);
+                            break;
+                        case 'outfit_image_completed':
+                            if (msg.data.status === 'completed' && msg.data.character_count > 0) {
+                                showToast(`복장 추출 완료 (${msg.data.character_count}개 캐릭터)`, 'success');
+                                updateOutfitProgress(undefined, `${msg.data.index + 1} / ${msg.data.total} 완료`);
+                                autoRefreshOutfitResults();
+                                // 단일 이미지 처리 시 LLM 자동 실행 (배치의 경우 outfit_batch_completed에서 실행)
+                                if (msg.data.total === 1) {
+                                    updateOutfitProgress('LLM 복장정리 진행중', '잠시만 기다려주세요...');
+                                    runLlmPrompt();
+                                }
+                            }
+                            break;
+                        case 'outfit_batch_completed':
+                            showToast('복장 추출 배치 완료', 'success');
+                            autoRefreshOutfitResults();
+                            // 업데이트된 캐릭터에 대해서만 LLM 자동 실행
+                            {
+                                const updatedChars = msg.data.updated_characters || [];
+                                if (updatedChars.length > 0) {
+                                    updateOutfitProgress('LLM 복장정리 진행중', `${updatedChars.length}명 처리 중...`);
+                                    runLlmForCharacters(updatedChars);
+                                } else {
+                                    hideOutfitProgress();
+                                }
+                            }
+                            break;
+                        case 'outfit_llm_completed':
+                            autoRefreshOutfitResults();
+                            break;
+                        case 'enhance_started':
+                            showToast(`프롬프트 강화 시작 (${msg.data.char_count}명)`, 'info');
+                            break;
+                        case 'enhance_completed':
+                            showToast(`프롬프트 강화 완료 (${msg.data.blocks_changed}개 변경)`, 'success');
                             break;
                     }
                 } catch (e) {
@@ -1345,6 +1756,7 @@
             // 현재 배치/예약된 배치의 파일명 목록
             const currentBatchFiles = new Set(batchModeState.current_batch?.backup_filenames || []);
             const scheduledBatchFiles = new Set(batchModeState.scheduled_batch?.backup_filenames || []);
+            const lastCompletedFiles = new Set(batchModeState.last_completed_batch_filenames || []);
 
             let html = '<div class="backup-grid">';
             for (const b of backups) {
@@ -1355,11 +1767,16 @@
                 const hasPrompt = positive || negative;
                 const isScheduled = b.is_scheduled || false;
 
+                // Store prompt data in Map (avoids data-attribute truncation issues)
+                promptDataMap.set(b.name, { positive, negative, enhanced_positive: b.enhanced_positive || '' });
+
                 // 현재 배치 또는 예약된 배치에 속한 카드인지 확인
                 const isInCurrentBatch = currentBatchFiles.has(b.name);
                 const isInScheduledBatch = scheduledBatchFiles.has(b.name);
+                const isCompletedBatch = !isInScheduledBatch && lastCompletedFiles.has(b.name);
                 const cardClass = isInScheduledBatch ? 'backup-card scheduled-batch' :
-                                     isInCurrentBatch ? 'backup-card current-batch' : 'backup-card';
+                                     isInCurrentBatch ? 'backup-card current-batch' :
+                                     isCompletedBatch ? 'backup-card completed-batch' : 'backup-card';
 
                 html += `
                 <div class="${cardClass}" data-name="${escapeAttr(b.name)}">
@@ -1381,8 +1798,6 @@
                             <button class="edit-prompt-btn" onclick="event.stopPropagation(); openPromptModal(this)"
                                     data-name="${escapeAttr(b.name)}"
                                     data-image-url="${escapeAttr(b.image_url)}"
-                                    data-positive="${escapeAttr(b.positive)}"
-                                    data-negative="${escapeAttr(b.negative)}"
                                     ${b.has_prompt ? '' : 'disabled title="프롬프트 없음"'}>
                                 ✏️ 수정
                             </button>
@@ -1393,14 +1808,22 @@
                             <button onclick="toggleUnusedNodes('${escapeAttr(b.name)}')">
                                 🔍 노드
                             </button>
+                            <button onclick="toggleChat('${escapeAttr(b.name)}')">
+                                💬 채팅
+                            </button>
                         </div>
                         ${hasPrompt ? `
-                            <button class="prompt-toggle-btn" onclick="togglePrompt('${escapeAttr(b.name)}')" id="prompt-btn-${escapeAttr(b.name)}">📝 프롬프트 펼치기</button>
+                            <div style="display:flex; align-items:center;">
+                                <button class="prompt-toggle-btn" onclick="togglePrompt('${escapeAttr(b.name)}')" id="prompt-btn-${escapeAttr(b.name)}">📝 프롬프트 펼치기</button>
+                                ${b.enhanced_positive ? `<button class="enhanced-toggle-btn" onclick="toggleEnhancedPrompt('${escapeAttr(b.name)}')" id="enhanced-btn-${escapeAttr(b.name)}">✨ 강화 프롬프트</button>` : ''}
+                            </div>
                             <div class="prompt-preview" id="prompt-${escapeAttr(b.name)}">[긍정]\n${escapeHtml(positive)}\n\n[부정]\n${escapeHtml(negative)}</div>
+                            ${b.enhanced_positive ? `<div class="enhanced-preview" id="enhanced-${escapeAttr(b.name)}"></div>` : ''}
                         ` : '<div class="prompt-preview" style="color:var(--text2)">프롬프트 없음</div>'}
                         <div class="conversion-info" id="conv-${escapeAttr(b.name)}" style="display:none; margin-top:8px;">
                             ${renderConversionInfoContent(info)}
                         </div>
+                        <div class="chat-content" id="chat-${escapeAttr(b.name)}" style="display:none; margin-top:8px;"></div>
                     </div>
                 </div>`;
             }
@@ -1464,11 +1887,92 @@
             }
         }
 
+        // ─── 강화 프롬프트 펼치기/접기 ───
+        function toggleEnhancedPrompt(name) {
+            const el = document.getElementById('enhanced-' + name);
+            const btn = document.getElementById('enhanced-btn-' + name);
+            if (!el) return;
+            if (el.classList.contains('expanded')) {
+                el.classList.remove('expanded');
+                btn.textContent = '✨ 강화 프롬프트';
+                return;
+            }
+            // diff 계산 후 표시
+            const data = promptDataMap.get(name);
+            if (!data || !data.enhanced_positive) return;
+            const original = data.positive || '';
+            const enhanced = data.enhanced_positive;
+            el.innerHTML = '[강화 긍정]\n' + renderDiff(original, enhanced);
+            el.classList.add('expanded');
+            btn.textContent = '✨ 강화 프롬프트 접기';
+        }
+
+        // ─── Diff 렌더링 (원본 대비 변경 부분 노랑 하이라이트) ───
+        function renderDiff(original, enhanced) {
+            // 토큰 단위(콤마/줄바꿈 기준)로 분리하여 diff
+            const origTokens = splitToTokens(original);
+            const enhTokens = splitToTokens(enhanced);
+            const origSet = new Set(origTokens.map(t => t.trim().toLowerCase()).filter(t => t));
+
+            let html = '';
+            for (const token of enhTokens) {
+                const trimmed = token.trim().toLowerCase();
+                if (trimmed && !origSet.has(trimmed)) {
+                    // 원본에 없는 토큰 = 변경/추가된 부분
+                    html += `<span class="diff-highlight">${escapeHtml(token)}</span>`;
+                } else {
+                    html += escapeHtml(token);
+                }
+            }
+            return html;
+        }
+
+        function splitToTokens(text) {
+            // 콤마, 줄바꿈, 대괄호 섹션 헤더를 기준으로 토큰 분리
+            const result = [];
+            let current = '';
+            for (let i = 0; i < text.length; i++) {
+                const ch = text[i];
+                if (ch === ',' || ch === '\n') {
+                    if (current) result.push(current);
+                    result.push(ch);
+                    current = '';
+                } else {
+                    current += ch;
+                }
+            }
+            if (current) result.push(current);
+            return result;
+        }
+
         // ─── 미사용 노드 토글 ───
         function toggleUnusedNodes(name) {
             const el = document.getElementById('conv-' + name);
             if (el) {
                 el.style.display = el.style.display === 'none' ? 'block' : 'none';
+            }
+        }
+
+        function toggleChat(name) {
+            const el = document.getElementById('chat-' + name);
+            if (!el) return;
+            if (el.style.display === 'none') {
+                // Fetch chat from server
+                fetchJSON('/api/backup_chat?name=' + encodeURIComponent(name))
+                    .then(data => {
+                        if (data.chat) {
+                            el.textContent = data.chat;
+                        } else {
+                            el.innerHTML = '<span style="color:var(--text2)">채팅 내용 없음</span>';
+                        }
+                        el.style.display = 'block';
+                    })
+                    .catch(() => {
+                        el.innerHTML = '<span style="color:var(--error)">채팅 로드 실패</span>';
+                        el.style.display = 'block';
+                    });
+            } else {
+                el.style.display = 'none';
             }
         }
 
@@ -1561,9 +2065,12 @@
             const card = btn.closest('.backup-card');
             const name = card.dataset.name;
             const imageUrl = btn.dataset.imageUrl;
-            const positive = btn.dataset.positive || '';
-            const negative = btn.dataset.negative || '';
-            
+            // Look up prompt from Map instead of data-attributes (avoids truncation)
+            const promptData = promptDataMap.get(name) || {};
+            // 강화 프롬프트가 있으면 강화 버전 사용, 없으면 원본
+            const positive = promptData.enhanced_positive || promptData.positive || '';
+            const negative = promptData.negative || '';
+
             currentModalBackupName = name;
             document.getElementById('modal-backup-name').textContent = name;
             document.getElementById('modal-preview-img').src = imageUrl;
@@ -1685,15 +2192,50 @@
 
             document.getElementById('setting-backup-dir').value = currentConfig.backup_base_dir || '';
 
-            // 배치 모드 타임아웃 설정
-            document.getElementById('setting-batch-timeout').value = currentConfig.batch_timeout_seconds || 5.0;
-
             // 가중치 클램프 설정
             const clampEnabled = currentConfig.clamp_enabled || false;
             document.getElementById('setting-clamp-enabled').checked = clampEnabled;
             document.getElementById('setting-clamp-value').value = currentConfig.clamp_value || 1.2;
             document.getElementById('clamp-value-row').style.display = clampEnabled ? 'flex' : 'none';
             updateClampStatus(clampEnabled);
+
+            // LLM 서비스 설정
+            const llmService = currentConfig.llm_service || 'copilot';
+            document.getElementById('setting-llm-service').value = llmService;
+            document.getElementById('setting-llm-model').value = currentConfig.llm_model || 'gpt-4.1';
+            document.getElementById('setting-custom-api-url').value = currentConfig.custom_api_url || '';
+            document.getElementById('setting-llm-service2').value = currentConfig.llm_service2 || '';
+            document.getElementById('setting-llm-model2').value = currentConfig.llm_model2 || '';
+            document.getElementById('setting-custom-api-url2').value = currentConfig.custom_api_url2 || '';
+            onLlmServiceChange();
+
+            // 배치 모드 타임아웃 설정
+            document.getElementById('setting-batch-timeout').value = currentConfig.batch_timeout_seconds || 5.0;
+
+            // 복장 추출 모드 설정
+            const outfitEnabled = currentConfig.outfit_mode_enabled || false;
+            document.getElementById('setting-outfit-enabled').checked = outfitEnabled;
+            updateOutfitStatus(outfitEnabled);
+            // 복장 워크플로우 소스 경로에서 파일명만 추출 (베이스 경로는 메인과 공유)
+            const outfitSourcePath = currentConfig.outfit_workflow_source_path || '';
+            const outfitParts = splitWorkflowPath(outfitSourcePath);
+            document.getElementById('setting-outfit-workflow-filename').value = outfitParts.filename;
+            document.getElementById('setting-outfit-workflow-source-path').value = outfitSourcePath;
+
+            // 복장정리프롬프트 파일 목록 로드
+            await loadCustompromptFiles();
+            document.getElementById('setting-outfit-prompt-file').value = currentConfig.outfit_prompt_file || '';
+
+            // 워크플로우 복원 프롬프트 파일 목록 로드
+            await loadRestorePromptFiles();
+            document.getElementById('setting-restore-prompt-file').value = currentConfig.restore_prompt_file || '';
+
+            // 프롬프트 강화 모드 설정
+            const enhanceEnabled = currentConfig.enhance_mode_enabled || false;
+            document.getElementById('setting-enhance-enabled').checked = enhanceEnabled;
+            updateEnhanceStatus(enhanceEnabled);
+            // 강화 프롬프트 파일 목록 로드 (customprompt 파일과 공유)
+            document.getElementById('setting-enhance-prompt-file').value = currentConfig.enhance_prompt_file || '';
 
             document.getElementById('settings-modal').classList.add('visible');
         }
@@ -1779,9 +2321,21 @@
                 webp_quality: parseInt(document.getElementById('setting-webp-quality').value) || 85,
                 comfy_workflow_source_path: document.getElementById('setting-workflow-path').value,
                 backup_base_dir: document.getElementById('setting-backup-dir').value,
-                batch_timeout_seconds: parseFloat(document.getElementById('setting-batch-timeout').value) || 5.0,
                 clamp_enabled: document.getElementById('setting-clamp-enabled').checked,
-                clamp_value: parseFloat(document.getElementById('setting-clamp-value').value) || 1.2
+                clamp_value: parseFloat(document.getElementById('setting-clamp-value').value) || 1.2,
+                llm_service: document.getElementById('setting-llm-service').value,
+                llm_model: document.getElementById('setting-llm-model').value,
+                llm_service2: document.getElementById('setting-llm-service2').value,
+                llm_model2: document.getElementById('setting-llm-model2').value,
+                custom_api_url: document.getElementById('setting-custom-api-url').value,
+                custom_api_url2: document.getElementById('setting-custom-api-url2').value,
+                batch_timeout_seconds: parseFloat(document.getElementById('setting-batch-timeout').value) || 5.0,
+                outfit_mode_enabled: document.getElementById('setting-outfit-enabled').checked,
+                outfit_workflow_source_path: document.getElementById('setting-outfit-workflow-source-path').value,
+                outfit_prompt_file: document.getElementById('setting-outfit-prompt-file').value,
+                restore_prompt_file: document.getElementById('setting-restore-prompt-file').value,
+                enhance_mode_enabled: document.getElementById('setting-enhance-enabled').checked,
+                enhance_prompt_file: document.getElementById('setting-enhance-prompt-file').value
             };
 
             try {
@@ -1797,6 +2351,21 @@
                     currentConfig = result.config;
                     // 배치 모드 상태 갱신
                     loadBatchModeStatus();
+                    // 버튼 가시성 업데이트
+                    updateHeaderButtonsVisibility();
+                    // 복장 추출 모드 설정 동기화
+                    try {
+                        await fetch('/api/outfit_mode/config', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                enabled: config.outfit_mode_enabled,
+                                source_path: config.outfit_workflow_source_path
+                            })
+                        });
+                    } catch (e) {
+                        console.error('복장 추출 모드 설정 동기화 실패:', e);
+                    }
                 } else {
                     showToast('설정 저장 실패', 'error');
                 }
@@ -1881,6 +2450,23 @@
             toast._timer = setTimeout(() => {
                 toast.className = 'toast';
             }, 5000);
+        }
+
+        // ─── 복장 추출 진행 토스트 (우측 하단, 수동 종료) ───
+        function showOutfitProgress(title, detail) {
+            const el = document.getElementById('outfit-progress-toast');
+            document.getElementById('outfit-progress-title').textContent = title || '복장 추출 진행중';
+            document.getElementById('outfit-progress-detail').textContent = detail || '';
+            el.classList.add('visible');
+        }
+        function updateOutfitProgress(title, detail) {
+            const el = document.getElementById('outfit-progress-toast');
+            if (!el.classList.contains('visible')) return;
+            if (title !== undefined) document.getElementById('outfit-progress-title').textContent = title;
+            if (detail !== undefined) document.getElementById('outfit-progress-detail').textContent = detail;
+        }
+        function hideOutfitProgress() {
+            document.getElementById('outfit-progress-toast').classList.remove('visible');
         }
 
         // ─── 라이트박스 ───
@@ -2029,6 +2615,9 @@
                     cancelBtn.style.display = 'none';
                 }
             }
+
+            // 배치 모드 상태 변경 시 헤더 버튼 가시성도 업데이트
+            updateHeaderButtonsVisibility();
         }
 
         async function toggleBatchMode() {
@@ -2043,6 +2632,7 @@
                 if (data.success) {
                     batchModeState = data.status;
                     updateBatchModeUI();
+                    updateHeaderButtonsVisibility();
                     showToast(`배치 모드 ${newEnabled ? '활성화' : '비활성화'}`, 'success');
                 }
             } catch (e) {
@@ -2082,10 +2672,598 @@
             }
         }
 
+        // ─── 복장 추출 모드 ───
+        function updateOutfitStatus(checked) {
+            // 켜려는 경우 배치 모드 확인
+            if (checked && !(batchModeState.enabled || false)) {
+                // 체크박스 원복
+                document.getElementById('setting-outfit-enabled').checked = false;
+                // 플로팅 경고 표시
+                showFloatingWarning('배치 모드를 먼저 활성화해주세요');
+                return;
+            }
+            document.getElementById('outfit-status').textContent = checked ? 'ON' : 'OFF';
+            updateHeaderButtonsVisibility();
+        }
+
+        function updateEnhanceStatus(checked) {
+            // 켜려는 경우 배치 모드 확인
+            if (checked && !(batchModeState.enabled || false)) {
+                document.getElementById('setting-enhance-enabled').checked = false;
+                showFloatingWarning('배치 모드를 먼저 활성화해주세요');
+                return;
+            }
+            document.getElementById('enhance-status').textContent = checked ? 'ON' : 'OFF';
+        }
+
+        // ─── 플로팅 경고 (화면 중앙 큰 텍스트) ───
+        function showFloatingWarning(message) {
+            // 기존 경고 제거
+            const old = document.getElementById('floating-warning');
+            if (old) old.remove();
+
+            const el = document.createElement('div');
+            el.id = 'floating-warning';
+            el.textContent = message;
+            Object.assign(el.style, {
+                position: 'fixed',
+                top: '50%',
+                left: '50%',
+                transform: 'translate(-50%, -50%)',
+                background: 'rgba(233, 69, 96, 0.95)',
+                color: '#fff',
+                padding: '20px 40px',
+                borderRadius: '12px',
+                fontSize: '1.2rem',
+                fontWeight: '700',
+                zIndex: '3000',
+                boxShadow: '0 4px 24px rgba(0,0,0,0.4)',
+                transition: 'opacity 0.4s',
+                pointerEvents: 'none',
+            });
+            document.body.appendChild(el);
+            setTimeout(() => {
+                el.style.opacity = '0';
+                setTimeout(() => el.remove(), 400);
+            }, 2000);
+        }
+
+        // ─── 헤더 버튼 가시성 업데이트 ───
+        function updateHeaderButtonsVisibility() {
+            const batchOn = batchModeState.enabled || false;
+            const outfitOn = document.getElementById('setting-outfit-enabled').checked;
+
+            // 배치 재전송 버튼: 배치 모드 ON일 때만
+            document.getElementById('batch-schedule-btn').style.display = batchOn ? '' : 'none';
+
+            // 복장 추출 버튼: 배치 모드 + 복장 모드 둘 다 ON일 때만
+            const showOutfit = batchOn && outfitOn;
+            document.getElementById('outfit-btn').style.display = showOutfit ? '' : 'none';
+        }
+
+        // ─── LLM 서비스 변경 ───
+        function onLlmServiceChange() {
+            const s1 = document.getElementById('setting-llm-service').value;
+            const s2 = document.getElementById('setting-llm-service2').value;
+            // LLM1 CustomAPI URL
+            const customRow = document.getElementById('customapi-url-row');
+            customRow.style.display = (s1 === 'customapi') ? 'flex' : 'none';
+            // LLM2 CustomAPI URL
+            const customRow2 = document.getElementById('customapi-url2-row');
+            customRow2.style.display = (s2 === 'customapi') ? 'flex' : 'none';
+        }
+
+        // ─── 복장정리프롬프트 파일 목록 로드 ───
+        async function loadCustompromptFiles() {
+            try {
+                const resp = await fetch('/api/customprompt_files');
+                const data = await resp.json();
+                const files = data.files || [];
+                // 복장정리프롬프트 select 채우기
+                const outfitSelect = document.getElementById('setting-outfit-prompt-file');
+                const outfitValue = outfitSelect.value;
+                while (outfitSelect.options.length > 1) outfitSelect.remove(1);
+                files.forEach(f => {
+                    const opt = document.createElement('option');
+                    opt.value = f;
+                    opt.textContent = f;
+                    outfitSelect.appendChild(opt);
+                });
+                outfitSelect.value = outfitValue;
+                // 프롬프트 강화 select 채우기
+                const enhanceSelect = document.getElementById('setting-enhance-prompt-file');
+                const enhanceValue = enhanceSelect.value;
+                while (enhanceSelect.options.length > 1) enhanceSelect.remove(1);
+                files.forEach(f => {
+                    const opt = document.createElement('option');
+                    opt.value = f;
+                    opt.textContent = f;
+                    enhanceSelect.appendChild(opt);
+                });
+                enhanceSelect.value = enhanceValue;
+            } catch (e) {
+                console.error('customprompt 파일 목록 로드 실패:', e);
+            }
+        }
+
+        function onOutfitPromptFileChange(value) {
+            // 설정 저장 시 반영됨
+        }
+
+        // ─── 워크플로우 복원 프롬프트 파일 목록 로드 ───
+        async function loadRestorePromptFiles() {
+            try {
+                const resp = await fetch('/api/customprompt_files');
+                const data = await resp.json();
+                const select = document.getElementById('setting-restore-prompt-file');
+                const currentValue = select.value;
+                while (select.options.length > 1) select.remove(1);
+                (data.files || []).forEach(f => {
+                    const opt = document.createElement('option');
+                    opt.value = f;
+                    opt.textContent = f;
+                    select.appendChild(opt);
+                });
+                select.value = currentValue;
+            } catch (e) {
+                console.error('복원 프롬프트 파일 목록 로드 실패:', e);
+            }
+        }
+
+        // ─── LLM 복장정리 실행 ───
+        let _llmRunning = false;
+        let _llmPending = false;
+
+        function openLlmCharacterSelect() {
+            const body = document.getElementById('llm-character-select-body');
+            const names = Object.keys(_outfitCharacterNames || {});
+            if (!names.length) {
+                showToast('복장 추출 결과가 없습니다', 'error');
+                return;
+            }
+            let html = `<button onclick="runLlmPrompt(null)" style="width:100%;padding:12px;margin-bottom:12px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:0.95rem;cursor:pointer;text-align:left;">
+                🤖 <strong>전체 캐릭터</strong> <span style="color:var(--text2);font-size:0.8rem;">(${names.length}명)</span></button>`;
+            html += `<div style="font-size:0.75rem;color:var(--text2);margin-bottom:8px;padding-left:4px;">또는 개별 캐릭터 선택:</div>`;
+            names.forEach(name => {
+                const dirty = _outfitCharacterNames[name];
+                const dirtyBadge = dirty ? ' <span style="color:#f44336;font-size:0.7rem;">● 미실행</span>' : '';
+                html += `<button onclick="runLlmPrompt('${name.replace(/'/g, "\\'")}')" style="width:100%;padding:10px 12px;margin-bottom:6px;background:var(--surface);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:0.9rem;cursor:pointer;text-align:left;">
+                    ${name}${dirtyBadge}</button>`;
+            });
+            body.innerHTML = html;
+            document.getElementById('llm-character-select-modal').classList.add('visible');
+        }
+
+        function closeLlmCharacterSelectModal() {
+            document.getElementById('llm-character-select-modal').classList.remove('visible');
+        }
+
+        async function runLlmPrompt(characterName) {
+            closeLlmCharacterSelectModal();
+            if (_llmRunning) {
+                _llmPending = true;
+                return;
+            }
+            _llmRunning = true;
+            const btn = document.getElementById('llm-run-btn');
+            btn.disabled = true;
+            btn.textContent = '🤖 LLM 실행중...';
+            showOutfitProgress('LLM 복장정리 진행중', characterName ? `'${characterName}' 처리 중...` : '전체 캐릭터 처리 중...');
+            try {
+                const payload = characterName ? { character: characterName } : {};
+                const resp = await fetch('/api/outfit_mode/run_llm', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    const label = characterName ? `'${characterName}'` : `전체 (${data.results.length}명)`;
+                    showToast(`LLM 복장정리 완료: ${label}`, 'success');
+                    refreshOutfitResults();
+                } else {
+                    showToast('LLM 실행 실패: ' + (data.error || '알 수 없는 오류'), 'error');
+                }
+            } catch (e) {
+                showToast('LLM 실행 오류: ' + e.message, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '🤖 LLM 복장정리 실행';
+                _llmRunning = false;
+                hideOutfitProgress();
+                if (_llmPending) {
+                    _llmPending = false;
+                    runLlmPrompt(characterName);
+                }
+            }
+        }
+
+        // 지정된 캐릭터 목록에 대해서만 LLM 실행 (자동 트리거용)
+        async function runLlmForCharacters(characters) {
+            if (!characters || characters.length === 0) return;
+            if (_llmRunning) return;  // 이미 실행 중이면 스킵
+            _llmRunning = true;
+            const btn = document.getElementById('llm-run-btn');
+            if (btn) { btn.disabled = true; btn.textContent = '🤖 LLM 실행중...'; }
+            updateOutfitProgress('LLM 복장정리 진행중', `${characters.length}명 처리 중...`);
+            try {
+                const payload = { characters: characters };
+                const resp = await fetch('/api/outfit_mode/run_llm', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    showToast(`LLM 복장정리 완료: ${data.results.length}명`, 'success');
+                    refreshOutfitResults();
+                }
+            } catch (e) {
+                console.error('[LLM] 자동 실행 오류:', e);
+            } finally {
+                if (btn) { btn.disabled = false; btn.textContent = '🤖 LLM 복장정리 실행'; }
+                _llmRunning = false;
+                hideOutfitProgress();
+            }
+        }
+
+        function updateOutfitWorkflowPath() {
+            // 메인 워크플로우의 베이스 경로를 공유
+            const baseDir = document.getElementById('setting-workflow-base-dir').value.trim();
+            const filename = document.getElementById('setting-outfit-workflow-filename').value.trim();
+            const sep = baseDir && baseDir.includes('\\') ? '\\' : '/';
+            const fullPath = baseDir && filename ? baseDir.replace(/[\\/]+$/, '') + sep + filename : '';
+            document.getElementById('setting-outfit-workflow-source-path').value = fullPath;
+        }
+
+        let outfitAutocompleteTimeout = null;
+        async function onOutfitFilenameInput(value) {
+            updateOutfitWorkflowPath();
+            const list = document.getElementById('outfit-workflow-autocomplete');
+            // 메인 워크플로우와 동일한 베이스 경로 사용
+            const baseDir = document.getElementById('setting-workflow-base-dir').value.trim();
+            clearTimeout(outfitAutocompleteTimeout);
+            outfitAutocompleteTimeout = setTimeout(async () => {
+                if (value.length < 1) {
+                    list.classList.remove('visible');
+                    return;
+                }
+                try {
+                    const params = new URLSearchParams({
+                        search: value,
+                        base_dir: baseDir
+                    });
+                    const data = await fetchJSON(`/api/workflow_files?${params}`);
+                    if (data.files && data.files.length > 0) {
+                        let html = '';
+                        for (const file of data.files.slice(0, 10)) {
+                            html += `
+                                <div class="autocomplete-item" onclick="selectOutfitWorkflowFile('${escapeAttr(file.path)}', '${escapeAttr(file.filename)}')">
+                                    <div class="filename">${escapeHtml(file.filename)}</div>
+                                    <div class="path">${escapeHtml(file.rel_path)}</div>
+                                </div>
+                            `;
+                        }
+                        list.innerHTML = html;
+                        list.classList.add('visible');
+                    } else {
+                        list.innerHTML = '<div class="autocomplete-item">검색 결과 없음</div>';
+                        list.classList.add('visible');
+                    }
+                } catch (e) {
+                    list.classList.remove('visible');
+                }
+            }, 300);
+        }
+
+        function selectOutfitWorkflowFile(fullPath, filename) {
+            document.getElementById('setting-outfit-workflow-filename').value = filename;
+            document.getElementById('setting-outfit-workflow-source-path').value = fullPath;
+            document.getElementById('outfit-workflow-autocomplete').classList.remove('visible');
+        }
+
+        // ─── 복장 추출 결과 모달 ───
+        function openOutfitResultsModal() {
+            document.getElementById('outfit-results-modal').classList.add('visible');
+            refreshOutfitResults();
+        }
+
+        function closeOutfitResultsModal() {
+            document.getElementById('outfit-results-modal').classList.remove('visible');
+        }
+
+        async function clearOutfitResults() {
+            if (!confirm('모든 복장 추출 결과를 초기화하시겠습니까? (이미지, 프롬프트 모두 삭제됩니다)')) return;
+            try {
+                const resp = await fetch('/api/outfit_mode/clear', { method: 'POST' });
+                const data = await resp.json();
+                if (data.success) {
+                    showToast('복장 추출 결과가 초기화되었습니다', 'success');
+                    refreshOutfitResults();
+                } else {
+                    showToast('초기화 실패', 'error');
+                }
+            } catch (e) {
+                showToast('초기화 오류: ' + e.message, 'error');
+            }
+        }
+
+        async function manualOutfitExtract() {
+            const btn = document.getElementById('outfit-extract-btn');
+            btn.disabled = true;
+            btn.textContent = '🧪 추출 중...';
+            try {
+                const resp = await fetch('/api/outfit_mode/extract', { method: 'POST' });
+                const data = await resp.json();
+                if (data.success) {
+                    showToast(`복장 추출 시작: ${data.message}`, 'success');
+                } else {
+                    showToast(`복장 추출 실패: ${data.error || data.message}`, 'error');
+                }
+            } catch (e) {
+                showToast(`복장 추출 오류: ${e}`, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '🧪 복장 추출 실행';
+            }
+        }
+
+        let _outfitUploadBytes = null;
+
+        function onOutfitImageSelected(input) {
+            const file = input.files[0];
+            const nameSpan = document.getElementById('outfit-upload-filename');
+            const btn = document.getElementById('outfit-upload-btn');
+            const preview = document.getElementById('outfit-upload-preview');
+            const img = document.getElementById('outfit-preview-img');
+
+            if (!file) {
+                _outfitUploadBytes = null;
+                nameSpan.textContent = '이미지를 선택하세요';
+                btn.disabled = true;
+                btn.style.opacity = '0.5';
+                preview.style.display = 'none';
+                return;
+            }
+
+            nameSpan.textContent = file.name;
+            btn.disabled = false;
+            btn.style.opacity = '1';
+
+            // 미리보기
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                img.src = e.target.result;
+                preview.style.display = '';
+            };
+            reader.readAsDataURL(file);
+
+            // 바이트 저장
+            const byteReader = new FileReader();
+            byteReader.onload = (e) => {
+                _outfitUploadBytes = new Uint8Array(e.target.result);
+            };
+            byteReader.readAsArrayBuffer(file);
+        }
+
+        async function uploadAndExtractOutfit() {
+            if (!_outfitUploadBytes) {
+                showToast('이미지를 먼저 선택하세요', 'error');
+                return;
+            }
+
+            const btn = document.getElementById('outfit-upload-btn');
+            btn.disabled = true;
+            btn.textContent = '⏳ 처리 중...';
+            showOutfitProgress('복장 추출 진행중', '이미지 업로드 중...');
+
+            try {
+                const formData = new FormData();
+                formData.append('image', new Blob([_outfitUploadBytes]), 'upload.png');
+                formData.append('label', 'manual');
+
+                const resp = await fetch('/api/outfit_mode/extract_upload', {
+                    method: 'POST',
+                    body: formData,
+                });
+                const data = await resp.json();
+
+                if (data.success) {
+                    const charCount = (data.characters || []).length;
+                    showToast(`복장 추출 완료: ${charCount}개 캐릭터`, 'success');
+                    updateOutfitProgress('LLM 복장정리 진행중', '잠시만 기다려주세요...');
+                    refreshOutfitResults();
+                } else {
+                    showToast(`복장 추출 실패: ${data.error || '알 수 없는 오류'}`, 'error');
+                    hideOutfitProgress();
+                }
+            } catch (e) {
+                showToast(`업로드 오류: ${e}`, 'error');
+                hideOutfitProgress();
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '🧪 추출 실행';
+            }
+        }
+
+        let _outfitCharacterNames = {};
+
+        function autoRefreshOutfitResults() {
+            // 복장 결과 모달이 열려있을 때만 자동 새로고침
+            const modal = document.getElementById('outfit-results-modal');
+            if (modal && modal.classList.contains('visible')) {
+                refreshOutfitResults();
+            }
+        }
+
+        async function refreshOutfitResults() {
+            const body = document.getElementById('outfit-results-body');
+            try {
+                const resp = await fetch('/api/outfit_mode/results');
+                const data = await resp.json();
+                const characters = data.characters || [];
+
+                // 캐릭터 이름 + llm_dirty 상태 캐시
+                _outfitCharacterNames = {};
+                characters.forEach(ch => { _outfitCharacterNames[ch.name] = ch.llm_dirty; });
+
+                if (characters.length === 0) {
+                    body.innerHTML = `
+                        <div class="empty-state">
+                            <p>복장 추출 결과가 없습니다</p>
+                            <p style="font-size: 0.8rem; color: var(--text2); margin-top: 8px;">배치 모드 + 복장 추출 모드 활성화 후 이미지를 생성하면 자동으로 결과가 표시됩니다</p>
+                        </div>`;
+                    return;
+                }
+
+                let html = '';
+                characters.forEach(ch => {
+                    const entryCount = ch.entries ? ch.entries.length : 0;
+                    html += `<div style="margin-bottom: 20px; border: 1px solid var(--border); border-radius: 10px; overflow: hidden;">`;
+
+                    // 캐릭터 헤더
+                    html += `<div style="background: var(--surface2); padding: 10px 16px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border);">`;
+                    html += `<div style="display: flex; align-items: center; gap: 8px;">`;
+                    html += `<strong style="font-size: 1.05rem;">${ch.name}</strong>`;
+                    if (ch.llm_dirty) {
+                        html += `<span style="width: 10px; height: 10px; background: #f44336; border-radius: 50%; display: inline-block;" title="업데이트 필요"></span>`;
+                    } else {
+                        html += `<span style="width: 10px; height: 10px; background: #4caf50; border-radius: 50%; display: inline-block;" title="최신 상태"></span>`;
+                    }
+                    html += `</div>`;
+                    html += `<span style="font-size: 0.75rem; color: var(--text2);">${entryCount}/10 결과</span>`;
+                    html += `</div>`;
+
+                    // 가로 이미지 스크롤 영역
+                    if (ch.entries && ch.entries.length > 0) {
+                        html += `<div style="padding: 12px 16px; overflow-x: auto; white-space: nowrap;">`;
+                        ch.entries.forEach((entry, idx) => {
+                            const ts = entry.timestamp ? new Date(entry.timestamp * 1000).toLocaleString() : '';
+                            html += `<div style="display: inline-block; width: 180px; margin-right: 12px; vertical-align: top; white-space: normal; background: var(--surface); border-radius: 8px; border: 1px solid var(--border); overflow: hidden; position: relative;">`;
+
+                            // 삭제 X 버튼
+                            html += `<button onclick="event.stopPropagation(); deleteOutfitEntry('${ch.name.replace(/'/g, "\\'")}', ${idx})" style="position: absolute; top: 4px; right: 4px; width: 22px; height: 22px; border-radius: 50%; border: none; background: rgba(0,0,0,0.6); color: #fff; font-size: 14px; line-height: 22px; text-align: center; cursor: pointer; z-index: 2; padding: 0; display: flex; align-items: center; justify-content: center;" title="이 항목 삭제">&#10005;</button>`;
+
+                            // 이미지
+                            if (entry.image_filename) {
+                                html += `<img src="/api/outfit_mode/result_image/${entry.image_filename}" style="width: 100%; height: 140px; object-fit: cover; display: block;" loading="lazy" onerror="this.style.display='none'">`;
+                            } else {
+                                html += `<div style="width: 100%; height: 140px; background: var(--surface2); display: flex; align-items: center; justify-content: center; color: var(--text2); font-size: 0.75rem;">이미지 없음</div>`;
+                            }
+
+                            // 정보
+                            html += `<div style="padding: 8px;">`;
+                            html += `<div style="font-size: 0.7rem; color: var(--text2); margin-bottom: 4px;">#${idx + 1} · ${ts}</div>`;
+                            html += `<div style="font-size: 0.7rem; color: var(--accent); margin-bottom: 4px; overflow: hidden; text-overflow: ellipsis; max-height: 32px;" title="${(entry.positive_prompt || '').replace(/"/g, '&quot;')}">프롬프트: ${(entry.positive_prompt || '(수동)').substring(0, 40)}${(entry.positive_prompt || '').length > 40 ? '...' : ''}</div>`;
+                            html += `<div style="font-size: 0.75rem; color: var(--text); max-height: 60px; overflow-y: auto; word-break: break-all; line-height: 1.3;">${entry.outfit_prompt || '(없음)'}</div>`;
+                            html += `</div>`;
+                            html += `</div>`;
+                        });
+                        html += `</div>`;
+                    }
+
+                    // llm result
+                    if (ch.llm_result) {
+                        html += `<div style="padding: 8px 16px 12px; border-top: 1px solid var(--border);">`;
+                        html += `<div style="font-size: 0.7rem; color: var(--text2); margin-bottom: 4px; cursor: pointer; user-select: none;" onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'none' ? '' : 'none'">▶ 복장 통합 결과 (클릭하여 펼치기/접기)</div>`;
+                        html += `<pre style="display: none; font-size: 0.75rem; color: var(--text); background: var(--surface2); padding: 8px; border-radius: 6px; white-space: pre-wrap; word-break: break-all; max-height: 150px; overflow-y: auto; margin: 0;">${ch.llm_result}</pre>`;
+                        html += `</div>`;
+                    }
+
+                    html += `</div>`;
+                });
+                body.innerHTML = html;
+            } catch (e) {
+                body.innerHTML = `<div style="color: var(--error);">결과 로드 실패: ${e.message}</div>`;
+            }
+        }
+
+        async function deleteOutfitEntry(characterName, entryIndex) {
+            if (!confirm(`"${characterName}"의 #${entryIndex + 1} 항목을 삭제하시겠습니까?`)) return;
+            try {
+                const resp = await fetch('/api/outfit_mode/delete_entry', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ character_name: characterName, entry_index: entryIndex })
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    refreshOutfitResults();
+                } else {
+                    alert('삭제 실패: 항목을 찾을 수 없습니다');
+                }
+            } catch (e) {
+                alert('삭제 실패: ' + e.message);
+            }
+        }
+
+        // ─── 모드 로그 모달 ───
+        function openModeLogModal() {
+            document.getElementById('mode-log-modal').classList.add('visible');
+            refreshModeLogs();
+        }
+
+        function closeModeLogModal() {
+            document.getElementById('mode-log-modal').classList.remove('visible');
+        }
+
+        async function refreshModeLogs() {
+            const body = document.getElementById('mode-log-body');
+            try {
+                const resp = await fetch('/api/mode_logs?count=200');
+                const data = await resp.json();
+                const logs = data.logs || [];
+
+                if (logs.length === 0) {
+                    body.innerHTML = `<div class="empty-state"><p>로그가 없습니다</p></div>`;
+                    return;
+                }
+
+                let html = '<div style="font-family: monospace; font-size: 0.8rem; line-height: 1.6;">';
+                logs.reverse().forEach(log => {
+                    const ts = log.timestamp ? log.timestamp.split('T')[1]?.split('.')[0] || log.timestamp : '';
+                    const mode = log.mode || '';
+                    const action = log.action || '';
+                    const dataStr = log.data ? JSON.stringify(log.data, null, 0) : '';
+                    const modeColor = mode === 'batch_mode' ? '#4fc3f7' : mode === 'outfit_mode' ? '#ffb74d' : 'var(--text2)';
+                    html += `<div style="padding: 2px 0; border-bottom: 1px solid var(--border);">`;
+                    html += `<span style="color: var(--text2);">${ts}</span> `;
+                    html += `<span style="color: ${modeColor}; font-weight: 600;">[${mode}]</span> `;
+                    html += `<span style="color: var(--text);">${action}</span>`;
+                    if (dataStr) {
+                        html += ` <span style="color: var(--text2); font-size: 0.75rem;">${dataStr}</span>`;
+                    }
+                    html += `</div>`;
+                });
+                html += '</div>';
+                body.innerHTML = html;
+            } catch (e) {
+                body.innerHTML = `<div style="color: var(--error);">로그 로드 실패: ${e.message}</div>`;
+            }
+        }
+
+        function exportModeLogs() {
+            window.open('/api/mode_logs/export', '_blank');
+        }
+
         // ─── 초기 로드 ───
         loadBackups(true);
         loadBatchModeStatus();
         connectFrontendWs();
+
+        // 복장 추출 모드 초기 상태 로드 (버튼 표시용)
+        (async () => {
+            try {
+                const cfg = await fetchJSON('/api/config');
+                const outfitOn = cfg.outfit_mode_enabled || false;
+                document.getElementById('setting-outfit-enabled').checked = outfitOn;
+                updateOutfitStatus(outfitOn);
+                const enhanceOn = cfg.enhance_mode_enabled || false;
+                document.getElementById('setting-enhance-enabled').checked = enhanceOn;
+                updateEnhanceStatus(enhanceOn);
+                updateHeaderButtonsVisibility();
+            } catch (e) { /* 무시 */ }
+        })();
     </script>
 </body>
 </html>

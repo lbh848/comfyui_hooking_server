@@ -6,3 +6,8 @@ venv/
 workflow/
 workflow_backup/
 요구사항/
+mode_workflow/
+current_mode_workflow/
+
+# Key files (보안상 git에 포함하지 않음)
+key/

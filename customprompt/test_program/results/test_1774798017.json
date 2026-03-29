@@ -1,0 +1,14 @@
+{
+  "timestamp": "2026-03-30 00:26:57",
+  "prompt_file": "haganai_extract_outfit_prompt.py",
+  "model": "gpt-4.1",
+  "model2": "gemini-3-flash-preview",
+  "results": [
+    {
+      "name": "unknown",
+      "success": true,
+      "elapsed": 0.0,
+      "raw_result": "LLM 작업 건너뜀"
+    }
+  ]
+}

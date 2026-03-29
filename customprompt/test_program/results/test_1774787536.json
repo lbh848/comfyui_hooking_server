@@ -1,0 +1,22 @@
+{
+  "timestamp": "2026-03-29 21:32:16",
+  "prompt_file": "haganai_extract_outfit_prompt.py",
+  "model": "gpt-4.1",
+  "results": [
+    {
+      "name": "hasegawa kobato",
+      "success": true,
+      "elapsed": 3.69,
+      "is_json": true,
+      "has_all_keys": true,
+      "parsed_output": {
+        "headgear": "black lace headband, twin tails hairstyle",
+        "clothing": "gothic lolita dress, likely black with frills",
+        "shoes": "black mary jane shoes",
+        "accessories": "black ribbon choker, white knee-high socks",
+        "memo": "Outfit fits Hasegawa Kobato's gothic lolita style preference; apparel choice likely for going out as mentioned in chat context."
+      },
+      "raw_result": "{\n  \"headgear\": \"black lace headband, twin tails hairstyle\",\n  \"clothing\": \"gothic lolita dress, likely black with frills\",\n  \"shoes\": \"black mary jane shoes\",\n  \"accessories\": \"black ribbon choker, white knee-high socks\",\n  \"memo\": \"Outfit fits Hasegawa Kobato's gothic lolita style preference; apparel choice likely for going out as mentioned in chat context.\"\n}"
+    }
+  ]
+}

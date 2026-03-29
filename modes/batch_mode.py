@@ -30,6 +30,9 @@ class BatchRequest:
     negative: str
     prompt_data: dict
     timestamp: float
+    processed_positive: str = ""  # 채팅 분리 후 비교용 프롬프트
+    chat_content: str = ""  # 분리된 채팅 내용
+    original_processed_positive: str = ""  # 강화 전 원본 (재전송 매칭용)
     # 처리 완료 후 채워짐
     image_bytes: Optional[bytes] = None
     status: str = "pending"  # pending, processing, completed, failed
@@ -65,6 +68,13 @@ class BatchMode:
         self.save_backup_func = save_backup_func
         self.notify_frontend_func = notify_frontend_func
 
+        # 배치 완료 콜백
+        self.on_batch_complete: Optional[Callable] = None
+        # 프롬프트 강화 콜백 (각 요청 처리 전 호출)
+        self.before_generate_func: Optional[Callable] = None
+        # 모드 로그 함수
+        self.mode_log_func: Optional[Callable] = None
+
         # 현재 수집 중인 배치
         self.current_batch: Optional[BatchList] = None
         # 타이머 태스크
@@ -79,6 +89,11 @@ class BatchMode:
         # 락
         self._lock = asyncio.Lock()
 
+    def _log(self, action: str, data: dict = None):
+        """모드 로그 기록"""
+        if self.mode_log_func:
+            self.mode_log_func("batch_mode", action, data)
+
     def create_black_image(self, width: int = 500, height: int = 500) -> bytes:
         """500x500 검은색 이미지를 생성하여 PNG 바이트로 반환"""
         img = Image.new("RGB", (width, height), color="black")
@@ -91,9 +106,13 @@ class BatchMode:
         positive: str,
         negative: str,
         prompt_data: dict,
+        processed_positive: str = "",
+        chat_content: str = "",
     ) -> tuple[str, bytes]:
         """
         요청을 추가하고 검은색 이미지를 즉시 반환.
+        processed_positive: 채팅이 분리된 프롬프트 (비교용)
+        chat_content: 분리된 채팅 내용
         반환: (request_id, black_image_bytes)
         """
         async with self._lock:
@@ -104,6 +123,8 @@ class BatchMode:
                 negative=negative,
                 prompt_data=prompt_data,
                 timestamp=time.time(),
+                processed_positive=processed_positive,
+                chat_content=chat_content,
             )
 
             # 현재 배치가 없으면 새로 생성
@@ -113,10 +134,12 @@ class BatchMode:
                     requests=[request],
                 )
                 print(f"[BATCH] 새 배치 시작: {self.current_batch.batch_id}")
+                self._log("batch_started", {"batch_id": self.current_batch.batch_id})
             else:
                 # 기존 배치에 추가
                 self.current_batch.requests.append(request)
                 print(f"[BATCH] 배치에 요청 추가: {self.current_batch.batch_id} ({len(self.current_batch.requests)}개)")
+                self._log("request_added", {"batch_id": self.current_batch.batch_id, "count": len(self.current_batch.requests)})
 
             # 타이머 재설정
             self._reset_timer()
@@ -151,6 +174,7 @@ class BatchMode:
                 batch_to_process.status = "processing"
 
                 print(f"[BATCH] 타임아웃! 배치 처리 시작: {batch_to_process.batch_id} ({len(batch_to_process.requests)}개)")
+                self._log("timeout_triggered", {"batch_id": batch_to_process.batch_id, "count": len(batch_to_process.requests)})
 
                 # 프론트엔드 알림
                 if self.notify_frontend_func:
@@ -170,20 +194,53 @@ class BatchMode:
             traceback.print_exc()
 
     async def _process_batch(self, batch: BatchList):
-        """배치의 모든 요청을 순차적으로 처리"""
+        """배치의 모든 요청을 처리. Phase 1: 프롬프트 강화, Phase 2: 이미지 생성"""
         if self.generate_image_func is None:
             print("[BATCH] 이미지 생성 함수가 설정되지 않음")
             return
 
+        self._log("batch_processing_start", {"batch_id": batch.batch_id, "count": len(batch.requests)})
+
+        # ─── Phase 1: 모든 프롬프트 강화 먼저 완료 ───
+        if self.before_generate_func:
+            enhance_start = time.time()
+            for i, request in enumerate(batch.requests):
+                try:
+                    # 강화 전 원본 백업
+                    if request.processed_positive:
+                        request.original_processed_positive = request.processed_positive
+                    else:
+                        request.original_processed_positive = request.positive
+
+                    await self.before_generate_func(request, batch)
+                except Exception as e:
+                    print(f"[BATCH] 프롬프트 강화 오류: {batch.batch_id}[{i}]: {e}")
+                    self._log("before_generate_error", {"batch_id": batch.batch_id, "index": i, "error": str(e)})
+
+            enhance_elapsed = time.time() - enhance_start
+            enhanced_count = sum(
+                1 for r in batch.requests
+                if r.processed_positive != r.original_processed_positive
+            )
+            print(f"[BATCH] Phase 1 완료: 프롬프트 강화 {enhanced_count}/{len(batch.requests)}개 ({enhance_elapsed:.1f}s)")
+            self._log("enhance_phase_done", {
+                "batch_id": batch.batch_id, "enhanced": enhanced_count,
+                "total": len(batch.requests), "elapsed": round(enhance_elapsed, 1),
+            })
+
+        # ─── Phase 2: 강화된 프롬프트로 이미지 생성 ───
         for i, request in enumerate(batch.requests):
             try:
                 request.status = "processing"
-                print(f"[BATCH] 처리 중: {batch.batch_id}[{i}] - {request.positive[:50]}...")
+                print(f"[BATCH] 이미지 생성: {batch.batch_id}[{i}] - {request.positive[:50]}...")
+                self._log("request_processing", {"batch_id": batch.batch_id, "index": i})
 
                 # 이미지 생성
                 start_time = time.time()
+                # 강화된 프롬프트 사용 (없으면 원본)
+                clean_positive = request.processed_positive or request.positive
                 img_bytes, node_errors = await self.generate_image_func(
-                    request.positive,
+                    clean_positive,
                     request.negative,
                 )
                 elapsed = time.time() - start_time
@@ -192,20 +249,31 @@ class BatchMode:
                     request.status = "failed"
                     request.error = str(node_errors)
                     print(f"[BATCH] 실패: {batch.batch_id}[{i}] - {node_errors}")
+                    self._log("request_failed", {"batch_id": batch.batch_id, "index": i, "error": str(node_errors)[:200]})
                 else:
                     request.image_bytes = img_bytes
                     request.status = "completed"
                     print(f"[BATCH] 완료: {batch.batch_id}[{i}] ({len(img_bytes):,} bytes, {elapsed:.1f}s)")
+                    self._log("request_completed", {"batch_id": batch.batch_id, "index": i, "size": len(img_bytes), "elapsed": round(elapsed, 1)})
 
                     # 백업 저장
                     if self.save_backup_func:
                         try:
+                            # 강화된 프롬프트가 원본과 다르면 저장
+                            enhanced = ""
+                            clean_pos = request.processed_positive or request.positive
+                            orig_pos = request.original_processed_positive or request.positive
+                            if clean_pos != orig_pos:
+                                enhanced = clean_pos
+
                             backup_name = await self.save_backup_func(
                                 img_bytes,
                                 f"batch_{batch.batch_id}_{request.request_id}",
                                 request.positive,
                                 request.negative,
                                 generation_time=elapsed,
+                                chat_content=request.chat_content,
+                                enhanced_positive=enhanced,
                             )
                             if backup_name:
                                 request.backup_filename = backup_name
@@ -226,6 +294,7 @@ class BatchMode:
                 request.status = "failed"
                 request.error = str(e)
                 print(f"[BATCH] 처리 오류: {batch.batch_id}[{i}] - {e}")
+                self._log("request_error", {"batch_id": batch.batch_id, "index": i, "error": str(e)})
                 traceback.print_exc()
 
         # 배치 완료
@@ -238,15 +307,26 @@ class BatchMode:
 
         print(f"[BATCH] 배치 완료: {batch.batch_id}")
 
+        completed_count = sum(1 for r in batch.requests if r.status == "completed")
+        self._log("batch_completed", {"batch_id": batch.batch_id, "total": len(batch.requests), "completed": completed_count, "failed": len(batch.requests) - completed_count})
+
         # 프론트엔드 알림
         if self.notify_frontend_func:
-            completed_count = sum(1 for r in batch.requests if r.status == "completed")
             await self.notify_frontend_func("batch_completed", {
                 "batch_id": batch.batch_id,
                 "total": len(batch.requests),
                 "completed": completed_count,
                 "failed": len(batch.requests) - completed_count,
             })
+
+        # 배치 완료 콜백 (복장 추출 모드 등)
+        if self.on_batch_complete:
+            try:
+                await self.on_batch_complete(batch)
+            except Exception as e:
+                print(f"[BATCH] on_batch_complete 콜백 오류: {e}")
+                self._log("batch_complete_callback_error", {"error": str(e)})
+                traceback.print_exc()
 
     def schedule_resend(self) -> bool:
         """최근 완료된 배치를 재전송 예약"""
@@ -269,6 +349,7 @@ class BatchMode:
             r.is_sent = False
 
         print(f"[BATCH] 재전송 예약: {self.scheduled_batch.batch_id} ({len(self.scheduled_batch.requests)}개)")
+        self._log("resend_scheduled", {"batch_id": self.scheduled_batch.batch_id, "count": len(self.scheduled_batch.requests)})
         return True
 
     def cancel_resend(self) -> bool:
@@ -284,6 +365,7 @@ class BatchMode:
         self.scheduled_batch = None
 
         print(f"[BATCH] 재전송 예약 취소: {batch_id}")
+        self._log("resend_cancelled", {"batch_id": batch_id})
         return True
 
     @staticmethod
@@ -297,6 +379,7 @@ class BatchMode:
         """
         예약된 다음 이미지를 반환.
         서버(8189)의 긍정프롬프트와 일치하는 이미지를 우선적으로 찾아서 전송.
+        비교시 processed_positive(채팅 분리 후 프롬프트)를 사용.
         반환: (image_bytes, request_info) 또는 None
         """
         if self.scheduled_batch is None or not self.scheduled_batch.is_scheduled:
@@ -308,10 +391,13 @@ class BatchMode:
         matched_index = -1
 
         # 역순(최근 것부터)으로 프롬프트 일치 검사 (가중치 무시)
+        # 강화 전 원본 프롬프트로 매칭 (강화 후 프롬프트는 원본과 다를 수 있음)
         for i in range(len(batch.requests) - 1, -1, -1):
             req = batch.requests[i]
             if req.status == "completed" and req.image_bytes is not None and not getattr(req, 'is_sent', False):
-                if self._normalize_prompt_for_compare(req.positive) == incoming_normalized:
+                # 강화 전 원본 우선, 없으면 processed_positive, 마지막으로 positive
+                compare_prompt = getattr(req, 'original_processed_positive', '') or req.processed_positive or req.positive
+                if self._normalize_prompt_for_compare(compare_prompt) == incoming_normalized:
                     matched_request = req
                     matched_index = i
                     break
@@ -374,6 +460,11 @@ class BatchMode:
             # 역순으로 목록 생성 (최근 것부터 전송)
             scheduled_batch_files = [r.backup_filename for r in reversed(self.scheduled_batch.requests) if r.backup_filename]
 
+        # 최근 완료된 배치의 backup_filename 목록 (초록색 표시용)
+        last_completed_files = []
+        if self.completed_batches:
+            last_completed_files = [r.backup_filename for r in self.completed_batches[-1].requests if r.backup_filename]
+
         return {
             "enabled": self.enabled,
             "timeout_seconds": self.timeout_seconds,
@@ -384,6 +475,7 @@ class BatchMode:
                 "backup_filenames": current_batch_files,
             } if self.current_batch else None,
             "completed_batches_count": len(self.completed_batches),
+            "last_completed_batch_filenames": last_completed_files,
             "scheduled_batch": {
                 "batch_id": self.scheduled_batch.batch_id,
                 "total": len(self.scheduled_batch.requests),

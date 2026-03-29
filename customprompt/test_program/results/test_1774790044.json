@@ -1,0 +1,22 @@
+{
+  "timestamp": "2026-03-29 22:14:04",
+  "prompt_file": "haganai_extract_outfit_prompt.py",
+  "model": "gpt-4.1",
+  "results": [
+    {
+      "name": "kashiwazaki sena",
+      "success": true,
+      "elapsed": 10.54,
+      "is_json": true,
+      "has_all_keys": true,
+      "parsed_output": {
+        "headgear": "blue butterfly hair clip",
+        "clothing": "white short-sleeved shirt with black collar and black tie, short plaid pleated skirt",
+        "shoes": "",
+        "accessories": "blue hair accessories",
+        "memo": "Based on outfit extraction [1], Sena is wearing a white short-sleeved shirt with a black collar and black tie, a short plaid pleated skirt, and blue hair accessories including a blue butterfly hair clip. This matches the chat's context of being in the school clubroom after school, with explicit mention of '학교 교복' (school uniform) in the chat. No evidence for a change of outfit in the chat."
+      },
+      "raw_result": "{\n  \"headgear\": \"blue butterfly hair clip\",\n  \"clothing\": \"white short-sleeved shirt with black collar and black tie, short plaid pleated skirt\",\n  \"shoes\": \"\",\n  \"accessories\": \"blue hair accessories\",\n  \"memo\": \"Based on outfit extraction [1], Sena is wearing a white short-sleeved shirt with a black collar and black tie, a short plaid pleated skirt, and blue hair accessories including a blue butterfly hair clip. This matches the chat's context of being in the school clubroom after school, with explicit mention of '학교 교복' (school uniform) in the chat. No evidence for a change of outfit in the chat.\"\n}"
+    }
+  ]
+}
