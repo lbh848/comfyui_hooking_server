@@ -465,6 +465,11 @@
             color: #fff;
         }
 
+        .toast.warning {
+            background: #e67e22;
+            color: #fff;
+        }
+
         /* ─── 복장 추출 진행 토스트 (우측 하단 고정) ─── */
         .outfit-progress-toast {
             position: fixed;
@@ -973,7 +978,7 @@
     <div id="outfit-progress-toast" class="outfit-progress-toast">
         <div class="spinner"></div>
         <div class="progress-body">
-            <div class="progress-title" id="outfit-progress-title">복장 추출 진행중</div>
+            <div class="progress-title" id="outfit-progress-title">복장 추출 진행중 (재생성 금지)</div>
             <div class="progress-detail" id="outfit-progress-detail">-</div>
         </div>
     </div>
@@ -1303,12 +1308,27 @@
 
                 <hr style="border: none; border-top: 1px solid var(--border); margin: 12px 0;">
 
-                <!-- 워크플로우 복원 프롬프트 선택 -->
+                <!-- 워크플로우 복원 프롬프트 -->
+                <div class="setting-row">
+                    <div class="setting-label">
+                        <div class="title">🔄 워크플로우 복원 프롬프트</div>
+                        <div class="desc">포스트 프로세스 종료 후 지정 프롬프트를 통해 베이스 워크플로우 로드</div>
+                    </div>
+                    <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="setting-restore-enabled" onchange="updateRestoreStatus(this.checked)">
+                            <span class="toggle-slider"></span>
+                        </label>
+                        <span id="restore-status" class="toggle-status">OFF</span>
+                    </div>
+                </div>
+
+                <!-- 워크플로우 복원 프롬프트 파일 선택 -->
                 <div class="form-group" style="margin-top: 8px;">
-                    <label style="font-size: 0.8rem; margin-bottom: 4px;">워크플로우 복원 프롬프트 (customprompt/)</label>
+                    <label style="font-size: 0.8rem; margin-bottom: 4px;">복원 프롬프트 파일 선택 (customprompt/)</label>
                     <select id="setting-restore-prompt-file"
                             style="width: 100%; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: 0.85rem;">
-                        <option value="">(선택 안함 - 복원 안함)</option>
+                        <option value="">(선택 안함)</option>
                     </select>
                     <div class="hint">모드(복장 추출 등) 종료 후 원래 워크플로우를 자동 실행하여 가중치를 VRAM에 프리로드합니다</div>
                 </div>
@@ -1491,7 +1511,7 @@
                         // 복장 추출 이벤트
                         case 'outfit_processing_started':
                             showToast(`복장 추출 시작 (배치 ${msg.data.batch_id}, ${msg.data.total}개)`, 'info');
-                            showOutfitProgress('복장 추출 진행중', `0 / ${msg.data.total} 처리 대기`);
+                            showOutfitProgress('복장 추출 진행중 (재생성 금지)', `0 / ${msg.data.total} 처리 대기`);
                             autoRefreshOutfitResults();
                             break;
                         case 'outfit_image_processing':
@@ -1513,13 +1533,22 @@
                         case 'outfit_batch_completed':
                             showToast('복장 추출 배치 완료', 'success');
                             autoRefreshOutfitResults();
-                            // 업데이트된 캐릭터에 대해서만 LLM 자동 실행
+                            // llm_dirty 캐릭터 조회 후 자동 LLM 실행
                             {
-                                const updatedChars = msg.data.updated_characters || [];
-                                if (updatedChars.length > 0) {
-                                    updateOutfitProgress('LLM 복장정리 진행중', `${updatedChars.length}명 처리 중...`);
-                                    runLlmForCharacters(updatedChars);
-                                } else {
+                                try {
+                                    const resp = await fetch('/api/outfit_mode/results');
+                                    const data = await resp.json();
+                                    const dirtyChars = (data.characters || [])
+                                        .filter(ch => ch.llm_dirty)
+                                        .map(ch => ch.name);
+                                    if (dirtyChars.length > 0) {
+                                        updateOutfitProgress('LLM 복장정리 진행중', `${dirtyChars.length}명 처리 중...`);
+                                        runLlmForCharacters(dirtyChars);
+                                    } else {
+                                        hideOutfitProgress();
+                                    }
+                                } catch (e) {
+                                    console.error('[LLM] llm_dirty 조회 오류:', e);
                                     hideOutfitProgress();
                                 }
                             }
@@ -1978,6 +2007,15 @@
 
         // ─── 재생성 ───
         async function regenerate(name, btn) {
+            // 복장 추출 진행 중이면 재생성 금지 (LLM 복장정리 중에는 허용)
+            const outfitToast = document.getElementById('outfit-progress-toast');
+            const progressTitle = document.getElementById('outfit-progress-title');
+            const isOutfitExtraction = progressTitle && progressTitle.textContent.includes('복장 추출');
+            if (outfitToast && outfitToast.classList.contains('visible') && isOutfitExtraction) {
+                showToast('복장 추출 진행중 (복장 추출 중엔 재생성 금지)', 'warning');
+                return;
+            }
+
             const originalText = btn.innerHTML;
             btn.disabled = true;
             btn.innerHTML = '<span class="spinner"></span>';
@@ -2228,6 +2266,9 @@
 
             // 워크플로우 복원 프롬프트 파일 목록 로드
             await loadRestorePromptFiles();
+            const restoreEnabled = currentConfig.restore_mode_enabled || false;
+            document.getElementById('setting-restore-enabled').checked = restoreEnabled;
+            updateRestoreStatus(restoreEnabled);
             document.getElementById('setting-restore-prompt-file').value = currentConfig.restore_prompt_file || '';
 
             // 프롬프트 강화 모드 설정
@@ -2334,6 +2375,7 @@
                 outfit_workflow_source_path: document.getElementById('setting-outfit-workflow-source-path').value,
                 outfit_prompt_file: document.getElementById('setting-outfit-prompt-file').value,
                 restore_prompt_file: document.getElementById('setting-restore-prompt-file').value,
+                restore_mode_enabled: document.getElementById('setting-restore-enabled').checked,
                 enhance_mode_enabled: document.getElementById('setting-enhance-enabled').checked,
                 enhance_prompt_file: document.getElementById('setting-enhance-prompt-file').value
             };
@@ -2455,7 +2497,7 @@
         // ─── 복장 추출 진행 토스트 (우측 하단, 수동 종료) ───
         function showOutfitProgress(title, detail) {
             const el = document.getElementById('outfit-progress-toast');
-            document.getElementById('outfit-progress-title').textContent = title || '복장 추출 진행중';
+            document.getElementById('outfit-progress-title').textContent = title || '복장 추출 진행중 (재생성 금지)';
             document.getElementById('outfit-progress-detail').textContent = detail || '';
             el.classList.add('visible');
         }
@@ -2694,6 +2736,10 @@
                 return;
             }
             document.getElementById('enhance-status').textContent = checked ? 'ON' : 'OFF';
+        }
+
+        function updateRestoreStatus(checked) {
+            document.getElementById('restore-status').textContent = checked ? 'ON' : 'OFF';
         }
 
         // ─── 플로팅 경고 (화면 중앙 큰 텍스트) ───
@@ -3055,7 +3101,7 @@
             const btn = document.getElementById('outfit-upload-btn');
             btn.disabled = true;
             btn.textContent = '⏳ 처리 중...';
-            showOutfitProgress('복장 추출 진행중', '이미지 업로드 중...');
+            showOutfitProgress('복장 추출 진행중 (재생성 금지)', '이미지 업로드 중...');
 
             try {
                 const formData = new FormData();
@@ -3261,6 +3307,9 @@
                 const enhanceOn = cfg.enhance_mode_enabled || false;
                 document.getElementById('setting-enhance-enabled').checked = enhanceOn;
                 updateEnhanceStatus(enhanceOn);
+                const restoreOn = cfg.restore_mode_enabled || false;
+                document.getElementById('setting-restore-enabled').checked = restoreOn;
+                updateRestoreStatus(restoreOn);
                 updateHeaderButtonsVisibility();
             } catch (e) { /* 무시 */ }
         })();

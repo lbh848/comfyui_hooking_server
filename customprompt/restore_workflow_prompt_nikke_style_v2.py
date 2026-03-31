@@ -22,7 +22,7 @@ from datetime import datetime
 
 _QUALITY = "newest, year2024, (masterpiece, best quality, score_7), highres, absurdres,"
 
-# 캐릭터 목록: (캐릭터 태그, 복장 태그)
+# 캐릭터 목록
 _CHARACTER_POOL = [
     "alice \\(nikke\\), pink bodysuit",
     "anis \\(nikke\\)",
@@ -31,29 +31,62 @@ _CHARACTER_POOL = [
     "cinderella \\(nikke\\), white bodysuit",
     "red hood \\(nikke\\)",
     "privaty \\(nikke\\), maid dress",
+    "anis \\(sparkling summer\\) \\(nikke\\), swimsuit",
+    "modernia \\(nikke\\), bodysuit",
+    "liliweiss \\(nikke\\)"
+]
+
+# 손모양
+_HAND_SIGNS = [
+    "v",
+    "ok sign",
+    "thumbs up",
+    "finger gun",
+    "salute",
+    "arms up",
+    "hand on hip",
+]
+
+# 표정
+_EXPRESSIONS = [
+    "smile",
+    "winking \\(animated\\)",
+    "pout",
+    "surprised",
+    "grin",
+    "blush",
+    "closed eyes, smile",
+    "tongue out",
+    "cat mouth",
+    "smirk",
 ]
 
 
-def _pick_character() -> str:
-    """초 단위 시간을 시드로 사용하여 캐릭터 태그 문자열을 선택한다."""
+def _make_seed() -> int:
+    """마이크로초까지 사용하여 매 호출마다 다른 시드 생성"""
     now = datetime.now()
-    seed = now.second  # 0~59
-    idx = seed % len(_CHARACTER_POOL)
-    char_tag = _CHARACTER_POOL[idx]
-    print(f"[RESTORE_PROMPT] 캐릭터 선택: seed={seed}, idx={idx}, char={char_tag}")
-    return char_tag
+    return now.hour * 10000000 + now.minute * 100000 + now.second * 1000 + now.microsecond // 1000
+
+
+def _pick_random(pool: list, seed: int) -> str:
+    """시드 기반으로 풀에서 하나 선택"""
+    return pool[seed % len(pool)]
 
 
 def _build_sign_prompt() -> str:
-    """선택된 캐릭터가 현재 시간이 적힌 팻말을 든 프롬프트를 생성한다."""
-    char_tag = _pick_character()
-    H = datetime.now().hour
-    M = datetime.now().minute
+    """랜덤 캐릭터 + 랜덤 손모양 + 랜덤 표정으로 팻말 프롬프트 생성"""
+    seed = _make_seed()
+    char_tag = _pick_random(_CHARACTER_POOL, seed)
+    hand_sign = _pick_random(_HAND_SIGNS, seed // 7 + 3)
+    expression = _pick_random(_EXPRESSIONS, seed // 13 + 5)
+
+    print(f"[RESTORE_PROMPT] seed={seed}, char={char_tag}, hand={hand_sign}, expr={expression}")
+
     return (
         f"{char_tag}, "
         f"(holding sign:1.3), sign, wooden sign, "
         f"(she hold text on sign: \"Job Fin\":1.3), "
-        f"standing, v, smile, winking \\(animated\\), yellow background"
+        f"standing, {hand_sign}, {expression}, yellow background"
     )
 
 

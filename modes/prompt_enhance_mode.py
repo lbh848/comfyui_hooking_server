@@ -40,6 +40,8 @@ class PromptEnhanceMode:
         self._original_prompts: dict[str, str] = {}
         # 강화 프롬프트 캐시: normalized_prompt -> enhanced_prompt
         self._enhance_cache: dict[str, str] = {}
+        # 캐릭터별 마지막 강화 추적 (일관성 유지용)
+        self._last_enhanced_block: dict[str, str] = {}  # char_name -> enhanced_block
 
     def _log(self, action: str, data: dict = None):
         if self.mode_log_func:
@@ -91,31 +93,62 @@ class PromptEnhanceMode:
 
         return blocks
 
-    @staticmethod
-    def _extract_character_name(block: str) -> str:
+    def _extract_character_name(self, block: str) -> str:
         """캐릭터 블럭에서 풀네임 추출.
-        'fullname (series)' 패턴 또는 일반 이름.
+        1. outfit_mode에 추적된 캐릭터 이름이 block에 있으면 사용 (가장 신뢰도 높음)
+        2. 콤마로 분리된 토큰 중 2단어 이름 패턴 찾기 (일반 태그 단어 제외)
+        3. 기존 정규식 fallback
         """
-        # 패턴: name (series) 형식
-        m = re.search(r'([a-zA-Z][a-zA-Z\s\-]+?)\s*\(([^)]+)\)', block)
-        if m:
-            return m.group(1).strip().lower()
+        # 1. outfit_mode의 추적된 캐릭터 이름 중 block에 있는 것 찾기
+        if self.outfit_mode_ref:
+            block_lower = block.lower()
+            for name in self.outfit_mode_ref.character_results:
+                if name.lower() in block_lower:
+                    return name.lower()
 
-        # fallback: 캐릭터 관련 키워드 앞의 이름
-        # "1girl ... name ..." 또는 "the girl/boy/person ... name ..."
-        m = re.search(r'(?:girl|boy|person|woman|man|character)\s.*?\b([a-z][a-z\s\-]{3,})\b', block, re.IGNORECASE)
+        # 2. 콤마로 분리된 토큰 중 캐릭터 이름 패턴 찾기
+        # 일반 태그에 자주 쓰이는 단어 (이 단어가 포함된 토큰은 이름이 아님)
+        COMMON_TAG_WORDS = {
+            'aged', 'mature', 'adolescent', 'girl', 'boy', 'man', 'woman',
+            'hair', 'eyes', 'skin', 'breasts', 'chest', 'face',
+            'shirt', 'skirt', 'dress', 'pants', 'jacket', 'coat', 'uniform',
+            'cotton', 'wool', 'silk', 'leather', 'denim', 'chiffon', 'lace',
+            'pleated', 'mini', 'collared', 'fitted', 'oversized', 'loose',
+            'short', 'long', 'medium', 'large', 'small', 'tall',
+            'blonde', 'black', 'white', 'red', 'blue', 'brown', 'green',
+            'purple', 'aqua', 'pink', 'silver', 'grey', 'gray', 'golden',
+            'school', 'standing', 'sitting', 'lying', 'walking', 'running',
+            'looking', 'pointing', 'holding', 'gripping', 'shouting',
+            'angry', 'happy', 'sad', 'flustered', 'blushing', 'smiling',
+            'left', 'right', 'center', 'top', 'bottom', 'front', 'back',
+            'ornament', 'glasses', 'socks', 'stockings', 'shoes', 'boots',
+            'tie', 'necktie', 'ribbon', 'bow', 'scarf', 'glove',
+            'over', 'under', 'open', 'closed', 'up', 'down',
+            'old', 'young', 'years', 'kg', 'cm', 'tall',
+        }
+
+        tokens = [t.strip() for t in block.split(',')]
+        for token in tokens:
+            token = token.strip()
+            # 2단어 이름만 매칭 (각 단어 2글자 이상, 숫자/괄호 없음)
+            if re.match(r'^[a-z][a-z]+\s[a-z][a-z]+$', token.lower()):
+                words = token.lower().split()
+                if not any(w in COMMON_TAG_WORDS for w in words):
+                    return token.lower()
+
+        # 3. 기존 패턴: name (series) 형식
+        m = re.search(r'([a-zA-Z][a-zA-Z\s\-]+?)\s*\(([^)]+)\)', block)
         if m:
             return m.group(1).strip().lower()
 
         return ""
 
-    @staticmethod
-    def _extract_all_character_names(text: str) -> list[str]:
+    def _extract_all_character_names(self, text: str) -> list[str]:
         """전체 캐릭터 블럭에서 모든 캐릭터 이름 추출"""
-        blocks = PromptEnhanceMode._split_char_blocks(text)
+        blocks = self._split_char_blocks(text)
         names = []
         for block in blocks:
-            name = PromptEnhanceMode._extract_character_name(block)
+            name = self._extract_character_name(block)
             if name:
                 names.append(name)
         return names
@@ -221,11 +254,25 @@ class PromptEnhanceMode:
 
             outfit_result = self._get_outfit_result(char_name)
             previous_chat = self._get_previous_chat(char_name)
+            # 이전 강화 결과를 항상 전달 (LLM이 Case A/B로 판단하여 일관성 유지)
+            previous_enhanced = self._last_enhanced_block.get(char_name, "")
+
+            # ─── 일관성 추적 디버그 로그 ───
+            self._log("consistency_tracking", {
+                "char_name": char_name,
+                "has_outfit_result": outfit_result is not None,
+                "outfit_result_preview": (outfit_result[:200] if outfit_result else None),
+                "has_previous_enhanced": bool(previous_enhanced),
+                "previous_enhanced_length": len(previous_enhanced) if previous_enhanced else 0,
+                "previous_enhanced_preview": (previous_enhanced[:300] if previous_enhanced else None),
+                "tracked_characters": list(self._last_enhanced_block.keys()),
+            })
 
             try:
                 enhanced = await self._run_enhance_prompt(
                     char_name, block, outfit_result, chat_content,
                     previous_chat=previous_chat,
+                    previous_enhanced=previous_enhanced,
                 )
                 if enhanced and enhanced != block:
                     enhanced_blocks[block.strip()] = enhanced
@@ -236,6 +283,9 @@ class PromptEnhanceMode:
                     })
                 else:
                     self._log("block_unchanged", {"name": char_name})
+                # 강화 일관성 추적 업데이트 (변경 여부와 관계없이)
+                if enhanced:
+                    self._last_enhanced_block[char_name] = enhanced
             except Exception as e:
                 self._log("block_enhance_error", {"name": char_name, "error": str(e)})
                 traceback.print_exc()
@@ -273,6 +323,7 @@ class PromptEnhanceMode:
         outfit_result: Optional[str],
         chat_content: str = "",
         previous_chat: str = "",
+        previous_enhanced: str = "",
     ) -> str:
         """customprompt/ 의 강화 스크립트를 로드하여 실행"""
         filepath = os.path.join(CUSTOMPROMPT_DIR, self.enhance_prompt_file)
@@ -294,6 +345,7 @@ class PromptEnhanceMode:
             outfit_result=outfit_result,
             chat_content=chat_content,
             previous_chat=previous_chat,
+            previous_enhanced=previous_enhanced,
         )
 
         if not result or result.startswith("[LLM 실패]"):

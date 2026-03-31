@@ -193,109 +193,136 @@ class BatchMode:
             print(f"[BATCH] 타이머 오류: {e}")
             traceback.print_exc()
 
+    async def _generate_single(self, batch: BatchList, i: int):
+        """배치 내 단일 요청의 이미지 생성 및 백업 저장"""
+        request = batch.requests[i]
+        try:
+            request.status = "processing"
+            print(f"[BATCH] 이미지 생성: {batch.batch_id}[{i}] - {request.positive[:50]}...")
+            self._log("request_processing", {"batch_id": batch.batch_id, "index": i})
+
+            # 이미지 생성
+            start_time = time.time()
+            # 강화된 프롬프트 사용 (없으면 원본)
+            clean_positive = request.processed_positive or request.positive
+            img_bytes, node_errors = await self.generate_image_func(
+                clean_positive,
+                request.negative,
+            )
+            elapsed = time.time() - start_time
+
+            if img_bytes is None:
+                request.status = "failed"
+                request.error = str(node_errors)
+                print(f"[BATCH] 실패: {batch.batch_id}[{i}] - {node_errors}")
+                self._log("request_failed", {"batch_id": batch.batch_id, "index": i, "error": str(node_errors)[:200]})
+            else:
+                request.image_bytes = img_bytes
+                request.status = "completed"
+                print(f"[BATCH] 완료: {batch.batch_id}[{i}] ({len(img_bytes):,} bytes, {elapsed:.1f}s)")
+                self._log("request_completed", {"batch_id": batch.batch_id, "index": i, "size": len(img_bytes), "elapsed": round(elapsed, 1)})
+
+                # 백업 저장
+                if self.save_backup_func:
+                    try:
+                        # 강화된 프롬프트가 원본과 다르면 저장
+                        enhanced = ""
+                        clean_pos = request.processed_positive or request.positive
+                        orig_pos = request.original_processed_positive or request.positive
+                        if clean_pos != orig_pos:
+                            enhanced = clean_pos
+
+                        backup_name = await self.save_backup_func(
+                            img_bytes,
+                            f"batch_{batch.batch_id}_{request.request_id}",
+                            request.positive,
+                            request.negative,
+                            generation_time=elapsed,
+                            chat_content=request.chat_content,
+                            enhanced_positive=enhanced,
+                        )
+                        if backup_name:
+                            request.backup_filename = backup_name
+                    except Exception as e:
+                        print(f"[BATCH] 백업 저장 실패: {e}")
+
+            # 프론트엔드에 진행 상황 알림
+            if self.notify_frontend_func:
+                await self.notify_frontend_func("batch_request_completed", {
+                    "batch_id": batch.batch_id,
+                    "request_id": request.request_id,
+                    "index": i,
+                    "total": len(batch.requests),
+                    "status": request.status,
+                })
+
+        except Exception as e:
+            request.status = "failed"
+            request.error = str(e)
+            print(f"[BATCH] 처리 오류: {batch.batch_id}[{i}] - {e}")
+            self._log("request_error", {"batch_id": batch.batch_id, "index": i, "error": str(e)})
+            traceback.print_exc()
+
     async def _process_batch(self, batch: BatchList):
-        """배치의 모든 요청을 처리. Phase 1: 프롬프트 강화, Phase 2: 이미지 생성"""
+        """배치의 모든 요청을 처리. 프롬프트 강화 완료 즉시 이미지 생성 시작 (파이프라인 병렬)"""
         if self.generate_image_func is None:
             print("[BATCH] 이미지 생성 함수가 설정되지 않음")
             return
 
         self._log("batch_processing_start", {"batch_id": batch.batch_id, "count": len(batch.requests)})
 
-        # ─── Phase 1: 모든 프롬프트 강화 먼저 완료 ───
         if self.before_generate_func:
-            enhance_start = time.time()
-            for i, request in enumerate(batch.requests):
-                try:
-                    # 강화 전 원본 백업
-                    if request.processed_positive:
-                        request.original_processed_positive = request.processed_positive
-                    else:
-                        request.original_processed_positive = request.positive
+            # ─── 파이프라인: 강화 완료 즉시 이미지 생성 + 다음 강화 동시 진행 ───
+            pipeline_start = time.time()
+            generate_queue = asyncio.Queue()
 
-                    await self.before_generate_func(request, batch)
-                except Exception as e:
-                    print(f"[BATCH] 프롬프트 강화 오류: {batch.batch_id}[{i}]: {e}")
-                    self._log("before_generate_error", {"batch_id": batch.batch_id, "index": i, "error": str(e)})
+            async def enhance_pipeline():
+                """순차적으로 프롬프트 강화, 완료 시마다 생성 큐에 푸시"""
+                for i, request in enumerate(batch.requests):
+                    try:
+                        # 강화 전 원본 백업
+                        if request.processed_positive:
+                            request.original_processed_positive = request.processed_positive
+                        else:
+                            request.original_processed_positive = request.positive
 
-            enhance_elapsed = time.time() - enhance_start
+                        await self.before_generate_func(request, batch)
+                        print(f"[BATCH] 프롬프트 강화 완료: {batch.batch_id}[{i}] → 이미지 생성 대기열 추가")
+                    except Exception as e:
+                        print(f"[BATCH] 프롬프트 강화 오류: {batch.batch_id}[{i}]: {e}")
+                        self._log("before_generate_error", {"batch_id": batch.batch_id, "index": i, "error": str(e)})
+
+                    # 강화 완료(또는 오류) → 즉시 생성 큐에 푸시
+                    await generate_queue.put(i)
+
+                # 파이프라인 종료 신호
+                await generate_queue.put(None)
+
+            async def generate_pipeline():
+                """큐에서 인덱스를 받아 이미지 생성 (강화와 병렬 실행)"""
+                while True:
+                    idx = await generate_queue.get()
+                    if idx is None:
+                        break
+                    await self._generate_single(batch, idx)
+
+            # 두 파이프라인 동시 실행: 강화 중 하나가 끝나면 즉시 생성 시작
+            await asyncio.gather(enhance_pipeline(), generate_pipeline())
+
+            pipeline_elapsed = time.time() - pipeline_start
             enhanced_count = sum(
                 1 for r in batch.requests
                 if r.processed_positive != r.original_processed_positive
             )
-            print(f"[BATCH] Phase 1 완료: 프롬프트 강화 {enhanced_count}/{len(batch.requests)}개 ({enhance_elapsed:.1f}s)")
-            self._log("enhance_phase_done", {
+            print(f"[BATCH] 파이프라인 완료: 강화 {enhanced_count}/{len(batch.requests)}개 ({pipeline_elapsed:.1f}s)")
+            self._log("pipeline_done", {
                 "batch_id": batch.batch_id, "enhanced": enhanced_count,
-                "total": len(batch.requests), "elapsed": round(enhance_elapsed, 1),
+                "total": len(batch.requests), "elapsed": round(pipeline_elapsed, 1),
             })
-
-        # ─── Phase 2: 강화된 프롬프트로 이미지 생성 ───
-        for i, request in enumerate(batch.requests):
-            try:
-                request.status = "processing"
-                print(f"[BATCH] 이미지 생성: {batch.batch_id}[{i}] - {request.positive[:50]}...")
-                self._log("request_processing", {"batch_id": batch.batch_id, "index": i})
-
-                # 이미지 생성
-                start_time = time.time()
-                # 강화된 프롬프트 사용 (없으면 원본)
-                clean_positive = request.processed_positive or request.positive
-                img_bytes, node_errors = await self.generate_image_func(
-                    clean_positive,
-                    request.negative,
-                )
-                elapsed = time.time() - start_time
-
-                if img_bytes is None:
-                    request.status = "failed"
-                    request.error = str(node_errors)
-                    print(f"[BATCH] 실패: {batch.batch_id}[{i}] - {node_errors}")
-                    self._log("request_failed", {"batch_id": batch.batch_id, "index": i, "error": str(node_errors)[:200]})
-                else:
-                    request.image_bytes = img_bytes
-                    request.status = "completed"
-                    print(f"[BATCH] 완료: {batch.batch_id}[{i}] ({len(img_bytes):,} bytes, {elapsed:.1f}s)")
-                    self._log("request_completed", {"batch_id": batch.batch_id, "index": i, "size": len(img_bytes), "elapsed": round(elapsed, 1)})
-
-                    # 백업 저장
-                    if self.save_backup_func:
-                        try:
-                            # 강화된 프롬프트가 원본과 다르면 저장
-                            enhanced = ""
-                            clean_pos = request.processed_positive or request.positive
-                            orig_pos = request.original_processed_positive or request.positive
-                            if clean_pos != orig_pos:
-                                enhanced = clean_pos
-
-                            backup_name = await self.save_backup_func(
-                                img_bytes,
-                                f"batch_{batch.batch_id}_{request.request_id}",
-                                request.positive,
-                                request.negative,
-                                generation_time=elapsed,
-                                chat_content=request.chat_content,
-                                enhanced_positive=enhanced,
-                            )
-                            if backup_name:
-                                request.backup_filename = backup_name
-                        except Exception as e:
-                            print(f"[BATCH] 백업 저장 실패: {e}")
-
-                # 프론트엔드에 진행 상황 알림
-                if self.notify_frontend_func:
-                    await self.notify_frontend_func("batch_request_completed", {
-                        "batch_id": batch.batch_id,
-                        "request_id": request.request_id,
-                        "index": i,
-                        "total": len(batch.requests),
-                        "status": request.status,
-                    })
-
-            except Exception as e:
-                request.status = "failed"
-                request.error = str(e)
-                print(f"[BATCH] 처리 오류: {batch.batch_id}[{i}] - {e}")
-                self._log("request_error", {"batch_id": batch.batch_id, "index": i, "error": str(e)})
-                traceback.print_exc()
+        else:
+            # ─── 강화 없이 바로 이미지 생성 ───
+            for i in range(len(batch.requests)):
+                await self._generate_single(batch, i)
 
         # 배치 완료
         batch.status = "completed"

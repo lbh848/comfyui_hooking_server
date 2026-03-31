@@ -67,6 +67,7 @@ DEFAULT_CONFIG = {
     "custom_api_url2": "",      # LLM2 CustomAPI 접속 경로
     "outfit_prompt_file": "",   # 복장정리프롬프트 파일명 (customprompt/)
     "restore_prompt_file": "",  # 워크플로우 복원 프롬프트 파일명 (customprompt/)
+    "restore_mode_enabled": False,  # 워크플로우 복원 프롬프트 활성화 여부
     "enhance_mode_enabled": False,  # 프롬프트 강화 모드 활성화 여부
     "enhance_prompt_file": "",  # 프롬프트 강화 파일명 (customprompt/)
 }
@@ -828,6 +829,8 @@ outfit_mode.compute_hash_func = compute_file_hash
 # ─── 워크플로우 복원 (모드 종료 후 가중치 프리로드) ─────────
 async def _do_restore_workflow():
     """모드 처리 완료 후 원래 워크플로우를 실행하여 가중치를 VRAM에 프리로드한다."""
+    if not app_config.get("restore_mode_enabled", False):
+        return
     prompt_file = app_config.get("restore_prompt_file", "")
     if not prompt_file:
         return
@@ -1566,6 +1569,18 @@ async def handle_api_regenerate(request: web.Request) -> web.Response:
             return web.json_response({"error": "프롬프트 파일 없음"}, status=404)
 
         positive, negative = _extract_prompts_from_backup(prompt_path)
+
+        # 강화 프롬프트가 있으면 원본 대신 강화 버전 사용
+        enhanced_path = os.path.join(WORKFLOW_BACKUP_DIR, f"{backup_name}_enhanced.txt")
+        if os.path.exists(enhanced_path):
+            try:
+                with open(enhanced_path, "r", encoding="utf-8") as ef:
+                    enhanced = ef.read().strip()
+                if enhanced:
+                    print(f"[REGEN] 강화 프롬프트 사용 (원본 길이 {len(positive)} → 강화 {len(enhanced)})")
+                    positive = enhanced
+            except Exception:
+                pass
 
         print(f"[REGEN] 재생성 시작: {backup_name}")
         print(f"[REGEN] 긍정: {positive[:60]}...")

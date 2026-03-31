@@ -166,15 +166,79 @@ def _dedupe(items: list) -> list:
 # ─── Character Identity ─────────────────────────────────────────
 
 CHAR_IDENTITIES = {
-    "hasegawa kobato": "Gothic lolita fashion, twin tails hairstyle, prefers black lace and frills",
-    "kashiwazaki pegasus": "Dark blue kimono with wide sleeves, wealthy middle-aged man",
-    "kashiwazaki sena": "School uniform, blue butterfly hair ornament, blonde long hair, large breasts",
-    "shiguma rika": "Lab coat, brown ponytail, round glasses",
-    "kusunoki yukimura": "Maid dress outfit, short black hair, devoted to Kodaka",
-    "redfield stella": "Formal wear: tuxedo, tailcoat, black jacket, black pants, white vest, white dress shirt, black bow tie, white gloves",
-    "takayama kate": "Nun outfit with red heart hair ornament on the wimple, and cross hair ornament",
-    "takayama maria": "Nun outfit with red heart hair ornament on the wimple, small girl",
-    "oreki houtarou": "School uniform, white short-sleeved collared shirt, black pants, energy-saving personality, short brown hair",
+    "hasegawa kobato": (
+        "Gothic lolita fashion, lolita hairband, black frilled dress, gothic lolita, "
+        "long sleeves, juliet sleeves, puffy sleeves, wide sleeves, frilled sleeves, "
+        "black ribbon, frills, frilled dress, bow, frilled hairband, two side up hairstyle, "
+        "heterochromia (blue right, red left), blonde hair, long hair, flat chest, loli"
+    ),
+    "kashiwazaki pegasus": (
+        "Blue kimono, wide sleeves, long sleeves, japanese clothes, "
+        "hair pulled back, ponytail, black hair"
+    ),
+    "kashiwazaki sena": (
+        "St. chronica academy school uniform, green jacket, white shirt, plaid pleated green skirt, "
+        "ascot, butterfly hair ornament, long sleeves, school uniform, "
+        "black thighhighs, zettai ryouiki, blonde long hair, aqua eyes, large breasts"
+    ),
+    "shiguma rika": (
+        "Lab coat over St. chronica academy school uniform, green plaid pleated skirt, "
+        "white shirt, vest, black necktie, collared shirt, hair scrunchie, miniskirt, "
+        "brown ponytail, round glasses, brown hair"
+    ),
+    "kusunoki yukimura": (
+        "Maid dress outfit, black frilled dress, maid headdress, white frilled apron, "
+        "red bowtie, juliet sleeves, puffy sleeves, hair flower, red bow, "
+        "white thighhighs, garter straps, bowtie, short brown hair"
+    ),
+    "mikazuki yozora": (
+        "St. chronica academy school uniform, green jacket, white shirt, black ascot, "
+        "green plaid pleated skirt, black thighhighs, zettai ryouiki, hair ribbon, braid, "
+        "white gloves, long sleeves, collared shirt, very long black hair, purple eyes"
+    ),
+    "redfield stella": (
+        "Tuxedo formal wear, black jacket (open), white vest, white dress shirt, "
+        "black bowtie (traditional), black pants, white gloves, hair ornament (black bow), "
+        "long sleeves, collared shirt, blonde short hair"
+    ),
+    "takayama kate": (
+        "Nun outfit, black dress, habit (wimple), cross necklace, frilled sleeves, wide sleeves, "
+        "heart hair ornament on wimple, long sleeves, holding cross, frills, thighhighs, "
+        "grey-white long hair, large breasts"
+    ),
+    "takayama maria": (
+        "Nun outfit, black dress, habit (wimple), cross necklace, frills, frilled sleeves, "
+        "wide sleeves, heart hair ornament on wimple, long sleeves, "
+        "grey-white long hair, flat chest, loli, small girl"
+    ),
+    "oreki houtarou": (
+        "School uniform (gakuran), or casual: black jacket/hoodie (open), white shirt, "
+        "black pants, black belt, necklace, collared shirt, hooded jacket, "
+        "short brown hair, energy-saving personality"
+    ),
+    "yusa aoi": (
+        "School uniform, brown cardigan/sweater, white collared shirt, "
+        "green plaid pleated skirt, black necktie, pantyhose, ascot, miniskirt, "
+        "red hair, short hair, red eyes"
+    ),
+    "hidaka hinata": (
+        "St. chronica academy school uniform, green jacket, white shirt, "
+        "black necktie, green plaid pleated skirt, hair bow, collared shirt, long sleeves, "
+        "brown hair, hair bun, braid"
+    ),
+    "jinguuji karin": (
+        "St. chronica academy school uniform, green jacket (blazer), ascot, "
+        "green plaid skirt, hair ornament, collared shirt, long sleeves, "
+        "black long hair"
+    ),
+    "ohtomo akane": (
+        "School uniform, green jacket, ascot, green plaid pleated skirt, "
+        "white shirt, collared shirt, long sleeves, black hair, short hair, ahoge"
+    ),
+    "hasegawa kodaka": (
+        "White collared shirt, green plaid pants, black belt, necklace, sleeves rolled up, "
+        "blonde short hair"
+    ),
 }
 
 
@@ -224,7 +288,12 @@ def _build_system_prompt() -> str:
         "**Not changed**: previous_result=school uniform, current_chat=\"She stepped outside briefly to check the weather\" → NOT CHANGED (brief outing)\n"
         "\n"
         "### RULES\n"
-        "1. **Cross-reference**: If outfit extraction is vague, use positive_prompt_history for exact details.\n"
+        "1. **Cross-reference ALWAYS**: positive_prompt_history is the GROUND TRUTH of what the character was intended to wear.\n"
+        "   - Items in BOTH outfit_prompt_history AND positive_prompt_history → HIGH CONFIDENCE, include.\n"
+        "   - Items ONLY in positive_prompt_history (not seen by VLM) → include (may be obscured or implied).\n"
+        "   - Items ONLY in outfit_prompt_history (VLM) but NOT in positive_prompt_history → LOW CONFIDENCE.\n"
+        "     Include ONLY if they appear consistently across multiple outfit entries. If only in one VLM entry,\n"
+        "     treat as potential hallucination and use the value from positive_prompt_history or 'Unknown'/'None'.\n"
         "2. **Completeness**: Include ALL visible items — hats, hair accessories, socks, stockings, ties, ribbons, gloves, etc.\n"
         "3. **Categorization**:\n"
         "   - headgear: hats, hair clips, ribbons, headbands, hair ornaments, wimples, glasses\n"

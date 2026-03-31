@@ -5,9 +5,9 @@
   "backup_base_dir": "",
   "workflow_filename": "",
   "batch_mode_enabled": true,
-  "batch_timeout_seconds": 5,
+  "batch_timeout_seconds": 7,
   "clamp_enabled": true,
-  "clamp_value": 1.2,
+  "clamp_value": 1.1,
   "outfit_mode_enabled": true,
   "outfit_workflow_source_path": "E:\\wsl2\\matrix\\Packages\\ComfyUI\\user\\default\\workflows\\캐릭터복장추적_v1.json",
   "llm_service": "customapi",
@@ -17,7 +17,8 @@
   "custom_api_url": "http://localhost:8190/copilot/gpt-4.1",
   "custom_api_url2": "http://localhost:8190/vertex/gemini-3-flash-preview",
   "outfit_prompt_file": "haganai_extract_outfit_prompt.py",
-  "restore_prompt_file": "restore_workflow_prompt_nikke_style.py",
+  "restore_prompt_file": "restore_workflow_prompt_nikke_style_v2.py",
+  "restore_mode_enabled": true,
   "enhance_mode_enabled": true,
   "enhance_prompt_file": "enhance_outfit_prompt.py"
 }
