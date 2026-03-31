@@ -1534,7 +1534,7 @@
                             showToast('복장 추출 배치 완료', 'success');
                             autoRefreshOutfitResults();
                             // llm_dirty 캐릭터 조회 후 자동 LLM 실행
-                            {
+                            (async () => {
                                 try {
                                     const resp = await fetch('/api/outfit_mode/results');
                                     const data = await resp.json();
@@ -1551,7 +1551,7 @@
                                     console.error('[LLM] llm_dirty 조회 오류:', e);
                                     hideOutfitProgress();
                                 }
-                            }
+                            })();
                             break;
                         case 'outfit_llm_completed':
                             autoRefreshOutfitResults();

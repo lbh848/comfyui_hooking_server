@@ -40,8 +40,8 @@ class PromptEnhanceMode:
         self._original_prompts: dict[str, str] = {}
         # 강화 프롬프트 캐시: normalized_prompt -> enhanced_prompt
         self._enhance_cache: dict[str, str] = {}
-        # 캐릭터별 마지막 강화 추적 (일관성 유지용)
-        self._last_enhanced_block: dict[str, str] = {}  # char_name -> enhanced_block
+        # 캐릭터별 마지막 강화 추적 (복장만 저장, 표정 제외)
+        self._last_enhanced_block: dict[str, str] = {}  # char_name -> outfit_only_block
 
     def _log(self, action: str, data: dict = None):
         if self.mode_log_func:
@@ -269,23 +269,25 @@ class PromptEnhanceMode:
             })
 
             try:
-                enhanced = await self._run_enhance_prompt(
+                combined, outfit_only = await self._run_enhance_prompt(
                     char_name, block, outfit_result, chat_content,
                     previous_chat=previous_chat,
                     previous_enhanced=previous_enhanced,
                 )
-                if enhanced and enhanced != block:
-                    enhanced_blocks[block.strip()] = enhanced
+                if combined and combined != block:
+                    enhanced_blocks[block.strip()] = combined
                     self._log("block_enhanced", {
                         "name": char_name,
                         "original_length": len(block),
-                        "enhanced_length": len(enhanced),
+                        "combined_length": len(combined),
+                        "outfit_only_length": len(outfit_only),
+                        "has_expression": combined != outfit_only,
                     })
                 else:
                     self._log("block_unchanged", {"name": char_name})
-                # 강화 일관성 추적 업데이트 (변경 여부와 관계없이)
-                if enhanced:
-                    self._last_enhanced_block[char_name] = enhanced
+                # 강화 일관성 추적: OUTFIT ONLY 저장 (표정은 제외, 매번 새로 생성)
+                if outfit_only:
+                    self._last_enhanced_block[char_name] = outfit_only
             except Exception as e:
                 self._log("block_enhance_error", {"name": char_name, "error": str(e)})
                 traceback.print_exc()
@@ -324,12 +326,14 @@ class PromptEnhanceMode:
         chat_content: str = "",
         previous_chat: str = "",
         previous_enhanced: str = "",
-    ) -> str:
-        """customprompt/ 의 강화 스크립트를 로드하여 실행"""
+    ) -> tuple[str, str]:
+        """customprompt/ 의 강화 스크립트를 로드하여 실행.
+        Returns: (combined_block, outfit_only_block)
+        """
         filepath = os.path.join(CUSTOMPROMPT_DIR, self.enhance_prompt_file)
         if not os.path.isfile(filepath):
             self._log("prompt_file_not_found", {"file": self.enhance_prompt_file})
-            return char_block
+            return char_block, char_block
 
         spec = importlib.util.spec_from_file_location("enhance_prompt", filepath)
         mod = importlib.util.module_from_spec(spec)
@@ -337,7 +341,7 @@ class PromptEnhanceMode:
 
         if not hasattr(mod, "run"):
             self._log("no_run_function", {"file": self.enhance_prompt_file})
-            return char_block
+            return char_block, char_block
 
         result = await mod.run(
             character_name=character_name,
@@ -348,13 +352,20 @@ class PromptEnhanceMode:
             previous_enhanced=previous_enhanced,
         )
 
-        if not result or result.startswith("[LLM 실패]"):
-            self._log("llm_failed", {"name": character_name, "result": (result or "")[:100]})
-            return char_block
+        # 하위 호환: str 반환 구형 스크립트 지원
+        if isinstance(result, str):
+            result = (result, result)
+
+        combined, outfit_only = result
+
+        if not combined or (isinstance(combined, str) and combined.startswith("[LLM 실패]")):
+            self._log("llm_failed", {"name": character_name, "result": (combined or "")[:100]})
+            return char_block, char_block
 
         # 검증
-        validated = self._validate_enhanced_block(char_block, result, character_name)
-        return validated
+        validated_combined = self._validate_enhanced_block(char_block, combined, character_name)
+        validated_outfit = self._validate_enhanced_block(char_block, outfit_only, character_name) if outfit_only else validated_combined
+        return validated_combined, validated_outfit
 
     # ─── 검증 ───────────────────────────────────────────────
 
