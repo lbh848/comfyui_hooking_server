@@ -1,14 +1,15 @@
 {
-  "comfy_workflow_source_path": "E:\\wsl2\\matrix\\Packages\\ComfyUI\\user\\default\\workflows\\0324워크플로우_나친적v3.json",
+  "comfy_workflow_source_path": "E:\\wsl2\\matrix\\Packages\\ComfyUI\\user\\default\\workflows\\0401워크플로우_나친적v6.json",
   "data_saving_mode": false,
-  "webp_quality": 85,
+  "webp_quality": 80,
+  "backup_webp_quality": 90,
   "backup_base_dir": "",
   "workflow_filename": "",
   "batch_mode_enabled": true,
   "batch_timeout_seconds": 7,
   "clamp_enabled": true,
   "clamp_value": 1.1,
-  "outfit_mode_enabled": true,
+  "outfit_mode_enabled": false,
   "outfit_workflow_source_path": "E:\\wsl2\\matrix\\Packages\\ComfyUI\\user\\default\\workflows\\캐릭터복장추적_v1.json",
   "llm_service": "customapi",
   "llm_model": "gpt-4.1",
@@ -18,7 +19,8 @@
   "custom_api_url2": "http://localhost:8190/vertex/gemini-3-flash-preview",
   "outfit_prompt_file": "haganai_extract_outfit_prompt.py",
   "restore_prompt_file": "restore_workflow_prompt_nikke_style_v2.py",
-  "restore_mode_enabled": true,
+  "restore_mode_enabled": false,
+  "restore_manual_enabled": true,
   "enhance_mode_enabled": true,
-  "enhance_prompt_file": "enhance_outfit_prompt.py"
+  "enhance_prompt_file": "enhance_outfit_prompt_v4.py"
 }

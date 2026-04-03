@@ -967,6 +967,7 @@
             <button onclick="scheduleBatchResend()" id="batch-schedule-btn" style="display:none;">📦 배치 재전송 예약</button>
             <button onclick="cancelBatchResend()" id="batch-cancel-btn" style="display:none;">❌ 예약 취소</button>
             <button onclick="openOutfitResultsModal()" id="outfit-btn" style="display:none;">👕 복장 추출</button>
+            <button onclick="manualRestoreDraw()" id="restore-manual-btn" style="display:none;">🖌️ 수동 그리기</button>
             <button onclick="openModeLogModal()">📋 모드 로그</button>
         </div>
     </header>
@@ -1080,13 +1081,25 @@
 
                 <div class="setting-row">
                     <div class="setting-label">
-                        <div class="title">WebP 품질</div>
+                        <div class="title">WebP 품질 (전송)</div>
                         <div class="desc">데이터 절약 모드 사용 시 이미지 품질 (1-100)</div>
                     </div>
                     <div class="setting-control quality-slider">
                         <input type="range" min="1" max="100" value="85" id="setting-webp-quality"
                                oninput="document.getElementById('quality-value').textContent = this.value">
                         <div class="quality-value" id="quality-value">85</div>
+                    </div>
+                </div>
+
+                <div class="setting-row">
+                    <div class="setting-label">
+                        <div class="title">백업 저장 품질</div>
+                        <div class="desc">백업 이미지 저장 시 WebP 품질 (1-100)</div>
+                    </div>
+                    <div class="setting-control quality-slider">
+                        <input type="range" min="1" max="100" value="80" id="setting-backup-webp-quality"
+                               oninput="document.getElementById('backup-quality-value').textContent = this.value">
+                        <div class="quality-value" id="backup-quality-value">80</div>
                     </div>
                 </div>
 
@@ -1332,6 +1345,21 @@
                     </select>
                     <div class="hint">모드(복장 추출 등) 종료 후 원래 워크플로우를 자동 실행하여 가중치를 VRAM에 프리로드합니다</div>
                 </div>
+
+                <!-- 워크플로우 복원 프롬프트 수동 작동 버튼 -->
+                <div class="setting-row" style="margin-top: 10px;">
+                    <div class="setting-label">
+                        <div class="title">🖌️ 워크플로우 복원 프롬프트 수동 작동</div>
+                        <div class="desc">복원 프롬프트로 그림을 그려, 사용자가 수동으로 워크플로우 로드</div>
+                    </div>
+                    <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="setting-restore-manual-enabled" onchange="updateRestoreManualStatus(this.checked)">
+                            <span class="toggle-slider"></span>
+                        </label>
+                        <span id="restore-manual-status" class="toggle-status">OFF</span>
+                    </div>
+                </div>
             </div>
             <div class="modal-footer">
                 <button class="cancel" onclick="closeSettingsModal()">취소</button>
@@ -1481,6 +1509,8 @@
                             loadBackups(true);
                             // 복장 추출 버튼 표시 (활성화된 경우)
                             updateHeaderButtonsVisibility();
+                            // 배치 완료 알림 (알림음 + 탭 반짝임)
+                            startBatchCompleteNotification();
                             break;
                         case 'batch_resend_scheduled':
                             batchModeState.scheduled_batch = msg.data;
@@ -2220,6 +2250,8 @@
             updateDataSavingStatus(dataSaving);
             document.getElementById('setting-webp-quality').value = currentConfig.webp_quality || 85;
             document.getElementById('quality-value').textContent = currentConfig.webp_quality || 85;
+            document.getElementById('setting-backup-webp-quality').value = currentConfig.backup_webp_quality || 80;
+            document.getElementById('backup-quality-value').textContent = currentConfig.backup_webp_quality || 80;
 
             // 워크플로우 경로를베이스 경로와 파일명으로 분리
             const workflowPath = currentConfig.comfy_workflow_source_path || '';
@@ -2270,6 +2302,11 @@
             document.getElementById('setting-restore-enabled').checked = restoreEnabled;
             updateRestoreStatus(restoreEnabled);
             document.getElementById('setting-restore-prompt-file').value = currentConfig.restore_prompt_file || '';
+
+            // 워크플로우 복원 프롬프트 수동 작동 설정
+            const restoreManualEnabled = currentConfig.restore_manual_enabled || false;
+            document.getElementById('setting-restore-manual-enabled').checked = restoreManualEnabled;
+            updateRestoreManualStatus(restoreManualEnabled);
 
             // 프롬프트 강화 모드 설정
             const enhanceEnabled = currentConfig.enhance_mode_enabled || false;
@@ -2360,6 +2397,7 @@
             const config = {
                 data_saving_mode: document.getElementById('setting-data-saving').checked,
                 webp_quality: parseInt(document.getElementById('setting-webp-quality').value) || 85,
+                backup_webp_quality: parseInt(document.getElementById('setting-backup-webp-quality').value) || 80,
                 comfy_workflow_source_path: document.getElementById('setting-workflow-path').value,
                 backup_base_dir: document.getElementById('setting-backup-dir').value,
                 clamp_enabled: document.getElementById('setting-clamp-enabled').checked,
@@ -2376,6 +2414,7 @@
                 outfit_prompt_file: document.getElementById('setting-outfit-prompt-file').value,
                 restore_prompt_file: document.getElementById('setting-restore-prompt-file').value,
                 restore_mode_enabled: document.getElementById('setting-restore-enabled').checked,
+                restore_manual_enabled: document.getElementById('setting-restore-manual-enabled').checked,
                 enhance_mode_enabled: document.getElementById('setting-enhance-enabled').checked,
                 enhance_prompt_file: document.getElementById('setting-enhance-prompt-file').value
             };
@@ -2742,6 +2781,10 @@
             document.getElementById('restore-status').textContent = checked ? 'ON' : 'OFF';
         }
 
+        function updateRestoreManualStatus(checked) {
+            document.getElementById('restore-manual-status').textContent = checked ? 'ON' : 'OFF';
+        }
+
         // ─── 플로팅 경고 (화면 중앙 큰 텍스트) ───
         function showFloatingWarning(message) {
             // 기존 경고 제거
@@ -2778,6 +2821,7 @@
         function updateHeaderButtonsVisibility() {
             const batchOn = batchModeState.enabled || false;
             const outfitOn = document.getElementById('setting-outfit-enabled').checked;
+            const restoreManualOn = document.getElementById('setting-restore-manual-enabled').checked;
 
             // 배치 재전송 버튼: 배치 모드 ON일 때만
             document.getElementById('batch-schedule-btn').style.display = batchOn ? '' : 'none';
@@ -2785,6 +2829,39 @@
             // 복장 추출 버튼: 배치 모드 + 복장 모드 둘 다 ON일 때만
             const showOutfit = batchOn && outfitOn;
             document.getElementById('outfit-btn').style.display = showOutfit ? '' : 'none';
+
+            // 수동 그리기 버튼: 수동 복원 모드 ON일 때만
+            document.getElementById('restore-manual-btn').style.display = restoreManualOn ? '' : 'none';
+        }
+
+        // ─── 수동 그리기 ───
+        async function manualRestoreDraw() {
+            const btn = document.getElementById('restore-manual-btn');
+            btn.disabled = true;
+            btn.textContent = '🖌️ 그리는 중...';
+            try {
+                const resp = await fetch('/api/restore_manual_draw', { method: 'POST' });
+                const data = await resp.json();
+                if (data.success) {
+                    showToast('수동 그리기 완료', 'success');
+                    loadBackups(true);
+                    // 생성된 이미지를 새 탭으로 보여주기
+                    if (data.image) {
+                        const w = window.open('');
+                        if (w) {
+                            w.document.write(`<html><head><title>수동 그리기 결과</title><style>body{margin:0;background:#1a1a2e;display:flex;justify-content:center;align-items:center;min-height:100vh;}</style></head><body><img src="${data.image}" style="max-width:95vw;max-height:95vh;"></body></html>`);
+                            w.document.close();
+                        }
+                    }
+                } else {
+                    showToast(`수동 그리기 실패: ${data.error}`, 'error');
+                }
+            } catch (e) {
+                showToast(`수동 그리기 오류: ${e.message}`, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '🖌️ 수동 그리기';
+            }
         }
 
         // ─── LLM 서비스 변경 ───
@@ -3310,9 +3387,67 @@
                 const restoreOn = cfg.restore_mode_enabled || false;
                 document.getElementById('setting-restore-enabled').checked = restoreOn;
                 updateRestoreStatus(restoreOn);
+                const restoreManualOn = cfg.restore_manual_enabled || false;
+                document.getElementById('setting-restore-manual-enabled').checked = restoreManualOn;
+                updateRestoreManualStatus(restoreManualOn);
                 updateHeaderButtonsVisibility();
             } catch (e) { /* 무시 */ }
         })();
+        // === 배치 완료 알림: 알림음 + 탭 반짝임 ===
+        const _originalTitle = document.title;
+        let _blinkTimer = null;
+        let _blinkVisible = true;
+
+        function playNotificationSound() {
+            try {
+                const ctx = new (window.AudioContext || window.webkitAudioContext)();
+                // 두 번의 짧은 삑삑 소리
+                [0, 0.25].forEach(delay => {
+                    const osc = ctx.createOscillator();
+                    const gain = ctx.createGain();
+                    osc.connect(gain);
+                    gain.connect(ctx.destination);
+                    osc.type = 'sine';
+                    osc.frequency.value = 880;
+                    gain.gain.setValueAtTime(0.3, ctx.currentTime + delay);
+                    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + delay + 0.15);
+                    osc.start(ctx.currentTime + delay);
+                    osc.stop(ctx.currentTime + delay + 0.15);
+                });
+            } catch (e) { /* AudioContext 미지원 시 무시 */ }
+        }
+
+        function startBatchCompleteNotification() {
+            playNotificationSound();
+            // 탭이 비활성 상태일 때만 반짝임
+            if (document.hidden) {
+                startTabBlink();
+            }
+        }
+
+        function startTabBlink() {
+            stopTabBlink(); // 기존 타이머 정리
+            _blinkVisible = true;
+            _blinkTimer = setInterval(() => {
+                _blinkVisible = !_blinkVisible;
+                document.title = _blinkVisible ? '🔔 배치 완료!' : _originalTitle;
+            }, 800);
+        }
+
+        function stopTabBlink() {
+            if (_blinkTimer) {
+                clearInterval(_blinkTimer);
+                _blinkTimer = null;
+            }
+            document.title = _originalTitle;
+        }
+
+        // 사용자가 탭을 확인하면 원래대로 복구
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden) {
+                stopTabBlink();
+            }
+        });
     </script>
 </body>
 </html>

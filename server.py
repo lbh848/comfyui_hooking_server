@@ -51,6 +51,7 @@ DEFAULT_CONFIG = {
     "comfy_workflow_source_path": r"E:\wsl2\matrix\Packages\ComfyUI\user\default\workflows\0310고속워크플로우_나친척.json",
     "data_saving_mode": False,
     "webp_quality": 85,
+    "backup_webp_quality": 80,  # 백업 이미지 저장 WebP 품질 (1-100)
     "backup_base_dir": "",  # 빈 값이면 WORKFLOW_BACKUP_DIR 사용
     "workflow_filename": "",  # 빈 값이면 workflow 폴더의 첫 번째 json 사용
     "batch_mode_enabled": False,  # 배치 모드 활성화 여부
@@ -68,6 +69,7 @@ DEFAULT_CONFIG = {
     "outfit_prompt_file": "",   # 복장정리프롬프트 파일명 (customprompt/)
     "restore_prompt_file": "",  # 워크플로우 복원 프롬프트 파일명 (customprompt/)
     "restore_mode_enabled": False,  # 워크플로우 복원 프롬프트 활성화 여부
+    "restore_manual_enabled": False,  # 워크플로우 복원 프롬프트 수동 작동 활성화 여부
     "enhance_mode_enabled": False,  # 프롬프트 강화 모드 활성화 여부
     "enhance_prompt_file": "",  # 프롬프트 강화 파일명 (customprompt/)
 }
@@ -148,7 +150,6 @@ print(f"[OUTFIT_MODE] 초기화: enabled={outfit_mode.enabled}, source={outfit_m
 enhance_mode.enabled = app_config.get("enhance_mode_enabled", False)
 enhance_mode.enhance_prompt_file = app_config.get("enhance_prompt_file", "")
 enhance_mode.mode_log_func = mode_logger.log
-enhance_mode.outfit_mode_ref = outfit_mode
 print(f"[ENHANCE_MODE] 초기화: enabled={enhance_mode.enabled}, prompt_file={enhance_mode.enhance_prompt_file}")
 
 
@@ -173,6 +174,11 @@ def get_data_saving_mode() -> bool:
 def get_webp_quality() -> int:
     """WebP 품질을 반환한다."""
     return app_config.get("webp_quality", 85)
+
+
+def get_backup_webp_quality() -> int:
+    """백업 이미지 저장 WebP 품질을 반환한다."""
+    return app_config.get("backup_webp_quality", 80)
 
 # ─── 상태 관리 ──────────────────────────────────────────
 prompts = {}          # prompt_id -> { status, prompt, outputs, ... }
@@ -580,7 +586,7 @@ async def save_backup(image_bytes: bytes, prompt_id: str, positive: str, negativ
             print(f"[BACKUP] ⚠ EXIF 생성 실패: {e}")
             exif_bytes = None
 
-    save_kwargs = {"format": "WEBP", "quality": 80}
+    save_kwargs = {"format": "WEBP", "quality": get_backup_webp_quality()}
     if exif_bytes:
         save_kwargs["exif"] = exif_bytes
 
@@ -664,6 +670,13 @@ async def submit_to_real_comfy(prompt_data: dict) -> tuple[str, dict]:
                 print(
                     f"[PROXY] ⚠ node_errors: "
                     f"{json.dumps(result['node_errors'], ensure_ascii=False)[:300]}"
+                )
+            if resp.status != 200 or "prompt_id" not in result:
+                error_msg = result.get("error_message", "") or result.get("error", "")
+                node_errors = result.get("node_errors", {})
+                raise RuntimeError(
+                    f"ComfyUI reject (status={resp.status}): "
+                    f"{error_msg} | node_errors={json.dumps(node_errors, ensure_ascii=False)[:500]}"
                 )
             return result["prompt_id"], result
 
@@ -2123,6 +2136,53 @@ async def handle_api_config(request: web.Request) -> web.Response:
             return web.json_response({"error": str(e)}, status=500)
 
 
+# ─── 워크플로우 복원 수동 그리기 ─────────────────────────────
+async def handle_api_restore_manual_draw(request: web.Request) -> web.Response:
+    """수동 그리기: 복원 프롬프트 파일로 프롬프트를 만들어 그림을 그린다."""
+    prompt_file = app_config.get("restore_prompt_file", "")
+    if not prompt_file:
+        return web.json_response({"error": "복원 프롬프트 파일이 지정되지 않았습니다"}, status=400)
+
+    filepath = os.path.join(CUSTOMPROMPT_DIR, prompt_file)
+    if not os.path.isfile(filepath):
+        return web.json_response({"error": f"복원 프롬프트 파일 없음: {prompt_file}"}, status=400)
+
+    try:
+        spec = importlib.util.spec_from_file_location("restore_prompt_manual", filepath)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        if not hasattr(module, "run"):
+            return web.json_response({"error": f"run() 함수 없음: {prompt_file}"}, status=400)
+
+        result = await module.run()
+        positive = result.get("positive", "") if isinstance(result, dict) else ""
+        negative = result.get("negative", "") if isinstance(result, dict) else ""
+
+        if not positive:
+            return web.json_response({"error": "빈 프롬프트 - 실행 불가"}, status=400)
+
+        print(f"[RESTORE_MANUAL] 수동 그리기 실행: positive='{positive[:50]}...'")
+        img_bytes, error = await generate_image_with_prompt(positive, negative)
+        if img_bytes:
+            await save_backup(img_bytes, "restore_manual", positive, negative)
+            print(f"[RESTORE_MANUAL] 완료 (이미지 {len(img_bytes):,}B)")
+
+            # base64로 프론트엔드에 전달
+            b64 = base64.b64encode(img_bytes).decode("ascii")
+            return web.json_response({
+                "success": True,
+                "image": f"data:image/png;base64,{b64}",
+                "positive": positive[:200],
+            })
+        else:
+            return web.json_response({"error": f"이미지 생성 실패: {error}"}, status=500)
+    except Exception as e:
+        print(f"[RESTORE_MANUAL] 오류: {e}")
+        traceback.print_exc()
+        return web.json_response({"error": str(e)}, status=500)
+
+
 # ─── LLM / Custom Prompt API ────────────────────────────────
 CUSTOMPROMPT_DIR = os.path.join(BASE_DIR, "customprompt")
 
@@ -2413,6 +2473,7 @@ app.router.add_get("/api/mode_workflow_files", handle_api_mode_workflow_files)
 # LLM / Custom Prompt API
 app.router.add_get("/api/customprompt_files", handle_api_customprompt_files)
 app.router.add_post("/api/outfit_mode/run_llm", handle_api_outfit_run_llm)
+app.router.add_post("/api/restore_manual_draw", handle_api_restore_manual_draw)
 # 프론트엔드
 app.router.add_get("/api/frontend_ws", handle_frontend_ws)
 app.router.add_get("/api/config", handle_api_config)

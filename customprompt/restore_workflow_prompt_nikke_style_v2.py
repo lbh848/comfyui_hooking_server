@@ -27,13 +27,13 @@ _CHARACTER_POOL = [
     "alice \\(nikke\\), pink bodysuit",
     "anis \\(nikke\\)",
     "rapi \\(nikke\\)",
-    "dorothy \\(nikke\\)",
+    "dorothy \\(nikke\\), white dress, frilled dress, halterneck, center frills, detached sleeves, see-through sleeves, bare shoulders, sleeves past wrists, frilled choker, neck ribbon, white thighhighs",
     "cinderella \\(nikke\\), white bodysuit",
     "red hood \\(nikke\\)",
     "privaty \\(nikke\\), maid dress",
     "anis \\(sparkling summer\\) \\(nikke\\), swimsuit",
     "modernia \\(nikke\\), bodysuit",
-    "liliweiss \\(nikke\\)"
+    "liliweiss \\(nikke\\), sparkling eyes,blue eyes"
 ]
 
 # 손모양

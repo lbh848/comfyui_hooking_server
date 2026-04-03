@@ -77,7 +77,7 @@ def _log_prompt_io(character_name: str, input_data: dict, output_data: str):
 
 # ─── Output Format ─────────────────────────────────────────
 
-OUTPUT_KEYS = ["headgear", "clothing", "shoes", "accessories", "memo"]
+OUTPUT_KEYS = ["headgear", "clothing", "shoes", "worn_accessories", "held_items", "memo"]
 
 
 def _validate_output(parsed: dict) -> tuple:
@@ -121,13 +121,97 @@ def _fill_defaults(parsed: dict) -> dict:
         "headgear": "None",
         "clothing": "Unknown",
         "shoes": "Unknown",
-        "accessories": "None",
+        "worn_accessories": "None",
+        "held_items": "None",
         "memo": ""
     }
     for key, default in defaults.items():
         if key not in parsed or not parsed[key]:
             parsed[key] = default
     return parsed
+
+
+# ─── SLOT Parsing ─────────────────────────────────────────
+
+def _parse_slot(chat_content: str) -> tuple:
+    """
+    [SLOT] 섹션을 chat_content에서 파싱.
+    [SLOT] 아래에 || 로 구분된 텍스트가 있음:
+      || 앞 = 그림 삽입 위치의 앞문장
+      || 뒤 = 그림 삽입 위치의 뒷문장
+
+    Returns:
+        (chat_without_slot, text_before_insertion, text_after_insertion)
+    """
+    if not chat_content:
+        return chat_content, "", ""
+
+    slot_match = re.search(
+        r'\[SLOT\]\s*(.*?)(?=\n\s*\[|\n\s*\n|\Z)',
+        chat_content, re.DOTALL | re.IGNORECASE
+    )
+    if not slot_match:
+        return chat_content, "", ""
+
+    slot_content = slot_match.group(1).strip()
+
+    if '||' in slot_content:
+        parts = slot_content.split('||', 1)
+        before = parts[0].strip()
+        after = parts[1].strip()
+    else:
+        before = slot_content.strip()
+        after = ""
+
+    chat_clean = chat_content[:slot_match.start()] + chat_content[slot_match.end():]
+    chat_clean = re.sub(r'\n{3,}', '\n\n', chat_clean).strip()
+
+    return chat_clean, before, after
+
+
+def _extract_insertion_context(chat_text: str, slot_before: str, slot_after: str,
+                               max_chars: int = 3000) -> str:
+    """
+    SLOT 앵커를 기준으로 chat_text에서 그림 삽입 위치 주변 컨텍스트 추출.
+    """
+    if not chat_text:
+        return ""
+    if not slot_before and not slot_after:
+        # SLOT이 비어있으면 chat의 마지막 부분 반환
+        return chat_text[-max_chars:] if len(chat_text) > max_chars else chat_text
+
+    anchor = slot_before or slot_after
+
+    # 정확 매칭 시도
+    pos = chat_text.find(anchor)
+
+    # 앵커의 첫 문장으로 재시도
+    if pos == -1:
+        first_phrase = anchor.split('.')[0].strip()
+        if len(first_phrase) > 10:
+            pos = chat_text.find(first_phrase)
+
+    # after_text로 재시도
+    if pos == -1 and slot_after and anchor != slot_after:
+        pos = chat_text.find(slot_after)
+        if pos == -1:
+            first_phrase = slot_after.split('.')[0].strip()
+            if len(first_phrase) > 10:
+                pos = chat_text.find(first_phrase)
+
+    # 매칭 실패 → 마지막 부분
+    if pos == -1:
+        return chat_text[-max_chars:] if len(chat_text) > max_chars else chat_text
+
+    # 삽입 위치 중심으로 추출
+    match_center = pos + len(anchor) // 2
+    half = max_chars // 2
+    start = max(0, match_center - half)
+    end = min(len(chat_text), start + max_chars)
+    if end == len(chat_text):
+        start = max(0, end - max_chars)
+
+    return chat_text[start:end]
 
 
 # ─── Chat Cleaning ─────────────────────────────────────────
@@ -260,32 +344,36 @@ def _build_system_prompt() -> str:
         "- **outfit_prompt_history**: VLM model predictions of the character's appearance. [1]=newest.\n"
         "- **positive_prompt_history**: image generation prompts (1:1 match with outfit_prompt_history). Contains precise outfit descriptions.\n"
         "- **current_chat**: the current situation the character is experiencing.\n"
+        "- **image_insertion_point** (if provided): shows exactly WHERE in the story the image is being generated.\n"
+        "  This is CRITICAL — the outfit you determine must match what the character is wearing AT THIS EXACT POINT.\n"
+        "  Read the text around the insertion point to determine whether the character has already changed\n"
+        "  or is about to change clothes.\n"
         "\n"
         "### OUTFIT CHANGE DETECTION\n"
-        "The outfit has likely **CHANGED** if:\n"
-        "[1] Explicit clothing change in current_chat: \"changed clothes\", \"now wearing ...\", \"put on ...\", \"took off ...\", \"got dressed\"\n"
-        "[2] Location change with TPO mismatch: \"went to school\" but previous_result is pajamas; \"went outside\" but wearing indoor clothes\n"
-        "[3] Activity/environment mismatch: \"at the beach\" but wearing formal wear; \"at the pool\" but wearing a dress\n"
-        "[4] Weather/season shift: \"it's freezing\" but wearing summer clothes; \"summer festival\" but wearing winter coat\n"
-        "[5] Role/event change: \"going to a party\", \"ceremony\", \"sports festival\" requiring specific attire different from previous_result\n"
-        "[6] Time-of-day shift: \"going to bed\" but wearing school uniform; \"morning\" but wearing nightclothes\n"
-        "[7] Post-activity: \"finished swimming\", \"came back from gym\" — implies changing out of activity-specific wear\n"
+        "Read the current_chat carefully and use common sense to determine whether the character's outfit\n"
+        "has changed since the previous_result. Do NOT look for specific keywords or phrases.\n"
+        "Instead, understand the SITUATION described in the chat and judge logically.\n"
         "\n"
-        "The outfit likely did **NOT change** if:\n"
-        "[1] Rushed/hasty departure: \"rushed out\", \"dragged outside\", \"forced to leave suddenly\", \"grabbed by the arm and pulled out\" — no time to change\n"
-        "[2] Same location, no trigger: \"studying in library\", \"sitting in clubroom\", \"eating lunch\"\n"
-        "[3] Brief outing: \"stepped outside for a moment\", \"quickly went to ...\", \"briefly checked ...\"\n"
-        "[4] No outfit-relevant information in current_chat\n"
-        "[5] Character personality suggests laziness about changing: e.g., \"she couldn't be bothered to change\"\n"
+        "If **image_insertion_point** is provided, check it FIRST:\n"
+        "- Is the insertion point AFTER a clothing change has occurred in the story?\n"
+        "  → The character is already wearing the new outfit at this point.\n"
+        "- Is the insertion point BEFORE the clothing change happens?\n"
+        "  → The character has NOT changed yet — use the previous_result outfit.\n"
+        "- No clothing change described anywhere near the insertion point?\n"
+        "  → Use common sense based on the overall situation.\n"
         "\n"
-        "### EXAMPLES\n"
-        "**Changed**: previous_result=school uniform, current_chat=\"She went home and changed into casual clothes\" → CHANGED (explicit mention)\n"
-        "**Changed**: previous_result=pajamas, current_chat=\"She headed to school in the morning\" → CHANGED (TPO mismatch: pajamas at school)\n"
-        "**Changed**: previous_result=school uniform, current_chat=\"They arrived at the beach\" → CHANGED (activity mismatch)\n"
-        "**Changed**: previous_result=casual wear, current_chat=\"It's the school sports festival today\" → CHANGED (event requires specific attire)\n"
-        "**Not changed**: previous_result=school uniform, current_chat=\"She was suddenly dragged outside by her friend\" → NOT CHANGED (no time to change)\n"
-        "**Not changed**: previous_result=casual clothes, current_chat=\"She continued reading in the library\" → NOT CHANGED (no trigger)\n"
-        "**Not changed**: previous_result=school uniform, current_chat=\"She stepped outside briefly to check the weather\" → NOT CHANGED (brief outing)\n"
+        "General reasoning:\n"
+        "- Does the chat describe the character actively changing clothes, or arriving at a place where\n"
+        "  they would have already changed?\n"
+        "- Given the location, activity, time, weather, and event, would the\n"
+        "  previous_result outfit be inappropriate or physically implausible?\n"
+        "- Was there enough TIME and OPPORTUNITY for the character to change? If rushed or forced to leave suddenly,\n"
+        "  they likely did NOT change even if the new location would normally warrant different clothes.\n"
+        "- Is the same location/activity continuing with no reason to change?\n"
+        "\n"
+        "Key principle: CONTEXT determines the answer, not specific words or phrases.\n"
+        "Two chats using completely different words can describe the same situation.\n"
+        "Always understand the FULL situation before deciding.\n"
         "\n"
         "### RULES\n"
         "1. **Cross-reference ALWAYS**: positive_prompt_history is the GROUND TRUTH of what the character was intended to wear.\n"
@@ -299,14 +387,15 @@ def _build_system_prompt() -> str:
         "   - headgear: hats, hair clips, ribbons, headbands, hair ornaments, wimples, glasses\n"
         "   - clothing: main outfit — shirt, skirt/pants, dress, jacket, tie, stockings/socks (if part of outfit)\n"
         "   - shoes: footwear\n"
-        "   - accessories: bags, belts, scarves, jewelry, chokers. \"None\" if absent\n"
+        "   - worn_accessories: items ATTACHED to the body or clothing — earrings, necklaces, chokers, belts, scarves, wristbands, rings. \"None\" if absent\n"
+        "   - held_items: items HELD in hands or carried — parasols, umbrellas, bags, purses, books, phones, weapons. \"None\" if absent\n"
         "4. **No speculation**: Do not invent items not in the data. Use \"Unknown\" or \"None\" for missing items.\n"
         "5. **Tags**: English, comma-separated Danbooru-style tags.\n"
         "6. **Evidence**: memo MUST state your reasoning — changed or not, which evidence, quote relevant chat lines.\n"
         "\n"
         "### OUTPUT FORMAT\n"
         "JSON only, no other text:\n"
-        '{"headgear":"","clothing":"","shoes":"","accessories":"","memo":""}\n'
+        '{"headgear":"","clothing":"","shoes":"","worn_accessories":"","held_items":"","memo":""}\n'
         "\n"
         "→JSON ONLY"
     )
@@ -322,7 +411,7 @@ def _build_char_intro(character_name: str, char_identity: str) -> str:
 
 
 def _build_data_prompt(outfits_text: str, prompts_text: str,
-                       chat_context: str,
+                       chat_context: str, insertion_context: str = "",
                        previous_result: str = None) -> str:
     """두 번째 user 메시지: 분석 데이터"""
     parts = []
@@ -334,6 +423,16 @@ def _build_data_prompt(outfits_text: str, prompts_text: str,
         parts.append(f"<positive_prompt_history>\n{prompts_text}\n</positive_prompt_history>")
     if chat_context:
         parts.append(f"<current_chat>\n{chat_context}\n</current_chat>")
+    if insertion_context:
+        parts.append(
+            "<image_insertion_point>\n"
+            "THIS IS WHERE THE IMAGE IS BEING GENERATED in the story.\n"
+            "The image depicts the character at this exact point. "
+            "Use this to determine whether the character has already changed clothes "
+            "or is still in the same outfit at this specific moment.\n"
+            f"{insertion_context}\n"
+            "</image_insertion_point>"
+        )
     return "\n\n".join(parts)
 
 
@@ -451,15 +550,26 @@ async def run(character_name: str, outfit_list: list, chat_list: list = [],
     # chat_list도 시간순: [0]=가장 오래됨, [-1]=가장 최신
     cleaned_chats = [clean_chat(c) for c in chat_list if c and c.strip()]
     chat_deduped = _dedupe(list(reversed(cleaned_chats)))[:1]
-    chat_context = ""
+
+    # ─── SLOT 파싱: 그림 삽입 위치 추출 ───
+    insertion_context = ""
     if chat_deduped:
-        chat_context = f"Chat[1]: {chat_deduped[0]}"
+        raw_chat = chat_deduped[0]
+        chat_without_slot, slot_before, slot_after = _parse_slot(raw_chat)
+        if slot_before or slot_after:
+            insertion_context = _extract_insertion_context(
+                chat_without_slot, slot_before, slot_after
+            )
+        chat_context = f"Chat[1]: {chat_without_slot if (slot_before or slot_after) else raw_chat}"
+    else:
+        chat_context = ""
 
     # 프롬프트 조합
     system_prompt = _build_system_prompt()
     char_intro = _build_char_intro(character_name, char_identity)
     data_prompt = _build_data_prompt(
         outfits_text, prompts_text, chat_context,
+        insertion_context=insertion_context,
         previous_result=previous_result
     )
 
