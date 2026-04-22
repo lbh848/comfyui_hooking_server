@@ -7,7 +7,7 @@
   "backup_webp_lossless": false,
   "backup_base_dir": "",
   "workflow_filename": "",
-  "batch_mode_enabled": true,
+  "batch_mode_enabled": false,
   "batch_timeout_seconds": 7,
   "notification_enabled": true,
   "auto_reschedule_enabled": true,

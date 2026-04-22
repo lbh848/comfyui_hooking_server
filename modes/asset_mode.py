@@ -1125,6 +1125,15 @@ class AssetMode:
                 outfit_path = os.path.join(char_dir, outfit_dir_name)
                 if not os.path.isdir(outfit_path):
                     continue
+                # 빈 표정 폴더 정리
+                for expr_dir_name in sorted(os.listdir(outfit_path)):
+                    expr_path = os.path.join(outfit_path, expr_dir_name)
+                    if os.path.isdir(expr_path) and not os.listdir(expr_path):
+                        os.rmdir(expr_path)
+                # 빈 복장 폴더 정리
+                if not os.listdir(outfit_path):
+                    os.rmdir(outfit_path)
+                    continue
                 outfits.add(outfit_dir_name)
                 for expr_dir_name in sorted(os.listdir(outfit_path)):
                     expr_path = os.path.join(outfit_path, expr_dir_name)
@@ -1197,9 +1206,11 @@ class AssetMode:
                     if not os.path.isfile(img_path):
                         continue
 
-                    # 치환 이름 적용
-                    o_name = outfit_map.get(outfit_dir_name, outfit_dir_name)
-                    e_name = expr_map.get(expr_dir_name, expr_dir_name)
+                    # 치환 이름이 설정되지 않은 항목은 건너뛰기
+                    o_name = outfit_map.get(outfit_dir_name, "")
+                    e_name = expr_map.get(expr_dir_name, "")
+                    if not o_name or not e_name:
+                        continue
 
                     base = f"{export_name}_{o_name}_{e_name}"
                     zip_name = base + ".webp"
