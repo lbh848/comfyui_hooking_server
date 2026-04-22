@@ -14,13 +14,18 @@ if errorlevel 1 (
     exit /b 1
 )
 
-:: venv가 없으면 생성
+:: venv가 없으면 생성 (불완전한 venv는 삭제 후 재생성)
 if not exist "venv\Scripts\activate.bat" (
-    echo [2/4] 가상환경 생성 중... (최초 실행 시 1~3분 소요)
-    python -m venv venv
+    echo [2/4] 가상환경 생성 중...
+    if exist "venv" (
+        echo       기존 불완전 venv 삭제 중...
+        rmdir /s /q "venv" 2>nul
+    )
+    python -m venv venv --clear
     if not exist "venv\Scripts\activate.bat" (
         echo [ERROR] 가상환경 생성에 실패했습니다.
-        echo         Python 버전을 확인하고 venv 폴더를 삭제 후 다시 시도하세요.
+        echo         venv 폴더를 수동으로 삭제한 후 다시 실행하세요.
+        echo         Python 3.10+ 이 설치되어 있는지 확인하세요.
         pause
         exit /b 1
     )
