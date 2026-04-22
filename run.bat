@@ -19,6 +19,13 @@ if not exist "workflow" mkdir workflow
 if not exist "current_work" mkdir current_work
 if not exist "workflow_backup" mkdir workflow_backup
 if not exist "frontend" mkdir frontend
+if not exist "logs" mkdir logs
+if not exist "mode_workflow" mkdir mode_workflow
+if not exist "asset_data" mkdir asset_data
+if not exist "auto_complete" mkdir auto_complete
+if not exist "pose_data" mkdir pose_data
+if not exist "chain_presets" mkdir chain_presets
+if not exist "key" mkdir key
 
 :: 서버 실행
 echo [INFO] Starting ComfyUI Proxy Server on port 8189...

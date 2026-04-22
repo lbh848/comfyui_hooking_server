@@ -5,9 +5,22 @@ logs/
 venv/
 workflow/
 workflow_backup/
+workflow_backup_static/
 요구사항/
 mode_workflow/
+asset/
+asset_data/
+pose_data/
 current_mode_workflow/
+auto_complete/
+CLAUDE.md
 
 # Key files (보안상 git에 포함하지 않음)
 key/
+
+# Distribution patches (외부 드라이브 배포)
+chain_presets/
+customprompt/enhance_outfit_prompt_v4_storage/
+customprompt/test_program/
+patch_data.zip
+patch_chain_presets.zip

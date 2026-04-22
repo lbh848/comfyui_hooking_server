@@ -39,6 +39,7 @@ class BatchRequest:
     error: Optional[str] = None
     backup_filename: Optional[str] = None  # 백업 저장 시 파일명 (확장자 제외)
     is_sent: bool = False  # 재전송 예약 시 전송 여부
+    wildcard_info: dict = field(default_factory=dict)  # NSFW 와일드카드 정보
 
 
 @dataclass
@@ -72,6 +73,8 @@ class BatchMode:
         self.on_batch_complete: Optional[Callable] = None
         # 프롬프트 강화 콜백 (각 요청 처리 전 호출)
         self.before_generate_func: Optional[Callable] = None
+        # 배치 전처리 콜백 (배치 처리 시작 시 1회만 호출)
+        self.preprocess_func: Optional[Callable] = None
         # 모드 로그 함수
         self.mode_log_func: Optional[Callable] = None
 
@@ -240,6 +243,7 @@ class BatchMode:
                             generation_time=elapsed,
                             chat_content=request.chat_content,
                             enhanced_positive=enhanced,
+                            wildcard_info=request.wildcard_info,
                         )
                         if backup_name:
                             request.backup_filename = backup_name
@@ -271,14 +275,36 @@ class BatchMode:
 
         self._log("batch_processing_start", {"batch_id": batch.batch_id, "count": len(batch.requests)})
 
+        # ─── 배치 전처리 (첫 이미지에서만 호출): 중복 chat 정리 ───
+        if self.preprocess_func:
+            try:
+                await self.preprocess_func(batch)
+            except Exception as e:
+                print(f"[BATCH] 전처리 오류: {e}")
+                self._log("preprocess_error", {"batch_id": batch.batch_id, "error": str(e)})
+
         if self.before_generate_func:
+            # ─── 스토리 순서 정렬: scene 번호 기준 오름차순, 키비주얼(slot 없음)은 마지막 ───
+            sorted_indices = sorted(
+                range(len(batch.requests)),
+                key=lambda i: BatchMode._extract_scene_priority(batch.requests[i])
+            )
+            if len(sorted_indices) > 1:
+                order_desc = ", ".join(
+                    f"[{i}](scene={BatchMode._extract_scene_priority(batch.requests[i])})"
+                    for i in sorted_indices
+                )
+                print(f"[BATCH] 강화 순서 정렬: {order_desc}")
+                self._log("enhance_order_sorted", {"order": order_desc})
+
             # ─── 파이프라인: 강화 완료 즉시 이미지 생성 + 다음 강화 동시 진행 ───
             pipeline_start = time.time()
             generate_queue = asyncio.Queue()
 
             async def enhance_pipeline():
-                """순차적으로 프롬프트 강화, 완료 시마다 생성 큐에 푸시"""
-                for i, request in enumerate(batch.requests):
+                """스토리 순서로 프롬프트 강화, 완료 시마다 생성 큐에 푸시"""
+                for i in sorted_indices:
+                    request = batch.requests[i]
                     try:
                         # 강화 전 원본 백업
                         if request.processed_positive:
@@ -401,6 +427,69 @@ class BatchMode:
         (tag:1.5) → (tag), BREAK:1.2 → BREAK
         """
         return re.sub(r':(-?\d+(?:\.\d+)?)\)', ')', prompt.strip())
+
+    @staticmethod
+    def _extract_scene_priority(request) -> int:
+        """이미지의 스토리 내 위치를 추출하여 정렬 우선순위 반환.
+        || 앞뒤 문장을 chat에서 찾아 삽입 위치를 기준으로 정렬.
+        값이 낮을수록 스토리 앞쪽 → 먼저 처리.
+
+        slot 형식:
+          - "text_before || text_after"  ← 문장 매칭으로 위치 추적
+          - "" 또는 없음  ← 키비주얼 (가장 마지막 처리)
+        """
+        # ─── 1단계: [SLOT] 섹션 추출 ───
+        slot_text = ""
+        for text in [request.processed_positive or "", request.positive or "",
+                     request.chat_content or ""]:
+            slot_match = re.search(
+                r'\[SLOT\]\s*(.*?)(?=\n\s*\[|\Z)', text,
+                re.IGNORECASE | re.DOTALL
+            )
+            if slot_match:
+                slot_text = slot_match.group(1).strip()
+                break
+
+        # [SLOT] 없거나 비어있거나 || 없으면 키비주얼
+        if not slot_text or '||' not in slot_text:
+            return 999999
+
+        # ─── 2단계: || 기준으로 앞뒤 문장 분리 ───
+        parts = slot_text.split('||', 1)
+        quote_chars = '"\u2018\u2019\u201c\u201d\''
+        before_text = parts[0].strip().strip(quote_chars).strip()
+        after_text = parts[1].strip().strip(quote_chars).strip() if len(parts) > 1 else ""
+
+        chat = request.chat_content or ""
+        if not chat:
+            return 999999
+
+        # ─── 3단계: before_text를 chat에서 찾아 캐릭터 오프셋 반환 ───
+        pos = -1
+        if before_text and len(before_text) >= 3:
+            # 긴 접두사부터 순차 매칭
+            for length in [50, 30, 20, 10]:
+                if len(before_text) >= length:
+                    pos = chat.find(before_text[:length])
+                    if pos >= 0:
+                        break
+            if pos < 0:
+                pos = chat.find(before_text)
+
+        # before_text 못 찾으면 after_text로 시도
+        if pos < 0 and after_text and len(after_text) >= 3:
+            for length in [50, 30, 20, 10]:
+                if len(after_text) >= length:
+                    pos = chat.find(after_text[:length])
+                    if pos >= 0:
+                        break
+            if pos < 0:
+                pos = chat.find(after_text)
+
+        if pos < 0:
+            return 999999
+
+        return pos  # 캐릭터 오프셋 = 스토리 내 위치 (낮을수록 앞쪽)
 
     def get_scheduled_image(self, incoming_positive: str = "") -> Optional[tuple[bytes, dict]]:
         """

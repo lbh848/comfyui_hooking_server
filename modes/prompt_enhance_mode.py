@@ -12,18 +12,20 @@ PromptEnhanceMode - 배치 프롬프트 강화 모드
   - 상단 섹션에서 char 이전 → prefix (퀄리티 태그 등)
 
 2단계: characters.txt 기반 캐릭터 이름 추출
-  - enhance_outfit_prompt_v4_storage/characters.txt에서 이름 목록 로드
+  - 스토리지 디렉토리의 characters.txt에서 이름 목록 로드
   - char 블럭에서 이름 매칭 (가장 긴 이름 우선)
 
-3단계: 파싱된 데이터를 v4 스크립트에 전달하여 프롬프트 강화
+3단계: 파싱된 데이터를 강화 스크립트에 전달하여 프롬프트 강화
   - char, setup, supplement 각각 강화
   - LLM이 [CHAR]/[SETUP]/[SUPPLEMENT] 구분 출력
   - 강화 결과로 전체 프롬프트 재조립
 """
 
 import asyncio
+import json
 import os
 import re
+import datetime
 import importlib.util
 import traceback
 from typing import Optional, Callable
@@ -51,7 +53,11 @@ class PromptEnhanceMode:
         self._last_enhanced_block: dict[str, str] = {}
         # 캐릭터 이름 캐시
         self._character_names: list[str] = []
+        # 마지막 강화 시 와일드카드 정보
+        self._last_wildcard_info: dict = {}
         self._load_character_names()
+        # 배치별 --- 구분자 추적: 이번 배치에서 이미 구분자를 추가한 캐릭터
+        self._batch_separator_chars: set[str] = set()
 
     def _log(self, action: str, data: dict = None):
         if self.mode_log_func:
@@ -222,14 +228,7 @@ class PromptEnhanceMode:
             (enhanced_positive, original_positive)
             강화 실패 또는 비활성화 시 (original, original) 반환
         """
-        if not self.enabled:
-            return positive, positive
-
-        if not self.enhance_prompt_file:
-            self._log("skip_no_prompt_file", {})
-            return positive, positive
-
-        # 1단계: 파싱
+        # 1단계: 파싱 (항상 실행)
         parsed = self._parse_prompt_sections(positive, chat_content)
 
         if not parsed["char"]:
@@ -239,6 +238,16 @@ class PromptEnhanceMode:
         char_blocks = self._split_char_blocks(parsed["char"])
         if not char_blocks:
             self._log("skip_no_char_blocks", {})
+            return positive, positive
+
+        # 강화 모드 꺼짐 → 추적만 하고 종료
+        if not self.enabled:
+            self._track_outfits(char_blocks, parsed)
+            return positive, positive
+
+        if not self.enhance_prompt_file:
+            self._log("skip_no_prompt_file", {})
+            self._last_wildcard_info = {}
             return positive, positive
 
         self._log("enhance_start", {
@@ -258,45 +267,10 @@ class PromptEnhanceMode:
         enhanced_setup = parsed["setup"]  # 기본값: 원본
         enhanced_supplement = parsed["supplement"]  # 기본값: 원본
 
-        for block in char_blocks:
-            char_name = self._extract_character_name(block)
-            if not char_name:
-                self._log("skip_no_name", {"block_preview": block[:50]})
-                continue
-
-            previous_enhanced = self._last_enhanced_block.get(char_name, "")
-
-            try:
-                result = await self._run_enhance_prompt(
-                    char_name=char_name,
-                    char=block,
-                    previous_enhanced=previous_enhanced,
-                    setup=parsed["setup"],
-                    supplement=parsed["supplement"],
-                    chat=parsed["chat"],
-                    slot=parsed["slot"],
-                )
-                if result and result["char"] != block:
-                    enhanced_chars[block.strip()] = result["char"]
-                    self._log("block_enhanced", {
-                        "name": char_name,
-                        "original_length": len(block),
-                        "enhanced_length": len(result["char"]),
-                        "outfit_only_length": len(result.get("outfit_only", "")),
-                    })
-                else:
-                    self._log("block_unchanged", {"name": char_name})
-                # 일관성 추적: 복장만 저장 (표정 제외)
-                if result.get("outfit_only"):
-                    self._last_enhanced_block[char_name] = result["outfit_only"]
-                # setup, supplement은 마지막 캐릭터의 강화 결과 사용
-                if result.get("setup"):
-                    enhanced_setup = result["setup"]
-                if result.get("supplement"):
-                    enhanced_supplement = result["supplement"]
-            except Exception as e:
-                self._log("block_enhance_error", {"name": char_name, "error": str(e)})
-                traceback.print_exc()
+        # run_all로 모든 캐릭터 한번에 강화
+        v5_result = await self._try_run_all(char_blocks, parsed)
+        if v5_result is not None:
+            enhanced_chars, enhanced_setup, enhanced_supplement = v5_result
 
         if not enhanced_chars:
             self._log("enhance_no_changes", {})
@@ -396,86 +370,188 @@ class PromptEnhanceMode:
 
         return result
 
-    # ─── v4 스크립트 실행 ──────────────────────────────────────
+    # ─── 복장 추적 (강화 모드 꺼짐 시에만 실행) ──────────────────────
 
-    async def _run_enhance_prompt(
-        self,
-        char_name: str,
-        char: str,
-        previous_enhanced: str = "",
-        setup: str = "",
-        supplement: str = "",
-        chat: str = "",
-        slot: str = "",
-    ) -> dict:
-        """v4 스크립트를 로드하여 실행. 파싱된 데이터를 전달.
+    @staticmethod
+    def _get_storage_path(character_name: str) -> str:
+        safe_name = re.sub(r'[^\w\s-]', '', character_name.lower()).strip().replace(' ', '_')
+        return os.path.join(STORAGE_DIR, f"{safe_name}.json")
 
-        Returns: dict with char, outfit_only, setup, supplement
+    @staticmethod
+    def _load_storage_history(character_name: str) -> list:
+        path = PromptEnhanceMode._get_storage_path(character_name)
+        if os.path.exists(path):
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    if isinstance(data, list):
+                        return data
+            except (json.JSONDecodeError, IOError):
+                pass
+        return []
+
+    @staticmethod
+    def _save_storage_history(character_name: str, history: list, max_entries: int = 15):
+        os.makedirs(STORAGE_DIR, exist_ok=True)
+        history = history[-max_entries:]
+        path = PromptEnhanceMode._get_storage_path(character_name)
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(history, f, ensure_ascii=False, indent=2)
+
+    def _track_outfits(self, char_blocks: list[str], parsed: dict):
+        """강화 없이 원본 복장만 스토리지에 저장.
+        배치당 첫 entry 앞에 --- 구분자를 추가하여 배치를 구분.
         """
+        slot = parsed.get("slot", "")
+        slot_before = ""
+        slot_after = ""
+        if slot:
+            if '||' in slot:
+                sp = slot.split('||', 1)
+                slot_before, slot_after = sp[0].strip(), sp[1].strip()
+            else:
+                slot_before, slot_after = slot.strip(), ""
+
+        for block in char_blocks:
+            char_name = self._extract_character_name(block)
+            if not char_name:
+                continue
+
+            history = self._load_storage_history(char_name)
+
+            # 배치당 첫 entry 전에 --- 구분자 추가
+            if char_name not in self._batch_separator_chars:
+                if history and history[-1] != "---":
+                    history.append("---")
+                self._batch_separator_chars.add(char_name)
+
+            entry = {
+                "timestamp": datetime.datetime.now().isoformat(),
+                "char": block.strip(),
+                "setup": parsed.get("setup", ""),
+                "supplement": parsed.get("supplement", ""),
+                "chat": parsed.get("chat", "")[:500],
+                "slot_before": slot_before,
+                "slot_after": slot_after,
+                "reason": "tracked (enhance off)",
+            }
+
+            history.append(entry)
+            self._save_storage_history(char_name, history)
+            self._log("outfit_tracked", {"name": char_name})
+
+    # ─── 스크립트 실행 ──────────────────────────────────────────
+
+    async def _try_run_all(
+        self,
+        char_blocks: list[str],
+        parsed: dict,
+    ) -> tuple[dict, str, str] | None:
+        """run_all로 모든 캐릭터를 단일 LLM 호출로 강화."""
         filepath = os.path.join(CUSTOMPROMPT_DIR, self.enhance_prompt_file)
         if not os.path.isfile(filepath):
-            self._log("prompt_file_not_found", {"file": self.enhance_prompt_file})
             return None
 
-        spec = importlib.util.spec_from_file_location("enhance_prompt", filepath)
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-
-        if not hasattr(mod, "run"):
-            self._log("no_run_function", {"file": self.enhance_prompt_file})
+        try:
+            spec = importlib.util.spec_from_file_location("enhance_prompt", filepath)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+        except Exception:
             return None
 
-        # v4 run() 시그니처 확인 후 파라미터 구성
-        import inspect
-        run_params = inspect.signature(mod.run).parameters
+        if not hasattr(mod, "run_all"):
+            return None
 
-        run_kwargs = {}
-        for key, value in {
-            "character_name": char_name,
-            "char": char,
-            "previous_enhanced": previous_enhanced,
-            "setup": setup,
-            "supplement": supplement,
-            "chat": chat,
-            "slot": slot,
-            # 하위 호환: 구형 스크립트 지원
-            "char_block": char,
-            "passing_setup": setup,
-            "passing_supplement": supplement,
-            "passing_chat": chat,
-            "passing_slot": slot,
-        }.items():
-            if key in run_params:
-                run_kwargs[key] = value
+        # 캐릭터 목록 구성
+        characters = []
+        for block in char_blocks:
+            name = self._extract_character_name(block)
+            if not name:
+                continue
+            # previous_enhanced: 메모리 우선, 없으면 저장소에서 로드
+            previous = self._last_enhanced_block.get(name, "")
+            if not previous:
+                history = self._load_storage_history(name)
+                for entry in reversed(history):
+                    if isinstance(entry, dict) and entry.get("char"):
+                        previous = entry["char"]
+                        break
+            characters.append({
+                "name": name,
+                "char": block,
+                "previous_enhanced": previous,
+            })
 
-        # 필수 파라미터 확인
-        if "character_name" not in run_kwargs:
-            run_kwargs["character_name"] = char_name
+        if not characters:
+            return None
 
-        result = await mod.run(**run_kwargs)
+        try:
+            import inspect
+            run_params = inspect.signature(mod.run_all).parameters
 
-        # 반환값 처리
-        if isinstance(result, dict):
-            # 새 형식: dict
-            return result
-        elif isinstance(result, tuple):
-            # 구형 스크립트: (combined, outfit_only)
-            combined, outfit_only = result
-            return {
-                "char": combined,
-                "outfit_only": outfit_only,
-                "setup": setup,
-                "supplement": supplement,
-            }
-        elif isinstance(result, str):
-            # 구형 스크립트: 단일 문자열
-            return {
-                "char": result,
-                "outfit_only": result,
-                "setup": setup,
-                "supplement": supplement,
-            }
-        return None
+            run_kwargs = {}
+            for key, value in {
+                "characters": characters,
+                "setup": parsed["setup"],
+                "supplement": parsed["supplement"],
+                "chat": parsed["chat"],
+                "slot": parsed["slot"],
+            }.items():
+                if key in run_params:
+                    run_kwargs[key] = value
+
+            result = await mod.run_all(**run_kwargs)
+        except Exception as e:
+            self._log("v5_run_all_error", {"error": str(e)})
+            traceback.print_exc()
+            return None
+
+        if not result or "characters" not in result:
+            self._log("v5_run_all_invalid", {})
+            return None
+
+        # 결과를 기존 구조로 변환
+        enhanced_chars = {}
+        wildcard_chars = []  # 와일드카드 정보 수집
+        for char_result in result.get("characters", []):
+            name = char_result.get("name", "")
+            # 원본 블럭 찾기
+            for block in char_blocks:
+                block_name = self._extract_character_name(block)
+                if block_name and block_name.lower() == name.lower():
+                    original = block.strip()
+                    combined = char_result.get("char", block)
+                    if combined != block:
+                        enhanced_chars[original] = combined
+                    # 일관성 추적
+                    if char_result.get("outfit_only"):
+                        self._last_enhanced_block[name] = char_result["outfit_only"]
+                    # 와일드카드 정보 수집
+                    nsfw_replaced = char_result.get("nsfw_replaced", [])
+                    outfit_llm_raw = char_result.get("outfit_llm_raw", "")
+                    if nsfw_replaced or outfit_llm_raw:
+                        wildcard_chars.append({
+                            "name": name,
+                            "nsfw_replaced": nsfw_replaced,
+                            "outfit_llm_raw": outfit_llm_raw,
+                        })
+                    break
+
+        enhanced_setup = result.get("setup", parsed["setup"])
+        enhanced_supplement = result.get("supplement", parsed["supplement"])
+
+        self._log("v5_run_all_complete", {
+            "blocks_changed": len(enhanced_chars),
+        })
+
+        # 와일드카드 정보 저장
+        has_wildcards = any(c["nsfw_replaced"] for c in wildcard_chars)
+        self._last_wildcard_info = {
+            "has_wildcards": has_wildcards,
+            "characters": wildcard_chars,
+        }
+
+        return enhanced_chars, enhanced_setup, enhanced_supplement
 
     # ─── 검증 ───────────────────────────────────────────────
 
@@ -522,6 +598,10 @@ class PromptEnhanceMode:
         if request_id and request_id in self._original_prompts:
             return self._original_prompts[request_id]
         return enhanced_positive
+
+    def get_last_wildcard_info(self) -> dict:
+        """마지막 enhance_prompt 호출에서 수집된 와일드카드 정보를 반환."""
+        return self._last_wildcard_info
 
     # ─── 상태 ────────────────────────────────────────────────
 

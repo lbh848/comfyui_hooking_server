@@ -13,6 +13,10 @@ import webbrowser
 import traceback
 import base64
 import shutil
+import mimetypes
+
+# webp mimetype 등록 (Windows 기본 누락 대응)
+mimetypes.add_type('image/webp', '.webp')
 import re
 import math
 import aiohttp
@@ -27,8 +31,14 @@ HAS_PIEXIF = True
 from modes import batch_mode
 from modes import outfit_mode
 from modes import enhance_mode
+from modes import asset_mode
+from modes import pose_mode
+from modes import chain_preset_mode
 from modes import mode_logger
+import logging
+logging.basicConfig(level=logging.INFO, format='[%(name)s] %(message)s')
 from modes import llm_service
+from modes import autocomplete_service
 import importlib.util
 
 # ─── 설정 ───────────────────────────────────────────────
@@ -45,17 +55,22 @@ FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
 CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
 MODE_WORKFLOW_DIR = os.path.join(BASE_DIR, "mode_workflow")
 CURRENT_MODE_WORK_DIR = os.path.join(BASE_DIR, "current_mode_workflow")
+WORKFLOW_BACKUP_STATIC_DIR = os.path.join(BASE_DIR, "workflow_backup_static")
 
 # 기본 설정값
 DEFAULT_CONFIG = {
     "comfy_workflow_source_path": r"E:\wsl2\matrix\Packages\ComfyUI\user\default\workflows\0310고속워크플로우_나친척.json",
     "data_saving_mode": False,
+    "send_original": False,  # 전송 시 원본 무변환 전송
     "webp_quality": 85,
     "backup_webp_quality": 80,  # 백업 이미지 저장 WebP 품질 (1-100)
+    "backup_webp_lossless": False,  # 백업 저장 무손실 WebP
     "backup_base_dir": "",  # 빈 값이면 WORKFLOW_BACKUP_DIR 사용
     "workflow_filename": "",  # 빈 값이면 workflow 폴더의 첫 번째 json 사용
     "batch_mode_enabled": False,  # 배치 모드 활성화 여부
     "batch_timeout_seconds": 5.0,  # 배치 모드 타임아웃 (초)
+    "notification_enabled": True,  # 배치 완료 알림
+    "auto_reschedule_enabled": False,  # 배치 완료 시 자동 재예약
     "clamp_enabled": False,  # 프롬프트 가중치 클램프 활성화 여부
     "clamp_value": 1.2,  # 가중치 클램프 최대값
     "outfit_mode_enabled": False,  # 복장 추출 모드 활성화 여부
@@ -72,18 +87,29 @@ DEFAULT_CONFIG = {
     "restore_manual_enabled": False,  # 워크플로우 복원 프롬프트 수동 작동 활성화 여부
     "enhance_mode_enabled": False,  # 프롬프트 강화 모드 활성화 여부
     "enhance_prompt_file": "",  # 프롬프트 강화 파일명 (customprompt/)
+    "asset_workflow_source_path": "",  # 에셋 생성 워크플로우 원본 소스 전체 경로
+    "dwpose_det_model": "",  # DWPose 탐지 모델 경로 (빈값=자동 다운로드)
+    "dwpose_pose_model": "",  # DWPose 포즈 모델 경로 (빈값=자동 다운로드)
+    "dwpose_model_cache_dir": "",  # 모델 캐시 디렉토리 (빈값=기본경로)
+    "backup_max_count": 500,  # 워크플로우 백업 최대 보관 수
+    "webp_lossless": False,  # 전송 이미지 무손실 WebP
 }
 
-# 워크플로우 백업 최대 보관 수 (이미지 개수 기준)
-MAX_BACKUP_IMAGES = 500
+# 워크플로우 백업 최대 보관 수 (기본값, config에서 덮어씀)
+DEFAULT_MAX_BACKUP_IMAGES = 500
 
 # 클라이언트(8189 → RisuAI 등)에 전송할 이미지 포맷
 IMAGE_FORMAT = "webp"  # "original", "png", "webp", "jpeg"
 IMAGE_QUALITY = 80
 
+REPORT_DIR = os.path.join(BASE_DIR, "logs")
+REPORT_FILE = os.path.join(REPORT_DIR, "enhence_prompt_report.md")
+
 # 폴더 생성
 for _d in [WORKFLOW_DIR, CURRENT_WORK_DIR, WORKFLOW_BACKUP_DIR, LOG_DIR, FRONTEND_DIR, MODE_WORKFLOW_DIR, CURRENT_MODE_WORK_DIR,
-           os.path.join(WORKFLOW_BACKUP_DIR, "mode", "outfit_mode")]:
+           os.path.join(WORKFLOW_BACKUP_DIR, "mode", "outfit_mode"), REPORT_DIR,
+           os.path.join(BASE_DIR, "asset_data"), os.path.join(BASE_DIR, "asset"),
+           os.path.join(BASE_DIR, "pose_data")]:
     os.makedirs(_d, exist_ok=True)
 
 
@@ -152,6 +178,20 @@ enhance_mode.enhance_prompt_file = app_config.get("enhance_prompt_file", "")
 enhance_mode.mode_log_func = mode_logger.log
 print(f"[ENHANCE_MODE] 초기화: enabled={enhance_mode.enabled}, prompt_file={enhance_mode.enhance_prompt_file}")
 
+# ─── 에셋 생성 모드 초기화 ───
+asset_mode.workflow_source_path = app_config.get("asset_workflow_source_path", "")
+asset_mode.mode_log_func = mode_logger.log
+asset_mode.load_tags()
+print(f"[ASSET_MODE] 초기화: source={asset_mode.workflow_source_path}, characters={len(asset_mode.list_characters())}")
+
+# ─── 포즈 편집 모드 초기화 ───
+pose_mode.det_model_path = app_config.get("dwpose_det_model", "")
+pose_mode.pose_model_path = app_config.get("dwpose_pose_model", "")
+pose_mode.model_cache_dir = app_config.get("dwpose_model_cache_dir", "")
+pose_mode.mode_log_func = mode_logger.log
+pose_mode.load()
+print(f"[POSE_MODE] 초기화: poses={len(pose_mode.list_poses())}")
+
 
 def get_comfy_workflow_source_path() -> str:
     """현재 설정된 ComfyUI 워크플로우 소스 경로를 반환한다."""
@@ -166,24 +206,24 @@ def get_backup_base_dir() -> str:
     return WORKFLOW_BACKUP_DIR
 
 
-def get_data_saving_mode() -> bool:
-    """데이터 절약 모드 여부를 반환한다."""
-    return app_config.get("data_saving_mode", False)
-
-
 def get_webp_quality() -> int:
     """WebP 품질을 반환한다."""
     return app_config.get("webp_quality", 85)
-
 
 def get_backup_webp_quality() -> int:
     """백업 이미지 저장 WebP 품질을 반환한다."""
     return app_config.get("backup_webp_quality", 80)
 
+def get_backup_webp_lossless() -> bool:
+    """백업 저장 무손실 여부를 반환한다."""
+    return app_config.get("backup_webp_lossless", False)
+
 # ─── 상태 관리 ──────────────────────────────────────────
 prompts = {}          # prompt_id -> { status, prompt, outputs, ... }
 ws_connections = {}   # client_id -> ws
-frontend_ws_connections = {}   # frontend client_id -> ws (for dashboard updates)
+frontend_ws_connections = {}   # frontend client_id -> {"ws": ws, "last_pong": time}
+WS_HEARTBEAT_INTERVAL = 30  # 초
+WS_STALE_TIMEOUT = 15       # 핑 후 응답 없으면 제거 (초)
 
 current_original_workflow = None   # 원본 워크플로우 (ComfyUI 드래그앤드롭용)
 current_api_workflow = None        # API 형식 워크플로우 (실행용)
@@ -213,9 +253,12 @@ def log_to_file(filename: str, data: str):
 async def notify_frontend(event_type: str, data: dict = None):
     """프론트엔드 대시보드에 이벤트를 전송한다."""
     message = {"type": event_type, "data": data or {}}
-    for client_id, ws in list(frontend_ws_connections.items()):
+    client_count = len(frontend_ws_connections)
+    if event_type.startswith("asset_"):
+        print(f"[WS] → 프론트엔드 전송: {event_type} (클라이언트 {client_count}명)")
+    for client_id, entry in list(frontend_ws_connections.items()):
         try:
-            await ws.send_json(message)
+            await entry["ws"].send_json(message)
         except Exception as e:
             print(f"[WS] 프론트엔드 전송 실패 ({client_id}): {e}")
             frontend_ws_connections.pop(client_id, None)
@@ -499,8 +542,10 @@ def _embed_png_metadata(png_bytes: bytes, prompt_data: dict) -> bytes:
 
 def convert_image_for_client(raw_bytes: bytes, prompt_data: dict, fmt=None, quality=None) -> tuple[bytes, str]:
     """클라이언트에 전송할 이미지를 지정 포맷으로 변환한다."""
+    if app_config.get("send_original", False):
+        return _embed_png_metadata(raw_bytes, prompt_data), "image/png"
     fmt = fmt or IMAGE_FORMAT
-    quality = quality or IMAGE_QUALITY
+    quality = quality or get_webp_quality()
 
     if fmt.lower() == "original":
         return _embed_png_metadata(raw_bytes, prompt_data), "image/png"
@@ -517,9 +562,8 @@ def convert_image_for_client(raw_bytes: bytes, prompt_data: dict, fmt=None, qual
         result = _embed_png_metadata(out.getvalue(), prompt_data)
         ct = "image/png"
     elif fmt.lower() == "webp":
-        (img if img.mode == "RGBA" else img.convert("RGB")).save(
-            out, format="WEBP", quality=quality, method=6
-        )
+        save_img = img if img.mode == "RGBA" else img.convert("RGB")
+        save_img.save(out, format="WEBP", quality=quality, method=4)
         result = out.getvalue()
         ct = "image/webp"
     elif fmt.lower() == "jpeg":
@@ -549,7 +593,7 @@ def create_placeholder_png() -> bytes:
 
 
 # ─── 백업 관리 ────────────────────────────────────────────
-async def save_backup(image_bytes: bytes, prompt_id: str, positive: str, negative: str, generation_time: float = None, chat_content: str = "", enhanced_positive: str = ""):
+async def save_backup(image_bytes: bytes, prompt_id: str, positive: str, negative: str, generation_time: float = None, chat_content: str = "", enhanced_positive: str = "", wildcard_info: dict = None):
     """이미지(WebP q80 + 원본 워크플로우 메타데이터)와 원본 워크플로우를 백업한다."""
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     base_name = f"{ts}_{prompt_id[:8]}"
@@ -587,6 +631,9 @@ async def save_backup(image_bytes: bytes, prompt_id: str, positive: str, negativ
             exif_bytes = None
 
     save_kwargs = {"format": "WEBP", "quality": get_backup_webp_quality()}
+    if get_backup_webp_lossless():
+        save_kwargs["lossless"] = True
+        del save_kwargs["quality"]
     if exif_bytes:
         save_kwargs["exif"] = exif_bytes
 
@@ -623,6 +670,11 @@ async def save_backup(image_bytes: bytes, prompt_id: str, positive: str, negativ
             enhanced_path = os.path.join(WORKFLOW_BACKUP_DIR, f"{base_name}_enhanced.txt")
             with open(enhanced_path, "w", encoding="utf-8") as f:
                 f.write(enhanced_positive)
+        # NSFW 와일드카드 정보를 JSON으로 저장 (미사용 시에도 상태 저장)
+        if enhanced_positive and wildcard_info is not None:
+            wildcard_path = os.path.join(WORKFLOW_BACKUP_DIR, f"{base_name}_wildcard.json")
+            with open(wildcard_path, "w", encoding="utf-8") as f:
+                json.dump(wildcard_info, f, ensure_ascii=False, indent=2)
         print(f"[BACKUP] 워크플로우 저장: {base_name}.json")
 
     # 3) 변환 정보 저장
@@ -644,10 +696,11 @@ async def save_backup(image_bytes: bytes, prompt_id: str, positive: str, negativ
 
 
 def cleanup_backups():
-    """MAX_BACKUP_IMAGES를 초과하는 오래된 백업을 삭제한다."""
+    """최대 보관 수를 초과하는 오래된 백업을 삭제한다."""
+    max_count = app_config.get("backup_max_count", DEFAULT_MAX_BACKUP_IMAGES)
     pattern = os.path.join(WORKFLOW_BACKUP_DIR, "*.webp")
     files = sorted(glob.glob(pattern), key=os.path.getmtime, reverse=True)
-    for old_file in files[MAX_BACKUP_IMAGES:]:
+    for old_file in files[max_count:]:
         base = old_file[:-5]  # .webp 제거
         for ext in [".webp", ".json", ".txt", "_info.json", "_enhanced.txt"]:
             try:
@@ -681,9 +734,27 @@ async def submit_to_real_comfy(prompt_data: dict) -> tuple[str, dict]:
             return result["prompt_id"], result
 
 
-async def wait_for_real_comfy(ws, real_prompt_id: str) -> dict | None:
-    print(f"[PROXY] WS 대기 시작 (prompt={real_prompt_id})")
+def count_ksampler_total_steps(workflow: dict) -> int:
+    """워크플로우의 모든 KSampler 노드 steps를 합산한다."""
+    total = 0
+    if not workflow:
+        return 0
+    for nid, node in workflow.items():
+        if not isinstance(node, dict):
+            continue
+        cls = node.get("class_type", "")
+        if "sampler" in cls.lower():
+            steps = node.get("inputs", {}).get("steps", 0)
+            if isinstance(steps, (int, float)) and steps > 0:
+                total += int(steps)
+    return total
+
+
+async def wait_for_real_comfy(ws, real_prompt_id: str, progress_callback=None, total_steps: int = 0) -> dict | None:
+    print(f"[PROXY] WS 대기 시작 (prompt={real_prompt_id}, total_steps={total_steps})")
     saw_executing = False
+    cumulative_steps = 0
+    prev_max = 0
     try:
         async for msg in ws:
             if msg.type == aiohttp.WSMsgType.TEXT:
@@ -694,9 +765,37 @@ async def wait_for_real_comfy(ws, real_prompt_id: str) -> dict | None:
                 msg_node = msg_data.get("node", "")
 
                 if msg_type == "progress":
-                    v = msg_data.get("value", "?")
-                    mx = msg_data.get("max", "?")
-                    print(f"[PROXY] WS progress: {v}/{mx}", end="\r")
+                    v = msg_data.get("value", 0)
+                    mx = msg_data.get("max", 0)
+                    # 새 ksampler 감지: max가 바뀌면 이전 ksampler 완료
+                    if mx != prev_max and prev_max > 0 and v < mx:
+                        cumulative_steps += prev_max
+                    prev_max = mx
+                    if total_steps > 0 and mx and mx > 0:
+                        overall_v = cumulative_steps + v
+                        pct = min(100, round(overall_v / total_steps * 100))
+                        print(f"[PROXY] WS progress: {v}/{mx} (전체 {pct}%)", end="\r")
+                        await progress_callback(overall_v, total_steps)
+                    else:
+                        print(f"[PROXY] WS progress: {v}/{mx}", end="\r")
+                        if progress_callback and mx and mx > 0:
+                            await progress_callback(v, mx)
+                elif msg_type == "progress_state":
+                    v = msg_data.get("value", 0)
+                    mx = msg_data.get("max", 0)
+                    if mx != prev_max and prev_max > 0 and v < mx:
+                        cumulative_steps += prev_max
+                    prev_max = mx
+                    if total_steps > 0 and mx and mx > 0:
+                        overall_v = cumulative_steps + v
+                        pct = min(100, round(overall_v / total_steps * 100))
+                        print(f"[PROXY] WS progress_state: {v}/{mx} (전체 {pct}%)", end="\r")
+                        await progress_callback(overall_v, total_steps)
+                    else:
+                        if v and mx and mx > 0:
+                            print(f"[PROXY] WS progress_state: {v}/{mx}", end="\r")
+                            if progress_callback:
+                                await progress_callback(v, mx)
                 elif msg_type not in WS_QUIET_TYPES:
                     print(f"[PROXY] WS: type={msg_type}, prompt={msg_prompt}, node={msg_node}")
 
@@ -765,6 +864,11 @@ async def generate_image_with_prompt(positive: str, negative: str):
 
     risu_prompt = build_prompt(positive, negative)
 
+    async def _on_gen_progress(value, max_value):
+        await notify_frontend("generation_progress", {
+            "value": value, "max": max_value,
+        })
+
     ws_url = (
         f"ws://{REAL_COMFY_HOST}:{REAL_COMFY_PORT}/ws"
         f"?clientId=gen_{uuid.uuid4().hex[:8]}"
@@ -774,7 +878,8 @@ async def generate_image_with_prompt(positive: str, negative: str):
             real_prompt_id, submit_result = await submit_to_real_comfy(risu_prompt)
             node_errors = submit_result.get("node_errors", {})
 
-            ws_result = await wait_for_real_comfy(real_ws, real_prompt_id)
+            total_steps = count_ksampler_total_steps(current_api_workflow)
+            ws_result = await wait_for_real_comfy(real_ws, real_prompt_id, progress_callback=_on_gen_progress, total_steps=total_steps)
             if ws_result is None:
                 return None, "생성 실패 또는 타임아웃"
 
@@ -798,6 +903,205 @@ async def generate_image_with_prompt(positive: str, negative: str):
         first_img.get("type", "output"),
     )
     return img_bytes, node_errors
+
+
+# ─── 에셋 모드 헬퍼 함수 ────────────────────────────────
+def build_prompt_with_workflow(workflow_api: dict, positive: str, negative: str, reference_image: str = "") -> dict:
+    """임의의 워크플로우 dict에 프롬프트를 주입한다."""
+    print(f"[ASSET] build_prompt_with_workflow: ref_image={repr(reference_image)}")
+    wf = copy.deepcopy(workflow_api)
+    for nid, ninfo in wf.items():
+        if not isinstance(ninfo, dict):
+            continue
+        title = ninfo.get("_meta", {}).get("title", "")
+        if title == "긍정프롬프트":
+            ninfo["inputs"]["value"] = positive
+        elif title == "부정프롬프트":
+            ninfo["inputs"]["value"] = negative
+        elif title == "레퍼런스이미지로드" and reference_image:
+            ninfo["inputs"]["image"] = reference_image
+            ninfo["inputs"]["subfolder"] = ""
+            ninfo["inputs"]["type"] = "input"
+    return wf
+
+
+async def submit_workflow_to_comfy(workflow_api: dict, progress_callback=None) -> tuple[bytes | None, str | dict]:
+    """임의의 API 워크플로우를 ComfyUI에 제출하고 이미지를 반환한다."""
+    ws_url = (
+        f"ws://{REAL_COMFY_HOST}:{REAL_COMFY_PORT}/ws"
+        f"?clientId=asset_{uuid.uuid4().hex[:8]}"
+    )
+    try:
+        async with aiohttp.ClientSession() as ws_session:
+            async with ws_session.ws_connect(ws_url) as real_ws:
+                real_prompt_id, submit_result = await submit_to_real_comfy(workflow_api)
+                node_errors = submit_result.get("node_errors", {})
+                if node_errors:
+                    print(f"[ASSET] node_errors: {json.dumps(node_errors, ensure_ascii=False)}")
+                print(f"[ASSET] submit_result: status={submit_result.get('status','?')}, prompt_id={real_prompt_id}")
+
+                total_steps = count_ksampler_total_steps(workflow_api)
+                ws_result = await wait_for_real_comfy(real_ws, real_prompt_id, progress_callback=progress_callback, total_steps=total_steps)
+                if ws_result is None:
+                    return None, "생성 실패 또는 타임아웃"
+
+        history = await fetch_real_history(real_prompt_id)
+        real_entry = history.get(real_prompt_id, {})
+        real_outputs = real_entry.get("outputs", {})
+        print(f"[ASSET] history keys: {list(history.keys())}, outputs: {list(real_outputs.keys())}")
+        for nid, nout in real_outputs.items():
+            print(f"[ASSET] output node {nid}: {list(nout.keys())}")
+
+        real_images = []
+        for nid, nout in real_outputs.items():
+            if "images" in nout:
+                real_images = nout["images"]
+                break
+
+        if not real_images:
+            err_detail = ""
+            if node_errors:
+                err_detail = f" (node_errors: {json.dumps(node_errors, ensure_ascii=False)})"
+            return None, f"ComfyUI에서 이미지를 찾을 수 없음{err_detail}"
+
+        first_img = real_images[0]
+        img_bytes = await fetch_real_image(
+            first_img["filename"],
+            first_img.get("subfolder", ""),
+            first_img.get("type", "output"),
+        )
+        return img_bytes, node_errors
+    except Exception as e:
+        return None, str(e)
+
+
+# ─── 워크플로우 능력 테스트 ────────────────────────────────
+_wf_test_running = False
+_wf_test_stop_requested = False
+
+
+async def handle_api_workflow_test_list(request: web.Request) -> web.Response:
+    """workflow_backup_static 폴더의 백업 JSON 파일 목록을 반환한다."""
+    backup_dir = app_config.get("backup_base_dir", "") or WORKFLOW_BACKUP_STATIC_DIR
+    if not os.path.isdir(backup_dir):
+        return web.json_response({"error": f"백업 폴더 없음: {backup_dir}"}, status=404)
+
+    json_files = sorted(
+        [f for f in os.listdir(backup_dir) if f.endswith(".json") and "_info." not in f]
+    )
+    items = []
+    for fname in json_files:
+        name = fname[:-5]  # .json 제거
+        # 썸네일 이미지 존재 여부
+        has_image = os.path.isfile(os.path.join(backup_dir, name + ".webp")) or \
+                    os.path.isfile(os.path.join(backup_dir, name + ".png"))
+        items.append({"name": name, "filename": fname, "has_image": has_image})
+
+    return web.json_response({"total": len(items), "files": items})
+
+
+async def _run_workflow_test(file_list: list, backup_dir: str):
+    """백업 파일 목록을 순차적으로 테스트한다."""
+    global _wf_test_running, _wf_test_stop_requested
+    _wf_test_running = True
+    _wf_test_stop_requested = False
+    total = len(file_list)
+
+    await notify_frontend("wf_test_start", {"total": total})
+
+    for i, fname in enumerate(file_list):
+        if _wf_test_stop_requested:
+            await notify_frontend("wf_test_stopped", {"completed": i, "total": total})
+            break
+
+        name = fname[:-5]
+        filepath = os.path.join(backup_dir, fname)
+        positive, negative = _extract_prompts_from_backup(filepath)
+
+        if not positive:
+            await notify_frontend("wf_test_progress", {
+                "index": i, "total": total, "name": name,
+                "status": "skipped", "reason": "프롬프트 없음"
+            })
+            continue
+
+        await notify_frontend("wf_test_progress", {
+            "index": i, "total": total, "name": name,
+            "status": "generating", "positive_preview": positive[:100]
+        })
+
+        try:
+            start_time = time.time()
+            img_bytes, result_info = await generate_image_with_prompt(positive, negative)
+            elapsed = time.time() - start_time
+
+            if img_bytes:
+                b64 = base64.b64encode(img_bytes).decode("ascii")
+                await notify_frontend("wf_test_progress", {
+                    "index": i, "total": total, "name": name,
+                    "status": "done", "elapsed": round(elapsed, 1),
+                    "image": f"data:image/webp;base64,{b64}"
+                })
+            else:
+                await notify_frontend("wf_test_progress", {
+                    "index": i, "total": total, "name": name,
+                    "status": "error", "error": str(result_info)
+                })
+        except Exception as e:
+            await notify_frontend("wf_test_progress", {
+                "index": i, "total": total, "name": name,
+                "status": "error", "error": str(e)
+            })
+
+    _wf_test_running = False
+    if not _wf_test_stop_requested:
+        await notify_frontend("wf_test_complete", {"total": total})
+
+
+async def handle_api_workflow_test_start(request: web.Request) -> web.Response:
+    """워크플로우 능력 테스트를 시작한다."""
+    global _wf_test_running
+    if _wf_test_running:
+        return web.json_response({"error": "이미 테스트가 실행 중입니다"}, status=409)
+
+    body = await request.json()
+    start_idx = body.get("start", 0)
+    end_idx = body.get("end", -1)
+
+    backup_dir = app_config.get("backup_base_dir", "") or WORKFLOW_BACKUP_STATIC_DIR
+    if not os.path.isdir(backup_dir):
+        return web.json_response({"error": f"백업 폴더 없음: {backup_dir}"}, status=404)
+
+    json_files = sorted(
+        [f for f in os.listdir(backup_dir) if f.endswith(".json") and "_info." not in f]
+    )
+    if not json_files:
+        return web.json_response({"error": "백업 파일이 없습니다"}, status=404)
+
+    if end_idx < 0 or end_idx >= len(json_files):
+        end_idx = len(json_files) - 1
+    start_idx = max(0, min(start_idx, len(json_files) - 1))
+
+    selected = json_files[start_idx:end_idx + 1]
+    if not selected:
+        return web.json_response({"error": "선택된 범위에 파일이 없습니다"}, status=400)
+
+    asyncio.create_task(_run_workflow_test(selected, backup_dir))
+    return web.json_response({"status": "started", "count": len(selected)})
+
+
+async def handle_api_workflow_test_stop(request: web.Request) -> web.Response:
+    """실행 중인 워크플로우 테스트를 중단한다."""
+    global _wf_test_stop_requested
+    if not _wf_test_running:
+        return web.json_response({"error": "실행 중인 테스트가 없습니다"}, status=400)
+    _wf_test_stop_requested = True
+    return web.json_response({"status": "stopping"})
+
+
+async def handle_api_workflow_test_status(request: web.Request) -> web.Response:
+    """워크플로우 테스트 실행 상태를 반환한다."""
+    return web.json_response({"running": _wf_test_running})
 
 
 # ─── 배치 모드 함수 설정 (generate_image_with_prompt 정의 후) ───
@@ -827,16 +1131,51 @@ async def _before_generate_enhance(request, batch):
     if enhanced != original:
         enhance_mode.track_original(request.request_id, original)
         request.processed_positive = enhanced
+        request.wildcard_info = enhance_mode.get_last_wildcard_info()
         print(f"[ENHANCE] 프롬프트 강화 적용: {request.request_id}")
     else:
         print(f"[ENHANCE] 프롬프트 변경 없음: {request.request_id}")
 
+
+# ─── 배치 전처리 콜백 (동일 chat 재처리 방지) ───
+async def _preprocess_batch(batch):
+    """배치 시작 시 1회 호출: 중복 chat 감지 및 이전 배치 정리"""
+    from modes.prompt_enhance_mode_preprocess import preprocess_clean_duplicate_chats
+
+    # 배치 구분자 추적 초기화
+    enhance_mode._batch_separator_chars.clear()
+
+    if not batch.requests:
+        return
+
+    # 첫 번째 요청의 chat으로 비교
+    first_chat = batch.requests[0].chat_content or ""
+    if not first_chat:
+        # chat_content가 없으면 positive에서 [CHAT] 섹션 추출 시도
+        from modes.prompt_enhance_mode import PromptEnhanceMode
+        first_chat = PromptEnhanceMode._extract_section(
+            batch.requests[0].processed_positive or batch.requests[0].positive, "CHAT"
+        )
+
+    deleted = await preprocess_clean_duplicate_chats(first_chat)
+    if deleted > 0:
+        print(f"[PREPROCESS] 배치 {batch.batch_id}: {deleted}개 중복 엔트리 정리")
+
 batch_mode.before_generate_func = _before_generate_enhance
+batch_mode.preprocess_func = _preprocess_batch
 outfit_mode.notify_frontend_func = notify_frontend
 enhance_mode.notify_frontend_func = notify_frontend
 # 복장 추출 모드 함수 의존성 설정 (convert_workflow_via_endpoint 정의 후)
 outfit_mode.convert_workflow_func = convert_workflow_via_endpoint
 outfit_mode.compute_hash_func = compute_file_hash
+# 에셋 생성 모드 함수 의존성 설정
+asset_mode.notify_frontend_func = notify_frontend
+asset_mode.convert_workflow_func = convert_workflow_via_endpoint
+asset_mode.compute_hash_func = compute_file_hash
+asset_mode.submit_workflow_func = submit_workflow_to_comfy
+asset_mode.build_prompt_with_workflow_func = build_prompt_with_workflow
+# 포즈 편집 모드 함수 의존성 설정
+pose_mode.notify_frontend_func = notify_frontend
 
 
 # ─── 워크플로우 복원 (모드 종료 후 가중치 프리로드) ─────────
@@ -1322,34 +1661,61 @@ async def handle_ws(request: web.Request) -> web.WebSocketResponse:
     return ws
 
 
+async def _ws_heartbeat():
+    """주기적으로 핑을 보내고 응답 없는 연결을 제거."""
+    while True:
+        await asyncio.sleep(WS_HEARTBEAT_INTERVAL)
+        now = time.time()
+        stale = []
+        for cid, entry in list(frontend_ws_connections.items()):
+            elapsed = now - entry["last_pong"]
+            if elapsed > WS_HEARTBEAT_INTERVAL + WS_STALE_TIMEOUT:
+                stale.append(cid)
+                continue
+            try:
+                await entry["ws"].send_json({"type": "ping"})
+            except Exception:
+                stale.append(cid)
+        for cid in stale:
+            frontend_ws_connections.pop(cid, None)
+            print(f"[FRONTEND WS] 하트비트 응답 없음, 제거: {cid}")
+
+
 async def handle_frontend_ws(request: web.Request) -> web.WebSocketResponse:
     """프론트엔드 대시보드용 WebSocket 핸들러"""
     ws = web.WebSocketResponse()
     await ws.prepare(request)
     client_id = str(uuid.uuid4())
-    frontend_ws_connections[client_id] = ws
-    print(f"[FRONTEND WS] 연결됨: {client_id}")
-    
+
+    # 기존 연결 정리 (혼자 사용하므로 최신 1개만 유지, close() 하지 않음 - 재연결 루프 방지)
+    frontend_ws_connections.clear()
+
+    frontend_ws_connections[client_id] = {"ws": ws, "last_pong": time.time()}
+    print(f"[FRONTEND WS] 연결됨: {client_id} (총 {len(frontend_ws_connections)}명)")
+
     # Send initial reschedule status
     if reschedule_queue is not None:
         await ws.send_json({
             "type": "reschedule_changed",
             "data": {"scheduled": True, "name": reschedule_queue["name"]}
         })
-    
+
     try:
         async for msg in ws:
             if msg.type == aiohttp.WSMsgType.TEXT:
                 try:
                     data = json.loads(msg.data)
-                    # Handle frontend messages if needed
+                    if data.get("type") == "pong":
+                        entry = frontend_ws_connections.get(client_id)
+                        if entry:
+                            entry["last_pong"] = time.time()
                 except:
                     pass
             elif msg.type in (aiohttp.WSMsgType.ERROR, aiohttp.WSMsgType.CLOSED):
                 break
     finally:
         frontend_ws_connections.pop(client_id, None)
-        print(f"[FRONTEND WS] 해제됨: {client_id}")
+        print(f"[FRONTEND WS] 해제됨: {client_id} (총 {len(frontend_ws_connections)}명)")
     return ws
 
 
@@ -1376,7 +1742,7 @@ async def handle_stats(request):
 async def handle_frontend(request: web.Request) -> web.Response:
     html_path = os.path.join(FRONTEND_DIR, "index.html")
     if os.path.exists(html_path):
-        return web.FileResponse(html_path)
+        return web.FileResponse(html_path, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
     return web.Response(text="Frontend not found. frontend/index.html 필요", status=404)
 
 
@@ -1464,6 +1830,16 @@ async def handle_api_backups(request: web.Request) -> web.Response:
             except:
                 pass
 
+        # NSFW 와일드카드 정보 로드
+        wildcard_info = {}
+        wildcard_path = os.path.join(backup_dir, f"{base}_wildcard.json")
+        if os.path.exists(wildcard_path):
+            try:
+                with open(wildcard_path, "r", encoding="utf-8") as wf:
+                    wildcard_info = json.load(wf)
+            except:
+                pass
+
         backups.append({
             "name": base,
             "image_url": f"/api/backup_image/{base}.webp",
@@ -1471,6 +1847,7 @@ async def handle_api_backups(request: web.Request) -> web.Response:
             "positive": positive,
             "negative": negative,
             "enhanced_positive": enhanced_positive,
+            "wildcard_info": wildcard_info,
             "conversion_info": info,
             "mtime": os.path.getmtime(f),
             "is_scheduled": is_scheduled,
@@ -1485,41 +1862,18 @@ async def handle_api_backups(request: web.Request) -> web.Response:
 
 
 async def handle_api_backup_image(request: web.Request) -> web.Response:
-    """백업 이미지를 서빙한다. 데이터 절약 모드 시 webp로 압축해서 전송."""
+    """백업 이미지를 서빙한다. 저장된 파일을 그대로 전송."""
     filename = request.match_info.get("filename", "")
     if ".." in filename or "/" in filename or "\\" in filename:
         return web.Response(status=400, text="Invalid filename")
-    
+
     backup_dir = get_backup_base_dir()
     path = os.path.join(backup_dir, filename)
-    
+
     if not os.path.exists(path):
         return web.Response(status=404)
-    
-    # 데이터 절약 모드 확인
-    if get_data_saving_mode():
-        try:
-            with open(path, "rb") as f:
-                raw_bytes = f.read()
-            
-            # 이미 webp 파일이면 품질만 조절해서 재압축
-            img = Image.open(BytesIO(raw_bytes))
-            out = BytesIO()
-            quality = get_webp_quality()
-            
-            if img.mode == "RGBA":
-                img.save(out, format="WEBP", quality=quality, method=6)
-            else:
-                img.convert("RGB").save(out, format="WEBP", quality=quality, method=6)
-            
-            result = out.getvalue()
-            print(f"[DATA_SAVING] 이미지 압축: {len(raw_bytes):,}B → {len(result):,}B (q={quality})")
-            return web.Response(body=result, content_type="image/webp")
-        except Exception as e:
-            print(f"[DATA_SAVING] 이미지 압축 실패, 원본 전송: {e}")
-            return web.FileResponse(path)
-    else:
-        return web.FileResponse(path)
+
+    return web.FileResponse(path)
 
 
 async def handle_api_backup_prompt(request: web.Request) -> web.Response:
@@ -2116,6 +2470,12 @@ async def handle_api_config(request: web.Request) -> web.Response:
             if "enhance_prompt_file" in body:
                 enhance_mode.enhance_prompt_file = str(body["enhance_prompt_file"])
 
+            # 에셋 생성 모드 설정 업데이트
+            if "asset_workflow_source_path" in body:
+                asset_mode.workflow_source_path = str(body["asset_workflow_source_path"])
+                asset_mode._asset_api_workflow = None
+                asset_mode._asset_hash = ""
+
             # LLM 서비스 설정 업데이트
             llm_service.update_config({
                 "llm_service": app_config.get("llm_service", "copilot"),
@@ -2343,6 +2703,129 @@ async def handle_api_enhance_mode_status(request: web.Request) -> web.Response:
     return web.json_response(enhance_mode.get_status())
 
 
+async def handle_api_enhance_report(request: web.Request) -> web.Response:
+    """강화 프롬프트 리포트를 저장한다. 최대 20개까지 보관."""
+    try:
+        body = await request.json()
+        original_positive = body.get("original_positive", "").strip()
+        enhanced_positive = body.get("enhanced_positive", "").strip()
+        reason = body.get("reason", "").strip()
+        chat_content = body.get("chat_content", "").strip()
+        slot = body.get("slot", "").strip()
+        wildcard_info = body.get("wildcard_info", {})
+
+        if not original_positive or not enhanced_positive:
+            return web.json_response({"ok": False, "error": "프롬프트 정보가 누락되었습니다."}, status=400)
+        if not reason:
+            return web.json_response({"ok": False, "error": "리포트 사유를 입력해주세요."}, status=400)
+
+        now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        # 기존 리포트 읽기
+        reports = []
+        if os.path.exists(REPORT_FILE):
+            with open(REPORT_FILE, "r", encoding="utf-8") as f:
+                content = f.read()
+            # "---\n" 으로 구분된 각 리포트 파싱
+            entries = [e.strip() for e in content.split("---") if e.strip()]
+            reports = entries
+
+        # Chat / Slot 섹션 (있을 때만 추가)
+        chat_section = ""
+        if chat_content:
+            chat_section = f"""
+
+### Chat 데이터
+```
+{chat_content}
+```"""
+
+        slot_section = ""
+        if slot:
+            slot_section = f"""
+
+### Slot 데이터
+```
+{slot}
+```"""
+
+        # NSFW 와일드카드 섹션
+        wildcard_section = ""
+        if wildcard_info and wildcard_info.get("has_wildcards"):
+            all_scenes = []
+            raw_parts = []
+            for c in wildcard_info.get("characters", []):
+                scenes = c.get("nsfw_replaced", [])
+                if scenes:
+                    all_scenes.extend(scenes)
+                raw = c.get("outfit_llm_raw", "")
+                if raw:
+                    raw_parts.append(f"**{c.get('name', '?')}**: {raw}")
+            if all_scenes or raw_parts:
+                wildcard_section = "\n\n### NSFW 와일드카드"
+                if all_scenes:
+                    wildcard_section += f"\n- **치환된 씬**: {', '.join(all_scenes)}"
+                if raw_parts:
+                    wildcard_section += "\n\n### LLM 원본 (캐릭터별)"
+                    for part in raw_parts:
+                        wildcard_section += f"\n{part}"
+
+        # 새 리포트 항목 생성
+        new_entry = f"""## Report #{len(reports) + 1}
+- **일시**: {now}
+- **리포트 사유**: {reason}
+
+### 원본 프롬프트 (긍정)
+```
+{original_positive}
+```
+
+### 강화 프롬프트
+```
+{enhanced_positive}
+```{wildcard_section}{chat_section}{slot_section}"""
+
+        reports.append(new_entry)
+
+        # 20개 초과 시 오래된 것부터 제거
+        if len(reports) > 20:
+            reports = reports[-20:]
+
+        # 파일에 쓰기
+        os.makedirs(REPORT_DIR, exist_ok=True)
+        with open(REPORT_FILE, "w", encoding="utf-8") as f:
+            f.write("# Enhance Prompt Reports\n\n")
+            f.write(f"> 최대 20개까지 보관 | 현재 {len(reports)}건\n\n")
+            f.write("\n---\n\n".join(reports))
+            f.write("\n")
+
+        return web.json_response({"ok": True, "count": len(reports)})
+    except Exception as e:
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+
+async def handle_api_enhance_report_list(request: web.Request) -> web.Response:
+    """강화 프롬프트 리포트 목록을 반환한다."""
+    try:
+        if not os.path.exists(REPORT_FILE):
+            return web.json_response({"ok": True, "reports": [], "count": 0})
+        with open(REPORT_FILE, "r", encoding="utf-8") as f:
+            content = f.read()
+        return web.json_response({"ok": True, "content": content})
+    except Exception as e:
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+
+async def handle_api_enhance_report_clear(request: web.Request) -> web.Response:
+    """강화 프롬프트 리포트를 모두 삭제한다."""
+    try:
+        if os.path.exists(REPORT_FILE):
+            os.remove(REPORT_FILE)
+        return web.json_response({"ok": True})
+    except Exception as e:
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+
 async def handle_api_workflow_files(request: web.Request) -> web.Response:
     """워크플로우 파일 목록을 반환한다. 검색 쿼리 지원."""
     try:
@@ -2421,7 +2904,7 @@ async def log_middleware(request, handler):
 
 
 # ─── 앱 설정 ─────────────────────────────────────────────
-app = web.Application(middlewares=[log_middleware])
+app = web.Application(middlewares=[log_middleware], client_max_size=200*1024*1024)
 
 # ComfyUI 프록시 라우트
 app.router.add_post("/prompt", handle_prompt)
@@ -2466,6 +2949,9 @@ app.router.add_post("/api/outfit_mode/clear", handle_api_outfit_mode_clear)
 app.router.add_post("/api/outfit_mode/delete_entry", handle_api_outfit_mode_delete_entry)
 # 프롬프트 강화 모드 API
 app.router.add_get("/api/enhance_mode/status", handle_api_enhance_mode_status)
+app.router.add_post("/api/enhance_report", handle_api_enhance_report)
+app.router.add_get("/api/enhance_report", handle_api_enhance_report_list)
+app.router.add_delete("/api/enhance_report", handle_api_enhance_report_clear)
 # 모드 로그 API
 app.router.add_get("/api/mode_logs", handle_api_mode_logs)
 app.router.add_get("/api/mode_logs/export", handle_api_mode_logs_export)
@@ -2479,14 +2965,557 @@ app.router.add_get("/api/frontend_ws", handle_frontend_ws)
 app.router.add_get("/api/config", handle_api_config)
 app.router.add_post("/api/config", handle_api_config)
 app.router.add_get("/api/workflow_files", handle_api_workflow_files)
+# 워크플로우 능력 테스트 API
+app.router.add_get("/api/workflow_test/list", handle_api_workflow_test_list)
+app.router.add_post("/api/workflow_test/start", handle_api_workflow_test_start)
+app.router.add_post("/api/workflow_test/stop", handle_api_workflow_test_stop)
+app.router.add_get("/api/workflow_test/status", handle_api_workflow_test_status)
+
+# 사운드 파일 서빙
+SOUND_DIR = os.path.join(BASE_DIR, "modes", "sound")
+async def handle_sound_file(request: web.Request) -> web.Response:
+    filename = request.match_info.get("filename", "")
+    filepath = os.path.join(SOUND_DIR, filename)
+    if os.path.isfile(filepath):
+        return web.FileResponse(filepath)
+    return web.Response(text="Not found", status=404)
+app.router.add_get("/api/sound/{filename}", handle_sound_file)
+
+# ─── 에셋 생성 모드 API 핸들러 ────────────────────────────
+async def handle_api_asset_mode_status(request: web.Request) -> web.Response:
+    return web.json_response(asset_mode.get_status())
+
+async def handle_api_asset_mode_tags_get(request: web.Request) -> web.Response:
+    return web.json_response(asset_mode.get_tags())
+
+async def handle_api_asset_mode_tags_post(request: web.Request) -> web.Response:
+    try:
+        body = await request.json()
+        action = body.get("action", "")
+        result = {"success": False, "error": "알 수 없는 액션"}
+
+        if action == "add_character":
+            result = asset_mode.add_character(body.get("name", ""))
+        elif action == "remove_character":
+            result = asset_mode.remove_character(body.get("name", ""))
+        elif action == "update_character":
+            result = asset_mode.update_character(
+                body.get("name", ""),
+                body.get("appearance", ""),
+                body.get("outfit", ""),
+                body.get("expression", ""),
+            )
+        elif action == "add_appearance":
+            result = asset_mode.add_appearance(body.get("name", ""))
+        elif action == "remove_appearance":
+            result = asset_mode.remove_appearance(body.get("name", ""))
+        elif action == "duplicate_appearance":
+            result = asset_mode.duplicate_appearance(body.get("name", ""), body.get("new_name", ""))
+        elif action == "add_appearance_tag":
+            result = asset_mode.add_appearance_tag(body.get("name", ""), body.get("value", ""))
+        elif action == "remove_appearance_tag":
+            result = asset_mode.remove_appearance_tag(body.get("name", ""), body.get("index", -1))
+        elif action == "add_outfit":
+            result = asset_mode.add_outfit(body.get("name", ""))
+        elif action == "remove_outfit":
+            result = asset_mode.remove_outfit(body.get("name", ""))
+        elif action == "add_outfit_tag":
+            result = asset_mode.add_outfit_tag(body.get("name", ""), body.get("value", ""))
+        elif action == "remove_outfit_tag":
+            result = asset_mode.remove_outfit_tag(body.get("name", ""), body.get("index", -1))
+        elif action == "duplicate_outfit":
+            result = asset_mode.duplicate_outfit(body.get("name", ""), body.get("new_name", ""))
+        elif action == "add_expression":
+            result = asset_mode.add_expression(body.get("name", ""))
+        elif action == "remove_expression":
+            result = asset_mode.remove_expression(body.get("name", ""))
+        elif action == "add_expression_tag":
+            result = asset_mode.add_expression_tag(body.get("name", ""), body.get("value", ""))
+        elif action == "remove_expression_tag":
+            result = asset_mode.remove_expression_tag(body.get("name", ""), body.get("index", -1))
+        elif action == "duplicate_expression":
+            result = asset_mode.duplicate_expression(body.get("name", ""), body.get("new_name", ""))
+        elif action == "add_quality_tag":
+            result = asset_mode.add_quality_tag(body.get("value", ""))
+        elif action == "remove_quality_tag":
+            result = asset_mode.remove_quality_tag(body.get("index", -1))
+        elif action == "add_negative_tag":
+            result = asset_mode.add_negative_tag(body.get("value", ""))
+        elif action == "remove_negative_tag":
+            result = asset_mode.remove_negative_tag(body.get("index", -1))
+        elif action == "save_quality_preset":
+            result = asset_mode.save_quality_preset(body.get("name", ""), body.get("tags", []))
+        elif action == "delete_quality_preset":
+            result = asset_mode.delete_quality_preset(body.get("name", ""))
+        elif action == "duplicate_quality_preset":
+            src, dn = body.get("source", ""), body.get("name", "")
+            ps = asset_mode._tags.setdefault("quality_presets", {})
+            if src not in ps: result = {"success": False, "error": "원본 없음"}
+            elif not dn.strip(): result = {"success": False, "error": "빈 이름"}
+            elif dn.strip() in ps: result = {"success": False, "error": "이미 존재"}
+            else: ps[dn.strip()] = list(ps[src]); asset_mode.save_tags(); result = {"success": True}
+        elif action == "load_quality_preset":
+            name = body.get("name", "")
+            if not name:
+                asset_mode._tags["quality"] = []
+                asset_mode.save_tags()
+                result = {"success": True}
+            else:
+                presets = asset_mode.get_quality_presets()
+                if name in presets:
+                    asset_mode._tags["quality"] = list(presets[name])
+                    asset_mode.save_tags()
+                    result = {"success": True}
+                else:
+                    result = {"success": False, "error": "존재하지 않는 프리셋"}
+        # 구도/기타 태그
+        elif action == "add_composition_tag":
+            result = asset_mode.add_composition_tag(body.get("value", ""))
+        elif action == "remove_composition_tag":
+            result = asset_mode.remove_composition_tag(body.get("index", -1))
+        elif action == "save_composition_preset":
+            result = asset_mode.save_composition_preset(body.get("name", ""), body.get("tags", []))
+        elif action == "delete_composition_preset":
+            result = asset_mode.delete_composition_preset(body.get("name", ""))
+        elif action == "duplicate_composition_preset":
+            src, dn = body.get("source", ""), body.get("name", "")
+            ps = asset_mode._tags.setdefault("composition_presets", {})
+            if src not in ps: result = {"success": False, "error": "원본 없음"}
+            elif not dn.strip(): result = {"success": False, "error": "빈 이름"}
+            elif dn.strip() in ps: result = {"success": False, "error": "이미 존재"}
+            else: ps[dn.strip()] = list(ps[src]); asset_mode.save_tags(); result = {"success": True}
+        elif action == "load_composition_preset":
+            name = body.get("name", "")
+            if not name:
+                asset_mode._tags["composition"] = []
+                asset_mode.save_tags()
+                result = {"success": True}
+            else:
+                presets = asset_mode.get_composition_presets()
+                if name in presets:
+                    asset_mode._tags["composition"] = list(presets[name])
+                    asset_mode.save_tags()
+                    result = {"success": True}
+                else:
+                    result = {"success": False, "error": "존재하지 않는 프리셋"}
+        # 태그 순서 변경
+        elif action == "reorder_global_tags":
+            result = asset_mode.reorder_global_tags(
+                body.get("category", ""),
+                body.get("order", []),
+                body.get("tags"))
+        elif action == "reorder_sub_tags":
+            result = asset_mode.reorder_sub_tags(
+                body.get("sub", ""), body.get("name", ""), body.get("order", []))
+        # 부정 프리셋
+        elif action == "save_negative_preset":
+            result = asset_mode.save_negative_preset(body.get("name", ""), body.get("tags", []))
+        elif action == "delete_negative_preset":
+            result = asset_mode.delete_negative_preset(body.get("name", ""))
+        elif action == "duplicate_negative_preset":
+            src, dn = body.get("source", ""), body.get("name", "")
+            ps = asset_mode._tags.setdefault("negative_presets", {})
+            if src not in ps: result = {"success": False, "error": "원본 없음"}
+            elif not dn.strip(): result = {"success": False, "error": "빈 이름"}
+            elif dn.strip() in ps: result = {"success": False, "error": "이미 존재"}
+            else: ps[dn.strip()] = list(ps[src]); asset_mode.save_tags(); result = {"success": True}
+        elif action == "load_negative_preset":
+            name = body.get("name", "")
+            if not name:
+                asset_mode._tags["negative"] = []
+                asset_mode.save_tags()
+                result = {"success": True}
+            else:
+                presets = asset_mode.get_negative_presets()
+                if name in presets:
+                    asset_mode._tags["negative"] = list(presets[name])
+                    asset_mode.save_tags()
+                    result = {"success": True}
+                else:
+                    result = {"success": False, "error": "존재하지 않는 프리셋"}
+        # 캐릭터 프리셋
+        elif action == "save_character_preset":
+            result = asset_mode.save_character_preset(
+                body.get("name", ""),
+                body.get("appearance", ""),
+                body.get("outfit", ""),
+            )
+        elif action == "load_character_preset":
+            result = asset_mode.load_character_preset(body.get("name", ""), body.get("character", ""))
+        elif action == "delete_character_preset":
+            result = asset_mode.delete_character_preset(body.get("name", ""))
+        elif action == "create_character_preset":
+            result = asset_mode.create_character_preset(body.get("name", ""))
+        elif action == "duplicate_character_preset":
+            src = body.get("source", "")
+            new_name = body.get("name", "")
+            presets = asset_mode._tags.get("character_presets", {})
+            if src not in presets:
+                result = {"success": False, "error": "원본 프리셋이 없음"}
+            elif not new_name.strip():
+                result = {"success": False, "error": "빈 이름"}
+            elif new_name.strip() in presets:
+                result = {"success": False, "error": "이미 존재하는 프리셋명"}
+            else:
+                import copy
+                presets[new_name.strip()] = copy.deepcopy(presets[src])
+                asset_mode.save_tags()
+                result = {"success": True}
+        # 외모 프리셋
+        elif action == "save_appearance_preset":
+            result = asset_mode.save_appearance_preset(body.get("name", ""), body.get("character", ""), body.get("appearance", ""))
+        elif action == "load_appearance_preset":
+            result = asset_mode.load_appearance_preset(body.get("name", ""), body.get("character", ""), body.get("appearance", ""))
+        elif action == "delete_appearance_preset":
+            result = asset_mode.delete_appearance_preset(body.get("name", ""))
+        # 복장 프리셋
+        elif action == "save_outfit_preset":
+            result = asset_mode.save_outfit_preset(body.get("name", ""), body.get("character", ""), body.get("outfit", ""))
+        elif action == "load_outfit_preset":
+            result = asset_mode.load_outfit_preset(body.get("name", ""), body.get("character", ""), body.get("outfit", ""))
+        elif action == "delete_outfit_preset":
+            result = asset_mode.delete_outfit_preset(body.get("name", ""))
+        # 표정 프리셋
+        elif action == "save_expression_preset":
+            result = asset_mode.save_expression_preset(body.get("name", ""), body.get("character", ""), body.get("expression", ""))
+        elif action == "load_expression_preset":
+            result = asset_mode.load_expression_preset(body.get("name", ""), body.get("character", ""), body.get("expression", ""))
+        elif action == "delete_expression_preset":
+            result = asset_mode.delete_expression_preset(body.get("name", ""))
+
+        return web.json_response(result)
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+async def handle_api_asset_mode_generate(request: web.Request) -> web.Response:
+    try:
+        body = await request.json()
+        result = await asset_mode.generate(
+            character=body.get("character", ""),
+            outfit=body.get("outfit", ""),
+            expression=body.get("expression", ""),
+            appearance=body.get("appearance", ""),
+            face_id_enabled=body.get("face_id_enabled", False),
+            face_id_strength=float(body.get("face_id_strength", 0.55)),
+            reference_image=body.get("reference_image", ""),
+            pose_enabled=body.get("pose_enabled", False),
+            pose_id=body.get("pose_id", ""),
+            fd_activate=body.get("fd_activate", False),
+            hd_activate=body.get("hd_activate", False),
+            ed_activate=body.get("ed_activate", False),
+        )
+        return web.json_response(result)
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+async def handle_api_asset_mode_characters(request: web.Request) -> web.Response:
+    return web.json_response({"characters": asset_mode.list_characters()})
+
+async def handle_api_asset_mode_gallery(request: web.Request) -> web.Response:
+    character = request.match_info.get("character", "")
+    return web.json_response({"gallery": asset_mode.list_character_gallery(character)})
+
+async def handle_api_asset_mode_outfits(request: web.Request) -> web.Response:
+    character = request.match_info.get("character", "")
+    return web.json_response({"outfits": asset_mode.list_outfits()})
+
+async def handle_api_asset_mode_expressions(request: web.Request) -> web.Response:
+    character = request.match_info.get("character", "")
+    return web.json_response({"expressions": asset_mode.list_expressions()})
+
+async def handle_api_asset_mode_images(request: web.Request) -> web.Response:
+    character = request.match_info.get("character", "")
+    outfit = request.match_info.get("outfit", "")
+    expression = request.match_info.get("expression", "")
+    return web.json_response({"images": asset_mode.list_images(character, outfit, expression)})
+
+async def handle_api_asset_mode_set_representative(request: web.Request) -> web.Response:
+    try:
+        body = await request.json()
+        result = asset_mode.set_representative(
+            body.get("character", ""),
+            body.get("outfit", ""),
+            body.get("expression", ""),
+            body.get("filename", ""),
+        )
+        return web.json_response(result)
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+async def handle_api_asset_mode_image(request: web.Request) -> web.Response:
+    character = request.match_info.get("character", "")
+    outfit = request.match_info.get("outfit", "")
+    expression = request.match_info.get("expression", "")
+    filename = request.match_info.get("filename", "")
+    filepath = asset_mode.get_image_path(character, outfit, expression, filename)
+    if filepath and os.path.isfile(filepath):
+        return web.FileResponse(filepath)
+    return web.Response(text="Not found", status=404)
+
+async def handle_api_asset_mode_delete_combination(request: web.Request) -> web.Response:
+    try:
+        body = await request.json()
+        result = asset_mode.delete_combination(
+            body.get("character", ""),
+            body.get("outfit", ""),
+            body.get("expression", ""),
+        )
+        return web.json_response(result)
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+async def handle_api_asset_mode_delete_image(request: web.Request) -> web.Response:
+    try:
+        body = await request.json()
+        result = asset_mode.delete_image(
+            body.get("character", ""),
+            body.get("outfit", ""),
+            body.get("expression", ""),
+            body.get("filename", ""),
+        )
+        return web.json_response(result)
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+async def handle_api_asset_mode_upload_reference(request: web.Request) -> web.Response:
+    """레퍼런스 이미지를 ComfyUI에 업로드하고 파일명 반환."""
+    try:
+        reader = await request.multipart()
+        image_data = None
+        filename = "reference.png"
+        async for part in reader:
+            if part.name == "image":
+                image_data = await part.read()
+                if part.filename:
+                    filename = part.filename
+        if not image_data:
+            return web.json_response({"success": False, "error": "이미지 없음"}, status=400)
+
+        import aiohttp, mimetypes
+        url = f"http://{REAL_COMFY_HOST}:{REAL_COMFY_PORT}/upload/image"
+        content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+        data = aiohttp.FormData()
+        data.add_field("image", image_data, filename=filename, content_type=content_type)
+        data.add_field("overwrite", "true")
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, data=data) as resp:
+                if resp.status != 200:
+                    text = await resp.text()
+                    return web.json_response({"success": False, "error": f"ComfyUI 업로드 실패 ({resp.status}): {text}"}, status=502)
+                result = await resp.json()
+                comfy_name = result.get("name", filename)
+                if not comfy_name:
+                    return web.json_response({"success": False, "error": "ComfyUI에서 파일명을 반환하지 않음"}, status=502)
+                return web.json_response({"success": True, "name": comfy_name})
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+# ─── 이름 치환 규칙 API 핸들러 ─────────────────────────────
+async def handle_api_asset_mode_name_mapping_get(request: web.Request) -> web.Response:
+    character = request.match_info.get("character", "")
+    if not character:
+        return web.json_response({"error": "캐릭터 이름 필요"}, status=400)
+    return web.json_response(asset_mode.get_character_export_info(character))
+
+async def handle_api_asset_mode_name_mapping_post(request: web.Request) -> web.Response:
+    try:
+        body = await request.json()
+        character = body.get("character", "")
+        if not character:
+            return web.json_response({"success": False, "error": "캐릭터 이름 필요"}, status=400)
+        result = asset_mode.save_character_name_mapping(
+            character,
+            body.get("export_name", ""),
+            body.get("outfit_mapping", {}),
+            body.get("expression_mapping", {}),
+        )
+        return web.json_response(result)
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+async def handle_api_asset_mode_export(request: web.Request) -> web.Response:
+    character = request.match_info.get("character", "")
+    if not character:
+        return web.json_response({"error": "캐릭터 이름 필요"}, status=400)
+    try:
+        buf = await asyncio.get_event_loop().run_in_executor(None, asset_mode.export_character_zip, character)
+        if buf is None:
+            return web.json_response({"error": "내보낼 대표 이미지가 없습니다."}, status=404)
+        from urllib.parse import quote
+        filename = quote(f"{character}.zip")
+        return web.Response(
+            body=buf.getvalue(),
+            content_type="application/zip",
+            headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"},
+        )
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
+# ─── 포즈 편집 모드 API 핸들러 ─────────────────────────────
+async def handle_api_pose_mode_status(request: web.Request) -> web.Response:
+    return web.json_response(pose_mode.get_status())
+
+async def handle_api_pose_mode_detect(request: web.Request) -> web.Response:
+    try:
+        reader = await request.multipart()
+        image_data = None
+        filename = "upload.png"
+        detect_body = True
+        detect_hand = True
+        detect_face = True
+
+        async for part in reader:
+            if part.name == "image":
+                image_data = await part.read()
+                if part.filename:
+                    filename = part.filename
+            elif part.name == "detect_body":
+                val = await part.text()
+                detect_body = val.lower() in ("true", "1", "enable")
+            elif part.name == "detect_hand":
+                val = await part.text()
+                detect_hand = val.lower() in ("true", "1", "enable")
+            elif part.name == "detect_face":
+                val = await part.text()
+                detect_face = val.lower() in ("true", "1", "enable")
+
+        if not image_data:
+            return web.json_response(
+                {"success": False, "error": "이미지가 없습니다."}, status=400
+            )
+
+        result = await pose_mode.detect_pose(
+            image_data, filename, detect_body, detect_hand, detect_face
+        )
+        return web.json_response(result)
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+async def handle_api_pose_mode_poses(request: web.Request) -> web.Response:
+    return web.json_response({"poses": pose_mode.list_poses()})
+
+async def handle_api_pose_mode_save(request: web.Request) -> web.Response:
+    try:
+        body = await request.json()
+        result = pose_mode.save_pose(
+            pose_data=body.get("keypoints"),
+            name=body.get("name"),
+            rendered_image_b64=body.get("rendered_image"),
+            source_image_b64=body.get("source_image"),
+        )
+        return web.json_response(result)
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+async def handle_api_pose_mode_load(request: web.Request) -> web.Response:
+    pose_id = request.match_info.get("pose_id", "")
+    result = pose_mode.load_pose(pose_id)
+    if result is None:
+        return web.json_response({"error": "포즈를 찾을 수 없습니다."}, status=404)
+    return web.json_response(result)
+
+async def handle_api_pose_mode_delete(request: web.Request) -> web.Response:
+    try:
+        body = await request.json()
+        result = pose_mode.delete_pose(body.get("id", ""))
+        return web.json_response(result)
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+# ─── 체인 프리셋 API 핸들러 ──────────────────────────────
+async def handle_api_chain_presets_list(request: web.Request) -> web.Response:
+    return web.json_response({"presets": chain_preset_mode.list_presets()})
+
+async def handle_api_chain_presets_save(request: web.Request) -> web.Response:
+    try:
+        body = await request.json()
+        result = chain_preset_mode.save_preset(
+            name=body.get("name", ""),
+            chains=body.get("chains", []),
+            repeat=body.get("repeat", 1),
+        )
+        return web.json_response(result)
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+async def handle_api_chain_presets_load(request: web.Request) -> web.Response:
+    name = request.match_info.get("name", "")
+    result = chain_preset_mode.load_preset(name)
+    if result is None:
+        return web.json_response({"error": "프리셋을 찾을 수 없습니다."}, status=404)
+    return web.json_response(result)
+
+async def handle_api_chain_presets_delete(request: web.Request) -> web.Response:
+    try:
+        body = await request.json()
+        result = chain_preset_mode.delete_preset(body.get("name", ""))
+        return web.json_response(result)
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+async def handle_api_pose_mode_image(request: web.Request) -> web.Response:
+    import os as _os
+    pose_id = request.match_info.get("pose_id", "")
+    # 디렉토리 트래버설 방지
+    if "/" in pose_id or "\\" in pose_id or ".." in pose_id:
+        return web.Response(status=400)
+    for ext, ct in [(".webp", "image/webp"), (".png", "image/png")]:
+        p = _os.path.join(pose_mode.pose_data_dir, f"{pose_id}{ext}")
+        if _os.path.exists(p):
+            return web.FileResponse(p, headers={"Content-Type": ct})
+    return web.Response(status=404)
+
+# ─── 자동완성 API ────────────────────────────────────────
+async def handle_api_autocomplete(request: web.Request) -> web.Response:
+    query = request.query.get("query", "")
+    limit = int(request.query.get("limit", "20"))
+    results = autocomplete_service.search_tags(query, limit)
+    return web.json_response(results)
+
+# 에셋 생성 모드 API 라우트
+app.router.add_get("/api/asset_mode/status", handle_api_asset_mode_status)
+app.router.add_get("/api/asset_mode/tags", handle_api_asset_mode_tags_get)
+app.router.add_post("/api/asset_mode/tags", handle_api_asset_mode_tags_post)
+app.router.add_post("/api/asset_mode/generate", handle_api_asset_mode_generate)
+app.router.add_get("/api/asset_mode/characters", handle_api_asset_mode_characters)
+app.router.add_get("/api/asset_mode/characters/{character}/gallery", handle_api_asset_mode_gallery)
+app.router.add_get("/api/asset_mode/characters/{character}/outfits", handle_api_asset_mode_outfits)
+app.router.add_get("/api/asset_mode/characters/{character}/expressions", handle_api_asset_mode_expressions)
+app.router.add_get("/api/asset_mode/characters/{character}/outfits/{outfit}/expressions/{expression}/images", handle_api_asset_mode_images)
+app.router.add_post("/api/asset_mode/set_representative", handle_api_asset_mode_set_representative)
+app.router.add_get("/api/asset_mode/characters/{character}/outfits/{outfit}/expressions/{expression}/images/{filename}", handle_api_asset_mode_image)
+app.router.add_post("/api/asset_mode/delete_combination", handle_api_asset_mode_delete_combination)
+app.router.add_post("/api/asset_mode/delete_image", handle_api_asset_mode_delete_image)
+app.router.add_post("/api/asset_mode/upload_reference", handle_api_asset_mode_upload_reference)
+app.router.add_get("/api/asset_mode/name_mapping/{character}", handle_api_asset_mode_name_mapping_get)
+app.router.add_post("/api/asset_mode/name_mapping", handle_api_asset_mode_name_mapping_post)
+app.router.add_get("/api/asset_mode/export/{character}", handle_api_asset_mode_export)
+# 자동완성 API
+app.router.add_get("/api/autocomplete", handle_api_autocomplete)
+# 포즈 편집 모드 API 라우트
+app.router.add_get("/api/pose_mode/status", handle_api_pose_mode_status)
+app.router.add_post("/api/pose_mode/detect", handle_api_pose_mode_detect)
+app.router.add_get("/api/pose_mode/poses", handle_api_pose_mode_poses)
+app.router.add_post("/api/pose_mode/poses/save", handle_api_pose_mode_save)
+app.router.add_get("/api/pose_mode/poses/{pose_id}", handle_api_pose_mode_load)
+app.router.add_get("/api/pose_mode/poses/{pose_id}/image", handle_api_pose_mode_image)
+app.router.add_post("/api/pose_mode/poses/delete", handle_api_pose_mode_delete)
+# 체인 프리셋 API 라우트
+app.router.add_get("/api/chain_presets", handle_api_chain_presets_list)
+app.router.add_post("/api/chain_presets/save", handle_api_chain_presets_save)
+app.router.add_get("/api/chain_presets/{name}", handle_api_chain_presets_load)
+app.router.add_post("/api/chain_presets/delete", handle_api_chain_presets_delete)
 
 
 async def on_startup(app):
     print("[INFO] 워크플로우 초기 로드...")
+    asyncio.create_task(_ws_heartbeat())
     try:
         await update_workflow_if_needed()
     except Exception as e:
         print(f"[WARN] 초기 워크플로우 로드 실패: {e}")
+    # 자동완성 CSV 로드
+    autocomplete_service.load_all_csv()
     # LLM 서비스 설정 초기화
     llm_service.update_config({
         "llm_service": app_config.get("llm_service", "copilot"),
@@ -2506,5 +3535,6 @@ if __name__ == "__main__":
     print(f"=== ComfyUI Proxy Server (port {PORT}) ===")
     print(f"실제 ComfyUI: {REAL_COMFY_HOST}:{REAL_COMFY_PORT}")
     print(f"워크플로우 폴더: {WORKFLOW_DIR}")
-    print(f"백업 폴더: {WORKFLOW_BACKUP_DIR} (최대 {MAX_BACKUP_IMAGES}개)")
+    max_bk = app_config.get("backup_max_count", DEFAULT_MAX_BACKUP_IMAGES)
+    print(f"백업 폴더: {WORKFLOW_BACKUP_DIR} (최대 {max_bk}개)")
     web.run_app(app, host=HOST, port=PORT)

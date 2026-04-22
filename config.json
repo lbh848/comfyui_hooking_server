@@ -1,12 +1,16 @@
 {
-  "comfy_workflow_source_path": "E:\\wsl2\\matrix\\Packages\\ComfyUI\\user\\default\\workflows\\0401워크플로우_나친적v6.json",
+  "comfy_workflow_source_path": "E:\\wsl2\\matrix\\Packages\\ComfyUI\\user\\default\\workflows\\0401워크플로우_나친적v7.json",
   "data_saving_mode": false,
-  "webp_quality": 80,
+  "send_original": false,
+  "webp_quality": 100,
   "backup_webp_quality": 90,
+  "backup_webp_lossless": false,
   "backup_base_dir": "",
   "workflow_filename": "",
   "batch_mode_enabled": true,
   "batch_timeout_seconds": 7,
+  "notification_enabled": true,
+  "auto_reschedule_enabled": true,
   "clamp_enabled": true,
   "clamp_value": 1.1,
   "outfit_mode_enabled": false,
@@ -21,6 +25,12 @@
   "restore_prompt_file": "restore_workflow_prompt_nikke_style_v2.py",
   "restore_mode_enabled": false,
   "restore_manual_enabled": true,
-  "enhance_mode_enabled": true,
-  "enhance_prompt_file": "enhance_outfit_prompt_v4.py"
+  "enhance_mode_enabled": false,
+  "enhance_prompt_file": "enhance_outfit_prompt_v9.py",
+  "asset_workflow_source_path": "E:\\wsl2\\matrix\\Packages\\ComfyUI\\user\\default\\workflows\\0418워크플로우_에셋메이커.json",
+  "dwpose_det_model": "",
+  "dwpose_pose_model": "",
+  "dwpose_model_cache_dir": "",
+  "backup_max_count": 1000,
+  "webp_lossless": false
 }

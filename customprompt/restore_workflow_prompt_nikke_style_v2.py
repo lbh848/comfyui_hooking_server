@@ -20,7 +20,7 @@ from datetime import datetime
 
 # ─── 프롬프트 구성 요소 ─────────────────────────────────
 
-_QUALITY = "newest, year2024, (masterpiece, best quality, score_7), highres, absurdres,"
+_QUALITY = "newest, year2024, (masterpiece, best quality, score_7), highres, absurdres, solo,"
 
 # 캐릭터 목록
 _CHARACTER_POOL = [
@@ -28,12 +28,13 @@ _CHARACTER_POOL = [
     "anis \\(nikke\\)",
     "rapi \\(nikke\\)",
     "dorothy \\(nikke\\), white dress, frilled dress, halterneck, center frills, detached sleeves, see-through sleeves, bare shoulders, sleeves past wrists, frilled choker, neck ribbon, white thighhighs",
-    "cinderella \\(nikke\\), white bodysuit",
+    "cinderella \\(nikke\\), white bodysuit, red eyes",
     "red hood \\(nikke\\)",
     "privaty \\(nikke\\), maid dress",
     "anis \\(sparkling summer\\) \\(nikke\\), swimsuit",
     "modernia \\(nikke\\), bodysuit",
-    "liliweiss \\(nikke\\), sparkling eyes,blue eyes"
+    "liliweiss \\(nikke\\), sparkling eyes,blue eyes", 
+    "shifty \\(nikke\\), blue eyes, blue hair, two side up, long hair, hair ornament, animal ear headphones, headset, sailor collar, button badge, grey serafuku, blue neckerchief, short sleeves, wrist cuffs, breast pockets, impossible clothes, breasts, pouch, white dress, covered navel, bare legs, white footwear, sneakers, socks",
 ]
 
 # 손모양
@@ -85,7 +86,7 @@ def _build_sign_prompt() -> str:
     return (
         f"{char_tag}, "
         f"(holding sign:1.3), sign, wooden sign, "
-        f"(she hold text on sign: \"Job Fin\":1.3), "
+        f"(she hold text on sign: \"V3\":1.3), "
         f"standing, {hand_sign}, {expression}, yellow background"
     )
 
@@ -101,5 +102,5 @@ async def run() -> dict:
     positive = f"{_QUALITY}\n{sign}\n\n[ILXL]\n{sign}\n\n[UPSCALE]\n{sign}"
     return {
         "positive": positive,
-        "negative": ""
+        "negative": "lowres, worst quality, bad quality, low quality, normal quality, worst detail, displeasing, fewer details, unfinished, incomplete, sketch, watermark, username, patreon username, logo, patreon logo, sign, artist collaboration, 3d, realistic, blender, pixel art, character doll, JPEG artifacts, aliasing, dithering, scan artifacts, blurry, chromatic aberration, screentone, film grain, heavy film grain, digital dissolve, censor, censored, mosaic censoring, bar censor, cropped, split theme, split screen, head out of frame, distorted composition, bad perspective, one-hour drawing challenge, 4koma, 2koma, bad anatomy, anatomically incorrect, bad proportions, mutation, deformed, disfigured, duplicate, amputee, bad hands, bad hand structure, bad arm, bad leg, bad limbs, bad feet, missing finger, extra digits, fewer digits, unclear fingertips, extra arms, extra legs, twist, bad face, mob face, bad eyes, unnatural hair, big head, big nose, nostrils, philtrum, beard, bald, long neck, futanari, breast ptosis, squiggly, bad gun anatomy, bullpup"
     }

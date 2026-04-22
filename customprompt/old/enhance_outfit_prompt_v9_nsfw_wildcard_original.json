@@ -1,0 +1,1242 @@
+{
+  "_meta": {
+    "description": "SD Studio NSFW Scene Wildcard - v9 integrated",
+    "total_scenes": 239,
+    "categories": {
+      "bondage": 9,
+      "cum": 17,
+      "pre": 17,
+      "sex": 48,
+      "solo": 52,
+      "non_penetration": 55,
+      "interspecies": 25,
+      "filming": 16
+    }
+  },
+  "sceneGuide": {
+    "positions": [
+      "fullnelson",
+      "doggysex",
+      "spooningsex",
+      "cowgirl",
+      "standingsex",
+      "missionary",
+      "wombpress",
+      "gangrape",
+      "mating press",
+      "hugsex",
+      "spread leg"
+    ],
+    "modifiers": {
+      "(none)": "standard sex scene",
+      "cum": "ejaculation/climax scene",
+      "pre": "moment before penetration",
+      "sleeping": "partner asleep",
+      "mc": "mind control state",
+      "defloration": "first time",
+      "chikan": "train/public harassment",
+      "bondage": "bound/restrained",
+      "filming": "being secretly filmed"
+    },
+    "solo_scenes": "solo character scenes",
+    "non_penetration": "non-penetration acts",
+    "interspecies": "tentacle, machine, goblin scenes"
+  },
+  "scenes": {
+    "bondage fullnelson": {
+      "prompt": "nsfw, uncensored, lifted and carried, spread legs, open mouth, both legs pulled back, lifted by another, m legs, penis in pussy, hetero, (full nelson:1.1), dynamic pose, skirt rolled up, pussy juice, shy, embarrassed, blush, full-face blush, panties aside,",
+      "resolution": "portrait",
+      "category": "bondage"
+    },
+    "bondage doggysex": {
+      "prompt": "nsfw, sex, doggystyle, on hands and knees, crushed head, arched back, {{face down}}, ass up, {{from side}}, looking down, top-down bottom-up, penis in pussy, uncensored, top-down bottom-up, dynamic pose, crushed head, saliva, pussy juice, pov, pov hands, shy, embarrassed, blush, full-face blush,",
+      "resolution": "portrait",
+      "category": "bondage"
+    },
+    "bondage spooningsex": {
+      "prompt": "nsfw, uncensored, on bed, spooning sex, lying on side, lying on back, one leg raised, knee to chest, hetero, size difference, dynamic pose, Man grabs girl's leg, pussy juice, shy, embarrassed, blush, full-face blush,",
+      "resolution": "portrait",
+      "category": "bondage"
+    },
+    "bondage cowgirl": {
+      "prompt": "nsfw, uncensored, from below, looking down, skirt rolled up, hetero, cowgirl position, dynamic pose, Grab the girl's waist, penis in pussy, man lying in bed, Girl on the waist, pussy juice, shy, embarrassed, blush, full-face blush,",
+      "resolution": "portrait",
+      "category": "bondage"
+    },
+    "bondage standingsex": {
+      "prompt": "nsfw, sex, uncensored, standing sex, leaning against wall, pressed against wall, head tilted back, one leg raised, knee to chest, from side, penis in pussy, dynamic pose, face-to-face, pussy juice, shy, embarrassed, blush, full-face blush,",
+      "resolution": "portrait",
+      "category": "bondage"
+    },
+    "bondage wombpress": {
+      "prompt": "nsfw, uncensored, (legs over shoulder:1.1), (mating press:1.1), (body press:1.1), (intense pleasure:1.1), breathless, penis in pussy, sex, lying, stomach bulge, cum in pussy, (on back:1.1), open mouth, m legs, from side, facing to the side, hetero,  looking at viewer, (head on ground, fainting:1.1), pussy juice, shy, embarrassed, blush, full-face blush,",
+      "resolution": "portrait",
+      "category": "bondage"
+    },
+    "bondage gangrape": {
+      "prompt": "(bar censor, censored:-1.1), decensored, 1girl, 4boys, deep penetration, fellatio, triple penetration, cum in mouth, multiple boys, straddling, anal, spread anus, cum in ass, cum in pussy, cum on body, oral, multiple penises, spitroast, irrumatio, (pussy:1.1), vaginal, panties aside, m legs, penis, solo focus, sex, (group sex:1.1), gangbang, trembling, pussy juice, scared, nervous, crying girl, open shirt, breasts out, nipples, ",
+      "resolution": "portrait",
+      "category": "bondage"
+    },
+    "bondage missionary": {
+      "prompt": "missionary, spread legs, hetero, (on back, lying:1.1), (penis in pussy:1.1), skirt rolled up, pussy juice, clitoris, clitoral hood,",
+      "resolution": "portrait",
+      "category": "bondage"
+    },
+    "bondage spread leg": {
+      "prompt": "kidnapped, legs up, sole, ass focus, arms up, bound, bound ankles, glaring, spread legs, ball gag, open clothes, scared, frown, tearing up, crying,",
+      "resolution": "portrait",
+      "category": "bondage"
+    },
+    "cum fullnelson": {
+      "prompt": "nsfw, uncensored, lifted and carried, spread legs, open mouth, both legs pulled back, lifted by another, m legs, penis in pussy, hetero, (full nelson:1.1), dynamic pose, skirt rolled up, pussy juice, shy, embarrassed, blush, full-face blush, panties aside,",
+      "resolution": "portrait",
+      "category": "cum"
+    },
+    "cum doggysex": {
+      "prompt": "nsfw, sex, doggystyle, on hands and knees, crushed head, arched back, {{face down}}, ass up, {{from side}}, looking down, top-down bottom-up, penis in pussy, uncensored, top-down bottom-up, dynamic pose, crushed head, saliva, pussy juice, pov, pov hands, shy, embarrassed, blush, full-face blush,",
+      "resolution": "portrait",
+      "category": "cum"
+    },
+    "cum spooningsex": {
+      "prompt": "nsfw, uncensored, on bed, spooning sex, lying on side, lying on back, one leg raised, knee to chest, hetero, size difference, dynamic pose, Man grabs girl's leg, pussy juice, shy, embarrassed, blush, full-face blush,",
+      "resolution": "portrait",
+      "category": "cum"
+    },
+    "cum cowgirl": {
+      "prompt": "nsfw, uncensored, from below, looking down, skirt rolled up, hetero, cowgirl position, dynamic pose, Grab the girl's waist, penis in pussy, man lying in bed, Girl on the waist, pussy juice, shy, embarrassed, blush, full-face blush,",
+      "resolution": "portrait",
+      "category": "cum"
+    },
+    "cum standingsex": {
+      "prompt": "nsfw, sex, uncensored, standing sex, leaning against wall, pressed against wall, head tilted back, one leg raised, knee to chest, from side, penis in pussy, dynamic pose, face-to-face, pussy juice, shy, embarrassed, blush, full-face blush,",
+      "resolution": "portrait",
+      "category": "cum"
+    },
+    "cum missionary": {
+      "prompt": "missionary, spread legs, hetero, (on back, lying:1.1), (penis in pussy:1.1), skirt rolled up, pussy juice, cum on pussy, ",
+      "resolution": "portrait",
+      "category": "cum"
+    },
+    "cum sleeping fullnelson": {
+      "prompt": "(girl with closed eyes:1.1), sex, rape, (sleeping girl:1.1), frowning, lying, trembling, nsfw, uncensored, lifted and carried, spread legs, open mouth, both legs pulled back, lifted by another, m legs, penis in pussy, hetero, (full nelson:1.1), dynamic pose, skirt rolled up, pussy juice, panties aside, open shirt, empty eyes,",
+      "resolution": "portrait",
+      "category": "cum"
+    },
+    "cum sleeping spooningsex": {
+      "prompt": "(girl with closed eyes:1.1), sex, rape, (sleeping girl:1.1), frowning, lying, trembling, nsfw, uncensored, on bed, spooning sex, lying on side, lying on back, one leg raised, knee to chest, hetero, size difference, dynamic pose, Man grabs girl's leg, pussy juice, ",
+      "resolution": "portrait",
+      "category": "cum"
+    },
+    "cum sleeping cowgirl": {
+      "prompt": "(girl with closed eyes:1.1), sex, rape, (sleeping girl:1.1), frowning, lying, trembling, nsfw, uncensored, from below, looking down, skirt rolled up, hetero, cowgirl position, dynamic pose, Grab the girl's waist, penis in pussy, man lying in bed, Girl on the waist, pussy juice, ",
+      "resolution": "portrait",
+      "category": "cum"
+    },
+    "cum sleeping missionary": {
+      "prompt": "(girl with closed eyes:1.1), sex, rape, (sleeping girl:1.1), frowning, lying, trembling, missionary, spread legs, hetero, (on back, lying:1.1), (penis in pussy:1.1), skirt rolled up, pussy juice, clitoris, clitoral hood, breasts out, ",
+      "resolution": "portrait",
+      "category": "cum"
+    },
+    "cum mating press": {
+      "prompt": "cross-section, folded, lying, (mating press:1.1), on back, on bed, panties aside, pussy, anus, veiny penis, penis in pussy, sex, pussy juice, pussy juice trail, (eyes:-1.1), (pussy focus:1.1), cum in pussy, cum overflow, excessive pussy juice, female ejaculation, internal cumshot, interracial, (out of frame:1.1), (head:-1.1), boy on top, perineum, testicles, ass focus,",
+      "resolution": "portrait",
+      "category": "cum"
+    },
+    "cum mc fullnelson": {
+      "prompt": "nsfw, uncensored, lifted and carried, spread legs, open mouth, both legs pulled back, lifted by another, m legs, penis in pussy, hetero, (full nelson:1.1), dynamic pose, skirt rolled up, pussy juice, panties aside, (pink eyes, empty eyes, drooling, mind control, :o, rolling eyes, wide-eyed:1.1), (coin:-1.1), ?,",
+      "resolution": "portrait",
+      "category": "cum"
+    },
+    "cum mc doggysex": {
+      "prompt": "nsfw, sex, doggystyle, on hands and knees, crushed head, arched back, {{face down}}, ass up, {{from side}}, looking down, top-down bottom-up, penis in pussy, uncensored, top-down bottom-up, dynamic pose, crushed head, saliva, pussy juice, pov, pov hands, (pink eyes, empty eyes, drooling, mind control, :o, rolling eyes, wide-eyed:1.1), (coin:-1.1), ?,",
+      "resolution": "portrait",
+      "category": "cum"
+    },
+    "cum mc spooningsex": {
+      "prompt": "nsfw, uncensored, on bed, spooning sex, lying on side, lying on back, one leg raised, knee to chest, hetero, size difference, dynamic pose, Man grabs girl's leg, pussy juice, (pink eyes, empty eyes, drooling, mind control, :o, rolling eyes, wide-eyed:1.1), (coin:-1.1), ?,",
+      "resolution": "portrait",
+      "category": "cum"
+    },
+    "cum mc cowgirl": {
+      "prompt": "nsfw, uncensored, from below, looking down, skirt rolled up, hetero, cowgirl position, dynamic pose, Grab the girl's waist, penis in pussy, man lying in bed, Girl on the waist, pussy juice, (pink eyes, empty eyes, drooling, mind control, :o, rolling eyes, wide-eyed:1.1), (coin:-1.1), ?,",
+      "resolution": "portrait",
+      "category": "cum"
+    },
+    "cum mc standingsex": {
+      "prompt": "nsfw, sex, uncensored, standing sex, leaning against wall, pressed against wall, head tilted back, one leg raised, knee to chest, from side, penis in pussy, dynamic pose, face-to-face, pussy juice, (pink eyes, empty eyes, drooling, mind control, :o, rolling eyes, wide-eyed:1.1), (coin:-1.1), ?,",
+      "resolution": "portrait",
+      "category": "cum"
+    },
+    "cum mc missionary": {
+      "prompt": "missionary, spread legs, hetero, (on back, lying:1.1), (penis in pussy:1.1), skirt rolled up, pussy juice, open shirt, (pink eyes, empty eyes, drooling, mind control, :o, rolling eyes, wide-eyed:1.1), (coin:-1.1), ?,",
+      "resolution": "portrait",
+      "category": "cum"
+    },
+    "pre fullnelson": {
+      "prompt": "nsfw, uncensored, lifted and carried, spread legs, open mouth, both legs pulled back, lifted by another, m legs, penis in pussy, hetero, (full nelson:1.1), dynamic pose, skirt rolled up, pussy juice, shy, embarrassed, blush, full-face blush, panties aside,",
+      "resolution": "portrait",
+      "category": "pre"
+    },
+    "pre doggysex": {
+      "prompt": "nsfw, sex, doggystyle, on hands and knees, crushed head, arched back, {{face down}}, ass up, {{from side}}, looking down, top-down bottom-up, uncensored, top-down bottom-up, dynamic pose, crushed head, saliva, pussy juice, pov, pov hands, ",
+      "resolution": "portrait",
+      "category": "pre"
+    },
+    "pre spooningsex": {
+      "prompt": "nsfw, uncensored, on bed, spooning sex, lying on side, lying on back, one leg raised, knee to chest, hetero, size difference, dynamic pose, Man grabs girl's leg, pussy juice, shy, embarrassed, blush, full-face blush,",
+      "resolution": "portrait",
+      "category": "pre"
+    },
+    "pre cowgirl": {
+      "prompt": "nsfw, uncensored, from below, looking down, skirt rolled up, hetero, cowgirl position, dynamic pose, Grab the girl's waist, man lying in bed, Girl on the waist, pussy juice, shy, embarrassed, blush, full-face blush,",
+      "resolution": "portrait",
+      "category": "pre"
+    },
+    "pre standingsex": {
+      "prompt": "nsfw, sex, uncensored, standing sex, leaning against wall, pressed against wall, head tilted back, one leg raised, knee to chest, from side, dynamic pose, face-to-face, pussy juice, shy, embarrassed, blush, full-face blush, (penis in pussy:-1.1),",
+      "resolution": "portrait",
+      "category": "pre"
+    },
+    "pre missionary": {
+      "prompt": "missionary, spread legs, hetero, (on back, lying:1.1), skirt rolled up, pussy juice, ",
+      "resolution": "portrait",
+      "category": "pre"
+    },
+    "pre sleeping fullnelson": {
+      "prompt": "(girl with closed eyes:1.1), sex, rape, (sleeping girl:1.1), frowning, lying, trembling, nsfw, uncensored, lifted and carried, spread legs, open mouth, both legs pulled back, lifted by another, m legs, hetero, (full nelson:1.1), dynamic pose, skirt rolled up, pussy juice, panties aside, open shirt, man grabbing girl's waist,",
+      "resolution": "portrait",
+      "category": "pre"
+    },
+    "pre sleeping spooningsex": {
+      "prompt": "(girl with closed eyes:1.1), sex, rape, (sleeping girl:1.1), frowning, lying, trembling, nsfw, uncensored, on bed, spooning sex, lying on side, lying on back, one leg raised, knee to chest, hetero, size difference, dynamic pose, Man grabs girl's leg, pussy juice, ",
+      "resolution": "portrait",
+      "category": "pre"
+    },
+    "pre sleeping cowgirl": {
+      "prompt": "(girl with closed eyes:1.1), sex, rape, (sleeping girl:1.1), frowning, lying, trembling, nsfw, uncensored, from below, looking down, skirt rolled up, hetero, cowgirl position, dynamic pose, (grab the girl's waist:1.1), man lying in bed, Girl on the waist, pussy juice, ",
+      "resolution": "portrait",
+      "category": "pre"
+    },
+    "pre sleeping missionary": {
+      "prompt": "(girl with closed eyes:1.1), sex, rape, (sleeping girl:1.1), frowning, lying, trembling, missionary, spread legs, hetero, (on back, lying:1.1), skirt rolled up, pussy juice, ",
+      "resolution": "portrait",
+      "category": "pre"
+    },
+    "pre mating press": {
+      "prompt": "folded, lying, (mating press:1.1), on back, on bed, panties aside, pussy, anus, veiny penis, pussy juice, pussy juice trail, (pussy focus:1.1), (eyes:-1.1), (out of frame:1.1), (head:-1.1), boy on top, perineum, testicles, ass focus,",
+      "resolution": "portrait",
+      "category": "pre"
+    },
+    "pre mc fullnelson": {
+      "prompt": "nsfw, uncensored, lifted and carried, spread legs, both legs pulled back, lifted by another, m legs, penis in pussy, hetero, (full nelson:1.1), dynamic pose, skirt rolled up, pussy juice, panties aside, (pink eyes, empty eyes, drooling, mind control, :o, rolling eyes, wide-eyed:1.1), (coin:-1.1), ?,",
+      "resolution": "portrait",
+      "category": "pre"
+    },
+    "pre mc doggysex": {
+      "prompt": "nsfw, sex, (doggystyle:1.1), on hands and knees, crushed head, arched back, {{face down}}, ass up, looking down, top-down bottom-up, uncensored, top-down bottom-up, dynamic pose, crushed head, saliva, pussy juice, pov, pov hands, (pink eyes, empty eyes, drooling, mind control, :o, rolling eyes, wide-eyed:1.1), (coin:-1.1), ?,",
+      "resolution": "portrait",
+      "category": "pre"
+    },
+    "pre mc spooningsex": {
+      "prompt": "nsfw, uncensored, on bed, spooning sex, lying on side, lying on back, one leg raised, knee to chest, hetero, size difference, dynamic pose, Man grabs girl's leg, pussy juice, (pink eyes, empty eyes, drooling, mind control, :o, rolling eyes, wide-eyed:1.1), (coin:-1.1), ?,",
+      "resolution": "portrait",
+      "category": "pre"
+    },
+    "pre mc cowgirl": {
+      "prompt": "nsfw, uncensored, from below, looking down, skirt rolled up, hetero, cowgirl position, dynamic pose, Grab the girl's waist, man lying in bed, Girl on the waist, pussy juice, (pink eyes, empty eyes, drooling, mind control, :o, rolling eyes, wide-eyed:1.1), (coin:-1.1), ?,",
+      "resolution": "portrait",
+      "category": "pre"
+    },
+    "pre mc standingsex": {
+      "prompt": "nsfw, sex, uncensored, standing sex, leaning against wall, pressed against wall, head tilted back, one leg raised, knee to chest, from side, dynamic pose, face-to-face, pussy juice, (pink eyes, empty eyes, drooling, mind control, :o, rolling eyes, wide-eyed:1.1), (coin:-1.1), ?,",
+      "resolution": "portrait",
+      "category": "pre"
+    },
+    "pre mc missionary": {
+      "prompt": "missionary, spread legs, hetero, (on back, lying:1.1), skirt rolled up, pussy juice, open shirt, (pink eyes, empty eyes, drooling, mind control, :o, rolling eyes, wide-eyed:1.1), (coin:-1.1), ?,",
+      "resolution": "portrait",
+      "category": "pre"
+    },
+    "fullnelson": {
+      "prompt": "nsfw, uncensored, lifted and carried, spread legs, open mouth, both legs pulled back, lifted by another, m legs, penis in pussy, hetero, (full nelson:1.1), dynamic pose, skirt rolled up, pussy juice, shy, embarrassed, blush, full-face blush, panties aside,",
+      "resolution": "portrait",
+      "category": "sex"
+    },
+    "doggysex": {
+      "prompt": "nsfw, sex, doggystyle, on hands and knees, crushed head, arched back, {{face down}}, ass up, {{from side}}, looking down, top-down bottom-up, penis in pussy, uncensored, top-down bottom-up, dynamic pose, saliva, pussy juice, pov, pov hands, shy, embarrassed, blush, full-face blush,",
+      "resolution": "portrait",
+      "category": "sex"
+    },
+    "spooningsex": {
+      "prompt": "nsfw, uncensored, on bed, spooning sex, lying on side, lying on back, one leg raised, knee to chest, hetero, size difference, dynamic pose, Man grabs girl's leg, pussy juice, shy, embarrassed, blush, full-face blush,",
+      "resolution": "portrait",
+      "category": "sex"
+    },
+    "cowgirl": {
+      "prompt": "nsfw, uncensored, from below, looking down, skirt rolled up, hetero, cowgirl position, dynamic pose, Grab the girl's waist, penis in pussy, man lying in bed, Girl on the waist, pussy juice, shy, embarrassed, blush, full-face blush,",
+      "resolution": "portrait",
+      "category": "sex"
+    },
+    "standingsex": {
+      "prompt": "nsfw, sex, uncensored, standing sex, leaning against wall, pressed against wall, head tilted back, one leg raised, knee to chest, from side, penis in pussy, dynamic pose, face-to-face, pussy juice, shy, embarrassed, blush, full-face blush,",
+      "resolution": "portrait",
+      "category": "sex"
+    },
+    "wombpress": {
+      "prompt": "nsfw, uncensored, (legs over shoulder:1.1), (mating press:1.1), (body press:1.1), (intense pleasure:1.1), breathless, penis in pussy, sex, lying, stomach bulge, cum in pussy, (on back:1.1), open mouth, m legs, from side, facing to the side, hetero,  looking at viewer, (head on ground, fainting:1.1), pussy juice, shy, embarrassed, blush, full-face blush,",
+      "resolution": "portrait",
+      "category": "sex"
+    },
+    "gangrape": {
+      "prompt": "(bar censor, censored:-1.1), decensored, 1girl, 4boys, deep penetration, fellatio, triple penetration, cum in mouth, multiple boys, straddling, anal, spread anus, cum in ass, cum in pussy, cum on body, oral, multiple penises, spitroast, irrumatio, (pussy:1.1), vaginal, panties aside, m legs, penis, solo focus, sex, (group sex:1.1), gangbang, trembling, pussy juice, scared, nervous, crying girl, breasts out, nipples, ",
+      "resolution": "portrait",
+      "category": "sex"
+    },
+    "missionary": {
+      "prompt": "missionary, spread legs, hetero, (on back, lying:1.1), (penis in pussy:1.1), skirt rolled up, pussy juice, ",
+      "resolution": "portrait",
+      "category": "sex"
+    },
+    "chikan ganabang": {
+      "prompt": "(bar censor, censored:-1.1), decensored, (train interior:1.1), dutch angle, old man, many pov hands, 6+boys, penis, chikan, gangbang, group sex, grabbing another's breast, grabbing from behind, ejaculation, (sex from behind, rape, penis in pussy:1.1), solo focus, torn clothes, arms up, blush, bra bull, bra lift, panties aside, shirt lift, open shirt, skirt lift, pussy juice, pussy juice stain, breasts out, puffy nipples, nipple stimulation, nipple pull, (scared:1.1), wide eyes, tears,  (trembling:1.1), (motion blur:1.1), rolling eyes, (6+boys:1.1), 1girl,",
+      "resolution": "portrait",
+      "category": "sex"
+    },
+    "chikan doggysex": {
+      "prompt": "(train interior, against door, against glass, breasts on glass, pov, pov hands:1.1), solo focus, (chair:-1.1), 1boy, chikan, public indecency, penis in pussy, grabbing another's ass, shirt lift, skirt lift, 1girl, pussy juice, breasts out, hand on glass, anus, ass, vaginal, looking back, looking at viewer, rape, sex, sex from behind, panties aside, (scared:1.1), wide eyes, tears, scared, (trembling:1.1), (motion blur:1.1), rolling eyes, heavy breathing, leaning forward, standing sex, motion lines,",
+      "resolution": "portrait",
+      "category": "sex"
+    },
+    "sleeping fullnelson": {
+      "prompt": "(girl with closed eyes:1.1), sex, rape, (sleeping girl:1.1), frowning, lying, trembling, nsfw, uncensored, lifted and carried, spread legs, open mouth, both legs pulled back, lifted by another, m legs, penis in pussy, hetero, (full nelson:1.1), dynamic pose, skirt rolled up, pussy juice, panties aside, ",
+      "resolution": "portrait",
+      "category": "sex"
+    },
+    "sleeping spooningsex": {
+      "prompt": "(girl with closed eyes:1.1), sex, rape, (sleeping girl:1.1), frowning, lying, trembling, nsfw, uncensored, on bed, spooning sex, lying on side, lying on back, one leg raised, knee to chest, hetero, size difference, dynamic pose, Man grabs girl's leg, pussy juice, ",
+      "resolution": "portrait",
+      "category": "sex"
+    },
+    "sleeping cowgirl": {
+      "prompt": "(girl with closed eyes:1.1), sex, rape, (sleeping girl:1.1), frowning, lying, trembling, nsfw, uncensored, from below, looking down, skirt rolled up, hetero, cowgirl position, dynamic pose, Grab the girl's waist, penis in pussy, man lying in bed, Girl on the waist, pussy juice, ",
+      "resolution": "portrait",
+      "category": "sex"
+    },
+    "sleeping gangrape": {
+      "prompt": "(bar censor, censored:-1.1), decensored, (girl with closed eyes:1.1), sex, rape, (sleeping girl:1.1), frowning, lying, trembling, 1girl, 4boys, deep penetration, fellatio, triple penetration, cum in mouth, multiple boys, straddling, anal, spread anus, cum in ass, cum in pussy, cum on body, oral, multiple penises, spitroast, irrumatio, (pussy:1.1), vaginal, panties aside, m legs, penis, solo focus, sex, (group sex:1.1), gangbang, pussy juice, ",
+      "resolution": "portrait",
+      "category": "sex"
+    },
+    "sleeping missionary": {
+      "prompt": "(girl with closed eyes:1.1), sex, rape, (sleeping girl:1.1), frowning, lying, trembling, missionary, spread legs, hetero, (on back, lying:1.1), (penis in pussy:1.1), skirt rolled up, pussy juice, ",
+      "resolution": "portrait",
+      "category": "sex"
+    },
+    "sleeping hugsex": {
+      "prompt": "sex, rape, (sleeping girl:1.1), frowning, lying, trembling, nsfw, on hands and knees, {{face down}}, ass up, {{from side}}, penis in pussy, uncensored, dynamic pose, saliva, pussy juice, girl on top, hug, on bed, lying, ",
+      "resolution": "portrait",
+      "category": "sex"
+    },
+    "mating press": {
+      "prompt": "cross-section, folded, lying, (mating press:1.1), on back, on bed, panties aside, pussy, anus, veiny penis, penis in pussy, sex, pussy juice, pussy juice trail, (eyes:-1.1), out of frame, (head:1.1), boy on top, perineum, testicles, ass focus, invisible man, ahegao,",
+      "resolution": "portrait",
+      "category": "sex"
+    },
+    "mc fullnelson": {
+      "prompt": "nsfw, uncensored, lifted and carried, spread legs, open mouth, both legs pulled back, lifted by another, m legs, penis in pussy, hetero, (full nelson:1.1), dynamic pose, skirt rolled up, pussy juice, panties aside, (pink eyes, empty eyes, drooling, mind control, :o, rolling eyes, wide-eyed:1.1), (coin:-1.1), ?,",
+      "resolution": "portrait",
+      "category": "sex"
+    },
+    "mc doggysex": {
+      "prompt": "nsfw, sex, doggystyle, on hands and knees, crushed head, arched back, {{face down}}, ass up, looking down, top-down bottom-up, penis in pussy, uncensored, top-down bottom-up, dynamic pose, saliva, pussy juice, pov, pov hands, (pink eyes, empty eyes, drooling, mind control, :o, rolling eyes, wide-eyed:1.1), (coin:-1.1), ?,",
+      "resolution": "portrait",
+      "category": "sex"
+    },
+    "mc spooningsex": {
+      "prompt": "nsfw, uncensored, on bed, spooning sex, lying on side, lying on back, one leg raised, knee to chest, hetero, size difference, dynamic pose, Man grabs girl's leg, pussy juice, (pink eyes, empty eyes, drooling, mind control, :o, rolling eyes, wide-eyed:1.1), (coin:-1.1), ?,",
+      "resolution": "portrait",
+      "category": "sex"
+    },
+    "mc cowgirl": {
+      "prompt": "nsfw, uncensored, from below, looking down, skirt rolled up, hetero, cowgirl position, dynamic pose, Grab the girl's waist, penis in pussy, man lying in bed, Girl on the waist, (pink eyes, empty eyes, drooling, mind control, :o, rolling eyes, wide-eyed:1.1), (coin:-1.1), ?,",
+      "resolution": "portrait",
+      "category": "sex"
+    },
+    "mc standingsex": {
+      "prompt": "nsfw, sex, uncensored, standing sex, leaning against wall, pressed against wall, head tilted back, one leg raised, knee to chest, from side, penis in pussy, dynamic pose, face-to-face, pussy juice, (pink eyes, empty eyes, drooling, mind control, :o, rolling eyes, wide-eyed:1.1), (coin:-1.1), ?,",
+      "resolution": "portrait",
+      "category": "sex"
+    },
+    "mc gangrape": {
+      "prompt": "(empty eyes, drooling, mind control, pink eyes:1.1), (bar censor, censored:-1.1), decensored, 1girl, 4boys, deep penetration, fellatio, triple penetration, cum in mouth, multiple boys, straddling, anal, spread anus, cum in ass, cum in pussy, cum on body, oral, multiple penises, spitroast, irrumatio, (pussy:1.1), vaginal, panties aside, m legs, penis, solo focus, sex, (group sex:1.1), gangbang, pussy juice, breasts out, nipples, :o, rolling eyes, wide-eyed, (coin:-1.1), ?, ",
+      "resolution": "portrait",
+      "category": "sex"
+    },
+    "mc missionary": {
+      "prompt": "missionary, spread legs, hetero, (on back, lying:1.1), (penis in pussy:1.1), skirt rolled up, pussy juice, open shirt, (pink eyes, empty eyes, drooling, mind control, :o, rolling eyes, wide-eyed:1.1), (coin:-1.1), ?,",
+      "resolution": "portrait",
+      "category": "sex"
+    },
+    "defloration fullnelson": {
+      "prompt": "nsfw, uncensored, lifted and carried, spread legs, open mouth, both legs pulled back, lifted by another, m legs, penis in pussy, hetero, (full nelson:1.1), dynamic pose, skirt rolled up, pussy juice, shy, embarrassed, blush, full-face blush, panties aside, defloration, blood from vagina, clenched teeth, moaning, screaming, wide-eyed, ",
+      "resolution": "portrait",
+      "category": "sex"
+    },
+    "defloration doggysex": {
+      "prompt": "nsfw, sex, doggystyle, on hands and knees, crushed head, arched back, {{face down}}, ass up, {{from side}}, looking down, top-down bottom-up, penis in pussy, uncensored, top-down bottom-up, dynamic pose, saliva, pussy juice, pov, pov hands, shy, embarrassed, blush, full-face blush, defloration, blood from vagina, clenched teeth, moaning, screaming, wide-eyed, ",
+      "resolution": "portrait",
+      "category": "sex"
+    },
+    "defloration spooningsex": {
+      "prompt": "nsfw, uncensored, on bed, spooning sex, lying on side, lying on back, one leg raised, knee to chest, hetero, size difference, dynamic pose, Man grabs girl's leg, pussy juice, shy, embarrassed, blush, full-face blush, defloration, blood from vagina, clenched teeth, moaning, screaming, wide-eyed, ",
+      "resolution": "portrait",
+      "category": "sex"
+    },
+    "defloration cowgirl": {
+      "prompt": "nsfw, uncensored, from below, looking down, skirt rolled up, hetero, cowgirl position, dynamic pose, Grab the girl's waist, penis in pussy, man lying in bed, Girl on the waist, pussy juice, shy, embarrassed, blush, full-face blush, defloration, blood from vagina, clenched teeth, moaning, screaming, wide-eyed, ",
+      "resolution": "portrait",
+      "category": "sex"
+    },
+    "defloration standingsex": {
+      "prompt": "nsfw, sex, uncensored, standing sex, leaning against wall, pressed against wall, head tilted back, one leg raised, knee to chest, from side, penis in pussy, dynamic pose, face-to-face, pussy juice, shy, embarrassed, blush, full-face blush, defloration, blood from vagina, clenched teeth, moaning, screaming, wide-eyed, ",
+      "resolution": "portrait",
+      "category": "sex"
+    },
+    "defloration wombpress": {
+      "prompt": "nsfw, uncensored, (legs over shoulder:1.1), (mating press:1.1), (body press:1.1), (intense pleasure:1.1), breathless, penis in pussy, sex, lying, stomach bulge, cum in pussy, (on back:1.1), open mouth, m legs, from side, facing to the side, hetero,  looking at viewer, (head on ground, fainting:1.1), pussy juice, shy, embarrassed, blush, full-face blush, defloration, blood from vagina, clenched teeth, moaning, screaming, wide-eyed, ",
+      "resolution": "portrait",
+      "category": "sex"
+    },
+    "defloration gangrape": {
+      "prompt": "defloration, blood from vagina, clenched teeth, moaning, screaming, wide-eyed, (bar censor, censored:-1.1), decensored, 4boys, deep penetration, fellatio, triple penetration, cum in mouth, multiple boys, straddling, anal, spread anus, cum in ass, cum in pussy, cum on body, oral, multiple penises, spitroast, irrumatio, (pussy:1.1), panties aside, m legs, penis, solo focus, sex, (group sex:1.1), gangbang, pussy juice, scared, nervous, crying girl, breasts out, nipples, penis in pussy,",
+      "resolution": "portrait",
+      "category": "sex"
+    },
+    "defloration missionary": {
+      "prompt": "missionary, spread legs, hetero, (on back, lying:1.1), (penis in pussy:1.1), skirt rolled up, pussy juice, open shirt, defloration, blood from vagina, clenched teeth, moaning, screaming, wide-eyed, ",
+      "resolution": "portrait",
+      "category": "sex"
+    },
+    "defloration chikan ganabang": {
+      "prompt": "defloration, blood from vagina, clenched teeth, moaning, screaming, wide-eyed, (bar censor, censored:-1.1), decensored, (train interior:1.1), dutch angle, old man, many pov hands, 6+boys, penis, chikan, gangbang, group sex, grabbing another's breast, grabbing from behind, ejaculation, (sex from behind, rape, penis in pussy:1.1), solo focus, torn clothes, arms up, blush, bra bull, bra lift, panties aside, shirt lift, open shirt, skirt lift, pussy juice, pussy juice stain, breasts out, puffy nipples, nipple stimulation, nipple pull, (scared:1.1), wide eyes, tears,  (trembling:1.1), (motion blur:1.1), rolling eyes, (6+boys:1.1), 1girl, ",
+      "resolution": "portrait",
+      "category": "sex"
+    },
+    "defloration chikan doggysex": {
+      "prompt": "(train interior, against door, against glass, breasts on glass, pov, pov hands:1.1), solo focus, (chair:-1.1), 1boy, chikan, public indecency, penis in pussy, grabbing another's ass, shirt lift, skirt lift, 1girl, pussy juice, breasts out, hand on glass, anus, ass, vaginal, looking back, looking at viewer, rape, sex, sex from behind, panties aside, (scared:1.1), wide eyes, tears, scared, (trembling:1.1), (motion blur:1.1), rolling eyes, heavy breathing, leaning forward, standing sex, motion lines, defloration, blood from vagina, clenched teeth, moaning, screaming, ",
+      "resolution": "portrait",
+      "category": "sex"
+    },
+    "defloration sleeping fullnelson": {
+      "prompt": "(girl with closed eyes:1.1), sex, rape, (sleeping girl:1.1), frowning, lying, trembling, nsfw, uncensored, lifted and carried, spread legs, open mouth, both legs pulled back, lifted by another, m legs, penis in pussy, hetero, (full nelson:1.1), dynamic pose, skirt rolled up, pussy juice, panties aside, defloration, blood from vagina, clenched teeth, moaning, ",
+      "resolution": "portrait",
+      "category": "sex"
+    },
+    "defloration sleeping spooningsex": {
+      "prompt": "(girl with closed eyes:1.1), sex, rape, (sleeping girl:1.1), frowning, lying, trembling, nsfw, uncensored, on bed, spooning sex, lying on side, lying on back, one leg raised, knee to chest, hetero, size difference, dynamic pose, Man grabs girl's leg, pussy juice, defloration, blood from vagina, clenched teeth, moaning, ",
+      "resolution": "portrait",
+      "category": "sex"
+    },
+    "defloration sleeping cowgirl": {
+      "prompt": "(girl with closed eyes:1.1), sex, rape, (sleeping girl:1.1), frowning, lying, trembling, nsfw, uncensored, from below, looking down, skirt rolled up, hetero, cowgirl position, dynamic pose, Grab the girl's waist, penis in pussy, man lying in bed, Girl on the waist, pussy juice, defloration, blood from vagina, clenched teeth, moaning, ",
+      "resolution": "portrait",
+      "category": "sex"
+    },
+    "defloration sleeping gangrape": {
+      "prompt": "(bar censor, censored:-1.1), decensored, (girl with closed eyes:1.1), sex, rape, (sleeping girl:1.1), frowning, lying, trembling, 1girl, 4boys, deep penetration, fellatio, triple penetration, cum in mouth, multiple boys, straddling, anal, cum in ass, cum in pussy, cum on body, oral, multiple penises, spitroast, irrumatio, (pussy:1.1), vaginal, panties aside, m legs, penis, solo focus, sex, (group sex:1.1), gangbang, pussy juice, defloration, blood from vagina, clenched teeth, moaning, penis in pussy,",
+      "resolution": "portrait",
+      "category": "sex"
+    },
+    "defloration sleeping missionary": {
+      "prompt": "(girl with closed eyes:1.1), sex, rape, (sleeping girl:1.1), frowning, lying, trembling, missionary, spread legs, hetero, (on back, lying:1.1), (penis in pussy:1.1), skirt rolled up, pussy juice, defloration, blood from vagina, clenched teeth, moaning, ",
+      "resolution": "portrait",
+      "category": "sex"
+    },
+    "defloration sleeping hugsex": {
+      "prompt": "sex, rape, (sleeping girl:1.1), frowning, lying, trembling, nsfw, on hands and knees, {{face down}}, ass up, {{from side}}, penis in pussy, uncensored, dynamic pose, saliva, pussy juice, pov, pov hands, girl on top, hug, on bed, lying, defloration, blood from vagina, clenched teeth, moaning, hug sex, (doggystyle:-1.1)",
+      "resolution": "portrait",
+      "category": "sex"
+    },
+    "defloration mating press": {
+      "prompt": "cross-section, folded, lying, (mating press:1.1), on back, on bed, panties aside, pussy, anus, veiny penis, penis in pussy, sex, pussy juice, pussy juice trail, (eyes:-1.1), defloration, blood from vagina, (out of frame:1.1), (head:-1.1), boy on top, perineum, testicles, ass focus, invisible man, tongue out, crying with eyes open, ",
+      "resolution": "portrait",
+      "category": "sex"
+    },
+    "defloration mc fullnelson": {
+      "prompt": "nsfw, uncensored, lifted and carried, spread legs, open mouth, both legs pulled back, lifted by another, m legs, penis in pussy, hetero, (full nelson:1.1), dynamic pose, skirt rolled up, pussy juice, panties aside, (pink eyes, empty eyes, drooling, mind control, :o, rolling eyes, wide-eyed:1.1), defloration, blood from vagina, moaning, (coin:-1.1), ?,",
+      "resolution": "portrait",
+      "category": "sex"
+    },
+    "defloration mc doggysex": {
+      "prompt": "nsfw, sex, doggystyle, on hands and knees, crushed head, arched back, {{face down}}, ass up, looking down, top-down bottom-up, penis in pussy, uncensored, top-down bottom-up, dynamic pose, saliva, pussy juice, pov, pov hands, (pink eyes, empty eyes, drooling, mind control, :o, rolling eyes, wide-eyed:1.1), defloration, blood from vagina, moaning, (coin:-1.1), ?,",
+      "resolution": "portrait",
+      "category": "sex"
+    },
+    "defloration mc spooningsex": {
+      "prompt": "nsfw, uncensored, on bed, spooning sex, lying on side, lying on back, one leg raised, knee to chest, hetero, size difference, dynamic pose, Man grabs girl's leg, pussy juice, (pink eyes, empty eyes, drooling, mind control, :o, rolling eyes, wide-eyed:1.1), defloration, blood from vagina, moaning, (coin:-1.1), ?,",
+      "resolution": "portrait",
+      "category": "sex"
+    },
+    "defloration mc cowgirl": {
+      "prompt": "nsfw, uncensored, from below, looking down, skirt rolled up, hetero, cowgirl position, dynamic pose, Grab the girl's waist, penis in pussy, man lying in bed, Girl on the waist, (pink eyes, empty eyes, drooling, mind control, :o, rolling eyes, wide-eyed:1.1), defloration, blood from vagina, moaning, (coin:-1.1), ?,",
+      "resolution": "portrait",
+      "category": "sex"
+    },
+    "defloration mc standingsex": {
+      "prompt": "nsfw, sex, uncensored, standing sex, leaning against wall, pressed against wall, head tilted back, one leg raised, knee to chest, from side, penis in pussy, dynamic pose, face-to-face, pussy juice, (pink eyes, empty eyes, drooling, mind control, :o, rolling eyes, wide-eyed:1.1), defloration, blood from vagina, moaning, (coin:-1.1), ?,",
+      "resolution": "portrait",
+      "category": "sex"
+    },
+    "defloration mc gangrape": {
+      "prompt": "(bar censor, censored:-1.1), decensored, girl, 4boys, deep penetration, fellatio, triple penetration, cum in mouth, multiple boys, straddling, anal, spread anus, cum in ass, cum in pussy, cum on body, oral, multiple penises, spitroast, irrumatio, (pussy:1.1),  panties aside, m legs, penis, (group sex:1.1), gangbang, pussy juice, breasts out, nipples, (pink eyes, empty eyes, drooling, mind control, :o, rolling eyes, wide-eyed:1.1), defloration, blood from vagina, moaning, (coin:-1.1), ?, penis in pussy,",
+      "resolution": "portrait",
+      "category": "sex"
+    },
+    "defloration mc missionary": {
+      "prompt": "missionary, spread legs, hetero, (on back, lying:1.1), (penis in pussy:1.1), skirt rolled up, pussy juice, open shirt, (pink eyes, empty eyes, drooling, mind control, :o, rolling eyes, wide-eyed:1.1), (coin:-1.1), defloration, blood from vagina, moaning, (coin:-1.1), ?,",
+      "resolution": "portrait",
+      "category": "sex"
+    },
+    "spreadpussy": {
+      "prompt": "nsfw, uncensored, on back, legs over head, presenting pussy, spread pussy, lying, self spread pussy, {{from above}}, open mouth, m legs, (pussy:1.1), panties aside, bra lift, breasts, nipples, (nipple indents:1.1), breasts out, clothes lift, embarrassed, shy, nervous, rolling eyes, bra lift, puffy nipples, full-face blush, ",
+      "resolution": "portrait",
+      "category": "solo"
+    },
+    "peeing": {
+      "prompt": "nsfw, uncensored, indoors, toilet, toilet use, voyeurism, solo, looking at self pussy, looking down, panty pull, (pussy:1.1), peeing, crotch seam, trembling, straight-on, embarrassed, squatting, expressionless, squat toilet,",
+      "resolution": "portrait",
+      "category": "solo"
+    },
+    "masturbation": {
+      "prompt": "female masturbation, nipple stimulation, nipple tweak, nipples, (nipple indents:1.1), breasts out, open mouth, pussy juice, peeking, tweaking own nipple, pussy, fingering, orgasm, saliva, tearing up, lying, embarrassed, shy, nervous, rolling eyes, bra lift, puffy nipples, full-face blush, panty pull, ",
+      "resolution": "portrait",
+      "category": "solo"
+    },
+    "subway filming": {
+      "prompt": "train interior, (under view:1.1), (looking away:1.1), (from below:1.1), panties, (recording, viewfinder:1), depth of field, expressionless, (cameltoe:1.1), ",
+      "resolution": "portrait",
+      "category": "solo"
+    },
+    "undressing pussy filming": {
+      "prompt": "(fom below:1.1), hidden camera, (looking away:1.1), facing away, (recording, viewfinder:1.1), depth of field, indoors, expressionless, voyeurism, (undressing:1.1), pulling own clothes, leaning forward, panty pull, cleft of venus, pussy, ",
+      "resolution": "portrait",
+      "category": "solo"
+    },
+    "undressing breasts filming": {
+      "prompt": "(fom above:1.1), hidden camera, (looking:1.1), facing away, (recording, viewfinder:1.1), depth of field, indoors, expressionless, voyeurism, (undressing:1.1), panties, bra, bra lift, lifting own bra, open own clothes, nipples, puffy nipples, navel, steaming body, timestamp, underwear, ",
+      "resolution": "portrait",
+      "category": "solo"
+    },
+    "vibrator bondage": {
+      "prompt": "dark, indoors, arms up, legs spread, m legs, dildo under panties, suspension, bound arms, bound legs, bound wrists, shibari, skirt lift, bra lift, breasts out, puffy nipples, covered nipples, vibrator on nipple, \r\nwide eyes, tears, screaming, scared, (trembling:1.1), (motion blur:1.1), rolling eyes,",
+      "resolution": "portrait",
+      "category": "solo"
+    },
+    "presenting armpit": {
+      "prompt": "presenting armpit, full-face blush, looking to the side, (armpit focus:1.1), spread armpit, blush, sweaty armpits, wet, steaming body, heavy breathing, shy, embarrassed, no shirt,\n",
+      "resolution": "portrait",
+      "category": "solo"
+    },
+    "incontinence": {
+      "prompt": "street, outdoors, (simple background:-1.1), standing, have to pee, peeing self, puddle, shoes, full body, tears, embarrassed, full-face blush, trembling, between legs, skirt grab, wet clothes, steaming body, shoes, clenched teeth, crying,",
+      "resolution": "portrait",
+      "category": "solo"
+    },
+    "panty presentation": {
+      "prompt": "indoor, blush, shy, female focus, holding panties, pussy juice stain, presenting removed panties, solo focus, focus panties, upper body, bite panties,",
+      "resolution": "portrait",
+      "category": "solo"
+    },
+    "peeking nipple": {
+      "prompt": "looking down shirt, unaware expression, (loose bra not supporting:1.1), (creating gap exposing subtle nipple peek barely visible:1.1), (revealing pussy and nipple line on clothes:-1.1), (areola, nipples, nipple slip:1.1), sweatdrop, (fanning self:1.1), very high angle POV from directly above side view, clothes pull, shirt pull, exhibitionism, public indecency, (open shirt:-1.1), hot, pulling own clothes,",
+      "resolution": "portrait",
+      "category": "solo"
+    },
+    "wet clothes": {
+      "prompt": "(troubled helpless expression, looking uncertain:1.1), (soaked clothes from rain, water dripping from hair and blouse:1.1), (clinging to skin:1.1), (subtly sheer wet blouse, bra outline visible through fabric, panties outline visible through fabric:1.1), ",
+      "resolution": "portrait",
+      "category": "solo"
+    },
+    "prone upskirt": {
+      "prompt": "(prone lying on bed:1.1), upskirt, cameltoe, feet up, looking down, looking book, ",
+      "resolution": "portrait",
+      "category": "solo"
+    },
+    "stairs upskirt": {
+      "prompt": "on stairs, (POV from behind on stairs down position, girl ascending in front high position, only girl back head visible, no face:1.1), panties, unaware innocent expression, ",
+      "resolution": "portrait",
+      "category": "solo"
+    },
+    "happy pregnant": {
+      "prompt": "1girl, cowboy shot, pregnant, puffy nipples, navel, looking at viewer, embarrassed, white nightgown, {{happy, open mouth, smile, closed eyes}}, {{{hand on own stomach}}}, tears, sitting, (dark nipples:0.2), covered nipples,",
+      "resolution": "portrait",
+      "category": "solo"
+    },
+    "unwanted pregnant": {
+      "prompt": "1girl, cowboy shot, pregnant, puffy nipples, navel, looking at viewer, embarrassed, white nightgown, {{{hand on own stomach}}}, tears, sitting, (dark nipples:0.2), covered nipples, skirt lift, crotchless panties, pussy, navel, lactation, crying with eyes open, tears, crying, streaming tears, anguish, despair, empty eyes, bags under eyes, nightgown, ",
+      "resolution": "portrait",
+      "category": "solo"
+    },
+    "pregnant test": {
+      "prompt": "holding pregnancy test, pregnancy test, hand on own stomach, implied pregnancy, on toilet, looking pregnancy test, surprised, panty pull, trembling, wide-eyed, squatting, squat toilet, sad, crying, shaded face,",
+      "resolution": "portrait",
+      "category": "solo"
+    },
+    "pregnancy status": {
+      "prompt": "1girl, cowboy shot, (pregnant:0.5), looking at stomach, embarrassed, {{{hand on own stomach}}}, covered nipples, confused, (ovum:1.1), (ovulation:1.1), (oocyte division:1.1), (female fertilization:1.1), skirt lift, skirt grab, cameltoe, stomach, Lifting her own skirt and touching her own stomach, navel, belly,",
+      "resolution": "portrait",
+      "category": "solo"
+    },
+    "sitting upskirt": {
+      "prompt": "(sitting, hugging own knees side by side, hands holding knees together, 1.5:1.1)skirt hiked up fully exposing crotch, panties::, on couch, dim lighting, dark, cameltoe, looking away,",
+      "resolution": "portrait",
+      "category": "solo"
+    },
+    "after sex": {
+      "prompt": "after sex, after vaginal, armpits, armpits, upskirt, lying, on back, blush, bra lift, panties aside, breasts out, clitoris, nipples, areolae, cum in pussy, cum on body, excessive cum, from above, spread legs, tongue out, pussy juice, fucked silly, female ejaculation, head back, rolling eyes, bra lift, puffy nipples, full-face blush, torn pantyhose, ",
+      "resolution": "portrait",
+      "category": "solo"
+    },
+    "pregnant womb xray": {
+      "prompt": "standing, (pregnant, fetus, x-ray:1.1), looking down, hands on stomach, open mouth, sweatdrop, moaning, rolling eyes, @ @, faceless fetus, bald fetus, (twin fetuses, ring:-1.1),",
+      "resolution": "portrait",
+      "category": "solo"
+    },
+    "panty show": {
+      "prompt": "lifting own clothes, skirt lift, looking at viewer, standing, blush, pantyshot, cameltoe, shy, embarrassed,",
+      "resolution": "portrait",
+      "category": "solo"
+    },
+    "pussy show": {
+      "prompt": "lifting own clothes, skirt lift, looking at viewer, standing, blush, shy, embarrassed, pussy, cleft of venus, rolling eyes, wide-eyed, @ @, scared, nervous,  panty pull, clitoris, clitoral hood,",
+      "resolution": "portrait",
+      "category": "solo"
+    },
+    "breasts show": {
+      "prompt": "looking at viewer, blush, shy, embarrassed, breasts out, bra, holding bra, holding unworn clothes, partially unbuttoned, unworn bra, cowboy shot, puffy nipples, stained bra, sweat stain, steaming body, ",
+      "resolution": "portrait",
+      "category": "solo"
+    },
+    "captive": {
+      "prompt": "kidnapped, tape gag, arms behindbback, bound, kneeling, looking back, from behind, indoors, dim lighting, dark, tearing up, ",
+      "resolution": "portrait",
+      "category": "solo"
+    },
+    "cum on body": {
+      "prompt": "cum, cum on body, lying, on back, panties, bra, cum on breasts, cum on clothes, cum on legs, clenched teeth, disgust, embarrassed, shy, nervous, blush, shy peek::, (arms in foreground:1.1), ",
+      "resolution": "portrait",
+      "category": "solo"
+    },
+    "sleeping cum on body": {
+      "prompt": "cum, cum on body, lying, on back, panties, bra, cum on breasts, cum on clothes, cum on legs, blush, sleeping, skirt lift, breasts out, panty pull, cleft of venus, pussy, shirt lift, ",
+      "resolution": "portrait",
+      "category": "solo"
+    },
+    "nude dogeza": {
+      "prompt": "ass, folded clothes, hair spread out, nude, unworn panties, unworn clothes, unworn bra, nsfw, solo, seiza, (teeth, glans, upper teeth only, tongue, tongue out, eyes:-1.1), (naked dogeza:1.1), (dogeza:1.1), unworn legwear,",
+      "resolution": "portrait",
+      "category": "solo"
+    },
+    "anal beads insertion": {
+      "prompt": "anal beads, anal object insertion, anal focus, anus, ass, full-face blush, furrowed brow, {{{{shaded face, scared, trembling}}}}, despair, {{tears, streaming tears, sweat}}, gloom (expression), open mouth, embarrassed, pussy juice, from behind, looking own ass, panty pull, doggystyle, on hands and knees, arched back, {{face down}}, ass up, ",
+      "resolution": "portrait",
+      "category": "solo"
+    },
+    "washing pussy": {
+      "prompt": "holding shower head, (Bring the shower head to the own clitolis:1.1), stimulate clitoris with water, nude, pussy, water hits pussy, shower room, wet, nipples, looking down, lower body, strong water pressure, showering, shower (place), straight hair, spread pussy,",
+      "resolution": "portrait",
+      "category": "solo"
+    },
+    "washing breasts": {
+      "prompt": "holding shower head, (Bring the shower head to the own nipples:1.1), stimulate nipple with water, nude, pussy, water hits breasts, shower room, wet, nipples, looking own breasts, lower body, strong water pressure, showering, shower (place), straight hair, ",
+      "resolution": "portrait",
+      "category": "solo"
+    },
+    "windy day upskirt": {
+      "prompt": "crotch focus, crotch seam, panties, voyeurism, cameltoe, public indecency, upskirt, full-face blush, embarrassed, @ @, surprised, street, pantyshot, outdoors, wind, wind lift, ",
+      "resolution": "portrait",
+      "category": "solo"
+    },
+    "fallen down upskirt": {
+      "prompt": "crotch focus, crotch seam, panties, voyeurism, cameltoe, public indecency, upskirt, pantyshot, full-face blush, embarrassed, shy, street, fallen down, on ground, arm support, open mouth, @ @,",
+      "resolution": "portrait",
+      "category": "solo"
+    },
+    "underdesk upskirt": {
+      "prompt": "crotch focus, crotch seam, feet out of frame, office background, office, looking away, (expressionless:1.1), panties, on chair, under table, voyeurism, cameltoe, steaming body, public indecency, upskirt, (skirt lift:-1.1), A situation where you are peeking at a woman's panties under the desk, desk, looking front, looking away,",
+      "resolution": "portrait",
+      "category": "solo"
+    },
+    "dropped item upskirt": {
+      "prompt": "crotch focus, crotch seam, looking down, expressionless, half-closed eyes, panties, voyeurism, cameltoe, public indecency, upskirt, (skirt lift:-1.1), hand on own knee, looking down, squatting, pantyshot, picking up, paper, shoes,",
+      "resolution": "portrait",
+      "category": "solo"
+    },
+    "high shelf upskirt": {
+      "prompt": "crotch focus, crotch seam, panties, voyeurism, cameltoe, public indecency, upskirt, pantyshot, expressionless, from behind, looking up, leaning forward, chair, library, look ahead, bookshelf, holding book, on chair, arm up, ",
+      "resolution": "portrait",
+      "category": "solo"
+    },
+    "own foot massage": {
+      "prompt": "on chair, office, fingers between toes, foot massage, (massage your own feet:1.1), (holding own foot:1.1), sitting, steaming body, embarrassed, blush, looking own foot, foot on thighs, leg up, bend leg, ",
+      "resolution": "portrait",
+      "category": "solo"
+    },
+    "panty adjusting": {
+      "prompt": "ass, adjusting clothes, (adjusting panties:1.1), ass focus, pantylines, from behind, standing, facing away, head out of frame, ",
+      "resolution": "portrait",
+      "category": "solo"
+    },
+    "bra strap adjusting": {
+      "prompt": "(adjusting bra:1.1), adjusting clothes, arm under breasts, standing, frown, v-shaped eyebrows, embarrassed, blush, looking at breasts, (hand in bra strap:1.1), cleavage, closed mouth, looking down, Adjust bra straps over clothes,",
+      "resolution": "portrait",
+      "category": "solo"
+    },
+    "outdoor masturbation": {
+      "prompt": "outdoors, female masturbation, pussy juice, solo focus, standing, legs together, fingering, cameltoe, exhibitionism, orgasm, rolling eyes, embarrassed, ahegao, saliva, public indecency, shadow, blurry background, blush, nipple tweak, nipple stimulation, (alley:1.1), ",
+      "resolution": "portrait",
+      "category": "solo"
+    },
+    "pubic hair removal": {
+      "prompt": "bathroom, holding razor, looking down, pussy, safety razor, shaving crotch, shaving, pussy focus, nervous, nude, self pubic hair removal, clitoris, (excessive pubic hair, bra, panties, clothes:-1.1), completely nude,",
+      "resolution": "portrait",
+      "category": "solo"
+    },
+    "mc spreadpussy": {
+      "prompt": "nsfw, uncensored, on back, legs over head, presenting pussy, spread pussy, lying, self spread pussy, {{from above}}, open mouth, m legs, (pussy:1.1), panties aside, bra lift, breasts, nipples, (nipple indents:1.1), breasts out, clothes lift, bra lift, puffy nipples, full-face blush, (pink eyes, empty eyes, drooling, mind control, :o, rolling eyes, wide-eyed:1.1), (coin:-1.1),",
+      "resolution": "portrait",
+      "category": "solo"
+    },
+    "mc masturbation": {
+      "prompt": "female masturbation, nipple stimulation, nipple tweak, nipples, (nipple indents:1.1), breasts out, open mouth, pussy juice, peeking, tweaking own nipple, pussy, fingering, orgasm, saliva, tearing up, lying, bra lift, puffy nipples, (pink eyes, empty eyes, drooling, mind control, :o, rolling eyes, wide-eyed:1.1), (coin:-1.1), panty pull, ",
+      "resolution": "portrait",
+      "category": "solo"
+    },
+    "mc presenting armpit": {
+      "prompt": "presenting armpit, looking away, (armpit focus:1.1), spread armpit, sweaty armpits, wet, steaming body, (pink eyes, empty eyes, drooling, mind control, :o, rolling eyes, wide-eyed:1.1), (coin:-1.1), no shirt, no bra, nipples, areolae, \n",
+      "resolution": "portrait",
+      "category": "solo"
+    },
+    "mc panty presentation": {
+      "prompt": "indoor, female focus, holding panties, pussy juice stain, presenting removed panties, solo focus, focus panties, upper body, bite panties, (pink eyes, empty eyes, drooling, mind control, :o, rolling eyes, wide-eyed:1.1), (coin:-1.1),",
+      "resolution": "portrait",
+      "category": "solo"
+    },
+    "mc panty show": {
+      "prompt": "lifting own clothes, skirt lift, looking at viewer, standing, pantyshot, cameltoe, (pink eyes, empty eyes, drooling, mind control, :o, rolling eyes, wide-eyed:1.1), (coin:-1.1),",
+      "resolution": "portrait",
+      "category": "solo"
+    },
+    "mc pussy show": {
+      "prompt": "lifting own clothes, skirt lift, looking at viewer, standing, pussy, cleft of venus, (panty pull:1.1), (pink eyes, empty eyes, drooling, mind control, :o, rolling eyes, wide-eyed:1.1), (coin:-1.1), clitoris, clitoral hood, ",
+      "resolution": "portrait",
+      "category": "solo"
+    },
+    "mc breasts show": {
+      "prompt": "looking at viewer, breasts out, bra, holding bra, holding unworn clothes, partially unbuttoned, unworn bra, cowboy shot, puffy nipples, stained bra, sweat stain, steaming body, (pink eyes, empty eyes, drooling, mind control, :o, rolling eyes, wide-eyed:1.1), (coin:-1.1), ",
+      "resolution": "portrait",
+      "category": "solo"
+    },
+    "orgasm": {
+      "prompt": "(see-through clothes, see-through shirt, see-through skirt, see-through bra, see-through panties, pussy, nipples:1.1), puffy nipples, covered nipples, blush, embarrassed, shy, excessive pussy juice, female ejaculation, female orgasm, head back, leaning back, standing, motion lines, pussy juice trail, tongue out, arms at sides, cowboy shot, ahegao, eyes,\n",
+      "resolution": "portrait",
+      "category": "solo"
+    },
+    "curse eruption": {
+      "prompt": "(see-through clothes, see-through shirt, see-through skirt, see-through bra, see-through panties, pussy, nipples:1.1), clothed masturbation, corruption, female masturbation, female orgasm, fingering, grabbing own breast, nipple stimulation, nipple tweak, covered nipples, fingering, open mouth, (pubic tattoo, shining tattoo:1.1), tattoo, pussy juice, standing, embarrassed, flustered, shy, confused, nervous, motion lines, moaning, crying, panties, skirt lift,\n",
+      "resolution": "portrait",
+      "category": "solo"
+    },
+    "defeat": {
+      "prompt": "defeat, abuse, (torn clothes:1.1), bad end, blush, body blush, bruise, bruise on arm, bruise on face, bruise on leg, bruise on stomach, half-closed eyes, dirty clothes, dutch angle, injury, pain, ryona, trembling, heavy breathing, puffy nipples, torn panties, torn bra, torn legwear, bondage, groping, bound, (nipples, pussy:1.1),\n",
+      "resolution": "portrait",
+      "category": "solo"
+    },
+    "clothing transparency": {
+      "prompt": "crowd, (see-through clothes, see-through shirt, see-through skirt, see-through bra, see-through panties, pussy, nipples:1.1), puffy nipples, covered nipples, street, public indecency, blush, looking down, scared, embarrassed, shy, (covering breasts, covering crotch:1.1), @ @, open mouth,\n",
+      "resolution": "portrait",
+      "category": "solo"
+    },
+    "footjob": {
+      "prompt": "nsfw, two-footed footjob, feet, sitting, penis, precum, uncensored, dynamic pose, (sweat, sweatdrop:-1), panties, stained panties, cameltoe, -3:bra::, embarrassed, flustered, shy, nervous, ",
+      "resolution": "portrait",
+      "category": "non_penetration"
+    },
+    "fella": {
+      "prompt": "nsfw, uncensored, (fellatio:1.1), sitting, from above, penis, precum, saliva on penis, handjob, kneeling, dynamic pose, embarrassed, flustered, shy, nervous, (speech bubble, text background:-1.1), steaming body, heavy breathing,",
+      "resolution": "portrait",
+      "category": "non_penetration"
+    },
+    "handjob": {
+      "prompt": "nsfw, two-handed handjob, penis, precum, uncensored, (panties, bra:-1.1), embarrassed, flustered, shy, nervous, ",
+      "resolution": "portrait",
+      "category": "non_penetration"
+    },
+    "sumata": {
+      "prompt": "nsfw, uncensored, Submit to penis, sumata, looking at penis, handjob, (thigh sex, hands on penis, handjob:1.1), hetero, girl's back boy, (dynamic pose:1.1), male focus, from below, holding another's waist, pussy, pussy juice, panties aside, embarrassed, flustered, shy, nervous, steaming body, ",
+      "resolution": "portrait",
+      "category": "non_penetration"
+    },
+    "breastfeeding": {
+      "prompt": "1boy, (breast sucking:1.1), (breastfeeding:1.1), (lactation:-1.1), grabbing another's breasts, nipple tweak, nipple stimulation,  (open clothes:1.1), saliva, upper body, from below, from side, 1girl, girl lying in bed, areola, bra, breasts, saliva on breasts, (nipple indents:1.1), looking at breasts, breasts out, orgasm, (penis:-1.1), embarrassed, flustered, aroused, shy, nervous, steaming body, looking own breasts,",
+      "resolution": "portrait",
+      "category": "non_penetration"
+    },
+    "cunnilingus": {
+      "prompt": "nsfw, (lying, on back:1.1) cunnilingus, 1other, tungs on pussy, open mouth, licking pussy, spread legs, m legs, (presenting pussy:1.1), uncensored, hetero, from above, panties aside, bra lift, (nipple indents:1.1), embarrassed, flustered, shy, nervous, full-face blush, steaming body, facepalm, ",
+      "resolution": "portrait",
+      "category": "non_penetration"
+    },
+    "foot warship": {
+      "prompt": "from side, 1boy, (pov:-1.1), standing, boy on top, foot worship, leg grab, smelling feet, licking foot, (thigh sex:1.1), cum on body, cum on clothes, 1girl, on back, lying, legs up, legs together, feet, foot on another's face, solo focus, pillow, embarrassed, flustered, shy, nervous, girl feet, feet,",
+      "resolution": "portrait",
+      "category": "non_penetration"
+    },
+    "kidnapping": {
+      "prompt": "cowboy shot, motion lines, 1boy, (chloroform:1.1), kidnapping, handkerchief, grabbing from behind, (grabbing another's breast:1.1), covering another's mouth, 1girl, restrained, tears, empty eyes, rolling eyes, shaded face, unconscious, arm grab, (panties, bra, underwear, nsfw:-1.1), trembling,",
+      "resolution": "portrait",
+      "category": "non_penetration"
+    },
+    "irrumatio": {
+      "prompt": "(irrumatio:1.1), motion lines, 1boy, grabbing another's head, from above, (pov crotch:1.1), pov hands, 1girl, fellatio, full-face blush, oral, deepthroat, saliva, wide eyes, tears, (trembling:1.1), (motion blur:1.1), rolling eyes, leaning forward, tearing up, pain, heavy breathing, steaming body, ",
+      "resolution": "portrait",
+      "category": "non_penetration"
+    },
+    "smelling pussy": {
+      "prompt": "(smelling pussy, face in crotch,:1.1), smelling, aroused, closed mouth, skirt lift, furrowed brow, hand on another's thigh, head on another's leg, head under another's skirt, head under skirt, heavy breathing, steam, steaming body, lifting own clothes, full-face blush, pervert, embarrassed, flustered, shy, ",
+      "resolution": "portrait",
+      "category": "non_penetration"
+    },
+    "chikan kabedon": {
+      "prompt": "(train interior, against door, against glass, breasts on glass, crowd:1.1), solo focus, from below, (chair:-1.1), 1boy, chikan, public indecency, fingering, grabbing another's breast, hand in panties, groping, molestation, skirt lift, 1girl, pussy juice, pussy juice stain, breasts out, (nipple indents:1.1), puffy nipples, hand on glass, (scared:1.1), wide eyes, tears, (trembling:1.1), rolling eyes, bra lift, ",
+      "resolution": "portrait",
+      "category": "non_penetration"
+    },
+    "chikan groping": {
+      "prompt": "train interior, crowd, multiple boys, chikan, public indecency, from below, 1boy, skirt lift, (from behind:1.1), (grabbing from behind:1.1), lifting another's clothes, grabbing another's ass, groping, ass grab, molestation, 1girl, solo focus, standing, looking to the side, blush, open mouth, scared, surprised, furrowed brow, hand grip, holding hand grip,",
+      "resolution": "portrait",
+      "category": "non_penetration"
+    },
+    "sleeping chikan": {
+      "prompt": "train interior, sleep molestation, groping, station, nsfw, (pov, pov hands, 4boys, many pov hands:1.1), hand on another's crotch, hand on another's breasts, hand on another's stomach, hand on another's pussy, 1girl, sitting, (sitting girl, sleeping girl:1.1), spread legs, panties aside, fingering, pussy, bra lift, nipples, nipple tweak, nipples stimulation, spread pussy, nipple caress, pussy caress,",
+      "resolution": "portrait",
+      "category": "non_penetration"
+    },
+    "sleeping cunnilingus": {
+      "prompt": "(girl with closed eyes:1.1), (sleeping girl:1.1), frowning, lying, trembling, decensored, nsfw, (lying, on back:1.1), cunnilingus, 1other, tungs on pussy, open mouth, licking pussy, spread legs, m legs, (presenting pussy:1.1), uncensored, hetero, from above, panties aside, bra lift, (nipple indents:1.1), puffy nipples, steaming body, ",
+      "resolution": "portrait",
+      "category": "non_penetration"
+    },
+    "sleeping breastfeeding": {
+      "prompt": "(girl with closed eyes:1.1), (sleeping girl:1.1), frowning, lying, trembling, decensored, nsfw, (breast sucking:1.1), (breastfeeding:1.1), (lactation:-1.1), grabbing another's breasts, nipple tweak, nipple stimulation, saliva, upper body, from below, from side, (girl lying in bed:1.1), areola, bra, breasts, saliva on breasts, (nipple indents:1.1), puffy nipples, breasts out, clothes lift, clothes pull, orgasm, (penis:-1.1), steaming body, leaning back,",
+      "resolution": "portrait",
+      "category": "non_penetration"
+    },
+    "sleeping fella": {
+      "prompt": "(girl with closed eyes:1.1), (sleeping girl:1.1), frowning, furrowed brow, lying, trembling, decensored, nsfw, uncensored, (fellatio:1.1), oral, penis, precum, penis in mouth, saliva on penis, drooling, (speech bubble, text background:-1.1), steaming body, heavy breathing, (lying, on back:1.1), (girl lying in bed:1.1), pillow, panties, tongue out,",
+      "resolution": "portrait",
+      "category": "non_penetration"
+    },
+    "reverse footjob": {
+      "prompt": "imminent spanking, hands up, over the knee, ass, (eyes:-1.1), blush, Back of the head, on bed, back, lying, dim lighting, dark, target#footjob, foot on penis, looking down, blush,",
+      "resolution": "portrait",
+      "category": "non_penetration"
+    },
+    "indifference footjob": {
+      "prompt": "dim lighting, dark, girl sitting on bed, footjob, expressionless, blush, penis, veiny penis, foot focus, knee up, toes, looking down,",
+      "resolution": "portrait",
+      "category": "non_penetration"
+    },
+    "cheeks licked": {
+      "prompt": "(portrait:1.1), looking to the side, constricted pupils, one eye closed, clenched teeth, cheek press, trembling, heavy breathing, arms at sides, A man licks a woman's cheek, disgust,",
+      "resolution": "portrait",
+      "category": "non_penetration"
+    },
+    "nipple stimulation": {
+      "prompt": "(lactation:-1.1), grabbing another's nipple, nipple tweak, (nipple stimulation:1.1), saliva, upper body, from below, from side, girl lying in bed, areola, bra, breasts, (nipple indents:1.1), looking at breasts, breasts out, orgasm, (penis:-1.1), embarrassed, flustered, aroused, shy, nervous, steaming body, looking own breasts, lying, on back, nipple rub, puffy nipples, nipples, areolae, bra lift, (tickling:1.1), looking away, teasing, trembling, saliva, (man rubs a woman's nipples:1.1), (man pinches a woman's nipples:1.1), (happy, smile:-1.1), looking away,",
+      "resolution": "portrait",
+      "category": "non_penetration"
+    },
+    "panty wrapped handjob": {
+      "prompt": "blush, open mouth, furrowed brow, embarrassed, shy, blush, (handjob over clothes:1.1), handjob, licking penis, panties on penis, tongue out, saliva, fellatio, from above, penis, precum, saliva on penis, handjob, dynamic pose, heavy breathing, penis,",
+      "resolution": "portrait",
+      "category": "non_penetration"
+    },
+    "gutpunch": {
+      "prompt": "(wide-eyed, surprised, twitching, ^^^, rolling eyes, open mouth, saliva, spit:1.1), shocked, trembling, (target#punching, stomach punch:1.1), erect nipples, have to pee, peeing self, cameltoe, nipple erection,",
+      "resolution": "portrait",
+      "category": "non_penetration"
+    },
+    "hair drag": {
+      "prompt": "(fainted, unconscious, exhausted, rolling eyes, open mouth, saliva:1.1), tears, arms down, sitting, (messy hair:1.1), hair pulled, (dragged:1.1), erect nipples, (feet focus:1.1), (walking away, back turned:1.1), (grabbing another's hair, dragging, pulling:1.1), (dark, night:1.1), back alley, trash bags, trash, dark background, (sidelighting, shade, shadow:1.1), (faceless male:1.1), tall male, bald, (bare feet:-1.1),",
+      "resolution": "portrait",
+      "category": "non_penetration"
+    },
+    "smelling breasts": {
+      "prompt": "(from behind, from side:1.1), looking at another, cowboy shot, (confused, nervous, embarrassed:1.1), open mouth, wavy mouth, raised eyebrows, arms at side, from above, looking at another, head between breasts, hands on another's breasts, grabbing another's breasts, heavy breathing, smelling, ",
+      "resolution": "portrait",
+      "category": "non_penetration"
+    },
+    "smelling thigh": {
+      "prompt": "from side, 1boy, (pov:-1.1), standing, boy on top, leg grab, smelling thigh, 1girl, on back, lying, legs up, legs together, feet, thigh on another's face, solo focus,  embarrassed, flustered, shy, nervous, confused, girl feet, heavy breathing, steaming body, pervert, ",
+      "resolution": "portrait",
+      "category": "non_penetration"
+    },
+    "smelling armpit": {
+      "prompt": "presenting armpit, full-face blush, looking at another, (armpit focus:1.1), spread armpit, blush, sweaty armpits, wet, steaming body, heavy breathing, shy, embarrassed, surprised, heavy breathing, steaming body, pervert, (smelling armpit:1.1), standing, cowboy shot, glaring, no shirt, ",
+      "resolution": "portrait",
+      "category": "non_penetration"
+    },
+    "smelling anal": {
+      "prompt": "skirt lift, panty pull, from behind, grabbing another's ass, groping, looking at another, looking back, pussy, anus, pussy juice, (smelling ass:1.1), spread ass, trembling, embarrassed, shy, full-face blush, tearing up, heavy breathing, steaming body, girl leaning forward, anus focus, ass, ",
+      "resolution": "portrait",
+      "category": "non_penetration"
+    },
+    "cum panties": {
+      "prompt": "close-up, lower body, head out of frame::, steam, gesugao, disgust, blush, standing, against wall, skirt lift, holding own skirt, thick penis, large penis, veiny penis, ejaculation, (cum on another's panties, cum on crotch:1.1), erection, holding veiny penis, masturbation, (motion lines, motion blur:1.1), (panty pull:1.1), pussy, ",
+      "resolution": "portrait",
+      "category": "non_penetration"
+    },
+    "paizuri": {
+      "prompt": "(paizuri:1.1), breasts squeezed together, grabbing own breast, embarrassed, shy, nervous, full-face blush, open mouth, semen on face, cum on breasts, cum on face, breasts around penis, bra lift, pov, veiny penis, cum, closed mouth, looking away, pov crotch, v-shaped eyebrows, tearing up, open shirt,",
+      "resolution": "portrait",
+      "category": "non_penetration"
+    },
+    "sleep undress": {
+      "prompt": "skirt lift, (sleep molestation:1.1), nipples, bra lift, on back, (undressing:1.1), panty pull, blush, open mouth, sleeping, (partially visible vulva:1.1), solo focus, trembling hands,",
+      "resolution": "portrait",
+      "category": "non_penetration"
+    },
+    "face pussy juice": {
+      "prompt": "blush, full-face blush, embarrassed, tearing up, open mouth, saliva, cunnilingus, (excessive pussy juice:1.1), pussy juice trail, lying male, on back, (pussy juice on face:1.1), sitting on face, tongue out, pervert, steaming body, heavy breathing, ahegao, trembling, (female ejaculation:1.1),",
+      "resolution": "portrait",
+      "category": "non_penetration"
+    },
+    "face piss": {
+      "prompt": "blush, full-face blush, embarrassed, crying, teardrop, open mouth, saliva, cunnilingus, excessive pussy juice, lying male, on back, (pussy juice on face:1.1), sitting on face, pervert, pee, peeing self, puddle, trembling, skirt grab, wet clothes, steaming body, clenched teeth,",
+      "resolution": "portrait",
+      "category": "non_penetration"
+    },
+    "stealth fellatio": {
+      "prompt": "fellatio, looking at viewer, open mouth, oral, penis grab, penis out, pov, (stealth fellatio:1.1), (under table:1.1), veiny penis, embarrassed, heavy breathing, steaming body, blush, glaring, nervous, tearing up,",
+      "resolution": "portrait",
+      "category": "non_penetration"
+    },
+    "anal beads pull": {
+      "prompt": "pink anal beads, anal object insertion, anal focus, anus, ass, full-face blush, furrowed brow, {{{{shaded face, scared, trembling}}}}, despair, {{tears, streaming tears, sweat}}, crying, screaming, ahegao, open mouth, tongue out, embarrassed, pussy juice, excessive pussy juice, female orgasm, female ejaculation, from behind, looking own ass, panty pull, doggystyle, on hands and knees, arched back, {{face down}}, ass up, (anal beads pull:1.1), motion lines, ",
+      "resolution": "portrait",
+      "category": "non_penetration"
+    },
+    "forced kiss": {
+      "prompt": "mutual deep kiss, wide-eyed, tearing up, full-face blush, breast press, kiss, disgust, surprised, holding another's wrist, forced kiss, french kiss, hand on another's head, saliva, saliva trail, trembling,",
+      "resolution": "portrait",
+      "category": "non_penetration"
+    },
+    "foot massage": {
+      "prompt": "fingers between toes, (foot massage:1.1), holding another's foot, sitting, steaming body, embarrassed, blush, looking at viewer, toes, open mouth, @ @, sweatdrop, indoors, (skirt tug:1.1), covering crotch, foot focus, from below, pov hands, knee up, ",
+      "resolution": "portrait",
+      "category": "non_penetration"
+    },
+    "hairjob": {
+      "prompt": "nsfw, handjob, penis, precum, uncensored, (panties, bra:-1.1), embarrassed, flustered, shy, nervous, (hairjob:1.1), cum on hair, hair over shoulder, upper body, hair focus, (hair on penis:1.1), looking at viewer, motion lines, disgust, fellatio, tongue, looking at penis, wrap own hair around another penis, bow head, oral, ",
+      "resolution": "portrait",
+      "category": "non_penetration"
+    },
+    "armpit sex": {
+      "prompt": "arm up, (armpit sex:1.1), penis, cum on body, blush, nervous, shy, embarrassed, heavy breathing, steaming body, presenting armpit, full-face blush, looking to the side, (armpit focus:1.1), sweaty armpits, wet, no shirt, solo focus, out of frame, sitting on bed, cum on armpits, excessive cum, motion lines, \n",
+      "resolution": "portrait",
+      "category": "non_penetration"
+    },
+    "mc footjob": {
+      "prompt": "nsfw, two-footed footjob, feet, sitting, penis, precum, uncensored, dynamic pose, (sweat, sweatdrop:-1), panties, stained panties, cameltoe, -3:bra::, (pink eyes, empty eyes, drooling, mind control, :o, rolling eyes, wide-eyed:1.1), (coin:-1.1),",
+      "resolution": "portrait",
+      "category": "non_penetration"
+    },
+    "mc fella": {
+      "prompt": "nsfw, uncensored, (fellatio:1.1), sitting, from above, penis, precum, saliva on penis, handjob, kneeling, dynamic pose, (speech bubble, text background:-1.1), steaming body, (pink eyes, empty eyes, drooling, mind control, :o, rolling eyes, wide-eyed:1.1), (coin:-1.1),",
+      "resolution": "portrait",
+      "category": "non_penetration"
+    },
+    "mc handjob": {
+      "prompt": "nsfw, two-handed handjob, penis, precum, uncensored, (panties, bra:-1.1), (pink eyes, empty eyes, drooling, mind control, :o, rolling eyes, wide-eyed:1.1), (coin:-1.1),",
+      "resolution": "portrait",
+      "category": "non_penetration"
+    },
+    "mc sumata": {
+      "prompt": "nsfw, uncensored, Submit to penis, sumata, looking at penis, handjob, (thigh sex, hands on penis, handjob:1.1), hetero, girl's back boy, (dynamic pose:1.1), male focus, from below, holding another's waist, pussy, pussy juice, panties aside, steaming body, (pink eyes, empty eyes, drooling, mind control, :o, rolling eyes, wide-eyed:1.1), (coin:-1.1),",
+      "resolution": "portrait",
+      "category": "non_penetration"
+    },
+    "mc breastfeeding": {
+      "prompt": "1boy, (breast sucking:1.1), (breastfeeding:1.1), (lactation:-1.1), grabbing another's breasts, nipple tweak, nipple stimulation,  (open clothes:1.1), saliva, upper body, from below, from side, 1girl, girl lying in bed, areola, bra, breasts, saliva on breasts, (nipple indents:1.1), looking at breasts, breasts out, orgasm, (penis:-1.1), steaming body, looking own breasts, (pink eyes, empty eyes, drooling, mind control, :o, rolling eyes, wide-eyed:1.1), (coin:-1.1),",
+      "resolution": "portrait",
+      "category": "non_penetration"
+    },
+    "mc cunnilingus": {
+      "prompt": "nsfw, (lying, on back:1.1) cunnilingus, 1other, tungs on pussy, open mouth, licking pussy, spread legs, m legs, (presenting pussy:1.1), uncensored, hetero, from above, panties aside, bra lift, (nipple indents:1.1), steaming body, facepalm, (pink eyes, empty eyes, drooling, mind control, :o, rolling eyes, wide-eyed:1.1), (coin:-1.1),",
+      "resolution": "portrait",
+      "category": "non_penetration"
+    },
+    "mc foot warship": {
+      "prompt": "from side, 1boy, (pov:-1.1), standing, boy on top, foot worship, leg grab, smelling feet, licking foot, (thigh sex:1.1), cum on body, cum on clothes, 1girl, on back, lying, legs up, legs together, feet, foot on another's face, solo focus, pillow, girl feet, feet, (pink eyes, empty eyes, drooling, mind control, :o, rolling eyes, wide-eyed:1.1), (coin:-1.1),",
+      "resolution": "portrait",
+      "category": "non_penetration"
+    },
+    "mc irrumatio": {
+      "prompt": "(irrumatio:1.1), motion lines, 1boy, grabbing another's head, from above, (pov crotch:1.1), pov hands, 1girl, fellatio, full-face blush, oral, deepthroat, saliva, (trembling:1.1), (motion blur:1.1), leaning forward, tearing up, pain, steaming body, (pink eyes, empty eyes, drooling, mind control, :o, rolling eyes, wide-eyed:1.1), (coin:-1.1), ",
+      "resolution": "portrait",
+      "category": "non_penetration"
+    },
+    "mc smelling pussy": {
+      "prompt": "(smelling pussy, face in crotch,:1.1), smelling, closed mouth, skirt lift, hand on another's thigh, head on another's leg, head under another's skirt, head under skirt, steam, steaming body, lifting own clothes, pervert, (pink eyes, empty eyes, drooling, mind control, :o, rolling eyes, wide-eyed:1.1), (coin:-1.1),",
+      "resolution": "portrait",
+      "category": "non_penetration"
+    },
+    "mc smelling breasts": {
+      "prompt": "(from behind, from side:1.1), looking at another, cowboy shot, open mouth, wavy mouth, arms at side, from above, looking at another, head between breasts, hands on another's breasts, grabbing another's breasts, heavy breathing, smelling, (pink eyes, empty eyes, drooling, mind control, :o, rolling eyes, wide-eyed:1.1), (coin:-1.1),",
+      "resolution": "portrait",
+      "category": "non_penetration"
+    },
+    "mc smelling thigh": {
+      "prompt": "from side, 1boy, (pov:-1.1), standing, boy on top, leg grab, smelling thigh, 1girl, on back, lying, legs up, legs together, feet, thigh on another's face, solo focus, girl feet, steaming body, pervert, (pink eyes, empty eyes, drooling, mind control, :o, rolling eyes, wide-eyed:1.1), (coin:-1.1),",
+      "resolution": "portrait",
+      "category": "non_penetration"
+    },
+    "mc smelling armpit": {
+      "prompt": "presenting armpit, (armpit focus:1.1), spread armpit, sweaty armpits, wet, steaming body, steaming body, pervert, (smelling armpit:1.1), standing, cowboy shot, no shirt, (pink eyes, empty eyes, drooling, mind control, :o, rolling eyes, wide-eyed:1.1), (coin:-1.1),",
+      "resolution": "portrait",
+      "category": "non_penetration"
+    },
+    "mc smelling anal": {
+      "prompt": "skirt lift, panty pull, from behind, grabbing another's ass, groping, looking at another, looking back, pussy, anus, pussy juice, (smelling ass:1.1), spread ass, heavy breathing, steaming body, girl leaning forward, anus focus, ass, (pink eyes, empty eyes, drooling, mind control, :o, rolling eyes, wide-eyed:1.1), (coin:-1.1),",
+      "resolution": "portrait",
+      "category": "non_penetration"
+    },
+    "mc cum panties": {
+      "prompt": "close-up, lower body, head out of frame::, steam, standing, against wall, skirt lift, holding own skirt, thick penis, large penis, veiny penis, ejaculation, (cum on another's panties, cum on crotch:1.1), erection, holding veiny penis, masturbation, (motion lines, motion blur:1.1), (panty pull:1.1), pussy, (pink eyes, empty eyes, drooling, mind control, :o, rolling eyes, wide-eyed:1.1), (coin:-1.1),",
+      "resolution": "portrait",
+      "category": "non_penetration"
+    },
+    "mc paizuri": {
+      "prompt": "(paizuri:1.1), breasts squeezed together, grabbing own breast, open mouth, semen on face, cum on breasts, cum on face, breasts around penis, bra lift, pov, veiny penis, cum, closed mouth, pov crotch, v-shaped eyebrows, tearing up, open shirt, (pink eyes, empty eyes, drooling, mind control, :o, rolling eyes, wide-eyed:1.1), (coin:-1.1),",
+      "resolution": "portrait",
+      "category": "non_penetration"
+    },
+    "mc stealth fellatio": {
+      "prompt": "fellatio, looking at viewer, open mouth, oral, penis grab, penis out, pov, (stealth fellatio:1.1), (under table:1.1), veiny penis, heavy breathing, steaming body, (pink eyes, empty eyes, drooling, mind control, :o, rolling eyes, wide-eyed:1.1), (coin:-1.1),",
+      "resolution": "portrait",
+      "category": "non_penetration"
+    },
+    "mc armpit sex": {
+      "prompt": "arm up, (armpit sex:1.1), penis, cum on body, heavy breathing, steaming body, presenting armpit, looking to the side, (armpit focus:1.1), sweaty armpits, wet, no shirt, solo focus, out of frame, sitting on bed, cum on armpits, excessive cum, motion lines, (pink eyes, empty eyes, drooling, mind control, :o, rolling eyes, wide-eyed:1.1), (coin:-1.1),\n",
+      "resolution": "portrait",
+      "category": "non_penetration"
+    },
+    "tentacle restrained": {
+      "prompt": "tentacle pit, tentacles wall::, (clenched teeth, messy hair:1.1), torn clothes, heavy breathing, surrounded, trembling, nude, nipples, (covered eyes by big hands:1.1), knees together feet apart, (huge tentacle monster:1.1), tentacles, veiny, (vore:1.1), (hug from behind, arm grab, leg grab, large hands, hand on another's face, crotch rub:1.1), just the tip, panties aside, torn panties, torn skirt, torn shirt, torn bra, pussy juice, breasts out, puffy nipples,",
+      "resolution": "portrait",
+      "category": "interspecies"
+    },
+    "tentacle milking": {
+      "prompt": "leaning forward, facing up, closed eyes, clenched teeth, blush, heavy breathing, lactation, areolae, (tentacles:1.1), see-through tentacles, breastfeeding, (see-through suction cups, breast sucking, breast pull, breastfeeding:1.1), (tentacles:1.1), (sucking own breasts:-1.1), (covered nipples:1.1), {{{restrained}}}, (immobilization:1.1), vore, sweat, flesh wall, tentacle pit, (torn clothes:1.1), torn panties, torn skirt, torn shirt, torn bra, pussy juice, breasts out, (dark, dim lighting:1.1), spread arms, outstretched arms, bound arms, immobilization, amputee, sweat, open shirt,",
+      "resolution": "portrait",
+      "category": "interspecies"
+    },
+    "tentacle tear clothes": {
+      "prompt": "(from side, dutch angle:1.1), surprised, (looking down, ^^^:1.1), wide-eyed, heavy breathing, {{{{{{tentacles, tentacles wall, fresh wall, pulling another's clothes, clothes grab, exploding clothes, undressing another, tearing clothes}}}}}}, frogtie, bouncing breasts, unalignes breasts, arms up, immobilization, stationary restraints, restrained, amputee, cleft of venus, sweat, torn clothes, torn shirt, one breast out, pussy, nipples, emphasis lines, (pussy juice trail, motion lines, motion blur:1.1), {{{{monster, tentacle pit}}}}, (dark, dim lighting:1.1),",
+      "resolution": "portrait",
+      "category": "interspecies"
+    },
+    "tentacle caress": {
+      "prompt": "dutch angle, motion lines, tentacles, veiny, (vore:1.1), (cunnilingus, leg grab, large hands, holding another's wrist, licking another's breast:1.1), (shade, tentacle pit, flesh wall:1.1), cowboy shot, skinny, duel monster, (reverse upright straddle:1.1), (oiled, screaming, moaning:1), heavy breathing, surrounded, trembling, arms up, own hands together, pussy, clitoris, (tentacle sex, vaginal:-1.1), (bound wrists, large hands on head:1.1), pussy juice stain, pussy juice trail, pussy juice puddle, torn panties, panties aside, torn skirt, torn shirt, torn bra, pussy juice, breasts out, puffy nipples,",
+      "resolution": "portrait",
+      "category": "interspecies"
+    },
+    "tentacle standingsex": {
+      "prompt": "heavy breathing, looking up, {{{empty eyes, no headwear, hair down}}}, {{{{{{tentacles, tentacle sex, vaginal}}}}}}, (dark:1.1), (glowing pink penis:1.1), (torn clothes:1.1), standing sex, leaning against wall, monster wall, tentacle wall, pressed against wall, head tilted back, (one leg raised:1.1), nipples, {{{{sway back, arms up, armpits}}}}, bound arms, bound legs, {{{{{stationary restraints, restrained}}}}}, amputee, pussy, clitoris, sweat, cum pool, partially submerged, {{{{monster, tentacle pit}}}}, head back, looking at pussy, torn panties, torn skirt, torn shirt, torn bra, pussy juice, breasts out, puffy nipples, panties aside, heavy breathing, open mouth, crying, moaning, screaming, ",
+      "resolution": "portrait",
+      "category": "interspecies"
+    },
+    "tentacles doggysex": {
+      "prompt": "leaning forward, (riding on monster:1.1), blush, empty eyes, heavy breathing, {{{{{{tentacles, vaginal, tentacle sex}}}}}}, huge penis, (doggystyle, on hands and knees, crushed head, arched back:1.1), {{face down}}, ass up, spread legs, bound arms, {{{{{{immobilization, stationary restraints, restrained}}}}}}, sweat, pussy, clitoris, (glowing pink penis:1.1), (dark:1.1), {{{{tentacle pit}}}}, torn panties, torn skirt, torn shirt, torn bra, pussy juice, breasts out, puffy nipples, panties aside, open mouth, crying, screaming, moaning, defloration, blood from vagina, ",
+      "resolution": "portrait",
+      "category": "interspecies"
+    },
+    "tentacle cowgirl": {
+      "prompt": "dutch angle, shade, tentacle pit, cowboy shot, riding, straddling, reverse upright straddle, arched back, narrow waist, heavy breathing, tentacle sex, huge penis, surrounded, vaginal, unaligned breasts, trembling, arms at sides, restrained, immobilization, pussy, clitoris, pussy juice, breasts sucked by tentacles, breasts pulled by tentacles, sitting on lap, surrounded by penis-shaped tentacles, huge penis, (glowing pink penis:1.1), (covered eyes, swallowing head, vore:1.1), hand on another's stomach, leg grab, torso grab, arm grab, hand on another's face, torn panties, torn skirt, torn shirt, torn bra, pussy juice, breasts out, puffy nipples, panties aside, open mouth, crying, screaming, defloration, blood from vagina, ",
+      "resolution": "portrait",
+      "category": "interspecies"
+    },
+    "tentacle missionary": {
+      "prompt": "uncensored, NSFW, (missionary:1.1), spread legs, (on back, lying:1.1), dutch angle, cowboy shot, from behind, facing away, (sitting on object:1.1), blush, heavy breathing, (messy hair:1.1), (pink tentacles:1.1), (head tilt:1.1), trembling, female orgasm, {{{{bound arms}}}}, stationary restraints, legs restraints, immobilization, restrained, bound legs, bound arms, between legs, wide spread legs, huge penis, (glowing pink penis:1.1), sex, vaginal, rape, pussy juice trail, sweat, (dark:1.1), (flesh bed, living bed, monster bed:1.1), (pillow:-1.1), {{monster}}, {{{{tentacle pit}}}}, torn panties, torn skirt, torn shirt, torn bra, pussy juice, breasts out, puffy nipples, panties aside, open mouth, crying, screaming, moaning, empty eyes, defloration, blood from vagina,",
+      "resolution": "portrait",
+      "category": "interspecies"
+    },
+    "tentacle spooningsex": {
+      "prompt": "nsfw, decensored, (dutch angle:1.1), (motion lines, speed lines:1.1), (dark:1.1), tentacle pit, (vore:1.1), (licking another's face, biting another's breasts, head between legs, cunnilingus:1.1), heavy breathing, surrounded, saliva trail, (arched back, tentacles around waist, coiled:1.1), (trembling:1.1), (breast pull:1.1), arms up, armpits, spread legs, (restrained, immobilization:1.1), stationary restraints, tentacle bed, (pillow:-1.1), huge penis, (glowing pink penis:1.1), (spooning sex, lying on side, lying on back, one leg raised, knee to chest:1.1), restrained legs, torn panties, torn skirt, torn shirt, torn bra, pussy juice, breasts out, puffy nipples, panties aside, open mouth, crying, screaming, moaning, empty eyes, defloration, blood from vagina,",
+      "resolution": "portrait",
+      "category": "interspecies"
+    },
+    "machine caress": {
+      "prompt": "uncensored, NSFW, (motion lines, speed lines, dim lighting:1.1), (laboratory:1.1), (mechanical tentacles, mechanical arms, robot penis:1.1), surrounded by penises, between legs, crotch rub::, breast pull, (tentacle sex:-1.1), vaginal, groping, squeezing, shade, underlighting::, (cowboy shot, looking up, no headwear, 2.0:1.1)hair down::, blush, heavy breathing, (female orgasm, trembling:1.1), (arched back:1.1), arms behind back, outstretched arms, (immobilization, restrained:1.1), own hands together, pussy, clitoris, (bound wrists, large hands on head:1.1), pussy juice stain, pussy juice trail, pussy juice puddle, torn panties, panties aside, torn skirt, torn shirt, torn bra, pussy juice, breasts out, puffy nipples,",
+      "resolution": "portrait",
+      "category": "interspecies"
+    },
+    "machine cowgirl": {
+      "prompt": "uncensored, NSFW, cowgirl position, dynamic pose, from side, dutch angle, from side, indoors, suction cups, (mechanical arms, mechanical tentacles:1.1), (laboratory:1.1), hospital bed, (dark, dim lighting:1.1), (motion lines, speed lines:1.1), motion blur, green wall, metal wall, (shade:1.1), sitting, (leaning back, arched back:1.1), wide-eyed, scared, looking up, blush, (headset:-1.1), heavy breathing, bouncing breasts, groping, squeezing, breast grab, spread legs, (immobilization, restrained, stationary restraints:1.1), respirator, covered mouth, machine fuck, sex machine, (glowing green dildo:1.1), huge penis, vaginal object insertion, metal wrist cuffs, metal ankle cuffs, metal collar, (forced orgasm:1.1), torn panties, torn skirt, torn shirt, torn bra, pussy juice, breasts out, puffy nipples, panties aside, crying, moaning, screaming, defloration, blood from vagina,",
+      "resolution": "portrait",
+      "category": "interspecies"
+    },
+    "machine missionary": {
+      "prompt": "uncensored, NSFW, (missionary:1.1), spread legs, (on back, lying:1.1), dutch angle, (from above:1.1), (laboratory:1.1), hospital bed, (dark, dim lighting:1.1), respirator, suction cups, covered mouth, (mechanical tentacles, mechanical arms, robot penis:1.1), (large penis:1.1), groping, squeezing, breast grab, (grabbing from behind:1.1), motion lines, (sidelighting:1.1), (shade:1.1), sitting, (folded:1.1), looking down, wide-eyed, scared, heavy breathing, arms behind head, (restrained:1.1), immobilization, stationary restraints, ankle cuffs, metal thigh cuffs, (chained legs:1.1), machine fuck, sex machine, (glowing green dildo:1.1), vaginal object insertion, (forced orgasm:1.1), torn panties, torn skirt, torn shirt, torn bra, pussy juice, breasts out, puffy nipples, panties aside, crying, moaning, screaming, empty eyes, defloration, blood from vagina,",
+      "resolution": "portrait",
+      "category": "interspecies"
+    },
+    "machine doggysex": {
+      "prompt": "uncensored, (doggystyle, on hands and knees:1.1), crushed head, arched back, {{face down}}, ass up, {{from side}}, looking down, top-down bottom-up, dynamic pose, crushed head, dutch angle, indoors, suction cups, (mechanical arms, mechanical tentacles:1.1), (laboratory:1.1), hospital bed, (dark, dim lighting:1.1), (motion lines, speed lines:1.1), motion blur, green wall, metal wall, (shade:1.1), blush, heavy breathing, bouncing breasts, groping, squeezing, breast grab, (immobilization, restrained, stationary restraints:1.1), respirator, covered mouth, machine fuck, sex machine, (glowing green dildo:1.1), huge penis, vaginal object insertion, metal wrist cuffs, metal ankle cuffs, metal collar, (forced orgasm:1.1), torn panties, torn skirt, torn shirt, torn bra, pussy juice, breasts out, puffy nipples, panties aside, crying, moaning, screaming, wide-eyed, scared, empty eyes, defloration, blood from vagina,",
+      "resolution": "portrait",
+      "category": "interspecies"
+    },
+    "machine spooningsex": {
+      "prompt": "uncensored, on bed, spooning sex, lying on side, lying on back, one leg raised, knee to chest, hetero, dynamic pose, dutch angle, indoors, suction cups, (mechanical arms, mechanical tentacles:1.1), (laboratory:1.1), hospital bed, (dark, dim lighting:1.1), (motion lines, speed lines:1.1), motion blur, green wall, metal wall, (shade:1.1), blush, heavy breathing, bouncing breasts, groping, squeezing, breast grab, (immobilization, restrained, stationary restraints:1.1), respirator, covered mouth, machine fuck, sex machine, (glowing green dildo:1.1), huge penis, vaginal object insertion, metal wrist cuffs, metal ankle cuffs, metal collar, (forced orgasm:1.1), torn panties, torn skirt, torn shirt, torn bra, pussy juice, breasts out, puffy nipples, panties aside, crying, moaning, screaming, wide-eyed, scared, empty eyes, defloration, blood from vagina,",
+      "resolution": "portrait",
+      "category": "interspecies"
+    },
+    "machine standingsex": {
+      "prompt": "uncensored, standing sex, leaning against wall, pressed against wall, head tilted back, one leg raised, knee to chest, from side, dutch angle, indoors, suction cups, (mechanical arms, mechanical tentacles:1.1), (laboratory:1.1), hospital bed, (dark, dim lighting:1.1), (motion lines, speed lines:1.1), motion blur, green wall, metal wall, (shade:1.1), blush, heavy breathing, bouncing breasts, groping, squeezing, breast grab, (immobilization, restrained, stationary restraints:1.1), respirator, covered mouth, machine fuck, sex machine, (glowing green dildo:1.1), huge penis, vaginal object insertion, metal wrist cuffs, metal ankle cuffs, metal collar, (forced orgasm:1.1), torn panties, torn skirt, torn shirt, torn bra, pussy juice, breasts out, puffy nipples, panties aside, crying, moaning, screaming, wide-eyed, scared, empty eyes, defloration, blood from vagina,",
+      "resolution": "portrait",
+      "category": "interspecies"
+    },
+    "machine milking": {
+      "prompt": "uncensored, leaning forward, from side, facing down, looking up, hanging breasts, (suction cups, breast sucking:1.1), milking machine, indoors, (mechanical arms, mechanical tentacles:1.1), (laboratory:1.1), hospital bed, (dark, dim lighting:1.1),  motion blur, green wall, metal wall, (shade:1.1), blush, heavy breathing, bouncing breasts, groping, squeezing, breast grab, (immobilization, restrained, stationary restraints:1.1), metal wrist cuffs, metal ankle cuffs, metal collar, torn panties, torn skirt, torn shirt, torn bra, pussy juice, breasts out, puffy nipples, crying, moaning, screaming, scared, forced orgasm,",
+      "resolution": "portrait",
+      "category": "interspecies"
+    },
+    "machine pussy checkup": {
+      "prompt": "uncensored,on back, legs over head, presenting pussy, (spread pussy:1.1), lying, {{from above}}, open mouth, m legs, (pussy:1.1), panties aside, indoors, (mechanical arms, mechanical tentacles:1.1), (laboratory:1.1), hospital bed, (dark, dim lighting:1.1), motion blur, green wall, metal wall, (shade:1.1), blush, heavy breathing, bouncing breasts, groping, squeezing, breast grab, (immobilization, restrained, stationary restraints:1.1), metal wrist cuffs, metal ankle cuffs, metal collar, torn panties, torn skirt, torn shirt, bra lift, pussy juice, breasts out, puffy nipples, screamingm crying, scared, anus, trembling, (pussy close-up, pussy focus, crotch focus, urethra, clitoral hood, clitoris, speculum, cervix, vaginal object insertio:1.1), steaming body,",
+      "resolution": "portrait",
+      "category": "interspecies"
+    },
+    "machine speculum cum": {
+      "prompt": "uncensored,on back, legs over head, presenting pussy, (spread pussy:1.1), lying, {{from above}}, open mouth, m legs, (pussy:1.1), panties aside, indoors, (mechanical arms, mechanical tentacles:1.1), (laboratory:1.1), hospital bed, (dark, dim lighting:1.1), motion blur, green wall, metal wall, (shade:1.1), blush, heavy breathing, bouncing breasts, groping, squeezing, breast grab, (immobilization, restrained, stationary restraints:1.1), metal wrist cuffs, metal ankle cuffs, metal collar, torn panties, torn skirt, torn shirt, bra lift, pussy juice, breasts out, puffy nipples, screamingm crying, scared, anus, trembling, (pussy close-up, pussy focus, crotch focus, urethra, clitoral hood, clitoris, speculum, artificial insemination, cum in pussy, vaginal object insertio:1.1), (mechanical penis:1.1), cumdrip, cum overflow, cum, penis aimed at pussy, steaming body,",
+      "resolution": "portrait",
+      "category": "interspecies"
+    },
+    "goblin caress": {
+      "prompt": "dim lighting, cave, torchlight, 5boys, armpits, arms up, bound, bound wrists, cum on body, cum, (cunnilingus:1.1), defeat, fellatio, gangbang, goblin, groping, paizuri, group sex, interspecies, leg grab, lying, monster, multiple boys, on back, oral, restrained, (straddling paizuri:1.1), (mounting:1.1), torn panties, torn skirt, torn shirt, torn bra, pussy juice, breasts out, puffy nipples, panties aside, disgust, bondage, (penis in pussy:-1.1), ",
+      "resolution": "portrait",
+      "category": "interspecies"
+    },
+    "goblin tear clothes": {
+      "prompt": "dim lighting, cave, torchlight, 5boys, bound, defeat, gangbang, goblin, groping, group sex, interspecies, monster, multiple boys, on back, penis, restrained, torn panties, torn skirt, torn shirt, torn bra, pussy juice, breasts out, puffy nipples, heavy breathing, open mouth, crying, moaning, screaming, disgust, bondage, (penis in pussy:-1.1), (looking down, ^^^:1.1), wide-eyed, pulling another's clothes, clothes grab, exploding clothes, undressing another, tearing clothes, bouncing breasts, unalignes breasts, cleft of venus, emphasis lines, motion lines, motion blur::,",
+      "resolution": "portrait",
+      "category": "interspecies"
+    },
+    "goblin standingsex": {
+      "prompt": "(hanging legs:1.1), dim lighting, cave, torchlight, 3boys, bound, cum on body, defeat, gangbang, goblin, groping, group sex, interspecies, monster, multiple boys, on back, penis, restrained, torn panties, torn skirt, torn shirt, torn bra, pussy juice, breasts out, puffy nipples, panties aside, heavy breathing, crying, moaning, screaming, disgust, bondage, motion lines, trembling, captured, rape, sweat, breast sucking, grabbing another's breast, (standing sex:1.1), hand milking, grabbing another's breast, holding another's wrist, standing missionary, ",
+      "resolution": "portrait",
+      "category": "interspecies"
+    },
+    "goblin doggysex": {
+      "prompt": "dim lighting, cave, torchlight, 5boys, bound, cum on body, defeat, gangbang, goblin, groping, group sex, interspecies, monster, multiple boys, on back, penis, restrained, torn panties, torn skirt, torn shirt, torn bra, pussy juice, breasts out, puffy nipples, panties aside, heavy breathing, crying, moaning, screaming, disgust, bondage, motion lines, trembling, captured, rape, sweat, sex, (doggystyle:1.1), on hands and knees, crushed head, arched back, (face down:1.1), ass up, looking down, top-down bottom-up, penis in pussy, uncensored, top-down bottom-up, dynamic pose, saliva, grabbing another's ass, (sex from behind:1.1), (mounting:1.1), breast sucking, hand on another's hip, ",
+      "resolution": "portrait",
+      "category": "interspecies"
+    },
+    "goblin cowgirl": {
+      "prompt": "dim lighting, cave, torchlight, 5boys, bound, cum on body, defeat, gangbang, goblin, groping, group sex, interspecies, monster, multiple boys, on back, penis, restrained, torn panties, torn skirt, torn shirt, torn bra, pussy juice, breasts out, puffy nipples, panties aside, heavy breathing, open mouth, crying, moaning, screaming, disgust, bondage, motion lines, trembling, captured, rape, sweat, from below, looking down, skirt rolled up, cowgirl position, dynamic pose, Grab the girl's waist, penis in pussy, Girl on the waist, double handjob, grabbing another's breast, handjob, spread legs, bukkake, penis in pussy, ",
+      "resolution": "portrait",
+      "category": "interspecies"
+    },
+    "goblin missionary": {
+      "prompt": "dim lighting, cave, torchlight, 5boys, bound, cum on body, defeat, gangbang, goblin, groping, group sex, interspecies, monster, multiple boys, on back, penis, restrained, torn panties, torn skirt, torn shirt, torn bra, pussy juice, breasts out, puffy nipples, panties aside, heavy breathing, open mouth, crying, moaning, screaming, disgust, bondage, motion lines, trembling, captured, rape, sweat, breast sucking, grabbing another's breast, lying, missionary, on back, spread legs, penis in pussy, ",
+      "resolution": "portrait",
+      "category": "interspecies"
+    },
+    "goblin spooningsex": {
+      "prompt": "dim lighting, cave, torchlight, 5boys, bound, cum on body, defeat, gangbang, goblin, groping, group sex, interspecies, monster, multiple boys, on back, penis, restrained, torn panties, torn skirt, torn shirt, torn bra, pussy juice, breasts out, puffy nipples, panties aside, heavy breathing, open mouth, crying, moaning, screaming, disgust, bondage, motion lines, trembling, captured, rape, sweat, spooning sex, lying on side, lying on back, one leg raised, knee to chest, dynamic pose, Man grabs girl's leg, mounting, breast sucking, hand on another's hip, ",
+      "resolution": "portrait",
+      "category": "interspecies"
+    },
+    "fullnelson filming": {
+      "prompt": "nsfw, uncensored, lifted and carried, spread legs, open mouth, both legs pulled back, lifted by another, m legs, penis in pussy, hetero, (full nelson:1.1), dynamic pose, skirt rolled up, pussy juice, shy, embarrassed, blush, full-face blush, panties aside, ",
+      "resolution": "portrait",
+      "category": "filming"
+    },
+    "doggysex filming": {
+      "prompt": "nsfw, sex, doggystyle, on hands and knees, crushed head, arched back, {{face down}}, ass up, {{from side}}, looking down, top-down bottom-up, penis in pussy, uncensored, top-down bottom-up, dynamic pose, crushed head, saliva, pussy juice, pov, pov hands, shy, embarrassed, blush, full-face blush,",
+      "resolution": "portrait",
+      "category": "filming"
+    },
+    "spooningsex filming": {
+      "prompt": "nsfw, uncensored, on bed, spooning sex, lying on side, lying on back, one leg raised, knee to chest, hetero, size difference, dynamic pose, Man grabs girl's leg, pussy juice, shy, embarrassed, blush, full-face blush, (girl covering own eyes with one hand perfectly, fingers spread, shy peek:1.1), (hand in foreground:1.1),",
+      "resolution": "portrait",
+      "category": "filming"
+    },
+    "cowgirl filming": {
+      "prompt": "nsfw, uncensored, from below, looking down, skirt rolled up, hetero, cowgirl position, dynamic pose, Grab the girl's waist, penis in pussy, man lying in bed, Girl on the waist, pussy juice, shy, embarrassed, blush, full-face blush, (girl covering own eyes with one hand perfectly, fingers spread, shy peek:1.1), (hand in foreground:1.1),",
+      "resolution": "portrait",
+      "category": "filming"
+    },
+    "standingsex filming": {
+      "prompt": "nsfw, sex, uncensored, standing sex, leaning against wall, pressed against wall, head tilted back, one leg raised, knee to chest, from side, penis in pussy, dynamic pose, face-to-face, pussy juice, shy, embarrassed, blush, full-face blush, (girl covering own eyes with one hand perfectly, fingers spread, shy peek:1.1), (hand in foreground:1.1),",
+      "resolution": "portrait",
+      "category": "filming"
+    },
+    "wombpress filming": {
+      "prompt": "nsfw, uncensored, (legs over shoulder:1.1), (mating press:1.1), (body press:1.1), (intense pleasure:1.1), breathless, penis in pussy, sex, lying, stomach bulge, cum in pussy, (on back:1.1), open mouth, m legs, from side, facing to the side, hetero,  looking at viewer, (head on ground, fainting:1.1), pussy juice, shy, embarrassed, blush, full-face blush, (girl covering own eyes with one hand perfectly, fingers spread, shy peek:1.1), (hand in foreground:1.1),",
+      "resolution": "portrait",
+      "category": "filming"
+    },
+    "gangrape filming": {
+      "prompt": "(bar censor, censored:-1.1), decensored, 1girl, 4boys, deep penetration, fellatio, triple penetration, cum in mouth, multiple boys, straddling, anal, spread anus, cum in ass, cum in pussy, cum on body, oral, multiple penises, spitroast, irrumatio, (pussy:1.1), vaginal, panties aside, m legs, penis, solo focus, sex, (group sex:1.1), gangbang, trembling, pussy juice, scared, nervous, crying girl, open shirt, breasts out, nipples, (girl covering own eyes with one hand perfectly, fingers spread, shy peek:1.1), (hand in foreground:1.1),",
+      "resolution": "portrait",
+      "category": "filming"
+    },
+    "missionary filming": {
+      "prompt": "missionary, spread legs, hetero, (on back, lying:1.1), (penis in pussy:1.1), skirt rolled up, pussy juice, open shirt, (girl covering own eyes with one hand perfectly, fingers spread, shy peek:1.1), (hand in foreground:1.1),",
+      "resolution": "portrait",
+      "category": "filming"
+    },
+    "chikan ganabang filming": {
+      "prompt": "(bar censor, censored:-1.1), decensored, (train interior:1.1), dutch angle, old man, many pov hands, 6+boys, penis, chikan, gangbang, group sex, grabbing another's breast, grabbing from behind, ejaculation, (sex from behind, rape, penis in pussy:1.1), 1girl, solo focus, torn clothes, arms up, blush, bra bull, bra lift, panties aside, shirt lift, open shirt, skirt lift, 1girl, pussy juice, pussy juice stain, breasts out, puffy nipples, nipple stimulation, nipple pull, (scared:1.1), wide eyes, tears, scared, (trembling:1.1), (motion blur:1.1), rolling eyes, (girl covering own eyes with one hand perfectly, fingers spread, shy peek:1.1), (hand in foreground:1.1),",
+      "resolution": "portrait",
+      "category": "filming"
+    },
+    "chikan doggysex filming": {
+      "prompt": "(train interior, against door, against glass, breasts on glass, pov, pov hands:1.1), solo focus, (chair:-1.1), 1boy, chikan, public indecency, penis in pussy, grabbing another's ass, shirt lift, skirt lift, 1girl, pussy juice, breasts out, hand on glass, anus, ass, vaginal, looking back, looking at viewer, rape, sex, sex from behind, panties aside, (scared:1.1), wide eyes, tears, scared, (trembling:1.1), (motion blur:1.1), rolling eyes, heavy breathing, leaning forward, standing sex, motion lines,",
+      "resolution": "portrait",
+      "category": "filming"
+    },
+    "sleeping fullnelson filming": {
+      "prompt": "(girl with closed eyes:1.1), sex, rape, (sleeping girl:1.1), frowning, lying, trembling, nsfw, uncensored, lifted and carried, spread legs, open mouth, both legs pulled back, lifted by another, m legs, penis in pussy, hetero, (full nelson:1.1), dynamic pose, skirt rolled up, pussy juice, panties aside, open shirt,",
+      "resolution": "portrait",
+      "category": "filming"
+    },
+    "sleeping spooningsex filming": {
+      "prompt": "(girl with closed eyes:1.1), sex, rape, (sleeping girl:1.1), frowning, lying, trembling, nsfw, uncensored, on bed, spooning sex, lying on side, lying on back, one leg raised, knee to chest, hetero, size difference, dynamic pose, Man grabs girl's leg, pussy juice, ",
+      "resolution": "portrait",
+      "category": "filming"
+    },
+    "sleeping cowgirl filming": {
+      "prompt": "(girl with closed eyes:1.1), sex, rape, (sleeping girl:1.1), frowning, lying, trembling, nsfw, uncensored, from below, looking down, skirt rolled up, hetero, cowgirl position, dynamic pose, Grab the girl's waist, penis in pussy, man lying in bed, Girl on the waist, pussy juice, ",
+      "resolution": "portrait",
+      "category": "filming"
+    },
+    "sleeping gangrape filming": {
+      "prompt": "(bar censor, censored:-1.1), decensored, (girl with closed eyes:1.1), sex, rape, (sleeping girl:1.1), frowning, lying, trembling, 1girl, 4boys, deep penetration, fellatio, triple penetration, cum in mouth, multiple boys, straddling, anal, spread anus, cum in ass, cum in pussy, cum on body, oral, multiple penises, spitroast, irrumatio, (pussy:1.1), vaginal, panties aside, m legs, penis, solo focus, sex, (group sex:1.1), gangbang, pussy juice, ",
+      "resolution": "portrait",
+      "category": "filming"
+    },
+    "sleeping missionary filming": {
+      "prompt": "(girl with closed eyes:1.1), sex, rape, (sleeping girl:1.1), frowning, lying, trembling, missionary, spread legs, hetero, (on back, lying:1.1), (penis in pussy:1.1), skirt rolled up, pussy juice, clitoris, clitoral hood,",
+      "resolution": "portrait",
+      "category": "filming"
+    },
+    "sleeping doggysex filming": {
+      "prompt": "sex, rape, (sleeping girl:1.1), frowning, lying, trembling, nsfw, doggy style, on hands and knees, crushed head, arched back, {{face down}}, ass up, {{from side}}, looking down, top-down bottom-up, penis in pussy, uncensored, top-down bottom-up, dynamic pose, crushed head, saliva, pussy juice, pov, pov hands, ",
+      "resolution": "portrait",
+      "category": "filming"
+    }
+  }
+}
