@@ -10,8 +10,7 @@ if errorlevel 1 (
     echo [ERROR] Python이 설치되어 있지 않거나 PATH에 등록되지 않았습니다.
     echo         Python 3.10+ 을 설치해주세요: https://www.python.org/downloads/
     echo         설치 시 "Add Python to PATH"를 체크하세요.
-    pause
-    exit /b 1
+    goto :end
 )
 
 :: venv가 없으면 생성 (불완전한 venv는 삭제 후 재생성)
@@ -26,8 +25,7 @@ if not exist "venv\Scripts\activate.bat" (
         echo [ERROR] 가상환경 생성에 실패했습니다.
         echo         venv 폴더를 수동으로 삭제한 후 다시 실행하세요.
         echo         Python 3.10+ 이 설치되어 있는지 확인하세요.
-        pause
-        exit /b 1
+        goto :end
     )
     echo       가상환경 생성 완료.
 ) else (
@@ -41,8 +39,7 @@ python -m pip install --upgrade pip >nul 2>&1
 pip install -r requirements.txt
 if errorlevel 1 (
     echo [ERROR] 패키지 설치에 실패했습니다. 네트워크 연결을 확인하세요.
-    pause
-    exit /b 1
+    goto :end
 )
 
 :: 필요한 폴더 생성
@@ -68,4 +65,5 @@ echo ============================================
 echo.
 python server.py
 
+:end
 pause
