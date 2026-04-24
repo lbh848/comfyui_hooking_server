@@ -1,4 +1,4 @@
-@echo off
+﻿@echo off
 setlocal
 cd /d %~dp0
 :: Python 설치 확인
