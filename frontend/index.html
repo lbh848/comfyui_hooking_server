@@ -5682,6 +5682,8 @@
 
         function renderAssetUI() {
             if (!assetTags) return;
+            const sidebar = document.getElementById('asset-sidebar');
+            const savedScroll = sidebar ? sidebar.scrollTop : 0;
             const charSelect = document.getElementById('asset-character-select');
             const currentChar = charSelect.value;
             charSelect.innerHTML = '<option value="">-- 캐릭터 선택 --</option>';
@@ -5771,6 +5773,9 @@
 
             // 메인 영역 갤러리 네비게이션 새로고침
             renderAssetMainArea();
+
+            // 사이드바 스크롤 위치 복원
+            if (sidebar) sidebar.scrollTop = savedScroll;
         }
 
         function renderTagChips(containerId, tags, removeFnName) {
@@ -10556,8 +10561,9 @@
             } catch (e) { console.warn('공지 확인 실패:', e); }
         }
 
-        // 페이지 로드 시 한 번만 체크
+        // 페이지 로드 시 체크 + 20분 주기 체크
         checkUnreadNotifications();
+        setInterval(checkUnreadNotifications, 20 * 60 * 1000);
 
         let _notiList = [];
         let _notiReadIds = [];
