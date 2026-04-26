@@ -1410,6 +1410,7 @@
             border-left: 1px solid var(--border);
             padding: 20px;
             overflow-y: auto;
+            overflow-anchor: none;
             display: flex;
             flex-direction: column;
             gap: 16px;
@@ -5775,7 +5776,10 @@
             renderAssetMainArea();
 
             // 사이드바 스크롤 위치 복원
-            if (sidebar) sidebar.scrollTop = savedScroll;
+            if (sidebar) {
+                sidebar.scrollTop = savedScroll;
+                requestAnimationFrame(() => { sidebar.scrollTop = savedScroll; });
+            }
         }
 
         function renderTagChips(containerId, tags, removeFnName) {
@@ -6091,28 +6095,24 @@
             const input = document.getElementById('asset-new-quality-tag');
             const val = input.value.trim();
             if (!val) return;
-            await assetTagAction('add_quality_tag', { value: val });
             input.value = '';
-            syncQualityPreset();
+            await modifyTagLightweight('add_quality_tag', { value: val }, 'asset-quality-tags', 'removeAssetQualityTag', 'quality', syncQualityPreset);
         }
 
         async function removeAssetQualityTag(idx) {
-            await assetTagAction('remove_quality_tag', { index: idx });
-            syncQualityPreset();
+            await modifyTagLightweight('remove_quality_tag', { index: idx }, 'asset-quality-tags', 'removeAssetQualityTag', 'quality', syncQualityPreset);
         }
 
         async function addAssetNegativeTag() {
             const input = document.getElementById('asset-new-negative-tag');
             const val = input.value.trim();
             if (!val) return;
-            await assetTagAction('add_negative_tag', { value: val });
             input.value = '';
-            syncNegativePreset();
+            await modifyTagLightweight('add_negative_tag', { value: val }, 'asset-negative-tags', 'removeAssetNegativeTag', 'negative', syncNegativePreset);
         }
 
         async function removeAssetNegativeTag(idx) {
-            await assetTagAction('remove_negative_tag', { index: idx });
-            syncNegativePreset();
+            await modifyTagLightweight('remove_negative_tag', { index: idx }, 'asset-negative-tags', 'removeAssetNegativeTag', 'negative', syncNegativePreset);
         }
 
         // ─── 프롬프트 미리보기 ───────────────────────────────
@@ -6190,14 +6190,12 @@
             const input = document.getElementById('asset-new-composition-tag');
             const val = input.value.trim();
             if (!val) return;
-            await assetTagAction('add_composition_tag', { value: val });
             input.value = '';
-            syncCompositionPreset();
+            await modifyTagLightweight('add_composition_tag', { value: val }, 'asset-composition-tags', 'removeAssetCompositionTag', 'composition', syncCompositionPreset);
         }
 
         async function removeAssetCompositionTag(idx) {
-            await assetTagAction('remove_composition_tag', { index: idx });
-            syncCompositionPreset();
+            await modifyTagLightweight('remove_composition_tag', { index: idx }, 'asset-composition-tags', 'removeAssetCompositionTag', 'composition', syncCompositionPreset);
         }
 
         // ─── 구도 프리셋 ────────────────────────────────────
@@ -6228,7 +6226,7 @@
 
         function loadCompositionPreset() {
             const name = document.getElementById('asset-composition-preset-select').value;
-            assetTagAction('load_composition_preset', { name });
+            modifyTagLightweight('load_composition_preset', { name }, 'asset-composition-tags', 'removeAssetCompositionTag', 'composition');
         }
 
         function deleteCompositionPreset() {
@@ -6264,9 +6262,31 @@
             }).catch(() => {});
         }
 
+        // 품질/구도/부정 태그: renderAssetUI() 없이 태그 컨테이너만 업데이트 (스크롤 유지)
+        async function modifyTagLightweight(action, params, containerId, removeFnName, tagKey, syncFn) {
+            try {
+                const resp = await fetch('/api/asset_mode/tags', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action, ...params })
+                });
+                const result = await resp.json();
+                if (result.success) {
+                    const dataResp = await fetch('/api/asset_mode/tags');
+                    assetTags = await dataResp.json();
+                    renderTagChips(containerId, assetTags[tagKey] || [], removeFnName);
+                    if (syncFn) syncFn();
+                } else {
+                    showToast(result.error || '오류', 'error');
+                }
+            } catch (e) {
+                showToast('요청 실패: ' + e.message, 'error');
+            }
+        }
+
         function loadQualityPreset() {
             const name = document.getElementById('asset-quality-preset-select').value;
-            assetTagAction('load_quality_preset', { name });
+            modifyTagLightweight('load_quality_preset', { name }, 'asset-quality-tags', 'removeAssetQualityTag', 'quality');
         }
 
         function deleteQualityPreset() {
@@ -6304,7 +6324,7 @@
 
         function loadNegativePreset() {
             const name = document.getElementById('asset-negative-preset-select').value;
-            assetTagAction('load_negative_preset', { name });
+            modifyTagLightweight('load_negative_preset', { name }, 'asset-negative-tags', 'removeAssetNegativeTag', 'negative');
         }
 
         function deleteNegativePreset() {
@@ -7198,6 +7218,8 @@
 
         function navigateToImages(charName, outfit, expression) {
             _assetScrollCache[1] = window.scrollY;
+            const sidebar = document.getElementById('asset-sidebar');
+            if (sidebar) _assetScrollCache['sidebar_1'] = sidebar.scrollTop;
             assetNavLevel = 2;
             assetNavCharacter = charName;
             assetNavOutfit = outfit;
@@ -7237,6 +7259,12 @@
                 assetNavLevel = 1;
                 assetNavOutfit = '';
                 assetNavExpression = '';
+                // 2차→1차 복귀 시 사이드바 스크롤을 즉시(동기적으로) 복원
+                const sidebar = document.getElementById('asset-sidebar');
+                if (sidebar && _assetScrollCache['sidebar_1'] !== undefined) {
+                    sidebar.scrollTop = _assetScrollCache['sidebar_1'];
+                    delete _assetScrollCache['sidebar_1'];
+                }
                 updateAssetBreadcrumb();
                 await renderCharacterGallery(assetNavCharacter);
             }
