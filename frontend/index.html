@@ -10652,7 +10652,10 @@
                 <div style="background:var(--surface); border-radius:12px; padding:20px; max-width:700px; width:90%; max-height:80vh; display:flex; flex-direction:column; overflow:hidden;">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-shrink:0;">
                         <h3 style="margin:0;">공지사항</h3>
-                        <button onclick="document.getElementById('noti-overlay').remove()" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer;">x</button>
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <a href="https://arca.live/b/characterai/168601102" target="_blank" rel="noopener" title="아카라이브" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer; text-decoration:none; opacity:0.7; transition:opacity 0.2s;" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.7'">📝</a>
+                            <button onclick="document.getElementById('noti-overlay').remove()" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer;">x</button>
+                        </div>
                     </div>
                     <div id="noti-content" style="overflow-y:auto; max-height:calc(80vh - 80px);">
                         <div style="text-align:center; color:var(--text-secondary); padding:20px;">로딩중...</div>
