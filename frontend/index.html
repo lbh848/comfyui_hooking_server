@@ -4332,6 +4332,9 @@
             const filename = document.getElementById('setting-workflow-filename').value;
             const fullPath = combineWorkflowPath(baseDir, filename);
             document.getElementById('setting-workflow-path').value = fullPath;
+            // 베이스 경로 변경 시 에셋/복장 경로도 함께 갱신
+            updateOutfitWorkflowPath();
+            updateAssetWorkflowPath();
         }
 
         // 베이스 경로와 파일명을 결합
