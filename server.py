@@ -44,8 +44,8 @@ import importlib.util
 # ─── 설정 ───────────────────────────────────────────────
 HOST = "0.0.0.0"
 PORT = 8189
-REAL_COMFY_HOST = "127.0.0.1"
-REAL_COMFY_PORT = 8188
+REAL_COMFY_HOST = os.environ.get("REAL_COMFY_HOST", "127.0.0.1")
+REAL_COMFY_PORT = int(os.environ.get("REAL_COMFY_PORT", "8188"))
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WORKFLOW_DIR = os.path.join(BASE_DIR, "workflow")
 CURRENT_WORK_DIR = os.path.join(BASE_DIR, "current_work")

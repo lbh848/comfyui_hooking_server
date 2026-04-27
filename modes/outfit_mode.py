@@ -28,8 +28,8 @@ MODE_WORKFLOW_DIR = os.path.join(BASE_DIR, "mode_workflow")
 CURRENT_MODE_WORK_DIR = os.path.join(BASE_DIR, "current_mode_workflow")
 OUTFIT_BACKUP_DIR = os.path.join(BASE_DIR, "workflow_backup", "mode", "outfit_mode")
 
-REAL_COMFY_HOST = "127.0.0.1"
-REAL_COMFY_PORT = 8188
+REAL_COMFY_HOST = os.environ.get("REAL_COMFY_HOST", "127.0.0.1")
+REAL_COMFY_PORT = int(os.environ.get("REAL_COMFY_PORT", "8188"))
 
 
 @dataclass
