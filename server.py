@@ -59,7 +59,7 @@ WORKFLOW_BACKUP_STATIC_DIR = os.path.join(BASE_DIR, "workflow_backup_static")
 
 # 기본 설정값
 DEFAULT_CONFIG = {
-    "comfy_workflow_source_path": r"E:\wsl2\matrix\Packages\ComfyUI\user\default\workflows\0310고속워크플로우_나친척.json",
+    "comfy_workflow_source_path": "",
     "data_saving_mode": False,
     "send_original": False,  # 전송 시 원본 무변환 전송
     "webp_quality": 85,
