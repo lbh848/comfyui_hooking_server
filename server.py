@@ -3472,6 +3472,106 @@ async def handle_api_autocomplete(request: web.Request) -> web.Response:
     results = autocomplete_service.search_tags(query, limit)
     return web.json_response(results)
 
+# ─── Cloudflare Quick Tunnel ─────────────────────────────
+_tunnel_process: asyncio.subprocess.Process | None = None
+_tunnel_url: str | None = None
+_cloudflared_path: str | None = None
+
+async def _ensure_cloudflared() -> str:
+    """cloudflared 바이너리 경로 반환. 없으면 자동 다운로드."""
+    global _cloudflared_path
+    if _cloudflared_path:
+        return _cloudflared_path
+    # 시스템에 설치된 경우
+    import shutil
+    found = shutil.which("cloudflared")
+    if found:
+        _cloudflared_path = found
+        return found
+    # 로컬에 다운로드
+    import platform, urllib.request
+    local_dir = os.path.join(os.path.dirname(__file__), ".bin")
+    os.makedirs(local_dir, exist_ok=True)
+    if platform.system() == "Windows":
+        bin_path = os.path.join(local_dir, "cloudflared.exe")
+        url = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe"
+    else:
+        bin_path = os.path.join(local_dir, "cloudflared")
+        url = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64"
+    if not os.path.exists(bin_path):
+        print("[INFO] cloudflared 다운로드 중...")
+        urllib.request.urlretrieve(url, bin_path)
+        os.chmod(bin_path, 0o755)
+        print(f"[INFO] cloudflared 다운로드 완료: {bin_path}")
+    _cloudflared_path = bin_path
+    return bin_path
+
+async def handle_api_tunnel_start(request: web.Request) -> web.Response:
+    global _tunnel_process, _tunnel_url
+    if _tunnel_process is not None and _tunnel_process.returncode is None:
+        return web.json_response({"status": "already_running", "url": _tunnel_url})
+    try:
+        cf_bin = await _ensure_cloudflared()
+        _tunnel_process = await asyncio.create_subprocess_exec(
+            cf_bin, "tunnel", "--url", "http://localhost:8189",
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        # stderr에서 trycloudflare.com URL 파싱
+        url = None
+        deadline = asyncio.get_event_loop().time() + 15  # 15초 타임아웃
+        buf = b""
+        while asyncio.get_event_loop().time() < deadline:
+            try:
+                chunk = await asyncio.wait_for(_tunnel_process.stderr.read(4096), timeout=2.0)
+            except asyncio.TimeoutError:
+                continue
+            if not chunk:
+                break
+            buf += chunk
+            text = buf.decode("utf-8", errors="ignore")
+            m = re.search(r'(https://[a-z0-9\-]+\.trycloudflare\.com)', text)
+            if m:
+                url = m.group(1)
+                break
+        if url:
+            _tunnel_url = url
+            return web.json_response({"status": "running", "url": url})
+        else:
+            # URL을 못 찾으면 프로세스 정리
+            _tunnel_process.kill()
+            await _tunnel_process.wait()
+            _tunnel_process = None
+            return web.json_response({"status": "error", "error": "터널 URL을 가져오지 못했습니다. (15초 타임아웃)"}, status=500)
+    except Exception as e:
+        _tunnel_process = None
+        return web.json_response({"status": "error", "error": str(e)}, status=500)
+
+async def handle_api_tunnel_status(request: web.Request) -> web.Response:
+    running = _tunnel_process is not None and _tunnel_process.returncode is None
+    return web.json_response({
+        "status": "running" if running else "stopped",
+        "url": _tunnel_url if running else None,
+    })
+
+async def handle_api_tunnel_stop(request: web.Request) -> web.Response:
+    global _tunnel_process, _tunnel_url
+    if _tunnel_process is not None and _tunnel_process.returncode is None:
+        _tunnel_process.kill()
+        await _tunnel_process.wait()
+    _tunnel_process = None
+    _tunnel_url = None
+    return web.json_response({"status": "stopped"})
+
+async def _tunnel_cleanup(app):
+    """서버 종료 시 터널 프로세스 정리"""
+    global _tunnel_process, _tunnel_url
+    if _tunnel_process is not None and _tunnel_process.returncode is None:
+        _tunnel_process.kill()
+        await _tunnel_process.wait()
+    _tunnel_process = None
+    _tunnel_url = None
+
 # 에셋 생성 모드 API 라우트
 app.router.add_get("/api/asset_mode/status", handle_api_asset_mode_status)
 app.router.add_get("/api/asset_mode/tags", handle_api_asset_mode_tags_get)
@@ -3505,6 +3605,10 @@ app.router.add_get("/api/chain_presets", handle_api_chain_presets_list)
 app.router.add_post("/api/chain_presets/save", handle_api_chain_presets_save)
 app.router.add_get("/api/chain_presets/{name}", handle_api_chain_presets_load)
 app.router.add_post("/api/chain_presets/delete", handle_api_chain_presets_delete)
+# 터널 API 라우트
+app.router.add_post("/api/tunnel/start", handle_api_tunnel_start)
+app.router.add_get("/api/tunnel/status", handle_api_tunnel_status)
+app.router.add_post("/api/tunnel/stop", handle_api_tunnel_stop)
 
 
 async def on_startup(app):
@@ -3530,6 +3634,7 @@ async def on_startup(app):
 
 
 app.on_startup.append(on_startup)
+app.on_cleanup.append(_tunnel_cleanup)
 
 if __name__ == "__main__":
     print(f"=== ComfyUI Proxy Server (port {PORT}) ===")

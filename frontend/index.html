@@ -792,6 +792,26 @@
             margin-bottom: 4px;
         }
 
+        /* ─── 터널 공유 버튼 ─── */
+        #tunnel-btn.tunnel-active {
+            background: #1b5e20 !important;
+            color: #fff !important;
+            border-color: #4caf50 !important;
+        }
+        #tunnel-btn.tunnel-loading {
+            opacity: 0.6;
+            cursor: wait;
+        }
+        .tunnel-sub-btn {
+            display: none;
+            font-size: 0.8rem;
+            padding: 6px 10px;
+            cursor: pointer;
+        }
+        .tunnel-sub-btn.visible {
+            display: inline-block;
+        }
+
         /* ─── 설정 모달 ─── */
         .settings-modal .modal-content {
             max-width: 600px;
@@ -2084,6 +2104,9 @@
                 <span id="notification-badge" style="position:absolute; top:4px; right:4px; width:8px; height:8px; background:var(--error); border-radius:50%; display:none;"></span>
             </button>
             <button onclick="openSettingsModal()">⚙️ 설정</button>
+            <button id="tunnel-btn" onclick="toggleTunnel()">🔗 공유</button>
+            <button id="tunnel-copy-btn" class="tunnel-sub-btn" onclick="copyTunnelUrl()">📋 링크 복사</button>
+            <button id="tunnel-regen-btn" class="tunnel-sub-btn" onclick="regenTunnel()">🔄 재생성</button>
             <button onclick="reloadWorkflow()">📂 워크플로우 가져오기</button>
             <button onclick="toggleBatchMode()" id="batch-mode-btn">🔄 배치모드: <span id="batch-mode-status">OFF</span></button>
             <button onclick="scheduleBatchResend()" id="batch-schedule-btn" style="display:none;">📦 배치 재전송 예약</button>
@@ -3197,6 +3220,69 @@
         
         // 설정 상태
         let currentConfig = {};
+
+        // ─── 터널 공유 ──────────────────────────────────────
+        let tunnelActive = false;
+        let tunnelUrl = null;
+
+        function _tunnelBtns(show) {
+            document.getElementById('tunnel-copy-btn').classList.toggle('visible', show);
+            document.getElementById('tunnel-regen-btn').classList.toggle('visible', show);
+        }
+
+        async function toggleTunnel() {
+            const btn = document.getElementById('tunnel-btn');
+            if (tunnelActive) {
+                // 끄기
+                try { await fetch('/api/tunnel/stop', {method:'POST'}); } catch(e) {}
+                tunnelActive = false;
+                tunnelUrl = null;
+                btn.textContent = '🔗 공유';
+                btn.classList.remove('tunnel-active');
+                _tunnelBtns(false);
+                return;
+            }
+            // 켜기
+            btn.textContent = '⏳ 연결 중...';
+            btn.classList.add('tunnel-loading');
+            btn.disabled = true;
+            try {
+                const res = await fetch('/api/tunnel/start', {method:'POST'});
+                const data = await res.json();
+                if (data.url) {
+                    tunnelActive = true;
+                    tunnelUrl = data.url;
+                    btn.textContent = '🔗 공유 중';
+                    btn.classList.remove('tunnel-loading');
+                    btn.classList.add('tunnel-active');
+                    _tunnelBtns(true);
+                    showToast('공유 링크가 생성되었습니다!', 'success');
+                } else {
+                    throw new Error(data.error || '터널 시작 실패');
+                }
+            } catch(e) {
+                btn.textContent = '🔗 공유';
+                btn.classList.remove('tunnel-loading');
+                showToast('공유 연결 실패: ' + e.message, 'error');
+            }
+            btn.disabled = false;
+        }
+
+        function copyTunnelUrl() {
+            if (!tunnelUrl) return;
+            navigator.clipboard.writeText(tunnelUrl).then(() => {
+                showToast('공유 주소가 복사되었습니다!', 'success');
+            });
+        }
+
+        async function regenTunnel() {
+            // 끄고 바로 다시 켜기
+            try { await fetch('/api/tunnel/stop', {method:'POST'}); } catch(e) {}
+            tunnelActive = false;
+            tunnelUrl = null;
+            _tunnelBtns(false);
+            await toggleTunnel();
+        }
 
         // ─── WebSocket 연결 ───
         function connectFrontendWs() {
@@ -4342,13 +4428,14 @@
             if (!baseDir && !filename) return '';
             if (!baseDir) return filename;
             if (!filename) return baseDir;
-            
-            // 경로 구분자 정규화
-            const normalizedBase = baseDir.replace(/\//g, '\\');
-            if (normalizedBase.endsWith('\\')) {
+
+            const isUnix = baseDir.startsWith('/');
+            const sep = isUnix ? '/' : '\\';
+            const normalizedBase = baseDir.replace(/[/\\]/g, sep);
+            if (normalizedBase.endsWith(sep)) {
                 return normalizedBase + filename;
             }
-            return baseDir + '\\' + filename;
+            return normalizedBase + sep + filename;
         }
 
         // 가중치 클램프 상태 업데이트
