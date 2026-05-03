@@ -86,7 +86,7 @@ def _build_sign_prompt() -> str:
     return (
         f"{char_tag}, "
         f"(holding sign:1.3), sign, wooden sign, "
-        f"(she hold text on sign: \"V3\":1.3), "
+        f"(she hold text on sign: \"Welcome to ComfyUI!\":1.3), "
         f"standing, {hand_sign}, {expression}, yellow background"
     )
 

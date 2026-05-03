@@ -115,7 +115,7 @@ for _d in [WORKFLOW_DIR, CURRENT_WORK_DIR, WORKFLOW_BACKUP_DIR, LOG_DIR, FRONTEN
 
 # ─── 설정 파일 관리 ─────────────────────────────────────
 def load_config() -> dict:
-    """설정 파일을 로드한다."""
+    """설정 파일을 로드한다. 없으면 기본값으로 생성한다."""
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE, "r", encoding="utf-8") as f:
@@ -126,6 +126,10 @@ def load_config() -> dict:
                 return merged
         except Exception as e:
             print(f"[CONFIG] 설정 파일 로드 실패: {e}")
+    else:
+        # config.json이 없으면 기본값으로 자동 생성
+        print(f"[CONFIG] config.json이 없습니다. 기본값으로 생성합니다.")
+        save_config(DEFAULT_CONFIG.copy())
     return DEFAULT_CONFIG.copy()
 
 

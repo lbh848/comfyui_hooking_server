@@ -18,6 +18,9 @@ CLAUDE.md
 # Key files (보안상 git에 포함하지 않음)
 key/
 
+# Config (사용자별 설정)
+config.json
+
 # Distribution patches (외부 드라이브 배포)
 chain_presets/
 customprompt/enhance_outfit_prompt_v4_storage/
