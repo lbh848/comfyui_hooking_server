@@ -19,13 +19,13 @@ class GitAutoUpdater:
             "branch": "v3.1",
         },
         {
-            "name": "soya-custom-nodes",
+            "name": "workflow-to-api",
             "path": r"E:\wsl2\matrix\Packages\ComfyU\comfyui-workflow-to-api-converter-endpoint",
             "url": "https://github.com/lbh848/comfyui-workflow-to-api-converter-endpoint",
             "branch": "main",
         },
         {
-            "name": "soya-custom-nodes",
+            "name": "hooking-server",
             "path": r"E:\test2\comfyui_hooking_server",
             "url": "https://github.com/lbh848/comfyui_hooking_server",
             "branch": "main",
