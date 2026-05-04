@@ -11,6 +11,26 @@ import sys
 
 class GitAutoUpdater:
     MAX_SLOTS = 3
+    DEFAULT_SLOTS = [
+        {
+            "name": "soya-custom-nodes",
+            "path": r"E:\wsl2\matrix\Packages\ComfyUI\comfyui-soya-custom-nodes",
+            "url": "https://github.com/lbh848/Comfyui-soya-custom-nodes",
+            "branch": "v3.1",
+        },
+        {
+            "name": "soya-custom-nodes",
+            "path": r"E:\wsl2\matrix\Packages\ComfyU\comfyui-workflow-to-api-converter-endpoint",
+            "url": "https://github.com/lbh848/comfyui-workflow-to-api-converter-endpoint",
+            "branch": "main",
+        },
+        {
+            "name": "soya-custom-nodes",
+            "path": r"E:\test2\comfyui_hooking_server",
+            "url": "https://github.com/lbh848/comfyui_hooking_server",
+            "branch": "main",
+        },
+    ]
 
     def __init__(self, root):
         self.root = root
@@ -47,6 +67,7 @@ class GitAutoUpdater:
         ttk.Label(hdr, text="Git Auto Updater", font=("Segoe UI", 14, "bold")).pack(
             side=tk.LEFT
         )
+        ttk.Button(hdr, text="초기화", command=self._reset_defaults).pack(side=tk.RIGHT, padx=(4, 0))
         ttk.Button(hdr, text="전체 업데이트", command=self._update_all).pack(
             side=tk.RIGHT
         )
@@ -97,7 +118,7 @@ class GitAutoUpdater:
 
         make_row("URL:", "url")
 
-        branch_row, _ = make_row("브랜치:", "branch", "main")
+        branch_row, _ = make_row("브랜치:", "branch")
         ttk.Button(
             branch_row,
             text="업데이트",
@@ -147,6 +168,8 @@ class GitAutoUpdater:
 
     def _load_config(self):
         if not os.path.isfile(self.config_path):
+            # 설정 파일이 없으면 기본값으로 채움
+            self._fill_defaults()
             return
         try:
             with open(self.config_path, "r", encoding="utf-8") as f:
@@ -158,6 +181,16 @@ class GitAutoUpdater:
                         self.entries[i][key].insert(0, val)
         except Exception:
             pass
+
+    def _fill_defaults(self):
+        """모든 슬롯을 기본값으로 초기화한다."""
+        for i, defaults in enumerate(self.DEFAULT_SLOTS):
+            for key in ("name", "path", "url", "branch"):
+                entry = self.entries[i][key]
+                entry.delete(0, tk.END)
+                val = defaults.get(key, "")
+                if val:
+                    entry.insert(0, val)
 
     def _on_close(self):
         self._save_config()
@@ -276,27 +309,9 @@ class GitAutoUpdater:
                         self._thread_log(f"[{name}] 업데이트 실패")
                     self._thread_log(f"[{name}] 사유: {err}")
             else:
-                # ── .git 없음 → clone 또는 init ──
-                os.makedirs(path, exist_ok=True)
-                if not os.listdir(path):
-                    # 빈 디렉토리: clone
-                    self._thread_log(f"[{name}] git clone -b {branch} ...")
-                    r = self._git(["git", "clone", "-b", branch, url, "."], path, timeout=300)
-                else:
-                    # 파일 있는 디렉토리: init → fetch → checkout
-                    self._thread_log(f"[{name}] git 초기화 + 동기화 ...")
-                    self._git(["git", "init"], path)
-                    self._git(["git", "remote", "add", "origin", url], path)
-                    self._git(["git", "fetch", "origin"], path, timeout=300)
-                    r = self._git(
-                        ["git", "checkout", "-f", "-b", branch, f"origin/{branch}"], path
-                    )
-
-                if r.returncode == 0:
-                    self._thread_log(f"[{name}] 완료!")
-                    self._verify(path, branch, name)
-                else:
-                    self._thread_log(f"[{name}] 실패: {r.stderr.strip()}")
+                # ── .git 없음 → 미설치 에러 ──
+                self._thread_log(f"[{name}] 설치되지 않음 - {path}에 .git 디렉토리가 없습니다.")
+                self._thread_log(f"[{name}] 먼저 수동으로 clone 후 업데이터를 사용하세요.")
 
         except subprocess.TimeoutExpired:
             self._thread_log(f"[{name}] 시간 초과!")
@@ -307,6 +322,11 @@ class GitAutoUpdater:
         self._save_config()
         data = self._slot_data(idx)
         threading.Thread(target=self._do_update, args=(data,), daemon=True).start()
+
+    def _reset_defaults(self):
+        self._fill_defaults()
+        self._save_config()
+        self._log("초기값으로 되돌렸습니다.")
 
     def _update_all(self):
         self._save_config()
