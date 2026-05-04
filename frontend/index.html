@@ -1953,6 +1953,8 @@
             display: flex;
             flex-direction: column;
             position: relative;
+            overflow: hidden;
+            min-height: 0;
         }
         .batch-slot-actions {
             position: absolute;
@@ -1996,6 +1998,9 @@
             display: flex;
             flex-direction: column;
             gap: 7px;
+            overflow-y: auto;
+            flex: 1;
+            min-height: 0;
         }
         .batch-field-group { display: flex; flex-direction: column; gap: 2px; }
         .batch-field-label { font-size: 0.7rem; color: var(--text-secondary); }
