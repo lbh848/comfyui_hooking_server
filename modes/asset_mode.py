@@ -576,6 +576,7 @@ class AssetMode:
         face_id_strength: float = 0.55,
         pose_enabled: bool = False,
         pose_data: dict = None,
+        hrf_activate: bool = False,
         fd_activate: bool = False,
         hd_activate: bool = False,
         ed_activate: bool = False,
@@ -613,6 +614,7 @@ class AssetMode:
             positive += f"\n[POSE_DATA]\n{json.dumps(pose_data, ensure_ascii=False)}"
         else:
             positive += f"\n[POSE_DATA]\n{json.dumps(DEFAULT_POSE_DATA, ensure_ascii=False)}"
+        positive += f"\n[HRF_ACTIVATE]\n{'true' if hrf_activate else 'false'}"
         positive += f"\n[FD_ACTIVATE]\n{'true' if fd_activate else 'false'}"
         positive += f"\n[HD_ACTIVATE]\n{'true' if hd_activate else 'false'}"
         positive += f"\n[ED_ACTIVATE]\n{'true' if ed_activate else 'false'}"
@@ -734,6 +736,7 @@ class AssetMode:
         reference_image: str = "",
         pose_enabled: bool = False,
         pose_id: str = "",
+        hrf_activate: bool = False,
         fd_activate: bool = False,
         hd_activate: bool = False,
         ed_activate: bool = False,
@@ -745,7 +748,7 @@ class AssetMode:
                     character, appearance, outfit, expression,
                     face_id_enabled, face_id_strength, reference_image,
                     pose_enabled, pose_id,
-                    fd_activate, hd_activate, ed_activate,
+                    hrf_activate, fd_activate, hd_activate, ed_activate,
                 )
             finally:
                 self._is_generating = False
@@ -761,6 +764,7 @@ class AssetMode:
         reference_image: str,
         pose_enabled: bool,
         pose_id: str,
+        hrf_activate: bool,
         fd_activate: bool,
         hd_activate: bool,
         ed_activate: bool,
@@ -779,6 +783,7 @@ class AssetMode:
             face_id_strength=face_id_strength,
             pose_enabled=pose_enabled,
             pose_data=pose_data,
+            hrf_activate=hrf_activate,
             fd_activate=fd_activate,
             hd_activate=hd_activate,
             ed_activate=ed_activate,

@@ -2402,8 +2402,16 @@
                         </div>
                     </div>
 
-                    <!-- 페이스/핸드/눈 디테일러 토글 -->
+                    <!-- HIRES FIX / 페이스/핸드/눈 디테일러 토글 -->
                     <div style="display:flex; flex-direction:column; gap:6px; margin-bottom:8px;">
+                        <div style="display:flex; align-items:center; gap:6px; padding:6px 8px; background:var(--surface2); border-radius:6px; border:1px solid var(--border);">
+                            <span style="font-size:0.8rem;">HIRES FIX</span>
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="asset-hrf-toggle">
+                                <span class="toggle-slider"></span>
+                            </label>
+                            <span id="asset-hrf-status" class="toggle-status off">OFF</span>
+                        </div>
                         <div style="display:flex; align-items:center; gap:6px; padding:6px 8px; background:var(--surface2); border-radius:6px; border:1px solid var(--border);">
                             <span style="font-size:0.8rem;">페이스 디테일러</span>
                             <label class="toggle-switch">
@@ -6216,6 +6224,7 @@
             const refStrength = parseFloat(document.getElementById('asset-ref-strength').value) || 0.55;
             const poseEnabled = document.getElementById('asset-pose-toggle').checked;
             const fdActivate = document.getElementById('asset-fd-toggle').checked;
+            const hrfActivate = document.getElementById('asset-hrf-toggle').checked;
             const hdActivate = document.getElementById('asset-hd-toggle').checked;
             const edActivate = document.getElementById('asset-ed-toggle').checked;
 
@@ -6245,6 +6254,7 @@
             } else {
                 positiveFull += `\n[POSE_DATA]\n{"people":[{"pose_keypoints_2d":[509.59,522.31,1,...]}],"canvas_height":1408,"canvas_width":936}`;
             }
+            positiveFull += `\n[HRF_ACTIVATE]\n${hrfActivate ? 'true' : 'false'}`;
             positiveFull += `\n[FD_ACTIVATE]\n${fdActivate ? 'true' : 'false'}`;
             positiveFull += `\n[HD_ACTIVATE]\n${hdActivate ? 'true' : 'false'}`;
             positiveFull += `\n[ED_ACTIVATE]\n${edActivate ? 'true' : 'false'}`;
@@ -7021,6 +7031,11 @@
             if (on) loadAssetPoseGrid();
         }
 
+        document.getElementById('asset-hrf-toggle').addEventListener('change', function() {
+            const status = document.getElementById('asset-hrf-status');
+            status.textContent = this.checked ? 'ON' : 'OFF';
+            status.className = 'toggle-status ' + (this.checked ? 'on' : 'off');
+        });
         document.getElementById('asset-fd-toggle').addEventListener('change', function() {
             const status = document.getElementById('asset-fd-status');
             status.textContent = this.checked ? 'ON' : 'OFF';
@@ -7404,6 +7419,7 @@
             const refStrength = parseFloat(document.getElementById('asset-ref-strength').value) || 0.55;
             const poseEnabled = document.getElementById('asset-pose-toggle').checked;
             const fdActivate = document.getElementById('asset-fd-toggle').checked;
+            const hrfActivate = document.getElementById('asset-hrf-toggle').checked;
             const hdActivate = document.getElementById('asset-hd-toggle').checked;
             const edActivate = document.getElementById('asset-ed-toggle').checked;
 
@@ -7439,6 +7455,7 @@
                                 reference_image: refEnabled ? assetRefImageName : '',
                                 pose_enabled: poseEnabled,
                                 pose_id: poseEnabled ? assetSelectedPoseId : '',
+                                hrf_activate: hrfActivate,
                                 fd_activate: fdActivate,
                                 hd_activate: hdActivate,
                                 ed_activate: edActivate,
@@ -9098,7 +9115,7 @@
         // ═══════════════════════════════════════════════════════
         // ─── 그림 일괄생성 (Batch Chain) ──────────────────────
         // ═══════════════════════════════════════════════════════
-        let batchChains = [];   // [{character, appearance, outfit, expression, composition_preset, quality_preset, negative_preset, ref_enabled, ref_strength, ref_image, pose_enabled, pose_id, fd_enabled, hd_enabled, ed_enabled}, ...]
+        let batchChains = [];   // [{character, appearance, outfit, expression, composition_preset, quality_preset, negative_preset, ref_enabled, ref_strength, ref_image, pose_enabled, pose_id, hrf_enabled, fd_enabled, hd_enabled, ed_enabled}, ...]
         let batchRunning = false;
         let batchSlotIdCounter = 0;
         let batchLoadedPoseList = [];
@@ -9124,6 +9141,7 @@
                 ref_preview_url: '',
                 pose_enabled: false,
                 pose_id: '',
+                hrf_enabled: false,
                 fd_enabled: false,
                 hd_enabled: false,
                 ed_enabled: false,
@@ -9199,6 +9217,14 @@
 
                     <div style="border-top:1px solid var(--border); padding-top:10px;">
                         <div class="batch-field-label" style="margin-bottom:6px;">디테일러 일괄 설정</div>
+                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+                            <label style="font-size:0.8rem;">HRF:</label>
+                            <select id="bulk-hrf-action" class="batch-select" style="width:auto; min-width:120px;">
+                                <option value="">변경 안함</option>
+                                <option value="on">모두 ON</option>
+                                <option value="off">모두 OFF</option>
+                            </select>
+                        </div>
                         <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
                             <label style="font-size:0.8rem;">FD 디테일러:</label>
                             <select id="bulk-fd-action" class="batch-select" style="width:auto; min-width:120px;">
@@ -9382,6 +9408,7 @@
             const refAction = document.getElementById('bulk-ref-action').value;
             const refStrengthCheck = document.getElementById('bulk-ref-strength-check').checked;
             const refStrength = parseFloat(document.getElementById('bulk-ref-strength').value);
+            const hrfAction = document.getElementById('bulk-hrf-action').value;
             const fdAction = document.getElementById('bulk-fd-action').value;
             const hdAction = document.getElementById('bulk-hd-action').value;
             const edAction = document.getElementById('bulk-ed-action').value;
@@ -9402,6 +9429,8 @@
                 }
                 if (fdAction === 'on') slot.fd_enabled = true;
                 if (fdAction === 'off') slot.fd_enabled = false;
+                if (hrfAction === 'on') slot.hrf_enabled = true;
+                if (hrfAction === 'off') slot.hrf_enabled = false;
                 if (hdAction === 'on') slot.hd_enabled = true;
                 if (hdAction === 'off') slot.hd_enabled = false;
                 if (edAction === 'on') slot.ed_enabled = true;
@@ -9519,6 +9548,10 @@
                     </div>
                 </div>
 
+                <div class="batch-toggle-row">
+                    <label>HIRES FIX</label>
+                    <label class="toggle-switch"><input type="checkbox" data-field="hrf_enabled" ${slot.hrf_enabled ? 'checked' : ''}><span class="toggle-slider"></span></label>
+                </div>
                 <div class="batch-toggle-row">
                     <label>페이스 디테일러</label>
                     <label class="toggle-switch"><input type="checkbox" data-field="fd_enabled" ${slot.fd_enabled ? 'checked' : ''}><span class="toggle-slider"></span></label>
@@ -9831,6 +9864,7 @@
             } else {
                 positiveFull += `\n[POSE_DATA]\n{"people":[{"pose_keypoints_2d":[509.59,522.31,1,...]}],"canvas_height":1408,"canvas_width":936}`;
             }
+            positiveFull += `\n[HRF_ACTIVATE]\n${slot.hrf_enabled ? 'true' : 'false'}`;
             positiveFull += `\n[FD_ACTIVATE]\n${slot.fd_enabled ? 'true' : 'false'}`;
             positiveFull += `\n[HD_ACTIVATE]\n${slot.hd_enabled ? 'true' : 'false'}`;
             positiveFull += `\n[ED_ACTIVATE]\n${slot.ed_enabled ? 'true' : 'false'}`;
@@ -9919,6 +9953,7 @@
                             pose_enabled: slot.pose_enabled,
                             pose_id: slot.pose_enabled ? slot.pose_id : '',
                             fd_activate: slot.fd_enabled,
+                            hrf_activate: slot.hrf_enabled,
                             hd_activate: slot.hd_enabled,
                             ed_activate: slot.ed_enabled,
                         };
@@ -10057,11 +10092,29 @@
                 batchChains = (preset.chains || []).map(c => ({
                     ...c,
                     _id: ++batchSlotIdCounter,
+                    hrf_enabled: !!c.hrf_enabled,
                     ref_preview_url: c.ref_preview_url || c.ref_image_data || '',
                 }));
                 document.getElementById('batch-repeat-count').value = preset.repeat || 1;
+
+                // 마이그레이션: hrf_enabled가 없던旧프리셋이면 false로 채우고 자동 저장
+                const needsMigration = (preset.chains || []).some(c => c.hrf_enabled === undefined);
+                if (needsMigration) {
+                    const chainsData = batchChains.map(c => {
+                        const copy = { ...c };
+                        delete copy._id;
+                        delete copy.ref_preview_url;
+                        return copy;
+                    });
+                    fetch('/api/chain_presets/save', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ name, chains: chainsData, repeat: preset.repeat || 1 }),
+                    }).catch(() => {});
+                }
+
                 renderBatchChain();
-                showToast(`프리셋 "${name}" 로드됨`);
+                showToast(`프리셋 "${name}" 로드됨${needsMigration ? ' (HRF 필드 자동 마이그레이션)' : ''}`);
             } catch (e) {
                 showToast('로드 실패: ' + e.message, 'error');
             }
@@ -10171,7 +10224,7 @@
                     ref_enabled: !!c.ref_enabled, ref_strength: c.ref_strength || 0.55,
                     ref_image: c.ref_image || '', ref_image_data: c._ref_image_data || '',
                     pose_enabled: !!c.pose_enabled, pose_id: c.pose_id || '',
-                    fd_enabled: !!c.fd_enabled, hd_enabled: !!c.hd_enabled, ed_enabled: !!c.ed_enabled,
+                    fd_enabled: !!c.fd_enabled, hrf_enabled: !!c.hrf_enabled, hd_enabled: !!c.hd_enabled, ed_enabled: !!c.ed_enabled,
                 };
                 delete c._ref_image_data;
                 return o;
@@ -10502,6 +10555,7 @@
                 pose_enabled: !!c.pose_enabled,
                 pose_id: poseIdMap[c.pose_id] || c.pose_id || '',
                 fd_enabled: !!c.fd_enabled,
+                hrf_enabled: !!c.hrf_enabled,
                 hd_enabled: !!c.hd_enabled,
                 ed_enabled: !!c.ed_enabled,
                 _id: ++batchSlotIdCounter,

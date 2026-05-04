@@ -3204,6 +3204,7 @@ async def handle_api_asset_mode_generate(request: web.Request) -> web.Response:
             reference_image=body.get("reference_image", ""),
             pose_enabled=body.get("pose_enabled", False),
             pose_id=body.get("pose_id", ""),
+            hrf_activate=body.get("hrf_activate", False),
             fd_activate=body.get("fd_activate", False),
             hd_activate=body.get("hd_activate", False),
             ed_activate=body.get("ed_activate", False),
