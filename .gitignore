@@ -24,6 +24,11 @@ config.json
 # Updater config (경로/브랜치 등 사용자 정보)
 updater_config.json
 
+# Updater build artifacts
+updater_dev/build/
+updater_dev/dist/
+updater_dev/*.spec
+
 # Distribution patches (외부 드라이브 배포)
 chain_presets/
 customprompt/enhance_outfit_prompt_v4_storage/
