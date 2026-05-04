@@ -28,7 +28,6 @@ updater_config.json
 updater_dev/build/
 updater_dev/dist/
 updater_dev/*.spec
-GitUpdater.exe
 
 # Distribution patches (외부 드라이브 배포)
 chain_presets/

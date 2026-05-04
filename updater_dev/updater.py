@@ -245,7 +245,8 @@ class GitAutoUpdater:
 
         # 작업 트리 변경 사항 확인
         status = self._git(["git", "status", "--porcelain"], path)
-        changes = [l for l in status.stdout.strip().splitlines() if l.strip()]
+        ignore_files = {"GitUpdater.exe"}
+        changes = [l for l in status.stdout.strip().splitlines() if l.strip() and os.path.basename(l.split(maxsplit=1)[-1].strip()) not in ignore_files]
         if changes:
             self._thread_log(f"[{name}] 검증 실패 - 로컬 변경사항 {len(changes)}건 감지")
             for c in changes[:5]:
