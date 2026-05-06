@@ -1187,7 +1187,7 @@ class AssetMode:
         outfit_map = mapping.get("outfits", {})
         expr_map = mapping.get("expressions", {})
         export_format = mapping.get("export_format", "webp").lower()
-        export_quality = max(1, min(100, int(mapping.get("export_quality", 90))))
+        export_quality = max(1, min(90, int(mapping.get("export_quality", 90))))
 
         # 포맷별 PIL 포맷 문자열 및 확장자
         FORMAT_MAP = {
@@ -1198,6 +1198,16 @@ class AssetMode:
             "avif": ("AVIF", ".avif"),
         }
         pil_format, ext = FORMAT_MAP.get(export_format, ("WEBP", ".webp"))
+
+        # 로컬 저장 품질 (90) 대비 보정값 계산
+        # 사용자가 80 설정 → PIL quality = round(80/0.9) ≈ 89 → 유효 품질 ~80%
+        LOCAL_QUALITY = 90
+        if export_quality >= LOCAL_QUALITY:
+            pil_quality = LOCAL_QUALITY
+            need_recompress = False
+        else:
+            pil_quality = min(100, round(export_quality / (LOCAL_QUALITY / 100)))
+            need_recompress = True
 
         buf = io.BytesIO()
         added = 0
@@ -1245,9 +1255,9 @@ class AssetMode:
                         zip_name = f"{base}_{idx}{ext}"
                     used_names.add(zip_name)
 
-                    # 원본이 대상 포맷과 같으면 그대로 사용, 다르면 변환
                     orig_ext = os.path.splitext(rep_file)[1].lower()
-                    if orig_ext == ext:
+                    # 같은 포맷 + 재압축 불필요 → 원본 그대로
+                    if orig_ext == ext and not need_recompress:
                         zf.write(img_path, zip_name)
                     else:
                         try:
@@ -1263,7 +1273,7 @@ class AssetMode:
                             img_buf = io.BytesIO()
                             save_kwargs = {"format": pil_format}
                             if pil_format in ("WEBP", "JPEG", "AVIF"):
-                                save_kwargs["quality"] = export_quality
+                                save_kwargs["quality"] = pil_quality
                             if pil_format == "WEBP":
                                 save_kwargs["method"] = 6  # 압축 속도 느리지만 최고 품질
                             img.save(img_buf, **save_kwargs)
