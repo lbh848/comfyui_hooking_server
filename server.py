@@ -3288,47 +3288,47 @@ async def handle_api_asset_mode_upload_reference(request: web.Request) -> web.Re
         reader = await request.multipart()
         image_data = None
         filename = "reference.png"
-        character = ""
         async for part in reader:
             if part.name == "image":
                 image_data = await part.read()
                 if part.filename:
                     filename = part.filename
-            elif part.name == "character":
-                character = (await part.read()).decode("utf-8").strip()
         if not image_data:
             return web.json_response({"success": False, "error": "이미지 없음"}, status=400)
 
-        # ── 에셋 폴더에 저장 (캐릭터가 선택된 경우) ──
-        asset_info = None
-        if character:
-            import time, uuid as _uuid
-            from modes.asset_mode import AssetMode
-            safe = AssetMode._safe_dirname
-            save_dir = os.path.join(
-                os.path.dirname(os.path.abspath(__file__)), "asset",
-                safe(character), safe("업로드이미지"), safe("갤러리"),
-            )
-            os.makedirs(save_dir, exist_ok=True)
-            asset_filename = f"{int(time.time())}_{_uuid.uuid4().hex[:6]}.webp"
+        # ── 에셋 폴더에 저장 ──
+        import time, uuid as _uuid
+        from modes.asset_mode import AssetMode
+        safe = AssetMode._safe_dirname
+        upload_char = "업로드이미지"
+        upload_outfit = "갤러리"
+        upload_expr = "갤러리"
+        save_dir = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "asset",
+            safe(upload_char), safe(upload_outfit), safe(upload_expr),
+        )
+        os.makedirs(save_dir, exist_ok=True)
+        asset_filename = f"{int(time.time())}_{_uuid.uuid4().hex[:6]}.webp"
+        asset_filepath = os.path.join(save_dir, asset_filename)
+        try:
+            from PIL import Image
+            from io import BytesIO
+            img = Image.open(BytesIO(image_data))
+            save_img = img if img.mode == "RGBA" else img.convert("RGB")
+            save_img.save(asset_filepath, format="WEBP", quality=90, method=4)
+        except Exception:
+            asset_filename = f"{int(time.time())}_{_uuid.uuid4().hex[:6]}.png"
             asset_filepath = os.path.join(save_dir, asset_filename)
-            try:
-                from PIL import Image
-                from io import BytesIO
-                img = Image.open(BytesIO(image_data))
-                save_img = img if img.mode == "RGBA" else img.convert("RGB")
-                save_img.save(asset_filepath, format="WEBP", quality=90, method=4)
-            except Exception:
-                asset_filename = f"{int(time.time())}_{_uuid.uuid4().hex[:6]}.png"
-                asset_filepath = os.path.join(save_dir, asset_filename)
-                with open(asset_filepath, "wb") as f:
-                    f.write(image_data)
-            asset_info = {
-                "character": character,
-                "outfit": "업로드이미지",
-                "expression": "갤러리",
-                "filename": asset_filename,
-            }
+            with open(asset_filepath, "wb") as f:
+                f.write(image_data)
+        # tags.json에 업로드이미지 캐릭터 자동 등록
+        asset_mode.ensure_upload_character()
+        asset_info = {
+            "character": upload_char,
+            "outfit": upload_outfit,
+            "expression": upload_expr,
+            "filename": asset_filename,
+        }
 
         # ── ComfyUI에 업로드 ──
         import aiohttp, mimetypes

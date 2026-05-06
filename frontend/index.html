@@ -6573,8 +6573,6 @@
             const file = input.files[0];
             const formData = new FormData();
             formData.append('image', file);
-            const charName = document.getElementById('asset-character-select').value;
-            if (charName) formData.append('character', charName);
             try {
                 const resp = await fetch('/api/asset_mode/upload_reference', { method: 'POST', body: formData });
                 const result = await resp.json();

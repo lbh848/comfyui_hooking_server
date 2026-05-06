@@ -489,6 +489,13 @@ class AssetMode:
     def list_characters(self) -> list[str]:
         return list(self._tags.get("characters", {}).keys())
 
+    def ensure_upload_character(self):
+        """업로드이미지 캐릭터가 tags.json에 없으면 자동 등록."""
+        chars = self._tags.setdefault("characters", {})
+        if "업로드이미지" not in chars:
+            chars["업로드이미지"] = {"appearance": "", "outfit": "", "expression": ""}
+            self.save_tags()
+
     def get_character(self, name: str) -> dict:
         return copy.deepcopy(self._tags.get("characters", {}).get(name, {}))
 
