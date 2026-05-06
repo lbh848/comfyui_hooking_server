@@ -7000,7 +7000,7 @@
                     const card = document.createElement('div');
                     card.style.cssText = 'cursor:pointer; border-radius:8px; overflow:hidden; border:2px solid var(--border); transition:border-color 0.2s;';
                     card.innerHTML = thumbUrl
-                        ? `<img src="${thumbUrl}" style="width:100%; display:block; aspect-ratio:1; object-fit:cover;" loading="lazy">`
+                        ? `<img src="${thumbUrl}" style="width:100%; display:block; aspect-ratio:1; object-fit:contain;" loading="lazy">`
                         : `<div style="width:100%; aspect-ratio:1; background:var(--surface2); display:flex; align-items:center; justify-content:center;">📁</div>`;
                     card.innerHTML += `<div style="font-size:0.7rem; padding:4px; text-align:center; background:var(--surface2);">${escapeHtml(item.outfit)} / ${escapeHtml(item.expression)}<br><span style="color:var(--text2);">${item.image_count}장</span></div>`;
                     card.onmouseenter = () => card.style.borderColor = 'var(--accent)';
@@ -7037,7 +7037,7 @@
                     const imgUrl = `/api/asset_mode/characters/${enc(char)}/outfits/${enc(outfit)}/expressions/${enc(expr)}/images/${enc(img.filename)}`;
                     const card = document.createElement('div');
                     card.style.cssText = `cursor:pointer; border-radius:8px; overflow:hidden; border:2px solid ${img.is_representative ? 'var(--accent)' : 'var(--border)'}; transition:border-color 0.2s; position:relative;`;
-                    card.innerHTML = `<img src="${imgUrl}" style="width:100%; display:block; aspect-ratio:1; object-fit:cover;" loading="lazy">`;
+                    card.innerHTML = `<img src="${imgUrl}" style="width:100%; display:block; aspect-ratio:1; object-fit:contain;" loading="lazy">`;
                     if (img.is_representative) {
                         card.innerHTML += `<span style="position:absolute; top:4px; right:4px; background:var(--accent); color:#fff; font-size:0.6rem; padding:2px 6px; border-radius:3px;">대표</span>`;
                     }
@@ -9429,7 +9429,7 @@
                     const card = document.createElement('div');
                     card.style.cssText = 'cursor:pointer; border-radius:8px; overflow:hidden; border:2px solid var(--border); transition:border-color 0.2s;';
                     card.innerHTML = thumbUrl
-                        ? `<img src="${thumbUrl}" style="width:100%; display:block; aspect-ratio:1; object-fit:cover;" loading="lazy">`
+                        ? `<img src="${thumbUrl}" style="width:100%; display:block; aspect-ratio:1; object-fit:contain;" loading="lazy">`
                         : `<div style="width:100%; aspect-ratio:1; background:var(--surface2); display:flex; align-items:center; justify-content:center;">📁</div>`;
                     card.innerHTML += `<div style="font-size:0.7rem; padding:4px; text-align:center; background:var(--surface2);">${escapeHtml(item.outfit)} / ${escapeHtml(item.expression)}</div>`;
                     card.onmouseenter = () => card.style.borderColor = 'var(--accent)';
@@ -9871,7 +9871,7 @@
                     const card = document.createElement('div');
                     card.style.cssText = 'cursor:pointer; border-radius:8px; overflow:hidden; border:2px solid var(--border); transition:border-color 0.2s;';
                     card.innerHTML = thumbUrl
-                        ? `<img src="${thumbUrl}" style="width:100%; display:block; aspect-ratio:1; object-fit:cover;" loading="lazy">`
+                        ? `<img src="${thumbUrl}" style="width:100%; display:block; aspect-ratio:1; object-fit:contain;" loading="lazy">`
                         : `<div style="width:100%; aspect-ratio:1; background:var(--surface2); display:flex; align-items:center; justify-content:center;">📁</div>`;
                     card.innerHTML += `<div style="font-size:0.7rem; padding:4px; text-align:center; background:var(--surface2);">${escapeHtml(item.outfit)} / ${escapeHtml(item.expression)}</div>`;
                     card.onmouseenter = () => card.style.borderColor = 'var(--accent)';
