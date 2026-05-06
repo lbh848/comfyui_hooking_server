@@ -9173,6 +9173,8 @@
             const charOptions = buildOptions(assetTags?.characters || {}, '', '-- 변경 안함 --');
             const appOptions = buildOptions(assetTags?.appearances || {}, '', '-- 변경 안함 --');
             const outfitOptions = buildOptions(assetTags?.outfits || {}, '', '-- 변경 안함 --');
+            const exprOptions = buildOptions(assetTags?.expressions || {}, '', '-- 변경 안함 --');
+            const compOptions = buildPresetOptions(assetTags?.composition_presets || {}, '', '-- 변경 안함 --');
             const qualOptions = buildPresetOptions(assetTags?.quality_presets || {}, '', '-- 변경 안함 --');
             const negOptions = buildPresetOptions(assetTags?.negative_presets || {}, '', '-- 변경 안함 --');
 
@@ -9190,6 +9192,8 @@
                     <div><div class="batch-field-label">캐릭터</div><select id="bulk-character" class="batch-select">${charOptions}</select></div>
                     <div><div class="batch-field-label">외모</div><select id="bulk-appearance" class="batch-select">${appOptions}</select></div>
                     <div><div class="batch-field-label">복장</div><select id="bulk-outfit" class="batch-select">${outfitOptions}</select></div>
+                    <div><div class="batch-field-label">표정</div><select id="bulk-expression" class="batch-select">${exprOptions}</select></div>
+                    <div><div class="batch-field-label">구도/기타 태그</div><select id="bulk-composition" class="batch-select">${compOptions}</select></div>
                     <div><div class="batch-field-label">품질 태그 프리셋</div><select id="bulk-quality" class="batch-select">${qualOptions}</select></div>
                     <div><div class="batch-field-label">부정 태그 프리셋</div><select id="bulk-negative" class="batch-select">${negOptions}</select></div>
 
@@ -9408,6 +9412,8 @@
                 character: document.getElementById('bulk-character').value,
                 appearance: document.getElementById('bulk-appearance').value,
                 outfit: document.getElementById('bulk-outfit').value,
+                expression: document.getElementById('bulk-expression').value,
+                composition_preset: document.getElementById('bulk-composition').value,
                 quality_preset: document.getElementById('bulk-quality').value,
                 negative_preset: document.getElementById('bulk-negative').value,
             };
@@ -9423,6 +9429,8 @@
                 if (fields.character) slot.character = fields.character;
                 if (fields.appearance) slot.appearance = fields.appearance;
                 if (fields.outfit) slot.outfit = fields.outfit;
+                if (fields.expression) slot.expression = fields.expression;
+                if (fields.composition_preset) slot.composition_preset = fields.composition_preset;
                 if (fields.quality_preset) slot.quality_preset = fields.quality_preset;
                 if (fields.negative_preset) slot.negative_preset = fields.negative_preset;
                 if (refAction === 'on') slot.ref_enabled = true;
