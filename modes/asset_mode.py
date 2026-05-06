@@ -942,6 +942,8 @@ class AssetMode:
         for fname in sorted(os.listdir(img_dir)):
             if fname.startswith("_"):
                 continue
+            if fname.endswith(".preview.webp"):
+                continue
             fpath = os.path.join(img_dir, fname)
             if not os.path.isfile(fpath):
                 continue
