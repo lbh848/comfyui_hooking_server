@@ -3343,8 +3343,8 @@ async def handle_api_asset_mode_upload_reference(request: web.Request) -> web.Re
             try:
                 with open(hash_file, "w", encoding="utf-8") as f:
                     _json.dump(hash_map, f, ensure_ascii=False)
-            except Exception:
-                pass
+            except Exception as he:
+                print(f"[UPLOAD_REF] 해시 파일 저장 실패: {he}")
 
         # tags.json에 업로드이미지 캐릭터 자동 등록
         asset_mode.ensure_upload_character()

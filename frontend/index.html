@@ -10601,7 +10601,13 @@
                         const uploadResult = await uploadResp.json();
                         if (uploadResult.success) {
                             chainSlot.ref_image = uploadResult.name;
-                            chainSlot.ref_preview_url = chainSlot.ref_image_data;
+                            if (uploadResult.asset_info) {
+                                const enc = encodeURIComponent;
+                                const ai = uploadResult.asset_info;
+                                chainSlot.ref_preview_url = `/api/asset_mode/characters/${enc(ai.character)}/outfits/${enc(ai.outfit)}/expressions/${enc(ai.expression)}/images/${enc(ai.filename)}`;
+                            } else {
+                                chainSlot.ref_preview_url = chainSlot.ref_image_data;
+                            }
                         }
                     } catch (e) { console.warn('[IMPORT] 레퍼런스 업로드 실패:', e); }
                 }
