@@ -3314,8 +3314,11 @@ async def handle_api_asset_mode_upload_reference(request: web.Request) -> web.Re
             )
             os.makedirs(save_dir, exist_ok=True)
 
-            # 해시 기반 중복 체크
-            content_hash = hashlib.sha256(image_data).hexdigest()
+            # 해시 기반 중복 체크 (픽셀 데이터로 계산 - 포맷 무관)
+            from PIL import Image
+            from io import BytesIO
+            img = Image.open(BytesIO(image_data))
+            content_hash = hashlib.sha256(img.convert("RGB").tobytes()).hexdigest()
             hash_file = os.path.join(save_dir, "_upload_hashes.json")
             hash_map = {}
             if os.path.isfile(hash_file):
@@ -3331,9 +3334,6 @@ async def handle_api_asset_mode_upload_reference(request: web.Request) -> web.Re
                 asset_filename = f"{int(time.time())}_{_uuid.uuid4().hex[:6]}.webp"
                 asset_filepath = os.path.join(save_dir, asset_filename)
                 try:
-                    from PIL import Image
-                    from io import BytesIO
-                    img = Image.open(BytesIO(image_data))
                     save_img = img if img.mode == "RGBA" else img.convert("RGB")
                     save_img.save(asset_filepath, format="WEBP", quality=90, method=4)
                 except Exception:
