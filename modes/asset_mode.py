@@ -1154,23 +1154,29 @@ class AssetMode:
             "outfit_mapping": mapping.get("outfits", {}),
             "expressions": sorted(expressions),
             "expression_mapping": mapping.get("expressions", {}),
+            "export_format": mapping.get("export_format", "webp"),
+            "export_quality": mapping.get("export_quality", 90),
         }
 
     def save_character_name_mapping(self, character: str, export_name: str,
-                                    outfit_mapping: dict, expression_mapping: dict) -> dict:
+                                    outfit_mapping: dict, expression_mapping: dict,
+                                    export_format: str = "webp", export_quality: int = 90) -> dict:
         """캐릭터 이름 치환 규칙 저장."""
         data = self._load_name_mapping()
         data[character] = {
             "export_name": export_name,
             "outfits": outfit_mapping,
             "expressions": expression_mapping,
+            "export_format": export_format,
+            "export_quality": max(1, min(100, int(export_quality))),
         }
         self._save_name_mapping(data)
         return {"success": True}
 
     def export_character_zip(self, character: str) -> str:
-        """캐릭터의 대표 이미지를 이름 치환 규칙에 따라 이름_복장_표정.webp로 만들어 zip 반환."""
+        """캐릭터의 대표 이미지를 이름 치환 규칙에 따라 이름_복장_표정.ext로 만들어 zip 반환."""
         import zipfile, io, tempfile
+        from PIL import Image
 
         char_dir = os.path.join(ASSET_DIR, self._safe_dirname(character))
         if not os.path.isdir(char_dir):
@@ -1180,6 +1186,18 @@ class AssetMode:
         export_name = mapping.get("export_name", "") or character
         outfit_map = mapping.get("outfits", {})
         expr_map = mapping.get("expressions", {})
+        export_format = mapping.get("export_format", "webp").lower()
+        export_quality = max(1, min(100, int(mapping.get("export_quality", 90))))
+
+        # 포맷별 PIL 포맷 문자열 및 확장자
+        FORMAT_MAP = {
+            "webp": ("WEBP", ".webp"),
+            "png": ("PNG", ".png"),
+            "jpeg": ("JPEG", ".jpg"),
+            "jpg": ("JPEG", ".jpg"),
+            "avif": ("AVIF", ".avif"),
+        }
+        pil_format, ext = FORMAT_MAP.get(export_format, ("WEBP", ".webp"))
 
         buf = io.BytesIO()
         added = 0
@@ -1218,16 +1236,43 @@ class AssetMode:
                         continue
 
                     base = f"{export_name}_{o_name}_{e_name}"
-                    zip_name = base + ".webp"
+                    zip_name = base + ext
                     # 동일 이름 처리
                     if zip_name in used_names:
                         idx = 2
-                        while f"{base}_{idx}.webp" in used_names:
+                        while f"{base}_{idx}{ext}" in used_names:
                             idx += 1
-                        zip_name = f"{base}_{idx}.webp"
+                        zip_name = f"{base}_{idx}{ext}"
                     used_names.add(zip_name)
 
-                    zf.write(img_path, zip_name)
+                    # 원본이 대상 포맷과 같으면 그대로 사용, 다르면 변환
+                    orig_ext = os.path.splitext(rep_file)[1].lower()
+                    if orig_ext == ext:
+                        zf.write(img_path, zip_name)
+                    else:
+                        try:
+                            img = Image.open(img_path)
+                            # JPEG는 알파 채널 미지원 → RGB 변환
+                            if pil_format == "JPEG" and img.mode in ("RGBA", "LA", "P"):
+                                img = img.convert("RGB")
+                            elif pil_format == "AVIF" and img.mode == "RGBA":
+                                pass  # AVIF는 RGBA 지원
+                            elif img.mode not in ("RGB", "RGBA"):
+                                img = img.convert("RGBA") if pil_format != "JPEG" else img.convert("RGB")
+
+                            img_buf = io.BytesIO()
+                            save_kwargs = {"format": pil_format}
+                            if pil_format in ("WEBP", "JPEG", "AVIF"):
+                                save_kwargs["quality"] = export_quality
+                            if pil_format == "WEBP":
+                                save_kwargs["method"] = 6  # 압축 속도 느리지만 최고 품질
+                            img.save(img_buf, **save_kwargs)
+                            img_buf.seek(0)
+                            zf.writestr(zip_name, img_buf.read())
+                        except Exception:
+                            # 변환 실패 시 원본 그대로 사용
+                            zf.write(img_path, zip_name)
+
                     added += 1
 
         if added == 0:

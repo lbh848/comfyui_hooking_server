@@ -6667,6 +6667,28 @@
                             </div>
                         </div>
 
+                        <!-- 이미지 출력 설정 -->
+                        <div style="background:rgba(156,39,176,0.08); border-radius:8px; padding:10px; margin-bottom:12px;">
+                            <div style="font-size:0.75rem; font-weight:600; margin-bottom:8px; color:#9C27B0;">이미지 출력 설정</div>
+                            <div style="display:flex; align-items:center; gap:12px;">
+                                <div style="display:flex; align-items:center; gap:6px; flex:1;">
+                                    <label style="font-size:0.8rem; white-space:nowrap;">형식</label>
+                                    <select id="nm-export-format" style="flex:1; font-size:0.8rem; padding:4px 6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text);">
+                                        <option value="webp" ${info.export_format === 'webp' ? 'selected' : ''}>WebP</option>
+                                        <option value="png" ${info.export_format === 'png' ? 'selected' : ''}>PNG</option>
+                                        <option value="jpeg" ${info.export_format === 'jpeg' ? 'selected' : ''}>JPEG</option>
+                                        <option value="avif" ${info.export_format === 'avif' ? 'selected' : ''}>AVIF</option>
+                                    </select>
+                                </div>
+                                <div style="display:flex; align-items:center; gap:6px; flex:2;">
+                                    <label style="font-size:0.8rem; white-space:nowrap;">품질</label>
+                                    <input type="range" id="nm-export-quality" min="1" max="100" value="${info.export_quality || 90}"
+                                        style="flex:1;" oninput="document.getElementById('nm-quality-value').textContent=this.value" />
+                                    <span id="nm-quality-value" style="font-size:0.8rem; min-width:28px; text-align:right;">${info.export_quality || 90}</span>
+                                </div>
+                            </div>
+                        </div>
+
                         <!-- 복장 목록 -->
                         <div style="background:rgba(76,175,80,0.08); border-radius:8px; padding:10px; margin-bottom:12px;">
                             <div style="font-size:0.75rem; font-weight:600; margin-bottom:6px; color:#4CAF50;">복장 (${info.outfits.length}개)</div>
@@ -6725,6 +6747,9 @@
             btn.disabled = true;
             btn.textContent = '저장중...';
 
+            const exportFormat = document.getElementById('nm-export-format').value;
+            const exportQuality = parseInt(document.getElementById('nm-export-quality').value, 10);
+
             try {
                 const resp = await fetch('/api/asset_mode/name_mapping', {
                     method: 'POST',
@@ -6734,6 +6759,8 @@
                         export_name: exportName,
                         outfit_mapping: outfitMapping,
                         expression_mapping: expressionMapping,
+                        export_format: exportFormat,
+                        export_quality: exportQuality,
                     }),
                 });
                 const result = await resp.json();
@@ -6771,6 +6798,8 @@
                 export_name: exportName,
                 outfit_mapping: outfitMapping,
                 expression_mapping: expressionMapping,
+                export_format: document.getElementById('nm-export-format').value,
+                export_quality: parseInt(document.getElementById('nm-export-quality').value, 10),
             };
 
             const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -6796,6 +6825,17 @@
                         const data = JSON.parse(ev.target.result);
                         if (data.export_name !== undefined) {
                             document.getElementById('nm-export-name').value = data.export_name || '';
+                        }
+                        // 출력 설정 복원
+                        if (data.export_format) {
+                            const fmtSel = document.getElementById('nm-export-format');
+                            if (fmtSel) fmtSel.value = data.export_format;
+                        }
+                        if (data.export_quality !== undefined) {
+                            const qSlider = document.getElementById('nm-export-quality');
+                            const qValue = document.getElementById('nm-quality-value');
+                            if (qSlider) qSlider.value = data.export_quality;
+                            if (qValue) qValue.textContent = data.export_quality;
                         }
                         // 복장: 매칭되는 이름만 적용, 나머진 그대로
                         if (data.outfit_mapping) {
