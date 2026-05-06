@@ -3283,19 +3283,54 @@ async def handle_api_asset_mode_delete_image(request: web.Request) -> web.Respon
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 async def handle_api_asset_mode_upload_reference(request: web.Request) -> web.Response:
-    """레퍼런스 이미지를 ComfyUI에 업로드하고 파일명 반환."""
+    """레퍼런스 이미지를 에셋 폴더에 저장하고 ComfyUI에 업로드하여 파일명 반환."""
     try:
         reader = await request.multipart()
         image_data = None
         filename = "reference.png"
+        character = ""
         async for part in reader:
             if part.name == "image":
                 image_data = await part.read()
                 if part.filename:
                     filename = part.filename
+            elif part.name == "character":
+                character = (await part.read()).decode("utf-8").strip()
         if not image_data:
             return web.json_response({"success": False, "error": "이미지 없음"}, status=400)
 
+        # ── 에셋 폴더에 저장 (캐릭터가 선택된 경우) ──
+        asset_info = None
+        if character:
+            import time, uuid as _uuid
+            from modes.asset_mode import AssetMode
+            safe = AssetMode._safe_dirname
+            save_dir = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)), "asset",
+                safe(character), safe("업로드이미지"), safe("갤러리"),
+            )
+            os.makedirs(save_dir, exist_ok=True)
+            asset_filename = f"{int(time.time())}_{_uuid.uuid4().hex[:6]}.webp"
+            asset_filepath = os.path.join(save_dir, asset_filename)
+            try:
+                from PIL import Image
+                from io import BytesIO
+                img = Image.open(BytesIO(image_data))
+                save_img = img if img.mode == "RGBA" else img.convert("RGB")
+                save_img.save(asset_filepath, format="WEBP", quality=90, method=4)
+            except Exception:
+                asset_filename = f"{int(time.time())}_{_uuid.uuid4().hex[:6]}.png"
+                asset_filepath = os.path.join(save_dir, asset_filename)
+                with open(asset_filepath, "wb") as f:
+                    f.write(image_data)
+            asset_info = {
+                "character": character,
+                "outfit": "업로드이미지",
+                "expression": "갤러리",
+                "filename": asset_filename,
+            }
+
+        # ── ComfyUI에 업로드 ──
         import aiohttp, mimetypes
         url = f"http://{REAL_COMFY_HOST}:{REAL_COMFY_PORT}/upload/image"
         content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
@@ -3311,7 +3346,10 @@ async def handle_api_asset_mode_upload_reference(request: web.Request) -> web.Re
                 comfy_name = result.get("name", filename)
                 if not comfy_name:
                     return web.json_response({"success": False, "error": "ComfyUI에서 파일명을 반환하지 않음"}, status=502)
-                return web.json_response({"success": True, "name": comfy_name})
+                response = {"success": True, "name": comfy_name}
+                if asset_info:
+                    response["asset_info"] = asset_info
+                return web.json_response(response)
     except Exception as e:
         return web.json_response({"success": False, "error": str(e)}, status=500)
 

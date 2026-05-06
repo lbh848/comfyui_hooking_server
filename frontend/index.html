@@ -6573,6 +6573,8 @@
             const file = input.files[0];
             const formData = new FormData();
             formData.append('image', file);
+            const charName = document.getElementById('asset-character-select').value;
+            if (charName) formData.append('character', charName);
             try {
                 const resp = await fetch('/api/asset_mode/upload_reference', { method: 'POST', body: formData });
                 const result = await resp.json();
@@ -6580,7 +6582,14 @@
                     assetRefImageName = result.name;
                     const preview = document.getElementById('asset-ref-preview');
                     const previewImg = document.getElementById('asset-ref-preview-img');
-                    previewImg.src = URL.createObjectURL(file);
+                    // 에셋 경로가 있으면 에셋 API URL로 미리보기 (갤러리에서 불러오기와 동일)
+                    if (result.asset_info) {
+                        const enc = encodeURIComponent;
+                        const ai = result.asset_info;
+                        previewImg.src = `/api/asset_mode/characters/${enc(ai.character)}/outfits/${enc(ai.outfit)}/expressions/${enc(ai.expression)}/images/${enc(ai.filename)}`;
+                    } else {
+                        previewImg.src = URL.createObjectURL(file);
+                    }
                     preview.style.display = 'block';
                     showToast('레퍼런스 이미지 업로드 완료', 'success');
                 } else {
