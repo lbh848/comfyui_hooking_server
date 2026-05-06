@@ -7049,7 +7049,6 @@
                             const imgBlob = await imgResp.blob();
                             const formData = new FormData();
                             formData.append('image', imgBlob, img.filename);
-                            formData.append('source', 'asset');
                             const uploadResp = await fetch('/api/asset_mode/upload_reference', { method: 'POST', body: formData });
                             const uploadResult = await uploadResp.json();
                             if (uploadResult.success) {
@@ -9441,7 +9440,6 @@
                             const imgBlob = await imgResp.blob();
                             const formData = new FormData();
                             formData.append('image', imgBlob, item.representative);
-                            formData.append('source', 'asset');
                             const uploadResp = await fetch('/api/asset_mode/upload_reference', { method: 'POST', body: formData });
                             const uploadResult = await uploadResp.json();
                             if (uploadResult.success) {
@@ -9883,7 +9881,6 @@
                             const imgBlob = await imgResp.blob();
                             const formData = new FormData();
                             formData.append('image', imgBlob, item.representative);
-                            formData.append('source', 'asset');
                             const uploadResp = await fetch('/api/asset_mode/upload_reference', { method: 'POST', body: formData });
                             const uploadResult = await uploadResp.json();
                             if (uploadResult.success) {
