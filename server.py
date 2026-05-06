@@ -3254,23 +3254,6 @@ async def handle_api_asset_mode_image(request: web.Request) -> web.Response:
     filename = request.match_info.get("filename", "")
     filepath = asset_mode.get_image_path(character, outfit, expression, filename)
     if filepath and os.path.isfile(filepath):
-        # PNG 원본: .preview.webp 캐시 사용 (최초 1회만 변환)
-        if filepath.lower().endswith(".png"):
-            preview_path = filepath + ".preview.webp"
-            if not os.path.isfile(preview_path) or os.path.getmtime(preview_path) < os.path.getmtime(filepath):
-                try:
-                    from PIL import Image
-                    import io as _io
-                    img = Image.open(filepath)
-                    save_img = img if img.mode in ("RGB", "RGBA") else img.convert("RGBA")
-                    save_kwargs = {"format": "WEBP", "quality": 90, "method": 4}
-                    if save_img.mode == "RGBA":
-                        save_kwargs["lossless"] = False
-                    save_img.save(preview_path, **save_kwargs)
-                except Exception:
-                    pass
-            if os.path.isfile(preview_path):
-                return web.FileResponse(preview_path)
         return web.FileResponse(filepath)
     return web.Response(text="Not found", status=404)
 
