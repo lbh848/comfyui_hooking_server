@@ -862,20 +862,10 @@ class AssetMode:
         )
         os.makedirs(save_dir, exist_ok=True)
 
-        filename = f"{int(time.time())}_{uuid.uuid4().hex[:6]}.webp"
+        filename = f"{int(time.time())}_{uuid.uuid4().hex[:6]}.png"
         filepath = os.path.join(save_dir, filename)
-
-        try:
-            from PIL import Image
-            from io import BytesIO
-            img = Image.open(BytesIO(img_bytes))
-            save_img = img if img.mode == "RGBA" else img.convert("RGB")
-            save_img.save(filepath, format="WEBP", quality=90, method=4)
-        except Exception:
-            filename = f"{int(time.time())}_{uuid.uuid4().hex[:6]}.png"
-            filepath = os.path.join(save_dir, filename)
-            with open(filepath, "wb") as f:
-                f.write(img_bytes)
+        with open(filepath, "wb") as f:
+            f.write(img_bytes)
 
         prompt_record_path = os.path.join(save_dir, f"{os.path.splitext(filename)[0]}_prompt.json")
         try:
