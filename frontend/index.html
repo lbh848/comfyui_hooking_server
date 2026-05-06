@@ -9077,6 +9077,7 @@
                     body: JSON.stringify({id})
                 });
                 loadPoseList();
+                loadAssetPoseGrid();
                 showToast('삭제 완료');
             } catch {}
         }
@@ -9097,7 +9098,7 @@
                     })
                 });
                 const r = await resp.json();
-                if (r.success) { showToast('저장 완료'); loadPoseList(); }
+                if (r.success) { showToast('저장 완료'); loadPoseList(); loadAssetPoseGrid(); }
                 else showToast('저장 실패: ' + (r.error || ''));
             } catch (e) { showToast('저장 오류: ' + e.message); }
         }
