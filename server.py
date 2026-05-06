@@ -3296,8 +3296,8 @@ async def handle_api_asset_mode_upload_reference(request: web.Request) -> web.Re
         if not image_data:
             return web.json_response({"success": False, "error": "이미지 없음"}, status=400)
 
-        # ── 에셋 폴더에 저장 ──
-        import time, uuid as _uuid
+        # ── 에셋 폴더에 저장 (중복 체크) ──
+        import time, uuid as _uuid, hashlib, json as _json
         from modes.asset_mode import AssetMode
         safe = AssetMode._safe_dirname
         upload_char = "업로드이미지"
@@ -3308,19 +3308,44 @@ async def handle_api_asset_mode_upload_reference(request: web.Request) -> web.Re
             safe(upload_char), safe(upload_outfit), safe(upload_expr),
         )
         os.makedirs(save_dir, exist_ok=True)
-        asset_filename = f"{int(time.time())}_{_uuid.uuid4().hex[:6]}.webp"
-        asset_filepath = os.path.join(save_dir, asset_filename)
-        try:
-            from PIL import Image
-            from io import BytesIO
-            img = Image.open(BytesIO(image_data))
-            save_img = img if img.mode == "RGBA" else img.convert("RGB")
-            save_img.save(asset_filepath, format="WEBP", quality=90, method=4)
-        except Exception:
-            asset_filename = f"{int(time.time())}_{_uuid.uuid4().hex[:6]}.png"
+
+        # 해시 기반 중복 체크
+        content_hash = hashlib.sha256(image_data).hexdigest()
+        hash_file = os.path.join(save_dir, "_upload_hashes.json")
+        hash_map = {}
+        if os.path.isfile(hash_file):
+            try:
+                with open(hash_file, "r", encoding="utf-8") as f:
+                    hash_map = _json.load(f)
+            except Exception:
+                pass
+
+        if content_hash in hash_map and os.path.isfile(os.path.join(save_dir, hash_map[content_hash])):
+            # 이미 존재하는 이미지 - 기존 파일 정보 반환
+            asset_filename = hash_map[content_hash]
+        else:
+            # 새 이미지 저장
+            asset_filename = f"{int(time.time())}_{_uuid.uuid4().hex[:6]}.webp"
             asset_filepath = os.path.join(save_dir, asset_filename)
-            with open(asset_filepath, "wb") as f:
-                f.write(image_data)
+            try:
+                from PIL import Image
+                from io import BytesIO
+                img = Image.open(BytesIO(image_data))
+                save_img = img if img.mode == "RGBA" else img.convert("RGB")
+                save_img.save(asset_filepath, format="WEBP", quality=90, method=4)
+            except Exception:
+                asset_filename = f"{int(time.time())}_{_uuid.uuid4().hex[:6]}.png"
+                asset_filepath = os.path.join(save_dir, asset_filename)
+                with open(asset_filepath, "wb") as f:
+                    f.write(image_data)
+            # 해시 맵 업데이트
+            hash_map[content_hash] = asset_filename
+            try:
+                with open(hash_file, "w", encoding="utf-8") as f:
+                    _json.dump(hash_map, f, ensure_ascii=False)
+            except Exception:
+                pass
+
         # tags.json에 업로드이미지 캐릭터 자동 등록
         asset_mode.ensure_upload_character()
         asset_info = {
