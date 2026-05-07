@@ -3211,6 +3211,7 @@ async def handle_api_asset_mode_generate(request: web.Request) -> web.Response:
         )
         return web.json_response(result)
     except Exception as e:
+        import traceback; traceback.print_exc()
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 async def handle_api_asset_mode_characters(request: web.Request) -> web.Response:
