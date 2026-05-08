@@ -976,6 +976,7 @@ async def submit_workflow_to_comfy(workflow_api: dict, progress_callback=None) -
         )
         return img_bytes, node_errors
     except Exception as e:
+        print(f"[ASSET] ComfyUI 제출 예외: {type(e).__name__}: {e}")
         return None, str(e)
 
 
@@ -3212,7 +3213,8 @@ async def handle_api_asset_mode_generate(request: web.Request) -> web.Response:
         return web.json_response(result)
     except Exception as e:
         import traceback; traceback.print_exc()
-        return web.json_response({"success": False, "error": str(e)}, status=500)
+        print(f"[ASSET] 에셋 생성 핸들러 예외: {type(e).__name__}: {e}")
+        return web.json_response({"success": False, "error": f"{type(e).__name__}: {e}"}, status=500)
 
 async def handle_api_asset_mode_characters(request: web.Request) -> web.Response:
     return web.json_response({"characters": asset_mode.list_characters()})
