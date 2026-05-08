@@ -667,61 +667,54 @@ class AssetMode:
             pass
 
     async def _fallback_load_workflow(self) -> bool:
-        """workflow_source_path 실패 시 mode_workflow 폴더에서 워크플로우를 찾아 로드한다."""
+        """workflow_source_path 실패 시 mode_workflow 폴더에서 같은 이름의 워크플로우를 찾아 로드한다."""
         if not os.path.isdir(MODE_WORKFLOW_DIR):
             print("[ASSET][FALLBACK] mode_workflow 폴더가 없음")
             self._log("fallback_no_dir", {"dir": MODE_WORKFLOW_DIR})
             return False
 
-        json_files = []
-        for f in os.listdir(MODE_WORKFLOW_DIR):
-            if f.endswith(".json"):
-                fpath = os.path.join(MODE_WORKFLOW_DIR, f)
-                if os.path.isfile(fpath):
-                    json_files.append((fpath, os.path.getmtime(fpath)))
-        json_files.sort(key=lambda x: x[1], reverse=True)
+        src = self.workflow_source_path or ""
+        fname = os.path.basename(src) if src else ""
+        fpath = os.path.join(MODE_WORKFLOW_DIR, fname) if fname else ""
 
-        if not json_files:
-            print("[ASSET][FALLBACK] mode_workflow 폴더에 JSON 파일이 없음")
-            self._log("fallback_no_files", {"dir": MODE_WORKFLOW_DIR})
+        if not fname or not os.path.isfile(fpath):
+            print(f"[ASSET][FALLBACK] mode_workflow에 같은 이름 파일 없음: '{fname or '(이름 없음)'}'")
+            self._log("fallback_no_match", {"name": fname})
             return False
 
-        print(f"[ASSET][FALLBACK] mode_workflow에서 {len(json_files)}개 파일 탐색 시작")
+        print(f"[ASSET][FALLBACK] mode_workflow에서 '{fname}' 로드 시도")
+        try:
+            with open(fpath, "r", encoding="utf-8") as f:
+                wf_data = json.load(f)
+        except Exception as e:
+            print(f"[ASSET][FALLBACK] '{fname}' 로드 실패: {e}")
+            self._log("fallback_load_error", {"name": fname, "error": str(e)})
+            return False
 
-        for fpath, _ in json_files:
-            fname = os.path.basename(fpath)
+        if self._is_api_format(wf_data):
+            self._asset_api_workflow = wf_data
+            self._save_cached_api(wf_data)
+            print(f"[ASSET][FALLBACK] '{fname}' API 포맷 로드 성공 ({len(wf_data)}개 노드)")
+            self._log("fallback_loaded_api", {"file": fname, "nodes": len(wf_data)})
+            return True
+
+        if self.convert_workflow_func:
             try:
-                with open(fpath, "r", encoding="utf-8") as f:
-                    wf_data = json.load(f)
+                api_wf, error = await self.convert_workflow_func(wf_data)
+                if api_wf is not None:
+                    self._asset_api_workflow = api_wf
+                    self._save_cached_api(api_wf)
+                    print(f"[ASSET][FALLBACK] '{fname}' 변환 성공 ({len(api_wf)}개 노드)")
+                    self._log("fallback_converted", {"file": fname, "nodes": len(api_wf)})
+                    return True
+                else:
+                    print(f"[ASSET][FALLBACK] '{fname}' 변환 실패: {error}")
             except Exception as e:
-                print(f"[ASSET][FALLBACK] '{fname}' 로드 실패: {e}")
-                continue
+                print(f"[ASSET][FALLBACK] '{fname}' 변환 예외: {e}")
+        else:
+            print(f"[ASSET][FALLBACK] '{fname}' - API 포맷이 아니고 변환 함수도 없음")
 
-            if self._is_api_format(wf_data):
-                self._asset_api_workflow = wf_data
-                self._save_cached_api(wf_data)
-                print(f"[ASSET][FALLBACK] '{fname}' API 포맷 로드 성공 ({len(wf_data)}개 노드)")
-                self._log("fallback_loaded_api", {"file": fname, "nodes": len(wf_data)})
-                return True
-
-            if self.convert_workflow_func:
-                try:
-                    api_wf, error = await self.convert_workflow_func(wf_data)
-                    if api_wf is not None:
-                        self._asset_api_workflow = api_wf
-                        self._save_cached_api(api_wf)
-                        print(f"[ASSET][FALLBACK] '{fname}' 변환 성공 ({len(api_wf)}개 노드)")
-                        self._log("fallback_converted", {"file": fname, "nodes": len(api_wf)})
-                        return True
-                    else:
-                        print(f"[ASSET][FALLBACK] '{fname}' 변환 실패: {error}")
-                except Exception as e:
-                    print(f"[ASSET][FALLBACK] '{fname}' 변환 예외: {e}")
-            else:
-                print(f"[ASSET][FALLBACK] '{fname}' - API 포맷이 아니고 변환 함수도 없음")
-
-        print("[ASSET][FALLBACK] 모든 파일 탐색 실패 - 사용 가능한 워크플로우 없음")
-        self._log("fallback_all_failed", {})
+        self._log("fallback_failed", {"name": fname})
         return False
 
     async def update_asset_workflow(self) -> bool:
