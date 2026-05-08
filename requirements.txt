@@ -1,6 +1,7 @@
 aiohttp
 httpx
 pillow
+pillow-avif-plugin
 piexif
 websockets
 tiktoken

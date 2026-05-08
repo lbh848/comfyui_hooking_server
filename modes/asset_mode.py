@@ -1182,11 +1182,15 @@ class AssetMode:
 
     def export_character_zip(self, character: str) -> str:
         """캐릭터의 대표 이미지를 이름 치환 규칙에 따라 이름_복장_표정.ext로 만들어 zip 반환."""
-        import zipfile, io, tempfile
+        import zipfile, io, tempfile, logging
         from PIL import Image
+
+        log = logging.getLogger("asset_export")
+        log.info(f"[ZIP 내보내기] 시작 — 캐릭터: {character}")
 
         char_dir = os.path.join(ASSET_DIR, self._safe_dirname(character))
         if not os.path.isdir(char_dir):
+            log.warning(f"[ZIP 내보내기] 캐릭터 디렉토리 없음: {char_dir}")
             return None
 
         mapping = self._load_name_mapping().get(character, {})
@@ -1195,6 +1199,7 @@ class AssetMode:
         expr_map = mapping.get("expressions", {})
         export_format = mapping.get("export_format", "webp").lower()
         export_quality = max(1, min(90, int(mapping.get("export_quality", 90))))
+        log.info(f"[ZIP 내보내기] 포맷={export_format}, 품질={export_quality}, 내보내기 이름={export_name}")
 
         # 포맷별 PIL 포맷 문자열 및 확장자
         FORMAT_MAP = {
@@ -1218,6 +1223,8 @@ class AssetMode:
 
         buf = io.BytesIO()
         added = 0
+        skipped_no_mapping = 0
+        skipped_no_rep = 0
         used_names = set()
 
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -1240,6 +1247,7 @@ class AssetMode:
                         except Exception:
                             pass
                     if not rep_file:
+                        skipped_no_rep += 1
                         continue
 
                     img_path = os.path.join(expr_path, rep_file)
@@ -1250,6 +1258,7 @@ class AssetMode:
                     o_name = outfit_map.get(outfit_dir_name, "")
                     e_name = expr_map.get(expr_dir_name, "")
                     if not o_name or not e_name:
+                        skipped_no_mapping += 1
                         continue
 
                     base = f"{export_name}_{o_name}_{e_name}"
@@ -1266,8 +1275,10 @@ class AssetMode:
                     # 같은 포맷 + 재압축 불필요 → 원본 그대로
                     if orig_ext == ext and not need_recompress:
                         zf.write(img_path, zip_name)
+                        log.info(f"[ZIP 내보내기] [{added + 1}] 원본 그대로 추가: {zip_name}")
                     else:
                         try:
+                            log.info(f"[ZIP 내보내기] [{added + 1}] 변환 중: {rep_file} → {zip_name} ({pil_format}, q={pil_quality})")
                             img = Image.open(img_path)
                             # JPEG는 알파 채널 미지원 → RGB 변환
                             if pil_format == "JPEG" and img.mode in ("RGBA", "LA", "P"):
@@ -1286,15 +1297,19 @@ class AssetMode:
                             img.save(img_buf, **save_kwargs)
                             img_buf.seek(0)
                             zf.writestr(zip_name, img_buf.read())
-                        except Exception:
+                            log.info(f"[ZIP 내보내기] [{added + 1}] 변환 완료: {zip_name} ({len(img_buf.getvalue())} bytes)")
+                        except Exception as e:
                             # 변환 실패 시 원본 그대로 사용
+                            log.warning(f"[ZIP 내보내기] [{added + 1}] 변환 실패, 원본 사용: {zip_name} — {e}")
                             zf.write(img_path, zip_name)
 
                     added += 1
 
         if added == 0:
+            log.warning(f"[ZIP 내보내기] 추가된 파일 없음 (매핑 누락={skipped_no_mapping}, 대표이미지 없음={skipped_no_rep})")
             return None
         buf.seek(0)
+        log.info(f"[ZIP 내보내기] 완료 — 총 {added}개 파일, 매핑 누락={skipped_no_mapping}, 대표이미지 없음={skipped_no_rep}, ZIP 크기={buf.getbuffer().nbytes / 1024:.1f}KB")
         return buf
 
     # ─── 상태 ─────────────────────────────────────────────

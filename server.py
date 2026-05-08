@@ -3409,18 +3409,25 @@ async def handle_api_asset_mode_export(request: web.Request) -> web.Response:
     character = request.match_info.get("character", "")
     if not character:
         return web.json_response({"error": "캐릭터 이름 필요"}, status=400)
+    import logging as _log
+    log = _log.getLogger("asset_export")
+    log.info(f"[ZIP 내보내기] 요청 수신 — 캐릭터: {character}")
     try:
         buf = await asyncio.get_event_loop().run_in_executor(None, asset_mode.export_character_zip, character)
         if buf is None:
+            log.warning(f"[ZIP 내보내기] 내보낼 이미지 없음 — 캐릭터: {character}")
             return web.json_response({"error": "내보낼 대표 이미지가 없습니다."}, status=404)
         from urllib.parse import quote
         filename = quote(f"{character}.zip")
+        size_kb = buf.getbuffer().nbytes / 1024
+        log.info(f"[ZIP 내보내기] 응답 전송 — {character}.zip ({size_kb:.1f}KB)")
         return web.Response(
             body=buf.getvalue(),
             content_type="application/zip",
             headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"},
         )
     except Exception as e:
+        log.error(f"[ZIP 내보내기] 오류 — {e}")
         return web.json_response({"error": str(e)}, status=500)
 
 # ─── 포즈 편집 모드 API 핸들러 ─────────────────────────────
