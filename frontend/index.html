@@ -6763,6 +6763,12 @@
                     </div>
 
                     <div style="overflow-y:auto; flex:1;">
+                        <!-- 파일명 미리보기 -->
+                        <div style="background:rgba(0,0,0,0.03); border:1px solid var(--border); border-radius:8px; padding:10px; margin-bottom:12px;">
+                            <div style="font-size:0.7rem; color:var(--text-secondary); margin-bottom:4px;">파일명 구성 미리보기</div>
+                            <div id="nm-filename-preview" style="font-size:0.85rem; font-family:monospace; word-break:break-all;"></div>
+                        </div>
+
                         <!-- 이미지 출력 설정 (고정) -->
                         <div style="background:rgba(156,39,176,0.08); border-radius:8px; padding:10px; margin-bottom:12px;">
                             <div style="font-size:0.75rem; font-weight:600; margin-bottom:8px; color:#9C27B0;">이미지 출력 설정</div>
@@ -6783,12 +6789,6 @@
                                     <span id="nm-quality-value" style="font-size:0.8rem; min-width:28px; text-align:right;">${info.export_quality || 90}</span>
                                 </div>
                             </div>
-                        </div>
-
-                        <!-- 파일명 미리보기 -->
-                        <div style="background:rgba(0,0,0,0.03); border:1px solid var(--border); border-radius:8px; padding:10px; margin-bottom:12px;">
-                            <div style="font-size:0.7rem; color:var(--text-secondary); margin-bottom:4px;">파일명 구성 미리보기</div>
-                            <div id="nm-filename-preview" style="font-size:0.85rem; font-family:monospace; word-break:break-all;"></div>
                         </div>
 
                         <!-- 네이밍 블록 (드래그로 순서 변경 가능) -->
