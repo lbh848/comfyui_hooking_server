@@ -2008,6 +2008,48 @@
             width: 100%; padding: 5px 8px; border: 1px solid var(--border);
             background: var(--surface2); color: var(--text); border-radius: 4px; font-size: 0.8rem;
         }
+        /* ── Custom searchable dropdown (batch slot only) ── */
+        .custom-select {
+            position: relative;
+            width: 100%; padding: 5px 8px; border: 1px solid var(--border);
+            background: var(--surface2); color: var(--text); border-radius: 4px; font-size: 0.8rem;
+            cursor: pointer; user-select: none; box-sizing: border-box;
+        }
+        .custom-select:hover { border-color: var(--accent); }
+        .custom-select.open { border-color: var(--accent); border-radius: 4px 4px 0 0; }
+        .custom-select-value {
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+            padding-right: 16px;
+        }
+        .custom-select-value::after {
+            content: '▾'; position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+            font-size: 0.7rem; color: var(--text-secondary); pointer-events: none;
+        }
+        .custom-select.open .custom-select-value::after { content: '▴'; }
+        .custom-select-options {
+            display: none; position: absolute; left: -1px; right: -1px; top: 100%;
+            background: var(--surface2); border: 1px solid var(--accent); border-top: none;
+            border-radius: 0 0 4px 4px; z-index: 900; max-height: 280px; overflow: hidden;
+            flex-direction: column;
+        }
+        .custom-select.open .custom-select-options { display: flex; }
+        .custom-select-search {
+            width: 100%; padding: 5px 8px; border: none; border-bottom: 1px solid var(--border);
+            background: var(--surface); color: var(--text); font-size: 0.78rem; outline: none;
+            box-sizing: border-box;
+        }
+        .custom-select-search::placeholder { color: var(--text-secondary); }
+        .custom-select-option-list {
+            overflow-y: auto; flex: 1; min-height: 0;
+        }
+        .custom-select-option {
+            padding: 4px 8px; cursor: pointer; font-size: 0.78rem;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        .custom-select-option:hover { background: var(--accent); color: #fff; }
+        .custom-select-option.selected { background: rgba(66,133,244,0.15); font-weight: 600; }
+        .custom-select-option.placeholder-opt { color: var(--text-secondary); }
+        .custom-select-option.hidden { display: none; }
         .batch-toggle-row {
             display: flex; align-items: center; gap: 8px;
             padding: 6px 10px;
@@ -6626,6 +6668,10 @@
             overlay.id = 'name-mapping-overlay';
             overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10000; display:flex; align-items:center; justify-content:center;';
 
+            // Initialize naming order and enabled state
+            window._nmNamingOrder = info.naming_order || ['character', 'outfit', 'expression'];
+            window._nmNamingEnabled = info.naming_enabled || {character: true, outfit: true, expression: true};
+
             let outfitsHtml = '';
             if (info.outfits.length === 0) {
                 outfitsHtml = '<div style="color:var(--text-secondary); font-size:0.8rem; padding:8px;">생성된 복장이 없습니다.</div>';
@@ -6656,6 +6702,59 @@
                 }
             }
 
+            // Block definitions for dynamic ordering
+            const nmBlockDefs = {
+                character: {
+                    label: '캐릭터 이름',
+                    color: '#4285F4',
+                    bg: 'rgba(66,133,244,0.08)',
+                    content: `<div style="display:flex; align-items:center; gap:8px;">
+                            <span style="flex:1; font-size:0.85rem; font-weight:600;">${escapeHtml(charName)}</span>
+                            <input type="text" id="nm-export-name" value="${escapeHtml(info.export_name || '')}" placeholder="내보낼 이름"
+                                style="flex:1; font-size:0.85rem; padding:6px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text);" />
+                        </div>`
+                },
+                outfit: {
+                    label: `복장 (${info.outfits.length}개)`,
+                    color: '#4CAF50',
+                    bg: 'rgba(76,175,80,0.08)',
+                    content: outfitsHtml
+                },
+                expression: {
+                    label: `표정 (${info.expressions.length}개)`,
+                    color: '#FF9800',
+                    bg: 'rgba(255,152,0,0.08)',
+                    content: expressionsHtml
+                }
+            };
+
+            // Generate naming blocks in saved order
+            let namingBlocksHtml = '';
+            for (const id of window._nmNamingOrder) {
+                const def = nmBlockDefs[id];
+                if (!def) continue;
+                const enabled = window._nmNamingEnabled[id];
+                namingBlocksHtml += `
+                    <div id="nm-block-${id}" class="nm-naming-block" data-block-id="${id}" draggable="true"
+                        style="background:${def.bg}; border-radius:8px; padding:10px; margin-bottom:8px; cursor:grab; opacity:${enabled ? '1' : '0.5'}; transition:opacity 0.2s;">
+                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+                            <span style="cursor:grab; font-size:1.1rem; color:var(--text-secondary); user-select:none;">⠿</span>
+                            <button class="nm-toggle-btn" data-block-id="${id}"
+                                onclick="toggleNamingBlock('${id}')"
+                                style="background:${enabled ? '#4CAF50' : '#999'}; color:#fff; border:none; padding:2px 10px; border-radius:4px; font-size:0.7rem; cursor:pointer; font-weight:600;">
+                                ${enabled ? '활성' : '비활성'}
+                            </button>
+                            <span style="font-size:0.75rem; font-weight:600; color:${def.color};">${def.label}</span>
+                            <div style="flex:1;"></div>
+                            <button onclick="moveNmBlock('${id}', -1)" style="background:none; border:1px solid var(--border); border-radius:4px; padding:2px 6px; cursor:pointer; color:var(--text); font-size:0.8rem;">▲</button>
+                            <button onclick="moveNmBlock('${id}', 1)" style="background:none; border:1px solid var(--border); border-radius:4px; padding:2px 6px; cursor:pointer; color:var(--text); font-size:0.8rem;">▼</button>
+                        </div>
+                        <div class="nm-block-content">
+                            ${def.content}
+                        </div>
+                    </div>`;
+            }
+
             overlay.innerHTML = `
                 <div style="background:var(--surface); border-radius:12px; padding:20px; max-width:600px; width:90%; max-height:80vh; display:flex; flex-direction:column;">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
@@ -6664,23 +6763,24 @@
                     </div>
 
                     <div style="overflow-y:auto; flex:1;">
-                        <!-- 캐릭터 이름 -->
-                        <div style="background:rgba(66,133,244,0.08); border-radius:8px; padding:10px; margin-bottom:12px;">
-                            <div style="font-size:0.75rem; font-weight:600; margin-bottom:6px; color:var(--accent);">캐릭터 이름</div>
-                            <div style="display:flex; align-items:center; gap:8px;">
-                                <span style="flex:1; font-size:0.85rem; font-weight:600;">${escapeHtml(charName)}</span>
-                                <input type="text" id="nm-export-name" value="${escapeHtml(info.export_name || '')}" placeholder="내보낼 이름"
-                                    style="flex:1; font-size:0.85rem; padding:6px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text);" />
-                            </div>
+                        <!-- 파일명 미리보기 -->
+                        <div style="background:rgba(0,0,0,0.03); border:1px solid var(--border); border-radius:8px; padding:10px; margin-bottom:12px;">
+                            <div style="font-size:0.7rem; color:var(--text-secondary); margin-bottom:4px;">파일명 구성 미리보기</div>
+                            <div id="nm-filename-preview" style="font-size:0.85rem; font-family:monospace; word-break:break-all;"></div>
                         </div>
 
-                        <!-- 이미지 출력 설정 -->
+                        <!-- 네이밍 블록 (드래그로 순서 변경 가능) -->
+                        <div id="nm-naming-blocks">
+                            ${namingBlocksHtml}
+                        </div>
+
+                        <!-- 이미지 출력 설정 (고정) -->
                         <div style="background:rgba(156,39,176,0.08); border-radius:8px; padding:10px; margin-bottom:12px;">
                             <div style="font-size:0.75rem; font-weight:600; margin-bottom:8px; color:#9C27B0;">이미지 출력 설정</div>
                             <div style="display:flex; align-items:center; gap:12px;">
                                 <div style="display:flex; align-items:center; gap:6px; flex:1;">
                                     <label style="font-size:0.8rem; white-space:nowrap;">형식</label>
-                                    <select id="nm-export-format" style="flex:1; font-size:0.8rem; padding:4px 6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text);">
+                                    <select id="nm-export-format" onchange="updateNamePreview()" style="flex:1; font-size:0.8rem; padding:4px 6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text);">
                                         <option value="webp" ${info.export_format === 'webp' ? 'selected' : ''}>WebP</option>
                                         <option value="png" ${info.export_format === 'png' ? 'selected' : ''}>PNG</option>
                                         <option value="jpeg" ${info.export_format === 'jpeg' ? 'selected' : ''}>JPEG</option>
@@ -6695,18 +6795,6 @@
                                 </div>
                             </div>
                         </div>
-
-                        <!-- 복장 목록 -->
-                        <div style="background:rgba(76,175,80,0.08); border-radius:8px; padding:10px; margin-bottom:12px;">
-                            <div style="font-size:0.75rem; font-weight:600; margin-bottom:6px; color:#4CAF50;">복장 (${info.outfits.length}개)</div>
-                            ${outfitsHtml}
-                        </div>
-
-                        <!-- 표정 목록 -->
-                        <div style="background:rgba(255,152,0,0.08); border-radius:8px; padding:10px; margin-bottom:12px;">
-                            <div style="font-size:0.75rem; font-weight:600; margin-bottom:6px; color:#FF9800;">표정 (${info.expressions.length}개)</div>
-                            ${expressionsHtml}
-                        </div>
                     </div>
 
                     <!-- 하단 버튼 -->
@@ -6719,6 +6807,119 @@
                     </div>
                 </div>`;
             document.body.appendChild(overlay);
+
+            // Setup drag and drop
+            setupNmDragDrop();
+
+            // Initial preview
+            updateNamePreview();
+        }
+
+        // ─── 네이밍 블록 헬퍼 ──────────────────────────────
+
+        function toggleNamingBlock(blockId) {
+            window._nmNamingEnabled[blockId] = !window._nmNamingEnabled[blockId];
+            const enabled = window._nmNamingEnabled[blockId];
+            const block = document.getElementById(`nm-block-${blockId}`);
+            const toggle = block.querySelector('.nm-toggle-btn');
+            if (enabled) {
+                toggle.textContent = '활성';
+                toggle.style.background = '#4CAF50';
+                block.style.opacity = '1';
+            } else {
+                toggle.textContent = '비활성';
+                toggle.style.background = '#999';
+                block.style.opacity = '0.5';
+            }
+            updateNamePreview();
+        }
+
+        function moveNmBlock(blockId, direction) {
+            const container = document.getElementById('nm-naming-blocks');
+            const blocks = [...container.querySelectorAll('.nm-naming-block')];
+            const idx = blocks.findIndex(b => b.dataset.blockId === blockId);
+            const newIdx = idx + direction;
+            if (newIdx < 0 || newIdx >= blocks.length) return;
+            if (direction === -1) {
+                container.insertBefore(blocks[idx], blocks[newIdx]);
+            } else {
+                container.insertBefore(blocks[newIdx], blocks[idx]);
+            }
+            updateNamePreview();
+        }
+
+        function updateNamePreview() {
+            const container = document.getElementById('nm-naming-blocks');
+            if (!container) return;
+            const blocks = [...container.querySelectorAll('.nm-naming-block')];
+            const format = document.getElementById('nm-export-format');
+            const ext = format ? {webp: '.webp', png: '.png', jpeg: '.jpg', avif: '.avif'}[format.value] || '.webp' : '.webp';
+            const labels = {character: '이름', outfit: '복장', expression: '표정'};
+            const colors = {character: '#4285F4', outfit: '#4CAF50', expression: '#FF9800'};
+            const preview = document.getElementById('nm-filename-preview');
+            if (!preview) return;
+            const parts = [];
+            blocks.forEach(block => {
+                const id = block.dataset.blockId;
+                if (window._nmNamingEnabled[id]) {
+                    parts.push(`<span style="color:${colors[id]}; font-weight:600;">${labels[id]}</span>`);
+                }
+            });
+            if (parts.length > 0) {
+                preview.innerHTML = parts.join('<span style="color:var(--text-secondary);">_</span>') + `<span style="color:var(--text-secondary);">${ext}</span>`;
+            } else {
+                preview.innerHTML = '<span style="color:#f44336;">모든 블록이 비활성화됨</span>';
+            }
+        }
+
+        function setupNmDragDrop() {
+            const container = document.getElementById('nm-naming-blocks');
+            if (!container) return;
+            let draggedBlock = null;
+            container.querySelectorAll('.nm-naming-block').forEach(block => {
+                block.addEventListener('dragstart', (e) => {
+                    draggedBlock = block;
+                    block.style.opacity = '0.4';
+                    e.dataTransfer.effectAllowed = 'move';
+                });
+                block.addEventListener('dragend', () => {
+                    block.style.opacity = window._nmNamingEnabled[block.dataset.blockId] ? '1' : '0.5';
+                    draggedBlock = null;
+                });
+                block.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'move';
+                    const target = e.currentTarget;
+                    if (target !== draggedBlock) {
+                        target.style.outline = '2px dashed var(--accent)';
+                    }
+                });
+                block.addEventListener('dragleave', (e) => {
+                    e.currentTarget.style.outline = '';
+                });
+                block.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    const target = e.currentTarget;
+                    target.style.outline = '';
+                    if (target !== draggedBlock && draggedBlock) {
+                        const blocks = [...container.querySelectorAll('.nm-naming-block')];
+                        const fromIdx = blocks.indexOf(draggedBlock);
+                        const toIdx = blocks.indexOf(target);
+                        if (fromIdx < toIdx) {
+                            container.insertBefore(draggedBlock, target.nextSibling);
+                        } else {
+                            container.insertBefore(draggedBlock, target);
+                        }
+                    }
+                    updateNamePreview();
+                });
+            });
+        }
+
+        function getNmOrderFromDOM() {
+            const container = document.getElementById('nm-naming-blocks');
+            if (!container) return window._nmNamingOrder;
+            return [...container.querySelectorAll('.nm-naming-block')].map(b => b.dataset.blockId);
         }
 
         async function saveNameMapping(character) {
@@ -6768,6 +6969,8 @@
                         expression_mapping: expressionMapping,
                         export_format: exportFormat,
                         export_quality: exportQuality,
+                        naming_order: getNmOrderFromDOM(),
+                        naming_enabled: window._nmNamingEnabled,
                     }),
                 });
                 const result = await resp.json();
@@ -6807,6 +7010,8 @@
                 expression_mapping: expressionMapping,
                 export_format: document.getElementById('nm-export-format').value,
                 export_quality: parseInt(document.getElementById('nm-export-quality').value, 10),
+                naming_order: getNmOrderFromDOM(),
+                naming_enabled: window._nmNamingEnabled,
             };
 
             const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -6861,6 +7066,37 @@
                                     input.value = data.expression_mapping[original] || '';
                                 }
                             });
+                        }
+                        // 네이밍 순서 및 활성화 상태 복원
+                        if (data.naming_order) {
+                            window._nmNamingOrder = data.naming_order;
+                            const container = document.getElementById('nm-naming-blocks');
+                            if (container) {
+                                const blocks = {};
+                                container.querySelectorAll('.nm-naming-block').forEach(b => {
+                                    blocks[b.dataset.blockId] = b;
+                                });
+                                data.naming_order.forEach(id => {
+                                    if (blocks[id]) container.appendChild(blocks[id]);
+                                });
+                            }
+                        }
+                        if (data.naming_enabled) {
+                            window._nmNamingEnabled = data.naming_enabled;
+                            Object.entries(data.naming_enabled).forEach(([id, enabled]) => {
+                                const block = document.getElementById(`nm-block-${id}`);
+                                if (block) {
+                                    const toggle = block.querySelector('.nm-toggle-btn');
+                                    block.style.opacity = enabled ? '1' : '0.5';
+                                    if (toggle) {
+                                        toggle.textContent = enabled ? '활성' : '비활성';
+                                        toggle.style.background = enabled ? '#4CAF50' : '#999';
+                                    }
+                                }
+                            });
+                        }
+                        if (data.naming_order || data.naming_enabled) {
+                            updateNamePreview();
                         }
                         showToast('치환 규칙 불러오기 완료', 'success');
                     } catch (err) {
@@ -9563,14 +9799,13 @@
         }
 
         function buildBatchSlotHTML(slot, idx) {
-            const charOptions = buildOptions(assetTags?.characters || {}, slot.character, '-- 캐릭터 --');
-            const appOptions = buildOptions(assetTags?.appearances || {}, slot.appearance, '-- 외모 --');
-            const outfitOptions = buildOptions(assetTags?.outfits || {}, slot.outfit, '-- 복장 --');
-            const exprOptions = buildOptions(assetTags?.expressions || {}, slot.expression, '-- 표정 --');
-            const compPresetOpts = buildPresetOptions(assetTags?.composition_presets || {}, slot.composition_preset, '-- 구도 프리셋 --');
-            const qualPresetOpts = buildPresetOptions(assetTags?.quality_presets || {}, slot.quality_preset, '-- 품질 프리셋 --');
-            const negPresetOpts = buildPresetOptions(assetTags?.negative_presets || {}, slot.negative_preset, '-- 부정 프리셋 --');
-            const poseOpts = buildPoseOptions(batchLoadedPoseList, slot.pose_id);
+            const charSel = buildCustomSelectHTML(assetTags?.characters || {}, slot.character, '-- 캐릭터 --', 'character');
+            const appSel = buildCustomSelectHTML(assetTags?.appearances || {}, slot.appearance, '-- 외모 --', 'appearance');
+            const outfitSel = buildCustomSelectHTML(assetTags?.outfits || {}, slot.outfit, '-- 복장 --', 'outfit');
+            const exprSel = buildCustomSelectHTML(assetTags?.expressions || {}, slot.expression, '-- 표정 --', 'expression');
+            const compSel = buildCustomSelectHTML(assetTags?.composition_presets || {}, slot.composition_preset, '-- 구도 프리셋 --', 'composition_preset');
+            const qualSel = buildCustomSelectHTML(assetTags?.quality_presets || {}, slot.quality_preset, '-- 품질 프리셋 --', 'quality_preset');
+            const negSel = buildCustomSelectHTML(assetTags?.negative_presets || {}, slot.negative_preset, '-- 부정 프리셋 --', 'negative_preset');
 
             return `
             <div class="batch-slot-header">
@@ -9578,13 +9813,13 @@
                 <button class="batch-slot-remove" onclick="removeBatchChainSlot(${idx})">&times;</button>
             </div>
             <div class="batch-slot-body">
-                <div class="batch-field-group"><div class="batch-field-label">캐릭터</div><select class="batch-select" data-field="character">${charOptions}</select></div>
-                <div class="batch-field-group"><div class="batch-field-label">외모</div><select class="batch-select" data-field="appearance">${appOptions}</select></div>
-                <div class="batch-field-group"><div class="batch-field-label">복장</div><select class="batch-select" data-field="outfit">${outfitOptions}</select></div>
-                <div class="batch-field-group"><div class="batch-field-label">표정</div><select class="batch-select" data-field="expression">${exprOptions}</select></div>
-                <div class="batch-field-group"><div class="batch-field-label">구도/기타 태그</div><select class="batch-select" data-field="composition_preset">${compPresetOpts}</select></div>
-                <div class="batch-field-group"><div class="batch-field-label">품질 태그</div><select class="batch-select" data-field="quality_preset">${qualPresetOpts}</select></div>
-                <div class="batch-field-group"><div class="batch-field-label">부정 태그</div><select class="batch-select" data-field="negative_preset">${negPresetOpts}</select></div>
+                <div class="batch-field-group"><div class="batch-field-label">캐릭터</div>${charSel}</div>
+                <div class="batch-field-group"><div class="batch-field-label">외모</div>${appSel}</div>
+                <div class="batch-field-group"><div class="batch-field-label">복장</div>${outfitSel}</div>
+                <div class="batch-field-group"><div class="batch-field-label">표정</div>${exprSel}</div>
+                <div class="batch-field-group"><div class="batch-field-label">구도/기타 태그</div>${compSel}</div>
+                <div class="batch-field-group"><div class="batch-field-label">품질 태그</div>${qualSel}</div>
+                <div class="batch-field-group"><div class="batch-field-label">부정 태그</div>${negSel}</div>
 
                 <div class="batch-toggle-row">
                     <label>레퍼런스</label>
@@ -9659,12 +9894,66 @@
             return html;
         }
 
+        // ── 커스텀 검색 드롭다운 (배치 슬롯 전용) ──
+        function buildCustomSelectHTML(obj, selected, placeholder, field) {
+            const sortedKeys = Object.keys(obj).sort();
+            const displayText = selected || placeholder;
+            let html = `<div class="custom-select" data-field="${field}">`;
+            html += `<div class="custom-select-value">${escapeHtml(displayText)}</div>`;
+            html += `<div class="custom-select-options">`;
+            html += `<input class="custom-select-search" placeholder="검색..." autocomplete="off" />`;
+            html += `<div class="custom-select-option-list">`;
+            html += `<div class="custom-select-option placeholder-opt${!selected ? ' selected' : ''}" data-value="">${escapeHtml(placeholder)}</div>`;
+            for (const name of sortedKeys) {
+                const sel = name === selected ? ' selected' : '';
+                html += `<div class="custom-select-option${sel}" data-value="${escapeHtml(name)}">${escapeHtml(name)}</div>`;
+            }
+            html += `</div></div></div>`;
+            return html;
+        }
+
         function bindBatchSlotEvents(slotEl, idx) {
-            // select 변경
-            slotEl.querySelectorAll('select[data-field]').forEach(sel => {
-                sel.addEventListener('change', () => {
-                    batchChains[idx][sel.dataset.field] = sel.value;
-                    updateBatchPreview(slotEl, idx);
+            // 커스텀 드롭다운 이벤트
+            slotEl.querySelectorAll('.custom-select[data-field]').forEach(cs => {
+                const field = cs.dataset.field;
+                const valueEl = cs.querySelector('.custom-select-value');
+                const optionsContainer = cs.querySelector('.custom-select-options');
+                const searchInput = cs.querySelector('.custom-select-search');
+                const optionList = cs.querySelector('.custom-select-option-list');
+
+                // 열기/닫기 토글
+                cs.addEventListener('click', (e) => {
+                    if (e.target.closest('.custom-select-option')) return;
+                    const wasOpen = cs.classList.contains('open');
+                    document.querySelectorAll('.custom-select.open').forEach(o => o.classList.remove('open'));
+                    if (!wasOpen) {
+                        cs.classList.add('open');
+                        searchInput.value = '';
+                        filterCustomOptions(optionList, '');
+                        requestAnimationFrame(() => searchInput.focus());
+                    }
+                });
+
+                // 검색 필터링
+                searchInput.addEventListener('input', (e) => {
+                    e.stopPropagation();
+                    filterCustomOptions(optionList, searchInput.value);
+                });
+                searchInput.addEventListener('click', (e) => e.stopPropagation());
+
+                // 옵션 선택
+                optionList.querySelectorAll('.custom-select-option').forEach(opt => {
+                    opt.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        const val = opt.dataset.value;
+                        const text = opt.textContent;
+                        batchChains[idx][field] = val;
+                        valueEl.textContent = text;
+                        optionList.querySelectorAll('.custom-select-option').forEach(o => o.classList.remove('selected'));
+                        opt.classList.add('selected');
+                        cs.classList.remove('open');
+                        updateBatchPreview(slotEl, idx);
+                    });
                 });
             });
             // checkbox 변경
@@ -9739,6 +10028,31 @@
                 updateBatchPreview(slotEl, idx);
             });
         }
+
+        // ── 커스텀 드롭다운 글로벌 이벤트 ──
+        function filterCustomOptions(optionList, query) {
+            const q = query.toLowerCase().trim();
+            optionList.querySelectorAll('.custom-select-option').forEach(opt => {
+                if (!q || opt.textContent.toLowerCase().includes(q)) {
+                    opt.classList.remove('hidden');
+                } else {
+                    opt.classList.add('hidden');
+                }
+            });
+        }
+
+        // 외부 클릭 시 드롭다운 닫기
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('.custom-select')) {
+                document.querySelectorAll('.custom-select.open').forEach(o => o.classList.remove('open'));
+            }
+        });
+        // ESC 키로 드롭다운 닫기
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                document.querySelectorAll('.custom-select.open').forEach(o => o.classList.remove('open'));
+            }
+        });
 
         // ─── 배치 포즈 선택 모달 ──────────────────────────────
         let batchPosePickerTarget = -1;

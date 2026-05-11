@@ -3402,6 +3402,8 @@ async def handle_api_asset_mode_name_mapping_post(request: web.Request) -> web.R
             body.get("expression_mapping", {}),
             body.get("export_format", "webp"),
             body.get("export_quality", 90),
+            body.get("naming_order"),
+            body.get("naming_enabled"),
         )
         return web.json_response(result)
     except Exception as e:

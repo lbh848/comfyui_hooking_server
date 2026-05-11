@@ -1226,11 +1226,14 @@ class AssetMode:
             "expression_mapping": mapping.get("expressions", {}),
             "export_format": mapping.get("export_format", "webp"),
             "export_quality": mapping.get("export_quality", 90),
+            "naming_order": mapping.get("naming_order", ["character", "outfit", "expression"]),
+            "naming_enabled": mapping.get("naming_enabled", {"character": True, "outfit": True, "expression": True}),
         }
 
     def save_character_name_mapping(self, character: str, export_name: str,
                                     outfit_mapping: dict, expression_mapping: dict,
-                                    export_format: str = "webp", export_quality: int = 90) -> dict:
+                                    export_format: str = "webp", export_quality: int = 90,
+                                    naming_order: list = None, naming_enabled: dict = None) -> dict:
         """캐릭터 이름 치환 규칙 저장."""
         data = self._load_name_mapping()
         data[character] = {
@@ -1239,6 +1242,8 @@ class AssetMode:
             "expressions": expression_mapping,
             "export_format": export_format,
             "export_quality": max(1, min(100, int(export_quality))),
+            "naming_order": naming_order or ["character", "outfit", "expression"],
+            "naming_enabled": naming_enabled or {"character": True, "outfit": True, "expression": True},
         }
         self._save_name_mapping(data)
         return {"success": True}
@@ -1262,7 +1267,9 @@ class AssetMode:
         expr_map = mapping.get("expressions", {})
         export_format = mapping.get("export_format", "webp").lower()
         export_quality = max(1, min(90, int(mapping.get("export_quality", 90))))
-        log.info(f"[ZIP 내보내기] 포맷={export_format}, 품질={export_quality}, 내보내기 이름={export_name}")
+        naming_order = mapping.get("naming_order", ["character", "outfit", "expression"])
+        naming_enabled = mapping.get("naming_enabled", {"character": True, "outfit": True, "expression": True})
+        log.info(f"[ZIP 내보내기] 포맷={export_format}, 품질={export_quality}, 내보내기 이름={export_name}, 순서={naming_order}")
 
         # 포맷별 PIL 포맷 문자열 및 확장자
         FORMAT_MAP = {
@@ -1320,11 +1327,36 @@ class AssetMode:
                     # 치환 이름이 설정되지 않은 항목은 건너뛰기
                     o_name = outfit_map.get(outfit_dir_name, "")
                     e_name = expr_map.get(expr_dir_name, "")
-                    if not o_name or not e_name:
+
+                    # 활성화된 블록 중 매핑 누락 확인
+                    skip = False
+                    for block_id in naming_order:
+                        if not naming_enabled.get(block_id, True):
+                            continue
+                        if block_id == "outfit" and not o_name:
+                            skip = True
+                            break
+                        elif block_id == "expression" and not e_name:
+                            skip = True
+                            break
+                    if skip:
                         skipped_no_mapping += 1
                         continue
 
-                    base = f"{export_name}_{o_name}_{e_name}"
+                    # 순서와 활성화 상태에 따라 파일명 구성
+                    parts = []
+                    for block_id in naming_order:
+                        if not naming_enabled.get(block_id, True):
+                            continue
+                        if block_id == "character":
+                            parts.append(export_name)
+                        elif block_id == "outfit":
+                            parts.append(o_name)
+                        elif block_id == "expression":
+                            parts.append(e_name)
+                    if not parts:
+                        continue
+                    base = "_".join(parts)
                     zip_name = base + ext
                     # 동일 이름 처리
                     if zip_name in used_names:
