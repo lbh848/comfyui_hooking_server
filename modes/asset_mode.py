@@ -477,6 +477,26 @@ class AssetMode:
         self._log("character_removed", {"name": name})
         return {"success": True}
 
+    def duplicate_character(self, source_name: str, new_name: str) -> dict:
+        if source_name not in self._tags["characters"]:
+            return {"success": False, "error": "존재하지 않는 캐릭터"}
+        if new_name in self._tags["characters"]:
+            return {"success": False, "error": "이미 존재하는 캐릭터"}
+        src = self._tags["characters"][source_name]
+        self._tags["characters"][new_name] = {
+            "appearance": src.get("appearance", ""),
+            "outfit": src.get("outfit", ""),
+            "expression": src.get("expression", ""),
+        }
+        self.save_tags()
+        # 이름 매핑도 복사
+        mapping = self._load_name_mapping()
+        if source_name in mapping:
+            mapping[new_name] = dict(mapping[source_name])
+            self._save_name_mapping(mapping)
+        self._log("character_duplicated", {"source": source_name, "new": new_name})
+        return {"success": True}
+
     def update_character(self, name: str, appearance: str = "", outfit: str = "", expression: str = "") -> dict:
         if name not in self._tags["characters"]:
             return {"success": False, "error": "존재하지 않는 캐릭터"}

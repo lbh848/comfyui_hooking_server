@@ -3001,6 +3001,9 @@ async def handle_api_asset_mode_tags_post(request: web.Request) -> web.Response:
 
         if action == "add_character":
             result = asset_mode.add_character(body.get("name", ""))
+        elif action == "duplicate_character":
+            result = asset_mode.duplicate_character(
+                body.get("source", ""), body.get("name", ""))
         elif action == "remove_character":
             result = asset_mode.remove_character(body.get("name", ""))
         elif action == "update_character":

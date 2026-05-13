@@ -2256,6 +2256,7 @@
                     </select>
                     <div style="display:flex; gap:6px; margin-top:4px;">
                         <button onclick="addAssetCharacter()" style="flex:1; background:var(--accent); color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">추가</button>
+                        <button onclick="duplicateAssetCharacter()" style="flex:1; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">복제</button>
                         <button onclick="removeAssetCharacter()" style="flex:1; background:var(--error); color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">삭제</button>
                     </div>
                     <!-- 캐릭터 프리셋 -->
@@ -5986,6 +5987,16 @@
             if (!name) return;
             if (!confirm(`캐릭터 "${name}" 삭제?`)) return;
             assetTagAction('remove_character', { name });
+        }
+
+        async function duplicateAssetCharacter() {
+            const source = document.getElementById('asset-character-select').value;
+            if (!source) return;
+            const newName = prompt(`복제할 새 캐릭터명을 입력하세요\n(원본: ${source})`);
+            if (!newName || !newName.trim()) return;
+            await assetTagAction('duplicate_character', { source, name: newName.trim() });
+            document.getElementById('asset-character-select').value = newName.trim();
+            onAssetCharacterChange();
         }
 
         function onAssetCharacterChange(preserveSelections = false) {
