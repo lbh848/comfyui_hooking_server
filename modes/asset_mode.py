@@ -489,6 +489,11 @@ class AssetMode:
             "expression": src.get("expression", ""),
         }
         self.save_tags()
+        # 에셋 폴더 전체 복사
+        src_dir = os.path.join(ASSET_DIR, self._safe_dirname(source_name))
+        new_dir = os.path.join(ASSET_DIR, self._safe_dirname(new_name))
+        if os.path.isdir(src_dir):
+            shutil.copytree(src_dir, new_dir)
         # 이름 매핑도 복사
         mapping = self._load_name_mapping()
         if source_name in mapping:
