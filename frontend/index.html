@@ -2310,12 +2310,11 @@
         .ep-card-badge.empty { background: var(--text-secondary); }
         .ep-card-badge.exists { background: #4CAF50; }
         .ep-card-thumb {
-            width: 100%; position: relative;
-            padding-bottom: 150.4%;
+            width: 100%;
             background: var(--surface2);
-            cursor: pointer;
+            overflow: hidden; position: relative; cursor: pointer;
         }
-        .ep-card-thumb img { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; display: block; border-radius: 0; }
+        .ep-card-thumb img { width: 100%; height: auto; display: block; }
         .ep-card-thumb .no-img { color: var(--text-secondary); font-size: 0.75rem; padding: 12px; text-align: center; }
         .ep-card-thumb .set-rep-btn {
             position: absolute; bottom: 4px; right: 4px; background: rgba(0,0,0,0.6);
@@ -2990,6 +2989,10 @@
                                         <button class="ep-btn ep-btn-primary" onclick="scanExprProfilePresets()" style="font-size:0.78rem;">📋 스캔</button>
                                         <button class="ep-btn" onclick="createExprProfileFolders()" style="font-size:0.78rem;">📁 빈 폴더</button>
                                         <div style="margin-left:auto; display:flex; align-items:center; gap:8px;">
+                                            <span style="font-size:0.85rem;">열:</span>
+                                            <button onclick="epChangeColumns(-1)" style="background:var(--surface2); border:1px solid var(--border); color:var(--text); border-radius:4px; width:24px; height:24px; cursor:pointer; font-size:0.8rem; display:flex; align-items:center; justify-content:center;">◀</button>
+                                            <span id="ep-col-count" style="font-size:0.85rem; min-width:12px; text-align:center;">3</span>
+                                            <button onclick="epChangeColumns(1)" style="background:var(--surface2); border:1px solid var(--border); color:var(--text); border-radius:4px; width:24px; height:24px; cursor:pointer; font-size:0.8rem; display:flex; align-items:center; justify-content:center;">▶</button>
                                             <span style="font-size:0.85rem;">반복:</span>
                                             <input type="number" id="ep-repeat-count" value="1" min="1" max="100" style="width:50px; padding:4px 6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:4px; text-align:center; font-size:0.85rem;" title="각 표정별 반복 횟수">
                                             <button id="ep-start-btn" class="ep-btn ep-btn-primary" onclick="startExprProfileGeneration()" disabled style="font-size:0.85rem; font-weight:600; padding:6px 18px; border-radius:6px;">시작</button>
@@ -6556,20 +6559,22 @@
         }
 
         async function loadExprProfileSettings() {
-            const charName = document.getElementById('ep-character-select').value;
-            if (!charName) { showToast('캐릭터를 먼저 선택하세요', 'error'); return; }
             try {
-                const resp = await fetch(`/api/asset_mode/ep_settings/${encodeURIComponent(charName)}`);
+                const resp = await fetch('/api/asset_mode/ep_settings_last');
                 const settings = await resp.json();
-                if (!settings || Object.keys(settings).length === 0) {
+                if (!settings || !settings.character) {
                     showToast('저장된 설정이 없습니다', 'info');
                     return;
                 }
+                document.getElementById('ep-character-select').value = settings.character;
+                onExprProfileCharacterChange();
+                await new Promise(r => setTimeout(r, 100));
                 if (settings.appearance !== undefined) {
                     document.getElementById('ep-appearance-select').value = settings.appearance;
                 }
                 if (settings.outfit !== undefined) {
                     document.getElementById('ep-outfit-select').value = settings.outfit;
+                    onExprProfileFieldChange();
                 }
                 if (settings.composition_preset !== undefined) {
                     document.getElementById('ep-composition-select').value = settings.composition_preset;
@@ -7176,9 +7181,12 @@
                         if (!epRunning) break;
                         const profile = selectedProfiles[i];
                         const jobNum = completed + 1;
+                        const elapsed = Date.now() - startTime;
+                        const avgMs = completed > 0 ? elapsed / completed : 0;
+                        const remainMs = completed > 0 ? avgMs * (totalJobs - completed) : 0;
 
                         document.getElementById('ep-status-text').textContent =
-                            `${round + 1}바퀴 — ${profile.name} (${jobNum}/${totalJobs}) | 경과: ${formatDuration(Date.now() - startTime)}`;
+                            `${round + 1}바퀴 — ${profile.name} (${jobNum}/${totalJobs}) | 경과: ${formatDuration(elapsed)} | 남은 시간: ~${formatDuration(remainMs)}`;
                         document.getElementById('ep-progress-inner').style.width =
                             `${(completed / totalJobs * 100).toFixed(1)}%`;
 
@@ -7251,6 +7259,7 @@
                         completed++;
                         document.getElementById('ep-progress-inner').style.width =
                             `${(completed / totalJobs * 100).toFixed(1)}%`;
+                        try { await scanExprProfilePresets(); } catch(e) {}
                     }
                     if (!epRunning) break;
                 }
@@ -7270,6 +7279,14 @@
 
         function stopExprProfileGeneration() {
             epRunning = false;
+        }
+
+        let epColumns = 3;
+        function epChangeColumns(delta) {
+            epColumns = Math.min(8, Math.max(2, epColumns + delta));
+            document.getElementById('ep-col-count').textContent = epColumns;
+            const grid = document.getElementById('ep-grid');
+            if (grid) grid.style.gridTemplateColumns = `repeat(${epColumns}, 1fr)`;
         }
 
         // ─── 에셋툴 ────────────────────────────────────────────

@@ -3546,6 +3546,9 @@ async def handle_api_ep_settings_get(request: web.Request) -> web.Response:
         return web.json_response({"error": "캐릭터 이름 필요"}, status=400)
     return web.json_response(asset_mode.get_ep_settings(character))
 
+async def handle_api_ep_settings_last_get(request: web.Request) -> web.Response:
+    return web.json_response(asset_mode.get_last_ep_settings())
+
 async def handle_api_ep_settings_post(request: web.Request) -> web.Response:
     try:
         body = await request.json()
@@ -3848,6 +3851,7 @@ app.router.add_post("/api/expression_profile/create_folders", handle_api_express
 app.router.add_get("/api/asset_mode/name_mapping/{character}", handle_api_asset_mode_name_mapping_get)
 app.router.add_post("/api/asset_mode/name_mapping", handle_api_asset_mode_name_mapping_post)
 app.router.add_get("/api/asset_mode/ep_settings/{character}", handle_api_ep_settings_get)
+app.router.add_get("/api/asset_mode/ep_settings_last", handle_api_ep_settings_last_get)
 app.router.add_post("/api/asset_mode/ep_settings", handle_api_ep_settings_post)
 app.router.add_get("/api/asset_mode/export/{character}", handle_api_asset_mode_export)
 # 자동완성 API

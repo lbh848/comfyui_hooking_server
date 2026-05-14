@@ -1449,6 +1449,16 @@ class AssetMode:
         data = self._load_name_mapping()
         return data.get(character, {}).get("ep_settings", {})
 
+    def get_last_ep_settings(self) -> dict:
+        data = self._load_name_mapping()
+        last_char = data.get("_last_ep_settings_character", "")
+        if not last_char:
+            return {}
+        settings = data.get(last_char, {}).get("ep_settings", {})
+        if settings:
+            settings["character"] = last_char
+        return settings
+
     def save_ep_settings(self, character: str, settings: dict) -> dict:
         data = self._load_name_mapping()
         if character not in data:
@@ -1458,6 +1468,7 @@ class AssetMode:
                 "expressions": {},
             }
         data[character]["ep_settings"] = settings
+        data["_last_ep_settings_character"] = character
         self._save_name_mapping(data)
         return {"success": True}
 
