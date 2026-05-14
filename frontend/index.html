@@ -6456,7 +6456,7 @@
             if (!assetTags) return;
             const name = prompt('새 프리셋명');
             if (!name || !name.trim()) return;
-            assetTagAction('save_composition_preset', { name: name.trim(), tags: assetTags.composition || [] });
+            assetTagAction('save_composition_preset', { name: name.trim(), tags: [] });
         }
 
         function duplicateCompositionPreset() {
@@ -6494,7 +6494,7 @@
             if (!assetTags) return;
             const name = prompt('새 프리셋명');
             if (!name || !name.trim()) return;
-            assetTagAction('save_quality_preset', { name: name.trim(), tags: assetTags.quality || [] });
+            assetTagAction('save_quality_preset', { name: name.trim(), tags: [] });
         }
 
         function duplicateQualityPreset() {
@@ -6554,7 +6554,7 @@
             if (!assetTags) return;
             const name = prompt('새 프리셋명');
             if (!name || !name.trim()) return;
-            assetTagAction('save_negative_preset', { name: name.trim(), tags: assetTags.negative || [] });
+            assetTagAction('save_negative_preset', { name: name.trim(), tags: [] });
         }
 
         function duplicateNegativePreset() {
@@ -6592,7 +6592,7 @@
             if (!assetTags) return;
             const name = prompt('새 프리셋명');
             if (!name || !name.trim()) return;
-            assetTagAction('save_character_negative_preset', { name: name.trim(), tags: assetTags.character_negative || [] });
+            assetTagAction('save_character_negative_preset', { name: name.trim(), tags: [] });
         }
 
         function duplicateCharacterNegativePreset() {
