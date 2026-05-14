@@ -3743,8 +3743,34 @@ app.router.add_get("/api/tunnel/status", handle_api_tunnel_status)
 app.router.add_post("/api/tunnel/stop", handle_api_tunnel_stop)
 
 
+def _backup_tags_on_startup():
+    from modes.asset_mode import TAGS_FILE, ASSET_DATA_DIR
+    if not os.path.isfile(TAGS_FILE):
+        return
+    backup_dir = os.path.join(ASSET_DATA_DIR, "backup")
+    os.makedirs(backup_dir, exist_ok=True)
+    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_path = os.path.join(backup_dir, f"tags_{ts}.json")
+    try:
+        shutil.copy2(TAGS_FILE, backup_path)
+        print(f"[BACKUP] tags.json 백업 완료: {backup_path}")
+    except Exception as e:
+        print(f"[BACKUP] tags.json 백업 실패: {e}")
+        return
+    old_backups = sorted(
+        (f for f in os.listdir(backup_dir) if f.startswith("tags_") and f.endswith(".json")),
+        key=lambda f: os.path.getmtime(os.path.join(backup_dir, f)),
+    )
+    for f in old_backups[:-10]:
+        try:
+            os.remove(os.path.join(backup_dir, f))
+        except Exception:
+            pass
+
+
 async def on_startup(app):
     print("[INFO] 워크플로우 초기 로드...")
+    _backup_tags_on_startup()
     asyncio.create_task(_ws_heartbeat())
     try:
         await update_workflow_if_needed()
