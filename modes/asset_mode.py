@@ -1445,6 +1445,22 @@ class AssetMode:
         self._save_name_mapping(data)
         return {"success": True}
 
+    def get_ep_settings(self, character: str) -> dict:
+        data = self._load_name_mapping()
+        return data.get(character, {}).get("ep_settings", {})
+
+    def save_ep_settings(self, character: str, settings: dict) -> dict:
+        data = self._load_name_mapping()
+        if character not in data:
+            data[character] = {
+                "export_name": character,
+                "outfits": {},
+                "expressions": {},
+            }
+        data[character]["ep_settings"] = settings
+        self._save_name_mapping(data)
+        return {"success": True}
+
     def export_character_zip(self, character: str) -> str:
         """캐릭터의 대표 이미지를 이름 치환 규칙에 따라 이름_복장_표정.ext로 만들어 zip 반환."""
         import zipfile, io, tempfile, logging
@@ -1603,6 +1619,64 @@ class AssetMode:
         buf.seek(0)
         log.info(f"[ZIP 내보내기] 완료 — 총 {added}개 파일, 매핑 누락={skipped_no_mapping}, 대표이미지 없음={skipped_no_rep}, ZIP 크기={buf.getbuffer().nbytes / 1024:.1f}KB")
         return buf
+
+    # ─── 표정 프로필 ─────────────────────────────────────
+    def scan_expression_profiles(self, character: str, outfit: str) -> dict:
+        """캐릭터/복장 경로에서 표정 프로필 폴더 상태를 스캔.
+        tags.json의 표정 목록과 실제 폴더를 비교하여 상태 반환."""
+        expr_list = self.list_expressions()
+        char_dir = os.path.join(ASSET_DIR, self._safe_dirname(character))
+        outfit_dir = os.path.join(char_dir, self._safe_dirname(outfit))
+        results = []
+        for expr_name in expr_list:
+            expr_dir = os.path.join(outfit_dir, self._safe_dirname(expr_name))
+            exists = os.path.isdir(expr_dir)
+            has_images = False
+            representative = ""
+            image_count = 0
+            if exists:
+                for f in os.listdir(expr_dir):
+                    if f.startswith("_"):
+                        continue
+                    fp = os.path.join(expr_dir, f)
+                    if os.path.isfile(fp):
+                        ext = os.path.splitext(f)[1].lower()
+                        if ext in (".webp", ".png", ".jpg", ".jpeg", ".avif"):
+                            image_count += 1
+                            has_images = True
+                rep_path = os.path.join(expr_dir, "_representative.json")
+                if os.path.isfile(rep_path):
+                    try:
+                        with open(rep_path, "r", encoding="utf-8") as f:
+                            representative = json.load(f).get("filename", "")
+                    except Exception:
+                        pass
+            results.append({
+                "name": expr_name,
+                "folder_exists": exists,
+                "has_images": has_images,
+                "image_count": image_count,
+                "representative": representative,
+            })
+        return {"profiles": results, "character": character, "outfit": outfit}
+
+    def create_expression_profile_folders(self, character: str, outfit: str, expressions: list = None) -> dict:
+        """지정한 캐릭터/복장 경로에 표정 폴더를 생성.
+        expressions가 None이면 tags.json의 모든 표정에 대해 생성."""
+        if expressions is None:
+            expressions = self.list_expressions()
+        char_dir = os.path.join(ASSET_DIR, self._safe_dirname(character))
+        outfit_dir = os.path.join(char_dir, self._safe_dirname(outfit))
+        created = []
+        skipped = []
+        for expr_name in expressions:
+            expr_dir = os.path.join(outfit_dir, self._safe_dirname(expr_name))
+            if os.path.isdir(expr_dir):
+                skipped.append(expr_name)
+            else:
+                os.makedirs(expr_dir, exist_ok=True)
+                created.append(expr_name)
+        return {"success": True, "created": created, "skipped": skipped}
 
     # ─── 상태 ─────────────────────────────────────────────
     def get_status(self) -> dict:

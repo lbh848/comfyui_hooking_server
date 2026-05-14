@@ -3540,6 +3540,24 @@ async def handle_api_asset_mode_name_mapping_post(request: web.Request) -> web.R
     except Exception as e:
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
+async def handle_api_ep_settings_get(request: web.Request) -> web.Response:
+    character = request.match_info.get("character", "")
+    if not character:
+        return web.json_response({"error": "캐릭터 이름 필요"}, status=400)
+    return web.json_response(asset_mode.get_ep_settings(character))
+
+async def handle_api_ep_settings_post(request: web.Request) -> web.Response:
+    try:
+        body = await request.json()
+        character = body.get("character", "")
+        settings = body.get("settings", {})
+        if not character:
+            return web.json_response({"success": False, "error": "캐릭터 이름 필요"}, status=400)
+        result = asset_mode.save_ep_settings(character, settings)
+        return web.json_response(result)
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
 async def handle_api_asset_mode_export(request: web.Request) -> web.Response:
     character = request.match_info.get("character", "")
     if not character:
@@ -3787,6 +3805,30 @@ async def _tunnel_cleanup(app):
     _tunnel_url = None
 
 # 에셋 생성 모드 API 라우트
+async def handle_api_expression_profile_scan(request: web.Request) -> web.Response:
+    try:
+        character = request.query.get("character", "")
+        outfit = request.query.get("outfit", "")
+        if not character or not outfit:
+            return web.json_response({"success": False, "error": "character, outfit 필수"}, status=400)
+        result = asset_mode.scan_expression_profiles(character, outfit)
+        return web.json_response(result)
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+async def handle_api_expression_profile_create_folders(request: web.Request) -> web.Response:
+    try:
+        body = await request.json()
+        character = body.get("character", "")
+        outfit = body.get("outfit", "")
+        expressions = body.get("expressions", None)
+        if not character or not outfit:
+            return web.json_response({"success": False, "error": "character, outfit 필수"}, status=400)
+        result = asset_mode.create_expression_profile_folders(character, outfit, expressions)
+        return web.json_response(result)
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
 app.router.add_get("/api/asset_mode/status", handle_api_asset_mode_status)
 app.router.add_get("/api/asset_mode/tags", handle_api_asset_mode_tags_get)
 app.router.add_post("/api/asset_mode/tags", handle_api_asset_mode_tags_post)
@@ -3801,8 +3843,12 @@ app.router.add_get("/api/asset_mode/characters/{character}/outfits/{outfit}/expr
 app.router.add_post("/api/asset_mode/delete_combination", handle_api_asset_mode_delete_combination)
 app.router.add_post("/api/asset_mode/delete_image", handle_api_asset_mode_delete_image)
 app.router.add_post("/api/asset_mode/upload_reference", handle_api_asset_mode_upload_reference)
+app.router.add_get("/api/expression_profile/scan", handle_api_expression_profile_scan)
+app.router.add_post("/api/expression_profile/create_folders", handle_api_expression_profile_create_folders)
 app.router.add_get("/api/asset_mode/name_mapping/{character}", handle_api_asset_mode_name_mapping_get)
 app.router.add_post("/api/asset_mode/name_mapping", handle_api_asset_mode_name_mapping_post)
+app.router.add_get("/api/asset_mode/ep_settings/{character}", handle_api_ep_settings_get)
+app.router.add_post("/api/asset_mode/ep_settings", handle_api_ep_settings_post)
 app.router.add_get("/api/asset_mode/export/{character}", handle_api_asset_mode_export)
 # 자동완성 API
 app.router.add_get("/api/autocomplete", handle_api_autocomplete)

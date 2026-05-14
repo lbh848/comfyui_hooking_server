@@ -357,20 +357,31 @@ def set_active_profile(profile_type: str, name: str) -> dict:
 
 
 def get_preset_profile_map() -> dict:
+    data = {}
     if os.path.isfile(PROFILE_MAP_FILE):
         try:
             with open(PROFILE_MAP_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
+                data = json.load(f)
         except Exception as e:
             _log(f"프로필 맵 로드 실패: {e}")
-    return {}
+    # 프로필 맵만 반환 (clean_profiles 등 제외)
+    return {k: v for k, v in data.items() if k not in ("clean_profiles", "active_preset_profile", "active_tag_profile")}
 
 
 def set_preset_profile_map(profile_map: dict) -> dict:
     os.makedirs(os.path.dirname(PROFILE_MAP_FILE), exist_ok=True)
+    # 기존 파일에서 프로필 정보 보존
+    existing = {}
+    if os.path.isfile(PROFILE_MAP_FILE):
+        try:
+            with open(PROFILE_MAP_FILE, "r", encoding="utf-8") as f:
+                existing = json.load(f)
+        except Exception:
+            existing = {}
+    existing.update(profile_map)
     try:
         with open(PROFILE_MAP_FILE, "w", encoding="utf-8") as f:
-            json.dump(profile_map, f, ensure_ascii=False, indent=2)
+            json.dump(existing, f, ensure_ascii=False, indent=2)
         _log(f"프로필 맵 저장: {len(profile_map)}개 항목")
         return {"success": True, "count": len(profile_map)}
     except Exception as e:

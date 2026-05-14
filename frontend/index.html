@@ -2234,6 +2234,104 @@
         }
         .batch-chain-plus:hover { border-color: var(--accent); color: var(--accent); background: rgba(66,133,244,0.08); }
 
+        /* ── 표정 프로필 생성 (에셋툴 내부 뷰) ── */
+        .ep-main {
+            flex: 1; min-width: 0; display: flex; flex-direction: column;
+        }
+        .ep-settings-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        .ep-settings-header {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 8px 12px; background: var(--surface2);
+            border-bottom: 1px solid var(--border); cursor: pointer; user-select: none;
+        }
+        .ep-settings-header:hover { background: rgba(66,133,244,0.06); }
+        .ep-settings-body {
+            padding: 12px 14px; display: flex; flex-direction: column; gap: 8px;
+        }
+        .ep-settings-row {
+            display: flex; align-items: center; gap: 8px;
+        }
+        .ep-settings-row > label { font-size: 0.78rem; white-space: nowrap; }
+        .ep-settings-row .toggle-switch { flex: 0 0 40px; }
+        .ep-field-group { display: flex; flex-direction: column; gap: 2px; }
+        .ep-field-label { font-size: 0.7rem; color: var(--text-secondary); }
+        .ep-field-group select,
+        .ep-field-group input[type="text"] {
+            width: 100%; padding: 5px 8px; border: 1px solid var(--border);
+            background: var(--surface2); color: var(--text); border-radius: 4px; font-size: 0.8rem;
+            box-sizing: border-box;
+        }
+        .ep-settings-fields {
+            display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
+        }
+        .ep-toolbar {
+            display: flex; align-items: center; gap: 10px; padding: 10px 12px;
+            background: var(--surface2); border-bottom: 1px solid var(--border); flex-wrap: wrap;
+        }
+        .ep-btn {
+            padding: 4px 10px; border-radius: 4px; border: 1px solid var(--border);
+            background: var(--surface2); color: var(--text); cursor: pointer; font-size: 0.78rem;
+            transition: background 0.15s;
+        }
+        .ep-btn:hover { background: var(--surface); }
+        .ep-btn-primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+        .ep-btn-primary:hover { filter: brightness(1.1); }
+        .ep-grid {
+            flex: 1; min-height: 0; overflow-y: auto; padding: 12px;
+            display: grid; grid-template-columns: repeat(3, 1fr);
+            gap: 10px; align-content: start;
+        }
+        .ep-empty-state {
+            grid-column: 1 / -1; display: flex; flex-direction: column;
+            align-items: center; justify-content: center;
+            min-height: 300px; color: var(--text-secondary);
+        }
+        .ep-card {
+            background: var(--surface); border: 2px solid var(--border); border-radius: 10px;
+            transition: border-color 0.2s, box-shadow 0.2s;
+            cursor: pointer;
+        }
+        .ep-card:hover { border-color: var(--accent); box-shadow: 0 2px 8px rgba(66,133,244,0.15); }
+        .ep-card.selected { border-color: var(--accent); background: rgba(66,133,244,0.06); }
+        .ep-card-header {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 6px 10px; background: var(--surface2); border-bottom: 1px solid var(--border);
+        }
+        .ep-card-title { font-size: 0.82rem; font-weight: 600; }
+        .ep-card-badge {
+            font-size: 0.65rem; padding: 2px 6px; border-radius: 10px;
+            background: var(--accent); color: #fff; font-weight: 600;
+        }
+        .ep-card-badge.empty { background: var(--text-secondary); }
+        .ep-card-badge.exists { background: #4CAF50; }
+        .ep-card-thumb {
+            width: 100%; position: relative;
+            padding-bottom: 150.4%;
+            background: var(--surface2);
+            cursor: pointer;
+        }
+        .ep-card-thumb img { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; display: block; border-radius: 0; }
+        .ep-card-thumb .no-img { color: var(--text-secondary); font-size: 0.75rem; padding: 12px; text-align: center; }
+        .ep-card-thumb .set-rep-btn {
+            position: absolute; bottom: 4px; right: 4px; background: rgba(0,0,0,0.6);
+            color: #fff; border: none; border-radius: 4px; padding: 2px 6px;
+            font-size: 0.65rem; cursor: pointer; display: none;
+        }
+        .ep-card-thumb:hover .set-rep-btn { display: block; }
+        .ep-card-toggle-row {
+            display: flex; align-items: center; gap: 6px; padding: 3px 6px;
+            background: var(--surface2); border-radius: 6px; border: 1px solid var(--border);
+            min-height: 28px; font-size: 0.75rem;
+        }
+        .ep-card-toggle-row label { flex: 1; }
+        .ep-card-toggle-row .toggle-switch { flex: 0 0 40px; }
+        .ep-field-group { display: flex; flex-direction: column; gap: 2px; margin-bottom: 4px; }
+
         /* 공지 마크다운 스타일 */
         .noti-md h1 { font-size:1.4rem; margin:16px 0 8px; border-bottom:1px solid var(--border); padding-bottom:6px; }
         .noti-md h2 { font-size:1.2rem; margin:14px 0 6px; }
@@ -2761,6 +2859,10 @@
                             🎯
                             <span class="at-sidebar-tooltip">매칭 결과</span>
                         </button>
+                        <button class="at-sidebar-btn" id="at-sidebar-expr-profile" onclick="atSwitchView('expr-profile')" title="표정 프로필">
+                            😊
+                            <span class="at-sidebar-tooltip">표정 프로필</span>
+                        </button>
                     </div>
                     <div class="at-main">
                         <div id="at-view-upload">
@@ -2828,6 +2930,83 @@
                                         <div id="at-embed-progress-bar" style="height:100%; background:var(--accent); transition:width 0.3s; width:0%; display:flex; align-items:center; justify-content:center; font-size:0.72rem; color:#fff; font-weight:600;"></div>
                                     </div>
                                     <div id="at-embed-progress-text" style="font-size:0.78rem; color:var(--text2); margin-top:4px;"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <div id="at-view-expr-profile" style="display:none;">
+                            <div style="display:flex; flex-direction:column; height:100%; min-height:400px;">
+                                <!-- 설정 카드 -->
+                                <div class="ep-settings-card">
+                                    <div class="ep-settings-header" onclick="toggleExprProfileSettings()">
+                                        <span style="font-size:0.85rem; font-weight:600;">캐릭터 설정</span>
+                                        <span id="ep-settings-summary" style="font-size:0.75rem; color:var(--text-secondary); flex:1;"></span>
+                                        <span id="ep-settings-arrow" style="font-size:0.7rem; transition:transform 0.2s;">▲</span>
+                                    </div>
+                                    <div id="ep-settings-body" style="display:flex;" class="ep-settings-body">
+                                        <div class="ep-settings-fields">
+                                            <div class="ep-field-group"><div class="ep-field-label">캐릭터</div><select id="ep-character-select" onchange="onExprProfileCharacterChange()"><option value="">-- 캐릭터 --</option></select></div>
+                                            <div class="ep-field-group"><div class="ep-field-label">외모</div><select id="ep-appearance-select" onchange="onExprProfileFieldChange()"><option value="">-- 외모 --</option></select></div>
+                                            <div class="ep-field-group"><div class="ep-field-label">복장</div><select id="ep-outfit-select" onchange="onExprProfileFieldChange()"><option value="">-- 복장 --</option></select></div>
+                                            <div class="ep-field-group"><div class="ep-field-label">구도</div><select id="ep-composition-select"><option value="">-- 프리셋 --</option></select></div>
+                                            <div class="ep-field-group"><div class="ep-field-label">품질</div><select id="ep-quality-select"><option value="">-- 프리셋 --</option></select></div>
+                                            <div class="ep-field-group"><div class="ep-field-label">부정 태그</div><select id="ep-negative-select"><option value="">-- 프리셋 --</option></select></div>
+                                            <div class="ep-field-group"><div class="ep-field-label">캐릭터 부정</div><select id="ep-character-negative-select"><option value="">-- 프리셋 --</option></select></div>
+                                        </div>
+                                        <div class="ep-settings-row" style="margin-top:4px;">
+                                            <label style="display:flex; align-items:center; gap:4px; font-size:0.8rem;">
+                                                <input type="checkbox" id="ep-ref-toggle" onchange="onExprProfileRefToggle()"> 레퍼런스
+                                                <span id="ep-ref-status" class="toggle-status off" style="font-size:0.7rem;">OFF</span>
+                                            </label>
+                                        </div>
+                                        <div id="ep-ref-section" style="display:none; margin-top:2px;">
+                                            <div class="ep-settings-row">
+                                                <label style="font-size:0.75rem; color:var(--text-secondary);">강도: <span id="ep-ref-strength-val">0.55</span></label>
+                                                <input type="range" id="ep-ref-strength" min="0" max="1" step="0.01" value="0.55" style="flex:1; cursor:pointer;" oninput="document.getElementById('ep-ref-strength-val').textContent=this.value">
+                                                <button onclick="document.getElementById('ep-ref-file-input').click()" class="ep-btn" style="font-size:0.7rem; padding:2px 6px;">파일</button>
+                                                <button onclick="openExprProfileRefGalleryPicker()" class="ep-btn" style="font-size:0.7rem; padding:2px 6px;">에셋</button>
+                                                <input type="file" id="ep-ref-file-input" accept="image/*" style="display:none;" onchange="uploadExprProfileRefImage(this)">
+                                            </div>
+                                            <div id="ep-ref-preview" style="display:none; margin-top:4px; position:relative;">
+                                                <img id="ep-ref-preview-img" style="height:60px; border-radius:4px; object-fit:contain;">
+                                                <button onclick="clearExprProfileRefImage()" style="position:absolute; top:-2px; right:-2px; background:rgba(0,0,0,0.6); color:#fff; border:none; border-radius:50%; width:14px; height:14px; font-size:0.55rem; cursor:pointer;">x</button>
+                                            </div>
+                                        </div>
+                                        <div class="ep-settings-row" style="margin-top:4px;">
+                                            <label style="display:flex; align-items:center; gap:4px; font-size:0.8rem;"><input type="checkbox" id="ep-hrf-toggle"> HIRES</label>
+                                            <label style="display:flex; align-items:center; gap:4px; font-size:0.8rem;"><input type="checkbox" id="ep-fd-toggle"> 페이스</label>
+                                            <label style="display:flex; align-items:center; gap:4px; font-size:0.8rem;"><input type="checkbox" id="ep-hd-toggle"> 핸드</label>
+                                            <label style="display:flex; align-items:center; gap:4px; font-size:0.8rem;"><input type="checkbox" id="ep-ed-toggle"> 눈</label>
+                                        </div>
+                                        <div class="ep-settings-row" style="margin-top:6px; justify-content:flex-end;">
+                                            <button class="ep-btn" onclick="loadExprProfileSettings()" style="font-size:0.75rem;">불러오기</button>
+                                            <button class="ep-btn ep-btn-primary" onclick="saveExprProfileSettings(); showToast('설정 저장 완료')" style="font-size:0.75rem;">저장</button>
+                                        </div>
+                                    </div>
+                                </div>
+                                <!-- 카드 그리드 -->
+                                <div style="flex:1; min-height:0; display:flex; flex-direction:column;">
+                                    <div class="ep-toolbar">
+                                        <span style="font-weight:600; font-size:0.9rem;">표정 프로필</span>
+                                        <button class="ep-btn ep-btn-primary" onclick="scanExprProfilePresets()" style="font-size:0.78rem;">📋 스캔</button>
+                                        <button class="ep-btn" onclick="createExprProfileFolders()" style="font-size:0.78rem;">📁 빈 폴더</button>
+                                        <div style="margin-left:auto; display:flex; align-items:center; gap:8px;">
+                                            <span style="font-size:0.85rem;">반복:</span>
+                                            <input type="number" id="ep-repeat-count" value="1" min="1" max="100" style="width:50px; padding:4px 6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:4px; text-align:center; font-size:0.85rem;" title="각 표정별 반복 횟수">
+                                            <button id="ep-start-btn" class="ep-btn ep-btn-primary" onclick="startExprProfileGeneration()" disabled style="font-size:0.85rem; font-weight:600; padding:6px 18px; border-radius:6px;">시작</button>
+                                            <button id="ep-stop-btn" onclick="stopExprProfileGeneration()" style="background:#e55; color:#fff; border:none; padding:6px 14px; border-radius:6px; cursor:pointer; font-size:0.85rem; display:none;">중단</button>
+                                        </div>
+                                    </div>
+                                    <div class="ep-progress-bar" id="ep-progress-bar" style="display:none; height:4px; background:var(--surface2);">
+                                        <div id="ep-progress-inner" style="height:100%; background:var(--accent); width:0%; transition:width 0.3s;"></div>
+                                    </div>
+                                    <div class="ep-status-text" id="ep-status-text" style="display:none; padding:6px 12px; font-size:0.8rem; color:var(--text-secondary); background:var(--surface2); border-bottom:1px solid var(--border);"></div>
+                                    <div id="ep-grid" class="ep-grid">
+                                        <div id="ep-empty-state" class="ep-empty-state">
+                                            <div style="font-size:2rem; margin-bottom:8px;">😊</div>
+                                            <div style="font-size:0.9rem; font-weight:600; margin-bottom:4px;">표정 프로필</div>
+                                            <div style="font-size:0.8rem; color:var(--text-secondary);">캐릭터와 복장을 선택한 뒤 📋 스캔 버튼을 눌러주세요</div>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -6233,6 +6412,866 @@
             }
         }
 
+        // ─── 표정 프로필 생성 ────────────────────────────────────
+        let epProfiles = [];
+        let epRunning = false;
+        let epRefImage = '';
+        let epRefPreviewUrl = '';
+
+        function initExprProfileTab() {
+            if (!assetTags) return;
+            const charSel = document.getElementById('ep-character-select');
+            const appSel = document.getElementById('ep-appearance-select');
+            const outfitSel = document.getElementById('ep-outfit-select');
+            const compSel = document.getElementById('ep-composition-select');
+            const qualSel = document.getElementById('ep-quality-select');
+            const negSel = document.getElementById('ep-negative-select');
+            const cnSel = document.getElementById('ep-character-negative-select');
+            const prevChar = charSel.value;
+            const prevApp = appSel.value;
+            const prevOutfit = outfitSel.value;
+            const prevComp = compSel.value;
+            const prevQual = qualSel.value;
+            const prevNeg = negSel.value;
+            const prevCn = cnSel.value;
+            charSel.innerHTML = '<option value="">-- 캐릭터 선택 --</option>';
+            for (const name of Object.keys(assetTags.characters || {}).sort()) {
+                charSel.innerHTML += `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`;
+            }
+            // 외모/복장 드롭다운도 옵션을 채우고 이전 선택 복원
+            const charData = prevChar ? assetTags.characters[prevChar] : null;
+            appSel.innerHTML = '<option value="">-- 외모 선택 --</option>';
+            for (const name of Object.keys(assetTags.appearances || {}).sort()) {
+                const isCharDefault = charData && name === charData.appearance;
+                const isPrev = name === prevApp;
+                appSel.innerHTML += `<option value="${escapeHtml(name)}" ${isPrev ? 'selected' : (isCharDefault && !prevApp ? 'selected' : '')}>${escapeHtml(name)}</option>`;
+            }
+            outfitSel.innerHTML = '<option value="">-- 복장 선택 --</option>';
+            for (const name of Object.keys(assetTags.outfits || {}).sort()) {
+                const isCharDefault = charData && name === charData.outfit;
+                const isPrev = name === prevOutfit;
+                outfitSel.innerHTML += `<option value="${escapeHtml(name)}" ${isPrev ? 'selected' : (isCharDefault && !prevOutfit ? 'selected' : '')}>${escapeHtml(name)}</option>`;
+            }
+            compSel.innerHTML = '<option value="">-- 프리셋 --</option>';
+            for (const name of Object.keys(assetTags.composition_presets || {}).sort()) {
+                compSel.innerHTML += `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`;
+            }
+            qualSel.innerHTML = '<option value="">-- 프리셋 --</option>';
+            for (const name of Object.keys(assetTags.quality_presets || {}).sort()) {
+                qualSel.innerHTML += `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`;
+            }
+            negSel.innerHTML = '<option value="">-- 프리셋 --</option>';
+            for (const name of Object.keys(assetTags.negative_presets || {}).sort()) {
+                negSel.innerHTML += `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`;
+            }
+            cnSel.innerHTML = '<option value="">-- 프리셋 --</option>';
+            for (const name of Object.keys(assetTags.character_negative_presets || {}).sort()) {
+                cnSel.innerHTML += `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`;
+            }
+            if (prevChar && charSel.querySelector(`option[value="${prevChar}"]`)) {
+                charSel.value = prevChar;
+            } else if (prevChar) {
+                // 캐릭터가 더 이상 목록에 없음
+            } else {
+                compSel.value = prevComp;
+                qualSel.value = prevQual;
+                negSel.value = prevNeg;
+                cnSel.value = prevCn;
+            }
+            renderExprProfileGrid();
+        }
+
+        function onExprProfileCharacterChange() {
+            const charName = document.getElementById('ep-character-select').value;
+            const appSel = document.getElementById('ep-appearance-select');
+            const outfitSel = document.getElementById('ep-outfit-select');
+            appSel.innerHTML = '<option value="">-- 외모 선택 --</option>';
+            if (charName && assetTags.characters[charName]) {
+                const charData = assetTags.characters[charName];
+                for (const name of Object.keys(assetTags.appearances || {}).sort()) {
+                    appSel.innerHTML += `<option value="${escapeHtml(name)}" ${name === charData.appearance ? 'selected' : ''}>${escapeHtml(name)}</option>`;
+                }
+            } else {
+                for (const name of Object.keys(assetTags.appearances || {}).sort()) {
+                    appSel.innerHTML += `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`;
+                }
+            }
+            outfitSel.innerHTML = '<option value="">-- 복장 선택 --</option>';
+            if (charName && assetTags.characters[charName]) {
+                const charData = assetTags.characters[charName];
+                for (const name of Object.keys(assetTags.outfits || {}).sort()) {
+                    outfitSel.innerHTML += `<option value="${escapeHtml(name)}" ${name === charData.outfit ? 'selected' : ''}>${escapeHtml(name)}</option>`;
+                }
+            } else {
+                for (const name of Object.keys(assetTags.outfits || {}).sort()) {
+                    outfitSel.innerHTML += `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`;
+                }
+            }
+            epProfiles = [];
+            renderExprProfileGrid();
+        }
+
+        function onExprProfileFieldChange() {
+            epProfiles = [];
+            renderExprProfileGrid();
+        }
+
+        function toggleExprProfileSettings() {
+            const body = document.getElementById('ep-settings-body');
+            const arrow = document.getElementById('ep-settings-arrow');
+            if (body.style.display === 'none') {
+                body.style.display = 'flex';
+                arrow.textContent = '▲';
+            } else {
+                body.style.display = 'none';
+                arrow.textContent = '▼';
+            }
+        }
+
+        function onExprProfilePresetChange() {}
+
+        function saveExprProfileSettings() {
+            const charName = document.getElementById('ep-character-select').value;
+            if (!charName) return;
+            const settings = {
+                character: charName,
+                appearance: document.getElementById('ep-appearance-select').value,
+                outfit: document.getElementById('ep-outfit-select').value,
+                composition_preset: document.getElementById('ep-composition-select').value,
+                quality_preset: document.getElementById('ep-quality-select').value,
+                negative_preset: document.getElementById('ep-negative-select').value,
+                character_negative_preset: document.getElementById('ep-character-negative-select').value,
+                ref_enabled: document.getElementById('ep-ref-toggle').checked,
+                ref_strength: parseFloat(document.getElementById('ep-ref-strength').value),
+                hrf_enabled: document.getElementById('ep-hrf-toggle').checked,
+                fd_enabled: document.getElementById('ep-fd-toggle').checked,
+                hd_enabled: document.getElementById('ep-hd-toggle').checked,
+                ed_enabled: document.getElementById('ep-ed-toggle').checked,
+            };
+            fetch('/api/asset_mode/ep_settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ character: charName, settings }),
+            }).catch(e => console.error('ep_settings 저장 실패:', e));
+        }
+
+        async function loadExprProfileSettings() {
+            const charName = document.getElementById('ep-character-select').value;
+            if (!charName) { showToast('캐릭터를 먼저 선택하세요', 'error'); return; }
+            try {
+                const resp = await fetch(`/api/asset_mode/ep_settings/${encodeURIComponent(charName)}`);
+                const settings = await resp.json();
+                if (!settings || Object.keys(settings).length === 0) {
+                    showToast('저장된 설정이 없습니다', 'info');
+                    return;
+                }
+                if (settings.appearance !== undefined) {
+                    document.getElementById('ep-appearance-select').value = settings.appearance;
+                }
+                if (settings.outfit !== undefined) {
+                    document.getElementById('ep-outfit-select').value = settings.outfit;
+                }
+                if (settings.composition_preset !== undefined) {
+                    document.getElementById('ep-composition-select').value = settings.composition_preset;
+                }
+                if (settings.quality_preset !== undefined) {
+                    document.getElementById('ep-quality-select').value = settings.quality_preset;
+                }
+                if (settings.negative_preset !== undefined) {
+                    document.getElementById('ep-negative-select').value = settings.negative_preset;
+                }
+                if (settings.character_negative_preset !== undefined) {
+                    document.getElementById('ep-character-negative-select').value = settings.character_negative_preset;
+                }
+                if (settings.ref_enabled !== undefined) {
+                    document.getElementById('ep-ref-toggle').checked = settings.ref_enabled;
+                    onExprProfileRefToggle();
+                }
+                if (settings.ref_strength !== undefined) {
+                    document.getElementById('ep-ref-strength').value = settings.ref_strength;
+                    document.getElementById('ep-ref-strength-val').textContent = settings.ref_strength;
+                }
+                if (settings.hrf_enabled !== undefined) {
+                    document.getElementById('ep-hrf-toggle').checked = settings.hrf_enabled;
+                }
+                if (settings.fd_enabled !== undefined) {
+                    document.getElementById('ep-fd-toggle').checked = settings.fd_enabled;
+                }
+                if (settings.hd_enabled !== undefined) {
+                    document.getElementById('ep-hd-toggle').checked = settings.hd_enabled;
+                }
+                if (settings.ed_enabled !== undefined) {
+                    document.getElementById('ep-ed-toggle').checked = settings.ed_enabled;
+                }
+                showToast('설정 불러오기 완료');
+            } catch (e) {
+                console.error('ep_settings 로드 실패:', e);
+            }
+        }
+
+        async function scanExprProfilePresets() {
+            const charName = document.getElementById('ep-character-select').value;
+            const outfitName = document.getElementById('ep-outfit-select').value;
+            if (!charName) { showToast('캐릭터를 선택하세요', 'error'); return; }
+            if (!outfitName) { showToast('복장을 선택하세요', 'error'); return; }
+            try {
+                const resp = await fetch(`/api/expression_profile/scan?character=${encodeURIComponent(charName)}&outfit=${encodeURIComponent(outfitName)}`);
+                const data = await resp.json();
+                if (data.profiles) {
+                    epProfiles = data.profiles.map(p => ({
+                        name: p.name,
+                        selected: true,
+                        folder_exists: p.folder_exists,
+                        has_images: p.has_images,
+                        image_count: p.image_count,
+                        representative: p.representative,
+                        ref_enabled: false,
+                        ref_strength: 0.55,
+                        ref_image: '',
+                        ref_preview_url: '',
+                        pose_enabled: false,
+                        pose_id: '',
+                        hrf_enabled: false,
+                        fd_enabled: false,
+                        hd_enabled: false,
+                        ed_enabled: false,
+                    }));
+                }
+                renderExprProfileGrid();
+                const existCount = epProfiles.filter(p => p.folder_exists).length;
+                const emptyCount = epProfiles.filter(p => !p.folder_exists).length;
+                showToast(`스캔 완료: ${epProfiles.length}개 표정 (폴더 있음: ${existCount}, 없음: ${emptyCount})`, 'success');
+            } catch (e) {
+                showToast('스캔 실패: ' + e.message, 'error');
+            }
+        }
+
+        async function createExprProfileFolders() {
+            const charName = document.getElementById('ep-character-select').value;
+            const outfitName = document.getElementById('ep-outfit-select').value;
+            if (!charName) { showToast('캐릭터를 선택하세요', 'error'); return; }
+            if (!outfitName) { showToast('복장을 선택하세요', 'error'); return; }
+            const missingExprs = epProfiles.filter(p => !p.folder_exists).map(p => p.name);
+            if (missingExprs.length === 0) { showToast('생성할 빈 폴더가 없습니다', 'info'); return; }
+            try {
+                const resp = await fetch('/api/expression_profile/create_folders', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        character: charName,
+                        outfit: outfitName,
+                        expressions: missingExprs,
+                    }),
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    showToast(`폴더 생성 완료: ${data.created.length}개 생성, ${data.skipped.length}개 스킵`, 'success');
+                    await scanExprProfilePresets();
+                } else {
+                    showToast('폴더 생성 실패: ' + (data.error || '알 수 없는 오류'), 'error');
+                }
+            } catch (e) {
+                showToast('폴더 생성 실패: ' + e.message, 'error');
+            }
+        }
+
+        function renderExprProfileGrid() {
+            const grid = document.getElementById('ep-grid');
+            const empty = document.getElementById('ep-empty-state');
+            if (epProfiles.length === 0) {
+                grid.querySelectorAll('.ep-card').forEach(el => el.remove());
+                empty.style.display = 'flex';
+                return;
+            }
+            empty.style.display = 'none';
+            grid.querySelectorAll('.ep-card').forEach(el => el.remove());
+            const charName = document.getElementById('ep-character-select').value;
+            const outfitName = document.getElementById('ep-outfit-select').value;
+            epProfiles.forEach((profile, idx) => {
+                const card = document.createElement('div');
+                card.className = 'ep-card' + (profile.selected ? ' selected' : '');
+                card.onclick = (e) => {
+                    if (e.target.closest('.ep-card-thumb') || e.target.closest('input') || e.target.closest('button') || e.target.closest('label') || e.target.closest('.toggle-switch')) return;
+                    profile.selected = !profile.selected;
+                    card.classList.toggle('selected', profile.selected);
+                    updateExprProfileStartBtn();
+                };
+                const enc = encodeURIComponent;
+                const thumbSrc = profile.representative && charName && outfitName
+                    ? `/api/asset_mode/characters/${enc(charName)}/outfits/${enc(outfitName)}/expressions/${enc(profile.name)}/images/${enc(profile.representative)}`
+                    : '';
+                let statusBadge = '';
+                if (profile.has_images) {
+                    statusBadge = `<span class="ep-card-badge exists">${profile.image_count}장</span>`;
+                } else if (profile.folder_exists) {
+                    statusBadge = '<span class="ep-card-badge empty">빈 폴더</span>';
+                } else {
+                    statusBadge = '<span class="ep-card-badge" style="background:var(--text-secondary);">미생성</span>';
+                }
+                card.innerHTML = `
+                    <div class="ep-card-header">
+                        <span class="ep-card-title">${escapeHtml(profile.name)}</span>
+                        ${statusBadge}
+                    </div>
+                    <div class="ep-card-thumb" onclick="handleExprProfileThumbClick(${idx}, event)">
+                        ${thumbSrc ? `<img src="${thumbSrc}" loading="lazy">` : '<div class="no-img">미리보기 없음</div>'}
+                        ${thumbSrc ? `<button class="set-rep-btn" onclick="setExprProfileRepresentative(${idx})">대표 설정</button>` : ''}
+                    </div>`;
+                grid.appendChild(card);
+            });
+            updateExprProfileStartBtn();
+        }
+
+        function epToggleRefSection(cb, idx) {
+            const section = document.querySelector(`.ep-ref-section[data-ep-idx="${idx}"]`);
+            if (section) section.style.display = cb.checked ? 'block' : 'none';
+        }
+
+        function updateExprProfileStartBtn() {
+            const btn = document.getElementById('ep-start-btn');
+            const selectedCount = epProfiles.filter(p => p.selected).length;
+            btn.disabled = selectedCount === 0;
+        }
+
+        function handleExprProfileThumbClick(idx, event) {
+            if (event.target.closest('.set-rep-btn')) return;
+            const profile = epProfiles[idx];
+            const charName = document.getElementById('ep-character-select').value;
+            const outfitName = document.getElementById('ep-outfit-select').value;
+            if (profile.image_count > 0 && charName && outfitName) {
+                openExprProfileImageGallery(idx);
+            }
+        }
+
+        async function setExprProfileRepresentative(idx) {
+            const profile = epProfiles[idx];
+            const charName = document.getElementById('ep-character-select').value;
+            const outfitName = document.getElementById('ep-outfit-select').value;
+            if (!profile.representative || !charName || !outfitName) {
+                showToast('대표 이미지를 설정할 수 없습니다', 'error');
+                return;
+            }
+            openExprProfileImageGallery(idx);
+        }
+
+        async function openExprProfileImageGallery(idx) {
+            const profile = epProfiles[idx];
+            const charName = document.getElementById('ep-character-select').value;
+            const outfitName = document.getElementById('ep-outfit-select').value;
+            if (!charName || !outfitName) return;
+            const enc = encodeURIComponent;
+            try {
+                const resp = await fetch(`/api/asset_mode/characters/${enc(charName)}/outfits/${enc(outfitName)}/expressions/${enc(profile.name)}/images`);
+                const data = await resp.json();
+                const images = data.images || [];
+                if (images.length === 0) { showToast('이미지가 없습니다', 'info'); return; }
+                const overlay = document.createElement('div');
+                overlay.id = 'ep-image-gallery-overlay';
+                overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10000; display:flex; align-items:center; justify-content:center;';
+                let gridHtml = images.map(img => {
+                    const imgSrc = `/api/asset_mode/characters/${enc(charName)}/outfits/${enc(outfitName)}/expressions/${enc(profile.name)}/images/${enc(img.filename)}`;
+                    const isRep = img.filename === profile.representative;
+                    return `<div style="cursor:pointer; border-radius:8px; overflow:hidden; border:2px solid ${isRep ? 'var(--accent)' : 'var(--border)'}; transition:border-color 0.15s; position:relative;"
+                        onmouseenter="this.style.borderColor='var(--accent)'"
+                        onmouseleave="this.style.borderColor='${isRep ? 'var(--accent)' : 'var(--border)'}'"
+                        onclick="selectExprProfileRepresentative(${idx}, '${escapeHtml(img.filename)}')">
+                        <img src="${imgSrc}" loading="lazy" style="width:100%; display:block; aspect-ratio:936/1408; object-fit:contain;">
+                        ${isRep ? '<div style="position:absolute;top:4px;left:4px;background:var(--accent);color:#fff;font-size:0.6rem;padding:1px 6px;border-radius:4px;">대표</div>' : ''}
+                    </div>`;
+                }).join('');
+                overlay.innerHTML = `<div style="background:var(--surface); border-radius:12px; padding:20px; max-width:700px; width:90%; max-height:80vh; display:flex; flex-direction:column; overflow:hidden;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                        <h3 style="margin:0;">${escapeHtml(profile.name)} - 이미지 선택</h3>
+                        <button onclick="document.getElementById('ep-image-gallery-overlay').remove()" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer;">x</button>
+                    </div>
+                    <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:8px; overflow-y:auto; flex:1;">${gridHtml}</div>
+                </div>`;
+                document.body.appendChild(overlay);
+                overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+            } catch (e) {
+                showToast('이미지 목록 로드 실패', 'error');
+            }
+        }
+
+        async function selectExprProfileRepresentative(idx, filename) {
+            const profile = epProfiles[idx];
+            const charName = document.getElementById('ep-character-select').value;
+            const outfitName = document.getElementById('ep-outfit-select').value;
+            try {
+                const resp = await fetch('/api/asset_mode/set_representative', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        character: charName,
+                        outfit: outfitName,
+                        expression: profile.name,
+                        filename: filename,
+                    }),
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    profile.representative = filename;
+                    renderExprProfileGrid();
+                    showToast('대표 이미지 설정 완료', 'success');
+                } else {
+                    showToast('대표 이미지 설정 실패: ' + (data.error || ''), 'error');
+                }
+            } catch (e) {
+                showToast('대표 이미지 설정 실패: ' + e.message, 'error');
+            }
+            const overlay = document.getElementById('ep-image-gallery-overlay');
+            if (overlay) overlay.remove();
+        }
+
+        function onExprProfileRefToggle() {
+            const checked = document.getElementById('ep-ref-toggle').checked;
+            document.getElementById('ep-ref-section').style.display = checked ? 'block' : 'none';
+            document.getElementById('ep-ref-status').textContent = checked ? 'ON' : 'OFF';
+            document.getElementById('ep-ref-status').className = 'toggle-status' + (checked ? '' : ' off');
+        }
+
+        async function uploadExprProfileRefImage(input) {
+            if (!input.files || !input.files[0]) return;
+            const file = input.files[0];
+            const formData = new FormData();
+            formData.append('image', file);
+            try {
+                const resp = await fetch('/api/asset_mode/upload_reference', { method: 'POST', body: formData });
+                const result = await resp.json();
+                if (result.success) {
+                    epRefImage = result.name;
+                    if (result.asset_info) {
+                        const enc = encodeURIComponent;
+                        const ai = result.asset_info;
+                        epRefPreviewUrl = `/api/asset_mode/characters/${enc(ai.character)}/outfits/${enc(ai.outfit)}/expressions/${enc(ai.expression)}/images/${enc(ai.filename)}`;
+                    } else {
+                        epRefPreviewUrl = URL.createObjectURL(file);
+                    }
+                    document.getElementById('ep-ref-preview-img').src = epRefPreviewUrl;
+                    document.getElementById('ep-ref-preview').style.display = 'block';
+                    showToast('레퍼런스 이미지 업로드 완료', 'success');
+                } else {
+                    showToast(result.error || '업로드 실패', 'error');
+                }
+            } catch (e) {
+                showToast('업로드 실패: ' + e.message, 'error');
+            }
+            input.value = '';
+        }
+
+        function clearExprProfileRefImage() {
+            epRefImage = '';
+            epRefPreviewUrl = '';
+            document.getElementById('ep-ref-preview-img').src = '';
+            document.getElementById('ep-ref-preview').style.display = 'none';
+        }
+
+        async function uploadExprProfileRefImageSlot(input, idx) {
+            if (!input.files || !input.files[0]) return;
+            const file = input.files[0];
+            const formData = new FormData();
+            formData.append('image', file);
+            try {
+                const resp = await fetch('/api/asset_mode/upload_reference', { method: 'POST', body: formData });
+                const result = await resp.json();
+                if (result.success) {
+                    epProfiles[idx].ref_image = result.name;
+                    if (result.asset_info) {
+                        const enc = encodeURIComponent;
+                        const ai = result.asset_info;
+                        epProfiles[idx].ref_preview_url = `/api/asset_mode/characters/${enc(ai.character)}/outfits/${enc(ai.outfit)}/expressions/${enc(ai.expression)}/images/${enc(ai.filename)}`;
+                    } else {
+                        epProfiles[idx].ref_preview_url = URL.createObjectURL(file);
+                    }
+                    const imgEl = document.querySelector(`.ep-ref-preview-img-slot[data-ep-idx="${idx}"]`);
+                    const prevEl = document.querySelector(`.ep-ref-preview-slot[data-ep-idx="${idx}"]`);
+                    if (imgEl) imgEl.src = epProfiles[idx].ref_preview_url;
+                    if (prevEl) prevEl.style.display = 'block';
+                    showToast('레퍼런스 이미지 업로드 완료', 'success');
+                } else {
+                    showToast(result.error || '업로드 실패', 'error');
+                }
+            } catch (e) {
+                showToast('업로드 실패: ' + e.message, 'error');
+            }
+            input.value = '';
+        }
+
+        function clearExprProfileRefImageSlot(idx) {
+            epProfiles[idx].ref_image = '';
+            epProfiles[idx].ref_preview_url = '';
+            const imgEl = document.querySelector(`.ep-ref-preview-img-slot[data-ep-idx="${idx}"]`);
+            const prevEl = document.querySelector(`.ep-ref-preview-slot[data-ep-idx="${idx}"]`);
+            if (imgEl) imgEl.src = '';
+            if (prevEl) prevEl.style.display = 'none';
+        }
+
+        function openExprProfileRefGalleryPicker() {
+            if (!assetTags || !assetTags.characters) return;
+            const overlay = document.createElement('div');
+            overlay.id = 'ep-ref-picker-overlay';
+            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10000; display:flex; align-items:center; justify-content:center;';
+            overlay.innerHTML = `<div style="background:var(--surface); border-radius:12px; padding:20px; max-width:700px; width:90%; max-height:80vh; display:flex; flex-direction:column; overflow:hidden;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; flex-shrink:0;">
+                    <h3 style="margin:0;">에셋에서 레퍼런스 선택</h3>
+                    <button onclick="document.getElementById('ep-ref-picker-overlay').remove()" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer;">x</button>
+                </div>
+                <div id="ep-ref-picker-back" style="display:none; margin-bottom:8px; flex-shrink:0;">
+                    <button onclick="epRefPickerGoBack()" style="background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:4px 12px; border-radius:4px; cursor:pointer; font-size:0.8rem;">뒤로</button>
+                </div>
+                <div id="ep-ref-picker-grid" style="display:grid; grid-template-columns:repeat(4,1fr); gap:8px; overflow-y:auto; max-height:calc(80vh - 120px);"></div>
+            </div>`;
+            document.body.appendChild(overlay);
+            epRefPickerState = { level: 'characters', char: '', target: 'sidebar' };
+            loadEpRefPickerCharacters();
+        }
+
+        let epRefPickerState = { level: 'characters', char: '', target: 'sidebar' };
+
+        function epRefPickerGoBack() {
+            epRefPickerState = { level: 'characters', char: '', target: epRefPickerState.target };
+            loadEpRefPickerCharacters();
+        }
+
+        async function loadEpRefPickerCharacters() {
+            const grid = document.getElementById('ep-ref-picker-grid');
+            if (!grid) return;
+            grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--text-secondary);">로딩중...</div>';
+            document.getElementById('ep-ref-picker-back').style.display = 'none';
+            try {
+                const resp = await fetch('/api/asset_mode/characters');
+                const data = await resp.json();
+                const chars = data.characters || [];
+                grid.innerHTML = '';
+                if (chars.length === 0) { grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--text-secondary);">캐릭터가 없습니다</div>'; return; }
+                chars.forEach(ch => {
+                    const card = document.createElement('div');
+                    card.style.cssText = 'cursor:pointer; border-radius:8px; border:2px solid var(--border); padding:16px 8px; text-align:center; transition:border-color 0.2s, background 0.2s;';
+                    card.innerHTML = `<div style="font-size:1.2rem; margin-bottom:4px;">📁</div><div style="font-size:0.85rem; word-break:break-all;">${escapeHtml(ch)}</div>`;
+                    card.onmouseenter = () => { card.style.borderColor = 'var(--accent)'; card.style.background = 'var(--surface2)'; };
+                    card.onmouseleave = () => { card.style.borderColor = 'var(--border)'; card.style.background = 'transparent'; };
+                    card.onclick = () => {
+                        epRefPickerState = { level: 'gallery', char: ch, target: epRefPickerState.target };
+                        loadEpRefPickerGallery(ch);
+                    };
+                    grid.appendChild(card);
+                });
+            } catch (e) { grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--error);">로드 실패</div>'; }
+        }
+
+        async function loadEpRefPickerGallery(char) {
+            const grid = document.getElementById('ep-ref-picker-grid');
+            if (!grid) return;
+            const enc = encodeURIComponent;
+            document.getElementById('ep-ref-picker-back').style.display = 'block';
+            grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--text-secondary);">로딩중...</div>';
+            try {
+                const resp = await fetch(`/api/asset_mode/characters/${enc(char)}/gallery`);
+                const data = await resp.json();
+                const gallery = data.gallery || [];
+                grid.innerHTML = '';
+                if (gallery.length === 0) { grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--text-secondary);">에셋이 없습니다</div>'; return; }
+                for (const item of gallery) {
+                    const thumbUrl = item.representative
+                        ? `/api/asset_mode/characters/${enc(char)}/outfits/${enc(item.outfit)}/expressions/${enc(item.expression)}/images/${enc(item.representative)}`
+                        : '';
+                    const card = document.createElement('div');
+                    card.style.cssText = 'cursor:pointer; border-radius:8px; overflow:hidden; border:2px solid var(--border); transition:border-color 0.2s;';
+                    card.innerHTML = thumbUrl
+                        ? `<img src="${thumbUrl}" style="width:100%; display:block; aspect-ratio:1; object-fit:contain;" loading="lazy">`
+                        : `<div style="width:100%; aspect-ratio:1; background:var(--surface2); display:flex; align-items:center; justify-content:center;">📁</div>`;
+                    card.innerHTML += `<div style="font-size:0.7rem; padding:4px; text-align:center; background:var(--surface2);">${escapeHtml(item.outfit)} / ${escapeHtml(item.expression)}</div>`;
+                    card.onmouseenter = () => card.style.borderColor = 'var(--accent)';
+                    card.onmouseleave = () => card.style.borderColor = 'var(--border)';
+                    card.onclick = async () => {
+                        if (!thumbUrl) { showToast('대표 이미지가 없습니다', 'error'); return; }
+                        try {
+                            const imgResp = await fetch(thumbUrl);
+                            const imgBlob = await imgResp.blob();
+                            const formData = new FormData();
+                            formData.append('image', imgBlob, item.representative);
+                            formData.append('source', 'asset');
+                            const uploadResp = await fetch('/api/asset_mode/upload_reference', { method: 'POST', body: formData });
+                            const uploadResult = await uploadResp.json();
+                            if (uploadResult.success) {
+                                if (epRefPickerState.target === 'sidebar') {
+                                    epRefImage = uploadResult.name;
+                                    epRefPreviewUrl = thumbUrl;
+                                    document.getElementById('ep-ref-preview-img').src = thumbUrl;
+                                    document.getElementById('ep-ref-preview').style.display = 'block';
+                                }
+                                showToast('레퍼런스 이미지 선택 완료', 'success');
+                                document.getElementById('ep-ref-picker-overlay').remove();
+                            } else {
+                                showToast(uploadResult.error || '업로드 실패', 'error');
+                            }
+                        } catch (e) {
+                            showToast('이미지 업로드 실패: ' + e.message, 'error');
+                        }
+                    };
+                    grid.appendChild(card);
+                }
+            } catch (e) { grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--error);">로드 실패</div>'; }
+        }
+
+        function openExprProfileRefGalleryPickerForSlot(idx) {
+            if (!assetTags || !assetTags.characters) return;
+            const overlay = document.createElement('div');
+            overlay.id = 'ep-ref-slot-picker-overlay';
+            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10000; display:flex; align-items:center; justify-content:center;';
+            overlay.innerHTML = `<div style="background:var(--surface); border-radius:12px; padding:20px; max-width:700px; width:90%; max-height:80vh; display:flex; flex-direction:column; overflow:hidden;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; flex-shrink:0;">
+                    <h3 style="margin:0;">에셋에서 레퍼런스 선택</h3>
+                    <button onclick="document.getElementById('ep-ref-slot-picker-overlay').remove()" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer;">x</button>
+                </div>
+                <div id="ep-ref-slot-picker-back" style="display:none; margin-bottom:8px; flex-shrink:0;">
+                    <button onclick="epRefSlotPickerGoBack()" style="background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:4px 12px; border-radius:4px; cursor:pointer; font-size:0.8rem;">뒤로</button>
+                </div>
+                <div id="ep-ref-slot-picker-grid" style="display:grid; grid-template-columns:repeat(4,1fr); gap:8px; overflow-y:auto; max-height:calc(80vh - 120px);"></div>
+            </div>`;
+            document.body.appendChild(overlay);
+            overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+            epRefSlotPickerState = { level: 'characters', char: '', slotIdx: idx };
+            loadEpRefSlotPickerCharacters(idx);
+        }
+
+        let epRefSlotPickerState = { level: 'characters', char: '', slotIdx: -1 };
+
+        function epRefSlotPickerGoBack() {
+            epRefSlotPickerState = { level: 'characters', char: '', slotIdx: epRefSlotPickerState.slotIdx };
+            loadEpRefSlotPickerCharacters(epRefSlotPickerState.slotIdx);
+        }
+
+        async function loadEpRefSlotPickerCharacters(idx) {
+            const grid = document.getElementById('ep-ref-slot-picker-grid');
+            if (!grid) return;
+            grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--text-secondary);">로딩중...</div>';
+            document.getElementById('ep-ref-slot-picker-back').style.display = 'none';
+            try {
+                const resp = await fetch('/api/asset_mode/characters');
+                const data = await resp.json();
+                const chars = data.characters || [];
+                grid.innerHTML = '';
+                if (chars.length === 0) { grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--text-secondary);">캐릭터가 없습니다</div>'; return; }
+                chars.forEach(ch => {
+                    const card = document.createElement('div');
+                    card.style.cssText = 'cursor:pointer; border-radius:8px; border:2px solid var(--border); padding:16px 8px; text-align:center; transition:border-color 0.2s, background 0.2s;';
+                    card.innerHTML = `<div style="font-size:1.2rem; margin-bottom:4px;">📁</div><div style="font-size:0.85rem; word-break:break-all;">${escapeHtml(ch)}</div>`;
+                    card.onmouseenter = () => { card.style.borderColor = 'var(--accent)'; card.style.background = 'var(--surface2)'; };
+                    card.onmouseleave = () => { card.style.borderColor = 'var(--border)'; card.style.background = 'transparent'; };
+                    card.onclick = () => {
+                        epRefSlotPickerState = { level: 'gallery', char: ch, slotIdx: idx };
+                        loadEpRefSlotPickerGallery(ch, idx);
+                    };
+                    grid.appendChild(card);
+                });
+            } catch (e) { grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--error);">로드 실패</div>'; }
+        }
+
+        async function loadEpRefSlotPickerGallery(char, idx) {
+            const grid = document.getElementById('ep-ref-slot-picker-grid');
+            if (!grid) return;
+            const enc = encodeURIComponent;
+            document.getElementById('ep-ref-slot-picker-back').style.display = 'block';
+            grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--text-secondary);">로딩중...</div>';
+            try {
+                const resp = await fetch(`/api/asset_mode/characters/${enc(char)}/gallery`);
+                const data = await resp.json();
+                const gallery = data.gallery || [];
+                grid.innerHTML = '';
+                if (gallery.length === 0) { grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--text-secondary);">에셋이 없습니다</div>'; return; }
+                for (const item of gallery) {
+                    const thumbUrl = item.representative
+                        ? `/api/asset_mode/characters/${enc(char)}/outfits/${enc(item.outfit)}/expressions/${enc(item.expression)}/images/${enc(item.representative)}`
+                        : '';
+                    const card = document.createElement('div');
+                    card.style.cssText = 'cursor:pointer; border-radius:8px; overflow:hidden; border:2px solid var(--border); transition:border-color 0.2s;';
+                    card.innerHTML = thumbUrl
+                        ? `<img src="${thumbUrl}" style="width:100%; display:block; aspect-ratio:1; object-fit:contain;" loading="lazy">`
+                        : `<div style="width:100%; aspect-ratio:1; background:var(--surface2); display:flex; align-items:center; justify-content:center;">📁</div>`;
+                    card.innerHTML += `<div style="font-size:0.7rem; padding:4px; text-align:center; background:var(--surface2);">${escapeHtml(item.outfit)} / ${escapeHtml(item.expression)}</div>`;
+                    card.onmouseenter = () => card.style.borderColor = 'var(--accent)';
+                    card.onmouseleave = () => card.style.borderColor = 'var(--border)';
+                    card.onclick = async () => {
+                        if (!thumbUrl) { showToast('대표 이미지가 없습니다', 'error'); return; }
+                        try {
+                            const imgResp = await fetch(thumbUrl);
+                            const imgBlob = await imgResp.blob();
+                            const formData = new FormData();
+                            formData.append('image', imgBlob, item.representative);
+                            formData.append('source', 'asset');
+                            const uploadResp = await fetch('/api/asset_mode/upload_reference', { method: 'POST', body: formData });
+                            const uploadResult = await uploadResp.json();
+                            if (uploadResult.success) {
+                                epProfiles[idx].ref_image = uploadResult.name;
+                                epProfiles[idx].ref_preview_url = thumbUrl;
+                                const imgEl = document.querySelector(`.ep-ref-preview-img-slot[data-ep-idx="${idx}"]`);
+                                const prevEl = document.querySelector(`.ep-ref-preview-slot[data-ep-idx="${idx}"]`);
+                                if (imgEl) imgEl.src = thumbUrl;
+                                if (prevEl) prevEl.style.display = 'block';
+                                showToast('레퍼런스 이미지 선택 완료', 'success');
+                                document.getElementById('ep-ref-slot-picker-overlay').remove();
+                            } else {
+                                showToast(uploadResult.error || '업로드 실패', 'error');
+                            }
+                        } catch (e) {
+                            showToast('이미지 업로드 실패: ' + e.message, 'error');
+                        }
+                    };
+                    grid.appendChild(card);
+                }
+            } catch (e) { grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--error);">로드 실패</div>'; }
+        }
+
+        async function startExprProfileGeneration() {
+            if (epRunning) return;
+            const selectedProfiles = epProfiles.filter(p => p.selected);
+            if (selectedProfiles.length === 0) { showToast('선택된 표정이 없습니다', 'error'); return; }
+            const charName = document.getElementById('ep-character-select').value;
+            const appearanceName = document.getElementById('ep-appearance-select').value;
+            const outfitName = document.getElementById('ep-outfit-select').value;
+            if (!charName || !appearanceName || !outfitName) {
+                showToast('캐릭터, 외모, 복장을 모두 선택하세요', 'error');
+                return;
+            }
+            const sidebarRefEnabled = document.getElementById('ep-ref-toggle').checked;
+            const sidebarRefStrength = parseFloat(document.getElementById('ep-ref-strength').value);
+            const sidebarRefImage = epRefImage;
+            const hrfEnabled = document.getElementById('ep-hrf-toggle').checked;
+            const fdEnabled = document.getElementById('ep-fd-toggle').checked;
+            const hdEnabled = document.getElementById('ep-hd-toggle').checked;
+            const edEnabled = document.getElementById('ep-ed-toggle').checked;
+            const compositionPreset = document.getElementById('ep-composition-select').value;
+            const qualityPreset = document.getElementById('ep-quality-select').value;
+            const negativePreset = document.getElementById('ep-negative-select').value;
+            const characterNegativePreset = document.getElementById('ep-character-negative-select').value;
+
+            const repeatCount = Math.max(1, parseInt(document.getElementById('ep-repeat-count').value) || 1);
+            const totalJobs = selectedProfiles.length * repeatCount;
+
+            epRunning = true;
+            document.getElementById('ep-start-btn').disabled = true;
+            document.getElementById('ep-stop-btn').style.display = 'inline-block';
+            document.getElementById('ep-progress-bar').style.display = 'block';
+            document.getElementById('ep-progress-inner').style.width = '0%';
+            document.getElementById('ep-status-text').style.display = 'block';
+            document.getElementById('ep-status-text').textContent = `준비중... (0/${totalJobs})`;
+            showTopProgress();
+
+            let completed = 0;
+            let successCount = 0;
+            let failCount = 0;
+            const startTime = Date.now();
+
+            function formatDuration(ms) {
+                const s = Math.floor(ms / 1000);
+                const m = Math.floor(s / 60);
+                const sec = s % 60;
+                return m > 0 ? `${m}분 ${sec}초` : `${sec}초`;
+            }
+
+            try {
+                for (let round = 0; round < repeatCount; round++) {
+                    for (let i = 0; i < selectedProfiles.length; i++) {
+                        if (!epRunning) break;
+                        const profile = selectedProfiles[i];
+                        const jobNum = completed + 1;
+
+                        document.getElementById('ep-status-text').textContent =
+                            `${round + 1}바퀴 — ${profile.name} (${jobNum}/${totalJobs}) | 경과: ${formatDuration(Date.now() - startTime)}`;
+                        document.getElementById('ep-progress-inner').style.width =
+                            `${(completed / totalJobs * 100).toFixed(1)}%`;
+
+                        const useRef = profile.ref_enabled ? true : sidebarRefEnabled;
+                        const useRefImage = profile.ref_enabled ? profile.ref_image : sidebarRefImage;
+                        const useRefStrength = profile.ref_enabled ? profile.ref_strength : sidebarRefStrength;
+
+                        const genPayload = {
+                            character: charName,
+                            appearance: appearanceName,
+                            outfit: outfitName,
+                            expression: profile.name,
+                            face_id_enabled: useRef,
+                            face_id_strength: useRefStrength,
+                            reference_image: useRefImage || '',
+                            pose_enabled: false,
+                            pose_id: '',
+                            fd_activate: profile.fd_enabled ? true : fdEnabled,
+                            hrf_activate: profile.hrf_enabled ? true : hrfEnabled,
+                            hd_activate: profile.hd_enabled ? true : hdEnabled,
+                            ed_activate: profile.ed_enabled ? true : edEnabled,
+                        };
+
+                        try {
+                            if (compositionPreset) {
+                                await fetch('/api/asset_mode/tags', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ action: 'load_composition_preset', name: compositionPreset })
+                                });
+                            }
+                            if (qualityPreset) {
+                                await fetch('/api/asset_mode/tags', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ action: 'load_quality_preset', name: qualityPreset })
+                                });
+                            }
+                            if (negativePreset) {
+                                await fetch('/api/asset_mode/tags', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ action: 'load_negative_preset', name: negativePreset })
+                                });
+                            }
+                            if (characterNegativePreset) {
+                                await fetch('/api/asset_mode/tags', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ action: 'load_character_negative_preset', name: characterNegativePreset })
+                                });
+                            }
+
+                            const resp = await fetch('/api/asset_mode/generate', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify(genPayload)
+                            });
+                            const result = await resp.json();
+                            if (result.success) {
+                                successCount++;
+                            } else {
+                                failCount++;
+                                showToast(`[${profile.name}] ${result.error || '생성 실패'}`, 'error');
+                            }
+                        } catch (e) {
+                            failCount++;
+                            showToast(`[${profile.name}] 요청 실패: ${e.message}`, 'error');
+                        }
+                        completed++;
+                        document.getElementById('ep-progress-inner').style.width =
+                            `${(completed / totalJobs * 100).toFixed(1)}%`;
+                    }
+                    if (!epRunning) break;
+                }
+
+                document.getElementById('ep-status-text').textContent =
+                    `완료 — 성공: ${successCount}, 실패: ${failCount} (총 ${totalJobs}건) | 소요: ${formatDuration(Date.now() - startTime)}`;
+                if (successCount > 0) showToast(`표정 프로필 생성 완료 (${successCount}장)`, 'success');
+                if (failCount > 0 && successCount === 0) showToast('모든 생성 실패', 'error');
+            } finally {
+                epRunning = false;
+                document.getElementById('ep-start-btn').disabled = false;
+                document.getElementById('ep-stop-btn').style.display = 'none';
+                hideTopProgress();
+                await scanExprProfilePresets();
+            }
+        }
+
+        function stopExprProfileGeneration() {
+            epRunning = false;
+        }
+
         // ─── 에셋툴 ────────────────────────────────────────────
         const atState = {
             images: [],          // {file, url, tags, status: 'pending'|'analyzing'|'done'|'error', error}
@@ -6264,11 +7303,14 @@
             document.getElementById('at-view-upload').style.display = view === 'upload' ? '' : 'none';
             document.getElementById('at-view-result').style.display = view === 'result' ? 'flex' : 'none';
             document.getElementById('at-view-embed').style.display = view === 'embed' ? '' : 'none';
+            document.getElementById('at-view-expr-profile').style.display = view === 'expr-profile' ? '' : 'none';
             document.getElementById('at-sidebar-upload').classList.toggle('active', view === 'upload');
             document.getElementById('at-sidebar-result').classList.toggle('active', view === 'result');
             document.getElementById('at-sidebar-embed').classList.toggle('active', view === 'embed');
+            document.getElementById('at-sidebar-expr-profile').classList.toggle('active', view === 'expr-profile');
             if (view === 'result') atRenderSourceCards();
             if (view === 'embed') atInitEmbedView();
+            if (view === 'expr-profile') initExprProfileTab();
         }
 
         function atClearAll() {
@@ -6935,7 +7977,7 @@
                     html += `<td style="padding:5px 8px; ${changed ? '' : 'color:var(--text2);'}">${escapeHtml(item.original)}</td>`;
                     html += `<td style="padding:4px 6px;">`;
                     html += `<select data-preset-name="${escapeHtml(item.original)}" style="font-size:0.78rem; padding:2px 4px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); width:100%;" onchange="atOnProfileMapChange(this.dataset.presetName, this.value)">`;
-                    html += `<option value="">(기본)</option>`;
+                    html += `<option value="">현재 프로필</option>`;
                     profileNames.forEach(pn => {
                         const sel = pn === selectedProfile ? 'selected' : '';
                         html += `<option value="${escapeHtml(pn)}" ${sel}>${escapeHtml(pn)}</option>`;
