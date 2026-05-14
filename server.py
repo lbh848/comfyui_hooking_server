@@ -238,6 +238,9 @@ reschedule_queue = None  # { name, image_bytes, positive, negative, prompt_data 
 
 WS_QUIET_TYPES = {"crystools.monitor", "crystools.monitor.gpu"}
 
+# ─── 텍스트 출력 저장소 ──────────────────────────────────────
+text_outputs = {}
+
 
 # ─── 로깅 ───────────────────────────────────────────────
 def log_to_file(filename: str, data: str):
@@ -2975,8 +2978,55 @@ app.router.add_get("/api/workflow_test/list", handle_api_workflow_test_list)
 app.router.add_post("/api/workflow_test/start", handle_api_workflow_test_start)
 app.router.add_post("/api/workflow_test/stop", handle_api_workflow_test_stop)
 app.router.add_get("/api/workflow_test/status", handle_api_workflow_test_status)
+# 텍스트 출력 API (ComfyUI SoyaTextSender 노드에서 수신)
+app.router.add_post("/api/text_output", handle_api_text_output_post)
+app.router.add_get("/api/text_output", handle_api_text_output_list)
+app.router.add_get("/api/text_output/{node_title}", handle_api_text_output_get)
+app.router.add_delete("/api/text_output", handle_api_text_output_clear)
 
-# 사운드 파일 서빙
+# ─── 텍스트 출력 API 핸들러 ────────────────────────────────
+async def handle_api_text_output_post(request: web.Request) -> web.Response:
+    try:
+        body = await request.json()
+        node_title = body.get("node_title", "")
+        node_id = body.get("node_id", "")
+        text = body.get("text", "")
+        if not node_title:
+            return web.json_response({"error": "node_title required"}, status=400)
+        entry = {
+            "node_title": node_title,
+            "node_id": node_id,
+            "text": text,
+            "timestamp": datetime.datetime.now().isoformat(),
+        }
+        text_outputs[node_title] = entry
+        print(f"[TEXT_OUTPUT] 수신: node_title='{node_title}', text={text[:100]}...")
+        log_to_file("text_output.log", f"node_title='{node_title}', node_id={node_id}, text_len={len(text)}")
+        await notify_frontend("text_output", entry)
+        return web.json_response({"status": "ok"})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def handle_api_text_output_list(request: web.Request) -> web.Response:
+    return web.json_response({"outputs": list(text_outputs.values())})
+
+
+async def handle_api_text_output_get(request: web.Request) -> web.Response:
+    node_title = request.match_info.get("node_title", "")
+    if not node_title:
+        return web.json_response({"error": "node_title required"}, status=400)
+    entry = text_outputs.get(node_title)
+    if entry is None:
+        return web.json_response({"error": "not found"}, status=404)
+    return web.json_response(entry)
+
+
+async def handle_api_text_output_clear(request: web.Request) -> web.Response:
+    text_outputs.clear()
+    return web.json_response({"status": "cleared"})
+
+
 SOUND_DIR = os.path.join(BASE_DIR, "modes", "sound")
 async def handle_sound_file(request: web.Request) -> web.Response:
     filename = request.match_info.get("filename", "")

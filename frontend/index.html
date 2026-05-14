@@ -2660,6 +2660,7 @@
                 </div>
             </div>
         </div>
+
     </main>
 
     <!-- 에셋 생성 오버레이 -->
@@ -3575,6 +3576,9 @@
                         case 'asset_generation_completed':
                             handleAssetWsEvent(msg.type, msg.data);
                             break;
+                        case 'text_output':
+                            handleTextOutput(msg.data);
+                            break;
                     }
                 } catch (e) {
                     console.error('[Frontend WS] 메시지 처리 실패:', e);
@@ -3592,6 +3596,22 @@
         }
 
         // ─── WebSocket 이벤트 핸들러 ───
+        const textOutputState = {};
+        function handleTextOutput(data) {
+            if (!data || !data.node_title) return;
+            textOutputState[data.node_title] = data;
+            const preview = (data.text || '').substring(0, 80) + ((data.text || '').length > 80 ? '...' : '');
+            showToast(`[Text] ${data.node_title}: ${preview}`, 'info');
+        }
+
+        function getTextOutputByNode(nodeTitle) {
+            return textOutputState[nodeTitle] || null;
+        }
+
+        function getAllTextOutputs() {
+            return Object.values(textOutputState);
+        }
+
         function handleRescheduleChanged(data) {
             // 모든 버튼 상태 업데이트
             const buttons = document.querySelectorAll('.reschedule-btn');
