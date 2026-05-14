@@ -2809,7 +2809,8 @@
                                     정제 규칙을 어디에 적용한 결과를 볼지 선택하세요.
                                 </div>
                                 <div style="display:flex; gap:8px; margin-bottom:8px;">
-                                    <button class="at-btn at-btn-primary" onclick="atPreviewClean('preset')" id="at-preview-preset-btn" style="font-size:0.82rem;">📋 내 프리셋 미리보기</button>
+                                    <button class="at-btn" onclick="atPreviewClean('preset')" id="at-preview-preset-btn" style="font-size:0.82rem;">📋 내 프리셋 미리보기</button>
+                                    <button class="at-btn" onclick="atSaveProfileMap()" id="at-save-profile-map-btn" style="font-size:0.78rem; background:var(--accent); color:#fff; border-color:var(--accent); font-weight:600;">💾 할당 저장</button>
                                     <button class="at-btn" onclick="atPreviewClean('tag')" id="at-preview-tag-btn" style="font-size:0.82rem;">🏷️ 업로드 태그 미리보기</button>
                                 </div>
                                 <div id="at-embed-preview" style="max-height:260px; overflow-y:auto; background:var(--surface2); border-radius:6px; padding:10px;">
@@ -6706,6 +6707,13 @@
 
         function atOnStepChange(stepIndex) {
             atReadStepsFromUI();
+            atRenderCleanSteps(atEmbedActiveSteps);
+            const container = document.getElementById('at-embed-steps-container');
+            const rows = container.querySelectorAll(':scope > div');
+            if (rows[stepIndex]) {
+                const sel = rows[stepIndex].querySelector('select');
+                if (sel) sel.focus();
+            }
         }
 
         function atReadStepsFromUI() {
@@ -6765,6 +6773,7 @@
                     showToast(`프로필 '${name}' 저장됨`, 'success');
                     await atLoadProfiles();
                     atLoadCacheStatus();
+                    atPreviewClean(atEmbedCurrentSource || 'preset');
                 } else {
                     showToast('저장 실패: ' + (result.error || ''), 'error');
                 }
@@ -6940,8 +6949,9 @@
                 const cacheStatus = cacheInfo.valid ? `✅ 유효 (${cacheInfo.cached_embeddings || 0}개 캐시됨)` : '❌ 설정 변경으로 무효화됨';
                 html += `<div style="margin-top:8px; display:flex; align-items:center; gap:8px;">`;
                 html += `<span style="font-size:0.78rem; color:var(--text2);">캐시 상태: ${cacheStatus}</span>`;
-                html += `<button class="at-btn" onclick="atSaveProfileMap()" style="font-size:0.78rem;">💾 할당 저장</button>`;
                 html += `</div>`;
+                const saveBtn = document.getElementById('at-save-profile-map-btn');
+                if (saveBtn) saveBtn.style.display = source === 'preset' ? '' : 'none';
                 previewDiv.innerHTML = html;
             } catch (e) {
                 previewDiv.innerHTML = `<div style="color:var(--error); font-size:0.85rem;">로드 오류: ${escapeHtml(e.message)}</div>`;
