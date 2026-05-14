@@ -1075,6 +1075,25 @@
             border-bottom-color: var(--accent);
             font-weight: 600;
         }
+        #tab-btn-backup {
+            background: var(--surface2);
+            border-radius: 6px;
+        }
+        .tab-btn[onclick*="'asset'"],
+        .tab-btn[onclick*="'pose'"],
+        .tab-btn[onclick*="'batch'"],
+        #tab-btn-smart-asset {
+            background: rgba(80, 200, 120, 0.12);
+            border-radius: 6px;
+        }
+        .tab-divider {
+            display: inline-block;
+            width: 1px;
+            height: 24px;
+            background: var(--border);
+            margin: 0 6px;
+            vertical-align: middle;
+        }
         .tab-content { display: none; }
         .tab-content.active { display: block; }
         #tab-batch-content.active { display: flex; flex-direction: column; height: calc(100vh - 60px); }
@@ -2196,23 +2215,22 @@
             <button id="tunnel-btn" onclick="toggleTunnel()">🔗 공유</button>
             <button id="tunnel-copy-btn" class="tunnel-sub-btn" onclick="copyTunnelUrl()">📋 링크 복사</button>
             <button id="tunnel-regen-btn" class="tunnel-sub-btn" onclick="regenTunnel()">🔄 재생성</button>
-            <button onclick="reloadWorkflow()">📂 워크플로우 가져오기</button>
-            <button onclick="toggleBatchMode()" id="batch-mode-btn">🔄 배치모드: <span id="batch-mode-status">OFF</span></button>
-            <button onclick="scheduleBatchResend()" id="batch-schedule-btn" style="display:none;">📦 배치 재전송 예약</button>
-            <button onclick="cancelBatchResend()" id="batch-cancel-btn" style="display:none;">❌ 예약 취소</button>
-            <button onclick="openOutfitResultsModal()" id="outfit-btn" style="display:none;">👕 복장 추출</button>
-            <button onclick="manualRestoreDraw()" id="restore-manual-btn" style="display:none;">🖌️ 수동 그리기</button>
+            <button onclick="reloadWorkflow()">📂 삽화 워크플로우 가져오기</button>
+            <button onclick="toggleBatchMode()" id="batch-mode-btn">🔄 삽화 배치모드: <span id="batch-mode-status">OFF</span></button>
+            <button onclick="manualRestoreDraw()" id="restore-manual-btn" style="display:none;">🖌️ 삽화 수동 그리기</button>
             <button onclick="openModeLogModal()">📋 모드 로그</button>
-            <button onclick="openWfTestModal()">🧪 WF 능력 테스트</button>
+
         </div>
     </header>
 
     <!-- 탭 바 -->
     <div class="tab-bar">
-        <button class="tab-btn active" onclick="switchTab('backup')">백업 이미지</button>
+        <button id="tab-btn-backup" class="tab-btn active" onclick="switchTab('backup')">삽화 백업</button>
+        <span class="tab-divider"></span>
         <button class="tab-btn" onclick="switchTab('asset')">에셋 생성</button>
-        <button class="tab-btn" onclick="switchTab('pose')">Pose 편집</button>
-        <button class="tab-btn" onclick="switchTab('batch')">그림 일괄생성</button>
+        <button class="tab-btn" onclick="switchTab('pose')">에셋 Pose 편집</button>
+        <button class="tab-btn" onclick="switchTab('batch')">에셋 일괄 생성</button>
+        <button id="tab-btn-smart-asset" class="tab-btn" onclick="switchTab('smart-asset')">에셋툴</button>
     </div>
 
     <!-- 토스트 알림 -->
@@ -2252,7 +2270,7 @@
     </div>
 
     <main>
-        <!-- 백업 이미지 탭 -->
+        <!-- 삽화 백업 탭 -->
         <div id="tab-backup-content" class="tab-content active">
             <div id="content">
                 <div class="empty-state">
@@ -2658,6 +2676,14 @@
                     <button class="batch-add-first-btn" onclick="addBatchChainSlot()">+</button>
                     <div style="margin-top:8px; color:var(--text-secondary); font-size:0.8rem;">클릭하여 체인 슬롯 추가</div>
                 </div>
+            </div>
+        </div>
+
+        <!-- 스마트 에셋 툴 탭 -->
+        <div id="tab-smart-asset-content" class="tab-content">
+            <div class="empty-state">
+                <h3>에셋툴</h3>
+                <p style="font-size: 0.85rem; color: var(--text2); margin-top: 8px;">에셋을 일괄 등록하고 태그를 자동 분석·매칭합니다</p>
             </div>
         </div>
 
@@ -3114,10 +3140,45 @@
                     <div class="hint">위 '워크플로우 소스 경로'의 베이스 경로에서 검색됩니다</div>
                 </div>
                 <input type="hidden" id="setting-asset-workflow-source-path">
+
+                <hr style="border: none; border-top: 1px solid var(--border); margin: 12px 0;">
+
+                <!-- 태그 분석 모드 -->
+                <div class="setting-row">
+                    <div class="setting-label">
+                        <div class="title">🔍 태그 분석 워크플로우</div>
+                        <div class="desc">태그 분석에 사용할 워크플로우 파일 (위 베이스 경로 공유)</div>
+                    </div>
+                </div>
+                <div class="form-group" style="margin-top: -8px;">
+                    <div class="autocomplete-wrapper">
+                        <input type="text" id="setting-tag-analysis-workflow-filename" placeholder="예: 태그분석워크플로우.json"
+                               oninput="onTagAnalysisFilenameInput(this.value)" onfocus="onTagAnalysisFilenameInput(this.value)">
+                        <div class="autocomplete-list" id="tag-analysis-workflow-autocomplete"></div>
+                    </div>
+                    <div class="hint">위 '워크플로우 소스 경로'의 베이스 경로에서 검색됩니다</div>
+                </div>
+                <input type="hidden" id="setting-tag-analysis-workflow-source-path">
             </div>
             <div class="modal-footer">
+                <button class="cancel" onclick="previewConfig()">📋 Config 미리보기</button>
                 <button class="cancel" onclick="closeSettingsModal()">취소</button>
                 <button class="confirm" onclick="saveSettings()">저장</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Config 미리보기 모달 -->
+    <div class="modal" id="config-preview-modal" onclick="if (event.target === this) this.classList.remove('visible')">
+        <div class="modal-content" style="max-width: 560px;">
+            <div class="modal-header">
+                <h2>📋 Config 미리보기</h2>
+                <button class="modal-close" onclick="document.getElementById('config-preview-modal').classList.remove('visible')">&times;</button>
+            </div>
+            <div class="modal-body" id="config-preview-body" style="max-height: 60vh; overflow-y: auto;">
+            </div>
+            <div class="modal-footer">
+                <button class="confirm" onclick="document.getElementById('config-preview-modal').classList.remove('visible')">닫기</button>
             </div>
         </div>
     </div>
@@ -3811,7 +3872,7 @@
         function renderBackups(backups) {
             const content = document.getElementById('content');
             if (!backups || backups.length === 0) {
-                content.innerHTML = '<div class="empty-state"><h2>백업 이미지 없음</h2><p>이미지가 생성되면 여기에 표시됩니다</p></div>';
+                content.innerHTML = '<div class="empty-state"><h2>삽화 백업 없음</h2><p>이미지가 생성되면 여기에 표시됩니다</p></div>';
                 return;
             }
 
@@ -4532,6 +4593,12 @@
             document.getElementById('setting-asset-workflow-filename').value = assetSplit.filename;
             document.getElementById('setting-asset-workflow-source-path').value = assetPath;
 
+            // 태그 분석 모드
+            const tagAnalysisPath = currentConfig.tag_analysis_workflow_source_path || '';
+            const tagAnalysisSplit = splitWorkflowPath(tagAnalysisPath);
+            document.getElementById('setting-tag-analysis-workflow-filename').value = tagAnalysisSplit.filename;
+            document.getElementById('setting-tag-analysis-workflow-source-path').value = tagAnalysisPath;
+
             document.getElementById('settings-modal').classList.add('visible');
         }
 
@@ -4564,6 +4631,7 @@
             // 베이스 경로 변경 시 에셋/복장 경로도 함께 갱신
             updateOutfitWorkflowPath();
             updateAssetWorkflowPath();
+            updateTagAnalysisWorkflowPath();
         }
 
         // 베이스 경로와 파일명을 결합
@@ -4600,6 +4668,69 @@
             document.getElementById('settings-modal').classList.remove('visible');
             // 자동완성 닫기
             document.getElementById('workflow-autocomplete').classList.remove('visible');
+            // config 미리보기 모달도 닫기
+            const previewModal = document.getElementById('config-preview-modal');
+            if (previewModal) previewModal.classList.remove('visible');
+        }
+
+        async function previewConfig() {
+            let config;
+            try {
+                const resp = await fetch('/api/config');
+                config = await resp.json();
+            } catch (e) {
+                showToast('Config 로드 실패: ' + e.message, 'error');
+                return;
+            }
+            const modal = document.getElementById('config-preview-modal');
+            const body = document.getElementById('config-preview-body');
+            if (!modal || !body) return;
+            const labels = {
+                send_original: '원본 전송',
+                webp_quality: 'WebP 화질',
+                backup_webp_quality: '백업 WebP 화질',
+                backup_webp_lossless: '백업 무손실',
+                comfy_workflow_source_path: '워크플로우 경로',
+                backup_base_dir: '백업 폴더',
+                backup_max_count: '백업 최대 수',
+                clamp_enabled: '가중치 클램프',
+                clamp_value: '클램프 값',
+                llm_service: 'LLM 서비스',
+                llm_model: 'LLM 모델',
+                llm_service2: 'LLM2 서비스',
+                llm_model2: 'LLM2 모델',
+                custom_api_url: 'Custom API URL',
+                custom_api_url2: 'Custom API URL 2',
+                batch_timeout_seconds: '배치 타임아웃(초)',
+                notification_enabled: '완료 알림',
+                auto_reschedule_enabled: '자동 재예약',
+                outfit_mode_enabled: '복장 추출 모드',
+                outfit_workflow_source_path: '복장 워크플로우 경로',
+                outfit_prompt_file: '복장 프롬프트 파일',
+                restore_prompt_file: '복원 프롬프트 파일',
+                restore_mode_enabled: '복원 모드',
+                restore_manual_enabled: '수동 복원 모드',
+                enhance_mode_enabled: '프롬프트 강화 모드',
+                enhance_prompt_file: '강화 프롬프트 파일',
+                asset_workflow_source_path: '에셋 생성 워크플로우',
+                tag_analysis_workflow_source_path: '태그 분석 워크플로우',
+                dwpose_det_model: 'DWPose 탐지 모델',
+                dwpose_pose_model: 'DWPose 포즈 모델',
+                dwpose_model_cache_dir: '모델 캐시 디렉토리',
+                webp_lossless: '무손실 WebP'
+            };
+            let html = '<table style="width:100%; border-collapse:collapse; font-size:0.82rem;">';
+            for (const [key, val] of Object.entries(config)) {
+                const label = labels[key] || key;
+                let displayVal = val;
+                if (typeof val === 'boolean') displayVal = val ? '<span style="color:#4caf50;">ON</span>' : '<span style="color:#999;">OFF</span>';
+                else if (typeof val === 'string' && val === '') displayVal = '<span style="color:#999;">(비어있음)</span>';
+                else if (typeof val === 'string' && val.length > 80) displayVal = val.substring(0, 77) + '...';
+                html += `<tr style="border-bottom:1px solid var(--border);"><td style="padding:4px 8px; color:var(--text2); white-space:nowrap;">${label}</td><td style="padding:4px 8px; word-break:break-all;">${displayVal}</td></tr>`;
+            }
+            html += '</table>';
+            body.innerHTML = html;
+            modal.classList.add('visible');
         }
 
         async function saveSettings() {
@@ -4631,7 +4762,8 @@
                 restore_manual_enabled: document.getElementById('setting-restore-manual-enabled').checked,
                 enhance_mode_enabled: document.getElementById('setting-enhance-enabled').checked,
                 enhance_prompt_file: document.getElementById('setting-enhance-prompt-file').value,
-                asset_workflow_source_path: document.getElementById('setting-asset-workflow-source-path').value
+                asset_workflow_source_path: document.getElementById('setting-asset-workflow-source-path').value,
+                tag_analysis_workflow_source_path: document.getElementById('setting-tag-analysis-workflow-source-path').value
             };
 
             try {
@@ -4732,6 +4864,8 @@
                         selectOutfitWorkflowFile(path, filename);
                     } else if (list.id === 'asset-workflow-autocomplete') {
                         selectAssetWorkflowFile(path, filename);
+                    } else if (list.id === 'tag-analysis-workflow-autocomplete') {
+                        selectTagAnalysisWorkflowFile(path, filename);
                     }
                     list.classList.remove('visible');
                 }
@@ -5057,14 +5191,17 @@
             const restoreManualOn = document.getElementById('setting-restore-manual-enabled').checked;
 
             // 배치 재전송 버튼: 배치 모드 ON일 때만
-            document.getElementById('batch-schedule-btn').style.display = batchOn ? '' : 'none';
+            const batchScheduleBtn = document.getElementById('batch-schedule-btn');
+            if (batchScheduleBtn) batchScheduleBtn.style.display = batchOn ? '' : 'none';
 
             // 복장 추출 버튼: 배치 모드 + 복장 모드 둘 다 ON일 때만
             const showOutfit = batchOn && outfitOn;
-            document.getElementById('outfit-btn').style.display = showOutfit ? '' : 'none';
+            const outfitBtn = document.getElementById('outfit-btn');
+            if (outfitBtn) outfitBtn.style.display = showOutfit ? '' : 'none';
 
             // 수동 그리기 버튼: 수동 복원 모드 ON일 때만
-            document.getElementById('restore-manual-btn').style.display = restoreManualOn ? '' : 'none';
+            const restoreManualBtn = document.getElementById('restore-manual-btn');
+            if (restoreManualBtn) restoreManualBtn.style.display = restoreManualOn ? '' : 'none';
         }
 
         // ─── 수동 그리기 ───
@@ -5319,6 +5456,36 @@
             const baseDir = document.getElementById('setting-workflow-base-dir').value;
             const filename = document.getElementById('setting-asset-workflow-filename').value;
             document.getElementById('setting-asset-workflow-source-path').value = combineWorkflowPath(baseDir, filename);
+        }
+
+        // 태그 분석 워크플로우 자동완성
+        let tagAnalysisAutocompleteTimeout;
+        async function onTagAnalysisFilenameInput(value) {
+            updateTagAnalysisWorkflowPath();
+            const list = document.getElementById('tag-analysis-workflow-autocomplete');
+            const baseDir = document.getElementById('setting-workflow-base-dir').value.trim();
+            clearTimeout(tagAnalysisAutocompleteTimeout);
+            tagAnalysisAutocompleteTimeout = setTimeout(async () => {
+                try {
+                    const params = new URLSearchParams({ search: value, base_dir: baseDir });
+                    const data = await fetchJSON(`/api/workflow_files?${params}`);
+                    renderAutocompleteItems(data.files, list);
+                } catch (e) {
+                    list.classList.remove('visible');
+                }
+            }, 300);
+        }
+
+        function selectTagAnalysisWorkflowFile(fullPath, filename) {
+            document.getElementById('setting-tag-analysis-workflow-filename').value = filename;
+            document.getElementById('setting-tag-analysis-workflow-source-path').value = fullPath;
+            document.getElementById('tag-analysis-workflow-autocomplete').classList.remove('visible');
+        }
+
+        function updateTagAnalysisWorkflowPath() {
+            const baseDir = document.getElementById('setting-workflow-base-dir').value;
+            const filename = document.getElementById('setting-tag-analysis-workflow-filename').value;
+            document.getElementById('setting-tag-analysis-workflow-source-path').value = combineWorkflowPath(baseDir, filename);
         }
 
         // ─── 복장 추출 결과 모달 ───
@@ -5887,6 +6054,10 @@
                 document.getElementById('tab-batch-content').classList.add('active');
                 if (!assetTags) loadAssetData();
                 initBatchTab();
+            } else if (name === 'smart-asset') {
+                document.querySelectorAll('.tab-btn')[4].classList.add('active');
+                document.getElementById('tab-smart-asset-content').classList.add('active');
+                if (!assetTags) loadAssetData();
             }
         }
 

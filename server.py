@@ -88,6 +88,7 @@ DEFAULT_CONFIG = {
     "enhance_mode_enabled": False,  # 프롬프트 강화 모드 활성화 여부
     "enhance_prompt_file": "",  # 프롬프트 강화 파일명 (customprompt/)
     "asset_workflow_source_path": "",  # 에셋 생성 워크플로우 원본 소스 전체 경로
+    "tag_analysis_workflow_source_path": "",  # 태그 분석 워크플로우 원본 소스 전체 경로
     "dwpose_det_model": "",  # DWPose 탐지 모델 경로 (빈값=자동 다운로드)
     "dwpose_pose_model": "",  # DWPose 포즈 모델 경로 (빈값=자동 다운로드)
     "dwpose_model_cache_dir": "",  # 모델 캐시 디렉토리 (빈값=기본경로)
@@ -2978,12 +2979,6 @@ app.router.add_get("/api/workflow_test/list", handle_api_workflow_test_list)
 app.router.add_post("/api/workflow_test/start", handle_api_workflow_test_start)
 app.router.add_post("/api/workflow_test/stop", handle_api_workflow_test_stop)
 app.router.add_get("/api/workflow_test/status", handle_api_workflow_test_status)
-# 텍스트 출력 API (ComfyUI SoyaTextSender 노드에서 수신)
-app.router.add_post("/api/text_output", handle_api_text_output_post)
-app.router.add_get("/api/text_output", handle_api_text_output_list)
-app.router.add_get("/api/text_output/{node_title}", handle_api_text_output_get)
-app.router.add_delete("/api/text_output", handle_api_text_output_clear)
-
 # ─── 텍스트 출력 API 핸들러 ────────────────────────────────
 async def handle_api_text_output_post(request: web.Request) -> web.Response:
     try:
@@ -3025,6 +3020,12 @@ async def handle_api_text_output_get(request: web.Request) -> web.Response:
 async def handle_api_text_output_clear(request: web.Request) -> web.Response:
     text_outputs.clear()
     return web.json_response({"status": "cleared"})
+
+# 텍스트 출력 API 라우터 등록
+app.router.add_post("/api/text_output", handle_api_text_output_post)
+app.router.add_get("/api/text_output", handle_api_text_output_list)
+app.router.add_get("/api/text_output/{node_title}", handle_api_text_output_get)
+app.router.add_delete("/api/text_output", handle_api_text_output_clear)
 
 
 SOUND_DIR = os.path.join(BASE_DIR, "modes", "sound")
