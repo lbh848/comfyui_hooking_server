@@ -6429,10 +6429,10 @@
                         <div style="font-size:0.8rem; font-weight:600; color:var(--success); margin-bottom:4px;">긍정 프롬프트</div>
                         <pre style="background:var(--surface2); padding:10px; border-radius:6px; font-size:0.75rem; white-space:pre-wrap; word-break:break-all; max-height:300px; overflow-y:auto; margin:0;">${escapeHtml(positiveFull)}</pre>
                     </div>
-                    ${negative ? `<div>
+                    <div>
                         <div style="font-size:0.8rem; font-weight:600; color:var(--error); margin-bottom:4px;">부정 프롬프트</div>
-                        <pre style="background:var(--surface2); padding:10px; border-radius:6px; font-size:0.75rem; white-space:pre-wrap; word-break:break-all; max-height:150px; overflow-y:auto; margin:0;">${escapeHtml(negative)}</pre>
-                    </div>` : ''}
+                        <pre style="background:var(--surface2); padding:10px; border-radius:6px; font-size:0.75rem; white-space:pre-wrap; word-break:break-all; max-height:150px; overflow-y:auto; margin:0;">${escapeHtml(negative || '(없음)')}</pre>
+                    </div>
                 </div>`;
             document.body.appendChild(overlay);
             overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
@@ -8455,6 +8455,7 @@
         TagAutocomplete.attach('asset-new-quality-tag', 'ac-quality-tag', 'input');
         TagAutocomplete.attach('asset-new-composition-tag', 'ac-composition-tag', 'input');
         TagAutocomplete.attach('asset-new-negative-tag', 'ac-negative-tag', 'input');
+        TagAutocomplete.attach('asset-new-character-negative-tag', 'ac-character-negative-tag', 'input');
         TagAutocomplete.attach('modal-positive', 'ac-modal-positive', 'textarea');
         TagAutocomplete.attach('modal-negative', 'ac-modal-negative', 'textarea');
 
@@ -10182,6 +10183,10 @@
                     <div class="batch-field-label" style="cursor:pointer; user-select:none; margin-bottom:4px;" onclick="toggleBatchPreview(this)">프롬프트 미리보기 ▼</div>
                     <div class="batch-prompt-preview collapsed" data-preview>${escapeHtml(previewBatchSlotPrompt(slot))}</div>
                 </div>
+                <div class="batch-prompt-preview-wrap">
+                    <div class="batch-field-label" style="cursor:pointer; user-select:none; margin-bottom:4px; color:var(--error);" onclick="toggleBatchPreview(this)">부정 프롬프트 미리보기 ▼</div>
+                    <div class="batch-prompt-preview collapsed" data-negative-preview>${escapeHtml(previewBatchSlotNegativePrompt(slot))}</div>
+                </div>
             </div>`;
         }
 
@@ -10541,6 +10546,8 @@
         function updateBatchPreview(slotEl, idx) {
             const preview = slotEl.querySelector('[data-preview]');
             if (preview) preview.textContent = previewBatchSlotPrompt(batchChains[idx]);
+            const negPreview = slotEl.querySelector('[data-negative-preview]');
+            if (negPreview) negPreview.textContent = previewBatchSlotNegativePrompt(batchChains[idx]);
         }
 
         function previewBatchSlotPrompt(slot) {
@@ -10573,6 +10580,14 @@
             const negative = [...cnTags, ...nTags].filter(t => t.trim()).join(', ');
 
             return positiveFull;
+        }
+
+        function previewBatchSlotNegativePrompt(slot) {
+            if (!assetTags) return '(태그 데이터 로딩중)';
+            const cnTags = (slot.character_negative_preset && assetTags.character_negative_presets?.[slot.character_negative_preset]) || [];
+            const nTags = (slot.negative_preset && assetTags.negative_presets?.[slot.negative_preset]) || [];
+            const negative = [...cnTags, ...nTags].filter(t => t.trim()).join(', ');
+            return negative || '(없음)';
         }
 
         async function loadBatchPoseList() {
