@@ -1752,6 +1752,48 @@
         .asset-gallery-card .gallery-delete-btn:hover {
             background: rgba(220,40,40,0.95);
         }
+        /* 갤러리 그룹 컨테이너 */
+        .gallery-group-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 16px;
+            padding: 14px;
+            border: 2px dashed var(--border);
+            border-radius: 12px;
+            background: transparent;
+            grid-column: 1 / -1;
+            position: relative;
+        }
+        .gallery-group-container.gallery-group-drag-over {
+            border-color: var(--accent);
+            background: rgba(66, 133, 244, 0.08);
+        }
+        .asset-gallery-card.gallery-dragging {
+            opacity: 0.4;
+        }
+        .asset-gallery-card.gallery-drag-over {
+            border-color: var(--accent);
+            box-shadow: 0 0 8px rgba(66, 133, 244, 0.3);
+        }
+        .gallery-group-remove-btn {
+            position: absolute;
+            top: 4px;
+            right: 4px;
+            background: rgba(200,40,40,0.7);
+            color: #fff;
+            border: none;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            font-size: 0.75rem;
+            cursor: pointer;
+            z-index: 3;
+            opacity: 0;
+            transition: opacity 0.15s;
+        }
+        .asset-gallery-card:hover .gallery-group-remove-btn {
+            opacity: 1;
+        }
         .asset-breadcrumb .bc-link {
             cursor: pointer;
             transition: color 0.15s;
@@ -2381,6 +2423,30 @@
                     </div>
                     </div>
 
+                    <div style="border-top:1px solid var(--border); margin-bottom:8px;"></div>
+                    <!-- 캐릭터 부정 태그 섹션 -->
+                    <div style="background:rgba(156,39,176,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
+                    <div class="section-title">캐릭터 부정 태그(optional)</div>
+                    <div style="font-size:0.7rem; color:var(--text-secondary); margin-bottom:6px; padding:4px 6px; background:rgba(0,0,0,0.05); border-radius:4px;">
+                        부정 프롬프트 조립 순서: 캐릭터 부정 태그 → 부정 태그
+                    </div>
+                    <div style="display:flex; gap:4px; margin-bottom:6px; flex-wrap:wrap; align-items:center;">
+                        <input type="text" class="asset-select-filter" data-filter-for="asset-character-negative-preset-select" placeholder="검색..." style="flex-basis:100%; margin-bottom:4px;">
+                        <select id="asset-character-negative-preset-select" onchange="loadCharacterNegativePreset(); this.previousElementSibling.value='';" style="flex:1; min-width:100px; font-size:0.8rem;">
+                            <option value="">-- 프리셋 --</option>
+                        </select>
+                        <button onclick="addCharacterNegativePreset()" style="flex:0; background:var(--accent); color:#fff; border:none; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">추가</button>
+                        <button onclick="duplicateCharacterNegativePreset()" style="flex:0; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">복제</button>
+                        <button onclick="deleteCharacterNegativePreset()" style="flex:0; background:var(--error); color:#fff; border:none; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">삭제</button>
+                    </div>
+                    <div id="asset-character-negative-tags" class="tag-list"></div>
+                    <div class="inline-add" style="margin-top:4px; position:relative;">
+                        <input type="text" id="asset-new-character-negative-tag" placeholder="캐릭터 부정 태그">
+                        <div class="tag-autocomplete-dropdown" id="ac-character-negative-tag"></div>
+                        <button onclick="addAssetCharacterNegativeTag()">+</button>
+                    </div>
+                    </div>
+
                     <!-- 부정 태그 섹션 -->
                     <div style="background:rgba(244,67,54,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
                     <div class="section-title">부정 태그</div>
@@ -2401,6 +2467,7 @@
                     </div>
                     </div>
 
+                    <div style="border-top:1px solid var(--border); margin-bottom:8px;"></div>
                     <!-- 레퍼런스 (Face ID) 섹션 -->
                     <div style="background:rgba(255,152,0,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
                         <div style="display:flex; align-items:center; gap:8px;">
@@ -5756,6 +5823,7 @@
 
         // ─── 에셋 생성 모드 ────────────────────────────────────
         let assetTags = null;
+        let assetRepresentatives = {};  // {charName: {outfit, expression, filename}}
         let assetGenerating = false;
 
         // ─── 공용 최상단 진행도 바 ───
@@ -5808,10 +5876,20 @@
                 const resp = await fetch('/api/asset_mode/tags');
                 assetTags = await resp.json();
 
+                // 대표이미지 데이터 로드
+                try {
+                    const gResp = await fetch('/api/asset_mode/characters');
+                    const gData = await gResp.json();
+                    assetRepresentatives = gData.representatives || {};
+                } catch (e) {
+                    assetRepresentatives = {};
+                }
+
                 if (isFirstLoad) {
                     assetTags.quality = [];
                     assetTags.composition = [];
                     assetTags.negative = [];
+                    assetTags.character_negative = [];
                 }
 
                 renderAssetUI();
@@ -5820,6 +5898,7 @@
                     const h = { 'Content-Type': 'application/json' };
                     fetch('/api/asset_mode/tags', { method: 'POST', headers: h, body: JSON.stringify({ action: 'load_quality_preset', name: '' }) });
                     fetch('/api/asset_mode/tags', { method: 'POST', headers: h, body: JSON.stringify({ action: 'load_composition_preset', name: '' }) });
+                    fetch('/api/asset_mode/tags', { method: 'POST', headers: h, body: JSON.stringify({ action: 'load_character_negative_preset', name: '' }) });
                     fetch('/api/asset_mode/tags', { method: 'POST', headers: h, body: JSON.stringify({ action: 'load_negative_preset', name: '' }) });
                 }
             } catch (e) {
@@ -5877,15 +5956,17 @@
                 exprSelect.appendChild(opt);
             }
 
-            // 품질/구도/부정 태그
+            // 품질/구도/캐릭터 부정/부정 태그
             renderTagChips('asset-quality-tags', assetTags.quality || [], 'removeAssetQualityTag');
             renderTagChips('asset-composition-tags', assetTags.composition || [], 'removeAssetCompositionTag');
+            renderTagChips('asset-character-negative-tags', assetTags.character_negative || [], 'removeAssetCharacterNegativeTag');
             renderTagChips('asset-negative-tags', assetTags.negative || [], 'removeAssetNegativeTag');
 
             // 모든 프리셋 드롭다운 렌더
             const presetKeys = [
                 ['quality_presets', 'asset-quality-preset-select', '-- 프리셋 --'],
                 ['composition_presets', 'asset-composition-preset-select', '-- 프리셋 --'],
+                ['character_negative_presets', 'asset-character-negative-preset-select', '-- 프리셋 --'],
                 ['negative_presets', 'asset-negative-preset-select', '-- 프리셋 --'],
                 ['character_presets', 'asset-character-preset-select', '-- 캐릭터 프리셋 --'],
             ];
@@ -6259,6 +6340,18 @@
             await modifyTagLightweight('remove_quality_tag', { index: idx }, 'asset-quality-tags', 'removeAssetQualityTag', 'quality', syncQualityPreset);
         }
 
+        async function addAssetCharacterNegativeTag() {
+            const input = document.getElementById('asset-new-character-negative-tag');
+            const val = input.value.trim();
+            if (!val) return;
+            input.value = '';
+            await modifyTagLightweight('add_character_negative_tag', { value: val }, 'asset-character-negative-tags', 'removeAssetCharacterNegativeTag', 'character_negative', syncCharacterNegativePreset);
+        }
+
+        async function removeAssetCharacterNegativeTag(idx) {
+            await modifyTagLightweight('remove_character_negative_tag', { index: idx }, 'asset-character-negative-tags', 'removeAssetCharacterNegativeTag', 'character_negative', syncCharacterNegativePreset);
+        }
+
         async function addAssetNegativeTag() {
             const input = document.getElementById('asset-new-negative-tag');
             const val = input.value.trim();
@@ -6296,6 +6389,8 @@
             const exprTags = expr ? (assetTags.expressions?.[expr] || []).filter(t => t.trim()) : [];
             // 복장 (전역)
             const outfitTags = outfit ? (assetTags.outfits?.[outfit] || []).filter(t => t.trim()) : [];
+            // 캐릭터 부정
+            const cnTags = (assetTags.character_negative || []).filter(t => t.trim());
             // 부정
             const nTags = (assetTags.negative || []).filter(t => t.trim());
 
@@ -6318,7 +6413,7 @@
             positiveFull += `\n[ED_ACTIVATE]\n${edActivate ? 'true' : 'false'}`;
             positiveFull += '\n[END]';
 
-            const negative = nTags.join(', ');
+            const negative = [...cnTags, ...nTags].join(', ');
 
             // 모달 표시
             const overlay = document.createElement('div');
@@ -6490,6 +6585,44 @@
             if (!name) return;
             if (!confirm(`프리셋 "${name}" 삭제?`)) return;
             assetTagAction('delete_negative_preset', { name });
+        }
+
+        // ─── 캐릭터 부정 태그 프리셋 ────────────────────────────
+        function addCharacterNegativePreset() {
+            if (!assetTags) return;
+            const name = prompt('새 프리셋명');
+            if (!name || !name.trim()) return;
+            assetTagAction('save_character_negative_preset', { name: name.trim(), tags: assetTags.character_negative || [] });
+        }
+
+        function duplicateCharacterNegativePreset() {
+            const src = document.getElementById('asset-character-negative-preset-select').value;
+            if (!src) { showToast('복제할 프리셋을 선택하세요', 'error'); return; }
+            const newName = prompt('새 프리셋명', src + ' 복사본');
+            if (!newName || !newName.trim()) return;
+            assetTagAction('duplicate_character_negative_preset', { source: src, name: newName.trim() });
+        }
+
+        function syncCharacterNegativePreset() {
+            const sel = document.getElementById('asset-character-negative-preset-select').value;
+            if (!sel || !assetTags) return;
+            fetch('/api/asset_mode/tags', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'save_character_negative_preset', name: sel, tags: assetTags.character_negative || [] })
+            }).catch(() => {});
+        }
+
+        function loadCharacterNegativePreset() {
+            const name = document.getElementById('asset-character-negative-preset-select').value;
+            modifyTagLightweight('load_character_negative_preset', { name }, 'asset-character-negative-tags', 'removeAssetCharacterNegativeTag', 'character_negative');
+        }
+
+        function deleteCharacterNegativePreset() {
+            const name = document.getElementById('asset-character-negative-preset-select').value;
+            if (!name) return;
+            if (!confirm(`프리셋 "${name}" 삭제?`)) return;
+            assetTagAction('delete_character_negative_preset', { name });
         }
 
         // ─── 캐릭터 프리셋 ──────────────────────────────────
@@ -7480,6 +7613,8 @@
                         action = { action: 'reorder_global_tags', category: 'composition', tags: reorderedTags };
                     } else if (containerId === 'asset-negative-tags') {
                         action = { action: 'reorder_global_tags', category: 'negative', tags: reorderedTags };
+                    } else if (containerId === 'asset-character-negative-tags') {
+                        action = { action: 'reorder_global_tags', category: 'character_negative', tags: reorderedTags };
                     } else if (containerId === 'asset-appearance-tags') {
                         const app = document.getElementById('asset-appearance-select').value;
                         action = { action: 'reorder_sub_tags', sub: 'appearances', name: app, order };
@@ -7502,6 +7637,9 @@
                         } else if (containerId === 'asset-negative-tags') {
                             const ps = document.getElementById('asset-negative-preset-select');
                             if (ps && ps.value) assetTagAction('save_negative_preset', { name: ps.value, tags: reorderedTags });
+                        } else if (containerId === 'asset-character-negative-tags') {
+                            const ps = document.getElementById('asset-character-negative-preset-select');
+                            if (ps && ps.value) assetTagAction('save_character_negative_preset', { name: ps.value, tags: reorderedTags });
                         }
                     }
                     dragIdx = null;
@@ -7542,17 +7680,34 @@
 
             const grid = document.getElementById('asset-folder-grid');
             grid.innerHTML = '';
+
             chars.forEach(name => {
-                const card = document.createElement('div');
-                card.className = 'asset-folder-card';
-                card.onclick = () => navigateToCharacterGallery(name);
-                card.innerHTML = `
-                    <div class="folder-icon">📁</div>
-                    <div class="folder-name">${escapeHtml(name)}</div>
-                `;
-                grid.appendChild(card);
+                grid.appendChild(createFolderCard(name));
             });
+
             showAssetView('folder');
+        }
+
+        function createFolderCard(name) {
+            const card = document.createElement('div');
+            card.className = 'asset-folder-card';
+
+            const icon = document.createElement('div');
+            icon.className = 'folder-icon';
+            icon.textContent = '📁';
+
+            const nameEl = document.createElement('div');
+            nameEl.className = 'folder-name';
+            nameEl.textContent = name;
+
+            card.appendChild(icon);
+            card.appendChild(nameEl);
+
+            card.onclick = () => {
+                navigateToCharacterGallery(name);
+            };
+
+            return card;
         }
 
         async function navigateToCharacterGallery(charName) {
@@ -7574,6 +7729,7 @@
                 const resp = await fetch(`/api/asset_mode/characters/${enc(charName)}/gallery`);
                 const data = await resp.json();
                 const items = data.gallery || [];
+                const outfitGroups = data.outfit_groups || {};
 
                 if (items.length === 0) {
                     showAssetView('empty');
@@ -7586,10 +7742,58 @@
                 const grid = document.getElementById('asset-gallery-grid');
                 grid.innerHTML = '';
 
-                items.forEach(item => {
+                // 아이템 키 맵
+                const itemMap = {};
+                items.forEach(it => { itemMap[`${it.outfit}::${it.expression}`] = it; });
+
+                // 그룹에 속한 아이템 집합
+                const groupedKeys = new Set();
+                for (const members of Object.values(outfitGroups)) {
+                    members.forEach(m => groupedKeys.add(`${m.outfit}::${m.expression}`));
+                }
+
+                // 그룹 카드 생성 헬퍼
+                function createGalleryCard(item, inGroup) {
                     const card = document.createElement('div');
                     card.className = 'asset-gallery-card';
-                    card.onclick = () => navigateToImages(charName, item.outfit, item.expression);
+                    card.draggable = true;
+                    card.dataset.outfit = item.outfit;
+                    card.dataset.expression = item.expression;
+
+                    // 드래그 시작
+                    card.addEventListener('dragstart', e => {
+                        e.dataTransfer.setData('text/plain', `${item.outfit}::${item.expression}`);
+                        e.dataTransfer.effectAllowed = 'move';
+                        card.classList.add('gallery-dragging');
+                    });
+                    card.addEventListener('dragend', () => {
+                        card.classList.remove('gallery-dragging');
+                        document.querySelectorAll('.gallery-drag-over, .gallery-group-drag-over').forEach(el =>
+                            el.classList.remove('gallery-drag-over', 'gallery-group-drag-over'));
+                    });
+
+                    // 다른 카드 위에 드롭 → 그룹 생성
+                    card.addEventListener('dragover', e => {
+                        e.preventDefault();
+                        e.dataTransfer.dropEffect = 'move';
+                        card.classList.add('gallery-drag-over');
+                    });
+                    card.addEventListener('dragleave', () => {
+                        card.classList.remove('gallery-drag-over');
+                    });
+                    card.addEventListener('drop', e => {
+                        e.preventDefault();
+                        card.classList.remove('gallery-drag-over');
+                        const srcKey = e.dataTransfer.getData('text/plain');
+                        const tgtKey = `${item.outfit}::${item.expression}`;
+                        if (!srcKey || srcKey === tgtKey) return;
+                        const [srcOutfit, srcExpr] = srcKey.split('::');
+                        assetTagAction('set_outfit_group', {
+                            character: charName,
+                            src_outfit: srcOutfit, src_expression: srcExpr,
+                            tgt_outfit: item.outfit, tgt_expression: item.expression
+                        }).then(() => renderCharacterGallery(charName));
+                    });
 
                     const enc = encodeURIComponent;
                     let thumbHtml;
@@ -7600,14 +7804,102 @@
                         thumbHtml = `<div class="gallery-thumb-placeholder">이미지 없음</div>`;
                     }
 
+                    let removeGroupBtn = '';
+                    if (inGroup) {
+                        removeGroupBtn = `<button class="gallery-group-remove-btn">×</button>`;
+                    }
+
                     card.innerHTML = `
                         <button class="gallery-delete-btn" onclick="event.stopPropagation(); deleteAssetCombination('${enc(charName)}','${enc(item.outfit)}','${enc(item.expression)}',${item.image_count})">삭제</button>
+                        ${removeGroupBtn}
                         ${thumbHtml}
                         <div class="gallery-title">${escapeHtml(item.outfit)} - ${escapeHtml(item.expression)}</div>
                         ${item.image_count > 0 ? `<div class="gallery-count">${item.image_count}장</div>` : ''}
                     `;
-                    grid.appendChild(card);
+
+                    // 그룹 제거 버튼 이벤트
+                    if (inGroup) {
+                        const rmBtn = card.querySelector('.gallery-group-remove-btn');
+                        if (rmBtn) {
+                            rmBtn.addEventListener('click', e => {
+                                e.stopPropagation();
+                                assetTagAction('ungroup_outfit', {
+                                    character: charName,
+                                    outfit: item.outfit,
+                                    expression: item.expression
+                                }).then(() => renderCharacterGallery(charName));
+                            });
+                        }
+                    }
+
+                    card.onclick = (e) => {
+                        navigateToImages(charName, item.outfit, item.expression);
+                    };
+
+                    return card;
+                }
+
+                // 그룹별 연한 랜덤 배경색
+                const groupColors = {};
+                function getGroupColor(gid) {
+                    if (!groupColors[gid]) {
+                        const h = Math.floor(Math.random() * 360);
+                        groupColors[gid] = `hsla(${h}, 60%, 85%, 0.4)`;
+                    }
+                    return groupColors[gid];
+                }
+
+                // 그룹 렌더링
+                for (const [gid, members] of Object.entries(outfitGroups)) {
+                    const validMembers = members.filter(m => itemMap[`${m.outfit}::${m.expression}`]);
+                    if (validMembers.length === 0) continue;
+
+                    const container = document.createElement('div');
+                    container.className = 'gallery-group-container';
+                    container.style.backgroundColor = getGroupColor(gid);
+
+                    validMembers.forEach(m => {
+                        const it = itemMap[`${m.outfit}::${m.expression}`];
+                        container.appendChild(createGalleryCard(it, true));
+                    });
+
+                    // 그룹 컨테이너도 드롭 영역
+                    container.addEventListener('dragover', e => {
+                        e.preventDefault();
+                        e.dataTransfer.dropEffect = 'move';
+                        container.classList.add('gallery-group-drag-over');
+                    });
+                    container.addEventListener('dragleave', e => {
+                        if (!container.contains(e.relatedTarget)) {
+                            container.classList.remove('gallery-group-drag-over');
+                        }
+                    });
+                    container.addEventListener('drop', e => {
+                        e.preventDefault();
+                        container.classList.remove('gallery-group-drag-over');
+                        const srcKey = e.dataTransfer.getData('text/plain');
+                        if (!srcKey) return;
+                        const tgt = validMembers[0];
+                        const tgtKey = `${tgt.outfit}::${tgt.expression}`;
+                        if (srcKey === tgtKey) return;
+                        const [srcOutfit, srcExpr] = srcKey.split('::');
+                        assetTagAction('set_outfit_group', {
+                            character: charName,
+                            src_outfit: srcOutfit, src_expression: srcExpr,
+                            tgt_outfit: tgt.outfit, tgt_expression: tgt.expression
+                        }).then(() => renderCharacterGallery(charName));
+                    });
+
+                    grid.appendChild(container);
+                }
+
+                // 그룹 없는 개별 카드
+                items.forEach(it => {
+                    const key = `${it.outfit}::${it.expression}`;
+                    if (groupedKeys.has(key)) return;
+                    grid.appendChild(createGalleryCard(it, false));
                 });
+
                 showAssetView('gallery');
                 if (savedScroll > 0) {
                     requestAnimationFrame(() => {
@@ -9471,6 +9763,7 @@
             const exprOptions = buildOptions(assetTags?.expressions || {}, '', '-- 변경 안함 --');
             const compOptions = buildPresetOptions(assetTags?.composition_presets || {}, '', '-- 변경 안함 --');
             const qualOptions = buildPresetOptions(assetTags?.quality_presets || {}, '', '-- 변경 안함 --');
+            const cnOptions = buildPresetOptions(assetTags?.character_negative_presets || {}, '', '-- 변경 안함 --');
             const negOptions = buildPresetOptions(assetTags?.negative_presets || {}, '', '-- 변경 안함 --');
 
             const overlay = document.createElement('div');
@@ -9490,6 +9783,7 @@
                     <div><div class="batch-field-label">표정</div><select id="bulk-expression" class="batch-select">${exprOptions}</select></div>
                     <div><div class="batch-field-label">구도/기타 태그</div><select id="bulk-composition" class="batch-select">${compOptions}</select></div>
                     <div><div class="batch-field-label">품질 태그 프리셋</div><select id="bulk-quality" class="batch-select">${qualOptions}</select></div>
+                    <div><div class="batch-field-label">캐릭터 부정(optional)</div><select id="bulk-character-negative" class="batch-select">${cnOptions}</select></div>
                     <div><div class="batch-field-label">부정 태그 프리셋</div><select id="bulk-negative" class="batch-select">${negOptions}</select></div>
 
                     <div style="border-top:1px solid var(--border); padding-top:10px;">
@@ -9717,6 +10011,7 @@
                 expression: document.getElementById('bulk-expression').value,
                 composition_preset: document.getElementById('bulk-composition').value,
                 quality_preset: document.getElementById('bulk-quality').value,
+                character_negative_preset: document.getElementById('bulk-character-negative').value,
                 negative_preset: document.getElementById('bulk-negative').value,
             };
             const refAction = document.getElementById('bulk-ref-action').value;
@@ -9734,6 +10029,7 @@
                 if (fields.expression) slot.expression = fields.expression;
                 if (fields.composition_preset) slot.composition_preset = fields.composition_preset;
                 if (fields.quality_preset) slot.quality_preset = fields.quality_preset;
+                if (fields.character_negative_preset) slot.character_negative_preset = fields.character_negative_preset;
                 if (fields.negative_preset) slot.negative_preset = fields.negative_preset;
                 if (refAction === 'on') slot.ref_enabled = true;
                 if (refAction === 'off') slot.ref_enabled = false;
@@ -9816,6 +10112,7 @@
             const exprSel = buildCustomSelectHTML(assetTags?.expressions || {}, slot.expression, '-- 표정 --', 'expression');
             const compSel = buildCustomSelectHTML(assetTags?.composition_presets || {}, slot.composition_preset, '-- 구도 프리셋 --', 'composition_preset');
             const qualSel = buildCustomSelectHTML(assetTags?.quality_presets || {}, slot.quality_preset, '-- 품질 프리셋 --', 'quality_preset');
+            const cnSel = buildCustomSelectHTML(assetTags?.character_negative_presets || {}, slot.character_negative_preset, '-- 캐릭터 부정 프리셋 --', 'character_negative_preset');
             const negSel = buildCustomSelectHTML(assetTags?.negative_presets || {}, slot.negative_preset, '-- 부정 프리셋 --', 'negative_preset');
 
             return `
@@ -9830,6 +10127,7 @@
                 <div class="batch-field-group"><div class="batch-field-label">표정</div>${exprSel}</div>
                 <div class="batch-field-group"><div class="batch-field-label">구도/기타 태그</div>${compSel}</div>
                 <div class="batch-field-group"><div class="batch-field-label">품질 태그</div>${qualSel}</div>
+                <div class="batch-field-group"><div class="batch-field-label">캐릭터 부정(optional)</div>${cnSel}</div>
                 <div class="batch-field-group"><div class="batch-field-label">부정 태그</div>${negSel}</div>
 
                 <div class="batch-toggle-row">
@@ -10252,6 +10550,7 @@
             const appTags = (slot.appearance && assetTags.appearances?.[slot.appearance]) || [];
             const exprTags = (slot.expression && assetTags.expressions?.[slot.expression]) || [];
             const outfitTags = (slot.outfit && assetTags.outfits?.[slot.outfit]) || [];
+            const cnTags = (slot.character_negative_preset && assetTags.character_negative_presets?.[slot.character_negative_preset]) || [];
             const nTags = (slot.negative_preset && assetTags.negative_presets?.[slot.negative_preset]) || [];
 
             const positive = [...qTags, ...cTags, ...appTags, ...exprTags, ...outfitTags].filter(t => t.trim());
@@ -10271,7 +10570,7 @@
             positiveFull += `\n[ED_ACTIVATE]\n${slot.ed_enabled ? 'true' : 'false'}`;
             positiveFull += '\n[END]';
 
-            const negative = nTags.filter(t => t.trim()).join(', ');
+            const negative = [...cnTags, ...nTags].filter(t => t.trim()).join(', ');
 
             return positiveFull;
         }
@@ -10375,6 +10674,14 @@
                                     method: 'POST',
                                     headers: { 'Content-Type': 'application/json' },
                                     body: JSON.stringify({ action: 'load_composition_preset', name: slot.composition_preset })
+                                });
+                            }
+                            // 캐릭터 부정 프리셋 로드
+                            if (slot.character_negative_preset) {
+                                await fetch('/api/asset_mode/tags', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ action: 'load_character_negative_preset', name: slot.character_negative_preset })
                                 });
                             }
                             // 부정 프리셋 로드
@@ -10558,7 +10865,7 @@
 
             // 1) 사용 중인 이름 수집
             const usedApps = new Set(), usedOutfits = new Set(), usedExprs = new Set();
-            const usedQual = new Set(), usedComp = new Set(), usedNeg = new Set();
+            const usedQual = new Set(), usedComp = new Set(), usedNeg = new Set(), usedCNeg = new Set();
             const usedChars = new Set(), usedPoseIds = new Set();
             const slotsNeedingRef = [];
 
@@ -10568,6 +10875,7 @@
                 if (slot.expression) usedExprs.add(slot.expression);
                 if (slot.quality_preset) usedQual.add(slot.quality_preset);
                 if (slot.composition_preset) usedComp.add(slot.composition_preset);
+                if (slot.character_negative_preset) usedCNeg.add(slot.character_negative_preset);
                 if (slot.negative_preset) usedNeg.add(slot.negative_preset);
                 if (slot.character) usedChars.add(slot.character);
                 if (slot.pose_enabled && slot.pose_id) usedPoseIds.add(slot.pose_id);
@@ -10578,6 +10886,7 @@
             const tags = {
                 appearances: {}, outfits: {}, expressions: {},
                 quality_presets: {}, composition_presets: {}, negative_presets: {},
+                character_negative_presets: {},
                 characters: {}
             };
             usedApps.forEach(name => { tags.appearances[name] = assetTags.appearances[name] || []; });
@@ -10586,6 +10895,7 @@
             usedQual.forEach(name => { tags.quality_presets[name] = assetTags.quality_presets[name] || []; });
             usedComp.forEach(name => { tags.composition_presets[name] = assetTags.composition_presets[name] || []; });
             usedNeg.forEach(name => { tags.negative_presets[name] = assetTags.negative_presets[name] || []; });
+            usedCNeg.forEach(name => { tags.character_negative_presets[name] = assetTags.character_negative_presets[name] || []; });
             usedChars.forEach(name => { tags.characters[name] = assetTags.characters[name] || {}; });
 
             // 3) 포즈 데이터 (keypoints + source_image base64)
@@ -10650,11 +10960,11 @@
         // ── 체인 가져오기 충돌 감지/해결 ──
         let _pendingImportData = null;
 
-        const IMPORT_TAG_CATEGORIES = ['appearances', 'outfits', 'expressions', 'quality_presets', 'composition_presets', 'negative_presets', 'characters'];
+        const IMPORT_TAG_CATEGORIES = ['appearances', 'outfits', 'expressions', 'quality_presets', 'composition_presets', 'negative_presets', 'character_negative_presets', 'characters'];
         const IMPORT_TAG_LABELS = {
             appearances: '외모', outfits: '복장', expressions: '표정',
             quality_presets: '품질 프리셋', composition_presets: '구도 프리셋',
-            negative_presets: '부정 프리셋', characters: '캐릭터'
+            negative_presets: '부정 프리셋', character_negative_presets: '캐릭터 부정 프리셋', characters: '캐릭터'
         };
 
         async function detectImportConflicts(data) {
@@ -10953,6 +11263,7 @@
                 expression: mapTagField(tagNameMap.expressions, c.expression),
                 composition_preset: mapTagField(tagNameMap.composition_presets, c.composition_preset),
                 quality_preset: mapTagField(tagNameMap.quality_presets, c.quality_preset),
+                character_negative_preset: mapTagField(tagNameMap.character_negative_presets, c.character_negative_preset),
                 negative_preset: mapTagField(tagNameMap.negative_presets, c.negative_preset),
                 ref_enabled: !!c.ref_enabled,
                 ref_strength: c.ref_strength || 0.55,
@@ -11000,6 +11311,8 @@
                 await assetTagAction('save_composition_preset', { name, tags: importedData || [] });
             } else if (cat === 'negative_presets') {
                 await assetTagAction('save_negative_preset', { name, tags: importedData || [] });
+            } else if (cat === 'character_negative_presets') {
+                await assetTagAction('save_character_negative_preset', { name, tags: importedData || [] });
             } else if (cat === 'characters') {
                 await assetTagAction('add_character', { name });
                 if (importedData && Object.keys(importedData).length > 0) {
@@ -11021,6 +11334,8 @@
                 await assetTagAction('delete_composition_preset', { name });
             } else if (cat === 'negative_presets') {
                 await assetTagAction('delete_negative_preset', { name });
+            } else if (cat === 'character_negative_presets') {
+                await assetTagAction('delete_character_negative_preset', { name });
             } else if (cat === 'characters') {
                 await assetTagAction('remove_character', { name });
             }

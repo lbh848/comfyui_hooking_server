@@ -3141,6 +3141,36 @@ async def handle_api_asset_mode_tags_post(request: web.Request) -> web.Response:
                     result = {"success": True}
                 else:
                     result = {"success": False, "error": "존재하지 않는 프리셋"}
+        # 캐릭터 부정 태그
+        elif action == "add_character_negative_tag":
+            result = asset_mode.add_character_negative_tag(body.get("value", ""))
+        elif action == "remove_character_negative_tag":
+            result = asset_mode.remove_character_negative_tag(body.get("index", -1))
+        elif action == "save_character_negative_preset":
+            result = asset_mode.save_character_negative_preset(body.get("name", ""), body.get("tags", []))
+        elif action == "delete_character_negative_preset":
+            result = asset_mode.delete_character_negative_preset(body.get("name", ""))
+        elif action == "duplicate_character_negative_preset":
+            src, dn = body.get("source", ""), body.get("name", "")
+            ps = asset_mode._tags.setdefault("character_negative_presets", {})
+            if src not in ps: result = {"success": False, "error": "원본 없음"}
+            elif not dn.strip(): result = {"success": False, "error": "빈 이름"}
+            elif dn.strip() in ps: result = {"success": False, "error": "이미 존재"}
+            else: ps[dn.strip()] = list(ps[src]); asset_mode.save_tags(); result = {"success": True}
+        elif action == "load_character_negative_preset":
+            name = body.get("name", "")
+            if not name:
+                asset_mode._tags["character_negative"] = []
+                asset_mode.save_tags()
+                result = {"success": True}
+            else:
+                presets = asset_mode.get_character_negative_presets()
+                if name in presets:
+                    asset_mode._tags["character_negative"] = list(presets[name])
+                    asset_mode.save_tags()
+                    result = {"success": True}
+                else:
+                    result = {"success": False, "error": "존재하지 않는 프리셋"}
         # 캐릭터 프리셋
         elif action == "save_character_preset":
             result = asset_mode.save_character_preset(
@@ -3190,6 +3220,16 @@ async def handle_api_asset_mode_tags_post(request: web.Request) -> web.Response:
             result = asset_mode.load_expression_preset(body.get("name", ""), body.get("character", ""), body.get("expression", ""))
         elif action == "delete_expression_preset":
             result = asset_mode.delete_expression_preset(body.get("name", ""))
+        # 복장×표정 그룹
+        elif action == "set_outfit_group":
+            result = asset_mode.set_outfit_group(
+                body.get("character", ""),
+                body.get("src_outfit", ""), body.get("src_expression", ""),
+                body.get("tgt_outfit", ""), body.get("tgt_expression", ""))
+        elif action == "ungroup_outfit":
+            result = asset_mode.ungroup_outfit(
+                body.get("character", ""),
+                body.get("outfit", ""), body.get("expression", ""))
 
         return web.json_response(result)
     except Exception as e:
@@ -3220,11 +3260,17 @@ async def handle_api_asset_mode_generate(request: web.Request) -> web.Response:
         return web.json_response({"success": False, "error": f"{type(e).__name__}: {e}"}, status=500)
 
 async def handle_api_asset_mode_characters(request: web.Request) -> web.Response:
-    return web.json_response({"characters": asset_mode.list_characters()})
+    return web.json_response({
+        "characters": asset_mode.list_characters(),
+        "representatives": asset_mode.get_characters_representative(),
+    })
 
 async def handle_api_asset_mode_gallery(request: web.Request) -> web.Response:
     character = request.match_info.get("character", "")
-    return web.json_response({"gallery": asset_mode.list_character_gallery(character)})
+    return web.json_response({
+        "gallery": asset_mode.list_character_gallery(character),
+        "outfit_groups": asset_mode.get_outfit_groups(character),
+    })
 
 async def handle_api_asset_mode_outfits(request: web.Request) -> web.Response:
     character = request.match_info.get("character", "")

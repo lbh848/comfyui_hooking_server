@@ -58,6 +58,7 @@ DEFAULT_TAGS = {
     "quality": ["masterpiece, best quality"],
     "composition": [],
     "negative": ["lowres, bad anatomy, bad hands"],
+    "character_negative": [],
     "appearances": {},
     "outfits": {},
     "expressions": {},
@@ -65,6 +66,7 @@ DEFAULT_TAGS = {
     "quality_presets": {},
     "composition_presets": {},
     "negative_presets": {},
+    "character_negative_presets": {},
     "character_presets": {},
 }
 
@@ -453,6 +455,40 @@ class AssetMode:
         self.save_tags()
         return {"success": True}
 
+    # ─── 캐릭터 부정 태그 ──────────────────────────────────
+    def add_character_negative_tag(self, value: str) -> dict:
+        if value.strip() in [t.strip() for t in self._tags.get("character_negative", [])]:
+            return {"success": False, "error": "이미 존재하는 태그"}
+        self._tags.setdefault("character_negative", []).append(value)
+        self.save_tags()
+        return {"success": True}
+
+    def remove_character_negative_tag(self, index: int) -> dict:
+        tags = self._tags.get("character_negative", [])
+        if index < 0 or index >= len(tags):
+            return {"success": False, "error": "잘못된 인덱스"}
+        tags.pop(index)
+        self.save_tags()
+        return {"success": True}
+
+    def get_character_negative_presets(self) -> dict:
+        return copy.deepcopy(self._tags.get("character_negative_presets", {}))
+
+    def save_character_negative_preset(self, name: str, tags: list[str]) -> dict:
+        if not name.strip():
+            return {"success": False, "error": "빈 이름"}
+        self._tags.setdefault("character_negative_presets", {})[name.strip()] = list(tags)
+        self.save_tags()
+        return {"success": True}
+
+    def delete_character_negative_preset(self, name: str) -> dict:
+        presets = self._tags.get("character_negative_presets", {})
+        if name not in presets:
+            return {"success": False, "error": "존재하지 않는 프리셋"}
+        del presets[name]
+        self.save_tags()
+        return {"success": True}
+
     # ─── 캐릭터 관리 (조합 참조만) ─────────────────────────
     def add_character(self, name: str) -> dict:
         if name in self._tags["characters"]:
@@ -513,6 +549,141 @@ class AssetMode:
 
     def list_characters(self) -> list[str]:
         return list(self._tags.get("characters", {}).keys())
+
+    def get_characters_representative(self) -> dict[str, dict]:
+        """각 캐릭터의 첫 번째 대표이미지 정보를 반환.
+        {char_name: {outfit, expression, filename}} 또는 {}
+        """
+        result = {}
+        for char_name in self.list_characters():
+            char_dir = os.path.join(ASSET_DIR, self._safe_dirname(char_name))
+            if not os.path.isdir(char_dir):
+                continue
+            for outfit_dir_name in sorted(os.listdir(char_dir)):
+                outfit_path = os.path.join(char_dir, outfit_dir_name)
+                if not os.path.isdir(outfit_path):
+                    continue
+                for expr_dir_name in sorted(os.listdir(outfit_path)):
+                    expr_path = os.path.join(outfit_path, expr_dir_name)
+                    if not os.path.isdir(expr_path):
+                        continue
+                    rep_path = os.path.join(expr_path, "_representative.json")
+                    if os.path.isfile(rep_path):
+                        try:
+                            with open(rep_path, "r", encoding="utf-8") as f:
+                                rep_file = json.load(f).get("filename", "")
+                            if rep_file:
+                                result[char_name] = {
+                                    "outfit": outfit_dir_name,
+                                    "expression": expr_dir_name,
+                                    "filename": rep_file,
+                                }
+                                break
+                        except Exception:
+                            pass
+                if char_name in result:
+                    break
+        return result
+
+    # ─── 복장×표정 그룹 (Level 1) ────────────────────────────
+    def _expr_group_path(self, character: str, outfit: str, expression: str) -> str:
+        return os.path.join(ASSET_DIR, self._safe_dirname(character),
+                            self._safe_dirname(outfit), self._safe_dirname(expression),
+                            "_expr_group.json")
+
+    def get_outfit_groups(self, character: str) -> dict:
+        """캐릭터의 복장×표정 그룹을 {group_id: [{outfit, expression}, ...]} 반환."""
+        groups: dict[str, list[dict]] = {}
+        char_dir = os.path.join(ASSET_DIR, self._safe_dirname(character))
+        if not os.path.isdir(char_dir):
+            return groups
+        for outfit_dir in sorted(os.listdir(char_dir)):
+            outfit_path = os.path.join(char_dir, outfit_dir)
+            if not os.path.isdir(outfit_path):
+                continue
+            for expr_dir in sorted(os.listdir(outfit_path)):
+                expr_path = os.path.join(outfit_path, expr_dir)
+                gfile = os.path.join(expr_path, "_expr_group.json")
+                if not os.path.isfile(gfile):
+                    continue
+                try:
+                    with open(gfile, "r", encoding="utf-8") as f:
+                        gid = json.load(f).get("group_id")
+                    if gid:
+                        groups.setdefault(gid, []).append({"outfit": outfit_dir, "expression": expr_dir})
+                except Exception:
+                    pass
+        return groups
+
+    def set_outfit_group(self, character: str, src_outfit: str, src_expr: str,
+                         tgt_outfit: str, tgt_expr: str) -> dict:
+        """두 복장×표정 조합을 같은 그룹으로 묶기."""
+        if not all([character, src_outfit, src_expr, tgt_outfit, tgt_expr]):
+            return {"success": False, "error": "필드 누락"}
+
+        src_gfile = self._expr_group_path(character, src_outfit, src_expr)
+        tgt_gfile = self._expr_group_path(character, tgt_outfit, tgt_expr)
+
+        # 기존 그룹 ID 읽기
+        tgt_gid = None
+        if os.path.isfile(tgt_gfile):
+            try:
+                with open(tgt_gfile, "r", encoding="utf-8") as f:
+                    tgt_gid = json.load(f).get("group_id")
+            except Exception:
+                pass
+
+        src_gid = None
+        if os.path.isfile(src_gfile):
+            try:
+                with open(src_gfile, "r", encoding="utf-8") as f:
+                    src_gid = json.load(f).get("group_id")
+            except Exception:
+                pass
+
+        if tgt_gid and src_gid and tgt_gid == src_gid:
+            return {"success": True, "message": "이미 같은 그룹"}
+
+        final_gid = tgt_gid or str(uuid.uuid4())
+
+        if not tgt_gid:
+            os.makedirs(os.path.dirname(tgt_gfile), exist_ok=True)
+            with open(tgt_gfile, "w", encoding="utf-8") as f:
+                json.dump({"group_id": final_gid}, f, ensure_ascii=False, indent=2)
+
+        os.makedirs(os.path.dirname(src_gfile), exist_ok=True)
+        with open(src_gfile, "w", encoding="utf-8") as f:
+            json.dump({"group_id": final_gid}, f, ensure_ascii=False, indent=2)
+
+        # 기존 그룹 병합
+        if src_gid and src_gid != final_gid:
+            groups = self.get_outfit_groups(character)
+            for m in groups.get(src_gid, []):
+                mf = self._expr_group_path(character, m["outfit"], m["expression"])
+                os.makedirs(os.path.dirname(mf), exist_ok=True)
+                with open(mf, "w", encoding="utf-8") as f:
+                    json.dump({"group_id": final_gid}, f, ensure_ascii=False, indent=2)
+
+        return {"success": True}
+
+    def ungroup_outfit(self, character: str, outfit: str, expression: str) -> dict:
+        """복장×표정 조합을 그룹에서 제거."""
+        if not all([character, outfit, expression]):
+            return {"success": False, "error": "필드 누락"}
+
+        gfile = self._expr_group_path(character, outfit, expression)
+        if not os.path.isfile(gfile):
+            return {"success": True, "message": "그룹 없음"}
+
+        try:
+            with open(gfile, "r", encoding="utf-8") as f:
+                old_gid = json.load(f).get("group_id")
+        except Exception:
+            old_gid = None
+
+        os.remove(gfile)
+
+        return {"success": True}
 
     def ensure_upload_character(self):
         """업로드이미지 캐릭터가 tags.json에 없으면 자동 등록."""
@@ -619,6 +790,7 @@ class AssetMode:
         outfit_tags = self._tags.get("outfits", {}).get(outfit, [])
         expr_tags = self._tags.get("expressions", {}).get(expression, [])
         n_tags = self._tags.get("negative", [])
+        cn_tags = self._tags.get("character_negative", [])
 
         positive_parts = []
         for t in q_tags:
@@ -652,7 +824,7 @@ class AssetMode:
         positive += f"\n[ED_ACTIVATE]\n{'true' if ed_activate else 'false'}"
         positive += "\n[END]"
 
-        negative_parts = [t.strip() for t in n_tags if t.strip()]
+        negative_parts = [t.strip() for t in cn_tags if t.strip()] + [t.strip() for t in n_tags if t.strip()]
         negative = ", ".join(negative_parts)
         return positive, negative
 
