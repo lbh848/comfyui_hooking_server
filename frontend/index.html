@@ -1977,6 +1977,62 @@
             pointer-events: none;
         }
 
+        /* ─── 에셋툴 탭 ─── */
+        .at-container { display: flex; flex-direction: column; height: calc(100vh - 60px); overflow: hidden; }
+        .at-toolbar { display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: var(--surface2); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+        .at-toolbar select, .at-toolbar button { font-size: 0.85rem; }
+        .at-body { display: flex; flex: 1; min-height: 0; overflow: hidden; }
+        .at-sidebar { width: 48px; display: flex; flex-direction: column; align-items: center; padding-top: 8px; background: var(--surface2); border-right: 1px solid var(--border); flex-shrink: 0; }
+        .at-sidebar-btn { width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; border-radius: 6px; cursor: pointer; font-size: 1.1rem; border: none; background: transparent; color: var(--text2); transition: all 0.15s; margin-bottom: 4px; position: relative; }
+        .at-sidebar-btn:hover { background: rgba(66,133,244,0.08); color: var(--text); }
+        .at-sidebar-btn.active { background: var(--accent); color: #fff; }
+        .at-sidebar-btn .at-sidebar-tooltip { display: none; position: absolute; left: 44px; top: 50%; transform: translateY(-50%); background: var(--surface); border: 1px solid var(--border); padding: 4px 10px; border-radius: 4px; font-size: 0.78rem; white-space: nowrap; z-index: 10; color: var(--text); box-shadow: 0 2px 8px rgba(0,0,0,0.2); }
+        .at-sidebar-btn:hover .at-sidebar-tooltip { display: block; }
+        .at-main { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+        .at-main > div { flex: 1; min-height: 0; }
+        #at-view-upload { padding: 16px; overflow-y: auto; }
+        #at-view-result { display: flex; flex-direction: column; min-height: 0; overflow: auto; }
+        .at-canvas { display: flex; flex-wrap: wrap; gap: 12px; padding: 16px; align-items: flex-start; }
+        .at-card { flex: 0 0 calc(25% - 9px); min-width: 180px; max-width: 280px; min-height: 0; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; display: flex; flex-direction: column; position: relative; transition: border-color 0.15s, box-shadow 0.15s; }
+        .at-card:hover { border-color: rgba(66,133,244,0.4); }
+        .at-card.selected { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(66,133,244,0.3); }
+        .at-card-source { border-color: rgba(76,175,80,0.5); }
+        .at-card-img { width: 100%; aspect-ratio: 3/4; background: var(--surface2); display: flex; align-items: center; justify-content: center; color: var(--text2); font-size: 0.8rem; position: relative; overflow: hidden; border-radius: 10px 10px 0 0; }
+        .at-card-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
+        .at-card-img .at-card-pct { position: absolute; top: 6px; left: 6px; background: var(--accent); color: #fff; font-size: 0.7rem; font-weight: 700; padding: 2px 8px; border-radius: 4px; z-index: 2; }
+        .at-card-img .at-card-check { position: absolute; top: 6px; right: 6px; z-index: 2; width: 18px; height: 18px; cursor: pointer; accent-color: var(--accent); }
+        .at-card-img .at-card-badge { position: absolute; bottom: 0; left: 0; right: 0; background: rgba(0,0,0,0.7); color: #4caf50; font-size: 0.7rem; padding: 2px 6px; text-align: center; }
+        .at-card-body { padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; }
+        .at-card-name { font-weight: 600; font-size: 0.85rem; word-break: break-word; }
+        .at-card-detail { font-size: 0.75rem; color: var(--text2); }
+        .at-card-tags { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 2px; }
+        .at-card-group { display: flex; flex-wrap: wrap; gap: 12px; width: 100%; align-items: flex-start; }
+        .at-card-separator { width: 100%; display: flex; align-items: center; gap: 6px; margin: 8px 0 4px; }
+        .at-card-separator-line { flex: 1; height: 1px; background: var(--border); }
+        .at-card-separator-label { font-size: 0.75rem; color: var(--text2); white-space: nowrap; }
+        .at-dropzone { border: 2px dashed var(--border); border-radius: 8px; padding: 40px 20px; text-align: center; cursor: pointer; transition: all 0.2s; margin-bottom: 16px; }
+        .at-dropzone:hover, .at-dropzone.dragover { border-color: var(--accent); background: rgba(66,133,244,0.06); }
+        .at-dropzone-icon { font-size: 2.5rem; margin-bottom: 8px; }
+        .at-dropzone-text { color: var(--text2); font-size: 0.9rem; }
+        .at-images { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
+        .at-image-card { position: relative; width: 120px; border-radius: 6px; overflow: hidden; border: 1px solid var(--border); background: var(--surface2); }
+        .at-image-card img { width: 120px; height: 120px; object-fit: cover; display: block; }
+        .at-image-card .at-remove-btn { position: absolute; top: 2px; right: 2px; background: rgba(0,0,0,0.6); color: #fff; border: none; border-radius: 50%; width: 22px; height: 22px; font-size: 0.75rem; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+        .at-image-card .at-remove-btn:hover { background: var(--error); }
+        .at-image-card .at-analysis-badge { position: absolute; bottom: 0; left: 0; right: 0; background: rgba(0,0,0,0.7); color: #4caf50; font-size: 0.7rem; padding: 2px 4px; text-align: center; }
+        .at-section { background: var(--surface2); border-radius: 8px; padding: 14px; margin-bottom: 14px; }
+        .at-section-title { font-weight: 600; font-size: 0.95rem; margin-bottom: 10px; display: flex; align-items: center; gap: 6px; }
+        .at-btn { padding: 5px 14px; border-radius: 5px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: 0.85rem; cursor: pointer; transition: all 0.15s; }
+        .at-btn:hover { background: var(--surface); }
+        .at-btn-primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+        .at-btn-primary:hover { opacity: 0.9; }
+        .at-btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+        .at-tags-preview { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+        .at-tag-chip { display: inline-block; background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 2px 8px; font-size: 0.75rem; color: var(--text2); white-space: nowrap; }
+        .at-progress-bar { height: 4px; background: var(--surface); border-radius: 2px; margin: 10px 0; overflow: hidden; }
+        .at-progress-bar-inner { height: 100%; background: var(--accent); width: 0; transition: width 0.3s; }
+        .at-empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1; color: var(--text2); font-size: 0.9rem; padding: 40px 20px; }
+
         /* ─── 그림 일괄생성 탭 ─── */
         .batch-chain-container {
             display: flex;
@@ -2679,11 +2735,103 @@
             </div>
         </div>
 
-        <!-- 스마트 에셋 툴 탭 -->
+        <!-- 에셋툴 탭 -->
         <div id="tab-smart-asset-content" class="tab-content">
-            <div class="empty-state">
-                <h3>에셋툴</h3>
-                <p style="font-size: 0.85rem; color: var(--text2); margin-top: 8px;">에셋을 일괄 등록하고 태그를 자동 분석·매칭합니다</p>
+            <div class="at-container">
+                <div class="at-toolbar">
+                    <span style="font-weight:600; font-size:0.95rem;">🔍 에셋툴</span>
+                    <label style="font-size:0.85rem;">비교 대상:</label>
+                    <span style="font-size:0.85rem; color:var(--text);">표정</span>
+                    <input type="hidden" id="at-category" value="expressions">
+                    <button class="at-btn at-btn-primary" id="at-analyze-btn" onclick="atAnalyzeAll()" disabled>분석 시작</button>
+                    <button class="at-btn" id="at-stop-btn" onclick="atStopAnalysis()" style="display:none; background:#e55; color:#fff; border-color:#e55;">중지</button>
+                    <button class="at-btn" id="at-clear-btn" onclick="atClearAll()" disabled>초기화</button>
+                </div>
+                <div class="at-body">
+                    <div class="at-sidebar">
+                        <button class="at-sidebar-btn active" id="at-sidebar-upload" onclick="atSwitchView('upload')" title="이미지 업로드">
+                            📁
+                            <span class="at-sidebar-tooltip">이미지 업로드</span>
+                        </button>
+                        <button class="at-sidebar-btn" id="at-sidebar-embed" onclick="atSwitchView('embed')" title="임베딩 설정">
+                            🧮
+                            <span class="at-sidebar-tooltip">임베딩 설정</span>
+                        </button>
+                        <button class="at-sidebar-btn" id="at-sidebar-result" onclick="atSwitchView('result')" title="매칭 결과">
+                            🎯
+                            <span class="at-sidebar-tooltip">매칭 결과</span>
+                        </button>
+                    </div>
+                    <div class="at-main">
+                        <div id="at-view-upload">
+                            <div class="at-dropzone" id="at-dropzone" onclick="document.getElementById('at-file-input').click()">
+                                <div class="at-dropzone-icon">📁</div>
+                                <div class="at-dropzone-text">이미지를 드래그앤드롭하거나 클릭하여 선택</div>
+                                <input type="file" id="at-file-input" multiple accept="image/*" style="display:none;" onchange="atOnFilesSelected(this.files)">
+                            </div>
+                            <div class="at-images" id="at-images"></div>
+                            <div class="at-progress-bar" id="at-progress-bar" style="display:none;"><div class="at-progress-bar-inner" id="at-progress-inner"></div></div>
+                        </div>
+                        <div id="at-view-result" style="display:none;">
+                            <div id="at-canvas" class="at-canvas">
+                                <div id="at-match-empty" class="at-empty-state">이미지를 분석하면<br>매칭 결과가 여기에 표시됩니다</div>
+                            </div>
+                        </div>
+                        <div id="at-view-embed" style="display:none;">
+                            <div class="at-section" style="margin-bottom:16px;">
+                                <div class="at-section-title">🧮 임베딩 이름 정제 설정</div>
+                                <div style="font-size:0.82rem; color:var(--text2); margin-bottom:12px;">
+                                    프리셋/태그 이름에서 임베딩에 사용할 의미 있는 부분을 추출하는 규칙입니다.<br>
+                                    프로필을 선택하거나 새로 만들어 적용할 수 있습니다.
+                                </div>
+                                <div style="display:flex; gap:10px; align-items:center; margin-bottom:10px; flex-wrap:wrap;">
+                                    <label style="font-size:0.85rem; font-weight:600; min-width:60px;">정제 대상:</label>
+                                    <select id="at-embed-source" style="padding:4px 8px; border-radius:5px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-size:0.85rem;" onchange="atOnSourceChange()">
+                                        <option value="프리셋">프리셋 이름</option>
+                                        <option value="태그">태그 (업로드 파일명)</option>
+                                    </select>
+                                    <label style="font-size:0.85rem; font-weight:600; min-width:42px;">프로필:</label>
+                                    <select id="at-embed-profile-select" style="padding:4px 8px; border-radius:5px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-size:0.85rem; min-width:160px;" onchange="atOnProfileSelect()">
+                                    </select>
+                                    <button class="at-btn" onclick="atNewProfile()" style="font-size:0.78rem;">＋ 새 프로필</button>
+                                    <button class="at-btn" onclick="atDeleteProfile()" style="font-size:0.78rem; color:#e55;" id="at-embed-delete-profile-btn">🗑 삭제</button>
+                                </div>
+                                <div id="at-embed-steps-container"></div>
+                                <div style="margin-top:12px; display:flex; gap:8px;">
+                                    <button class="at-btn at-btn-primary" onclick="atSaveCurrentProfile()" style="font-size:0.82rem;">💾 프로필 저장</button>
+                                    <button class="at-btn" onclick="atAddStep()" style="font-size:0.82rem;">＋ 단계 추가</button>
+                                    <button class="at-btn" onclick="atResetCurrentProfile()" style="font-size:0.82rem;">🔄 기본값으로</button>
+                                </div>
+                            </div>
+                            <div class="at-section" style="margin-bottom:16px;">
+                                <div class="at-section-title">📋 정제 결과 미리보기</div>
+                                <div style="font-size:0.82rem; color:var(--text2); margin-bottom:10px;">
+                                    정제 규칙을 어디에 적용한 결과를 볼지 선택하세요.
+                                </div>
+                                <div style="display:flex; gap:8px; margin-bottom:8px;">
+                                    <button class="at-btn at-btn-primary" onclick="atPreviewClean('preset')" id="at-preview-preset-btn" style="font-size:0.82rem;">📋 내 프리셋 미리보기</button>
+                                    <button class="at-btn" onclick="atPreviewClean('tag')" id="at-preview-tag-btn" style="font-size:0.82rem;">🏷️ 업로드 태그 미리보기</button>
+                                </div>
+                                <div id="at-embed-preview" style="max-height:260px; overflow-y:auto; background:var(--surface2); border-radius:6px; padding:10px;">
+                                    <div style="color:var(--text2); font-size:0.85rem;">미리보기를 불러오려면 새로고침 버튼을 누르세요.</div>
+                                </div>
+                            </div>
+                            <div class="at-section" style="margin-bottom:16px;">
+                                <div class="at-section-title">🗄️ 임베딩 캐시</div>
+                                <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                                    <button class="at-btn at-btn-primary" id="at-embed-build-btn" onclick="atStartEmbeddingBuild()" style="font-size:0.82rem;">▶ 임베딩 시작</button>
+                                    <div id="at-embed-cache-status" style="font-size:0.82rem; color:var(--text2);">상태 확인 중...</div>
+                                </div>
+                                <div id="at-embed-progress" style="display:none; margin-top:10px;">
+                                    <div style="background:var(--surface2); border-radius:4px; height:20px; overflow:hidden;">
+                                        <div id="at-embed-progress-bar" style="height:100%; background:var(--accent); transition:width 0.3s; width:0%; display:flex; align-items:center; justify-content:center; font-size:0.72rem; color:#fff; font-weight:600;"></div>
+                                    </div>
+                                    <div id="at-embed-progress-text" style="font-size:0.78rem; color:var(--text2); margin-top:4px;"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -2967,6 +3115,58 @@
                     <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
                         <input type="text" id="setting-custom-api-url2" placeholder="예: http://localhost:8191/copilot"
                                style="width: 300px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text);">
+                    </div>
+                </div>
+
+                <hr style="border: none; border-top: 1px solid var(--border); margin: 16px 0;">
+                <div style="text-align: center; margin-bottom: 12px;">
+                    <span style="display: inline-block; background: var(--accent); color: #fff; font-size: 0.95rem; font-weight: 700; padding: 4px 18px; border-radius: 8px; letter-spacing: 2px;">임베딩</span>
+                </div>
+
+                <div class="setting-row">
+                    <div class="setting-label">
+                        <div class="title">임베딩 프로바이더</div>
+                        <div class="desc">텍스트 임베딩 서비스 제공자 (에셋툴 유사도 매칭에 사용)</div>
+                    </div>
+                    <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                        <select id="setting-embedding-provider" onchange="onEmbeddingProviderChange()"
+                                style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: .85rem;">
+                            <option value="voyage">Voyage AI</option>
+                            <option value="custom">Custom API</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="setting-row" id="embedding-url-row" style="display: none;">
+                    <div class="setting-label">
+                        <div class="title">임베딩 URL</div>
+                        <div class="desc">임베딩 API 엔드포인트 URL</div>
+                    </div>
+                    <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                        <input type="text" id="setting-embedding-url" placeholder="예: https://api.voyageai.com/v1/embeddings"
+                               style="width: 350px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text);">
+                    </div>
+                </div>
+
+                <div class="setting-row">
+                    <div class="setting-label">
+                        <div class="title">임베딩 API Key</div>
+                        <div class="desc">임베딩 서비스 인증 키</div>
+                    </div>
+                    <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                        <input type="text" id="setting-embedding-api-key" placeholder="API 키 입력"
+                               style="width: 300px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text);">
+                    </div>
+                </div>
+
+                <div class="setting-row">
+                    <div class="setting-label">
+                        <div class="title">임베딩 모델</div>
+                        <div class="desc">사용할 임베딩 모델명</div>
+                    </div>
+                    <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                        <input type="text" id="setting-embedding-model" placeholder="예: voyage-4-large"
+                               style="width: 200px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text);">
                     </div>
                 </div>
 
@@ -4541,6 +4741,14 @@
             document.getElementById('setting-custom-api-url2').value = currentConfig.custom_api_url2 || '';
             onLlmServiceChange();
 
+            // 임베딩 설정
+            const embProvider = currentConfig.embedding_provider || 'voyage';
+            document.getElementById('setting-embedding-provider').value = embProvider;
+            document.getElementById('setting-embedding-url').value = currentConfig.embedding_url || '';
+            document.getElementById('setting-embedding-api-key').value = currentConfig.embedding_api_key || '';
+            document.getElementById('setting-embedding-model').value = currentConfig.embedding_model || 'voyage-4-large';
+            onEmbeddingProviderChange();
+
             // 배치 모드 타임아웃 설정
             document.getElementById('setting-batch-timeout').value = currentConfig.batch_timeout_seconds || 5.0;
 
@@ -4701,6 +4909,10 @@
                 llm_model2: 'LLM2 모델',
                 custom_api_url: 'Custom API URL',
                 custom_api_url2: 'Custom API URL 2',
+                embedding_provider: '임베딩 프로바이더',
+                embedding_url: '임베딩 URL',
+                embedding_api_key: '임베딩 API Key',
+                embedding_model: '임베딩 모델',
                 batch_timeout_seconds: '배치 타임아웃(초)',
                 notification_enabled: '완료 알림',
                 auto_reschedule_enabled: '자동 재예약',
@@ -4720,7 +4932,9 @@
                 webp_lossless: '무손실 WebP'
             };
             let html = '<table style="width:100%; border-collapse:collapse; font-size:0.82rem;">';
+            const hiddenKeys = [];
             for (const [key, val] of Object.entries(config)) {
+                if (hiddenKeys.includes(key)) continue;
                 const label = labels[key] || key;
                 let displayVal = val;
                 if (typeof val === 'boolean') displayVal = val ? '<span style="color:#4caf50;">ON</span>' : '<span style="color:#999;">OFF</span>';
@@ -4751,6 +4965,10 @@
                 llm_model2: document.getElementById('setting-llm-model2').value,
                 custom_api_url: document.getElementById('setting-custom-api-url').value,
                 custom_api_url2: document.getElementById('setting-custom-api-url2').value,
+                embedding_provider: document.getElementById('setting-embedding-provider').value,
+                embedding_url: document.getElementById('setting-embedding-url').value,
+                embedding_api_key: document.getElementById('setting-embedding-api-key').value,
+                embedding_model: document.getElementById('setting-embedding-model').value,
                 batch_timeout_seconds: parseFloat(document.getElementById('setting-batch-timeout').value) || 5.0,
                 notification_enabled: document.getElementById('setting-notification-enabled').checked,
                 auto_reschedule_enabled: document.getElementById('setting-auto-reschedule').checked,
@@ -5240,6 +5458,12 @@
             // LLM2 CustomAPI URL
             const customRow2 = document.getElementById('customapi-url2-row');
             customRow2.style.display = (s2 === 'customapi') ? 'flex' : 'none';
+        }
+
+        function onEmbeddingProviderChange() {
+            const provider = document.getElementById('setting-embedding-provider').value;
+            const urlRow = document.getElementById('embedding-url-row');
+            urlRow.style.display = (provider === 'custom') ? 'flex' : 'none';
         }
 
         // ─── 복장정리프롬프트 파일 목록 로드 ───
@@ -6008,6 +6232,861 @@
             }
         }
 
+        // ─── 에셋툴 ────────────────────────────────────────────
+        const atState = {
+            images: [],          // {file, url, tags, status: 'pending'|'analyzing'|'done'|'error', error}
+            matches: [],         // [{...match_result, selected: bool}] (기존 호환용, 합산 결과)
+            imageMatches: [],    // [{imageName, tags, matches: [{...match_result, selected: bool}]}] (이미지별 결과)
+            chains: [],          // 제안된 체인
+        };
+
+        function atOnFilesSelected(files) {
+            for (const file of files) {
+                if (!file.type.startsWith('image/')) continue;
+                const url = URL.createObjectURL(file);
+                atState.images.push({ file, url, tags: null, status: 'pending', error: null });
+            }
+            atRenderImages();
+            document.getElementById('at-analyze-btn').disabled = atState.images.length === 0;
+            document.getElementById('at-clear-btn').disabled = atState.images.length === 0;
+        }
+
+        function atRemoveImage(index) {
+            const item = atState.images[index];
+            if (item.url) URL.revokeObjectURL(item.url);
+            atState.images.splice(index, 1);
+            atRenderImages();
+            document.getElementById('at-analyze-btn').disabled = atState.images.length === 0;
+        }
+
+        function atSwitchView(view) {
+            document.getElementById('at-view-upload').style.display = view === 'upload' ? '' : 'none';
+            document.getElementById('at-view-result').style.display = view === 'result' ? 'flex' : 'none';
+            document.getElementById('at-view-embed').style.display = view === 'embed' ? '' : 'none';
+            document.getElementById('at-sidebar-upload').classList.toggle('active', view === 'upload');
+            document.getElementById('at-sidebar-result').classList.toggle('active', view === 'result');
+            document.getElementById('at-sidebar-embed').classList.toggle('active', view === 'embed');
+            if (view === 'result') atRenderSourceCards();
+            if (view === 'embed') atInitEmbedView();
+        }
+
+        function atClearAll() {
+            atState.images.forEach(item => { if (item.url) URL.revokeObjectURL(item.url); });
+            atState.images = [];
+            atState.matches = [];
+            atState.imageMatches = [];
+            atState.chains = [];
+            atRenderImages();
+            const canvas = document.getElementById('at-canvas');
+            if (canvas) canvas.innerHTML = '<div class="at-empty-state">이미지를 분석하면<br>매칭 결과가 여기에 표시됩니다</div>';
+            document.getElementById('at-analyze-btn').disabled = true;
+            document.getElementById('at-clear-btn').disabled = true;
+            document.getElementById('at-progress-bar').style.display = 'none';
+            atSwitchView('upload');
+        }
+
+        function atRenderSourceCards() {
+            const canvas = document.getElementById('at-canvas');
+            if (!canvas) return;
+            if (atState.imageMatches.length > 0) {
+                atRenderMatches();
+                return;
+            }
+            const done = atState.images.filter(i => i.status === 'done');
+            if (done.length === 0) {
+                canvas.innerHTML = '<div class="at-empty-state">이미지를 분석하면<br>매칭 결과가 여기에 표시됩니다</div>';
+                return;
+            }
+            canvas.innerHTML = '';
+            done.forEach(item => {
+                const card = document.createElement('div');
+                card.className = 'at-card at-card-source';
+                const tags = item.tags ? item.tags : [];
+                card.innerHTML = `
+                    <div class="at-card-img">
+                        <img src="${item.url}" onclick="openLightbox(this.src)">
+                    </div>
+                    <div class="at-card-body">
+                        <div class="at-card-name">${escapeHtml(item.file.name || '이미지')}</div>
+                        <div class="at-card-tags">${tags.map(t => `<span class="at-tag-chip">${escapeHtml(t)}</span>`).join('')}</div>
+                    </div>
+                `;
+                canvas.appendChild(card);
+            });
+        }
+
+        function atRenderImages() {
+            const container = document.getElementById('at-images');
+            container.innerHTML = '';
+            atState.images.forEach((item, i) => {
+                const card = document.createElement('div');
+                card.className = 'at-image-card';
+                let badge = '';
+                if (item.status === 'done') badge = '<div class="at-analysis-badge">✅ 분석완료</div>';
+                else if (item.status === 'analyzing') badge = '<div class="at-analysis-badge" style="color:#ffd700;">⏳ 분석중</div>';
+                else if (item.status === 'error') badge = '<div class="at-analysis-badge" style="color:#f44;">❌ 오류</div>';
+                card.innerHTML = `<img src="${item.url}"><button class="at-remove-btn" onclick="atRemoveImage(${i})">✕</button>${badge}`;
+                container.appendChild(card);
+            });
+        }
+
+        // 에셋툴 분석 중단 컨트롤러
+        let atAbortController = null;
+
+        async function atAnalyzeAll() {
+            const category = document.getElementById('at-category').value;
+            const pending = atState.images.filter(i => i.status === 'pending' || i.status === 'error');
+            if (pending.length === 0) { showToast('분석할 이미지가 없습니다', 'error'); return; }
+
+            atAbortController = new AbortController();
+            document.getElementById('at-analyze-btn').disabled = true;
+            document.getElementById('at-stop-btn').style.display = '';
+            document.getElementById('at-progress-bar').style.display = 'block';
+            document.getElementById('at-progress-inner').style.width = '0%';
+
+            let completed = 0;
+            for (const item of pending) {
+                if (atAbortController.signal.aborted) break;
+                item.status = 'analyzing';
+                atRenderImages();
+                try {
+                    const formData = new FormData();
+                    formData.append('image', item.file);
+                    formData.append('category', category);
+                    const resp = await fetch('/api/asset_tool/analyze', { method: 'POST', body: formData, signal: atAbortController.signal });
+                    const result = await resp.json();
+                    if (result.success) {
+                        item.tags = result.tags;
+                        item.status = 'done';
+                    } else {
+                        item.error = result.error || '분석 실패';
+                        item.status = 'error';
+                    }
+                } catch (e) {
+                    if (e.name === 'AbortError') {
+                        item.status = 'pending';
+                        break;
+                    }
+                    item.error = e.message;
+                    item.status = 'error';
+                }
+                completed++;
+                document.getElementById('at-progress-inner').style.width = `${Math.round(completed / pending.length * 100)}%`;
+                atRenderImages();
+            }
+
+            document.getElementById('at-analyze-btn').disabled = false;
+            document.getElementById('at-stop-btn').style.display = 'none';
+            document.getElementById('at-progress-bar').style.display = 'none';
+            atAbortController = null;
+
+            atSwitchView('result');
+            atRenderSourceCards();
+
+            // 자동으로 매칭 실행
+            const doneCount = atState.images.filter(i => i.status === 'done').length;
+            if (doneCount > 0) await atMatchPresets();
+        }
+
+        function atStopAnalysis() {
+            if (atAbortController) {
+                atAbortController.abort();
+                // analyzing 상태를 pending으로 되돌림
+                atState.images.forEach(i => { if (i.status === 'analyzing') i.status = 'pending'; });
+                atRenderImages();
+                document.getElementById('at-analyze-btn').disabled = false;
+                document.getElementById('at-stop-btn').style.display = 'none';
+                document.getElementById('at-progress-bar').style.display = 'none';
+                showToast('분석이 중지되었습니다', 'warning');
+            }
+        }
+
+        function atShowAnalysisResults() {
+            const section = document.getElementById('at-analysis-section');
+            const container = document.getElementById('at-analysis-results');
+            const done = atState.images.filter(i => i.status === 'done');
+            if (done.length === 0) { section.style.display = 'none'; return; }
+
+            section.style.display = 'block';
+            container.innerHTML = '';
+            done.forEach((item, i) => {
+                const div = document.createElement('div');
+                div.style.cssText = 'margin-bottom:12px; padding:8px 10px; background:var(--surface); border-radius:6px;';
+                const name = item.file.name || `이미지 ${i + 1}`;
+                const tagsHtml = (item.tags || []).map(t => `<span class="at-tag-chip">${escapeHtml(t)}</span>`).join('');
+                div.innerHTML = `<div style="font-weight:600; font-size:0.85rem; margin-bottom:4px;">${escapeHtml(name)}</div><div class="at-tags-preview">${tagsHtml}</div>`;
+                container.appendChild(div);
+            });
+        }
+
+        async function atMatchPresets() {
+            const category = document.getElementById('at-category').value;
+            const doneImages = atState.images.filter(i => i.status === 'done' && i.tags && i.tags.length > 0);
+            if (doneImages.length === 0) { showToast('매칭할 태그가 없습니다', 'error'); return; }
+
+            try {
+                atState.imageMatches = [];
+                atState.matches = [];
+
+                for (const img of doneImages) {
+                    const uniqueTags = [...new Set(img.tags.map(t => t.trim()))];
+                    const resp = await fetch('/api/asset_tool/match', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ tags: uniqueTags, category: category, top_n: 3 })
+                    });
+                    const result = await resp.json();
+                    if (result.success) {
+                        const matches = result.matches.map(m => ({ ...m, selected: false }));
+                        atState.imageMatches.push({
+                            imageName: img.file.name || '이미지',
+                            imageUrl: img.url,
+                            tags: uniqueTags,
+                            matches: matches
+                        });
+                    }
+                }
+
+                atState.chains = [];
+                atRenderMatches();
+            } catch (e) {
+                showToast('매칭 오류: ' + e.message, 'error');
+            }
+        }
+
+        function atRenderMatches() {
+            const canvas = document.getElementById('at-canvas');
+            const emptyMsg = document.getElementById('at-match-empty');
+            if (!canvas) return;
+            canvas.innerHTML = '';
+
+            if (atState.imageMatches.length === 0) {
+                canvas.innerHTML = '<div class="at-empty-state">이미지를 분석하면<br>매칭 결과가 여기에 표시됩니다</div>';
+                return;
+            }
+
+            atState.imageMatches.forEach((imgGroup, gi) => {
+                imgGroup.matches.forEach((m, i) => { if (i < 3) m.selected = true; });
+
+                // 그룹 구분선
+                if (gi > 0) {
+                    const sep = document.createElement('div');
+                    sep.className = 'at-card-separator';
+                    sep.innerHTML = `<div class="at-card-separator-line"></div><div class="at-card-separator-label">${escapeHtml(imgGroup.imageName)}</div><div class="at-card-separator-line"></div>`;
+                    canvas.appendChild(sep);
+                }
+
+                // 소스 이미지 카드
+                const srcCard = document.createElement('div');
+                srcCard.className = 'at-card at-card-source';
+                srcCard.innerHTML = `
+                    <div class="at-card-img">
+                        <img src="${imgGroup.imageUrl}" onclick="openLightbox(this.src)">
+                    </div>
+                    <div class="at-card-body">
+                        <div class="at-card-name">${escapeHtml(imgGroup.imageName)}</div>
+                        <div class="at-card-tags">${imgGroup.tags.map(t => `<span class="at-tag-chip">${escapeHtml(t)}</span>`).join('')}</div>
+                    </div>
+                `;
+                canvas.appendChild(srcCard);
+
+                // 매칭 결과 카드들
+                imgGroup.matches.forEach((m, i) => {
+                    const card = document.createElement('div');
+                    card.className = 'at-card' + (m.selected ? ' selected' : '');
+                    const matchPct = m.jaccard > 0 ? Math.round(m.jaccard * 100) : 0;
+                    const matchedStr = (m.matched_tags || []).map(t => `<span class="at-tag-chip" style="border-color:#4caf50;background:rgba(76,175,80,0.1);">${escapeHtml(t)}</span>`).join('');
+                    const unmatchedStr = (m.unmatched_preset || []).slice(0, 5).map(t => `<span class="at-tag-chip" style="border-color:#999;background:rgba(158,158,158,0.1);">${escapeHtml(t)}</span>`).join('');
+                    card.innerHTML = `
+                        <div class="at-card-img">
+                            <input type="checkbox" class="at-card-check" ${m.selected ? 'checked' : ''} onchange="atState.imageMatches[${gi}].matches[${i}].selected=this.checked; this.closest('.at-card').classList.toggle('selected', this.checked); ">
+                            <div class="at-card-pct">${matchPct}%</div>
+                        </div>
+                        <div class="at-card-body">
+                            <div class="at-card-name">${escapeHtml(m.name)}</div>
+                            <div class="at-card-detail">일치 ${m.match_ratio}</div>
+                            <div class="at-card-tags">${matchedStr}${unmatchedStr}</div>
+                        </div>
+                    `;
+                    canvas.appendChild(card);
+                });
+            });
+        }
+
+        function atSendToBatch() {
+            const category = document.getElementById('at-category').value;
+            const newChains = [];
+
+            atState.imageMatches.forEach(imgGroup => {
+                imgGroup.matches.filter(m => m.selected).forEach(m => {
+                    const chain = {
+                        character: '',
+                        appearance: '',
+                        outfit: '',
+                        expression: '',
+                        composition_preset: '',
+                        quality_preset: '',
+                        negative_preset: '',
+                        character_negative_preset: '',
+                        ref_enabled: false,
+                        ref_strength: 0.55,
+                        ref_image: '',
+                        pose_enabled: false,
+                        pose_id: '',
+                        hrf_enabled: false,
+                        fd_enabled: false,
+                        hd_enabled: false,
+                        ed_enabled: false,
+                    };
+                    if (category === 'expressions') chain.expression = m.name;
+                    else if (category === 'composition') chain.composition_preset = m.name;
+                    else if (category === 'quality') chain.quality_preset = m.name;
+                    else if (category === 'character') {
+                        chain.expression = (m.character_data || {}).expression || '';
+                        chain.appearance = (m.character_data || {}).appearance || '';
+                        chain.outfit = (m.character_data || {}).outfit || '';
+                    }
+                    else if (category === 'appearances') chain.appearance = m.name;
+                    else if (category === 'outfits') chain.outfit = m.name;
+                    newChains.push(chain);
+                });
+            });
+
+            if (newChains.length === 0) { showToast('선택된 매칭이 없습니다', 'error'); return; }
+
+            // 에셋 일괄 생성 탭에 체인 추가
+            if (typeof addBatchChainSlot === 'function') {
+                newChains.forEach(chain => {
+                    addBatchChainSlot(chain);
+                });
+            }
+
+            // 에셋 일괄 생성 탭으로 전환
+            if (typeof switchTab === 'function') {
+                switchTab('batch');
+            }
+            showToast(`${newChains.length}개 체인이 에셋 일괄 생성에 추가되었습니다`, 'success');
+        }
+
+        // ─── 임베딩 설정 UI ─────────────────────────────────────────
+        const AT_CLEAN_ACTIONS = [
+            { value: 'split_by', label: '구분자로 분리', params: ['separator', 'take'] },
+            { value: 'strip_suffix', label: '접미사 제거', params: ['pattern'] },
+            { value: 'strip_prefix', label: '접두사 제거', params: ['pattern'] },
+            { value: 'replace', label: '치환', params: ['from', 'to'] },
+            { value: 'strip', label: '공백 제거', params: [] },
+            { value: 'lower', label: '소문자화', params: [] },
+        ];
+        let atEmbedProfiles = {};
+        let atEmbedCurrentSource = 'preset';
+        let atEmbedActiveSteps = [];
+
+        function atGetCurrentProfileType() {
+            return document.getElementById('at-embed-source').value === '태그' ? 'tag' : 'preset';
+        }
+
+        function atGetCurrentProfileName() {
+            const sel = document.getElementById('at-embed-profile-select');
+            return sel ? sel.value : '';
+        }
+
+        function atInitEmbedView() {
+            atLoadProfiles();
+            atLoadCacheStatus();
+        }
+
+        async function atLoadProfiles() {
+            try {
+                const resp = await fetch('/api/asset_tool/embedding_profiles');
+                const result = await resp.json();
+                if (!result.success) { showToast('프로필 로드 실패', 'error'); return; }
+                atEmbedProfiles = result.profiles || {};
+                const profileType = atGetCurrentProfileType();
+                const activeName = profileType === 'tag' ? result.active_tag_profile : result.active_preset_profile;
+                atRenderProfileSelect(activeName);
+                const steps = atEmbedProfiles[activeName] || [];
+                atEmbedActiveSteps = JSON.parse(JSON.stringify(steps));
+                atRenderCleanSteps(atEmbedActiveSteps);
+            } catch (e) {
+                showToast('프로필 로드 오류: ' + e.message, 'error');
+            }
+        }
+
+        function atRenderProfileSelect(activeName) {
+            const sel = document.getElementById('at-embed-profile-select');
+            sel.innerHTML = '';
+            const names = Object.keys(atEmbedProfiles);
+            names.forEach(name => {
+                const opt = document.createElement('option');
+                opt.value = name;
+                opt.textContent = name;
+                if (name === activeName) opt.selected = true;
+                sel.appendChild(opt);
+            });
+        }
+
+        function atOnSourceChange() {
+            atLoadProfiles();
+        }
+
+        function atOnProfileSelect() {
+            const name = atGetCurrentProfileName();
+            const steps = atEmbedProfiles[name] || [];
+            atEmbedActiveSteps = JSON.parse(JSON.stringify(steps));
+            atRenderCleanSteps(atEmbedActiveSteps);
+        }
+
+        function atRenderCleanSteps(steps) {
+            const container = document.getElementById('at-embed-steps-container');
+            container.innerHTML = '';
+            const maxSteps = Math.max(steps.length, 1);
+            for (let i = 0; i < maxSteps; i++) {
+                const step = steps[i] || {};
+                const stepDiv = document.createElement('div');
+                stepDiv.style.cssText = 'display:flex; gap:8px; align-items:center; margin-bottom:8px; flex-wrap:wrap;';
+                const stepNum = document.createElement('span');
+                stepNum.textContent = `${i + 1}단계:`;
+                stepNum.style.cssText = 'font-weight:600; font-size:0.82rem; min-width:42px;';
+                stepDiv.appendChild(stepNum);
+
+                const actionSelect = document.createElement('select');
+                actionSelect.style.cssText = 'padding:4px 8px; border-radius:5px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-size:0.82rem; min-width:140px;';
+                actionSelect.innerHTML = '<option value="">(없음)</option>' + AT_CLEAN_ACTIONS.map(a => `<option value="${a.value}" ${step.action === a.value ? 'selected' : ''}>${a.label}</option>`).join('');
+                actionSelect.onchange = () => { atOnStepChange(i); };
+                stepDiv.appendChild(actionSelect);
+
+                if (step.action === 'split_by') {
+                    const sepInput = document.createElement('input');
+                    sepInput.type = 'text'; sepInput.value = step.separator || '_';
+                    sepInput.placeholder = '구분자';
+                    sepInput.style.cssText = 'width:50px; padding:4px 6px; border-radius:5px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-size:0.82rem; text-align:center;';
+                    sepInput.id = `at-step-${i}-separator`;
+                    stepDiv.appendChild(sepInput);
+                    const takeInput = document.createElement('input');
+                    takeInput.type = 'text'; takeInput.value = step.take !== undefined ? String(step.take) : '-1';
+                    takeInput.placeholder = '위치';
+                    takeInput.style.cssText = 'width:80px; padding:4px 6px; border-radius:5px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-size:0.82rem;';
+                    takeInput.id = `at-step-${i}-take`;
+                    stepDiv.appendChild(takeInput);
+                } else if (step.action === 'strip_suffix' || step.action === 'strip_prefix') {
+                    const patInput = document.createElement('input');
+                    patInput.type = 'text'; patInput.value = step.pattern || '';
+                    patInput.placeholder = '정규식 패턴';
+                    patInput.style.cssText = 'width:200px; padding:4px 6px; border-radius:5px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-size:0.82rem;';
+                    patInput.id = `at-step-${i}-pattern`;
+                    stepDiv.appendChild(patInput);
+                } else if (step.action === 'replace') {
+                    const fromInput = document.createElement('input');
+                    fromInput.type = 'text'; fromInput.value = step.from || '';
+                    fromInput.placeholder = '찾을 문자';
+                    fromInput.style.cssText = 'width:60px; padding:4px 6px; border-radius:5px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-size:0.82rem; text-align:center;';
+                    fromInput.id = `at-step-${i}-from`;
+                    stepDiv.appendChild(fromInput);
+                    const arrow = document.createElement('span');
+                    arrow.textContent = '→';
+                    arrow.style.cssText = 'font-size:0.82rem;';
+                    stepDiv.appendChild(arrow);
+                    const toInput = document.createElement('input');
+                    toInput.type = 'text'; toInput.value = step.to !== undefined ? step.to : ' ';
+                    toInput.placeholder = '바꿀 문자';
+                    toInput.style.cssText = 'width:60px; padding:4px 6px; border-radius:5px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-size:0.82rem; text-align:center;';
+                    toInput.id = `at-step-${i}-to`;
+                    stepDiv.appendChild(toInput);
+                }
+
+                const removeBtn = document.createElement('button');
+                removeBtn.textContent = '✕';
+                removeBtn.style.cssText = 'border:none; background:transparent; color:var(--error); cursor:pointer; font-size:0.9rem; padding:2px 6px;';
+                removeBtn.onclick = () => { atRemoveStep(i); };
+                stepDiv.appendChild(removeBtn);
+
+                container.appendChild(stepDiv);
+            }
+        }
+
+        function atOnStepChange(stepIndex) {
+            atReadStepsFromUI();
+        }
+
+        function atReadStepsFromUI() {
+            const steps = [];
+            const container = document.getElementById('at-embed-steps-container');
+            const rows = container.querySelectorAll(':scope > div');
+            rows.forEach((row, i) => {
+                const actionSelect = row.querySelector('select');
+                if (!actionSelect || !actionSelect.value) return;
+                const step = { action: actionSelect.value };
+                if (step.action === 'split_by') {
+                    const sepEl = document.getElementById(`at-step-${i}-separator`);
+                    const takeEl = document.getElementById(`at-step-${i}-take`);
+                    step.separator = sepEl ? sepEl.value : '_';
+                    const takeVal = takeEl ? takeEl.value.trim() : '-1';
+                    step.take = takeVal.match(/^-?\d+$/) ? parseInt(takeVal) : takeVal;
+                } else if (step.action === 'strip_suffix' || step.action === 'strip_prefix') {
+                    const patEl = document.getElementById(`at-step-${i}-pattern`);
+                    step.pattern = patEl ? patEl.value : '';
+                } else if (step.action === 'replace') {
+                    const fromEl = document.getElementById(`at-step-${i}-from`);
+                    const toEl = document.getElementById(`at-step-${i}-to`);
+                    step.from = fromEl ? fromEl.value : '';
+                    step.to = toEl ? toEl.value : ' ';
+                }
+                steps.push(step);
+            });
+            atEmbedActiveSteps = steps;
+            return steps;
+        }
+
+        function atAddStep() {
+            atReadStepsFromUI();
+            atEmbedActiveSteps.push({ action: 'replace', from: '_', to: ' ' });
+            atRenderCleanSteps(atEmbedActiveSteps);
+        }
+
+        function atRemoveStep(index) {
+            atReadStepsFromUI();
+            atEmbedActiveSteps.splice(index, 1);
+            atRenderCleanSteps(atEmbedActiveSteps);
+        }
+
+        async function atSaveCurrentProfile() {
+            const steps = atReadStepsFromUI();
+            const name = atGetCurrentProfileName();
+            if (!name) { showToast('프로필을 먼저 선택하거나 새로 만드세요', 'warning'); return; }
+            const profileType = atGetCurrentProfileType();
+            try {
+                const resp = await fetch('/api/asset_tool/embedding_profile_save', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name, steps, profile_type: profileType })
+                });
+                const result = await resp.json();
+                if (result.success) {
+                    showToast(`프로필 '${name}' 저장됨`, 'success');
+                    await atLoadProfiles();
+                    atLoadCacheStatus();
+                } else {
+                    showToast('저장 실패: ' + (result.error || ''), 'error');
+                }
+            } catch (e) {
+                showToast('저장 오류: ' + e.message, 'error');
+            }
+        }
+
+        async function atNewProfile() {
+            const name = prompt('새 프로필 이름을 입력하세요:');
+            if (!name || !name.trim()) return;
+            const trimmedName = name.trim();
+            atReadStepsFromUI();
+            atEmbedProfiles[trimmedName] = JSON.parse(JSON.stringify(atEmbedActiveSteps));
+            try {
+                const profileType = atGetCurrentProfileType();
+                const resp = await fetch('/api/asset_tool/embedding_profile_save', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: trimmedName, steps: atEmbedProfiles[trimmedName], profile_type: profileType })
+                });
+                const result = await resp.json();
+                if (!result.success) {
+                    showToast('프로필 저장 실패: ' + (result.error || ''), 'error');
+                    return;
+                }
+                showToast(`프로필 '${trimmedName}' 생성됨`, 'success');
+                await atLoadProfiles();
+                const sel = document.getElementById('at-embed-profile-select');
+                sel.value = trimmedName;
+                atRenderCleanSteps(atEmbedProfiles[trimmedName] || []);
+            } catch (e) {
+                showToast('프로필 생성 오류: ' + e.message, 'error');
+            }
+        }
+
+        async function atDeleteProfile() {
+            const name = atGetCurrentProfileName();
+            if (!name) return;
+            if (!confirm(`프로필 '${name}'을 삭제하시겠습니까?`)) return;
+            try {
+                const resp = await fetch('/api/asset_tool/embedding_profile_delete', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name })
+                });
+                const result = await resp.json();
+                if (result.success) {
+                    showToast(`프로필 '${name}' 삭제됨`, 'success');
+                    await atLoadProfiles();
+                } else {
+                    showToast('삭제 실패: ' + (result.error || ''), 'error');
+                }
+            } catch (e) {
+                showToast('삭제 오류: ' + e.message, 'error');
+            }
+        }
+
+        async function atApplyProfile() {
+            const name = atGetCurrentProfileName();
+            const profileType = atGetCurrentProfileType();
+            if (!name) return;
+            try {
+                const resp = await fetch('/api/asset_tool/embedding_profile_apply', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name, profile_type: profileType })
+                });
+                const result = await resp.json();
+                if (result.success) {
+                    showToast(`프로필 '${name}' 적용됨`, 'success');
+                    atLoadCacheStatus();
+                } else {
+                    showToast('적용 실패: ' + (result.error || ''), 'error');
+                }
+            } catch (e) {
+                showToast('적용 오류: ' + e.message, 'error');
+            }
+        }
+
+        function atResetCurrentProfile() {
+            const profileType = atGetCurrentProfileType();
+            const defaults = {
+                preset: [
+                    { action: 'split_by', separator: '/', take: -1 },
+                    { action: 'strip_suffix', pattern: '_v\\d+$' },
+                    { action: 'replace', from: '_', to: ' ' }
+                ],
+                tag: [
+                    { action: 'strip_suffix', pattern: '\\.(webp|png|jpg|jpeg|gif|bmp)$' },
+                    { action: 'split_by', separator: '_', take: '1:' },
+                    { action: 'replace', from: '_', to: ' ' }
+                ]
+            };
+            const steps = profileType === 'tag' ? defaults.tag : defaults.preset;
+            atEmbedActiveSteps = JSON.parse(JSON.stringify(steps));
+            atRenderCleanSteps(atEmbedActiveSteps);
+            showToast('기본값으로 초기화되었습니다', 'info');
+        }
+
+        let atPresetProfileMap = {};
+
+        async function atPreviewClean(source) {
+            if (!source) source = 'preset';
+            atEmbedCurrentSource = source;
+            const previewDiv = document.getElementById('at-embed-preview');
+            document.getElementById('at-preview-preset-btn').classList.toggle('at-btn-primary', source === 'preset');
+            document.getElementById('at-preview-tag-btn').classList.toggle('at-btn-primary', source === 'tag');
+            previewDiv.innerHTML = '<div style="color:var(--text2); font-size:0.85rem;">로딩 중...</div>';
+            try {
+                let resp;
+                if (source === 'tag') {
+                    const tagNames = atState.images.map(img => img.file ? img.file.name : '').filter(n => n);
+                    if (tagNames.length === 0) {
+                        previewDiv.innerHTML = '<div style="color:var(--text2); font-size:0.85rem;">업로드된 이미지가 없습니다. 먼저 이미지를 업로드하세요.</div>';
+                        return;
+                    }
+                    resp = await fetch('/api/asset_tool/embedding_preview', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ category: 'expressions', source: 'tag', names: tagNames })
+                    });
+                } else {
+                    resp = await fetch('/api/asset_tool/embedding_preview?category=expressions&source=preset');
+                }
+                const result = await resp.json();
+                if (!result.success) {
+                    previewDiv.innerHTML = `<div style="color:var(--error); font-size:0.85rem;">오류: ${escapeHtml(result.error || '')}</div>`;
+                    return;
+                }
+                const preview = result.preview || [];
+                const profiles = result.profiles || {};
+                const profileMap = result.preset_profile_map || {};
+                atPresetProfileMap = JSON.parse(JSON.stringify(profileMap));
+                atEmbedProfiles = profiles;
+
+                if (result.active_preset_profile !== undefined) {
+                    atRenderProfileSelect(result.active_preset_profile);
+                }
+
+                if (preview.length === 0) {
+                    const emptyMsg = source === 'tag'
+                        ? '업로드된 이미지 파일명에 정제할 이름이 없습니다.'
+                        : '해당 카테고리에 프리셋이 없습니다.';
+                    previewDiv.innerHTML = `<div style="color:var(--text2); font-size:0.85rem;">${emptyMsg}</div>`;
+                    return;
+                }
+                const profileNames = Object.keys(profiles);
+                let html = '<table style="width:100%; border-collapse:collapse; font-size:0.82rem;">';
+                html += '<thead><tr style="border-bottom:2px solid var(--border);">';
+                html += '<th style="text-align:left; padding:6px 8px; color:var(--text2); width:40%;">원본</th>';
+                html += '<th style="text-align:left; padding:4px 6px; color:var(--text2); width:30%;">적용 프로필</th>';
+                html += '<th style="text-align:left; padding:6px 8px; color:var(--text2); width:30%;">정제 후</th>';
+                html += '</tr></thead><tbody>';
+                preview.forEach(item => {
+                    const changed = item.original !== item.cleaned;
+                    const selectedProfile = profileMap[item.original] || '';
+                    html += `<tr style="border-bottom:1px solid var(--border);">`;
+                    html += `<td style="padding:5px 8px; ${changed ? '' : 'color:var(--text2);'}">${escapeHtml(item.original)}</td>`;
+                    html += `<td style="padding:4px 6px;">`;
+                    html += `<select data-preset-name="${escapeHtml(item.original)}" style="font-size:0.78rem; padding:2px 4px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); width:100%;" onchange="atOnProfileMapChange(this.dataset.presetName, this.value)">`;
+                    html += `<option value="">(기본)</option>`;
+                    profileNames.forEach(pn => {
+                        const sel = pn === selectedProfile ? 'selected' : '';
+                        html += `<option value="${escapeHtml(pn)}" ${sel}>${escapeHtml(pn)}</option>`;
+                    });
+                    html += `</select></td>`;
+                    html += `<td style="padding:5px 8px; color:var(--accent);">${escapeHtml(item.cleaned || '(빈 값)')}</td>`;
+                    html += '</tr>';
+                });
+                html += '</tbody></table>';
+                const cacheInfo = result.cache_info || {};
+                const cacheStatus = cacheInfo.valid ? `✅ 유효 (${cacheInfo.cached_embeddings || 0}개 캐시됨)` : '❌ 설정 변경으로 무효화됨';
+                html += `<div style="margin-top:8px; display:flex; align-items:center; gap:8px;">`;
+                html += `<span style="font-size:0.78rem; color:var(--text2);">캐시 상태: ${cacheStatus}</span>`;
+                html += `<button class="at-btn" onclick="atSaveProfileMap()" style="font-size:0.78rem;">💾 할당 저장</button>`;
+                html += `</div>`;
+                previewDiv.innerHTML = html;
+            } catch (e) {
+                previewDiv.innerHTML = `<div style="color:var(--error); font-size:0.85rem;">로드 오류: ${escapeHtml(e.message)}</div>`;
+            }
+        }
+
+        function atOnProfileMapChange(presetName, profileName) {
+            if (profileName) {
+                atPresetProfileMap[presetName] = profileName;
+            } else {
+                delete atPresetProfileMap[presetName];
+            }
+            atRefreshPreviewCleanedNames();
+        }
+
+        async function atRefreshPreviewCleanedNames() {
+            const previewDiv = document.getElementById('at-embed-preview');
+            const table = previewDiv.querySelector('table');
+            if (!table) return;
+            try {
+                const source = atEmbedCurrentSource || 'preset';
+                let resp;
+                if (source === 'tag') {
+                    const tagNames = atState.images.map(img => img.file ? img.file.name : '').filter(n => n);
+                    if (tagNames.length === 0) return;
+                    resp = await fetch('/api/asset_tool/embedding_preview', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ category: 'expressions', source: 'tag', names: tagNames })
+                    });
+                } else {
+                    resp = await fetch('/api/asset_tool/embedding_preview?category=expressions&source=preset');
+                }
+                const result = await resp.json();
+                if (!result.success) return;
+                const preview = result.preview || [];
+                const profileMap = atPresetProfileMap;
+                const rows = table.querySelectorAll('tbody tr');
+                preview.forEach((item, i) => {
+                    if (rows[i]) {
+                        const cleanedTd = rows[i].querySelector('td:nth-child(3)');
+                        if (cleanedTd) {
+                            const changed = item.original !== item.cleaned;
+                            const isMapped = profileMap[item.original];
+                            cleanedTd.textContent = item.cleaned || '(빈 값)';
+                            const origTd = rows[i].querySelector('td:nth-child(1)');
+                            if (origTd) origTd.style.color = changed ? '' : 'var(--text2)';
+                            if (cleanedTd) cleanedTd.style.color = isMapped ? '#ff9800' : 'var(--accent)';
+                        }
+                    }
+                });
+            } catch (e) { /* ignore */ }
+        }
+
+        async function atSaveProfileMap() {
+            try {
+                const resp = await fetch('/api/asset_tool/embedding_profile_map', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ preset_profile_map: atPresetProfileMap })
+                });
+                const result = await resp.json();
+                if (result.success) {
+                    showToast(`프리셋 프로필 할당 저장됨 (${result.count}개)`, 'success');
+                } else {
+                    showToast('저장 실패: ' + (result.error || ''), 'error');
+                }
+            } catch (e) {
+                showToast('저장 오류: ' + e.message, 'error');
+            }
+        }
+
+        async function atLoadCacheStatus() {
+            const statusDiv = document.getElementById('at-embed-cache-status');
+            try {
+                const resp = await fetch('/api/asset_tool/embedding_cache_status');
+                const result = await resp.json();
+                if (result.success) {
+                    if (result.valid) {
+                        statusDiv.innerHTML = `✅ 캐시 유효 (<strong>${result.cached_embeddings}</strong>개 임베딩 저장됨)`;
+                        statusDiv.style.color = 'var(--accent)';
+                    } else {
+                        statusDiv.innerHTML = '❌ 캐시 무효 (설정 변경됨, 재빌드 필요)';
+                        statusDiv.style.color = 'var(--error)';
+                    }
+                } else {
+                    statusDiv.innerHTML = '상태 확인 불가';
+                    statusDiv.style.color = 'var(--text2)';
+                }
+            } catch (e) {
+                statusDiv.innerHTML = '상태 확인 오류';
+                statusDiv.style.color = 'var(--text2)';
+            }
+        }
+
+        let atEmbedBuildRunning = false;
+        async function atStartEmbeddingBuild() {
+            if (atEmbedBuildRunning) { showToast('이미 임베딩 빌드가 진행 중입니다', 'warning'); return; }
+            atEmbedBuildRunning = true;
+            const btn = document.getElementById('at-embed-build-btn');
+            const progressDiv = document.getElementById('at-embed-progress');
+            const progressBar = document.getElementById('at-embed-progress-bar');
+            const progressText = document.getElementById('at-embed-progress-text');
+            btn.disabled = true;
+            btn.textContent = '⏳ 임베딩 중...';
+            progressDiv.style.display = 'block';
+            progressBar.style.width = '0%';
+            progressText.textContent = '임베딩 시작 중...';
+            try {
+                const resp = await fetch('/api/asset_tool/embedding_start', { method: 'POST' });
+                const result = await resp.json();
+                if (result.success) {
+                    progressBar.style.width = '100%';
+                    progressBar.textContent = '';
+                    progressText.textContent = `완료! ${result.embedded_count}/${result.total_names}개 임베딩 저장됨`;
+                    showToast(`${result.embedded_count}개 임베딩 빌드 완료`, 'success');
+                    atLoadCacheStatus();
+                    atPreviewClean();
+                } else {
+                    progressText.textContent = '오류: ' + (result.error || '알 수 없는 오류');
+                    showToast('임베딩 빌드 실패: ' + (result.error || ''), 'error');
+                }
+            } catch (e) {
+                progressText.textContent = '오류: ' + e.message;
+                showToast('임베딩 빌드 오류: ' + e.message, 'error');
+            }
+            btn.disabled = false;
+            btn.textContent = '▶ 임베딩 시작';
+            atEmbedBuildRunning = false;
+        }
+
+        // 드래그앤드롭 초기화
+        document.addEventListener('DOMContentLoaded', () => {
+            const dropzone = document.getElementById('at-dropzone');
+            if (dropzone) {
+                dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('dragover'); });
+                dropzone.addEventListener('dragleave', () => { dropzone.classList.remove('dragover'); });
+                dropzone.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    dropzone.classList.remove('dragover');
+                    if (e.dataTransfer.files.length) atOnFilesSelected(e.dataTransfer.files);
+                });
+            }
+        });
+
         // ─── 에셋 생성 모드 ────────────────────────────────────
         let assetTags = null;
         let assetRepresentatives = {};  // {charName: {outfit, expression, filename}}
@@ -6058,6 +7137,7 @@
                 document.querySelectorAll('.tab-btn')[4].classList.add('active');
                 document.getElementById('tab-smart-asset-content').classList.add('active');
                 if (!assetTags) loadAssetData();
+                atSwitchView('upload');
             }
         }
 

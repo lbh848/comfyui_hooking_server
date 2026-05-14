@@ -39,6 +39,8 @@ import logging
 logging.basicConfig(level=logging.INFO, format='[%(name)s] %(message)s')
 from modes import llm_service
 from modes import autocomplete_service
+from modes import asset_tool_mode
+from modes import embedding_service
 import importlib.util
 
 # ─── 설정 ───────────────────────────────────────────────
@@ -81,6 +83,10 @@ DEFAULT_CONFIG = {
     "llm_model2": "",           # LLM2 모델명 (폴백, 비어있으면 비활성)
     "custom_api_url": "",       # LLM1 CustomAPI 접속 경로
     "custom_api_url2": "",      # LLM2 CustomAPI 접속 경로
+    "embedding_provider": "voyage",  # 임베딩 프로바이더: voyage / custom
+    "embedding_url": "https://api.voyageai.com/v1/embeddings",  # 임베딩 API URL
+    "embedding_api_key": "",      # 임베딩 API 키
+    "embedding_model": "voyage-4-large",  # 임베딩 모델명
     "outfit_prompt_file": "",   # 복장정리프롬프트 파일명 (customprompt/)
     "restore_prompt_file": "",  # 워크플로우 복원 프롬프트 파일명 (customprompt/)
     "restore_mode_enabled": False,  # 워크플로우 복원 프롬프트 활성화 여부
@@ -93,7 +99,7 @@ DEFAULT_CONFIG = {
     "dwpose_pose_model": "",  # DWPose 포즈 모델 경로 (빈값=자동 다운로드)
     "dwpose_model_cache_dir": "",  # 모델 캐시 디렉토리 (빈값=기본경로)
     "backup_max_count": 500,  # 워크플로우 백업 최대 보관 수
-    "webp_lossless": False,  # 전송 이미지 무손실 WebP
+    "webp_lossless": False,
 }
 
 # 워크플로우 백업 최대 보관 수 (기본값, config에서 덮어씀)
@@ -188,6 +194,12 @@ asset_mode.workflow_source_path = app_config.get("asset_workflow_source_path", "
 asset_mode.mode_log_func = mode_logger.log
 asset_mode.load_tags()
 print(f"[ASSET_MODE] 초기화: source={asset_mode.workflow_source_path}, characters={len(asset_mode.list_characters())}")
+
+# ─── 에셋툴 모드 초기화 ───
+asset_tool = asset_tool_mode.AssetToolMode()
+asset_tool.workflow_source_path = app_config.get("tag_analysis_workflow_source_path", "")
+asset_tool.mode_log_func = mode_logger.log
+print(f"[ASSET_TOOL] 초기화: source={asset_tool.workflow_source_path}")
 
 # ─── 포즈 편집 모드 초기화 ───
 pose_mode.det_model_path = app_config.get("dwpose_det_model", "")
@@ -1183,6 +1195,11 @@ asset_mode.convert_workflow_func = convert_workflow_via_endpoint
 asset_mode.compute_hash_func = compute_file_hash
 asset_mode.submit_workflow_func = submit_workflow_to_comfy
 asset_mode.build_prompt_with_workflow_func = build_prompt_with_workflow
+# 에셋툴 모드 함수 의존성 설정
+asset_tool.convert_workflow_func = convert_workflow_via_endpoint
+asset_tool.compute_hash_func = compute_file_hash
+asset_tool.submit_workflow_func = submit_workflow_to_comfy
+asset_tool.build_prompt_with_workflow_func = build_prompt_with_workflow
 # 포즈 편집 모드 함수 의존성 설정
 pose_mode.notify_frontend_func = notify_frontend
 
@@ -2485,6 +2502,12 @@ async def handle_api_config(request: web.Request) -> web.Response:
                 asset_mode._asset_api_workflow = None
                 asset_mode._asset_hash = ""
 
+            # 에셋툴 모드 설정 업데이트
+            if "tag_analysis_workflow_source_path" in body:
+                asset_tool.workflow_source_path = str(body["tag_analysis_workflow_source_path"])
+                asset_tool._api_workflow = None
+                asset_tool._workflow_hash = ""
+
             # LLM 서비스 설정 업데이트
             llm_service.update_config({
                 "llm_service": app_config.get("llm_service", "copilot"),
@@ -2493,6 +2516,14 @@ async def handle_api_config(request: web.Request) -> web.Response:
                 "llm_model2": app_config.get("llm_model2", ""),
                 "custom_api_url": app_config.get("custom_api_url", ""),
                 "custom_api_url2": app_config.get("custom_api_url2", ""),
+            })
+
+            # 임베딩 서비스 설정 업데이트
+            embedding_service.update_config({
+                "embedding_provider": app_config.get("embedding_provider", "voyage"),
+                "embedding_url": app_config.get("embedding_url", "https://api.voyageai.com/v1/embeddings"),
+                "embedding_api_key": app_config.get("embedding_api_key", ""),
+                "embedding_model": app_config.get("embedding_model", "voyage-4-large"),
             })
 
             # 파일로 저장
@@ -3775,6 +3806,330 @@ app.router.add_post("/api/asset_mode/name_mapping", handle_api_asset_mode_name_m
 app.router.add_get("/api/asset_mode/export/{character}", handle_api_asset_mode_export)
 # 자동완성 API
 app.router.add_get("/api/autocomplete", handle_api_autocomplete)
+# ─── 에셋툴 API 핸들러 ──────────────────────────────────
+async def handle_api_asset_tool_status(request: web.Request) -> web.Response:
+    return web.json_response(asset_tool.get_status())
+
+async def handle_api_asset_tool_analyze(request: web.Request) -> web.Response:
+    if not asset_tool.workflow_source_path:
+        return web.json_response({"success": False, "error": "태그 분석 워크플로우 경로가 설정되지 않았습니다"}, status=400)
+    try:
+        reader = await request.multipart()
+        image_data = None
+        tag_category = "expressions"
+        async for part in reader:
+            if part.name == "image":
+                image_data = await part.read()
+            elif part.name == "category":
+                tag_category = (await part.read()).decode("utf-8").strip()
+
+        if not image_data:
+            return web.json_response({"success": False, "error": "이미지가 없습니다"}, status=400)
+
+        async def _on_progress(value, max_value):
+            await notify_frontend("asset_tool_progress", {"value": value, "max": max_value})
+
+        result = await asset_tool.analyze_image(image_data, tag_category, progress_callback=_on_progress)
+        print(f"[ASSET_TOOL] 분석 결과: success={result.get('success')}, tags_count={len(result.get('tags', []))}, error={result.get('error', '')}")
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[ASSET_TOOL] 분석 오류: {e}")
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+async def handle_api_asset_tool_match(request: web.Request) -> web.Response:
+    try:
+        body = await request.json()
+        analyzed_tags = body.get("tags", [])
+        tag_category = body.get("category", "expressions")
+        top_n = body.get("top_n", 5)
+
+        tags_data = asset_mode.get_tags()
+        results = asset_tool.match_presets(analyzed_tags, tag_category, tags_data, top_n)
+        chains = asset_tool.suggest_chains(results, tag_category, tags_data)
+
+        embedding_query = body.get("embedding_query", "")
+        embedding_results = []
+        if embedding_query:
+            embedding_results = await asset_tool.find_similar_by_embedding(
+                embedding_query, tag_category, tags_data,
+                top_n=top_n, threshold=body.get("embedding_threshold", 0.3),
+            )
+
+        return web.json_response({
+            "success": True,
+            "matches": results,
+            "chains": chains,
+            "embedding_matches": embedding_results,
+        })
+    except Exception as e:
+        print(f"[ASSET_TOOL] 매칭 오류: {e}")
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_asset_tool_embedding_match(request: web.Request) -> web.Response:
+    try:
+        body = await request.json()
+        query = body.get("query", "")
+        tag_category = body.get("category", "expressions")
+        top_n = body.get("top_n", 5)
+        threshold = body.get("threshold", 0.3)
+
+        if not query:
+            return web.json_response({"success": False, "error": "query가 필요합니다"}, status=400)
+
+        tags_data = asset_mode.get_tags()
+        results = await asset_tool.find_similar_by_embedding(
+            query, tag_category, tags_data, top_n=top_n, threshold=threshold,
+        )
+
+        return web.json_response({"success": True, "matches": results})
+    except Exception as e:
+        print(f"[ASSET_TOOL] 임베딩 매칭 오류: {e}")
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_asset_tool_embedding_preview(request: web.Request) -> web.Response:
+    try:
+        tag_category = request.query.get("category", "expressions")
+        profile_name = request.query.get("profile", "")
+        source = request.query.get("source", "preset")
+
+        tag_names = []
+        if request.method == "POST":
+            body = await request.json()
+            tag_category = body.get("category", tag_category)
+            source = body.get("source", source)
+            tag_names = body.get("names", [])
+
+        tags_data = asset_mode.get_tags()
+
+        if tag_category == "expressions":
+            presets = tags_data.get("expressions", {})
+        elif tag_category == "composition":
+            presets = tags_data.get("composition_presets", {})
+        elif tag_category == "quality":
+            presets = tags_data.get("quality_presets", {})
+        elif tag_category == "appearances":
+            presets = tags_data.get("appearances", {})
+        elif tag_category == "outfits":
+            presets = tags_data.get("outfits", {})
+        elif tag_category == "character":
+            presets = tags_data.get("character_presets", {})
+        elif tag_category == "negative":
+            presets = tags_data.get("negative_presets", {})
+        else:
+            presets = tags_data.get("expressions", {})
+
+        if source == "tag" and tag_names:
+            names = tag_names
+            # 파일 확장자 제거
+            import os as _os
+            names = [_os.path.splitext(n)[0] for n in names if n]
+            names = list(dict.fromkeys(names))  # 중복 제거 (순서 유지)
+        else:
+            names = [name for name, value in presets.items()
+                     if isinstance(value, (list, dict))]
+
+        profile_map = embedding_service.get_preset_profile_map()
+        if source == "tag":
+            active_steps = embedding_service._get_active_steps("tag")
+        else:
+            active_steps = embedding_service._get_active_steps("preset")
+
+        preview = []
+        for name in names:
+            assigned = profile_map.get(name, "")
+            if assigned:
+                profiles = embedding_service.list_profiles()
+                steps = profiles.get(assigned, active_steps)
+            else:
+                steps = active_steps
+            cleaned = embedding_service.clean_name_by_steps(name, steps)
+            preview.append({
+                "original": name,
+                "cleaned": cleaned,
+                "profile": assigned,
+            })
+
+        cache_info = {}
+        if embedding_service._is_cache_valid():
+            cache = embedding_service._load_local_cache()
+            cache_info = {
+                "valid": True,
+                "cached_embeddings": len(cache.get("embeddings", {})),
+                "signature": cache.get("signature", {}),
+            }
+        else:
+            cache_info = {"valid": False, "cached_embeddings": 0, "signature": {}}
+
+        current_config = embedding_service.get_config()
+
+        return web.json_response({
+            "success": True,
+            "category": tag_category,
+            "preview": preview,
+            "profiles": embedding_service.list_profiles(),
+            "active_preset_profile": current_config.get("active_preset_profile", ""),
+            "active_tag_profile": current_config.get("active_tag_profile", ""),
+            "preset_profile_map": profile_map,
+            "cache_info": cache_info,
+        })
+    except Exception as e:
+        print(f"[ASSET_TOOL] 임베딩 프리뷰 오류: {e}")
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_asset_tool_embedding_profiles(request: web.Request) -> web.Response:
+    try:
+        current_config = embedding_service.get_config()
+        profiles = embedding_service.list_profiles()
+        return web.json_response({
+            "success": True,
+            "profiles": profiles,
+            "active_preset_profile": current_config.get("active_preset_profile", ""),
+            "active_tag_profile": current_config.get("active_tag_profile", ""),
+        })
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_asset_tool_embedding_profile_save(request: web.Request) -> web.Response:
+    try:
+        body = await request.json()
+        name = body.get("name", "").strip()
+        steps = body.get("steps", [])
+        profile_type = body.get("profile_type", "preset")
+
+        if not name:
+            return web.json_response({"success": False, "error": "프로필 이름이 필요합니다"}, status=400)
+
+        result = embedding_service.save_profile(name, steps)
+        if not result["success"]:
+            return web.json_response(result, status=400)
+
+        apply_result = embedding_service.set_active_profile(
+            "preset" if profile_type == "preset" else "tag", name
+        )
+
+        return web.json_response({
+            "success": True,
+            "name": name,
+            "applied": apply_result.get("success", False),
+        })
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_asset_tool_embedding_profile_delete(request: web.Request) -> web.Response:
+    try:
+        body = await request.json()
+        name = body.get("name", "")
+
+        result = embedding_service.delete_profile(name)
+        if not result["success"]:
+            return web.json_response(result, status=400)
+
+        return web.json_response({"success": True, "deleted": name})
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_asset_tool_embedding_profile_apply(request: web.Request) -> web.Response:
+    try:
+        body = await request.json()
+        name = body.get("name", "")
+        profile_type = body.get("profile_type", "preset")
+
+        result = embedding_service.set_active_profile(profile_type, name)
+        if not result["success"]:
+            return web.json_response(result, status=400)
+
+        return web.json_response({"success": True, "active": name, "profile_type": profile_type})
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_asset_tool_embedding_profile_map_save(request: web.Request) -> web.Response:
+    try:
+        body = await request.json()
+        profile_map = body.get("preset_profile_map", {})
+        if not isinstance(profile_map, dict):
+            return web.json_response({"success": False, "error": "preset_profile_map must be a dict"}, status=400)
+
+        result = embedding_service.set_preset_profile_map(profile_map)
+        if not result["success"]:
+            return web.json_response(result, status=400)
+
+        return web.json_response({"success": True, "count": len(profile_map)})
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+_embedding_build_lock = asyncio.Lock()
+
+
+async def handle_api_asset_tool_embedding_start(request: web.Request) -> web.Response:
+    if _embedding_build_lock.locked():
+        return web.json_response({"success": False, "error": "이미 임베딩 빌드가 진행 중입니다"}, status=409)
+
+    async with _embedding_build_lock:
+        try:
+            tags_data = asset_mode.get_tags()
+
+            last_progress = {"done": 0, "total": 0, "message": ""}
+
+            async def _progress(done, total, message):
+                last_progress["done"] = done
+                last_progress["total"] = total
+                last_progress["message"] = message
+                await notify_frontend("embedding_build_progress", {
+                    "done": done,
+                    "total": total,
+                    "message": message,
+                })
+
+            result = await embedding_service.build_preset_embeddings(
+                tags_data, progress_callback=_progress
+            )
+
+            return web.json_response(result)
+        except Exception as e:
+            print(f"[ASSET_TOOL] 임베딩 빌드 오류: {e}")
+            traceback.print_exc()
+            return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_asset_tool_embedding_cache_status(request: web.Request) -> web.Response:
+    try:
+        cache = embedding_service._load_local_cache()
+        current_sig = embedding_service._signature_for_config()
+        saved_sig = cache.get("signature", {})
+        is_valid = saved_sig == current_sig
+        return web.json_response({
+            "success": True,
+            "valid": is_valid,
+            "cached_embeddings": len(cache.get("embeddings", {})),
+            "current_config": current_sig,
+            "saved_config": saved_sig,
+        })
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+# 에셋툴 API 라우트
+app.router.add_get("/api/asset_tool/status", handle_api_asset_tool_status)
+app.router.add_post("/api/asset_tool/analyze", handle_api_asset_tool_analyze)
+app.router.add_post("/api/asset_tool/match", handle_api_asset_tool_match)
+app.router.add_post("/api/asset_tool/embedding_match", handle_api_asset_tool_embedding_match)
+app.router.add_get("/api/asset_tool/embedding_preview", handle_api_asset_tool_embedding_preview)
+app.router.add_post("/api/asset_tool/embedding_preview", handle_api_asset_tool_embedding_preview)
+app.router.add_post("/api/asset_tool/embedding_start", handle_api_asset_tool_embedding_start)
+app.router.add_get("/api/asset_tool/embedding_cache_status", handle_api_asset_tool_embedding_cache_status)
+app.router.add_get("/api/asset_tool/embedding_profiles", handle_api_asset_tool_embedding_profiles)
+app.router.add_post("/api/asset_tool/embedding_profile_save", handle_api_asset_tool_embedding_profile_save)
+app.router.add_post("/api/asset_tool/embedding_profile_delete", handle_api_asset_tool_embedding_profile_delete)
+app.router.add_post("/api/asset_tool/embedding_profile_apply", handle_api_asset_tool_embedding_profile_apply)
+app.router.add_post("/api/asset_tool/embedding_profile_map", handle_api_asset_tool_embedding_profile_map_save)
 # 포즈 편집 모드 API 라우트
 app.router.add_get("/api/pose_mode/status", handle_api_pose_mode_status)
 app.router.add_post("/api/pose_mode/detect", handle_api_pose_mode_detect)
@@ -3796,6 +4151,7 @@ app.router.add_post("/api/tunnel/stop", handle_api_tunnel_stop)
 
 def _backup_tags_on_startup():
     from modes.asset_mode import TAGS_FILE, ASSET_DATA_DIR
+    from modes.embedding_service import PROFILE_MAP_FILE
     if not os.path.isfile(TAGS_FILE):
         return
     backup_dir = os.path.join(ASSET_DATA_DIR, "backup")
@@ -3807,7 +4163,6 @@ def _backup_tags_on_startup():
         print(f"[BACKUP] tags.json 백업 완료: {backup_path}")
     except Exception as e:
         print(f"[BACKUP] tags.json 백업 실패: {e}")
-        return
     old_backups = sorted(
         (f for f in os.listdir(backup_dir) if f.startswith("tags_") and f.endswith(".json")),
         key=lambda f: os.path.getmtime(os.path.join(backup_dir, f)),
@@ -3817,6 +4172,22 @@ def _backup_tags_on_startup():
             os.remove(os.path.join(backup_dir, f))
         except Exception:
             pass
+    if os.path.isfile(PROFILE_MAP_FILE):
+        profile_backup_path = os.path.join(backup_dir, f"embedding_profile_map_{ts}.json")
+        try:
+            shutil.copy2(PROFILE_MAP_FILE, profile_backup_path)
+            print(f"[BACKUP] embedding_profile_map.json 백업 완료: {profile_backup_path}")
+        except Exception as e:
+            print(f"[BACKUP] embedding_profile_map.json 백업 실패: {e}")
+        old_profile_backups = sorted(
+            (f for f in os.listdir(backup_dir) if f.startswith("embedding_profile_map_") and f.endswith(".json")),
+            key=lambda f: os.path.getmtime(os.path.join(backup_dir, f)),
+        )
+        for f in old_profile_backups[:-10]:
+            try:
+                os.remove(os.path.join(backup_dir, f))
+            except Exception:
+                pass
 
 
 async def on_startup(app):
@@ -3838,6 +4209,14 @@ async def on_startup(app):
         "custom_api_url": app_config.get("custom_api_url", ""),
         "custom_api_url2": app_config.get("custom_api_url2", ""),
     })
+    # 임베딩 서비스 설정 초기화
+    embedding_service.update_config({
+        "embedding_provider": app_config.get("embedding_provider", "voyage"),
+        "embedding_url": app_config.get("embedding_url", "https://api.voyageai.com/v1/embeddings"),
+        "embedding_api_key": app_config.get("embedding_api_key", ""),
+        "embedding_model": app_config.get("embedding_model", "voyage-4-large"),
+    })
+    embedding_service._load_profiles_from_file()
     # 프런트엔드 자동 열기
     webbrowser.open(f"http://127.0.0.1:{PORT}/")
 
