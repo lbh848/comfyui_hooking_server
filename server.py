@@ -3375,7 +3375,7 @@ async def handle_api_asset_mode_set_representative(request: web.Request) -> web.
             body.get("character", ""),
             body.get("outfit", ""),
             body.get("expression", ""),
-            body.get("filename", ""),
+            body.get("filename") or "",
         )
         return web.json_response(result)
     except Exception as e:
@@ -3897,22 +3897,32 @@ async def handle_api_asset_tool_match(request: web.Request) -> web.Response:
         results = asset_tool.match_presets(analyzed_tags, tag_category, tags_data, top_n)
         chains = asset_tool.suggest_chains(results, tag_category, tags_data)
 
-        embedding_query = body.get("embedding_query", "")
         embedding_results = []
-        if embedding_query:
-            embedding_results = await asset_tool.find_similar_by_embedding(
-                embedding_query, tag_category, tags_data,
-                top_n=top_n, threshold=body.get("embedding_threshold", 0.3),
-            )
+        embedding_error = ""
+        if analyzed_tags:
+            try:
+                embedding_results = await asset_tool.match_presets_by_names(
+                    analyzed_tags, tag_category,
+                    tags_data=tags_data,
+                    top_n=top_n, threshold=body.get("embedding_threshold", 0.3),
+                )
+            except Exception as e:
+                embedding_error = str(e)
+                print(f"[ASSET_TOOL] 임베딩 매칭 오류: {e}")
+                import traceback
+                traceback.print_exc()
 
         return web.json_response({
             "success": True,
             "matches": results,
             "chains": chains,
             "embedding_matches": embedding_results,
+            "embedding_error": embedding_error,
         })
     except Exception as e:
         print(f"[ASSET_TOOL] 매칭 오류: {e}")
+        import traceback
+        traceback.print_exc()
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 
@@ -3928,7 +3938,7 @@ async def handle_api_asset_tool_embedding_match(request: web.Request) -> web.Res
             return web.json_response({"success": False, "error": "query가 필요합니다"}, status=400)
 
         tags_data = asset_mode.get_tags()
-        results = await asset_tool.find_similar_by_embedding(
+        results = await asset_tool.match_presets_by_query(
             query, tag_category, tags_data, top_n=top_n, threshold=threshold,
         )
 
@@ -4124,6 +4134,9 @@ async def handle_api_asset_tool_embedding_start(request: web.Request) -> web.Res
 
     async with _embedding_build_lock:
         try:
+            body = await request.json()
+            skip_cached = body.get("skip_cached", False)
+
             tags_data = asset_mode.get_tags()
 
             last_progress = {"done": 0, "total": 0, "message": ""}
@@ -4139,7 +4152,7 @@ async def handle_api_asset_tool_embedding_start(request: web.Request) -> web.Res
                 })
 
             result = await embedding_service.build_preset_embeddings(
-                tags_data, progress_callback=_progress
+                tags_data, progress_callback=_progress, skip_cached=skip_cached
             )
 
             return web.json_response(result)

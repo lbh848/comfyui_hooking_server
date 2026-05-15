@@ -16,7 +16,7 @@ from PIL import Image
 from io import BytesIO
 from typing import Optional, Callable, Awaitable
 
-from modes.embedding_service import find_similar_presets, get_config as get_embedding_config
+from modes.embedding_service import match_presets_by_query, match_presets_by_names, get_config as get_embedding_config
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CURRENT_MODE_WORK_DIR = os.path.join(BASE_DIR, "current_mode_workflow")
@@ -455,9 +455,9 @@ class AssetToolMode:
         return chains
 
     # ─── 임베딩 유사도 매칭 ──────────────────────────────────
-    async def find_similar_by_embedding(self, query: str, tag_category: str,
+    async def match_presets_by_query(self, query: str, tag_category: str,
                                          tags_data: dict, top_n: int = 5,
-                                         threshold: float = 0.3) -> list[dict]:
+                                         threshold: float = 0.0) -> list[dict]:
         """
         임베딩 기반으로 쿼리 텍스트와 가장 유사한 프리셋을 찾는다.
         Jaccard 매칭이 0일 때 또는 보완적으로 사용.
@@ -496,7 +496,7 @@ class AssetToolMode:
         preset_names = [name for name, value in presets.items()
                        if isinstance(value, list)]
 
-        results = await find_similar_presets(
+        results = await match_presets_by_query(
             query_text=query,
             preset_names=preset_names,
             tag_category=tag_category,
@@ -511,6 +511,64 @@ class AssetToolMode:
 
         self._log("embedding_match", {
             "query": query,
+            "category": tag_category,
+            "results_count": len(results),
+        })
+
+        return results
+
+    async def match_presets_by_names(self, tag_names: list[str],
+                                    tag_category: str = "expressions",
+                                    tags_data: dict = None,
+                                    top_n: int = 10,
+                                    threshold: float = 0.3) -> list[dict]:
+        if tags_data is None:
+            from modes.asset_mode import asset_mode
+            tags_data = asset_mode.get_tags()
+        if tag_category == "expressions":
+            presets = tags_data.get("expressions", {})
+        elif tag_category == "composition":
+            presets = tags_data.get("composition_presets", {})
+        elif tag_category == "quality":
+            presets = tags_data.get("quality_presets", {})
+        elif tag_category == "appearances":
+            presets = tags_data.get("appearances", {})
+        elif tag_category == "outfits":
+            presets = tags_data.get("outfits", {})
+        else:
+            presets = tags_data.get("expressions", {})
+
+        if not presets:
+            print(f"[ASSET_TOOL] match_presets_by_names: 프리셋 없음 (category={tag_category})")
+            return []
+
+        preset_names = [name for name, value in presets.items()
+                       if isinstance(value, list)]
+
+        print(f"[ASSET_TOOL] match_presets_by_names: 태그={len(tag_names)}개, 프리셋={len(preset_names)}개, category={tag_category}")
+
+        try:
+            results = await match_presets_by_names(
+                tag_names=tag_names,
+                preset_names=preset_names,
+                tag_category=tag_category,
+                top_n=top_n,
+                threshold=threshold,
+                tags_data=tags_data,
+            )
+        except Exception as e:
+            print(f"[ASSET_TOOL] match_presets_by_names 예외: {type(e).__name__}: {e}")
+            import traceback
+            traceback.print_exc()
+            return []
+
+        for r in results:
+            preset_tags = presets.get(r["name"], [])
+            if isinstance(preset_tags, list):
+                r["preset_tags"] = preset_tags
+
+        self._log("tag_embedding_match", {
+            "tags": tag_names,
             "category": tag_category,
             "results_count": len(results),
         })

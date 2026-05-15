@@ -559,6 +559,88 @@ async def batch_get_embeddings(texts: list[str], input_type: str = "document",
     return all_embeddings
 
 
+async def match_presets_by_names(
+    tag_names: list[str],
+    preset_names: list[str],
+    tag_category: str = "expressions",
+    top_n: int = 10,
+    threshold: float = 0.3,
+    tags_data: dict = None,
+) -> list[dict]:
+    try:
+        api_key = _current_config.get("embedding_api_key", "")
+        if not api_key:
+            _log("API 키 없음 - 태그 기반 임베딩 매칭 스킵")
+            return []
+
+        if not tag_names or not preset_names:
+            _log(f"태그 기반 임베딩 매칭 스킵: tag_names={len(tag_names) if tag_names else 0}, preset_names={len(preset_names) if preset_names else 0}")
+            return []
+
+        clean_tags = [_clean_tag_name(t) for t in tag_names]
+        clean_tags = [c for c in clean_tags if c]
+        if not clean_tags:
+            _log(f"태그 기반 임베딩 매칭 스킵: 정제 후 태그 없음 (원본: {tag_names})")
+            return []
+
+        clean_presets = [_clean_preset_name(n, tags_data) for n in preset_names]
+        unique_clean_tags = list(dict.fromkeys(clean_tags))
+        unique_clean_presets = list(dict.fromkeys(clean_presets))
+        unique_clean_presets = [c for c in unique_clean_presets if c]
+
+        _log(f"태그 기반 임베딩 매칭 시작: 원본태그={len(tag_names)}, 정제태그={len(unique_clean_tags)}, 프리셋={len(unique_clean_presets)}")
+
+        tag_embs = await batch_get_embeddings(unique_clean_tags, input_type="query")
+        preset_embs = await batch_get_embeddings(unique_clean_presets, input_type="document")
+
+        if tag_embs is None:
+            _log("태그 기반 임베딩 매칭 실패: 태그 임베딩 결과가 None")
+            return []
+        if preset_embs is None:
+            _log("태그 기반 임베딩 매칭 실패: 프리셋 임베딩 결과가 None")
+            return []
+
+        tag_emb_map = dict(zip(unique_clean_tags, tag_embs))
+        preset_emb_map = dict(zip(unique_clean_presets, preset_embs))
+
+        results = {}
+        for tag_name, clean_tag in zip(tag_names, clean_tags):
+            if not clean_tag or clean_tag not in tag_emb_map:
+                continue
+            tag_emb = tag_emb_map[clean_tag]
+            for preset_name, clean_preset in zip(preset_names, clean_presets):
+                if not clean_preset or clean_preset not in preset_emb_map:
+                    continue
+                sim = cosine_similarity(tag_emb, preset_emb_map[clean_preset])
+                if sim >= threshold:
+                    key = preset_name
+                    if key not in results or sim > results[key]["similarity"]:
+                        results[key] = {
+                            "name": preset_name,
+                            "clean_name": clean_preset,
+                            "similarity": round(sim, 4),
+                            "matched_tag": clean_tag,
+                            "original_tag": tag_name,
+                        }
+
+        results_list = sorted(results.values(), key=lambda x: x["similarity"], reverse=True)
+        _log(f"태그 기반 임베딩 매칭: {len(clean_tags)}개 태그 vs {len(preset_names)}개 프리셋, "
+             f"결과 {len(results_list)}개 (threshold={threshold})")
+    except Exception as e:
+        _log(f"태그 기반 임베딩 매칭 예외: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
+        return []
+
+    cache = _load_local_cache()
+    cache["signature"] = _signature_for_config()
+    cache["embeddings"].update({k: v for k, v in _embedding_cache.items()})
+    _local_cache = cache
+    _save_local_cache()
+
+    return results_list[:top_n]
+
+
 def _clean_preset_name(name: str, tags_data: dict = None) -> str:
     if tags_data:
         profile_map = tags_data.get("preset_profile_map", {})
@@ -577,7 +659,7 @@ def _clean_tag_name(name: str) -> str:
     return clean_name_by_steps(name, steps)
 
 
-async def find_similar_presets(
+async def match_presets_by_query(
     query_text: str,
     preset_names: list[str],
     tag_category: str = "expressions",
@@ -637,7 +719,7 @@ def preview_clean_names(names: list[str], steps: list[dict]) -> list[dict]:
     return results
 
 
-async def build_preset_embeddings(tags_data: dict, progress_callback=None) -> dict:
+async def build_preset_embeddings(tags_data: dict, progress_callback=None, skip_cached: bool = False) -> dict:
     api_key = _current_config.get("embedding_api_key", "")
     if not api_key:
         _log("API 키 없음 - 임베딩 빌드 불가")
@@ -678,24 +760,40 @@ async def build_preset_embeddings(tags_data: dict, progress_callback=None) -> di
                 all_names_to_embed[char_name] = ("character_presets", char_name, "document")
 
     unique_names = list(all_names_to_embed.keys())
-    _log(f"임베딩 빌드 시작: {len(unique_names)}개 고유 이름")
+
+    if skip_cached:
+        cache = _load_local_cache()
+        cached_embs = cache.get("embeddings", {})
+        names_to_request = []
+        for name in unique_names:
+            cache_key = f"document:{name}"
+            if cache_key in _embedding_cache or cache_key in cached_embs:
+                continue
+            names_to_request.append(name)
+        _log(f"임베딩 빌드 시작 (캐시 스킵): 전체 {len(unique_names)}개 중 캐시 {len(unique_names) - len(names_to_request)}개 스킵, 신규 {len(names_to_request)}개")
+        unique_names_for_api = names_to_request
+    else:
+        _log(f"임베딩 빌드 시작 (전체 재구축): {len(unique_names)}개 고유 이름")
+        unique_names_for_api = unique_names
+
+    total_count = len(unique_names)
 
     if progress_callback:
-        await progress_callback(0, len(unique_names), "임베딩 계산 준비 중")
+        await progress_callback(total_count - len(unique_names_for_api), total_count, "임베딩 계산 준비 중")
 
     batch_size = 64
-    total_batches = (len(unique_names) + batch_size - 1) // batch_size
-    embedded_count = 0
+    total_batches = (len(unique_names_for_api) + batch_size - 1) // batch_size
+    embedded_count = total_count - len(unique_names_for_api)
 
     for batch_idx in range(total_batches):
         start = batch_idx * batch_size
-        batch = unique_names[start:start + batch_size]
+        batch = unique_names_for_api[start:start + batch_size]
         results = await get_embeddings(batch, input_type="document")
 
         if results is None:
             _log(f"배치 {batch_idx + 1}/{total_batches} 임베딩 실패")
             if progress_callback:
-                await progress_callback(embedded_count, len(unique_names), f"배치 {batch_idx + 1} 실패")
+                await progress_callback(embedded_count, total_count, f"배치 {batch_idx + 1} 실패")
             continue
 
         for name, emb in zip(batch, results):
@@ -705,7 +803,7 @@ async def build_preset_embeddings(tags_data: dict, progress_callback=None) -> di
         embedded_count += len(batch)
 
         if progress_callback:
-            await progress_callback(embedded_count, len(unique_names),
+            await progress_callback(embedded_count, total_count,
                                     f"배치 {batch_idx + 1}/{total_batches} 완료")
 
     cache = _load_local_cache()
@@ -714,13 +812,16 @@ async def build_preset_embeddings(tags_data: dict, progress_callback=None) -> di
     _local_cache = cache
     _save_local_cache()
 
-    _log(f"임베딩 빌드 완료: {embedded_count}/{len(unique_names)}개, "
+    skipped = total_count - len(unique_names_for_api)
+    _log(f"임베딩 빌드 완료: 신규 {embedded_count - skipped if skip_cached else embedded_count}/{total_count}개"
+         f"{f' (캐시 스킵 {skipped}개)' if skip_cached else ''}, "
          f"캐시 크기={len(cache['embeddings'])}개")
 
     return {
         "success": True,
-        "total_names": len(unique_names),
+        "total_names": total_count,
         "embedded_count": embedded_count,
+        "skipped": skipped if skip_cached else 0,
         "name_map": name_map,
         "cache_size": len(cache["embeddings"]),
     }

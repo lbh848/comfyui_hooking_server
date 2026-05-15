@@ -1251,11 +1251,12 @@ class AssetMode:
         )
         os.makedirs(img_dir, exist_ok=True)
 
-        fpath = os.path.join(img_dir, filename)
-        if not os.path.isfile(fpath):
-            return {"success": False, "error": "파일이 존재하지 않음"}
-
         rep_path = os.path.join(img_dir, "_representative.json")
+
+        if not filename:
+            if os.path.isfile(rep_path):
+                os.remove(rep_path)
+            return {"success": True, "action": "unset"}
 
         current_rep = ""
         if os.path.isfile(rep_path):

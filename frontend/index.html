@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ComfyUI 에셋/삽화 매니저-V3</title>
+    <title>ComfyUI 에셋/삽화 매니저-V4</title>
     <style>
         :root {
             --bg: #1a1a2e;
@@ -1992,8 +1992,8 @@
         .at-main > div { flex: 1; min-height: 0; }
         #at-view-upload { padding: 16px; overflow-y: auto; }
         #at-view-result { display: flex; flex-direction: column; min-height: 0; overflow: auto; }
-        .at-canvas { display: flex; flex-wrap: wrap; gap: 12px; padding: 16px; align-items: flex-start; }
-        .at-card { flex: 0 0 calc(25% - 9px); min-width: 180px; max-width: 280px; min-height: 0; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; display: flex; flex-direction: column; position: relative; transition: border-color 0.15s, box-shadow 0.15s; }
+        .at-canvas { display: flex; flex-direction: column; gap: 16px; padding: 16px; align-items: stretch; }
+        .at-card { min-width: 180px; max-width: 280px; min-height: 0; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; display: flex; flex-direction: column; position: relative; transition: border-color 0.15s, box-shadow 0.15s; }
         .at-card:hover { border-color: rgba(66,133,244,0.4); }
         .at-card.selected { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(66,133,244,0.3); }
         .at-card-source { border-color: rgba(76,175,80,0.5); }
@@ -2027,6 +2027,9 @@
         .at-btn-primary { background: var(--accent); color: #fff; border-color: var(--accent); }
         .at-btn-primary:hover { opacity: 0.9; }
         .at-btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+        .at-btn-secondary { background: var(--surface2); color: var(--text); border-color: var(--accent); }
+        .at-btn-secondary:hover { background: var(--surface); }
+        .at-btn-secondary:disabled { opacity: 0.4; cursor: not-allowed; }
         .at-tags-preview { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
         .at-tag-chip { display: inline-block; background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 2px 8px; font-size: 0.75rem; color: var(--text2); white-space: nowrap; }
         .at-progress-bar { height: 4px; background: var(--surface); border-radius: 2px; margin: 10px 0; overflow: hidden; }
@@ -2291,6 +2294,7 @@
             align-items: center; justify-content: center;
             min-height: 300px; color: var(--text-secondary);
         }
+        .ep-card-checkbox { width: 18px; height: 18px; accent-color: var(--accent); cursor: pointer; margin: 0; flex-shrink: 0; }
         .ep-card {
             background: var(--surface); border: 2px solid var(--border); border-radius: 10px;
             transition: border-color 0.2s, box-shadow 0.2s;
@@ -2358,7 +2362,7 @@
         <span class="top-progress-label" id="top-progress-label"></span>
     </div>
     <header>
-        <h1>ComfyUI 에셋/삽화 매니저-<span style="color:#4caf50;">V3</span></h1>
+        <h1>ComfyUI 에셋/삽화 매니저-<span style="color:#4caf50;">V4</span></h1>
         <div class="controls">
             <button id="notification-bell" onclick="openNotificationBoard()" style="position:relative; background:transparent; border:none; color:var(--text2); font-size:1.2rem; cursor:pointer; padding:6px 10px; transition:color 0.2s;" onmouseenter="this.style.color='var(--text)'" onmouseleave="this.style.color='var(--text2)'">
                 &#x1F514;
@@ -2837,6 +2841,12 @@
             <div class="at-container">
                 <div class="at-toolbar">
                     <span style="font-weight:600; font-size:0.95rem;">🔍 에셋툴</span>
+                    <label style="display:flex; align-items:center; gap:4px; font-size:0.85rem; cursor:pointer;">
+                        <input type="checkbox" id="at-do-analyze" checked style="accent-color:var(--accent); cursor:pointer;"> 태그 분석
+                    </label>
+                    <label style="display:flex; align-items:center; gap:4px; font-size:0.85rem; cursor:pointer;">
+                        <input type="checkbox" id="at-do-match" checked style="accent-color:var(--accent); cursor:pointer;"> 임베딩 매칭
+                    </label>
                     <label style="font-size:0.85rem;">비교 대상:</label>
                     <span style="font-size:0.85rem; color:var(--text);">표정</span>
                     <input type="hidden" id="at-category" value="expressions">
@@ -2919,9 +2929,10 @@
                                 </div>
                             </div>
                             <div class="at-section" style="margin-bottom:16px;">
-                                <div class="at-section-title">🗄️ 임베딩 캐시</div>
+                                <div class="at-section-title">🗄️ 임베딩 캐시(프리셋만 해당됨)</div>
                                 <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-                                    <button class="at-btn at-btn-primary" id="at-embed-build-btn" onclick="atStartEmbeddingBuild()" style="font-size:0.82rem;">▶ 임베딩 시작</button>
+                                    <button class="at-btn at-btn-primary" id="at-embed-build-btn" onclick="atStartEmbeddingBuild(false)" style="font-size:0.82rem;">▶ 전체 임베딩</button>
+                                    <button class="at-btn at-btn-secondary" id="at-embed-incremental-btn" onclick="atStartEmbeddingBuild(true)" style="font-size:0.82rem;">⚡ 캐시없는것만 임베딩</button>
                                     <div id="at-embed-cache-status" style="font-size:0.82rem; color:var(--text2);">상태 확인 중...</div>
                                 </div>
                                 <div id="at-embed-progress" style="display:none; margin-top:10px;">
@@ -2988,6 +2999,9 @@
                                         <span style="font-weight:600; font-size:0.9rem;">표정 프로필</span>
                                         <button class="ep-btn ep-btn-primary" onclick="scanExprProfilePresets()" style="font-size:0.78rem;">📋 스캔</button>
                                         <button class="ep-btn" onclick="createExprProfileFolders()" style="font-size:0.78rem;">📁 빈 폴더</button>
+                                        <button class="ep-btn" onclick="epSelectAll()" style="font-size:0.78rem;">✅ 전체선택</button>
+                                        <button class="ep-btn" onclick="epDeselectAll()" style="font-size:0.78rem;">❎ 전체해제</button>
+                                        <span id="ep-selected-count" style="font-size:0.78rem; color:var(--text2);"></span>
                                         <div style="margin-left:auto; display:flex; align-items:center; gap:8px;">
                                             <span style="font-size:0.85rem;">열:</span>
                                             <button onclick="epChangeColumns(-1)" style="background:var(--surface2); border:1px solid var(--border); color:var(--text); border-radius:4px; width:24px; height:24px; cursor:pointer; font-size:0.8rem; display:flex; align-items:center; justify-content:center;">◀</button>
@@ -6625,7 +6639,7 @@
                 if (data.profiles) {
                     epProfiles = data.profiles.map(p => ({
                         name: p.name,
-                        selected: true,
+                        selected: false,
                         folder_exists: p.folder_exists,
                         has_images: p.has_images,
                         image_count: p.image_count,
@@ -6696,9 +6710,12 @@
                 const card = document.createElement('div');
                 card.className = 'ep-card' + (profile.selected ? ' selected' : '');
                 card.onclick = (e) => {
-                    if (e.target.closest('.ep-card-thumb') || e.target.closest('input') || e.target.closest('button') || e.target.closest('label') || e.target.closest('.toggle-switch')) return;
+                    if (e.target.closest('.ep-card-thumb') || e.target.closest('button') || e.target.closest('label') || e.target.closest('.toggle-switch')) return;
+                    if (e.target.type === 'checkbox') return;
                     profile.selected = !profile.selected;
                     card.classList.toggle('selected', profile.selected);
+                    const cb = card.querySelector('.ep-card-checkbox');
+                    if (cb) cb.checked = profile.selected;
                     updateExprProfileStartBtn();
                 };
                 const enc = encodeURIComponent;
@@ -6715,11 +6732,14 @@
                 }
                 card.innerHTML = `
                     <div class="ep-card-header">
-                        <span class="ep-card-title">${escapeHtml(profile.name)}</span>
+                        <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                            <input type="checkbox" class="ep-card-checkbox" ${profile.selected ? 'checked' : ''} onchange="epProfiles[${idx}].selected=this.checked; this.closest('.ep-card').classList.toggle('selected', this.checked); updateExprProfileStartBtn();">
+                            <span class="ep-card-title">${escapeHtml(profile.name)}</span>
+                        </label>
                         ${statusBadge}
                     </div>
                     <div class="ep-card-thumb" onclick="handleExprProfileThumbClick(${idx}, event)">
-                        ${thumbSrc ? `<img src="${thumbSrc}" loading="lazy">` : '<div class="no-img">미리보기 없음</div>'}
+                        ${thumbSrc ? `<img src="${thumbSrc}" loading="lazy">` : '<div class="no-img" style="cursor:pointer;">여기를 눌러 이미지 선택</div>'}
                         ${thumbSrc ? `<button class="set-rep-btn" onclick="setExprProfileRepresentative(${idx})">대표 설정</button>` : ''}
                     </div>`;
                 grid.appendChild(card);
@@ -6736,6 +6756,18 @@
             const btn = document.getElementById('ep-start-btn');
             const selectedCount = epProfiles.filter(p => p.selected).length;
             btn.disabled = selectedCount === 0;
+            const countEl = document.getElementById('ep-selected-count');
+            if (countEl) countEl.textContent = selectedCount > 0 ? `${selectedCount}/${epProfiles.length} 선택` : '';
+        }
+
+        function epSelectAll() {
+            epProfiles.forEach(p => p.selected = true);
+            renderExprProfileGrid();
+        }
+
+        function epDeselectAll() {
+            epProfiles.forEach(p => p.selected = false);
+            renderExprProfileGrid();
         }
 
         function handleExprProfileThumbClick(idx, event) {
@@ -6779,7 +6811,7 @@
                     return `<div style="cursor:pointer; border-radius:8px; overflow:hidden; border:2px solid ${isRep ? 'var(--accent)' : 'var(--border)'}; transition:border-color 0.15s; position:relative;"
                         onmouseenter="this.style.borderColor='var(--accent)'"
                         onmouseleave="this.style.borderColor='${isRep ? 'var(--accent)' : 'var(--border)'}'"
-                        onclick="selectExprProfileRepresentative(${idx}, '${escapeHtml(img.filename)}')">
+                        onclick="selectExprProfileRepresentative(${idx}, '${escapeHtml(img.filename)}', ${isRep})">
                         <img src="${imgSrc}" loading="lazy" style="width:100%; display:block; aspect-ratio:936/1408; object-fit:contain;">
                         ${isRep ? '<div style="position:absolute;top:4px;left:4px;background:var(--accent);color:#fff;font-size:0.6rem;padding:1px 6px;border-radius:4px;">대표</div>' : ''}
                     </div>`;
@@ -6798,10 +6830,39 @@
             }
         }
 
-        async function selectExprProfileRepresentative(idx, filename) {
+        async function selectExprProfileRepresentative(idx, filename, isRep) {
             const profile = epProfiles[idx];
             const charName = document.getElementById('ep-character-select').value;
             const outfitName = document.getElementById('ep-outfit-select').value;
+
+            if (isRep) {
+                try {
+                    const resp = await fetch('/api/asset_mode/set_representative', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            character: charName,
+                            outfit: outfitName,
+                            expression: profile.name,
+                            filename: '',
+                        }),
+                    });
+                    const data = await resp.json();
+                    if (data.success) {
+                        profile.representative = '';
+                        const overlay = document.getElementById('ep-image-gallery-overlay');
+                        if (overlay) overlay.remove();
+                        renderExprProfileGrid();
+                        showToast('대표 이미지 해제 완료', 'success');
+                    } else {
+                        showToast('대표 이미지 해제 실패: ' + (data.error || ''), 'error');
+                    }
+                } catch (e) {
+                    showToast('대표 이미지 해제 실패: ' + e.message, 'error');
+                }
+                return;
+            }
+
             try {
                 const resp = await fetch('/api/asset_mode/set_representative', {
                     method: 'POST',
@@ -6816,6 +6877,8 @@
                 const data = await resp.json();
                 if (data.success) {
                     profile.representative = filename;
+                    const overlay = document.getElementById('ep-image-gallery-overlay');
+                    if (overlay) overlay.remove();
                     renderExprProfileGrid();
                     showToast('대표 이미지 설정 완료', 'success');
                 } else {
@@ -6824,8 +6887,6 @@
             } catch (e) {
                 showToast('대표 이미지 설정 실패: ' + e.message, 'error');
             }
-            const overlay = document.getElementById('ep-image-gallery-overlay');
-            if (overlay) overlay.remove();
         }
 
         function onExprProfileRefToggle() {
@@ -7292,8 +7353,9 @@
         // ─── 에셋툴 ────────────────────────────────────────────
         const atState = {
             images: [],          // {file, url, tags, status: 'pending'|'analyzing'|'done'|'error', error}
-            matches: [],         // [{...match_result, selected: bool}] (기존 호환용, 합산 결과)
+            matches: [],         // [{...match_result, selected: bool}] (태그 매칭 결과)
             imageMatches: [],    // [{imageName, tags, matches: [{...match_result, selected: bool}]}] (이미지별 결과)
+            embeddingMatches: [], // [{...embedding_result, selected: bool}] (임베딩 매칭 결과)
             chains: [],          // 제안된 체인
         };
 
@@ -7335,6 +7397,7 @@
             atState.images = [];
             atState.matches = [];
             atState.imageMatches = [];
+            atState.embeddingMatches = [];
             atState.chains = [];
             atRenderImages();
             const canvas = document.getElementById('at-canvas');
@@ -7395,57 +7458,149 @@
 
         async function atAnalyzeAll() {
             const category = document.getElementById('at-category').value;
-            const pending = atState.images.filter(i => i.status === 'pending' || i.status === 'error');
-            if (pending.length === 0) { showToast('분석할 이미지가 없습니다', 'error'); return; }
+            const doAnalyze = document.getElementById('at-do-analyze').checked;
+            const doMatch = document.getElementById('at-do-match').checked;
+            if (!doAnalyze && !doMatch) { showToast('태그 분석 또는 임베딩 매칭 중 하나 이상 선택하세요', 'error'); return; }
 
-            atAbortController = new AbortController();
+            const pending = atState.images.filter(i => i.status === 'pending' || i.status === 'error');
+
             document.getElementById('at-analyze-btn').disabled = true;
             document.getElementById('at-stop-btn').style.display = '';
             document.getElementById('at-progress-bar').style.display = 'block';
             document.getElementById('at-progress-inner').style.width = '0%';
 
-            let completed = 0;
-            for (const item of pending) {
-                if (atAbortController.signal.aborted) break;
-                item.status = 'analyzing';
-                atRenderImages();
-                try {
-                    const formData = new FormData();
-                    formData.append('image', item.file);
-                    formData.append('category', category);
-                    const resp = await fetch('/api/asset_tool/analyze', { method: 'POST', body: formData, signal: atAbortController.signal });
-                    const result = await resp.json();
-                    if (result.success) {
-                        item.tags = result.tags;
-                        item.status = 'done';
-                    } else {
-                        item.error = result.error || '분석 실패';
+            // 전체 단계: 태그 분석 + 임베딩 매칭 + 태그 매칭
+            const analyzeCount = (doAnalyze && pending.length > 0) ? pending.length : 0;
+            const totalSteps = analyzeCount + (doMatch ? atState.images.length * 2 : 0);
+            let completedSteps = 0;
+
+            // 1. 태그 분석
+            if (doAnalyze && pending.length > 0) {
+                atAbortController = new AbortController();
+                for (const item of pending) {
+                    if (atAbortController.signal.aborted) break;
+                    item.status = 'analyzing';
+                    atRenderImages();
+                    try {
+                        const formData = new FormData();
+                        formData.append('image', item.file);
+                        formData.append('category', category);
+                        const resp = await fetch('/api/asset_tool/analyze', { method: 'POST', body: formData, signal: atAbortController.signal });
+                        const result = await resp.json();
+                        if (result.success) {
+                            item.tags = result.tags;
+                            item.status = 'done';
+                        } else {
+                            item.error = result.error || '분석 실패';
+                            item.status = 'error';
+                        }
+                    } catch (e) {
+                        if (e.name === 'AbortError') {
+                            item.status = 'pending';
+                            break;
+                        }
+                        item.error = e.message;
                         item.status = 'error';
                     }
-                } catch (e) {
-                    if (e.name === 'AbortError') {
-                        item.status = 'pending';
-                        break;
-                    }
-                    item.error = e.message;
-                    item.status = 'error';
+                    completedSteps++;
+                    if (totalSteps > 0) document.getElementById('at-progress-inner').style.width = `${Math.round(completedSteps / totalSteps * 100)}%`;
+                    atRenderImages();
                 }
-                completed++;
-                document.getElementById('at-progress-inner').style.width = `${Math.round(completed / pending.length * 100)}%`;
-                atRenderImages();
+                atAbortController = null;
+            }
+
+            // 2. 임베딩 매칭
+            if (doMatch) {
+                const uploadedFiles = atState.images.filter(i => i.file);
+                const tagNames = uploadedFiles.map(i => {
+                    const name = i.file.name || '';
+                    return name.substring(0, name.lastIndexOf('.')) || name;
+                }).filter(n => n);
+                if (tagNames.length === 0) {
+                    showToast('임베딩 매칭할 파일이 없습니다. 이미지를 업로드하세요.', 'error');
+                    document.getElementById('at-analyze-btn').disabled = false;
+                    document.getElementById('at-stop-btn').style.display = 'none';
+                    document.getElementById('at-progress-bar').style.display = 'none';
+                    return;
+                }
+                for (const img of uploadedFiles) {
+                    const fileName = img.file.name || '';
+                    const baseName = fileName.substring(0, fileName.lastIndexOf('.')) || fileName;
+                    try {
+                        const embResp = await fetch('/api/asset_tool/match', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ tags: [baseName], category: category, top_n: 10, embedding_threshold: 0 })
+                        });
+                        const embResult = await embResp.json();
+                        console.log('[임베딩 매칭]', fileName, embResult);
+                        if (embResult.success && embResult.embedding_matches && embResult.embedding_matches.length > 0) {
+                            atState.embeddingMatches.push({
+                                imageName: fileName || '이미지',
+                                imageUrl: img.url || '',
+                                matches: embResult.embedding_matches.map(m => ({ ...m, selected: false }))
+                            });
+                        } else if (!embResult.success) {
+                            console.error('[임베딩 매칭 실패]', fileName, embResult.error);
+                        } else {
+                            console.warn('[임베딩 매칭 결과 없음]', fileName, 'threshold:', 0, 'result:', embResult);
+                        }
+                    } catch (e) {
+                        console.error('임베딩 매칭 오류:', e);
+                    }
+                    completedSteps++;
+                    if (totalSteps > 0) document.getElementById('at-progress-inner').style.width = `${Math.round(completedSteps / totalSteps * 100)}%`;
+                }
+
+                // 3. 태그 매칭
+                const doneImages = atState.images.filter(i => i.status === 'done' && i.tags && i.tags.length > 0);
+                for (const img of doneImages) {
+                    const uniqueTags = [...new Set(img.tags.map(t => t.trim()))];
+                    try {
+                        const tagResp = await fetch('/api/asset_tool/match', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ tags: uniqueTags, category: category, top_n: 10 })
+                        });
+                        const tagResult = await tagResp.json();
+                        console.log('[태그 매칭]', img.file.name, tagResult);
+                        if (tagResult.success && tagResult.matches && tagResult.matches.length > 0) {
+                            atState.imageMatches.push({
+                                imageName: img.file.name || '이미지',
+                                imageUrl: img.url,
+                                tags: uniqueTags,
+                                matches: tagResult.matches.map(m => ({ ...m, selected: false }))
+                            });
+                        } else if (!tagResult.success) {
+                            console.error('[태그 매칭 실패]', img.file.name, tagResult.error);
+                        } else {
+                            console.warn('[태그 매칭 결과 없음]', img.file.name, tagResult);
+                        }
+                    } catch (e) {
+                        console.error('태그 매칭 오류:', e);
+                    }
+                    completedSteps++;
+                    if (totalSteps > 0) document.getElementById('at-progress-inner').style.width = `${Math.round(completedSteps / totalSteps * 100)}%`;
+                }
+
+                atState.chains = [];
+            } else if (doAnalyze) {
+                const analyzable = atState.images.filter(i => i.status === 'done' && i.tags && i.tags.length > 0);
+                if (analyzable.length > 0) {
+                    atSwitchView('result');
+                    atRenderSourceCards();
+                }
             }
 
             document.getElementById('at-analyze-btn').disabled = false;
             document.getElementById('at-stop-btn').style.display = 'none';
             document.getElementById('at-progress-bar').style.display = 'none';
-            atAbortController = null;
 
-            atSwitchView('result');
-            atRenderSourceCards();
-
-            // 자동으로 매칭 실행
-            const doneCount = atState.images.filter(i => i.status === 'done').length;
-            if (doneCount > 0) await atMatchPresets();
+            // 모든 작업 완료 후 매칭 결과 화면으로 전환
+            if (doMatch && (atState.embeddingMatches.length > 0 || atState.imageMatches.length > 0)) {
+                atSwitchView('result');
+                atRenderMatches();
+            }
         }
 
         function atStopAnalysis() {
@@ -7479,33 +7634,62 @@
             });
         }
 
-        async function atMatchPresets() {
+        async function atMatchPresets(fileNames) {
             const category = document.getElementById('at-category').value;
             const doneImages = atState.images.filter(i => i.status === 'done' && i.tags && i.tags.length > 0);
-            if (doneImages.length === 0) { showToast('매칭할 태그가 없습니다', 'error'); return; }
+
+            let tagNames = fileNames;
+            if (!tagNames || tagNames.length === 0) {
+                if (doneImages.length === 0) { showToast('매칭할 태그가 없습니다', 'error'); return; }
+                tagNames = doneImages.map(i => {
+                    const name = i.file.name || '';
+                    return name.substring(0, name.lastIndexOf('.')) || name;
+                });
+            }
 
             try {
-                atState.imageMatches = [];
-                atState.matches = [];
+            atState.imageMatches = [];
+            atState.matches = [];
+            atState.embeddingMatches = [];
 
-                for (const img of doneImages) {
+            for (const img of atState.images) {
+                const fileName = img.file.name || '';
+                const baseName = fileName.substring(0, fileName.lastIndexOf('.')) || fileName;
+
+                // 임베딩 매칭 (파일명 기반)
+                const embResp = await fetch('/api/asset_tool/match', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ tags: [baseName], category: category, top_n: 10, embedding_threshold: 0 })
+                });
+                const embResult = await embResp.json();
+                if (embResult.success && embResult.embedding_matches && embResult.embedding_matches.length > 0) {
+                    atState.embeddingMatches.push({
+                        imageName: fileName || '이미지',
+                        imageUrl: img.url || '',
+                        matches: embResult.embedding_matches.map(m => ({ ...m, selected: false }))
+                    });
+                }
+
+                // 태그 매칭 (AI 분석 결과 기반)
+                if (img.status === 'done' && img.tags && img.tags.length > 0) {
                     const uniqueTags = [...new Set(img.tags.map(t => t.trim()))];
-                    const resp = await fetch('/api/asset_tool/match', {
+                    const tagResp = await fetch('/api/asset_tool/match', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ tags: uniqueTags, category: category, top_n: 3 })
+                        body: JSON.stringify({ tags: uniqueTags, category: category, top_n: 10 })
                     });
-                    const result = await resp.json();
-                    if (result.success) {
-                        const matches = result.matches.map(m => ({ ...m, selected: false }));
+                    const tagResult = await tagResp.json();
+                    if (tagResult.success && tagResult.matches && tagResult.matches.length > 0) {
                         atState.imageMatches.push({
-                            imageName: img.file.name || '이미지',
+                            imageName: fileName || '이미지',
                             imageUrl: img.url,
                             tags: uniqueTags,
-                            matches: matches
+                            matches: tagResult.matches.map(m => ({ ...m, selected: false }))
                         });
                     }
                 }
+            }
 
                 atState.chains = [];
                 atRenderMatches();
@@ -7520,56 +7704,125 @@
             if (!canvas) return;
             canvas.innerHTML = '';
 
-            if (atState.imageMatches.length === 0) {
+            if (atState.embeddingMatches.length === 0 && atState.imageMatches.length === 0) {
                 canvas.innerHTML = '<div class="at-empty-state">이미지를 분석하면<br>매칭 결과가 여기에 표시됩니다</div>';
                 return;
             }
 
-            atState.imageMatches.forEach((imgGroup, gi) => {
-                imgGroup.matches.forEach((m, i) => { if (i < 3) m.selected = true; });
+            const enc = encodeURIComponent;
 
-                // 그룹 구분선
-                if (gi > 0) {
+            // 모든 이미지 이름 수집
+            const allImageNames = [];
+            atState.embeddingMatches.forEach(g => { if (!allImageNames.includes(g.imageName)) allImageNames.push(g.imageName); });
+            atState.imageMatches.forEach(g => { if (!allImageNames.includes(g.imageName)) allImageNames.push(g.imageName); });
+
+            allImageNames.forEach((imgName, imgIdx) => {
+                const embGroup = atState.embeddingMatches.find(g => g.imageName === imgName);
+                const tagGroup = atState.imageMatches.find(g => g.imageName === imgName);
+                const imageUrl = (embGroup && embGroup.imageUrl) ? embGroup.imageUrl : (tagGroup ? tagGroup.imageUrl : '');
+
+                // 이미지 구분선
+                if (imgIdx > 0) {
                     const sep = document.createElement('div');
                     sep.className = 'at-card-separator';
-                    sep.innerHTML = `<div class="at-card-separator-line"></div><div class="at-card-separator-label">${escapeHtml(imgGroup.imageName)}</div><div class="at-card-separator-line"></div>`;
+                    sep.innerHTML = `<div class="at-card-separator-line"></div><div class="at-card-separator-label">${escapeHtml(imgName)}</div><div class="at-card-separator-line"></div>`;
                     canvas.appendChild(sep);
                 }
 
-                // 소스 이미지 카드
-                const srcCard = document.createElement('div');
-                srcCard.className = 'at-card at-card-source';
-                srcCard.innerHTML = `
-                    <div class="at-card-img">
-                        <img src="${imgGroup.imageUrl}" onclick="openLightbox(this.src)">
-                    </div>
-                    <div class="at-card-body">
-                        <div class="at-card-name">${escapeHtml(imgGroup.imageName)}</div>
-                        <div class="at-card-tags">${imgGroup.tags.map(t => `<span class="at-tag-chip">${escapeHtml(t)}</span>`).join('')}</div>
-                    </div>
-                `;
-                canvas.appendChild(srcCard);
+                const wrapper = document.createElement('div');
+                wrapper.style.cssText = 'display:flex; gap:16px; overflow-x:auto; padding-bottom:8px;';
 
-                // 매칭 결과 카드들
-                imgGroup.matches.forEach((m, i) => {
-                    const card = document.createElement('div');
-                    card.className = 'at-card' + (m.selected ? ' selected' : '');
-                    const matchPct = m.jaccard > 0 ? Math.round(m.jaccard * 100) : 0;
-                    const matchedStr = (m.matched_tags || []).map(t => `<span class="at-tag-chip" style="border-color:#4caf50;background:rgba(76,175,80,0.1);">${escapeHtml(t)}</span>`).join('');
-                    const unmatchedStr = (m.unmatched_preset || []).slice(0, 5).map(t => `<span class="at-tag-chip" style="border-color:#999;background:rgba(158,158,158,0.1);">${escapeHtml(t)}</span>`).join('');
-                    card.innerHTML = `
-                        <div class="at-card-img">
-                            <input type="checkbox" class="at-card-check" ${m.selected ? 'checked' : ''} onchange="atState.imageMatches[${gi}].matches[${i}].selected=this.checked; this.closest('.at-card').classList.toggle('selected', this.checked); ">
-                            <div class="at-card-pct">${matchPct}%</div>
-                        </div>
-                        <div class="at-card-body">
-                            <div class="at-card-name">${escapeHtml(m.name)}</div>
-                            <div class="at-card-detail">일치 ${m.match_ratio}</div>
-                            <div class="at-card-tags">${matchedStr}${unmatchedStr}</div>
-                        </div>
+                // 왼쪽: 업로드 이미지
+                if (imageUrl) {
+                    const srcCard = document.createElement('div');
+                    srcCard.className = 'at-card at-card-source';
+                    srcCard.style.cssText = 'max-width:360px; min-width:360px; flex-shrink:0;';
+                    srcCard.innerHTML = `
+                        <div class="at-card-img"><img src="${imageUrl}" loading="lazy" onclick="openLightbox(this.src)"></div>
+                        <div class="at-card-body"><div class="at-card-name">${escapeHtml(imgName)}</div></div>
                     `;
-                    canvas.appendChild(card);
-                });
+                    wrapper.appendChild(srcCard);
+                }
+
+                // 오른쪽: 매칭 결과 (1열 가로 스크롤)
+                const rightCol = document.createElement('div');
+                rightCol.style.cssText = 'flex:1; min-width:0;';
+
+                // 임베딩 매칭 결과
+                if (embGroup && embGroup.matches.length > 0) {
+                    const egi = atState.embeddingMatches.indexOf(embGroup);
+                    const embTitle = document.createElement('div');
+                    embTitle.style.cssText = 'font-weight:700; font-size:0.85rem; color:var(--accent); margin-bottom:6px;';
+                    embTitle.textContent = `🧠 임베딩 매칭 (Top ${embGroup.matches.length})`;
+                    rightCol.appendChild(embTitle);
+
+                    const embRow = document.createElement('div');
+                    embRow.style.cssText = 'display:flex; gap:12px; overflow-x:auto; padding-bottom:8px;';
+                    embGroup.matches.forEach((m, i) => {
+                        const card = document.createElement('div');
+                        card.className = 'at-card' + (m.selected ? ' selected' : '');
+                        card.style.cssText = 'width:180px; flex-shrink:0;';
+                        const simPct = m.similarity ? Math.round(m.similarity * 100) : 0;
+                        const cleanName = m.clean_name ? `<div style="font-size:0.7rem; color:var(--text2);">(${escapeHtml(m.clean_name)})</div>` : '';
+                        const matchedTag = m.matched_tag ? `<div style="font-size:0.7rem; color:var(--text2);">← ${escapeHtml(m.matched_tag)}</div>` : '';
+                        card.innerHTML = `
+                            <div class="at-card-img">
+                                <input type="checkbox" class="at-card-check" ${m.selected ? 'checked' : ''} onchange="atState.embeddingMatches[${egi}].matches[${i}].selected=this.checked; this.closest('.at-card').classList.toggle('selected', this.checked); ">
+                                <div class="at-card-pct">${simPct}%</div>
+                            </div>
+                            <div class="at-card-body">
+                                <div class="at-card-name">${escapeHtml(m.name)}</div>
+                                ${cleanName}
+                                ${matchedTag}
+                                <div class="at-card-detail">유사도 ${simPct}%</div>
+                            </div>
+                        `;
+                        embRow.appendChild(card);
+                    });
+                    rightCol.appendChild(embRow);
+                }
+
+                // 태그 매칭 결과
+                if (tagGroup && tagGroup.matches.length > 0) {
+                    tagGroup.matches.forEach((m) => { m.selected = false; });
+                    const gi = atState.imageMatches.indexOf(tagGroup);
+                    const tagTitle = document.createElement('div');
+                    tagTitle.style.cssText = 'font-weight:700; font-size:0.85rem; color:#4caf50; margin-bottom:6px;';
+                    tagTitle.textContent = '🏷️ 태그 매칭';
+                    rightCol.appendChild(tagTitle);
+
+                    const tagsLine = document.createElement('div');
+                    tagsLine.style.cssText = 'display:flex; flex-wrap:wrap; gap:3px; margin-bottom:8px;';
+                    tagsLine.innerHTML = tagGroup.tags.map(t => `<span class="at-tag-chip">${escapeHtml(t)}</span>`).join('');
+                    rightCol.appendChild(tagsLine);
+
+                    const tagRow = document.createElement('div');
+                    tagRow.style.cssText = 'display:flex; gap:12px; overflow-x:auto; padding-bottom:8px;';
+                    tagGroup.matches.slice(0, 10).forEach((m, i) => {
+                        const card = document.createElement('div');
+                        card.className = 'at-card' + (m.selected ? ' selected' : '');
+                        card.style.cssText = 'width:180px; flex-shrink:0;';
+                        const matchPct = m.jaccard > 0 ? Math.round(m.jaccard * 100) : 0;
+                        const matchedStr = (m.matched_tags || []).map(t => `<span class="at-tag-chip" style="border-color:#4caf50;background:rgba(76,175,80,0.1);">${escapeHtml(t)}</span>`).join('');
+                        const unmatchedStr = (m.unmatched_preset || []).slice(0, 5).map(t => `<span class="at-tag-chip" style="border-color:#999;background:rgba(158,158,158,0.1);">${escapeHtml(t)}</span>`).join('');
+                        card.innerHTML = `
+                            <div class="at-card-img">
+                                <input type="checkbox" class="at-card-check" ${m.selected ? 'checked' : ''} onchange="atState.imageMatches[${gi}].matches[${i}].selected=this.checked; this.closest('.at-card').classList.toggle('selected', this.checked); ">
+                                <div class="at-card-pct">${matchPct}%</div>
+                            </div>
+                            <div class="at-card-body">
+                                <div class="at-card-name">${escapeHtml(m.name)}</div>
+                                <div class="at-card-detail">일치 ${m.match_ratio}</div>
+                                <div class="at-card-tags">${matchedStr}${unmatchedStr}</div>
+                            </div>
+                        `;
+                        tagRow.appendChild(card);
+                    });
+                    rightCol.appendChild(tagRow);
+                }
+
+                wrapper.appendChild(rightCol);
+                canvas.appendChild(wrapper);
             });
         }
 
@@ -7610,6 +7863,36 @@
                     else if (category === 'outfits') chain.outfit = m.name;
                     newChains.push(chain);
                 });
+            });
+
+            atState.embeddingMatches.forEach(embGroup => {
+                embGroup.matches.filter(m => m.selected).forEach(m => {
+                const chain = {
+                    character: '',
+                    appearance: '',
+                    outfit: '',
+                    expression: '',
+                    composition_preset: '',
+                    quality_preset: '',
+                    negative_preset: '',
+                    character_negative_preset: '',
+                    ref_enabled: false,
+                    ref_strength: 0.55,
+                    ref_image: '',
+                    pose_enabled: false,
+                    pose_id: '',
+                    hrf_enabled: false,
+                    fd_enabled: false,
+                    hd_enabled: false,
+                    ed_enabled: false,
+                };
+                if (category === 'expressions') chain.expression = m.name;
+                else if (category === 'composition') chain.composition_preset = m.name;
+                else if (category === 'quality') chain.quality_preset = m.name;
+                else if (category === 'appearances') chain.appearance = m.name;
+                else if (category === 'outfits') chain.outfit = m.name;
+                newChains.push(chain);
+            });
             });
 
             if (newChains.length === 0) { showToast('선택된 매칭이 없습니다', 'error'); return; }
@@ -8107,26 +8390,37 @@
         }
 
         let atEmbedBuildRunning = false;
-        async function atStartEmbeddingBuild() {
+        async function atStartEmbeddingBuild(skipCached = false) {
             if (atEmbedBuildRunning) { showToast('이미 임베딩 빌드가 진행 중입니다', 'warning'); return; }
             atEmbedBuildRunning = true;
             const btn = document.getElementById('at-embed-build-btn');
+            const incBtn = document.getElementById('at-embed-incremental-btn');
             const progressDiv = document.getElementById('at-embed-progress');
             const progressBar = document.getElementById('at-embed-progress-bar');
             const progressText = document.getElementById('at-embed-progress-text');
             btn.disabled = true;
-            btn.textContent = '⏳ 임베딩 중...';
+            incBtn.disabled = true;
+            const activeBtn = skipCached ? incBtn : btn;
+            activeBtn.textContent = '⏳ 임베딩 중...';
             progressDiv.style.display = 'block';
             progressBar.style.width = '0%';
             progressText.textContent = '임베딩 시작 중...';
             try {
-                const resp = await fetch('/api/asset_tool/embedding_start', { method: 'POST' });
+                const resp = await fetch('/api/asset_tool/embedding_start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ skip_cached: skipCached }),
+                });
                 const result = await resp.json();
                 if (result.success) {
                     progressBar.style.width = '100%';
                     progressBar.textContent = '';
-                    progressText.textContent = `완료! ${result.embedded_count}/${result.total_names}개 임베딩 저장됨`;
-                    showToast(`${result.embedded_count}개 임베딩 빌드 완료`, 'success');
+                    const skipped = result.skipped || 0;
+                    const msg = skipCached && skipped > 0
+                        ? `완료! 신규 ${result.embedded_count - skipped}개 + 캐시 ${skipped}개 / 전체 ${result.total_names}개`
+                        : `완료! ${result.embedded_count}/${result.total_names}개 임베딩 저장됨`;
+                    progressText.textContent = msg;
+                    showToast(skipCached ? `캐시없는것만 임베딩 완료 (캐시 ${skipped}개 스킵)` : `${result.embedded_count}개 임베딩 빌드 완료`, 'success');
                     atLoadCacheStatus();
                     atPreviewClean();
                 } else {
@@ -8138,7 +8432,9 @@
                 showToast('임베딩 빌드 오류: ' + e.message, 'error');
             }
             btn.disabled = false;
-            btn.textContent = '▶ 임베딩 시작';
+            incBtn.disabled = false;
+            btn.textContent = '▶ 전체 임베딩';
+            incBtn.textContent = '⚡ 캐시없는것만 임베딩';
             atEmbedBuildRunning = false;
         }
 
