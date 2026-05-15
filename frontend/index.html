@@ -2852,7 +2852,11 @@
                     <input type="hidden" id="at-category" value="expressions">
                     <button class="at-btn at-btn-primary" id="at-analyze-btn" onclick="atAnalyzeAll()" disabled>분석 시작</button>
                     <button class="at-btn" id="at-stop-btn" onclick="atStopAnalysis()" style="display:none; background:#e55; color:#fff; border-color:#e55;">중지</button>
-                    <button class="at-btn" id="at-clear-btn" onclick="atClearAll()" disabled>초기화</button>
+
+                    <select id="at-compare-char" style="font-size:0.85rem; padding:2px 6px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); color:var(--text);">
+                        <option value="">비교 캐릭터</option>
+                    </select>
+                    <button class="at-btn" id="at-compare-apply-btn" onclick="atLoadCompareImages()" style="font-size:0.8rem;">적용</button>
                 </div>
                 <div class="at-body">
                     <div class="at-sidebar">
@@ -2875,6 +2879,9 @@
                     </div>
                     <div class="at-main">
                         <div id="at-view-upload">
+                            <div style="display:flex; justify-content:flex-end; margin-bottom:8px;">
+                                <button class="at-btn" id="at-clear-btn" onclick="atClearAll()" disabled>초기화</button>
+                            </div>
                             <div class="at-dropzone" id="at-dropzone" onclick="document.getElementById('at-file-input').click()">
                                 <div class="at-dropzone-icon">📁</div>
                                 <div class="at-dropzone-text">이미지를 드래그앤드롭하거나 클릭하여 선택</div>
@@ -6437,6 +6444,10 @@
 
         function initExprProfileTab() {
             if (!assetTags) return;
+            if (epRunning) {
+                renderExprProfileGrid();
+                return;
+            }
             const charSel = document.getElementById('ep-character-select');
             const appSel = document.getElementById('ep-appearance-select');
             const outfitSel = document.getElementById('ep-outfit-select');
@@ -6529,6 +6540,7 @@
         }
 
         function onExprProfileFieldChange() {
+            if (epRunning) return;
             epProfiles = [];
             renderExprProfileGrid();
         }
@@ -6637,9 +6649,11 @@
                 const resp = await fetch(`/api/expression_profile/scan?character=${encodeURIComponent(charName)}&outfit=${encodeURIComponent(outfitName)}`);
                 const data = await resp.json();
                 if (data.profiles) {
+                    const prevSelection = {};
+                    epProfiles.forEach(p => { prevSelection[p.name] = p.selected; });
                     epProfiles = data.profiles.map(p => ({
                         name: p.name,
-                        selected: false,
+                        selected: prevSelection[p.name] || false,
                         folder_exists: p.folder_exists,
                         has_images: p.has_images,
                         image_count: p.image_count,
@@ -6708,7 +6722,8 @@
             const outfitName = document.getElementById('ep-outfit-select').value;
             epProfiles.forEach((profile, idx) => {
                 const card = document.createElement('div');
-                card.className = 'ep-card' + (profile.selected ? ' selected' : '');
+                card.className = 'ep-card' + (profile.selected ? ' selected' : '') + (epRunning ? ' disabled' : '');
+                if (epRunning) card.style.cssText = 'opacity:0.6; pointer-events:none;';
                 card.onclick = (e) => {
                     if (e.target.closest('.ep-card-thumb') || e.target.closest('button') || e.target.closest('label') || e.target.closest('.toggle-switch')) return;
                     if (e.target.type === 'checkbox') return;
@@ -6733,7 +6748,7 @@
                 card.innerHTML = `
                     <div class="ep-card-header">
                         <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
-                            <input type="checkbox" class="ep-card-checkbox" ${profile.selected ? 'checked' : ''} onchange="epProfiles[${idx}].selected=this.checked; this.closest('.ep-card').classList.toggle('selected', this.checked); updateExprProfileStartBtn();">
+                            <input type="checkbox" class="ep-card-checkbox" ${profile.selected ? 'checked' : ''} ${epRunning ? 'disabled' : ''} onchange="epProfiles[${idx}].selected=this.checked; this.closest('.ep-card').classList.toggle('selected', this.checked); updateExprProfileStartBtn();">
                             <span class="ep-card-title">${escapeHtml(profile.name)}</span>
                         </label>
                         ${statusBadge}
@@ -7356,6 +7371,7 @@
             matches: [],         // [{...match_result, selected: bool}] (태그 매칭 결과)
             imageMatches: [],    // [{imageName, tags, matches: [{...match_result, selected: bool}]}] (이미지별 결과)
             embeddingMatches: [], // [{...embedding_result, selected: bool}] (임베딩 매칭 결과)
+            compareImages: {},    // {presetName: imageUrl} 비교 캐릭터 이미지 맵
             chains: [],          // 제안된 체인
         };
 
@@ -7392,12 +7408,77 @@
             if (view === 'expr-profile') initExprProfileTab();
         }
 
+        async function atLoadCharacterList() {
+            try {
+                const resp = await fetch('/api/asset_mode/characters');
+                const data = await resp.json();
+                const sel = document.getElementById('at-compare-char');
+                if (!sel) return;
+                const curVal = sel.value;
+                sel.innerHTML = '<option value="">비교 캐릭터</option>';
+                (data.characters || []).forEach(name => {
+                    const opt = document.createElement('option');
+                    opt.value = name;
+                    opt.textContent = name;
+                    sel.appendChild(opt);
+                });
+                if (curVal) sel.value = curVal;
+            } catch (e) {
+                console.error('캐릭터 목록 로드 오류:', e);
+            }
+        }
+
+        async function atLoadCompareImages() {
+            const charName = document.getElementById('at-compare-char').value;
+            if (!charName) {
+                atState.compareImages = {};
+                atRenderMatches();
+                showToast('비교 캐릭터를 선택하세요', 'warning');
+                return;
+            }
+            const category = document.getElementById('at-category').value;
+            try {
+                const tagsResp = await fetch('/api/asset_mode/tags');
+                const tagsData = await tagsResp.json();
+                const enc = encodeURIComponent;
+                const imgMap = {};
+                const charData = (tagsData.characters || {})[charName] || {};
+                const defaultOutfit = charData.outfit || '';
+                const outfitName = defaultOutfit || Object.keys(tagsData.outfits || {})[0] || '';
+                if (category === 'expressions') {
+                    const exprNames = Object.keys(tagsData.expressions || {});
+                    for (const exprName of exprNames) {
+                        try {
+                            const listResp = await fetch(`/api/asset_mode/characters/${enc(charName)}/outfits/${enc(outfitName)}/expressions/${enc(exprName)}/images`);
+                            const listData = await listResp.json();
+                            const repFile = listData.representative || (listData.images && listData.images[0] && listData.images[0].filename);
+                            if (repFile) {
+                                imgMap[exprName] = `/api/asset_mode/characters/${enc(charName)}/outfits/${enc(outfitName)}/expressions/${enc(exprName)}/images/${enc(repFile)}`;
+                            }
+                        } catch (e) { /* skip */ }
+                    }
+                }
+                atState.compareImages = imgMap;
+                atRenderMatches();
+                const count = Object.keys(imgMap).length;
+                if (count > 0) {
+                    showToast(`비교 캐릭터 "${charName}" 표정 이미지 ${count}개 로드 완료`, 'success');
+                } else {
+                    showToast(`"${charName}" 캐릭터에서 로드할 이미지가 없습니다`, 'warning');
+                }
+            } catch (e) {
+                console.error('비교 이미지 로드 오류:', e);
+                showToast('비교 이미지 로드 실패: ' + e.message, 'error');
+            }
+        }
+
         function atClearAll() {
             atState.images.forEach(item => { if (item.url) URL.revokeObjectURL(item.url); });
             atState.images = [];
             atState.matches = [];
             atState.imageMatches = [];
             atState.embeddingMatches = [];
+            atState.compareImages = {};
             atState.chains = [];
             atRenderImages();
             const canvas = document.getElementById('at-canvas');
@@ -7732,14 +7813,24 @@
                 const wrapper = document.createElement('div');
                 wrapper.style.cssText = 'display:flex; gap:16px; overflow-x:auto; padding-bottom:8px;';
 
-                // 왼쪽: 업로드 이미지
+                // 왼쪽: 업로드 이미지 + 선택된 매칭 비교 이미지
                 if (imageUrl) {
                     const srcCard = document.createElement('div');
                     srcCard.className = 'at-card at-card-source';
                     srcCard.style.cssText = 'max-width:360px; min-width:360px; flex-shrink:0;';
+                    const selEmb = embGroup ? embGroup.matches.find(m => m.selected) : null;
+                    const selTag = tagGroup ? tagGroup.matches.find(m => m.selected) : null;
+                    const selName = selEmb ? selEmb.name : (selTag ? selTag.name : '');
+                    const selCompareUrl = selName ? (atState.compareImages[selName] || '') : '';
+                    const compareHtml = selName
+                        ? (selCompareUrl
+                            ? `<div style="margin-top:8px;"><div style="font-size:0.75rem;color:var(--text2);margin-bottom:2px;">선택: ${escapeHtml(selName)}</div><div class="at-card-img" style="aspect-ratio:3/4;border-radius:8px;"><img src="${selCompareUrl}" loading="lazy" style="width:100%;height:100%;object-fit:cover;display:block;" onclick="openLightbox(this.src)"></div></div>`
+                            : `<div style="margin-top:8px;"><div style="font-size:0.75rem;color:var(--text2);margin-bottom:2px;">선택: ${escapeHtml(selName)}</div><div class="at-card-img" style="aspect-ratio:3/4;border-radius:8px;display:flex;align-items:center;justify-content:center;"><span style="font-size:0.8rem;color:var(--text2);">이미지 없음</span></div></div>`)
+                        : '';
                     srcCard.innerHTML = `
                         <div class="at-card-img"><img src="${imageUrl}" loading="lazy" onclick="openLightbox(this.src)"></div>
                         <div class="at-card-body"><div class="at-card-name">${escapeHtml(imgName)}</div></div>
+                        ${compareHtml}
                     `;
                     wrapper.appendChild(srcCard);
                 }
@@ -7765,10 +7856,15 @@
                         const simPct = m.similarity ? Math.round(m.similarity * 100) : 0;
                         const cleanName = m.clean_name ? `<div style="font-size:0.7rem; color:var(--text2);">(${escapeHtml(m.clean_name)})</div>` : '';
                         const matchedTag = m.matched_tag ? `<div style="font-size:0.7rem; color:var(--text2);">← ${escapeHtml(m.matched_tag)}</div>` : '';
+                        const compareImgUrl = atState.compareImages[m.name] || '';
+                        const compareImgHtml = compareImgUrl
+                            ? `<img src="${compareImgUrl}" loading="lazy" style="width:100%;height:100%;object-fit:cover;display:block;" onclick="openLightbox(this.src)">`
+                            : '<span style="color:var(--text2);font-size:0.75rem;">이미지 없음</span>';
                         card.innerHTML = `
                             <div class="at-card-img">
-                                <input type="checkbox" class="at-card-check" ${m.selected ? 'checked' : ''} onchange="atState.embeddingMatches[${egi}].matches[${i}].selected=this.checked; this.closest('.at-card').classList.toggle('selected', this.checked); ">
+                                <input type="checkbox" class="at-card-check" ${m.selected ? 'checked' : ''} onchange="atSelectSingleMatch('embedding', ${egi}, ${i}, ${imgIdx}, this.checked); ">
                                 <div class="at-card-pct">${simPct}%</div>
+                                ${compareImgHtml}
                             </div>
                             <div class="at-card-body">
                                 <div class="at-card-name">${escapeHtml(m.name)}</div>
@@ -7784,7 +7880,6 @@
 
                 // 태그 매칭 결과
                 if (tagGroup && tagGroup.matches.length > 0) {
-                    tagGroup.matches.forEach((m) => { m.selected = false; });
                     const gi = atState.imageMatches.indexOf(tagGroup);
                     const tagTitle = document.createElement('div');
                     tagTitle.style.cssText = 'font-weight:700; font-size:0.85rem; color:#4caf50; margin-bottom:6px;';
@@ -7805,10 +7900,15 @@
                         const matchPct = m.jaccard > 0 ? Math.round(m.jaccard * 100) : 0;
                         const matchedStr = (m.matched_tags || []).map(t => `<span class="at-tag-chip" style="border-color:#4caf50;background:rgba(76,175,80,0.1);">${escapeHtml(t)}</span>`).join('');
                         const unmatchedStr = (m.unmatched_preset || []).slice(0, 5).map(t => `<span class="at-tag-chip" style="border-color:#999;background:rgba(158,158,158,0.1);">${escapeHtml(t)}</span>`).join('');
+                        const compareImgUrl = atState.compareImages[m.name] || '';
+                        const compareImgHtml = compareImgUrl
+                            ? `<img src="${compareImgUrl}" loading="lazy" style="width:100%;height:100%;object-fit:cover;display:block;" onclick="openLightbox(this.src)">`
+                            : '<span style="color:var(--text2);font-size:0.75rem;">이미지 없음</span>';
                         card.innerHTML = `
                             <div class="at-card-img">
-                                <input type="checkbox" class="at-card-check" ${m.selected ? 'checked' : ''} onchange="atState.imageMatches[${gi}].matches[${i}].selected=this.checked; this.closest('.at-card').classList.toggle('selected', this.checked); ">
+                                <input type="checkbox" class="at-card-check" ${m.selected ? 'checked' : ''} onchange="atSelectSingleMatch('tag', ${gi}, ${i}, ${imgIdx}, this.checked); ">
                                 <div class="at-card-pct">${matchPct}%</div>
+                                ${compareImgHtml}
                             </div>
                             <div class="at-card-body">
                                 <div class="at-card-name">${escapeHtml(m.name)}</div>
@@ -7824,6 +7924,34 @@
                 wrapper.appendChild(rightCol);
                 canvas.appendChild(wrapper);
             });
+        }
+
+        function atSelectSingleMatch(type, groupIdx, matchIdx, imgIdx, checked) {
+            const allImageNames = [];
+            atState.embeddingMatches.forEach(g => { if (!allImageNames.includes(g.imageName)) allImageNames.push(g.imageName); });
+            atState.imageMatches.forEach(g => { if (!allImageNames.includes(g.imageName)) allImageNames.push(g.imageName); });
+
+            const currentImgName = allImageNames[imgIdx];
+            if (!currentImgName) return;
+
+            atState.embeddingMatches.forEach((g) => {
+                if (g.imageName !== currentImgName) return;
+                g.matches.forEach((m) => { m.selected = false; });
+            });
+            atState.imageMatches.forEach((g) => {
+                if (g.imageName !== currentImgName) return;
+                g.matches.forEach((m) => { m.selected = false; });
+            });
+
+            if (checked) {
+                if (type === 'embedding') {
+                    atState.embeddingMatches[groupIdx].matches[matchIdx].selected = true;
+                } else {
+                    atState.imageMatches[groupIdx].matches[matchIdx].selected = true;
+                }
+            }
+
+            atRenderMatches();
         }
 
         function atSendToBatch() {
@@ -8502,6 +8630,7 @@
                 document.querySelectorAll('.tab-btn')[4].classList.add('active');
                 document.getElementById('tab-smart-asset-content').classList.add('active');
                 if (!assetTags) loadAssetData();
+                atLoadCharacterList();
                 atSwitchView('upload');
             }
         }
