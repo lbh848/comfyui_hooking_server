@@ -814,7 +814,7 @@
 
         /* ─── 설정 모달 ─── */
         .settings-modal .modal-content {
-            max-width: 600px;
+            max-width: 680px;
         }
 
         .setting-row {
@@ -924,6 +924,32 @@
             letter-spacing: 0.5px;
             line-height: 1.4;
         }
+
+        /* ─── 설정 모달 탭 ─── */
+        .settings-tab-bar {
+            display: flex;
+            border-bottom: 2px solid var(--border);
+            margin-bottom: 8px;
+        }
+        .settings-tab-btn {
+            background: transparent;
+            color: var(--text2);
+            border: none;
+            padding: 10px 20px;
+            font-size: 0.85rem;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            margin-bottom: -2px;
+            transition: all 0.2s;
+        }
+        .settings-tab-btn:hover { color: var(--text); }
+        .settings-tab-btn.active {
+            color: var(--accent);
+            border-bottom-color: var(--accent);
+            font-weight: 600;
+        }
+        .settings-tab-panel { display: none; }
+        .settings-tab-panel.active { display: block; }
 
         /* 슬라이더 */
         .quality-slider {
@@ -3222,433 +3248,436 @@
                 <button class="modal-close" onclick="closeSettingsModal()">&times;</button>
             </div>
             <div class="modal-body">
-                <div class="setting-row">
-                    <div class="setting-label">
-                        <div class="title">Risu 전송 품질</div>
-                        <div class="desc">Risu(ComfyUI 클라이언트)에 전송할 WebP 품질 (1-99). 100이면 원본 무압축 전송 (백업 파일과 무관)</div>
+                <!-- 설정 탭 바 -->
+                <div class="settings-tab-bar">
+                    <button class="settings-tab-btn active" onclick="switchSettingsTab('common')">공통설정</button>
+                    <button class="settings-tab-btn" onclick="switchSettingsTab('api')">외부 API</button>
+                    <button class="settings-tab-btn" onclick="switchSettingsTab('illustration')">삽화</button>
+                    <button class="settings-tab-btn" onclick="switchSettingsTab('asset')">에셋</button>
+                </div>
+
+                <!-- Tab 1: 공통설정 -->
+                <div class="settings-tab-panel active" id="settings-tab-common">
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="title">워크플로우 소스 경로</div>
+                            <div class="desc">"워크플로우 가져오기" 시 불러올 파일 경로</div>
+                        </div>
                     </div>
-                    <div class="setting-control" style="display:flex;align-items:center;gap:16px;">
-                        <label class="toggle-switch" title="변환 없이 원본 PNG 그대로 전송">
-                            <input type="checkbox" id="setting-send-original" onchange="document.getElementById('setting-webp-quality').disabled=this.checked">
-                            <span class="toggle-slider"></span>
-                        </label>
-                        <span style="font-size:12px;color:#888;white-space:nowrap;">원본 전송</span>
-                        <div class="quality-slider" style="flex:1;display:flex;align-items:center;gap:8px;">
-                            <input type="range" min="1" max="100" value="85" id="setting-webp-quality"
-                                   oninput="document.getElementById('quality-value').textContent = this.value">
-                            <div class="quality-value" id="quality-value">85</div>
+                    <div class="form-group" style="margin-top: -8px;">
+                        <label style="font-size: 0.8rem; margin-bottom: 4px;">베이스 경로 (폴더)</label>
+                        <input type="text" id="setting-workflow-base-dir" placeholder="워크플로우 파일이 있는 폴더 경로 입력"
+                               oninput="updateWorkflowPath()">
+                        <div class="hint" style="margin-bottom: 8px;">워크플로우 파일이 있는 폴더 경로</div>
+                    </div>
+                    <div class="form-group" style="margin-top: -8px;">
+                        <label style="font-size: 0.8rem; margin-bottom: 4px;">워크플로우 파일명</label>
+                        <div class="autocomplete-wrapper">
+                            <input type="text" id="setting-workflow-filename" placeholder="예: 0310고속워크플로우_나친척.json"
+                                   oninput="onWorkflowFilenameInput(this.value)" onfocus="onWorkflowFilenameInput(this.value)">
+                            <div class="autocomplete-list" id="workflow-autocomplete"></div>
+                        </div>
+                        <div class="hint">검색어를 입력하면 자동으로 파일 목록이 표시됩니다</div>
+                    </div>
+                    <input type="hidden" id="setting-workflow-path">
+
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="title">백업 저장 경로</div>
+                            <div class="desc">비워두면 기본 경로(workflow_backup) 사용</div>
+                        </div>
+                    </div>
+                    <div class="form-group" style="margin-top: -8px;">
+                        <input type="text" id="setting-backup-dir" placeholder="예: D:\backups\comfyui">
+                        <div class="hint">절대 경로를 입력하세요</div>
+                    </div>
+
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="title">백업 최대 보관 수</div>
+                            <div class="desc">이 장수를 초과하면 오래된 백업부터 자동 삭제</div>
+                        </div>
+                        <div class="setting-control" style="display:flex;align-items:center;gap:8px;">
+                            <input type="number" id="setting-backup-max-count" min="10" max="10000" step="10"
+                                   style="width:80px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);text-align:right;">
+                            <span style="font-size:0.8rem;color:var(--text2);">장</span>
+                        </div>
+                    </div>
+
+                    <!-- 가중치 클램프 -->
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="title">가중치 클램프</div>
+                            <div class="desc">프롬프트에서 과도하게 설정된 가중치를 제한합니다 (예: :2 → :1.2)</div>
+                        </div>
+                        <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="setting-clamp-enabled" onchange="updateClampStatus(this.checked)">
+                                <span class="toggle-slider"></span>
+                            </label>
+                            <span id="clamp-status" class="toggle-status">OFF</span>
+                        </div>
+                    </div>
+
+                    <div class="setting-row" id="clamp-value-row" style="display: none;">
+                        <div class="setting-label">
+                            <div class="title">클램프 수치</div>
+                            <div class="desc">가중치의 최대 허용값 (양수)</div>
+                        </div>
+                        <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                            <input type="number" id="setting-clamp-value" min="0.1" max="5" step="0.1" value="1.2"
+                                   style="width: 80px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text);">
                         </div>
                     </div>
                 </div>
 
-                <div class="setting-row">
-                    <div class="setting-label">
-                        <div class="title">백업 저장 품질</div>
-                        <div class="desc">디스크 백업 파일 저장용 WebP 품질 (1-100). 전송 품질과 별개이며 재전송 시 사용되지 않음</div>
+                <!-- Tab 2: 외부 API 설정 -->
+                <div class="settings-tab-panel" id="settings-tab-api">
+                    <!-- LLM 설정 -->
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="title">LLM 서비스 선택</div>
+                            <div class="desc">외부 LLM 요청에 사용할 서비스</div>
+                        </div>
+                        <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                            <select id="setting-llm-service" onchange="onLlmServiceChange()"
+                                    style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: 0.85rem;">
+                                <option value="copilot">Copilot</option>
+                                <option value="vertex">Vertex</option>
+                                <option value="customapi">CustomAPI</option>
+                            </select>
+                        </div>
                     </div>
-                    <div class="setting-control" style="display:flex;align-items:center;gap:16px;">
-                        <label class="toggle-switch" title="무손실 저장 (파일 크기 증가)">
-                            <input type="checkbox" id="setting-backup-webp-lossless" onchange="document.getElementById('setting-backup-webp-quality').disabled=this.checked">
-                            <span class="toggle-slider"></span>
-                        </label>
-                        <span style="font-size:12px;color:#888;white-space:nowrap;">무손실</span>
-                        <div class="quality-slider" style="flex:1;display:flex;align-items:center;gap:8px;">
-                            <input type="range" min="1" max="100" value="80" id="setting-backup-webp-quality"
-                                   oninput="document.getElementById('backup-quality-value').textContent = this.value">
-                            <div class="quality-value" id="backup-quality-value">80</div>
+
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="title">LLM 모델명</div>
+                            <div class="desc">사용할 모델 (예: gpt-4.1, gemini-3-flash-preview)</div>
+                        </div>
+                        <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                            <input type="text" id="setting-llm-model" value="gpt-4.1" placeholder="gpt-4.1"
+                                   style="width: 200px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text);">
+                        </div>
+                    </div>
+
+                    <div class="setting-row" id="customapi-url-row" style="display: none;">
+                        <div class="setting-label">
+                            <div class="title">CustomAPI 접속 경로</div>
+                            <div class="desc">CustomAPI 서비스의 베이스 URL</div>
+                        </div>
+                        <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                            <input type="text" id="setting-custom-api-url" placeholder="예: http://localhost:8190/copilot"
+                                   style="width: 300px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text);">
+                        </div>
+                    </div>
+
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="title">LLM2 서비스 선택</div>
+                            <div class="desc">폴백 LLM 서비스 (비워두면 LLM1 서비스 사용)</div>
+                        </div>
+                        <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                            <select id="setting-llm-service2" onchange="onLlmServiceChange()"
+                                    style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: .85rem;">
+                                <option value="">(LLM1과 동일)</option>
+                                <option value="copilot">Copilot</option>
+                                <option value="vertex">Vertex</option>
+                                <option value="customapi">CustomAPI</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="title">LLM2 모델명</div>
+                            <div class="desc">폴백 모델 (LLM 실패 시 자동 시도, 비워두면 비활성)</div>
+                        </div>
+                        <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                            <input type="text" id="setting-llm-model2" placeholder="예: gemini-3-flash-preview"
+                                   style="width: 200px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text);">
+                        </div>
+                    </div>
+
+                    <div class="setting-row" id="customapi-url2-row" style="display: none;">
+                        <div class="setting-label">
+                            <div class="title">LLM2 CustomAPI 접속 경로</div>
+                            <div class="desc">LLM2 전용 CustomAPI 베이스 URL (비워두면 LLM1 경로 사용)</div>
+                        </div>
+                        <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                            <input type="text" id="setting-custom-api-url2" placeholder="예: http://localhost:8191/copilot"
+                                   style="width: 300px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text);">
+                        </div>
+                    </div>
+
+                    <!-- 임베딩 설정 -->
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="title">임베딩 프로바이더</div>
+                            <div class="desc">텍스트 임베딩 서비스 제공자 (에셋툴 유사도 매칭에 사용)</div>
+                        </div>
+                        <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                            <select id="setting-embedding-provider" onchange="onEmbeddingProviderChange()"
+                                    style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: .85rem;">
+                                <option value="voyage">Voyage AI</option>
+                                <option value="custom">Custom API</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="setting-row" id="embedding-url-row" style="display: none;">
+                        <div class="setting-label">
+                            <div class="title">임베딩 URL</div>
+                            <div class="desc">임베딩 API 엔드포인트 URL</div>
+                        </div>
+                        <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                            <input type="text" id="setting-embedding-url" placeholder="예: https://api.voyageai.com/v1/embeddings"
+                                   style="width: 350px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text);">
+                        </div>
+                    </div>
+
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="title">임베딩 API Key</div>
+                            <div class="desc">임베딩 서비스 인증 키</div>
+                        </div>
+                        <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                            <input type="text" id="setting-embedding-api-key" placeholder="API 키 입력"
+                                   style="width: 300px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text);">
+                        </div>
+                    </div>
+
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="title">임베딩 모델</div>
+                            <div class="desc">사용할 임베딩 모델명</div>
+                        </div>
+                        <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                            <input type="text" id="setting-embedding-model" placeholder="예: voyage-4-large"
+                                   style="width: 200px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text);">
                         </div>
                     </div>
                 </div>
 
-                <div class="setting-row">
-                    <div class="setting-label">
-                        <div class="title">워크플로우 소스 경로</div>
-                        <div class="desc">"워크플로우 가져오기" 시 불러올 파일 경로</div>
+                <!-- Tab 3: 삽화 관련 설정 -->
+                <div class="settings-tab-panel" id="settings-tab-illustration">
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="title">Risu 전송 품질</div>
+                            <div class="desc">Risu(ComfyUI 클라이언트)에 전송할 WebP 품질 (1-99). 100이면 원본 무압축 전송 (백업 파일과 무관)</div>
+                        </div>
+                        <div class="setting-control" style="display:flex;align-items:center;gap:16px;">
+                            <label class="toggle-switch" title="변환 없이 원본 PNG 그대로 전송">
+                                <input type="checkbox" id="setting-send-original" onchange="document.getElementById('setting-webp-quality').disabled=this.checked">
+                                <span class="toggle-slider"></span>
+                            </label>
+                            <span style="font-size:12px;color:#888;white-space:nowrap;">원본 전송</span>
+                            <div class="quality-slider" style="flex:1;display:flex;align-items:center;gap:8px;">
+                                <input type="range" min="1" max="100" value="85" id="setting-webp-quality"
+                                       oninput="document.getElementById('quality-value').textContent = this.value">
+                                <div class="quality-value" id="quality-value">85</div>
+                            </div>
+                        </div>
                     </div>
-                </div>
-                <div class="form-group" style="margin-top: -8px;">
-                    <label style="font-size: 0.8rem; margin-bottom: 4px;">베이스 경로 (폴더)</label>
-                    <input type="text" id="setting-workflow-base-dir" placeholder="워크플로우 파일이 있는 폴더 경로 입력"
-                           oninput="updateWorkflowPath()">
-                    <div class="hint" style="margin-bottom: 8px;">워크플로우 파일이 있는 폴더 경로</div>
-                </div>
-                <div class="form-group" style="margin-top: -8px;">
-                    <label style="font-size: 0.8rem; margin-bottom: 4px;">워크플로우 파일명</label>
-                    <div class="autocomplete-wrapper">
-                        <input type="text" id="setting-workflow-filename" placeholder="예: 0310고속워크플로우_나친척.json"
-                               oninput="onWorkflowFilenameInput(this.value)" onfocus="onWorkflowFilenameInput(this.value)">
-                        <div class="autocomplete-list" id="workflow-autocomplete"></div>
-                    </div>
-                    <div class="hint">검색어를 입력하면 자동으로 파일 목록이 표시됩니다</div>
-                </div>
-                <input type="hidden" id="setting-workflow-path">
 
-                <div class="setting-row">
-                    <div class="setting-label">
-                        <div class="title">백업 저장 경로</div>
-                        <div class="desc">비워두면 기본 경로(workflow_backup) 사용</div>
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="title">백업 저장 품질</div>
+                            <div class="desc">디스크 백업 파일 저장용 WebP 품질 (1-100). 전송 품질과 별개이며 재전송 시 사용되지 않음</div>
+                        </div>
+                        <div class="setting-control" style="display:flex;align-items:center;gap:16px;">
+                            <label class="toggle-switch" title="무손실 저장 (파일 크기 증가)">
+                                <input type="checkbox" id="setting-backup-webp-lossless" onchange="document.getElementById('setting-backup-webp-quality').disabled=this.checked">
+                                <span class="toggle-slider"></span>
+                            </label>
+                            <span style="font-size:12px;color:#888;white-space:nowrap;">무손실</span>
+                            <div class="quality-slider" style="flex:1;display:flex;align-items:center;gap:8px;">
+                                <input type="range" min="1" max="100" value="80" id="setting-backup-webp-quality"
+                                       oninput="document.getElementById('backup-quality-value').textContent = this.value">
+                                <div class="quality-value" id="backup-quality-value">80</div>
+                            </div>
+                        </div>
                     </div>
-                </div>
-                <div class="form-group" style="margin-top: -8px;">
-                    <input type="text" id="setting-backup-dir" placeholder="예: D:\backups\comfyui">
-                    <div class="hint">절대 경로를 입력하세요</div>
-                </div>
 
-                <div class="setting-row">
-                    <div class="setting-label">
-                        <div class="title">백업 최대 보관 수</div>
-                        <div class="desc">이 장수를 초과하면 오래된 백업부터 자동 삭제</div>
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="title">배치 모드 타임아웃</div>
+                            <div class="desc">마지막 입력 후 배치 처리까지 대기 시간 (초)</div>
+                        </div>
+                        <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                            <input type="number" id="setting-batch-timeout" min="1" max="60" step="0.5" value="5"
+                                   style="width: 80px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text);">
+                            <span>초</span>
+                        </div>
                     </div>
-                    <div class="setting-control" style="display:flex;align-items:center;gap:8px;">
-                        <input type="number" id="setting-backup-max-count" min="10" max="10000" step="10"
-                               style="width:80px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);text-align:right;">
-                        <span style="font-size:0.8rem;color:var(--text2);">장</span>
-                    </div>
-                </div>
 
-                <!-- 가중치 클램프 -->
-                <div class="setting-row">
-                    <div class="setting-label">
-                        <div class="title">가중치 클램프</div>
-                        <div class="desc">프롬프트에서 과도하게 설정된 가중치를 제한합니다 (예: :2 → :1.2)</div>
+                    <!-- 완료 알림 -->
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="title">완료 알림</div>
+                            <div class="desc">배치 그림 완성 시 알림음 + 탭 반짝임</div>
+                        </div>
+                        <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="setting-notification-enabled" onchange="updateNotificationStatus(this.checked)">
+                                <span class="toggle-slider"></span>
+                            </label>
+                            <span id="notification-status" class="toggle-status">OFF</span>
+                        </div>
                     </div>
-                    <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
-                        <label class="toggle-switch">
-                            <input type="checkbox" id="setting-clamp-enabled" onchange="updateClampStatus(this.checked)">
-                            <span class="toggle-slider"></span>
-                        </label>
-                        <span id="clamp-status" class="toggle-status">OFF</span>
-                    </div>
-                </div>
 
-                <div class="setting-row" id="clamp-value-row" style="display: none;">
-                    <div class="setting-label">
-                        <div class="title">클램프 수치</div>
-                        <div class="desc">가중치의 최대 허용값 (양수)</div>
+                    <!-- 자동 재예약 -->
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="title">자동 재예약</div>
+                            <div class="desc">배치 그림 완성 시 가장 최근 배치로 자동 재예약</div>
+                        </div>
+                        <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="setting-auto-reschedule" onchange="updateAutoRescheduleStatus(this.checked)">
+                                <span class="toggle-slider"></span>
+                            </label>
+                            <span id="auto-reschedule-status" class="toggle-status">OFF</span>
+                        </div>
                     </div>
-                    <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
-                        <input type="number" id="setting-clamp-value" min="0.1" max="5" step="0.1" value="1.2"
-                               style="width: 80px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text);">
-                    </div>
-                </div>
 
-                <!-- LLM 설정 -->
-                <div class="setting-row">
-                    <div class="setting-label">
-                        <div class="title">LLM 서비스 선택</div>
-                        <div class="desc">외부 LLM 요청에 사용할 서비스</div>
+                    <!-- 복장 추출 모드 -->
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="title">👕 복장 추출 모드 <span class="beta-badge">BETA</span></div>
+                            <div class="desc">배치 모드에서 이미지 생성 후 자동으로 복장/캐릭터 추출 (배치 모드 활성화 시에만 작동)</div>
+                        </div>
+                        <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="setting-outfit-enabled" onchange="updateOutfitStatus(this.checked)">
+                                <span class="toggle-slider"></span>
+                            </label>
+                            <span id="outfit-status" class="toggle-status">OFF</span>
+                        </div>
                     </div>
-                    <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
-                        <select id="setting-llm-service" onchange="onLlmServiceChange()"
-                                style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: 0.85rem;">
-                            <option value="copilot">Copilot</option>
-                            <option value="vertex">Vertex</option>
-                            <option value="customapi">CustomAPI</option>
+
+                    <div class="form-group" style="margin-top: 4px;">
+                        <label style="font-size: 0.8rem; margin-bottom: 4px;">복장 추출 워크플로우 파일명 (위 베이스 경로 공유)</label>
+                        <div class="autocomplete-wrapper">
+                            <input type="text" id="setting-outfit-workflow-filename" placeholder="예: 복장추출워크플로우.json"
+                                   oninput="onOutfitFilenameInput(this.value)" onfocus="onOutfitFilenameInput(this.value)">
+                            <div class="autocomplete-list" id="outfit-workflow-autocomplete"></div>
+                        </div>
+                        <div class="hint">공통설정 탭의 '베이스 경로'에서 검색됩니다</div>
+                    </div>
+                    <input type="hidden" id="setting-outfit-workflow-source-path">
+
+                    <!-- 복장정리프롬프트 선택 -->
+                    <div class="form-group" style="margin-top: 8px;">
+                        <label style="font-size: 0.8rem; margin-bottom: 4px;">복장정리프롬프트 선택 (customprompt/)</label>
+                        <select id="setting-outfit-prompt-file" onchange="onOutfitPromptFileChange(this.value)"
+                                style="width: 100%; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: 0.85rem;">
+                            <option value="">(선택 안함)</option>
                         </select>
+                        <div class="hint">customprompt/ 폴더의 파이썬 파일을 선택하면 LLM으로 복장 통합 결과를 생성합니다</div>
                     </div>
-                </div>
 
-                <div class="setting-row">
-                    <div class="setting-label">
-                        <div class="title">LLM 모델명</div>
-                        <div class="desc">사용할 모델 (예: gpt-4.1, gemini-3-flash-preview)</div>
+                    <!-- 프롬프트 강화 모드 -->
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="title">✨ 프롬프트 강화 모드 <span class="beta-badge">BETA</span></div>
+                            <div class="desc">배치 프롬프트의 캐릭터 복장 묘사를 LLM으로 자동 강화 (배치 모드 필수, 복장 추출 모드와 함께 사용하면 더 정확)</div>
+                        </div>
+                        <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="setting-enhance-enabled" onchange="updateEnhanceStatus(this.checked)">
+                                <span class="toggle-slider"></span>
+                            </label>
+                            <span id="enhance-status" class="toggle-status">OFF</span>
+                        </div>
                     </div>
-                    <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
-                        <input type="text" id="setting-llm-model" value="gpt-4.1" placeholder="gpt-4.1"
-                               style="width: 200px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text);">
-                    </div>
-                </div>
 
-                <div class="setting-row" id="customapi-url-row" style="display: none;">
-                    <div class="setting-label">
-                        <div class="title">CustomAPI 접속 경로</div>
-                        <div class="desc">CustomAPI 서비스의 베이스 URL</div>
-                    </div>
-                    <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
-                        <input type="text" id="setting-custom-api-url" placeholder="예: http://localhost:8190/copilot"
-                               style="width: 300px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text);">
-                    </div>
-                </div>
-
-                <div class="setting-row">
-                    <div class="setting-label">
-                        <div class="title">LLM2 서비스 선택</div>
-                        <div class="desc">폴백 LLM 서비스 (비워두면 LLM1 서비스 사용)</div>
-                    </div>
-                    <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
-                        <select id="setting-llm-service2" onchange="onLlmServiceChange()"
-                                style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: .85rem;">
-                            <option value="">(LLM1과 동일)</option>
-                            <option value="copilot">Copilot</option>
-                            <option value="vertex">Vertex</option>
-                            <option value="customapi">CustomAPI</option>
+                    <!-- 프롬프트 강화 파일 선택 -->
+                    <div class="form-group" style="margin-top: 8px;">
+                        <label style="font-size: 0.8rem; margin-bottom: 4px;">프롬프트 강화 파일 선택 (customprompt/)</label>
+                        <select id="setting-enhance-prompt-file"
+                                style="width: 100%; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: 0.85rem;">
+                            <option value="">(선택 안함)</option>
                         </select>
+                        <div class="hint">customprompt/ 폴더의 강화 프롬프트 파일을 선택합니다 (기본: enhance_outfit_prompt.py)</div>
                     </div>
-                </div>
 
-                <div class="setting-row">
-                    <div class="setting-label">
-                        <div class="title">LLM2 모델명</div>
-                        <div class="desc">폴백 모델 (LLM 실패 시 자동 시도, 비워두면 비활성)</div>
+                    <!-- 워크플로우 복원 프롬프트 -->
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="title">🔄 워크플로우 복원 프롬프트</div>
+                            <div class="desc">포스트 프로세스 종료 후 지정 프롬프트를 통해 베이스 워크플로우 로드</div>
+                        </div>
+                        <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="setting-restore-enabled" onchange="updateRestoreStatus(this.checked)">
+                                <span class="toggle-slider"></span>
+                            </label>
+                            <span id="restore-status" class="toggle-status">OFF</span>
+                        </div>
                     </div>
-                    <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
-                        <input type="text" id="setting-llm-model2" placeholder="예: gemini-3-flash-preview"
-                               style="width: 200px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text);">
-                    </div>
-                </div>
 
-                <div class="setting-row" id="customapi-url2-row" style="display: none;">
-                    <div class="setting-label">
-                        <div class="title">LLM2 CustomAPI 접속 경로</div>
-                        <div class="desc">LLM2 전용 CustomAPI 베이스 URL (비워두면 LLM1 경로 사용)</div>
-                    </div>
-                    <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
-                        <input type="text" id="setting-custom-api-url2" placeholder="예: http://localhost:8191/copilot"
-                               style="width: 300px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text);">
-                    </div>
-                </div>
-
-                <hr style="border: none; border-top: 1px solid var(--border); margin: 16px 0;">
-                <div style="text-align: center; margin-bottom: 12px;">
-                    <span style="display: inline-block; background: var(--accent); color: #fff; font-size: 0.95rem; font-weight: 700; padding: 4px 18px; border-radius: 8px; letter-spacing: 2px;">임베딩</span>
-                </div>
-
-                <div class="setting-row">
-                    <div class="setting-label">
-                        <div class="title">임베딩 프로바이더</div>
-                        <div class="desc">텍스트 임베딩 서비스 제공자 (에셋툴 유사도 매칭에 사용)</div>
-                    </div>
-                    <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
-                        <select id="setting-embedding-provider" onchange="onEmbeddingProviderChange()"
-                                style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: .85rem;">
-                            <option value="voyage">Voyage AI</option>
-                            <option value="custom">Custom API</option>
+                    <!-- 워크플로우 복원 프롬프트 파일 선택 -->
+                    <div class="form-group" style="margin-top: 8px;">
+                        <label style="font-size: 0.8rem; margin-bottom: 4px;">복원 프롬프트 파일 선택 (customprompt/)</label>
+                        <select id="setting-restore-prompt-file"
+                                style="width: 100%; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: 0.85rem;">
+                            <option value="">(선택 안함)</option>
                         </select>
+                        <div class="hint">모드(복장 추출 등) 종료 후 원래 워크플로우를 자동 실행하여 가중치를 VRAM에 프리로드합니다</div>
+                    </div>
+
+                    <!-- 워크플로우 복원 프롬프트 수동 작동 버튼 -->
+                    <div class="setting-row" style="margin-top: 10px;">
+                        <div class="setting-label">
+                            <div class="title">🖌️ 워크플로우 복원 프롬프트 수동 작동</div>
+                            <div class="desc">복원프롬프트로 comfy 워크플로우를 호출합니다.<br>(모델을 ram으로 미리 올리기 위해 사용합니다)</div>
+                        </div>
+                        <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="setting-restore-manual-enabled" onchange="updateRestoreManualStatus(this.checked)">
+                                <span class="toggle-slider"></span>
+                            </label>
+                            <span id="restore-manual-status" class="toggle-status">OFF</span>
+                        </div>
                     </div>
                 </div>
 
-                <div class="setting-row" id="embedding-url-row" style="display: none;">
-                    <div class="setting-label">
-                        <div class="title">임베딩 URL</div>
-                        <div class="desc">임베딩 API 엔드포인트 URL</div>
+                <!-- Tab 4: 에셋 관련 설정 -->
+                <div class="settings-tab-panel" id="settings-tab-asset">
+                    <!-- 에셋 생성 모드 -->
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="title">🎨 에셋 생성 워크플로우</div>
+                            <div class="desc">에셋 이미지 생성에 사용할 워크플로우 파일 (공통설정 탭 베이스 경로 공유)</div>
+                        </div>
                     </div>
-                    <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
-                        <input type="text" id="setting-embedding-url" placeholder="예: https://api.voyageai.com/v1/embeddings"
-                               style="width: 350px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text);">
+                    <div class="form-group" style="margin-top: -8px;">
+                        <div class="autocomplete-wrapper">
+                            <input type="text" id="setting-asset-workflow-filename" placeholder="예: 에셋생성워크플로우.json"
+                                   oninput="onAssetFilenameInput(this.value)" onfocus="onAssetFilenameInput(this.value)">
+                            <div class="autocomplete-list" id="asset-workflow-autocomplete"></div>
+                        </div>
+                        <div class="hint">공통설정 탭의 '베이스 경로'에서 검색됩니다</div>
                     </div>
+                    <input type="hidden" id="setting-asset-workflow-source-path">
+
+                    <!-- 태그 분석 모드 -->
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="title">🔍 태그 분석 워크플로우</div>
+                            <div class="desc">태그 분석에 사용할 워크플로우 파일 (공통설정 탭 베이스 경로 공유)</div>
+                        </div>
+                    </div>
+                    <div class="form-group" style="margin-top: -8px;">
+                        <div class="autocomplete-wrapper">
+                            <input type="text" id="setting-tag-analysis-workflow-filename" placeholder="예: 태그분석워크플로우.json"
+                                   oninput="onTagAnalysisFilenameInput(this.value)" onfocus="onTagAnalysisFilenameInput(this.value)">
+                            <div class="autocomplete-list" id="tag-analysis-workflow-autocomplete"></div>
+                        </div>
+                        <div class="hint">공통설정 탭의 '베이스 경로'에서 검색됩니다</div>
+                    </div>
+                    <input type="hidden" id="setting-tag-analysis-workflow-source-path">
                 </div>
-
-                <div class="setting-row">
-                    <div class="setting-label">
-                        <div class="title">임베딩 API Key</div>
-                        <div class="desc">임베딩 서비스 인증 키</div>
-                    </div>
-                    <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
-                        <input type="text" id="setting-embedding-api-key" placeholder="API 키 입력"
-                               style="width: 300px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text);">
-                    </div>
-                </div>
-
-                <div class="setting-row">
-                    <div class="setting-label">
-                        <div class="title">임베딩 모델</div>
-                        <div class="desc">사용할 임베딩 모델명</div>
-                    </div>
-                    <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
-                        <input type="text" id="setting-embedding-model" placeholder="예: voyage-4-large"
-                               style="width: 200px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text);">
-                    </div>
-                </div>
-
-                <hr style="border: none; border-top: 1px solid var(--border); margin: 16px 0;">
-                <div style="text-align: center; margin-bottom: 12px;">
-                    <span style="display: inline-block; background: var(--accent); color: #fff; font-size: 0.95rem; font-weight: 700; padding: 4px 18px; border-radius: 8px; letter-spacing: 2px;">모드</span>
-                </div>
-
-                <div class="setting-row">
-                    <div class="setting-label">
-                        <div class="title">배치 모드 타임아웃</div>
-                        <div class="desc">마지막 입력 후 배치 처리까지 대기 시간 (초)</div>
-                    </div>
-                    <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
-                        <input type="number" id="setting-batch-timeout" min="1" max="60" step="0.5" value="5"
-                               style="width: 80px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text);">
-                        <span>초</span>
-                    </div>
-                </div>
-
-                <!-- 완료 알림 -->
-                <div class="setting-row">
-                    <div class="setting-label">
-                        <div class="title">완료 알림</div>
-                        <div class="desc">배치 그림 완성 시 알림음 + 탭 반짝임</div>
-                    </div>
-                    <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
-                        <label class="toggle-switch">
-                            <input type="checkbox" id="setting-notification-enabled" onchange="updateNotificationStatus(this.checked)">
-                            <span class="toggle-slider"></span>
-                        </label>
-                        <span id="notification-status" class="toggle-status">OFF</span>
-                    </div>
-                </div>
-
-                <!-- 자동 재예약 -->
-                <div class="setting-row">
-                    <div class="setting-label">
-                        <div class="title">자동 재예약</div>
-                        <div class="desc">배치 그림 완성 시 가장 최근 배치로 자동 재예약</div>
-                    </div>
-                    <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
-                        <label class="toggle-switch">
-                            <input type="checkbox" id="setting-auto-reschedule" onchange="updateAutoRescheduleStatus(this.checked)">
-                            <span class="toggle-slider"></span>
-                        </label>
-                        <span id="auto-reschedule-status" class="toggle-status">OFF</span>
-                    </div>
-                </div>
-
-                <!-- 복장 추출 모드 -->
-                <div class="setting-row">
-                    <div class="setting-label">
-                        <div class="title">👕 복장 추출 모드 <span class="beta-badge">BETA</span></div>
-                        <div class="desc">배치 모드에서 이미지 생성 후 자동으로 복장/캐릭터 추출 (배치 모드 활성화 시에만 작동)</div>
-                    </div>
-                    <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
-                        <label class="toggle-switch">
-                            <input type="checkbox" id="setting-outfit-enabled" onchange="updateOutfitStatus(this.checked)">
-                            <span class="toggle-slider"></span>
-                        </label>
-                        <span id="outfit-status" class="toggle-status">OFF</span>
-                    </div>
-                </div>
-
-                <div class="form-group" style="margin-top: 4px;">
-                    <label style="font-size: 0.8rem; margin-bottom: 4px;">복장 추출 워크플로우 파일명 (위 베이스 경로 공유)</label>
-                    <div class="autocomplete-wrapper">
-                        <input type="text" id="setting-outfit-workflow-filename" placeholder="예: 복장추출워크플로우.json"
-                               oninput="onOutfitFilenameInput(this.value)" onfocus="onOutfitFilenameInput(this.value)">
-                        <div class="autocomplete-list" id="outfit-workflow-autocomplete"></div>
-                    </div>
-                    <div class="hint">위 '워크플로우 소스 경로'의 베이스 경로에서 검색됩니다</div>
-                </div>
-                <input type="hidden" id="setting-outfit-workflow-source-path">
-
-                <!-- 복장정리프롬프트 선택 -->
-                <div class="form-group" style="margin-top: 8px;">
-                    <label style="font-size: 0.8rem; margin-bottom: 4px;">복장정리프롬프트 선택 (customprompt/)</label>
-                    <select id="setting-outfit-prompt-file" onchange="onOutfitPromptFileChange(this.value)"
-                            style="width: 100%; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: 0.85rem;">
-                        <option value="">(선택 안함)</option>
-                    </select>
-                    <div class="hint">customprompt/ 폴더의 파이썬 파일을 선택하면 LLM으로 복장 통합 결과를 생성합니다</div>
-                </div>
-
-                <hr style="border: none; border-top: 1px solid var(--border); margin: 12px 0;">
-
-                <!-- 프롬프트 강화 모드 -->
-                <div class="setting-row">
-                    <div class="setting-label">
-                        <div class="title">✨ 프롬프트 강화 모드 <span class="beta-badge">BETA</span></div>
-                        <div class="desc">배치 프롬프트의 캐릭터 복장 묘사를 LLM으로 자동 강화 (배치 모드 필수, 복장 추출 모드와 함께 사용하면 더 정확)</div>
-                    </div>
-                    <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
-                        <label class="toggle-switch">
-                            <input type="checkbox" id="setting-enhance-enabled" onchange="updateEnhanceStatus(this.checked)">
-                            <span class="toggle-slider"></span>
-                        </label>
-                        <span id="enhance-status" class="toggle-status">OFF</span>
-                    </div>
-                </div>
-
-                <!-- 프롬프트 강화 파일 선택 -->
-                <div class="form-group" style="margin-top: 8px;">
-                    <label style="font-size: 0.8rem; margin-bottom: 4px;">프롬프트 강화 파일 선택 (customprompt/)</label>
-                    <select id="setting-enhance-prompt-file"
-                            style="width: 100%; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: 0.85rem;">
-                        <option value="">(선택 안함)</option>
-                    </select>
-                    <div class="hint">customprompt/ 폴더의 강화 프롬프트 파일을 선택합니다 (기본: enhance_outfit_prompt.py)</div>
-                </div>
-
-                <hr style="border: none; border-top: 1px solid var(--border); margin: 12px 0;">
-
-                <!-- 워크플로우 복원 프롬프트 -->
-                <div class="setting-row">
-                    <div class="setting-label">
-                        <div class="title">🔄 워크플로우 복원 프롬프트</div>
-                        <div class="desc">포스트 프로세스 종료 후 지정 프롬프트를 통해 베이스 워크플로우 로드</div>
-                    </div>
-                    <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
-                        <label class="toggle-switch">
-                            <input type="checkbox" id="setting-restore-enabled" onchange="updateRestoreStatus(this.checked)">
-                            <span class="toggle-slider"></span>
-                        </label>
-                        <span id="restore-status" class="toggle-status">OFF</span>
-                    </div>
-                </div>
-
-                <!-- 워크플로우 복원 프롬프트 파일 선택 -->
-                <div class="form-group" style="margin-top: 8px;">
-                    <label style="font-size: 0.8rem; margin-bottom: 4px;">복원 프롬프트 파일 선택 (customprompt/)</label>
-                    <select id="setting-restore-prompt-file"
-                            style="width: 100%; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: 0.85rem;">
-                        <option value="">(선택 안함)</option>
-                    </select>
-                    <div class="hint">모드(복장 추출 등) 종료 후 원래 워크플로우를 자동 실행하여 가중치를 VRAM에 프리로드합니다</div>
-                </div>
-
-                <!-- 워크플로우 복원 프롬프트 수동 작동 버튼 -->
-                <div class="setting-row" style="margin-top: 10px;">
-                    <div class="setting-label">
-                        <div class="title">🖌️ 워크플로우 복원 프롬프트 수동 작동</div>
-                        <div class="desc">복원프롬프트로 comfy 워크플로우를 호출합니다.<br>(모델을 ram으로 미리 올리기 위해 사용합니다)</div>
-                    </div>
-                    <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
-                        <label class="toggle-switch">
-                            <input type="checkbox" id="setting-restore-manual-enabled" onchange="updateRestoreManualStatus(this.checked)">
-                            <span class="toggle-slider"></span>
-                        </label>
-                        <span id="restore-manual-status" class="toggle-status">OFF</span>
-                    </div>
-                </div>
-
-                <hr style="border: none; border-top: 1px solid var(--border); margin: 12px 0;">
-
-                <!-- 에셋 생성 모드 -->
-                <div class="setting-row">
-                    <div class="setting-label">
-                        <div class="title">🎨 에셋 생성 워크플로우</div>
-                        <div class="desc">에셋 이미지 생성에 사용할 워크플로우 파일 (위 베이스 경로 공유)</div>
-                    </div>
-                </div>
-                <div class="form-group" style="margin-top: -8px;">
-                    <div class="autocomplete-wrapper">
-                        <input type="text" id="setting-asset-workflow-filename" placeholder="예: 에셋생성워크플로우.json"
-                               oninput="onAssetFilenameInput(this.value)" onfocus="onAssetFilenameInput(this.value)">
-                        <div class="autocomplete-list" id="asset-workflow-autocomplete"></div>
-                    </div>
-                    <div class="hint">위 '워크플로우 소스 경로'의 베이스 경로에서 검색됩니다</div>
-                </div>
-                <input type="hidden" id="setting-asset-workflow-source-path">
-
-                <hr style="border: none; border-top: 1px solid var(--border); margin: 12px 0;">
-
-                <!-- 태그 분석 모드 -->
-                <div class="setting-row">
-                    <div class="setting-label">
-                        <div class="title">🔍 태그 분석 워크플로우</div>
-                        <div class="desc">태그 분석에 사용할 워크플로우 파일 (위 베이스 경로 공유)</div>
-                    </div>
-                </div>
-                <div class="form-group" style="margin-top: -8px;">
-                    <div class="autocomplete-wrapper">
-                        <input type="text" id="setting-tag-analysis-workflow-filename" placeholder="예: 태그분석워크플로우.json"
-                               oninput="onTagAnalysisFilenameInput(this.value)" onfocus="onTagAnalysisFilenameInput(this.value)">
-                        <div class="autocomplete-list" id="tag-analysis-workflow-autocomplete"></div>
-                    </div>
-                    <div class="hint">위 '워크플로우 소스 경로'의 베이스 경로에서 검색됩니다</div>
-                </div>
-                <input type="hidden" id="setting-tag-analysis-workflow-source-path">
             </div>
             <div class="modal-footer">
                 <button class="cancel" onclick="previewConfig()">📋 Config 미리보기</button>
@@ -4984,6 +5013,16 @@
             }
         }
 
+        // ─── 설정 모달 탭 전환 ───
+        function switchSettingsTab(tabName) {
+            document.querySelectorAll('.settings-tab-btn').forEach(btn => btn.classList.remove('active'));
+            document.querySelectorAll('.settings-tab-panel').forEach(panel => panel.classList.remove('active'));
+            document.querySelector(`.settings-tab-btn[onclick*="'${tabName}'"]`).classList.add('active');
+            document.getElementById('settings-tab-' + tabName).classList.add('active');
+            // 탭 전환 시 모든 자동완성 닫기
+            document.querySelectorAll('.autocomplete-list').forEach(list => list.classList.remove('visible'));
+        }
+
         // ─── 설정 모달 ───
         async function openSettingsModal() {
             // 현재 설정 로드
@@ -5098,6 +5137,8 @@
             document.getElementById('setting-tag-analysis-workflow-source-path').value = tagAnalysisPath;
 
             document.getElementById('settings-modal').classList.add('visible');
+            // 항상 첫 번째 탭으로 시작
+            switchSettingsTab('common');
         }
 
         // 워크플로우 경로를베이스 경로와 파일명으로 분리
@@ -5164,8 +5205,8 @@
 
         function closeSettingsModal() {
             document.getElementById('settings-modal').classList.remove('visible');
-            // 자동완성 닫기
-            document.getElementById('workflow-autocomplete').classList.remove('visible');
+            // 모든 자동완성 닫기
+            document.querySelectorAll('.autocomplete-list').forEach(list => list.classList.remove('visible'));
             // config 미리보기 모달도 닫기
             const previewModal = document.getElementById('config-preview-modal');
             if (previewModal) previewModal.classList.remove('visible');
