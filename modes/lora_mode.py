@@ -25,6 +25,11 @@ def _lora_dir(character: str) -> str:
     return os.path.join(ASSET_DIR, _safe_dirname(character), "Lora")
 
 
+def _lora_entry_dir(character: str, entry_name: str) -> str:
+    """캐릭터의 특정 LoRA 항목 폴더 경로 반환"""
+    return os.path.join(_lora_dir(character), _safe_dirname(entry_name))
+
+
 def _training_dir(character: str) -> str:
     """캐릭터의 학습용 이미지 폴더 경로 반환"""
     return os.path.join(_lora_dir(character), TRAINING_DIR_NAME)
@@ -44,9 +49,9 @@ def list_characters() -> list:
         return []
 
 
-def list_lora_files(character: str) -> list:
-    """캐릭터의 Lora 폴더에서 LoRA 파일 목록 반환"""
-    lora_path = _lora_dir(character)
+def list_lora_files(character: str, entry: str = "") -> list:
+    """LoRA 파일 목록 반환. entry 지정 시 해당 항목 폴더 내, 미지정 시 Lora 루트"""
+    lora_path = _lora_entry_dir(character, entry) if entry else _lora_dir(character)
     if not os.path.isdir(lora_path):
         return []
 
@@ -70,14 +75,14 @@ def list_lora_files(character: str) -> list:
     return files
 
 
-def save_uploaded_file(character: str, filename: str, file_data: bytes) -> dict:
-    """업로드된 LoRA 파일을 캐릭터의 Lora 폴더에 저장"""
+def save_uploaded_file(character: str, filename: str, file_data: bytes, entry: str = "") -> dict:
+    """업로드된 LoRA 파일을 저장. entry 지정 시 항목 폴더 내에 저장"""
     # 파일명 정제
     safe_name = "".join(c for c in filename if c.isalnum() or c in (' ', '_', '-', '.', '(', ')', '[', ']', '(')).strip()
     if not safe_name:
         return {"success": False, "error": "유효하지 않은 파일명"}
 
-    lora_path = _lora_dir(character)
+    lora_path = _lora_entry_dir(character, entry) if entry else _lora_dir(character)
     os.makedirs(lora_path, exist_ok=True)
 
     dest = os.path.join(lora_path, safe_name)
@@ -99,14 +104,14 @@ def save_uploaded_file(character: str, filename: str, file_data: bytes) -> dict:
         return {"success": False, "error": str(e)}
 
 
-def delete_lora_file(character: str, filename: str) -> dict:
-    """캐릭터의 Lora 폴더에서 LoRA 파일 삭제"""
+def delete_lora_file(character: str, filename: str, entry: str = "") -> dict:
+    """LoRA 파일 삭제. entry 지정 시 항목 폴더 내에서 삭제"""
     # 경로 탈출 방지
     if ".." in filename or os.path.sep in filename:
         print(f"[LORA] 잘못된 파일명: {filename}")
         return {"success": False, "error": "잘못된 파일명"}
 
-    lora_path = _lora_dir(character)
+    lora_path = _lora_entry_dir(character, entry) if entry else _lora_dir(character)
     fpath = os.path.join(lora_path, filename)
 
     if not os.path.isfile(fpath):
@@ -394,6 +399,7 @@ def list_lora_entries(character: str = "") -> list:
             "trigger": info.get("trigger", ""),
             "description": info.get("description", ""),
             "character": info.get("character", ""),
+            "representative": info.get("representative", ""),
         })
     return entries
 
@@ -417,9 +423,9 @@ def add_lora_entry(name: str, character: str, trigger: str, description: str = "
         print(f"[LORA_MANAGE] 이미 존재: {name}")
         return {"success": False, "error": "이미 존재하는 LoRA명"}
 
-    # 캐릭터 Lora 폴더 생성
-    lora_path = _lora_dir(character)
-    os.makedirs(lora_path, exist_ok=True)
+    # 캐릭터 Lora 폴더 + 항목 폴더 생성
+    entry_path = _lora_entry_dir(character, name)
+    os.makedirs(entry_path, exist_ok=True)
 
     data.setdefault("loras", {})[name] = {
         "trigger": trigger.strip(),
@@ -431,8 +437,8 @@ def add_lora_entry(name: str, character: str, trigger: str, description: str = "
     return {"success": True, "name": name}
 
 
-def remove_lora_entry(name: str) -> dict:
-    """LoRA 항목 삭제 (메타데이터만, 파일은 유지)"""
+def remove_lora_entry(name: str, character: str = "") -> dict:
+    """LoRA 항목 삭제 (메타데이터 + 폴더)"""
     if not name:
         return {"success": False, "error": "이름 누락"}
 
@@ -441,13 +447,28 @@ def remove_lora_entry(name: str) -> dict:
         print(f"[LORA_MANAGE] 항목 없음: {name}")
         return {"success": False, "error": "항목을 찾을 수 없습니다"}
 
+    # character가 안 주어지면 메타데이터에서 가져옴
+    if not character:
+        character = data["loras"][name].get("character", "")
+
+    # 항목 폴더 삭제
+    if character:
+        entry_path = _lora_entry_dir(character, name)
+        if os.path.isdir(entry_path):
+            try:
+                shutil.rmtree(entry_path)
+                print(f"[LORA_MANAGE] 폴더 삭제: {entry_path}")
+            except Exception as e:
+                print(f"[LORA_MANAGE] 폴더 삭제 실패: {entry_path} - {e}")
+                traceback.print_exc()
+
     del data["loras"][name]
     _save_lora_manage(data)
     print(f"[LORA_MANAGE] LoRA 삭제: {name}")
     return {"success": True}
 
 
-def update_lora_entry(name: str, trigger: str = None, description: str = None) -> dict:
+def update_lora_entry(name: str, trigger: str = None, description: str = None, representative: str = None) -> dict:
     """LoRA 항목 메타데이터 수정"""
     if not name:
         return {"success": False, "error": "이름 누락"}
@@ -461,7 +482,25 @@ def update_lora_entry(name: str, trigger: str = None, description: str = None) -
         data["loras"][name]["trigger"] = trigger.strip()
     if description is not None:
         data["loras"][name]["description"] = description.strip()
+    if representative is not None:
+        data["loras"][name]["representative"] = representative.strip()
 
     _save_lora_manage(data)
     print(f"[LORA_MANAGE] LoRA 수정: {name}")
     return {"success": True}
+
+
+def get_entry_image_path(character: str, entry_name: str, filename: str) -> str | None:
+    """LoRA 항목 폴더 내 이미지 파일 경로 반환"""
+    if ".." in entry_name or ".." in filename or os.path.sep in entry_name or os.path.sep in filename:
+        print(f"[LORA_MANAGE] 잘못된 경로: {entry_name}/{filename}")
+        return None
+    fpath = os.path.join(_lora_entry_dir(character, entry_name), filename)
+    if os.path.isfile(fpath):
+        return fpath
+    # 학습용 이미지 폴더도 확인
+    tpath = os.path.join(_training_dir(character), filename)
+    if os.path.isfile(tpath):
+        return tpath
+    print(f"[LORA_MANAGE] 이미지 없음: {fpath}")
+    return None

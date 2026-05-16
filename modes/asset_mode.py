@@ -563,6 +563,8 @@ class AssetMode:
                 outfit_path = os.path.join(char_dir, outfit_dir_name)
                 if not os.path.isdir(outfit_path):
                     continue
+                if outfit_dir_name == "Lora":
+                    continue
                 for expr_dir_name in sorted(os.listdir(outfit_path)):
                     expr_path = os.path.join(outfit_path, expr_dir_name)
                     if not os.path.isdir(expr_path):
@@ -600,6 +602,8 @@ class AssetMode:
         for outfit_dir in sorted(os.listdir(char_dir)):
             outfit_path = os.path.join(char_dir, outfit_dir)
             if not os.path.isdir(outfit_path):
+                continue
+            if outfit_dir == "Lora":
                 continue
             for expr_dir in sorted(os.listdir(outfit_path)):
                 expr_path = os.path.join(outfit_path, expr_dir)
@@ -1342,6 +1346,8 @@ class AssetMode:
             outfit_path = os.path.join(char_dir, outfit_dir_name)
             if not os.path.isdir(outfit_path):
                 continue
+            if outfit_dir_name == "Lora":
+                continue
             for expr_dir_name in sorted(os.listdir(outfit_path)):
                 expr_path = os.path.join(outfit_path, expr_dir_name)
                 if not os.path.isdir(expr_path):
@@ -1397,6 +1403,8 @@ class AssetMode:
             for outfit_dir_name in sorted(os.listdir(char_dir)):
                 outfit_path = os.path.join(char_dir, outfit_dir_name)
                 if not os.path.isdir(outfit_path):
+                    continue
+                if outfit_dir_name == "Lora":
                     continue
                 # 빈 표정 폴더 정리
                 for expr_dir_name in sorted(os.listdir(outfit_path)):
@@ -1526,6 +1534,8 @@ class AssetMode:
             for outfit_dir_name in sorted(os.listdir(char_dir)):
                 outfit_path = os.path.join(char_dir, outfit_dir_name)
                 if not os.path.isdir(outfit_path):
+                    continue
+                if outfit_dir_name == "Lora":
                     continue
                 for expr_dir_name in sorted(os.listdir(outfit_path)):
                     expr_path = os.path.join(outfit_path, expr_dir_name)

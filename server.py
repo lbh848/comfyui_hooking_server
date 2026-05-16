@@ -4261,10 +4261,11 @@ async def handle_api_lora_list(request):
     """캐릭터의 LoRA 파일 목록 반환"""
     try:
         character = request.query.get("character", "")
+        entry = request.query.get("entry", "")
         if not character:
             return web.json_response({"success": False, "error": "캐릭터 미지정"}, status=400)
         from modes.lora_mode import list_lora_files
-        files = list_lora_files(character)
+        files = list_lora_files(character, entry)
         return web.json_response({"success": True, "files": files})
     except Exception as e:
         print(f"[LORA] 파일 목록 조회 실패: {e}")
@@ -4282,13 +4283,13 @@ async def handle_api_lora_upload(request):
         filename = field.filename
         file_data = await field.read()
 
-        # 캐릭터명은 쿼리 파라미터로
         character = request.query.get("character", "")
+        entry = request.query.get("entry", "")
         if not character:
             return web.json_response({"success": False, "error": "캐릭터 미지정"}, status=400)
 
         from modes.lora_mode import save_uploaded_file
-        result = save_uploaded_file(character, filename, file_data)
+        result = save_uploaded_file(character, filename, file_data, entry)
         status = 200 if result.get("success") else 400
         return web.json_response(result, status=status)
     except Exception as e:
@@ -4302,11 +4303,12 @@ async def handle_api_lora_delete(request):
         body = await request.json()
         character = body.get("character", "")
         filename = body.get("filename", "")
+        entry = body.get("entry", "")
         if not character or not filename:
             return web.json_response({"success": False, "error": "필수 값 누락"}, status=400)
 
         from modes.lora_mode import delete_lora_file
-        result = delete_lora_file(character, filename)
+        result = delete_lora_file(character, filename, entry)
         status = 200 if result.get("success") else 400
         return web.json_response(result, status=status)
     except Exception as e:
@@ -4493,6 +4495,25 @@ app.router.add_get("/api/lora/manage/list", handle_api_lora_manage_list)
 app.router.add_post("/api/lora/manage/add", handle_api_lora_manage_add)
 app.router.add_post("/api/lora/manage/delete", handle_api_lora_manage_delete)
 app.router.add_post("/api/lora/manage/update", handle_api_lora_manage_update)
+
+
+async def handle_api_lora_entry_image(request):
+    """LoRA 항목 이미지 서빙 (대표 이미지 등)"""
+    try:
+        character = request.match_info.get("character", "")
+        entry = request.match_info.get("entry", "")
+        filename = request.match_info.get("filename", "")
+        from modes.lora_mode import get_entry_image_path
+        filepath = get_entry_image_path(character, entry, filename)
+        if filepath:
+            return web.FileResponse(filepath)
+        return web.Response(text="Not found", status=404)
+    except Exception as e:
+        print(f"[LORA_MANAGE] 이미지 서빙 실패: {e}")
+        return web.Response(text="Error", status=500)
+
+
+app.router.add_get("/api/lora/entry_image/{character}/{entry}/{filename}", handle_api_lora_entry_image)
 
 
 def _backup_tags_on_startup():
