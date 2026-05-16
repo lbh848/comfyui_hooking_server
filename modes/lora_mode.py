@@ -365,16 +365,46 @@ def save_training_prompt(character: str, entry: str, filename: str, positive: st
 # ─── LoRA 항목 관리 (lora_manage.json) ─────────────────────────
 
 def _load_lora_manage() -> dict:
-    """lora_manage.json 로드"""
+    """lora_manage.json 로드 (필요시 마이그레이션)"""
     if os.path.isfile(LORA_MANAGE_FILE):
         try:
             with open(LORA_MANAGE_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
+                data = json.load(f)
+            data = _migrate_lora_manage(data)
+            return data
         except Exception as e:
             print(f"[LORA_MANAGE] 로드 실패: {e}")
             traceback.print_exc()
             return {"loras": {}}
     return {"loras": {}}
+
+
+def _migrate_lora_manage(data: dict) -> dict:
+    """구형 평평한 구조를 캐릭터 중첩 구조로 마이그레이션"""
+    loras = data.get("loras", {})
+    if not loras:
+        return data
+
+    # 구형 감지: 값에 "character" 필드가 있으면 평평한 구조
+    first_value = next(iter(loras.values()), {})
+    if "character" not in first_value:
+        return data  # 이미 새 구조
+
+    print("[LORA_MANAGE] 마이그레이션: 평평한 구조 -> 캐릭터 중첩 구조")
+    new_loras = {}
+    for name, info in loras.items():
+        char = info.get("character", "")
+        if not char:
+            print(f"[LORA_MANAGE] 마이그레이션 스킵: 캐릭터 없음 - {name}")
+            continue
+        # character 필드 제거하고 중첩
+        entry_data = {k: v for k, v in info.items() if k != "character"}
+        new_loras.setdefault(char, {})[name] = entry_data
+
+    data["loras"] = new_loras
+    _save_lora_manage(data)
+    print(f"[LORA_MANAGE] 마이그레이션 완료: {len(loras)}개 항목")
+    return data
 
 
 def _save_lora_manage(data: dict):
@@ -388,21 +418,27 @@ def _save_lora_manage(data: dict):
         traceback.print_exc()
 
 
+def _get_entry(data: dict, character: str, name: str) -> dict | None:
+    """중첩 구조에서 엔트리 조회"""
+    return data.get("loras", {}).get(character, {}).get(name)
+
+
 def list_lora_entries(character: str = "") -> list:
     """LoRA 항목 목록 반환. character 지정 시 해당 캐릭터 것만."""
     data = _load_lora_manage()
     entries = []
-    for name, info in data.get("loras", {}).items():
-        if character and info.get("character") != character:
+    for char_name, char_entries in data.get("loras", {}).items():
+        if character and char_name != character:
             continue
-        entries.append({
-            "name": name,
-            "trigger": info.get("trigger", ""),
-            "description": info.get("description", ""),
-            "character": info.get("character", ""),
-            "representative": info.get("representative", ""),
-            "training_config": info.get("training_config", {}),
-        })
+        for name, info in char_entries.items():
+            entries.append({
+                "name": name,
+                "trigger": info.get("trigger", ""),
+                "description": info.get("description", ""),
+                "character": char_name,
+                "representative": info.get("representative", ""),
+                "training_config": info.get("training_config", {}),
+            })
     return entries
 
 
@@ -421,77 +457,155 @@ def add_lora_entry(name: str, character: str, trigger: str, description: str = "
     name = name.strip()
     data = _load_lora_manage()
 
-    if name in data.get("loras", {}):
-        print(f"[LORA_MANAGE] 이미 존재: {name}")
+    if _get_entry(data, character, name):
+        print(f"[LORA_MANAGE] 이미 존재: {name} (캐릭터: {character})")
         return {"success": False, "error": "이미 존재하는 LoRA명"}
 
     # 캐릭터 Lora 폴더 + 항목 폴더 생성
     entry_path = _lora_entry_dir(character, name)
     os.makedirs(entry_path, exist_ok=True)
 
-    data.setdefault("loras", {})[name] = {
+    data.setdefault("loras", {}).setdefault(character, {})[name] = {
         "trigger": trigger.strip(),
         "description": description.strip(),
-        "character": character,
     }
     _save_lora_manage(data)
     print(f"[LORA_MANAGE] LoRA 추가: {name} (캐릭터: {character}, 트리거: {trigger.strip()})")
     return {"success": True, "name": name}
 
 
-def remove_lora_entry(name: str, character: str = "") -> dict:
+def remove_lora_entry(name: str, character: str) -> dict:
     """LoRA 항목 삭제 (메타데이터 + 폴더)"""
     if not name:
         return {"success": False, "error": "이름 누락"}
+    if not character:
+        return {"success": False, "error": "캐릭터 누락"}
 
     data = _load_lora_manage()
-    if name not in data.get("loras", {}):
-        print(f"[LORA_MANAGE] 항목 없음: {name}")
+    if not _get_entry(data, character, name):
+        print(f"[LORA_MANAGE] 항목 없음: {character}/{name}")
         return {"success": False, "error": "항목을 찾을 수 없습니다"}
 
-    # character가 안 주어지면 메타데이터에서 가져옴
-    if not character:
-        character = data["loras"][name].get("character", "")
-
     # 항목 폴더 삭제
-    if character:
-        entry_path = _lora_entry_dir(character, name)
-        if os.path.isdir(entry_path):
-            try:
-                shutil.rmtree(entry_path)
-                print(f"[LORA_MANAGE] 폴더 삭제: {entry_path}")
-            except Exception as e:
-                print(f"[LORA_MANAGE] 폴더 삭제 실패: {entry_path} - {e}")
-                traceback.print_exc()
+    entry_path = _lora_entry_dir(character, name)
+    if os.path.isdir(entry_path):
+        try:
+            shutil.rmtree(entry_path)
+            print(f"[LORA_MANAGE] 폴더 삭제: {entry_path}")
+        except Exception as e:
+            print(f"[LORA_MANAGE] 폴더 삭제 실패: {entry_path} - {e}")
+            traceback.print_exc()
 
-    del data["loras"][name]
+    del data["loras"][character][name]
+    # 캐릭터 하위가 비었으면 캐릭터 키도 삭제
+    if not data["loras"][character]:
+        del data["loras"][character]
     _save_lora_manage(data)
-    print(f"[LORA_MANAGE] LoRA 삭제: {name}")
+    print(f"[LORA_MANAGE] LoRA 삭제: {character}/{name}")
     return {"success": True}
 
 
-def update_lora_entry(name: str, trigger: str = None, description: str = None, representative: str = None, training_config: dict = None) -> dict:
+def update_lora_entry(name: str, character: str, trigger: str = None, description: str = None, representative: str = None, training_config: dict = None) -> dict:
     """LoRA 항목 메타데이터 수정"""
     if not name:
         return {"success": False, "error": "이름 누락"}
+    if not character:
+        return {"success": False, "error": "캐릭터 누락"}
 
     data = _load_lora_manage()
-    if name not in data.get("loras", {}):
-        print(f"[LORA_MANAGE] 항목 없음: {name}")
+    entry = _get_entry(data, character, name)
+    if entry is None:
+        print(f"[LORA_MANAGE] 항목 없음: {character}/{name}")
         return {"success": False, "error": "항목을 찾을 수 없습니다"}
 
     if trigger is not None:
-        data["loras"][name]["trigger"] = trigger.strip()
+        entry["trigger"] = trigger.strip()
     if description is not None:
-        data["loras"][name]["description"] = description.strip()
+        entry["description"] = description.strip()
     if representative is not None:
-        data["loras"][name]["representative"] = representative.strip()
+        entry["representative"] = representative.strip()
     if training_config is not None:
-        data["loras"][name]["training_config"] = training_config
+        entry["training_config"] = training_config
 
     _save_lora_manage(data)
-    print(f"[LORA_MANAGE] LoRA 수정: {name}")
+    print(f"[LORA_MANAGE] LoRA 수정: {character}/{name}")
     return {"success": True}
+
+
+def export_training_images(character: str, entry: str, comfy_input_dir: str) -> dict:
+    """
+    학습용 이미지를 Comfy Input 폴더 하위로 복사
+    - multi_img_folder_name 서브폴더 생성 (없으면 생성, 있으면 내부 비우기)
+    - 이미지를 [1].ext, [2].ext ... 형식으로 이름 변경하여 복사
+    """
+    # 학습 이미지 폴더 확인
+    t_dir = _training_dir(character, entry)
+    if not os.path.isdir(t_dir):
+        print(f"[LORA_EXPORT] 학습 이미지 폴더 없음: {t_dir}")
+        return {"success": False, "error": "학습용 이미지가 없습니다"}
+
+    # 학습 이미지 파일 목록 (이미지 파일만)
+    image_files = []
+    for fname in sorted(os.listdir(t_dir)):
+        if fname.startswith("_"):
+            continue
+        ext = os.path.splitext(fname)[1].lower()
+        if ext in IMAGE_EXTENSIONS:
+            image_files.append(fname)
+
+    if not image_files:
+        print(f"[LORA_EXPORT] 학습 이미지 파일 없음: {t_dir}")
+        return {"success": False, "error": "학습용 이미지 파일이 없습니다"}
+
+    # multi_img_folder_name 읽기
+    data = _load_lora_manage()
+    entry_info = _get_entry(data, character, entry) or {}
+    training_config = entry_info.get("training_config", {})
+    folder_name = training_config.get("multi_img_folder_name", "soya_lora")
+
+    # 대상 폴더 경로
+    target_dir = os.path.join(comfy_input_dir, folder_name)
+
+    # 대상 폴더가 있으면 내부 비우기
+    if os.path.isdir(target_dir):
+        print(f"[LORA_EXPORT] 대상 폴더 비우기: {target_dir}")
+        for item in os.listdir(target_dir):
+            item_path = os.path.join(target_dir, item)
+            try:
+                if os.path.isfile(item_path):
+                    os.remove(item_path)
+                elif os.path.isdir(item_path):
+                    shutil.rmtree(item_path)
+            except Exception as e:
+                print(f"[LORA_EXPORT] 삭제 실패: {item_path} - {e}")
+    else:
+        os.makedirs(target_dir, exist_ok=True)
+        print(f"[LORA_EXPORT] 대상 폴더 생성: {target_dir}")
+
+    # 이미지 복사 ([1].ext, [2].ext ...)
+    exported = []
+    errors = []
+    for idx, fname in enumerate(image_files, start=1):
+        src_path = os.path.join(t_dir, fname)
+        ext = os.path.splitext(fname)[1]
+        dest_name = f"[{idx}]{ext}"
+        dest_path = os.path.join(target_dir, dest_name)
+        try:
+            shutil.copy2(src_path, dest_path)
+            exported.append(dest_name)
+            print(f"[LORA_EXPORT] 복사: {src_path} -> {dest_path}")
+        except Exception as e:
+            print(f"[LORA_EXPORT] 복사 실패: {src_path} -> {dest_path} - {e}")
+            traceback.print_exc()
+            errors.append({"filename": fname, "reason": str(e)})
+
+    return {
+        "success": True,
+        "exported": exported,
+        "errors": errors,
+        "target_dir": target_dir,
+        "count": len(exported),
+    }
 
 
 def get_entry_image_path(character: str, entry_name: str, filename: str) -> str | None:

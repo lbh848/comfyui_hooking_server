@@ -3398,13 +3398,23 @@
                         </div>
                         <button onclick="previewLoraPromptsRaw()" style="width:100%; padding:6px; margin-top:4px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600;">프롬프트 Raw 보기</button>
                     </div>
+
+                    <!-- 학습 시작 / 디버그 (항목 선택 시) -->
+                    <div id="lora-training-export-section" style="display:none; margin-bottom:8px;">
+                        <button onclick="startLoraTraining()" style="width:100%; padding:8px; background:rgba(80,180,120,0.2); color:var(--text); border:1px solid rgba(80,180,120,0.3); border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">
+                            학습 시작
+                        </button>
+                        <button onclick="exportLoraTrainingImages()" style="width:100%; padding:6px; margin-top:4px; background:var(--surface2); color:var(--text-secondary); border:1px solid var(--border); border-radius:6px; cursor:pointer; font-size:0.75rem;">
+                            이미지 강제 전송(디버깅용)
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
 
     <!-- LoRA 학습 이미지 피커 모달 -->
     <div class="modal" id="lora-image-picker-modal" onclick="if (event.target === this) closeLoraImagePicker()">
-        <div class="modal-content" style="max-width:720px;">
+        <div class="modal-content" style="max-width:1080px;">
             <div class="modal-header">
                 <h2 id="lora-picker-title">이미지 선택</h2>
                 <button class="modal-close" onclick="closeLoraImagePicker()">&times;</button>
@@ -9661,6 +9671,7 @@
             document.getElementById('lora-delete-btn').style.display = '';
             document.getElementById('lora-training-add-section').style.display = '';
             document.getElementById('lora-training-config-section').style.display = '';
+            document.getElementById('lora-training-export-section').style.display = '';
 
             // 항목 정보 로드
             const enc = encodeURIComponent;
@@ -9707,8 +9718,7 @@
             try {
                 const resp = await fetchJSON('/api/lora/manage/delete', {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name: loraCurrentEntry })
-                });
+                    body: JSON.stringify({ name: loraCurrentEntry, character: loraCurrentCharacter })                });
                 if (resp.success) {
                     showToast('삭제 완료', 'success');
                     await enterLoraCharacter(loraCurrentCharacter);
@@ -9726,11 +9736,47 @@
             try {
                 const resp = await fetchJSON('/api/lora/manage/update', {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name: loraCurrentEntry, trigger, description })
+                    body: JSON.stringify({ name: loraCurrentEntry, character: loraCurrentCharacter, trigger, description })
                 });
                 if (resp.success) { showToast('저장 완료', 'success'); }
                 else { showToast(resp.error || '저장 실패', 'error'); }
             } catch (e) { console.error('[LORA_MANAGE] 저장 실패:', e); showToast('저장 실패', 'error'); }
+        }
+
+        async function startLoraTraining() {
+            if (!loraCurrentCharacter || !loraCurrentEntry) { showToast('LoRA 항목을 선택하세요', 'error'); return; }
+            try {
+                showToast('학습 시작 중...', 'info');
+                const resp = await fetchJSON('/api/lora/training/start', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ character: loraCurrentCharacter, entry: loraCurrentEntry })
+                });
+                if (resp.success) {
+                    const errs = resp.node_errors && Object.keys(resp.node_errors).length > 0;
+                    showToast(`학습 시작 완료 (이미지 ${resp.exported_count}장 전송, prompt_id: ${resp.prompt_id})`, errs ? 'warning' : 'success');
+                } else {
+                    showToast(resp.error || '학습 시작 실패', 'error');
+                }
+            } catch (e) { console.error('[LORA] 학습 시작 실패:', e); showToast('학습 시작 실패', 'error'); }
+        }
+
+        async function exportLoraTrainingImages() {
+            if (!loraCurrentCharacter || !loraCurrentEntry) { showToast('LoRA 항목을 선택하세요', 'error'); return; }
+            try {
+                const resp = await fetchJSON('/api/lora/training_images/export', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ character: loraCurrentCharacter, entry: loraCurrentEntry })
+                });
+                if (resp.success) {
+                    const errs = resp.errors || [];
+                    const msg = errs.length > 0
+                        ? `${resp.count}개 전송 완료 (${errs.length}개 실패)`
+                        : `${resp.count}개 전송 완료`;
+                    showToast(msg, errs.length > 0 ? 'warning' : 'success');
+                } else {
+                    showToast(resp.error || '전송 실패', 'error');
+                }
+            } catch (e) { console.error('[LORA] 이미지 전송 실패:', e); showToast('전송 실패', 'error'); }
         }
 
         async function loadLoraFiles() {
@@ -9817,8 +9863,9 @@
                 grid.style.display = '';
                 grid.innerHTML = images.map(img => `
                     <div class="asset-image-card" style="cursor:default;">
-                        <div style="position:relative;">
+                        <div style="position:relative; overflow:hidden; border-radius:8px;">
                             <img src="/api/lora/training_image/${enc(loraCurrentCharacter)}/${enc(loraCurrentEntry)}/${enc(img.filename)}" style="width:100%; display:block; cursor:zoom-in;" onclick="event.stopPropagation(); openLightbox(this.src)">
+                            ${img.is_representative ? '<div style="position:absolute; top:4px; left:4px; z-index:10; background:rgba(255,193,7,0.95); color:#000; font-size:0.7rem; font-weight:700; padding:3px 8px; border-radius:4px;">대표</div>' : ''}
                         </div>
                         <div style="padding:8px;">
                             <div style="font-size:0.75rem; color:var(--text-secondary); margin-bottom:4px;">${escapeHtml(img.filename)}</div>
@@ -9865,7 +9912,7 @@
             try {
                 const resp = await fetchJSON('/api/lora/manage/update', {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name: loraCurrentEntry, training_config })
+                    body: JSON.stringify({ name: loraCurrentEntry, character: loraCurrentCharacter, training_config })
                 });
                 if (resp.success) { showToast('학습 설정 저장 완료', 'success'); }
                 else { showToast(resp.error || '저장 실패', 'error'); }
@@ -10053,17 +10100,21 @@
                     <button onclick="saveLoraTrainingPrompt('${escapeHtml(filename)}')" style="padding:8px 16px; background:var(--accent); color:#fff; border:none; border-radius:6px; cursor:pointer; font-weight:600;">저장</button>
                 `;
                 document.getElementById('lora-picker-body').innerHTML = `
-                    <div style="margin-bottom:12px;">
-                        <img src="/api/lora/training_image/${enc(loraCurrentCharacter)}/${enc(loraCurrentEntry)}/${enc(filename)}" style="max-width:200px; max-height:200px; border-radius:8px; display:block; margin:0 auto;">
-                        <div style="text-align:center; margin-top:6px; font-size:0.8rem; color:var(--text-secondary);">${escapeHtml(filename)}</div>
-                    </div>
-                    <div style="margin-bottom:8px;">
-                        <label style="font-size:0.8rem; font-weight:600; display:block; margin-bottom:4px;">긍정 프롬프트</label>
-                        <textarea id="lora-prompt-positive" rows="5" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px; background:var(--surface); color:var(--text); font-size:0.85rem; resize:vertical;">${escapeHtml(img.positive || '')}</textarea>
-                    </div>
-                    <div>
-                        <label style="font-size:0.8rem; font-weight:600; display:block; margin-bottom:4px;">부정 프롬프트</label>
-                        <textarea id="lora-prompt-negative" rows="5" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px; background:var(--surface); color:var(--text); font-size:0.85rem; resize:vertical;">${escapeHtml(img.negative || '')}</textarea>
+                    <div style="display:flex; gap:16px; margin-bottom:12px;">
+                        <div style="flex:0 0 320px;">
+                            <img src="/api/lora/training_image/${enc(loraCurrentCharacter)}/${enc(loraCurrentEntry)}/${enc(filename)}" style="width:100%; border-radius:8px; display:block;">
+                            <div style="text-align:center; margin-top:6px; font-size:0.8rem; color:var(--text-secondary);">${escapeHtml(filename)}</div>
+                        </div>
+                        <div style="flex:1; display:flex; flex-direction:column; gap:8px;">
+                            <div>
+                                <label style="font-size:0.8rem; font-weight:600; display:block; margin-bottom:4px;">긍정 프롬프트</label>
+                                <textarea id="lora-prompt-positive" rows="8" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px; background:var(--surface); color:var(--text); font-size:0.85rem; resize:vertical;">${escapeHtml(img.positive || '')}</textarea>
+                            </div>
+                            <div>
+                                <label style="font-size:0.8rem; font-weight:600; display:block; margin-bottom:4px;">부정 프롬프트</label>
+                                <textarea id="lora-prompt-negative" rows="4" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px; background:var(--surface); color:var(--text); font-size:0.85rem; resize:vertical;">${escapeHtml(img.negative || '')}</textarea>
+                            </div>
+                        </div>
                     </div>
                 `;
                 modal.style.display = 'flex';
@@ -10150,7 +10201,7 @@
                     <button onclick="loadLoraPickerGallery()" style="padding:4px 12px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:4px; cursor:pointer; font-size:0.8rem;">&larr; 뒤로</button>
                     <span style="margin-left:8px; font-size:0.85rem; color:var(--text-secondary);">${escapeHtml(outfit)} / ${escapeHtml(expression)}</span>
                 </div>
-                <div id="lora-picker-images-grid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(120px, 1fr)); gap:8px;">
+                <div id="lora-picker-images-grid" style="display:grid; grid-template-columns:repeat(3, 1fr); gap:8px;">
                     <div class="spinner" style="width:32px;height:32px;border-width:3px;margin:16px auto;"></div>
                 </div>
             `;
@@ -10171,6 +10222,7 @@
                         <div onclick="loraPickerToggle(this, '${escapeHtml(key)}')" style="position:relative; cursor:pointer; border-radius:6px; overflow:hidden; border:2px solid ${checked ? 'var(--accent)' : 'transparent'}; transition:border-color 0.15s;">
                             <img src="${imgUrl}" style="width:100%; display:block;">
                             <div style="position:absolute; top:4px; right:4px; width:20px; height:20px; border-radius:50%; background:${checked ? 'var(--accent)' : 'rgba(0,0,0,0.3)'}; display:flex; align-items:center; justify-content:center; color:#fff; font-size:0.7rem;">${checked ? '✓' : ''}</div>
+                            ${img.is_representative ? '<div style="position:absolute; top:4px; left:4px; z-index:10; background:rgba(255,193,7,0.95); color:#000; font-size:0.65rem; font-weight:700; padding:2px 6px; border-radius:4px;">대표</div>' : ''}
                         </div>
                     `;
                 }).join('');

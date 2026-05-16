@@ -4469,10 +4469,13 @@ async def handle_api_lora_manage_delete(request):
     try:
         body = await request.json()
         name = body.get("name", "")
+        character = body.get("character", "")
         if not name:
             return web.json_response({"success": False, "error": "이름 누락"}, status=400)
+        if not character:
+            return web.json_response({"success": False, "error": "캐릭터 누락"}, status=400)
         from modes.lora_mode import remove_lora_entry
-        result = remove_lora_entry(name)
+        result = remove_lora_entry(name, character)
         status = 200 if result.get("success") else 400
         return web.json_response(result, status=status)
     except Exception as e:
@@ -4485,13 +4488,16 @@ async def handle_api_lora_manage_update(request):
     try:
         body = await request.json()
         name = body.get("name", "")
+        character = body.get("character", "")
         trigger = body.get("trigger")
         description = body.get("description")
         training_config = body.get("training_config")
         if not name:
             return web.json_response({"success": False, "error": "이름 누락"}, status=400)
+        if not character:
+            return web.json_response({"success": False, "error": "캐릭터 누락"}, status=400)
         from modes.lora_mode import update_lora_entry
-        result = update_lora_entry(name, trigger, description, training_config=training_config)
+        result = update_lora_entry(name, character, trigger, description, training_config=training_config)
         status = 200 if result.get("success") else 400
         return web.json_response(result, status=status)
     except Exception as e:
@@ -4522,6 +4528,149 @@ async def handle_api_lora_entry_image(request):
 
 
 app.router.add_get("/api/lora/entry_image/{character}/{entry}/{filename}", handle_api_lora_entry_image)
+
+
+async def handle_api_lora_training_export(request):
+    """학습용 이미지를 Comfy Input 폴더로 전송 (복사)"""
+    try:
+        body = await request.json()
+        character = body.get("character", "")
+        entry = body.get("entry", "")
+        if not character or not entry:
+            return web.json_response({"success": False, "error": "캐릭터/엔트리 미지정"}, status=400)
+
+        config = load_config()
+        comfy_input_dir = config.get("comfy_input_dir", "")
+        if not comfy_input_dir:
+            return web.json_response({"success": False, "error": "Comfy Input 폴더 경로가 설정되지 않았습니다"}, status=400)
+
+        if not os.path.isdir(comfy_input_dir):
+            return web.json_response({"success": False, "error": f"Comfy Input 폴더가 존재하지 않습니다: {comfy_input_dir}"}, status=400)
+
+        from modes.lora_mode import export_training_images
+        result = export_training_images(character, entry, comfy_input_dir)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[LORA] 학습 이미지 전송 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+app.router.add_post("/api/lora/training_images/export", handle_api_lora_training_export)
+
+
+def _build_lora_training_text(images: list, trigger: str, profile: str, step: int, il_rate: float, save_step: int, folder: str, field: str = "positive") -> str:
+    """LoRA 학습용 프롬프트 텍스트 생성 (긍정/부정)"""
+    lines = []
+    for i, img in enumerate(images, start=1):
+        if field == "positive":
+            prefix = f"{trigger}, " if trigger else ""
+            lines.append(f"[{i}]{prefix}{img.get('positive', '(프롬프트 없음)')}")
+        else:
+            lines.append(f"[{i}]{img.get('negative', '(프롬프트 없음)')}")
+    lines.append("[PROFILE]")
+    lines.append(profile or "(미입력)")
+    lines.append("[N_IMG]")
+    lines.append(str(len(images)))
+    lines.append("[STEP_PER_IMAGE]")
+    lines.append(str(step))
+    lines.append("[IL_RATE]")
+    lines.append(str(il_rate))
+    lines.append("[SAVE_PER_STEP]")
+    lines.append(str(save_step))
+    lines.append("[MULTI_IMG_FOLDER_NAME]")
+    lines.append(folder or "(미입력)")
+    lines.append("[END]")
+    return "\n".join(lines)
+
+
+async def handle_api_lora_training_start(request):
+    """이미지 전송 후 LoRA 학습 워크플로우 구동"""
+    try:
+        body = await request.json()
+        character = body.get("character", "")
+        entry = body.get("entry", "")
+        if not character or not entry:
+            return web.json_response({"success": False, "error": "캐릭터/엔트리 미지정"}, status=400)
+
+        config = load_config()
+        comfy_input_dir = config.get("comfy_input_dir", "")
+        if not comfy_input_dir:
+            return web.json_response({"success": False, "error": "Comfy Input 폴더 경로가 설정되지 않았습니다"}, status=400)
+        if not os.path.isdir(comfy_input_dir):
+            return web.json_response({"success": False, "error": f"Comfy Input 폴더가 존재하지 않습니다: {comfy_input_dir}"}, status=400)
+
+        # 1. 학습 이미지 전송
+        from modes.lora_mode import export_training_images, list_training_images, _get_entry, _load_lora_manage
+        export_result = export_training_images(character, entry, comfy_input_dir)
+        if not export_result.get("success"):
+            return web.json_response(export_result)
+
+        # 2. 학습 설정 읽기
+        data = _load_lora_manage()
+        entry_info = _get_entry(data, character, entry) or {}
+        training_config = entry_info.get("training_config", {})
+        trigger = entry_info.get("trigger", "")
+
+        profile = training_config.get("profile", "anima")
+        step = training_config.get("step_per_image", 50)
+        il_rate = training_config.get("il_rate", 0.0005)
+        save_step = training_config.get("save_per_step", 50)
+        folder = training_config.get("multi_img_folder_name", "soya_lora")
+
+        # 3. 학습 이미지 + 프롬프트 로드
+        images = list_training_images(character, entry)
+        if not images:
+            return web.json_response({"success": False, "error": "학습 이미지가 없습니다"})
+
+        positive_text = _build_lora_training_text(images, trigger, profile, step, il_rate, save_step, folder, "positive")
+        negative_text = _build_lora_training_text(images, trigger, profile, step, il_rate, save_step, folder, "negative")
+
+        # 4. 워크플로우 로드 & 변환
+        workflow_path = config.get("lora_training_workflow_source_path", "")
+        if not workflow_path or not os.path.isfile(workflow_path):
+            return web.json_response({"success": False, "error": f"LoRA 학습 워크플로우 파일이 없습니다: {workflow_path}"})
+
+        with open(workflow_path, "r", encoding="utf-8") as f:
+            original_wf = json.load(f)
+
+        api_wf, conv_err = await convert_workflow_via_endpoint(original_wf)
+        if conv_err or api_wf is None:
+            return web.json_response({"success": False, "error": f"워크플로우 변환 실패: {conv_err}"})
+
+        # 5. 프롬프트 주입
+        import copy
+        wf = copy.deepcopy(api_wf)
+        for nid, ninfo in wf.items():
+            if not isinstance(ninfo, dict):
+                continue
+            title = ninfo.get("_meta", {}).get("title", "")
+            if title == "긍정프롬프트":
+                ninfo["inputs"]["value"] = positive_text
+            elif title == "부정프롬프트":
+                ninfo["inputs"]["value"] = negative_text
+
+        # 6. ComfyUI에 제출
+        prompt_id, submit_result = await submit_to_real_comfy(wf)
+        node_errors = submit_result.get("node_errors", {})
+        print(f"[LORA_TRAIN] 학습 워크플로우 제출 완료: prompt_id={prompt_id}")
+
+        return web.json_response({
+            "success": True,
+            "prompt_id": prompt_id,
+            "exported_count": export_result.get("count", 0),
+            "node_errors": node_errors,
+        })
+    except RuntimeError as e:
+        print(f"[LORA_TRAIN] 워크플로우 제출 거부: {e}")
+        return web.json_response({"success": False, "error": str(e)}, status=400)
+    except Exception as e:
+        print(f"[LORA_TRAIN] 학습 시작 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+app.router.add_post("/api/lora/training/start", handle_api_lora_training_start)
 
 
 def _backup_tags_on_startup():
