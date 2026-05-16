@@ -8597,8 +8597,8 @@
             const previewMap = {};
             if (window._atTagPreview && Array.isArray(window._atTagPreview)) {
                 window._atTagPreview.forEach(item => {
-                    const base = item.original.substring(0, item.original.lastIndexOf(".")) || item.original;
-                    previewMap[base] = item.cleaned || base;
+                    // 서버에서 이미 확장자를 제거한 original을 그대로 키로 사용
+                    previewMap[item.original] = item.cleaned || item.original;
                 });
             }
 
