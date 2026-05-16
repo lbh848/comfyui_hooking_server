@@ -7985,6 +7985,9 @@
 
             // 2. 임베딩 매칭
             if (doMatch) {
+                atState.embeddingMatches = [];
+                atState.imageMatches = [];
+                atState.chains = [];
                 const uploadedFiles = atState.images.filter(i => i.file);
                 const tagNames = uploadedFiles.map(i => {
                     const name = i.file.name || '';
@@ -8056,8 +8059,6 @@
                     completedSteps++;
                     if (totalSteps > 0) document.getElementById('at-progress-inner').style.width = `${Math.round(completedSteps / totalSteps * 100)}%`;
                 }
-
-                atState.chains = [];
             } else if (doAnalyze) {
                 const analyzable = atState.images.filter(i => i.status === 'done' && i.tags && i.tags.length > 0);
                 if (analyzable.length > 0) {
