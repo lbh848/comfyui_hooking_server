@@ -1,4 +1,4 @@
-"""
+﻿"""
 embedding_service - 텍스트 임베딩 서비스
 
 에셋툴 분석 결과에서 감정/상황 키워드와 프리셋 간의
@@ -91,7 +91,7 @@ def _parse_take(take_value) -> object:
     return take_value
 
 
-def _apply_take(parts: list[str], take_value) -> str:
+def _apply_take(parts: list[str], take_value, join_sep: str = "_") -> str:
     if isinstance(take_value, int):
         if -len(parts) <= take_value < len(parts):
             return parts[take_value]
@@ -104,7 +104,7 @@ def _apply_take(parts: list[str], take_value) -> str:
         if end is not None and end < 0:
             end = len(parts) + end
         selected = parts[start:end]
-        return "_".join(selected)
+        return join_sep.join(selected)
 
     return parts[take_value] if isinstance(take_value, int) and -len(parts) <= take_value < len(parts) else parts[-1]
 
@@ -120,7 +120,7 @@ def clean_name_by_steps(name: str, steps: list[dict]) -> str:
             if not parts:
                 continue
             take_parsed = _parse_take(take)
-            result = _apply_take(parts, take_parsed)
+            result = _apply_take(parts, take_parsed, join_sep=sep)
         elif action == "strip_suffix":
             pattern = step.get("pattern", "")
             if pattern:

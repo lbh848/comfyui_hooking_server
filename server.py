@@ -1,4 +1,4 @@
-import asyncio
+﻿import asyncio
 import json
 import os
 import copy
@@ -3366,7 +3366,7 @@ async def handle_api_asset_mode_images(request: web.Request) -> web.Response:
     character = request.match_info.get("character", "")
     outfit = request.match_info.get("outfit", "")
     expression = request.match_info.get("expression", "")
-    return web.json_response({"images": asset_mode.list_images(character, outfit, expression)})
+    return web.json_response(asset_mode.list_images(character, outfit, expression))
 
 async def handle_api_asset_mode_set_representative(request: web.Request) -> web.Response:
     try:
@@ -4125,6 +4125,37 @@ async def handle_api_asset_tool_embedding_profile_map_save(request: web.Request)
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 
+
+async def handle_api_asset_tool_embedding_profile_map_get(request: web.Request) -> web.Response:
+    try:
+        profile_map = embedding_service.get_preset_profile_map()
+        # 정제 규칙(clean_profiles) 존재 여부도 함께 반환
+        clean_profile_keys = []
+        active_preset_profile = ""
+        try:
+            import json, os
+            from modes.embedding_service import PROFILE_MAP_FILE
+            if os.path.isfile(PROFILE_MAP_FILE):
+                with open(PROFILE_MAP_FILE, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                clean_profile_keys = list(data.get("clean_profiles", {}).keys())
+                active_preset_profile = data.get("active_preset_profile", "")
+        except Exception:
+            pass
+        return web.json_response({
+            "success": True,
+            "preset_profile_map": profile_map,
+            "count": len(profile_map),
+            "clean_profile_keys": clean_profile_keys,
+            "active_preset_profile": active_preset_profile,
+            "has_clean_profiles": len(clean_profile_keys) > 0 and bool(active_preset_profile),
+        })
+    except Exception as e:
+        print(f"[ASSET_TOOL] 프로필 맵 조회 오류: {e}")
+        import traceback
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
 _embedding_build_lock = asyncio.Lock()
 
 
@@ -4193,6 +4224,7 @@ app.router.add_post("/api/asset_tool/embedding_profile_save", handle_api_asset_t
 app.router.add_post("/api/asset_tool/embedding_profile_delete", handle_api_asset_tool_embedding_profile_delete)
 app.router.add_post("/api/asset_tool/embedding_profile_apply", handle_api_asset_tool_embedding_profile_apply)
 app.router.add_post("/api/asset_tool/embedding_profile_map", handle_api_asset_tool_embedding_profile_map_save)
+app.router.add_get("/api/asset_tool/embedding_profile_map", handle_api_asset_tool_embedding_profile_map_get)
 # 포즈 편집 모드 API 라우트
 app.router.add_get("/api/pose_mode/status", handle_api_pose_mode_status)
 app.router.add_post("/api/pose_mode/detect", handle_api_pose_mode_detect)
@@ -4294,3 +4326,7 @@ if __name__ == "__main__":
     max_bk = app_config.get("backup_max_count", DEFAULT_MAX_BACKUP_IMAGES)
     print(f"백업 폴더: {WORKFLOW_BACKUP_DIR} (최대 {max_bk}개)")
     web.run_app(app, host=HOST, port=PORT)
+
+
+
+
