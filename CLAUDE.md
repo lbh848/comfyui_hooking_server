@@ -33,3 +33,6 @@
 - **모든 실패 경로에 print() 로깅 필수**: 조용히 빈 결과를 반환하지 않는다. 실패 원인, 입력값, 상태를 항상 cmd에 출력한다.
 - 예외 발생 시 `traceback.print_exc()`로 전체 스택 트레이스를 출력한다.
 - API 키 없음, 데이터 비어있음, 캐시 미스, 임베딩 실패 등 모든 조건부 스킵에 사유를 로그로 남긴다.
+
+## 파일 인코딩
+- **모든 파일 쓰기는 반드시 UTF-8로**: PowerShell의 Set-Content는 인코딩을 깨먹으므로 사용 금지. Node.js의 fs.writeFileSync(path, content, 'utf8')를 사용한다.
