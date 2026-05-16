@@ -8585,22 +8585,46 @@
             return true;
         }
 
-        function atExportNameMapping() {
+                function atExportNameMapping() {
             if (!_atValidateSelection()) return;
 
             const charName = document.getElementById('at-compare-char').value || '';
+            const category = document.getElementById("at-category").value || "expressions";
             const allNames = _atGetAllImageNames();
-            const mappings = {};
+            const outfitMapping = {};
+            const expressionMapping = {};
+
+            const previewMap = {};
+            if (window._atTagPreview && Array.isArray(window._atTagPreview)) {
+                window._atTagPreview.forEach(item => {
+                    const base = item.original.substring(0, item.original.lastIndexOf(".")) || item.original;
+                    previewMap[base] = item.cleaned || base;
+                });
+            }
 
             allNames.forEach(imgName => {
                 const match = _atGetSelectedForImage(imgName);
                 if (match) {
-                    const baseName = imgName.substring(0, imgName.lastIndexOf('.')) || imgName;
-                    mappings[match.name] = baseName;
+                    const safeName = match.name.replace(/\//g, "");
+                    const baseName = imgName.substring(0, imgName.lastIndexOf(".")) || imgName;
+                    const cleanedValue = previewMap[baseName] || baseName;
+                    if (category === "outfits") {
+                        outfitMapping[safeName] = cleanedValue;
+                    } else {
+                        expressionMapping[safeName] = cleanedValue;
+                    }
                 }
             });
 
-            const data = { character: charName, mappings };
+            const data = {
+                export_name: charName,
+                outfit_mapping: outfitMapping,
+                expression_mapping: expressionMapping,
+                export_format: 'webp',
+                export_quality: 90,
+                naming_order: ['character', 'outfit', 'expression'],
+                naming_enabled: { character: true, outfit: true, expression: true }
+            };
             const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
@@ -8609,9 +8633,7 @@
             a.click();
             URL.revokeObjectURL(url);
             showToast('이름 치환 규칙을 다운로드합니다', 'success');
-        }
-
-        async function atExportChain() {
+        }        async function atExportChain() {
             if (!_atValidateSelection()) return;
 
             const charName = document.getElementById('at-compare-char').value || '';
@@ -9025,6 +9047,7 @@
                 const profileMap = result.preset_profile_map || {};
                 atPresetProfileMap = JSON.parse(JSON.stringify(profileMap));
                 atEmbedProfiles = profiles;
+                window._atTagPreview = preview;
 
                 if (result.active_preset_profile !== undefined) {
                     atRenderProfileSelect(result.active_preset_profile);
