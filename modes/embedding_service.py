@@ -155,6 +155,7 @@ def _get_active_steps(profile_type: str) -> list[dict]:
 def _signature_for_config() -> dict:
     profiles = _current_config.get("clean_profiles", {})
     return {
+        "cache_format": "v2",
         "provider": _current_config.get("embedding_provider", "voyage"),
         "model": _current_config.get("embedding_model", "voyage-4-large"),
         "url": _current_config.get("embedding_url", ""),
@@ -178,13 +179,16 @@ def _load_local_cache() -> dict:
             _local_cache = {"signature": {}, "embeddings": {}}
     else:
         _local_cache = {"signature": {}, "embeddings": {}}
+    global _file_cache
+    _file_cache = dict(_local_cache.get("embeddings", {}))
     return _local_cache
 
 
 def _save_local_cache():
-    global _local_cache
+    global _local_cache, _file_cache
     if _local_cache is None:
-        return
+        _local_cache = {"signature": {}, "embeddings": {}}
+    _local_cache["embeddings"] = dict(_file_cache)
     cache_dir = os.path.dirname(EMBEDDING_CACHE_FILE)
     os.makedirs(cache_dir, exist_ok=True)
     try:
@@ -203,8 +207,9 @@ def _is_cache_valid() -> bool:
 
 
 def _invalidate_local_cache():
-    global _local_cache
+    global _local_cache, _file_cache
     _local_cache = {"signature": {}, "embeddings": {}}
+    _file_cache = {}
     if os.path.isfile(EMBEDDING_CACHE_FILE):
         try:
             os.remove(EMBEDDING_CACHE_FILE)
@@ -498,15 +503,12 @@ def cosine_similarity(a: list[float], b: list[float]) -> float:
 
 
 async def get_embedding_cached(text: str, input_type: str = "query") -> Optional[list[float]]:
-    cache_key = f"{input_type}:{text}"
+    cache_key = text
     if cache_key in _embedding_cache:
         return _embedding_cache[cache_key]
-    cache = _load_local_cache()
-    if _is_cache_valid():
-        emb = cache.get("embeddings", {}).get(cache_key)
-        if emb is not None:
-            _embedding_cache[cache_key] = emb
-            return emb
+    if cache_key in _file_cache:
+        _embedding_cache[cache_key] = _file_cache[cache_key]
+        return _file_cache[cache_key]
 
     results = await get_embeddings([text], input_type=input_type)
     if results and len(results) > 0:
@@ -521,17 +523,14 @@ async def batch_get_embeddings(texts: list[str], input_type: str = "document",
     uncached_indices: list[int] = []
     uncached_texts: list[str] = []
 
-    cache = _load_local_cache()
-    local_has_valid_sig = _is_cache_valid()
-    local_embs = cache.get("embeddings", {})
-
     for i, text in enumerate(texts):
-        cache_key = f"{input_type}:{text}"
+        cache_key = text
         if cache_key in _embedding_cache:
             all_embeddings[i] = _embedding_cache[cache_key]
-        elif local_has_valid_sig and cache_key in local_embs:
-            all_embeddings[i] = local_embs[cache_key]
-            _embedding_cache[cache_key] = local_embs[cache_key]
+        elif cache_key in _file_cache:
+            emb = _file_cache[cache_key]
+            _embedding_cache[cache_key] = emb
+            all_embeddings[i] = emb
         else:
             uncached_indices.append(i)
             uncached_texts.append(text)
@@ -549,7 +548,7 @@ async def batch_get_embeddings(texts: list[str], input_type: str = "document",
 
             for j, (idx, embedding) in enumerate(zip(batch_indices, results)):
                 all_embeddings[idx] = embedding
-                cache_key = f"{input_type}:{uncached_texts[start + j]}"
+                cache_key = uncached_texts[start + j]
                 _embedding_cache[cache_key] = embedding
 
     if any(e is None for e in all_embeddings):
@@ -631,12 +630,6 @@ async def match_presets_by_names(
         import traceback
         traceback.print_exc()
         return []
-
-    cache = _load_local_cache()
-    cache["signature"] = _signature_for_config()
-    cache["embeddings"].update({k: v for k, v in _embedding_cache.items()})
-    _local_cache = cache
-    _save_local_cache()
 
     return results_list[:top_n]
 
@@ -806,9 +799,11 @@ async def build_preset_embeddings(tags_data: dict, progress_callback=None, skip_
             await progress_callback(embedded_count, total_count,
                                     f"배치 {batch_idx + 1}/{total_batches} 완료")
 
+    for name, emb in _embedding_cache.items():
+        if name not in _file_cache:
+            _file_cache[name] = emb
     cache = _load_local_cache()
     cache["signature"] = _signature_for_config()
-    cache["embeddings"].update({k: v for k, v in _embedding_cache.items()})
     _local_cache = cache
     _save_local_cache()
 
@@ -828,8 +823,9 @@ async def build_preset_embeddings(tags_data: dict, progress_callback=None, skip_
 
 
 def clear_cache():
-    global _embedding_cache, _local_cache
+    global _embedding_cache, _local_cache, _file_cache
     _embedding_cache = {}
+    _file_cache = {}
     _local_cache = {"signature": {}, "embeddings": {}}
     _save_local_cache()
     _log("임베딩 캐시 전체 초기화")
