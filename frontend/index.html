@@ -2285,9 +2285,13 @@
         .ep-btn-primary { background: var(--accent); color: #fff; border-color: var(--accent); }
         .ep-btn-primary:hover { filter: brightness(1.1); }
         .ep-grid {
-            flex: 1; min-height: 0; overflow-y: auto; padding: 12px;
-            display: grid; grid-template-columns: repeat(3, 1fr);
+            flex: 1; min-height: 0; overflow-y: auto; overflow-x: auto; padding: 12px;
+            display: grid; grid-template-columns: repeat(3, minmax(120px, 1fr));
             gap: 10px; align-content: start;
+        }
+        .ep-card {
+            background: var(--surface); border: 2px solid var(--border); border-radius: 10px;
+            min-width: 0;
         }
         .ep-empty-state {
             grid-column: 1 / -1; display: flex; flex-direction: column;
@@ -2305,8 +2309,9 @@
         .ep-card-header {
             display: flex; align-items: center; justify-content: space-between;
             padding: 6px 10px; background: var(--surface2); border-bottom: 1px solid var(--border);
+            min-height: 3.6em;
         }
-        .ep-card-title { font-size: 0.82rem; font-weight: 600; }
+        .ep-card-title { font-size: 0.82rem; font-weight: 600; line-height: 1.2; }
         .ep-card-badge {
             font-size: 0.65rem; padding: 2px 6px; border-radius: 10px;
             background: var(--accent); color: #fff; font-weight: 600;
@@ -2315,10 +2320,11 @@
         .ep-card-badge.exists { background: #4CAF50; }
         .ep-card-thumb {
             width: 100%;
+            aspect-ratio: 3/4;
             background: var(--surface2);
             overflow: hidden; position: relative; cursor: pointer;
         }
-        .ep-card-thumb img { width: 100%; height: auto; display: block; }
+        .ep-card-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
         .ep-card-thumb .no-img { color: var(--text-secondary); font-size: 0.75rem; padding: 12px; text-align: center; }
         .ep-card-thumb .set-rep-btn {
             position: absolute; bottom: 4px; right: 4px; background: rgba(0,0,0,0.6);
@@ -2857,6 +2863,9 @@
                         <option value="">비교 캐릭터</option>
                     </select>
                     <button class="at-btn" id="at-compare-apply-btn" onclick="atLoadCompareImages()" style="font-size:0.8rem;">적용</button>
+                    <button class="at-btn" onclick="atExportNameMapping()" style="font-size:0.8rem; background:#2a7; color:#fff; border-color:#2a7;">이름치환내보내기</button>
+                    <button class="at-btn" onclick="atExportChain()" style="font-size:0.8rem; background:#2a7; color:#fff; border-color:#2a7;">체인내보내기</button>
+                    <span id="at-compare-status" style="font-size:0.75rem; color:var(--text2); display:none;"></span>
                 </div>
                 <div class="at-body">
                     <div class="at-sidebar">
@@ -2868,13 +2877,13 @@
                             🧮
                             <span class="at-sidebar-tooltip">임베딩 설정</span>
                         </button>
-                        <button class="at-sidebar-btn" id="at-sidebar-result" onclick="atSwitchView('result')" title="매칭 결과">
-                            🎯
-                            <span class="at-sidebar-tooltip">매칭 결과</span>
-                        </button>
                         <button class="at-sidebar-btn" id="at-sidebar-expr-profile" onclick="atSwitchView('expr-profile')" title="표정 프로필">
                             😊
                             <span class="at-sidebar-tooltip">표정 프로필</span>
+                        </button>
+                        <button class="at-sidebar-btn" id="at-sidebar-result" onclick="atSwitchView('result')" title="매칭 결과">
+                            🎯
+                            <span class="at-sidebar-tooltip">매칭 결과</span>
                         </button>
                     </div>
                     <div class="at-main">
@@ -2916,7 +2925,7 @@
                                 </div>
                                 <div id="at-embed-steps-container"></div>
                                 <div style="margin-top:12px; display:flex; gap:8px;">
-                                    <button class="at-btn at-btn-primary" onclick="atSaveCurrentProfile()" style="font-size:0.82rem;">💾 프로필 저장</button>
+                                    <button class="at-btn at-btn-primary" onclick="atSaveCurrentProfile()" style="font-size:0.82rem;">💾 프로필 저장 및 적용</button>
                                     <button class="at-btn" onclick="atAddStep()" style="font-size:0.82rem;">＋ 단계 추가</button>
                                     <button class="at-btn" onclick="atResetCurrentProfile()" style="font-size:0.82rem;">🔄 기본값으로</button>
                                 </div>
@@ -3006,6 +3015,7 @@
                                         <span style="font-weight:600; font-size:0.9rem;">표정 프로필</span>
                                         <button class="ep-btn ep-btn-primary" onclick="scanExprProfilePresets()" style="font-size:0.78rem;">📋 스캔</button>
                                         <button class="ep-btn" onclick="createExprProfileFolders()" style="font-size:0.78rem;">📁 빈 폴더</button>
+                                        <button class="ep-btn" onclick="openEpAdvModal()" style="font-size:0.78rem;">⚙ 고급 설정</button>
                                         <button class="ep-btn" onclick="epSelectAll()" style="font-size:0.78rem;">✅ 전체선택</button>
                                         <button class="ep-btn" onclick="epDeselectAll()" style="font-size:0.78rem;">❎ 전체해제</button>
                                         <span id="ep-selected-count" style="font-size:0.78rem; color:var(--text2);"></span>
@@ -3040,6 +3050,46 @@
         </div>
 
     </main>
+
+    <!-- 표정별 고급 설정 모달 -->
+    <div id="ep-adv-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:10000; display:none; align-items:center; justify-content:center;">
+        <div style="background:var(--surface); border-radius:12px; width:720px; max-width:92vw; max-height:80vh; display:flex; flex-direction:column; overflow:hidden; box-shadow:0 8px 32px rgba(0,0,0,0.3);">
+            <div style="display:flex; align-items:center; justify-content:space-between; padding:14px 18px; border-bottom:1px solid var(--border); background:var(--surface2);">
+                <span style="font-weight:600; font-size:1rem;">표정별 고급 설정</span>
+                <button onclick="closeEpAdvModal()" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer; padding:2px 6px;">✕</button>
+            </div>
+            <div style="display:flex; flex:1; min-height:0; overflow:hidden;">
+                <!-- 좌측: 표정 리스트 -->
+                <div style="width:220px; min-width:180px; border-right:1px solid var(--border); display:flex; flex-direction:column;">
+                    <div style="padding:8px; border-bottom:1px solid var(--border);">
+                        <input id="ep-adv-search" type="text" placeholder="검색..." oninput="filterEpAdvList()" style="width:100%; padding:6px 10px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:6px; font-size:0.82rem; box-sizing:border-box;">
+                    </div>
+                    <div id="ep-adv-expr-list" style="flex:1; overflow-y:auto; padding:4px;"></div>
+                </div>
+                <!-- 우측: 설정 패널 -->
+                <div id="ep-adv-right" style="flex:1; padding:16px; display:flex; flex-direction:column; gap:12px; overflow-y:auto;">
+                    <div id="ep-adv-empty" style="display:flex; align-items:center; justify-content:center; height:100%; color:var(--text-secondary); font-size:0.9rem;">표정을 선택하세요</div>
+                    <div id="ep-adv-detail" style="display:none;">
+                        <div id="ep-adv-detail-name" style="font-weight:600; font-size:0.95rem; margin-bottom:10px;"></div>
+                        <div style="display:grid; grid-template-columns:1fr; gap:10px;">
+                            <div class="ep-field-group">
+                                <div class="ep-field-label">구도</div>
+                                <div id="ep-adv-comp-dd"></div>
+                            </div>
+                            <div class="ep-field-group">
+                                <div class="ep-field-label">품질</div>
+                                <div id="ep-adv-qual-dd"></div>
+                            </div>
+                            <div class="ep-field-group">
+                                <div class="ep-field-label">부정 태그</div>
+                                <div id="ep-adv-neg-dd"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <!-- 에셋 생성 오버레이 -->
     <div class="asset-generating-overlay" id="asset-generating-overlay" style="display:none;">
@@ -6438,6 +6488,7 @@
 
         // ─── 표정 프로필 생성 ────────────────────────────────────
         let epProfiles = [];
+        let epSavedPerExpression = {};  // 불러오기 시 임시 보관, 스캔 후 적용
         let epRunning = false;
         let epRefImage = '';
         let epRefPreviewUrl = '';
@@ -6562,6 +6613,17 @@
         function saveExprProfileSettings() {
             const charName = document.getElementById('ep-character-select').value;
             if (!charName) return;
+            // 표정별 고급 설정 수집
+            const perExpression = {};
+            epProfiles.forEach(p => {
+                if (p.composition_preset || p.quality_preset || p.negative_preset) {
+                    perExpression[p.name] = {
+                        composition_preset: p.composition_preset || '',
+                        quality_preset: p.quality_preset || '',
+                        negative_preset: p.negative_preset || '',
+                    };
+                }
+            });
             const settings = {
                 character: charName,
                 appearance: document.getElementById('ep-appearance-select').value,
@@ -6576,6 +6638,7 @@
                 fd_enabled: document.getElementById('ep-fd-toggle').checked,
                 hd_enabled: document.getElementById('ep-hd-toggle').checked,
                 ed_enabled: document.getElementById('ep-ed-toggle').checked,
+                per_expression: perExpression,
             };
             fetch('/api/asset_mode/ep_settings', {
                 method: 'POST',
@@ -6634,6 +6697,11 @@
                 if (settings.ed_enabled !== undefined) {
                     document.getElementById('ep-ed-toggle').checked = settings.ed_enabled;
                 }
+                // 표정별 고급 설정 → 임시 보관 (스캔 후 적용)
+                epSavedPerExpression = settings.per_expression || {};
+                if (epProfiles.length > 0) {
+                    applyEpSavedPerExpression();
+                }
                 showToast('설정 불러오기 완료');
             } catch (e) {
                 console.error('ep_settings 로드 실패:', e);
@@ -6649,27 +6717,34 @@
                 const resp = await fetch(`/api/expression_profile/scan?character=${encodeURIComponent(charName)}&outfit=${encodeURIComponent(outfitName)}`);
                 const data = await resp.json();
                 if (data.profiles) {
-                    const prevSelection = {};
-                    epProfiles.forEach(p => { prevSelection[p.name] = p.selected; });
-                    epProfiles = data.profiles.map(p => ({
+                    const prevData = {};
+                    epProfiles.forEach(p => { prevData[p.name] = p; });
+                    epProfiles = data.profiles.map(p => {
+                        const prev = prevData[p.name];
+                        return {
                         name: p.name,
-                        selected: prevSelection[p.name] || false,
+                        selected: prev ? prev.selected : false,
                         folder_exists: p.folder_exists,
                         has_images: p.has_images,
                         image_count: p.image_count,
                         representative: p.representative,
-                        ref_enabled: false,
-                        ref_strength: 0.55,
-                        ref_image: '',
-                        ref_preview_url: '',
-                        pose_enabled: false,
-                        pose_id: '',
-                        hrf_enabled: false,
-                        fd_enabled: false,
-                        hd_enabled: false,
-                        ed_enabled: false,
-                    }));
+                        ref_enabled: prev ? prev.ref_enabled : false,
+                        ref_strength: prev ? prev.ref_strength : 0.55,
+                        ref_image: prev ? prev.ref_image : '',
+                        ref_preview_url: prev ? prev.ref_preview_url : '',
+                        pose_enabled: prev ? prev.pose_enabled : false,
+                        pose_id: prev ? prev.pose_id : '',
+                        hrf_enabled: prev ? prev.hrf_enabled : false,
+                        fd_enabled: prev ? prev.fd_enabled : false,
+                        hd_enabled: prev ? prev.hd_enabled : false,
+                        ed_enabled: prev ? prev.ed_enabled : false,
+                        composition_preset: prev ? (prev.composition_preset || '') : '',
+                        quality_preset: prev ? (prev.quality_preset || '') : '',
+                        negative_preset: prev ? (prev.negative_preset || '') : '',
+                    };
+                    });
                 }
+                applyEpSavedPerExpression();
                 renderExprProfileGrid();
                 const existCount = epProfiles.filter(p => p.folder_exists).length;
                 const emptyCount = epProfiles.filter(p => !p.folder_exists).length;
@@ -6705,6 +6780,118 @@
                 }
             } catch (e) {
                 showToast('폴더 생성 실패: ' + e.message, 'error');
+            }
+        }
+
+        let epAdvSelectedExpr = '';
+
+        function openEpAdvModal() {
+            if (epProfiles.length === 0) {
+                showToast('먼저 스캔을 해주세요', 'warning');
+                return;
+            }
+            const modal = document.getElementById('ep-adv-modal');
+            modal.style.display = 'flex';
+            document.getElementById('ep-adv-search').value = '';
+            renderEpAdvExprList('');
+            if (epAdvSelectedExpr) selectEpAdvExpr(epAdvSelectedExpr);
+        }
+
+        function closeEpAdvModal() {
+            document.getElementById('ep-adv-modal').style.display = 'none';
+        }
+
+        function filterEpAdvList() {
+            const q = document.getElementById('ep-adv-search').value;
+            renderEpAdvExprList(q);
+        }
+
+        function renderEpAdvExprList(query) {
+            const list = document.getElementById('ep-adv-expr-list');
+            const savedScroll = list.scrollTop;
+            const q = query.toLowerCase().trim();
+            let html = '';
+            for (const p of epProfiles) {
+                if (q && !p.name.toLowerCase().includes(q)) continue;
+                const isActive = p.name === epAdvSelectedExpr;
+                const hasOverride = p.composition_preset || p.quality_preset || p.negative_preset;
+                html += `<div onclick="selectEpAdvExpr('${escapeHtml(p.name)}')" style="padding:8px 12px; cursor:pointer; font-size:0.82rem; border-radius:6px; margin:2px 4px; transition:background 0.1s; ${isActive ? 'background:var(--accent); color:#fff; font-weight:600;' : 'background:transparent;'}" onmouseenter="this.style.background=this.style.background.includes('accent')?'var(--accent)':'var(--surface2)'" onmouseleave="this.style.background='${isActive ? 'var(--accent)' : 'transparent'}'">${escapeHtml(p.name)}${hasOverride ? ' ⚙' : ''}</div>`;
+            }
+            list.innerHTML = html || '<div style="padding:12px; color:var(--text-secondary); font-size:0.8rem; text-align:center;">결과 없음</div>';
+            list.scrollTop = savedScroll;
+        }
+
+        function selectEpAdvExpr(name) {
+            epAdvSelectedExpr = name;
+            const profile = epProfiles.find(p => p.name === name);
+            if (!profile) return;
+            document.getElementById('ep-adv-empty').style.display = 'none';
+            document.getElementById('ep-adv-detail').style.display = 'block';
+            document.getElementById('ep-adv-detail-name').textContent = name;
+            // 커스텀 검색 드롭다운 생성
+            const compDd = document.getElementById('ep-adv-comp-dd');
+            const qualDd = document.getElementById('ep-adv-qual-dd');
+            const negDd = document.getElementById('ep-adv-neg-dd');
+            compDd.innerHTML = buildCustomSelectHTML(assetTags.composition_presets || {}, profile.composition_preset || '', '글로벌 설정을 따름', 'ep-adv-comp');
+            qualDd.innerHTML = buildCustomSelectHTML(assetTags.quality_presets || {}, profile.quality_preset || '', '글로벌 설정을 따름', 'ep-adv-qual');
+            negDd.innerHTML = buildCustomSelectHTML(assetTags.negative_presets || {}, profile.negative_preset || '', '글로벌 설정을 따름', 'ep-adv-neg');
+            bindEpAdvDropdowns(profile);
+            renderEpAdvExprList(document.getElementById('ep-adv-search').value);
+        }
+
+        function bindEpAdvDropdowns(profile) {
+            ['ep-adv-comp', 'ep-adv-qual', 'ep-adv-neg'].forEach(fieldId => {
+                const cs = document.querySelector(`#ep-adv-${fieldId === 'ep-adv-comp' ? 'comp' : fieldId === 'ep-adv-qual' ? 'qual' : 'neg'}-dd .custom-select[data-field="${fieldId}"]`);
+                if (!cs) return;
+                const valueEl = cs.querySelector('.custom-select-value');
+                const searchInput = cs.querySelector('.custom-select-search');
+                const optionList = cs.querySelector('.custom-select-option-list');
+
+                cs.addEventListener('click', (e) => {
+                    if (e.target.closest('.custom-select-option')) return;
+                    const wasOpen = cs.classList.contains('open');
+                    document.querySelectorAll('#ep-adv-modal .custom-select.open').forEach(o => o.classList.remove('open'));
+                    if (!wasOpen) {
+                        cs.classList.add('open');
+                        searchInput.value = '';
+                        filterCustomOptions(optionList, '');
+                        requestAnimationFrame(() => searchInput.focus());
+                    }
+                });
+
+                searchInput.addEventListener('input', (e) => {
+                    e.stopPropagation();
+                    filterCustomOptions(optionList, searchInput.value);
+                });
+                searchInput.addEventListener('click', (e) => e.stopPropagation());
+
+                optionList.querySelectorAll('.custom-select-option').forEach(opt => {
+                    opt.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        const val = opt.dataset.value;
+                        valueEl.textContent = opt.textContent;
+                        optionList.querySelectorAll('.custom-select-option').forEach(o => o.classList.remove('selected'));
+                        opt.classList.add('selected');
+                        cs.classList.remove('open');
+                        // 저장
+                        if (fieldId === 'ep-adv-comp') profile.composition_preset = val;
+                        else if (fieldId === 'ep-adv-qual') profile.quality_preset = val;
+                        else if (fieldId === 'ep-adv-neg') profile.negative_preset = val;
+                        renderEpAdvExprList(document.getElementById('ep-adv-search').value);
+                    });
+                });
+            });
+        }
+
+        function applyEpSavedPerExpression() {
+            if (!epSavedPerExpression || Object.keys(epSavedPerExpression).length === 0) return;
+            for (const [exprName, presets] of Object.entries(epSavedPerExpression)) {
+                const profile = epProfiles.find(p => p.name === exprName);
+                if (profile) {
+                    profile.composition_preset = presets.composition_preset || '';
+                    profile.quality_preset = presets.quality_preset || '';
+                    profile.negative_preset = presets.negative_preset || '';
+                }
             }
         }
 
@@ -7286,26 +7473,31 @@
                             ed_activate: profile.ed_enabled ? true : edEnabled,
                         };
 
+                        // 개별 고급 설정 우선, 없으면 글로벌 설정 사용
+                        const effectiveComp = profile.composition_preset || compositionPreset;
+                        const effectiveQual = profile.quality_preset || qualityPreset;
+                        const effectiveNeg = profile.negative_preset || negativePreset;
+
                         try {
-                            if (compositionPreset) {
+                            if (effectiveComp) {
                                 await fetch('/api/asset_mode/tags', {
                                     method: 'POST',
                                     headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify({ action: 'load_composition_preset', name: compositionPreset })
+                                    body: JSON.stringify({ action: 'load_composition_preset', name: effectiveComp })
                                 });
                             }
-                            if (qualityPreset) {
+                            if (effectiveQual) {
                                 await fetch('/api/asset_mode/tags', {
                                     method: 'POST',
                                     headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify({ action: 'load_quality_preset', name: qualityPreset })
+                                    body: JSON.stringify({ action: 'load_quality_preset', name: effectiveQual })
                                 });
                             }
-                            if (negativePreset) {
+                            if (effectiveNeg) {
                                 await fetch('/api/asset_mode/tags', {
                                     method: 'POST',
                                     headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify({ action: 'load_negative_preset', name: negativePreset })
+                                    body: JSON.stringify({ action: 'load_negative_preset', name: effectiveNeg })
                                 });
                             }
                             if (characterNegativePreset) {
@@ -7362,7 +7554,7 @@
             epColumns = Math.min(8, Math.max(2, epColumns + delta));
             document.getElementById('ep-col-count').textContent = epColumns;
             const grid = document.getElementById('ep-grid');
-            if (grid) grid.style.gridTemplateColumns = `repeat(${epColumns}, 1fr)`;
+            if (grid) grid.style.gridTemplateColumns = `repeat(${epColumns}, minmax(120px, 1fr))`;
         }
 
         // ─── 에셋툴 ────────────────────────────────────────────
@@ -7430,6 +7622,8 @@
 
         async function atLoadCompareImages() {
             const charName = document.getElementById('at-compare-char').value;
+            const statusEl = document.getElementById('at-compare-status');
+            const applyBtn = document.getElementById('at-compare-apply-btn');
             if (!charName) {
                 atState.compareImages = {};
                 atRenderMatches();
@@ -7437,25 +7631,53 @@
                 return;
             }
             const category = document.getElementById('at-category').value;
+            applyBtn.disabled = true;
+            statusEl.style.display = 'inline';
+            const setStatus = (msg) => { statusEl.textContent = msg; };
             try {
-                const tagsResp = await fetch('/api/asset_mode/tags');
-                const tagsData = await tagsResp.json();
                 const enc = encodeURIComponent;
                 const imgMap = {};
-                const charData = (tagsData.characters || {})[charName] || {};
-                const defaultOutfit = charData.outfit || '';
-                const outfitName = defaultOutfit || Object.keys(tagsData.outfits || {})[0] || '';
                 if (category === 'expressions') {
-                    const exprNames = Object.keys(tagsData.expressions || {});
-                    for (const exprName of exprNames) {
-                        try {
-                            const listResp = await fetch(`/api/asset_mode/characters/${enc(charName)}/outfits/${enc(outfitName)}/expressions/${enc(exprName)}/images`);
-                            const listData = await listResp.json();
-                            const repFile = listData.representative || (listData.images && listData.images[0] && listData.images[0].filename);
-                            if (repFile) {
-                                imgMap[exprName] = `/api/asset_mode/characters/${enc(charName)}/outfits/${enc(outfitName)}/expressions/${enc(exprName)}/images/${enc(repFile)}`;
+                    // 1순위: 에셋툴 표정 프로필에 설정된 캐릭터/복장 기준으로 조회
+                    setStatus('설정된 프로필 조회 중...');
+                    try {
+                        const epResp = await fetch(`/api/asset_mode/ep_settings/${enc(charName)}`);
+                        const epData = await epResp.json();
+                        const epOutfit = epData.outfit || '';
+                        if (epOutfit) {
+                            const tagsResp = await fetch('/api/asset_mode/tags');
+                            const tagsData = await tagsResp.json();
+                            const exprNames = Object.keys(tagsData.expressions || {});
+                            for (let i = 0; i < exprNames.length; i++) {
+                                const exprName = exprNames[i];
+                                setStatus(`프로필 이미지 로드 중... (${i + 1}/${exprNames.length})`);
+                                try {
+                                    const listResp = await fetch(`/api/asset_mode/characters/${enc(charName)}/outfits/${enc(epOutfit)}/expressions/${enc(exprName)}/images`);
+                                    const listData = await listResp.json();
+                                    const repFile = listData.representative || (listData.images && listData.images[0] && listData.images[0].filename);
+                                    if (repFile) {
+                                        imgMap[exprName] = `/api/asset_mode/characters/${enc(charName)}/outfits/${enc(epOutfit)}/expressions/${enc(exprName)}/images/${enc(repFile)}`;
+                                    }
+                                } catch (e) { /* skip */ }
                             }
-                        } catch (e) { /* skip */ }
+                        }
+                    } catch (e) { console.warn('ep_settings 조회 실패:', e); }
+
+                    // 2순위: 아직 이미지 없는 감정을 실제 폴더 구조에서 보완
+                    const missingExprs = Object.keys(imgMap).length === 0; // 1순위가 전부 실패면 전체 스캔
+                    if (missingExprs || Object.values(imgMap).some(v => !v)) {
+                        setStatus('폴더 구조 스캔 중...');
+                        const galResp = await fetch(`/api/asset_mode/characters/${enc(charName)}/gallery`);
+                        const galData = await galResp.json();
+                        const gallery = galData.gallery || [];
+                        for (const item of gallery) {
+                            if (item.image_count > 0 && !imgMap[item.expression]) {
+                                const repFile = item.representative || '';
+                                if (repFile) {
+                                    imgMap[item.expression] = `/api/asset_mode/characters/${enc(charName)}/outfits/${enc(item.outfit)}/expressions/${enc(item.expression)}/images/${enc(repFile)}`;
+                                }
+                            }
+                        }
                     }
                 }
                 atState.compareImages = imgMap;
@@ -7469,6 +7691,9 @@
             } catch (e) {
                 console.error('비교 이미지 로드 오류:', e);
                 showToast('비교 이미지 로드 실패: ' + e.message, 'error');
+            } finally {
+                applyBtn.disabled = false;
+                statusEl.style.display = 'none';
             }
         }
 
@@ -8037,6 +8262,126 @@
                 switchTab('batch');
             }
             showToast(`${newChains.length}개 체인이 에셋 일괄 생성에 추가되었습니다`, 'success');
+        }
+
+        // ─── 에셋툴 내보내기 (이름 치환 / 체인) ─────────────────────────
+
+        function _atGetAllImageNames() {
+            const names = [];
+            atState.embeddingMatches.forEach(g => { if (!names.includes(g.imageName)) names.push(g.imageName); });
+            atState.imageMatches.forEach(g => { if (!names.includes(g.imageName)) names.push(g.imageName); });
+            return names;
+        }
+
+        function _atGetSelectedForImage(imgName) {
+            const selEmb = atState.embeddingMatches.find(g => g.imageName === imgName);
+            const selTag = atState.imageMatches.find(g => g.imageName === imgName);
+            const embMatch = selEmb ? selEmb.matches.find(m => m.selected) : null;
+            const tagMatch = selTag ? selTag.matches.find(m => m.selected) : null;
+            return embMatch || tagMatch || null;
+        }
+
+        function _atValidateSelection() {
+            const allNames = _atGetAllImageNames();
+            if (allNames.length === 0) {
+                showToast('매칭 결과가 없습니다. 먼저 분석을 진행해주세요.', 'warning');
+                return false;
+            }
+            for (const imgName of allNames) {
+                if (!_atGetSelectedForImage(imgName)) {
+                    showToast('모든 이미지에 대해 매칭을 선택해주세요', 'warning');
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        function atExportNameMapping() {
+            if (!_atValidateSelection()) return;
+
+            const charName = document.getElementById('at-compare-char').value || '';
+            const allNames = _atGetAllImageNames();
+            const mappings = {};
+
+            allNames.forEach(imgName => {
+                const match = _atGetSelectedForImage(imgName);
+                if (match) {
+                    const baseName = imgName.substring(0, imgName.lastIndexOf('.')) || imgName;
+                    mappings[match.name] = baseName;
+                }
+            });
+
+            const data = { character: charName, mappings };
+            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `name_mapping_${Date.now()}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+            showToast('이름 치환 규칙을 다운로드합니다', 'success');
+        }
+
+        async function atExportChain() {
+            if (!_atValidateSelection()) return;
+
+            const charName = document.getElementById('at-compare-char').value || '';
+            const allNames = _atGetAllImageNames();
+            const chains = [];
+
+            let epSettings = {};
+            if (charName) {
+                try {
+                    const resp = await fetch(`/api/asset_mode/ep_settings/${encodeURIComponent(charName)}`);
+                    epSettings = await resp.json();
+                } catch (e) {
+                    console.warn('[체인내보내기] ep_settings 로드 실패:', e);
+                }
+            }
+
+            allNames.forEach(imgName => {
+                const match = _atGetSelectedForImage(imgName);
+                if (!match) return;
+
+                const perExpr = epSettings.per_expression || {};
+                const exprSettings = perExpr[match.name] || {};
+
+                const chain = {
+                    character: exprSettings.character || epSettings.character || '',
+                    appearance: exprSettings.appearance || epSettings.appearance || '',
+                    outfit: exprSettings.outfit || epSettings.outfit || '',
+                    expression: match.name,
+                    composition_preset: exprSettings.composition_preset || epSettings.composition_preset || '',
+                    quality_preset: exprSettings.quality_preset || epSettings.quality_preset || '',
+                    negative_preset: exprSettings.negative_preset || epSettings.negative_preset || '',
+                    character_negative_preset: exprSettings.character_negative_preset || epSettings.character_negative_preset || '',
+                    ref_enabled: exprSettings.ref_enabled !== undefined ? exprSettings.ref_enabled : (epSettings.ref_enabled || false),
+                    ref_strength: exprSettings.ref_strength || epSettings.ref_strength || 0.55,
+                    ref_image: '',
+                    pose_enabled: false,
+                    pose_id: '',
+                    hrf_enabled: exprSettings.hrf_enabled !== undefined ? exprSettings.hrf_enabled : (epSettings.hrf_enabled || false),
+                    fd_enabled: exprSettings.fd_enabled !== undefined ? exprSettings.fd_enabled : (epSettings.fd_enabled || false),
+                    hd_enabled: exprSettings.hd_enabled !== undefined ? exprSettings.hd_enabled : (epSettings.hd_enabled || false),
+                    ed_enabled: exprSettings.ed_enabled !== undefined ? exprSettings.ed_enabled : (epSettings.ed_enabled || false),
+                };
+                chains.push(chain);
+            });
+
+            const payload = {
+                version: 1,
+                repeat: 1,
+                chains,
+            };
+
+            const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `chain_export_${Date.now()}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+            showToast('체인 파일을 다운로드합니다', 'success');
         }
 
         // ─── 임베딩 설정 UI ─────────────────────────────────────────
