@@ -3270,15 +3270,6 @@
                                oninput="updateWorkflowPath()">
                         <div class="hint" style="margin-bottom: 8px;">워크플로우 파일이 있는 폴더 경로</div>
                     </div>
-                    <div class="form-group" style="margin-top: -8px;">
-                        <label style="font-size: 0.8rem; margin-bottom: 4px;">워크플로우 파일명</label>
-                        <div class="autocomplete-wrapper">
-                            <input type="text" id="setting-workflow-filename" placeholder="예: 0310고속워크플로우_나친척.json"
-                                   oninput="onWorkflowFilenameInput(this.value)" onfocus="onWorkflowFilenameInput(this.value)">
-                            <div class="autocomplete-list" id="workflow-autocomplete"></div>
-                        </div>
-                        <div class="hint">검색어를 입력하면 자동으로 파일 목록이 표시됩니다</div>
-                    </div>
                     <input type="hidden" id="setting-workflow-path">
 
                     <div class="setting-row">
@@ -3422,6 +3413,20 @@
 
                 <!-- Tab 3: 삽화 관련 설정 -->
                 <div class="settings-tab-panel" id="settings-tab-illustration">
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="title">삽화 워크플로우 파일명</div>
+                            <div class="desc">삽화 생성에 사용할 워크플로우 파일 (베이스 경로 공유)</div>
+                        </div>
+                    </div>
+                    <div class="form-group" style="margin-top: -8px;">
+                        <div class="autocomplete-wrapper">
+                            <input type="text" id="setting-workflow-filename" placeholder="예: 0310고속워크플로우_나친척.json"
+                                   oninput="onWorkflowFilenameInput(this.value)" onfocus="onWorkflowFilenameInput(this.value)">
+                            <div class="autocomplete-list" id="workflow-autocomplete"></div>
+                        </div>
+                        <div class="hint">검색어를 입력하면 자동으로 파일 목록이 표시됩니다</div>
+                    </div>
                     <div class="setting-row">
                         <div class="setting-label">
                             <div class="title">Risu 전송 품질</div>
