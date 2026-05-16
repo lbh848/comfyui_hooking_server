@@ -9707,13 +9707,13 @@
 
         // ─── 학습용 이미지 ─────────────────────────────────────
         async function loadLoraTrainingImages() {
-            if (!loraCurrentCharacter) return;
+            if (!loraCurrentCharacter || !loraCurrentEntry) return;
             const grid = document.getElementById('lora-training-grid');
             const section = document.getElementById('lora-training-section');
             const emptyEl = document.getElementById('lora-training-empty');
             const enc = encodeURIComponent;
             try {
-                const resp = await fetchJSON(`/api/lora/training_images?character=${enc(loraCurrentCharacter)}`);
+                const resp = await fetchJSON(`/api/lora/training_images?character=${enc(loraCurrentCharacter)}&entry=${enc(loraCurrentEntry)}`);
                 if (!resp.success) { showToast(resp.error || '학습 이미지 로드 실패', 'error'); return; }
                 const images = resp.images || [];
                 section.style.display = '';
@@ -9727,7 +9727,7 @@
                 grid.innerHTML = images.map(img => `
                     <div class="asset-image-card" style="cursor:default;">
                         <div style="position:relative;">
-                            <img src="/api/lora/training_image/${enc(loraCurrentCharacter)}/${enc(img.filename)}" style="width:100%; display:block; cursor:zoom-in;" onclick="event.stopPropagation(); openLightbox(this.src)">
+                            <img src="/api/lora/training_image/${enc(loraCurrentCharacter)}/${enc(loraCurrentEntry)}/${enc(img.filename)}" style="width:100%; display:block; cursor:zoom-in;" onclick="event.stopPropagation(); openLightbox(this.src)">
                             ${img.is_representative ? '<div style="position:absolute; top:4px; left:4px; background:var(--accent); color:#fff; padding:2px 6px; border-radius:4px; font-size:0.65rem; font-weight:600;">대표</div>' : ''}
                         </div>
                         <div style="padding:8px;">
@@ -9751,7 +9751,7 @@
             try {
                 const resp = await fetchJSON('/api/lora/training_images/delete', {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ character: loraCurrentCharacter, filename })
+                    body: JSON.stringify({ character: loraCurrentCharacter, entry: loraCurrentEntry, filename })
                 });
                 if (resp.success) { showToast('삭제 완료', 'success'); await loadLoraTrainingImages(); }
                 else { showToast(resp.error || '삭제 실패', 'error'); }
@@ -9762,7 +9762,7 @@
             try {
                 const resp = await fetchJSON('/api/lora/training_images/representative', {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ character: loraCurrentCharacter, filename })
+                    body: JSON.stringify({ character: loraCurrentCharacter, entry: loraCurrentEntry, filename })
                 });
                 if (resp.success) { await loadLoraTrainingImages(); }
                 else { showToast(resp.error || '대표 설정 실패', 'error'); }
@@ -9774,7 +9774,7 @@
             const card = grid.querySelector(`[onclick*="${filename}"]`);
             // 프롬프트 편집 모달 열기
             const enc = encodeURIComponent;
-            fetchJSON(`/api/lora/training_images?character=${enc(loraCurrentCharacter)}`).then(resp => {
+            fetchJSON(`/api/lora/training_images?character=${enc(loraCurrentCharacter)}&entry=${enc(loraCurrentEntry)}`).then(resp => {
                 if (!resp.success) return;
                 const img = resp.images.find(i => i.filename === filename);
                 if (!img) return;
@@ -9787,7 +9787,7 @@
                 `;
                 document.getElementById('lora-picker-body').innerHTML = `
                     <div style="margin-bottom:12px;">
-                        <img src="/api/lora/training_image/${enc(loraCurrentCharacter)}/${enc(filename)}" style="max-width:200px; max-height:200px; border-radius:8px; display:block; margin:0 auto;">
+                        <img src="/api/lora/training_image/${enc(loraCurrentCharacter)}/${enc(loraCurrentEntry)}/${enc(filename)}" style="max-width:200px; max-height:200px; border-radius:8px; display:block; margin:0 auto;">
                         <div style="text-align:center; margin-top:6px; font-size:0.8rem; color:var(--text-secondary);">${escapeHtml(filename)}</div>
                     </div>
                     <div style="margin-bottom:8px;">
@@ -9809,7 +9809,7 @@
             try {
                 const resp = await fetchJSON('/api/lora/training_images/prompt', {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ character: loraCurrentCharacter, filename, positive, negative })
+                    body: JSON.stringify({ character: loraCurrentCharacter, entry: loraCurrentEntry, filename, positive, negative })
                 });
                 if (resp.success) { showToast('프롬프트 저장 완료', 'success'); closeLoraImagePicker(); await loadLoraTrainingImages(); }
                 else { showToast(resp.error || '저장 실패', 'error'); }
@@ -9951,7 +9951,7 @@
             try {
                 const resp = await fetchJSON('/api/lora/training_images/add', {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ character: loraCurrentCharacter, sources })
+                    body: JSON.stringify({ character: loraCurrentCharacter, entry: loraCurrentEntry, sources })
                 });
                 if (resp.success) {
                     const msg = `${resp.added.length}장 추가됨${resp.skipped.length > 0 ? ` (${resp.skipped.length}장 스킵)` : ''}`;

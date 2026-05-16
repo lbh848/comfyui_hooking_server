@@ -1,7 +1,7 @@
 """
 LoRA 매니징 모듈
-- asset/<character>/Lora/ 폴더에서 LoRA 파일 관리
-- asset/<character>/Lora/학습용 이미지/ 폴더에서 학습용 이미지 관리
+- asset/<character>/Lora/<entry>/ 폴더에서 LoRA 파일 관리
+- asset/<character>/Lora/<entry>/학습용 이미지/ 폴더에서 학습용 이미지 관리
 """
 
 import os
@@ -30,9 +30,10 @@ def _lora_entry_dir(character: str, entry_name: str) -> str:
     return os.path.join(_lora_dir(character), _safe_dirname(entry_name))
 
 
-def _training_dir(character: str) -> str:
-    """캐릭터의 학습용 이미지 폴더 경로 반환"""
-    return os.path.join(_lora_dir(character), TRAINING_DIR_NAME)
+def _training_dir(character: str, entry: str = "") -> str:
+    """LoRA 엔트리 내 학습용 이미지 폴더 경로 반환"""
+    base = _lora_entry_dir(character, entry) if entry else _lora_dir(character)
+    return os.path.join(base, TRAINING_DIR_NAME)
 
 
 def list_characters() -> list:
@@ -129,12 +130,12 @@ def delete_lora_file(character: str, filename: str, entry: str = "") -> dict:
 
 # ─── 학습용 이미지 관리 ─────────────────────────────────────
 
-def add_training_images(character: str, sources: list) -> dict:
+def add_training_images(character: str, entry: str, sources: list) -> dict:
     """
     에셋 폴더에서 학습용 이미지로 복사
     sources: [{ "outfit": "...", "expression": "...", "filename": "..." }, ...]
     """
-    t_dir = _training_dir(character)
+    t_dir = _training_dir(character, entry)
     os.makedirs(t_dir, exist_ok=True)
 
     added = []
@@ -200,9 +201,9 @@ def add_training_images(character: str, sources: list) -> dict:
     return {"success": True, "added": added, "skipped": skipped}
 
 
-def list_training_images(character: str) -> list:
+def list_training_images(character: str, entry: str = "") -> list:
     """학습용 이미지 목록 반환 (프롬프트 포함)"""
-    t_dir = _training_dir(character)
+    t_dir = _training_dir(character, entry)
     if not os.path.isdir(t_dir):
         return []
 
@@ -255,24 +256,24 @@ def list_training_images(character: str) -> list:
     return images
 
 
-def get_training_image_path(character: str, filename: str) -> str | None:
+def get_training_image_path(character: str, entry: str, filename: str) -> str | None:
     """학습용 이미지 파일 경로 반환"""
     if ".." in filename or os.path.sep in filename:
         print(f"[LORA] 잘못된 파일명: {filename}")
         return None
-    fpath = os.path.join(_training_dir(character), filename)
+    fpath = os.path.join(_training_dir(character, entry), filename)
     if os.path.isfile(fpath):
         return fpath
     print(f"[LORA] 학습 이미지 없음: {fpath}")
     return None
 
 
-def delete_training_image(character: str, filename: str) -> dict:
+def delete_training_image(character: str, entry: str, filename: str) -> dict:
     """학습용 이미지 + 프롬프트 JSON 삭제"""
     if ".." in filename or os.path.sep in filename:
         return {"success": False, "error": "잘못된 파일명"}
 
-    t_dir = _training_dir(character)
+    t_dir = _training_dir(character, entry)
     fpath = os.path.join(t_dir, filename)
 
     if not os.path.isfile(fpath):
@@ -306,9 +307,9 @@ def delete_training_image(character: str, filename: str) -> dict:
         return {"success": False, "error": str(e)}
 
 
-def set_training_representative(character: str, filename: str) -> dict:
+def set_training_representative(character: str, entry: str, filename: str) -> dict:
     """학습용 이미지 대표 설정/해제"""
-    t_dir = _training_dir(character)
+    t_dir = _training_dir(character, entry)
     rep_path = os.path.join(t_dir, "_representative.json")
 
     # 이미 대표면 해제
@@ -334,12 +335,12 @@ def set_training_representative(character: str, filename: str) -> dict:
         return {"success": False, "error": str(e)}
 
 
-def save_training_prompt(character: str, filename: str, positive: str, negative: str) -> dict:
+def save_training_prompt(character: str, entry: str, filename: str, positive: str, negative: str) -> dict:
     """학습용 이미지의 프롬프트 저장"""
     if ".." in filename or os.path.sep in filename:
         return {"success": False, "error": "잘못된 파일명"}
 
-    t_dir = _training_dir(character)
+    t_dir = _training_dir(character, entry)
     base = os.path.splitext(filename)[0]
     prompt_path = os.path.join(t_dir, f"{base}_prompt.json")
 
@@ -498,8 +499,8 @@ def get_entry_image_path(character: str, entry_name: str, filename: str) -> str 
     fpath = os.path.join(_lora_entry_dir(character, entry_name), filename)
     if os.path.isfile(fpath):
         return fpath
-    # 학습용 이미지 폴더도 확인
-    tpath = os.path.join(_training_dir(character), filename)
+    # 엔트리 내 학습용 이미지 폴더도 확인
+    tpath = os.path.join(_training_dir(character, entry_name), filename)
     if os.path.isfile(tpath):
         return tpath
     print(f"[LORA_MANAGE] 이미지 없음: {fpath}")

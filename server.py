@@ -4327,10 +4327,11 @@ async def handle_api_lora_training_list(request):
     """학습용 이미지 목록"""
     try:
         character = request.query.get("character", "")
-        if not character:
-            return web.json_response({"success": False, "error": "캐릭터 미지정"}, status=400)
+        entry = request.query.get("entry", "")
+        if not character or not entry:
+            return web.json_response({"success": False, "error": "캐릭터/엔트리 미지정"}, status=400)
         from modes.lora_mode import list_training_images
-        images = list_training_images(character)
+        images = list_training_images(character, entry)
         return web.json_response({"success": True, "images": images})
     except Exception as e:
         print(f"[LORA] 학습 이미지 목록 조회 실패: {e}")
@@ -4342,11 +4343,12 @@ async def handle_api_lora_training_add(request):
     try:
         body = await request.json()
         character = body.get("character", "")
+        entry = body.get("entry", "")
         sources = body.get("sources", [])
-        if not character or not sources:
+        if not character or not entry or not sources:
             return web.json_response({"success": False, "error": "필수 값 누락"}, status=400)
         from modes.lora_mode import add_training_images
-        result = add_training_images(character, sources)
+        result = add_training_images(character, entry, sources)
         return web.json_response(result)
     except Exception as e:
         print(f"[LORA] 학습 이미지 추가 실패: {e}")
@@ -4357,9 +4359,10 @@ async def handle_api_lora_training_image(request):
     """학습용 이미지 파일 서빙"""
     try:
         character = request.match_info.get("character", "")
+        entry = request.match_info.get("entry", "")
         filename = request.match_info.get("filename", "")
         from modes.lora_mode import get_training_image_path
-        filepath = get_training_image_path(character, filename)
+        filepath = get_training_image_path(character, entry, filename)
         if filepath:
             return web.FileResponse(filepath)
         return web.Response(text="Not found", status=404)
@@ -4373,11 +4376,12 @@ async def handle_api_lora_training_delete(request):
     try:
         body = await request.json()
         character = body.get("character", "")
+        entry = body.get("entry", "")
         filename = body.get("filename", "")
-        if not character or not filename:
+        if not character or not entry or not filename:
             return web.json_response({"success": False, "error": "필수 값 누락"}, status=400)
         from modes.lora_mode import delete_training_image
-        result = delete_training_image(character, filename)
+        result = delete_training_image(character, entry, filename)
         status = 200 if result.get("success") else 400
         return web.json_response(result, status=status)
     except Exception as e:
@@ -4390,11 +4394,12 @@ async def handle_api_lora_training_representative(request):
     try:
         body = await request.json()
         character = body.get("character", "")
+        entry = body.get("entry", "")
         filename = body.get("filename", "")
-        if not character or not filename:
+        if not character or not entry or not filename:
             return web.json_response({"success": False, "error": "필수 값 누락"}, status=400)
         from modes.lora_mode import set_training_representative
-        result = set_training_representative(character, filename)
+        result = set_training_representative(character, entry, filename)
         return web.json_response(result)
     except Exception as e:
         print(f"[LORA] 대표 설정 실패: {e}")
@@ -4406,13 +4411,14 @@ async def handle_api_lora_training_prompt(request):
     try:
         body = await request.json()
         character = body.get("character", "")
+        entry = body.get("entry", "")
         filename = body.get("filename", "")
         positive = body.get("positive", "")
         negative = body.get("negative", "")
-        if not character or not filename:
+        if not character or not entry or not filename:
             return web.json_response({"success": False, "error": "필수 값 누락"}, status=400)
         from modes.lora_mode import save_training_prompt
-        result = save_training_prompt(character, filename, positive, negative)
+        result = save_training_prompt(character, entry, filename, positive, negative)
         return web.json_response(result)
     except Exception as e:
         print(f"[LORA] 프롬프트 저장 실패: {e}")
@@ -4421,7 +4427,7 @@ async def handle_api_lora_training_prompt(request):
 
 app.router.add_get("/api/lora/training_images", handle_api_lora_training_list)
 app.router.add_post("/api/lora/training_images/add", handle_api_lora_training_add)
-app.router.add_get("/api/lora/training_image/{character}/{filename}", handle_api_lora_training_image)
+app.router.add_get("/api/lora/training_image/{character}/{entry}/{filename}", handle_api_lora_training_image)
 app.router.add_post("/api/lora/training_images/delete", handle_api_lora_training_delete)
 app.router.add_post("/api/lora/training_images/representative", handle_api_lora_training_representative)
 app.router.add_post("/api/lora/training_images/prompt", handle_api_lora_training_prompt)
