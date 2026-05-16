@@ -7774,6 +7774,7 @@
                 let badge = '';
                 if (item.status === 'done') badge = '<div class="at-analysis-badge">✅ 분석완료</div>';
                 else if (item.status === 'analyzing') badge = '<div class="at-analysis-badge" style="color:#ffd700;">⏳ 분석중</div>';
+                else if (item.status === 'pending') badge = '<div class="at-analysis-badge" style="color:#888;">⏸ 대기중</div>';
                 else if (item.status === 'error') badge = '<div class="at-analysis-badge" style="color:#f44;">❌ 오류</div>';
                 card.innerHTML = `<img src="${item.url}"><button class="at-remove-btn" onclick="atRemoveImage(${i})">✕</button>${badge}`;
                 container.appendChild(card);
@@ -7789,6 +7790,21 @@
             const doMatch = document.getElementById('at-do-match').checked;
             if (!doAnalyze && !doMatch) { showToast('태그 분석 또는 임베딩 매칭 중 하나 이상 선택하세요', 'error'); return; }
 
+            // 태그 분석 모드일 때, 기존 done 상태도 pending으로 초기화하여 재분행 상황을 보여줌
+            if (doAnalyze) {
+                let resetCount = 0;
+                atState.images.forEach(i => {
+                    if (i.status === 'done') {
+                        i.status = 'pending';
+                        i.tags = [];
+                        resetCount++;
+                    }
+                });
+                if (resetCount > 0) {
+                    console.log('[atAnalyzeAll] 기존 분석완료 이미지', resetCount, '개를 대기 상태로 초기화');
+                }
+                atRenderImages();
+            }
             const pending = atState.images.filter(i => i.status === 'pending' || i.status === 'error');
 
             document.getElementById('at-analyze-btn').disabled = true;
