@@ -13,6 +13,7 @@ from modes.asset_mode import ASSET_DIR, TAGS_FILE, AssetMode
 LORA_EXTENSIONS = {".safetensors", ".pt", ".ckpt", ".bin"}
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 TRAINING_DIR_NAME = "학습용 이미지"
+LORA_MANAGE_FILE = os.path.join(os.path.dirname(TAGS_FILE), "lora_manage.json")
 
 
 def _safe_dirname(name: str) -> str:
@@ -353,3 +354,114 @@ def save_training_prompt(character: str, filename: str, positive: str, negative:
     except Exception as e:
         print(f"[LORA] 프롬프트 저장 실패: {prompt_path} - {e}")
         return {"success": False, "error": str(e)}
+
+
+# ─── LoRA 항목 관리 (lora_manage.json) ─────────────────────────
+
+def _load_lora_manage() -> dict:
+    """lora_manage.json 로드"""
+    if os.path.isfile(LORA_MANAGE_FILE):
+        try:
+            with open(LORA_MANAGE_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"[LORA_MANAGE] 로드 실패: {e}")
+            traceback.print_exc()
+            return {"loras": {}}
+    return {"loras": {}}
+
+
+def _save_lora_manage(data: dict):
+    """lora_manage.json 저장"""
+    try:
+        with open(LORA_MANAGE_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        print(f"[LORA_MANAGE] 저장 완료")
+    except Exception as e:
+        print(f"[LORA_MANAGE] 저장 실패: {e}")
+        traceback.print_exc()
+
+
+def list_lora_entries(character: str = "") -> list:
+    """LoRA 항목 목록 반환. character 지정 시 해당 캐릭터 것만."""
+    data = _load_lora_manage()
+    entries = []
+    for name, info in data.get("loras", {}).items():
+        if character and info.get("character") != character:
+            continue
+        entries.append({
+            "name": name,
+            "trigger": info.get("trigger", ""),
+            "description": info.get("description", ""),
+            "character": info.get("character", ""),
+        })
+    return entries
+
+
+def add_lora_entry(name: str, character: str, trigger: str, description: str = "") -> dict:
+    """새 LoRA 항목 추가"""
+    if not name or not name.strip():
+        print("[LORA_MANAGE] 이름 누락")
+        return {"success": False, "error": "이름을 입력하세요"}
+    if not trigger or not trigger.strip():
+        print("[LORA_MANAGE] 트리거 키워드 누락")
+        return {"success": False, "error": "트리거 키워드를 입력하세요"}
+    if not character:
+        print("[LORA_MANAGE] 캐릭터 미지정")
+        return {"success": False, "error": "캐릭터를 선택하세요"}
+
+    name = name.strip()
+    data = _load_lora_manage()
+
+    if name in data.get("loras", {}):
+        print(f"[LORA_MANAGE] 이미 존재: {name}")
+        return {"success": False, "error": "이미 존재하는 LoRA명"}
+
+    # 캐릭터 Lora 폴더 생성
+    lora_path = _lora_dir(character)
+    os.makedirs(lora_path, exist_ok=True)
+
+    data.setdefault("loras", {})[name] = {
+        "trigger": trigger.strip(),
+        "description": description.strip(),
+        "character": character,
+    }
+    _save_lora_manage(data)
+    print(f"[LORA_MANAGE] LoRA 추가: {name} (캐릭터: {character}, 트리거: {trigger.strip()})")
+    return {"success": True, "name": name}
+
+
+def remove_lora_entry(name: str) -> dict:
+    """LoRA 항목 삭제 (메타데이터만, 파일은 유지)"""
+    if not name:
+        return {"success": False, "error": "이름 누락"}
+
+    data = _load_lora_manage()
+    if name not in data.get("loras", {}):
+        print(f"[LORA_MANAGE] 항목 없음: {name}")
+        return {"success": False, "error": "항목을 찾을 수 없습니다"}
+
+    del data["loras"][name]
+    _save_lora_manage(data)
+    print(f"[LORA_MANAGE] LoRA 삭제: {name}")
+    return {"success": True}
+
+
+def update_lora_entry(name: str, trigger: str = None, description: str = None) -> dict:
+    """LoRA 항목 메타데이터 수정"""
+    if not name:
+        return {"success": False, "error": "이름 누락"}
+
+    data = _load_lora_manage()
+    if name not in data.get("loras", {}):
+        print(f"[LORA_MANAGE] 항목 없음: {name}")
+        return {"success": False, "error": "항목을 찾을 수 없습니다"}
+
+    if trigger is not None:
+        data["loras"][name]["trigger"] = trigger.strip()
+    if description is not None:
+        data["loras"][name]["description"] = description.strip()
+
+    _save_lora_manage(data)
+    print(f"[LORA_MANAGE] LoRA 수정: {name}")
+    return {"success": True}

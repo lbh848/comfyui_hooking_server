@@ -3332,6 +3332,32 @@
                         </select>
                     </div>
 
+                    <!-- LoRA 항목 관리 -->
+                    <div style="background:rgba(180,130,220,0.06); border-radius:8px; padding:10px; margin-bottom:8px;">
+                        <div class="section-title">LoRA 항목</div>
+                        <select id="lora-entry-select" onchange="onLoraEntryChange()" style="margin-bottom:6px;">
+                            <option value="">-- LoRA 선택 --</option>
+                        </select>
+                        <div style="display:flex; gap:6px;">
+                            <button onclick="addLoraEntry()" style="flex:1; background:var(--accent); color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem; font-weight:600;">추가</button>
+                            <button onclick="removeLoraEntry()" style="flex:1; background:var(--error); color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem; font-weight:600;">삭제</button>
+                        </div>
+                    </div>
+
+                    <!-- LoRA 항목 정보 (선택 시 표시) -->
+                    <div id="lora-entry-info" style="display:none; background:var(--surface2); border-radius:8px; padding:10px; margin-bottom:8px;">
+                        <div class="section-title">LoRA 정보</div>
+                        <div style="margin-bottom:6px;">
+                            <div style="font-size:0.75rem; color:var(--text-secondary); margin-bottom:2px;">트리거 키워드</div>
+                            <input type="text" id="lora-entry-trigger" style="width:100%; padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface1); color:var(--text); font-size:0.85rem;">
+                        </div>
+                        <div style="margin-bottom:6px;">
+                            <div style="font-size:0.75rem; color:var(--text-secondary); margin-bottom:2px;">설명</div>
+                            <textarea id="lora-entry-description" rows="2" style="width:100%; padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface1); color:var(--text); font-size:0.85rem; resize:vertical;"></textarea>
+                        </div>
+                        <button onclick="saveLoraEntryInfo()" style="width:100%; padding:6px; background:var(--accent); color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:0.8rem; font-weight:600;">저장</button>
+                    </div>
+
                     <!-- LoRA 업로드 -->
                     <div style="background:var(--surface2); border-radius:8px; padding:10px; margin-bottom:8px;">
                         <div class="section-title">LoRA 업로드</div>
@@ -9435,6 +9461,7 @@
 
         // ─── LoRA 매니징 ─────────────────────────────────────
         let loraCurrentCharacter = '';
+        let loraCurrentEntry = '';
         let loraPickerState = { level: 'gallery', outfit: '', expression: '', selected: new Set() };
 
         async function loadLoraCharacters() {
@@ -9458,18 +9485,134 @@
         async function onLoraCharacterChange() {
             const select = document.getElementById('lora-character-select');
             loraCurrentCharacter = select.value;
+            loraCurrentEntry = '';
             const breadcrumb = document.getElementById('lora-breadcrumb');
             breadcrumb.innerHTML = loraCurrentCharacter
                 ? `<span style="cursor:pointer;" onclick="loadLoraCharacters(); document.getElementById('lora-character-select').value=''; onLoraCharacterChange();">로라매니징</span> / <span>${loraCurrentCharacter}</span> / Lora`
                 : '<span>로라매니징</span>';
 
+            // LoRA 항목 정보 영역 초기화
+            document.getElementById('lora-entry-info').style.display = 'none';
+
             if (!loraCurrentCharacter) {
                 document.getElementById('lora-empty-state').style.display = '';
                 document.getElementById('lora-files-section').style.display = 'none';
                 document.getElementById('lora-training-section').style.display = 'none';
+                // LoRA 항목 셀렉트도 초기화
+                const entrySelect = document.getElementById('lora-entry-select');
+                entrySelect.innerHTML = '<option value="">-- LoRA 선택 --</option>';
                 return;
             }
-            await Promise.all([loadLoraFiles(), loadLoraTrainingImages()]);
+            await Promise.all([loadLoraFiles(), loadLoraTrainingImages(), loadLoraEntries()]);
+        }
+
+        // ─── LoRA 항목 관리 ─────────────────────────────────────
+        async function loadLoraEntries() {
+            if (!loraCurrentCharacter) return;
+            try {
+                const resp = await fetchJSON(`/api/lora/manage/list?character=${encodeURIComponent(loraCurrentCharacter)}`);
+                const select = document.getElementById('lora-entry-select');
+                select.innerHTML = '<option value="">-- LoRA 선택 --</option>';
+                if (resp.success && resp.loras) {
+                    resp.loras.forEach(lora => {
+                        const opt = document.createElement('option');
+                        opt.value = lora.name;
+                        opt.textContent = lora.trigger ? `${lora.name} (${lora.trigger})` : lora.name;
+                        select.appendChild(opt);
+                    });
+                }
+            } catch (e) {
+                console.error('[LORA_MANAGE] 항목 목록 로드 실패:', e);
+            }
+        }
+
+        async function onLoraEntryChange() {
+            const select = document.getElementById('lora-entry-select');
+            loraCurrentEntry = select.value;
+            const infoEl = document.getElementById('lora-entry-info');
+
+            if (!loraCurrentEntry) {
+                infoEl.style.display = 'none';
+                return;
+            }
+
+            // 항목 정보 로드
+            try {
+                const resp = await fetchJSON(`/api/lora/manage/list?character=${encodeURIComponent(loraCurrentCharacter)}`);
+                if (!resp.success) { showToast(resp.error || '항목 로드 실패', 'error'); return; }
+                const entry = (resp.loras || []).find(l => l.name === loraCurrentEntry);
+                if (!entry) { infoEl.style.display = 'none'; return; }
+
+                document.getElementById('lora-entry-trigger').value = entry.trigger || '';
+                document.getElementById('lora-entry-description').value = entry.description || '';
+                infoEl.style.display = '';
+            } catch (e) {
+                console.error('[LORA_MANAGE] 항목 정보 로드 실패:', e);
+            }
+        }
+
+        async function addLoraEntry() {
+            if (!loraCurrentCharacter) { showToast('먼저 캐릭터를 선택하세요', 'error'); return; }
+            const name = prompt('LoRA 이름을 입력하세요');
+            if (!name || !name.trim()) return;
+            const trigger = prompt('트리거 키워드를 입력하세요');
+            if (!trigger || !trigger.trim()) { showToast('트리거 키워드는 필수입니다', 'error'); return; }
+            const description = prompt('설명을 입력하세요 (생략 가능)') || '';
+            try {
+                const resp = await fetchJSON('/api/lora/manage/add', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: name.trim(), character: loraCurrentCharacter, trigger: trigger.trim(), description: description.trim() })
+                });
+                if (resp.success) {
+                    showToast('LoRA 항목 추가 완료', 'success');
+                    await loadLoraEntries();
+                    document.getElementById('lora-entry-select').value = name.trim();
+                    await onLoraEntryChange();
+                } else {
+                    showToast(resp.error || '추가 실패', 'error');
+                }
+            } catch (e) { console.error('[LORA_MANAGE] 추가 실패:', e); showToast('추가 실패', 'error'); }
+        }
+
+        async function removeLoraEntry() {
+            const select = document.getElementById('lora-entry-select');
+            const name = select.value;
+            if (!name) { showToast('삭제할 LoRA를 선택하세요', 'error'); return; }
+            if (!confirm(`"${name}" 항목을 삭제하시겠습니까?`)) return;
+            try {
+                const resp = await fetchJSON('/api/lora/manage/delete', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name })
+                });
+                if (resp.success) {
+                    showToast('삭제 완료', 'success');
+                    loraCurrentEntry = '';
+                    document.getElementById('lora-entry-info').style.display = 'none';
+                    await loadLoraEntries();
+                } else {
+                    showToast(resp.error || '삭제 실패', 'error');
+                }
+            } catch (e) { console.error('[LORA_MANAGE] 삭제 실패:', e); showToast('삭제 실패', 'error'); }
+        }
+
+        async function saveLoraEntryInfo() {
+            if (!loraCurrentEntry) { showToast('LoRA를 선택하세요', 'error'); return; }
+            const trigger = document.getElementById('lora-entry-trigger').value.trim();
+            if (!trigger) { showToast('트리거 키워드는 필수입니다', 'error'); return; }
+            const description = document.getElementById('lora-entry-description').value.trim();
+            try {
+                const resp = await fetchJSON('/api/lora/manage/update', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: loraCurrentEntry, trigger, description })
+                });
+                if (resp.success) {
+                    showToast('저장 완료', 'success');
+                    await loadLoraEntries();
+                    document.getElementById('lora-entry-select').value = loraCurrentEntry;
+                } else {
+                    showToast(resp.error || '저장 실패', 'error');
+                }
+            } catch (e) { console.error('[LORA_MANAGE] 저장 실패:', e); showToast('저장 실패', 'error'); }
         }
 
         async function loadLoraFiles() {

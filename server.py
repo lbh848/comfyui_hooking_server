@@ -4425,6 +4425,76 @@ app.router.add_post("/api/lora/training_images/representative", handle_api_lora_
 app.router.add_post("/api/lora/training_images/prompt", handle_api_lora_training_prompt)
 
 
+# ─── LoRA 항목 관리 API ─────────────────────────────────
+async def handle_api_lora_manage_list(request):
+    """LoRA 항목 목록"""
+    try:
+        character = request.query.get("character", "")
+        from modes.lora_mode import list_lora_entries
+        entries = list_lora_entries(character)
+        return web.json_response({"success": True, "loras": entries})
+    except Exception as e:
+        print(f"[LORA_MANAGE] 목록 조회 실패: {e}")
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_lora_manage_add(request):
+    """LoRA 항목 추가"""
+    try:
+        body = await request.json()
+        name = body.get("name", "")
+        character = body.get("character", "")
+        trigger = body.get("trigger", "")
+        description = body.get("description", "")
+        from modes.lora_mode import add_lora_entry
+        result = add_lora_entry(name, character, trigger, description)
+        status = 200 if result.get("success") else 400
+        return web.json_response(result, status=status)
+    except Exception as e:
+        print(f"[LORA_MANAGE] 추가 실패: {e}")
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_lora_manage_delete(request):
+    """LoRA 항목 삭제"""
+    try:
+        body = await request.json()
+        name = body.get("name", "")
+        if not name:
+            return web.json_response({"success": False, "error": "이름 누락"}, status=400)
+        from modes.lora_mode import remove_lora_entry
+        result = remove_lora_entry(name)
+        status = 200 if result.get("success") else 400
+        return web.json_response(result, status=status)
+    except Exception as e:
+        print(f"[LORA_MANAGE] 삭제 실패: {e}")
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_lora_manage_update(request):
+    """LoRA 항목 메타데이터 수정"""
+    try:
+        body = await request.json()
+        name = body.get("name", "")
+        trigger = body.get("trigger")
+        description = body.get("description")
+        if not name:
+            return web.json_response({"success": False, "error": "이름 누락"}, status=400)
+        from modes.lora_mode import update_lora_entry
+        result = update_lora_entry(name, trigger, description)
+        status = 200 if result.get("success") else 400
+        return web.json_response(result, status=status)
+    except Exception as e:
+        print(f"[LORA_MANAGE] 수정 실패: {e}")
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+app.router.add_get("/api/lora/manage/list", handle_api_lora_manage_list)
+app.router.add_post("/api/lora/manage/add", handle_api_lora_manage_add)
+app.router.add_post("/api/lora/manage/delete", handle_api_lora_manage_delete)
+app.router.add_post("/api/lora/manage/update", handle_api_lora_manage_update)
+
+
 def _backup_tags_on_startup():
     from modes.asset_mode import TAGS_FILE, ASSET_DATA_DIR
     from modes.embedding_service import PROFILE_MAP_FILE
