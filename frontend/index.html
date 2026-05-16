@@ -2911,23 +2911,44 @@
                                     프리셋/태그 이름에서 임베딩에 사용할 의미 있는 부분을 추출하는 규칙입니다.<br>
                                     프로필을 선택하거나 새로 만들어 적용할 수 있습니다.
                                 </div>
-                                <div style="display:flex; gap:10px; align-items:center; margin-bottom:10px; flex-wrap:wrap;">
-                                    <label style="font-size:0.85rem; font-weight:600; min-width:60px;">정제 대상:</label>
-                                    <select id="at-embed-source" style="padding:4px 8px; border-radius:5px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-size:0.85rem;" onchange="atOnSourceChange()">
-                                        <option value="프리셋">프리셋 이름</option>
-                                        <option value="태그">태그 (업로드 파일명)</option>
-                                    </select>
-                                    <label style="font-size:0.85rem; font-weight:600; min-width:42px;">프로필:</label>
-                                    <select id="at-embed-profile-select" style="padding:4px 8px; border-radius:5px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-size:0.85rem; min-width:160px;" onchange="atOnProfileSelect()">
-                                    </select>
-                                    <button class="at-btn" onclick="atNewProfile()" style="font-size:0.78rem;">＋ 새 프로필</button>
-                                    <button class="at-btn" onclick="atDeleteProfile()" style="font-size:0.78rem; color:#e55;" id="at-embed-delete-profile-btn">🗑 삭제</button>
-                                </div>
-                                <div id="at-embed-steps-container"></div>
-                                <div style="margin-top:12px; display:flex; gap:8px;">
-                                    <button class="at-btn at-btn-primary" onclick="atSaveCurrentProfile()" style="font-size:0.82rem;">💾 프로필 저장 및 적용</button>
-                                    <button class="at-btn" onclick="atAddStep()" style="font-size:0.82rem;">＋ 단계 추가</button>
-                                    <button class="at-btn" onclick="atResetCurrentProfile()" style="font-size:0.82rem;">🔄 기본값으로</button>
+                                <!-- 좌우 배치 컨테이너 -->
+                                <div style="display:flex; gap:12px; align-items:flex-start;">
+                                    <!-- 프리셋 정제 영역 -->
+                                    <div style="flex:1; min-width:0; border:1px solid var(--border); border-radius:8px; padding:10px;">
+                                        <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px; flex-wrap:wrap;">
+                                            <span style="font-size:0.85rem; font-weight:700;">📋 내 프리셋</span>
+                                            <label style="font-size:0.78rem; font-weight:600;">프로필:</label>
+                                            <select id="at-embed-profile-select-preset" style="padding:3px 6px; border-radius:5px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-size:0.78rem; min-width:140px;" onchange="atOnProfileSelect('preset')">
+                                            </select>
+                                            <button class="at-btn" onclick="atNewProfile('preset')" style="font-size:0.72rem;">＋ 새 프로필</button>
+                                            <button class="at-btn" onclick="atDeleteProfile('preset')" style="font-size:0.72rem; color:#e55;">🗑 삭제</button>
+                                        </div>
+                                        <div id="at-embed-steps-container-preset"></div>
+                                        <div style="margin-top:8px; display:flex; gap:8px;">
+                                            <button class="at-btn at-btn-primary" onclick="atSaveCurrentProfile('preset')" style="font-size:0.82rem;">💾 저장 및 적용</button>
+                                            <button class="at-btn" onclick="atAddStep('preset')" style="font-size:0.82rem;">＋ 단계 추가</button>
+                                            <button class="at-btn" onclick="atResetCurrentProfile('preset')" style="font-size:0.82rem;">🔄 기본값</button>
+                                        </div>
+                                    </div>
+                                    <!-- 세로 구분선 -->
+                                    <div style="width:1px; align-self:stretch; background:var(--border);"></div>
+                                    <!-- 태그 정제 영역 -->
+                                    <div style="flex:1; min-width:0; border:1px solid var(--border); border-radius:8px; padding:10px;">
+                                        <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px; flex-wrap:wrap;">
+                                            <span style="font-size:0.85rem; font-weight:700;">🏷️ 업로드 태그</span>
+                                            <label style="font-size:0.78rem; font-weight:600;">프로필:</label>
+                                            <select id="at-embed-profile-select-tag" style="padding:3px 6px; border-radius:5px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-size:0.78rem; min-width:140px;" onchange="atOnProfileSelect('tag')">
+                                            </select>
+                                            <button class="at-btn" onclick="atNewProfile('tag')" style="font-size:0.72rem;">＋ 새 프로필</button>
+                                            <button class="at-btn" onclick="atDeleteProfile('tag')" style="font-size:0.72rem; color:#e55;">🗑 삭제</button>
+                                        </div>
+                                        <div id="at-embed-steps-container-tag"></div>
+                                        <div style="margin-top:8px; display:flex; gap:8px;">
+                                            <button class="at-btn at-btn-primary" onclick="atSaveCurrentProfile('tag')" style="font-size:0.82rem;">💾 저장 및 적용</button>
+                                            <button class="at-btn" onclick="atAddStep('tag')" style="font-size:0.82rem;">＋ 단계 추가</button>
+                                            <button class="at-btn" onclick="atResetCurrentProfile('tag')" style="font-size:0.82rem;">🔄 기본값</button>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                             <div class="at-section" style="margin-bottom:16px;">
@@ -8395,14 +8416,15 @@
         ];
         let atEmbedProfiles = {};
         let atEmbedCurrentSource = 'preset';
-        let atEmbedActiveSteps = [];
+        let atEmbedActiveSteps = { preset: [], tag: [] };
 
-        function atGetCurrentProfileType() {
-            return document.getElementById('at-embed-source').value === '태그' ? 'tag' : 'preset';
+        function atGetCurrentProfileType(source) {
+            return source || 'preset';
         }
 
-        function atGetCurrentProfileName() {
-            const sel = document.getElementById('at-embed-profile-select');
+        function atGetCurrentProfileName(source) {
+            const selId = (source || 'preset') === 'tag' ? 'at-embed-profile-select-tag' : 'at-embed-profile-select-preset';
+            const sel = document.getElementById(selId);
             return sel ? sel.value : '';
         }
 
@@ -8417,19 +8439,27 @@
                 const result = await resp.json();
                 if (!result.success) { showToast('프로필 로드 실패', 'error'); return; }
                 atEmbedProfiles = result.profiles || {};
-                const profileType = atGetCurrentProfileType();
-                const activeName = profileType === 'tag' ? result.active_tag_profile : result.active_preset_profile;
-                atRenderProfileSelect(activeName);
-                const steps = atEmbedProfiles[activeName] || [];
-                atEmbedActiveSteps = JSON.parse(JSON.stringify(steps));
-                atRenderCleanSteps(atEmbedActiveSteps);
+                // 두 영역 모두 렌더링
+                atRenderProfileSelect('at-embed-profile-select-preset', result.active_preset_profile);
+                atRenderProfileSelect('at-embed-profile-select-tag', result.active_tag_profile);
+                // 프리셋 steps
+                const presetName = result.active_preset_profile;
+                const presetSteps = atEmbedProfiles[presetName] || [];
+                atEmbedActiveSteps.preset = JSON.parse(JSON.stringify(presetSteps));
+                atRenderCleanSteps(atEmbedActiveSteps.preset, 'preset');
+                // 태그 steps
+                const tagName = result.active_tag_profile;
+                const tagSteps = atEmbedProfiles[tagName] || [];
+                atEmbedActiveSteps.tag = JSON.parse(JSON.stringify(tagSteps));
+                atRenderCleanSteps(atEmbedActiveSteps.tag, 'tag');
             } catch (e) {
                 showToast('프로필 로드 오류: ' + e.message, 'error');
             }
         }
 
-        function atRenderProfileSelect(activeName) {
-            const sel = document.getElementById('at-embed-profile-select');
+        function atRenderProfileSelect(selectId, activeName) {
+            const sel = document.getElementById(selectId);
+            if (!sel) return;
             sel.innerHTML = '';
             const names = Object.keys(atEmbedProfiles);
             names.forEach(name => {
@@ -8441,19 +8471,15 @@
             });
         }
 
-        function atOnSourceChange() {
-            atLoadProfiles();
-        }
-
-        function atOnProfileSelect() {
-            const name = atGetCurrentProfileName();
+        function atOnProfileSelect(source) {
+            const name = atGetCurrentProfileName(source);
             const steps = atEmbedProfiles[name] || [];
-            atEmbedActiveSteps = JSON.parse(JSON.stringify(steps));
-            atRenderCleanSteps(atEmbedActiveSteps);
+            atEmbedActiveSteps[source] = JSON.parse(JSON.stringify(steps));
+            atRenderCleanSteps(atEmbedActiveSteps[source], source);
         }
 
-        function atRenderCleanSteps(steps) {
-            const container = document.getElementById('at-embed-steps-container');
+        function atRenderCleanSteps(steps, source) {
+            const container = document.getElementById(`at-embed-steps-container-${source}`);
             container.innerHTML = '';
             const maxSteps = Math.max(steps.length, 1);
             for (let i = 0; i < maxSteps; i++) {
@@ -8468,7 +8494,7 @@
                 const actionSelect = document.createElement('select');
                 actionSelect.style.cssText = 'padding:4px 8px; border-radius:5px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-size:0.82rem; min-width:140px;';
                 actionSelect.innerHTML = '<option value="">(없음)</option>' + AT_CLEAN_ACTIONS.map(a => `<option value="${a.value}" ${step.action === a.value ? 'selected' : ''}>${a.label}</option>`).join('');
-                actionSelect.onchange = () => { atOnStepChange(i); };
+                actionSelect.onchange = () => { atOnStepChange(i, source); };
                 stepDiv.appendChild(actionSelect);
 
                 if (step.action === 'split_by') {
@@ -8476,27 +8502,27 @@
                     sepInput.type = 'text'; sepInput.value = step.separator || '_';
                     sepInput.placeholder = '구분자';
                     sepInput.style.cssText = 'width:50px; padding:4px 6px; border-radius:5px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-size:0.82rem; text-align:center;';
-                    sepInput.id = `at-step-${i}-separator`;
+                    sepInput.id = `at-step-${source}-${i}-separator`;
                     stepDiv.appendChild(sepInput);
                     const takeInput = document.createElement('input');
                     takeInput.type = 'text'; takeInput.value = step.take !== undefined ? String(step.take) : '-1';
                     takeInput.placeholder = '위치';
                     takeInput.style.cssText = 'width:80px; padding:4px 6px; border-radius:5px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-size:0.82rem;';
-                    takeInput.id = `at-step-${i}-take`;
+                    takeInput.id = `at-step-${source}-${i}-take`;
                     stepDiv.appendChild(takeInput);
                 } else if (step.action === 'strip_suffix' || step.action === 'strip_prefix') {
                     const patInput = document.createElement('input');
                     patInput.type = 'text'; patInput.value = step.pattern || '';
                     patInput.placeholder = '정규식 패턴';
                     patInput.style.cssText = 'width:200px; padding:4px 6px; border-radius:5px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-size:0.82rem;';
-                    patInput.id = `at-step-${i}-pattern`;
+                    patInput.id = `at-step-${source}-${i}-pattern`;
                     stepDiv.appendChild(patInput);
                 } else if (step.action === 'replace') {
                     const fromInput = document.createElement('input');
                     fromInput.type = 'text'; fromInput.value = step.from || '';
                     fromInput.placeholder = '찾을 문자';
                     fromInput.style.cssText = 'width:60px; padding:4px 6px; border-radius:5px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-size:0.82rem; text-align:center;';
-                    fromInput.id = `at-step-${i}-from`;
+                    fromInput.id = `at-step-${source}-${i}-from`;
                     stepDiv.appendChild(fromInput);
                     const arrow = document.createElement('span');
                     arrow.textContent = '→';
@@ -8506,24 +8532,24 @@
                     toInput.type = 'text'; toInput.value = step.to !== undefined ? step.to : ' ';
                     toInput.placeholder = '바꿀 문자';
                     toInput.style.cssText = 'width:60px; padding:4px 6px; border-radius:5px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-size:0.82rem; text-align:center;';
-                    toInput.id = `at-step-${i}-to`;
+                    toInput.id = `at-step-${source}-${i}-to`;
                     stepDiv.appendChild(toInput);
                 }
 
                 const removeBtn = document.createElement('button');
                 removeBtn.textContent = '✕';
                 removeBtn.style.cssText = 'border:none; background:transparent; color:var(--error); cursor:pointer; font-size:0.9rem; padding:2px 6px;';
-                removeBtn.onclick = () => { atRemoveStep(i); };
+                removeBtn.onclick = () => { atRemoveStep(i, source); };
                 stepDiv.appendChild(removeBtn);
 
                 container.appendChild(stepDiv);
             }
         }
 
-        function atOnStepChange(stepIndex) {
-            atReadStepsFromUI();
-            atRenderCleanSteps(atEmbedActiveSteps);
-            const container = document.getElementById('at-embed-steps-container');
+        function atOnStepChange(stepIndex, source) {
+            atReadStepsFromUI(source);
+            atRenderCleanSteps(atEmbedActiveSteps[source], source);
+            const container = document.getElementById(`at-embed-steps-container-${source}`);
             const rows = container.querySelectorAll(':scope > div');
             if (rows[stepIndex]) {
                 const sel = rows[stepIndex].querySelector('select');
@@ -8531,52 +8557,52 @@
             }
         }
 
-        function atReadStepsFromUI() {
+        function atReadStepsFromUI(source) {
             const steps = [];
-            const container = document.getElementById('at-embed-steps-container');
+            const container = document.getElementById(`at-embed-steps-container-${source}`);
             const rows = container.querySelectorAll(':scope > div');
             rows.forEach((row, i) => {
                 const actionSelect = row.querySelector('select');
                 if (!actionSelect || !actionSelect.value) return;
                 const step = { action: actionSelect.value };
                 if (step.action === 'split_by') {
-                    const sepEl = document.getElementById(`at-step-${i}-separator`);
-                    const takeEl = document.getElementById(`at-step-${i}-take`);
+                    const sepEl = document.getElementById(`at-step-${source}-${i}-separator`);
+                    const takeEl = document.getElementById(`at-step-${source}-${i}-take`);
                     step.separator = sepEl ? sepEl.value : '_';
                     const takeVal = takeEl ? takeEl.value.trim() : '-1';
                     step.take = takeVal.match(/^-?\d+$/) ? parseInt(takeVal) : takeVal;
                 } else if (step.action === 'strip_suffix' || step.action === 'strip_prefix') {
-                    const patEl = document.getElementById(`at-step-${i}-pattern`);
+                    const patEl = document.getElementById(`at-step-${source}-${i}-pattern`);
                     step.pattern = patEl ? patEl.value : '';
                 } else if (step.action === 'replace') {
-                    const fromEl = document.getElementById(`at-step-${i}-from`);
-                    const toEl = document.getElementById(`at-step-${i}-to`);
+                    const fromEl = document.getElementById(`at-step-${source}-${i}-from`);
+                    const toEl = document.getElementById(`at-step-${source}-${i}-to`);
                     step.from = fromEl ? fromEl.value : '';
                     step.to = toEl ? toEl.value : ' ';
                 }
                 steps.push(step);
             });
-            atEmbedActiveSteps = steps;
+            atEmbedActiveSteps[source] = steps;
             return steps;
         }
 
-        function atAddStep() {
-            atReadStepsFromUI();
-            atEmbedActiveSteps.push({ action: 'replace', from: '_', to: ' ' });
-            atRenderCleanSteps(atEmbedActiveSteps);
+        function atAddStep(source) {
+            atReadStepsFromUI(source);
+            atEmbedActiveSteps[source].push({ action: 'replace', from: '_', to: ' ' });
+            atRenderCleanSteps(atEmbedActiveSteps[source], source);
         }
 
-        function atRemoveStep(index) {
-            atReadStepsFromUI();
-            atEmbedActiveSteps.splice(index, 1);
-            atRenderCleanSteps(atEmbedActiveSteps);
+        function atRemoveStep(index, source) {
+            atReadStepsFromUI(source);
+            atEmbedActiveSteps[source].splice(index, 1);
+            atRenderCleanSteps(atEmbedActiveSteps[source], source);
         }
 
-        async function atSaveCurrentProfile() {
-            const steps = atReadStepsFromUI();
-            const name = atGetCurrentProfileName();
+        async function atSaveCurrentProfile(source) {
+            const steps = atReadStepsFromUI(source);
+            const name = atGetCurrentProfileName(source);
             if (!name) { showToast('프로필을 먼저 선택하거나 새로 만드세요', 'warning'); return; }
-            const profileType = atGetCurrentProfileType();
+            const profileType = atGetCurrentProfileType(source);
             try {
                 const resp = await fetch('/api/asset_tool/embedding_profile_save', {
                     method: 'POST',
@@ -8588,7 +8614,14 @@
                     showToast(`프로필 '${name}' 저장됨`, 'success');
                     await atLoadProfiles();
                     atLoadCacheStatus();
-                    atPreviewClean(atEmbedCurrentSource || 'preset');
+                    atPreviewClean(source);
+                    // 같은 프로필을 쓰는 다른 쪽도 동기화
+                    const otherSource = source === 'preset' ? 'tag' : 'preset';
+                    const otherName = atGetCurrentProfileName(otherSource);
+                    if (otherName === name) {
+                        atEmbedActiveSteps[otherSource] = JSON.parse(JSON.stringify(steps));
+                        atRenderCleanSteps(atEmbedActiveSteps[otherSource], otherSource);
+                    }
                 } else {
                     showToast('저장 실패: ' + (result.error || ''), 'error');
                 }
@@ -8597,14 +8630,14 @@
             }
         }
 
-        async function atNewProfile() {
+        async function atNewProfile(source) {
             const name = prompt('새 프로필 이름을 입력하세요:');
             if (!name || !name.trim()) return;
             const trimmedName = name.trim();
-            atReadStepsFromUI();
-            atEmbedProfiles[trimmedName] = JSON.parse(JSON.stringify(atEmbedActiveSteps));
+            atReadStepsFromUI(source);
+            atEmbedProfiles[trimmedName] = JSON.parse(JSON.stringify(atEmbedActiveSteps[source]));
             try {
-                const profileType = atGetCurrentProfileType();
+                const profileType = atGetCurrentProfileType(source);
                 const resp = await fetch('/api/asset_tool/embedding_profile_save', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -8617,16 +8650,17 @@
                 }
                 showToast(`프로필 '${trimmedName}' 생성됨`, 'success');
                 await atLoadProfiles();
-                const sel = document.getElementById('at-embed-profile-select');
-                sel.value = trimmedName;
-                atRenderCleanSteps(atEmbedProfiles[trimmedName] || []);
+                const selId = source === 'tag' ? 'at-embed-profile-select-tag' : 'at-embed-profile-select-preset';
+                const sel = document.getElementById(selId);
+                if (sel) sel.value = trimmedName;
+                atRenderCleanSteps(atEmbedProfiles[trimmedName] || [], source);
             } catch (e) {
                 showToast('프로필 생성 오류: ' + e.message, 'error');
             }
         }
 
-        async function atDeleteProfile() {
-            const name = atGetCurrentProfileName();
+        async function atDeleteProfile(source) {
+            const name = atGetCurrentProfileName(source);
             if (!name) return;
             if (!confirm(`프로필 '${name}'을 삭제하시겠습니까?`)) return;
             try {
@@ -8669,8 +8703,7 @@
             }
         }
 
-        function atResetCurrentProfile() {
-            const profileType = atGetCurrentProfileType();
+        function atResetCurrentProfile(source) {
             const defaults = {
                 preset: [
                     { action: 'split_by', separator: '/', take: -1 },
@@ -8683,9 +8716,9 @@
                     { action: 'replace', from: '_', to: ' ' }
                 ]
             };
-            const steps = profileType === 'tag' ? defaults.tag : defaults.preset;
-            atEmbedActiveSteps = JSON.parse(JSON.stringify(steps));
-            atRenderCleanSteps(atEmbedActiveSteps);
+            const steps = (source === 'tag' ? defaults.tag : defaults.preset);
+            atEmbedActiveSteps[source] = JSON.parse(JSON.stringify(steps));
+            atRenderCleanSteps(atEmbedActiveSteps[source], source);
             showToast('기본값으로 초기화되었습니다', 'info');
         }
 
