@@ -96,6 +96,7 @@ DEFAULT_CONFIG = {
     "enhance_prompt_file": "",  # 프롬프트 강화 파일명 (customprompt/)
     "asset_workflow_source_path": "",  # 에셋 생성 워크플로우 원본 소스 전체 경로
     "tag_analysis_workflow_source_path": "",  # 태그 분석 워크플로우 원본 소스 전체 경로
+    "lora_training_workflow_source_path": "",  # 로라 학습 워크플로우 원본 소스 전체 경로
     "dwpose_det_model": "",  # DWPose 탐지 모델 경로 (빈값=자동 다운로드)
     "dwpose_pose_model": "",  # DWPose 포즈 모델 경로 (빈값=자동 다운로드)
     "dwpose_model_cache_dir": "",  # 모델 캐시 디렉토리 (빈값=기본경로)
@@ -4486,10 +4487,11 @@ async def handle_api_lora_manage_update(request):
         name = body.get("name", "")
         trigger = body.get("trigger")
         description = body.get("description")
+        training_config = body.get("training_config")
         if not name:
             return web.json_response({"success": False, "error": "이름 누락"}, status=400)
         from modes.lora_mode import update_lora_entry
-        result = update_lora_entry(name, trigger, description)
+        result = update_lora_entry(name, trigger, description, training_config=training_config)
         status = 200 if result.get("success") else 400
         return web.json_response(result, status=status)
     except Exception as e:

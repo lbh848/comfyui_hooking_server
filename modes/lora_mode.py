@@ -401,6 +401,7 @@ def list_lora_entries(character: str = "") -> list:
             "description": info.get("description", ""),
             "character": info.get("character", ""),
             "representative": info.get("representative", ""),
+            "training_config": info.get("training_config", {}),
         })
     return entries
 
@@ -469,7 +470,7 @@ def remove_lora_entry(name: str, character: str = "") -> dict:
     return {"success": True}
 
 
-def update_lora_entry(name: str, trigger: str = None, description: str = None, representative: str = None) -> dict:
+def update_lora_entry(name: str, trigger: str = None, description: str = None, representative: str = None, training_config: dict = None) -> dict:
     """LoRA 항목 메타데이터 수정"""
     if not name:
         return {"success": False, "error": "이름 누락"}
@@ -485,6 +486,8 @@ def update_lora_entry(name: str, trigger: str = None, description: str = None, r
         data["loras"][name]["description"] = description.strip()
     if representative is not None:
         data["loras"][name]["representative"] = representative.strip()
+    if training_config is not None:
+        data["loras"][name]["training_config"] = training_config
 
     _save_lora_manage(data)
     print(f"[LORA_MANAGE] LoRA 수정: {name}")

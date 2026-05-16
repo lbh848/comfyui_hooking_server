@@ -35,3 +35,7 @@ customprompt/enhance_outfit_prompt_v4_storage/
 customprompt/test_program/
 patch_data.zip
 patch_chain_presets.zip
+
+# Knowledge graph outputs (rebuild with: graphify . or code-review-graph build)
+graphify-out/
+.code-review-graph/

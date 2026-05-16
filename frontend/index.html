@@ -3351,16 +3351,6 @@
                         </div>
                     </div>
 
-                    <!-- LoRA 업로드 (항목 선택 시) -->
-                    <div id="lora-upload-section" style="display:none; background:var(--surface2); border-radius:8px; padding:10px; margin-bottom:8px;">
-                        <div class="section-title">LoRA 업로드</div>
-                        <input type="file" id="lora-file-input" accept=".safetensors,.pt,.ckpt,.bin" style="display:none;" onchange="uploadLoraFile(this)">
-                        <button onclick="document.getElementById('lora-file-input').click()" style="width:100%; padding:8px; background:var(--accent); color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">
-                            파일 선택
-                        </button>
-                        <div style="font-size:0.7rem; color:var(--text-secondary); margin-top:4px;">.safetensors, .pt, .ckpt, .bin</div>
-                    </div>
-
                     <!-- 학습 이미지 추가 (항목 선택 시) -->
                     <div id="lora-training-add-section" style="display:none; background:rgba(255,152,0,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
                         <div class="section-title">학습용 이미지</div>
@@ -3368,6 +3358,42 @@
                             에셋에서 선택
                         </button>
                         <div style="font-size:0.7rem; color:var(--text-secondary); margin-top:4px;">현재 캐릭터의 에셋 이미지에서 학습용 이미지를 추가합니다.</div>
+                    </div>
+
+                    <!-- 학습 설정 (항목 선택 시) -->
+                    <div id="lora-training-config-section" style="display:none; background:rgba(100,150,255,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
+                        <div class="section-title">학습 설정</div>
+                        <div style="display:flex; flex-direction:column; gap:6px;">
+                            <div>
+                                <label style="font-size:0.7rem; color:var(--text-secondary); display:block; margin-bottom:2px;">PROFILE</label>
+                                <input type="text" id="lora-cfg-profile" placeholder="예: anima" style="width:100%; padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); font-size:0.8rem; box-sizing:border-box;">
+                            </div>
+                            <div>
+                                <label style="font-size:0.7rem; color:var(--text-secondary); display:block; margin-bottom:2px;">학습 이미지 수 (자동)</label>
+                                <div id="lora-cfg-nimg" style="padding:4px 8px; background:var(--surface); border-radius:4px; font-size:0.85rem; color:var(--text-secondary);">0</div>
+                            </div>
+                            <div>
+                                <label style="font-size:0.7rem; color:var(--text-secondary); display:block; margin-bottom:2px;">STEP_PER_IMAGE</label>
+                                <input type="number" id="lora-cfg-step" value="50" min="1" style="width:100%; padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); font-size:0.8rem; box-sizing:border-box;">
+                            </div>
+                            <div>
+                                <label style="font-size:0.7rem; color:var(--text-secondary); display:block; margin-bottom:2px;">IL_RATE (학습률)</label>
+                                <input type="number" id="lora-cfg-ilrate" value="0.0005" step="0.0001" style="width:100%; padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); font-size:0.8rem; box-sizing:border-box;">
+                            </div>
+                            <div>
+                                <label style="font-size:0.7rem; color:var(--text-secondary); display:block; margin-bottom:2px;">SAVE_PER_STEP</label>
+                                <input type="number" id="lora-cfg-save-step" value="50" min="1" style="width:100%; padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); font-size:0.8rem; box-sizing:border-box;">
+                            </div>
+                            <div>
+                                <label style="font-size:0.7rem; color:var(--text-secondary); display:block; margin-bottom:2px;">MULTI_IMG_FOLDER_NAME</label>
+                                <input type="text" id="lora-cfg-folder" placeholder="예: soya_lora" style="width:100%; padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); font-size:0.8rem; box-sizing:border-box;">
+                            </div>
+                        </div>
+                        <div style="display:flex; gap:4px; margin-top:8px;">
+                            <button onclick="saveLoraTrainingConfig()" style="flex:1; padding:6px; background:var(--accent); color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600;">저장</button>
+                            <button onclick="previewLoraTraining()" style="flex:1; padding:6px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600;">미리보기</button>
+                        </div>
+                        <button onclick="previewLoraPromptsRaw()" style="width:100%; padding:6px; margin-top:4px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600;">프롬프트 Raw 보기</button>
                     </div>
                 </div>
             </div>
@@ -3406,6 +3432,7 @@
                     <button class="settings-tab-btn" onclick="switchSettingsTab('api')">외부 API</button>
                     <button class="settings-tab-btn" onclick="switchSettingsTab('illustration')">삽화</button>
                     <button class="settings-tab-btn" onclick="switchSettingsTab('asset')">에셋</button>
+                    <button class="settings-tab-btn" onclick="switchSettingsTab('lora')">로라</button>
                 </div>
 
                 <!-- Tab 1: 공통설정 -->
@@ -3845,6 +3872,25 @@
                         <div class="hint">공통설정 탭의 '베이스 경로'에서 검색됩니다</div>
                     </div>
                     <input type="hidden" id="setting-tag-analysis-workflow-source-path">
+                </div>
+
+                <div class="settings-tab-panel" id="settings-tab-lora">
+                    <!-- 로라 학습 워크플로우 -->
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="title">🔧 로라 학습 워크플로우</div>
+                            <div class="desc">LoRA 학습에 사용할 워크플로우 파일 (공통설정 탭 베이스 경로 공유)</div>
+                        </div>
+                    </div>
+                    <div class="form-group" style="margin-top: -8px;">
+                        <div class="autocomplete-wrapper">
+                            <input type="text" id="setting-lora-workflow-filename" placeholder="예: 로라학습워크플로우.json"
+                                   oninput="onLoraFilenameInput(this.value)" onfocus="onLoraFilenameInput(this.value)">
+                            <div class="autocomplete-list" id="lora-workflow-autocomplete"></div>
+                        </div>
+                        <div class="hint">공통설정 탭의 '베이스 경로'에서 검색됩니다</div>
+                    </div>
+                    <input type="hidden" id="setting-lora-workflow-source-path">
                 </div>
             </div>
             <div class="modal-footer">
@@ -5305,6 +5351,12 @@
             document.getElementById('setting-tag-analysis-workflow-filename').value = tagAnalysisSplit.filename;
             document.getElementById('setting-tag-analysis-workflow-source-path').value = tagAnalysisPath;
 
+            // 로라 학습 워크플로우
+            const loraPath = currentConfig.lora_training_workflow_source_path || '';
+            const loraSplit = splitWorkflowPath(loraPath);
+            document.getElementById('setting-lora-workflow-filename').value = loraSplit.filename;
+            document.getElementById('setting-lora-workflow-source-path').value = loraPath;
+
             document.getElementById('settings-modal').classList.add('visible');
             // 항상 첫 번째 탭으로 시작
             switchSettingsTab('common');
@@ -5340,6 +5392,7 @@
             updateOutfitWorkflowPath();
             updateAssetWorkflowPath();
             updateTagAnalysisWorkflowPath();
+            updateLoraWorkflowPath();
         }
 
         // 베이스 경로와 파일명을 결합
@@ -5482,7 +5535,8 @@
                 enhance_mode_enabled: document.getElementById('setting-enhance-enabled').checked,
                 enhance_prompt_file: document.getElementById('setting-enhance-prompt-file').value,
                 asset_workflow_source_path: document.getElementById('setting-asset-workflow-source-path').value,
-                tag_analysis_workflow_source_path: document.getElementById('setting-tag-analysis-workflow-source-path').value
+                tag_analysis_workflow_source_path: document.getElementById('setting-tag-analysis-workflow-source-path').value,
+                lora_training_workflow_source_path: document.getElementById('setting-lora-workflow-source-path').value
             };
 
             try {
@@ -5585,6 +5639,8 @@
                         selectAssetWorkflowFile(path, filename);
                     } else if (list.id === 'tag-analysis-workflow-autocomplete') {
                         selectTagAnalysisWorkflowFile(path, filename);
+                    } else if (list.id === 'lora-workflow-autocomplete') {
+                        selectLoraWorkflowFile(path, filename);
                     }
                     list.classList.remove('visible');
                 }
@@ -6211,6 +6267,36 @@
             const baseDir = document.getElementById('setting-workflow-base-dir').value;
             const filename = document.getElementById('setting-tag-analysis-workflow-filename').value;
             document.getElementById('setting-tag-analysis-workflow-source-path').value = combineWorkflowPath(baseDir, filename);
+        }
+
+        // 로라 학습 워크플로우 자동완성
+        let loraAutocompleteTimeout;
+        async function onLoraFilenameInput(value) {
+            updateLoraWorkflowPath();
+            const list = document.getElementById('lora-workflow-autocomplete');
+            const baseDir = document.getElementById('setting-workflow-base-dir').value.trim();
+            clearTimeout(loraAutocompleteTimeout);
+            loraAutocompleteTimeout = setTimeout(async () => {
+                try {
+                    const params = new URLSearchParams({ search: value, base_dir: baseDir });
+                    const data = await fetchJSON(`/api/workflow_files?${params}`);
+                    renderAutocompleteItems(data.files, list);
+                } catch (e) {
+                    list.classList.remove('visible');
+                }
+            }, 300);
+        }
+
+        function selectLoraWorkflowFile(fullPath, filename) {
+            document.getElementById('setting-lora-workflow-filename').value = filename;
+            document.getElementById('setting-lora-workflow-source-path').value = fullPath;
+            document.getElementById('lora-workflow-autocomplete').classList.remove('visible');
+        }
+
+        function updateLoraWorkflowPath() {
+            const baseDir = document.getElementById('setting-workflow-base-dir').value;
+            const filename = document.getElementById('setting-lora-workflow-filename').value;
+            document.getElementById('setting-lora-workflow-source-path').value = combineWorkflowPath(baseDir, filename);
         }
 
         // ─── 복장 추출 결과 모달 ───
@@ -9470,8 +9556,8 @@
             _loraHideAll();
             document.getElementById('lora-breadcrumb').innerHTML = '<span>로라매니징</span>';
             document.getElementById('lora-delete-btn').style.display = 'none';
-            document.getElementById('lora-upload-section').style.display = 'none';
             document.getElementById('lora-training-add-section').style.display = 'none';
+            document.getElementById('lora-training-config-section').style.display = 'none';
             await loadLoraCharacterGrid();
         }
 
@@ -9515,8 +9601,8 @@
 
             // 사이드바: 추가 버튼만
             document.getElementById('lora-delete-btn').style.display = 'none';
-            document.getElementById('lora-upload-section').style.display = 'none';
             document.getElementById('lora-training-add-section').style.display = 'none';
+            document.getElementById('lora-training-config-section').style.display = 'none';
 
             try {
                 const enc = encodeURIComponent;
@@ -9568,10 +9654,10 @@
 
             _loraHideAll();
 
-            // 사이드바: 삭제/업로드/학습 표시
+            // 사이드바: 삭제/학습 표시
             document.getElementById('lora-delete-btn').style.display = '';
-            document.getElementById('lora-upload-section').style.display = '';
             document.getElementById('lora-training-add-section').style.display = '';
+            document.getElementById('lora-training-config-section').style.display = '';
 
             // 항목 정보 로드
             const enc = encodeURIComponent;
@@ -9588,7 +9674,7 @@
                 }
             } catch (e) { console.error('[LORA_MANAGE] 항목 정보 로드 실패:', e); }
 
-            await Promise.all([loadLoraFiles(), loadLoraTrainingImages()]);
+            await Promise.all([loadLoraFiles(), loadLoraTrainingImages(), loadLoraTrainingConfig()]);
         }
 
         async function addLoraEntry() {
@@ -9717,6 +9803,8 @@
                 if (!resp.success) { showToast(resp.error || '학습 이미지 로드 실패', 'error'); return; }
                 const images = resp.images || [];
                 section.style.display = '';
+                // N_IMG 자동 업데이트
+                document.getElementById('lora-cfg-nimg').textContent = images.length;
                 if (images.length === 0) {
                     grid.style.display = 'none';
                     emptyEl.style.display = '';
@@ -9728,13 +9816,11 @@
                     <div class="asset-image-card" style="cursor:default;">
                         <div style="position:relative;">
                             <img src="/api/lora/training_image/${enc(loraCurrentCharacter)}/${enc(loraCurrentEntry)}/${enc(img.filename)}" style="width:100%; display:block; cursor:zoom-in;" onclick="event.stopPropagation(); openLightbox(this.src)">
-                            ${img.is_representative ? '<div style="position:absolute; top:4px; left:4px; background:var(--accent); color:#fff; padding:2px 6px; border-radius:4px; font-size:0.65rem; font-weight:600;">대표</div>' : ''}
                         </div>
                         <div style="padding:8px;">
                             <div style="font-size:0.75rem; color:var(--text-secondary); margin-bottom:4px;">${escapeHtml(img.filename)}</div>
                             <div style="font-size:0.7rem; color:var(--text-secondary); margin-bottom:6px; max-height:40px; overflow:hidden;">${escapeHtml(img.positive || '(프롬프트 없음)')}</div>
                             <div style="display:flex; gap:4px; flex-wrap:wrap;">
-                                <button onclick="setLoraTrainingRepresentative('${escapeHtml(img.filename)}')" style="flex:1; padding:3px 6px; background:${img.is_representative ? 'var(--accent)' : 'var(--surface2)'}; color:${img.is_representative ? '#fff' : 'var(--text)'}; border:1px solid var(--border); border-radius:4px; cursor:pointer; font-size:0.7rem;">대표</button>
                                 <button onclick="showLoraTrainingPrompt('${escapeHtml(img.filename)}')" style="flex:1; padding:3px 6px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:4px; cursor:pointer; font-size:0.7rem;">프롬프트</button>
                                 <button onclick="deleteLoraTrainingImage('${escapeHtml(img.filename)}')" style="flex:1; padding:3px 6px; background:var(--error); color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:0.7rem;">삭제</button>
                             </div>
@@ -9744,6 +9830,189 @@
             } catch (e) {
                 console.error('[LORA] 학습 이미지 로드 실패:', e);
             }
+        }
+
+        // ─── 학습 설정 ─────────────────────────────────────
+        async function loadLoraTrainingConfig() {
+            if (!loraCurrentCharacter || !loraCurrentEntry) return;
+            const enc = encodeURIComponent;
+            try {
+                const resp = await fetchJSON(`/api/lora/manage/list?character=${enc(loraCurrentCharacter)}`);
+                if (resp.success) {
+                    const entry = (resp.loras || []).find(l => l.name === loraCurrentEntry);
+                    const cfg = (entry && entry.training_config) || {};
+                    document.getElementById('lora-cfg-profile').value = cfg.profile || '';
+                    document.getElementById('lora-cfg-step').value = cfg.step_per_image || 50;
+                    document.getElementById('lora-cfg-ilrate').value = cfg.il_rate || 0.0005;
+                    document.getElementById('lora-cfg-save-step').value = cfg.save_per_step || 50;
+                    document.getElementById('lora-cfg-folder').value = cfg.multi_img_folder_name || '';
+                }
+            } catch (e) { console.error('[LORA] 학습 설정 로드 실패:', e); }
+        }
+
+        async function saveLoraTrainingConfig() {
+            if (!loraCurrentEntry) { showToast('LoRA 항목을 선택하세요', 'error'); return; }
+            const training_config = {
+                profile: document.getElementById('lora-cfg-profile').value.trim(),
+                step_per_image: parseInt(document.getElementById('lora-cfg-step').value) || 50,
+                il_rate: parseFloat(document.getElementById('lora-cfg-ilrate').value) || 0.0005,
+                save_per_step: parseInt(document.getElementById('lora-cfg-save-step').value) || 50,
+                multi_img_folder_name: document.getElementById('lora-cfg-folder').value.trim(),
+            };
+            try {
+                const resp = await fetchJSON('/api/lora/manage/update', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: loraCurrentEntry, training_config })
+                });
+                if (resp.success) { showToast('학습 설정 저장 완료', 'success'); }
+                else { showToast(resp.error || '저장 실패', 'error'); }
+            } catch (e) { console.error('[LORA] 학습 설정 저장 실패:', e); showToast('저장 실패', 'error'); }
+        }
+
+        // 학습 이미지 캐시 (미리보기용)
+        let loraTrainingImageCache = [];
+
+        // loadLoraTrainingImages에서 캐시 업데이트 (기존 함수에 캐시 저장 추가는 별도)
+        async function _fetchLoraTrainingImageCache() {
+            if (!loraCurrentCharacter || !loraCurrentEntry) { loraTrainingImageCache = []; return; }
+            const enc = encodeURIComponent;
+            try {
+                const resp = await fetchJSON(`/api/lora/training_images?character=${enc(loraCurrentCharacter)}&entry=${enc(loraCurrentEntry)}`);
+                loraTrainingImageCache = resp.success ? (resp.images || []) : [];
+            } catch (e) { loraTrainingImageCache = []; }
+        }
+
+        async function previewLoraTraining() {
+            await _fetchLoraTrainingImageCache();
+            const images = loraTrainingImageCache;
+            const profile = document.getElementById('lora-cfg-profile').value.trim();
+            const nImg = images.length;
+            const stepPerImage = parseInt(document.getElementById('lora-cfg-step').value) || 50;
+            const ilRate = parseFloat(document.getElementById('lora-cfg-ilrate').value) || 0.0005;
+            const savePerStep = parseInt(document.getElementById('lora-cfg-save-step').value) || 50;
+            const folderName = document.getElementById('lora-cfg-folder').value.trim();
+
+            // 긍정 워크플로우 생성
+            let positiveLines = [];
+            images.forEach((img, i) => {
+                positiveLines.push(`[${i + 1}]${img.positive || '(프롬프트 없음)'}`);
+            });
+            positiveLines.push('[PROFILE]');
+            positiveLines.push(profile || '(미입력)');
+            positiveLines.push('[N_IMG]');
+            positiveLines.push(String(nImg));
+            positiveLines.push('[STEP_PER_IMAGE]');
+            positiveLines.push(String(stepPerImage));
+            positiveLines.push('[IL_RATE]');
+            positiveLines.push(String(ilRate));
+            positiveLines.push('[SAVE_PER_STEP]');
+            positiveLines.push(String(savePerStep));
+            positiveLines.push('[MULTI_IMG_FOLDER_NAME]');
+            positiveLines.push(folderName || '(미입력)');
+            positiveLines.push('[END]');
+
+            // 부정 워크플로우 생성
+            let negativeLines = [];
+            images.forEach((img, i) => {
+                negativeLines.push(`[${i + 1}]${img.negative || '(프롬프트 없음)'}`);
+            });
+            negativeLines.push('[PROFILE]');
+            negativeLines.push(profile || '(미입력)');
+            negativeLines.push('[N_IMG]');
+            negativeLines.push(String(nImg));
+            negativeLines.push('[STEP_PER_IMAGE]');
+            negativeLines.push(String(stepPerImage));
+            negativeLines.push('[IL_RATE]');
+            negativeLines.push(String(ilRate));
+            negativeLines.push('[SAVE_PER_STEP]');
+            negativeLines.push(String(savePerStep));
+            negativeLines.push('[MULTI_IMG_FOLDER_NAME]');
+            negativeLines.push(folderName || '(미입력)');
+            negativeLines.push('[END]');
+
+            // 모달 표시
+            let overlay = document.getElementById('lora-preview-overlay');
+            if (overlay) overlay.remove();
+            overlay = document.createElement('div');
+            overlay.id = 'lora-preview-overlay';
+            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:10000; display:flex; align-items:center; justify-content:center;';
+            overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+            overlay.innerHTML = `<div style="background:var(--surface); border-radius:12px; padding:20px; max-width:700px; width:90%; max-height:85vh; display:flex; flex-direction:column; overflow:hidden;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                    <h3 style="margin:0;">워크플로우 미리보기</h3>
+                    <button onclick="document.getElementById('lora-preview-overlay').remove()" style="background:none; border:none; font-size:1.4rem; cursor:pointer; color:var(--text);">&times;</button>
+                </div>
+                <div style="flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:12px;">
+                    <div>
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                            <span style="font-weight:600; font-size:0.9rem;">긍정 워크플로우</span>
+                            <button onclick="navigator.clipboard.writeText(document.getElementById('lora-preview-positive').textContent); showToast('복사 완료','success')" style="padding:2px 8px; font-size:0.75rem; background:var(--surface2); border:1px solid var(--border); border-radius:4px; cursor:pointer;">복사</button>
+                        </div>
+                        <pre id="lora-preview-positive" style="background:var(--surface2); padding:10px; border-radius:8px; font-size:0.8rem; white-space:pre-wrap; word-break:break-all; margin:0; max-height:200px; overflow-y:auto;">${escapeHtml(positiveLines.join('\n'))}</pre>
+                    </div>
+                    <div>
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                            <span style="font-weight:600; font-size:0.9rem;">부정 워크플로우</span>
+                            <button onclick="navigator.clipboard.writeText(document.getElementById('lora-preview-negative').textContent); showToast('복사 완료','success')" style="padding:2px 8px; font-size:0.75rem; background:var(--surface2); border:1px solid var(--border); border-radius:4px; cursor:pointer;">복사</button>
+                        </div>
+                        <pre id="lora-preview-negative" style="background:var(--surface2); padding:10px; border-radius:8px; font-size:0.8rem; white-space:pre-wrap; word-break:break-all; margin:0; max-height:200px; overflow-y:auto;">${escapeHtml(negativeLines.join('\n'))}</pre>
+                    </div>
+                </div>
+            </div>`;
+            document.body.appendChild(overlay);
+        }
+
+        async function previewLoraPromptsRaw() {
+            await _fetchLoraTrainingImageCache();
+            const images = loraTrainingImageCache;
+            if (images.length === 0) { showToast('학습 이미지가 없습니다', 'error'); return; }
+
+            const profile = document.getElementById('lora-cfg-profile').value.trim();
+            const nImg = images.length;
+            const stepPerImage = parseInt(document.getElementById('lora-cfg-step').value) || 50;
+            const ilRate = parseFloat(document.getElementById('lora-cfg-ilrate').value) || 0.0005;
+            const savePerStep = parseInt(document.getElementById('lora-cfg-save-step').value) || 50;
+            const folderName = document.getElementById('lora-cfg-folder').value.trim();
+
+            // 긍정: [1]프롬프트\n[2]프롬프트\n...\n[PROFILE]\n값\n[N_IMG]\n값\n...
+            let positiveRaw = '';
+            let negativeRaw = '';
+            images.forEach((img, i) => {
+                positiveRaw += `[${i + 1}]${img.positive || '(프롬프트 없음)'}\n`;
+                negativeRaw += `[${i + 1}]${img.negative || '(프롬프트 없음)'}\n`;
+            });
+            const configBlock = `[PROFILE]\n${profile || '(미입력)'}\n[N_IMG]\n${nImg}\n[STEP_PER_IMAGE]\n${stepPerImage}\n[IL_RATE]\n${ilRate}\n[SAVE_PER_STEP]\n${savePerStep}\n[MULTI_IMG_FOLDER_NAME]\n${folderName || '(미입력)'}\n[END]`;
+            positiveRaw += configBlock;
+
+            let overlay = document.getElementById('lora-raw-overlay');
+            if (overlay) overlay.remove();
+            overlay = document.createElement('div');
+            overlay.id = 'lora-raw-overlay';
+            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:10000; display:flex; align-items:center; justify-content:center;';
+            overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+            overlay.innerHTML = `<div style="background:var(--surface); border-radius:12px; padding:20px; max-width:700px; width:90%; max-height:85vh; display:flex; flex-direction:column; overflow:hidden;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                    <h3 style="margin:0;">프롬프트 Raw (${images.length}장)</h3>
+                    <button onclick="document.getElementById('lora-raw-overlay').remove()" style="background:none; border:none; font-size:1.4rem; cursor:pointer; color:var(--text);">&times;</button>
+                </div>
+                <div style="flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:12px;">
+                    <div>
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                            <span style="font-weight:600; font-size:0.9rem;">긍정 프롬프트 Raw</span>
+                            <button onclick="navigator.clipboard.writeText(document.getElementById('lora-raw-positive').textContent); showToast('복사 완료','success')" style="padding:2px 8px; font-size:0.75rem; background:var(--surface2); border:1px solid var(--border); border-radius:4px; cursor:pointer;">복사</button>
+                        </div>
+                        <pre id="lora-raw-positive" style="background:var(--surface2); padding:10px; border-radius:8px; font-size:0.8rem; white-space:pre-wrap; word-break:break-all; margin:0; max-height:300px; overflow-y:auto;">${escapeHtml(positiveRaw.trim())}</pre>
+                    </div>
+                    <div>
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                            <span style="font-weight:600; font-size:0.9rem;">부정 프롬프트 Raw</span>
+                            <button onclick="navigator.clipboard.writeText(document.getElementById('lora-raw-negative').textContent); showToast('복사 완료','success')" style="padding:2px 8px; font-size:0.75rem; background:var(--surface2); border:1px solid var(--border); border-radius:4px; cursor:pointer;">복사</button>
+                        </div>
+                        <pre id="lora-raw-negative" style="background:var(--surface2); padding:10px; border-radius:8px; font-size:0.8rem; white-space:pre-wrap; word-break:break-all; margin:0; max-height:300px; overflow-y:auto;">${escapeHtml(negativeRaw.trim())}</pre>
+                    </div>
+                </div>
+            </div>`;
+            document.body.appendChild(overlay);
         }
 
         async function deleteLoraTrainingImage(filename) {
@@ -9756,17 +10025,6 @@
                 if (resp.success) { showToast('삭제 완료', 'success'); await loadLoraTrainingImages(); }
                 else { showToast(resp.error || '삭제 실패', 'error'); }
             } catch (e) { console.error('[LORA] 학습 이미지 삭제 실패:', e); showToast('삭제 실패', 'error'); }
-        }
-
-        async function setLoraTrainingRepresentative(filename) {
-            try {
-                const resp = await fetchJSON('/api/lora/training_images/representative', {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ character: loraCurrentCharacter, entry: loraCurrentEntry, filename })
-                });
-                if (resp.success) { await loadLoraTrainingImages(); }
-                else { showToast(resp.error || '대표 설정 실패', 'error'); }
-            } catch (e) { console.error('[LORA] 대표 설정 실패:', e); }
         }
 
         function showLoraTrainingPrompt(filename) {
