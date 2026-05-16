@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
@@ -6667,7 +6667,6 @@
                 body: JSON.stringify({ character: charName, settings }),
             }).catch(e => console.error('ep_settings 저장 실패:', e));
         }
-
         async function loadExprProfileSettings() {
             try {
                 const resp = await fetch('/api/asset_mode/ep_settings_last');
@@ -7483,7 +7482,6 @@
                             appearance: appearanceName,
                             outfit: outfitName,
                             expression: profile.name,
-                            face_id_enabled: useRef,
                             face_id_strength: useRefStrength,
                             reference_image: useRefImage || '',
                             pose_enabled: false,
@@ -7587,6 +7585,8 @@
             compareImages: {},    // {presetName: imageUrl} 비교 캐릭터 이미지 맵
             chains: [],          // 제안된 체인
         };
+
+        _atLoadState();
 
         function atOnFilesSelected(files) {
             for (const file of files) {
@@ -7726,6 +7726,7 @@
             atState.embeddingMatches = [];
             atState.compareImages = {};
             atState.chains = [];
+            sessionStorage.removeItem('atState');
             atRenderImages();
             const canvas = document.getElementById('at-canvas');
             if (canvas) canvas.innerHTML = '<div class="at-empty-state">이미지를 분석하면<br>매칭 결과가 여기에 표시됩니다</div>';
@@ -7789,6 +7790,10 @@
             const doAnalyze = document.getElementById('at-do-analyze').checked;
             const doMatch = document.getElementById('at-do-match').checked;
             if (!doAnalyze && !doMatch) { showToast('태그 분석 또는 임베딩 매칭 중 하나 이상 선택하세요', 'error'); return; }
+            if (doMatch && (!atPresetProfileMap || Object.keys(atPresetProfileMap).length === 0)) {
+                showToast('정제 결과가 없습니다. 먼저 임베딩 설정에서 미리보기를 확인하세요.', 'error');
+                return;
+            }
 
             // 태그 분석 모드일 때, 기존 done 상태도 pending으로 초기화하여 재분행 상황을 보여줌
             if (doAnalyze) {
@@ -7940,6 +7945,7 @@
             document.getElementById('at-progress-bar').style.display = 'none';
 
             // 모든 작업 완료 후 매칭 결과 화면으로 전환
+            console.log("[ANALYZE_COMPLETE] doMatch=" + doMatch + ", emb=" + atState.embeddingMatches.length + ", img=" + atState.imageMatches.length);
             if (doMatch && (atState.embeddingMatches.length > 0 || atState.imageMatches.length > 0)) {
                 atSwitchView('result');
                 atRenderMatches();
@@ -8041,7 +8047,39 @@
             }
         }
 
+        function _atSaveState() {
+            console.log("[AT_SAVE_STATE] called, emb=" + atState.embeddingMatches.length + ", img=" + atState.imageMatches.length);
+            try {
+                sessionStorage.setItem('atState', JSON.stringify({
+                    embeddingMatches: atState.embeddingMatches,
+                    imageMatches: atState.imageMatches,
+                    chains: atState.chains
+                }));
+            } catch (e) {}
+        }
+
+        function _atLoadState() {
+            console.log("[AT_LOAD_STATE] called");
+            try {
+                const saved = sessionStorage.getItem('atState');
+                if (saved) {
+                    const data = JSON.parse(saved);
+                    atState.embeddingMatches = data.embeddingMatches || [];
+                    atState.imageMatches = data.imageMatches || [];
+                    atState.chains = data.chains || [];
+                    // Blob URL은 세션이 끊기면 무효화되므로 imageUrl 비워둠
+                    atState.embeddingMatches.forEach(g => { g.imageUrl = ''; });
+                    atState.imageMatches.forEach(g => { g.imageUrl = ''; });
+                    // 다음 프레임에 렌더링
+                    requestAnimationFrame(() => {
+                        atRenderMatches();
+                    });
+                }
+            } catch (e) {}
+        }
+
         function atRenderMatches() {
+            console.log("[AT_RENDER_MATCHES] called, emb=" + atState.embeddingMatches.length + ", img=" + atState.imageMatches.length);
             const canvas = document.getElementById('at-canvas');
             const emptyMsg = document.getElementById('at-match-empty');
             if (!canvas) return;
@@ -8155,11 +8193,12 @@
 
                     const tagRow = document.createElement('div');
                     tagRow.style.cssText = 'display:flex; gap:12px; overflow-x:auto; padding-bottom:8px;';
-                    tagGroup.matches.slice(0, 10).forEach((m, i) => {
+                    tagGroup.matches.forEach((m, i) => {
                         const card = document.createElement('div');
                         card.className = 'at-card' + (m.selected ? ' selected' : '');
                         card.style.cssText = 'width:180px; flex-shrink:0;';
-                        const matchPct = m.jaccard > 0 ? Math.round(m.jaccard * 100) : 0;
+                        const isManual = m.manual === true;
+                        const matchPct = isManual ? '수동' : (m.jaccard > 0 ? Math.round(m.jaccard * 100) : 0);
                         const matchedStr = (m.matched_tags || []).map(t => `<span class="at-tag-chip" style="border-color:#4caf50;background:rgba(76,175,80,0.1);">${escapeHtml(t)}</span>`).join('');
                         const unmatchedStr = (m.unmatched_preset || []).slice(0, 5).map(t => `<span class="at-tag-chip" style="border-color:#999;background:rgba(158,158,158,0.1);">${escapeHtml(t)}</span>`).join('');
                         const compareImgUrl = atState.compareImages[m.name] || '';
@@ -8169,12 +8208,12 @@
                         card.innerHTML = `
                             <div class="at-card-img">
                                 <input type="checkbox" class="at-card-check" ${m.selected ? 'checked' : ''} onchange="atSelectSingleMatch('tag', ${gi}, ${i}, ${imgIdx}, this.checked); ">
-                                <div class="at-card-pct">${matchPct}%</div>
+                                <div class="at-card-pct">${isManual ? matchPct : matchPct + '%'}</div>
                                 ${compareImgHtml}
                             </div>
                             <div class="at-card-body">
                                 <div class="at-card-name">${escapeHtml(m.name)}</div>
-                                <div class="at-card-detail">일치 ${m.match_ratio}</div>
+                                <div class="at-card-detail">${isManual ? '수동 추가' : ('일치 ' + m.match_ratio)}</div>
                                 <div class="at-card-tags">${matchedStr}${unmatchedStr}</div>
                             </div>
                         `;
@@ -8183,9 +8222,48 @@
                     rightCol.appendChild(tagRow);
                 }
 
+                // --- manual preset add UI
+                const manualWrap = document.createElement('div');
+                manualWrap.style.cssText = 'margin-top:12px;';
+                const manualBtn = document.createElement('button');
+                manualBtn.className = 'at-btn';
+                manualBtn.style.cssText = 'font-size:0.78rem; padding:4px 10px; background:var(--surface2);';
+                manualBtn.textContent = '\u2795 프리셋 직접 추가';
+                const manualSearchWrap = document.createElement('div');
+                manualSearchWrap.style.cssText = 'display:none; margin-top:4px;';
+                const manualSearchInput = document.createElement('input');
+                manualSearchInput.type = 'text';
+                manualSearchInput.placeholder = '프리셋 검색...';
+                manualSearchInput.style.cssText = 'width:100%; padding:6px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface2); color:var(--text); font-size:0.78rem; box-sizing:border-box;';
+                const manualSearchList = document.createElement('div');
+                manualSearchList.style.cssText = 'max-height:160px; overflow-y:auto; margin-top:4px; border:1px solid var(--border); border-radius:4px; background:var(--surface);';
+                manualSearchList.innerHTML = atBuildPresetSearchList('');
+                manualSearchInput.oninput = (e) => {
+                    manualSearchList.innerHTML = atBuildPresetSearchList(e.target.value);
+                };
+                manualSearchList.onclick = (e) => {
+                    const item = e.target.closest('[data-preset]');
+                    if (item) {
+                        atAddManualMatch(imgName, item.dataset.preset);
+                        manualSearchWrap.style.display = 'none';
+                        manualSearchInput.value = '';
+                        manualSearchList.innerHTML = atBuildPresetSearchList('');
+                    }
+                };
+                manualSearchWrap.appendChild(manualSearchInput);
+                manualSearchWrap.appendChild(manualSearchList);
+                manualBtn.onclick = () => {
+                    manualSearchWrap.style.display = manualSearchWrap.style.display === 'none' ? 'block' : 'none';
+                    if (manualSearchWrap.style.display !== 'none') manualSearchInput.focus();
+                };
+                manualWrap.appendChild(manualBtn);
+                manualWrap.appendChild(manualSearchWrap);
+                rightCol.appendChild(manualWrap);
+
                 wrapper.appendChild(rightCol);
                 canvas.appendChild(wrapper);
             });
+            _atSaveState();
         }
 
         function atSelectSingleMatch(type, groupIdx, matchIdx, imgIdx, checked) {
@@ -8214,6 +8292,54 @@
             }
 
             atRenderMatches();
+        }
+        function atBuildPresetSearchList(query) {
+            const category = document.getElementById('at-category').value;
+            let presets = {};
+            if (category === 'expressions') presets = (assetTags && assetTags.expressions) || {};
+            else if (category === 'composition') presets = (assetTags && assetTags.composition_presets) || {};
+            else if (category === 'quality') presets = (assetTags && assetTags.quality_presets) || {};
+            else if (category === 'appearances') presets = (assetTags && assetTags.appearances) || {};
+            else if (category === 'outfits') presets = (assetTags && assetTags.outfits) || {};
+            else if (category === 'character') presets = (assetTags && assetTags.character_presets) || {};
+            else if (category === 'negative') presets = (assetTags && assetTags.negative_presets) || {};
+            const q = (query || '').toLowerCase().trim();
+            const names = Object.keys(presets).sort().filter(name => !q || name.toLowerCase().includes(q));
+            if (names.length === 0) {
+                return '<div style="padding:8px; font-size:0.75rem; color:var(--text2); text-align:center;">결과 없음</div>';
+            }
+            return names.map(name => '<div data-preset="' + escapeHtml(name) + '" style="padding:6px 8px; font-size:0.78rem; cursor:pointer; border-bottom:1px solid var(--border); transition:background 0.15s;" onmouseenter="this.style.background=\'var(--surface2)\'" onmouseleave="this.style.background=\'transparent\'">' + escapeHtml(name) + '</div>').join('');
+        }
+
+        function atAddManualMatch(imgName, presetName) {
+            let group = atState.imageMatches.find(g => g.imageName === imgName);
+            if (!group) {
+                const img = atState.images.find(i => (i.file && i.file.name || '') === imgName);
+                group = {
+                    imageName: imgName,
+                    imageUrl: img ? img.url : '',
+                    tags: [],
+                    matches: []
+                };
+                atState.imageMatches.push(group);
+            }
+            if (group.matches.some(m => m.name === presetName)) {
+                showToast('이미 추가된 프리셋입니다', 'warning');
+                return;
+            }
+            // 기존 선택 해제
+            group.matches.forEach(m => { m.selected = false; });
+            group.matches.unshift({
+                name: presetName,
+                jaccard: 0,
+                match_ratio: '수동',
+                matched_tags: [],
+                unmatched_preset: [],
+                selected: true,
+                manual: true
+            });
+            atRenderMatches();
+            showToast(`"${presetName}" 추가됨`, 'success');
         }
 
         function atSendToBatch() {

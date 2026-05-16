@@ -1,4 +1,4 @@
-"""
+﻿"""
 AssetMode - 에셋 생성 모드
 
 외모/복장/표정은 전역 관리, 캐릭터는 조합만 참조.
@@ -1196,7 +1196,7 @@ class AssetMode:
         safe = "".join(c for c in name if c.isalnum() or c in (' ', '_', '-', '.')).strip()
         return safe or f"unknown_{hash(name) % 10000}"
 
-    def list_images(self, character: str, outfit: str, expression: str) -> list[dict]:
+    def list_images(self, character: str, outfit: str, expression: str) -> dict:
         img_dir = os.path.join(
             ASSET_DIR,
             self._safe_dirname(character),
@@ -1204,7 +1204,7 @@ class AssetMode:
             self._safe_dirname(expression),
         )
         if not os.path.isdir(img_dir):
-            return []
+            return {"images": [], "representative": ""}
 
         rep_path = os.path.join(img_dir, "_representative.json")
         representative = ""
@@ -1240,7 +1240,7 @@ class AssetMode:
                 "positive": prompt_data.get("positive", ""),
                 "negative": prompt_data.get("negative", ""),
             })
-        return images
+        return {"images": images, "representative": representative}
 
     def set_representative(self, character: str, outfit: str, expression: str, filename: str) -> dict:
         img_dir = os.path.join(
