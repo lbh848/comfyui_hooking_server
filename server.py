@@ -68,6 +68,7 @@ DEFAULT_CONFIG = {
     "backup_webp_quality": 80,  # 백업 이미지 저장 WebP 품질 (1-100)
     "backup_webp_lossless": False,  # 백업 저장 무손실 WebP
     "backup_base_dir": "",  # 빈 값이면 WORKFLOW_BACKUP_DIR 사용
+    "comfy_input_dir": "",  # ComfyUI input 폴더 경로 (빈값=기본경로)
     "workflow_filename": "",  # 빈 값이면 workflow 폴더의 첫 번째 json 사용
     "batch_mode_enabled": False,  # 배치 모드 활성화 여부
     "batch_timeout_seconds": 5.0,  # 배치 모드 타임아웃 (초)
@@ -4242,6 +4243,186 @@ app.router.add_post("/api/chain_presets/delete", handle_api_chain_presets_delete
 app.router.add_post("/api/tunnel/start", handle_api_tunnel_start)
 app.router.add_get("/api/tunnel/status", handle_api_tunnel_status)
 app.router.add_post("/api/tunnel/stop", handle_api_tunnel_stop)
+
+
+# ─── LoRA 매니징 API ─────────────────────────────────────
+async def handle_api_lora_characters(request):
+    """LoRA 캐릭터 목록 반환"""
+    try:
+        from modes.lora_mode import list_characters
+        characters = list_characters()
+        return web.json_response({"success": True, "characters": characters})
+    except Exception as e:
+        print(f"[LORA] 캐릭터 목록 조회 실패: {e}")
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_lora_list(request):
+    """캐릭터의 LoRA 파일 목록 반환"""
+    try:
+        character = request.query.get("character", "")
+        if not character:
+            return web.json_response({"success": False, "error": "캐릭터 미지정"}, status=400)
+        from modes.lora_mode import list_lora_files
+        files = list_lora_files(character)
+        return web.json_response({"success": True, "files": files})
+    except Exception as e:
+        print(f"[LORA] 파일 목록 조회 실패: {e}")
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_lora_upload(request):
+    """LoRA 파일 업로드"""
+    try:
+        reader = await request.multipart()
+        field = await reader.next()
+        if not field or field.name != "file":
+            return web.json_response({"success": False, "error": "파일 필드 없음"}, status=400)
+
+        filename = field.filename
+        file_data = await field.read()
+
+        # 캐릭터명은 쿼리 파라미터로
+        character = request.query.get("character", "")
+        if not character:
+            return web.json_response({"success": False, "error": "캐릭터 미지정"}, status=400)
+
+        from modes.lora_mode import save_uploaded_file
+        result = save_uploaded_file(character, filename, file_data)
+        status = 200 if result.get("success") else 400
+        return web.json_response(result, status=status)
+    except Exception as e:
+        print(f"[LORA] 업로드 실패: {e}")
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_lora_delete(request):
+    """LoRA 파일 삭제"""
+    try:
+        body = await request.json()
+        character = body.get("character", "")
+        filename = body.get("filename", "")
+        if not character or not filename:
+            return web.json_response({"success": False, "error": "필수 값 누락"}, status=400)
+
+        from modes.lora_mode import delete_lora_file
+        result = delete_lora_file(character, filename)
+        status = 200 if result.get("success") else 400
+        return web.json_response(result, status=status)
+    except Exception as e:
+        print(f"[LORA] 삭제 실패: {e}")
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+app.router.add_get("/api/lora/characters", handle_api_lora_characters)
+app.router.add_get("/api/lora/list", handle_api_lora_list)
+app.router.add_post("/api/lora/upload", handle_api_lora_upload)
+app.router.add_post("/api/lora/delete", handle_api_lora_delete)
+
+
+# ─── LoRA 학습용 이미지 API ─────────────────────────────────
+async def handle_api_lora_training_list(request):
+    """학습용 이미지 목록"""
+    try:
+        character = request.query.get("character", "")
+        if not character:
+            return web.json_response({"success": False, "error": "캐릭터 미지정"}, status=400)
+        from modes.lora_mode import list_training_images
+        images = list_training_images(character)
+        return web.json_response({"success": True, "images": images})
+    except Exception as e:
+        print(f"[LORA] 학습 이미지 목록 조회 실패: {e}")
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_lora_training_add(request):
+    """학습용 이미지 추가 (에셋에서 복사)"""
+    try:
+        body = await request.json()
+        character = body.get("character", "")
+        sources = body.get("sources", [])
+        if not character or not sources:
+            return web.json_response({"success": False, "error": "필수 값 누락"}, status=400)
+        from modes.lora_mode import add_training_images
+        result = add_training_images(character, sources)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[LORA] 학습 이미지 추가 실패: {e}")
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_lora_training_image(request):
+    """학습용 이미지 파일 서빙"""
+    try:
+        character = request.match_info.get("character", "")
+        filename = request.match_info.get("filename", "")
+        from modes.lora_mode import get_training_image_path
+        filepath = get_training_image_path(character, filename)
+        if filepath:
+            return web.FileResponse(filepath)
+        return web.Response(text="Not found", status=404)
+    except Exception as e:
+        print(f"[LORA] 학습 이미지 서빙 실패: {e}")
+        return web.Response(text="Error", status=500)
+
+
+async def handle_api_lora_training_delete(request):
+    """학습용 이미지 삭제"""
+    try:
+        body = await request.json()
+        character = body.get("character", "")
+        filename = body.get("filename", "")
+        if not character or not filename:
+            return web.json_response({"success": False, "error": "필수 값 누락"}, status=400)
+        from modes.lora_mode import delete_training_image
+        result = delete_training_image(character, filename)
+        status = 200 if result.get("success") else 400
+        return web.json_response(result, status=status)
+    except Exception as e:
+        print(f"[LORA] 학습 이미지 삭제 실패: {e}")
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_lora_training_representative(request):
+    """학습용 이미지 대표 설정"""
+    try:
+        body = await request.json()
+        character = body.get("character", "")
+        filename = body.get("filename", "")
+        if not character or not filename:
+            return web.json_response({"success": False, "error": "필수 값 누락"}, status=400)
+        from modes.lora_mode import set_training_representative
+        result = set_training_representative(character, filename)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[LORA] 대표 설정 실패: {e}")
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_lora_training_prompt(request):
+    """학습용 이미지 프롬프트 저장"""
+    try:
+        body = await request.json()
+        character = body.get("character", "")
+        filename = body.get("filename", "")
+        positive = body.get("positive", "")
+        negative = body.get("negative", "")
+        if not character or not filename:
+            return web.json_response({"success": False, "error": "필수 값 누락"}, status=400)
+        from modes.lora_mode import save_training_prompt
+        result = save_training_prompt(character, filename, positive, negative)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[LORA] 프롬프트 저장 실패: {e}")
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+app.router.add_get("/api/lora/training_images", handle_api_lora_training_list)
+app.router.add_post("/api/lora/training_images/add", handle_api_lora_training_add)
+app.router.add_get("/api/lora/training_image/{character}/{filename}", handle_api_lora_training_image)
+app.router.add_post("/api/lora/training_images/delete", handle_api_lora_training_delete)
+app.router.add_post("/api/lora/training_images/representative", handle_api_lora_training_representative)
+app.router.add_post("/api/lora/training_images/prompt", handle_api_lora_training_prompt)
 
 
 def _backup_tags_on_startup():

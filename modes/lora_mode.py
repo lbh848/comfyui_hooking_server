@@ -1,0 +1,355 @@
+"""
+LoRA 매니징 모듈
+- asset/<character>/Lora/ 폴더에서 LoRA 파일 관리
+- asset/<character>/Lora/학습용 이미지/ 폴더에서 학습용 이미지 관리
+"""
+
+import os
+import json
+import shutil
+import traceback
+from modes.asset_mode import ASSET_DIR, TAGS_FILE, AssetMode
+
+LORA_EXTENSIONS = {".safetensors", ".pt", ".ckpt", ".bin"}
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+TRAINING_DIR_NAME = "학습용 이미지"
+
+
+def _safe_dirname(name: str) -> str:
+    return AssetMode._safe_dirname(name)
+
+
+def _lora_dir(character: str) -> str:
+    """캐릭터의 Lora 폴더 경로 반환"""
+    return os.path.join(ASSET_DIR, _safe_dirname(character), "Lora")
+
+
+def _training_dir(character: str) -> str:
+    """캐릭터의 학습용 이미지 폴더 경로 반환"""
+    return os.path.join(_lora_dir(character), TRAINING_DIR_NAME)
+
+
+def list_characters() -> list:
+    """tags.json에서 캐릭터 목록 반환"""
+    if not os.path.isfile(TAGS_FILE):
+        print("[LORA] tags.json 없음")
+        return []
+    try:
+        with open(TAGS_FILE, "r", encoding="utf-8") as f:
+            tags = json.load(f)
+        return list(tags.get("characters", {}).keys())
+    except Exception as e:
+        print(f"[LORA] 캐릭터 목록 로드 실패: {e}")
+        return []
+
+
+def list_lora_files(character: str) -> list:
+    """캐릭터의 Lora 폴더에서 LoRA 파일 목록 반환"""
+    lora_path = _lora_dir(character)
+    if not os.path.isdir(lora_path):
+        return []
+
+    files = []
+    for fname in sorted(os.listdir(lora_path)):
+        fpath = os.path.join(lora_path, fname)
+        if not os.path.isfile(fpath):
+            continue
+        ext = os.path.splitext(fname)[1].lower()
+        if ext not in LORA_EXTENSIONS:
+            continue
+        try:
+            fstat = os.stat(fpath)
+            files.append({
+                "filename": fname,
+                "size": fstat.st_size,
+                "modified": fstat.st_mtime,
+            })
+        except Exception as e:
+            print(f"[LORA] 파일 정보 읽기 실패: {fpath} - {e}")
+    return files
+
+
+def save_uploaded_file(character: str, filename: str, file_data: bytes) -> dict:
+    """업로드된 LoRA 파일을 캐릭터의 Lora 폴더에 저장"""
+    # 파일명 정제
+    safe_name = "".join(c for c in filename if c.isalnum() or c in (' ', '_', '-', '.', '(', ')', '[', ']', '(')).strip()
+    if not safe_name:
+        return {"success": False, "error": "유효하지 않은 파일명"}
+
+    lora_path = _lora_dir(character)
+    os.makedirs(lora_path, exist_ok=True)
+
+    dest = os.path.join(lora_path, safe_name)
+    if os.path.exists(dest):
+        return {"success": False, "error": f"이미 존재하는 파일: {safe_name}"}
+
+    try:
+        with open(dest, "wb") as f:
+            f.write(file_data)
+        fstat = os.stat(dest)
+        print(f"[LORA] 파일 저장 완료: {dest}")
+        return {
+            "success": True,
+            "filename": safe_name,
+            "size": fstat.st_size,
+        }
+    except Exception as e:
+        print(f"[LORA] 파일 저장 실패: {dest} - {e}")
+        return {"success": False, "error": str(e)}
+
+
+def delete_lora_file(character: str, filename: str) -> dict:
+    """캐릭터의 Lora 폴더에서 LoRA 파일 삭제"""
+    # 경로 탈출 방지
+    if ".." in filename or os.path.sep in filename:
+        print(f"[LORA] 잘못된 파일명: {filename}")
+        return {"success": False, "error": "잘못된 파일명"}
+
+    lora_path = _lora_dir(character)
+    fpath = os.path.join(lora_path, filename)
+
+    if not os.path.isfile(fpath):
+        print(f"[LORA] 파일 없음: {fpath}")
+        return {"success": False, "error": "파일을 찾을 수 없습니다"}
+
+    try:
+        os.remove(fpath)
+        print(f"[LORA] 파일 삭제 완료: {fpath}")
+        return {"success": True}
+    except Exception as e:
+        print(f"[LORA] 파일 삭제 실패: {fpath} - {e}")
+        return {"success": False, "error": str(e)}
+
+
+# ─── 학습용 이미지 관리 ─────────────────────────────────────
+
+def add_training_images(character: str, sources: list) -> dict:
+    """
+    에셋 폴더에서 학습용 이미지로 복사
+    sources: [{ "outfit": "...", "expression": "...", "filename": "..." }, ...]
+    """
+    t_dir = _training_dir(character)
+    os.makedirs(t_dir, exist_ok=True)
+
+    added = []
+    skipped = []
+    char_dir = os.path.join(ASSET_DIR, _safe_dirname(character))
+
+    for src in sources:
+        outfit = src.get("outfit", "")
+        expression = src.get("expression", "")
+        filename = src.get("filename", "")
+
+        if not outfit or not expression or not filename:
+            print(f"[LORA] 학습 이미지 추가: 필수 값 누락 - {src}")
+            skipped.append({"filename": filename, "reason": "필수 값 누락"})
+            continue
+
+        # 원본 경로
+        src_path = os.path.join(char_dir, _safe_dirname(outfit), _safe_dirname(expression), filename)
+        if not os.path.isfile(src_path):
+            print(f"[LORA] 학습 이미지 원본 없음: {src_path}")
+            skipped.append({"filename": filename, "reason": "원본 파일 없음"})
+            continue
+
+        # 대상 경로 (이름 충돌 방지)
+        dest_name = filename
+        dest_path = os.path.join(t_dir, dest_name)
+        if os.path.exists(dest_path):
+            # 이미 존재하면 타임스탬프 접두어 추가
+            import time
+            base, ext = os.path.splitext(filename)
+            dest_name = f"{int(time.time())}_{base}{ext}"
+            dest_path = os.path.join(t_dir, dest_name)
+
+        try:
+            shutil.copy2(src_path, dest_path)
+
+            # 프롬프트 JSON도 복사
+            base, ext = os.path.splitext(filename)
+            prompt_src = os.path.join(char_dir, _safe_dirname(outfit), _safe_dirname(expression), f"{base}_prompt.json")
+            prompt_dest = os.path.join(t_dir, f"{os.path.splitext(dest_name)[0]}_prompt.json")
+            if os.path.isfile(prompt_src):
+                # 복사하면서 positive에서 [FACE_ID_ACTIVATE] 위쪽만 추출
+                with open(prompt_src, "r", encoding="utf-8") as f:
+                    pdata = json.load(f)
+                positive = pdata.get("positive", "")
+                marker = "[FACE_ID_ACTIVATE]"
+                if marker in positive:
+                    pdata["positive"] = positive.split(marker)[0].strip()
+                with open(prompt_dest, "w", encoding="utf-8") as f:
+                    json.dump(pdata, f, ensure_ascii=False, indent=2)
+            else:
+                # 프롬프트 파일이 없으면 빈 프롬프트 생성
+                with open(prompt_dest, "w", encoding="utf-8") as f:
+                    json.dump({"positive": "", "negative": ""}, f, ensure_ascii=False, indent=2)
+
+            added.append(dest_name)
+            print(f"[LORA] 학습 이미지 추가: {dest_path}")
+        except Exception as e:
+            print(f"[LORA] 학습 이미지 복사 실패: {src_path} -> {dest_path} - {e}")
+            traceback.print_exc()
+            skipped.append({"filename": filename, "reason": str(e)})
+
+    return {"success": True, "added": added, "skipped": skipped}
+
+
+def list_training_images(character: str) -> list:
+    """학습용 이미지 목록 반환 (프롬프트 포함)"""
+    t_dir = _training_dir(character)
+    if not os.path.isdir(t_dir):
+        return []
+
+    # 대표 이미지 로드
+    rep_path = os.path.join(t_dir, "_representative.json")
+    representative = ""
+    if os.path.isfile(rep_path):
+        try:
+            with open(rep_path, "r", encoding="utf-8") as f:
+                representative = json.load(f).get("filename", "")
+        except Exception:
+            pass
+
+    images = []
+    for fname in sorted(os.listdir(t_dir)):
+        if fname.startswith("_"):
+            continue
+        ext = os.path.splitext(fname)[1].lower()
+        if ext not in IMAGE_EXTENSIONS:
+            continue
+
+        fpath = os.path.join(t_dir, fname)
+        # 프롬프트 로드
+        base = os.path.splitext(fname)[0]
+        prompt_path = os.path.join(t_dir, f"{base}_prompt.json")
+        positive = ""
+        negative = ""
+        if os.path.isfile(prompt_path):
+            try:
+                with open(prompt_path, "r", encoding="utf-8") as f:
+                    pdata = json.load(f)
+                    positive = pdata.get("positive", "")
+                    negative = pdata.get("negative", "")
+            except Exception as e:
+                print(f"[LORA] 프롬프트 로드 실패: {prompt_path} - {e}")
+
+        try:
+            fstat = os.stat(fpath)
+            images.append({
+                "filename": fname,
+                "positive": positive,
+                "negative": negative,
+                "is_representative": fname == representative,
+                "size": fstat.st_size,
+                "modified": fstat.st_mtime,
+            })
+        except Exception as e:
+            print(f"[LORA] 학습 이미지 정보 읽기 실패: {fpath} - {e}")
+
+    return images
+
+
+def get_training_image_path(character: str, filename: str) -> str | None:
+    """학습용 이미지 파일 경로 반환"""
+    if ".." in filename or os.path.sep in filename:
+        print(f"[LORA] 잘못된 파일명: {filename}")
+        return None
+    fpath = os.path.join(_training_dir(character), filename)
+    if os.path.isfile(fpath):
+        return fpath
+    print(f"[LORA] 학습 이미지 없음: {fpath}")
+    return None
+
+
+def delete_training_image(character: str, filename: str) -> dict:
+    """학습용 이미지 + 프롬프트 JSON 삭제"""
+    if ".." in filename or os.path.sep in filename:
+        return {"success": False, "error": "잘못된 파일명"}
+
+    t_dir = _training_dir(character)
+    fpath = os.path.join(t_dir, filename)
+
+    if not os.path.isfile(fpath):
+        print(f"[LORA] 학습 이미지 없음: {fpath}")
+        return {"success": False, "error": "파일을 찾을 수 없습니다"}
+
+    try:
+        os.remove(fpath)
+
+        # 프롬프트 JSON도 삭제
+        base = os.path.splitext(filename)[0]
+        prompt_path = os.path.join(t_dir, f"{base}_prompt.json")
+        if os.path.isfile(prompt_path):
+            os.remove(prompt_path)
+
+        # 대표 이미지였으면 대표 설정도 해제
+        rep_path = os.path.join(t_dir, "_representative.json")
+        if os.path.isfile(rep_path):
+            try:
+                with open(rep_path, "r", encoding="utf-8") as f:
+                    if json.load(f).get("filename") == filename:
+                        os.remove(rep_path)
+            except Exception:
+                pass
+
+        print(f"[LORA] 학습 이미지 삭제 완료: {fpath}")
+        return {"success": True}
+    except Exception as e:
+        print(f"[LORA] 학습 이미지 삭제 실패: {fpath} - {e}")
+        traceback.print_exc()
+        return {"success": False, "error": str(e)}
+
+
+def set_training_representative(character: str, filename: str) -> dict:
+    """학습용 이미지 대표 설정/해제"""
+    t_dir = _training_dir(character)
+    rep_path = os.path.join(t_dir, "_representative.json")
+
+    # 이미 대표면 해제
+    if os.path.isfile(rep_path):
+        try:
+            with open(rep_path, "r", encoding="utf-8") as f:
+                current = json.load(f).get("filename", "")
+            if current == filename:
+                os.remove(rep_path)
+                print(f"[LORA] 대표 해제: {filename}")
+                return {"success": True, "representative": ""}
+        except Exception as e:
+            print(f"[LORA] 대표 확인 실패: {e}")
+
+    # 대표 설정
+    try:
+        with open(rep_path, "w", encoding="utf-8") as f:
+            json.dump({"filename": filename}, f, ensure_ascii=False)
+        print(f"[LORA] 대표 설정: {filename}")
+        return {"success": True, "representative": filename}
+    except Exception as e:
+        print(f"[LORA] 대표 설정 실패: {e}")
+        return {"success": False, "error": str(e)}
+
+
+def save_training_prompt(character: str, filename: str, positive: str, negative: str) -> dict:
+    """학습용 이미지의 프롬프트 저장"""
+    if ".." in filename or os.path.sep in filename:
+        return {"success": False, "error": "잘못된 파일명"}
+
+    t_dir = _training_dir(character)
+    base = os.path.splitext(filename)[0]
+    prompt_path = os.path.join(t_dir, f"{base}_prompt.json")
+
+    try:
+        # 기존 데이터 유지하면서 프롬프트만 업데이트
+        existing = {}
+        if os.path.isfile(prompt_path):
+            with open(prompt_path, "r", encoding="utf-8") as f:
+                existing = json.load(f)
+        existing["positive"] = positive
+        existing["negative"] = negative
+
+        with open(prompt_path, "w", encoding="utf-8") as f:
+            json.dump(existing, f, ensure_ascii=False, indent=2)
+        print(f"[LORA] 프롬프트 저장 완료: {prompt_path}")
+        return {"success": True}
+    except Exception as e:
+        print(f"[LORA] 프롬프트 저장 실패: {prompt_path} - {e}")
+        return {"success": False, "error": str(e)}

@@ -1112,6 +1112,10 @@
             background: rgba(80, 200, 120, 0.12);
             border-radius: 6px;
         }
+        #tab-btn-lora {
+            background: rgba(180, 130, 220, 0.15);
+            border-radius: 6px;
+        }
         .tab-divider {
             display: inline-block;
             width: 1px;
@@ -1508,6 +1512,54 @@
         .asset-breadcrumb .bc-sep { color: var(--border); }
         .asset-breadcrumb .bc-active { color: var(--accent); font-weight: 600; }
 
+        .asset-loading {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            padding: 60px 0;
+            color: var(--text2);
+            font-size: 0.9rem;
+        }
+        .lora-file-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+            gap: 12px;
+            padding: 16px;
+        }
+        .lora-file-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            transition: border-color 0.2s;
+        }
+        .lora-file-card:hover { border-color: rgba(180, 130, 220, 0.5); }
+        .lora-file-name {
+            font-weight: 600;
+            font-size: 0.85rem;
+            word-break: break-all;
+        }
+        .lora-file-info {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+        .lora-file-actions {
+            display: flex;
+            gap: 6px;
+        }
+        .lora-file-actions button {
+            flex: 1;
+            padding: 4px 8px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.75rem;
+        }
         .asset-image-grid {
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
@@ -2420,6 +2472,8 @@
         <button class="tab-btn" onclick="switchTab('pose')">에셋 Pose 편집</button>
         <button class="tab-btn" onclick="switchTab('batch')">에셋 일괄 생성</button>
         <button id="tab-btn-smart-asset" class="tab-btn" onclick="switchTab('smart-asset')">에셋툴</button>
+        <span class="tab-divider"></span>
+        <button id="tab-btn-lora" class="tab-btn" onclick="switchTab('lora')">로라매니징</button>
     </div>
 
     <!-- 토스트 알림 -->
@@ -2478,6 +2532,10 @@
             </div>
             <div class="asset-container">
                 <div class="asset-main" id="asset-main">
+                    <div class="asset-loading" id="asset-loading" style="display:none;">
+                        <div class="spinner" style="width:32px;height:32px;border-width:3px;"></div>
+                        <span>로딩 중...</span>
+                    </div>
                     <div class="asset-empty-state" id="asset-empty-state">
                         <h3>에셋 생성 모드</h3>
                         <p>사이드바에서 캐릭터, 복장, 표정을 선택한 후 이미지를 생성하세요.</p>
@@ -3240,6 +3298,81 @@
         </div>
     </div>
 
+        <!-- 로라매니징 탭 -->
+        <div id="tab-lora-content" class="tab-content">
+            <div class="asset-breadcrumb" id="lora-breadcrumb">
+                <span>로라매니징</span>
+            </div>
+            <div class="asset-container">
+                <div class="asset-main" id="lora-main">
+                    <div class="asset-empty-state" id="lora-empty-state">
+                        <h3>로라매니징</h3>
+                        <p>사이드바에서 캐릭터를 선택하세요.</p>
+                    </div>
+                    <!-- LoRA 파일 그리드 -->
+                    <div id="lora-files-section" style="display:none; padding:16px;">
+                        <div style="font-weight:600; font-size:0.95rem; margin-bottom:8px;">LoRA 파일</div>
+                        <div class="lora-file-grid" id="lora-file-grid" style="display:none;"></div>
+                    </div>
+                    <!-- 학습용 이미지 그리드 -->
+                    <div id="lora-training-section" style="display:none; padding:16px;">
+                        <div style="font-weight:600; font-size:0.95rem; margin-bottom:8px;">학습용 이미지</div>
+                        <div class="asset-image-grid" id="lora-training-grid" style="display:none;"></div>
+                        <div id="lora-training-empty" style="display:none; text-align:center; padding:32px; color:var(--text-secondary);">
+                            학습용 이미지가 없습니다. 사이드바에서 이미지를 추가하세요.
+                        </div>
+                    </div>
+                </div>
+                <div class="asset-sidebar" id="lora-sidebar">
+                    <!-- 캐릭터 선택 -->
+                    <div style="background:rgba(180,130,220,0.1); border-radius:8px; padding:10px; margin-bottom:8px;">
+                        <div class="section-title">캐릭터</div>
+                        <select id="lora-character-select" onchange="onLoraCharacterChange()">
+                            <option value="">-- 캐릭터 선택 --</option>
+                        </select>
+                    </div>
+
+                    <!-- LoRA 업로드 -->
+                    <div style="background:var(--surface2); border-radius:8px; padding:10px; margin-bottom:8px;">
+                        <div class="section-title">LoRA 업로드</div>
+                        <input type="file" id="lora-file-input" accept=".safetensors,.pt,.ckpt,.bin" style="display:none;" onchange="uploadLoraFile(this)">
+                        <button onclick="document.getElementById('lora-file-input').click()" style="width:100%; padding:8px; background:var(--accent); color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">
+                            파일 선택
+                        </button>
+                        <div style="font-size:0.7rem; color:var(--text-secondary); margin-top:4px;">.safetensors, .pt, .ckpt, .bin</div>
+                    </div>
+
+                    <!-- 학습 이미지 추가 -->
+                    <div style="background:rgba(255,152,0,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
+                        <div class="section-title">학습용 이미지</div>
+                        <button onclick="openLoraImagePicker()" style="width:100%; padding:8px; background:rgba(180,130,220,0.2); color:var(--text); border:1px solid rgba(180,130,220,0.3); border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">
+                            에셋에서 선택
+                        </button>
+                        <div style="font-size:0.7rem; color:var(--text-secondary); margin-top:4px;">현재 캐릭터의 에셋 이미지에서 학습용 이미지를 추가합니다.</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    <!-- LoRA 학습 이미지 피커 모달 -->
+    <div class="modal" id="lora-image-picker-modal" onclick="if (event.target === this) closeLoraImagePicker()">
+        <div class="modal-content" style="max-width:720px;">
+            <div class="modal-header">
+                <h2 id="lora-picker-title">이미지 선택</h2>
+                <button class="modal-close" onclick="closeLoraImagePicker()">&times;</button>
+            </div>
+            <div class="modal-body" id="lora-picker-body">
+                <!-- 동적 렌더링 -->
+            </div>
+            <div class="modal-footer" id="lora-picker-footer" style="display:none;">
+                <span id="lora-picker-count" style="font-size:0.85rem; color:var(--text-secondary);"></span>
+                <button onclick="loraPickerConfirm()" id="lora-picker-confirm-btn" style="padding:8px 20px; background:var(--accent); color:#fff; border:none; border-radius:6px; cursor:pointer; font-weight:600;">
+                    선택 완료
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- 설정 모달 -->
     <div class="modal settings-modal" id="settings-modal" onclick="if (event.target === this) closeSettingsModal()">
         <div class="modal-content">
@@ -3271,6 +3404,17 @@
                         <div class="hint" style="margin-bottom: 8px;">워크플로우 파일이 있는 폴더 경로</div>
                     </div>
                     <input type="hidden" id="setting-workflow-path">
+
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="title">Comfy Input 폴더 경로</div>
+                            <div class="desc">ComfyUI의 input 폴더 경로 (비워두면 기본경로 사용)</div>
+                        </div>
+                    </div>
+                    <div class="form-group" style="margin-top: -8px;">
+                        <input type="text" id="setting-comfy-input-dir" placeholder="예: C:\ComfyUI\input">
+                        <div class="hint">절대 경로를 입력하세요</div>
+                    </div>
 
                     <div class="setting-row">
                         <div class="setting-label">
@@ -5055,6 +5199,7 @@
             document.getElementById('setting-workflow-filename').value = pathParts.filename;
             document.getElementById('setting-workflow-path').value = workflowPath;
 
+            document.getElementById('setting-comfy-input-dir').value = currentConfig.comfy_input_dir || '';
             document.getElementById('setting-backup-dir').value = currentConfig.backup_base_dir || '';
             document.getElementById('setting-backup-max-count').value = currentConfig.backup_max_count || 500;
 
@@ -5291,6 +5436,7 @@
                 backup_webp_quality: parseInt(document.getElementById('setting-backup-webp-quality').value) || 80,
                 backup_webp_lossless: document.getElementById('setting-backup-webp-lossless').checked,
                 comfy_workflow_source_path: document.getElementById('setting-workflow-path').value,
+                comfy_input_dir: document.getElementById('setting-comfy-input-dir').value,
                 backup_base_dir: document.getElementById('setting-backup-dir').value,
                 backup_max_count: parseInt(document.getElementById('setting-backup-max-count').value) || 500,
                 clamp_enabled: document.getElementById('setting-clamp-enabled').checked,
@@ -9287,6 +9433,368 @@
             atCheckReadyStates();
         }
 
+        // ─── LoRA 매니징 ─────────────────────────────────────
+        let loraCurrentCharacter = '';
+        let loraPickerState = { level: 'gallery', outfit: '', expression: '', selected: new Set() };
+
+        async function loadLoraCharacters() {
+            try {
+                const resp = await fetchJSON('/api/lora/characters');
+                const select = document.getElementById('lora-character-select');
+                select.innerHTML = '<option value="">-- 캐릭터 선택 --</option>';
+                if (resp.success && resp.characters) {
+                    resp.characters.forEach(name => {
+                        const opt = document.createElement('option');
+                        opt.value = name;
+                        opt.textContent = name;
+                        select.appendChild(opt);
+                    });
+                }
+            } catch (e) {
+                console.error('[LORA] 캐릭터 목록 로드 실패:', e);
+            }
+        }
+
+        async function onLoraCharacterChange() {
+            const select = document.getElementById('lora-character-select');
+            loraCurrentCharacter = select.value;
+            const breadcrumb = document.getElementById('lora-breadcrumb');
+            breadcrumb.innerHTML = loraCurrentCharacter
+                ? `<span style="cursor:pointer;" onclick="loadLoraCharacters(); document.getElementById('lora-character-select').value=''; onLoraCharacterChange();">로라매니징</span> / <span>${loraCurrentCharacter}</span> / Lora`
+                : '<span>로라매니징</span>';
+
+            if (!loraCurrentCharacter) {
+                document.getElementById('lora-empty-state').style.display = '';
+                document.getElementById('lora-files-section').style.display = 'none';
+                document.getElementById('lora-training-section').style.display = 'none';
+                return;
+            }
+            await Promise.all([loadLoraFiles(), loadLoraTrainingImages()]);
+        }
+
+        async function loadLoraFiles() {
+            if (!loraCurrentCharacter) return;
+            const grid = document.getElementById('lora-file-grid');
+            const section = document.getElementById('lora-files-section');
+            try {
+                const resp = await fetchJSON(`/api/lora/list?character=${encodeURIComponent(loraCurrentCharacter)}`);
+                if (!resp.success) { showToast(resp.error || '파일 목록 로드 실패', 'error'); return; }
+                const files = resp.files || [];
+                section.style.display = '';
+                if (files.length === 0) {
+                    grid.style.display = 'none';
+                    return;
+                }
+                grid.style.display = '';
+                grid.innerHTML = files.map(f => `
+                    <div class="lora-file-card">
+                        <div class="lora-file-name">${escapeHtml(f.filename)}</div>
+                        <div class="lora-file-info">${formatFileSize(f.size)} · ${formatDate(f.modified)}</div>
+                        <div class="lora-file-actions">
+                            <button style="background:var(--error); color:#fff;" onclick="deleteLoraFile('${escapeHtml(f.filename)}')">삭제</button>
+                        </div>
+                    </div>
+                `).join('');
+            } catch (e) {
+                console.error('[LORA] 파일 목록 로드 실패:', e);
+            }
+        }
+
+        async function uploadLoraFile(input) {
+            if (!loraCurrentCharacter) { showToast('먼저 캐릭터를 선택하세요', 'error'); input.value = ''; return; }
+            const file = input.files[0];
+            if (!file) return;
+            const formData = new FormData();
+            formData.append('file', file);
+            try {
+                const resp = await fetch(`/api/lora/upload?character=${encodeURIComponent(loraCurrentCharacter)}`, { method: 'POST', body: formData });
+                const result = await resp.json();
+                if (result.success) { showToast('업로드 완료', 'success'); await loadLoraFiles(); }
+                else { showToast(result.error || '업로드 실패', 'error'); }
+            } catch (e) { console.error('[LORA] 업로드 실패:', e); showToast('업로드 실패', 'error'); }
+            input.value = '';
+        }
+
+        async function deleteLoraFile(filename) {
+            if (!confirm(`"${filename}" 삭제하시겠습니까?`)) return;
+            try {
+                const resp = await fetchJSON('/api/lora/delete', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ character: loraCurrentCharacter, filename })
+                });
+                if (resp.success) { showToast('삭제 완료', 'success'); await loadLoraFiles(); }
+                else { showToast(resp.error || '삭제 실패', 'error'); }
+            } catch (e) { console.error('[LORA] 삭제 실패:', e); showToast('삭제 실패', 'error'); }
+        }
+
+        // ─── 학습용 이미지 ─────────────────────────────────────
+        async function loadLoraTrainingImages() {
+            if (!loraCurrentCharacter) return;
+            const grid = document.getElementById('lora-training-grid');
+            const section = document.getElementById('lora-training-section');
+            const emptyEl = document.getElementById('lora-training-empty');
+            const enc = encodeURIComponent;
+            try {
+                const resp = await fetchJSON(`/api/lora/training_images?character=${enc(loraCurrentCharacter)}`);
+                if (!resp.success) { showToast(resp.error || '학습 이미지 로드 실패', 'error'); return; }
+                const images = resp.images || [];
+                section.style.display = '';
+                if (images.length === 0) {
+                    grid.style.display = 'none';
+                    emptyEl.style.display = '';
+                    return;
+                }
+                emptyEl.style.display = 'none';
+                grid.style.display = '';
+                grid.innerHTML = images.map(img => `
+                    <div class="asset-image-card" style="cursor:default;">
+                        <div style="position:relative;">
+                            <img src="/api/lora/training_image/${enc(loraCurrentCharacter)}/${enc(img.filename)}" style="width:100%; display:block; cursor:zoom-in;" onclick="event.stopPropagation(); openLightbox(this.src)">
+                            ${img.is_representative ? '<div style="position:absolute; top:4px; left:4px; background:var(--accent); color:#fff; padding:2px 6px; border-radius:4px; font-size:0.65rem; font-weight:600;">대표</div>' : ''}
+                        </div>
+                        <div style="padding:8px;">
+                            <div style="font-size:0.75rem; color:var(--text-secondary); margin-bottom:4px;">${escapeHtml(img.filename)}</div>
+                            <div style="font-size:0.7rem; color:var(--text-secondary); margin-bottom:6px; max-height:40px; overflow:hidden;">${escapeHtml(img.positive || '(프롬프트 없음)')}</div>
+                            <div style="display:flex; gap:4px; flex-wrap:wrap;">
+                                <button onclick="setLoraTrainingRepresentative('${escapeHtml(img.filename)}')" style="flex:1; padding:3px 6px; background:${img.is_representative ? 'var(--accent)' : 'var(--surface2)'}; color:${img.is_representative ? '#fff' : 'var(--text)'}; border:1px solid var(--border); border-radius:4px; cursor:pointer; font-size:0.7rem;">대표</button>
+                                <button onclick="showLoraTrainingPrompt('${escapeHtml(img.filename)}')" style="flex:1; padding:3px 6px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:4px; cursor:pointer; font-size:0.7rem;">프롬프트</button>
+                                <button onclick="deleteLoraTrainingImage('${escapeHtml(img.filename)}')" style="flex:1; padding:3px 6px; background:var(--error); color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:0.7rem;">삭제</button>
+                            </div>
+                        </div>
+                    </div>
+                `).join('');
+            } catch (e) {
+                console.error('[LORA] 학습 이미지 로드 실패:', e);
+            }
+        }
+
+        async function deleteLoraTrainingImage(filename) {
+            if (!confirm(`"${filename}" 삭제하시겠습니까?`)) return;
+            try {
+                const resp = await fetchJSON('/api/lora/training_images/delete', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ character: loraCurrentCharacter, filename })
+                });
+                if (resp.success) { showToast('삭제 완료', 'success'); await loadLoraTrainingImages(); }
+                else { showToast(resp.error || '삭제 실패', 'error'); }
+            } catch (e) { console.error('[LORA] 학습 이미지 삭제 실패:', e); showToast('삭제 실패', 'error'); }
+        }
+
+        async function setLoraTrainingRepresentative(filename) {
+            try {
+                const resp = await fetchJSON('/api/lora/training_images/representative', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ character: loraCurrentCharacter, filename })
+                });
+                if (resp.success) { await loadLoraTrainingImages(); }
+                else { showToast(resp.error || '대표 설정 실패', 'error'); }
+            } catch (e) { console.error('[LORA] 대표 설정 실패:', e); }
+        }
+
+        function showLoraTrainingPrompt(filename) {
+            const grid = document.getElementById('lora-training-grid');
+            const card = grid.querySelector(`[onclick*="${filename}"]`);
+            // 프롬프트 편집 모달 열기
+            const enc = encodeURIComponent;
+            fetchJSON(`/api/lora/training_images?character=${enc(loraCurrentCharacter)}`).then(resp => {
+                if (!resp.success) return;
+                const img = resp.images.find(i => i.filename === filename);
+                if (!img) return;
+                const modal = document.getElementById('lora-image-picker-modal');
+                document.getElementById('lora-picker-title').textContent = '프롬프트 편집';
+                document.getElementById('lora-picker-footer').style.display = 'flex';
+                document.getElementById('lora-picker-footer').innerHTML = `
+                    <button onclick="closeLoraImagePicker()" style="padding:8px 16px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:6px; cursor:pointer;">닫기</button>
+                    <button onclick="saveLoraTrainingPrompt('${escapeHtml(filename)}')" style="padding:8px 16px; background:var(--accent); color:#fff; border:none; border-radius:6px; cursor:pointer; font-weight:600;">저장</button>
+                `;
+                document.getElementById('lora-picker-body').innerHTML = `
+                    <div style="margin-bottom:12px;">
+                        <img src="/api/lora/training_image/${enc(loraCurrentCharacter)}/${enc(filename)}" style="max-width:200px; max-height:200px; border-radius:8px; display:block; margin:0 auto;">
+                        <div style="text-align:center; margin-top:6px; font-size:0.8rem; color:var(--text-secondary);">${escapeHtml(filename)}</div>
+                    </div>
+                    <div style="margin-bottom:8px;">
+                        <label style="font-size:0.8rem; font-weight:600; display:block; margin-bottom:4px;">긍정 프롬프트</label>
+                        <textarea id="lora-prompt-positive" rows="5" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px; background:var(--surface); color:var(--text); font-size:0.85rem; resize:vertical;">${escapeHtml(img.positive || '')}</textarea>
+                    </div>
+                    <div>
+                        <label style="font-size:0.8rem; font-weight:600; display:block; margin-bottom:4px;">부정 프롬프트</label>
+                        <textarea id="lora-prompt-negative" rows="5" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px; background:var(--surface); color:var(--text); font-size:0.85rem; resize:vertical;">${escapeHtml(img.negative || '')}</textarea>
+                    </div>
+                `;
+                modal.style.display = 'flex';
+            });
+        }
+
+        async function saveLoraTrainingPrompt(filename) {
+            const positive = document.getElementById('lora-prompt-positive').value;
+            const negative = document.getElementById('lora-prompt-negative').value;
+            try {
+                const resp = await fetchJSON('/api/lora/training_images/prompt', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ character: loraCurrentCharacter, filename, positive, negative })
+                });
+                if (resp.success) { showToast('프롬프트 저장 완료', 'success'); closeLoraImagePicker(); await loadLoraTrainingImages(); }
+                else { showToast(resp.error || '저장 실패', 'error'); }
+            } catch (e) { console.error('[LORA] 프롬프트 저장 실패:', e); showToast('저장 실패', 'error'); }
+        }
+
+        // ─── LoRA 이미지 피커 ─────────────────────────────────
+        function openLoraImagePicker() {
+            if (!loraCurrentCharacter) { showToast('먼저 캐릭터를 선택하세요', 'error'); return; }
+            loraPickerState = { level: 'gallery', outfit: '', expression: '', selected: new Set() };
+            document.getElementById('lora-picker-title').textContent = '학습용 이미지 선택';
+            document.getElementById('lora-picker-footer').style.display = 'flex';
+            document.getElementById('lora-picker-footer').innerHTML = `
+                <span id="lora-picker-count" style="font-size:0.85rem; color:var(--text-secondary);"></span>
+                <button onclick="loraPickerConfirm()" style="padding:8px 20px; background:var(--accent); color:#fff; border:none; border-radius:6px; cursor:pointer; font-weight:600;">선택 완료</button>
+            `;
+            const modal = document.getElementById('lora-image-picker-modal');
+            modal.style.display = 'flex';
+            loadLoraPickerGallery();
+        }
+
+        function closeLoraImagePicker() {
+            document.getElementById('lora-image-picker-modal').style.display = 'none';
+        }
+
+        async function loadLoraPickerGallery() {
+            const body = document.getElementById('lora-picker-body');
+            const enc = encodeURIComponent;
+            body.innerHTML = '<div style="text-align:center; padding:32px;"><div class="spinner" style="width:32px;height:32px;border-width:3px;margin:0 auto;"></div></div>';
+
+            try {
+                const resp = await fetchJSON(`/api/asset_mode/characters/${enc(loraCurrentCharacter)}/gallery`);
+                if (!resp.gallery || resp.gallery.length === 0) {
+                    body.innerHTML = '<div style="text-align:center; padding:32px; color:var(--text-secondary);">표시할 이미지가 없습니다.</div>';
+                    return;
+                }
+
+                body.innerHTML = `
+                    <div style="margin-bottom:12px; display:flex; align-items:center; gap:8px;">
+                        <button onclick="loraPickerToggleSelectAll()" style="padding:4px 12px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:4px; cursor:pointer; font-size:0.8rem;">전체 선택/해제</button>
+                    </div>
+                    <div class="asset-gallery-grid" id="lora-picker-gallery-grid">
+                        ${resp.gallery.map(item => `
+                            <div class="asset-gallery-item" onclick="loadLoraPickerImages('${escapeHtml(item.outfit)}', '${escapeHtml(item.expression)}')" style="cursor:pointer;">
+                                ${item.representative
+                                    ? `<img src="/api/asset_mode/characters/${enc(loraCurrentCharacter)}/outfits/${enc(item.outfit)}/expressions/${enc(item.expression)}/images/${enc(item.representative)}" style="width:100%; display:block; border-radius:6px;">`
+                                    : '<div style="width:100%; padding:32px; background:var(--surface2); border-radius:6px; display:flex; align-items:center; justify-content:center; color:var(--text-secondary); font-size:0.8rem;">No img</div>'
+                                }
+                                <div style="font-size:0.75rem; margin-top:4px; text-align:center;">${escapeHtml(item.outfit)} / ${escapeHtml(item.expression)}${item.image_count > 1 ? ` (${item.image_count}장)` : ''}</div>
+                            </div>
+                        `).join('')}
+                    </div>
+                `;
+                loraPickerState.level = 'gallery';
+                loraPickerUpdateCount();
+            } catch (e) {
+                console.error('[LORA] 갤러리 로드 실패:', e);
+                body.innerHTML = '<div style="text-align:center; padding:32px; color:var(--error);">로드 실패</div>';
+            }
+        }
+
+        async function loadLoraPickerImages(outfit, expression) {
+            const body = document.getElementById('lora-picker-body');
+            const enc = encodeURIComponent;
+            loraPickerState.outfit = outfit;
+            loraPickerState.expression = expression;
+            loraPickerState.level = 'images';
+
+            body.innerHTML = `
+                <div style="margin-bottom:12px;">
+                    <button onclick="loadLoraPickerGallery()" style="padding:4px 12px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:4px; cursor:pointer; font-size:0.8rem;">&larr; 뒤로</button>
+                    <span style="margin-left:8px; font-size:0.85rem; color:var(--text-secondary);">${escapeHtml(outfit)} / ${escapeHtml(expression)}</span>
+                </div>
+                <div id="lora-picker-images-grid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(120px, 1fr)); gap:8px;">
+                    <div class="spinner" style="width:32px;height:32px;border-width:3px;margin:16px auto;"></div>
+                </div>
+            `;
+
+            try {
+                const resp = await fetchJSON(`/api/asset_mode/characters/${enc(loraCurrentCharacter)}/outfits/${enc(outfit)}/expressions/${enc(expression)}/images`);
+                if (!resp.images || resp.images.length === 0) {
+                    document.getElementById('lora-picker-images-grid').innerHTML = '<div style="text-align:center; padding:16px; color:var(--text-secondary); grid-column:1/-1;">이미지가 없습니다.</div>';
+                    return;
+                }
+
+                const grid = document.getElementById('lora-picker-images-grid');
+                grid.innerHTML = resp.images.map(img => {
+                    const key = `${outfit}|||${expression}|||${img.filename}`;
+                    const checked = loraPickerState.selected.has(key);
+                    const imgUrl = `/api/asset_mode/characters/${enc(loraCurrentCharacter)}/outfits/${enc(outfit)}/expressions/${enc(expression)}/images/${enc(img.filename)}`;
+                    return `
+                        <div onclick="loraPickerToggle(this, '${escapeHtml(key)}')" style="position:relative; cursor:pointer; border-radius:6px; overflow:hidden; border:2px solid ${checked ? 'var(--accent)' : 'transparent'}; transition:border-color 0.15s;">
+                            <img src="${imgUrl}" style="width:100%; display:block;">
+                            <div style="position:absolute; top:4px; right:4px; width:20px; height:20px; border-radius:50%; background:${checked ? 'var(--accent)' : 'rgba(0,0,0,0.3)'}; display:flex; align-items:center; justify-content:center; color:#fff; font-size:0.7rem;">${checked ? '✓' : ''}</div>
+                        </div>
+                    `;
+                }).join('');
+            } catch (e) {
+                console.error('[LORA] 이미지 로드 실패:', e);
+            }
+        }
+
+        function loraPickerToggle(el, key) {
+            if (loraPickerState.selected.has(key)) {
+                loraPickerState.selected.delete(key);
+                el.style.borderColor = 'transparent';
+                el.querySelector('div').style.background = 'rgba(0,0,0,0.3)';
+                el.querySelector('div').textContent = '';
+            } else {
+                loraPickerState.selected.add(key);
+                el.style.borderColor = 'var(--accent)';
+                el.querySelector('div').style.background = 'var(--accent)';
+                el.querySelector('div').textContent = '✓';
+            }
+            loraPickerUpdateCount();
+        }
+
+        function loraPickerToggleSelectAll() {
+            // 현재 보이는 갤러리의 모든 이미지를 선택/해제
+            // 갤러리 레벨에서는 의미가 없으므로 아무것도 하지 않음
+        }
+
+        function loraPickerUpdateCount() {
+            const el = document.getElementById('lora-picker-count');
+            if (el) el.textContent = `${loraPickerState.selected.size}장 선택됨`;
+        }
+
+        async function loraPickerConfirm() {
+            if (loraPickerState.selected.size === 0) {
+                showToast('이미지를 선택하세요', 'error');
+                return;
+            }
+            const sources = [];
+            for (const key of loraPickerState.selected) {
+                const [outfit, expression, filename] = key.split('|||');
+                sources.push({ outfit, expression, filename });
+            }
+
+            try {
+                const resp = await fetchJSON('/api/lora/training_images/add', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ character: loraCurrentCharacter, sources })
+                });
+                if (resp.success) {
+                    const msg = `${resp.added.length}장 추가됨${resp.skipped.length > 0 ? ` (${resp.skipped.length}장 스킵)` : ''}`;
+                    showToast(msg, 'success');
+                    closeLoraImagePicker();
+                    await loadLoraTrainingImages();
+                } else {
+                    showToast(resp.error || '추가 실패', 'error');
+                }
+            } catch (e) {
+                console.error('[LORA] 학습 이미지 추가 실패:', e);
+                showToast('추가 실패', 'error');
+            }
+        }
+
+        function formatFileSize(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+        }
+
         // 드래그앤드롭 초기화
         document.addEventListener('DOMContentLoaded', () => {
             const dropzone = document.getElementById('at-dropzone');
@@ -9353,11 +9861,16 @@
                 if (!assetTags) loadAssetData();
                 atLoadCharacterList();
                 atSwitchView('upload');
+            } else if (name === 'lora') {
+                document.querySelectorAll('.tab-btn')[5].classList.add('active');
+                document.getElementById('tab-lora-content').classList.add('active');
+                loadLoraCharacters();
             }
         }
 
         async function loadAssetData() {
             const isFirstLoad = !assetTags;
+            showAssetView('loading');
             try {
                 const resp = await fetch('/api/asset_mode/tags');
                 assetTags = await resp.json();
@@ -11093,7 +11606,8 @@
         }
 
         function showAssetView(view) {
-            // view: 'empty' | 'folder' | 'gallery' | 'grid'
+            // view: 'empty' | 'folder' | 'gallery' | 'grid' | 'loading'
+            document.getElementById('asset-loading').style.display = view === 'loading' ? 'flex' : 'none';
             document.getElementById('asset-empty-state').style.display = view === 'empty' ? 'block' : 'none';
             document.getElementById('asset-folder-grid').style.display = view === 'folder' ? 'grid' : 'none';
             document.getElementById('asset-gallery-grid').style.display = view === 'gallery' ? 'grid' : 'none';
@@ -11162,6 +11676,7 @@
 
         async function renderCharacterGallery(charName) {
             const savedScroll = _assetScrollCache[1] || 0;
+            showAssetView('loading');
             try {
                 const enc = encodeURIComponent;
                 const resp = await fetch(`/api/asset_mode/characters/${enc(charName)}/gallery`);
@@ -11547,6 +12062,7 @@
             try {
                 const enc = encodeURIComponent;
                 const url = `/api/asset_mode/characters/${enc(char)}/outfits/${enc(outfit)}/expressions/${enc(expr)}/images`;
+                showAssetView('loading');
                 const resp = await fetch(url);
                 const data = await resp.json();
                 const images = data.images || [];
