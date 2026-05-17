@@ -83,6 +83,73 @@ def list_lora_files(character: str, entry: str = "") -> list:
     return files
 
 
+def list_trained_sessions(lora_load_path: str, character: str, entry: str) -> list:
+    """학습된 LoRA 세션(타임스탬프 폴더) 목록 반환"""
+    if not lora_load_path:
+        print("[LORA_TRAINED] lora_load_path 미설정")
+        return []
+    # 구조: lora_load_path/<character>/Lora/<entry>/
+    entry_dir = os.path.join(lora_load_path, _safe_dirname(character), "Lora", _safe_dirname(entry))
+    if not os.path.isdir(entry_dir):
+        print(f"[LORA_TRAINED] 엔트리 폴더 없음: {entry_dir}")
+        return []
+    sessions = []
+    for name in sorted(os.listdir(entry_dir), reverse=True):
+        path = os.path.join(entry_dir, name)
+        if not os.path.isdir(path):
+            continue
+        step_count = sum(1 for f in os.listdir(path) if f.endswith('.safetensors'))
+        has_final = any('-step' not in f for f in os.listdir(path) if f.endswith('.safetensors'))
+        sessions.append({
+            "name": name,
+            "step_count": step_count,
+            "has_final": has_final,
+        })
+    return sessions
+
+
+def list_trained_steps(lora_load_path: str, character: str, entry: str, session: str) -> list:
+    """학습된 LoRA step 파일 목록 반환 (JSON 메타데이터 포함)"""
+    if not lora_load_path:
+        print("[LORA_TRAINED] lora_load_path 미설정")
+        return []
+    session_dir = os.path.join(lora_load_path, _safe_dirname(character), "Lora", _safe_dirname(entry), session)
+    if not os.path.isdir(session_dir):
+        print(f"[LORA_TRAINED] 세션 폴더 없음: {session_dir}")
+        return []
+    steps = []
+    for fname in sorted(os.listdir(session_dir)):
+        if not fname.endswith('.json'):
+            continue
+        json_path = os.path.join(session_dir, fname)
+        try:
+            with open(json_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+        except Exception as e:
+            print(f"[LORA_TRAINED] JSON 읽기 실패: {json_path} - {e}")
+            continue
+        step_name = os.path.splitext(fname)[0]
+        safetensors = data.get('lora_file', step_name + '.safetensors')
+        previews = data.get('previews', [])
+        steps.append({
+            "name": step_name,
+            "safetensors": safetensors,
+            "previews": previews,
+            "json_file": fname,
+        })
+    return steps
+
+
+def get_trained_preview_path(lora_load_path: str, character: str, entry: str, session: str, filename: str) -> str:
+    """학습된 LoRA 프리뷰 이미지 경로 반환"""
+    if not lora_load_path:
+        return ""
+    path = os.path.join(lora_load_path, _safe_dirname(character), "Lora", _safe_dirname(entry), session, filename)
+    if os.path.isfile(path):
+        return path
+    return ""
+
+
 def save_uploaded_file(character: str, filename: str, file_data: bytes, entry: str = "") -> dict:
     """업로드된 LoRA 파일을 저장. entry 지정 시 항목 폴더 내에 저장"""
     # 파일명 정제

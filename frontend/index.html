@@ -3313,10 +3313,18 @@
                             <p>사이드바에서 추가하세요.</p>
                         </div>
                     </div>
-                    <!-- LoRA 파일 그리드 -->
-                    <div id="lora-files-section" style="display:none; padding:16px;">
-                        <div style="font-weight:600; font-size:0.95rem; margin-bottom:8px;">LoRA 파일</div>
-                        <div class="lora-file-grid" id="lora-file-grid" style="display:none;"></div>
+                    <!-- 학습된 LoRA 세션 -->
+                    <div id="lora-trained-section" style="display:none; padding:16px;">
+                        <div style="font-weight:600; font-size:0.95rem; margin-bottom:8px;">학습된 LoRA</div>
+                        <!-- 세션 목록 -->
+                        <div id="lora-trained-sessions" style="display:none;"></div>
+                        <!-- step 목록 -->
+                        <div id="lora-trained-steps" style="display:none;"></div>
+                        <!-- 프리뷰 이미지 -->
+                        <div id="lora-trained-previews" style="display:none;"></div>
+                        <div id="lora-trained-empty" style="display:none; text-align:center; padding:32px; color:var(--text-secondary);">
+                            학습된 LoRA가 없습니다.
+                        </div>
                     </div>
                     <!-- 학습용 이미지 그리드 -->
                     <div id="lora-training-section" style="display:none; padding:16px;">
@@ -3947,6 +3955,18 @@
                         <div class="hint">공통설정 탭의 '베이스 경로'에서 검색됩니다</div>
                     </div>
                     <input type="hidden" id="setting-lora-workflow-source-path">
+
+                    <!-- 로라 로드 경로 -->
+                    <div class="setting-row" style="margin-top: 16px;">
+                        <div class="setting-label">
+                            <div class="title">📂 로라 로드 경로</div>
+                            <div class="desc">LoRA 모델 파일(.safetensors)을 로드할 폴더의 절대 경로</div>
+                        </div>
+                    </div>
+                    <div class="form-group" style="margin-top: -8px;">
+                        <input type="text" id="setting-lora-load-path" placeholder="예: E:\ComfyUI\models\loras">
+                        <div class="hint">학습된 LoRA가 저장되는 폴더 경로</div>
+                    </div>
                 </div>
             </div>
             <div class="modal-footer">
@@ -5419,6 +5439,9 @@
             document.getElementById('setting-lora-workflow-filename').value = loraSplit.filename;
             document.getElementById('setting-lora-workflow-source-path').value = loraPath;
 
+            // 로라 로드 경로
+            document.getElementById('setting-lora-load-path').value = currentConfig.lora_load_path || '';
+
             document.getElementById('settings-modal').classList.add('visible');
             // 항상 첫 번째 탭으로 시작
             switchSettingsTab('common');
@@ -5598,7 +5621,8 @@
                 enhance_prompt_file: document.getElementById('setting-enhance-prompt-file').value,
                 asset_workflow_source_path: document.getElementById('setting-asset-workflow-source-path').value,
                 tag_analysis_workflow_source_path: document.getElementById('setting-tag-analysis-workflow-source-path').value,
-                lora_training_workflow_source_path: document.getElementById('setting-lora-workflow-source-path').value
+                lora_training_workflow_source_path: document.getElementById('setting-lora-workflow-source-path').value,
+                lora_load_path: document.getElementById('setting-lora-load-path').value
             };
 
             try {
@@ -9608,7 +9632,7 @@
 
         function _loraHideAll() {
             document.getElementById('lora-entries-section').style.display = 'none';
-            document.getElementById('lora-files-section').style.display = 'none';
+            document.getElementById('lora-trained-section').style.display = 'none';
             document.getElementById('lora-training-section').style.display = 'none';
             document.getElementById('lora-test-section').style.display = 'none';
             document.getElementById('lora-entry-info').style.display = 'none';
@@ -9742,7 +9766,147 @@
                 }
             } catch (e) { console.error('[LORA_MANAGE] 항목 정보 로드 실패:', e); }
 
-            await Promise.all([loadLoraFiles(), loadLoraTrainingImages(), loadLoraTestImages(), loadLoraTrainingConfig()]);
+            await Promise.all([loadLoraTrainingImages(), loadLoraTestImages(), loadLoraTrainingConfig(), loadTrainedLoraSessions()]);
+        }
+
+        // ─── 학습된 LoRA (lora_load_path) ─────────────────────────
+        let loraCurrentTrainedSession = '';
+
+        async function loadTrainedLoraSessions() {
+            const section = document.getElementById('lora-trained-section');
+            const sessionsEl = document.getElementById('lora-trained-sessions');
+            const stepsEl = document.getElementById('lora-trained-steps');
+            const previewsEl = document.getElementById('lora-trained-previews');
+            const emptyEl = document.getElementById('lora-trained-empty');
+
+            section.style.display = '';
+            sessionsEl.style.display = 'none';
+            stepsEl.style.display = 'none';
+            previewsEl.style.display = 'none';
+            emptyEl.style.display = 'none';
+            loraCurrentTrainedSession = '';
+
+            try {
+                const enc = encodeURIComponent;
+                const resp = await fetchJSON(`/api/lora/trained/sessions?character=${enc(loraCurrentCharacter)}&entry=${enc(loraCurrentEntry)}`);
+                if (!resp.success) {
+                    if (resp.error) showToast(resp.error, 'error');
+                    emptyEl.style.display = '';
+                    return;
+                }
+                const sessions = resp.sessions || [];
+                if (sessions.length === 0) {
+                    emptyEl.style.display = '';
+                    return;
+                }
+                sessionsEl.style.display = '';
+                sessionsEl.innerHTML = `<div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(320px, 1fr)); gap:12px;">` +
+                    sessions.map(s => `
+                        <div onclick="enterTrainedSession('${escapeHtml(s.name)}')"
+                             style="background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:16px; cursor:pointer; transition:border-color 0.2s;"
+                             onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+                            <div style="font-weight:600; font-size:0.95rem;">${escapeHtml(s.name)}</div>
+                            <div style="font-size:0.8rem; color:var(--text-secondary); margin-top:6px;">
+                                ${s.step_count}개 파일${s.has_final ? ' (최종 포함)' : ''}
+                            </div>
+                        </div>
+                    `).join('') + '</div>';
+            } catch (e) {
+                console.error('[LORA_TRAINED] 세션 로드 실패:', e);
+                emptyEl.style.display = '';
+            }
+        }
+
+        async function enterTrainedSession(session) {
+            loraCurrentTrainedSession = session;
+
+            // breadcrumb 업데이트
+            document.getElementById('lora-breadcrumb').innerHTML =
+                `<span style="cursor:pointer;" onclick="initLoraTab()">로라매니징</span> / ` +
+                `<span style="cursor:pointer;" onclick="enterLoraCharacter('${escapeHtml(loraCurrentCharacter)}')">${escapeHtml(loraCurrentCharacter)}</span> / ` +
+                `<span style="cursor:pointer;" onclick="enterLoraEntry('${escapeHtml(loraCurrentEntry)}')">${escapeHtml(loraCurrentEntry)}</span> / ` +
+                `<span>${escapeHtml(session)}</span>`;
+
+            const sessionsEl = document.getElementById('lora-trained-sessions');
+            const stepsEl = document.getElementById('lora-trained-steps');
+            const previewsEl = document.getElementById('lora-trained-previews');
+            const emptyEl = document.getElementById('lora-trained-empty');
+
+            sessionsEl.style.display = 'none';
+            previewsEl.style.display = 'none';
+            emptyEl.style.display = 'none';
+
+            try {
+                const enc = encodeURIComponent;
+                const resp = await fetchJSON(`/api/lora/trained/steps?character=${enc(loraCurrentCharacter)}&entry=${enc(loraCurrentEntry)}&session=${enc(session)}`);
+                if (!resp.success) {
+                    showToast(resp.error || 'step 로드 실패', 'error');
+                    return;
+                }
+                const steps = resp.steps || [];
+                if (steps.length === 0) {
+                    emptyEl.style.display = '';
+                    emptyEl.textContent = 'step 파일이 없습니다.';
+                    return;
+                }
+                stepsEl.style.display = '';
+                stepsEl.innerHTML = `<div style="margin-bottom:10px; font-size:0.82rem; color:var(--text-secondary);">step 파일을 클릭하면 프리뷰 이미지를 볼 수 있습니다.</div>` +
+                    `<div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(340px, 1fr)); gap:12px;">` +
+                    steps.map(s => {
+                        const previewUrl = s.previews.length > 0
+                            ? `/api/lora/trained/preview/${enc(loraCurrentCharacter)}/${enc(loraCurrentEntry)}/${enc(session)}/${enc(s.previews[0])}`
+                            : '';
+                        return `
+                        <div onclick="enterTrainedStep('${escapeHtml(s.name)}')"
+                             style="background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:12px; cursor:pointer; transition:border-color 0.2s;"
+                             onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+                            ${previewUrl ? `<img src="${previewUrl}" style="width:100%; border-radius:8px; margin-bottom:10px;">` : ''}
+                            <div style="font-weight:600; font-size:0.9rem;">${escapeHtml(s.name)}</div>
+                            <div style="font-size:0.78rem; color:var(--text-secondary); margin-top:4px;">
+                                프리뷰 ${s.previews.length}장
+                            </div>
+                        </div>`;
+                    }).join('') + '</div>';
+            } catch (e) {
+                console.error('[LORA_TRAINED] step 로드 실패:', e);
+                showToast('step 로드 실패', 'error');
+            }
+        }
+
+        async function enterTrainedStep(stepName) {
+            // breadcrumb 업데이트
+            document.getElementById('lora-breadcrumb').innerHTML =
+                `<span style="cursor:pointer;" onclick="initLoraTab()">로라매니징</span> / ` +
+                `<span style="cursor:pointer;" onclick="enterLoraCharacter('${escapeHtml(loraCurrentCharacter)}')">${escapeHtml(loraCurrentCharacter)}</span> / ` +
+                `<span style="cursor:pointer;" onclick="enterLoraEntry('${escapeHtml(loraCurrentEntry)}')">${escapeHtml(loraCurrentEntry)}</span> / ` +
+                `<span style="cursor:pointer;" onclick="enterTrainedSession('${escapeHtml(loraCurrentTrainedSession)}')">${escapeHtml(loraCurrentTrainedSession)}</span> / ` +
+                `<span>${escapeHtml(stepName)}</span>`;
+
+            const stepsEl = document.getElementById('lora-trained-steps');
+            const previewsEl = document.getElementById('lora-trained-previews');
+            stepsEl.style.display = 'none';
+
+            // 이미 로드된 step 데이터에서 찾기 (재요청 없이)
+            const enc = encodeURIComponent;
+            try {
+                const resp = await fetchJSON(`/api/lora/trained/steps?character=${enc(loraCurrentCharacter)}&entry=${enc(loraCurrentEntry)}&session=${enc(loraCurrentTrainedSession)}`);
+                if (!resp.success) return;
+                const step = (resp.steps || []).find(s => s.name === stepName);
+                if (!step || !step.previews || step.previews.length === 0) {
+                    previewsEl.style.display = '';
+                    previewsEl.innerHTML = '<div style="text-align:center; padding:32px; color:var(--text-secondary);">프리뷰 이미지가 없습니다.</div>';
+                    return;
+                }
+                previewsEl.style.display = '';
+                previewsEl.innerHTML = `<div style="font-size:0.82rem; color:var(--text-secondary); margin-bottom:10px;">${escapeHtml(step.safetensors)}</div>` +
+                    `<div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(400px, 1fr)); gap:12px;">` +
+                    step.previews.map(p => {
+                        const url = `/api/lora/trained/preview/${enc(loraCurrentCharacter)}/${enc(loraCurrentEntry)}/${enc(loraCurrentTrainedSession)}/${enc(p)}`;
+                        return `<img src="${url}" style="width:100%; border-radius:10px; cursor:pointer;" onclick="window.open('${url}','_blank')">`;
+                    }).join('') + '</div>';
+            } catch (e) {
+                console.error('[LORA_TRAINED] 프리뷰 로드 실패:', e);
+            }
         }
 
         async function addLoraEntry() {

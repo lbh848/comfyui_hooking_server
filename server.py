@@ -97,6 +97,7 @@ DEFAULT_CONFIG = {
     "asset_workflow_source_path": "",  # 에셋 생성 워크플로우 원본 소스 전체 경로
     "tag_analysis_workflow_source_path": "",  # 태그 분석 워크플로우 원본 소스 전체 경로
     "lora_training_workflow_source_path": "",  # 로라 학습 워크플로우 원본 소스 전체 경로
+    "lora_load_path": "",  # 로라 모델 로드 폴더 절대 경로
     "dwpose_det_model": "",  # DWPose 탐지 모델 경로 (빈값=자동 다운로드)
     "dwpose_pose_model": "",  # DWPose 포즈 모델 경로 (빈값=자동 다운로드)
     "dwpose_model_cache_dir": "",  # 모델 캐시 디렉토리 (빈값=기본경로)
@@ -4877,6 +4878,75 @@ async def handle_api_lora_training_start(request):
 
 
 app.router.add_post("/api/lora/training/start", handle_api_lora_training_start)
+
+
+# ─── 학습된 LoRA 열람 API ─────────────────────────────────────────────
+
+async def handle_api_lora_trained_sessions(request):
+    """학습된 LoRA 세션 목록 반환"""
+    try:
+        character = request.query.get("character", "")
+        entry = request.query.get("entry", "")
+        if not character or not entry:
+            return web.json_response({"success": False, "error": "character, entry 필수"}, status=400)
+        config = load_config()
+        lora_load_path = config.get("lora_load_path", "")
+        if not lora_load_path:
+            return web.json_response({"success": False, "error": "lora_load_path 미설정"}, status=400)
+        from modes.lora_mode import list_trained_sessions
+        sessions = list_trained_sessions(lora_load_path, character, entry)
+        return web.json_response({"success": True, "sessions": sessions})
+    except Exception as e:
+        print(f"[LORA_TRAINED] 세션 목록 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_lora_trained_steps(request):
+    """학습된 LoRA step 파일 목록 반환"""
+    try:
+        character = request.query.get("character", "")
+        entry = request.query.get("entry", "")
+        session = request.query.get("session", "")
+        if not character or not entry or not session:
+            return web.json_response({"success": False, "error": "character, entry, session 필수"}, status=400)
+        config = load_config()
+        lora_load_path = config.get("lora_load_path", "")
+        if not lora_load_path:
+            return web.json_response({"success": False, "error": "lora_load_path 미설정"}, status=400)
+        from modes.lora_mode import list_trained_steps
+        steps = list_trained_steps(lora_load_path, character, entry, session)
+        return web.json_response({"success": True, "steps": steps})
+    except Exception as e:
+        print(f"[LORA_TRAINED] step 목록 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_lora_trained_preview(request):
+    """학습된 LoRA 프리뷰 이미지 서빙"""
+    try:
+        character = request.match_info.get("character", "")
+        entry = request.match_info.get("entry", "")
+        session = request.match_info.get("session", "")
+        filename = request.match_info.get("filename", "")
+        if not character or not entry or not session or not filename:
+            return web.Response(text="Missing params", status=400)
+        config = load_config()
+        lora_load_path = config.get("lora_load_path", "")
+        from modes.lora_mode import get_trained_preview_path
+        filepath = get_trained_preview_path(lora_load_path, character, entry, session, filename)
+        if filepath:
+            return web.FileResponse(filepath)
+        return web.Response(text="Not found", status=404)
+    except Exception as e:
+        print(f"[LORA_TRAINED] 프리뷰 서빙 실패: {e}")
+        return web.Response(text="Error", status=500)
+
+
+app.router.add_get("/api/lora/trained/sessions", handle_api_lora_trained_sessions)
+app.router.add_get("/api/lora/trained/steps", handle_api_lora_trained_steps)
+app.router.add_get("/api/lora/trained/preview/{character}/{entry}/{session}/{filename}", handle_api_lora_trained_preview)
 
 
 def _backup_tags_on_startup():
