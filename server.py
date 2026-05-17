@@ -4060,6 +4060,54 @@ async def handle_api_expression_profile_create_folders(request: web.Request) -> 
     except Exception as e:
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
+async def handle_api_asset_mode_batch_set_negative(request: web.Request) -> web.Response:
+    try:
+        body = await request.json()
+        character = body.get("character", "")
+        negative_tags = body.get("negative_tags", "")
+        if not character:
+            return web.json_response({"success": False, "error": "character 필수"}, status=400)
+
+        reps = asset_mode.batch_analyze_representatives(character)
+        if not reps:
+            return web.json_response({"success": True, "total": 0, "success_count": 0, "fail_count": 0})
+
+        success_count = 0
+        fail_count = 0
+        for rep in reps:
+            try:
+                img_dir = os.path.dirname(rep["filepath"])
+                prompt_path = os.path.join(img_dir, f"{os.path.splitext(rep['filename'])[0]}_prompt.json")
+                existing = {}
+                if os.path.isfile(prompt_path):
+                    try:
+                        with open(prompt_path, "r", encoding="utf-8") as pf:
+                            existing = json.load(pf)
+                    except Exception:
+                        pass
+                existing["negative"] = negative_tags
+                with open(prompt_path, "w", encoding="utf-8") as pf:
+                    json.dump(existing, pf, ensure_ascii=False, indent=2)
+                success_count += 1
+                print(f"[ASSET_MODE] 부정 프롬프트 적용 완료: {rep['filename']}")
+            except Exception as e:
+                fail_count += 1
+                print(f"[ASSET_MODE] 부정 프롬프트 적용 실패: {rep['filename']} - {e}")
+                import traceback
+                traceback.print_exc()
+
+        return web.json_response({
+            "success": True,
+            "total": len(reps),
+            "success_count": success_count,
+            "fail_count": fail_count,
+        })
+    except Exception as e:
+        print(f"[ASSET_MODE] batch_set_negative 오류: {e}")
+        import traceback
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
 app.router.add_get("/api/asset_mode/status", handle_api_asset_mode_status)
 app.router.add_get("/api/asset_mode/tags", handle_api_asset_mode_tags_get)
 app.router.add_post("/api/asset_mode/tags", handle_api_asset_mode_tags_post)
@@ -4078,6 +4126,7 @@ app.router.add_post("/api/asset_mode/upload_reference", handle_api_asset_mode_up
 app.router.add_post("/api/asset_mode/batch_analyze_representatives", handle_api_asset_mode_batch_analyze)
 app.router.add_post("/api/asset_mode/analyze_selected", handle_api_asset_mode_analyze_selected)
 app.router.add_post("/api/asset_mode/cancel_analyze", handle_api_asset_mode_cancel_analyze)
+app.router.add_post("/api/asset_mode/batch_set_negative", handle_api_asset_mode_batch_set_negative)
 app.router.add_get("/api/expression_profile/scan", handle_api_expression_profile_scan)
 app.router.add_post("/api/expression_profile/create_folders", handle_api_expression_profile_create_folders)
 app.router.add_get("/api/asset_mode/name_mapping/{character}", handle_api_asset_mode_name_mapping_get)

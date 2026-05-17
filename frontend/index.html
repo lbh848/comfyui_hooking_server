@@ -2904,6 +2904,13 @@
                         <button id="au-batch-rep-btn" onclick="auBatchAnalyzeRepresentatives()" style="width:100%; background:#2E7D32; color:#fff; border:none; padding:6px 10px; border-radius:6px; cursor:pointer; font-size:0.82rem; font-weight:600; margin-top:4px; opacity:0.5;">대표이미지 일괄 태그 분석</button>
                         <div id="au-analyze-status" style="font-size:0.72rem; color:var(--text2); margin-top:4px; display:none;"></div>
                     </div>
+
+                    <!-- 부정 프롬프트 일괄 적용 -->
+                    <div style="background:rgba(156,39,176,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
+                        <div class="section-title">부정 프롬프트 일괄 적용</div>
+                        <div id="au-negative-preset-select" style="margin-bottom:6px;"></div>
+                        <button id="au-batch-negative-btn" onclick="auBatchSetNegative()" style="width:100%; background:#9C27B0; color:#fff; border:none; padding:6px 10px; border-radius:6px; cursor:pointer; font-size:0.82rem; font-weight:600;">대표이미지에 부정 프롬프트 적용</button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -11249,7 +11256,7 @@
                 }
 
                 renderAssetUI();
-
+                auRenderNegativePresetSelect();
                 if (isFirstLoad) {
                     const h = { 'Content-Type': 'application/json' };
                     fetch('/api/asset_mode/tags', { method: 'POST', headers: h, body: JSON.stringify({ action: 'load_quality_preset', name: '' }) });
@@ -13289,6 +13296,100 @@
                 showToast('일괄 분석 오류', 'error');
             } finally {
                 auSetAnalyzingState(false);
+            }
+        }
+
+        function auRenderNegativePresetSelect() {
+            const container = document.getElementById('au-negative-preset-select');
+            if (!container || !assetTags) return;
+            container.innerHTML = buildCustomSelectHTML(
+                assetTags.negative_presets || {},
+                '',
+                '-- 부정 프리셋 선택 --',
+                'au-negative-preset'
+            );
+            // 커스텀 드롭다운 이벤트 바인딩
+            const cs = container.querySelector('.custom-select[data-field="au-negative-preset"]');
+            if (!cs) return;
+            const valueEl = cs.querySelector('.custom-select-value');
+            const searchInput = cs.querySelector('.custom-select-search');
+            const optionList = cs.querySelector('.custom-select-option-list');
+
+            cs.addEventListener('click', (e) => {
+                if (e.target.closest('.custom-select-option')) return;
+                const wasOpen = cs.classList.contains('open');
+                document.querySelectorAll('.custom-select.open').forEach(o => o.classList.remove('open'));
+                if (!wasOpen) {
+                    cs.classList.add('open');
+                    searchInput.value = '';
+                    filterCustomOptions(optionList, '');
+                    requestAnimationFrame(() => searchInput.focus());
+                }
+            });
+
+            searchInput.addEventListener('input', (e) => {
+                e.stopPropagation();
+                filterCustomOptions(optionList, searchInput.value);
+            });
+            searchInput.addEventListener('click', (e) => e.stopPropagation());
+
+            optionList.querySelectorAll('.custom-select-option').forEach(opt => {
+                opt.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    valueEl.textContent = opt.textContent;
+                    optionList.querySelectorAll('.custom-select-option').forEach(o => o.classList.remove('selected'));
+                    opt.classList.add('selected');
+                    cs.classList.remove('open');
+                });
+            });
+        }
+
+        async function auBatchSetNegative() {
+            if (auNavLevel < 1 || !auNavCharacter) {
+                showToast('캐릭터를 먼저 선택하세요', 'error');
+                return;
+            }
+            const container = document.getElementById('au-negative-preset-select');
+            const selEl = container ? container.querySelector('.custom-select-value') : null;
+            const presetName = selEl ? selEl.textContent : '';
+            if (!presetName || presetName.startsWith('--')) {
+                showToast('부정 프리셋를 먼저 선택하세요', 'error');
+                return;
+            }
+            const presetTags = assetTags.negative_presets?.[presetName];
+            if (!presetTags || !Array.isArray(presetTags) || presetTags.length === 0) {
+                showToast('선택한 프리셋에 태그가 없습니다', 'error');
+                return;
+            }
+            const negativeTags = presetTags.join(', ');
+            if (!confirm(`대표이미지에 부정 프롬프트를 일괄 적용하시겠습니까?\n기존 부정 프롬프트가 덮어씌워집니다.`)) return;
+
+            const btn = document.getElementById('au-batch-negative-btn');
+            btn.disabled = true;
+            btn.textContent = '적용 중...';
+            try {
+                const resp = await fetch('/api/asset_mode/batch_set_negative', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ character: auNavCharacter, negative_tags: negativeTags }),
+                });
+                const data = await resp.json();
+                if (!data.success) {
+                    showToast(data.error || '적용 실패', 'error');
+                    return;
+                }
+                const total = data.total || 0;
+                const ok = data.success_count || 0;
+                const fail = data.fail_count || 0;
+                showToast(
+                    `${ok}장에 부정 프롬프트 적용 완료` + (fail > 0 ? `, ${fail}건 실패` : ''),
+                    fail > 0 ? 'warning' : 'success'
+                );
+            } catch (e) {
+                showToast('부정 프롬프트 적용 오류: ' + e.message, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '대표이미지에 부정 프롬프트 적용';
             }
         }
 
