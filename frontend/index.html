@@ -3430,9 +3430,23 @@
 
                     <!-- 학습 시작 / 디버그 (항목 선택 시) -->
                     <div id="lora-training-export-section" style="display:none; margin-bottom:8px;">
-                        <button onclick="startLoraTraining()" style="width:100%; padding:8px; background:rgba(80,180,120,0.2); color:var(--text); border:1px solid rgba(80,180,120,0.3); border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">
+                        <button id="lora-training-start-btn" onclick="startLoraTraining()" style="width:100%; padding:8px; background:rgba(80,180,120,0.2); color:var(--text); border:1px solid rgba(80,180,120,0.3); border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">
                             학습 시작
                         </button>
+                        <!-- 학습 진행률 표시 -->
+                        <div id="lora-training-progress" style="display:none; margin-top:8px; padding:10px; background:var(--surface2); border-radius:8px; border:1px solid var(--border);">
+                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                                <span id="lora-progress-phase" style="font-size:0.8rem; font-weight:600; color:var(--accent);">준비 중...</span>
+                                <span id="lora-progress-pct" style="font-size:0.75rem; color:var(--text-secondary);">0%</span>
+                            </div>
+                            <div style="width:100%; height:6px; background:var(--bg); border-radius:3px; overflow:hidden;">
+                                <div id="lora-progress-bar" style="width:0%; height:100%; background:var(--accent); border-radius:3px; transition:width 0.3s ease;"></div>
+                            </div>
+                            <div id="lora-progress-detail" style="margin-top:6px; font-size:0.72rem; color:var(--text-secondary); display:flex; justify-content:space-between;">
+                                <span id="lora-progress-step"></span>
+                                <span id="lora-progress-time"></span>
+                            </div>
+                        </div>
                         <button onclick="exportLoraTrainingImages()" style="width:100%; padding:6px; margin-top:4px; background:var(--surface2); color:var(--text-secondary); border:1px solid var(--border); border-radius:6px; cursor:pointer; font-size:0.75rem;">
                             이미지 강제 전송(디버깅용)
                         </button>
@@ -4315,6 +4329,12 @@
                             updateBatchModeUI();
                             showToast('배치 재전송 예약이 완료되었습니다', 'success');
                             loadBackups(true);
+                            break;
+                        // LoRA 학습 진행률
+                        case 'lora_training_progress':
+                            if (typeof updateLoraTrainingUI === 'function') {
+                                updateLoraTrainingUI(msg.data.phase, msg.data);
+                            }
                             break;
                         // 공용 이미지 생성 진행도
                         case 'generation_progress':
@@ -9787,11 +9807,84 @@
                 });
                 if (resp.success) {
                     const errs = resp.node_errors && Object.keys(resp.node_errors).length > 0;
-                    showToast(`학습 시작 완료 (이미지 ${resp.exported_count}장 전송, prompt_id: ${resp.prompt_id})`, errs ? 'warning' : 'success');
+                    showToast(`학습 시작 완료 (이미지 ${resp.exported_count}장 전송)`, errs ? 'warning' : 'success');
+                    // 진행률 UI 표시
+                    showLoraTrainingProgress();
                 } else {
                     showToast(resp.error || '학습 시작 실패', 'error');
                 }
             } catch (e) { console.error('[LORA] 학습 시작 실패:', e); showToast('학습 시작 실패', 'error'); }
+        }
+
+        function showLoraTrainingProgress() {
+            const el = document.getElementById('lora-training-progress');
+            if (el) el.style.display = 'block';
+            const btn = document.getElementById('lora-training-start-btn');
+            if (btn) { btn.disabled = true; btn.style.opacity = '0.5'; btn.style.cursor = 'not-allowed'; }
+            updateLoraTrainingUI('preparing', { message: '학습 준비 중...' });
+        }
+
+        function updateLoraTrainingUI(phase, data) {
+            const phaseEl = document.getElementById('lora-progress-phase');
+            const pctEl = document.getElementById('lora-progress-pct');
+            const barEl = document.getElementById('lora-progress-bar');
+            const stepEl = document.getElementById('lora-progress-step');
+            const timeEl = document.getElementById('lora-progress-time');
+
+            if (phase === 'preparing') {
+                if (phaseEl) phaseEl.textContent = '준비 중';
+                if (pctEl) pctEl.textContent = '';
+                if (barEl) barEl.style.width = '0%';
+                if (stepEl) stepEl.textContent = data.message || '';
+                if (timeEl) timeEl.textContent = '';
+            } else if (phase === 'training') {
+                const step = data.step || 0;
+                const total = data.total || 1;
+                const pct = Math.round(step / total * 100);
+                if (phaseEl) phaseEl.textContent = '학습 진행 중';
+                if (pctEl) pctEl.textContent = pct + '%';
+                if (barEl) { barEl.style.width = pct + '%'; barEl.style.background = 'var(--accent)'; }
+                if (stepEl) stepEl.textContent = `스텝 ${step}/${total}`;
+                const remainMin = data.remaining_min || 0;
+                const elapsedSec = data.elapsed_sec || 0;
+                const elapsedMin = (elapsedSec / 60).toFixed(1);
+                if (timeEl) timeEl.textContent = `경과 ${elapsedMin}분 / 남은 ${remainMin.toFixed(1)}분`;
+            } else if (phase === 'training_complete') {
+                if (phaseEl) phaseEl.textContent = '학습 완료';
+                if (pctEl) pctEl.textContent = '100%';
+                if (barEl) { barEl.style.width = '100%'; barEl.style.background = '#4caf50'; }
+                if (stepEl) stepEl.textContent = data.message || '학습 완료!';
+                if (timeEl) timeEl.textContent = '';
+            } else if (phase === 'preview' || phase === 'preview_start') {
+                const current = data.current || 0;
+                const total = data.total || 1;
+                const pct = total > 0 ? Math.round(current / total * 100) : 0;
+                if (phaseEl) phaseEl.textContent = '프리뷰 이미지 생성';
+                if (pctEl) pctEl.textContent = pct + '%';
+                if (barEl) { barEl.style.width = pct + '%'; barEl.style.background = '#2196f3'; }
+                if (stepEl) stepEl.textContent = `프리뷰 ${current}/${total}`;
+                const remainMin = data.remaining_min || 0;
+                if (timeEl) timeEl.textContent = remainMin > 0 ? `남은 약 ${remainMin.toFixed(1)}분` : '';
+            } else if (phase === 'all_complete') {
+                if (phaseEl) { phaseEl.textContent = '전체 완료!'; phaseEl.style.color = '#4caf50'; }
+                if (pctEl) pctEl.textContent = '';
+                if (barEl) { barEl.style.width = '100%'; barEl.style.background = '#4caf50'; }
+                if (stepEl) stepEl.textContent = data.message || '모든 작업 완료';
+                if (timeEl) timeEl.textContent = '';
+                // 학습 시작 버튼 복원
+                const btn = document.getElementById('lora-training-start-btn');
+                if (btn) { btn.disabled = false; btn.style.opacity = '1'; btn.style.cursor = 'pointer'; }
+                showToast('LoRA 학습+프리뷰가 완료되었습니다!', 'success');
+            } else if (phase === 'error') {
+                if (phaseEl) { phaseEl.textContent = '에러 발생'; phaseEl.style.color = 'var(--error)'; }
+                if (pctEl) pctEl.textContent = '';
+                if (barEl) { barEl.style.background = 'var(--error)'; }
+                if (stepEl) stepEl.textContent = data.message || '알 수 없는 에러';
+                if (timeEl) timeEl.textContent = '';
+                const btn = document.getElementById('lora-training-start-btn');
+                if (btn) { btn.disabled = false; btn.style.opacity = '1'; btn.style.cursor = 'pointer'; }
+                showToast('학습 중 에러: ' + (data.message || ''), 'error');
+            }
         }
 
         async function exportLoraTrainingImages() {
@@ -10114,40 +10207,35 @@
             const genH = parseInt(document.getElementById('lora-cfg-genh').value) || 1024;
             const loraSavePath = loraCurrentCharacter + '/Lora/' + loraCurrentEntry;
 
-            // 긍정: [1]트리거 프롬프트\n...\n[PROFILE]\n...\n[TEST_POSITIVE]\n...\n[END]
+            // 긍정: [1]트리거 프롬프트\n...\n[PROFILE]\n...\n[TEST_POSITIVE]\n...\n[TEST_NEGATIVE]\n...\n[END]
             const trigger = document.getElementById('lora-entry-trigger').value.trim();
             let positiveRaw = '';
             let negativeRaw = '';
             images.forEach((img, i) => {
                 const triggerPrefix = trigger ? trigger + ', ' : '';
                 positiveRaw += `[${i + 1}]${triggerPrefix}${img.positive || '(프롬프트 없음)'}\n`;
-                negativeRaw += `[${i + 1}]${img.negative || '(프롬프트 없음)'}\n`;
+                negativeRaw += `[${i + 1}]${img.negative || ''}\n`;
             });
 
-            // 설정 블록 (공통)
+            // 설정 블록 (긍정만)
             let configBlock = `[PROFILE]\n${profile || '(미입력)'}\n[N_IMG]\n${nImg}\n[STEP_PER_IMAGE]\n${stepPerImage}\n[IL_RATE]\n${ilRate}\n[SAVE_PER_STEP]\n${savePerStep}\n[MULTI_IMG_FOLDER_NAME]\n${folderName || '(미입력)'}\n[LORA_SAVE_PATH]\n${loraSavePath}\n[GEN_W]\n${genW}\n[GEN_H]\n${genH}`;
 
-            // TEST_POSITIVE
-            let testPosBlock = '';
+            // TEST_POSITIVE + TEST_NEGATIVE (긍정 프롬프트 안에 모두 포함)
+            let testBlock = '';
             if (testImages.length > 0) {
-                testPosBlock = '\n[TEST_POSITIVE]\n';
+                testBlock = '\n[TEST_POSITIVE]\n';
                 testImages.forEach((img, i) => {
                     const triggerPrefix = trigger ? trigger + ', ' : '';
-                    testPosBlock += `[${i + 1}]${triggerPrefix}${img.positive || '(프롬프트 없음)'}\n`;
+                    testBlock += `[${i + 1}]${triggerPrefix}${img.positive || '(프롬프트 없음)'}\n`;
                 });
-            }
-
-            // TEST_NEGATIVE
-            let testNegBlock = '';
-            if (testImages.length > 0) {
-                testNegBlock = '\n[TEST_NEGATIVE]\n';
+                testBlock += '[TEST_NEGATIVE]\n';
                 testImages.forEach((img, i) => {
-                    testNegBlock += `[${i + 1}]${img.negative || '(프롬프트 없음)'}\n`;
+                    testBlock += `[${i + 1}]${img.negative || ''}\n`;
                 });
             }
 
-            positiveRaw += configBlock + testPosBlock + '\n[END]';
-            negativeRaw += configBlock + testNegBlock + '\n[END]';
+            positiveRaw += configBlock + testBlock + '\n[END]';
+            // 부정: 이미지별 태그만, [END] 없음
 
             let overlay = document.getElementById('lora-raw-overlay');
             if (overlay) overlay.remove();

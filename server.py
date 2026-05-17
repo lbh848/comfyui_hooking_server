@@ -4678,7 +4678,12 @@ def _build_lora_training_text(images: list, trigger: str, profile: str, step: in
             prefix = f"{trigger}, " if trigger else ""
             lines.append(f"[{i}]{prefix}{img.get('positive', '(프롬프트 없음)')}")
         else:
-            lines.append(f"[{i}]{img.get('negative', '(프롬프트 없음)')}")
+            # 부정 프롬프트: 이미지별 태그만, [END] 없음
+            lines.append(f"[{i}]{img.get('negative', '')}")
+
+    # 부정 프롬프트는 여기서 종료 ([END] 없음)
+    if field == "negative":
+        return "\n".join(lines)
     lines.append("[PROFILE]")
     lines.append(profile or "(미입력)")
     lines.append("[N_IMG]")
@@ -4697,20 +4702,81 @@ def _build_lora_training_text(images: list, trigger: str, profile: str, step: in
     lines.append(str(gen_w))
     lines.append("[GEN_H]")
     lines.append(str(gen_h))
-    # TEST_POSITIVE / TEST_NEGATIVE
+    # TEST_POSITIVE
     if test_images:
-        if field == "positive":
-            lines.append("[TEST_POSITIVE]")
-        else:
-            lines.append("[TEST_NEGATIVE]")
+        lines.append("[TEST_POSITIVE]")
         for i, img in enumerate(test_images, start=1):
-            if field == "positive":
-                prefix = f"{trigger}, " if trigger else ""
-                lines.append(f"[{i}]{prefix}{img.get('positive', '(프롬프트 없음)')}")
-            else:
-                lines.append(f"[{i}]{img.get('negative', '(프롬프트 없음)')}")
+            prefix = f"{trigger}, " if trigger else ""
+            lines.append(f"[{i}]{prefix}{img.get('positive', '(프롬프트 없음)')}")
+        # TEST_NEGATIVE (긍정 프롬프트 안에 포함)
+        lines.append("[TEST_NEGATIVE]")
+        for i, img in enumerate(test_images, start=1):
+            lines.append(f"[{i}]{img.get('negative', '')}")
     lines.append("[END]")
     return "\n".join(lines)
+
+
+# ─── LoRA 학습 진행률 백그라운드 모니터링 ──────────────────
+async def _monitor_lora_training(prompt_id: str):
+    """ComfyUI WebSocket에 연결해서 학습 진행률을 프론트엔드에 전달하는 백그라운드 태스크."""
+    ws_url = (
+        f"ws://{REAL_COMFY_HOST}:{REAL_COMFY_PORT}/ws"
+        f"?clientId=lora_train_{uuid.uuid4().hex[:8]}"
+    )
+    print(f"[LORA_MONITOR] 백그라운드 모니터링 시작: prompt_id={prompt_id}")
+    try:
+        async with aiohttp.ClientSession() as ws_session:
+            async with ws_session.ws_connect(ws_url) as ws:
+                async for msg in ws:
+                    if msg.type == aiohttp.WSMsgType.TEXT:
+                        data = json.loads(msg.data)
+                        msg_type = data.get("type", "")
+                        msg_data = data.get("data", {})
+
+                        # md_soya_progress 커스텀 메시지 → 프론트엔드에 전달
+                        if msg_type == "md_soya_progress":
+                            phase = msg_data.get("phase", "")
+                            print(f"[LORA_MONITOR] phase={phase}, data={json.dumps(msg_data, ensure_ascii=False)[:200]}")
+                            await notify_frontend("lora_training_progress", msg_data)
+                            # all_complete이면 모니터링 종료
+                            if phase == "all_complete":
+                                print(f"[LORA_MONITOR] 학습+프리뷰 전체 완료")
+                                return
+
+                        # executing node=None → 워크플로우 완료 (md_soya_progress가 오지 않은 경우 대비)
+                        if msg_type == "executing":
+                            exec_prompt = msg_data.get("prompt_id", "")
+                            exec_node = msg_data.get("node")
+                            if exec_prompt == prompt_id and exec_node is None:
+                                print(f"[LORA_MONITOR] 워크플로우 실행 완료 (executing node=None)")
+                                await notify_frontend("lora_training_progress", {
+                                    "phase": "all_complete",
+                                    "message": "Workflow execution finished"
+                                })
+                                return
+
+                        # 실행 에러
+                        if msg_type == "execution_error":
+                            err_prompt = msg_data.get("data", {}).get("prompt_id", "")
+                            if err_prompt == prompt_id:
+                                err_msg = msg_data.get("data", {}).get("exception_message", "Unknown error")
+                                print(f"[LORA_MONITOR] 실행 에러: {err_msg}")
+                                await notify_frontend("lora_training_progress", {
+                                    "phase": "error",
+                                    "message": err_msg
+                                })
+                                return
+
+                    elif msg.type in (aiohttp.WSMsgType.ERROR, aiohttp.WSMsgType.CLOSED):
+                        print(f"[LORA_MONITOR] WebSocket 연결 종료/에러")
+                        break
+    except Exception as e:
+        print(f"[LORA_MONITOR] 모니터링 예외: {e}")
+        traceback.print_exc()
+        await notify_frontend("lora_training_progress", {
+            "phase": "error",
+            "message": f"모니터링 연결 실패: {e}"
+        })
 
 
 async def handle_api_lora_training_start(request):
@@ -4790,6 +4856,10 @@ async def handle_api_lora_training_start(request):
         prompt_id, submit_result = await submit_to_real_comfy(wf)
         node_errors = submit_result.get("node_errors", {})
         print(f"[LORA_TRAIN] 학습 워크플로우 제출 완료: prompt_id={prompt_id}")
+
+        # 8. 백그라운드 진행률 모니터링 시작
+        asyncio.create_task(_monitor_lora_training(prompt_id))
+        print(f"[LORA_TRAIN] 백그라운드 모니터링 태스크 시작됨")
 
         return web.json_response({
             "success": True,
