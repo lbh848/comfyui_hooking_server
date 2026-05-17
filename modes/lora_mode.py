@@ -8,6 +8,7 @@ import os
 import json
 import shutil
 import traceback
+from PIL import Image
 from modes.asset_mode import ASSET_DIR, TAGS_FILE, AssetMode
 
 LORA_EXTENSIONS = {".safetensors", ".pt", ".ckpt", ".bin"}
@@ -404,6 +405,13 @@ def list_training_images(character: str, entry: str = "") -> list:
 
         try:
             fstat = os.stat(fpath)
+            # 이미지 해상도 읽기
+            width, height = 0, 0
+            try:
+                with Image.open(fpath) as im:
+                    width, height = im.size
+            except Exception as e:
+                print(f"[LORA] 이미지 해상도 읽기 실패: {fpath} - {e}")
             images.append({
                 "filename": fname,
                 "positive": positive,
@@ -413,6 +421,8 @@ def list_training_images(character: str, entry: str = "") -> list:
                 "is_representative": fname == representative,
                 "size": fstat.st_size,
                 "modified": fstat.st_mtime,
+                "width": width,
+                "height": height,
             })
         except Exception as e:
             print(f"[LORA] 학습 이미지 정보 읽기 실패: {fpath} - {e}")

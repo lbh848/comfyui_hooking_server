@@ -3529,6 +3529,10 @@
                                 </label>
                                 <span id="lora-cfg-upscale-status" class="toggle-status off">OFF</span>
                             </div>
+                            <div>
+                                <label style="font-size:0.7rem; color:var(--text-secondary); display:block; margin-bottom:2px;">RESOLUTION (업스케일링 해상도)</label>
+                                <input type="number" id="lora-cfg-resolution" value="1024" min="1" style="width:100%; padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); font-size:0.8rem; box-sizing:border-box;">
+                            </div>
                         </div>
                         <div style="display:flex; gap:4px; margin-top:8px;">
                             <button onclick="saveLoraTrainingConfig()" style="flex:1; padding:6px; background:var(--accent); color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600;">저장</button>
@@ -10531,6 +10535,7 @@
                         <div style="position:relative; overflow:hidden; border-radius:8px;">
                             <img src="/api/lora/training_image/${enc(loraCurrentCharacter)}/${enc(loraCurrentEntry)}/${enc(img.filename)}" style="width:100%; display:block; cursor:zoom-in;" onclick="event.stopPropagation(); openLightbox(this.src)">
                             ${img.is_representative ? '<div style="position:absolute; top:4px; left:4px; z-index:10; background:rgba(255,193,7,0.95); color:#000; font-size:0.7rem; font-weight:700; padding:3px 8px; border-radius:4px;">대표</div>' : ''}
+                            ${img.width && img.height ? '<div style="position:absolute; top:4px; right:4px; z-index:10; background:rgba(0,0,0,0.7); color:#fff; font-size:0.65rem; padding:2px 6px; border-radius:4px;">' + img.width + 'x' + img.height + '</div>' : ''}
                         </div>
                         <div style="padding:8px;">
                             <div style="font-size:0.75rem; color:var(--text-secondary); margin-bottom:4px;">${escapeHtml(img.filename)}</div>
@@ -10569,6 +10574,7 @@
                     const upscaleStatus = document.getElementById('lora-cfg-upscale-status');
                     upscaleStatus.textContent = cfg.upscale ? 'ON' : 'OFF';
                     upscaleStatus.className = 'toggle-status ' + (cfg.upscale ? 'on' : 'off');
+                    document.getElementById('lora-cfg-resolution').value = cfg.resolution || 1024;
                     // lora_save_path 자동 생성
                     document.getElementById('lora-cfg-save-path').textContent = loraCurrentCharacter + '/Lora/' + loraCurrentEntry;
                 }
@@ -10586,6 +10592,7 @@
                 gen_w: parseInt(document.getElementById('lora-cfg-genw').value) || 1024,
                 gen_h: parseInt(document.getElementById('lora-cfg-genh').value) || 1024,
                 upscale: document.getElementById('lora-cfg-upscale').checked,
+                resolution: parseInt(document.getElementById('lora-cfg-resolution').value) || 1024,
                 lora_save_path: loraCurrentCharacter + '/Lora/' + loraCurrentEntry,
             };
             try {
@@ -10637,6 +10644,7 @@
             const genH = parseInt(document.getElementById('lora-cfg-genh').value) || 1024;
             const loraSavePath = loraCurrentCharacter + '/Lora/' + loraCurrentEntry;
             const upscale = document.getElementById('lora-cfg-upscale').checked;
+            const resolution = parseInt(document.getElementById('lora-cfg-resolution').value) || 1024;
 
             // 긍정: [1]트리거 프롬프트\n...\n[PROFILE]\n...\n[TEST_POSITIVE]\n...\n[TEST_NEGATIVE]\n...\n[END]
             const trigger = document.getElementById('lora-entry-trigger').value.trim();
@@ -10649,7 +10657,7 @@
             });
 
             // 설정 블록 (긍정만)
-            let configBlock = `[PROFILE]\n${profile || '(미입력)'}\n[N_IMG]\n${nImg}\n[STEP_PER_IMAGE]\n${stepPerImage}\n[IL_RATE]\n${ilRate}\n[SAVE_PER_STEP]\n${savePerStep}\n[MULTI_IMG_FOLDER_NAME]\n${folderName || '(미입력)'}\n[LORA_SAVE_PATH]\n${loraSavePath}\n[GEN_W]\n${genW}\n[GEN_H]\n${genH}\n[UPSCALE]\n${upscale}`;
+            let configBlock = `[PROFILE]\n${profile || '(미입력)'}\n[N_IMG]\n${nImg}\n[STEP_PER_IMAGE]\n${stepPerImage}\n[IL_RATE]\n${ilRate}\n[SAVE_PER_STEP]\n${savePerStep}\n[MULTI_IMG_FOLDER_NAME]\n${folderName || '(미입력)'}\n[LORA_SAVE_PATH]\n${loraSavePath}\n[GEN_W]\n${genW}\n[GEN_H]\n${genH}\n[UPSCALE]\n${upscale}\n[RESOLUTION]\n${resolution}`;
 
             // TEST_POSITIVE + TEST_NEGATIVE (긍정 프롬프트 안에 모두 포함)
             let testBlock = '';

@@ -4950,7 +4950,7 @@ async def handle_api_lora_training_export(request):
 app.router.add_post("/api/lora/training_images/export", handle_api_lora_training_export)
 
 
-def _build_lora_training_text(images: list, trigger: str, profile: str, step: int, il_rate: float, save_step: int, folder: str, field: str = "positive", lora_save_path: str = "", gen_w: int = 1024, gen_h: int = 1024, upscale: bool = False, test_images: list = None) -> str:
+def _build_lora_training_text(images: list, trigger: str, profile: str, step: int, il_rate: float, save_step: int, folder: str, field: str = "positive", lora_save_path: str = "", gen_w: int = 1024, gen_h: int = 1024, upscale: bool = False, resolution: int = 1024, test_images: list = None) -> str:
     """LoRA 학습용 프롬프트 텍스트 생성 (긍정/부정)"""
     lines = []
     for i, img in enumerate(images, start=1):
@@ -4984,6 +4984,8 @@ def _build_lora_training_text(images: list, trigger: str, profile: str, step: in
     lines.append(str(gen_h))
     lines.append("[UPSCALE]")
     lines.append(str(upscale).lower())
+    lines.append("[RESOLUTION]")
+    lines.append(str(resolution))
     # TEST_POSITIVE
     if test_images:
         lines.append("[TEST_POSITIVE]")
@@ -5098,6 +5100,7 @@ async def handle_api_lora_training_start(request):
         gen_h = training_config.get("gen_h", 1024)
         lora_save_path = training_config.get("lora_save_path", f"{character}/Lora/{entry}")
         upscale = training_config.get("upscale", False)
+        resolution = training_config.get("resolution", 1024)
 
         # 3. 학습 이미지 + 프롬프트 로드
         images = list_training_images(character, entry)
@@ -5108,8 +5111,8 @@ async def handle_api_lora_training_start(request):
         from modes.lora_mode import list_test_images
         test_images = list_test_images(character, entry)
 
-        positive_text = _build_lora_training_text(images, trigger, profile, step, il_rate, save_step, folder, "positive", lora_save_path, gen_w, gen_h, upscale, test_images)
-        negative_text = _build_lora_training_text(images, trigger, profile, step, il_rate, save_step, folder, "negative", lora_save_path, gen_w, gen_h, upscale, test_images)
+        positive_text = _build_lora_training_text(images, trigger, profile, step, il_rate, save_step, folder, "positive", lora_save_path, gen_w, gen_h, upscale, resolution, test_images)
+        negative_text = _build_lora_training_text(images, trigger, profile, step, il_rate, save_step, folder, "negative", lora_save_path, gen_w, gen_h, upscale, resolution, test_images)
 
         # 5. 워크플로우 로드 & 변환
         workflow_path = config.get("lora_training_workflow_source_path", "")
