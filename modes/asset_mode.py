@@ -1241,8 +1241,13 @@ class AssetMode:
             images.append({
                 "filename": fname,
                 "is_representative": fname == representative,
+                "has_prompt": bool(prompt_data),
                 "positive": prompt_data.get("positive", ""),
                 "negative": prompt_data.get("negative", ""),
+                "prompt_character": prompt_data.get("character", ""),
+                "prompt_appearance": prompt_data.get("appearance", ""),
+                "prompt_outfit": prompt_data.get("outfit", ""),
+                "prompt_expression": prompt_data.get("expression", ""),
             })
         return {"images": images, "representative": representative}
 
@@ -1363,6 +1368,21 @@ class AssetMode:
         with open(final_path, "wb") as f:
             f.write(image_data)
 
+        # 업로드 이미지용 빈 프롬프트 JSON 생성
+        prompt_path = os.path.join(img_dir, f"{os.path.splitext(os.path.basename(final_path))[0]}_prompt.json")
+        try:
+            with open(prompt_path, "w", encoding="utf-8") as pf:
+                json.dump({
+                    "positive": "",
+                    "negative": "",
+                    "character": character,
+                    "appearance": "",
+                    "outfit": outfit,
+                    "expression": expression,
+                }, pf, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"[ASSET_MODE] 프롬프트 JSON 생성 실패: {e}")
+
         print(f"[ASSET_MODE] 이미지 업로드: {final_path}")
         return {"success": True, "filename": os.path.basename(final_path)}
 
@@ -1408,6 +1428,35 @@ class AssetMode:
                         "representative": rep_file,
                         "image_count": image_count,
                     })
+        return results
+
+    def batch_analyze_representatives(self, character: str) -> list[dict]:
+        """대표이미지가 있는 조합의 실제 파일 경로 목록을 반환."""
+        gallery = self.list_character_gallery(character)
+        results = []
+        char_dir = os.path.join(ASSET_DIR, self._safe_dirname(character))
+
+        for item in gallery:
+            rep_file = item.get("representative", "")
+            if not rep_file:
+                continue
+            filepath = os.path.join(
+                char_dir,
+                self._safe_dirname(item["outfit"]),
+                self._safe_dirname(item["expression"]),
+                rep_file,
+            )
+            if os.path.isfile(filepath):
+                results.append({
+                    "outfit": item["outfit"],
+                    "expression": item["expression"],
+                    "filename": rep_file,
+                    "filepath": filepath,
+                })
+            else:
+                print(f"[ASSET_MODE] 대표이미지 파일 없음: {filepath}")
+
+        print(f"[ASSET_MODE] 대표이미지 일괄 분석 대상: {len(results)}개")
         return results
 
     # ─── 이름 치환 규칙 ───────────────────────────────────────
