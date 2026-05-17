@@ -509,6 +509,11 @@
             object-fit: contain;
         }
 
+        /* 학습된 LoRA 카드 삭제 버튼 호버 표시 */
+        div:hover > .trained-delete-btn {
+            opacity: 1 !important;
+        }
+
         /* ─── 토스트 알림 ─── */
         .toast {
             position: fixed;
@@ -3315,7 +3320,9 @@
                     </div>
                     <!-- 학습된 LoRA 세션 -->
                     <div id="lora-trained-section" style="display:none; padding:16px;">
-                        <div style="font-weight:600; font-size:0.95rem; margin-bottom:8px;">학습된 LoRA</div>
+                        <div style="font-weight:700; font-size:1.1rem; margin-bottom:12px; padding-bottom:6px; border-bottom:1px solid var(--border);">학습된 LoRA</div>
+                        <!-- 대표 LoRA -->
+                        <div id="lora-representative" style="display:none; margin-bottom:16px;"></div>
                         <!-- 세션 목록 -->
                         <div id="lora-trained-sessions" style="display:none;"></div>
                         <!-- step 목록 -->
@@ -3326,9 +3333,11 @@
                             학습된 LoRA가 없습니다.
                         </div>
                     </div>
+                    <!-- 구분선 -->
+                    <div id="lora-section-divider" style="display:none; margin:0 16px; border-top:1px solid var(--border);"></div>
                     <!-- 학습용 이미지 그리드 -->
                     <div id="lora-training-section" style="display:none; padding:16px;">
-                        <div style="font-weight:600; font-size:0.95rem; margin-bottom:8px;">학습용 이미지</div>
+                        <div style="font-weight:700; font-size:1.1rem; margin-bottom:12px; padding-bottom:6px; border-bottom:1px solid var(--border);">학습용 이미지</div>
                         <div class="asset-image-grid" id="lora-training-grid" style="display:none;"></div>
                         <div id="lora-training-empty" style="display:none; text-align:center; padding:32px; color:var(--text-secondary);">
                             학습용 이미지가 없습니다. 사이드바에서 이미지를 추가하세요.
@@ -3336,7 +3345,7 @@
                     </div>
                     <!-- 테스트 이미지 그리드 -->
                     <div id="lora-test-section" style="display:none; padding:16px;">
-                        <div style="font-weight:600; font-size:0.95rem; margin-bottom:8px;">테스트 이미지</div>
+                        <div style="font-weight:700; font-size:1.1rem; margin-bottom:12px; padding-bottom:6px; border-bottom:1px solid var(--border);">테스트 이미지</div>
                         <div class="asset-image-grid" id="lora-test-grid" style="display:none;"></div>
                         <div id="lora-test-empty" style="display:none; text-align:center; padding:32px; color:var(--text-secondary);">
                             테스트 이미지가 없습니다. 사이드바에서 이미지를 추가하세요.
@@ -9633,6 +9642,8 @@
         function _loraHideAll() {
             document.getElementById('lora-entries-section').style.display = 'none';
             document.getElementById('lora-trained-section').style.display = 'none';
+            document.getElementById('lora-representative').style.display = 'none';
+            document.getElementById('lora-section-divider').style.display = 'none';
             document.getElementById('lora-training-section').style.display = 'none';
             document.getElementById('lora-test-section').style.display = 'none';
             document.getElementById('lora-entry-info').style.display = 'none';
@@ -9714,9 +9725,15 @@
                 grid.style.display = '';
                 grid.innerHTML = entries.map(e => {
                     const enc2 = encodeURIComponent;
-                    const thumbSrc = e.representative
-                        ? `/api/lora/entry_image/${enc2(character)}/${enc2(e.name)}/${enc2(e.representative)}`
-                        : '';
+                    let thumbSrc = '';
+                    if (e.representative) {
+                        try {
+                            const rep = JSON.parse(e.representative);
+                            thumbSrc = rep.preview || '';
+                        } catch (_) {
+                            thumbSrc = `/api/lora/entry_image/${enc2(character)}/${enc2(e.name)}/${enc2(e.representative)}`;
+                        }
+                    }
                     return `
                     <div class="asset-gallery-card" onclick="enterLoraEntry('${escapeHtml(e.name)}')">
                         ${thumbSrc
@@ -9762,6 +9779,7 @@
                         document.getElementById('lora-entry-trigger').value = entry.trigger || '';
                         document.getElementById('lora-entry-description').value = entry.description || '';
                         document.getElementById('lora-entry-info').style.display = '';
+                        loraEntryRepresentative = entry.representative || '';
                     }
                 }
             } catch (e) { console.error('[LORA_MANAGE] 항목 정보 로드 실패:', e); }
@@ -9771,6 +9789,7 @@
 
         // ─── 학습된 LoRA (lora_load_path) ─────────────────────────
         let loraCurrentTrainedSession = '';
+        let loraEntryRepresentative = '';
 
         async function loadTrainedLoraSessions() {
             const section = document.getElementById('lora-trained-section');
@@ -9780,6 +9799,8 @@
             const emptyEl = document.getElementById('lora-trained-empty');
 
             section.style.display = '';
+            document.getElementById('lora-section-divider').style.display = '';
+
             sessionsEl.style.display = 'none';
             stepsEl.style.display = 'none';
             previewsEl.style.display = 'none';
@@ -9800,17 +9821,35 @@
                     return;
                 }
                 sessionsEl.style.display = '';
+                // 대표 이미지가 속한 세션 찾기
+                let repPreviewUrl = '';
+                let repSessionName = '';
+                if (loraEntryRepresentative) {
+                    try {
+                        const rep = JSON.parse(loraEntryRepresentative);
+                        repPreviewUrl = rep.preview || '';
+                    } catch (_) {}
+                }
+                // preview URL에서 세션명 추출: /api/lora/trained/preview/char/entry/SESSION/file
+                if (repPreviewUrl) {
+                    const parts = repPreviewUrl.split('/');
+                    const si = parts.indexOf('preview');
+                    if (si >= 0 && parts.length > si + 3) repSessionName = decodeURIComponent(parts[si + 3]);
+                }
                 sessionsEl.innerHTML = `<div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(320px, 1fr)); gap:12px;">` +
-                    sessions.map(s => `
+                    sessions.map(s => {
+                        const isRep = s.name === repSessionName;
+                        return `
                         <div onclick="enterTrainedSession('${escapeHtml(s.name)}')"
-                             style="background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:16px; cursor:pointer; transition:border-color 0.2s;"
-                             onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+                             style="background:var(--surface); border:1px solid ${isRep ? 'var(--accent)' : 'var(--border)'}; border-radius:10px; padding:16px; cursor:pointer; transition:border-color 0.2s;"
+                             onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='${isRep ? 'var(--accent)' : 'var(--border)'}'">
+                            ${isRep ? `<img src="${repPreviewUrl}" style="width:100%; border-radius:8px; margin-bottom:10px; display:block;">` : ''}
                             <div style="font-weight:600; font-size:0.95rem;">${escapeHtml(s.name)}</div>
                             <div style="font-size:0.8rem; color:var(--text-secondary); margin-top:6px;">
                                 ${s.step_count}개 파일${s.has_final ? ' (최종 포함)' : ''}
                             </div>
-                        </div>
-                    `).join('') + '</div>';
+                        </div>`;
+                    }).join('') + '</div>';
             } catch (e) {
                 console.error('[LORA_TRAINED] 세션 로드 실패:', e);
                 emptyEl.style.display = '';
@@ -9833,6 +9872,7 @@
             const emptyEl = document.getElementById('lora-trained-empty');
 
             sessionsEl.style.display = 'none';
+            document.getElementById('lora-representative').style.display = 'none';
             previewsEl.style.display = 'none';
             emptyEl.style.display = 'none';
 
@@ -9857,19 +9897,75 @@
                             ? `/api/lora/trained/preview/${enc(loraCurrentCharacter)}/${enc(loraCurrentEntry)}/${enc(session)}/${enc(s.previews[0])}`
                             : '';
                         return `
-                        <div onclick="enterTrainedStep('${escapeHtml(s.name)}')"
-                             style="background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:12px; cursor:pointer; transition:border-color 0.2s;"
+                        <div style="background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:12px; transition:border-color 0.2s; position:relative;"
                              onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
-                            ${previewUrl ? `<img src="${previewUrl}" style="width:100%; border-radius:8px; margin-bottom:10px;">` : ''}
-                            <div style="font-weight:600; font-size:0.9rem;">${escapeHtml(s.name)}</div>
-                            <div style="font-size:0.78rem; color:var(--text-secondary); margin-top:4px;">
-                                프리뷰 ${s.previews.length}장
+                            <div onclick="enterTrainedStep('${escapeHtml(s.name)}')" style="cursor:pointer;">
+                                ${previewUrl ? `<img src="${previewUrl}" style="width:100%; border-radius:8px; margin-bottom:10px;">` : ''}
+                                <div style="font-weight:600; font-size:0.9rem;">${escapeHtml(s.name)}</div>
+                                <div style="font-size:0.78rem; color:var(--text-secondary); margin-top:4px;">
+                                    프리뷰 ${s.previews.length}장
+                                </div>
                             </div>
+                            <button onclick="event.stopPropagation(); deleteTrainedStep('${escapeHtml(s.name)}')"
+                                    style="position:absolute; top:8px; right:8px; background:rgba(220,53,69,0.85); color:#fff; border:none; border-radius:6px; padding:4px 10px; font-size:0.75rem; cursor:pointer; opacity:0; transition:opacity 0.2s;"
+                                    onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0'"
+                                    class="trained-delete-btn">삭제</button>
                         </div>`;
                     }).join('') + '</div>';
             } catch (e) {
                 console.error('[LORA_TRAINED] step 로드 실패:', e);
                 showToast('step 로드 실패', 'error');
+            }
+        }
+
+        async function setTrainedRepresentative(safetensorsPath, previewUrl) {
+            if (!confirm('이 이미지와 LoRA를 대표로 설정하시겠습니까?')) return;
+            try {
+                const repValue = JSON.stringify({ safetensors: safetensorsPath, preview: previewUrl });
+                const resp = await fetchJSON('/api/lora/manage/update', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        name: loraCurrentEntry,
+                        character: loraCurrentCharacter,
+                        representative: repValue,
+                    }),
+                });
+                if (resp.success) {
+                    loraEntryRepresentative = repValue;
+                    showToast('대표 LoRA로 설정되었습니다', 'success');
+                } else {
+                    showToast(resp.error || '설정 실패', 'error');
+                }
+            } catch (e) {
+                console.error('[LORA_TRAINED] 대표 설정 실패:', e);
+                showToast('대표 설정 실패', 'error');
+            }
+        }
+
+        async function deleteTrainedStep(stepName) {
+            if (!confirm(`"${stepName}"을(를) 삭제하시겠습니까?\n관련 safetensors, json, toml, 프리뷰 이미지가 모두 삭제됩니다.`)) return;
+            const enc = encodeURIComponent;
+            try {
+                const resp = await fetchJSON('/api/lora/trained/delete', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        character: loraCurrentCharacter,
+                        entry: loraCurrentEntry,
+                        session: loraCurrentTrainedSession,
+                        step: stepName,
+                    }),
+                });
+                if (resp.success) {
+                    showToast('삭제 완료', 'success');
+                    enterTrainedSession(loraCurrentTrainedSession);
+                } else {
+                    showToast(resp.error || '삭제 실패', 'error');
+                }
+            } catch (e) {
+                console.error('[LORA_TRAINED] 삭제 실패:', e);
+                showToast('삭제 실패', 'error');
             }
         }
 
@@ -9898,11 +9994,21 @@
                     return;
                 }
                 previewsEl.style.display = '';
-                previewsEl.innerHTML = `<div style="font-size:0.82rem; color:var(--text-secondary); margin-bottom:10px;">${escapeHtml(step.safetensors)}</div>` +
+                const safetensorsPath = step.safetensors;
+                previewsEl.innerHTML = `<div style="display:flex; align-items:center; gap:8px; margin-bottom:10px;">
+                        <span style="font-size:0.82rem; color:var(--text-secondary);">${escapeHtml(step.safetensors)}</span>
+                    </div>` +
                     `<div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(400px, 1fr)); gap:12px;">` +
                     step.previews.map(p => {
                         const url = `/api/lora/trained/preview/${enc(loraCurrentCharacter)}/${enc(loraCurrentEntry)}/${enc(loraCurrentTrainedSession)}/${enc(p)}`;
-                        return `<img src="${url}" style="width:100%; border-radius:10px; cursor:pointer;" onclick="window.open('${url}','_blank')">`;
+                        return `<div style="position:relative;">
+                            <img src="${url}" style="width:100%; border-radius:10px; cursor:pointer; display:block;" onclick="openLightbox('${url}')">
+                            <button onclick="setTrainedRepresentative('${escapeHtml(safetensorsPath)}', '${escapeHtml(url)}')"
+                                    style="position:absolute; bottom:10px; right:10px; background:rgba(0,0,0,0.7); color:#fff; border:1px solid rgba(255,255,255,0.3); border-radius:8px; padding:6px 12px; font-size:0.78rem; cursor:pointer; backdrop-filter:blur(4px); transition:background 0.2s;"
+                                    onmouseover="this.style.background='rgba(0,120,215,0.85)'" onmouseout="this.style.background='rgba(0,0,0,0.7)'">
+                                이 이미지와 로라를 대표로 설정
+                            </button>
+                        </div>`;
                     }).join('') + '</div>';
             } catch (e) {
                 console.error('[LORA_TRAINED] 프리뷰 로드 실패:', e);

@@ -4609,7 +4609,8 @@ async def handle_api_lora_manage_update(request):
         if not character:
             return web.json_response({"success": False, "error": "캐릭터 누락"}, status=400)
         from modes.lora_mode import update_lora_entry
-        result = update_lora_entry(name, character, trigger, description, training_config=training_config)
+        representative = body.get("representative")
+        result = update_lora_entry(name, character, trigger, description, representative=representative, training_config=training_config)
         status = 200 if result.get("success") else 400
         return web.json_response(result, status=status)
     except Exception as e:
@@ -4944,9 +4945,33 @@ async def handle_api_lora_trained_preview(request):
         return web.Response(text="Error", status=500)
 
 
+async def handle_api_lora_trained_delete(request):
+    """학습된 LoRA step 삭제"""
+    try:
+        body = await request.json()
+        character = body.get("character", "")
+        entry = body.get("entry", "")
+        session = body.get("session", "")
+        step = body.get("step", "")
+        if not character or not entry or not session or not step:
+            return web.json_response({"success": False, "error": "character, entry, session, step 필수"}, status=400)
+        config = load_config()
+        lora_load_path = config.get("lora_load_path", "")
+        if not lora_load_path:
+            return web.json_response({"success": False, "error": "lora_load_path 미설정"}, status=400)
+        from modes.lora_mode import delete_trained_step
+        result = delete_trained_step(lora_load_path, character, entry, session, step)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[LORA_TRAINED] 삭제 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
 app.router.add_get("/api/lora/trained/sessions", handle_api_lora_trained_sessions)
 app.router.add_get("/api/lora/trained/steps", handle_api_lora_trained_steps)
 app.router.add_get("/api/lora/trained/preview/{character}/{entry}/{session}/{filename}", handle_api_lora_trained_preview)
+app.router.add_post("/api/lora/trained/delete", handle_api_lora_trained_delete)
 
 
 def _backup_tags_on_startup():

@@ -140,6 +140,67 @@ def list_trained_steps(lora_load_path: str, character: str, entry: str, session:
     return steps
 
 
+def delete_trained_step(lora_load_path: str, character: str, entry: str, session: str, step_name: str) -> dict:
+    """학습된 LoRA step 삭제 (safetensors, json, toml, 프리뷰 이미지)"""
+    if not lora_load_path:
+        print("[LORA_TRAINED] lora_load_path 미설정")
+        return {"success": False, "error": "lora_load_path 미설정"}
+    session_dir = os.path.join(lora_load_path, _safe_dirname(character), "Lora", _safe_dirname(entry), session)
+    if not os.path.isdir(session_dir):
+        print(f"[LORA_TRAINED] 세션 폴더 없음: {session_dir}")
+        return {"success": False, "error": "세션 폴더 없음"}
+    json_path = os.path.join(session_dir, step_name + ".json")
+    if not os.path.isfile(json_path):
+        print(f"[LORA_TRAINED] JSON 파일 없음: {json_path}")
+        return {"success": False, "error": "JSON 파일 없음"}
+    # JSON에서 연관 파일 목록 읽기
+    try:
+        with open(json_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except Exception as e:
+        print(f"[LORA_TRAINED] JSON 읽기 실패: {json_path} - {e}")
+        return {"success": False, "error": f"JSON 읽기 실패: {e}"}
+    deleted = []
+    errors = []
+    # safetensors
+    st_name = data.get('lora_file', step_name + '.safetensors')
+    for fname in [st_name]:
+        fp = os.path.join(session_dir, fname)
+        if os.path.isfile(fp):
+            try:
+                os.remove(fp)
+                deleted.append(fname)
+            except Exception as e:
+                errors.append(f"{fname}: {e}")
+    # previews
+    for p in data.get('previews', []):
+        fp = os.path.join(session_dir, p)
+        if os.path.isfile(fp):
+            try:
+                os.remove(fp)
+                deleted.append(p)
+            except Exception as e:
+                errors.append(f"{p}: {e}")
+    # toml
+    toml_path = os.path.join(session_dir, step_name + ".toml")
+    if os.path.isfile(toml_path):
+        try:
+            os.remove(toml_path)
+            deleted.append(step_name + ".toml")
+        except Exception as e:
+            errors.append(f"{step_name}.toml: {e}")
+    # json
+    try:
+        os.remove(json_path)
+        deleted.append(step_name + ".json")
+    except Exception as e:
+        errors.append(f"{step_name}.json: {e}")
+    if errors:
+        print(f"[LORA_TRAINED] 삭제 중 일부 실패: {errors}")
+    print(f"[LORA_TRAINED] 삭제 완료: {deleted}")
+    return {"success": True, "deleted": deleted, "errors": errors}
+
+
 def get_trained_preview_path(lora_load_path: str, character: str, entry: str, session: str, filename: str) -> str:
     """학습된 LoRA 프리뷰 이미지 경로 반환"""
     if not lora_load_path:
