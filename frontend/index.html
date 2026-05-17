@@ -13190,6 +13190,7 @@
             }).filter(img => img.filename);
 
             statusEl.textContent = '분석 중... (0/' + images.length + ')';
+            auSetAnalyzingState(true);
             try {
                 const resp = await fetch('/api/asset_mode/analyze_selected', {
                     method: 'POST',
@@ -13205,8 +13206,14 @@
                 const ok = data.success_count || 0;
                 const fail = data.fail_count || 0;
                 const total = data.total || 0;
-                statusEl.textContent = `분석 완료 (${ok}/${total})` + (fail > 0 ? ` 실패 ${fail}건` : '');
-                showToast(`${ok}장 분석 완료` + (fail > 0 ? `, ${fail}건 실패` : ''), fail > 0 ? 'warning' : 'success');
+                const cancelled = total > 0 && (ok + fail) < total;
+                statusEl.textContent = cancelled
+                    ? `분석 중지됨 (${ok}/${total})`
+                    : `분석 완료 (${ok}/${total})` + (fail > 0 ? ` 실패 ${fail}건` : '');
+                showToast(cancelled
+                    ? `분석 중지됨 (${ok}장 완료)`
+                    : `${ok}장 분석 완료` + (fail > 0 ? `, ${fail}건 실패` : ''),
+                    cancelled ? 'warning' : fail > 0 ? 'warning' : 'success');
                 // 분석 완료 후 이미지 뷰 갱신
                 if (auNavLevel >= 2 && auNavOutfit && auNavExpression) {
                     await auRenderImages(auNavCharacter, auNavOutfit, auNavExpression);
@@ -13215,7 +13222,34 @@
                 statusEl.textContent = '오류: ' + e.message;
                 showToast('분석 오류', 'error');
             } finally {
-                btn.disabled = false;
+                auSetAnalyzingState(false);
+            }
+        }
+
+        let _auAnalyzing = false;
+
+        async function auCancelAnalyze() {
+            try {
+                await fetch('/api/asset_mode/cancel_analyze', { method: 'POST' });
+                showToast('분석 중지 요청됨', 'info');
+            } catch (e) {
+                console.error('[AU] 중지 요청 실패:', e);
+            }
+        }
+
+        function auSetAnalyzingState(analyzing) {
+            _auAnalyzing = analyzing;
+            const batchBtn = document.getElementById('au-batch-rep-btn');
+            const selectedBtn = document.getElementById('au-analyze-btn');
+            if (analyzing) {
+                batchBtn.textContent = '중지';
+                batchBtn.style.background = '#c62828';
+                batchBtn.onclick = auCancelAnalyze;
+                selectedBtn.disabled = true;
+            } else {
+                batchBtn.style.background = '#2E7D32';
+                batchBtn.onclick = auBatchAnalyzeRepresentatives;
+                auUpdateAnalyzeBtn();
             }
         }
 
@@ -13223,8 +13257,7 @@
             if (auNavLevel < 1 || !auNavCharacter) { showToast('캐릭터를 먼저 선택하세요', 'error'); return; }
             if (!confirm('대표이미지 일괄 태그 분석을 실행하시겠습니까?\n기존 프롬프트가 있으면 덮어씌워집니다.')) return;
             showToast('대표이미지 일괄 태그 분석을 시작합니다', 'info');
-            const btn = document.getElementById('au-batch-rep-btn');
-            btn.style.opacity = '0.5';
+            auSetAnalyzingState(true);
             const statusEl = document.getElementById('au-analyze-status');
             statusEl.style.display = 'block';
             statusEl.textContent = '대표이미지 목록 조회 중...';
@@ -13243,14 +13276,19 @@
                 const total = data.total || 0;
                 const ok = data.success_count || 0;
                 const fail = data.fail_count || 0;
-                statusEl.textContent = `대표이미지 분석 완료 (${ok}/${total})` + (fail > 0 ? ` 실패 ${fail}건` : '');
-                showToast(`대표이미지 ${ok}장 분석 완료` + (fail > 0 ? `, ${fail}건 실패` : ''), fail > 0 ? 'warning' : 'success');
+                const cancelled = total > 0 && (ok + fail) < total;
+                statusEl.textContent = cancelled
+                    ? `분석 중지됨 (${ok}/${total})`
+                    : `대표이미지 분석 완료 (${ok}/${total})` + (fail > 0 ? ` 실패 ${fail}건` : '');
+                showToast(cancelled
+                    ? `분석 중지됨 (${ok}장 완료)`
+                    : `대표이미지 ${ok}장 분석 완료` + (fail > 0 ? `, ${fail}건 실패` : ''),
+                    cancelled ? 'warning' : fail > 0 ? 'warning' : 'success');
             } catch (e) {
                 statusEl.textContent = '오류: ' + e.message;
                 showToast('일괄 분석 오류', 'error');
             } finally {
-                btn.style.opacity = '1';
-                auUpdateAnalyzeBtn();
+                auSetAnalyzingState(false);
             }
         }
 

@@ -3848,9 +3848,18 @@ async def _tunnel_cleanup(app):
     _tunnel_url = None
 
 # 에셋 생성 모드 API 라우트
+_asset_analyze_cancel = False
+
+async def handle_api_asset_mode_cancel_analyze(request: web.Request) -> web.Response:
+    """분석 중지 요청."""
+    global _asset_analyze_cancel
+    _asset_analyze_cancel = True
+    print("[ASSET_MODE] 분석 중지 요청됨")
+    return web.json_response({"success": True})
 
 async def handle_api_asset_mode_batch_analyze(request: web.Request) -> web.Response:
     """대표이미지 일괄 태그 분석."""
+    global _asset_analyze_cancel
     if not asset_tool.workflow_source_path:
         return web.json_response({"success": False, "error": "태그 분석 워크플로우 경로가 설정되지 않았습니다"}, status=400)
     try:
@@ -3863,12 +3872,16 @@ async def handle_api_asset_mode_batch_analyze(request: web.Request) -> web.Respo
         if not reps:
             return web.json_response({"success": True, "results": [], "total": 0, "success_count": 0, "fail_count": 0})
 
+        _asset_analyze_cancel = False
         results = []
         success_count = 0
         fail_count = 0
         total = len(reps)
 
         for i, rep in enumerate(reps):
+            if _asset_analyze_cancel:
+                print(f"[ASSET_MODE] 일괄 분석 중지됨 ({i}/{total} 완료)")
+                break
             await notify_frontend("asset_mode_batch_progress", {
                 "current": i + 1, "total": total,
                 "outfit": rep["outfit"], "expression": rep["expression"],
@@ -3925,6 +3938,7 @@ async def handle_api_asset_mode_batch_analyze(request: web.Request) -> web.Respo
 
 async def handle_api_asset_mode_analyze_selected(request: web.Request) -> web.Response:
     """선택 이미지 태그 분석 + _prompt.json 저장."""
+    global _asset_analyze_cancel
     if not asset_tool.workflow_source_path:
         return web.json_response({"success": False, "error": "태그 분석 워크플로우 경로가 설정되지 않았습니다"}, status=400)
     try:
@@ -3934,12 +3948,17 @@ async def handle_api_asset_mode_analyze_selected(request: web.Request) -> web.Re
         if not character or not images:
             return web.json_response({"success": False, "error": "character와 images가 필요합니다"}, status=400)
 
+        _asset_analyze_cancel = False
+
         total = len(images)
         success_count = 0
         fail_count = 0
         results = []
 
         for i, img_info in enumerate(images):
+            if _asset_analyze_cancel:
+                print(f"[ASSET_MODE] 선택 분석 중지됨 ({i}/{total} 완료)")
+                break
             outfit = img_info.get("outfit", "")
             expression = img_info.get("expression", "")
             filename = img_info.get("filename", "")
@@ -4058,6 +4077,7 @@ app.router.add_post("/api/asset_mode/upload_image", handle_api_asset_mode_upload
 app.router.add_post("/api/asset_mode/upload_reference", handle_api_asset_mode_upload_reference)
 app.router.add_post("/api/asset_mode/batch_analyze_representatives", handle_api_asset_mode_batch_analyze)
 app.router.add_post("/api/asset_mode/analyze_selected", handle_api_asset_mode_analyze_selected)
+app.router.add_post("/api/asset_mode/cancel_analyze", handle_api_asset_mode_cancel_analyze)
 app.router.add_get("/api/expression_profile/scan", handle_api_expression_profile_scan)
 app.router.add_post("/api/expression_profile/create_folders", handle_api_expression_profile_create_folders)
 app.router.add_get("/api/asset_mode/name_mapping/{character}", handle_api_asset_mode_name_mapping_get)
