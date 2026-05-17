@@ -184,12 +184,15 @@ def add_training_images(character: str, entry: str, sources: list) -> dict:
                 marker = "[FACE_ID_ACTIVATE]"
                 if marker in positive:
                     pdata["positive"] = positive.split(marker)[0].strip()
+                # 원본 프롬프트 저장
+                pdata["original_positive"] = pdata["positive"]
+                pdata["original_negative"] = pdata.get("negative", "")
                 with open(prompt_dest, "w", encoding="utf-8") as f:
                     json.dump(pdata, f, ensure_ascii=False, indent=2)
             else:
                 # 프롬프트 파일이 없으면 빈 프롬프트 생성
                 with open(prompt_dest, "w", encoding="utf-8") as f:
-                    json.dump({"positive": "", "negative": ""}, f, ensure_ascii=False, indent=2)
+                    json.dump({"positive": "", "negative": "", "original_positive": "", "original_negative": ""}, f, ensure_ascii=False, indent=2)
 
             added.append(dest_name)
             print(f"[LORA] 학습 이미지 추가: {dest_path}")
@@ -237,6 +240,9 @@ def list_training_images(character: str, entry: str = "") -> list:
                     pdata = json.load(f)
                     positive = pdata.get("positive", "")
                     negative = pdata.get("negative", "")
+                    # original이 없으면 현재값을 원본으로 사용 (기존 데이터 마이그레이션)
+                    original_positive = pdata.get("original_positive", positive)
+                    original_negative = pdata.get("original_negative", negative)
             except Exception as e:
                 print(f"[LORA] 프롬프트 로드 실패: {prompt_path} - {e}")
 
@@ -246,6 +252,8 @@ def list_training_images(character: str, entry: str = "") -> list:
                 "filename": fname,
                 "positive": positive,
                 "negative": negative,
+                "original_positive": original_positive,
+                "original_negative": original_negative,
                 "is_representative": fname == representative,
                 "size": fstat.st_size,
                 "modified": fstat.st_mtime,
@@ -350,6 +358,11 @@ def save_training_prompt(character: str, entry: str, filename: str, positive: st
         if os.path.isfile(prompt_path):
             with open(prompt_path, "r", encoding="utf-8") as f:
                 existing = json.load(f)
+        # original이 없으면 최초 저장 시 현재값을 원본으로 보존
+        if "original_positive" not in existing:
+            existing["original_positive"] = existing.get("positive", "")
+        if "original_negative" not in existing:
+            existing["original_negative"] = existing.get("negative", "")
         existing["positive"] = positive
         existing["negative"] = negative
 

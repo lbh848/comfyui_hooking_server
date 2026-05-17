@@ -10083,6 +10083,21 @@
             } catch (e) { console.error('[LORA] 학습 이미지 삭제 실패:', e); showToast('삭제 실패', 'error'); }
         }
 
+        function _renderPromptDiffSpans(text, otherTagsSet, highlightColor) {
+            if (!text) return '';
+            const parts = text.split(',');
+            return parts.map((part) => {
+                const trimmed = part.trim();
+                const isDiff = trimmed && !otherTagsSet.has(trimmed);
+                const bg = isDiff ? highlightColor : '';
+                return `<span style="background:${bg}; border-radius:3px;">${escapeHtml(part)}</span>`;
+            }).join(',');
+        }
+
+        function _tagSet(text) {
+            return new Set(text.split(',').map(t => t.trim()).filter(t => t));
+        }
+
         function showLoraTrainingPrompt(filename) {
             const grid = document.getElementById('lora-training-grid');
             const card = grid.querySelector(`[onclick*="${filename}"]`);
@@ -10099,20 +10114,42 @@
                     <button onclick="closeLoraImagePicker()" style="padding:8px 16px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:6px; cursor:pointer;">닫기</button>
                     <button onclick="saveLoraTrainingPrompt('${escapeHtml(filename)}')" style="padding:8px 16px; background:var(--accent); color:#fff; border:none; border-radius:6px; cursor:pointer; font-weight:600;">저장</button>
                 `;
+                const origPos = img.original_positive || img.positive || '';
+                const origNeg = img.original_negative || img.negative || '';
+                const curPos = img.positive || '';
+                const curNeg = img.negative || '';
+                const curPosTags = _tagSet(curPos);
+                const origPosTags = _tagSet(origPos);
+                const curNegTags = _tagSet(curNeg);
+                const origNegTags = _tagSet(origNeg);
+                const _roStyle = 'width:100%; padding:8px; border:1px solid var(--border); border-radius:6px; background:var(--surface2); color:var(--text-secondary); font-size:0.85rem; line-height:1.5; white-space:pre-wrap; word-wrap:break-word; overflow-y:auto; cursor:default;';
+                const _editStyle = 'width:100%; padding:8px; border:1px solid var(--border); border-radius:6px; background:var(--surface); color:var(--text); font-size:0.85rem; line-height:1.5; white-space:pre-wrap; word-wrap:break-word; overflow-y:auto; outline:none; min-height:80px;';
                 document.getElementById('lora-picker-body').innerHTML = `
                     <div style="display:flex; gap:16px; margin-bottom:12px;">
-                        <div style="flex:0 0 320px;">
-                            <img src="/api/lora/training_image/${enc(loraCurrentCharacter)}/${enc(loraCurrentEntry)}/${enc(filename)}" style="width:100%; border-radius:8px; display:block;">
-                            <div style="text-align:center; margin-top:6px; font-size:0.8rem; color:var(--text-secondary);">${escapeHtml(filename)}</div>
-                        </div>
+                        <img src="/api/lora/training_image/${enc(loraCurrentCharacter)}/${enc(loraCurrentEntry)}/${enc(filename)}" style="width:120px; height:120px; object-fit:cover; border-radius:8px; display:block; flex-shrink:0;">
+                        <div style="display:flex; align-items:center; font-size:0.85rem; color:var(--text-secondary);">${escapeHtml(filename)}</div>
+                    </div>
+                    <div style="display:flex; gap:16px;">
                         <div style="flex:1; display:flex; flex-direction:column; gap:8px;">
+                            <div style="font-size:0.85rem; font-weight:700; color:var(--text-secondary); text-align:center; margin-bottom:4px;">원본</div>
                             <div>
                                 <label style="font-size:0.8rem; font-weight:600; display:block; margin-bottom:4px;">긍정 프롬프트</label>
-                                <textarea id="lora-prompt-positive" rows="8" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px; background:var(--surface); color:var(--text); font-size:0.85rem; resize:vertical;">${escapeHtml(img.positive || '')}</textarea>
+                                <div style="${_roStyle} max-height:200px;">${_renderPromptDiffSpans(origPos, curPosTags, 'rgba(220,50,50,0.12)')}</div>
                             </div>
                             <div>
                                 <label style="font-size:0.8rem; font-weight:600; display:block; margin-bottom:4px;">부정 프롬프트</label>
-                                <textarea id="lora-prompt-negative" rows="4" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px; background:var(--surface); color:var(--text); font-size:0.85rem; resize:vertical;">${escapeHtml(img.negative || '')}</textarea>
+                                <div style="${_roStyle} max-height:120px;">${_renderPromptDiffSpans(origNeg, curNegTags, 'rgba(220,50,50,0.12)')}</div>
+                            </div>
+                        </div>
+                        <div style="flex:1; display:flex; flex-direction:column; gap:8px;">
+                            <div style="font-size:0.85rem; font-weight:700; color:var(--accent); text-align:center; margin-bottom:4px;">수정</div>
+                            <div>
+                                <label style="font-size:0.8rem; font-weight:600; display:block; margin-bottom:4px;">긍정 프롬프트</label>
+                                <div contenteditable="true" id="lora-prompt-positive" onpaste="event.preventDefault(); document.execCommand('insertText', false, event.clipboardData.getData('text/plain'));" style="${_editStyle} max-height:200px;">${_renderPromptDiffSpans(curPos, origPosTags, 'rgba(50,180,50,0.12)')}</div>
+                            </div>
+                            <div>
+                                <label style="font-size:0.8rem; font-weight:600; display:block; margin-bottom:4px;">부정 프롬프트</label>
+                                <div contenteditable="true" id="lora-prompt-negative" onpaste="event.preventDefault(); document.execCommand('insertText', false, event.clipboardData.getData('text/plain'));" style="${_editStyle} max-height:120px;">${_renderPromptDiffSpans(curNeg, origNegTags, 'rgba(50,180,50,0.12)')}</div>
                             </div>
                         </div>
                     </div>
@@ -10122,8 +10159,8 @@
         }
 
         async function saveLoraTrainingPrompt(filename) {
-            const positive = document.getElementById('lora-prompt-positive').value;
-            const negative = document.getElementById('lora-prompt-negative').value;
+            const positive = document.getElementById('lora-prompt-positive').textContent;
+            const negative = document.getElementById('lora-prompt-negative').textContent;
             try {
                 const resp = await fetchJSON('/api/lora/training_images/prompt', {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },

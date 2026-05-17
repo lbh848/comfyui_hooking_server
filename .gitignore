@@ -39,3 +39,6 @@ patch_chain_presets.zip
 # Knowledge graph outputs (rebuild with: graphify . or code-review-graph build)
 graphify-out/
 .code-review-graph/
+
+# MCP config (로컬 환경설정)
+.mcp.json
