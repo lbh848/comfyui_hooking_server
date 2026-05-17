@@ -3521,10 +3521,17 @@
                                 <label style="font-size:0.7rem; color:var(--text-secondary); display:block; margin-bottom:2px;">GEN_H (테스트 생성 해상도)</label>
                                 <input type="number" id="lora-cfg-genh" value="1024" min="1" style="width:100%; padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); font-size:0.8rem; box-sizing:border-box;">
                             </div>
+                            <div style="display:flex; align-items:center; gap:6px; padding:6px 8px; background:var(--surface2); border-radius:6px; border:1px solid var(--border);">
+                                <span style="font-size:0.8rem;">이미지 업스케일링</span>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="lora-cfg-upscale" onchange="document.getElementById('lora-cfg-upscale-status').textContent=this.checked?'ON':'OFF'; document.getElementById('lora-cfg-upscale-status').className='toggle-status '+(this.checked?'on':'off');">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                                <span id="lora-cfg-upscale-status" class="toggle-status off">OFF</span>
+                            </div>
                         </div>
                         <div style="display:flex; gap:4px; margin-top:8px;">
                             <button onclick="saveLoraTrainingConfig()" style="flex:1; padding:6px; background:var(--accent); color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600;">저장</button>
-                            <button onclick="previewLoraTraining()" style="flex:1; padding:6px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600;">미리보기</button>
                         </div>
                         <button onclick="previewLoraPromptsRaw()" style="width:100%; padding:6px; margin-top:4px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600;">프롬프트 Raw 보기</button>
                     </div>
@@ -10556,6 +10563,12 @@
                     document.getElementById('lora-cfg-folder').textContent = cfg.multi_img_folder_name || 'soya_lora';
                     document.getElementById('lora-cfg-genw').value = cfg.gen_w || 1024;
                     document.getElementById('lora-cfg-genh').value = cfg.gen_h || 1024;
+                    // 업스케일링 토글
+                    const upscaleCb = document.getElementById('lora-cfg-upscale');
+                    upscaleCb.checked = !!cfg.upscale;
+                    const upscaleStatus = document.getElementById('lora-cfg-upscale-status');
+                    upscaleStatus.textContent = cfg.upscale ? 'ON' : 'OFF';
+                    upscaleStatus.className = 'toggle-status ' + (cfg.upscale ? 'on' : 'off');
                     // lora_save_path 자동 생성
                     document.getElementById('lora-cfg-save-path').textContent = loraCurrentCharacter + '/Lora/' + loraCurrentEntry;
                 }
@@ -10572,6 +10585,7 @@
                 multi_img_folder_name: document.getElementById('lora-cfg-folder').textContent.trim(),
                 gen_w: parseInt(document.getElementById('lora-cfg-genw').value) || 1024,
                 gen_h: parseInt(document.getElementById('lora-cfg-genh').value) || 1024,
+                upscale: document.getElementById('lora-cfg-upscale').checked,
                 lora_save_path: loraCurrentCharacter + '/Lora/' + loraCurrentEntry,
             };
             try {
@@ -10607,121 +10621,6 @@
             } catch (e) { loraTestImageCache = []; }
         }
 
-        async function previewLoraTraining() {
-            await Promise.all([_fetchLoraTrainingImageCache(), _fetchLoraTestImageCache()]);
-            const images = loraTrainingImageCache;
-            const testImages = loraTestImageCache;
-            const profile = document.getElementById('lora-cfg-profile').value.trim();
-            const nImg = images.length;
-            const stepPerImage = parseInt(document.getElementById('lora-cfg-step').value) || 50;
-            const ilRate = parseFloat(document.getElementById('lora-cfg-ilrate').value) || 0.0005;
-            const savePerStep = parseInt(document.getElementById('lora-cfg-save-step').value) || 50;
-            const folderName = document.getElementById('lora-cfg-folder').textContent.trim();
-            const genW = parseInt(document.getElementById('lora-cfg-genw').value) || 1024;
-            const genH = parseInt(document.getElementById('lora-cfg-genh').value) || 1024;
-            const loraSavePath = loraCurrentCharacter + '/Lora/' + loraCurrentEntry;
-
-            // 트리거 워드
-            const trigger = document.getElementById('lora-entry-trigger').value.trim();
-
-            // 긍정 워크플로우 생성
-            let positiveLines = [];
-            images.forEach((img, i) => {
-                const triggerPrefix = trigger ? trigger + ', ' : '';
-                positiveLines.push(`[${i + 1}]${triggerPrefix}${img.positive || '(프롬프트 없음)'}`);
-            });
-            positiveLines.push('[PROFILE]');
-            positiveLines.push(profile || '(미입력)');
-            positiveLines.push('[N_IMG]');
-            positiveLines.push(String(nImg));
-            positiveLines.push('[STEP_PER_IMAGE]');
-            positiveLines.push(String(stepPerImage));
-            positiveLines.push('[IL_RATE]');
-            positiveLines.push(String(ilRate));
-            positiveLines.push('[SAVE_PER_STEP]');
-            positiveLines.push(String(savePerStep));
-            positiveLines.push('[MULTI_IMG_FOLDER_NAME]');
-            positiveLines.push(folderName || '(미입력)');
-            positiveLines.push('[LORA_SAVE_PATH]');
-            positiveLines.push(loraSavePath);
-            positiveLines.push('[GEN_W]');
-            positiveLines.push(String(genW));
-            positiveLines.push('[GEN_H]');
-            positiveLines.push(String(genH));
-            // TEST_POSITIVE
-            if (testImages.length > 0) {
-                positiveLines.push('[TEST_POSITIVE]');
-                testImages.forEach((img, i) => {
-                    const triggerPrefix = trigger ? trigger + ', ' : '';
-                    positiveLines.push(`[${i + 1}]${triggerPrefix}${img.positive || '(프롬프트 없음)'}`);
-                });
-            }
-            positiveLines.push('[END]');
-
-            // 부정 워크플로우 생성
-            let negativeLines = [];
-            images.forEach((img, i) => {
-                negativeLines.push(`[${i + 1}]${img.negative || '(프롬프트 없음)'}`);
-            });
-            negativeLines.push('[PROFILE]');
-            negativeLines.push(profile || '(미입력)');
-            negativeLines.push('[N_IMG]');
-            negativeLines.push(String(nImg));
-            negativeLines.push('[STEP_PER_IMAGE]');
-            negativeLines.push(String(stepPerImage));
-            negativeLines.push('[IL_RATE]');
-            negativeLines.push(String(ilRate));
-            negativeLines.push('[SAVE_PER_STEP]');
-            negativeLines.push(String(savePerStep));
-            negativeLines.push('[MULTI_IMG_FOLDER_NAME]');
-            negativeLines.push(folderName || '(미입력)');
-            negativeLines.push('[LORA_SAVE_PATH]');
-            negativeLines.push(loraSavePath);
-            negativeLines.push('[GEN_W]');
-            negativeLines.push(String(genW));
-            negativeLines.push('[GEN_H]');
-            negativeLines.push(String(genH));
-            // TEST_NEGATIVE
-            if (testImages.length > 0) {
-                negativeLines.push('[TEST_NEGATIVE]');
-                testImages.forEach((img, i) => {
-                    negativeLines.push(`[${i + 1}]${img.negative || '(프롬프트 없음)'}`);
-                });
-            }
-            negativeLines.push('[END]');
-
-            // 모달 표시
-            let overlay = document.getElementById('lora-preview-overlay');
-            if (overlay) overlay.remove();
-            overlay = document.createElement('div');
-            overlay.id = 'lora-preview-overlay';
-            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:10000; display:flex; align-items:center; justify-content:center;';
-            overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
-            overlay.innerHTML = `<div style="background:var(--surface); border-radius:12px; padding:20px; max-width:700px; width:90%; max-height:85vh; display:flex; flex-direction:column; overflow:hidden;">
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-                    <h3 style="margin:0;">워크플로우 미리보기</h3>
-                    <button onclick="document.getElementById('lora-preview-overlay').remove()" style="background:none; border:none; font-size:1.4rem; cursor:pointer; color:var(--text);">&times;</button>
-                </div>
-                <div style="flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:12px;">
-                    <div>
-                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
-                            <span style="font-weight:600; font-size:0.9rem;">긍정 워크플로우</span>
-                            <button onclick="navigator.clipboard.writeText(document.getElementById('lora-preview-positive').textContent); showToast('복사 완료','success')" style="padding:2px 8px; font-size:0.75rem; background:var(--surface2); border:1px solid var(--border); border-radius:4px; cursor:pointer;">복사</button>
-                        </div>
-                        <pre id="lora-preview-positive" style="background:var(--surface2); padding:10px; border-radius:8px; font-size:0.8rem; white-space:pre-wrap; word-break:break-all; margin:0; max-height:200px; overflow-y:auto;">${escapeHtml(positiveLines.join('\n'))}</pre>
-                    </div>
-                    <div>
-                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
-                            <span style="font-weight:600; font-size:0.9rem;">부정 워크플로우</span>
-                            <button onclick="navigator.clipboard.writeText(document.getElementById('lora-preview-negative').textContent); showToast('복사 완료','success')" style="padding:2px 8px; font-size:0.75rem; background:var(--surface2); border:1px solid var(--border); border-radius:4px; cursor:pointer;">복사</button>
-                        </div>
-                        <pre id="lora-preview-negative" style="background:var(--surface2); padding:10px; border-radius:8px; font-size:0.8rem; white-space:pre-wrap; word-break:break-all; margin:0; max-height:200px; overflow-y:auto;">${escapeHtml(negativeLines.join('\n'))}</pre>
-                    </div>
-                </div>
-            </div>`;
-            document.body.appendChild(overlay);
-        }
-
         async function previewLoraPromptsRaw() {
             await Promise.all([_fetchLoraTrainingImageCache(), _fetchLoraTestImageCache()]);
             const images = loraTrainingImageCache;
@@ -10737,6 +10636,7 @@
             const genW = parseInt(document.getElementById('lora-cfg-genw').value) || 1024;
             const genH = parseInt(document.getElementById('lora-cfg-genh').value) || 1024;
             const loraSavePath = loraCurrentCharacter + '/Lora/' + loraCurrentEntry;
+            const upscale = document.getElementById('lora-cfg-upscale').checked;
 
             // 긍정: [1]트리거 프롬프트\n...\n[PROFILE]\n...\n[TEST_POSITIVE]\n...\n[TEST_NEGATIVE]\n...\n[END]
             const trigger = document.getElementById('lora-entry-trigger').value.trim();
@@ -10749,7 +10649,7 @@
             });
 
             // 설정 블록 (긍정만)
-            let configBlock = `[PROFILE]\n${profile || '(미입력)'}\n[N_IMG]\n${nImg}\n[STEP_PER_IMAGE]\n${stepPerImage}\n[IL_RATE]\n${ilRate}\n[SAVE_PER_STEP]\n${savePerStep}\n[MULTI_IMG_FOLDER_NAME]\n${folderName || '(미입력)'}\n[LORA_SAVE_PATH]\n${loraSavePath}\n[GEN_W]\n${genW}\n[GEN_H]\n${genH}`;
+            let configBlock = `[PROFILE]\n${profile || '(미입력)'}\n[N_IMG]\n${nImg}\n[STEP_PER_IMAGE]\n${stepPerImage}\n[IL_RATE]\n${ilRate}\n[SAVE_PER_STEP]\n${savePerStep}\n[MULTI_IMG_FOLDER_NAME]\n${folderName || '(미입력)'}\n[LORA_SAVE_PATH]\n${loraSavePath}\n[GEN_W]\n${genW}\n[GEN_H]\n${genH}\n[UPSCALE]\n${upscale}`;
 
             // TEST_POSITIVE + TEST_NEGATIVE (긍정 프롬프트 안에 모두 포함)
             let testBlock = '';
