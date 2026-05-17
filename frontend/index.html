@@ -3401,7 +3401,10 @@
                     </div>
                     <!-- 학습된 LoRA 세션 -->
                     <div id="lora-trained-section" style="display:none; padding:16px;">
-                        <div style="font-weight:700; font-size:1.1rem; margin-bottom:12px; padding-bottom:6px; border-bottom:1px solid var(--border);">학습된 LoRA</div>
+                        <div style="font-weight:700; font-size:1.1rem; margin-bottom:12px; padding-bottom:6px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between;">
+                            <span>학습된 LoRA</span>
+                            <button onclick="loadTrainedLoraSessions()" title="폴더 새로고침" style="background:none; border:1px solid var(--border); border-radius:4px; padding:2px 8px; cursor:pointer; color:var(--text-secondary); font-size:0.8rem; display:flex; align-items:center; gap:4px;">🔄 새로고침</button>
+                        </div>
                         <!-- 대표 LoRA -->
                         <div id="lora-representative" style="display:none; margin-bottom:16px;"></div>
                         <!-- 세션 목록 -->
@@ -10064,8 +10067,12 @@
                         const isRep = s.name === repSessionName;
                         return `
                         <div onclick="enterTrainedSession('${escapeHtml(s.name)}')"
-                             style="background:var(--surface); border:1px solid ${isRep ? 'var(--accent)' : 'var(--border)'}; border-radius:10px; padding:16px; cursor:pointer; transition:border-color 0.2s;"
+                             style="background:var(--surface); border:1px solid ${isRep ? 'var(--accent)' : 'var(--border)'}; border-radius:10px; padding:16px; cursor:pointer; transition:border-color 0.2s; position:relative;"
                              onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='${isRep ? 'var(--accent)' : 'var(--border)'}'">
+                            <button onclick="event.stopPropagation(); deleteTrainedSession('${escapeHtml(s.name)}')"
+                                    style="position:absolute; top:8px; right:8px; background:rgba(220,53,69,0.85); color:#fff; border:none; border-radius:6px; padding:4px 10px; font-size:0.75rem; cursor:pointer; opacity:0; transition:opacity 0.2s;"
+                                    onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0'"
+                                    class="trained-delete-btn">폴더 삭제</button>
                             ${isRep ? `<img src="${repPreviewUrl}" style="width:100%; border-radius:8px; margin-bottom:10px; display:block;">` : ''}
                             <div style="font-weight:600; font-size:0.95rem;">${escapeHtml(s.name)}</div>
                             <div style="font-size:0.8rem; color:var(--text-secondary); margin-top:6px;">
@@ -10196,6 +10203,30 @@
             } catch (e) {
                 console.error('[LORA_TRAINED] 삭제 실패:', e);
                 showToast('삭제 실패', 'error');
+            }
+        }
+
+        async function deleteTrainedSession(sessionName) {
+            if (!confirm(`세션 "${sessionName}" 폴더를 전체 삭제하시겠습니까?\n폴더 내 모든 파일이 삭제되며 복구할 수 없습니다.`)) return;
+            try {
+                const resp = await fetchJSON('/api/lora/trained/delete-session', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        character: loraCurrentCharacter,
+                        entry: loraCurrentEntry,
+                        session: sessionName,
+                    }),
+                });
+                if (resp.success) {
+                    showToast(`세션 삭제 완료 (${resp.file_count}개 파일)`, 'success');
+                    loadTrainedLoraSessions();
+                } else {
+                    showToast(resp.error || '세션 삭제 실패', 'error');
+                }
+            } catch (e) {
+                console.error('[LORA_TRAINED] 세션 삭제 실패:', e);
+                showToast('세션 삭제 실패', 'error');
             }
         }
 

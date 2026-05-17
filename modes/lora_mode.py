@@ -201,6 +201,27 @@ def delete_trained_step(lora_load_path: str, character: str, entry: str, session
     return {"success": True, "deleted": deleted, "errors": errors}
 
 
+def delete_trained_session(lora_load_path: str, character: str, entry: str, session: str) -> dict:
+    """학습된 LoRA 세션 폴더 전체 삭제"""
+    import shutil
+    if not lora_load_path:
+        print("[LORA_TRAINED] lora_load_path 미설정")
+        return {"success": False, "error": "lora_load_path 미설정"}
+    session_dir = os.path.join(lora_load_path, _safe_dirname(character), "Lora", _safe_dirname(entry), session)
+    if not os.path.isdir(session_dir):
+        print(f"[LORA_TRAINED] 세션 폴더 없음: {session_dir}")
+        return {"success": False, "error": "세션 폴더 없음"}
+    try:
+        file_count = sum(1 for _ in os.listdir(session_dir))
+        shutil.rmtree(session_dir)
+        print(f"[LORA_TRAINED] 세션 폴더 삭제 완료: {session_dir} ({file_count}개 파일)")
+        return {"success": True, "deleted_session": session, "file_count": file_count}
+    except Exception as e:
+        print(f"[LORA_TRAINED] 세션 폴더 삭제 실패: {session_dir} - {e}")
+        traceback.print_exc()
+        return {"success": False, "error": str(e)}
+
+
 def get_trained_preview_path(lora_load_path: str, character: str, entry: str, session: str, filename: str) -> str:
     """학습된 LoRA 프리뷰 이미지 경로 반환"""
     if not lora_load_path:

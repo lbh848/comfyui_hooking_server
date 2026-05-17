@@ -5252,6 +5252,31 @@ app.router.add_get("/api/lora/trained/preview/{character}/{entry}/{session}/{fil
 app.router.add_post("/api/lora/trained/delete", handle_api_lora_trained_delete)
 
 
+async def handle_api_lora_trained_delete_session(request):
+    """학습된 LoRA 세션 폴더 전체 삭제"""
+    try:
+        body = await request.json()
+        character = body.get("character", "")
+        entry = body.get("entry", "")
+        session = body.get("session", "")
+        if not character or not entry or not session:
+            return web.json_response({"success": False, "error": "character, entry, session 필수"}, status=400)
+        config = load_config()
+        lora_load_path = config.get("lora_load_path", "")
+        if not lora_load_path:
+            return web.json_response({"success": False, "error": "lora_load_path 미설정"}, status=400)
+        from modes.lora_mode import delete_trained_session
+        result = delete_trained_session(lora_load_path, character, entry, session)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[LORA_TRAINED] 세션 삭제 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+app.router.add_post("/api/lora/trained/delete-session", handle_api_lora_trained_delete_session)
+
+
 def _backup_tags_on_startup():
     from modes.asset_mode import TAGS_FILE, ASSET_DATA_DIR
     from modes.embedding_service import PROFILE_MAP_FILE
