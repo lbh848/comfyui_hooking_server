@@ -9890,15 +9890,22 @@
                     return;
                 }
                 stepsEl.style.display = '';
+                // 대표 safetensors 파일명 추출
+                let repSafetensors = '';
+                if (loraEntryRepresentative) {
+                    try { repSafetensors = JSON.parse(loraEntryRepresentative).safetensors || ''; } catch (_) {}
+                }
                 stepsEl.innerHTML = `<div style="margin-bottom:10px; font-size:0.82rem; color:var(--text-secondary);">step 파일을 클릭하면 프리뷰 이미지를 볼 수 있습니다.</div>` +
                     `<div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(340px, 1fr)); gap:12px;">` +
                     steps.map(s => {
                         const previewUrl = s.previews.length > 0
                             ? `/api/lora/trained/preview/${enc(loraCurrentCharacter)}/${enc(loraCurrentEntry)}/${enc(session)}/${enc(s.previews[0])}`
                             : '';
+                        const isRep = s.safetensors === repSafetensors;
                         return `
-                        <div style="background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:12px; transition:border-color 0.2s; position:relative;"
-                             onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+                        <div style="background:var(--surface); border:1px solid ${isRep ? 'var(--accent)' : 'var(--border)'}; border-radius:10px; padding:12px; transition:border-color 0.2s; position:relative;"
+                             onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='${isRep ? 'var(--accent)' : 'var(--border)'}'">
+                            ${isRep ? '<div style="position:absolute; top:8px; left:8px; z-index:5; background:rgba(255,193,7,0.95); color:#000; font-size:0.7rem; font-weight:700; padding:3px 8px; border-radius:4px;">대표</div>' : ''}
                             <div onclick="enterTrainedStep('${escapeHtml(s.name)}')" style="cursor:pointer;">
                                 ${previewUrl ? `<img src="${previewUrl}" style="width:100%; border-radius:8px; margin-bottom:10px;">` : ''}
                                 <div style="font-weight:600; font-size:0.9rem;">${escapeHtml(s.name)}</div>
