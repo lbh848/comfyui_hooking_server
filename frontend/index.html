@@ -1111,6 +1111,7 @@
             border-radius: 6px;
         }
         .tab-btn[onclick*="'asset'"],
+        .tab-btn[onclick*="'asset-upload'"],
         .tab-btn[onclick*="'pose'"],
         .tab-btn[onclick*="'batch'"],
         #tab-btn-smart-asset {
@@ -1586,6 +1587,24 @@
             object-fit: contain;
             display: block;
         }
+        .au-select-check {
+            position: absolute;
+            top: 8px;
+            left: 8px;
+            width: 24px;
+            height: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.1rem;
+            cursor: pointer;
+            background: rgba(0,0,0,0.3);
+            border-radius: 4px;
+            z-index: 2;
+            transition: background 0.15s;
+        }
+        .au-select-check:hover { background: rgba(0,0,0,0.5); }
+
         .asset-image-card .rep-badge {
             position: absolute;
             top: 8px;
@@ -2474,6 +2493,7 @@
         <button id="tab-btn-backup" class="tab-btn active" onclick="switchTab('backup')">삽화 백업</button>
         <span class="tab-divider"></span>
         <button class="tab-btn" onclick="switchTab('asset')">에셋 생성</button>
+        <button class="tab-btn" onclick="switchTab('asset-upload')">에셋 업로드</button>
         <button class="tab-btn" onclick="switchTab('pose')">에셋 Pose 편집</button>
         <button class="tab-btn" onclick="switchTab('batch')">에셋 일괄 생성</button>
         <button id="tab-btn-smart-asset" class="tab-btn" onclick="switchTab('smart-asset')">스마트매치</button>
@@ -2829,6 +2849,59 @@
                         <button class="asset-generate-btn" id="asset-generate-btn" onclick="generateAssetImage()" disabled style="flex:1;">
                             이미지 생성
                         </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 에셋 업로드 탭 -->
+        <div id="tab-asset-upload-content" class="tab-content">
+            <div class="asset-breadcrumb" id="au-breadcrumb">
+                <span>에셋</span>
+            </div>
+            <div class="asset-container">
+                <div class="asset-main" id="au-main">
+                    <div class="asset-loading" id="au-loading" style="display:none;">
+                        <div class="spinner" style="width:32px;height:32px;border-width:3px;"></div>
+                        <span>로딩 중...</span>
+                    </div>
+                    <div class="asset-empty-state" id="au-empty-state">
+                        <h3>에셋 업로드</h3>
+                        <p>사이드바에서 캐릭터를 선택하거나 추가한 후 이미지를 업로드하세요.</p>
+                    </div>
+                    <div class="asset-folder-grid" id="au-folder-grid" style="display:none;"></div>
+                    <div class="asset-gallery-grid" id="au-gallery-grid" style="display:none;"></div>
+                    <div class="asset-image-grid" id="au-image-grid" style="display:none;"></div>
+                </div>
+                <div class="asset-sidebar" id="au-sidebar">
+                    <div class="resize-handle" id="au-sidebar-resize-handle"></div>
+
+                    <!-- 캐릭터 관리 섹션 -->
+                    <div style="background:rgba(66,133,244,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
+                        <div class="section-title">캐릭터 관리</div>
+                        <select id="au-character-select" onchange="auOnCharacterChange()">
+                            <option value="">-- 캐릭터 선택 --</option>
+                        </select>
+                        <div style="display:flex; gap:6px; margin-top:4px;">
+                            <button onclick="auAddCharacter()" style="flex:1; background:var(--accent); color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">추가</button>
+                            <button onclick="auDuplicateCharacter()" style="flex:1; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">복제</button>
+                            <button onclick="auRemoveCharacter()" style="flex:1; background:var(--error); color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">삭제</button>
+                        </div>
+                    </div>
+
+                    <!-- 이미지 업로드 -->
+                    <div style="background:rgba(255,152,0,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
+                        <div class="section-title">이미지 업로드</div>
+                        <div style="font-size:0.72rem; color:var(--text-secondary); margin-bottom:6px;">캐릭터 폴더 진입 후 이미지를 추가합니다.</div>
+                        <button id="au-upload-btn" onclick="auOpenUploadModal()" style="width:100%; background:#FF9800; color:#fff; border:none; padding:6px 10px; border-radius:6px; cursor:pointer; font-size:0.82rem; font-weight:600;">이미지 업로드</button>
+                    </div>
+
+                    <!-- 태그 분석 -->
+                    <div style="background:rgba(76,175,80,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
+                        <div class="section-title">태그 분석</div>
+                        <div style="font-size:0.72rem; color:var(--text-secondary); margin-bottom:6px;">갤러리에서 이미지를 선택한 후 분석할 수 있습니다.</div>
+                        <button id="au-analyze-btn" onclick="auAnalyzeSelectedImages()" style="width:100%; background:#4CAF50; color:#fff; border:none; padding:6px 10px; border-radius:6px; cursor:pointer; font-size:0.82rem; font-weight:600;" disabled>선택 이미지 태그 분석</button>
+                        <div id="au-analyze-status" style="font-size:0.72rem; color:var(--text2); margin-top:4px; display:none;"></div>
                     </div>
                 </div>
             </div>
@@ -3929,11 +4002,11 @@
                     </div>
                     <input type="hidden" id="setting-asset-workflow-source-path">
 
-                    <!-- 태그 분석 모드 -->
+                    <!-- 스마트 매치용 태그 분석 모드 -->
                     <div class="setting-row">
                         <div class="setting-label">
-                            <div class="title">🔍 태그 분석 워크플로우</div>
-                            <div class="desc">태그 분석에 사용할 워크플로우 파일 (공통설정 탭 베이스 경로 공유)</div>
+                            <div class="title">🔍 스마트 매치용 태그 분석 워크플로우</div>
+                            <div class="desc">스마트 매치 태그 분석에 사용할 워크플로우 파일 (공통설정 탭 베이스 경로 공유)</div>
                         </div>
                     </div>
                     <div class="form-group" style="margin-top: -8px;">
@@ -3945,6 +4018,23 @@
                         <div class="hint">공통설정 탭의 '베이스 경로'에서 검색됩니다</div>
                     </div>
                     <input type="hidden" id="setting-tag-analysis-workflow-source-path">
+
+                    <!-- 에셋용 태그 분석 모드 -->
+                    <div class="setting-row" style="margin-top: 12px;">
+                        <div class="setting-label">
+                            <div class="title">🏷️ 에셋용 태그 분석 워크플로우</div>
+                            <div class="desc">에셋 생성 시 태그 분석에 사용할 워크플로우 파일 (공통설정 탭 베이스 경로 공유)</div>
+                        </div>
+                    </div>
+                    <div class="form-group" style="margin-top: -8px;">
+                        <div class="autocomplete-wrapper">
+                            <input type="text" id="setting-asset-tag-analysis-workflow-filename" placeholder="예: 에셋태그분석워크플로우.json"
+                                   oninput="onAssetTagAnalysisFilenameInput(this.value)" onfocus="onAssetTagAnalysisFilenameInput(this.value)">
+                            <div class="autocomplete-list" id="asset-tag-analysis-workflow-autocomplete"></div>
+                        </div>
+                        <div class="hint">공통설정 탭의 '베이스 경로'에서 검색됩니다</div>
+                    </div>
+                    <input type="hidden" id="setting-asset-tag-analysis-workflow-source-path">
                 </div>
 
                 <div class="settings-tab-panel" id="settings-tab-lora">
@@ -3997,6 +4087,44 @@
             </div>
             <div class="modal-footer">
                 <button class="confirm" onclick="document.getElementById('config-preview-modal').classList.remove('visible')">닫기</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 에셋 업로드 모달 -->
+    <div class="modal" id="au-upload-modal" onclick="if (event.target === this) auCloseUploadModal()">
+        <div class="modal-content" style="max-width:480px;">
+            <div class="modal-header">
+                <h2>📤 이미지 업로드</h2>
+                <button class="modal-close" onclick="auCloseUploadModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>캐릭터</label>
+                    <div id="au-modal-character" style="padding:6px 10px; background:var(--bg); border:1px solid var(--border); border-radius:6px; font-size:0.85rem; color:var(--text);"></div>
+                </div>
+                <div class="form-group">
+                    <label>복장</label>
+                    <select id="au-modal-outfit" style="width:100%; padding:6px 10px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text); font-size:0.85rem;"></select>
+                </div>
+                <div class="form-group">
+                    <label>표정</label>
+                    <select id="au-modal-expression" style="width:100%; padding:6px 10px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text); font-size:0.85rem;"></select>
+                </div>
+                <div class="form-group">
+                    <label>이미지 파일</label>
+                    <div id="au-modal-dropzone" style="border:2px dashed var(--border); border-radius:8px; padding:24px; text-align:center; cursor:pointer; transition:border-color 0.2s, background 0.2s; color:var(--text-secondary); font-size:0.82rem;">
+                        <div style="font-size:1.8rem; margin-bottom:6px;">📁</div>
+                        <div>여기에 파일을 드래그하거나 클릭하여 선택</div>
+                    </div>
+                    <div id="au-modal-file-list" style="margin-top:8px; max-height:120px; overflow-y:auto;"></div>
+                    <input type="file" id="au-modal-file-input" multiple accept="image/*" style="display:none;">
+                </div>
+                <div id="au-modal-upload-status" style="font-size:0.78rem; color:var(--text2); display:none;"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="cancel" onclick="auCloseUploadModal()">취소</button>
+                <button class="confirm" id="au-modal-upload-btn" onclick="auDoUpload()" disabled style="background:#FF9800;">업로드</button>
             </div>
         </div>
     </div>
@@ -5442,6 +5570,12 @@
             document.getElementById('setting-tag-analysis-workflow-filename').value = tagAnalysisSplit.filename;
             document.getElementById('setting-tag-analysis-workflow-source-path').value = tagAnalysisPath;
 
+            // 에셋용 태그 분석 모드
+            const assetTagAnalysisPath = currentConfig.asset_tag_analysis_workflow_source_path || '';
+            const assetTagAnalysisSplit = splitWorkflowPath(assetTagAnalysisPath);
+            document.getElementById('setting-asset-tag-analysis-workflow-filename').value = assetTagAnalysisSplit.filename;
+            document.getElementById('setting-asset-tag-analysis-workflow-source-path').value = assetTagAnalysisPath;
+
             // 로라 학습 워크플로우
             const loraPath = currentConfig.lora_training_workflow_source_path || '';
             const loraSplit = splitWorkflowPath(loraPath);
@@ -5572,7 +5706,8 @@
                 enhance_mode_enabled: '프롬프트 강화 모드',
                 enhance_prompt_file: '강화 프롬프트 파일',
                 asset_workflow_source_path: '에셋 생성 워크플로우',
-                tag_analysis_workflow_source_path: '태그 분석 워크플로우',
+                tag_analysis_workflow_source_path: '스마트 매치용 태그 분석 워크플로우',
+                asset_tag_analysis_workflow_source_path: '에셋용 태그 분석 워크플로우',
                 dwpose_det_model: 'DWPose 탐지 모델',
                 dwpose_pose_model: 'DWPose 포즈 모델',
                 dwpose_model_cache_dir: '모델 캐시 디렉토리',
@@ -5630,6 +5765,7 @@
                 enhance_prompt_file: document.getElementById('setting-enhance-prompt-file').value,
                 asset_workflow_source_path: document.getElementById('setting-asset-workflow-source-path').value,
                 tag_analysis_workflow_source_path: document.getElementById('setting-tag-analysis-workflow-source-path').value,
+                asset_tag_analysis_workflow_source_path: document.getElementById('setting-asset-tag-analysis-workflow-source-path').value,
                 lora_training_workflow_source_path: document.getElementById('setting-lora-workflow-source-path').value,
                 lora_load_path: document.getElementById('setting-lora-load-path').value
             };
@@ -6362,6 +6498,36 @@
             const baseDir = document.getElementById('setting-workflow-base-dir').value;
             const filename = document.getElementById('setting-tag-analysis-workflow-filename').value;
             document.getElementById('setting-tag-analysis-workflow-source-path').value = combineWorkflowPath(baseDir, filename);
+        }
+
+        // 에셋용 태그 분석 워크플로우 자동완성
+        let assetTagAnalysisAutocompleteTimeout;
+        async function onAssetTagAnalysisFilenameInput(value) {
+            updateAssetTagAnalysisWorkflowPath();
+            const list = document.getElementById('asset-tag-analysis-workflow-autocomplete');
+            const baseDir = document.getElementById('setting-workflow-base-dir').value.trim();
+            clearTimeout(assetTagAnalysisAutocompleteTimeout);
+            assetTagAnalysisAutocompleteTimeout = setTimeout(async () => {
+                try {
+                    const params = new URLSearchParams({ search: value, base_dir: baseDir });
+                    const data = await fetchJSON(`/api/workflow_files?${params}`);
+                    renderAutocompleteItems(data.files, list);
+                } catch (e) {
+                    list.classList.remove('visible');
+                }
+            }, 300);
+        }
+
+        function selectAssetTagAnalysisWorkflowFile(fullPath, filename) {
+            document.getElementById('setting-asset-tag-analysis-workflow-filename').value = filename;
+            document.getElementById('setting-asset-tag-analysis-workflow-source-path').value = fullPath;
+            document.getElementById('asset-tag-analysis-workflow-autocomplete').classList.remove('visible');
+        }
+
+        function updateAssetTagAnalysisWorkflowPath() {
+            const baseDir = document.getElementById('setting-workflow-base-dir').value;
+            const filename = document.getElementById('setting-asset-tag-analysis-workflow-filename').value;
+            document.getElementById('setting-asset-tag-analysis-workflow-source-path').value = combineWorkflowPath(baseDir, filename);
         }
 
         // 로라 학습 워크플로우 자동완성
@@ -10971,7 +11137,7 @@
         let assetNavOutfit = '';
         let assetNavExpression = '';
 
-        function switchTab(name) {
+        async function switchTab(name) {
             document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
             document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
             if (name === 'backup') {
@@ -10981,24 +11147,29 @@
                 document.querySelectorAll('.tab-btn')[1].classList.add('active');
                 document.getElementById('tab-asset-content').classList.add('active');
                 if (!assetTags) loadAssetData();
-            } else if (name === 'pose') {
+            } else if (name === 'asset-upload') {
                 document.querySelectorAll('.tab-btn')[2].classList.add('active');
+                document.getElementById('tab-asset-upload-content').classList.add('active');
+                if (!assetTags) await loadAssetData();
+                auLoadCharacterList();
+            } else if (name === 'pose') {
+                document.querySelectorAll('.tab-btn')[3].classList.add('active');
                 document.getElementById('tab-pose-content').classList.add('active');
                 initPoseEditor();
                 loadPoseList();
             } else if (name === 'batch') {
-                document.querySelectorAll('.tab-btn')[3].classList.add('active');
+                document.querySelectorAll('.tab-btn')[4].classList.add('active');
                 document.getElementById('tab-batch-content').classList.add('active');
                 if (!assetTags) loadAssetData();
                 initBatchTab();
             } else if (name === 'smart-asset') {
-                document.querySelectorAll('.tab-btn')[4].classList.add('active');
+                document.querySelectorAll('.tab-btn')[5].classList.add('active');
                 document.getElementById('tab-smart-asset-content').classList.add('active');
                 if (!assetTags) loadAssetData();
                 atLoadCharacterList();
                 atSwitchView('upload');
             } else if (name === 'lora') {
-                document.querySelectorAll('.tab-btn')[5].classList.add('active');
+                document.querySelectorAll('.tab-btn')[6].classList.add('active');
                 document.getElementById('tab-lora-content').classList.add('active');
                 initLoraTab();
             }
@@ -12735,6 +12906,461 @@
         }
 
         // ─── 갤러리 네비게이션 (메인 영역) ─────────────────────
+        // ─── 에셋 업로드 탭 ─────────────────────────────────────────
+        let auNavLevel = 0;
+        let auNavCharacter = '';
+        let auNavOutfit = '';
+        let auNavExpression = '';
+        let auSelectedImages = new Set(); // 선택된 이미지 경로 세트
+
+        function auShowView(view) {
+            document.getElementById('au-loading').style.display = view === 'loading' ? 'flex' : 'none';
+            document.getElementById('au-empty-state').style.display = view === 'empty' ? 'block' : 'none';
+            document.getElementById('au-folder-grid').style.display = view === 'folder' ? 'grid' : 'none';
+            document.getElementById('au-gallery-grid').style.display = view === 'gallery' ? 'grid' : 'none';
+            document.getElementById('au-image-grid').style.display = view === 'grid' ? 'grid' : 'none';
+        }
+
+        function auLoadCharacterList() {
+            const sel = document.getElementById('au-character-select');
+            const chars = Object.keys(assetTags?.characters || {});
+            sel.innerHTML = '<option value="">-- 캐릭터 선택 --</option>';
+            chars.forEach(name => {
+                const opt = document.createElement('option');
+                opt.value = name;
+                opt.textContent = name;
+                sel.appendChild(opt);
+            });
+            if (auNavCharacter) sel.value = auNavCharacter;
+            auRenderFolders();
+        }
+
+        function auRenderFolders() {
+            auNavLevel = 0;
+            auNavCharacter = '';
+            auNavOutfit = '';
+            auNavExpression = '';
+            auSelectedImages.clear();
+            auUpdateAnalyzeBtn();
+            auUpdateUploadBtn();
+            auUpdateBreadcrumb();
+
+            const chars = Object.keys(assetTags?.characters || {});
+            if (chars.length === 0) {
+                auShowView('empty');
+                const empty = document.getElementById('au-empty-state');
+                empty.querySelector('h3').textContent = '에셋 업로드';
+                empty.querySelector('p').textContent = '사이드바에서 캐릭터를 추가한 후 이미지를 탐색하세요.';
+                return;
+            }
+
+            const grid = document.getElementById('au-folder-grid');
+            grid.innerHTML = '';
+            chars.forEach(name => {
+                const card = document.createElement('div');
+                card.className = 'asset-folder-card';
+                const icon = document.createElement('div');
+                icon.className = 'folder-icon';
+                icon.textContent = '📁';
+                const nameEl = document.createElement('div');
+                nameEl.className = 'folder-name';
+                nameEl.textContent = name;
+                card.appendChild(icon);
+                card.appendChild(nameEl);
+                card.onclick = () => auNavigateToGallery(name);
+                grid.appendChild(card);
+            });
+            auShowView('folder');
+        }
+
+        async function auNavigateToGallery(charName) {
+            auNavLevel = 1;
+            auNavCharacter = charName;
+            auNavOutfit = '';
+            auNavExpression = '';
+            auSelectedImages.clear();
+            auUpdateAnalyzeBtn();
+            auUpdateUploadBtn();
+            document.getElementById('au-character-select').value = charName;
+            auUpdateBreadcrumb();
+            await auRenderGallery(charName);
+        }
+
+        async function auRenderGallery(charName) {
+            auShowView('loading');
+            try {
+                const enc = encodeURIComponent;
+                const resp = await fetch(`/api/asset_mode/characters/${enc(charName)}/gallery`);
+                const data = await resp.json();
+                const items = data.gallery || [];
+
+                if (items.length === 0) {
+                    auShowView('empty');
+                    const empty = document.getElementById('au-empty-state');
+                    empty.querySelector('h3').textContent = escapeHtml(charName);
+                    empty.querySelector('p').textContent = '복장과 표정 조합이 없습니다.';
+                    return;
+                }
+
+                const grid = document.getElementById('au-gallery-grid');
+                grid.innerHTML = '';
+                items.forEach(item => {
+                    const card = document.createElement('div');
+                    card.className = 'asset-gallery-card';
+                    card.dataset.outfit = item.outfit;
+                    card.dataset.expression = item.expression;
+
+                    let thumbHtml;
+                    if (item.representative) {
+                        const thumbUrl = `/api/asset_mode/characters/${enc(charName)}/outfits/${enc(item.outfit)}/expressions/${enc(item.expression)}/images/${enc(item.representative)}`;
+                        thumbHtml = `<img class="gallery-thumb" src="${thumbUrl}" loading="lazy">`;
+                    } else {
+                        thumbHtml = `<div class="gallery-thumb-placeholder">이미지 없음</div>`;
+                    }
+
+                    card.innerHTML = `
+                        ${thumbHtml}
+                        <div class="gallery-title">${escapeHtml(item.outfit)} - ${escapeHtml(item.expression)}</div>
+                        ${item.image_count > 0 ? `<div class="gallery-count">${item.image_count}장</div>` : ''}`;
+                    card.onclick = () => auNavigateToImages(charName, item.outfit, item.expression);
+                    grid.appendChild(card);
+                });
+                auShowView('gallery');
+            } catch (e) {
+                console.error('[AU] 갤러리 로드 실패:', e);
+                auShowView('empty');
+            }
+        }
+
+        async function auNavigateToImages(charName, outfit, expression) {
+            auNavLevel = 2;
+            auNavOutfit = outfit;
+            auNavExpression = expression;
+            auSelectedImages.clear();
+            auUpdateAnalyzeBtn();
+            auUpdateUploadBtn();
+            auUpdateBreadcrumb();
+            await auRenderImages(charName, outfit, expression);
+        }
+
+        async function auRenderImages(charName, outfit, expression) {
+            auShowView('loading');
+            try {
+                const enc = encodeURIComponent;
+                const resp = await fetch(`/api/asset_mode/characters/${enc(charName)}/outfits/${enc(outfit)}/expressions/${enc(expression)}/images`);
+                const data = await resp.json();
+                const images = data.images || [];
+
+                if (images.length === 0) {
+                    auShowView('empty');
+                    const empty = document.getElementById('au-empty-state');
+                    empty.querySelector('h3').textContent = `${charName} / ${outfit} / ${expression}`;
+                    empty.querySelector('p').textContent = '이미지가 없습니다.';
+                    return;
+                }
+
+                const grid = document.getElementById('au-image-grid');
+                auShowView('grid');
+                grid.innerHTML = '';
+                images.forEach(img => {
+                    const imgUrl = `/api/asset_mode/characters/${enc(charName)}/outfits/${enc(outfit)}/expressions/${enc(expression)}/images/${enc(img.filename)}`;
+                    const card = document.createElement('div');
+                    card.className = 'asset-image-card';
+                    card.dataset.imgUrl = imgUrl;
+                    card.dataset.filename = img.filename;
+                    const hasPrompt = img.positive || img.negative;
+                    card.innerHTML = `
+                        <div class="au-select-check" onclick="event.stopPropagation(); auToggleSelect(this, '${imgUrl}')" title="선택">☐</div>
+                        ${img.is_representative ? '<div class="rep-badge">대표</div>' : ''}
+                        <img src="${imgUrl}" onclick="openLightbox(this.src)" loading="lazy">
+                        <div class="card-actions">
+                            <span class="filename">${escapeHtml(img.filename)}</span>
+                            <button onclick="setAssetRepresentative('${enc(charName)}','${enc(outfit)}','${enc(expression)}','${enc(img.filename)}'); auRenderImages('${enc(charName)}','${enc(outfit)}','${enc(expression)}')">
+                                ${img.is_representative ? '대표해제' : '대표설정'}
+                            </button>
+                            <button onclick="deleteAssetImage('${enc(charName)}','${enc(outfit)}','${enc(expression)}','${enc(img.filename)}'); auRenderImages('${enc(charName)}','${enc(outfit)}','${enc(expression)}')" style="color:var(--error);">삭제</button>
+                            <button onclick="sendAssetToPoseEditor('${imgUrl}','${enc(img.filename)}')">포즈 편집</button>
+                        </div>
+                        ${hasPrompt ? `
+                        <div class="prompt-info">
+                            <div class="prompt-label" onclick="this.parentElement.classList.toggle('expanded')">프롬프트 ▾</div>
+                            <div class="prompt-text">
+                                ${img.positive ? `<b>긍정:</b> ${escapeHtml(img.positive).replace(/\n/g, '<br>')}` : ''}
+                                ${img.negative ? `<br><b>부정:</b> ${escapeHtml(img.negative).replace(/\n/g, '<br>')}` : ''}
+                            </div>
+                        </div>` : ''}`;
+                    grid.appendChild(card);
+                });
+            } catch (e) {
+                console.error('[AU] 이미지 로드 실패:', e);
+                auShowView('empty');
+            }
+        }
+
+        function auToggleSelect(checkEl, imgUrl) {
+            if (auSelectedImages.has(imgUrl)) {
+                auSelectedImages.delete(imgUrl);
+                checkEl.textContent = '☐';
+                checkEl.style.color = '';
+            } else {
+                auSelectedImages.add(imgUrl);
+                checkEl.textContent = '☑';
+                checkEl.style.color = 'var(--accent)';
+            }
+            auUpdateAnalyzeBtn();
+            auUpdateUploadBtn();
+        }
+
+        function auUpdateAnalyzeBtn() {
+            const btn = document.getElementById('au-analyze-btn');
+            btn.disabled = auSelectedImages.size === 0;
+            btn.textContent = auSelectedImages.size > 0
+                ? `선택 이미지 태그 분석 (${auSelectedImages.size}장)`
+                : '선택 이미지 태그 분석';
+        }
+
+        async function auAnalyzeSelectedImages() {
+            if (auSelectedImages.size === 0) { showToast('이미지를 먼저 선택하세요', 'error'); return; }
+            const statusEl = document.getElementById('au-analyze-status');
+            statusEl.style.display = 'block';
+            const btn = document.getElementById('au-analyze-btn');
+            btn.disabled = true;
+
+            const urls = [...auSelectedImages];
+            let done = 0;
+            let failCount = 0;
+            for (const url of urls) {
+                statusEl.textContent = `분석 중... (${done + 1}/${urls.length})`;
+                try {
+                    // 이미지 fetch 후 blob으로 변환
+                    const imgResp = await fetch(url);
+                    if (!imgResp.ok) { failCount++; done++; continue; }
+                    const blob = await imgResp.blob();
+                    const formData = new FormData();
+                    formData.append('image', blob, 'image.png');
+                    formData.append('category', 'expressions');
+                    const resp = await fetch('/api/asset_tool/analyze', { method: 'POST', body: formData });
+                    const result = await resp.json();
+                    if (!result.success) {
+                        console.warn('[AU] 분석 실패:', url, result.error);
+                        failCount++;
+                    }
+                } catch (e) {
+                    console.error('[AU] 분석 오류:', e);
+                    failCount++;
+                }
+                done++;
+            }
+            statusEl.textContent = `완료 (${done - failCount}/${urls.length})` + (failCount > 0 ? ` 실패 ${failCount}건` : '');
+            btn.disabled = false;
+            showToast(`${done - failCount}장 분석 완료` + (failCount > 0 ? `, ${failCount}건 실패` : ''), failCount > 0 ? 'warning' : 'success');
+        }
+
+        function auUpdateBreadcrumb() {
+            const bc = document.getElementById('au-breadcrumb');
+            let html = '<span class="bc-link" onclick="auNavigateBreadcrumb(0)">에셋</span>';
+            if (auNavLevel >= 1 && auNavCharacter) {
+                if (auNavLevel === 1) {
+                    html += `<span class="bc-sep">/</span><span class="bc-active">${escapeHtml(auNavCharacter)}</span>`;
+                } else {
+                    html += `<span class="bc-sep">/</span><span class="bc-link" onclick="auNavigateBreadcrumb(1)">${escapeHtml(auNavCharacter)}</span>`;
+                }
+            }
+            if (auNavLevel >= 2 && auNavOutfit && auNavExpression) {
+                html += `<span class="bc-sep">/</span><span class="bc-active">${escapeHtml(auNavOutfit)}-${escapeHtml(auNavExpression)}</span>`;
+            }
+            bc.innerHTML = html;
+        }
+
+        async function auNavigateBreadcrumb(level) {
+            if (level === 0) auRenderFolders();
+            else if (level === 1) {
+                auNavLevel = 1;
+                auNavOutfit = '';
+                auNavExpression = '';
+                auSelectedImages.clear();
+                auUpdateAnalyzeBtn();
+            auUpdateUploadBtn();
+                auUpdateBreadcrumb();
+                await auRenderGallery(auNavCharacter);
+            }
+        }
+
+        function auOnCharacterChange() {
+            const charName = document.getElementById('au-character-select').value;
+            if (charName) {
+                auNavigateToGallery(charName);
+            } else {
+                auRenderFolders();
+            }
+        }
+
+        async function auAddCharacter() {
+            const name = prompt('새 캐릭터명을 입력하세요');
+            if (!name || !name.trim()) return;
+            await assetTagAction('add_character', { name: name.trim() });
+            auLoadCharacterList();
+        }
+
+        async function auDuplicateCharacter() {
+            const source = document.getElementById('au-character-select').value;
+            if (!source) return;
+            const newName = prompt(`복제할 새 캐릭터명을 입력하세요\n(원본: ${source})`);
+            if (!newName || !newName.trim()) return;
+            await assetTagAction('duplicate_character', { source, name: newName.trim() });
+            auLoadCharacterList();
+        }
+
+        function auRemoveCharacter() {
+            const name = document.getElementById('au-character-select').value;
+            if (!name) return;
+            if (!confirm(`캐릭터 "${name}" 삭제?`)) return;
+            assetTagAction('remove_character', { name }).then(() => auLoadCharacterList());
+        }
+
+        function auUpdateUploadBtn() {
+            // 버튼은 항상 활성화 - 모달에서 레벨 체크
+        }
+
+        // ─── 업로드 모달 ─────────────────────────────────────────
+        let auModalFiles = [];
+
+        function auOpenUploadModal() {
+            if (auNavLevel < 1 || !auNavCharacter) {
+                showToast('캐릭터 폴더로 먼저 들어가세요', 'warning');
+                return;
+            }
+
+            const modal = document.getElementById('au-upload-modal');
+            modal.classList.add('visible');
+
+            // 캐릭터명 표시
+            document.getElementById('au-modal-character').textContent = auNavCharacter;
+
+            // 복장 select 채우기
+            const outfitSel = document.getElementById('au-modal-outfit');
+            const charData = assetTags?.characters?.[auNavCharacter];
+            const defaultOutfit = charData?.outfit || auNavOutfit || '';
+            outfitSel.innerHTML = '<option value="">-- 복장 선택 --</option>';
+            for (const name of Object.keys(assetTags?.outfits || {}).sort()) {
+                const sel = name === defaultOutfit ? ' selected' : '';
+                outfitSel.innerHTML += `<option value="${escapeHtml(name)}"${sel}>${escapeHtml(name)}</option>`;
+            }
+
+            // 표정 select 채우기
+            const exprSel = document.getElementById('au-modal-expression');
+            const defaultExpr = auNavExpression || '';
+            exprSel.innerHTML = '<option value="">-- 표정 선택 --</option>';
+            for (const name of Object.keys(assetTags?.expressions || {}).sort()) {
+                const sel = name === defaultExpr ? ' selected' : '';
+                exprSel.innerHTML += `<option value="${escapeHtml(name)}"${sel}>${escapeHtml(name)}</option>`;
+            }
+
+            // 파일 목록 초기화
+            auModalFiles = [];
+            auRenderModalFileList();
+            document.getElementById('au-modal-upload-status').style.display = 'none';
+
+            // 드롭존 이벤트 (중복 방지)
+            const dropzone = document.getElementById('au-modal-dropzone');
+            const fileInput = document.getElementById('au-modal-file-input');
+            dropzone.onclick = () => fileInput.click();
+            dropzone.ondragover = (e) => { e.preventDefault(); dropzone.style.borderColor = 'var(--accent)'; dropzone.style.background = 'rgba(255,152,0,0.08)'; };
+            dropzone.ondragleave = () => { dropzone.style.borderColor = ''; dropzone.style.background = ''; };
+            dropzone.ondrop = (e) => {
+                e.preventDefault();
+                dropzone.style.borderColor = '';
+                dropzone.style.background = '';
+                if (e.dataTransfer.files.length) auAddModalFiles(e.dataTransfer.files);
+            };
+            fileInput.onchange = () => { if (fileInput.files.length) auAddModalFiles(fileInput.files); fileInput.value = ''; };
+        }
+
+        function auCloseUploadModal() {
+            document.getElementById('au-upload-modal').classList.remove('visible');
+            auModalFiles = [];
+            document.getElementById('au-modal-file-input').value = '';
+        }
+
+        function auAddModalFiles(fileList) {
+            for (const f of fileList) {
+                if (!f.type.startsWith('image/')) continue;
+                auModalFiles.push(f);
+            }
+            auRenderModalFileList();
+        }
+
+        function auRemoveModalFile(index) {
+            auModalFiles.splice(index, 1);
+            auRenderModalFileList();
+        }
+
+        function auRenderModalFileList() {
+            const listEl = document.getElementById('au-modal-file-list');
+            const btn = document.getElementById('au-modal-upload-btn');
+            const outfit = document.getElementById('au-modal-outfit').value;
+            const expr = document.getElementById('au-modal-expression').value;
+
+            listEl.innerHTML = auModalFiles.map((f, i) =>
+                `<div style="display:flex; justify-content:space-between; align-items:center; padding:3px 0; font-size:0.78rem; border-bottom:1px solid var(--border);">
+                    <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(f.name)} <span style="color:var(--text-secondary);">(${(f.size/1024).toFixed(0)}KB)</span></span>
+                    <button onclick="auRemoveModalFile(${i})" style="background:none; border:none; color:var(--error); cursor:pointer; font-size:0.9rem; padding:0 4px;">✕</button>
+                </div>`
+            ).join('');
+
+            btn.disabled = !(outfit && expr && auModalFiles.length > 0);
+        }
+
+        async function auDoUpload() {
+            const outfit = document.getElementById('au-modal-outfit').value;
+            const expr = document.getElementById('au-modal-expression').value;
+            if (!outfit || !expr || auModalFiles.length === 0) return;
+
+            const statusEl = document.getElementById('au-modal-upload-status');
+            const btn = document.getElementById('au-modal-upload-btn');
+            statusEl.style.display = 'block';
+            btn.disabled = true;
+
+            let done = 0, failCount = 0;
+            for (const file of auModalFiles) {
+                statusEl.textContent = `업로드 중... (${done + 1}/${auModalFiles.length})`;
+                try {
+                    const formData = new FormData();
+                    formData.append('image', file);
+                    formData.append('character', auNavCharacter);
+                    formData.append('outfit', outfit);
+                    formData.append('expression', expr);
+                    const resp = await fetch('/api/asset_mode/upload_image', { method: 'POST', body: formData });
+                    const result = await resp.json();
+                    if (!result.success) {
+                        console.warn('[AU] 업로드 실패:', file.name, result.error);
+                        failCount++;
+                    }
+                } catch (e) {
+                    console.error('[AU] 업로드 오류:', e);
+                    failCount++;
+                }
+                done++;
+            }
+
+            showToast(`${done - failCount}장 업로드 완료`, failCount > 0 ? 'warning' : 'success');
+            auCloseUploadModal();
+
+            // 현재 뷰 갱신
+            const enc = encodeURIComponent;
+            if (auNavLevel === 2 && auNavOutfit && auNavExpression) {
+                await auRenderImages(enc(auNavCharacter), enc(auNavOutfit), enc(auNavExpression));
+            } else if (auNavLevel === 1) {
+                await auRenderGallery(auNavCharacter);
+            }
+        }
+
+        // select 변경 시 업로드 버튼 상태 업데이트
+        document.getElementById('au-modal-outfit').addEventListener('change', auRenderModalFileList);
+        document.getElementById('au-modal-expression').addEventListener('change', auRenderModalFileList);
+
+        // ─── 에셋 업로드 탭 끝 ─────────────────────────────────────
+
         function renderAssetMainArea() {
             if (assetNavLevel === 0) renderCharacterFolders();
             else if (assetNavLevel === 1) renderCharacterGallery(assetNavCharacter);
@@ -13369,6 +13995,41 @@
             document.addEventListener('mousemove', (e) => {
                 if (!dragging) return;
                 const diff = startX - e.clientX; // 왼쪽으로 드래그 = 넓어짐
+                let newW = startW + diff;
+                newW = Math.max(280, Math.min(800, newW));
+                sidebar.style.width = newW + 'px';
+            });
+
+            document.addEventListener('mouseup', () => {
+                if (!dragging) return;
+                dragging = false;
+                handle.classList.remove('active');
+                document.body.style.cursor = '';
+                document.body.style.userSelect = '';
+            });
+        })();
+
+        // ─── 에셋 업로드 사이드바 리사이즈 ──────────────────────────
+        (function() {
+            const handle = document.getElementById('au-sidebar-resize-handle');
+            const sidebar = document.getElementById('au-sidebar');
+            if (!handle || !sidebar) return;
+            let dragging = false;
+            let startX, startW;
+
+            handle.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                dragging = true;
+                startX = e.clientX;
+                startW = sidebar.offsetWidth;
+                handle.classList.add('active');
+                document.body.style.cursor = 'col-resize';
+                document.body.style.userSelect = 'none';
+            });
+
+            document.addEventListener('mousemove', (e) => {
+                if (!dragging) return;
+                const diff = startX - e.clientX;
                 let newW = startW + diff;
                 newW = Math.max(280, Math.min(800, newW));
                 sidebar.style.width = newW + 'px';
