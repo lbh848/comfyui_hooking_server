@@ -4634,6 +4634,11 @@
                         case 'asset_generation_completed':
                             handleAssetWsEvent(msg.type, msg.data);
                             break;
+                        // 에셋 분석 진행률 이벤트
+                        case 'asset_mode_batch_progress':
+                        case 'asset_mode_selected_progress':
+                            handleAssetAnalyzeProgress(msg.type, msg.data);
+                            break;
                         case 'text_output':
                             handleTextOutput(msg.data);
                             break;
@@ -13176,34 +13181,41 @@
             const btn = document.getElementById('au-analyze-btn');
             btn.disabled = true;
 
-            const urls = [...auSelectedImages];
-            let done = 0;
-            let failCount = 0;
-            for (const url of urls) {
-                statusEl.textContent = `분석 중... (${done + 1}/${urls.length})`;
-                try {
-                    // 이미지 fetch 후 blob으로 변환
-                    const imgResp = await fetch(url);
-                    if (!imgResp.ok) { failCount++; done++; continue; }
-                    const blob = await imgResp.blob();
-                    const formData = new FormData();
-                    formData.append('image', blob, 'image.png');
-                    formData.append('category', 'expressions');
-                    const resp = await fetch('/api/asset_tool/analyze', { method: 'POST', body: formData });
-                    const result = await resp.json();
-                    if (!result.success) {
-                        console.warn('[AU] 분석 실패:', url, result.error);
-                        failCount++;
-                    }
-                } catch (e) {
-                    console.error('[AU] 분석 오류:', e);
-                    failCount++;
+            // URL에서 filename 추출
+            const images = [...auSelectedImages].map(url => {
+                const parts = url.split('/images/');
+                const filename = parts.length > 1 ? decodeURIComponent(parts[parts.length - 1]) : '';
+                return { outfit: auNavOutfit, expression: auNavExpression, filename };
+            }).filter(img => img.filename);
+
+            statusEl.textContent = '분석 중... (0/' + images.length + ')';
+            try {
+                const resp = await fetch('/api/asset_mode/analyze_selected', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ character: auNavCharacter, images }),
+                });
+                const data = await resp.json();
+                if (!data.success) {
+                    statusEl.textContent = '오류: ' + (data.error || '알 수 없는 오류');
+                    showToast(data.error || '분석 실패', 'error');
+                    return;
                 }
-                done++;
+                const ok = data.success_count || 0;
+                const fail = data.fail_count || 0;
+                const total = data.total || 0;
+                statusEl.textContent = `분석 완료 (${ok}/${total})` + (fail > 0 ? ` 실패 ${fail}건` : '');
+                showToast(`${ok}장 분석 완료` + (fail > 0 ? `, ${fail}건 실패` : ''), fail > 0 ? 'warning' : 'success');
+                // 분석 완료 후 이미지 뷰 갱신
+                if (auNavLevel >= 2 && auNavOutfit && auNavExpression) {
+                    await auRenderImages(auNavCharacter, auNavOutfit, auNavExpression);
+                }
+            } catch (e) {
+                statusEl.textContent = '오류: ' + e.message;
+                showToast('분석 오류', 'error');
+            } finally {
+                btn.disabled = false;
             }
-            statusEl.textContent = `완료 (${done - failCount}/${urls.length})` + (failCount > 0 ? ` 실패 ${failCount}건` : '');
-            btn.disabled = false;
-            showToast(`${done - failCount}장 분석 완료` + (failCount > 0 ? `, ${failCount}건 실패` : ''), failCount > 0 ? 'warning' : 'success');
         }
 
         async function auBatchAnalyzeRepresentatives() {
@@ -14330,6 +14342,18 @@
                     hideTopProgress();
                 }
             }
+        }
+
+        // 에셋 태그 분석 진행률 WebSocket 핸들러
+        function handleAssetAnalyzeProgress(type, data) {
+            const statusEl = document.getElementById('au-analyze-status');
+            if (!statusEl) return;
+            statusEl.style.display = 'block';
+            const current = data.current || 0;
+            const total = data.total || 0;
+            const label = type === 'asset_mode_batch_progress' ? '대표이미지' : '선택';
+            const detail = data.filename ? ` - ${data.filename}` : (data.outfit ? ` - ${data.outfit}/${data.expression}` : '');
+            statusEl.textContent = `${label} 분석 중... (${current}/${total})${detail}`;
         }
 
         // ─── 사이드바 리사이즈 ─────────────────────────────────

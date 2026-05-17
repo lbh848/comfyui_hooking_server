@@ -3923,6 +3923,100 @@ async def handle_api_asset_mode_batch_analyze(request: web.Request) -> web.Respo
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 
+async def handle_api_asset_mode_analyze_selected(request: web.Request) -> web.Response:
+    """선택 이미지 태그 분석 + _prompt.json 저장."""
+    if not asset_tool.workflow_source_path:
+        return web.json_response({"success": False, "error": "태그 분석 워크플로우 경로가 설정되지 않았습니다"}, status=400)
+    try:
+        body = await request.json()
+        character = body.get("character", "")
+        images = body.get("images", [])
+        if not character or not images:
+            return web.json_response({"success": False, "error": "character와 images가 필요합니다"}, status=400)
+
+        total = len(images)
+        success_count = 0
+        fail_count = 0
+        results = []
+
+        for i, img_info in enumerate(images):
+            outfit = img_info.get("outfit", "")
+            expression = img_info.get("expression", "")
+            filename = img_info.get("filename", "")
+            if not outfit or not expression or not filename:
+                fail_count += 1
+                results.append({"filename": filename, "tags_count": 0, "error": "필드 누락"})
+                continue
+
+            await notify_frontend("asset_mode_selected_progress", {
+                "current": i + 1, "total": total,
+                "outfit": outfit, "expression": expression, "filename": filename,
+            })
+
+            try:
+                from modes.asset_mode import ASSET_DIR
+                filepath = os.path.join(ASSET_DIR,
+                    asset_mode._safe_dirname(character),
+                    asset_mode._safe_dirname(outfit),
+                    asset_mode._safe_dirname(expression),
+                    filename)
+
+                if not os.path.isfile(filepath):
+                    fail_count += 1
+                    results.append({"filename": filename, "tags_count": 0, "error": "파일 없음"})
+                    print(f"[ASSET_MODE] 선택 분석: 파일 없음 - {filepath}")
+                    continue
+
+                with open(filepath, "rb") as f:
+                    image_data = f.read()
+
+                analyze_result = await asset_tool.analyze_image(image_data, "expressions")
+                tags = analyze_result.get("tags", [])
+                positive = ", ".join(tags) if tags else ""
+
+                # _prompt.json 저장
+                prompt_path = os.path.join(os.path.dirname(filepath),
+                    f"{os.path.splitext(filename)[0]}_prompt.json")
+                existing = {}
+                if os.path.isfile(prompt_path):
+                    try:
+                        with open(prompt_path, "r", encoding="utf-8") as pf:
+                            existing = json.load(pf)
+                    except Exception:
+                        pass
+                existing["positive"] = positive
+                existing.setdefault("negative", "")
+                existing.setdefault("character", character)
+                existing.setdefault("appearance", "")
+                existing.setdefault("outfit", outfit)
+                existing.setdefault("expression", expression)
+                with open(prompt_path, "w", encoding="utf-8") as pf:
+                    json.dump(existing, pf, ensure_ascii=False, indent=2)
+
+                results.append({"filename": filename, "tags_count": len(tags)})
+                success_count += 1
+                print(f"[ASSET_MODE] 선택 분석 완료 ({i+1}/{total}): {filename} ({len(tags)}개 태그)")
+            except Exception as e:
+                fail_count += 1
+                results.append({"filename": filename, "tags_count": 0, "error": str(e)})
+                print(f"[ASSET_MODE] 선택 분석 실패 ({i+1}/{total}): {filename} - {e}")
+                import traceback
+                traceback.print_exc()
+
+        return web.json_response({
+            "success": True,
+            "results": results,
+            "total": total,
+            "success_count": success_count,
+            "fail_count": fail_count,
+        })
+    except Exception as e:
+        print(f"[ASSET_MODE] 선택 분석 오류: {e}")
+        import traceback
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
 async def handle_api_expression_profile_scan(request: web.Request) -> web.Response:
     try:
         character = request.query.get("character", "")
@@ -3963,6 +4057,7 @@ app.router.add_post("/api/asset_mode/delete_image", handle_api_asset_mode_delete
 app.router.add_post("/api/asset_mode/upload_image", handle_api_asset_mode_upload_image)
 app.router.add_post("/api/asset_mode/upload_reference", handle_api_asset_mode_upload_reference)
 app.router.add_post("/api/asset_mode/batch_analyze_representatives", handle_api_asset_mode_batch_analyze)
+app.router.add_post("/api/asset_mode/analyze_selected", handle_api_asset_mode_analyze_selected)
 app.router.add_get("/api/expression_profile/scan", handle_api_expression_profile_scan)
 app.router.add_post("/api/expression_profile/create_folders", handle_api_expression_profile_create_folders)
 app.router.add_get("/api/asset_mode/name_mapping/{character}", handle_api_asset_mode_name_mapping_get)
