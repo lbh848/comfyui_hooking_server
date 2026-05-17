@@ -4434,6 +4434,117 @@ app.router.add_post("/api/lora/training_images/representative", handle_api_lora_
 app.router.add_post("/api/lora/training_images/prompt", handle_api_lora_training_prompt)
 
 
+# ─── LoRA 테스트 이미지 API ─────────────────────────────────
+async def handle_api_lora_test_list(request):
+    """테스트 이미지 목록"""
+    try:
+        character = request.query.get("character", "")
+        entry = request.query.get("entry", "")
+        if not character or not entry:
+            return web.json_response({"success": False, "error": "캐릭터/엔트리 미지정"}, status=400)
+        from modes.lora_mode import list_test_images
+        images = list_test_images(character, entry)
+        return web.json_response({"success": True, "images": images})
+    except Exception as e:
+        print(f"[LORA] 테스트 이미지 목록 조회 실패: {e}")
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_lora_test_add(request):
+    """테스트 이미지 추가 (에셋에서 복사)"""
+    try:
+        body = await request.json()
+        character = body.get("character", "")
+        entry = body.get("entry", "")
+        sources = body.get("sources", [])
+        if not character or not entry or not sources:
+            return web.json_response({"success": False, "error": "필수 값 누락"}, status=400)
+        from modes.lora_mode import add_test_images
+        result = add_test_images(character, entry, sources)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[LORA] 테스트 이미지 추가 실패: {e}")
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_lora_test_image(request):
+    """테스트 이미지 파일 서빙"""
+    try:
+        character = request.match_info.get("character", "")
+        entry = request.match_info.get("entry", "")
+        filename = request.match_info.get("filename", "")
+        from modes.lora_mode import get_test_image_path
+        filepath = get_test_image_path(character, entry, filename)
+        if filepath:
+            return web.FileResponse(filepath)
+        return web.Response(text="Not found", status=404)
+    except Exception as e:
+        print(f"[LORA] 테스트 이미지 서빙 실패: {e}")
+        return web.Response(text="Error", status=500)
+
+
+async def handle_api_lora_test_delete(request):
+    """테스트 이미지 삭제"""
+    try:
+        body = await request.json()
+        character = body.get("character", "")
+        entry = body.get("entry", "")
+        filename = body.get("filename", "")
+        if not character or not entry or not filename:
+            return web.json_response({"success": False, "error": "필수 값 누락"}, status=400)
+        from modes.lora_mode import delete_test_image
+        result = delete_test_image(character, entry, filename)
+        status = 200 if result.get("success") else 400
+        return web.json_response(result, status=status)
+    except Exception as e:
+        print(f"[LORA] 테스트 이미지 삭제 실패: {e}")
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_lora_test_representative(request):
+    """테스트 이미지 대표 설정"""
+    try:
+        body = await request.json()
+        character = body.get("character", "")
+        entry = body.get("entry", "")
+        filename = body.get("filename", "")
+        if not character or not entry or not filename:
+            return web.json_response({"success": False, "error": "필수 값 누락"}, status=400)
+        from modes.lora_mode import set_test_representative
+        result = set_test_representative(character, entry, filename)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[LORA] 테스트 대표 설정 실패: {e}")
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_lora_test_prompt(request):
+    """테스트 이미지 프롬프트 저장"""
+    try:
+        body = await request.json()
+        character = body.get("character", "")
+        entry = body.get("entry", "")
+        filename = body.get("filename", "")
+        positive = body.get("positive", "")
+        negative = body.get("negative", "")
+        if not character or not entry or not filename:
+            return web.json_response({"success": False, "error": "필수 값 누락"}, status=400)
+        from modes.lora_mode import save_test_prompt
+        result = save_test_prompt(character, entry, filename, positive, negative)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[LORA] 테스트 프롬프트 저장 실패: {e}")
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+app.router.add_get("/api/lora/test_images", handle_api_lora_test_list)
+app.router.add_post("/api/lora/test_images/add", handle_api_lora_test_add)
+app.router.add_get("/api/lora/test_image/{character}/{entry}/{filename}", handle_api_lora_test_image)
+app.router.add_post("/api/lora/test_images/delete", handle_api_lora_test_delete)
+app.router.add_post("/api/lora/test_images/representative", handle_api_lora_test_representative)
+app.router.add_post("/api/lora/test_images/prompt", handle_api_lora_test_prompt)
+
+
 # ─── LoRA 항목 관리 API ─────────────────────────────────
 async def handle_api_lora_manage_list(request):
     """LoRA 항목 목록"""
@@ -4559,7 +4670,7 @@ async def handle_api_lora_training_export(request):
 app.router.add_post("/api/lora/training_images/export", handle_api_lora_training_export)
 
 
-def _build_lora_training_text(images: list, trigger: str, profile: str, step: int, il_rate: float, save_step: int, folder: str, field: str = "positive") -> str:
+def _build_lora_training_text(images: list, trigger: str, profile: str, step: int, il_rate: float, save_step: int, folder: str, field: str = "positive", lora_save_path: str = "", gen_w: int = 1024, gen_h: int = 1024, test_images: list = None) -> str:
     """LoRA 학습용 프롬프트 텍스트 생성 (긍정/부정)"""
     lines = []
     for i, img in enumerate(images, start=1):
@@ -4580,6 +4691,24 @@ def _build_lora_training_text(images: list, trigger: str, profile: str, step: in
     lines.append(str(save_step))
     lines.append("[MULTI_IMG_FOLDER_NAME]")
     lines.append(folder or "(미입력)")
+    lines.append("[LORA_SAVE_PATH]")
+    lines.append(lora_save_path or "(미설정)")
+    lines.append("[GEN_W]")
+    lines.append(str(gen_w))
+    lines.append("[GEN_H]")
+    lines.append(str(gen_h))
+    # TEST_POSITIVE / TEST_NEGATIVE
+    if test_images:
+        if field == "positive":
+            lines.append("[TEST_POSITIVE]")
+        else:
+            lines.append("[TEST_NEGATIVE]")
+        for i, img in enumerate(test_images, start=1):
+            if field == "positive":
+                prefix = f"{trigger}, " if trigger else ""
+                lines.append(f"[{i}]{prefix}{img.get('positive', '(프롬프트 없음)')}")
+            else:
+                lines.append(f"[{i}]{img.get('negative', '(프롬프트 없음)')}")
     lines.append("[END]")
     return "\n".join(lines)
 
@@ -4617,16 +4746,23 @@ async def handle_api_lora_training_start(request):
         il_rate = training_config.get("il_rate", 0.0005)
         save_step = training_config.get("save_per_step", 50)
         folder = training_config.get("multi_img_folder_name", "soya_lora")
+        gen_w = training_config.get("gen_w", 1024)
+        gen_h = training_config.get("gen_h", 1024)
+        lora_save_path = training_config.get("lora_save_path", f"{character}/Lora/{entry}")
 
         # 3. 학습 이미지 + 프롬프트 로드
         images = list_training_images(character, entry)
         if not images:
             return web.json_response({"success": False, "error": "학습 이미지가 없습니다"})
 
-        positive_text = _build_lora_training_text(images, trigger, profile, step, il_rate, save_step, folder, "positive")
-        negative_text = _build_lora_training_text(images, trigger, profile, step, il_rate, save_step, folder, "negative")
+        # 4. 테스트 이미지 로드
+        from modes.lora_mode import list_test_images
+        test_images = list_test_images(character, entry)
 
-        # 4. 워크플로우 로드 & 변환
+        positive_text = _build_lora_training_text(images, trigger, profile, step, il_rate, save_step, folder, "positive", lora_save_path, gen_w, gen_h, test_images)
+        negative_text = _build_lora_training_text(images, trigger, profile, step, il_rate, save_step, folder, "negative", lora_save_path, gen_w, gen_h, test_images)
+
+        # 5. 워크플로우 로드 & 변환
         workflow_path = config.get("lora_training_workflow_source_path", "")
         if not workflow_path or not os.path.isfile(workflow_path):
             return web.json_response({"success": False, "error": f"LoRA 학습 워크플로우 파일이 없습니다: {workflow_path}"})
@@ -4638,7 +4774,7 @@ async def handle_api_lora_training_start(request):
         if conv_err or api_wf is None:
             return web.json_response({"success": False, "error": f"워크플로우 변환 실패: {conv_err}"})
 
-        # 5. 프롬프트 주입
+        # 6. 프롬프트 주입
         import copy
         wf = copy.deepcopy(api_wf)
         for nid, ninfo in wf.items():
@@ -4650,7 +4786,7 @@ async def handle_api_lora_training_start(request):
             elif title == "부정프롬프트":
                 ninfo["inputs"]["value"] = negative_text
 
-        # 6. ComfyUI에 제출
+        # 7. ComfyUI에 제출
         prompt_id, submit_result = await submit_to_real_comfy(wf)
         node_errors = submit_result.get("node_errors", {})
         print(f"[LORA_TRAIN] 학습 워크플로우 제출 완료: prompt_id={prompt_id}")

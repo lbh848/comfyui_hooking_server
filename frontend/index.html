@@ -3326,6 +3326,14 @@
                             학습용 이미지가 없습니다. 사이드바에서 이미지를 추가하세요.
                         </div>
                     </div>
+                    <!-- 테스트 이미지 그리드 -->
+                    <div id="lora-test-section" style="display:none; padding:16px;">
+                        <div style="font-weight:600; font-size:0.95rem; margin-bottom:8px;">테스트 이미지</div>
+                        <div class="asset-image-grid" id="lora-test-grid" style="display:none;"></div>
+                        <div id="lora-test-empty" style="display:none; text-align:center; padding:32px; color:var(--text-secondary);">
+                            테스트 이미지가 없습니다. 사이드바에서 이미지를 추가하세요.
+                        </div>
+                    </div>
                     <!-- LoRA 항목 정보 (항목 선택 시) -->
                     <div id="lora-entry-info" style="display:none; padding:16px;">
                         <div style="background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:16px; max-width:480px;">
@@ -3354,10 +3362,19 @@
                     <!-- 학습 이미지 추가 (항목 선택 시) -->
                     <div id="lora-training-add-section" style="display:none; background:rgba(255,152,0,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
                         <div class="section-title">학습용 이미지</div>
-                        <button onclick="openLoraImagePicker()" style="width:100%; padding:8px; background:rgba(180,130,220,0.2); color:var(--text); border:1px solid rgba(180,130,220,0.3); border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">
+                        <button onclick="openLoraImagePicker('training')" style="width:100%; padding:8px; background:rgba(180,130,220,0.2); color:var(--text); border:1px solid rgba(180,130,220,0.3); border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">
                             에셋에서 선택
                         </button>
                         <div style="font-size:0.7rem; color:var(--text-secondary); margin-top:4px;">현재 캐릭터의 에셋 이미지에서 학습용 이미지를 추가합니다.</div>
+                    </div>
+
+                    <!-- 테스트 이미지 추가 (항목 선택 시) -->
+                    <div id="lora-test-add-section" style="display:none; background:rgba(0,150,255,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
+                        <div class="section-title">테스트 이미지</div>
+                        <button onclick="openLoraImagePicker('test')" style="width:100%; padding:8px; background:rgba(180,130,220,0.2); color:var(--text); border:1px solid rgba(180,130,220,0.3); border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">
+                            에셋에서 선택
+                        </button>
+                        <div style="font-size:0.7rem; color:var(--text-secondary); margin-top:4px;">현재 캐릭터의 에셋 이미지에서 테스트용 이미지를 추가합니다.</div>
                     </div>
 
                     <!-- 학습 설정 (항목 선택 시) -->
@@ -3390,6 +3407,18 @@
                             <div>
                                 <label style="font-size:0.7rem; color:var(--text-secondary); display:block; margin-bottom:2px;">MULTI_IMG_FOLDER_NAME</label>
                                 <div id="lora-cfg-folder" style="padding:4px 8px; background:var(--surface); border-radius:4px; font-size:0.85rem; color:var(--text-secondary);">soya_lora</div>
+                            </div>
+                            <div>
+                                <label style="font-size:0.7rem; color:var(--text-secondary); display:block; margin-bottom:2px;">LORA_SAVE_PATH (자동)</label>
+                                <div id="lora-cfg-save-path" style="padding:4px 8px; background:var(--surface); border-radius:4px; font-size:0.85rem; color:var(--text-secondary); word-break:break-all;"></div>
+                            </div>
+                            <div>
+                                <label style="font-size:0.7rem; color:var(--text-secondary); display:block; margin-bottom:2px;">GEN_W (테스트 생성 해상도)</label>
+                                <input type="number" id="lora-cfg-genw" value="1024" min="1" style="width:100%; padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); font-size:0.8rem; box-sizing:border-box;">
+                            </div>
+                            <div>
+                                <label style="font-size:0.7rem; color:var(--text-secondary); display:block; margin-bottom:2px;">GEN_H (테스트 생성 해상도)</label>
+                                <input type="number" id="lora-cfg-genh" value="1024" min="1" style="width:100%; padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); font-size:0.8rem; box-sizing:border-box;">
                             </div>
                         </div>
                         <div style="display:flex; gap:4px; margin-top:8px;">
@@ -9554,12 +9583,14 @@
         // ─── LoRA 매니징 ─────────────────────────────────────
         let loraCurrentCharacter = '';
         let loraCurrentEntry = '';
+        let loraPickerTarget = 'training'; // 'training' or 'test'
         let loraPickerState = { level: 'gallery', outfit: '', expression: '', selected: new Set() };
 
         function _loraHideAll() {
             document.getElementById('lora-entries-section').style.display = 'none';
             document.getElementById('lora-files-section').style.display = 'none';
             document.getElementById('lora-training-section').style.display = 'none';
+            document.getElementById('lora-test-section').style.display = 'none';
             document.getElementById('lora-entry-info').style.display = 'none';
         }
 
@@ -9570,6 +9601,7 @@
             document.getElementById('lora-breadcrumb').innerHTML = '<span>로라매니징</span>';
             document.getElementById('lora-delete-btn').style.display = 'none';
             document.getElementById('lora-training-add-section').style.display = 'none';
+            document.getElementById('lora-test-add-section').style.display = 'none';
             document.getElementById('lora-training-config-section').style.display = 'none';
             await loadLoraCharacterGrid();
         }
@@ -9615,6 +9647,7 @@
             // 사이드바: 추가 버튼만
             document.getElementById('lora-delete-btn').style.display = 'none';
             document.getElementById('lora-training-add-section').style.display = 'none';
+            document.getElementById('lora-test-add-section').style.display = 'none';
             document.getElementById('lora-training-config-section').style.display = 'none';
 
             try {
@@ -9670,6 +9703,7 @@
             // 사이드바: 삭제/학습 표시
             document.getElementById('lora-delete-btn').style.display = '';
             document.getElementById('lora-training-add-section').style.display = '';
+            document.getElementById('lora-test-add-section').style.display = '';
             document.getElementById('lora-training-config-section').style.display = '';
             document.getElementById('lora-training-export-section').style.display = '';
 
@@ -9688,7 +9722,7 @@
                 }
             } catch (e) { console.error('[LORA_MANAGE] 항목 정보 로드 실패:', e); }
 
-            await Promise.all([loadLoraFiles(), loadLoraTrainingImages(), loadLoraTrainingConfig()]);
+            await Promise.all([loadLoraFiles(), loadLoraTrainingImages(), loadLoraTestImages(), loadLoraTrainingConfig()]);
         }
 
         async function addLoraEntry() {
@@ -9896,6 +9930,10 @@
                     document.getElementById('lora-cfg-ilrate').value = cfg.il_rate || 0.0005;
                     document.getElementById('lora-cfg-save-step').value = cfg.save_per_step || 50;
                     document.getElementById('lora-cfg-folder').textContent = cfg.multi_img_folder_name || 'soya_lora';
+                    document.getElementById('lora-cfg-genw').value = cfg.gen_w || 1024;
+                    document.getElementById('lora-cfg-genh').value = cfg.gen_h || 1024;
+                    // lora_save_path 자동 생성
+                    document.getElementById('lora-cfg-save-path').textContent = loraCurrentCharacter + '/Lora/' + loraCurrentEntry;
                 }
             } catch (e) { console.error('[LORA] 학습 설정 로드 실패:', e); }
         }
@@ -9908,6 +9946,9 @@
                 il_rate: parseFloat(document.getElementById('lora-cfg-ilrate').value) || 0.0005,
                 save_per_step: parseInt(document.getElementById('lora-cfg-save-step').value) || 50,
                 multi_img_folder_name: document.getElementById('lora-cfg-folder').textContent.trim(),
+                gen_w: parseInt(document.getElementById('lora-cfg-genw').value) || 1024,
+                gen_h: parseInt(document.getElementById('lora-cfg-genh').value) || 1024,
+                lora_save_path: loraCurrentCharacter + '/Lora/' + loraCurrentEntry,
             };
             try {
                 const resp = await fetchJSON('/api/lora/manage/update', {
@@ -9921,6 +9962,7 @@
 
         // 학습 이미지 캐시 (미리보기용)
         let loraTrainingImageCache = [];
+        let loraTestImageCache = [];
 
         // loadLoraTrainingImages에서 캐시 업데이트 (기존 함수에 캐시 저장 추가는 별도)
         async function _fetchLoraTrainingImageCache() {
@@ -9932,15 +9974,28 @@
             } catch (e) { loraTrainingImageCache = []; }
         }
 
+        async function _fetchLoraTestImageCache() {
+            if (!loraCurrentCharacter || !loraCurrentEntry) { loraTestImageCache = []; return; }
+            const enc = encodeURIComponent;
+            try {
+                const resp = await fetchJSON(`/api/lora/test_images?character=${enc(loraCurrentCharacter)}&entry=${enc(loraCurrentEntry)}`);
+                loraTestImageCache = resp.success ? (resp.images || []) : [];
+            } catch (e) { loraTestImageCache = []; }
+        }
+
         async function previewLoraTraining() {
-            await _fetchLoraTrainingImageCache();
+            await Promise.all([_fetchLoraTrainingImageCache(), _fetchLoraTestImageCache()]);
             const images = loraTrainingImageCache;
+            const testImages = loraTestImageCache;
             const profile = document.getElementById('lora-cfg-profile').value.trim();
             const nImg = images.length;
             const stepPerImage = parseInt(document.getElementById('lora-cfg-step').value) || 50;
             const ilRate = parseFloat(document.getElementById('lora-cfg-ilrate').value) || 0.0005;
             const savePerStep = parseInt(document.getElementById('lora-cfg-save-step').value) || 50;
             const folderName = document.getElementById('lora-cfg-folder').textContent.trim();
+            const genW = parseInt(document.getElementById('lora-cfg-genw').value) || 1024;
+            const genH = parseInt(document.getElementById('lora-cfg-genh').value) || 1024;
+            const loraSavePath = loraCurrentCharacter + '/Lora/' + loraCurrentEntry;
 
             // 트리거 워드
             const trigger = document.getElementById('lora-entry-trigger').value.trim();
@@ -9963,6 +10018,20 @@
             positiveLines.push(String(savePerStep));
             positiveLines.push('[MULTI_IMG_FOLDER_NAME]');
             positiveLines.push(folderName || '(미입력)');
+            positiveLines.push('[LORA_SAVE_PATH]');
+            positiveLines.push(loraSavePath);
+            positiveLines.push('[GEN_W]');
+            positiveLines.push(String(genW));
+            positiveLines.push('[GEN_H]');
+            positiveLines.push(String(genH));
+            // TEST_POSITIVE
+            if (testImages.length > 0) {
+                positiveLines.push('[TEST_POSITIVE]');
+                testImages.forEach((img, i) => {
+                    const triggerPrefix = trigger ? trigger + ', ' : '';
+                    positiveLines.push(`[${i + 1}]${triggerPrefix}${img.positive || '(프롬프트 없음)'}`);
+                });
+            }
             positiveLines.push('[END]');
 
             // 부정 워크플로우 생성
@@ -9982,6 +10051,19 @@
             negativeLines.push(String(savePerStep));
             negativeLines.push('[MULTI_IMG_FOLDER_NAME]');
             negativeLines.push(folderName || '(미입력)');
+            negativeLines.push('[LORA_SAVE_PATH]');
+            negativeLines.push(loraSavePath);
+            negativeLines.push('[GEN_W]');
+            negativeLines.push(String(genW));
+            negativeLines.push('[GEN_H]');
+            negativeLines.push(String(genH));
+            // TEST_NEGATIVE
+            if (testImages.length > 0) {
+                negativeLines.push('[TEST_NEGATIVE]');
+                testImages.forEach((img, i) => {
+                    negativeLines.push(`[${i + 1}]${img.negative || '(프롬프트 없음)'}`);
+                });
+            }
             negativeLines.push('[END]');
 
             // 모달 표시
@@ -10017,8 +10099,9 @@
         }
 
         async function previewLoraPromptsRaw() {
-            await _fetchLoraTrainingImageCache();
+            await Promise.all([_fetchLoraTrainingImageCache(), _fetchLoraTestImageCache()]);
             const images = loraTrainingImageCache;
+            const testImages = loraTestImageCache;
             if (images.length === 0) { showToast('학습 이미지가 없습니다', 'error'); return; }
 
             const profile = document.getElementById('lora-cfg-profile').value.trim();
@@ -10027,8 +10110,11 @@
             const ilRate = parseFloat(document.getElementById('lora-cfg-ilrate').value) || 0.0005;
             const savePerStep = parseInt(document.getElementById('lora-cfg-save-step').value) || 50;
             const folderName = document.getElementById('lora-cfg-folder').textContent.trim();
+            const genW = parseInt(document.getElementById('lora-cfg-genw').value) || 1024;
+            const genH = parseInt(document.getElementById('lora-cfg-genh').value) || 1024;
+            const loraSavePath = loraCurrentCharacter + '/Lora/' + loraCurrentEntry;
 
-            // 긍정: [1]트리거 프롬프트\n[2]트리거 프롬프트\n...\n[PROFILE]\n값\n[N_IMG]\n값\n...
+            // 긍정: [1]트리거 프롬프트\n...\n[PROFILE]\n...\n[TEST_POSITIVE]\n...\n[END]
             const trigger = document.getElementById('lora-entry-trigger').value.trim();
             let positiveRaw = '';
             let negativeRaw = '';
@@ -10037,8 +10123,31 @@
                 positiveRaw += `[${i + 1}]${triggerPrefix}${img.positive || '(프롬프트 없음)'}\n`;
                 negativeRaw += `[${i + 1}]${img.negative || '(프롬프트 없음)'}\n`;
             });
-            const configBlock = `[PROFILE]\n${profile || '(미입력)'}\n[N_IMG]\n${nImg}\n[STEP_PER_IMAGE]\n${stepPerImage}\n[IL_RATE]\n${ilRate}\n[SAVE_PER_STEP]\n${savePerStep}\n[MULTI_IMG_FOLDER_NAME]\n${folderName || '(미입력)'}\n[END]`;
-            positiveRaw += configBlock;
+
+            // 설정 블록 (공통)
+            let configBlock = `[PROFILE]\n${profile || '(미입력)'}\n[N_IMG]\n${nImg}\n[STEP_PER_IMAGE]\n${stepPerImage}\n[IL_RATE]\n${ilRate}\n[SAVE_PER_STEP]\n${savePerStep}\n[MULTI_IMG_FOLDER_NAME]\n${folderName || '(미입력)'}\n[LORA_SAVE_PATH]\n${loraSavePath}\n[GEN_W]\n${genW}\n[GEN_H]\n${genH}`;
+
+            // TEST_POSITIVE
+            let testPosBlock = '';
+            if (testImages.length > 0) {
+                testPosBlock = '\n[TEST_POSITIVE]\n';
+                testImages.forEach((img, i) => {
+                    const triggerPrefix = trigger ? trigger + ', ' : '';
+                    testPosBlock += `[${i + 1}]${triggerPrefix}${img.positive || '(프롬프트 없음)'}\n`;
+                });
+            }
+
+            // TEST_NEGATIVE
+            let testNegBlock = '';
+            if (testImages.length > 0) {
+                testNegBlock = '\n[TEST_NEGATIVE]\n';
+                testImages.forEach((img, i) => {
+                    testNegBlock += `[${i + 1}]${img.negative || '(프롬프트 없음)'}\n`;
+                });
+            }
+
+            positiveRaw += configBlock + testPosBlock + '\n[END]';
+            negativeRaw += configBlock + testNegBlock + '\n[END]';
 
             let overlay = document.getElementById('lora-raw-overlay');
             if (overlay) overlay.remove();
@@ -10048,7 +10157,7 @@
             overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
             overlay.innerHTML = `<div style="background:var(--surface); border-radius:12px; padding:20px; max-width:700px; width:90%; max-height:85vh; display:flex; flex-direction:column; overflow:hidden;">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-                    <h3 style="margin:0;">프롬프트 Raw (${images.length}장)</h3>
+                    <h3 style="margin:0;">프롬프트 Raw (${images.length}장 학습${testImages.length > 0 ? ', ' + testImages.length + '장 테스트' : ''})</h3>
                     <button onclick="document.getElementById('lora-raw-overlay').remove()" style="background:none; border:none; font-size:1.4rem; cursor:pointer; color:var(--text);">&times;</button>
                 </div>
                 <div style="flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:12px;">
@@ -10081,6 +10190,128 @@
                 if (resp.success) { showToast('삭제 완료', 'success'); await loadLoraTrainingImages(); }
                 else { showToast(resp.error || '삭제 실패', 'error'); }
             } catch (e) { console.error('[LORA] 학습 이미지 삭제 실패:', e); showToast('삭제 실패', 'error'); }
+        }
+
+        // ─── 테스트 이미지 ─────────────────────────────────────
+        async function loadLoraTestImages() {
+            if (!loraCurrentCharacter || !loraCurrentEntry) return;
+            const grid = document.getElementById('lora-test-grid');
+            const section = document.getElementById('lora-test-section');
+            const emptyEl = document.getElementById('lora-test-empty');
+            const enc = encodeURIComponent;
+            try {
+                const resp = await fetchJSON(`/api/lora/test_images?character=${enc(loraCurrentCharacter)}&entry=${enc(loraCurrentEntry)}`);
+                if (!resp.success) { showToast(resp.error || '테스트 이미지 로드 실패', 'error'); return; }
+                const images = resp.images || [];
+                section.style.display = '';
+                if (images.length === 0) {
+                    grid.style.display = 'none';
+                    emptyEl.style.display = '';
+                    return;
+                }
+                emptyEl.style.display = 'none';
+                grid.style.display = '';
+                grid.innerHTML = images.map(img => `
+                    <div class="asset-image-card" style="cursor:default;">
+                        <div style="position:relative; overflow:hidden; border-radius:8px;">
+                            <img src="/api/lora/test_image/${enc(loraCurrentCharacter)}/${enc(loraCurrentEntry)}/${enc(img.filename)}" style="width:100%; display:block; cursor:zoom-in;" onclick="event.stopPropagation(); openLightbox(this.src)">
+                            ${img.is_representative ? '<div style="position:absolute; top:4px; left:4px; z-index:10; background:rgba(255,193,7,0.95); color:#000; font-size:0.7rem; font-weight:700; padding:3px 8px; border-radius:4px;">대표</div>' : ''}
+                        </div>
+                        <div style="padding:8px;">
+                            <div style="font-size:0.75rem; color:var(--text-secondary); margin-bottom:4px;">${escapeHtml(img.filename)}</div>
+                            <div style="font-size:0.7rem; color:var(--text-secondary); margin-bottom:6px; max-height:40px; overflow:hidden;">${escapeHtml(img.positive || '(프롬프트 없음)')}</div>
+                            <div style="display:flex; gap:4px; flex-wrap:wrap;">
+                                <button onclick="showLoraTestPrompt('${escapeHtml(img.filename)}')" style="flex:1; padding:3px 6px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:4px; cursor:pointer; font-size:0.7rem;">프롬프트</button>
+                                <button onclick="deleteLoraTestImage('${escapeHtml(img.filename)}')" style="flex:1; padding:3px 6px; background:var(--error); color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:0.7rem;">삭제</button>
+                            </div>
+                        </div>
+                    </div>
+                `).join('');
+            } catch (e) {
+                console.error('[LORA] 테스트 이미지 로드 실패:', e);
+            }
+        }
+
+        async function deleteLoraTestImage(filename) {
+            if (!confirm(`"${filename}" 삭제하시겠습니까?`)) return;
+            try {
+                const resp = await fetchJSON('/api/lora/test_images/delete', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ character: loraCurrentCharacter, entry: loraCurrentEntry, filename })
+                });
+                if (resp.success) { showToast('삭제 완료', 'success'); await loadLoraTestImages(); }
+                else { showToast(resp.error || '삭제 실패', 'error'); }
+            } catch (e) { console.error('[LORA] 테스트 이미지 삭제 실패:', e); showToast('삭제 실패', 'error'); }
+        }
+
+        function showLoraTestPrompt(filename) {
+            const enc = encodeURIComponent;
+            fetchJSON(`/api/lora/test_images?character=${enc(loraCurrentCharacter)}&entry=${enc(loraCurrentEntry)}`).then(resp => {
+                if (!resp.success) return;
+                const img = resp.images.find(i => i.filename === filename);
+                if (!img) return;
+                const modal = document.getElementById('lora-image-picker-modal');
+                document.getElementById('lora-picker-title').textContent = '프롬프트 편집 (테스트)';
+                document.getElementById('lora-picker-footer').style.display = 'flex';
+                document.getElementById('lora-picker-footer').innerHTML = `
+                    <button onclick="closeLoraImagePicker()" style="padding:8px 16px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:6px; cursor:pointer;">닫기</button>
+                    <button onclick="saveLoraTestPrompt('${escapeHtml(filename)}')" style="padding:8px 16px; background:var(--accent); color:#fff; border:none; border-radius:6px; cursor:pointer; font-weight:600;">저장</button>
+                `;
+                const origPos = img.original_positive || img.positive || '';
+                const origNeg = img.original_negative || img.negative || '';
+                const curPos = img.positive || '';
+                const curNeg = img.negative || '';
+                const curPosTags = _tagSet(curPos);
+                const origPosTags = _tagSet(origPos);
+                const curNegTags = _tagSet(curNeg);
+                const origNegTags = _tagSet(origNeg);
+                const _roStyle = 'width:100%; padding:8px; border:1px solid var(--border); border-radius:6px; background:var(--surface2); color:var(--text-secondary); font-size:0.85rem; line-height:1.5; white-space:pre-wrap; word-wrap:break-word; overflow-y:auto; cursor:default;';
+                const _editStyle = 'width:100%; padding:8px; border:1px solid var(--border); border-radius:6px; background:var(--surface); color:var(--text); font-size:0.85rem; line-height:1.5; white-space:pre-wrap; word-wrap:break-word; overflow-y:auto; outline:none; min-height:80px;';
+                document.getElementById('lora-picker-body').innerHTML = `
+                    <div style="display:flex; gap:16px; margin-bottom:12px;">
+                        <img src="/api/lora/test_image/${enc(loraCurrentCharacter)}/${enc(loraCurrentEntry)}/${enc(filename)}" style="width:120px; height:120px; object-fit:cover; border-radius:8px; display:block; flex-shrink:0;">
+                        <div style="display:flex; align-items:center; font-size:0.85rem; color:var(--text-secondary);">${escapeHtml(filename)}</div>
+                    </div>
+                    <div style="display:flex; gap:16px;">
+                        <div style="flex:1; display:flex; flex-direction:column; gap:8px;">
+                            <div style="font-size:0.85rem; font-weight:700; color:var(--text-secondary); text-align:center; margin-bottom:4px;">원본</div>
+                            <div>
+                                <label style="font-size:0.8rem; font-weight:600; display:block; margin-bottom:4px;">긍정 프롬프트</label>
+                                <div style="${_roStyle} max-height:200px;">${_renderPromptDiffSpans(origPos, curPosTags, 'rgba(220,50,50,0.12)')}</div>
+                            </div>
+                            <div>
+                                <label style="font-size:0.8rem; font-weight:600; display:block; margin-bottom:4px;">부정 프롬프트</label>
+                                <div style="${_roStyle} max-height:120px;">${_renderPromptDiffSpans(origNeg, curNegTags, 'rgba(220,50,50,0.12)')}</div>
+                            </div>
+                        </div>
+                        <div style="flex:1; display:flex; flex-direction:column; gap:8px;">
+                            <div style="font-size:0.85rem; font-weight:700; color:var(--accent); text-align:center; margin-bottom:4px;">수정</div>
+                            <div>
+                                <label style="font-size:0.8rem; font-weight:600; display:block; margin-bottom:4px;">긍정 프롬프트</label>
+                                <div contenteditable="true" id="lora-prompt-positive" onpaste="event.preventDefault(); document.execCommand('insertText', false, event.clipboardData.getData('text/plain'));" style="${_editStyle} max-height:200px;">${_renderPromptDiffSpans(curPos, origPosTags, 'rgba(50,180,50,0.12)')}</div>
+                            </div>
+                            <div>
+                                <label style="font-size:0.8rem; font-weight:600; display:block; margin-bottom:4px;">부정 프롬프트</label>
+                                <div contenteditable="true" id="lora-prompt-negative" onpaste="event.preventDefault(); document.execCommand('insertText', false, event.clipboardData.getData('text/plain'));" style="${_editStyle} max-height:120px;">${_renderPromptDiffSpans(curNeg, origNegTags, 'rgba(50,180,50,0.12)')}</div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                modal.style.display = 'flex';
+            });
+        }
+
+        async function saveLoraTestPrompt(filename) {
+            const positive = document.getElementById('lora-prompt-positive').textContent;
+            const negative = document.getElementById('lora-prompt-negative').textContent;
+            try {
+                const resp = await fetchJSON('/api/lora/test_images/prompt', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ character: loraCurrentCharacter, entry: loraCurrentEntry, filename, positive, negative })
+                });
+                if (resp.success) { showToast('프롬프트 저장 완료', 'success'); closeLoraImagePicker(); await loadLoraTestImages(); }
+                else { showToast(resp.error || '저장 실패', 'error'); }
+            } catch (e) { console.error('[LORA] 테스트 프롬프트 저장 실패:', e); showToast('저장 실패', 'error'); }
         }
 
         function _renderPromptDiffSpans(text, otherTagsSet, highlightColor) {
@@ -10172,10 +10403,11 @@
         }
 
         // ─── LoRA 이미지 피커 ─────────────────────────────────
-        function openLoraImagePicker() {
+        function openLoraImagePicker(target = 'training') {
             if (!loraCurrentCharacter) { showToast('먼저 캐릭터를 선택하세요', 'error'); return; }
+            loraPickerTarget = target;
             loraPickerState = { level: 'gallery', outfit: '', expression: '', selected: new Set() };
-            document.getElementById('lora-picker-title').textContent = '학습용 이미지 선택';
+            document.getElementById('lora-picker-title').textContent = target === 'test' ? '테스트 이미지 선택' : '학습용 이미지 선택';
             document.getElementById('lora-picker-footer').style.display = 'flex';
             document.getElementById('lora-picker-footer').innerHTML = `
                 <span id="lora-picker-count" style="font-size:0.85rem; color:var(--text-secondary);"></span>
@@ -10304,8 +10536,9 @@
                 sources.push({ outfit, expression, filename });
             }
 
+            const apiUrl = loraPickerTarget === 'test' ? '/api/lora/test_images/add' : '/api/lora/training_images/add';
             try {
-                const resp = await fetchJSON('/api/lora/training_images/add', {
+                const resp = await fetchJSON(apiUrl, {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ character: loraCurrentCharacter, entry: loraCurrentEntry, sources })
                 });
@@ -10313,12 +10546,16 @@
                     const msg = `${resp.added.length}장 추가됨${resp.skipped.length > 0 ? ` (${resp.skipped.length}장 스킵)` : ''}`;
                     showToast(msg, 'success');
                     closeLoraImagePicker();
-                    await loadLoraTrainingImages();
+                    if (loraPickerTarget === 'test') {
+                        await loadLoraTestImages();
+                    } else {
+                        await loadLoraTrainingImages();
+                    }
                 } else {
                     showToast(resp.error || '추가 실패', 'error');
                 }
             } catch (e) {
-                console.error('[LORA] 학습 이미지 추가 실패:', e);
+                console.error('[LORA] 이미지 추가 실패:', e);
                 showToast('추가 실패', 'error');
             }
         }
