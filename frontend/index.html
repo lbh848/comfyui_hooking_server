@@ -4093,33 +4093,77 @@
 
     <!-- 에셋 업로드 모달 -->
     <div class="modal" id="au-upload-modal" onclick="if (event.target === this) auCloseUploadModal()">
-        <div class="modal-content" style="max-width:480px;">
+        <div class="modal-content" style="max-width:900px;">
             <div class="modal-header">
                 <h2>📤 이미지 업로드</h2>
                 <button class="modal-close" onclick="auCloseUploadModal()">&times;</button>
             </div>
-            <div class="modal-body">
+            <div class="modal-body" style="max-height:75vh; overflow-y:auto;">
                 <div class="form-group">
                     <label>캐릭터</label>
                     <div id="au-modal-character" style="padding:6px 10px; background:var(--bg); border:1px solid var(--border); border-radius:6px; font-size:0.85rem; color:var(--text);"></div>
                 </div>
+                <!-- 글로벌 설정 -->
                 <div class="form-group">
-                    <label>복장</label>
-                    <select id="au-modal-outfit" style="width:100%; padding:6px 10px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text); font-size:0.85rem;"></select>
+                    <label>글로벌 설정 <span style="font-weight:normal; font-size:0.75rem; color:var(--text2);">업로드된 모든 이미지에 적용됩니다</span></label>
+                    <div style="display:flex; gap:12px; align-items:flex-start;">
+                        <!-- 복장 설정 -->
+                        <div style="flex:1; min-width:0; border:1px solid var(--border); border-radius:8px; padding:10px;">
+                            <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px;">
+                                <span style="font-weight:700; font-size:0.85rem;">👕 복장</span>
+                                <select id="au-modal-outfit-mode" onchange="auToggleMode('outfit')" style="padding:3px 6px; border-radius:5px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-size:0.78rem;">
+                                    <option value="rule">규칙 사용</option>
+                                    <option value="direct">직접 입력</option>
+                                </select>
+                            </div>
+                            <div id="au-modal-outfit-direct" style="display:none;">
+                                <input type="text" id="au-modal-outfit-direct-input" placeholder="복장명 입력" oninput="auApplyGlobalSettings()" style="width:100%; padding:4px 8px; border-radius:5px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-size:0.82rem; box-sizing:border-box;">
+                            </div>
+                            <div id="au-modal-outfit-rule">
+                                <div id="au-modal-outfit-rules-container"></div>
+                                <div style="margin-top:6px; display:flex; gap:6px;">
+                                    <button class="at-btn" onclick="auAddRuleStep('outfit')" style="font-size:0.78rem;">＋ 단계 추가</button>
+                                    <button class="at-btn at-btn-primary" onclick="auApplyGlobalSettings()" style="font-size:0.78rem;">✅ 적용</button>
+                                    <button class="at-btn" onclick="auResetRules('outfit')" style="font-size:0.78rem;">🔄 기본값</button>
+                                </div>
+                            </div>
+                        </div>
+                        <!-- 세로 구분선 -->
+                        <div style="width:1px; align-self:stretch; background:var(--border);"></div>
+                        <!-- 표정 설정 -->
+                        <div style="flex:1; min-width:0; border:1px solid var(--border); border-radius:8px; padding:10px;">
+                            <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px;">
+                                <span style="font-weight:700; font-size:0.85rem;">😊 표정</span>
+                                <select id="au-modal-expr-mode" onchange="auToggleMode('expr')" style="padding:3px 6px; border-radius:5px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-size:0.78rem;">
+                                    <option value="rule">규칙 사용</option>
+                                    <option value="direct">직접 입력</option>
+                                </select>
+                            </div>
+                            <div id="au-modal-expr-direct" style="display:none;">
+                                <input type="text" id="au-modal-expr-direct-input" placeholder="표정명 입력" oninput="auApplyGlobalSettings()" style="width:100%; padding:4px 8px; border-radius:5px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-size:0.82rem; box-sizing:border-box;">
+                            </div>
+                            <div id="au-modal-expr-rule">
+                                <div id="au-modal-expr-rules-container"></div>
+                                <div style="margin-top:6px; display:flex; gap:6px;">
+                                    <button class="at-btn" onclick="auAddRuleStep('expr')" style="font-size:0.78rem;">＋ 단계 추가</button>
+                                    <button class="at-btn at-btn-primary" onclick="auApplyGlobalSettings()" style="font-size:0.78rem;">✅ 적용</button>
+                                    <button class="at-btn" onclick="auResetRules('expr')" style="font-size:0.78rem;">🔄 기본값</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
-                <div class="form-group">
-                    <label>표정</label>
-                    <select id="au-modal-expression" style="width:100%; padding:6px 10px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text); font-size:0.85rem;"></select>
-                </div>
+                <!-- 이미지 파일 드롭존 -->
                 <div class="form-group">
                     <label>이미지 파일</label>
                     <div id="au-modal-dropzone" style="border:2px dashed var(--border); border-radius:8px; padding:24px; text-align:center; cursor:pointer; transition:border-color 0.2s, background 0.2s; color:var(--text-secondary); font-size:0.82rem;">
                         <div style="font-size:1.8rem; margin-bottom:6px;">📁</div>
                         <div>여기에 파일을 드래그하거나 클릭하여 선택</div>
                     </div>
-                    <div id="au-modal-file-list" style="margin-top:8px; max-height:120px; overflow-y:auto;"></div>
                     <input type="file" id="au-modal-file-input" multiple accept="image/*" style="display:none;">
                 </div>
+                <!-- 파일 목록 + 개별 설정 -->
+                <div id="au-modal-file-list" style="margin-top:8px; max-height:300px; overflow-y:auto;"></div>
                 <div id="au-modal-upload-status" style="font-size:0.78rem; color:var(--text2); display:none;"></div>
             </div>
             <div class="modal-footer">
@@ -13224,6 +13268,251 @@
 
         // ─── 업로드 모달 ─────────────────────────────────────────
         let auModalFiles = [];
+        let auModalFileSettings = []; // [{ outfit: '', expression: '' }, ...]
+        let auModalOutfitRules = [];
+        let auModalExprRules = [];
+
+        // 정제 규칙 액션 (스마트매치와 동일)
+        const AU_CLEAN_ACTIONS = [
+            { value: 'split_by', label: '구분자로 분리', params: ['separator', 'take'] },
+            { value: 'strip_suffix', label: '접미사 제거', params: ['pattern'] },
+            { value: 'strip_prefix', label: '접두사 제거', params: ['pattern'] },
+            { value: 'replace', label: '치환', params: ['from', 'to'] },
+            { value: 'strip', label: '공백 제거', params: [] },
+            { value: 'lower', label: '소문자화', params: [] },
+        ];
+
+        const AU_DEFAULT_RULES = {
+            outfit: [
+                { action: 'strip_suffix', pattern: '\\.(webp|png|jpg|jpeg|gif|bmp)$' },
+            ],
+            expr: [
+                { action: 'strip_suffix', pattern: '\\.(webp|png|jpg|jpeg|gif|bmp)$' },
+            ],
+        };
+
+        function auApplyCleanSteps(filename, steps) {
+            let result = filename;
+            for (const step of steps) {
+                if (!step.action) continue;
+                try {
+                    switch (step.action) {
+                        case 'split_by': {
+                            const sep = step.separator || '_';
+                            const parts = result.split(sep).filter(p => p !== '');
+                            const take = step.take;
+                            if (typeof take === 'number') {
+                                result = take < 0 ? (parts[parts.length + take] || '') : (parts[take] || '');
+                            } else if (typeof take === 'string' && take.includes(':')) {
+                                const [startStr, endStr] = take.split(':').map(s => s.trim());
+                                const s = startStr ? parseInt(startStr) - 1 : 0;
+                                const e = endStr ? parseInt(endStr) : parts.length;
+                                result = parts.slice(Math.max(0, s), Math.min(parts.length, e)).join(sep);
+                            } else {
+                                result = parts[0] || '';
+                            }
+                            break;
+                        }
+                        case 'strip_suffix': {
+                            const re = new RegExp(step.pattern + '$');
+                            result = result.replace(re, '');
+                            break;
+                        }
+                        case 'strip_prefix': {
+                            const re = new RegExp('^' + step.pattern);
+                            result = result.replace(re, '');
+                            break;
+                        }
+                        case 'replace': {
+                            result = result.replaceAll(step.from || '', step.to !== undefined ? step.to : ' ');
+                            break;
+                        }
+                        case 'strip': {
+                            result = result.trim();
+                            break;
+                        }
+                        case 'lower': {
+                            result = result.toLowerCase();
+                            break;
+                        }
+                    }
+                } catch (e) {
+                    console.warn('[AU] 정제 규칙 적용 오류:', step.action, e);
+                }
+            }
+            return result.trim();
+        }
+
+        function auRenderRuleSteps(steps, field) {
+            const container = document.getElementById(`au-modal-${field}-rules-container`);
+            if (!container) return;
+            container.innerHTML = '';
+            for (let i = 0; i < Math.max(steps.length, 1); i++) {
+                const step = steps[i] || {};
+                const row = document.createElement('div');
+                row.style.cssText = 'display:flex; gap:6px; align-items:center; margin-bottom:6px; flex-wrap:wrap;';
+
+                const num = document.createElement('span');
+                num.textContent = `${i + 1}.`;
+                num.style.cssText = 'font-weight:600; font-size:0.78rem; min-width:20px;';
+                row.appendChild(num);
+
+                const actionSel = document.createElement('select');
+                actionSel.style.cssText = 'padding:3px 6px; border-radius:5px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-size:0.78rem; min-width:120px;';
+                actionSel.innerHTML = '<option value="">(없음)</option>' + AU_CLEAN_ACTIONS.map(a =>
+                    `<option value="${a.value}" ${step.action === a.value ? 'selected' : ''}>${a.label}</option>`
+                ).join('');
+                actionSel.onchange = () => { auOnRuleStepChange(i, field); };
+                row.appendChild(actionSel);
+
+                if (step.action === 'split_by') {
+                    const sepIn = document.createElement('input');
+                    sepIn.type = 'text'; sepIn.value = step.separator || '_'; sepIn.placeholder = '구분자';
+                    sepIn.style.cssText = 'width:45px; padding:3px 5px; border-radius:5px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-size:0.78rem; text-align:center;';
+                    sepIn.id = `au-rule-${field}-${i}-separator`;
+                    row.appendChild(sepIn);
+                    const takeIn = document.createElement('input');
+                    takeIn.type = 'text'; takeIn.value = step.take !== undefined ? String(step.take) : '-1'; takeIn.placeholder = '위치';
+                    takeIn.style.cssText = 'width:60px; padding:3px 5px; border-radius:5px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-size:0.78rem;';
+                    takeIn.id = `au-rule-${field}-${i}-take`;
+                    row.appendChild(takeIn);
+                } else if (step.action === 'strip_suffix' || step.action === 'strip_prefix') {
+                    const patIn = document.createElement('input');
+                    patIn.type = 'text'; patIn.value = step.pattern || ''; patIn.placeholder = '정규식 패턴';
+                    patIn.style.cssText = 'width:150px; padding:3px 5px; border-radius:5px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-size:0.78rem;';
+                    patIn.id = `au-rule-${field}-${i}-pattern`;
+                    row.appendChild(patIn);
+                } else if (step.action === 'replace') {
+                    const fromIn = document.createElement('input');
+                    fromIn.type = 'text'; fromIn.value = step.from || ''; fromIn.placeholder = '찾을 문자';
+                    fromIn.style.cssText = 'width:55px; padding:3px 5px; border-radius:5px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-size:0.78rem; text-align:center;';
+                    fromIn.id = `au-rule-${field}-${i}-from`;
+                    row.appendChild(fromIn);
+                    const arrow = document.createElement('span');
+                    arrow.textContent = '→'; arrow.style.cssText = 'font-size:0.78rem;';
+                    row.appendChild(arrow);
+                    const toIn = document.createElement('input');
+                    toIn.type = 'text'; toIn.value = step.to !== undefined ? step.to : ' '; toIn.placeholder = '바꿀 문자';
+                    toIn.style.cssText = 'width:55px; padding:3px 5px; border-radius:5px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-size:0.78rem; text-align:center;';
+                    toIn.id = `au-rule-${field}-${i}-to`;
+                    row.appendChild(toIn);
+                }
+
+                const rmBtn = document.createElement('button');
+                rmBtn.textContent = '✕';
+                rmBtn.style.cssText = 'border:none; background:transparent; color:var(--error); cursor:pointer; font-size:0.85rem; padding:2px 4px;';
+                rmBtn.onclick = () => { auRemoveRuleStep(i, field); };
+                row.appendChild(rmBtn);
+
+                container.appendChild(row);
+            }
+        }
+
+        function auReadRuleStepsFromUI(field) {
+            const steps = [];
+            const container = document.getElementById(`au-modal-${field}-rules-container`);
+            if (!container) return steps;
+            const rows = container.querySelectorAll(':scope > div');
+            rows.forEach((row, i) => {
+                const actionSel = row.querySelector('select');
+                if (!actionSel || !actionSel.value) return;
+                const step = { action: actionSel.value };
+                if (step.action === 'split_by') {
+                    const sepEl = document.getElementById(`au-rule-${field}-${i}-separator`);
+                    const takeEl = document.getElementById(`au-rule-${field}-${i}-take`);
+                    step.separator = sepEl ? sepEl.value : '_';
+                    const takeVal = takeEl ? takeEl.value.trim() : '-1';
+                    step.take = takeVal.match(/^-?\d+$/) ? parseInt(takeVal) : takeVal;
+                } else if (step.action === 'strip_suffix' || step.action === 'strip_prefix') {
+                    const patEl = document.getElementById(`au-rule-${field}-${i}-pattern`);
+                    step.pattern = patEl ? patEl.value : '';
+                } else if (step.action === 'replace') {
+                    const fromEl = document.getElementById(`au-rule-${field}-${i}-from`);
+                    const toEl = document.getElementById(`au-rule-${field}-${i}-to`);
+                    step.from = fromEl ? fromEl.value : '';
+                    step.to = toEl ? toEl.value : ' ';
+                }
+                steps.push(step);
+            });
+            return steps;
+        }
+
+        function auOnRuleStepChange(stepIndex, field) {
+            const steps = auReadRuleStepsFromUI(field);
+            if (field === 'outfit') auModalOutfitRules = steps;
+            else auModalExprRules = steps;
+            auRenderRuleSteps(steps, field);
+            auApplyGlobalSettings();
+            const container = document.getElementById(`au-modal-${field}-rules-container`);
+            const rows = container.querySelectorAll(':scope > div');
+            if (rows[stepIndex]) {
+                const sel = rows[stepIndex].querySelector('select');
+                if (sel) sel.focus();
+            }
+        }
+
+        function auAddRuleStep(field) {
+            const steps = auReadRuleStepsFromUI(field);
+            steps.push({ action: 'replace', from: '_', to: ' ' });
+            if (field === 'outfit') auModalOutfitRules = steps;
+            else auModalExprRules = steps;
+            auRenderRuleSteps(steps, field);
+        }
+
+        function auRemoveRuleStep(index, field) {
+            const steps = auReadRuleStepsFromUI(field);
+            steps.splice(index, 1);
+            if (field === 'outfit') auModalOutfitRules = steps;
+            else auModalExprRules = steps;
+            auRenderRuleSteps(steps, field);
+            auApplyGlobalSettings();
+        }
+
+        function auResetRules(field) {
+            const defaults = JSON.parse(JSON.stringify(AU_DEFAULT_RULES[field] || []));
+            if (field === 'outfit') auModalOutfitRules = defaults;
+            else auModalExprRules = defaults;
+            auRenderRuleSteps(defaults, field);
+            auApplyGlobalSettings();
+        }
+
+        function auToggleMode(field) {
+            const mode = document.getElementById(`au-modal-${field}-mode`).value;
+            const directEl = document.getElementById(`au-modal-${field}-direct`);
+            const ruleEl = document.getElementById(`au-modal-${field}-rule`);
+            directEl.style.display = mode === 'direct' ? 'block' : 'none';
+            ruleEl.style.display = mode === 'rule' ? 'block' : 'none';
+            auApplyGlobalSettings();
+        }
+
+        function auApplyGlobalSettings() {
+            if (auModalFiles.length === 0) return;
+            const outfitMode = document.getElementById('au-modal-outfit-mode').value;
+            const exprMode = document.getElementById('au-modal-expr-mode').value;
+
+            const outfitSteps = auReadRuleStepsFromUI('outfit');
+            auModalOutfitRules = outfitSteps;
+            const exprSteps = auReadRuleStepsFromUI('expr');
+            auModalExprRules = exprSteps;
+
+            const directOutfit = document.getElementById('au-modal-outfit-direct-input').value;
+            const directExpr = document.getElementById('au-modal-expr-direct-input').value;
+
+            for (let i = 0; i < auModalFiles.length; i++) {
+                const fname = auModalFiles[i].name;
+                if (outfitMode === 'rule') {
+                    auModalFileSettings[i].outfit = auApplyCleanSteps(fname, outfitSteps);
+                } else {
+                    auModalFileSettings[i].outfit = directOutfit;
+                }
+                if (exprMode === 'rule') {
+                    auModalFileSettings[i].expression = auApplyCleanSteps(fname, exprSteps);
+                } else {
+                    auModalFileSettings[i].expression = directExpr;
+                }
+            }
+            auRenderModalFileList();
+        }
 
         function auOpenUploadModal() {
             if (auNavLevel < 1 || !auNavCharacter) {
@@ -13237,27 +13526,24 @@
             // 캐릭터명 표시
             document.getElementById('au-modal-character').textContent = auNavCharacter;
 
-            // 복장 select 채우기
-            const outfitSel = document.getElementById('au-modal-outfit');
-            const charData = assetTags?.characters?.[auNavCharacter];
-            const defaultOutfit = charData?.outfit || auNavOutfit || '';
-            outfitSel.innerHTML = '<option value="">-- 복장 선택 --</option>';
-            for (const name of Object.keys(assetTags?.outfits || {}).sort()) {
-                const sel = name === defaultOutfit ? ' selected' : '';
-                outfitSel.innerHTML += `<option value="${escapeHtml(name)}"${sel}>${escapeHtml(name)}</option>`;
-            }
-
-            // 표정 select 채우기
-            const exprSel = document.getElementById('au-modal-expression');
-            const defaultExpr = auNavExpression || '';
-            exprSel.innerHTML = '<option value="">-- 표정 선택 --</option>';
-            for (const name of Object.keys(assetTags?.expressions || {}).sort()) {
-                const sel = name === defaultExpr ? ' selected' : '';
-                exprSel.innerHTML += `<option value="${escapeHtml(name)}"${sel}>${escapeHtml(name)}</option>`;
-            }
-
-            // 파일 목록 초기화
+            // 글로벌 설정 초기화
             auModalFiles = [];
+            auModalFileSettings = [];
+            auModalOutfitRules = JSON.parse(JSON.stringify(AU_DEFAULT_RULES.outfit));
+            auModalExprRules = JSON.parse(JSON.stringify(AU_DEFAULT_RULES.expr));
+
+            document.getElementById('au-modal-outfit-mode').value = 'rule';
+            document.getElementById('au-modal-expr-mode').value = 'rule';
+            document.getElementById('au-modal-outfit-direct').style.display = 'none';
+            document.getElementById('au-modal-outfit-rule').style.display = 'block';
+            document.getElementById('au-modal-expr-direct').style.display = 'none';
+            document.getElementById('au-modal-expr-rule').style.display = 'block';
+            document.getElementById('au-modal-outfit-direct-input').value = '';
+            document.getElementById('au-modal-expr-direct-input').value = '';
+
+            auRenderRuleSteps(auModalOutfitRules, 'outfit');
+            auRenderRuleSteps(auModalExprRules, 'expr');
+
             auRenderModalFileList();
             document.getElementById('au-modal-upload-status').style.display = 'none';
 
@@ -13279,6 +13565,7 @@
         function auCloseUploadModal() {
             document.getElementById('au-upload-modal').classList.remove('visible');
             auModalFiles = [];
+            auModalFileSettings = [];
             document.getElementById('au-modal-file-input').value = '';
         }
 
@@ -13286,35 +13573,62 @@
             for (const f of fileList) {
                 if (!f.type.startsWith('image/')) continue;
                 auModalFiles.push(f);
+                auModalFileSettings.push({ outfit: '', expression: '' });
             }
-            auRenderModalFileList();
+            auApplyGlobalSettings();
         }
 
         function auRemoveModalFile(index) {
             auModalFiles.splice(index, 1);
+            auModalFileSettings.splice(index, 1);
             auRenderModalFileList();
+        }
+
+        function auOnFileSettingChange(index, field, value) {
+            auModalFileSettings[index][field] = value;
+            auUpdateUploadBtnState();
+        }
+
+        function auUpdateUploadBtnState() {
+            const btn = document.getElementById('au-modal-upload-btn');
+            if (auModalFiles.length === 0) { btn.disabled = true; return; }
+            const allValid = auModalFileSettings.every(s => s.outfit && s.expression);
+            btn.disabled = !allValid;
         }
 
         function auRenderModalFileList() {
             const listEl = document.getElementById('au-modal-file-list');
-            const btn = document.getElementById('au-modal-upload-btn');
-            const outfit = document.getElementById('au-modal-outfit').value;
-            const expr = document.getElementById('au-modal-expression').value;
+            const inputStyle = 'padding:3px 6px; border-radius:5px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-size:0.78rem; width:120px; box-sizing:border-box;';
 
-            listEl.innerHTML = auModalFiles.map((f, i) =>
-                `<div style="display:flex; justify-content:space-between; align-items:center; padding:3px 0; font-size:0.78rem; border-bottom:1px solid var(--border);">
-                    <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(f.name)} <span style="color:var(--text-secondary);">(${(f.size/1024).toFixed(0)}KB)</span></span>
+            if (auModalFiles.length === 0) {
+                listEl.innerHTML = '';
+                auUpdateUploadBtnState();
+                return;
+            }
+
+            listEl.innerHTML = `<div style="display:grid; grid-template-columns:1fr 130px 130px 30px; gap:6px; align-items:center; padding:4px 0; font-size:0.75rem; color:var(--text2); border-bottom:2px solid var(--border); font-weight:600;">
+                <span>파일명</span><span>복장</span><span>표정</span><span></span>
+            </div>` + auModalFiles.map((f, i) => {
+                const s = auModalFileSettings[i] || { outfit: '', expression: '' };
+                return `<div style="display:grid; grid-template-columns:1fr 130px 130px 30px; gap:6px; align-items:center; padding:3px 0; font-size:0.78rem; border-bottom:1px solid var(--border);">
+                    <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeHtml(f.name)}">${escapeHtml(f.name)} <span style="color:var(--text-secondary);">(${(f.size/1024).toFixed(0)}KB)</span></span>
+                    <input type="text" value="${escapeHtml(s.outfit)}" onchange="auOnFileSettingChange(${i},'outfit',this.value)" style="${inputStyle}">
+                    <input type="text" value="${escapeHtml(s.expression)}" onchange="auOnFileSettingChange(${i},'expression',this.value)" style="${inputStyle}">
                     <button onclick="auRemoveModalFile(${i})" style="background:none; border:none; color:var(--error); cursor:pointer; font-size:0.9rem; padding:0 4px;">✕</button>
-                </div>`
-            ).join('');
+                </div>`;
+            }).join('');
 
-            btn.disabled = !(outfit && expr && auModalFiles.length > 0);
+            auUpdateUploadBtnState();
         }
 
         async function auDoUpload() {
-            const outfit = document.getElementById('au-modal-outfit').value;
-            const expr = document.getElementById('au-modal-expression').value;
-            if (!outfit || !expr || auModalFiles.length === 0) return;
+            if (auModalFiles.length === 0) return;
+            // 모든 파일에 outfit/expression이 있는지 확인
+            const missing = auModalFileSettings.some(s => !s.outfit || !s.expression);
+            if (missing) {
+                showToast('모든 파일의 복장/표정을 입력해주세요', 'warning');
+                return;
+            }
 
             const statusEl = document.getElementById('au-modal-upload-status');
             const btn = document.getElementById('au-modal-upload-btn');
@@ -13322,14 +13636,16 @@
             btn.disabled = true;
 
             let done = 0, failCount = 0;
-            for (const file of auModalFiles) {
+            for (let idx = 0; idx < auModalFiles.length; idx++) {
+                const file = auModalFiles[idx];
+                const { outfit, expression } = auModalFileSettings[idx];
                 statusEl.textContent = `업로드 중... (${done + 1}/${auModalFiles.length})`;
                 try {
                     const formData = new FormData();
                     formData.append('image', file);
                     formData.append('character', auNavCharacter);
                     formData.append('outfit', outfit);
-                    formData.append('expression', expr);
+                    formData.append('expression', expression);
                     const resp = await fetch('/api/asset_mode/upload_image', { method: 'POST', body: formData });
                     const result = await resp.json();
                     if (!result.success) {
@@ -13354,10 +13670,6 @@
                 await auRenderGallery(auNavCharacter);
             }
         }
-
-        // select 변경 시 업로드 버튼 상태 업데이트
-        document.getElementById('au-modal-outfit').addEventListener('change', auRenderModalFileList);
-        document.getElementById('au-modal-expression').addEventListener('change', auRenderModalFileList);
 
         // ─── 에셋 업로드 탭 끝 ─────────────────────────────────────
 
