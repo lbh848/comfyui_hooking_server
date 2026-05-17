@@ -13075,10 +13075,10 @@
                         <img src="${imgUrl}" onclick="openLightbox(this.src)" loading="lazy">
                         <div class="card-actions">
                             <span class="filename">${escapeHtml(img.filename)}</span>
-                            <button onclick="setAssetRepresentative('${enc(charName)}','${enc(outfit)}','${enc(expression)}','${enc(img.filename)}'); auRenderImages('${enc(charName)}','${enc(outfit)}','${enc(expression)}')">
+                            <button onclick="setAssetRepresentative('${enc(charName)}','${enc(outfit)}','${enc(expression)}','${enc(img.filename)}'); auRenderImages('${escapeHtml(charName)}','${escapeHtml(outfit)}','${escapeHtml(expression)}')">
                                 ${img.is_representative ? '대표해제' : '대표설정'}
                             </button>
-                            <button onclick="deleteAssetImage('${enc(charName)}','${enc(outfit)}','${enc(expression)}','${enc(img.filename)}'); auRenderImages('${enc(charName)}','${enc(outfit)}','${enc(expression)}')" style="color:var(--error);">삭제</button>
+                            <button onclick="deleteAssetImage('${enc(charName)}','${enc(outfit)}','${enc(expression)}','${enc(img.filename)}'); auRenderImages('${escapeHtml(charName)}','${escapeHtml(outfit)}','${escapeHtml(expression)}')" style="color:var(--error);">삭제</button>
                             <button onclick="sendAssetToPoseEditor('${imgUrl}','${enc(img.filename)}')">포즈 편집</button>
                         </div>
                         ${hasPrompt ? `
