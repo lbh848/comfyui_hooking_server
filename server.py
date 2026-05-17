@@ -96,6 +96,7 @@ DEFAULT_CONFIG = {
     "enhance_prompt_file": "",  # 프롬프트 강화 파일명 (customprompt/)
     "asset_workflow_source_path": "",  # 에셋 생성 워크플로우 원본 소스 전체 경로
     "tag_analysis_workflow_source_path": "",  # 태그 분석 워크플로우 원본 소스 전체 경로
+    "asset_tag_analysis_workflow_source_path": "",  # 에셋용 태그 분석 워크플로우 원본 소스 전체 경로
     "lora_training_workflow_source_path": "",  # 로라 학습 워크플로우 원본 소스 전체 경로
     "lora_load_path": "",  # 로라 모델 로드 폴더 절대 경로
     "dwpose_det_model": "",  # DWPose 탐지 모델 경로 (빈값=자동 다운로드)
@@ -2511,6 +2512,10 @@ async def handle_api_config(request: web.Request) -> web.Response:
                 asset_tool._api_workflow = None
                 asset_tool._workflow_hash = ""
 
+            # 에셋용 태그 분석 워크플로우 설정 업데이트
+            if "asset_tag_analysis_workflow_source_path" in body:
+                app_config["asset_tag_analysis_workflow_source_path"] = str(body["asset_tag_analysis_workflow_source_path"])
+
             # LLM 서비스 설정 업데이트
             llm_service.update_config({
                 "llm_service": app_config.get("llm_service", "copilot"),
@@ -3406,6 +3411,38 @@ async def handle_api_asset_mode_delete_combination(request: web.Request) -> web.
     except Exception as e:
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
+async def handle_api_asset_mode_upload_image(request: web.Request) -> web.Response:
+    """에셋 업로드 탭에서 이미지를 특정 캐릭터/복장/표정 조합에 업로드."""
+    try:
+        reader = await request.multipart()
+        image_data = None
+        filename = "upload.png"
+        character = ""
+        outfit = ""
+        expression = ""
+        async for part in reader:
+            if part.name == "image":
+                image_data = await part.read()
+                if part.filename:
+                    filename = part.filename
+            elif part.name == "character":
+                character = (await part.read()).decode("utf-8").strip()
+            elif part.name == "outfit":
+                outfit = (await part.read()).decode("utf-8").strip()
+            elif part.name == "expression":
+                expression = (await part.read()).decode("utf-8").strip()
+
+        if not image_data:
+            return web.json_response({"success": False, "error": "이미지가 없습니다"}, status=400)
+        if not character or not outfit or not expression:
+            return web.json_response({"success": False, "error": "캐릭터, 복장, 표정을 모두 지정하세요"}, status=400)
+
+        result = asset_mode.upload_image(character, outfit, expression, filename, image_data)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[ASSET_MODE] 이미지 업로드 오류: {e}")
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
 async def handle_api_asset_mode_delete_image(request: web.Request) -> web.Response:
     try:
         body = await request.json()
@@ -3848,6 +3885,7 @@ app.router.add_post("/api/asset_mode/set_representative", handle_api_asset_mode_
 app.router.add_get("/api/asset_mode/characters/{character}/outfits/{outfit}/expressions/{expression}/images/{filename}", handle_api_asset_mode_image)
 app.router.add_post("/api/asset_mode/delete_combination", handle_api_asset_mode_delete_combination)
 app.router.add_post("/api/asset_mode/delete_image", handle_api_asset_mode_delete_image)
+app.router.add_post("/api/asset_mode/upload_image", handle_api_asset_mode_upload_image)
 app.router.add_post("/api/asset_mode/upload_reference", handle_api_asset_mode_upload_reference)
 app.router.add_get("/api/expression_profile/scan", handle_api_expression_profile_scan)
 app.router.add_post("/api/expression_profile/create_folders", handle_api_expression_profile_create_folders)

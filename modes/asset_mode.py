@@ -1335,6 +1335,37 @@ class AssetMode:
                 pass
         return {"success": True}
 
+    def upload_image(self, character: str, outfit: str, expression: str,
+                     filename: str, image_data: bytes) -> dict:
+        """외부 이미지를 에셋 폴더에 저장."""
+        import re
+        img_dir = os.path.join(
+            ASSET_DIR,
+            self._safe_dirname(character),
+            self._safe_dirname(outfit),
+            self._safe_dirname(expression),
+        )
+        os.makedirs(img_dir, exist_ok=True)
+
+        # 안전한 파일명 생성
+        safe_name = os.path.splitext(filename)[0]
+        safe_name = re.sub(r'[^\w\s\-\.]', '', safe_name).strip() or "upload"
+        ext = os.path.splitext(filename)[1].lower() or ".png"
+        safe_filename = f"{safe_name}{ext}"
+
+        # 중복 시 숫자 추가
+        counter = 1
+        final_path = os.path.join(img_dir, safe_filename)
+        while os.path.exists(final_path):
+            final_path = os.path.join(img_dir, f"{safe_name}_{counter}{ext}")
+            counter += 1
+
+        with open(final_path, "wb") as f:
+            f.write(image_data)
+
+        print(f"[ASSET_MODE] 이미지 업로드: {final_path}")
+        return {"success": True, "filename": os.path.basename(final_path)}
+
     def list_character_gallery(self, character: str) -> list[dict]:
         """캐릭터 폴더의 실제 복장×표정 조합을 스캔하여 반환."""
         char_dir = os.path.join(ASSET_DIR, self._safe_dirname(character))
