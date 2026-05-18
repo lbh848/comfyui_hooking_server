@@ -5299,41 +5299,40 @@ async def handle_api_lora_trained_delete_session(request):
 app.router.add_post("/api/lora/trained/delete-session", handle_api_lora_trained_delete_session)
 
 
-def _backup_tags_on_startup():
-    from modes.asset_mode import TAGS_FILE, ASSET_DATA_DIR
+def _backup_data_on_startup():
+    """프로그램 시작 시 asset_data 주요 파일들을 백업 (최대 50개 유지)"""
+    from modes.asset_mode import TAGS_FILE, ASSET_DATA_DIR, NAME_MAPPING_FILE
     from modes.embedding_service import PROFILE_MAP_FILE
-    if not os.path.isfile(TAGS_FILE):
-        return
+    from modes.lora_mode import LORA_MANAGE_FILE
+
+    MAX_BACKUPS = 50
     backup_dir = os.path.join(ASSET_DATA_DIR, "backup")
     os.makedirs(backup_dir, exist_ok=True)
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    backup_path = os.path.join(backup_dir, f"tags_{ts}.json")
-    try:
-        shutil.copy2(TAGS_FILE, backup_path)
-        print(f"[BACKUP] tags.json 백업 완료: {backup_path}")
-    except Exception as e:
-        print(f"[BACKUP] tags.json 백업 실패: {e}")
-    old_backups = sorted(
-        (f for f in os.listdir(backup_dir) if f.startswith("tags_") and f.endswith(".json")),
-        key=lambda f: os.path.getmtime(os.path.join(backup_dir, f)),
-    )
-    for f in old_backups[:-10]:
+
+    backup_targets = [
+        ("tags", TAGS_FILE),
+        ("embedding_profile_map", PROFILE_MAP_FILE),
+        ("name_mapping", NAME_MAPPING_FILE),
+        ("lora_manage", LORA_MANAGE_FILE),
+    ]
+
+    for prefix, src_path in backup_targets:
+        if not os.path.isfile(src_path):
+            continue
+        dst_path = os.path.join(backup_dir, f"{prefix}_{ts}.json")
         try:
-            os.remove(os.path.join(backup_dir, f))
-        except Exception:
-            pass
-    if os.path.isfile(PROFILE_MAP_FILE):
-        profile_backup_path = os.path.join(backup_dir, f"embedding_profile_map_{ts}.json")
-        try:
-            shutil.copy2(PROFILE_MAP_FILE, profile_backup_path)
-            print(f"[BACKUP] embedding_profile_map.json 백업 완료: {profile_backup_path}")
+            shutil.copy2(src_path, dst_path)
+            print(f"[BACKUP] {prefix}.json 백업 완료: {dst_path}")
         except Exception as e:
-            print(f"[BACKUP] embedding_profile_map.json 백업 실패: {e}")
-        old_profile_backups = sorted(
-            (f for f in os.listdir(backup_dir) if f.startswith("embedding_profile_map_") and f.endswith(".json")),
+            print(f"[BACKUP] {prefix}.json 백업 실패: {e}")
+            continue
+        # 오래된 백업 정리 (최신 MAX_BACKUPS개만 유지)
+        old_backups = sorted(
+            (f for f in os.listdir(backup_dir) if f.startswith(f"{prefix}_") and f.endswith(".json")),
             key=lambda f: os.path.getmtime(os.path.join(backup_dir, f)),
         )
-        for f in old_profile_backups[:-10]:
+        for f in old_backups[:-MAX_BACKUPS]:
             try:
                 os.remove(os.path.join(backup_dir, f))
             except Exception:
@@ -5342,7 +5341,7 @@ def _backup_tags_on_startup():
 
 async def on_startup(app):
     print("[INFO] 워크플로우 초기 로드...")
-    _backup_tags_on_startup()
+    _backup_data_on_startup()
     asyncio.create_task(_ws_heartbeat())
     try:
         await update_workflow_if_needed()
