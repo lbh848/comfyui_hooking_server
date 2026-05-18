@@ -8579,7 +8579,7 @@
 
             // 전체 단계: 태그 분석 + 임베딩 매칭 + 태그 매칭
             const analyzeCount = (doAnalyze && pending.length > 0) ? pending.length : 0;
-            const totalSteps = analyzeCount + (doMatch ? atState.images.length * 2 : 0);
+            const totalSteps = analyzeCount + (doMatch ? atState.images.length * 2 : 0) + (doAnalyze && !doMatch ? atState.images.length : 0);
             let completedSteps = 0;
 
             // 1. 태그 분석
@@ -8694,10 +8694,38 @@
                     if (totalSteps > 0) document.getElementById('at-progress-inner').style.width = `${Math.round(completedSteps / totalSteps * 100)}%`;
                 }
             } else if (doAnalyze) {
-                const analyzable = atState.images.filter(i => i.status === 'done' && i.tags && i.tags.length > 0);
-                if (analyzable.length > 0) {
-                    atSwitchView('result');
-                    atRenderSourceCards();
+                // 태그 분석만 선택한 경우에도 태그 매칭 실행
+                atState.imageMatches = [];
+                atState.embeddingMatches = [];
+                atState.chains = [];
+                const doneImages = atState.images.filter(i => i.status === 'done' && i.tags && i.tags.length > 0);
+                for (const img of doneImages) {
+                    const uniqueTags = [...new Set(img.tags.map(t => t.trim()))];
+                    try {
+                        const tagResp = await fetch('/api/asset_tool/match', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ tags: uniqueTags, category: category, top_n: 10 })
+                        });
+                        const tagResult = await tagResp.json();
+                        console.log('[태그 매칭]', img.file.name, tagResult);
+                        if (tagResult.success && tagResult.matches && tagResult.matches.length > 0) {
+                            atState.imageMatches.push({
+                                imageName: img.file.name || '이미지',
+                                imageUrl: img.url,
+                                tags: uniqueTags,
+                                matches: tagResult.matches.map(m => ({ ...m, selected: false }))
+                            });
+                        } else if (!tagResult.success) {
+                            console.error('[태그 매칭 실패]', img.file.name, tagResult.error);
+                        } else {
+                            console.warn('[태그 매칭 결과 없음]', img.file.name, tagResult);
+                        }
+                    } catch (e) {
+                        console.error('태그 매칭 오류:', e);
+                    }
+                    completedSteps++;
+                    if (totalSteps > 0) document.getElementById('at-progress-inner').style.width = `${Math.round(completedSteps / totalSteps * 100)}%`;
                 }
             }
 
@@ -8707,7 +8735,7 @@
 
             // 모든 작업 완료 후 매칭 결과 화면으로 전환
             console.log("[ANALYZE_COMPLETE] doMatch=" + doMatch + ", emb=" + atState.embeddingMatches.length + ", img=" + atState.imageMatches.length);
-            if (doMatch && (atState.embeddingMatches.length > 0 || atState.imageMatches.length > 0)) {
+            if (atState.embeddingMatches.length > 0 || atState.imageMatches.length > 0) {
                 atSwitchView('result');
                 atRenderMatches();
             }
