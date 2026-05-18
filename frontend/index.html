@@ -3542,9 +3542,14 @@
 
                     <!-- 학습 시작 / 디버그 (항목 선택 시) -->
                     <div id="lora-training-export-section" style="display:none; margin-bottom:8px;">
-                        <button id="lora-training-start-btn" onclick="startLoraTraining()" style="width:100%; padding:8px; background:rgba(80,180,120,0.2); color:var(--text); border:1px solid rgba(80,180,120,0.3); border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">
-                            학습 시작
-                        </button>
+                        <div style="display:flex; gap:4px;">
+                            <button id="lora-training-start-btn" onclick="startLoraTraining()" style="flex:1; padding:8px; background:rgba(80,180,120,0.2); color:var(--text); border:1px solid rgba(80,180,120,0.3); border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">
+                                학습 시작
+                            </button>
+                            <button id="lora-training-stop-btn" onclick="stopLoraTraining()" style="display:none; padding:8px 12px; background:rgba(220,80,80,0.2); color:var(--text); border:1px solid rgba(220,80,80,0.3); border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">
+                                학습 중지
+                            </button>
+                        </div>
                         <!-- 학습 진행률 표시 -->
                         <div id="lora-training-progress" style="display:none; margin-top:8px; padding:10px; background:var(--surface2); border-radius:8px; border:1px solid var(--border);">
                             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
@@ -10363,7 +10368,20 @@
             if (el) el.style.display = 'block';
             const btn = document.getElementById('lora-training-start-btn');
             if (btn) { btn.disabled = true; btn.style.opacity = '0.5'; btn.style.cursor = 'not-allowed'; }
+            const stopBtn = document.getElementById('lora-training-stop-btn');
+            if (stopBtn) stopBtn.style.display = 'inline-block';
             updateLoraTrainingUI('preparing', { message: '학습 준비 중...' });
+        }
+
+        function stopLoraTraining() {
+            // 진행률 UI 숨기고 학습 시작 버튼 복원
+            const progEl = document.getElementById('lora-training-progress');
+            if (progEl) progEl.style.display = 'none';
+            const btn = document.getElementById('lora-training-start-btn');
+            if (btn) { btn.disabled = false; btn.style.opacity = '1'; btn.style.cursor = 'pointer'; }
+            const stopBtn = document.getElementById('lora-training-stop-btn');
+            if (stopBtn) stopBtn.style.display = 'none';
+            showToast('학습 중지됨 (버튼 복원)', 'info');
         }
 
         function updateLoraTrainingUI(phase, data) {
@@ -10416,6 +10434,8 @@
                 // 학습 시작 버튼 복원
                 const btn = document.getElementById('lora-training-start-btn');
                 if (btn) { btn.disabled = false; btn.style.opacity = '1'; btn.style.cursor = 'pointer'; }
+                const stopBtn2 = document.getElementById('lora-training-stop-btn');
+                if (stopBtn2) stopBtn2.style.display = 'none';
                 showToast('LoRA 학습+프리뷰가 완료되었습니다!', 'success');
             } else if (phase === 'error') {
                 if (phaseEl) { phaseEl.textContent = '에러 발생'; phaseEl.style.color = 'var(--error)'; }
@@ -10425,6 +10445,8 @@
                 if (timeEl) timeEl.textContent = '';
                 const btn = document.getElementById('lora-training-start-btn');
                 if (btn) { btn.disabled = false; btn.style.opacity = '1'; btn.style.cursor = 'pointer'; }
+                const stopBtn3 = document.getElementById('lora-training-stop-btn');
+                if (stopBtn3) stopBtn3.style.display = 'none';
                 showToast('학습 중 에러: ' + (data.message || ''), 'error');
             }
         }
@@ -10804,11 +10826,11 @@
                             <div style="font-size:0.85rem; font-weight:700; color:var(--text-secondary); text-align:center; margin-bottom:4px;">원본</div>
                             <div>
                                 <label style="font-size:0.8rem; font-weight:600; display:block; margin-bottom:4px;">긍정 프롬프트</label>
-                                <div style="${_roStyle} max-height:200px;">${_renderPromptDiffSpans(origPos, curPosTags, 'rgba(220,50,50,0.12)')}</div>
+                                <div id="lora-prompt-positive-orig" style="${_roStyle} max-height:200px;">${_renderPromptDiffSpans(origPos, curPosTags, 'rgba(220,50,50,0.12)')}</div>
                             </div>
                             <div>
                                 <label style="font-size:0.8rem; font-weight:600; display:block; margin-bottom:4px;">부정 프롬프트</label>
-                                <div style="${_roStyle} max-height:120px;">${_renderPromptDiffSpans(origNeg, curNegTags, 'rgba(220,50,50,0.12)')}</div>
+                                <div id="lora-prompt-negative-orig" style="${_roStyle} max-height:120px;">${_renderPromptDiffSpans(origNeg, curNegTags, 'rgba(220,50,50,0.12)')}</div>
                             </div>
                         </div>
                         <div style="flex:1; display:flex; flex-direction:column; gap:8px;">
@@ -10825,6 +10847,7 @@
                     </div>
                 `;
                 modal.style.display = 'flex';
+                setupPromptLiveDiff(origPos, origNeg, origPosTags, origNegTags);
             });
         }
 
@@ -10854,6 +10877,30 @@
 
         function _tagSet(text) {
             return new Set(text.split(',').map(t => t.trim()).filter(t => t));
+        }
+
+        function setupPromptLiveDiff(origPos, origNeg, origPosTags, origNegTags) {
+            const origPosEl = document.getElementById('lora-prompt-positive-orig');
+            const origNegEl = document.getElementById('lora-prompt-negative-orig');
+            const editPosEl = document.getElementById('lora-prompt-positive');
+            const editNegEl = document.getElementById('lora-prompt-negative');
+            if (!origPosEl || !origNegEl || !editPosEl || !editNegEl) return;
+
+            function updateOriginalDiff() {
+                const curPosTags = _tagSet(editPosEl.textContent);
+                const curNegTags = _tagSet(editNegEl.textContent);
+                origPosEl.innerHTML = _renderPromptDiffSpans(origPos, curPosTags, 'rgba(220,50,50,0.12)');
+                origNegEl.innerHTML = _renderPromptDiffSpans(origNeg, curNegTags, 'rgba(220,50,50,0.12)');
+            }
+
+            editPosEl.addEventListener('input', updateOriginalDiff);
+            editNegEl.addEventListener('input', updateOriginalDiff);
+            editPosEl.addEventListener('blur', function() {
+                this.innerHTML = _renderPromptDiffSpans(this.textContent, origPosTags, 'rgba(50,180,50,0.12)');
+            });
+            editNegEl.addEventListener('blur', function() {
+                this.innerHTML = _renderPromptDiffSpans(this.textContent, origNegTags, 'rgba(50,180,50,0.12)');
+            });
         }
 
         function showLoraTrainingPrompt(filename) {
@@ -10892,11 +10939,11 @@
                             <div style="font-size:0.85rem; font-weight:700; color:var(--text-secondary); text-align:center; margin-bottom:4px;">원본</div>
                             <div>
                                 <label style="font-size:0.8rem; font-weight:600; display:block; margin-bottom:4px;">긍정 프롬프트</label>
-                                <div style="${_roStyle} max-height:200px;">${_renderPromptDiffSpans(origPos, curPosTags, 'rgba(220,50,50,0.12)')}</div>
+                                <div id="lora-prompt-positive-orig" style="${_roStyle} max-height:200px;">${_renderPromptDiffSpans(origPos, curPosTags, 'rgba(220,50,50,0.12)')}</div>
                             </div>
                             <div>
                                 <label style="font-size:0.8rem; font-weight:600; display:block; margin-bottom:4px;">부정 프롬프트</label>
-                                <div style="${_roStyle} max-height:120px;">${_renderPromptDiffSpans(origNeg, curNegTags, 'rgba(220,50,50,0.12)')}</div>
+                                <div id="lora-prompt-negative-orig" style="${_roStyle} max-height:120px;">${_renderPromptDiffSpans(origNeg, curNegTags, 'rgba(220,50,50,0.12)')}</div>
                             </div>
                         </div>
                         <div style="flex:1; display:flex; flex-direction:column; gap:8px;">
@@ -10913,6 +10960,7 @@
                     </div>
                 `;
                 modal.style.display = 'flex';
+                setupPromptLiveDiff(origPos, origNeg, origPosTags, origNegTags);
             });
         }
 
