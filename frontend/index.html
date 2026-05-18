@@ -4065,22 +4065,39 @@
                 </div>
 
                 <div class="settings-tab-panel" id="settings-tab-lora">
-                    <!-- 로라 학습 워크플로우 -->
+                    <!-- 로라 학습 워크플로우 (Anima) -->
                     <div class="setting-row">
                         <div class="setting-label">
-                            <div class="title">🔧 로라 학습 워크플로우</div>
-                            <div class="desc">LoRA 학습에 사용할 워크플로우 파일 (공통설정 탭 베이스 경로 공유)</div>
+                            <div class="title">🔧 로라 학습 워크플로우 - Anima</div>
+                            <div class="desc">Anima profile LoRA 학습에 사용할 워크플로우 파일</div>
                         </div>
                     </div>
                     <div class="form-group" style="margin-top: -8px;">
                         <div class="autocomplete-wrapper">
-                            <input type="text" id="setting-lora-workflow-filename" placeholder="예: 로라학습워크플로우.json"
-                                   oninput="onLoraFilenameInput(this.value)" onfocus="onLoraFilenameInput(this.value)">
-                            <div class="autocomplete-list" id="lora-workflow-autocomplete"></div>
+                            <input type="text" id="setting-lora-workflow-anima-filename" placeholder="예: 로라학습(anima).json"
+                                   oninput="onLoraAnimaFilenameInput(this.value)" onfocus="onLoraAnimaFilenameInput(this.value)">
+                            <div class="autocomplete-list" id="lora-workflow-anima-autocomplete"></div>
                         </div>
                         <div class="hint">공통설정 탭의 '베이스 경로'에서 검색됩니다</div>
                     </div>
-                    <input type="hidden" id="setting-lora-workflow-source-path">
+                    <input type="hidden" id="setting-lora-workflow-anima-source-path">
+
+                    <!-- 로라 학습 워크플로우 (SDXL) -->
+                    <div class="setting-row" style="margin-top: 16px;">
+                        <div class="setting-label">
+                            <div class="title">🔧 로라 학습 워크플로우 - SDXL</div>
+                            <div class="desc">SDXL profile LoRA 학습에 사용할 워크플로우 파일</div>
+                        </div>
+                    </div>
+                    <div class="form-group" style="margin-top: -8px;">
+                        <div class="autocomplete-wrapper">
+                            <input type="text" id="setting-lora-workflow-sdxl-filename" placeholder="예: 로라학습(sdxl).json"
+                                   oninput="onLoraSdxlFilenameInput(this.value)" onfocus="onLoraSdxlFilenameInput(this.value)">
+                            <div class="autocomplete-list" id="lora-workflow-sdxl-autocomplete"></div>
+                        </div>
+                        <div class="hint">공통설정 탭의 '베이스 경로'에서 검색됩니다</div>
+                    </div>
+                    <input type="hidden" id="setting-lora-workflow-sdxl-source-path">
 
                     <!-- 로라 로드 경로 -->
                     <div class="setting-row" style="margin-top: 16px;">
@@ -5652,11 +5669,18 @@
             document.getElementById('setting-asset-tag-analysis-workflow-filename').value = assetTagAnalysisSplit.filename;
             document.getElementById('setting-asset-tag-analysis-workflow-source-path').value = assetTagAnalysisPath;
 
-            // 로라 학습 워크플로우
-            const loraPath = currentConfig.lora_training_workflow_source_path || '';
-            const loraSplit = splitWorkflowPath(loraPath);
-            document.getElementById('setting-lora-workflow-filename').value = loraSplit.filename;
-            document.getElementById('setting-lora-workflow-source-path').value = loraPath;
+            // 로라 학습 워크플로우 (profile별)
+            const loraPaths = currentConfig.lora_training_workflow_source_paths || {};
+            // Anima
+            const loraAnimaPath = loraPaths.anima || '';
+            const loraAnimaSplit = splitWorkflowPath(loraAnimaPath);
+            document.getElementById('setting-lora-workflow-anima-filename').value = loraAnimaSplit.filename;
+            document.getElementById('setting-lora-workflow-anima-source-path').value = loraAnimaPath;
+            // SDXL
+            const loraSdxlPath = loraPaths.sdxl || '';
+            const loraSdxlSplit = splitWorkflowPath(loraSdxlPath);
+            document.getElementById('setting-lora-workflow-sdxl-filename').value = loraSdxlSplit.filename;
+            document.getElementById('setting-lora-workflow-sdxl-source-path').value = loraSdxlPath;
 
             // 로라 로드 경로
             document.getElementById('setting-lora-load-path').value = currentConfig.lora_load_path || '';
@@ -5842,7 +5866,10 @@
                 asset_workflow_source_path: document.getElementById('setting-asset-workflow-source-path').value,
                 tag_analysis_workflow_source_path: document.getElementById('setting-tag-analysis-workflow-source-path').value,
                 asset_tag_analysis_workflow_source_path: document.getElementById('setting-asset-tag-analysis-workflow-source-path').value,
-                lora_training_workflow_source_path: document.getElementById('setting-lora-workflow-source-path').value,
+                lora_training_workflow_source_paths: {
+                    anima: document.getElementById('setting-lora-workflow-anima-source-path').value,
+                    sdxl: document.getElementById('setting-lora-workflow-sdxl-source-path').value
+                },
                 lora_load_path: document.getElementById('setting-lora-load-path').value
             };
 
@@ -5946,8 +5973,10 @@
                         selectAssetWorkflowFile(path, filename);
                     } else if (list.id === 'tag-analysis-workflow-autocomplete') {
                         selectTagAnalysisWorkflowFile(path, filename);
-                    } else if (list.id === 'lora-workflow-autocomplete') {
-                        selectLoraWorkflowFile(path, filename);
+                    } else if (list.id === 'lora-workflow-anima-autocomplete') {
+                        selectLoraAnimaWorkflowFile(path, filename);
+                    } else if (list.id === 'lora-workflow-sdxl-autocomplete') {
+                        selectLoraSdxlWorkflowFile(path, filename);
                     }
                     list.classList.remove('visible');
                 }
@@ -6606,14 +6635,14 @@
             document.getElementById('setting-asset-tag-analysis-workflow-source-path').value = combineWorkflowPath(baseDir, filename);
         }
 
-        // 로라 학습 워크플로우 자동완성
-        let loraAutocompleteTimeout;
-        async function onLoraFilenameInput(value) {
-            updateLoraWorkflowPath();
-            const list = document.getElementById('lora-workflow-autocomplete');
+        // 로라 학습 워크플로우 자동완성 - Anima
+        let loraAnimaAutocompleteTimeout;
+        async function onLoraAnimaFilenameInput(value) {
+            updateLoraAnimaWorkflowPath();
+            const list = document.getElementById('lora-workflow-anima-autocomplete');
             const baseDir = document.getElementById('setting-workflow-base-dir').value.trim();
-            clearTimeout(loraAutocompleteTimeout);
-            loraAutocompleteTimeout = setTimeout(async () => {
+            clearTimeout(loraAnimaAutocompleteTimeout);
+            loraAnimaAutocompleteTimeout = setTimeout(async () => {
                 try {
                     const params = new URLSearchParams({ search: value, base_dir: baseDir });
                     const data = await fetchJSON(`/api/workflow_files?${params}`);
@@ -6624,16 +6653,46 @@
             }, 300);
         }
 
-        function selectLoraWorkflowFile(fullPath, filename) {
-            document.getElementById('setting-lora-workflow-filename').value = filename;
-            document.getElementById('setting-lora-workflow-source-path').value = fullPath;
-            document.getElementById('lora-workflow-autocomplete').classList.remove('visible');
+        function selectLoraAnimaWorkflowFile(fullPath, filename) {
+            document.getElementById('setting-lora-workflow-anima-filename').value = filename;
+            document.getElementById('setting-lora-workflow-anima-source-path').value = fullPath;
+            document.getElementById('lora-workflow-anima-autocomplete').classList.remove('visible');
         }
 
-        function updateLoraWorkflowPath() {
+        function updateLoraAnimaWorkflowPath() {
             const baseDir = document.getElementById('setting-workflow-base-dir').value;
-            const filename = document.getElementById('setting-lora-workflow-filename').value;
-            document.getElementById('setting-lora-workflow-source-path').value = combineWorkflowPath(baseDir, filename);
+            const filename = document.getElementById('setting-lora-workflow-anima-filename').value;
+            document.getElementById('setting-lora-workflow-anima-source-path').value = combineWorkflowPath(baseDir, filename);
+        }
+
+        // 로라 학습 워크플로우 자동완성 - SDXL
+        let loraSdxlAutocompleteTimeout;
+        async function onLoraSdxlFilenameInput(value) {
+            updateLoraSdxlWorkflowPath();
+            const list = document.getElementById('lora-workflow-sdxl-autocomplete');
+            const baseDir = document.getElementById('setting-workflow-base-dir').value.trim();
+            clearTimeout(loraSdxlAutocompleteTimeout);
+            loraSdxlAutocompleteTimeout = setTimeout(async () => {
+                try {
+                    const params = new URLSearchParams({ search: value, base_dir: baseDir });
+                    const data = await fetchJSON(`/api/workflow_files?${params}`);
+                    renderAutocompleteItems(data.files, list);
+                } catch (e) {
+                    list.classList.remove('visible');
+                }
+            }, 300);
+        }
+
+        function selectLoraSdxlWorkflowFile(fullPath, filename) {
+            document.getElementById('setting-lora-workflow-sdxl-filename').value = filename;
+            document.getElementById('setting-lora-workflow-sdxl-source-path').value = fullPath;
+            document.getElementById('lora-workflow-sdxl-autocomplete').classList.remove('visible');
+        }
+
+        function updateLoraSdxlWorkflowPath() {
+            const baseDir = document.getElementById('setting-workflow-base-dir').value;
+            const filename = document.getElementById('setting-lora-workflow-sdxl-filename').value;
+            document.getElementById('setting-lora-workflow-sdxl-source-path').value = combineWorkflowPath(baseDir, filename);
         }
 
         // ─── 복장 추출 결과 모달 ───

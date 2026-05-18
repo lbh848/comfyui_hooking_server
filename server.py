@@ -97,7 +97,7 @@ DEFAULT_CONFIG = {
     "asset_workflow_source_path": "",  # 에셋 생성 워크플로우 원본 소스 전체 경로
     "tag_analysis_workflow_source_path": "",  # 태그 분석 워크플로우 원본 소스 전체 경로
     "asset_tag_analysis_workflow_source_path": "",  # 에셋용 태그 분석 워크플로우 원본 소스 전체 경로
-    "lora_training_workflow_source_path": "",  # 로라 학습 워크플로우 원본 소스 전체 경로
+    "lora_training_workflow_source_paths": {"anima": "", "sdxl": ""},  # 로라 학습 워크플로우 원본 소스 경로 (profile별)
     "lora_load_path": "",  # 로라 모델 로드 폴더 절대 경로
     "dwpose_det_model": "",  # DWPose 탐지 모델 경로 (빈값=자동 다운로드)
     "dwpose_pose_model": "",  # DWPose 포즈 모델 경로 (빈값=자동 다운로드)
@@ -5114,8 +5114,24 @@ async def handle_api_lora_training_start(request):
         positive_text = _build_lora_training_text(images, trigger, profile, step, il_rate, save_step, folder, "positive", lora_save_path, gen_w, gen_h, upscale, resolution, test_images)
         negative_text = _build_lora_training_text(images, trigger, profile, step, il_rate, save_step, folder, "negative", lora_save_path, gen_w, gen_h, upscale, resolution, test_images)
 
-        # 5. 워크플로우 로드 & 변환
-        workflow_path = config.get("lora_training_workflow_source_path", "")
+        # 5. 워크플로우 로드 & 변환 (profile별 선택)
+        workflow_paths = config.get("lora_training_workflow_source_paths", {})
+        if not isinstance(workflow_paths, dict) or not workflow_paths:
+            # 구형 설정 호환: 단일 경로가 있으면 사용
+            legacy_path = config.get("lora_training_workflow_source_path", "")
+            workflow_path = legacy_path
+            print(f"[LORA_TRAIN] 구형 설정(lora_training_workflow_source_path) 사용: {workflow_path}")
+        else:
+            workflow_path = workflow_paths.get(profile, "")
+            if not workflow_path:
+                # fallback: 첫 번째 사용 가능한 경로
+                for k, v in workflow_paths.items():
+                    if v:
+                        workflow_path = v
+                        print(f"[LORA_TRAIN] profile '{profile}' 경로 없음, fallback '{k}' 사용: {workflow_path}")
+                        break
+            else:
+                print(f"[LORA_TRAIN] profile '{profile}' 워크플로우 사용: {workflow_path}")
         if not workflow_path or not os.path.isfile(workflow_path):
             return web.json_response({"success": False, "error": f"LoRA 학습 워크플로우 파일이 없습니다: {workflow_path}"})
 
