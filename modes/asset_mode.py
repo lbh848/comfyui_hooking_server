@@ -781,8 +781,10 @@ class AssetMode:
         expression: str = "",
         face_id_enabled: bool = False,
         face_id_strength: float = 0.55,
+        face_id_dir: str = "",
         style_ref_enabled: bool = False,
         style_ref_strength: float = 0.55,
+        style_ref_dir: str = "",
         pose_enabled: bool = False,
         pose_data: dict = None,
         hrf_activate: bool = False,
@@ -819,8 +821,10 @@ class AssetMode:
 
         positive += f"\n[FACE_ID_ACTIVATE]\n{'true' if face_id_enabled else 'false'}"
         positive += f"\n[FACE_ID_STR]\n{face_id_strength}"
+        positive += f"\n[FACE_ID_DIR]\n{face_id_dir or 'soya_char_ref/fallback'}"
         positive += f"\n[STYLE_ACTIVATE]\n{'true' if style_ref_enabled else 'false'}"
         positive += f"\n[STYLE_STR]\n{style_ref_strength}"
+        positive += f"\n[STYLE_DIR]\n{style_ref_dir or 'soya_style_ref/fallback'}"
         positive += f"\n[POSE_ACTIVATE]\n{'true' if pose_enabled else 'false'}"
         if pose_enabled and pose_data:
             positive += f"\n[POSE_DATA]\n{json.dumps(pose_data, ensure_ascii=False)}"
@@ -1059,8 +1063,10 @@ class AssetMode:
             appearance, outfit, expression,
             face_id_enabled=face_id_enabled,
             face_id_strength=face_id_strength,
+            face_id_dir=reference_subfolder,
             style_ref_enabled=style_ref_enabled,
             style_ref_strength=style_ref_strength,
+            style_ref_dir=style_ref_subfolder,
             pose_enabled=pose_enabled,
             pose_data=pose_data,
             hrf_activate=hrf_activate,

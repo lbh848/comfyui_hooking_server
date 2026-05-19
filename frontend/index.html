@@ -11891,8 +11891,12 @@
             let positiveFull = positive;
             positiveFull += `\n[FACE_ID_ACTIVATE]\n${refEnabled ? 'true' : 'false'}`;
             positiveFull += `\n[FACE_ID_STR]\n${refStrength}`;
+            const refDir = document.getElementById('asset-ref-folder-hash-text')?.textContent || '';
+            positiveFull += `\n[FACE_ID_DIR]\n${refDir || 'soya_char_ref/fallback'}`;
             positiveFull += `\n[STYLE_ACTIVATE]\n${styleRefEnabled ? 'true' : 'false'}`;
             positiveFull += `\n[STYLE_STR]\n${styleRefStrength}`;
+            const styleDir = document.getElementById('asset-style-ref-folder-hash-text')?.textContent || '';
+            positiveFull += `\n[STYLE_DIR]\n${styleDir || 'soya_style_ref/fallback'}`;
             positiveFull += `\n[POSE_ACTIVATE]\n${poseEnabled ? 'true' : 'false'}`;
             if (poseEnabled && assetSelectedPoseId) {
                 positiveFull += `\n[POSE_DATA]\n(포즈 데이터: ${assetSelectedPoseId})`;
@@ -17245,7 +17249,9 @@
                     const hashEl = slotEl.querySelector('.batch-ref-folder-hash');
                     const hashText = slotEl.querySelector('.batch-ref-folder-hash-text');
                     if (hashEl && hashText) {
-                        hashText.textContent = 'soya_char_ref/' + data.hash;
+                        const dir = 'soya_char_ref/' + data.hash;
+                        hashText.textContent = dir;
+                        batchChains[slotIdx].ref_dir = dir;
                         hashEl.style.display = 'block';
                     }
                 }
@@ -17305,7 +17311,9 @@
                     const hashEl = slotEl.querySelector('.batch-style-ref-folder-hash');
                     const hashText = slotEl.querySelector('.batch-style-ref-folder-hash-text');
                     if (hashEl && hashText) {
-                        hashText.textContent = 'soya_style_ref/' + data.hash;
+                        const dir = 'soya_style_ref/' + data.hash;
+                        hashText.textContent = dir;
+                        batchChains[slotIdx].style_ref_dir = dir;
                         hashEl.style.display = 'block';
                     }
                 }
@@ -17528,8 +17536,10 @@
             let positiveFull = positive.join(', ');
             positiveFull += `\n[FACE_ID_ACTIVATE]\n${slot.ref_enabled ? 'true' : 'false'}`;
             positiveFull += `\n[FACE_ID_STR]\n${slot.ref_strength}`;
+            positiveFull += `\n[FACE_ID_DIR]\n${slot.ref_dir || 'soya_char_ref/fallback'}`;
             positiveFull += `\n[STYLE_ACTIVATE]\n${slot.style_ref_enabled ? 'true' : 'false'}`;
             positiveFull += `\n[STYLE_STR]\n${slot.style_ref_strength || 0.55}`;
+            positiveFull += `\n[STYLE_DIR]\n${slot.style_ref_dir || 'soya_style_ref/fallback'}`;
             positiveFull += `\n[POSE_ACTIVATE]\n${slot.pose_enabled ? 'true' : 'false'}`;
             if (slot.pose_enabled && slot.pose_id) {
                 positiveFull += `\n[POSE_DATA]\n(포즈 데이터: ${slot.pose_id})`;
