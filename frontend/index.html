@@ -10269,6 +10269,30 @@
                     return;
                 }
                 sessionsEl.style.display = '';
+                // 대표 LoRA 이미지 표시
+                const repEl = document.getElementById('lora-representative');
+                if (loraEntryRepresentative) {
+                    try {
+                        const rep = JSON.parse(loraEntryRepresentative);
+                        const repImg = rep.preview || '';
+                        const repFile = rep.safetensors || '';
+                        if (repImg) {
+                            repEl.style.display = '';
+                            repEl.innerHTML = `
+                                <div style="display:flex; align-items:center; gap:12px; padding:12px; background:var(--surface); border:2px solid var(--accent); border-radius:10px;">
+                                    <img src="${repImg}" style="width:80px; height:80px; object-fit:cover; border-radius:8px;">
+                                    <div>
+                                        <div style="font-size:0.75rem; font-weight:700; color:var(--accent); margin-bottom:4px;">현재 엔트리 대표</div>
+                                        <div style="font-size:0.8rem; color:var(--text-secondary); word-break:break-all;">${escapeHtml(repFile.split(/[\\/]/).pop() || '')}</div>
+                                    </div>
+                                </div>`;
+                        } else {
+                            repEl.style.display = 'none';
+                        }
+                    } catch (_) { repEl.style.display = 'none'; }
+                } else {
+                    repEl.style.display = 'none';
+                }
                 // 대표 이미지가 속한 세션 찾기
                 let repPreviewUrl = '';
                 let repSessionName = '';
@@ -10418,6 +10442,8 @@
                 if (resp.success) {
                     loraEntryRepresentative = repValue;
                     showToast('대표 LoRA로 설정되었습니다', 'success');
+                    await enterTrainedSession(loraCurrentTrainedSession);
+                    if (loraCurrentTrainedStep) enterTrainedStep(loraCurrentTrainedStep);
                 } else {
                     showToast(resp.error || '설정 실패', 'error');
                 }
@@ -10442,8 +10468,31 @@
                     }),
                 });
                 if (resp.success) {
+                    // 현재 세션이 엔트리 대표로 설정되어 있으면 엔트리 대표도 함께 업데이트
+                    let isEntryRepSession = false;
+                    try {
+                        const rep = JSON.parse(loraEntryRepresentative);
+                        const parts = (rep.preview || '').split('/');
+                        const si = parts.indexOf('preview');
+                        if (si >= 0 && parts.length > si + 3) {
+                            isEntryRepSession = decodeURIComponent(parts[si + 3]) === sessionName;
+                        }
+                    } catch (_) {}
+                    if (isEntryRepSession) {
+                        const entryResp = await fetchJSON('/api/lora/manage/update', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({
+                                name: loraCurrentEntry,
+                                character: loraCurrentCharacter,
+                                representative: repValue,
+                            }),
+                        });
+                        if (entryResp.success) loraEntryRepresentative = repValue;
+                    }
                     showToast('세션 대표 LoRA로 설정되었습니다', 'success');
-                    enterTrainedStep(loraCurrentTrainedStep);
+                    await enterTrainedSession(loraCurrentTrainedSession);
+                    if (loraCurrentTrainedStep) enterTrainedStep(loraCurrentTrainedStep);
                 } else {
                     showToast(resp.error || '설정 실패', 'error');
                 }
