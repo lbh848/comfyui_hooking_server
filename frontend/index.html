@@ -2793,6 +2793,40 @@
                         </div>
                     </div>
 
+                    <!-- 스타일 레퍼런스 섹션 -->
+                    <div style="background:rgba(156,39,176,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <div class="section-title" style="margin-bottom:0;">스타일 레퍼런스</div>
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="asset-style-ref-toggle" onchange="onAssetStyleRefToggle()">
+                                <span class="toggle-slider"></span>
+                            </label>
+                            <span id="asset-style-ref-status" class="toggle-status off">OFF</span>
+                        </div>
+                        <div id="asset-style-ref-section" style="display:none; margin-top:8px;">
+                            <div style="margin-bottom:8px;">
+                                <label style="font-size:0.8rem; color:var(--text-secondary);">강도: <span id="asset-style-ref-strength-val">0.55</span></label>
+                                <input type="range" id="asset-style-ref-strength" min="0" max="1" step="0.01" value="0.55" style="cursor:pointer; width:100%; margin-top:2px;"
+                                    oninput="document.getElementById('asset-style-ref-strength-val').textContent=this.value">
+                            </div>
+                            <div style="margin-bottom:6px;">
+                                <div style="font-size:0.8rem; color:var(--text-secondary); margin-bottom:4px;">스타일 레퍼런스 이미지</div>
+                                <div style="display:flex; gap:4px;">
+                                    <button onclick="document.getElementById('asset-style-ref-file-input').click()" style="flex:1; font-size:0.75rem; padding:4px;">파일 업로드</button>
+                                    <button onclick="openAssetStyleRefGalleryPicker()" style="flex:1; font-size:0.75rem; padding:4px;">에셋에서 선택</button>
+                                </div>
+                                <input type="file" id="asset-style-ref-file-input" accept="image/*" multiple style="display:none;" onchange="uploadAssetStyleRefImage(this)">
+                            </div>
+                            <div id="asset-style-ref-preview" style="display:none; margin-top:4px; position:relative;">
+                                <div id="asset-style-ref-preview-grid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(60px, 1fr)); gap:4px;"></div>
+                                <button onclick="clearAssetStyleRefImage()" style="position:absolute; top:2px; right:2px; background:rgba(0,0,0,0.6); color:#fff; border:none; border-radius:50%; width:20px; height:20px; font-size:0.7rem; cursor:pointer;">x</button>
+                            </div>
+                            <div id="asset-style-ref-folder-hash" style="display:none; margin-top:6px; font-size:0.7rem; color:var(--text-secondary); background:rgba(0,0,0,0.05); border-radius:4px; padding:4px 8px; user-select:text; cursor:text;">
+                                <span style="opacity:0.7;">📁</span> <span id="asset-style-ref-folder-hash-text"></span>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- 포즈 섹션 -->
                     <div style="background:rgba(0,188,212,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
                         <div style="display:flex; align-items:center; gap:8px;">
@@ -7463,6 +7497,10 @@
                         ref_strength: prev ? prev.ref_strength : 0.55,
                         ref_image: prev ? prev.ref_image : '',
                         ref_preview_url: prev ? prev.ref_preview_url : '',
+                        style_ref_enabled: prev ? prev.style_ref_enabled : false,
+                        style_ref_strength: prev ? prev.style_ref_strength : 0.55,
+                        style_ref_image: prev ? prev.style_ref_image : '',
+                        style_ref_preview_url: prev ? prev.style_ref_preview_url : '',
                         pose_enabled: prev ? prev.pose_enabled : false,
                         pose_id: prev ? prev.pose_id : '',
                         hrf_enabled: prev ? prev.hrf_enabled : false,
@@ -9211,6 +9249,9 @@
                         ref_enabled: false,
                         ref_strength: 0.55,
                         ref_image: '',
+                        style_ref_enabled: false,
+                        style_ref_strength: 0.55,
+                        style_ref_image: '',
                         pose_enabled: false,
                         pose_id: '',
                         hrf_enabled: false,
@@ -9246,6 +9287,9 @@
                     ref_enabled: false,
                     ref_strength: 0.55,
                     ref_image: '',
+                    style_ref_enabled: false,
+                    style_ref_strength: 0.55,
+                    style_ref_image: '',
                     pose_enabled: false,
                     pose_id: '',
                     hrf_enabled: false,
@@ -9395,6 +9439,9 @@
                     ref_enabled: exprSettings.ref_enabled !== undefined ? exprSettings.ref_enabled : (epSettings.ref_enabled || false),
                     ref_strength: exprSettings.ref_strength || epSettings.ref_strength || 0.55,
                     ref_image: '',
+                    style_ref_enabled: exprSettings.style_ref_enabled !== undefined ? exprSettings.style_ref_enabled : (epSettings.style_ref_enabled || false),
+                    style_ref_strength: exprSettings.style_ref_strength || epSettings.style_ref_strength || 0.55,
+                    style_ref_image: '',
                     pose_enabled: false,
                     pose_id: '',
                     hrf_enabled: exprSettings.hrf_enabled !== undefined ? exprSettings.hrf_enabled : (epSettings.hrf_enabled || false),
@@ -11814,6 +11861,8 @@
             const expr = document.getElementById('asset-expression-select').value;
             const refEnabled = document.getElementById('asset-ref-toggle').checked;
             const refStrength = parseFloat(document.getElementById('asset-ref-strength').value) || 0.55;
+            const styleRefEnabled = document.getElementById('asset-style-ref-toggle').checked;
+            const styleRefStrength = parseFloat(document.getElementById('asset-style-ref-strength').value) || 0.55;
             const poseEnabled = document.getElementById('asset-pose-toggle').checked;
             const fdActivate = document.getElementById('asset-fd-toggle').checked;
             const hrfActivate = document.getElementById('asset-hrf-toggle').checked;
@@ -11842,6 +11891,8 @@
             let positiveFull = positive;
             positiveFull += `\n[FACE_ID_ACTIVATE]\n${refEnabled ? 'true' : 'false'}`;
             positiveFull += `\n[FACE_ID_STR]\n${refStrength}`;
+            positiveFull += `\n[STYLE_ACTIVATE]\n${styleRefEnabled ? 'true' : 'false'}`;
+            positiveFull += `\n[STYLE_STR]\n${styleRefStrength}`;
             positiveFull += `\n[POSE_ACTIVATE]\n${poseEnabled ? 'true' : 'false'}`;
             if (poseEnabled && assetSelectedPoseId) {
                 positiveFull += `\n[POSE_DATA]\n(포즈 데이터: ${assetSelectedPoseId})`;
@@ -12272,6 +12323,102 @@
         function clearAssetRefImage() {
             assetRefImages = [];
             renderAssetRefPreview();
+        }
+
+        // ─── 스타일 레퍼런스 ──────────────────────────────────────
+        let assetStyleRefImages = [];  // [{name, local_path, orig_filename, preview_url}]
+
+        function onAssetStyleRefToggle() {
+            const on = document.getElementById('asset-style-ref-toggle').checked;
+            document.getElementById('asset-style-ref-section').style.display = on ? 'block' : 'none';
+            const status = document.getElementById('asset-style-ref-status');
+            status.textContent = on ? 'ON' : 'OFF';
+            status.className = 'toggle-status ' + (on ? 'on' : 'off');
+        }
+
+        async function uploadAssetStyleRefImage(input) {
+            if (!input.files || !input.files.length) return;
+            const formData = new FormData();
+            for (const file of input.files) {
+                formData.append('image', file);
+            }
+            try {
+                const resp = await fetch('/api/asset_mode/upload_reference', { method: 'POST', body: formData });
+                const result = await resp.json();
+                if (result.success) {
+                    const images = result.images || [];
+                    const enc = encodeURIComponent;
+                    assetStyleRefImages = images.map((img, i) => {
+                        let preview_url = '';
+                        if (result.asset_info) {
+                            const ai = result.asset_info;
+                            preview_url = `/api/asset_mode/characters/${enc(ai.character)}/outfits/${enc(ai.outfit)}/expressions/${enc(ai.expression)}/images/${enc(img.name)}`;
+                        } else {
+                            preview_url = URL.createObjectURL(input.files[i] || new Blob());
+                        }
+                        return { name: img.name, local_path: img.local_path, orig_filename: img.orig_filename, preview_url };
+                    });
+                    renderAssetStyleRefPreview();
+                    showToast(`${images.length}장 스타일 레퍼런스 이미지 업로드 완료`, 'success');
+                } else {
+                    showToast(result.error || '업로드 실패', 'error');
+                }
+            } catch (e) {
+                showToast('업로드 실패: ' + e.message, 'error');
+            }
+            input.value = '';
+        }
+
+        function renderAssetStyleRefPreview() {
+            const preview = document.getElementById('asset-style-ref-preview');
+            const grid = document.getElementById('asset-style-ref-preview-grid');
+            if (!assetStyleRefImages.length) { preview.style.display = 'none'; return; }
+            preview.style.display = 'block';
+            grid.innerHTML = assetStyleRefImages.map((img, i) =>
+                `<div style="position:relative;">
+                    <img src="${escapeHtml(img.preview_url)}" style="width:100%; aspect-ratio:1; object-fit:cover; border-radius:4px; border:1px solid var(--border); display:block;">
+                    <button onclick="removeAssetStyleRefImage(${i})" style="position:absolute; top:2px; right:2px; background:rgba(0,0,0,0.6); color:#fff; border:none; border-radius:50%; width:18px; height:18px; font-size:0.65rem; cursor:pointer; display:flex; align-items:center; justify-content:center; line-height:1;">x</button>
+                </div>`
+            ).join('');
+            updateStyleRefFolderHash();
+        }
+
+        function removeAssetStyleRefImage(idx) {
+            assetStyleRefImages.splice(idx, 1);
+            renderAssetStyleRefPreview();
+        }
+
+        function clearAssetStyleRefImage() {
+            assetStyleRefImages = [];
+            renderAssetStyleRefPreview();
+        }
+
+        async function updateStyleRefFolderHash() {
+            const el = document.getElementById('asset-style-ref-folder-hash');
+            const txt = document.getElementById('asset-style-ref-folder-hash-text');
+            if (!assetStyleRefImages.length) { el.style.display = 'none'; return; }
+            const filenames = assetStyleRefImages.map(img => img.name);
+            try {
+                const resp = await fetch('/api/asset_mode/compute_ref_hash', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filenames })
+                });
+                const data = await resp.json();
+                if (data.hash) {
+                    txt.textContent = 'soya_style_ref/' + data.hash;
+                    el.style.display = 'block';
+                }
+            } catch(e) {
+                console.warn('style ref hash 계산 실패:', e);
+            }
+        }
+
+        async function openAssetStyleRefGalleryPicker() {
+            const char = document.getElementById('asset-character-select').value;
+            if (!char) { showToast('캐릭터를 먼저 선택하세요', 'error'); return; }
+            // 레퍼런스 갤러리 피커 재사용 (스타일 레퍼런스 모드로)
+            openAssetRefGalleryPickerInternal('style');
         }
 
         async function openNameMappingModal() {
@@ -12721,10 +12868,20 @@
         }
 
         let assetRefPickerSelected = [];  // [{filename, imgUrl, char, outfit, expr}]
+        let assetRefPickerTargetType = 'ref';  // 'ref' or 'style'
 
         function openAssetRefGalleryPicker() {
+            assetRefPickerTargetType = 'ref';
+            openAssetRefGalleryPickerInternal();
+        }
+
+        function openAssetRefGalleryPickerInternal(mode) {
+            if (mode === 'style') {
+                assetRefPickerTargetType = 'style';
+            }
             // 기존 선택된 이미지를 모달에 미리 반영
-            assetRefPickerSelected = assetRefImages.map(img => ({
+            const currentImages = assetRefPickerTargetType === 'style' ? assetStyleRefImages : assetRefImages;
+            assetRefPickerSelected = currentImages.map(img => ({
                 filename: img.name,
                 imgUrl: img.preview_url,
                 char: '', outfit: '', expr: ''
@@ -12928,15 +13085,23 @@
                 const uploadResult = await uploadResp.json();
                 if (uploadResult.success) {
                     const images = uploadResult.images || [];
-                    assetRefImages = images.map((img, i) => ({
+                    const refImages = images.map((img, i) => ({
                         name: img.name,
                         local_path: img.local_path,
                         orig_filename: img.orig_filename,
                         preview_url: assetRefPickerSelected[i].imgUrl,
                     }));
-                    renderAssetRefPreview();
-                    document.getElementById('asset-ref-picker-overlay').remove();
-                    showToast(`${images.length}장 레퍼런스 이미지 선택 완료`, 'success');
+                    if (assetRefPickerTargetType === 'style') {
+                        assetStyleRefImages = refImages;
+                        renderAssetStyleRefPreview();
+                        document.getElementById('asset-ref-picker-overlay').remove();
+                        showToast(`${images.length}장 스타일 레퍼런스 이미지 선택 완료`, 'success');
+                    } else {
+                        assetRefImages = refImages;
+                        renderAssetRefPreview();
+                        document.getElementById('asset-ref-picker-overlay').remove();
+                        showToast(`${images.length}장 레퍼런스 이미지 선택 완료`, 'success');
+                    }
                 } else {
                     showToast(uploadResult.error || '업로드 실패', 'error');
                 }
@@ -14416,6 +14581,8 @@
 
             const refEnabled = document.getElementById('asset-ref-toggle').checked;
             const refStrength = parseFloat(document.getElementById('asset-ref-strength').value) || 0.55;
+            const styleRefEnabled = document.getElementById('asset-style-ref-toggle').checked;
+            const styleRefStrength = parseFloat(document.getElementById('asset-style-ref-strength').value) || 0.55;
             const poseEnabled = document.getElementById('asset-pose-toggle').checked;
             const fdActivate = document.getElementById('asset-fd-toggle').checked;
             const hrfActivate = document.getElementById('asset-hrf-toggle').checked;
@@ -14452,6 +14619,9 @@
                                 face_id_enabled: refEnabled,
                                 face_id_strength: refStrength,
                                 reference_images: refEnabled ? assetRefImages.map(img => ({filename: img.name, local_path: img.local_path})) : [],
+                                style_ref_enabled: styleRefEnabled,
+                                style_ref_strength: styleRefStrength,
+                                style_ref_images: styleRefEnabled ? assetStyleRefImages.map(img => ({filename: img.name, local_path: img.local_path})) : [],
                                 pose_enabled: poseEnabled,
                                 pose_id: poseEnabled ? assetSelectedPoseId : '',
                                 hrf_activate: hrfActivate,
@@ -16189,6 +16359,10 @@
                 ref_strength: 0.55,
                 ref_images: [],
                 ref_preview_url: '',
+                style_ref_enabled: false,
+                style_ref_strength: 0.55,
+                style_ref_images: [],
+                style_ref_preview_url: '',
                 pose_enabled: false,
                 pose_id: '',
                 hrf_enabled: false,
@@ -16621,6 +16795,7 @@
             const cnSel = buildCustomSelectHTML(assetTags?.character_negative_presets || {}, slot.character_negative_preset, '-- 캐릭터 부정 프리셋 --', 'character_negative_preset');
             const negSel = buildCustomSelectHTML(assetTags?.negative_presets || {}, slot.negative_preset, '-- 부정 프리셋 --', 'negative_preset');
             const refPreviewUrls = slot.ref_preview_url ? slot.ref_preview_url.split('|').filter(Boolean) : [];
+            const styleRefPreviewUrls = slot.style_ref_preview_url ? slot.style_ref_preview_url.split('|').filter(Boolean) : [];
 
             return `
             <div class="batch-slot-header">
@@ -16658,6 +16833,30 @@
                     </div>
                     <div class="batch-ref-folder-hash" style="display:none; margin-top:4px; font-size:0.7rem; color:var(--text-secondary); background:rgba(0,0,0,0.05); border-radius:4px; padding:4px 8px; user-select:text; cursor:text;">
                         <span style="opacity:0.7;">📁</span> <span class="batch-ref-folder-hash-text"></span>
+                    </div>
+                </div>
+
+                <div class="batch-toggle-row">
+                    <label>스타일 레퍼런스</label>
+                    <label class="toggle-switch"><input type="checkbox" data-field="style_ref_enabled" ${slot.style_ref_enabled ? 'checked' : ''}><span class="toggle-slider"></span></label>
+                </div>
+                <div class="batch-style-ref-section" style="display:${slot.style_ref_enabled ? 'block' : 'none'};">
+                    <div style="display:flex; align-items:center; gap:6px; margin-bottom:4px;">
+                        <span style="font-size:0.7rem; color:var(--text-secondary);">강도:</span>
+                        <input type="range" data-field="style_ref_strength" min="0" max="1" step="0.01" value="${slot.style_ref_strength}" style="flex:1; cursor:pointer;">
+                        <span class="batch-style-ref-str-val" style="font-size:0.7rem; min-width:28px;">${slot.style_ref_strength}</span>
+                    </div>
+                    <div style="display:flex; gap:4px; margin-bottom:4px;">
+                        <button class="batch-style-ref-upload-btn" style="flex:1; font-size:0.75rem; padding:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:4px; cursor:pointer;">파일 업로드</button>
+                        <button class="batch-style-ref-gallery-btn" style="flex:1; font-size:0.75rem; padding:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:4px; cursor:pointer;">에셋에서 선택</button>
+                    </div>
+                    <input type="file" class="batch-style-ref-file-input" accept="image/*" multiple style="display:none;">
+                    <div class="batch-style-ref-preview" style="display:${styleRefPreviewUrls.length ? 'block' : 'none'}; position:relative;">
+                        <div class="batch-style-ref-preview-grid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(50px, 1fr)); gap:4px;">${styleRefPreviewUrls.map((url, imgIdx) => `<div style="position:relative;"><img src="${escapeHtml(url)}" style="width:100%; aspect-ratio:1; object-fit:cover; border-radius:4px; border:1px solid var(--border); display:block;"><button onclick="removeBatchStyleRefImage(${idx}, ${imgIdx})" style="position:absolute; top:1px; right:1px; background:rgba(0,0,0,0.6); color:#fff; border:none; border-radius:50%; width:16px; height:16px; font-size:0.6rem; cursor:pointer; display:flex; align-items:center; justify-content:center; line-height:1;">x</button></div>`).join('')}</div>
+                        <button class="batch-style-ref-clear-btn" style="position:absolute; top:2px; right:2px; background:rgba(0,0,0,0.6); color:#fff; border:none; border-radius:50%; width:18px; height:18px; font-size:0.65rem; cursor:pointer;">x</button>
+                    </div>
+                    <div class="batch-style-ref-folder-hash" style="display:none; margin-top:4px; font-size:0.7rem; color:var(--text-secondary); background:rgba(0,0,0,0.05); border-radius:4px; padding:4px 8px; user-select:text; cursor:text;">
+                        <span style="opacity:0.7;">📁</span> <span class="batch-style-ref-folder-hash-text"></span>
                     </div>
                 </div>
 
@@ -16786,6 +16985,9 @@
                     if (cb.dataset.field === 'ref_enabled') {
                         slotEl.querySelector('.batch-ref-section').style.display = cb.checked ? 'block' : 'none';
                     }
+                    if (cb.dataset.field === 'style_ref_enabled') {
+                        slotEl.querySelector('.batch-style-ref-section').style.display = cb.checked ? 'block' : 'none';
+                    }
                     if (cb.dataset.field === 'pose_enabled') {
                         slotEl.querySelector('.batch-pose-select-row').style.display = cb.checked ? 'block' : 'none';
                     }
@@ -16796,7 +16998,10 @@
             slotEl.querySelectorAll('input[type="range"][data-field]').forEach(rng => {
                 rng.addEventListener('input', () => {
                     batchChains[idx][rng.dataset.field] = parseFloat(rng.value);
-                    slotEl.querySelector('.batch-ref-str-val').textContent = rng.value;
+                    const valEl = rng.dataset.field === 'style_ref_strength'
+                        ? slotEl.querySelector('.batch-style-ref-str-val')
+                        : slotEl.querySelector('.batch-ref-str-val');
+                    if (valEl) valEl.textContent = rng.value;
                 });
             });
 
@@ -16850,6 +17055,59 @@
                 batchChains[idx].ref_images = [];
                 batchChains[idx].ref_preview_url = '';
                 renderBatchRefPreview(idx);
+                updateBatchPreview(slotEl, idx);
+            });
+
+            // 스타일 레퍼런스 파일 업로드
+            const styleFileInput = slotEl.querySelector('.batch-style-ref-file-input');
+            const styleUploadBtn = slotEl.querySelector('.batch-style-ref-upload-btn');
+            styleUploadBtn.addEventListener('click', () => styleFileInput.click());
+            styleFileInput.addEventListener('change', async function() {
+                if (!this.files || !this.files.length) return;
+                const formData = new FormData();
+                for (const file of this.files) {
+                    formData.append('image', file);
+                }
+                try {
+                    const resp = await fetch('/api/asset_mode/upload_reference', { method: 'POST', body: formData });
+                    const result = await resp.json();
+                    if (result.success) {
+                        const images = result.images || [];
+                        const enc = encodeURIComponent;
+                        const refImages = images.map((img, i) => {
+                            let preview_url = '';
+                            if (result.asset_info) {
+                                const ai = result.asset_info;
+                                preview_url = `/api/asset_mode/characters/${enc(ai.character)}/outfits/${enc(ai.outfit)}/expressions/${enc(ai.expression)}/images/${enc(img.name)}`;
+                            } else {
+                                preview_url = URL.createObjectURL(this.files[i] || new Blob());
+                            }
+                            return { name: img.name, local_path: img.local_path, orig_filename: img.orig_filename, preview_url };
+                        });
+                        batchChains[idx].style_ref_images = refImages.map(img => ({name: img.name, local_path: img.local_path, orig_filename: img.orig_filename}));
+                        batchChains[idx].style_ref_preview_url = refImages.map(img => img.preview_url).join('|');
+                        renderBatchStyleRefPreview(idx);
+                        showToast(`${images.length}장 스타일 레퍼런스 이미지 업로드 완료`, 'success');
+                        updateBatchPreview(slotEl, idx);
+                    } else {
+                        showToast(result.error || '업로드 실패', 'error');
+                    }
+                } catch (e) {
+                    showToast('업로드 실패: ' + e.message, 'error');
+                }
+                this.value = '';
+            });
+
+            // 에셋에서 스타일 레퍼런스 선택
+            slotEl.querySelector('.batch-style-ref-gallery-btn').addEventListener('click', () => {
+                openBatchStyleRefGalleryPicker(idx);
+            });
+
+            // 스타일 레퍼런스 미리보기 삭제
+            slotEl.querySelector('.batch-style-ref-clear-btn').addEventListener('click', () => {
+                batchChains[idx].style_ref_images = [];
+                batchChains[idx].style_ref_preview_url = '';
+                renderBatchStyleRefPreview(idx);
                 updateBatchPreview(slotEl, idx);
             });
         }
@@ -16996,13 +17254,86 @@
             }
         }
 
+        function renderBatchStyleRefPreview(slotIdx) {
+            const slot = batchChains[slotIdx];
+            const slotEl = document.querySelectorAll('.batch-slot')[slotIdx];
+            if (!slotEl) return;
+            const preview = slotEl.querySelector('.batch-style-ref-preview');
+            const previewGrid = slotEl.querySelector('.batch-style-ref-preview-grid');
+            const urls = slot.style_ref_preview_url ? slot.style_ref_preview_url.split('|').filter(Boolean) : [];
+            if (!urls.length) {
+                preview.style.display = 'none';
+                const hashEl = slotEl.querySelector('.batch-style-ref-folder-hash');
+                if (hashEl) hashEl.style.display = 'none';
+                return;
+            }
+            preview.style.display = 'block';
+            previewGrid.innerHTML = urls.map((url, imgIdx) =>
+                `<div style="position:relative;"><img src="${escapeHtml(url)}" style="width:100%; aspect-ratio:1; object-fit:cover; border-radius:4px; border:1px solid var(--border); display:block;"><button onclick="removeBatchStyleRefImage(${slotIdx}, ${imgIdx})" style="position:absolute; top:1px; right:1px; background:rgba(0,0,0,0.6); color:#fff; border:none; border-radius:50%; width:16px; height:16px; font-size:0.6rem; cursor:pointer; display:flex; align-items:center; justify-content:center; line-height:1;">x</button></div>`
+            ).join('');
+            updateBatchStyleRefFolderHash(slotIdx);
+        }
+
+        function removeBatchStyleRefImage(slotIdx, imgIdx) {
+            const slot = batchChains[slotIdx];
+            const urls = slot.style_ref_preview_url ? slot.style_ref_preview_url.split('|').filter(Boolean) : [];
+            urls.splice(imgIdx, 1);
+            slot.style_ref_images.splice(imgIdx, 1);
+            slot.style_ref_preview_url = urls.join('|');
+            renderBatchStyleRefPreview(slotIdx);
+            const slotEl = document.querySelectorAll('.batch-slot')[slotIdx];
+            if (slotEl) updateBatchPreview(slotEl, slotIdx);
+        }
+
+        async function updateBatchStyleRefFolderHash(slotIdx) {
+            const slot = batchChains[slotIdx];
+            const slotEl = document.querySelectorAll('.batch-slot')[slotIdx];
+            if (!slotEl || !slot.style_ref_images || !slot.style_ref_images.length) {
+                const hashEl = slotEl?.querySelector('.batch-style-ref-folder-hash');
+                if (hashEl) hashEl.style.display = 'none';
+                return;
+            }
+            const filenames = slot.style_ref_images.map(img => img.name);
+            try {
+                const resp = await fetch('/api/asset_mode/compute_ref_hash', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filenames })
+                });
+                const data = await resp.json();
+                if (data.hash) {
+                    const hashEl = slotEl.querySelector('.batch-style-ref-folder-hash');
+                    const hashText = slotEl.querySelector('.batch-style-ref-folder-hash-text');
+                    if (hashEl && hashText) {
+                        hashText.textContent = 'soya_style_ref/' + data.hash;
+                        hashEl.style.display = 'block';
+                    }
+                }
+            } catch(e) {
+                console.warn('batch style ref hash 계산 실패:', e);
+            }
+        }
+
         // ─── 배치 슬롯 레퍼런스 에셋 갤러리 선택 ─────────────
         let batchRefPickerTarget = -1;
+        let batchRefPickerTargetType = 'ref';  // 'ref' or 'style'
         let batchRefPickerSelected = [];
         function openBatchRefGalleryPicker(slotIdx) {
             batchRefPickerTarget = slotIdx;
+            batchRefPickerTargetType = 'ref';
             // 기존 선택된 이미지를 모달에 미리 반영
             const existingUrls = batchChains[slotIdx].ref_preview_url ? batchChains[slotIdx].ref_preview_url.split('|').filter(Boolean) : [];
+            openBatchRefPickerModal(existingUrls);
+        }
+
+        function openBatchStyleRefGalleryPicker(slotIdx) {
+            batchRefPickerTarget = slotIdx;
+            batchRefPickerTargetType = 'style';
+            const existingUrls = batchChains[slotIdx].style_ref_preview_url ? batchChains[slotIdx].style_ref_preview_url.split('|').filter(Boolean) : [];
+            openBatchRefPickerModal(existingUrls);
+        }
+
+        function openBatchRefPickerModal(existingUrls) {
             batchRefPickerSelected = existingUrls.map(url => ({
                 filename: '',
                 imgUrl: url,
@@ -17140,15 +17471,27 @@
                         let preview_url = batchRefPickerSelected[i].imgUrl;
                         return { name: img.name, local_path: img.local_path, orig_filename: img.orig_filename, preview_url };
                     });
-                    batchChains[batchRefPickerTarget].ref_images = refImages.map(img => ({name: img.name, local_path: img.local_path, orig_filename: img.orig_filename}));
-                    batchChains[batchRefPickerTarget].ref_preview_url = refImages.map(img => img.preview_url).join('|');
-                    const slotEl = document.querySelectorAll('.batch-slot')[batchRefPickerTarget];
-                    if (slotEl) {
-                        renderBatchRefPreview(batchRefPickerTarget);
-                        updateBatchPreview(slotEl, batchRefPickerTarget);
+                    const target = batchRefPickerTarget;
+                    const slotEl = document.querySelectorAll('.batch-slot')[target];
+                    if (batchRefPickerTargetType === 'style') {
+                        batchChains[target].style_ref_images = refImages.map(img => ({name: img.name, local_path: img.local_path, orig_filename: img.orig_filename}));
+                        batchChains[target].style_ref_preview_url = refImages.map(img => img.preview_url).join('|');
+                        if (slotEl) {
+                            renderBatchStyleRefPreview(target);
+                            updateBatchPreview(slotEl, target);
+                        }
+                        document.getElementById('batch-ref-picker-overlay').remove();
+                        showToast(`${images.length}장 스타일 레퍼런스 이미지 선택 완료`, 'success');
+                    } else {
+                        batchChains[target].ref_images = refImages.map(img => ({name: img.name, local_path: img.local_path, orig_filename: img.orig_filename}));
+                        batchChains[target].ref_preview_url = refImages.map(img => img.preview_url).join('|');
+                        if (slotEl) {
+                            renderBatchRefPreview(target);
+                            updateBatchPreview(slotEl, target);
+                        }
+                        document.getElementById('batch-ref-picker-overlay').remove();
+                        showToast(`${images.length}장 레퍼런스 이미지 선택 완료`, 'success');
                     }
-                    document.getElementById('batch-ref-picker-overlay').remove();
-                    showToast(`${images.length}장 레퍼런스 이미지 선택 완료`, 'success');
                 } else {
                     showToast(uploadResult.error || '업로드 실패', 'error');
                 }
@@ -17185,6 +17528,8 @@
             let positiveFull = positive.join(', ');
             positiveFull += `\n[FACE_ID_ACTIVATE]\n${slot.ref_enabled ? 'true' : 'false'}`;
             positiveFull += `\n[FACE_ID_STR]\n${slot.ref_strength}`;
+            positiveFull += `\n[STYLE_ACTIVATE]\n${slot.style_ref_enabled ? 'true' : 'false'}`;
+            positiveFull += `\n[STYLE_STR]\n${slot.style_ref_strength || 0.55}`;
             positiveFull += `\n[POSE_ACTIVATE]\n${slot.pose_enabled ? 'true' : 'false'}`;
             if (slot.pose_enabled && slot.pose_id) {
                 positiveFull += `\n[POSE_DATA]\n(포즈 데이터: ${slot.pose_id})`;
@@ -17285,6 +17630,9 @@
                             face_id_enabled: slot.ref_enabled,
                             face_id_strength: slot.ref_strength,
                             reference_images: slot.ref_images || [],
+                            style_ref_enabled: slot.style_ref_enabled,
+                            style_ref_strength: slot.style_ref_strength || 0.55,
+                            style_ref_images: slot.style_ref_images || [],
                             pose_enabled: slot.pose_enabled,
                             pose_id: slot.pose_enabled ? slot.pose_id : '',
                             fd_activate: slot.fd_enabled,
@@ -17575,6 +17923,8 @@
                     ref_enabled: !!c.ref_enabled, ref_strength: c.ref_strength || 0.55,
                     ref_images: c.ref_images || [], ref_image_data: c._ref_image_data || '',
                     ref_image_datas: c._ref_image_datas || [],
+                    style_ref_enabled: !!c.style_ref_enabled, style_ref_strength: c.style_ref_strength || 0.55,
+                    style_ref_images: c.style_ref_images || [],
                     pose_enabled: !!c.pose_enabled, pose_id: c.pose_id || '',
                     fd_enabled: !!c.fd_enabled, hrf_enabled: !!c.hrf_enabled, hd_enabled: !!c.hd_enabled, ed_enabled: !!c.ed_enabled,
                 };
@@ -17923,6 +18273,10 @@
                 ref_image_data: c.ref_image_data || '',
                 ref_image_datas: c.ref_image_datas || [],
                 ref_preview_url: c.ref_preview_url || c.ref_image_data || '',
+                style_ref_enabled: !!c.style_ref_enabled,
+                style_ref_strength: c.style_ref_strength || 0.55,
+                style_ref_images: c.style_ref_images || [],
+                style_ref_preview_url: c.style_ref_preview_url || '',
                 pose_enabled: !!c.pose_enabled,
                 pose_id: poseIdMap[c.pose_id] || c.pose_id || '',
                 fd_enabled: !!c.fd_enabled,

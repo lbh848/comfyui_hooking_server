@@ -950,6 +950,20 @@ def _prepare_ref_folder(reference_images: list, comfy_input_dir: str) -> str:
     return f"soya_char_ref/{folder_hash}"
 
 
+def _prepare_style_ref_folder(style_ref_images: list, comfy_input_dir: str) -> str:
+    """스타일 레퍼런스 이미지들을 comfy_input_dir/soya_style_ref/<hash>/ 폴더에 복사하고 subfolder 경로 반환."""
+    filenames = [img["filename"] for img in style_ref_images]
+    folder_hash = _compute_ref_folder_hash(filenames)
+    ref_dir = os.path.join(comfy_input_dir, "soya_style_ref", folder_hash)
+    os.makedirs(ref_dir, exist_ok=True)
+    for img in style_ref_images:
+        dst = os.path.join(ref_dir, os.path.basename(img["local_path"]))
+        if not os.path.isfile(dst) or os.path.getmtime(img["local_path"]) > os.path.getmtime(dst):
+            shutil.copy2(img["local_path"], dst)
+    print(f"[ASSET] style ref folder prepared: {ref_dir} ({len(style_ref_images)} images)")
+    return f"soya_style_ref/{folder_hash}"
+
+
 async def handle_api_compute_ref_hash(request: web.Request) -> web.Response:
     try:
         data = await request.json()
@@ -963,9 +977,8 @@ async def handle_api_compute_ref_hash(request: web.Request) -> web.Response:
         return web.json_response({"error": str(e)}, status=500)
 
 
-def build_prompt_with_workflow(workflow_api: dict, positive: str, negative: str, reference_subfolder: str = "") -> dict:
+def build_prompt_with_workflow(workflow_api: dict, positive: str, negative: str) -> dict:
     """임의의 워크플로우 dict에 프롬프트를 주입한다."""
-    print(f"[ASSET] build_prompt_with_workflow: ref_subfolder={repr(reference_subfolder)}")
     wf = copy.deepcopy(workflow_api)
     for nid, ninfo in wf.items():
         if not isinstance(ninfo, dict):
@@ -975,10 +988,6 @@ def build_prompt_with_workflow(workflow_api: dict, positive: str, negative: str,
             ninfo["inputs"]["value"] = positive
         elif title == "부정프롬프트":
             ninfo["inputs"]["value"] = negative
-        elif title == "레퍼런스이미지로드" and reference_subfolder:
-            ninfo["inputs"]["image"] = ""
-            ninfo["inputs"]["subfolder"] = reference_subfolder
-            ninfo["inputs"]["type"] = "input"
     return wf
 
 
@@ -3378,6 +3387,22 @@ async def handle_api_asset_mode_generate(request: web.Request) -> web.Response:
                 else:
                     print(f"[ASSET] 유효한 레퍼런스 이미지 없음 (received={len(reference_images)})")
 
+        style_ref_images = body.get("style_ref_images", [])
+        style_ref_subfolder = ""
+        if body.get("style_ref_enabled", False) and style_ref_images:
+            config = load_config()
+            comfy_input_dir = config.get("comfy_input_dir", "")
+            if not comfy_input_dir:
+                print("[ASSET] comfy_input_dir가 설정되지 않음, 스타일 레퍼런스 폴더 생성 불가")
+            elif not os.path.isdir(comfy_input_dir):
+                print(f"[ASSET] comfy_input_dir가 존재하지 않음: {comfy_input_dir}")
+            else:
+                valid_images = [img for img in style_ref_images if img.get("local_path") and os.path.isfile(img.get("local_path", ""))]
+                if valid_images:
+                    style_ref_subfolder = _prepare_style_ref_folder(valid_images, comfy_input_dir)
+                else:
+                    print(f"[ASSET] 유효한 스타일 레퍼런스 이미지 없음 (received={len(style_ref_images)})")
+
         result = await asset_mode.generate(
             character=body.get("character", ""),
             outfit=body.get("outfit", ""),
@@ -3386,6 +3411,9 @@ async def handle_api_asset_mode_generate(request: web.Request) -> web.Response:
             face_id_enabled=body.get("face_id_enabled", False),
             face_id_strength=float(body.get("face_id_strength", 0.55)),
             reference_subfolder=reference_subfolder,
+            style_ref_enabled=body.get("style_ref_enabled", False),
+            style_ref_strength=float(body.get("style_ref_strength", 0.55)),
+            style_ref_subfolder=style_ref_subfolder,
             pose_enabled=body.get("pose_enabled", False),
             pose_id=body.get("pose_id", ""),
             hrf_activate=body.get("hrf_activate", False),
