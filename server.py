@@ -3505,6 +3505,8 @@ async def handle_api_asset_mode_generate(request: web.Request) -> web.Response:
             style_ref_enabled=body.get("style_ref_enabled", False),
             style_ref_strength=float(body.get("style_ref_strength", 0.55)),
             style_ref_subfolder=style_ref_subfolder,
+            lora_activate=body.get("lora_activate", False),
+            lora_data=body.get("lora_data", ""),
             pose_enabled=body.get("pose_enabled", False),
             pose_id=body.get("pose_id", ""),
             hrf_activate=body.get("hrf_activate", False),
@@ -5005,6 +5007,20 @@ async def handle_api_lora_manage_list(request):
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 
+async def handle_api_lora_for_picker(request):
+    """LoRA 피커용 목록 (캐릭터별 그룹 + 대표이미지 + safetensors 경로)"""
+    try:
+        from modes.lora_mode import list_lora_for_picker
+        config = load_config()
+        lora_load_path = config.get("lora_load_path", "")
+        groups = list_lora_for_picker(lora_load_path)
+        return web.json_response({"success": True, "groups": groups})
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        print(f"[LORA_PICKER] 목록 조회 실패: {e}")
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
 async def handle_api_lora_manage_add(request):
     """LoRA 항목 추가"""
     try:
@@ -5065,6 +5081,7 @@ async def handle_api_lora_manage_update(request):
 
 
 app.router.add_get("/api/lora/manage/list", handle_api_lora_manage_list)
+app.router.add_get("/api/lora/for_picker", handle_api_lora_for_picker)
 app.router.add_post("/api/lora/manage/add", handle_api_lora_manage_add)
 app.router.add_post("/api/lora/manage/delete", handle_api_lora_manage_delete)
 app.router.add_post("/api/lora/manage/update", handle_api_lora_manage_update)

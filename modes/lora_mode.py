@@ -854,7 +854,70 @@ def list_lora_entries(character: str = "") -> list:
     return entries
 
 
-def add_lora_entry(name: str, character: str, trigger: str, description: str = "") -> dict:
+def list_lora_for_picker(lora_load_path: str = "") -> list:
+    """LoRA 피커용 목록 반환. 캐릭터별 그룹 + 대표이미지 + 사용 가능한 safetensors 경로 포함."""
+    data = _load_lora_manage()
+    result = []
+    for char_name, char_entries in data.get("loras", {}).items():
+        char_group = {"character": char_name, "entries": []}
+        for name, info in char_entries.items():
+            entry = {
+                "name": name,
+                "trigger": info.get("trigger", ""),
+                "description": info.get("description", ""),
+                "representative": info.get("representative", ""),
+                "training_config": info.get("training_config", {}),
+                "lora_files": [],
+            }
+            # 학습된 safetensors 파일 목록
+            if lora_load_path:
+                entry_dir = os.path.join(lora_load_path, _safe_dirname(char_name), "Lora", _safe_dirname(name))
+                if os.path.isdir(entry_dir):
+                    for session_name in sorted(os.listdir(entry_dir)):
+                        session_dir = os.path.join(entry_dir, session_name)
+                        if not os.path.isdir(session_dir):
+                            continue
+                        for fname in sorted(os.listdir(session_dir)):
+                            if fname.endswith('.json'):
+                                json_path = os.path.join(session_dir, fname)
+                                try:
+                                    with open(json_path, 'r', encoding='utf-8') as f:
+                                        jdata = json.load(f)
+                                    safetensors = jdata.get('lora_file', '')
+                                    if safetensors:
+                                        relative_path = os.path.join(
+                                            _safe_dirname(char_name), "Lora",
+                                            _safe_dirname(name), session_name, safetensors
+                                        )
+                                        previews = jdata.get('previews', [])
+                                        entry["lora_files"].append({
+                                            "path": relative_path,
+                                            "session": session_name,
+                                            "safetensors": safetensors,
+                                            "previews": previews,
+                                        })
+                                except Exception as e:
+                                    print(f"[LORA_PICKER] JSON 읽기 실패: {json_path} - {e}")
+            # 수동 업로드된 safetensors도 포함
+            manual_dir = os.path.join(ASSET_DIR, _safe_dirname(char_name), "Lora", _safe_dirname(name))
+            if os.path.isdir(manual_dir):
+                for fname in os.listdir(manual_dir):
+                    if fname.endswith('.safetensors'):
+                        full_path = os.path.join(manual_dir, fname)
+                        entry["lora_files"].append({
+                            "path": f"(수동) {_safe_dirname(char_name)}/Lora/{_safe_dirname(name)}/{fname}",
+                            "session": "manual",
+                            "safetensors": fname,
+                            "previews": [],
+                            "local_path": full_path,
+                        })
+            char_group["entries"].append(entry)
+        if char_group["entries"]:
+            result.append(char_group)
+    return result
+
+
+
     """새 LoRA 항목 추가"""
     if not name or not name.strip():
         print("[LORA_MANAGE] 이름 누락")

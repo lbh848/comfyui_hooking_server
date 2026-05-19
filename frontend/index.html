@@ -2841,6 +2841,22 @@
                         </div>
                     </div>
 
+                    <!-- LoRA 섹션 -->
+                    <div style="background:rgba(76,175,80,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <div class="section-title" style="margin-bottom:0;">LoRA</div>
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="asset-lora-toggle" onchange="onAssetLoraToggle()">
+                                <span class="toggle-slider"></span>
+                            </label>
+                            <span id="asset-lora-status" class="toggle-status off">OFF</span>
+                        </div>
+                        <div id="asset-lora-section" style="display:none; margin-top:8px;">
+                            <button onclick="openAssetLoraPicker()" style="width:100%; font-size:0.8rem; padding:6px; border:1px dashed var(--border); background:var(--surface2); border-radius:6px; cursor:pointer; color:var(--text-secondary); transition:border-color 0.15s;">+ LoRA 추가</button>
+                            <div id="asset-lora-list" style="margin-top:6px; display:flex; flex-direction:column; gap:6px;"></div>
+                        </div>
+                    </div>
+
                     <!-- 포즈 섹션 -->
                     <div style="background:rgba(0,188,212,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
                         <div style="display:flex; align-items:center; gap:8px;">
@@ -11914,6 +11930,7 @@
             const refStrength = parseFloat(document.getElementById('asset-ref-strength').value) || 0.55;
             const styleRefEnabled = document.getElementById('asset-style-ref-toggle').checked;
             const styleRefStrength = parseFloat(document.getElementById('asset-style-ref-strength').value) || 0.55;
+            const loraEnabled = document.getElementById('asset-lora-toggle').checked;
             const poseEnabled = document.getElementById('asset-pose-toggle').checked;
             const fdActivate = document.getElementById('asset-fd-toggle').checked;
             const hrfActivate = document.getElementById('asset-hrf-toggle').checked;
@@ -11948,6 +11965,14 @@
             positiveFull += `\n[STYLE_STR]\n${styleRefStrength}`;
             const styleDir = document.getElementById('asset-style-ref-folder-hash-text')?.textContent || '';
             positiveFull += `\n[STYLE_DIR]\n${styleDir || 'soya_style_ref/fallback'}`;
+            const loraActive = loraEnabled && assetLoraList.length > 0;
+            positiveFull += `\n[LORA_ACTIVATE]\n${loraActive ? 'true' : 'false'}`;
+            if (loraActive) {
+                const config = window.serverConfig || {};
+                positiveFull += `\n[LORA_DATA]\n${JSON.stringify({list: assetLoraList.map(l => ({lora_path: (config.lora_load_path ? 'SOYA_CHAR_LORA\\' : '') + l.lora_path, str: l.strength, BASE: l.BASE || 'anima'}))})}`;
+            } else {
+                positiveFull += `\n[LORA_DATA]\n{"list":[]}`;
+            }
             positiveFull += `\n[POSE_ACTIVATE]\n${poseEnabled ? 'true' : 'false'}`;
             if (poseEnabled && assetSelectedPoseId) {
                 positiveFull += `\n[POSE_DATA]\n(포즈 데이터: ${assetSelectedPoseId})`;
@@ -13166,6 +13191,154 @@
         }
 
         // ─── 포즈 선택 ───────────────────────────────────────
+        // ─── LoRA 블록 (개별 에셋) ──
+        let assetLoraList = []; // [{name, character, lora_path, strength, preview_url, trigger, BASE}]
+
+        function onAssetLoraToggle() {
+            const on = document.getElementById('asset-lora-toggle').checked;
+            document.getElementById('asset-lora-section').style.display = on ? 'block' : 'none';
+            const status = document.getElementById('asset-lora-status');
+            status.textContent = on ? 'ON' : 'OFF';
+            status.className = 'toggle-status ' + (on ? 'on' : 'off');
+        }
+
+        function renderAssetLoraList() {
+            const container = document.getElementById('asset-lora-list');
+            if (!container) return;
+            if (assetLoraList.length === 0) {
+                container.innerHTML = '<div style="font-size:0.75rem; color:var(--text-secondary); text-align:center; padding:4px;">선택된 LoRA가 없습니다</div>';
+                return;
+            }
+            container.innerHTML = assetLoraList.map((lora, i) => `
+                <div style="display:flex; align-items:center; gap:8px; padding:6px; background:var(--surface2); border-radius:6px; border:1px solid var(--border);">
+                    ${lora.preview_url ? `<img src="${escapeHtml(lora.preview_url)}" style="width:40px; height:40px; object-fit:cover; border-radius:4px;">` : '<div style="width:40px; height:40px; background:var(--surface); border-radius:4px; display:flex; align-items:center; justify-content:center; font-size:0.8rem;">📦</div>'}
+                    <div style="flex:1; min-width:0;">
+                        <div style="font-size:0.8rem; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(lora.name)}</div>
+                        <div style="font-size:0.65rem; color:var(--text-secondary);">${escapeHtml(lora.trigger)} · ${escapeHtml(lora.character)}</div>
+                    </div>
+                    <div style="display:flex; align-items:center; gap:4px; min-width:100px;">
+                        <input type="range" min="0" max="2" step="0.01" value="${lora.strength}"
+                            oninput="assetLoraList[${i}].strength=parseFloat(this.value); this.nextElementSibling.textContent=this.value"
+                            style="width:60px; cursor:pointer;">
+                        <span style="font-size:0.7rem; min-width:24px;">${lora.strength}</span>
+                    </div>
+                    <button onclick="assetLoraList.splice(${i},1); renderAssetLoraList();"
+                        style="background:none; border:none; color:var(--error); cursor:pointer; font-size:0.9rem; padding:2px 4px;">x</button>
+                </div>
+            `).join('');
+        }
+
+        let loraPickerData = null;
+
+        async function openAssetLoraPicker() {
+            const overlay = document.createElement('div');
+            overlay.id = 'asset-lora-picker-overlay';
+            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10010; display:flex; align-items:center; justify-content:center;';
+            overlay.innerHTML = `
+                <div style="background:var(--surface); border-radius:12px; padding:20px; max-width:700px; width:90%; max-height:80vh; display:flex; flex-direction:column;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                        <h3 style="margin:0;">LoRA 선택</h3>
+                        <button onclick="document.getElementById('asset-lora-picker-overlay').remove()" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer;">x</button>
+                    </div>
+                    <div id="lora-picker-back" style="display:none; margin-bottom:8px;">
+                        <button onclick="showLoraPickerCharacters()" style="background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:4px 12px; border-radius:4px; cursor:pointer; font-size:0.8rem;">← 뒤로</button>
+                    </div>
+                    <div id="lora-picker-grid" style="display:grid; grid-template-columns:repeat(4,1fr); gap:8px; overflow-y:auto; max-height:calc(80vh - 80px);"></div>
+                </div>`;
+            document.body.appendChild(overlay);
+            overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+            await loadLoraPickerCharacters();
+        }
+
+        async function loadLoraPickerCharacters() {
+            const grid = document.getElementById('lora-picker-grid');
+            if (!grid) return;
+            grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--text-secondary);">로딩중...</div>';
+            document.getElementById('lora-picker-back').style.display = 'none';
+            try {
+                const resp = await fetch('/api/lora/for_picker');
+                const data = await resp.json();
+                if (!data.success) { grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--error);">로드 실패</div>'; return; }
+                loraPickerData = data.groups || [];
+                showLoraPickerCharacters();
+            } catch (e) {
+                grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--error);">로드 실패: ' + e.message + '</div>';
+            }
+        }
+
+        function showLoraPickerCharacters() {
+            const grid = document.getElementById('lora-picker-grid');
+            if (!grid || !loraPickerData) return;
+            document.getElementById('lora-picker-back').style.display = 'none';
+            grid.innerHTML = '';
+            if (loraPickerData.length === 0) { grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--text-secondary);">LoRA 항목이 없습니다</div>'; return; }
+            loraPickerData.forEach(group => {
+                const card = document.createElement('div');
+                card.style.cssText = 'cursor:pointer; border-radius:8px; border:2px solid var(--border); padding:16px 8px; text-align:center; transition:border-color 0.2s, background 0.2s;';
+                card.innerHTML = `<div style="font-size:1.2rem; margin-bottom:4px;">📁</div><div style="font-size:0.85rem; word-break:break-all;">${escapeHtml(group.character)}</div><div style="font-size:0.7rem; color:var(--text-secondary);">${group.entries.length}개</div>`;
+                card.onmouseenter = () => { card.style.borderColor = 'var(--accent)'; card.style.background = 'var(--surface2)'; };
+                card.onmouseleave = () => { card.style.borderColor = 'var(--border)'; card.style.background = 'transparent'; };
+                card.onclick = () => showLoraPickerEntries(group);
+                grid.appendChild(card);
+            });
+        }
+
+        function showLoraPickerEntries(group) {
+            const grid = document.getElementById('lora-picker-grid');
+            if (!grid) return;
+            document.getElementById('lora-picker-back').style.display = 'block';
+            grid.innerHTML = '';
+            if (group.entries.length === 0) { grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--text-secondary);">LoRA 항목이 없습니다</div>'; return; }
+            const config = window.serverConfig || {};
+            const loraLoadPath = config.lora_load_path || '';
+            group.entries.forEach(entry => {
+                const rep = entry.representative ? JSON.parse(entry.representative) : null;
+                let previewUrl = '';
+                if (rep && rep.preview) {
+                    previewUrl = rep.preview;
+                }
+                // 대표 학습 step의 첫 preview 이미지로 fallback
+                if (!previewUrl && entry.lora_files && entry.lora_files.length > 0) {
+                    const lastFile = entry.lora_files[entry.lora_files.length - 1];
+                    if (lastFile.previews && lastFile.previews.length > 0) {
+                        const enc = encodeURIComponent;
+                        previewUrl = `/api/lora/trained/preview/${enc(group.character)}/${enc(entry.name)}/${enc(lastFile.session)}/${enc(lastFile.previews[0])}`;
+                    }
+                }
+                const hasFile = entry.lora_files && entry.lora_files.length > 0;
+                const card = document.createElement('div');
+                card.style.cssText = `cursor:${hasFile ? 'pointer' : 'default'}; border-radius:8px; overflow:hidden; border:2px solid var(--border); transition:border-color 0.2s; position:relative;`;
+                card.innerHTML = previewUrl
+                    ? `<img src="${escapeHtml(previewUrl)}" style="width:100%; display:block; aspect-ratio:1; object-fit:contain;" loading="lazy">`
+                    : `<div style="width:100%; aspect-ratio:1; background:var(--surface2); display:flex; align-items:center; justify-content:center;">📦</div>`;
+                card.innerHTML += `<div style="font-size:0.7rem; padding:4px; text-align:center; background:var(--surface2);">${escapeHtml(entry.name)}${!hasFile ? ' <span style="color:var(--error);">(파일없음)</span>' : ''}</div>`;
+                if (hasFile) {
+                    card.onmouseenter = () => { card.style.borderColor = 'var(--accent)'; };
+                    card.onmouseleave = () => { card.style.borderColor = 'var(--border)'; };
+                    card.onclick = () => {
+                        // 가장 마지막 세션의 마지막 step을 기본으로 선택
+                        const lastFile = entry.lora_files[entry.lora_files.length - 1];
+                        const config = window.serverConfig || {};
+                        const loraPath = config.lora_load_path ? lastFile.path : lastFile.path;
+                        const BASE = (entry.training_config && entry.training_config.profile) || 'anima';
+                        assetLoraList.push({
+                            name: entry.name,
+                            character: group.character,
+                            lora_path: lastFile.path,
+                            strength: 0.5,
+                            preview_url: previewUrl,
+                            trigger: entry.trigger || '',
+                            BASE: BASE,
+                        });
+                        renderAssetLoraList();
+                        document.getElementById('asset-lora-picker-overlay').remove();
+                        showToast(`LoRA "${entry.name}" 추가됨`, 'success');
+                    };
+                }
+                grid.appendChild(card);
+            });
+        }
+
         let assetSelectedPoseId = '';
 
         function onAssetPoseToggle() {
@@ -14638,11 +14811,26 @@
             const refStrength = parseFloat(document.getElementById('asset-ref-strength').value) || 0.55;
             const styleRefEnabled = document.getElementById('asset-style-ref-toggle').checked;
             const styleRefStrength = parseFloat(document.getElementById('asset-style-ref-strength').value) || 0.55;
+            const loraEnabled = document.getElementById('asset-lora-toggle').checked;
             const poseEnabled = document.getElementById('asset-pose-toggle').checked;
             const fdActivate = document.getElementById('asset-fd-toggle').checked;
             const hrfActivate = document.getElementById('asset-hrf-toggle').checked;
             const hdActivate = document.getElementById('asset-hd-toggle').checked;
             const edActivate = document.getElementById('asset-ed-toggle').checked;
+
+            // LoRA 데이터 빌드
+            let loraData = '';
+            if (loraEnabled && assetLoraList.length > 0) {
+                const config = window.serverConfig || {};
+                const loraLoadPath = config.lora_load_path || '';
+                loraData = JSON.stringify({
+                    list: assetLoraList.map(l => ({
+                        lora_path: (loraLoadPath ? 'SOYA_CHAR_LORA\\' : '') + l.lora_path,
+                        str: l.strength,
+                        BASE: l.BASE || 'anima',
+                    }))
+                });
+            }
 
             assetGenerating = true;
             document.getElementById('asset-generate-btn').disabled = true;
@@ -14677,6 +14865,8 @@
                                 style_ref_enabled: styleRefEnabled,
                                 style_ref_strength: styleRefStrength,
                                 style_ref_images: styleRefEnabled ? assetStyleRefImages.map(img => ({filename: img.name, local_path: img.local_path})) : [],
+                                lora_activate: loraEnabled,
+                                lora_data: loraData,
                                 pose_enabled: poseEnabled,
                                 pose_id: poseEnabled ? assetSelectedPoseId : '',
                                 hrf_activate: hrfActivate,
@@ -16418,6 +16608,8 @@
                 style_ref_strength: 0.55,
                 style_ref_images: [],
                 style_ref_preview_url: '',
+                lora_enabled: false,
+                lora_list: [],
                 pose_enabled: false,
                 pose_id: '',
                 hrf_enabled: false,
@@ -16557,6 +16749,18 @@
                         <div style="display:flex; align-items:center; gap:8px;">
                             <label style="font-size:0.8rem;">ED 디테일러:</label>
                             <select id="bulk-ed-action" class="batch-select" style="width:auto; min-width:120px;">
+                                <option value="">변경 안함</option>
+                                <option value="on">모두 ON</option>
+                                <option value="off">모두 OFF</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div style="border-top:1px solid var(--border); padding-top:10px;">
+                        <div class="batch-field-label" style="margin-bottom:6px;">LoRA 일괄 설정</div>
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <label style="font-size:0.8rem;">적용 여부:</label>
+                            <select id="bulk-lora-action" class="batch-select" style="width:auto; min-width:120px;">
                                 <option value="">변경 안함</option>
                                 <option value="on">모두 ON</option>
                                 <option value="off">모두 OFF</option>
@@ -16845,6 +17049,7 @@
             const fdAction = document.getElementById('bulk-fd-action').value;
             const hdAction = document.getElementById('bulk-hd-action').value;
             const edAction = document.getElementById('bulk-ed-action').value;
+            const loraAction = document.getElementById('bulk-lora-action').value;
 
             batchChains.forEach(slot => {
                 if (fields.character) slot.character = fields.character;
@@ -16871,6 +17076,8 @@
                     slot.style_ref_preview_url = window._bulkStyleRefImages.map(img => img.preview_url).join('|');
                     slot.style_ref_enabled = true;
                 }
+                if (loraAction === 'on') slot.lora_enabled = true;
+                if (loraAction === 'off') slot.lora_enabled = false;
                 if (fdAction === 'on') slot.fd_enabled = true;
                 if (fdAction === 'off') slot.fd_enabled = false;
                 if (hrfAction === 'on') slot.hrf_enabled = true;
@@ -17016,6 +17223,26 @@
                     </div>
                 </div>
 
+                <div class="batch-toggle-row" style="background:rgba(76,175,80,0.08); border-radius:4px; padding:2px 6px;">
+                    <label>LoRA</label>
+                    <label class="toggle-switch"><input type="checkbox" data-field="lora_enabled" ${slot.lora_enabled ? 'checked' : ''}><span class="toggle-slider"></span></label>
+                </div>
+                <div class="batch-lora-section" style="display:${slot.lora_enabled ? 'block' : 'none'}; margin-bottom:4px;">
+                    <button class="batch-lora-add-btn" style="width:100%; font-size:0.7rem; padding:3px; border:1px dashed var(--border); background:var(--surface2); border-radius:4px; cursor:pointer; color:var(--text-secondary);" onclick="openBatchSlotLoraPicker(${idx})">+ LoRA 추가</button>
+                    <div class="batch-lora-items">
+                        ${(slot.lora_list || []).map((l, li) => `
+                            <div class="batch-lora-item" style="display:flex; align-items:center; gap:4px; padding:3px; background:var(--surface2); border-radius:4px; margin-top:3px; font-size:0.7rem;">
+                                ${l.preview_url ? `<img src="${escapeHtml(l.preview_url)}" style="width:24px; height:24px; object-fit:cover; border-radius:3px;">` : ''}
+                                <span style="flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(l.name)}</span>
+                                <input type="range" min="0" max="2" step="0.01" value="${l.strength}" style="width:50px; cursor:pointer;"
+                                    onchange="batchChains[${idx}].lora_list[${li}].strength=parseFloat(this.value)">
+                                <span style="min-width:20px;">${l.strength}</span>
+                                <button onclick="batchChains[${idx}].lora_list.splice(${li},1); renderBatchChain();" style="background:none; border:none; color:var(--error); cursor:pointer; font-size:0.8rem;">x</button>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+
                 <div class="batch-toggle-row">
                     <label>포즈</label>
                     <label class="toggle-switch"><input type="checkbox" data-field="pose_enabled" ${slot.pose_enabled ? 'checked' : ''}><span class="toggle-slider"></span></label>
@@ -17143,6 +17370,9 @@
                     }
                     if (cb.dataset.field === 'style_ref_enabled') {
                         slotEl.querySelector('.batch-style-ref-section').style.display = cb.checked ? 'block' : 'none';
+                    }
+                    if (cb.dataset.field === 'lora_enabled') {
+                        slotEl.querySelector('.batch-lora-section').style.display = cb.checked ? 'block' : 'none';
                     }
                     if (cb.dataset.field === 'pose_enabled') {
                         slotEl.querySelector('.batch-pose-select-row').style.display = cb.checked ? 'block' : 'none';
@@ -17293,6 +17523,112 @@
                 document.querySelectorAll('.custom-select.open').forEach(o => o.classList.remove('open'));
             }
         });
+
+        // ─── 배치 슬롯 LoRA 피커 ──
+        function openBatchSlotLoraPicker(slotIdx) {
+            const overlay = document.createElement('div');
+            overlay.id = 'batch-lora-picker-overlay';
+            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10010; display:flex; align-items:center; justify-content:center;';
+            overlay.innerHTML = `
+                <div style="background:var(--surface); border-radius:12px; padding:20px; max-width:700px; width:90%; max-height:80vh; display:flex; flex-direction:column;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                        <h3 style="margin:0;">LoRA 선택</h3>
+                        <button onclick="document.getElementById('batch-lora-picker-overlay').remove()" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer;">x</button>
+                    </div>
+                    <div id="batch-lora-picker-back" style="display:none; margin-bottom:8px;">
+                        <button onclick="showBatchLoraPickerCharacters()" style="background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:4px 12px; border-radius:4px; cursor:pointer; font-size:0.8rem;">← 뒤로</button>
+                    </div>
+                    <div id="batch-lora-picker-grid" style="display:grid; grid-template-columns:repeat(4,1fr); gap:8px; overflow-y:auto; max-height:calc(80vh - 80px);"></div>
+                </div>`;
+            document.body.appendChild(overlay);
+            overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+            loadBatchLoraPickerData(slotIdx);
+        }
+
+        let batchLoraPickerData = null;
+        let batchLoraPickerTarget = -1;
+
+        async function loadBatchLoraPickerData(slotIdx) {
+            batchLoraPickerTarget = slotIdx;
+            const grid = document.getElementById('batch-lora-picker-grid');
+            if (!grid) return;
+            grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--text-secondary);">로딩중...</div>';
+            try {
+                const resp = await fetch('/api/lora/for_picker');
+                const data = await resp.json();
+                if (!data.success) { grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--error);">로드 실패</div>'; return; }
+                batchLoraPickerData = data.groups || [];
+                showBatchLoraPickerCharacters();
+            } catch (e) {
+                grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--error);">로드 실패</div>';
+            }
+        }
+
+        function showBatchLoraPickerCharacters() {
+            const grid = document.getElementById('batch-lora-picker-grid');
+            if (!grid || !batchLoraPickerData) return;
+            document.getElementById('batch-lora-picker-back').style.display = 'none';
+            grid.innerHTML = '';
+            if (batchLoraPickerData.length === 0) { grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--text-secondary);">LoRA 항목이 없습니다</div>'; return; }
+            batchLoraPickerData.forEach(group => {
+                const card = document.createElement('div');
+                card.style.cssText = 'cursor:pointer; border-radius:8px; border:2px solid var(--border); padding:16px 8px; text-align:center; transition:border-color 0.2s, background 0.2s;';
+                card.innerHTML = `<div style="font-size:1.2rem; margin-bottom:4px;">📁</div><div style="font-size:0.85rem; word-break:break-all;">${escapeHtml(group.character)}</div><div style="font-size:0.7rem; color:var(--text-secondary);">${group.entries.length}개</div>`;
+                card.onmouseenter = () => { card.style.borderColor = 'var(--accent)'; card.style.background = 'var(--surface2)'; };
+                card.onmouseleave = () => { card.style.borderColor = 'var(--border)'; card.style.background = 'transparent'; };
+                card.onclick = () => showBatchLoraPickerEntries(group);
+                grid.appendChild(card);
+            });
+        }
+
+        function showBatchLoraPickerEntries(group) {
+            const grid = document.getElementById('batch-lora-picker-grid');
+            if (!grid) return;
+            document.getElementById('batch-lora-picker-back').style.display = 'block';
+            grid.innerHTML = '';
+            if (group.entries.length === 0) { grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--text-secondary);">LoRA 항목이 없습니다</div>'; return; }
+            group.entries.forEach(entry => {
+                const rep = entry.representative ? JSON.parse(entry.representative) : null;
+                let previewUrl = rep && rep.preview ? rep.preview : '';
+                if (!previewUrl && entry.lora_files && entry.lora_files.length > 0) {
+                    const lastFile = entry.lora_files[entry.lora_files.length - 1];
+                    if (lastFile.previews && lastFile.previews.length > 0) {
+                        const enc = encodeURIComponent;
+                        previewUrl = `/api/lora/trained/preview/${enc(group.character)}/${enc(entry.name)}/${enc(lastFile.session)}/${enc(lastFile.previews[0])}`;
+                    }
+                }
+                const hasFile = entry.lora_files && entry.lora_files.length > 0;
+                const card = document.createElement('div');
+                card.style.cssText = `cursor:${hasFile ? 'pointer' : 'default'}; border-radius:8px; overflow:hidden; border:2px solid var(--border); transition:border-color 0.2s; position:relative;`;
+                card.innerHTML = previewUrl
+                    ? `<img src="${escapeHtml(previewUrl)}" style="width:100%; display:block; aspect-ratio:1; object-fit:contain;" loading="lazy">`
+                    : `<div style="width:100%; aspect-ratio:1; background:var(--surface2); display:flex; align-items:center; justify-content:center;">📦</div>`;
+                card.innerHTML += `<div style="font-size:0.7rem; padding:4px; text-align:center; background:var(--surface2);">${escapeHtml(entry.name)}${!hasFile ? ' <span style="color:var(--error);">(파일없음)</span>' : ''}</div>`;
+                if (hasFile) {
+                    card.onmouseenter = () => { card.style.borderColor = 'var(--accent)'; };
+                    card.onmouseleave = () => { card.style.borderColor = 'var(--border)'; };
+                    card.onclick = () => {
+                        const lastFile = entry.lora_files[entry.lora_files.length - 1];
+                        const BASE = (entry.training_config && entry.training_config.profile) || 'anima';
+                        if (!batchChains[batchLoraPickerTarget].lora_list) batchChains[batchLoraPickerTarget].lora_list = [];
+                        batchChains[batchLoraPickerTarget].lora_list.push({
+                            name: entry.name,
+                            character: group.character,
+                            lora_path: lastFile.path,
+                            strength: 0.5,
+                            preview_url: previewUrl,
+                            trigger: entry.trigger || '',
+                            BASE: BASE,
+                        });
+                        batchChains[batchLoraPickerTarget].lora_enabled = true;
+                        renderBatchChain();
+                        document.getElementById('batch-lora-picker-overlay').remove();
+                        showToast(`LoRA "${entry.name}" 추가됨`, 'success');
+                    };
+                }
+                grid.appendChild(card);
+            });
+        }
 
         // ─── 배치 포즈 선택 모달 ──────────────────────────────
         let batchPosePickerTarget = -1;
@@ -17693,6 +18029,14 @@
             positiveFull += `\n[STYLE_ACTIVATE]\n${slot.style_ref_enabled ? 'true' : 'false'}`;
             positiveFull += `\n[STYLE_STR]\n${slot.style_ref_strength || 0.55}`;
             positiveFull += `\n[STYLE_DIR]\n${slot.style_ref_dir || 'soya_style_ref/fallback'}`;
+            const loraActive = slot.lora_enabled && (slot.lora_list || []).length > 0;
+            positiveFull += `\n[LORA_ACTIVATE]\n${loraActive ? 'true' : 'false'}`;
+            if (loraActive) {
+                const config = window.serverConfig || {};
+                positiveFull += `\n[LORA_DATA]\n${JSON.stringify({list: slot.lora_list.map(l => ({lora_path: (config.lora_load_path ? 'SOYA_CHAR_LORA\\' : '') + l.lora_path, str: l.strength, BASE: l.BASE || 'anima'}))})}`;
+            } else {
+                positiveFull += `\n[LORA_DATA]\n{"list":[]}`;
+            }
             positiveFull += `\n[POSE_ACTIVATE]\n${slot.pose_enabled ? 'true' : 'false'}`;
             if (slot.pose_enabled && slot.pose_id) {
                 positiveFull += `\n[POSE_DATA]\n(포즈 데이터: ${slot.pose_id})`;
@@ -17796,6 +18140,18 @@
                             style_ref_enabled: slot.style_ref_enabled,
                             style_ref_strength: slot.style_ref_strength || 0.55,
                             style_ref_images: slot.style_ref_images || [],
+                            lora_activate: slot.lora_enabled && (slot.lora_list || []).length > 0,
+                            lora_data: (() => {
+                                if (!slot.lora_enabled || !(slot.lora_list || []).length) return '';
+                                const config = window.serverConfig || {};
+                                return JSON.stringify({
+                                    list: slot.lora_list.map(l => ({
+                                        lora_path: (config.lora_load_path ? 'SOYA_CHAR_LORA\\' : '') + l.lora_path,
+                                        str: l.strength,
+                                        BASE: l.BASE || 'anima',
+                                    }))
+                                });
+                            })(),
                             pose_enabled: slot.pose_enabled,
                             pose_id: slot.pose_enabled ? slot.pose_id : '',
                             fd_activate: slot.fd_enabled,

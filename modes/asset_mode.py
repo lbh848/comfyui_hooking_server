@@ -785,6 +785,8 @@ class AssetMode:
         style_ref_enabled: bool = False,
         style_ref_strength: float = 0.55,
         style_ref_dir: str = "",
+        lora_activate: bool = False,
+        lora_data: str = "",
         pose_enabled: bool = False,
         pose_data: dict = None,
         hrf_activate: bool = False,
@@ -825,6 +827,8 @@ class AssetMode:
         positive += f"\n[STYLE_ACTIVATE]\n{'true' if style_ref_enabled else 'false'}"
         positive += f"\n[STYLE_STR]\n{style_ref_strength}"
         positive += f"\n[STYLE_DIR]\n{style_ref_dir or 'soya_style_ref/fallback'}"
+        positive += f"\n[LORA_ACTIVATE]\n{'true' if lora_activate else 'false'}"
+        positive += f"\n[LORA_DATA]\n{lora_data or '{"list":[]}'}"
         positive += f"\n[POSE_ACTIVATE]\n{'true' if pose_enabled else 'false'}"
         if pose_enabled and pose_data:
             positive += f"\n[POSE_DATA]\n{json.dumps(pose_data, ensure_ascii=False)}"
@@ -1010,6 +1014,8 @@ class AssetMode:
         style_ref_enabled: bool = False,
         style_ref_strength: float = 0.55,
         style_ref_subfolder: str = "",
+        lora_activate: bool = False,
+        lora_data: str = "",
         pose_enabled: bool = False,
         pose_id: str = "",
         hrf_activate: bool = False,
@@ -1024,6 +1030,7 @@ class AssetMode:
                     character, appearance, outfit, expression,
                     face_id_enabled, face_id_strength, reference_subfolder,
                     style_ref_enabled, style_ref_strength, style_ref_subfolder,
+                    lora_activate, lora_data,
                     pose_enabled, pose_id,
                     hrf_activate, fd_activate, hd_activate, ed_activate,
                 )
@@ -1042,6 +1049,8 @@ class AssetMode:
         style_ref_enabled: bool,
         style_ref_strength: float,
         style_ref_subfolder: str,
+        lora_activate: bool,
+        lora_data: str,
         pose_enabled: bool,
         pose_id: str,
         hrf_activate: bool,
@@ -1067,6 +1076,8 @@ class AssetMode:
             style_ref_enabled=style_ref_enabled,
             style_ref_strength=style_ref_strength,
             style_ref_dir=style_ref_subfolder,
+            lora_activate=lora_activate,
+            lora_data=lora_data,
             pose_enabled=pose_enabled,
             pose_data=pose_data,
             hrf_activate=hrf_activate,
