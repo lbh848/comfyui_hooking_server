@@ -17418,10 +17418,10 @@
                         <option value="sdxl" ${lora.BASE === 'sdxl' ? 'selected' : ''}>sdxl</option>
                         <option value="ilxl" ${lora.BASE === 'ilxl' ? 'selected' : ''}>ilxl</option>
                     </select>
-                    <div style="display:flex; align-items:center; gap:4px; margin-top:4px;">
-                        <input type="range" min="0" max="1" step="0.01" value="${lora.strength}" style="flex:1; cursor:pointer;"
-                            oninput="bulkLoraList[${i}].strength=parseFloat(this.value); this.nextElementSibling.textContent=parseFloat(this.value).toFixed(2)">
-                        <span style="font-size:0.65rem; min-width:24px; text-align:right;">${lora.strength.toFixed(2)}</span>
+                    <div style="margin-top:4px;">
+                        <input type="range" min="0" max="1" step="0.01" value="${lora.strength}" style="width:100%; cursor:pointer;"
+                            oninput="bulkLoraList[${i}].strength=parseFloat(this.value); this.parentElement.querySelector('.lora-strength-val').textContent=parseFloat(this.value).toFixed(2)">
+                        <div class="lora-strength-val" style="font-size:0.65rem; text-align:right; margin-top:1px;">${lora.strength.toFixed(2)}</div>
                     </div>
                 </div>
             `).join('');
@@ -17669,6 +17669,9 @@
                 // 기존 레퍼런스가 있으면 해시 표시
                 if (batchChains[idx]?.ref_images?.length) {
                     updateBatchRefFolderHash(idx);
+                }
+                if (batchChains[idx]?.style_ref_images?.length) {
+                    updateBatchStyleRefFolderHash(idx);
                 }
             });
 
@@ -18340,6 +18343,7 @@
                         hashText.textContent = dir;
                         batchChains[slotIdx].ref_dir = dir;
                         hashEl.style.display = 'block';
+                        updateBatchPreview(slotEl, slotIdx);
                     }
                 }
             } catch(e) {
@@ -18402,6 +18406,7 @@
                         hashText.textContent = dir;
                         batchChains[slotIdx].style_ref_dir = dir;
                         hashEl.style.display = 'block';
+                        updateBatchPreview(slotEl, slotIdx);
                     }
                 }
             } catch(e) {
@@ -18734,10 +18739,10 @@
                             appearance: slot.appearance,
                             face_id_enabled: slot.ref_enabled,
                             face_id_strength: slot.ref_strength,
-                            reference_images: slot.ref_images || [],
+                            reference_images: (slot.ref_images || []).map(img => ({filename: img.name, local_path: img.local_path})),
                             style_ref_enabled: slot.style_ref_enabled,
                             style_ref_strength: slot.style_ref_strength || 0.55,
-                            style_ref_images: slot.style_ref_images || [],
+                            style_ref_images: (slot.style_ref_images || []).map(img => ({filename: img.name, local_path: img.local_path})),
                             lora_activate: slot.lora_enabled && (slot.lora_list || []).length > 0,
                             lora_data: (() => {
                                 if (!slot.lora_enabled || !(slot.lora_list || []).length) return '';
