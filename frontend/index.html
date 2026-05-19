@@ -1146,7 +1146,7 @@
         }
         .tab-content { display: none; }
         .tab-content.active { display: block; }
-        #tab-batch-content.active { display: flex; flex-direction: column; height: calc(100vh - 60px); }
+        #tab-batch-content.active { display: flex; flex-direction: column; min-height: calc(100vh - 60px); }
 
         /* ─── 에셋 모드 ─── */
         .asset-container {
@@ -3071,7 +3071,7 @@
                 <div id="batch-progress-inner" style="height:100%; background:var(--accent); width:0%; transition:width 0.3s;"></div>
             </div>
             <div class="batch-status-text" id="batch-status-text" style="display:none; padding:6px 12px; font-size:0.8rem; color:var(--text-secondary); background:var(--surface2); border-bottom:1px solid var(--border);"></div>
-            <div id="batch-chain-container" class="batch-chain-container" style="flex:1; min-height:0;">
+            <div id="batch-chain-container" class="batch-chain-container" style="flex:1;">
                 <div id="batch-empty-state" class="batch-empty-state">
                     <button class="batch-add-first-btn" onclick="addBatchChainSlot()">+</button>
                     <div style="margin-top:8px; color:var(--text-secondary); font-size:0.8rem;">클릭하여 체인 슬롯 추가</div>
