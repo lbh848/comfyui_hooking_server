@@ -4182,6 +4182,7 @@
                             <span style="display: inline-flex; align-items: center; padding: 8px 12px; background: var(--bg-tertiary, #2a2a3e); border: 1px solid var(--border-color, #3a3a4e); border-left: none; border-radius: 0 6px 6px 0; font-size: 13px; color: var(--text-secondary, #aaa); white-space: nowrap; user-select: none;">\SOYA_CHAR_LORA</span>
                         </div>
                         <div class="hint">학습된 LoRA가 저장되는 폴더 경로 (\SOYA_CHAR_LORA는 자동 추가)</div>
+                        <button onclick="scanUntrackedLoras()" style="margin-top: 6px; padding: 6px 14px; font-size: 12px; background: var(--bg-tertiary, #2a2a3e); border: 1px solid var(--border-color, #3a3a4e); border-radius: 6px; color: var(--text-secondary, #aaa); cursor: pointer;">비추적 로라 제거</button>
                     </div>
                 </div>
             </div>
@@ -4189,6 +4190,26 @@
                 <button class="cancel" onclick="previewConfig()">📋 Config 미리보기</button>
                 <button class="cancel" onclick="closeSettingsModal()">취소</button>
                 <button class="confirm" onclick="saveSettings()">저장</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 비추적 로라 제거 확인 모달 -->
+    <div class="modal" id="untracked-lora-modal" onclick="if (event.target === this) this.classList.remove('visible')">
+        <div class="modal-content" style="max-width: 600px;">
+            <div class="modal-header">
+                <h2>비추적 LoRA 제거</h2>
+                <button class="modal-close" onclick="document.getElementById('untracked-lora-modal').classList.remove('visible')">&times;</button>
+            </div>
+            <div class="modal-body" id="untracked-lora-body" style="max-height: 55vh; overflow-y: auto;">
+                <div id="untracked-lora-loading" style="text-align: center; padding: 30px; color: var(--text-secondary, #aaa);">스캔 중...</div>
+                <div id="untracked-lora-list" style="display:none;"></div>
+                <div id="untracked-lora-empty" style="display:none; text-align: center; padding: 30px; color: var(--text-secondary, #aaa);">비추적 항목이 없습니다.</div>
+                <div id="untracked-lora-error" style="display:none; text-align: center; padding: 30px; color: #e74c3c;"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="cancel" onclick="document.getElementById('untracked-lora-modal').classList.remove('visible')">취소</button>
+                <button id="untracked-lora-delete-btn" class="confirm" onclick="removeUntrackedLoras()" style="display:none; background: #c0392b;">선택 항목 삭제</button>
             </div>
         </div>
     </div>
@@ -5930,6 +5951,121 @@
             } finally {
                 btn.disabled = false;
                 btn.textContent = '패치하기';
+            }
+        }
+
+        // ── 비추적 LoRA 제거 ──
+        let _untrackedLoraItems = [];
+
+        async function scanUntrackedLoras() {
+            const modal = document.getElementById('untracked-lora-modal');
+            const loading = document.getElementById('untracked-lora-loading');
+            const listDiv = document.getElementById('untracked-lora-list');
+            const emptyDiv = document.getElementById('untracked-lora-empty');
+            const errorDiv = document.getElementById('untracked-lora-error');
+            const deleteBtn = document.getElementById('untracked-lora-delete-btn');
+
+            _untrackedLoraItems = [];
+            loading.style.display = '';
+            listDiv.style.display = 'none';
+            emptyDiv.style.display = 'none';
+            errorDiv.style.display = 'none';
+            deleteBtn.style.display = 'none';
+            modal.classList.add('visible');
+
+            try {
+                const res = await fetch('/api/lora/untracked');
+                const data = await res.json();
+
+                loading.style.display = 'none';
+
+                if (!data.success) {
+                    errorDiv.textContent = data.error || '스캔 실패';
+                    errorDiv.style.display = '';
+                    return;
+                }
+
+                if (!data.items || data.items.length === 0) {
+                    emptyDiv.style.display = '';
+                    return;
+                }
+
+                _untrackedLoraItems = data.items;
+                let html = '<div style="margin-bottom:8px; font-size:13px; color:var(--text-secondary,#aaa);">다음 항목이 로라 매니징에서 추적되지 않고 있습니다:</div>';
+
+                // 전체 선택
+                html += `<label style="display:flex; align-items:center; gap:6px; margin-bottom:8px; padding:6px 8px; background:var(--bg-tertiary,#2a2a3e); border-radius:6px; font-size:12px; cursor:pointer;">
+                    <input type="checkbox" id="untracked-select-all" onchange="toggleAllUntracked(this.checked)" checked> 전체 선택
+                </label>`;
+
+                for (let i = 0; i < data.items.length; i++) {
+                    const item = data.items[i];
+                    const typeLabel = item.type === 'character' ? '캐릭터' : '엔트리';
+                    const typeColor = item.type === 'character' ? '#e67e22' : '#3498db';
+                    html += `<label style="display:flex; align-items:flex-start; gap:8px; padding:8px; margin-bottom:4px; background:var(--bg-tertiary,#2a2a3e); border-radius:6px; cursor:pointer; font-size:13px;">
+                        <input type="checkbox" class="untracked-item-cb" data-index="${i}" checked style="margin-top:2px;">
+                        <div style="flex:1;">
+                            <div><span style="color:${typeColor}; font-size:11px; font-weight:600;">[${typeLabel}]</span> ${item.display}</div>
+                            <div style="color:var(--text-secondary,#aaa); font-size:11px;">${item.file_count}개 파일 · ${item.size_mb} MB</div>
+                            <div style="color:var(--text-secondary,#777); font-size:10px; word-break:break-all;">${item.path}</div>
+                        </div>
+                    </label>`;
+                }
+
+                const totalSize = data.items.reduce((s, i) => s + i.size_mb, 0);
+                html += `<div style="margin-top:8px; font-size:12px; color:var(--text-secondary,#aaa);">총 ${data.items.length}개 항목, 약 ${totalSize.toFixed(1)} MB</div>`;
+
+                listDiv.innerHTML = html;
+                listDiv.style.display = '';
+                deleteBtn.style.display = '';
+            } catch (e) {
+                loading.style.display = 'none';
+                errorDiv.textContent = '스캔 중 오류: ' + e.message;
+                errorDiv.style.display = '';
+            }
+        }
+
+        function toggleAllUntracked(checked) {
+            document.querySelectorAll('.untracked-item-cb').forEach(cb => cb.checked = checked);
+        }
+
+        async function removeUntrackedLoras() {
+            const selected = [];
+            document.querySelectorAll('.untracked-item-cb:checked').forEach(cb => {
+                const idx = parseInt(cb.dataset.index);
+                if (_untrackedLoraItems[idx]) selected.push(_untrackedLoraItems[idx]);
+            });
+
+            if (selected.length === 0) {
+                alert('선택된 항목이 없습니다.');
+                return;
+            }
+
+            if (!confirm(`선택한 ${selected.length}개 항목을 정말 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.`)) return;
+
+            const deleteBtn = document.getElementById('untracked-lora-delete-btn');
+            deleteBtn.disabled = true;
+            deleteBtn.textContent = '삭제 중...';
+
+            try {
+                const res = await fetch('/api/lora/untracked/remove', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ items: selected })
+                });
+                const data = await res.json();
+
+                if (data.success) {
+                    alert(`삭제 완료: ${data.removed_count}개 항목 제거` + (data.errors.length > 0 ? `\n일부 실패: ${data.errors.length}개` : ''));
+                    document.getElementById('untracked-lora-modal').classList.remove('visible');
+                } else {
+                    alert('삭제 실패: ' + (data.error || '알 수 없는 오류'));
+                }
+            } catch (e) {
+                alert('삭제 중 오류: ' + e.message);
+            } finally {
+                deleteBtn.disabled = false;
+                deleteBtn.textContent = '선택 항목 삭제';
             }
         }
 

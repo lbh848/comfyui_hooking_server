@@ -1107,6 +1107,130 @@ def export_training_images(character: str, entry: str, comfy_input_dir: str) -> 
     }
 
 
+def scan_untracked_loras(lora_load_path: str) -> dict:
+    """lora_load_path에서 lora_manage.json에 추적되지 않는 캐릭터/엔트리/파일 스캔"""
+    if not lora_load_path or not os.path.isdir(lora_load_path):
+        print(f"[LORA_UNTRACKED] lora_load_path 없음: {lora_load_path}")
+        return {"success": False, "error": "로라 로드 경로가 존재하지 않습니다", "items": []}
+
+    manage_data = _load_lora_manage()
+    tracked = manage_data.get("loras", {})
+
+    untracked = []
+
+    # lora_load_path 바로 아래 항목 스캔
+    try:
+        top_items = os.listdir(lora_load_path)
+    except Exception as e:
+        print(f"[LORA_UNTRACKED] 경로 스캔 실패: {e}")
+        traceback.print_exc()
+        return {"success": False, "error": f"경로 스캔 실패: {e}", "items": []}
+
+    for char_dir_name in top_items:
+        char_path = os.path.join(lora_load_path, char_dir_name)
+        if not os.path.isdir(char_path):
+            continue
+
+        # 이 디렉토리가 tracked의 어떤 캐릭터와 매칭되는지 확인
+        matched_char = None
+        for tracked_char in tracked:
+            if _safe_dirname(tracked_char) == char_dir_name:
+                matched_char = tracked_char
+                break
+
+        if matched_char is None:
+            # 캐릭터 자체가 추적 안됨 - 하위 전체가 비추적
+            file_count = 0
+            size_mb = 0
+            for root, dirs, files in os.walk(char_path):
+                for f in files:
+                    fp = os.path.join(root, f)
+                    try:
+                        size_mb += os.path.getsize(fp)
+                        file_count += 1
+                    except Exception:
+                        pass
+            size_mb = round(size_mb / (1024 * 1024), 1)
+            untracked.append({
+                "type": "character",
+                "path": char_path,
+                "display": char_dir_name,
+                "file_count": file_count,
+                "size_mb": size_mb,
+            })
+            continue
+
+        # 캐릭터는 추적됨 - 엔트리 레벨 확인
+        tracked_entries = tracked[matched_char]
+        lora_sub = os.path.join(char_path, "Lora")
+        if not os.path.isdir(lora_sub):
+            continue
+
+        try:
+            entry_dirs = os.listdir(lora_sub)
+        except Exception:
+            continue
+
+        for entry_dir_name in entry_dirs:
+            entry_path = os.path.join(lora_sub, entry_dir_name)
+            if not os.path.isdir(entry_path):
+                continue
+
+            # 이 엔트리가 tracked에 있는지 확인
+            matched_entry = None
+            for tracked_entry in tracked_entries:
+                if _safe_dirname(tracked_entry) == entry_dir_name:
+                    matched_entry = tracked_entry
+                    break
+
+            if matched_entry is None:
+                # 엔트리가 추적 안됨
+                file_count = 0
+                size_mb = 0
+                for root, dirs, files in os.walk(entry_path):
+                    for f in files:
+                        fp = os.path.join(root, f)
+                        try:
+                            size_mb += os.path.getsize(fp)
+                            file_count += 1
+                        except Exception:
+                            pass
+                size_mb = round(size_mb / (1024 * 1024), 1)
+                untracked.append({
+                    "type": "entry",
+                    "path": entry_path,
+                    "display": f"{char_dir_name}/Lora/{entry_dir_name}",
+                    "file_count": file_count,
+                    "size_mb": size_mb,
+                })
+
+    print(f"[LORA_UNTRACKED] 스캔 완료: {len(untracked)}개 비추적 항목 발견")
+    return {"success": True, "items": untracked}
+
+
+def remove_untracked_loras(items: list) -> dict:
+    """비추적 LoRA 항목 일괄 삭제"""
+    removed = []
+    errors = []
+
+    for item in items:
+        path = item.get("path", "")
+        if not path or not os.path.exists(path):
+            errors.append({"path": path, "reason": "경로 없음"})
+            continue
+
+        try:
+            shutil.rmtree(path)
+            removed.append(path)
+            print(f"[LORA_UNTRACKED] 삭제: {path}")
+        except Exception as e:
+            errors.append({"path": path, "reason": str(e)})
+            print(f"[LORA_UNTRACKED] 삭제 실패: {path} - {e}")
+            traceback.print_exc()
+
+    return {"success": True, "removed": removed, "errors": errors, "removed_count": len(removed)}
+
+
 def get_entry_image_path(character: str, entry_name: str, filename: str) -> str | None:
     """LoRA 항목 폴더 내 이미지 파일 경로 반환"""
     if ".." in entry_name or ".." in filename or os.path.sep in entry_name or os.path.sep in filename:

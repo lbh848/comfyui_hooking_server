@@ -5486,6 +5486,42 @@ async def handle_api_lora_trained_delete_session(request):
 app.router.add_post("/api/lora/trained/delete-session", handle_api_lora_trained_delete_session)
 
 
+async def handle_api_lora_untracked_scan(request):
+    """비추적 LoRA 항목 스캔"""
+    try:
+        config = load_config()
+        lora_load_path = config.get("lora_load_path", "")
+        if not lora_load_path:
+            return web.json_response({"success": False, "error": "로라 로드 경로가 설정되지 않았습니다"}, status=400)
+        from modes.lora_mode import scan_untracked_loras
+        result = scan_untracked_loras(lora_load_path)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[LORA_UNTRACKED] 스캔 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_lora_untracked_remove(request):
+    """비추적 LoRA 항목 일괄 삭제"""
+    try:
+        body = await request.json()
+        items = body.get("items", [])
+        if not items:
+            return web.json_response({"success": False, "error": "삭제할 항목이 없습니다"}, status=400)
+        from modes.lora_mode import remove_untracked_loras
+        result = remove_untracked_loras(items)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[LORA_UNTRACKED] 삭제 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+app.router.add_get("/api/lora/untracked", handle_api_lora_untracked_scan)
+app.router.add_post("/api/lora/untracked/remove", handle_api_lora_untracked_remove)
+
+
 def _backup_data_on_startup():
     """프로그램 시작 시 asset_data 주요 파일들을 백업 (최대 50개 유지)"""
     from modes.asset_mode import TAGS_FILE, ASSET_DATA_DIR, NAME_MAPPING_FILE
