@@ -12031,7 +12031,7 @@
         }
 
         // ─── 프롬프트 미리보기 ───────────────────────────────
-        function previewAssetPrompt() {
+        async function previewAssetPrompt() {
             if (!assetTags) return;
             const char = document.getElementById('asset-character-select').value;
             const app = document.getElementById('asset-appearance-select').value;
@@ -12086,9 +12086,16 @@
             }
             positiveFull += `\n[POSE_ACTIVATE]\n${poseEnabled ? 'true' : 'false'}`;
             if (poseEnabled && assetSelectedPoseId) {
-                positiveFull += `\n[POSE_DATA]\n(포즈 데이터: ${assetSelectedPoseId})`;
+                try {
+                    const resp = await fetch(`/api/pose_mode/poses/${encodeURIComponent(assetSelectedPoseId)}`);
+                    const poseResult = await resp.json();
+                    const poseJson = poseResult.keypoints || poseResult;
+                    positiveFull += `\n[POSE_DATA]\n${JSON.stringify(poseJson)}`;
+                } catch (e) {
+                    positiveFull += `\n[POSE_DATA]\n(포즈 데이터 로드 실패: ${assetSelectedPoseId})`;
+                }
             } else {
-                positiveFull += `\n[POSE_DATA]\n{"people":[{"pose_keypoints_2d":[509.59,522.31,1,...]}],"canvas_height":1408,"canvas_width":936}`;
+                positiveFull += `\n[POSE_DATA]\n{"people":[{"pose_keypoints_2d":[509.59,522.31,1,552.52,696.55,1,299.04,600.06,1,73.98,858.17,1,86.61,624.58,1,774.33,791.04,1,484.34,1286.20,1,442.67,1336.70,1,263.38,1096.80,1,354.29,1393.52,1,344.19,1408.67,1,469.19,1128.37,1,561.36,1390.99,1,561.36,1408.67,1,422.47,471.80,1,618.18,404.88,1,351.76,502.11,1,730.55,414.98,1]}],"canvas_height":1408,"canvas_width":936}`;
             }
             positiveFull += `\n[HRF_ACTIVATE]\n${hrfActivate ? 'true' : 'false'}`;
             positiveFull += `\n[FD_ACTIVATE]\n${fdActivate ? 'true' : 'false'}`;
