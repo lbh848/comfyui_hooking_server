@@ -18874,8 +18874,46 @@
 
         async function saveBatchPreset() {
             if (batchChains.length === 0) { showToast('저장할 체인이 없습니다', 'error'); return; }
-            const name = prompt('프리셋 이름:');
-            if (!name || !name.trim()) return;
+
+            const currentName = document.getElementById('batch-preset-select').value || '';
+            const overlay = document.createElement('div');
+            overlay.id = 'batch-preset-save-overlay';
+            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:10030; display:flex; align-items:center; justify-content:center;';
+            overlay.innerHTML = `
+                <div style="background:var(--surface); border-radius:10px; padding:18px; min-width:320px; box-shadow:0 4px 20px rgba(0,0,0,0.3);">
+                    <div style="font-weight:600; margin-bottom:10px; font-size:0.95rem;">프리셋 저장</div>
+                    <input id="batch-preset-save-name" type="text" value="${escapeHtml(currentName)}" placeholder="프리셋 이름" style="width:100%; padding:6px 10px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:6px; font-size:0.85rem; box-sizing:border-box;">
+                    <div style="display:flex; gap:8px; margin-top:12px; justify-content:flex-end;">
+                        <button id="batch-preset-save-cancel" style="padding:6px 14px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:6px; cursor:pointer; font-size:0.8rem;">취소</button>
+                        <button id="batch-preset-save-new" style="padding:6px 14px; border:none; background:var(--accent); color:#fff; border-radius:6px; cursor:pointer; font-size:0.8rem;">새 이름으로 저장</button>
+                        ${currentName ? '<button id="batch-preset-save-overwrite" style="padding:6px 14px; border:none; background:#e8a317; color:#fff; border-radius:6px; cursor:pointer; font-size:0.8rem;">현재 프리셋에 덮어쓰기</button>' : ''}
+                    </div>
+                </div>`;
+            document.body.appendChild(overlay);
+
+            const nameInput = document.getElementById('batch-preset-save-name');
+            nameInput.focus();
+            nameInput.select();
+
+            return new Promise((resolve) => {
+                function doSave(name) {
+                    overlay.remove();
+                    if (!name || !name.trim()) { resolve(); return; }
+                    _doSaveBatchPreset(name.trim()).then(resolve);
+                }
+                overlay.addEventListener('click', (e) => { if (e.target === overlay) { overlay.remove(); resolve(); } });
+                document.getElementById('batch-preset-save-cancel').onclick = () => { overlay.remove(); resolve(); };
+                document.getElementById('batch-preset-save-new').onclick = () => doSave(nameInput.value);
+                const owBtn = document.getElementById('batch-preset-save-overwrite');
+                if (owBtn) owBtn.onclick = () => doSave(currentName);
+                nameInput.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter') doSave(nameInput.value);
+                    if (e.key === 'Escape') { overlay.remove(); resolve(); }
+                });
+            });
+        }
+
+        async function _doSaveBatchPreset(name) {
             const chainsData = batchChains.map(c => {
                 const copy = { ...c };
                 delete copy._id;
@@ -18887,7 +18925,7 @@
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        name: name.trim(),
+                        name,
                         chains: chainsData,
                         repeat: parseInt(document.getElementById('batch-repeat-count').value) || 1,
                     }),
@@ -18895,7 +18933,8 @@
                 const result = await resp.json();
                 if (result.success) {
                     await refreshBatchPresetSelect();
-                    showToast('프리셋 저장됨');
+                    document.getElementById('batch-preset-select').value = name;
+                    showToast(`프리셋 "${name}" 저장됨`);
                 } else {
                     showToast('저장 실패: ' + (result.error || '알 수 없는 오류'), 'error');
                 }
