@@ -998,7 +998,7 @@ class AssetMode:
         expression: str = "",
         face_id_enabled: bool = False,
         face_id_strength: float = 0.55,
-        reference_image: str = "",
+        reference_subfolder: str = "",
         pose_enabled: bool = False,
         pose_id: str = "",
         hrf_activate: bool = False,
@@ -1011,7 +1011,7 @@ class AssetMode:
             try:
                 return await self._generate_internal(
                     character, appearance, outfit, expression,
-                    face_id_enabled, face_id_strength, reference_image,
+                    face_id_enabled, face_id_strength, reference_subfolder,
                     pose_enabled, pose_id,
                     hrf_activate, fd_activate, hd_activate, ed_activate,
                 )
@@ -1026,7 +1026,7 @@ class AssetMode:
         expression: str,
         face_id_enabled: bool,
         face_id_strength: float,
-        reference_image: str,
+        reference_subfolder: str,
         pose_enabled: bool,
         pose_id: str,
         hrf_activate: bool,
@@ -1071,7 +1071,7 @@ class AssetMode:
         if self.build_prompt_with_workflow_func:
             workflow = self.build_prompt_with_workflow_func(
                 self._asset_api_workflow, positive, negative,
-                reference_image=reference_image if face_id_enabled else "",
+                reference_subfolder=reference_subfolder if face_id_enabled else "",
             )
         else:
             workflow = copy.deepcopy(self._asset_api_workflow)
@@ -1083,9 +1083,9 @@ class AssetMode:
                     ninfo["inputs"]["value"] = positive
                 elif title == "부정프롬프트":
                     ninfo["inputs"]["value"] = negative
-                elif title == "레퍼런스이미지로드" and face_id_enabled and reference_image:
-                    ninfo["inputs"]["image"] = reference_image
-                    ninfo["inputs"]["subfolder"] = ""
+                elif title == "레퍼런스이미지로드" and face_id_enabled and reference_subfolder:
+                    ninfo["inputs"]["image"] = ""
+                    ninfo["inputs"]["subfolder"] = reference_subfolder
                     ninfo["inputs"]["type"] = "input"
 
         final_positive = positive

@@ -930,9 +930,29 @@ async def generate_image_with_prompt(positive: str, negative: str):
 
 
 # ─── 에셋 모드 헬퍼 함수 ────────────────────────────────
-def build_prompt_with_workflow(workflow_api: dict, positive: str, negative: str, reference_image: str = "") -> dict:
+def _compute_ref_folder_hash(filenames: list) -> str:
+    """파일명 목록으로 MD5 해시를 생성하여 폴더명으로 사용."""
+    combined = "|".join(sorted(filenames))
+    return hashlib.md5(combined.encode()).hexdigest()[:12]
+
+
+def _prepare_ref_folder(reference_images: list, comfy_input_dir: str) -> str:
+    """레퍼런스 이미지들을 comfy_input_dir/soya_char_ref/<hash>/ 폴더에 복사하고 subfolder 경로 반환."""
+    filenames = [img["filename"] for img in reference_images]
+    folder_hash = _compute_ref_folder_hash(filenames)
+    ref_dir = os.path.join(comfy_input_dir, "soya_char_ref", folder_hash)
+    os.makedirs(ref_dir, exist_ok=True)
+    for img in reference_images:
+        dst = os.path.join(ref_dir, os.path.basename(img["local_path"]))
+        if not os.path.isfile(dst) or os.path.getmtime(img["local_path"]) > os.path.getmtime(dst):
+            shutil.copy2(img["local_path"], dst)
+    print(f"[ASSET] ref folder prepared: {ref_dir} ({len(reference_images)} images)")
+    return f"soya_char_ref/{folder_hash}"
+
+
+def build_prompt_with_workflow(workflow_api: dict, positive: str, negative: str, reference_subfolder: str = "") -> dict:
     """임의의 워크플로우 dict에 프롬프트를 주입한다."""
-    print(f"[ASSET] build_prompt_with_workflow: ref_image={repr(reference_image)}")
+    print(f"[ASSET] build_prompt_with_workflow: ref_subfolder={repr(reference_subfolder)}")
     wf = copy.deepcopy(workflow_api)
     for nid, ninfo in wf.items():
         if not isinstance(ninfo, dict):
@@ -942,9 +962,9 @@ def build_prompt_with_workflow(workflow_api: dict, positive: str, negative: str,
             ninfo["inputs"]["value"] = positive
         elif title == "부정프롬프트":
             ninfo["inputs"]["value"] = negative
-        elif title == "레퍼런스이미지로드" and reference_image:
-            ninfo["inputs"]["image"] = reference_image
-            ninfo["inputs"]["subfolder"] = ""
+        elif title == "레퍼런스이미지로드" and reference_subfolder:
+            ninfo["inputs"]["image"] = ""
+            ninfo["inputs"]["subfolder"] = reference_subfolder
             ninfo["inputs"]["type"] = "input"
     return wf
 
@@ -3328,6 +3348,23 @@ async def handle_api_asset_mode_tags_post(request: web.Request) -> web.Response:
 async def handle_api_asset_mode_generate(request: web.Request) -> web.Response:
     try:
         body = await request.json()
+        reference_images = body.get("reference_images", [])
+        reference_subfolder = ""
+        if body.get("face_id_enabled", False) and reference_images:
+            config = load_config()
+            comfy_input_dir = config.get("comfy_input_dir", "")
+            if not comfy_input_dir:
+                print("[ASSET] comfy_input_dir가 설정되지 않음, 레퍼런스 폴더 생성 불가")
+            elif not os.path.isdir(comfy_input_dir):
+                print(f"[ASSET] comfy_input_dir가 존재하지 않음: {comfy_input_dir}")
+            else:
+                # local_path가 있는 항목만 필터
+                valid_images = [img for img in reference_images if img.get("local_path") and os.path.isfile(img.get("local_path", ""))]
+                if valid_images:
+                    reference_subfolder = _prepare_ref_folder(valid_images, comfy_input_dir)
+                else:
+                    print(f"[ASSET] 유효한 레퍼런스 이미지 없음 (received={len(reference_images)})")
+
         result = await asset_mode.generate(
             character=body.get("character", ""),
             outfit=body.get("outfit", ""),
@@ -3335,7 +3372,7 @@ async def handle_api_asset_mode_generate(request: web.Request) -> web.Response:
             appearance=body.get("appearance", ""),
             face_id_enabled=body.get("face_id_enabled", False),
             face_id_strength=float(body.get("face_id_strength", 0.55)),
-            reference_image=body.get("reference_image", ""),
+            reference_subfolder=reference_subfolder,
             pose_enabled=body.get("pose_enabled", False),
             pose_id=body.get("pose_id", ""),
             hrf_activate=body.get("hrf_activate", False),
@@ -3457,61 +3494,64 @@ async def handle_api_asset_mode_delete_image(request: web.Request) -> web.Respon
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 async def handle_api_asset_mode_upload_reference(request: web.Request) -> web.Response:
-    """레퍼런스 이미지를 에셋 폴더에 저장하고 ComfyUI에 업로드하여 파일명 반환."""
+    """레퍼런스 이미지를 에셋 폴더에 저장하고 파일명+로컬경로 반환 (다중 파일 지원)."""
     try:
         reader = await request.multipart()
-        image_data = None
-        filename = "reference.png"
+        images_data = []  # [{filename, data}]
         source = ""
         async for part in reader:
             if part.name == "image":
-                image_data = await part.read()
-                if part.filename:
-                    filename = part.filename
+                img_data = await part.read()
+                if img_data:
+                    fname = part.filename or "reference.png"
+                    images_data.append({"filename": fname, "data": img_data})
             elif part.name == "source":
                 source = (await part.read()).decode("utf-8").strip()
-        if not image_data:
+        if not images_data:
             return web.json_response({"success": False, "error": "이미지 없음"}, status=400)
 
-        # ── 에셋 폴더에 저장 (에셋 선택 제외) ──
-        asset_info = None
-        if source != "asset":
-            import time, uuid as _uuid, hashlib, json as _json
-            from modes.asset_mode import AssetMode
-            safe = AssetMode._safe_dirname
-            upload_char = "업로드이미지"
-            upload_outfit = "갤러리"
-            upload_expr = "갤러리"
-            save_dir = os.path.join(
-                os.path.dirname(os.path.abspath(__file__)), "asset",
-                safe(upload_char), safe(upload_outfit), safe(upload_expr),
-            )
-            os.makedirs(save_dir, exist_ok=True)
+        import time as _time, uuid as _uuid, hashlib as _hashlib, json as _json
+        from modes.asset_mode import AssetMode
+        from PIL import Image
+        from io import BytesIO
+        safe = AssetMode._safe_dirname
+        upload_char = "업로드이미지"
+        upload_outfit = "갤러리"
+        upload_expr = "갤러리"
+        save_dir = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "asset",
+            safe(upload_char), safe(upload_outfit), safe(upload_expr),
+        )
+        os.makedirs(save_dir, exist_ok=True)
 
-            # 해시 기반 중복 체크 (픽셀 데이터로 계산 - 포맷 무관)
-            from PIL import Image
-            from io import BytesIO
+        # 해시 맵 로드
+        hash_file = os.path.join(save_dir, "_upload_hashes.json")
+        hash_map = {}
+        if os.path.isfile(hash_file):
+            try:
+                with open(hash_file, "r", encoding="utf-8") as f:
+                    hash_map = _json.load(f)
+            except Exception:
+                pass
+
+        images_result = []
+        for img_entry in images_data:
+            image_data = img_entry["data"]
+            orig_filename = img_entry["filename"]
+
             img = Image.open(BytesIO(image_data))
-            content_hash = hashlib.sha256(img.convert("RGB").tobytes()).hexdigest()
-            hash_file = os.path.join(save_dir, "_upload_hashes.json")
-            hash_map = {}
-            if os.path.isfile(hash_file):
-                try:
-                    with open(hash_file, "r", encoding="utf-8") as f:
-                        hash_map = _json.load(f)
-                except Exception:
-                    pass
+            content_hash = _hashlib.sha256(img.convert("RGB").tobytes()).hexdigest()
 
             if content_hash in hash_map and os.path.isfile(os.path.join(save_dir, hash_map[content_hash])):
                 asset_filename = hash_map[content_hash]
             else:
-                asset_filename = f"{int(time.time())}_{_uuid.uuid4().hex[:6]}.webp"
+                asset_filename = f"{int(_time.time())}_{_uuid.uuid4().hex[:6]}.webp"
                 asset_filepath = os.path.join(save_dir, asset_filename)
                 try:
                     save_img = img if img.mode == "RGBA" else img.convert("RGB")
                     save_img.save(asset_filepath, format="WEBP", quality=90, method=4)
                 except Exception:
-                    asset_filename = f"{int(time.time())}_{_uuid.uuid4().hex[:6]}.png"
+                    asset_filename = f"{int(_time.time())}_{_uuid.uuid4().hex[:6]}.png"
                     asset_filepath = os.path.join(save_dir, asset_filename)
                     with open(asset_filepath, "wb") as f:
                         f.write(image_data)
@@ -3522,35 +3562,30 @@ async def handle_api_asset_mode_upload_reference(request: web.Request) -> web.Re
                 except Exception as he:
                     print(f"[UPLOAD_REF] 해시 파일 저장 실패: {he}")
 
-            asset_mode.ensure_upload_character()
-            asset_info = {
+            local_path = os.path.join(save_dir, asset_filename)
+            images_result.append({
+                "name": asset_filename,
+                "local_path": local_path,
+                "orig_filename": orig_filename,
+            })
+
+        asset_mode.ensure_upload_character()
+
+        # 하위 호환: 단일 파일인 경우 name 필드도 포함
+        response = {
+            "success": True,
+            "images": images_result,
+            "name": images_result[0]["name"] if images_result else "",
+            "asset_info": {
                 "character": upload_char,
                 "outfit": upload_outfit,
                 "expression": upload_expr,
-                "filename": asset_filename,
-            }
-
-        # ── ComfyUI에 업로드 ──
-        import aiohttp, mimetypes
-        url = f"http://{REAL_COMFY_HOST}:{REAL_COMFY_PORT}/upload/image"
-        content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
-        data = aiohttp.FormData()
-        data.add_field("image", image_data, filename=filename, content_type=content_type)
-        data.add_field("overwrite", "true")
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, data=data) as resp:
-                if resp.status != 200:
-                    text = await resp.text()
-                    return web.json_response({"success": False, "error": f"ComfyUI 업로드 실패 ({resp.status}): {text}"}, status=502)
-                result = await resp.json()
-                comfy_name = result.get("name", filename)
-                if not comfy_name:
-                    return web.json_response({"success": False, "error": "ComfyUI에서 파일명을 반환하지 않음"}, status=502)
-                response = {"success": True, "name": comfy_name}
-                if asset_info:
-                    response["asset_info"] = asset_info
-                return web.json_response(response)
+                "filename": images_result[0]["name"] if images_result else "",
+            },
+        }
+        return web.json_response(response)
     except Exception as e:
+        import traceback; traceback.print_exc()
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 # ─── 이름 치환 규칙 API 핸들러 ─────────────────────────────

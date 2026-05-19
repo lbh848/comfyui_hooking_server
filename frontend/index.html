@@ -2781,10 +2781,10 @@
                                     <button onclick="document.getElementById('asset-ref-file-input').click()" style="flex:1; font-size:0.75rem; padding:4px;">파일 업로드</button>
                                     <button onclick="openAssetRefGalleryPicker()" style="flex:1; font-size:0.75rem; padding:4px;">에셋에서 선택</button>
                                 </div>
-                                <input type="file" id="asset-ref-file-input" accept="image/*" style="display:none;" onchange="uploadAssetRefImage(this)">
+                                <input type="file" id="asset-ref-file-input" accept="image/*" multiple style="display:none;" onchange="uploadAssetRefImage(this)">
                             </div>
                             <div id="asset-ref-preview" style="display:none; margin-top:4px; position:relative;">
-                                <img id="asset-ref-preview-img" style="width:100%; border-radius:6px; max-height:150px; object-fit:contain;">
+                                <div id="asset-ref-preview-grid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(60px, 1fr)); gap:4px;"></div>
                                 <button onclick="clearAssetRefImage()" style="position:absolute; top:2px; right:2px; background:rgba(0,0,0,0.6); color:#fff; border:none; border-radius:50%; width:20px; height:20px; font-size:0.7rem; cursor:pointer;">x</button>
                             </div>
                         </div>
@@ -3494,11 +3494,11 @@
                                 <div id="lora-cfg-nimg" style="padding:4px 8px; background:var(--surface); border-radius:4px; font-size:0.85rem; color:var(--text-secondary);">0</div>
                             </div>
                             <div>
-                                <label style="font-size:0.7rem; color:var(--text-secondary); display:block; margin-bottom:2px;">STEP_PER_IMAGE(추천:50)</label>
+                                <label style="font-size:0.7rem; color:var(--text-secondary); display:block; margin-bottom:2px;">STEP_PER_IMAGE(추천:100)</label>
                                 <input type="number" id="lora-cfg-step" value="50" min="1" style="width:100%; padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); font-size:0.8rem; box-sizing:border-box;">
                             </div>
                             <div>
-                                <label style="font-size:0.7rem; color:var(--text-secondary); display:block; margin-bottom:2px;">IL_RATE (학습률)(추천값-Anima:0.0005/XL:0.005)</label>
+                                <label style="font-size:0.7rem; color:var(--text-secondary); display:block; margin-bottom:2px;">IL_RATE (학습률)(추천값-Anima:0.00025/XL:0.0003)</label>
                                 <input type="number" id="lora-cfg-ilrate" value="0.0005" step="0.0001" style="width:100%; padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); font-size:0.8rem; box-sizing:border-box;">
                             </div>
                             <div>
@@ -3506,7 +3506,7 @@
                                 <input type="number" id="lora-cfg-save-step" value="50" min="1" style="width:100%; padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); font-size:0.8rem; box-sizing:border-box;">
                             </div>
                             <div>
-                                <label style="font-size:0.7rem; color:var(--text-secondary); display:block; margin-bottom:2px;">MULTI_IMG_FOLDER_NAME</label>
+                                <label style="font-size:0.7rem; color:var(--text-secondary); display:block; margin-bottom:2px;">MULTI_IMG_FOLDER_NAME (자동)</label>
                                 <div id="lora-cfg-folder" style="padding:4px 8px; background:var(--surface); border-radius:4px; font-size:0.85rem; color:var(--text-secondary);">soya_lora</div>
                             </div>
                             <div>
@@ -3627,7 +3627,7 @@
                     <div class="setting-row">
                         <div class="setting-label">
                             <div class="title">Comfy Input 폴더 경로</div>
-                            <div class="desc">ComfyUI의 input 폴더 경로 (비워두면 기본경로 사용)</div>
+                            <div class="desc">ComfyUI의 이미지 input 폴더 경로</div>
                         </div>
                     </div>
                     <div class="form-group" style="margin-top: -8px;">
@@ -12181,7 +12181,7 @@
         }
 
         // ─── 레퍼런스 (Face ID) ─────────────────────────────
-        let assetRefImageName = '';
+        let assetRefImages = [];  // [{name, local_path, orig_filename, preview_url}]
 
         function onAssetRefToggle() {
             const on = document.getElementById('asset-ref-toggle').checked;
@@ -12192,27 +12192,29 @@
         }
 
         async function uploadAssetRefImage(input) {
-            if (!input.files || !input.files[0]) return;
-            const file = input.files[0];
+            if (!input.files || !input.files.length) return;
             const formData = new FormData();
-            formData.append('image', file);
+            for (const file of input.files) {
+                formData.append('image', file);
+            }
             try {
                 const resp = await fetch('/api/asset_mode/upload_reference', { method: 'POST', body: formData });
                 const result = await resp.json();
                 if (result.success) {
-                    assetRefImageName = result.name;
-                    const preview = document.getElementById('asset-ref-preview');
-                    const previewImg = document.getElementById('asset-ref-preview-img');
-                    // 에셋 경로가 있으면 에셋 API URL로 미리보기 (갤러리에서 불러오기와 동일)
-                    if (result.asset_info) {
-                        const enc = encodeURIComponent;
-                        const ai = result.asset_info;
-                        previewImg.src = `/api/asset_mode/characters/${enc(ai.character)}/outfits/${enc(ai.outfit)}/expressions/${enc(ai.expression)}/images/${enc(ai.filename)}`;
-                    } else {
-                        previewImg.src = URL.createObjectURL(file);
-                    }
-                    preview.style.display = 'block';
-                    showToast('레퍼런스 이미지 업로드 완료', 'success');
+                    const images = result.images || [];
+                    const enc = encodeURIComponent;
+                    assetRefImages = images.map((img, i) => {
+                        let preview_url = '';
+                        if (result.asset_info) {
+                            const ai = result.asset_info;
+                            preview_url = `/api/asset_mode/characters/${enc(ai.character)}/outfits/${enc(ai.outfit)}/expressions/${enc(ai.expression)}/images/${enc(img.name)}`;
+                        } else {
+                            preview_url = URL.createObjectURL(input.files[i] || new Blob());
+                        }
+                        return { name: img.name, local_path: img.local_path, orig_filename: img.orig_filename, preview_url };
+                    });
+                    renderAssetRefPreview();
+                    showToast(`${images.length}장 레퍼런스 이미지 업로드 완료`, 'success');
                 } else {
                     showToast(result.error || '업로드 실패', 'error');
                 }
@@ -12222,10 +12224,20 @@
             input.value = '';
         }
 
+        function renderAssetRefPreview() {
+            const preview = document.getElementById('asset-ref-preview');
+            const grid = document.getElementById('asset-ref-preview-grid');
+            if (!assetRefImages.length) { preview.style.display = 'none'; return; }
+            preview.style.display = 'block';
+            grid.innerHTML = assetRefImages.map((img, i) =>
+                `<img src="${escapeHtml(img.preview_url)}" style="width:100%; aspect-ratio:1; object-fit:cover; border-radius:4px; border:1px solid var(--border);">`
+            ).join('');
+        }
+
         function clearAssetRefImage() {
-            assetRefImageName = '';
+            assetRefImages = [];
             document.getElementById('asset-ref-preview').style.display = 'none';
-            document.getElementById('asset-ref-preview-img').src = '';
+            document.getElementById('asset-ref-preview-grid').innerHTML = '';
         }
 
         async function openNameMappingModal() {
@@ -12674,7 +12686,10 @@
             }
         }
 
+        let assetRefPickerSelected = [];  // [{filename, imgUrl, char, outfit, expr}]
+
         function openAssetRefGalleryPicker() {
+            assetRefPickerSelected = [];
             const overlay = document.createElement('div');
             overlay.id = 'asset-ref-picker-overlay';
             overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10000; display:flex; align-items:center; justify-content:center;';
@@ -12685,7 +12700,11 @@
                             <h3 style="margin:0;">에셋에서 이미지 선택</h3>
                             <span id="asset-ref-picker-breadcrumb" style="font-size:0.8rem; color:var(--text2);"></span>
                         </div>
-                        <button onclick="document.getElementById('asset-ref-picker-overlay').remove()" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer;">x</button>
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <span id="asset-ref-picker-count" style="font-size:0.8rem; color:var(--accent);">0장 선택</span>
+                            <button id="asset-ref-picker-confirm-btn" onclick="confirmAssetRefPickerSelection()" style="background:var(--accent); color:#fff; border:none; padding:4px 12px; border-radius:4px; cursor:pointer; font-size:0.8rem; display:none;">선택 완료</button>
+                            <button onclick="document.getElementById('asset-ref-picker-overlay').remove()" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer;">x</button>
+                        </div>
                     </div>
                     <div id="asset-ref-picker-back" style="display:none; margin-bottom:8px;">
                         <button onclick="assetRefPickerGoBack()" style="background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:4px 12px; border-radius:4px; cursor:pointer; font-size:0.8rem;">← 뒤로</button>
@@ -12706,9 +12725,9 @@
                 assetRefPickerState.level = 'characters';
                 loadAssetRefPickerCharacters();
             } else {
-                assetRefPickerState.level = 'images';
+                // combos 레벨로 복귀
                 const ctx = assetRefPickerState.stack[assetRefPickerState.stack.length - 1];
-                loadAssetRefPickerImages(ctx.char, ctx.outfit, ctx.expr);
+                loadAssetRefPickerCombos(ctx.char);
             }
         }
 
@@ -12735,7 +12754,7 @@
                     card.onmouseenter = () => { card.style.borderColor = 'var(--accent)'; card.style.background = 'var(--surface2)'; };
                     card.onmouseleave = () => { card.style.borderColor = 'var(--border)'; card.style.background = 'transparent'; };
                     card.onclick = () => {
-                        assetRefPickerState.stack = [{ level: 'characters' }];
+                        assetRefPickerState.stack = [{ level: 'characters', char }];
                         loadAssetRefPickerCombos(char);
                     };
                     grid.appendChild(card);
@@ -12775,7 +12794,7 @@
                     card.onmouseenter = () => card.style.borderColor = 'var(--accent)';
                     card.onmouseleave = () => card.style.borderColor = 'var(--border)';
                     card.onclick = () => {
-                        assetRefPickerState.stack = [{ level: 'characters' }, { level: 'combos', char }];
+                        assetRefPickerState.stack = [{ level: 'characters', char }, { level: 'combos', char }];
                         loadAssetRefPickerImages(char, item.outfit, item.expression);
                     };
                     grid.appendChild(card);
@@ -12810,34 +12829,79 @@
                     if (img.is_representative) {
                         card.innerHTML += `<span style="position:absolute; top:4px; right:4px; background:var(--accent); color:#fff; font-size:0.6rem; padding:2px 6px; border-radius:3px;">대표</span>`;
                     }
-                    card.onmouseenter = () => card.style.borderColor = 'var(--success)';
-                    card.onmouseleave = () => card.style.borderColor = img.is_representative ? 'var(--accent)' : 'var(--border)';
-                    card.onclick = async () => {
-                        try {
-                            const imgResp = await fetch(imgUrl);
-                            const imgBlob = await imgResp.blob();
-                            const formData = new FormData();
-                            formData.append('image', imgBlob, img.filename);
-                            formData.append('source', 'asset');
-                            const uploadResp = await fetch('/api/asset_mode/upload_reference', { method: 'POST', body: formData });
-                            const uploadResult = await uploadResp.json();
-                            if (uploadResult.success) {
-                                assetRefImageName = uploadResult.name;
-                                document.getElementById('asset-ref-preview').style.display = 'block';
-                                document.getElementById('asset-ref-preview-img').src = imgUrl;
-                                document.getElementById('asset-ref-picker-overlay').remove();
-                                showToast('레퍼런스 이미지 선택 완료', 'success');
-                            } else {
-                                showToast(uploadResult.error || 'ComfyUI 업로드 실패', 'error');
-                            }
-                        } catch (e) {
-                            showToast('이미지 업로드 실패: ' + e.message, 'error');
+                    card.dataset.imgFilename = img.filename;
+                    card.dataset.imgUrl = imgUrl;
+                    card.dataset.char = char;
+                    card.dataset.outfit = outfit;
+                    card.dataset.expr = expr;
+
+                    // Check if already selected
+                    const isSelected = assetRefPickerSelected.some(s => s.imgUrl === imgUrl);
+                    if (isSelected) {
+                        card.style.borderColor = 'var(--success)';
+                        card.innerHTML += `<span class="check-mark" style="position:absolute; top:2px; left:2px; background:var(--success); color:#fff; font-size:0.6rem; width:18px; height:18px; border-radius:50%; display:flex; align-items:center; justify-content:center;">✓</span>`;
+                    }
+
+                    card.onclick = () => {
+                        const idx = assetRefPickerSelected.findIndex(s => s.imgUrl === imgUrl);
+                        if (idx >= 0) {
+                            // Deselect
+                            assetRefPickerSelected.splice(idx, 1);
+                            card.style.borderColor = img.is_representative ? 'var(--accent)' : 'var(--border)';
+                            const check = card.querySelector('.check-mark');
+                            if (check) check.remove();
+                        } else {
+                            // Select
+                            assetRefPickerSelected.push({ filename: img.filename, imgUrl, char, outfit, expr });
+                            card.style.borderColor = 'var(--success)';
+                            const check = document.createElement('span');
+                            check.className = 'check-mark';
+                            check.style.cssText = 'position:absolute; top:2px; left:2px; background:var(--success); color:#fff; font-size:0.6rem; width:18px; height:18px; border-radius:50%; display:flex; align-items:center; justify-content:center;';
+                            check.textContent = '✓';
+                            card.appendChild(check);
                         }
+                        // Update count and confirm button
+                        const countEl = document.getElementById('asset-ref-picker-count');
+                        const confirmBtn = document.getElementById('asset-ref-picker-confirm-btn');
+                        if (countEl) countEl.textContent = `${assetRefPickerSelected.length}장 선택`;
+                        if (confirmBtn) confirmBtn.style.display = assetRefPickerSelected.length > 0 ? 'inline-block' : 'none';
                     };
                     grid.appendChild(card);
                 }
             } catch (e) {
                 grid.innerHTML = `<div style="grid-column:1/-1; text-align:center; color:var(--error);">로드 실패: ${e.message}</div>`;
+            }
+        }
+
+        async function confirmAssetRefPickerSelection() {
+            if (!assetRefPickerSelected.length) return;
+            try {
+                // Upload all selected images
+                const formData = new FormData();
+                for (const sel of assetRefPickerSelected) {
+                    const imgResp = await fetch(sel.imgUrl);
+                    const imgBlob = await imgResp.blob();
+                    formData.append('image', imgBlob, sel.filename);
+                }
+                formData.append('source', 'asset');
+                const uploadResp = await fetch('/api/asset_mode/upload_reference', { method: 'POST', body: formData });
+                const uploadResult = await uploadResp.json();
+                if (uploadResult.success) {
+                    const images = uploadResult.images || [];
+                    assetRefImages = images.map((img, i) => ({
+                        name: img.name,
+                        local_path: img.local_path,
+                        orig_filename: img.orig_filename,
+                        preview_url: assetRefPickerSelected[i].imgUrl,
+                    }));
+                    renderAssetRefPreview();
+                    document.getElementById('asset-ref-picker-overlay').remove();
+                    showToast(`${images.length}장 레퍼런스 이미지 선택 완료`, 'success');
+                } else {
+                    showToast(uploadResult.error || '업로드 실패', 'error');
+                }
+            } catch (e) {
+                showToast('이미지 업로드 실패: ' + e.message, 'error');
             }
         }
 
@@ -14345,7 +14409,7 @@
                                 appearance: app,
                                 face_id_enabled: refEnabled,
                                 face_id_strength: refStrength,
-                                reference_image: refEnabled ? assetRefImageName : '',
+                                reference_images: refEnabled ? assetRefImages.map(img => ({filename: img.name, local_path: img.local_path})) : [],
                                 pose_enabled: poseEnabled,
                                 pose_id: poseEnabled ? assetSelectedPoseId : '',
                                 hrf_activate: hrfActivate,
@@ -16059,7 +16123,7 @@
         // ═══════════════════════════════════════════════════════
         // ─── 그림 일괄생성 (Batch Chain) ──────────────────────
         // ═══════════════════════════════════════════════════════
-        let batchChains = [];   // [{character, appearance, outfit, expression, composition_preset, quality_preset, negative_preset, ref_enabled, ref_strength, ref_image, pose_enabled, pose_id, hrf_enabled, fd_enabled, hd_enabled, ed_enabled}, ...]
+        let batchChains = [];   // [{character, appearance, outfit, expression, composition_preset, quality_preset, negative_preset, ref_enabled, ref_strength, ref_images, pose_enabled, pose_id, hrf_enabled, fd_enabled, hd_enabled, ed_enabled}, ...]
         let batchRunning = false;
         let batchSlotIdCounter = 0;
         let batchLoadedPoseList = [];
@@ -16081,7 +16145,7 @@
                 negative_preset: '',
                 ref_enabled: false,
                 ref_strength: 0.55,
-                ref_image: '',
+                ref_images: [],
                 ref_preview_url: '',
                 pose_enabled: false,
                 pose_id: '',
@@ -16152,10 +16216,10 @@
                             <button id="bulk-ref-upload-btn" style="font-size:0.75rem; padding:3px 8px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:4px; cursor:pointer;">파일 선택</button>
                             <button id="bulk-ref-gallery-btn" type="button" style="font-size:0.75rem; padding:3px 8px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:4px; cursor:pointer;">에셋에서 선택</button>
                             <span id="bulk-ref-file-name" style="font-size:0.7rem; color:var(--text-secondary);">미선택</span>
-                            <input type="file" id="bulk-ref-file" accept="image/*" style="display:none;">
+                            <input type="file" id="bulk-ref-file" accept="image/*" multiple style="display:none;">
                         </div>
                         <div id="bulk-ref-preview" style="display:none; margin-bottom:6px;">
-                            <img id="bulk-ref-preview-img" style="max-height:80px; max-width:100%; border-radius:6px; object-fit:contain;">
+                            <div id="bulk-ref-preview-grid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(50px, 1fr)); gap:4px;"></div>
                         </div>
                         <div style="display:flex; align-items:center; gap:8px;">
                             <label style="font-size:0.8rem;">강도:</label>
@@ -16214,33 +16278,41 @@
             const bulkRefFile = document.getElementById('bulk-ref-file');
             document.getElementById('bulk-ref-upload-btn').addEventListener('click', () => bulkRefFile.click());
             bulkRefFile.addEventListener('change', async function() {
-                if (!this.files || !this.files[0]) return;
-                const file = this.files[0];
+                if (!this.files || !this.files.length) return;
                 const formData = new FormData();
-                formData.append('image', file);
+                for (const file of this.files) {
+                    formData.append('image', file);
+                }
                 try {
                     const resp = await fetch('/api/asset_mode/upload_reference', { method: 'POST', body: formData });
                     const result = await resp.json();
                     if (result.success) {
-                        window._bulkRefImage = result.name;
-                        if (result.asset_info) {
-                            const enc = encodeURIComponent;
-                            const ai = result.asset_info;
-                            window._bulkRefPreviewUrl = `/api/asset_mode/characters/${enc(ai.character)}/outfits/${enc(ai.outfit)}/expressions/${enc(ai.expression)}/images/${enc(ai.filename)}`;
-                        } else {
-                            window._bulkRefPreviewUrl = URL.createObjectURL(file);
-                        }
-                        document.getElementById('bulk-ref-file-name').textContent = file.name;
+                        const images = result.images || [];
+                        const enc = encodeURIComponent;
+                        window._bulkRefImages = images.map((img, i) => {
+                            let preview_url = '';
+                            if (result.asset_info) {
+                                const ai = result.asset_info;
+                                preview_url = `/api/asset_mode/characters/${enc(ai.character)}/outfits/${enc(ai.outfit)}/expressions/${enc(ai.expression)}/images/${enc(img.name)}`;
+                            } else {
+                                preview_url = URL.createObjectURL(this.files[i] || new Blob());
+                            }
+                            return { name: img.name, local_path: img.local_path, orig_filename: img.orig_filename, preview_url };
+                        });
+                        window._bulkRefPreviewUrls = window._bulkRefImages.map(img => img.preview_url);
+                        document.getElementById('bulk-ref-file-name').textContent = `${images.length}장 선택`;
                         document.getElementById('bulk-ref-preview').style.display = 'block';
-                        document.getElementById('bulk-ref-preview-img').src = window._bulkRefPreviewUrl;
+                        document.getElementById('bulk-ref-preview-grid').innerHTML = window._bulkRefImages.map(img =>
+                            `<img src="${escapeHtml(img.preview_url)}" style="width:100%; aspect-ratio:1; object-fit:cover; border-radius:4px; border:1px solid var(--border);">`
+                        ).join('');
                     } else {
                         showToast(result.error || '업로드 실패', 'error');
                     }
                 } catch (e) { showToast('업로드 실패: ' + e.message, 'error'); }
                 this.value = '';
             });
-            window._bulkRefImage = null;
-            window._bulkRefPreviewUrl = null;
+            window._bulkRefImages = null;
+            window._bulkRefPreviewUrls = null;
 
             // 에셋에서 레퍼런스 선택
             document.getElementById('bulk-ref-gallery-btn').addEventListener('click', () => {
@@ -16249,7 +16321,10 @@
         }
 
         // ─── 일괄 설정용 에셋 레퍼런스 선택 ──
+        let bulkRefPickerSelected = [];
+
         function openBulkRefGalleryPicker() {
+            bulkRefPickerSelected = [];
             const overlay = document.createElement('div');
             overlay.id = 'bulk-ref-picker-overlay';
             overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10010; display:flex; align-items:center; justify-content:center;';
@@ -16257,7 +16332,11 @@
                 <div style="background:var(--surface); border-radius:12px; padding:20px; max-width:700px; width:90%; max-height:80vh; display:flex; flex-direction:column;">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
                         <h3 style="margin:0;">에셋에서 레퍼런스 선택</h3>
-                        <button onclick="document.getElementById('bulk-ref-picker-overlay').remove()" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer;">x</button>
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <span id="bulk-ref-picker-count" style="font-size:0.8rem; color:var(--accent);">0장 선택</span>
+                            <button id="bulk-ref-picker-confirm-btn" onclick="confirmBulkRefPickerSelection()" style="background:var(--accent); color:#fff; border:none; padding:4px 12px; border-radius:4px; cursor:pointer; font-size:0.8rem; display:none;">선택 완료</button>
+                            <button onclick="document.getElementById('bulk-ref-picker-overlay').remove()" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer;">x</button>
+                        </div>
                     </div>
                     <div id="bulk-ref-picker-back" style="display:none; margin-bottom:8px;">
                         <button onclick="bulkRefPickerGoBack()" style="background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:4px 12px; border-radius:4px; cursor:pointer; font-size:0.8rem;">← 뒤로</button>
@@ -16319,39 +16398,69 @@
                         ? `/api/asset_mode/characters/${enc(char)}/outfits/${enc(item.outfit)}/expressions/${enc(item.expression)}/images/${enc(item.representative)}`
                         : '';
                     const card = document.createElement('div');
-                    card.style.cssText = 'cursor:pointer; border-radius:8px; overflow:hidden; border:2px solid var(--border); transition:border-color 0.2s;';
+                    card.style.cssText = 'cursor:pointer; border-radius:8px; overflow:hidden; border:2px solid var(--border); transition:border-color 0.2s; position:relative;';
                     card.innerHTML = thumbUrl
                         ? `<img src="${thumbUrl}" style="width:100%; display:block; aspect-ratio:1; object-fit:contain;" loading="lazy">`
                         : `<div style="width:100%; aspect-ratio:1; background:var(--surface2); display:flex; align-items:center; justify-content:center;">📁</div>`;
                     card.innerHTML += `<div style="font-size:0.7rem; padding:4px; text-align:center; background:var(--surface2);">${escapeHtml(item.outfit)} / ${escapeHtml(item.expression)}</div>`;
-                    card.onmouseenter = () => card.style.borderColor = 'var(--accent)';
-                    card.onmouseleave = () => card.style.borderColor = 'var(--border)';
-                    card.onclick = async () => {
+                    card.onclick = () => {
                         if (!thumbUrl) { showToast('대표 이미지가 없습니다', 'error'); return; }
-                        try {
-                            const imgResp = await fetch(thumbUrl);
-                            const imgBlob = await imgResp.blob();
-                            const formData = new FormData();
-                            formData.append('image', imgBlob, item.representative);
-                            formData.append('source', 'asset');
-                            const uploadResp = await fetch('/api/asset_mode/upload_reference', { method: 'POST', body: formData });
-                            const uploadResult = await uploadResp.json();
-                            if (uploadResult.success) {
-                                window._bulkRefImage = uploadResult.name;
-                                window._bulkRefPreviewUrl = thumbUrl;
-                                document.getElementById('bulk-ref-file-name').textContent = `${item.outfit} / ${item.expression}`;
-                                document.getElementById('bulk-ref-preview').style.display = 'block';
-                                document.getElementById('bulk-ref-preview-img').src = thumbUrl;
-                                document.getElementById('bulk-ref-picker-overlay').remove();
-                                showToast('레퍼런스 이미지 선택 완료', 'success');
-                            } else {
-                                showToast(uploadResult.error || '업로드 실패', 'error');
-                            }
-                        } catch (e) { showToast('이미지 업로드 실패: ' + e.message, 'error'); }
+                        const idx = bulkRefPickerSelected.findIndex(s => s.imgUrl === thumbUrl);
+                        if (idx >= 0) {
+                            bulkRefPickerSelected.splice(idx, 1);
+                            card.style.borderColor = 'var(--border)';
+                            const check = card.querySelector('.check-mark');
+                            if (check) check.remove();
+                        } else {
+                            bulkRefPickerSelected.push({ filename: item.representative, imgUrl: thumbUrl, char, outfit: item.outfit, expr: item.expression });
+                            card.style.borderColor = 'var(--success)';
+                            const check = document.createElement('span');
+                            check.className = 'check-mark';
+                            check.style.cssText = 'position:absolute; top:2px; left:2px; background:var(--success); color:#fff; font-size:0.6rem; width:18px; height:18px; border-radius:50%; display:flex; align-items:center; justify-content:center;';
+                            check.textContent = '✓';
+                            card.appendChild(check);
+                        }
+                        const countEl = document.getElementById('bulk-ref-picker-count');
+                        const confirmBtn = document.getElementById('bulk-ref-picker-confirm-btn');
+                        if (countEl) countEl.textContent = `${bulkRefPickerSelected.length}장 선택`;
+                        if (confirmBtn) confirmBtn.style.display = bulkRefPickerSelected.length > 0 ? 'inline-block' : 'none';
                     };
                     grid.appendChild(card);
                 }
             } catch (e) { grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--error);">로드 실패</div>'; }
+        }
+
+        async function confirmBulkRefPickerSelection() {
+            if (!bulkRefPickerSelected.length) return;
+            try {
+                const formData = new FormData();
+                for (const sel of bulkRefPickerSelected) {
+                    const imgResp = await fetch(sel.imgUrl);
+                    const imgBlob = await imgResp.blob();
+                    formData.append('image', imgBlob, sel.filename);
+                }
+                formData.append('source', 'asset');
+                const uploadResp = await fetch('/api/asset_mode/upload_reference', { method: 'POST', body: formData });
+                const uploadResult = await uploadResp.json();
+                if (uploadResult.success) {
+                    const images = uploadResult.images || [];
+                    const enc = encodeURIComponent;
+                    window._bulkRefImages = images.map((img, i) => {
+                        let preview_url = bulkRefPickerSelected[i].imgUrl;
+                        return { name: img.name, local_path: img.local_path, orig_filename: img.orig_filename, preview_url };
+                    });
+                    window._bulkRefPreviewUrls = window._bulkRefImages.map(img => img.preview_url);
+                    document.getElementById('bulk-ref-file-name').textContent = `${images.length}장 선택`;
+                    document.getElementById('bulk-ref-preview').style.display = 'block';
+                    document.getElementById('bulk-ref-preview-grid').innerHTML = window._bulkRefImages.map(img =>
+                        `<img src="${escapeHtml(img.preview_url)}" style="width:100%; aspect-ratio:1; object-fit:cover; border-radius:4px; border:1px solid var(--border);">`
+                    ).join('');
+                    document.getElementById('bulk-ref-picker-overlay').remove();
+                    showToast(`${images.length}장 레퍼런스 이미지 선택 완료`, 'success');
+                } else {
+                    showToast(uploadResult.error || '업로드 실패', 'error');
+                }
+            } catch (e) { showToast('이미지 업로드 실패: ' + e.message, 'error'); }
         }
 
         function applyBatchBulkEdit() {
@@ -16385,9 +16494,9 @@
                 if (refAction === 'on') slot.ref_enabled = true;
                 if (refAction === 'off') slot.ref_enabled = false;
                 if (refStrengthCheck) slot.ref_strength = refStrength;
-                if (window._bulkRefImage) {
-                    slot.ref_image = window._bulkRefImage;
-                    slot.ref_preview_url = window._bulkRefPreviewUrl;
+                if (window._bulkRefImages && window._bulkRefImages.length) {
+                    slot.ref_images = window._bulkRefImages.map(img => ({name: img.name, local_path: img.local_path, orig_filename: img.orig_filename}));
+                    slot.ref_preview_url = window._bulkRefImages.map(img => img.preview_url).join('|');
                     slot.ref_enabled = true;
                 }
                 if (fdAction === 'on') slot.fd_enabled = true;
@@ -16495,9 +16604,9 @@
                         <button class="batch-ref-upload-btn" style="flex:1; font-size:0.75rem; padding:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:4px; cursor:pointer;">파일 업로드</button>
                         <button class="batch-ref-gallery-btn" style="flex:1; font-size:0.75rem; padding:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:4px; cursor:pointer;">에셋에서 선택</button>
                     </div>
-                    <input type="file" class="batch-ref-file-input" accept="image/*" style="display:none;">
+                    <input type="file" class="batch-ref-file-input" accept="image/*" multiple style="display:none;">
                     <div class="batch-ref-preview" style="display:${slot.ref_preview_url ? 'block' : 'none'}; position:relative;">
-                        <img class="batch-ref-preview-img" src="${escapeHtml(slot.ref_preview_url || '')}" style="width:100%; border-radius:6px; max-height:120px; object-fit:contain;">
+                        <div class="batch-ref-preview-grid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(50px, 1fr)); gap:4px;">${slot.ref_preview_url ? slot.ref_preview_url.split('|').filter(Boolean).map(url => `<img src="${escapeHtml(url)}" style="width:100%; aspect-ratio:1; object-fit:cover; border-radius:4px; border:1px solid var(--border);">`).join('') : ''}</div>
                         <button class="batch-ref-clear-btn" style="position:absolute; top:2px; right:2px; background:rgba(0,0,0,0.6); color:#fff; border:none; border-radius:50%; width:18px; height:18px; font-size:0.65rem; cursor:pointer;">x</button>
                     </div>
                 </div>
@@ -16646,27 +16755,36 @@
             const uploadBtn = slotEl.querySelector('.batch-ref-upload-btn');
             uploadBtn.addEventListener('click', () => fileInput.click());
             fileInput.addEventListener('change', async function() {
-                if (!this.files || !this.files[0]) return;
-                const file = this.files[0];
+                if (!this.files || !this.files.length) return;
                 const formData = new FormData();
-                formData.append('image', file);
+                for (const file of this.files) {
+                    formData.append('image', file);
+                }
                 try {
                     const resp = await fetch('/api/asset_mode/upload_reference', { method: 'POST', body: formData });
                     const result = await resp.json();
                     if (result.success) {
-                        batchChains[idx].ref_image = result.name;
+                        const images = result.images || [];
+                        const enc = encodeURIComponent;
+                        const refImages = images.map((img, i) => {
+                            let preview_url = '';
+                            if (result.asset_info) {
+                                const ai = result.asset_info;
+                                preview_url = `/api/asset_mode/characters/${enc(ai.character)}/outfits/${enc(ai.outfit)}/expressions/${enc(ai.expression)}/images/${enc(img.name)}`;
+                            } else {
+                                preview_url = URL.createObjectURL(this.files[i] || new Blob());
+                            }
+                            return { name: img.name, local_path: img.local_path, orig_filename: img.orig_filename, preview_url };
+                        });
+                        batchChains[idx].ref_images = refImages.map(img => ({name: img.name, local_path: img.local_path, orig_filename: img.orig_filename}));
+                        batchChains[idx].ref_preview_url = refImages.map(img => img.preview_url).join('|');
                         const preview = slotEl.querySelector('.batch-ref-preview');
-                        const previewImg = slotEl.querySelector('.batch-ref-preview-img');
-                        if (result.asset_info) {
-                            const enc = encodeURIComponent;
-                            const ai = result.asset_info;
-                            batchChains[idx].ref_preview_url = `/api/asset_mode/characters/${enc(ai.character)}/outfits/${enc(ai.outfit)}/expressions/${enc(ai.expression)}/images/${enc(ai.filename)}`;
-                        } else {
-                            batchChains[idx].ref_preview_url = URL.createObjectURL(file);
-                        }
-                        previewImg.src = batchChains[idx].ref_preview_url;
+                        const previewGrid = slotEl.querySelector('.batch-ref-preview-grid');
+                        previewGrid.innerHTML = refImages.map(img =>
+                            `<img src="${escapeHtml(img.preview_url)}" style="width:100%; aspect-ratio:1; object-fit:cover; border-radius:4px; border:1px solid var(--border);">`
+                        ).join('');
                         preview.style.display = 'block';
-                        showToast('레퍼런스 이미지 업로드 완료', 'success');
+                        showToast(`${images.length}장 레퍼런스 이미지 업로드 완료`, 'success');
                         updateBatchPreview(slotEl, idx);
                     } else {
                         showToast(result.error || '업로드 실패', 'error');
@@ -16684,11 +16802,11 @@
 
             // 레퍼런스 미리보기 삭제
             slotEl.querySelector('.batch-ref-clear-btn').addEventListener('click', () => {
-                batchChains[idx].ref_image = '';
+                batchChains[idx].ref_images = [];
                 batchChains[idx].ref_preview_url = '';
                 const preview = slotEl.querySelector('.batch-ref-preview');
                 preview.style.display = 'none';
-                slotEl.querySelector('.batch-ref-preview-img').src = '';
+                slotEl.querySelector('.batch-ref-preview-grid').innerHTML = '';
                 updateBatchPreview(slotEl, idx);
             });
         }
@@ -16776,8 +16894,10 @@
 
         // ─── 배치 슬롯 레퍼런스 에셋 갤러리 선택 ─────────────
         let batchRefPickerTarget = -1;
+        let batchRefPickerSelected = [];
         function openBatchRefGalleryPicker(slotIdx) {
             batchRefPickerTarget = slotIdx;
+            batchRefPickerSelected = [];
             const overlay = document.createElement('div');
             overlay.id = 'batch-ref-picker-overlay';
             overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10000; display:flex; align-items:center; justify-content:center;';
@@ -16785,7 +16905,11 @@
                 <div style="background:var(--surface); border-radius:12px; padding:20px; max-width:700px; width:90%; max-height:80vh; display:flex; flex-direction:column; overflow:hidden;">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; flex-shrink:0;">
                         <h3 style="margin:0;">에셋에서 레퍼런스 선택</h3>
-                        <button onclick="document.getElementById('batch-ref-picker-overlay').remove()" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer;">x</button>
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <span id="batch-ref-picker-count" style="font-size:0.8rem; color:var(--accent);">0장 선택</span>
+                            <button id="batch-ref-picker-confirm-btn" onclick="confirmBatchRefPickerSelection()" style="background:var(--accent); color:#fff; border:none; padding:4px 12px; border-radius:4px; cursor:pointer; font-size:0.8rem; display:none;">선택 완료</button>
+                            <button onclick="document.getElementById('batch-ref-picker-overlay').remove()" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer;">x</button>
+                        </div>
                     </div>
                     <div id="batch-ref-picker-back" style="display:none; margin-bottom:8px; flex-shrink:0;">
                         <button onclick="batchRefPickerGoBack()" style="background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:4px 12px; border-radius:4px; cursor:pointer; font-size:0.8rem;">← 뒤로</button>
@@ -16847,44 +16971,78 @@
                         ? `/api/asset_mode/characters/${enc(char)}/outfits/${enc(item.outfit)}/expressions/${enc(item.expression)}/images/${enc(item.representative)}`
                         : '';
                     const card = document.createElement('div');
-                    card.style.cssText = 'cursor:pointer; border-radius:8px; overflow:hidden; border:2px solid var(--border); transition:border-color 0.2s;';
+                    card.style.cssText = 'cursor:pointer; border-radius:8px; overflow:hidden; border:2px solid var(--border); transition:border-color 0.2s; position:relative;';
                     card.innerHTML = thumbUrl
                         ? `<img src="${thumbUrl}" style="width:100%; display:block; aspect-ratio:1; object-fit:contain;" loading="lazy">`
                         : `<div style="width:100%; aspect-ratio:1; background:var(--surface2); display:flex; align-items:center; justify-content:center;">📁</div>`;
                     card.innerHTML += `<div style="font-size:0.7rem; padding:4px; text-align:center; background:var(--surface2);">${escapeHtml(item.outfit)} / ${escapeHtml(item.expression)}</div>`;
-                    card.onmouseenter = () => card.style.borderColor = 'var(--accent)';
-                    card.onmouseleave = () => card.style.borderColor = 'var(--border)';
-                    card.onclick = async () => {
+                    card.onclick = () => {
                         if (!thumbUrl) { showToast('대표 이미지가 없습니다', 'error'); return; }
-                        try {
-                            const imgResp = await fetch(thumbUrl);
-                            const imgBlob = await imgResp.blob();
-                            const formData = new FormData();
-                            formData.append('image', imgBlob, item.representative);
-                            formData.append('source', 'asset');
-                            const uploadResp = await fetch('/api/asset_mode/upload_reference', { method: 'POST', body: formData });
-                            const uploadResult = await uploadResp.json();
-                            if (uploadResult.success) {
-                                batchChains[batchRefPickerTarget].ref_image = uploadResult.name;
-                                batchChains[batchRefPickerTarget].ref_preview_url = thumbUrl;
-                                const slotEl = document.querySelectorAll('.batch-slot')[batchRefPickerTarget];
-                                if (slotEl) {
-                                    slotEl.querySelector('.batch-ref-preview-img').src = thumbUrl;
-                                    slotEl.querySelector('.batch-ref-preview').style.display = 'block';
-                                    updateBatchPreview(slotEl, batchRefPickerTarget);
-                                }
-                                document.getElementById('batch-ref-picker-overlay').remove();
-                                showToast('레퍼런스 이미지 선택 완료', 'success');
-                            } else {
-                                showToast(uploadResult.error || '업로드 실패', 'error');
-                            }
-                        } catch (e) {
-                            showToast('이미지 업로드 실패: ' + e.message, 'error');
+                        const idx = batchRefPickerSelected.findIndex(s => s.imgUrl === thumbUrl);
+                        if (idx >= 0) {
+                            batchRefPickerSelected.splice(idx, 1);
+                            card.style.borderColor = 'var(--border)';
+                            const check = card.querySelector('.check-mark');
+                            if (check) check.remove();
+                        } else {
+                            batchRefPickerSelected.push({ filename: item.representative, imgUrl: thumbUrl, char, outfit: item.outfit, expr: item.expression });
+                            card.style.borderColor = 'var(--success)';
+                            const check = document.createElement('span');
+                            check.className = 'check-mark';
+                            check.style.cssText = 'position:absolute; top:2px; left:2px; background:var(--success); color:#fff; font-size:0.6rem; width:18px; height:18px; border-radius:50%; display:flex; align-items:center; justify-content:center;';
+                            check.textContent = '✓';
+                            card.appendChild(check);
                         }
+                        const countEl = document.getElementById('batch-ref-picker-count');
+                        const confirmBtn = document.getElementById('batch-ref-picker-confirm-btn');
+                        if (countEl) countEl.textContent = `${batchRefPickerSelected.length}장 선택`;
+                        if (confirmBtn) confirmBtn.style.display = batchRefPickerSelected.length > 0 ? 'inline-block' : 'none';
                     };
                     grid.appendChild(card);
                 }
             } catch (e) { grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--error);">로드 실패</div>'; }
+        }
+
+        async function confirmBatchRefPickerSelection() {
+            if (!batchRefPickerSelected.length) return;
+            try {
+                const formData = new FormData();
+                for (const sel of batchRefPickerSelected) {
+                    const imgResp = await fetch(sel.imgUrl);
+                    const imgBlob = await imgResp.blob();
+                    formData.append('image', imgBlob, sel.filename);
+                }
+                formData.append('source', 'asset');
+                const uploadResp = await fetch('/api/asset_mode/upload_reference', { method: 'POST', body: formData });
+                const uploadResult = await uploadResp.json();
+                if (uploadResult.success) {
+                    const images = uploadResult.images || [];
+                    const enc = encodeURIComponent;
+                    const refImages = images.map((img, i) => {
+                        let preview_url = batchRefPickerSelected[i].imgUrl;
+                        return { name: img.name, local_path: img.local_path, orig_filename: img.orig_filename, preview_url };
+                    });
+                    batchChains[batchRefPickerTarget].ref_images = refImages.map(img => ({name: img.name, local_path: img.local_path, orig_filename: img.orig_filename}));
+                    batchChains[batchRefPickerTarget].ref_preview_url = refImages.map(img => img.preview_url).join('|');
+                    const slotEl = document.querySelectorAll('.batch-slot')[batchRefPickerTarget];
+                    if (slotEl) {
+                        const previewGrid = slotEl.querySelector('.batch-ref-preview-grid');
+                        if (previewGrid) {
+                            previewGrid.innerHTML = refImages.map(img =>
+                                `<img src="${escapeHtml(img.preview_url)}" style="width:100%; aspect-ratio:1; object-fit:cover; border-radius:4px; border:1px solid var(--border);">`
+                            ).join('');
+                        }
+                        slotEl.querySelector('.batch-ref-preview').style.display = 'block';
+                        updateBatchPreview(slotEl, batchRefPickerTarget);
+                    }
+                    document.getElementById('batch-ref-picker-overlay').remove();
+                    showToast(`${images.length}장 레퍼런스 이미지 선택 완료`, 'success');
+                } else {
+                    showToast(uploadResult.error || '업로드 실패', 'error');
+                }
+            } catch (e) {
+                showToast('이미지 업로드 실패: ' + e.message, 'error');
+            }
         }
 
         function toggleBatchPreview(labelEl) {
@@ -17014,7 +17172,7 @@
                             appearance: slot.appearance,
                             face_id_enabled: slot.ref_enabled,
                             face_id_strength: slot.ref_strength,
-                            reference_image: slot.ref_image || '',
+                            reference_images: slot.ref_images || [],
                             pose_enabled: slot.pose_enabled,
                             pose_id: slot.pose_enabled ? slot.pose_id : '',
                             fd_activate: slot.fd_enabled,
@@ -17244,7 +17402,7 @@
                 if (slot.negative_preset) usedNeg.add(slot.negative_preset);
                 if (slot.character) usedChars.add(slot.character);
                 if (slot.pose_enabled && slot.pose_id) usedPoseIds.add(slot.pose_id);
-                if (slot.ref_enabled && slot.ref_image) slotsNeedingRef.push(slot);
+                if (slot.ref_enabled && (slot.ref_images?.length || slot.ref_image)) slotsNeedingRef.push(slot);
             });
 
             // 2) 태그 데이터 추출
@@ -17275,20 +17433,25 @@
 
             // 4) 레퍼런스 이미지 base64 수집
             for (const slot of slotsNeedingRef) {
-                let dataUrl = slot.ref_preview_url || '';
-                // 서버 이미지 경로면 fetch해서 base64 변환
-                if (dataUrl && !dataUrl.startsWith('data:')) {
-                    try {
-                        const imgResp = await fetch(dataUrl);
-                        const blob = await imgResp.blob();
-                        dataUrl = await new Promise(resolve => {
-                            const reader = new FileReader();
-                            reader.onloadend = () => resolve(reader.result);
-                            reader.readAsDataURL(blob);
-                        });
-                    } catch (e) { console.warn('[EXPORT] 레퍼런스 이미지 변환 실패:', e); dataUrl = ''; }
+                const urls = (slot.ref_preview_url || '').split('|').filter(Boolean);
+                const dataUrls = [];
+                for (const url of urls) {
+                    let dataUrl = url;
+                    if (dataUrl && !dataUrl.startsWith('data:')) {
+                        try {
+                            const imgResp = await fetch(dataUrl);
+                            const blob = await imgResp.blob();
+                            dataUrl = await new Promise(resolve => {
+                                const reader = new FileReader();
+                                reader.onloadend = () => resolve(reader.result);
+                                reader.readAsDataURL(blob);
+                            });
+                        } catch (e) { console.warn('[EXPORT] 레퍼런스 이미지 변환 실패:', e); dataUrl = ''; }
+                    }
+                    if (dataUrl) dataUrls.push(dataUrl);
                 }
-                slot._ref_image_data = dataUrl;
+                slot._ref_image_data = dataUrls[0] || '';  // 하위 호환
+                slot._ref_image_datas = dataUrls;
             }
 
             // 5) 체인 슬롯 직렬화
@@ -17298,11 +17461,13 @@
                     expression: c.expression || '', composition_preset: c.composition_preset || '',
                     quality_preset: c.quality_preset || '', negative_preset: c.negative_preset || '',
                     ref_enabled: !!c.ref_enabled, ref_strength: c.ref_strength || 0.55,
-                    ref_image: c.ref_image || '', ref_image_data: c._ref_image_data || '',
+                    ref_images: c.ref_images || [], ref_image_data: c._ref_image_data || '',
+                    ref_image_datas: c._ref_image_datas || [],
                     pose_enabled: !!c.pose_enabled, pose_id: c.pose_id || '',
                     fd_enabled: !!c.fd_enabled, hrf_enabled: !!c.hrf_enabled, hd_enabled: !!c.hd_enabled, ed_enabled: !!c.ed_enabled,
                 };
                 delete c._ref_image_data;
+                delete c._ref_image_datas;
                 return o;
             });
 
@@ -17594,22 +17759,32 @@
 
             // ── 레퍼런스 이미지 업로드 ──
             for (const chainSlot of data.chains) {
-                if (chainSlot.ref_image_data && chainSlot.ref_image_data.startsWith('data:')) {
+                // 다중 이미지 데이터 (ref_image_datas 배열) 처리
+                const dataUrls = chainSlot.ref_image_datas?.length
+                    ? chainSlot.ref_image_datas
+                    : (chainSlot.ref_image_data && chainSlot.ref_image_data.startsWith('data:') ? [chainSlot.ref_image_data] : []);
+                if (dataUrls.length) {
                     try {
-                        const resp = await fetch(chainSlot.ref_image_data);
-                        const blob = await resp.blob();
                         const formData = new FormData();
-                        formData.append('image', blob, chainSlot.ref_image || 'reference.webp');
+                        for (let i = 0; i < dataUrls.length; i++) {
+                            const resp = await fetch(dataUrls[i]);
+                            const blob = await resp.blob();
+                            formData.append('image', blob, `reference_${i}.webp`);
+                        }
                         const uploadResp = await fetch('/api/asset_mode/upload_reference', { method: 'POST', body: formData });
                         const uploadResult = await uploadResp.json();
                         if (uploadResult.success) {
+                            const images = uploadResult.images || [];
                             chainSlot.ref_image = uploadResult.name;
+                            chainSlot.ref_images = images.map(img => ({name: img.name, local_path: img.local_path, orig_filename: img.orig_filename}));
                             if (uploadResult.asset_info) {
                                 const enc = encodeURIComponent;
                                 const ai = uploadResult.asset_info;
-                                chainSlot.ref_preview_url = `/api/asset_mode/characters/${enc(ai.character)}/outfits/${enc(ai.outfit)}/expressions/${enc(ai.expression)}/images/${enc(ai.filename)}`;
+                                chainSlot.ref_preview_url = images.map(img =>
+                                    `/api/asset_mode/characters/${enc(ai.character)}/outfits/${enc(ai.outfit)}/expressions/${enc(ai.expression)}/images/${enc(img.name)}`
+                                ).join('|');
                             } else {
-                                chainSlot.ref_preview_url = chainSlot.ref_image_data;
+                                chainSlot.ref_preview_url = dataUrls.join('|');
                             }
                         }
                     } catch (e) { console.warn('[IMPORT] 레퍼런스 업로드 실패:', e); }
@@ -17632,8 +17807,9 @@
                 negative_preset: mapTagField(tagNameMap.negative_presets, c.negative_preset),
                 ref_enabled: !!c.ref_enabled,
                 ref_strength: c.ref_strength || 0.55,
-                ref_image: c.ref_image || '',
+                ref_images: c.ref_images || (c.ref_image ? [{name: c.ref_image, local_path: ''}] : []),
                 ref_image_data: c.ref_image_data || '',
+                ref_image_datas: c.ref_image_datas || [],
                 ref_preview_url: c.ref_preview_url || c.ref_image_data || '',
                 pose_enabled: !!c.pose_enabled,
                 pose_id: poseIdMap[c.pose_id] || c.pose_id || '',
