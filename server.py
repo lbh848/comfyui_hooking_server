@@ -2502,6 +2502,22 @@ async def handle_api_batch_mode_cancel_resend(request: web.Request) -> web.Respo
 
 
 # ─── 설정 API ─────────────────────────────────────────────
+def _clear_folder(folder_path: str):
+    """폴더 내의 모든 파일과 하위 폴더를 삭제한다 (폴더 자체는 유지)."""
+    if not os.path.isdir(folder_path):
+        return
+    for item in os.listdir(folder_path):
+        item_path = os.path.join(folder_path, item)
+        try:
+            if os.path.isfile(item_path) or os.path.islink(item_path):
+                os.remove(item_path)
+            elif os.path.isdir(item_path):
+                shutil.rmtree(item_path)
+        except Exception as e:
+            print(f"[patch] 삭제 실패 {item_path}: {e}")
+            traceback.print_exc()
+
+
 async def handle_api_patch_comfy_input(request: web.Request) -> web.Response:
     """Comfy Input 폴더에 soya_* 폴더를 생성하고 fallback 이미지를 복사한다."""
     try:
@@ -2522,13 +2538,20 @@ async def handle_api_patch_comfy_input(request: web.Request) -> web.Response:
             os.path.join(comfy_input_dir, "soya_style_ref", "fallback"),
         ]
         created = []
+        cleared = []
         for folder in folders:
             if not os.path.isdir(folder):
                 os.makedirs(folder, exist_ok=True)
                 created.append(folder)
                 print(f"[patch] 폴더 생성: {folder}")
             else:
-                print(f"[patch] 폴더 이미 존재: {folder}")
+                # fallback 폴더와 soya_lora는 기존 내용물을 비운 뒤 다시 패치
+                if folder.endswith("fallback") or os.path.basename(folder) == "soya_lora":
+                    _clear_folder(folder)
+                    cleared.append(folder)
+                    print(f"[patch] 폴더 비움: {folder}")
+                else:
+                    print(f"[patch] 폴더 이미 존재: {folder}")
 
         # fallback 이미지 복사
         script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -2541,32 +2564,26 @@ async def handle_api_patch_comfy_input(request: web.Request) -> web.Response:
                     continue
                 # soya_char_ref/fallback 에 복사
                 dst_char = os.path.join(comfy_input_dir, "soya_char_ref", "fallback", fname)
-                if not os.path.isfile(dst_char):
-                    shutil.copy2(src_file, dst_char)
-                    copied.append(dst_char)
-                    print(f"[patch] 복사: {src_file} -> {dst_char}")
-                else:
-                    print(f"[patch] 이미 존재 (건너뜀): {dst_char}")
+                shutil.copy2(src_file, dst_char)
+                copied.append(dst_char)
+                print(f"[patch] 복사: {src_file} -> {dst_char}")
                 # soya_style_ref/fallback 에 복사
                 dst_style = os.path.join(comfy_input_dir, "soya_style_ref", "fallback", fname)
-                if not os.path.isfile(dst_style):
-                    shutil.copy2(src_file, dst_style)
-                    copied.append(dst_style)
-                    print(f"[patch] 복사: {src_file} -> {dst_style}")
-                else:
-                    print(f"[patch] 이미 존재 (건너뜀): {dst_style}")
+                shutil.copy2(src_file, dst_style)
+                copied.append(dst_style)
+                print(f"[patch] 복사: {src_file} -> {dst_style}")
         else:
             print(f"[patch] fallback_img 소스 폴더 없음: {fallback_src}")
 
         msg_lines = []
         if created:
             msg_lines.append(f"폴더 {len(created)}개 생성")
-        else:
-            msg_lines.append("모든 폴더가 이미 존재함")
+        if cleared:
+            msg_lines.append(f"폴더 {len(cleared)}개 비움")
         if copied:
             msg_lines.append(f"이미지 {len(copied)}개 복사")
-        else:
-            msg_lines.append("복사할 새 이미지 없음")
+        if not (created or cleared or copied):
+            msg_lines.append("변경 사항 없음")
 
         return web.json_response({"ok": True, "message": "\n".join(msg_lines)})
     except Exception as e:
