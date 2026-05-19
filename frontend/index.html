@@ -2787,6 +2787,9 @@
                                 <div id="asset-ref-preview-grid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(60px, 1fr)); gap:4px;"></div>
                                 <button onclick="clearAssetRefImage()" style="position:absolute; top:2px; right:2px; background:rgba(0,0,0,0.6); color:#fff; border:none; border-radius:50%; width:20px; height:20px; font-size:0.7rem; cursor:pointer;">x</button>
                             </div>
+                            <div id="asset-ref-folder-hash" style="display:none; margin-top:6px; font-size:0.7rem; color:var(--text-secondary); background:rgba(0,0,0,0.05); border-radius:4px; padding:4px 8px; user-select:text; cursor:text;">
+                                <span style="opacity:0.7;">📁</span> <span id="asset-ref-folder-hash-text"></span>
+                            </div>
                         </div>
                     </div>
 
@@ -12182,6 +12185,28 @@
         }
 
         // ─── 레퍼런스 (Face ID) ─────────────────────────────
+
+        async function updateRefFolderHash() {
+            const el = document.getElementById('asset-ref-folder-hash');
+            const txt = document.getElementById('asset-ref-folder-hash-text');
+            if (!assetRefImages.length) { el.style.display = 'none'; return; }
+            const filenames = assetRefImages.map(img => img.name);
+            try {
+                const resp = await fetch('/api/asset_mode/compute_ref_hash', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filenames })
+                });
+                const data = await resp.json();
+                if (data.hash) {
+                    txt.textContent = 'soya_char_ref/' + data.hash;
+                    el.style.display = 'block';
+                }
+            } catch(e) {
+                console.warn('ref hash 계산 실패:', e);
+            }
+        }
+
         let assetRefImages = [];  // [{name, local_path, orig_filename, preview_url}]
 
         function onAssetRefToggle() {
@@ -12231,14 +12256,22 @@
             if (!assetRefImages.length) { preview.style.display = 'none'; return; }
             preview.style.display = 'block';
             grid.innerHTML = assetRefImages.map((img, i) =>
-                `<img src="${escapeHtml(img.preview_url)}" style="width:100%; aspect-ratio:1; object-fit:cover; border-radius:4px; border:1px solid var(--border);">`
+                `<div style="position:relative;">
+                    <img src="${escapeHtml(img.preview_url)}" style="width:100%; aspect-ratio:1; object-fit:cover; border-radius:4px; border:1px solid var(--border); display:block;">
+                    <button onclick="removeAssetRefImage(${i})" style="position:absolute; top:2px; right:2px; background:rgba(0,0,0,0.6); color:#fff; border:none; border-radius:50%; width:18px; height:18px; font-size:0.65rem; cursor:pointer; display:flex; align-items:center; justify-content:center; line-height:1;">x</button>
+                </div>`
             ).join('');
+            updateRefFolderHash();
+        }
+
+        function removeAssetRefImage(idx) {
+            assetRefImages.splice(idx, 1);
+            renderAssetRefPreview();
         }
 
         function clearAssetRefImage() {
             assetRefImages = [];
-            document.getElementById('asset-ref-preview').style.display = 'none';
-            document.getElementById('asset-ref-preview-grid').innerHTML = '';
+            renderAssetRefPreview();
         }
 
         async function openNameMappingModal() {
@@ -12690,7 +12723,13 @@
         let assetRefPickerSelected = [];  // [{filename, imgUrl, char, outfit, expr}]
 
         function openAssetRefGalleryPicker() {
-            assetRefPickerSelected = [];
+            // 기존 선택된 이미지를 모달에 미리 반영
+            assetRefPickerSelected = assetRefImages.map(img => ({
+                filename: img.name,
+                imgUrl: img.preview_url,
+                char: '', outfit: '', expr: ''
+            }));
+            const preselectedCount = assetRefPickerSelected.length;
             const overlay = document.createElement('div');
             overlay.id = 'asset-ref-picker-overlay';
             overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10000; display:flex; align-items:center; justify-content:center;';
@@ -12702,8 +12741,8 @@
                             <span id="asset-ref-picker-breadcrumb" style="font-size:0.8rem; color:var(--text2);"></span>
                         </div>
                         <div style="display:flex; align-items:center; gap:8px;">
-                            <span id="asset-ref-picker-count" style="font-size:0.8rem; color:var(--accent);">0장 선택</span>
-                            <button id="asset-ref-picker-confirm-btn" onclick="confirmAssetRefPickerSelection()" style="background:var(--accent); color:#fff; border:none; padding:4px 12px; border-radius:4px; cursor:pointer; font-size:0.8rem; display:none;">선택 완료</button>
+                            <span id="asset-ref-picker-count" style="font-size:0.8rem; color:var(--accent);">${preselectedCount}장 선택</span>
+                            <button id="asset-ref-picker-confirm-btn" onclick="confirmAssetRefPickerSelection()" style="background:var(--accent); color:#fff; border:none; padding:4px 12px; border-radius:4px; cursor:pointer; font-size:0.8rem; ${preselectedCount > 0 ? 'display:inline-block;' : 'display:none;'}">선택 완료</button>
                             <button onclick="document.getElementById('asset-ref-picker-overlay').remove()" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer;">x</button>
                         </div>
                     </div>
@@ -16560,6 +16599,10 @@
             });
             container.querySelectorAll('.batch-slot').forEach((slotEl, idx) => {
                 bindBatchSlotEvents(slotEl, idx);
+                // 기존 레퍼런스가 있으면 해시 표시
+                if (batchChains[idx]?.ref_images?.length) {
+                    updateBatchRefFolderHash(idx);
+                }
             });
 
             // 스크롤 위치 복원 후 새 슬롯이 보이면 끝으로 스크롤
@@ -16577,6 +16620,7 @@
             const qualSel = buildCustomSelectHTML(assetTags?.quality_presets || {}, slot.quality_preset, '-- 품질 프리셋 --', 'quality_preset');
             const cnSel = buildCustomSelectHTML(assetTags?.character_negative_presets || {}, slot.character_negative_preset, '-- 캐릭터 부정 프리셋 --', 'character_negative_preset');
             const negSel = buildCustomSelectHTML(assetTags?.negative_presets || {}, slot.negative_preset, '-- 부정 프리셋 --', 'negative_preset');
+            const refPreviewUrls = slot.ref_preview_url ? slot.ref_preview_url.split('|').filter(Boolean) : [];
 
             return `
             <div class="batch-slot-header">
@@ -16608,9 +16652,12 @@
                         <button class="batch-ref-gallery-btn" style="flex:1; font-size:0.75rem; padding:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:4px; cursor:pointer;">에셋에서 선택</button>
                     </div>
                     <input type="file" class="batch-ref-file-input" accept="image/*" multiple style="display:none;">
-                    <div class="batch-ref-preview" style="display:${slot.ref_preview_url ? 'block' : 'none'}; position:relative;">
-                        <div class="batch-ref-preview-grid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(50px, 1fr)); gap:4px;">${slot.ref_preview_url ? slot.ref_preview_url.split('|').filter(Boolean).map(url => `<img src="${escapeHtml(url)}" style="width:100%; aspect-ratio:1; object-fit:cover; border-radius:4px; border:1px solid var(--border);">`).join('') : ''}</div>
+                    <div class="batch-ref-preview" style="display:${refPreviewUrls.length ? 'block' : 'none'}; position:relative;">
+                        <div class="batch-ref-preview-grid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(50px, 1fr)); gap:4px;">${refPreviewUrls.map((url, imgIdx) => `<div style="position:relative;"><img src="${escapeHtml(url)}" style="width:100%; aspect-ratio:1; object-fit:cover; border-radius:4px; border:1px solid var(--border); display:block;"><button onclick="removeBatchRefImage(${idx}, ${imgIdx})" style="position:absolute; top:1px; right:1px; background:rgba(0,0,0,0.6); color:#fff; border:none; border-radius:50%; width:16px; height:16px; font-size:0.6rem; cursor:pointer; display:flex; align-items:center; justify-content:center; line-height:1;">x</button></div>`).join('')}</div>
                         <button class="batch-ref-clear-btn" style="position:absolute; top:2px; right:2px; background:rgba(0,0,0,0.6); color:#fff; border:none; border-radius:50%; width:18px; height:18px; font-size:0.65rem; cursor:pointer;">x</button>
+                    </div>
+                    <div class="batch-ref-folder-hash" style="display:none; margin-top:4px; font-size:0.7rem; color:var(--text-secondary); background:rgba(0,0,0,0.05); border-radius:4px; padding:4px 8px; user-select:text; cursor:text;">
+                        <span style="opacity:0.7;">📁</span> <span class="batch-ref-folder-hash-text"></span>
                     </div>
                 </div>
 
@@ -16781,12 +16828,7 @@
                         });
                         batchChains[idx].ref_images = refImages.map(img => ({name: img.name, local_path: img.local_path, orig_filename: img.orig_filename}));
                         batchChains[idx].ref_preview_url = refImages.map(img => img.preview_url).join('|');
-                        const preview = slotEl.querySelector('.batch-ref-preview');
-                        const previewGrid = slotEl.querySelector('.batch-ref-preview-grid');
-                        previewGrid.innerHTML = refImages.map(img =>
-                            `<img src="${escapeHtml(img.preview_url)}" style="width:100%; aspect-ratio:1; object-fit:cover; border-radius:4px; border:1px solid var(--border);">`
-                        ).join('');
-                        preview.style.display = 'block';
+                        renderBatchRefPreview(idx);
                         showToast(`${images.length}장 레퍼런스 이미지 업로드 완료`, 'success');
                         updateBatchPreview(slotEl, idx);
                     } else {
@@ -16807,9 +16849,7 @@
             slotEl.querySelector('.batch-ref-clear-btn').addEventListener('click', () => {
                 batchChains[idx].ref_images = [];
                 batchChains[idx].ref_preview_url = '';
-                const preview = slotEl.querySelector('.batch-ref-preview');
-                preview.style.display = 'none';
-                slotEl.querySelector('.batch-ref-preview-grid').innerHTML = '';
+                renderBatchRefPreview(idx);
                 updateBatchPreview(slotEl, idx);
             });
         }
@@ -16895,12 +16935,80 @@
             renderGrid('');
         }
 
+        // ─── 배치 슬롯 레퍼런스 프리뷰/해시 공통 함수 ─────
+        function renderBatchRefPreview(slotIdx) {
+            const slot = batchChains[slotIdx];
+            const slotEl = document.querySelectorAll('.batch-slot')[slotIdx];
+            if (!slotEl) return;
+            const preview = slotEl.querySelector('.batch-ref-preview');
+            const previewGrid = slotEl.querySelector('.batch-ref-preview-grid');
+            const urls = slot.ref_preview_url ? slot.ref_preview_url.split('|').filter(Boolean) : [];
+            if (!urls.length) {
+                preview.style.display = 'none';
+                const hashEl = slotEl.querySelector('.batch-ref-folder-hash');
+                if (hashEl) hashEl.style.display = 'none';
+                return;
+            }
+            preview.style.display = 'block';
+            previewGrid.innerHTML = urls.map((url, imgIdx) =>
+                `<div style="position:relative;"><img src="${escapeHtml(url)}" style="width:100%; aspect-ratio:1; object-fit:cover; border-radius:4px; border:1px solid var(--border); display:block;"><button onclick="removeBatchRefImage(${slotIdx}, ${imgIdx})" style="position:absolute; top:1px; right:1px; background:rgba(0,0,0,0.6); color:#fff; border:none; border-radius:50%; width:16px; height:16px; font-size:0.6rem; cursor:pointer; display:flex; align-items:center; justify-content:center; line-height:1;">x</button></div>`
+            ).join('');
+            updateBatchRefFolderHash(slotIdx);
+        }
+
+        function removeBatchRefImage(slotIdx, imgIdx) {
+            const slot = batchChains[slotIdx];
+            const urls = slot.ref_preview_url ? slot.ref_preview_url.split('|').filter(Boolean) : [];
+            urls.splice(imgIdx, 1);
+            slot.ref_images.splice(imgIdx, 1);
+            slot.ref_preview_url = urls.join('|');
+            renderBatchRefPreview(slotIdx);
+            const slotEl = document.querySelectorAll('.batch-slot')[slotIdx];
+            if (slotEl) updateBatchPreview(slotEl, slotIdx);
+        }
+
+        async function updateBatchRefFolderHash(slotIdx) {
+            const slot = batchChains[slotIdx];
+            const slotEl = document.querySelectorAll('.batch-slot')[slotIdx];
+            if (!slotEl || !slot.ref_images || !slot.ref_images.length) {
+                const hashEl = slotEl?.querySelector('.batch-ref-folder-hash');
+                if (hashEl) hashEl.style.display = 'none';
+                return;
+            }
+            const filenames = slot.ref_images.map(img => img.name);
+            try {
+                const resp = await fetch('/api/asset_mode/compute_ref_hash', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filenames })
+                });
+                const data = await resp.json();
+                if (data.hash) {
+                    const hashEl = slotEl.querySelector('.batch-ref-folder-hash');
+                    const hashText = slotEl.querySelector('.batch-ref-folder-hash-text');
+                    if (hashEl && hashText) {
+                        hashText.textContent = 'soya_char_ref/' + data.hash;
+                        hashEl.style.display = 'block';
+                    }
+                }
+            } catch(e) {
+                console.warn('batch ref hash 계산 실패:', e);
+            }
+        }
+
         // ─── 배치 슬롯 레퍼런스 에셋 갤러리 선택 ─────────────
         let batchRefPickerTarget = -1;
         let batchRefPickerSelected = [];
         function openBatchRefGalleryPicker(slotIdx) {
             batchRefPickerTarget = slotIdx;
-            batchRefPickerSelected = [];
+            // 기존 선택된 이미지를 모달에 미리 반영
+            const existingUrls = batchChains[slotIdx].ref_preview_url ? batchChains[slotIdx].ref_preview_url.split('|').filter(Boolean) : [];
+            batchRefPickerSelected = existingUrls.map(url => ({
+                filename: '',
+                imgUrl: url,
+                char: '', outfit: '', expr: ''
+            }));
+            const preselectedCount = batchRefPickerSelected.length;
             const overlay = document.createElement('div');
             overlay.id = 'batch-ref-picker-overlay';
             overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10000; display:flex; align-items:center; justify-content:center;';
@@ -16909,8 +17017,8 @@
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; flex-shrink:0;">
                         <h3 style="margin:0;">에셋에서 레퍼런스 선택</h3>
                         <div style="display:flex; align-items:center; gap:8px;">
-                            <span id="batch-ref-picker-count" style="font-size:0.8rem; color:var(--accent);">0장 선택</span>
-                            <button id="batch-ref-picker-confirm-btn" onclick="confirmBatchRefPickerSelection()" style="background:var(--accent); color:#fff; border:none; padding:4px 12px; border-radius:4px; cursor:pointer; font-size:0.8rem; display:none;">선택 완료</button>
+                            <span id="batch-ref-picker-count" style="font-size:0.8rem; color:var(--accent);">${preselectedCount}장 선택</span>
+                            <button id="batch-ref-picker-confirm-btn" onclick="confirmBatchRefPickerSelection()" style="background:var(--accent); color:#fff; border:none; padding:4px 12px; border-radius:4px; cursor:pointer; font-size:0.8rem; ${preselectedCount > 0 ? 'display:inline-block;' : 'display:none;'}">선택 완료</button>
                             <button onclick="document.getElementById('batch-ref-picker-overlay').remove()" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer;">x</button>
                         </div>
                     </div>
@@ -16979,6 +17087,13 @@
                         ? `<img src="${thumbUrl}" style="width:100%; display:block; aspect-ratio:1; object-fit:contain;" loading="lazy">`
                         : `<div style="width:100%; aspect-ratio:1; background:var(--surface2); display:flex; align-items:center; justify-content:center;">📁</div>`;
                     card.innerHTML += `<div style="font-size:0.7rem; padding:4px; text-align:center; background:var(--surface2);">${escapeHtml(item.outfit)} / ${escapeHtml(item.expression)}</div>`;
+
+                    // 이미 선택된 항목이면 체크 표시
+                    if (thumbUrl && batchRefPickerSelected.some(s => s.imgUrl === thumbUrl)) {
+                        card.style.borderColor = 'var(--success)';
+                        card.innerHTML += `<span class="check-mark" style="position:absolute; top:2px; left:2px; background:var(--success); color:#fff; font-size:0.6rem; width:18px; height:18px; border-radius:50%; display:flex; align-items:center; justify-content:center;">✓</span>`;
+                    }
+
                     card.onclick = () => {
                         if (!thumbUrl) { showToast('대표 이미지가 없습니다', 'error'); return; }
                         const idx = batchRefPickerSelected.findIndex(s => s.imgUrl === thumbUrl);
@@ -17029,13 +17144,7 @@
                     batchChains[batchRefPickerTarget].ref_preview_url = refImages.map(img => img.preview_url).join('|');
                     const slotEl = document.querySelectorAll('.batch-slot')[batchRefPickerTarget];
                     if (slotEl) {
-                        const previewGrid = slotEl.querySelector('.batch-ref-preview-grid');
-                        if (previewGrid) {
-                            previewGrid.innerHTML = refImages.map(img =>
-                                `<img src="${escapeHtml(img.preview_url)}" style="width:100%; aspect-ratio:1; object-fit:cover; border-radius:4px; border:1px solid var(--border);">`
-                            ).join('');
-                        }
-                        slotEl.querySelector('.batch-ref-preview').style.display = 'block';
+                        renderBatchRefPreview(batchRefPickerTarget);
                         updateBatchPreview(slotEl, batchRefPickerTarget);
                     }
                     document.getElementById('batch-ref-picker-overlay').remove();

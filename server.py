@@ -950,6 +950,19 @@ def _prepare_ref_folder(reference_images: list, comfy_input_dir: str) -> str:
     return f"soya_char_ref/{folder_hash}"
 
 
+async def handle_api_compute_ref_hash(request: web.Request) -> web.Response:
+    try:
+        data = await request.json()
+        filenames = data.get("filenames", [])
+        if not filenames:
+            return web.json_response({"hash": ""})
+        folder_hash = _compute_ref_folder_hash(filenames)
+        return web.json_response({"hash": folder_hash})
+    except Exception as e:
+        print(f"[ERROR] compute_ref_hash: {e}")
+        return web.json_response({"error": str(e)}, status=500)
+
+
 def build_prompt_with_workflow(workflow_api: dict, positive: str, negative: str, reference_subfolder: str = "") -> dict:
     """임의의 워크플로우 dict에 프롬프트를 주입한다."""
     print(f"[ASSET] build_prompt_with_workflow: ref_subfolder={repr(reference_subfolder)}")
@@ -4158,6 +4171,7 @@ app.router.add_post("/api/asset_mode/delete_combination", handle_api_asset_mode_
 app.router.add_post("/api/asset_mode/delete_image", handle_api_asset_mode_delete_image)
 app.router.add_post("/api/asset_mode/upload_image", handle_api_asset_mode_upload_image)
 app.router.add_post("/api/asset_mode/upload_reference", handle_api_asset_mode_upload_reference)
+app.router.add_post("/api/asset_mode/compute_ref_hash", handle_api_compute_ref_hash)
 app.router.add_post("/api/asset_mode/batch_analyze_representatives", handle_api_asset_mode_batch_analyze)
 app.router.add_post("/api/asset_mode/analyze_selected", handle_api_asset_mode_analyze_selected)
 app.router.add_post("/api/asset_mode/cancel_analyze", handle_api_asset_mode_cancel_analyze)
