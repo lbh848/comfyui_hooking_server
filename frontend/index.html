@@ -16805,6 +16805,7 @@
         function openBatchBulkEdit() {
             if (batchChains.length === 0) { showToast('슬롯이 없습니다', 'error'); return; }
             if (!assetTags) { showToast('태그 데이터를 먼저 로드하세요', 'error'); return; }
+            bulkLoraList = [];
 
             const charOptions = buildOptions(assetTags?.characters || {}, '', '-- 변경 안함 --');
             const appOptions = buildOptions(assetTags?.appearances || {}, '', '-- 변경 안함 --');
@@ -16819,12 +16820,13 @@
             overlay.id = 'batch-bulk-overlay';
             overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10000; display:flex; align-items:center; justify-content:center;';
             overlay.innerHTML = `
-                <div style="background:var(--surface); border-radius:12px; padding:20px; max-width:500px; width:90%; display:flex; flex-direction:column; gap:12px;">
-                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                <div style="background:var(--surface); border-radius:12px; padding:20px; max-width:500px; width:90%; max-height:80vh; display:flex; flex-direction:column; gap:12px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; flex-shrink:0;">
                         <h3 style="margin:0;">일괄 설정</h3>
                         <button onclick="document.getElementById('batch-bulk-overlay').remove()" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer;">x</button>
                     </div>
-                    <div style="font-size:0.75rem; color:var(--text-secondary);">선택한 항목만 모든 슬롯에 일괄 적용됩니다. '-- 변경 안함 --'은 기존 값을 유지합니다.</div>
+                    <div style="font-size:0.75rem; color:var(--text-secondary); flex-shrink:0;">선택한 항목만 모든 슬롯에 일괄 적용됩니다. '-- 변경 안함 --'은 기존 값을 유지합니다.</div>
+                    <div style="overflow-y:auto; flex:1; min-height:0;">
 
                     <div><div class="batch-field-label">캐릭터</div><select id="bulk-character" class="batch-select">${charOptions}</select></div>
                     <div><div class="batch-field-label">외모</div><select id="bulk-appearance" class="batch-select">${appOptions}</select></div>
@@ -16892,6 +16894,21 @@
                     </div>
 
                     <div style="border-top:1px solid var(--border); padding-top:10px;">
+                        <div class="batch-field-label" style="margin-bottom:6px;">LoRA 일괄 설정</div>
+                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+                            <label style="font-size:0.8rem;">적용 여부:</label>
+                            <select id="bulk-lora-action" class="batch-select" style="width:auto; min-width:120px;">
+                                <option value="">변경 안함</option>
+                                <option value="on">모두 ON</option>
+                                <option value="off">모두 OFF</option>
+                            </select>
+                        </div>
+                        <div style="font-size:0.8rem; margin-bottom:4px;">LoRA 추가 (적용 시 모든 슬롯에 추가)</div>
+                        <div id="bulk-lora-list" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(120px, 1fr)); gap:6px; margin-bottom:6px;"></div>
+                        <button onclick="openBulkLoraPicker()" style="font-size:0.75rem; padding:4px 10px; border:1px dashed var(--border); background:var(--surface2); color:var(--text-secondary); border-radius:4px; cursor:pointer; width:100%;">+ LoRA 추가</button>
+                    </div>
+
+                    <div style="border-top:1px solid var(--border); padding-top:10px;">
                         <div class="batch-field-label" style="margin-bottom:6px;">디테일러 일괄 설정</div>
                         <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
                             <label style="font-size:0.8rem;">HRF:</label>
@@ -16926,20 +16943,9 @@
                             </select>
                         </div>
                     </div>
-
-                    <div style="border-top:1px solid var(--border); padding-top:10px;">
-                        <div class="batch-field-label" style="margin-bottom:6px;">LoRA 일괄 설정</div>
-                        <div style="display:flex; align-items:center; gap:8px;">
-                            <label style="font-size:0.8rem;">적용 여부:</label>
-                            <select id="bulk-lora-action" class="batch-select" style="width:auto; min-width:120px;">
-                                <option value="">변경 안함</option>
-                                <option value="on">모두 ON</option>
-                                <option value="off">모두 OFF</option>
-                            </select>
-                        </div>
                     </div>
 
-                    <button onclick="applyBatchBulkEdit()" style="background:var(--accent); color:#fff; border:none; padding:8px; border-radius:6px; cursor:pointer; font-size:0.9rem; font-weight:600; margin-top:4px;">적용 (${batchChains.length}개 슬롯)</button>
+                    <button onclick="applyBatchBulkEdit()" style="flex-shrink:0; background:var(--accent); color:#fff; border:none; padding:8px; border-radius:6px; cursor:pointer; font-size:0.9rem; font-weight:600; margin-top:4px;">적용 (${batchChains.length}개 슬롯)</button>
                 </div>`;
             document.body.appendChild(overlay);
             overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
@@ -17199,6 +17205,164 @@
             } catch (e) { showToast('이미지 업로드 실패: ' + e.message, 'error'); }
         }
 
+        let bulkLoraList = [];
+
+        function renderBulkLoraList() {
+            const container = document.getElementById('bulk-lora-list');
+            if (!container) return;
+            if (bulkLoraList.length === 0) {
+                container.innerHTML = '<div style="font-size:0.7rem; color:var(--text-secondary); text-align:center; padding:4px;">선택된 LoRA가 없습니다</div>';
+                return;
+            }
+            container.innerHTML = bulkLoraList.map((lora, i) => `
+                <div style="padding:6px; background:var(--surface2); border-radius:6px; border:1px solid var(--border); position:relative;">
+                    <button onclick="bulkLoraList.splice(${i},1); renderBulkLoraList();"
+                        style="position:absolute; top:1px; right:3px; background:none; border:none; color:var(--error); cursor:pointer; font-size:1.2rem; padding:2px 4px;">x</button>
+                    ${lora.preview_url ? `<img src="${escapeHtml(lora.preview_url)}" style="width:70%; aspect-ratio:1; object-fit:cover; border-radius:6px; display:block; margin:0 auto;">` : '<div style="width:70%; aspect-ratio:1; background:var(--surface); border-radius:6px; display:flex; align-items:center; justify-content:center; font-size:1.2rem; margin:0 auto;">📦</div>'}
+                    <div style="margin-top:4px;">
+                        <div style="font-size:0.7rem; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(lora.name)}</div>
+                        <div style="font-size:0.6rem; color:var(--text-secondary);">${escapeHtml(lora.trigger || '')} · ${escapeHtml(lora.character || '')}</div>
+                    </div>
+                    <select onchange="bulkLoraList[${i}].BASE=this.value"
+                        style="width:100%; margin-top:4px; background:var(--surface); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:2px 4px; font-size:0.65rem; cursor:pointer;">
+                        <option value="anima" ${lora.BASE === 'anima' ? 'selected' : ''}>anima</option>
+                        <option value="sdxl" ${lora.BASE === 'sdxl' ? 'selected' : ''}>sdxl</option>
+                        <option value="ilxl" ${lora.BASE === 'ilxl' ? 'selected' : ''}>ilxl</option>
+                    </select>
+                    <div style="display:flex; align-items:center; gap:4px; margin-top:4px;">
+                        <input type="range" min="0" max="1" step="0.01" value="${lora.strength}" style="flex:1; cursor:pointer;"
+                            oninput="bulkLoraList[${i}].strength=parseFloat(this.value); this.nextElementSibling.textContent=parseFloat(this.value).toFixed(2)">
+                        <span style="font-size:0.65rem; min-width:24px; text-align:right;">${lora.strength.toFixed(2)}</span>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        async function openBulkLoraPicker() {
+            const overlay = document.createElement('div');
+            overlay.id = 'bulk-lora-picker-overlay';
+            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10020; display:flex; align-items:center; justify-content:center;';
+            overlay.innerHTML = `
+                <div style="background:var(--surface); border-radius:12px; padding:20px; max-width:700px; width:90%; max-height:80vh; display:flex; flex-direction:column;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                        <h3 style="margin:0;">LoRA 선택</h3>
+                        <button onclick="document.getElementById('bulk-lora-picker-overlay').remove()" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer;">x</button>
+                    </div>
+                    <div id="bulk-lora-picker-back" style="display:none; margin-bottom:8px;">
+                        <button style="background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:4px 12px; border-radius:4px; cursor:pointer; font-size:0.8rem;">← 뒤로</button>
+                    </div>
+                    <div id="bulk-lora-picker-grid" style="display:grid; grid-template-columns:repeat(4,1fr); gap:8px; overflow-y:auto; max-height:calc(80vh - 80px);"></div>
+                </div>`;
+            document.body.appendChild(overlay);
+            overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+
+            const grid = document.getElementById('bulk-lora-picker-grid');
+            const backBtn = document.getElementById('bulk-lora-picker-back');
+            grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--text-secondary);">로딩중...</div>';
+            backBtn.style.display = 'none';
+            try {
+                const resp = await fetch('/api/lora/for_picker');
+                const data = await resp.json();
+                if (!data.success) { grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--error);">로드 실패</div>'; return; }
+                const groups = data.groups || [];
+
+                function showChars() {
+                    backBtn.style.display = 'none';
+                    grid.innerHTML = '';
+                    if (groups.length === 0) { grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--text-secondary);">LoRA 항목이 없습니다</div>'; return; }
+                    groups.forEach(group => {
+                        const card = document.createElement('div');
+                        card.style.cssText = 'cursor:pointer; border-radius:8px; border:2px solid var(--border); padding:16px 8px; text-align:center; transition:border-color 0.2s, background 0.2s;';
+                        card.innerHTML = `<div style="font-size:1.2rem; margin-bottom:4px;">📁</div><div style="font-size:0.85rem; word-break:break-all;">${escapeHtml(group.character)}</div><div style="font-size:0.7rem; color:var(--text-secondary);">${group.entries.length}개</div>`;
+                        card.onmouseenter = () => { card.style.borderColor = 'var(--accent)'; card.style.background = 'var(--surface2)'; };
+                        card.onmouseleave = () => { card.style.borderColor = 'var(--border)'; card.style.background = 'transparent'; };
+                        card.onclick = () => showEntries(group);
+                        grid.appendChild(card);
+                    });
+                }
+
+                function showEntries(group) {
+                    backBtn.style.display = 'block';
+                    backBtn.onclick = () => showChars();
+                    grid.innerHTML = '';
+                    group.entries.forEach(entry => {
+                        const hasFile = entry.lora_files && entry.lora_files.length > 0;
+                        const rep = entry.representative ? JSON.parse(entry.representative) : null;
+                        let previewUrl = rep && rep.preview ? rep.preview : '';
+                        const card = document.createElement('div');
+                        card.style.cssText = `cursor:${hasFile ? 'pointer' : 'default'}; border-radius:8px; overflow:hidden; border:2px solid var(--border); transition:border-color 0.2s;`;
+                        card.innerHTML = previewUrl
+                            ? `<img src="${escapeHtml(previewUrl)}" style="width:100%; display:block; aspect-ratio:1; object-fit:contain;" loading="lazy">`
+                            : `<div style="width:100%; aspect-ratio:1; background:var(--surface2); display:flex; align-items:center; justify-content:center;">📦</div>`;
+                        card.innerHTML += `<div style="font-size:0.7rem; padding:4px; text-align:center; background:var(--surface2);">${escapeHtml(entry.name)}${!hasFile ? ' <span style="color:var(--error);">(파일없음)</span>' : ''}</div>`;
+                        if (hasFile) {
+                            card.onmouseenter = () => { card.style.borderColor = 'var(--accent)'; };
+                            card.onmouseleave = () => { card.style.borderColor = 'var(--border)'; };
+                            card.onclick = () => showSessions(group, entry);
+                        }
+                        grid.appendChild(card);
+                    });
+                }
+
+                function showSessions(group, entry) {
+                    backBtn.style.display = 'block';
+                    backBtn.onclick = () => showEntries(group);
+                    grid.innerHTML = '';
+                    const sessionReps = entry.session_representatives || {};
+                    const sessionMap = {};
+                    (entry.lora_files || []).forEach(f => {
+                        if (!sessionMap[f.session]) sessionMap[f.session] = [];
+                        sessionMap[f.session].push(f);
+                    });
+                    const sessionNames = Object.keys(sessionMap).sort().reverse();
+                    if (sessionNames.length === 0) { grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--text-secondary);">세션이 없습니다</div>'; return; }
+                    const enc = encodeURIComponent;
+                    sessionNames.forEach(sessionName => {
+                        const files = sessionMap[sessionName];
+                        const repStr = sessionReps[sessionName] || '';
+                        let repData = null;
+                        if (repStr) { try { repData = JSON.parse(repStr); } catch (_) {} }
+                        let previewUrl = '';
+                        if (repData && repData.preview) previewUrl = repData.preview;
+                        else if (files.length > 0) {
+                            const lastFile = files[files.length - 1];
+                            if (lastFile.previews && lastFile.previews.length > 0)
+                                previewUrl = `/api/lora/trained/preview/${enc(group.character)}/${enc(entry.name)}/${enc(sessionName)}/${enc(lastFile.previews[0])}`;
+                        }
+                        const hasRep = !!repData;
+                        const card = document.createElement('div');
+                        card.style.cssText = `cursor:${hasRep ? 'pointer' : 'not-allowed'}; border-radius:8px; overflow:hidden; border:2px solid var(--border); transition:border-color 0.2s; ${hasRep ? '' : 'opacity:0.6;'}`;
+                        card.innerHTML = previewUrl
+                            ? `<img src="${escapeHtml(previewUrl)}" style="width:100%; display:block; aspect-ratio:1; object-fit:contain;" loading="lazy">`
+                            : `<div style="width:100%; aspect-ratio:1; background:var(--surface2); display:flex; align-items:center; justify-content:center;">📂</div>`;
+                        card.innerHTML += `<div style="font-size:0.7rem; padding:4px; text-align:center; background:var(--surface2);">${escapeHtml(sessionName)}${!hasRep ? ' <span style="color:var(--warning);">(대표 선택 안됨)</span>' : ''}</div>`;
+                        if (hasRep) {
+                            card.onmouseenter = () => { card.style.borderColor = 'var(--accent)'; };
+                            card.onmouseleave = () => { card.style.borderColor = 'var(--border)'; };
+                            card.onclick = () => {
+                                const BASE = (entry.training_config && entry.training_config.profile) || 'anima';
+                                const repSafetensors = repData.safetensors || '';
+                                const matchedFile = files.find(f => f.safetensors === repSafetensors) || files[files.length - 1];
+                                bulkLoraList.push({
+                                    name: entry.name, character: group.character,
+                                    lora_path: matchedFile.path, strength: 0.5,
+                                    preview_url: previewUrl, trigger: entry.trigger || '', BASE,
+                                });
+                                renderBulkLoraList();
+                                document.getElementById('bulk-lora-picker-overlay').remove();
+                                showToast(`LoRA "${entry.name}" 추가됨`, 'success');
+                            };
+                        }
+                        grid.appendChild(card);
+                    });
+                }
+
+                showChars();
+            } catch (e) {
+                grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--error);">로드 실패</div>';
+            }
+        }
+
         function applyBatchBulkEdit() {
             const fields = {
                 character: document.getElementById('bulk-character').value,
@@ -17248,6 +17412,12 @@
                     slot.style_ref_enabled = true;
                 }
                 if (loraAction === 'on') slot.lora_enabled = true;
+                if (loraAction === 'off') slot.lora_enabled = false;
+                if (bulkLoraList.length > 0) {
+                    if (!slot.lora_list) slot.lora_list = [];
+                    bulkLoraList.forEach(l => slot.lora_list.push({...l}));
+                    slot.lora_enabled = true;
+                }
                 if (loraAction === 'off') slot.lora_enabled = false;
                 if (fdAction === 'on') slot.fd_enabled = true;
                 if (fdAction === 'off') slot.fd_enabled = false;
@@ -17402,13 +17572,25 @@
                     <button class="batch-lora-add-btn" style="width:100%; font-size:0.7rem; padding:3px; border:1px dashed var(--border); background:var(--surface2); border-radius:4px; cursor:pointer; color:var(--text-secondary);" onclick="openBatchSlotLoraPicker(${idx})">+ LoRA 추가</button>
                     <div class="batch-lora-items">
                         ${(slot.lora_list || []).map((l, li) => `
-                            <div class="batch-lora-item" style="display:flex; align-items:center; gap:4px; padding:3px; background:var(--surface2); border-radius:4px; margin-top:3px; font-size:0.7rem;">
-                                ${l.preview_url ? `<img src="${escapeHtml(l.preview_url)}" style="width:24px; height:24px; object-fit:cover; border-radius:3px;">` : ''}
-                                <span style="flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(l.name)}</span>
-                                <input type="range" min="0" max="2" step="0.01" value="${l.strength}" style="width:50px; cursor:pointer;"
-                                    onchange="batchChains[${idx}].lora_list[${li}].strength=parseFloat(this.value)">
-                                <span style="min-width:20px;">${l.strength}</span>
-                                <button onclick="batchChains[${idx}].lora_list.splice(${li},1); renderBatchChain();" style="background:none; border:none; color:var(--error); cursor:pointer; font-size:0.8rem;">x</button>
+                            <div style="padding:6px; background:var(--surface2); border-radius:6px; border:1px solid var(--border); margin-top:4px; position:relative;">
+                                <button onclick="batchChains[${idx}].lora_list.splice(${li},1); renderBatchChain();"
+                                    style="position:absolute; top:2px; right:4px; background:none; border:none; color:var(--error); cursor:pointer; font-size:1.4rem; padding:2px 4px;">x</button>
+                                ${l.preview_url ? `<img src="${escapeHtml(l.preview_url)}" style="width:70%; aspect-ratio:1; object-fit:cover; border-radius:6px; display:block; margin:0 auto;">` : '<div style="width:70%; aspect-ratio:1; background:var(--surface); border-radius:6px; display:flex; align-items:center; justify-content:center; font-size:1.5rem; margin:0 auto;">📦</div>'}
+                                <div style="margin-top:4px;">
+                                    <div style="font-size:0.75rem; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(l.name)}</div>
+                                    <div style="font-size:0.6rem; color:var(--text-secondary);">${escapeHtml(l.trigger || '')} · ${escapeHtml(l.character || '')}</div>
+                                </div>
+                                <select onchange="batchChains[${idx}].lora_list[${li}].BASE=this.value"
+                                    style="width:100%; margin-top:4px; background:var(--surface); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:2px 4px; font-size:0.7rem; cursor:pointer;">
+                                    <option value="anima" ${l.BASE === 'anima' ? 'selected' : ''}>anima</option>
+                                    <option value="sdxl" ${l.BASE === 'sdxl' ? 'selected' : ''}>sdxl</option>
+                                    <option value="ilxl" ${l.BASE === 'ilxl' ? 'selected' : ''}>ilxl</option>
+                                </select>
+                                <div style="display:flex; align-items:center; gap:4px; margin-top:4px;">
+                                    <input type="range" min="0" max="1" step="0.01" value="${l.strength}" style="flex:1; cursor:pointer;"
+                                        oninput="batchChains[${idx}].lora_list[${li}].strength=parseFloat(this.value); this.nextElementSibling.textContent=parseFloat(this.value).toFixed(2); updateBatchPreview(this.closest('.batch-slot'), ${idx})">
+                                    <span style="font-size:0.7rem; min-width:28px; text-align:right;">${l.strength.toFixed(2)}</span>
+                                </div>
                             </div>
                         `).join('')}
                     </div>
