@@ -18856,10 +18856,12 @@
         async function refreshBatchPresetSelect() {
             const sel = document.getElementById('batch-preset-select');
             const prev = sel.value;
-            sel.innerHTML = '<option value="">-- 프리셋 선택 --</option>';
+            sel.disabled = true;
+            sel.innerHTML = '<option value="">로딩 중...</option>';
             try {
                 const resp = await fetch('/api/chain_presets');
                 const data = await resp.json();
+                sel.innerHTML = '<option value="">-- 프리셋 선택 --</option>';
                 for (const p of (data.presets || [])) {
                     const opt = document.createElement('option');
                     opt.value = p.name;
@@ -18868,7 +18870,10 @@
                 }
                 if (prev) sel.value = prev;
             } catch (e) {
+                sel.innerHTML = '<option value="">-- 프리셋 선택 --</option>';
                 console.error('프리셋 목록 로드 실패:', e);
+            } finally {
+                sel.disabled = false;
             }
         }
 
