@@ -2502,6 +2502,79 @@ async def handle_api_batch_mode_cancel_resend(request: web.Request) -> web.Respo
 
 
 # ─── 설정 API ─────────────────────────────────────────────
+async def handle_api_patch_comfy_input(request: web.Request) -> web.Response:
+    """Comfy Input 폴더에 soya_* 폴더를 생성하고 fallback 이미지를 복사한다."""
+    try:
+        body = await request.json()
+        comfy_input_dir = body.get("comfy_input_dir", "").strip()
+        if not comfy_input_dir:
+            return web.json_response({"ok": False, "error": "comfy_input_dir이 비어 있습니다."}, status=400)
+
+        if not os.path.isdir(comfy_input_dir):
+            return web.json_response({"ok": False, "error": f"폴더가 존재하지 않습니다: {comfy_input_dir}"}, status=400)
+
+        # 생성할 폴더 목록
+        folders = [
+            os.path.join(comfy_input_dir, "soya_char_ref"),
+            os.path.join(comfy_input_dir, "soya_style_ref"),
+            os.path.join(comfy_input_dir, "soya_lora"),
+            os.path.join(comfy_input_dir, "soya_char_ref", "fallback"),
+            os.path.join(comfy_input_dir, "soya_style_ref", "fallback"),
+        ]
+        created = []
+        for folder in folders:
+            if not os.path.isdir(folder):
+                os.makedirs(folder, exist_ok=True)
+                created.append(folder)
+                print(f"[patch] 폴더 생성: {folder}")
+            else:
+                print(f"[patch] 폴더 이미 존재: {folder}")
+
+        # fallback 이미지 복사
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        fallback_src = os.path.join(script_dir, "modes", "fallback_img")
+        copied = []
+        if os.path.isdir(fallback_src):
+            for fname in os.listdir(fallback_src):
+                src_file = os.path.join(fallback_src, fname)
+                if not os.path.isfile(src_file):
+                    continue
+                # soya_char_ref/fallback 에 복사
+                dst_char = os.path.join(comfy_input_dir, "soya_char_ref", "fallback", fname)
+                if not os.path.isfile(dst_char):
+                    shutil.copy2(src_file, dst_char)
+                    copied.append(dst_char)
+                    print(f"[patch] 복사: {src_file} -> {dst_char}")
+                else:
+                    print(f"[patch] 이미 존재 (건너뜀): {dst_char}")
+                # soya_style_ref/fallback 에 복사
+                dst_style = os.path.join(comfy_input_dir, "soya_style_ref", "fallback", fname)
+                if not os.path.isfile(dst_style):
+                    shutil.copy2(src_file, dst_style)
+                    copied.append(dst_style)
+                    print(f"[patch] 복사: {src_file} -> {dst_style}")
+                else:
+                    print(f"[patch] 이미 존재 (건너뜀): {dst_style}")
+        else:
+            print(f"[patch] fallback_img 소스 폴더 없음: {fallback_src}")
+
+        msg_lines = []
+        if created:
+            msg_lines.append(f"폴더 {len(created)}개 생성")
+        else:
+            msg_lines.append("모든 폴더가 이미 존재함")
+        if copied:
+            msg_lines.append(f"이미지 {len(copied)}개 복사")
+        else:
+            msg_lines.append("복사할 새 이미지 없음")
+
+        return web.json_response({"ok": True, "message": "\n".join(msg_lines)})
+    except Exception as e:
+        traceback.print_exc()
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+
+
 async def handle_api_config(request: web.Request) -> web.Response:
     """설정을 조회하거나 저장한다."""
     global app_config
@@ -3054,6 +3127,7 @@ app.router.add_post("/api/restore_manual_draw", handle_api_restore_manual_draw)
 app.router.add_get("/api/frontend_ws", handle_frontend_ws)
 app.router.add_get("/api/config", handle_api_config)
 app.router.add_post("/api/config", handle_api_config)
+app.router.add_post("/api/patch-comfy-input", handle_api_patch_comfy_input)
 app.router.add_get("/api/workflow_files", handle_api_workflow_files)
 # 워크플로우 능력 테스트 API
 app.router.add_get("/api/workflow_test/list", handle_api_workflow_test_list)

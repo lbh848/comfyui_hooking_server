@@ -733,6 +733,20 @@
             margin-top: 4px;
         }
 
+        .btn-patch-comfy-input {
+            padding: 6px 14px;
+            font-size: 0.8rem;
+            background: var(--accent);
+            color: #fff;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            white-space: nowrap;
+            transition: opacity 0.15s;
+        }
+        .btn-patch-comfy-input:hover { opacity: 0.85; }
+        .btn-patch-comfy-input:disabled { opacity: 0.5; cursor: not-allowed; }
+
         .modal-footer button {
             padding: 8px 16px;
             border: 1px solid var(--border);
@@ -3668,7 +3682,10 @@
                         </div>
                     </div>
                     <div class="form-group" style="margin-top: -8px;">
-                        <input type="text" id="setting-comfy-input-dir" placeholder="예: C:\ComfyUI\input">
+                        <div style="display: flex; gap: 8px; align-items: center;">
+                            <input type="text" id="setting-comfy-input-dir" placeholder="예: C:\ComfyUI\input" style="flex: 1;">
+                            <button type="button" class="btn-patch-comfy-input" onclick="patchComfyInput()" title="Comfy Input 폴더에 soya_char_ref/fallback, soya_style_ref/fallback, soya_lora 폴더를 생성하고 fallback 이미지를 복사합니다.">패치하기</button>
+                        </div>
                         <div class="hint">절대 경로를 입력하세요</div>
                     </div>
 
@@ -5864,6 +5881,35 @@
             html += '</table>';
             body.innerHTML = html;
             modal.classList.add('visible');
+        }
+
+        async function patchComfyInput() {
+            const comfyInputDir = document.getElementById('setting-comfy-input-dir').value.trim();
+            if (!comfyInputDir) {
+                alert('Comfy Input 폴더 경로를 먼저 입력하세요.');
+                return;
+            }
+            const btn = document.querySelector('.btn-patch-comfy-input');
+            btn.disabled = true;
+            btn.textContent = '패치 중…';
+            try {
+                const resp = await fetch('/api/patch-comfy-input', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ comfy_input_dir: comfyInputDir })
+                });
+                const result = await resp.json();
+                if (result.ok) {
+                    alert('패치 완료!\n' + (result.message || ''));
+                } else {
+                    alert('패치 실패: ' + (result.error || '알 수 없는 오류'));
+                }
+            } catch (e) {
+                alert('패치 요청 실패: ' + e.message);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '패치하기';
+            }
         }
 
         async function saveSettings() {
