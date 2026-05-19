@@ -17052,6 +17052,7 @@
                         ? slotEl.querySelector('.batch-style-ref-str-val')
                         : slotEl.querySelector('.batch-ref-str-val');
                     if (valEl) valEl.textContent = rng.value;
+                    updateBatchPreview(slotEl, idx);
                 });
             });
 
