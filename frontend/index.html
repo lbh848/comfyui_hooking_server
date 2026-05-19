@@ -4161,8 +4161,11 @@
                         </div>
                     </div>
                     <div class="form-group" style="margin-top: -8px;">
-                        <input type="text" id="setting-lora-load-path" placeholder="예: E:\ComfyUI\models\loras">
-                        <div class="hint">학습된 LoRA가 저장되는 폴더 경로</div>
+                        <div style="display: flex; align-items: center; gap: 0;">
+                            <input type="text" id="setting-lora-load-path" placeholder="예: E:\ComfyUI\models\loras" style="flex: 1; border-radius: 6px 0 0 6px;">
+                            <span style="display: inline-flex; align-items: center; padding: 8px 12px; background: var(--bg-tertiary, #2a2a3e); border: 1px solid var(--border-color, #3a3a4e); border-left: none; border-radius: 0 6px 6px 0; font-size: 13px; color: var(--text-secondary, #aaa); white-space: nowrap; user-select: none;">\SOYA_CHAR_LORA</span>
+                        </div>
+                        <div class="hint">학습된 LoRA가 저장되는 폴더 경로 (\SOYA_CHAR_LORA는 자동 추가)</div>
                     </div>
                 </div>
             </div>
@@ -5736,8 +5739,10 @@
             document.getElementById('setting-lora-workflow-sdxl-filename').value = loraSdxlSplit.filename;
             document.getElementById('setting-lora-workflow-sdxl-source-path').value = loraSdxlPath;
 
-            // 로라 로드 경로
-            document.getElementById('setting-lora-load-path').value = currentConfig.lora_load_path || '';
+            // 로라 로드 경로 (SOYA_CHAR_LORA 접미사 제거 후 표시)
+            const loraLoadPath = currentConfig.lora_load_path || '';
+            const loraSuffix = '\\SOYA_CHAR_LORA';
+            document.getElementById('setting-lora-load-path').value = loraLoadPath.endsWith(loraSuffix) ? loraLoadPath.slice(0, -loraSuffix.length) : loraLoadPath;
 
             document.getElementById('settings-modal').classList.add('visible');
             // 항상 첫 번째 탭으로 시작
@@ -5953,7 +5958,7 @@
                     anima: document.getElementById('setting-lora-workflow-anima-source-path').value,
                     sdxl: document.getElementById('setting-lora-workflow-sdxl-source-path').value
                 },
-                lora_load_path: document.getElementById('setting-lora-load-path').value
+                lora_load_path: document.getElementById('setting-lora-load-path').value.trim().replace(/\\?$/, '\\SOYA_CHAR_LORA')
             };
 
             try {
