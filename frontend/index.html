@@ -16942,6 +16942,7 @@
         // ═══════════════════════════════════════════════════════
         let batchChains = [];   // [{character, appearance, outfit, expression, composition_preset, quality_preset, negative_preset, ref_enabled, ref_strength, ref_images, pose_enabled, pose_id, hrf_enabled, fd_enabled, hd_enabled, ed_enabled}, ...]
         let batchRunning = false;
+        let batchActuallyRunning = false;
         let batchSlotIdCounter = 0;
         let batchLoadedPoseList = [];
 
@@ -17603,8 +17604,7 @@
                 if (loraAction === 'on') slot.lora_enabled = true;
                 if (loraAction === 'off') slot.lora_enabled = false;
                 if (bulkLoraList.length > 0) {
-                    if (!slot.lora_list) slot.lora_list = [];
-                    bulkLoraList.forEach(l => slot.lora_list.push({...l}));
+                    slot.lora_list = bulkLoraList.map(l => ({...l}));
                     slot.lora_enabled = true;
                 }
                 if (loraAction === 'off') slot.lora_enabled = false;
@@ -18692,6 +18692,7 @@
             const totalJobs = batchChains.length * repeatCount;
 
             batchRunning = true;
+            batchActuallyRunning = true;
             document.getElementById('batch-start-btn').disabled = true;
             document.getElementById('batch-stop-btn').style.display = 'inline-block';
             document.getElementById('batch-progress-bar').style.display = 'block';
@@ -18826,14 +18827,28 @@
                 if (failCount > 0 && successCount === 0) showToast('모든 생성 실패', 'error');
             } finally {
                 batchRunning = false;
+                batchActuallyRunning = false;
                 document.getElementById('batch-start-btn').disabled = false;
                 document.getElementById('batch-stop-btn').style.display = 'none';
                 hideTopProgress();
             }
         }
 
+        let _batchStoppingToastInterval = null;
+
         function stopBatchGeneration() {
+            if (!batchRunning) return;
             batchRunning = false;
+            showToast('중단 중... 현재 진행 중인 작업이 끝나면 중단됩니다', 'warning');
+            clearInterval(_batchStoppingToastInterval);
+            _batchStoppingToastInterval = setInterval(() => {
+                if (batchActuallyRunning) {
+                    showToast('중단 중...', 'warning');
+                } else {
+                    clearInterval(_batchStoppingToastInterval);
+                    _batchStoppingToastInterval = null;
+                }
+            }, 4000);
         }
 
         // ─── 체인 프리셋 (서버 파일 저장) ──────────────────────
