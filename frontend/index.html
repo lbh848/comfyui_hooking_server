@@ -16501,6 +16501,34 @@
                     </div>
 
                     <div style="border-top:1px solid var(--border); padding-top:10px;">
+                        <div class="batch-field-label" style="margin-bottom:6px;">스타일 레퍼런스 일괄 설정</div>
+                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+                            <label style="font-size:0.8rem;">적용 여부:</label>
+                            <select id="bulk-style-ref-action" class="batch-select" style="width:auto; min-width:120px;">
+                                <option value="">변경 안함</option>
+                                <option value="on">모두 ON</option>
+                                <option value="off">모두 OFF</option>
+                            </select>
+                        </div>
+                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+                            <label style="font-size:0.8rem;">이미지:</label>
+                            <button id="bulk-style-ref-upload-btn" style="font-size:0.75rem; padding:3px 8px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:4px; cursor:pointer;">파일 선택</button>
+                            <button id="bulk-style-ref-gallery-btn" type="button" style="font-size:0.75rem; padding:3px 8px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:4px; cursor:pointer;">에셋에서 선택</button>
+                            <span id="bulk-style-ref-file-name" style="font-size:0.7rem; color:var(--text-secondary);">미선택</span>
+                            <input type="file" id="bulk-style-ref-file" accept="image/*" multiple style="display:none;">
+                        </div>
+                        <div id="bulk-style-ref-preview" style="display:none; margin-bottom:6px;">
+                            <div id="bulk-style-ref-preview-grid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(50px, 1fr)); gap:4px;"></div>
+                        </div>
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <label style="font-size:0.8rem;">강도:</label>
+                            <input type="range" id="bulk-style-ref-strength" min="0" max="1" step="0.01" value="0.55" style="flex:1; cursor:pointer;">
+                            <span id="bulk-style-ref-strength-val" style="font-size:0.75rem; min-width:28px;">0.55</span>
+                            <label style="font-size:0.75rem; color:var(--text-secondary);"><input type="checkbox" id="bulk-style-ref-strength-check"> 강도도 변경</label>
+                        </div>
+                    </div>
+
+                    <div style="border-top:1px solid var(--border); padding-top:10px;">
                         <div class="batch-field-label" style="margin-bottom:6px;">디테일러 일괄 설정</div>
                         <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
                             <label style="font-size:0.8rem;">HRF:</label>
@@ -16589,20 +16617,70 @@
             document.getElementById('bulk-ref-gallery-btn').addEventListener('click', () => {
                 openBulkRefGalleryPicker();
             });
+
+            // ─── 스타일 레퍼런스 일괄 설정 이벤트 ──
+            document.getElementById('bulk-style-ref-strength').addEventListener('input', function() {
+                document.getElementById('bulk-style-ref-strength-val').textContent = this.value;
+            });
+
+            const bulkStyleRefFile = document.getElementById('bulk-style-ref-file');
+            document.getElementById('bulk-style-ref-upload-btn').addEventListener('click', () => bulkStyleRefFile.click());
+            bulkStyleRefFile.addEventListener('change', async function() {
+                if (!this.files || !this.files.length) return;
+                const formData = new FormData();
+                for (const file of this.files) {
+                    formData.append('image', file);
+                }
+                try {
+                    const resp = await fetch('/api/asset_mode/upload_reference', { method: 'POST', body: formData });
+                    const result = await resp.json();
+                    if (result.success) {
+                        const images = result.images || [];
+                        const enc = encodeURIComponent;
+                        window._bulkStyleRefImages = images.map((img, i) => {
+                            let preview_url = '';
+                            if (result.asset_info) {
+                                const ai = result.asset_info;
+                                preview_url = `/api/asset_mode/characters/${enc(ai.character)}/outfits/${enc(ai.outfit)}/expressions/${enc(ai.expression)}/images/${enc(img.name)}`;
+                            } else {
+                                preview_url = URL.createObjectURL(this.files[i] || new Blob());
+                            }
+                            return { name: img.name, local_path: img.local_path, orig_filename: img.orig_filename, preview_url };
+                        });
+                        document.getElementById('bulk-style-ref-file-name').textContent = `${images.length}장 선택`;
+                        document.getElementById('bulk-style-ref-preview').style.display = 'block';
+                        document.getElementById('bulk-style-ref-preview-grid').innerHTML = window._bulkStyleRefImages.map(img =>
+                            `<img src="${escapeHtml(img.preview_url)}" style="width:100%; aspect-ratio:1; object-fit:cover; border-radius:4px; border:1px solid var(--border);">`
+                        ).join('');
+                    } else {
+                        showToast(result.error || '업로드 실패', 'error');
+                    }
+                } catch (e) { showToast('업로드 실패: ' + e.message, 'error'); }
+                this.value = '';
+            });
+            window._bulkStyleRefImages = null;
+
+            // 에셋에서 스타일 레퍼런스 선택
+            document.getElementById('bulk-style-ref-gallery-btn').addEventListener('click', () => {
+                openBulkRefGalleryPicker('style');
+            });
         }
 
         // ─── 일괄 설정용 에셋 레퍼런스 선택 ──
         let bulkRefPickerSelected = [];
+        let bulkRefPickerMode = 'ref'; // 'ref' or 'style'
 
-        function openBulkRefGalleryPicker() {
+        function openBulkRefGalleryPicker(mode) {
+            bulkRefPickerMode = mode || 'ref';
             bulkRefPickerSelected = [];
+            const title = bulkRefPickerMode === 'style' ? '에셋에서 스타일 레퍼런스 선택' : '에셋에서 레퍼런스 선택';
             const overlay = document.createElement('div');
             overlay.id = 'bulk-ref-picker-overlay';
             overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10010; display:flex; align-items:center; justify-content:center;';
             overlay.innerHTML = `
                 <div style="background:var(--surface); border-radius:12px; padding:20px; max-width:700px; width:90%; max-height:80vh; display:flex; flex-direction:column;">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-                        <h3 style="margin:0;">에셋에서 레퍼런스 선택</h3>
+                        <h3 style="margin:0;">${title}</h3>
                         <div style="display:flex; align-items:center; gap:8px;">
                             <span id="bulk-ref-picker-count" style="font-size:0.8rem; color:var(--accent);">0장 선택</span>
                             <button id="bulk-ref-picker-confirm-btn" onclick="confirmBulkRefPickerSelection()" style="background:var(--accent); color:#fff; border:none; padding:4px 12px; border-radius:4px; cursor:pointer; font-size:0.8rem; display:none;">선택 완료</button>
@@ -16703,6 +16781,7 @@
 
         async function confirmBulkRefPickerSelection() {
             if (!bulkRefPickerSelected.length) return;
+            const isStyle = bulkRefPickerMode === 'style';
             try {
                 const formData = new FormData();
                 for (const sel of bulkRefPickerSelected) {
@@ -16716,18 +16795,29 @@
                 if (uploadResult.success) {
                     const images = uploadResult.images || [];
                     const enc = encodeURIComponent;
-                    window._bulkRefImages = images.map((img, i) => {
+                    const mapped = images.map((img, i) => {
                         let preview_url = bulkRefPickerSelected[i].imgUrl;
                         return { name: img.name, local_path: img.local_path, orig_filename: img.orig_filename, preview_url };
                     });
-                    window._bulkRefPreviewUrls = window._bulkRefImages.map(img => img.preview_url);
-                    document.getElementById('bulk-ref-file-name').textContent = `${images.length}장 선택`;
-                    document.getElementById('bulk-ref-preview').style.display = 'block';
-                    document.getElementById('bulk-ref-preview-grid').innerHTML = window._bulkRefImages.map(img =>
-                        `<img src="${escapeHtml(img.preview_url)}" style="width:100%; aspect-ratio:1; object-fit:cover; border-radius:4px; border:1px solid var(--border);">`
-                    ).join('');
+                    if (isStyle) {
+                        window._bulkStyleRefImages = mapped;
+                        document.getElementById('bulk-style-ref-file-name').textContent = `${images.length}장 선택`;
+                        document.getElementById('bulk-style-ref-preview').style.display = 'block';
+                        document.getElementById('bulk-style-ref-preview-grid').innerHTML = mapped.map(img =>
+                            `<img src="${escapeHtml(img.preview_url)}" style="width:100%; aspect-ratio:1; object-fit:cover; border-radius:4px; border:1px solid var(--border);">`
+                        ).join('');
+                    } else {
+                        window._bulkRefImages = mapped;
+                        window._bulkRefPreviewUrls = mapped.map(img => img.preview_url);
+                        document.getElementById('bulk-ref-file-name').textContent = `${images.length}장 선택`;
+                        document.getElementById('bulk-ref-preview').style.display = 'block';
+                        document.getElementById('bulk-ref-preview-grid').innerHTML = mapped.map(img =>
+                            `<img src="${escapeHtml(img.preview_url)}" style="width:100%; aspect-ratio:1; object-fit:cover; border-radius:4px; border:1px solid var(--border);">`
+                        ).join('');
+                    }
                     document.getElementById('bulk-ref-picker-overlay').remove();
-                    showToast(`${images.length}장 레퍼런스 이미지 선택 완료`, 'success');
+                    const label = isStyle ? '스타일 레퍼런스' : '레퍼런스';
+                    showToast(`${images.length}장 ${label} 이미지 선택 완료`, 'success');
                 } else {
                     showToast(uploadResult.error || '업로드 실패', 'error');
                 }
@@ -16748,6 +16838,9 @@
             const refAction = document.getElementById('bulk-ref-action').value;
             const refStrengthCheck = document.getElementById('bulk-ref-strength-check').checked;
             const refStrength = parseFloat(document.getElementById('bulk-ref-strength').value);
+            const styleRefAction = document.getElementById('bulk-style-ref-action').value;
+            const styleRefStrengthCheck = document.getElementById('bulk-style-ref-strength-check').checked;
+            const styleRefStrength = parseFloat(document.getElementById('bulk-style-ref-strength').value);
             const hrfAction = document.getElementById('bulk-hrf-action').value;
             const fdAction = document.getElementById('bulk-fd-action').value;
             const hdAction = document.getElementById('bulk-hd-action').value;
@@ -16769,6 +16862,14 @@
                     slot.ref_images = window._bulkRefImages.map(img => ({name: img.name, local_path: img.local_path, orig_filename: img.orig_filename}));
                     slot.ref_preview_url = window._bulkRefImages.map(img => img.preview_url).join('|');
                     slot.ref_enabled = true;
+                }
+                if (styleRefAction === 'on') slot.style_ref_enabled = true;
+                if (styleRefAction === 'off') slot.style_ref_enabled = false;
+                if (styleRefStrengthCheck) slot.style_ref_strength = styleRefStrength;
+                if (window._bulkStyleRefImages && window._bulkStyleRefImages.length) {
+                    slot.style_ref_images = window._bulkStyleRefImages.map(img => ({name: img.name, local_path: img.local_path, orig_filename: img.orig_filename}));
+                    slot.style_ref_preview_url = window._bulkStyleRefImages.map(img => img.preview_url).join('|');
+                    slot.style_ref_enabled = true;
                 }
                 if (fdAction === 'on') slot.fd_enabled = true;
                 if (fdAction === 'off') slot.fd_enabled = false;
