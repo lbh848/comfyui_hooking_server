@@ -5072,7 +5072,9 @@ async def handle_api_lora_manage_update(request):
             return web.json_response({"success": False, "error": "캐릭터 누락"}, status=400)
         from modes.lora_mode import update_lora_entry
         representative = body.get("representative")
-        result = update_lora_entry(name, character, trigger, description, representative=representative, training_config=training_config)
+        session_name = body.get("session_name")
+        session_representative = body.get("session_representative")
+        result = update_lora_entry(name, character, trigger, description, representative=representative, training_config=training_config, session_name=session_name, session_representative=session_representative)
         status = 200 if result.get("success") else 400
         return web.json_response(result, status=status)
     except Exception as e:

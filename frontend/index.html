@@ -2785,7 +2785,7 @@
                         <div id="asset-ref-section" style="display:none; margin-top:8px;">
                             <div style="margin-bottom:8px;">
                                 <label style="font-size:0.8rem; color:var(--text-secondary);">강도: <span id="asset-ref-strength-val">0.55</span></label>
-                                <input type="range" id="asset-ref-strength" min="0" max="1" step="0.01" value="0.55" style="cursor:pointer;"
+                                <input type="range" id="asset-ref-strength" min="0" max="1" step="0.01" value="0.55" style="cursor:pointer; width:100%; margin-top:2px;"
                                     oninput="document.getElementById('asset-ref-strength-val').textContent=this.value"
                                     style="width:100%; margin-top:2px;">
                             </div>
@@ -10236,6 +10236,7 @@
 
         // ─── 학습된 LoRA (lora_load_path) ─────────────────────────
         let loraCurrentTrainedSession = '';
+        let loraCurrentTrainedStep = '';
         let loraEntryRepresentative = '';
 
         async function loadTrainedLoraSessions() {
@@ -10286,6 +10287,8 @@
                 sessionsEl.innerHTML = `<div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(320px, 1fr)); gap:12px;">` +
                     sessions.map(s => {
                         const isRep = s.name === repSessionName;
+                        const sessionPreview = s.preview_url || '';
+                        const hasSessionRep = !!sessionPreview;
                         return `
                         <div onclick="enterTrainedSession('${escapeHtml(s.name)}')"
                              style="background:var(--surface); border:1px solid ${isRep ? 'var(--accent)' : 'var(--border)'}; border-radius:10px; padding:16px; cursor:pointer; transition:border-color 0.2s; position:relative;"
@@ -10294,11 +10297,19 @@
                                     style="position:absolute; top:8px; right:8px; background:rgba(220,53,69,0.85); color:#fff; border:none; border-radius:6px; padding:4px 10px; font-size:0.75rem; cursor:pointer; opacity:0; transition:opacity 0.2s;"
                                     onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0'"
                                     class="trained-delete-btn">폴더 삭제</button>
-                            ${isRep ? `<img src="${repPreviewUrl}" style="width:100%; border-radius:8px; margin-bottom:10px; display:block;">` : ''}
+                            ${sessionPreview ? `<img src="${sessionPreview}" style="width:100%; border-radius:8px; margin-bottom:10px; display:block;">` : ''}
+                            ${hasSessionRep ? '<div style="position:absolute; top:8px; left:8px; z-index:5; background:rgba(255,193,7,0.95); color:#000; font-size:0.7rem; font-weight:700; padding:3px 8px; border-radius:4px;">세션 대표</div>' : ''}
                             <div style="font-weight:600; font-size:0.95rem;">${escapeHtml(s.name)}</div>
                             <div style="font-size:0.8rem; color:var(--text-secondary); margin-top:6px;">
                                 ${s.step_count}개 파일${s.has_final ? ' (최종 포함)' : ''}
+                                ${!hasSessionRep ? ' <span style="color:var(--warning);">(세션 대표 미설정)</span>' : ''}
                             </div>
+                            ${hasSessionRep ? `
+                            <button onclick="event.stopPropagation(); setEntryRepFromSession('${escapeHtml(s.name)}')"
+                                    style="margin-top:8px; background:${isRep ? 'var(--accent)' : 'var(--surface2)'}; color:${isRep ? '#fff' : 'var(--text)'}; border:1px solid ${isRep ? 'var(--accent)' : 'var(--border)'}; border-radius:6px; padding:4px 10px; font-size:0.75rem; cursor:pointer; width:100%; transition:background 0.2s;"
+                                    ${isRep ? 'disabled' : ''}>
+                                ${isRep ? '현재 엔트리 대표' : '엔트리 대표로 설정'}
+                            </button>` : ''}
                         </div>`;
                     }).join('') + '</div>';
             } catch (e) {
@@ -10346,6 +10357,17 @@
                 if (loraEntryRepresentative) {
                     try { repSafetensors = JSON.parse(loraEntryRepresentative).safetensors || ''; } catch (_) {}
                 }
+                // 세션 대표 safetensors 파일명
+                let sessionRepSafetensors = '';
+                try {
+                    const sessResp = await fetchJSON(`/api/lora/trained/sessions?character=${enc(loraCurrentCharacter)}&entry=${enc(loraCurrentEntry)}`);
+                    if (sessResp.success) {
+                        const sess = (sessResp.sessions || []).find(x => x.name === session);
+                        if (sess && sess.representative) {
+                            sessionRepSafetensors = JSON.parse(sess.representative).safetensors || '';
+                        }
+                    }
+                } catch (_) {}
                 stepsEl.innerHTML = `<div style="margin-bottom:10px; font-size:0.82rem; color:var(--text-secondary);">step 파일을 클릭하면 프리뷰 이미지를 볼 수 있습니다.</div>` +
                     `<div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(340px, 1fr)); gap:12px;">` +
                     steps.map(s => {
@@ -10353,10 +10375,14 @@
                             ? `/api/lora/trained/preview/${enc(loraCurrentCharacter)}/${enc(loraCurrentEntry)}/${enc(session)}/${enc(s.previews[0])}`
                             : '';
                         const isRep = s.safetensors === repSafetensors;
+                        const isSessionRep = s.safetensors === sessionRepSafetensors;
+                        let badges = '';
+                        if (isRep) badges += '<div style="position:absolute; top:8px; left:8px; z-index:5; background:rgba(0,120,215,0.95); color:#fff; font-size:0.7rem; font-weight:700; padding:3px 8px; border-radius:4px;">엔트리 대표</div>';
+                        if (isSessionRep) badges += `<div style="position:absolute; top:8px; left:${isRep ? '110px' : '8px'}; z-index:5; background:rgba(255,193,7,0.95); color:#000; font-size:0.7rem; font-weight:700; padding:3px 8px; border-radius:4px;">세션 대표</div>`;
                         return `
-                        <div style="background:var(--surface); border:1px solid ${isRep ? 'var(--accent)' : 'var(--border)'}; border-radius:10px; padding:12px; transition:border-color 0.2s; position:relative;"
-                             onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='${isRep ? 'var(--accent)' : 'var(--border)'}'">
-                            ${isRep ? '<div style="position:absolute; top:8px; left:8px; z-index:5; background:rgba(255,193,7,0.95); color:#000; font-size:0.7rem; font-weight:700; padding:3px 8px; border-radius:4px;">대표</div>' : ''}
+                        <div style="background:var(--surface); border:1px solid ${isRep ? 'var(--accent)' : (isSessionRep ? 'rgba(255,193,7,0.6)' : 'var(--border)')}; border-radius:10px; padding:12px; transition:border-color 0.2s; position:relative;"
+                             onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='${isRep ? 'var(--accent)' : (isSessionRep ? 'rgba(255,193,7,0.6)' : 'var(--border)')}'">
+                            ${badges}
                             <div onclick="enterTrainedStep('${escapeHtml(s.name)}')" style="cursor:pointer;">
                                 ${previewUrl ? `<img src="${previewUrl}" style="width:100%; border-radius:8px; margin-bottom:10px;">` : ''}
                                 <div style="font-weight:600; font-size:0.9rem;">${escapeHtml(s.name)}</div>
@@ -10398,6 +10424,63 @@
             } catch (e) {
                 console.error('[LORA_TRAINED] 대표 설정 실패:', e);
                 showToast('대표 설정 실패', 'error');
+            }
+        }
+
+        async function setSessionRepresentative(sessionName, safetensorsPath, previewUrl) {
+            if (!confirm('이 이미지와 LoRA를 이 세션의 대표로 설정하시겠습니까?')) return;
+            try {
+                const repValue = JSON.stringify({ safetensors: safetensorsPath, preview: previewUrl });
+                const resp = await fetchJSON('/api/lora/manage/update', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        name: loraCurrentEntry,
+                        character: loraCurrentCharacter,
+                        session_name: sessionName,
+                        session_representative: repValue,
+                    }),
+                });
+                if (resp.success) {
+                    showToast('세션 대표 LoRA로 설정되었습니다', 'success');
+                    enterTrainedStep(loraCurrentTrainedStep);
+                } else {
+                    showToast(resp.error || '설정 실패', 'error');
+                }
+            } catch (e) {
+                console.error('[LORA_TRAINED] 세션 대표 설정 실패:', e);
+                showToast('세션 대표 설정 실패', 'error');
+            }
+        }
+
+        async function setEntryRepFromSession(sessionName) {
+            try {
+                // 세션 대표 데이터를 엔트리 대표로 복사
+                const enc = encodeURIComponent;
+                const resp = await fetchJSON(`/api/lora/trained/sessions?character=${enc(loraCurrentCharacter)}&entry=${enc(loraCurrentEntry)}`);
+                if (!resp.success) { showToast('세션 정보 조회 실패', 'error'); return; }
+                const session = (resp.sessions || []).find(s => s.name === sessionName);
+                if (!session || !session.representative) { showToast('세션 대표가 설정되지 않았습니다', 'error'); return; }
+
+                const updateResp = await fetchJSON('/api/lora/manage/update', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        name: loraCurrentEntry,
+                        character: loraCurrentCharacter,
+                        representative: session.representative,
+                    }),
+                });
+                if (updateResp.success) {
+                    loraEntryRepresentative = session.representative;
+                    showToast('엔트리 대표로 설정되었습니다', 'success');
+                    loadTrainedLoraSessions();
+                } else {
+                    showToast(updateResp.error || '설정 실패', 'error');
+                }
+            } catch (e) {
+                console.error('[LORA_TRAINED] 엔트리 대표 설정 실패:', e);
+                showToast('엔트리 대표 설정 실패', 'error');
             }
         }
 
@@ -10452,6 +10535,7 @@
         }
 
         async function enterTrainedStep(stepName) {
+            loraCurrentTrainedStep = stepName;
             // breadcrumb 업데이트
             document.getElementById('lora-breadcrumb').innerHTML =
                 `<span style="cursor:pointer;" onclick="initLoraTab()">로라매니징</span> / ` +
@@ -10477,19 +10561,46 @@
                 }
                 previewsEl.style.display = '';
                 const safetensorsPath = step.safetensors;
+                // 대표 상태 확인
+                let isEntryRep = false, isSessionRep = false, sessionRepPreviewUrl = '';
+                try {
+                    const rep = loraEntryRepresentative ? JSON.parse(loraEntryRepresentative) : null;
+                    if (rep && rep.safetensors === safetensorsPath) isEntryRep = true;
+                } catch (_) {}
+                try {
+                    const sessResp = await fetchJSON(`/api/lora/trained/sessions?character=${enc(loraCurrentCharacter)}&entry=${enc(loraCurrentEntry)}`);
+                    if (sessResp.success) {
+                        const sess = (sessResp.sessions || []).find(x => x.name === loraCurrentTrainedSession);
+                        if (sess && sess.representative) {
+                            const sr = JSON.parse(sess.representative);
+                            if (sr.safetensors === safetensorsPath) {
+                                isSessionRep = true;
+                                sessionRepPreviewUrl = sr.preview || '';
+                            }
+                        }
+                    }
+                } catch (_) {}
+                let badgeHtml = '';
+                if (isEntryRep) badgeHtml += '<span style="background:rgba(0,120,215,0.95); color:#fff; font-size:0.7rem; font-weight:700; padding:2px 8px; border-radius:4px;">엔트리 대표</span>';
+                if (isSessionRep) badgeHtml += '<span style="background:rgba(255,193,7,0.95); color:#000; font-size:0.7rem; font-weight:700; padding:2px 8px; border-radius:4px;">세션 대표</span>';
                 previewsEl.innerHTML = `<div style="display:flex; align-items:center; gap:8px; margin-bottom:10px;">
                         <span style="font-size:0.82rem; color:var(--text-secondary);">${escapeHtml(step.safetensors)}</span>
+                        ${badgeHtml}
                     </div>` +
                     `<div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(400px, 1fr)); gap:12px;">` +
                     step.previews.map(p => {
                         const url = `/api/lora/trained/preview/${enc(loraCurrentCharacter)}/${enc(loraCurrentEntry)}/${enc(loraCurrentTrainedSession)}/${enc(p)}`;
+                        const isRepImage = isSessionRep && sessionRepPreviewUrl === url;
                         return `<div style="position:relative;">
                             <img src="${url}" style="width:100%; border-radius:10px; cursor:pointer; display:block;" onclick="openLightbox('${url}')">
-                            <button onclick="setTrainedRepresentative('${escapeHtml(safetensorsPath)}', '${escapeHtml(url)}')"
-                                    style="position:absolute; bottom:10px; right:10px; background:rgba(0,0,0,0.7); color:#fff; border:1px solid rgba(255,255,255,0.3); border-radius:8px; padding:6px 12px; font-size:0.78rem; cursor:pointer; backdrop-filter:blur(4px); transition:background 0.2s;"
-                                    onmouseover="this.style.background='rgba(0,120,215,0.85)'" onmouseout="this.style.background='rgba(0,0,0,0.7)'">
-                                이 이미지와 로라를 대표로 설정
+                            ${isRepImage ? '<div style="position:absolute; top:10px; left:10px; z-index:5; background:rgba(255,193,7,0.95); color:#000; font-size:0.75rem; font-weight:700; padding:4px 10px; border-radius:6px;">현재 세션 대표 이미지</div>' : ''}
+                            <div style="position:absolute; bottom:10px; right:10px; display:flex; gap:6px;">
+                            <button onclick="setSessionRepresentative('${escapeHtml(loraCurrentTrainedSession)}', '${escapeHtml(safetensorsPath)}', '${escapeHtml(url)}')"
+                                    style="background:rgba(0,0,0,0.7); color:#fff; border:1px solid rgba(255,255,255,0.3); border-radius:8px; padding:6px 12px; font-size:0.78rem; cursor:pointer; backdrop-filter:blur(4px); transition:background 0.2s;"
+                                    onmouseover="this.style.background='rgba(0,160,80,0.85)'" onmouseout="this.style.background='rgba(0,0,0,0.7)'">
+                                세션 대표로 설정
                             </button>
+                            </div>
                         </div>`;
                     }).join('') + '</div>';
             } catch (e) {
@@ -11969,7 +12080,7 @@
             positiveFull += `\n[LORA_ACTIVATE]\n${loraActive ? 'true' : 'false'}`;
             if (loraActive) {
                 const config = window.serverConfig || {};
-                positiveFull += `\n[LORA_DATA]\n${JSON.stringify({list: assetLoraList.map(l => ({lora_path: (config.lora_load_path ? 'SOYA_CHAR_LORA\\' : '') + l.lora_path, str: l.strength, BASE: l.BASE || 'anima'}))})}`;
+                positiveFull += `\n[LORA_DATA]\n${JSON.stringify({list: assetLoraList.map(l => ({lora_path: 'SOYA_CHAR_LORA\\' + l.lora_path, str: l.strength, BASE: l.BASE || 'anima'}))})}`;
             } else {
                 positiveFull += `\n[LORA_DATA]\n{"list":[]}`;
             }
@@ -13210,20 +13321,26 @@
                 return;
             }
             container.innerHTML = assetLoraList.map((lora, i) => `
-                <div style="display:flex; align-items:center; gap:8px; padding:6px; background:var(--surface2); border-radius:6px; border:1px solid var(--border);">
-                    ${lora.preview_url ? `<img src="${escapeHtml(lora.preview_url)}" style="width:40px; height:40px; object-fit:cover; border-radius:4px;">` : '<div style="width:40px; height:40px; background:var(--surface); border-radius:4px; display:flex; align-items:center; justify-content:center; font-size:0.8rem;">📦</div>'}
-                    <div style="flex:1; min-width:0;">
+                <div style="padding:8px; background:var(--surface2); border-radius:6px; border:1px solid var(--border); position:relative;">
+                    <button onclick="assetLoraList.splice(${i},1); renderAssetLoraList();"
+                        style="position:absolute; top:2px; right:4px; background:none; border:none; color:var(--error); cursor:pointer; font-size:1.8rem; padding:2px 4px;">x</button>
+                    ${lora.preview_url ? `<img src="${escapeHtml(lora.preview_url)}" style="width:70%; aspect-ratio:1; object-fit:cover; border-radius:6px; display:block; margin:0 auto;">` : '<div style="width:70%; aspect-ratio:1; background:var(--surface); border-radius:6px; display:flex; align-items:center; justify-content:center; font-size:2rem; margin:0 auto;">📦</div>'}
+                    <div style="margin-top:6px;">
                         <div style="font-size:0.8rem; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(lora.name)}</div>
                         <div style="font-size:0.65rem; color:var(--text-secondary);">${escapeHtml(lora.trigger)} · ${escapeHtml(lora.character)}</div>
                     </div>
-                    <div style="display:flex; align-items:center; gap:4px; min-width:100px;">
-                        <input type="range" min="0" max="2" step="0.01" value="${lora.strength}"
-                            oninput="assetLoraList[${i}].strength=parseFloat(this.value); this.nextElementSibling.textContent=this.value"
-                            style="width:60px; cursor:pointer;">
-                        <span style="font-size:0.7rem; min-width:24px;">${lora.strength}</span>
+                    <select onchange="assetLoraList[${i}].BASE=this.value"
+                        style="width:100%; margin-top:6px; background:var(--surface); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:3px 4px; font-size:0.75rem; cursor:pointer;">
+                        <option value="anima" ${lora.BASE === 'anima' ? 'selected' : ''}>anima</option>
+                        <option value="sdxl" ${lora.BASE === 'sdxl' ? 'selected' : ''}>sdxl</option>
+                        <option value="ilxl" ${lora.BASE === 'ilxl' ? 'selected' : ''}>ilxl</option>
+                    </select>
+                    <div style="display:flex; align-items:center; gap:6px; margin-top:6px;">
+                        <input type="range" min="0" max="1" step="0.01" value="${lora.strength}"
+                            oninput="assetLoraList[${i}].strength=parseFloat(this.value); this.nextElementSibling.textContent=parseFloat(this.value).toFixed(2)"
+                            style="flex:1; cursor:pointer;">
+                        <span style="font-size:0.7rem; min-width:28px; text-align:right;">${lora.strength.toFixed(2)}</span>
                     </div>
-                    <button onclick="assetLoraList.splice(${i},1); renderAssetLoraList();"
-                        style="background:none; border:none; color:var(--error); cursor:pointer; font-size:0.9rem; padding:2px 4px;">x</button>
                 </div>
             `).join('');
         }
@@ -13287,10 +13404,9 @@
             const grid = document.getElementById('lora-picker-grid');
             if (!grid) return;
             document.getElementById('lora-picker-back').style.display = 'block';
+            document.getElementById('lora-picker-back').onclick = () => showLoraPickerCharacters();
             grid.innerHTML = '';
             if (group.entries.length === 0) { grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--text-secondary);">LoRA 항목이 없습니다</div>'; return; }
-            const config = window.serverConfig || {};
-            const loraLoadPath = config.lora_load_path || '';
             group.entries.forEach(entry => {
                 const rep = entry.representative ? JSON.parse(entry.representative) : null;
                 let previewUrl = '';
@@ -13315,16 +13431,71 @@
                 if (hasFile) {
                     card.onmouseenter = () => { card.style.borderColor = 'var(--accent)'; };
                     card.onmouseleave = () => { card.style.borderColor = 'var(--border)'; };
+                    card.onclick = () => showLoraPickerSessions(group, entry);
+                }
+                grid.appendChild(card);
+            });
+        }
+
+        function showLoraPickerSessions(group, entry) {
+            const grid = document.getElementById('lora-picker-grid');
+            if (!grid) return;
+            document.getElementById('lora-picker-back').style.display = 'block';
+            document.getElementById('lora-picker-back').onclick = () => showLoraPickerEntries(group);
+            grid.innerHTML = '';
+
+            const sessionReps = entry.session_representatives || {};
+            // lora_files를 세션별로 그룹화
+            const sessionMap = {};
+            (entry.lora_files || []).forEach(f => {
+                if (!sessionMap[f.session]) sessionMap[f.session] = [];
+                sessionMap[f.session].push(f);
+            });
+            const sessionNames = Object.keys(sessionMap).sort().reverse();
+            if (sessionNames.length === 0) {
+                grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--text-secondary);">세션이 없습니다</div>';
+                return;
+            }
+
+            const enc = encodeURIComponent;
+            const BASE = (entry.training_config && entry.training_config.profile) || 'anima';
+
+            sessionNames.forEach(sessionName => {
+                const files = sessionMap[sessionName];
+                const repStr = sessionReps[sessionName] || '';
+                let repData = null;
+                if (repStr) { try { repData = JSON.parse(repStr); } catch (_) {} }
+
+                // 세션 대표 preview
+                let previewUrl = '';
+                if (repData && repData.preview) {
+                    previewUrl = repData.preview;
+                } else if (files.length > 0) {
+                    const lastFile = files[files.length - 1];
+                    if (lastFile.previews && lastFile.previews.length > 0) {
+                        previewUrl = `/api/lora/trained/preview/${enc(group.character)}/${enc(entry.name)}/${enc(sessionName)}/${enc(lastFile.previews[0])}`;
+                    }
+                }
+
+                const hasRep = !!repData;
+                const card = document.createElement('div');
+                card.style.cssText = `cursor:${hasRep ? 'pointer' : 'not-allowed'}; border-radius:8px; overflow:hidden; border:2px solid ${hasRep ? 'var(--border)' : 'var(--border)'}; transition:border-color 0.2s; position:relative; ${hasRep ? '' : 'opacity:0.6;'}`;
+                card.innerHTML = previewUrl
+                    ? `<img src="${escapeHtml(previewUrl)}" style="width:100%; display:block; aspect-ratio:1; object-fit:contain;" loading="lazy">`
+                    : `<div style="width:100%; aspect-ratio:1; background:var(--surface2); display:flex; align-items:center; justify-content:center;">📂</div>`;
+                card.innerHTML += `<div style="font-size:0.7rem; padding:4px; text-align:center; background:var(--surface2);">${escapeHtml(sessionName)}${!hasRep ? ' <span style="color:var(--warning);">(대표 로라 선택 안됨)</span>' : ''}</div>`;
+
+                if (hasRep) {
+                    card.onmouseenter = () => { card.style.borderColor = 'var(--accent)'; };
+                    card.onmouseleave = () => { card.style.borderColor = 'var(--border)'; };
                     card.onclick = () => {
-                        // 가장 마지막 세션의 마지막 step을 기본으로 선택
-                        const lastFile = entry.lora_files[entry.lora_files.length - 1];
-                        const config = window.serverConfig || {};
-                        const loraPath = config.lora_load_path ? lastFile.path : lastFile.path;
-                        const BASE = (entry.training_config && entry.training_config.profile) || 'anima';
+                        // 대표 safetensors 파일명과 매칭되는 lora_file 찾기
+                        const repSafetensors = repData.safetensors || '';
+                        const matchedFile = files.find(f => f.safetensors === repSafetensors) || files[files.length - 1];
                         assetLoraList.push({
                             name: entry.name,
                             character: group.character,
-                            lora_path: lastFile.path,
+                            lora_path: matchedFile.path,
                             strength: 0.5,
                             preview_url: previewUrl,
                             trigger: entry.trigger || '',
@@ -13332,7 +13503,7 @@
                         });
                         renderAssetLoraList();
                         document.getElementById('asset-lora-picker-overlay').remove();
-                        showToast(`LoRA "${entry.name}" 추가됨`, 'success');
+                        showToast(`LoRA "${entry.name}" (${sessionName}) 추가됨`, 'success');
                     };
                 }
                 grid.appendChild(card);
@@ -17585,6 +17756,7 @@
             const grid = document.getElementById('batch-lora-picker-grid');
             if (!grid) return;
             document.getElementById('batch-lora-picker-back').style.display = 'block';
+            document.getElementById('batch-lora-picker-back').onclick = () => showBatchLoraPickerCharacters();
             grid.innerHTML = '';
             if (group.entries.length === 0) { grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--text-secondary);">LoRA 항목이 없습니다</div>'; return; }
             group.entries.forEach(entry => {
@@ -17607,14 +17779,69 @@
                 if (hasFile) {
                     card.onmouseenter = () => { card.style.borderColor = 'var(--accent)'; };
                     card.onmouseleave = () => { card.style.borderColor = 'var(--border)'; };
+                    card.onclick = () => showBatchLoraPickerSessions(group, entry);
+                }
+                grid.appendChild(card);
+            });
+        }
+
+        function showBatchLoraPickerSessions(group, entry) {
+            const grid = document.getElementById('batch-lora-picker-grid');
+            if (!grid) return;
+            document.getElementById('batch-lora-picker-back').style.display = 'block';
+            document.getElementById('batch-lora-picker-back').onclick = () => showBatchLoraPickerEntries(group);
+            grid.innerHTML = '';
+
+            const sessionReps = entry.session_representatives || {};
+            const sessionMap = {};
+            (entry.lora_files || []).forEach(f => {
+                if (!sessionMap[f.session]) sessionMap[f.session] = [];
+                sessionMap[f.session].push(f);
+            });
+            const sessionNames = Object.keys(sessionMap).sort().reverse();
+            if (sessionNames.length === 0) {
+                grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--text-secondary);">세션이 없습니다</div>';
+                return;
+            }
+
+            const enc = encodeURIComponent;
+            const BASE = (entry.training_config && entry.training_config.profile) || 'anima';
+
+            sessionNames.forEach(sessionName => {
+                const files = sessionMap[sessionName];
+                const repStr = sessionReps[sessionName] || '';
+                let repData = null;
+                if (repStr) { try { repData = JSON.parse(repStr); } catch (_) {} }
+
+                let previewUrl = '';
+                if (repData && repData.preview) {
+                    previewUrl = repData.preview;
+                } else if (files.length > 0) {
+                    const lastFile = files[files.length - 1];
+                    if (lastFile.previews && lastFile.previews.length > 0) {
+                        previewUrl = `/api/lora/trained/preview/${enc(group.character)}/${enc(entry.name)}/${enc(sessionName)}/${enc(lastFile.previews[0])}`;
+                    }
+                }
+
+                const hasRep = !!repData;
+                const card = document.createElement('div');
+                card.style.cssText = `cursor:${hasRep ? 'pointer' : 'not-allowed'}; border-radius:8px; overflow:hidden; border:2px solid var(--border); transition:border-color 0.2s; position:relative; ${hasRep ? '' : 'opacity:0.6;'}`;
+                card.innerHTML = previewUrl
+                    ? `<img src="${escapeHtml(previewUrl)}" style="width:100%; display:block; aspect-ratio:1; object-fit:contain;" loading="lazy">`
+                    : `<div style="width:100%; aspect-ratio:1; background:var(--surface2); display:flex; align-items:center; justify-content:center;">📂</div>`;
+                card.innerHTML += `<div style="font-size:0.7rem; padding:4px; text-align:center; background:var(--surface2);">${escapeHtml(sessionName)}${!hasRep ? ' <span style="color:var(--warning);">(대표 로라 선택 안됨)</span>' : ''}</div>`;
+
+                if (hasRep) {
+                    card.onmouseenter = () => { card.style.borderColor = 'var(--accent)'; };
+                    card.onmouseleave = () => { card.style.borderColor = 'var(--border)'; };
                     card.onclick = () => {
-                        const lastFile = entry.lora_files[entry.lora_files.length - 1];
-                        const BASE = (entry.training_config && entry.training_config.profile) || 'anima';
+                        const repSafetensors = repData.safetensors || '';
+                        const matchedFile = files.find(f => f.safetensors === repSafetensors) || files[files.length - 1];
                         if (!batchChains[batchLoraPickerTarget].lora_list) batchChains[batchLoraPickerTarget].lora_list = [];
                         batchChains[batchLoraPickerTarget].lora_list.push({
                             name: entry.name,
                             character: group.character,
-                            lora_path: lastFile.path,
+                            lora_path: matchedFile.path,
                             strength: 0.5,
                             preview_url: previewUrl,
                             trigger: entry.trigger || '',
@@ -17623,7 +17850,7 @@
                         batchChains[batchLoraPickerTarget].lora_enabled = true;
                         renderBatchChain();
                         document.getElementById('batch-lora-picker-overlay').remove();
-                        showToast(`LoRA "${entry.name}" 추가됨`, 'success');
+                        showToast(`LoRA "${entry.name}" (${sessionName}) 추가됨`, 'success');
                     };
                 }
                 grid.appendChild(card);
@@ -18033,7 +18260,7 @@
             positiveFull += `\n[LORA_ACTIVATE]\n${loraActive ? 'true' : 'false'}`;
             if (loraActive) {
                 const config = window.serverConfig || {};
-                positiveFull += `\n[LORA_DATA]\n${JSON.stringify({list: slot.lora_list.map(l => ({lora_path: (config.lora_load_path ? 'SOYA_CHAR_LORA\\' : '') + l.lora_path, str: l.strength, BASE: l.BASE || 'anima'}))})}`;
+                positiveFull += `\n[LORA_DATA]\n${JSON.stringify({list: slot.lora_list.map(l => ({lora_path: 'SOYA_CHAR_LORA\\' + l.lora_path, str: l.strength, BASE: l.BASE || 'anima'}))})}`;
             } else {
                 positiveFull += `\n[LORA_DATA]\n{"list":[]}`;
             }

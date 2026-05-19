@@ -94,6 +94,12 @@ def list_trained_sessions(lora_load_path: str, character: str, entry: str) -> li
     if not os.path.isdir(entry_dir):
         print(f"[LORA_TRAINED] 엔트리 폴더 없음: {entry_dir}")
         return []
+
+    # 세션별 대표 로라 조회
+    manage_data = _load_lora_manage()
+    manage_entry = _get_entry(manage_data, character, entry)
+    session_reps = (manage_entry or {}).get("session_representatives", {})
+
     sessions = []
     for name in sorted(os.listdir(entry_dir), reverse=True):
         path = os.path.join(entry_dir, name)
@@ -101,10 +107,23 @@ def list_trained_sessions(lora_load_path: str, character: str, entry: str) -> li
             continue
         step_count = sum(1 for f in os.listdir(path) if f.endswith('.safetensors'))
         has_final = any('-step' not in f for f in os.listdir(path) if f.endswith('.safetensors'))
+
+        # 세션 대표 이미지 정보
+        session_rep = session_reps.get(name, "")
+        preview_url = ""
+        if session_rep:
+            try:
+                rep_data = json.loads(session_rep)
+                preview_url = rep_data.get("preview", "")
+            except Exception:
+                pass
+
         sessions.append({
             "name": name,
             "step_count": step_count,
             "has_final": has_final,
+            "representative": session_rep,
+            "preview_url": preview_url,
         })
     return sessions
 
@@ -867,6 +886,7 @@ def list_lora_for_picker(lora_load_path: str = "") -> list:
                 "description": info.get("description", ""),
                 "representative": info.get("representative", ""),
                 "training_config": info.get("training_config", {}),
+                "session_representatives": info.get("session_representatives", {}),
                 "lora_files": [],
             }
             # 학습된 safetensors 파일 목록
@@ -980,7 +1000,7 @@ def remove_lora_entry(name: str, character: str) -> dict:
     return {"success": True}
 
 
-def update_lora_entry(name: str, character: str, trigger: str = None, description: str = None, representative: str = None, training_config: dict = None) -> dict:
+def update_lora_entry(name: str, character: str, trigger: str = None, description: str = None, representative: str = None, training_config: dict = None, session_name: str = None, session_representative: str = None) -> dict:
     """LoRA 항목 메타데이터 수정"""
     if not name:
         return {"success": False, "error": "이름 누락"}
@@ -1001,6 +1021,10 @@ def update_lora_entry(name: str, character: str, trigger: str = None, descriptio
         entry["representative"] = representative.strip()
     if training_config is not None:
         entry["training_config"] = training_config
+    if session_name is not None and session_representative is not None:
+        if "session_representatives" not in entry:
+            entry["session_representatives"] = {}
+        entry["session_representatives"][session_name] = session_representative
 
     _save_lora_manage(data)
     print(f"[LORA_MANAGE] LoRA 수정: {character}/{name}")
