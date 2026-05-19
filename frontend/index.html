@@ -12079,7 +12079,6 @@
             const loraActive = loraEnabled && assetLoraList.length > 0;
             positiveFull += `\n[LORA_ACTIVATE]\n${loraActive ? 'true' : 'false'}`;
             if (loraActive) {
-                const config = window.serverConfig || {};
                 positiveFull += `\n[LORA_DATA]\n${JSON.stringify({list: assetLoraList.map(l => ({lora_path: 'SOYA_CHAR_LORA\\' + l.lora_path, str: l.strength, BASE: l.BASE || 'anima'}))})}`;
             } else {
                 positiveFull += `\n[LORA_DATA]\n{"list":[]}`;
@@ -14999,11 +14998,9 @@
             // LoRA 데이터 빌드
             let loraData = '';
             if (loraEnabled && assetLoraList.length > 0) {
-                const config = window.serverConfig || {};
-                const loraLoadPath = config.lora_load_path || '';
                 loraData = JSON.stringify({
                     list: assetLoraList.map(l => ({
-                        lora_path: (loraLoadPath ? 'SOYA_CHAR_LORA\\' : '') + l.lora_path,
+                        lora_path: 'SOYA_CHAR_LORA\\' + l.lora_path,
                         str: l.strength,
                         BASE: l.BASE || 'anima',
                     }))
@@ -18559,10 +18556,9 @@
                             lora_activate: slot.lora_enabled && (slot.lora_list || []).length > 0,
                             lora_data: (() => {
                                 if (!slot.lora_enabled || !(slot.lora_list || []).length) return '';
-                                const config = window.serverConfig || {};
                                 return JSON.stringify({
                                     list: slot.lora_list.map(l => ({
-                                        lora_path: (config.lora_load_path ? 'SOYA_CHAR_LORA\\' : '') + l.lora_path,
+                                        lora_path: 'SOYA_CHAR_LORA\\' + l.lora_path,
                                         str: l.strength,
                                         BASE: l.BASE || 'anima',
                                     }))
