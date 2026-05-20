@@ -13931,8 +13931,7 @@
                     <select onchange="assetLoraList[${i}].BASE=this.value"
                         style="width:100%; margin-top:6px; background:var(--surface); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:3px 4px; font-size:0.75rem; cursor:pointer;">
                         <option value="anima" ${lora.BASE === 'anima' ? 'selected' : ''}>anima</option>
-                        <option value="sdxl" ${lora.BASE === 'sdxl' ? 'selected' : ''}>sdxl</option>
-                        <option value="ilxl" ${lora.BASE === 'ilxl' ? 'selected' : ''}>ilxl</option>
+                        <option value="sdxl" ${(lora.BASE === 'sdxl' || lora.BASE === 'ilxl') ? 'selected' : ''}>sdxl</option>
                     </select>
                     <div style="display:flex; align-items:center; gap:6px; margin-top:6px;">
                         <input type="range" min="0" max="1" step="0.01" value="${lora.strength}"
@@ -17916,8 +17915,7 @@
                     <select onchange="bulkLoraList[${i}].BASE=this.value"
                         style="width:100%; margin-top:4px; background:var(--surface); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:2px 4px; font-size:0.65rem; cursor:pointer;">
                         <option value="anima" ${lora.BASE === 'anima' ? 'selected' : ''}>anima</option>
-                        <option value="sdxl" ${lora.BASE === 'sdxl' ? 'selected' : ''}>sdxl</option>
-                        <option value="ilxl" ${lora.BASE === 'ilxl' ? 'selected' : ''}>ilxl</option>
+                        <option value="sdxl" ${(lora.BASE === 'sdxl' || lora.BASE === 'ilxl') ? 'selected' : ''}>sdxl</option>
                     </select>
                     <div style="margin-top:4px;">
                         <input type="range" min="0" max="1" step="0.01" value="${lora.strength}" style="width:100%; cursor:pointer;"
@@ -18295,8 +18293,7 @@
                                 <select onchange="batchChains[${idx}].lora_list[${li}].BASE=this.value"
                                     style="width:100%; margin-top:4px; background:var(--surface); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:2px 4px; font-size:0.7rem; cursor:pointer;">
                                     <option value="anima" ${l.BASE === 'anima' ? 'selected' : ''}>anima</option>
-                                    <option value="sdxl" ${l.BASE === 'sdxl' ? 'selected' : ''}>sdxl</option>
-                                    <option value="ilxl" ${l.BASE === 'ilxl' ? 'selected' : ''}>ilxl</option>
+                                    <option value="sdxl" ${(l.BASE === 'sdxl' || l.BASE === 'ilxl') ? 'selected' : ''}>sdxl</option>
                                 </select>
                                 <div style="display:flex; align-items:center; gap:4px; margin-top:4px;">
                                     <input type="range" min="0" max="1" step="0.01" value="${l.strength}" style="flex:1; cursor:pointer;"
