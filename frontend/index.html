@@ -3314,6 +3314,8 @@
                                             <div class="ep-field-group"><div class="ep-field-label">품질</div><select id="ep-quality-select"><option value="">-- 프리셋 --</option></select></div>
                                             <div class="ep-field-group"><div class="ep-field-label">부정 태그</div><select id="ep-negative-select"><option value="">-- 프리셋 --</option></select></div>
                                             <div class="ep-field-group"><div class="ep-field-label">캐릭터 부정</div><select id="ep-character-negative-select"><option value="">-- 프리셋 --</option></select></div>
+                                            <div class="ep-field-group"><div class="ep-field-label">아티스트</div><select id="ep-artist-select"><option value="">-- 프리셋 --</option></select></div>
+                                            <div class="ep-field-group"><div class="ep-field-label">자연어</div><select id="ep-natural-language-select"><option value="">-- 프리셋 --</option></select></div>
                                         </div>
                                         <div class="ep-settings-row" style="margin-top:4px;">
                                             <label style="display:flex; align-items:center; gap:4px; font-size:0.8rem;">
@@ -7696,6 +7698,8 @@
             const qualSel = document.getElementById('ep-quality-select');
             const negSel = document.getElementById('ep-negative-select');
             const cnSel = document.getElementById('ep-character-negative-select');
+            const artistSel = document.getElementById('ep-artist-select');
+            const nlSel = document.getElementById('ep-natural-language-select');
             const prevChar = charSel.value;
             const prevApp = appSel.value;
             const prevOutfit = outfitSel.value;
@@ -7703,6 +7707,8 @@
             const prevQual = qualSel.value;
             const prevNeg = negSel.value;
             const prevCn = cnSel.value;
+            const prevArtist = artistSel.value;
+            const prevNl = nlSel.value;
             charSel.innerHTML = '<option value="">-- 캐릭터 선택 --</option>';
             for (const name of Object.keys(assetTags.characters || {}).sort()) {
                 charSel.innerHTML += `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`;
@@ -7737,6 +7743,14 @@
             for (const name of Object.keys(assetTags.character_negative_presets || {}).sort()) {
                 cnSel.innerHTML += `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`;
             }
+            artistSel.innerHTML = '<option value="">-- 프리셋 --</option>';
+            for (const name of Object.keys(assetTags.artist_presets || {}).sort()) {
+                artistSel.innerHTML += `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`;
+            }
+            nlSel.innerHTML = '<option value="">-- 프리셋 --</option>';
+            for (const name of Object.keys(assetTags.natural_language_presets || {}).sort()) {
+                nlSel.innerHTML += `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`;
+            }
             if (prevChar && charSel.querySelector(`option[value="${prevChar}"]`)) {
                 charSel.value = prevChar;
             } else if (prevChar) {
@@ -7746,6 +7760,8 @@
                 qualSel.value = prevQual;
                 negSel.value = prevNeg;
                 cnSel.value = prevCn;
+                artistSel.value = prevArtist;
+                nlSel.value = prevNl;
             }
             renderExprProfileGrid();
         }
@@ -7822,6 +7838,8 @@
                 quality_preset: document.getElementById('ep-quality-select').value,
                 negative_preset: document.getElementById('ep-negative-select').value,
                 character_negative_preset: document.getElementById('ep-character-negative-select').value,
+                artist_preset: document.getElementById('ep-artist-select').value,
+                natural_language_preset: document.getElementById('ep-natural-language-select').value,
                 ref_enabled: document.getElementById('ep-ref-toggle').checked,
                 ref_strength: parseFloat(document.getElementById('ep-ref-strength').value),
                 hrf_enabled: document.getElementById('ep-hrf-toggle').checked,
@@ -7865,6 +7883,12 @@
                 }
                 if (settings.character_negative_preset !== undefined) {
                     document.getElementById('ep-character-negative-select').value = settings.character_negative_preset;
+                }
+                if (settings.artist_preset !== undefined) {
+                    document.getElementById('ep-artist-select').value = settings.artist_preset;
+                }
+                if (settings.natural_language_preset !== undefined) {
+                    document.getElementById('ep-natural-language-select').value = settings.natural_language_preset;
                 }
                 if (settings.ref_enabled !== undefined) {
                     document.getElementById('ep-ref-toggle').checked = settings.ref_enabled;
@@ -8607,6 +8631,8 @@
             const qualityPreset = document.getElementById('ep-quality-select').value;
             const negativePreset = document.getElementById('ep-negative-select').value;
             const characterNegativePreset = document.getElementById('ep-character-negative-select').value;
+            const artistPreset = document.getElementById('ep-artist-select').value;
+            const naturalLanguagePreset = document.getElementById('ep-natural-language-select').value;
 
             const repeatCount = Math.max(1, parseInt(document.getElementById('ep-repeat-count').value) || 1);
             const totalJobs = selectedProfiles.length * repeatCount;
@@ -8664,6 +8690,10 @@
                             hrf_activate: profile.hrf_enabled ? true : hrfEnabled,
                             hd_activate: profile.hd_enabled ? true : hdEnabled,
                             ed_activate: profile.ed_enabled ? true : edEnabled,
+                            artist_preset: artistPreset || '',
+                            natural_language: naturalLanguagePreset
+                                ? (assetTags?.natural_language_presets?.[naturalLanguagePreset] || '')
+                                : '',
                         };
 
                         // 개별 고급 설정 우선, 없으면 글로벌 설정 사용
@@ -9719,6 +9749,8 @@
                     fd_enabled: false,
                     hd_enabled: false,
                     ed_enabled: false,
+                    artist_preset: '',
+                    natural_language_preset: '',
                 };
                 if (category === 'expressions') chain.expression = m.name;
                 else if (category === 'composition') chain.composition_preset = m.name;
@@ -17400,7 +17432,7 @@
         }
 
         function addBatchChainSlot(data) {
-            const slot = data || {
+            const defaults = {
                 character: '',
                 appearance: '',
                 outfit: '',
@@ -17430,8 +17462,10 @@
                 hd_enabled: false,
                 ed_enabled: false,
                 artist_preset: '',
+                natural_language_preset: '',
                 natural_language: '',
             };
+            const slot = { ...defaults, ...(data || {}) };
             slot._id = ++batchSlotIdCounter;
             batchChains.push(slot);
             renderBatchChain();
@@ -17460,6 +17494,7 @@
             const cnOptions = buildPresetOptions(assetTags?.character_negative_presets || {}, '', '-- 변경 안함 --');
             const negOptions = buildPresetOptions(assetTags?.negative_presets || {}, '', '-- 변경 안함 --');
             const artistOptions = buildPresetOptions(assetTags?.artist_presets || {}, '', '-- 변경 안함 --');
+            const nlOptions = buildPresetOptions(assetTags?.natural_language_presets || {}, '', '-- 변경 안함 --');
 
             const overlay = document.createElement('div');
             overlay.id = 'batch-bulk-overlay';
@@ -17482,7 +17517,7 @@
                     <div><div class="batch-field-label">캐릭터 부정(optional)</div><select id="bulk-character-negative" class="batch-select">${cnOptions}</select></div>
                     <div><div class="batch-field-label">부정 태그 프리셋</div><select id="bulk-negative" class="batch-select">${negOptions}</select></div>
                     <div><div class="batch-field-label">아티스트 프리셋</div><select id="bulk-artist" class="batch-select">${artistOptions}</select></div>
-                    <div><div class="batch-field-label">자연어</div><textarea id="bulk-natural-language" rows="2" placeholder="일괄 적용할 자연어 텍스트 (빈칸=변경 안함)" style="width:100%; padding:4px 6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:4px; font-size:0.8rem; resize:vertical; font-family:inherit;"></textarea></div>
+                    <div><div class="batch-field-label">자연어 프리셋</div><select id="bulk-natural-language-preset" class="batch-select">${nlOptions}</select></div>
 
                     <div style="border-top:1px solid var(--border); padding-top:10px;">
                         <div class="batch-field-label" style="margin-bottom:6px;">레퍼런스 일괄 설정</div>
@@ -18062,8 +18097,8 @@
                 character_negative_preset: document.getElementById('bulk-character-negative').value,
                 negative_preset: document.getElementById('bulk-negative').value,
                 artist_preset: document.getElementById('bulk-artist').value,
+                natural_language_preset: document.getElementById('bulk-natural-language-preset').value,
             };
-            const bulkNaturalLanguage = document.getElementById('bulk-natural-language')?.value?.trim() || '';
             const refAction = document.getElementById('bulk-ref-action').value;
             const refStrengthCheck = document.getElementById('bulk-ref-strength-check').checked;
             const refStrength = parseFloat(document.getElementById('bulk-ref-strength').value);
@@ -18093,7 +18128,7 @@
                 if (fields.character_negative_preset) slot.character_negative_preset = fields.character_negative_preset;
                 if (fields.negative_preset) slot.negative_preset = fields.negative_preset;
                 if (fields.artist_preset) slot.artist_preset = fields.artist_preset;
-                if (bulkNaturalLanguage) slot.natural_language = bulkNaturalLanguage;
+                if (fields.natural_language_preset) slot.natural_language_preset = fields.natural_language_preset;
                 if (refAction === 'on') slot.ref_enabled = true;
                 if (refAction === 'off') slot.ref_enabled = false;
                 if (refStrengthCheck) slot.ref_strength = refStrength;
@@ -18206,6 +18241,7 @@
             const cnSel = buildCustomSelectHTML(assetTags?.character_negative_presets || {}, slot.character_negative_preset, '-- 캐릭터 부정 프리셋 --', 'character_negative_preset');
             const negSel = buildCustomSelectHTML(assetTags?.negative_presets || {}, slot.negative_preset, '-- 부정 프리셋 --', 'negative_preset');
             const artistSel = buildCustomSelectHTML(assetTags?.artist_presets || {}, slot.artist_preset, '-- 아티스트 프리셋 --', 'artist_preset');
+            const nlSel = buildCustomSelectHTML(assetTags?.natural_language_presets || {}, slot.natural_language_preset, '-- 자연어 프리셋 --', 'natural_language_preset');
             const refPreviewUrls = slot.ref_preview_url ? slot.ref_preview_url.split('|').filter(Boolean) : [];
             const styleRefPreviewUrls = slot.style_ref_preview_url ? slot.style_ref_preview_url.split('|').filter(Boolean) : [];
 
@@ -18224,7 +18260,7 @@
                 <div class="batch-field-group"><div class="batch-field-label">캐릭터 부정(optional)</div>${cnSel}</div>
                 <div class="batch-field-group"><div class="batch-field-label">부정 태그</div>${negSel}</div>
                 <div class="batch-field-group"><div class="batch-field-label">아티스트 프리셋</div>${artistSel}</div>
-                <div class="batch-field-group"><div class="batch-field-label">자연어</div><textarea data-field="natural_language" rows="2" placeholder="자연어 프롬프트..." style="width:100%; padding:4px 6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:4px; font-size:0.75rem; resize:vertical; font-family:inherit;">${escapeHtml(slot.natural_language || '')}</textarea></div>
+                <div class="batch-field-group"><div class="batch-field-label">자연어</div>${nlSel}</div>
 
                 <div class="batch-toggle-row">
                     <label>레퍼런스</label>
@@ -19333,7 +19369,9 @@
                             hd_activate: slot.hd_enabled,
                             ed_activate: slot.ed_enabled,
                             artist_preset: slot.artist_preset || '',
-                            natural_language: slot.natural_language || '',
+                            natural_language: slot.natural_language_preset
+                                ? (assetTags?.natural_language_presets?.[slot.natural_language_preset] || slot.natural_language || '')
+                                : (slot.natural_language || ''),
                             lora_trigger_words: (slot.lora_list || []).map(l => l.trigger).filter(t => t && t.trim()).join(', '),
                         };
 
@@ -19539,13 +19577,14 @@
                     _id: ++batchSlotIdCounter,
                     hrf_enabled: !!c.hrf_enabled,
                     artist_preset: c.artist_preset || '',
+                    natural_language_preset: c.natural_language_preset || '',
                     natural_language: c.natural_language || '',
                     ref_preview_url: c.ref_preview_url || c.ref_image_data || '',
                 }));
                 document.getElementById('batch-repeat-count').value = preset.repeat || 1;
 
-                // 마이그레이션: hrf_enabled/artist_preset/natural_language가 없던旧프리셋이면 기본값으로 채우고 자동 저장
-                const needsMigration = (preset.chains || []).some(c => c.hrf_enabled === undefined || c.artist_preset === undefined || c.natural_language === undefined);
+                // 마이그레이션: hrf_enabled/artist_preset/natural_language/natural_language_preset가 없던旧프리셋이면 기본값으로 채우고 자동 저장
+                const needsMigration = (preset.chains || []).some(c => c.hrf_enabled === undefined || c.artist_preset === undefined || c.natural_language === undefined || c.natural_language_preset === undefined);
                 if (needsMigration) {
                     const chainsData = batchChains.map(c => {
                         const copy = { ...c };
