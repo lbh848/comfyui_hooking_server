@@ -2047,39 +2047,6 @@
         .tag-autocomplete-dropdown .ac-item:last-child { border-bottom: none; }
         .tag-autocomplete-dropdown .ac-item:hover { background: var(--surface2); }
         .tag-autocomplete-dropdown .ac-item mark { background: var(--accent); color: #fff; border-radius: 2px; padding: 0 2px; }
-        .asset-select-filter {
-            width: 100%;
-            padding: 3px 6px;
-            font-size: 0.75rem;
-            border: 1px solid var(--border);
-            border-radius: 4px;
-            background: var(--bg);
-            color: var(--text);
-            margin-bottom: 2px;
-            box-sizing: border-box;
-        }
-        .asset-select-filter::placeholder { color: var(--text-muted); }
-        .asset-select-dd {
-            display: none;
-            position: absolute;
-            z-index: 9999;
-            background: var(--surface2);
-            border: 1px solid var(--border);
-            border-radius: 4px;
-            max-height: 180px;
-            overflow-y: auto;
-            box-sizing: border-box;
-        }
-        .asset-select-dd.visible { display: block; }
-        .asset-select-dd-item {
-            padding: 4px 8px;
-            font-size: 0.75rem;
-            cursor: pointer;
-            color: var(--text);
-        }
-        .asset-select-dd-item:hover,
-        .asset-select-dd-item.active { background: var(--accent); color: #fff; }
-        .asset-select-dd-item mark { background: var(--accent); color: #fff; border-radius: 2px; padding: 0 1px; }
         .ac-tooltip {
             display: none;
             position: fixed;
@@ -2690,10 +2657,7 @@
                     <!-- 외모 -->
                     <div style="margin-bottom:8px;">
                         <div style="font-size:0.7rem; color:var(--text-secondary); margin-bottom:2px;">외모</div>
-                        <input type="text" class="asset-select-filter" data-filter-for="asset-appearance-select" placeholder="검색...">
-                        <select id="asset-appearance-select" onchange="onAssetAppearanceChange(); this.previousElementSibling.value='';">
-                            <option value="">-- 외모 선택 --</option>
-                        </select>
+                        <div id="asset-appearance-select-container"></div>
                         <div style="display:flex; gap:4px; margin-top:3px;">
                             <button onclick="addAssetAppearance()" style="flex:1; background:var(--accent); color:#fff; border:none; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">추가</button>
                             <button onclick="duplicateAssetAppearance()" style="flex:1; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">복제</button>
@@ -2710,10 +2674,7 @@
                     <!-- 복장 -->
                     <div style="margin-bottom:8px;">
                         <div style="font-size:0.7rem; color:var(--text-secondary); margin-bottom:2px;">복장</div>
-                        <input type="text" class="asset-select-filter" data-filter-for="asset-outfit-select" placeholder="검색...">
-                        <select id="asset-outfit-select" onchange="onAssetOutfitChange(); this.previousElementSibling.value='';">
-                            <option value="">-- 복장 선택 --</option>
-                        </select>
+                        <div id="asset-outfit-select-container"></div>
                         <div style="display:flex; gap:4px; margin-top:3px;">
                             <button onclick="addAssetOutfit()" style="flex:1; background:var(--accent); color:#fff; border:none; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">추가</button>
                             <button onclick="duplicateAssetOutfit()" style="flex:1; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">복제</button>
@@ -2730,10 +2691,7 @@
                     <!-- 표정 -->
                     <div>
                         <div style="font-size:0.7rem; color:var(--text-secondary); margin-bottom:2px;">표정</div>
-                        <input type="text" class="asset-select-filter" data-filter-for="asset-expression-select" placeholder="검색...">
-                        <select id="asset-expression-select" onchange="onAssetExpressionChange(); this.previousElementSibling.value='';">
-                            <option value="">-- 표정 선택 --</option>
-                        </select>
+                        <div id="asset-expression-select-container"></div>
                         <div style="display:flex; gap:4px; margin-top:3px;">
                             <button onclick="addAssetExpression()" style="flex:1; background:var(--accent); color:#fff; border:none; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">추가</button>
                             <button onclick="duplicateAssetExpression()" style="flex:1; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">복제</button>
@@ -2751,14 +2709,13 @@
                     <!-- 구도/기타 태그 섹션 -->
                     <div style="background:rgba(156,39,176,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
                     <div class="section-title">구도/기타 태그</div>
-                    <div style="display:flex; gap:4px; margin-bottom:6px; flex-wrap:wrap; align-items:center;">
-                        <input type="text" class="asset-select-filter" data-filter-for="asset-composition-preset-select" placeholder="검색..." style="flex-basis:100%; margin-bottom:4px;">
-                        <select id="asset-composition-preset-select" onchange="loadCompositionPreset(); this.previousElementSibling.value='';" style="flex:1; min-width:100px; font-size:0.8rem;">
-                            <option value="">-- 프리셋 --</option>
-                        </select>
-                        <button onclick="addCompositionPreset()" style="flex:0; background:var(--accent); color:#fff; border:none; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">추가</button>
-                        <button onclick="duplicateCompositionPreset()" style="flex:0; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">복제</button>
-                        <button onclick="deleteCompositionPreset()" style="flex:0; background:var(--error); color:#fff; border:none; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">삭제</button>
+                    <div style="margin-bottom:6px;">
+                        <div id="asset-composition-preset-select-container"></div>
+                        <div style="display:flex; gap:4px; margin-top:3px;">
+                            <button onclick="addCompositionPreset()" style="flex:1; background:var(--accent); color:#fff; border:none; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">추가</button>
+                            <button onclick="duplicateCompositionPreset()" style="flex:1; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">복제</button>
+                            <button onclick="deleteCompositionPreset()" style="flex:1; background:var(--error); color:#fff; border:none; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">삭제</button>
+                        </div>
                     </div>
                     <div id="asset-composition-tags" class="tag-list"></div>
                     <div class="inline-add" style="margin-top:4px; position:relative;">
@@ -2771,14 +2728,13 @@
                     <!-- 아티스트 프리셋 섹션 -->
                     <div style="background:rgba(233,30,99,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
                     <div class="section-title">아티스트 프리셋</div>
-                    <div style="display:flex; gap:4px; margin-bottom:6px; flex-wrap:wrap; align-items:center;">
-                        <input type="text" class="asset-select-filter" data-filter-for="asset-artist-preset-select" placeholder="검색..." style="flex-basis:100%; margin-bottom:4px;">
-                        <select id="asset-artist-preset-select" onchange="loadArtistPreset(); this.previousElementSibling.value='';" style="flex:1; min-width:100px; font-size:0.8rem;">
-                            <option value="">-- 프리셋 --</option>
-                        </select>
-                        <button onclick="addArtistPreset()" style="flex:0; background:var(--accent); color:#fff; border:none; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">추가</button>
-                        <button onclick="duplicateArtistPreset()" style="flex:0; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">복제</button>
-                        <button onclick="deleteArtistPreset()" style="flex:0; background:var(--error); color:#fff; border:none; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">삭제</button>
+                    <div style="margin-bottom:6px;">
+                        <div id="asset-artist-preset-select-container"></div>
+                        <div style="display:flex; gap:4px; margin-top:3px;">
+                            <button onclick="addArtistPreset()" style="flex:1; background:var(--accent); color:#fff; border:none; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">추가</button>
+                            <button onclick="duplicateArtistPreset()" style="flex:1; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">복제</button>
+                            <button onclick="deleteArtistPreset()" style="flex:1; background:var(--error); color:#fff; border:none; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">삭제</button>
+                        </div>
                     </div>
                     <div id="asset-artist-tags" class="tag-list"></div>
                     <div class="inline-add" style="margin-top:4px; position:relative;">
@@ -2791,14 +2747,13 @@
                     <!-- 품질 태그 섹션 -->
                     <div style="background:rgba(76,175,80,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
                     <div class="section-title">품질 태그</div>
-                    <div style="display:flex; gap:4px; margin-bottom:6px; flex-wrap:wrap; align-items:center;">
-                        <input type="text" class="asset-select-filter" data-filter-for="asset-quality-preset-select" placeholder="검색..." style="flex-basis:100%; margin-bottom:4px;">
-                        <select id="asset-quality-preset-select" onchange="loadQualityPreset(); this.previousElementSibling.value='';" style="flex:1; min-width:100px; font-size:0.8rem;">
-                            <option value="">-- 프리셋 --</option>
-                        </select>
-                        <button onclick="addQualityPreset()" style="flex:0; background:var(--accent); color:#fff; border:none; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">추가</button>
-                        <button onclick="duplicateQualityPreset()" style="flex:0; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">복제</button>
-                        <button onclick="deleteQualityPreset()" style="flex:0; background:var(--error); color:#fff; border:none; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">삭제</button>
+                    <div style="margin-bottom:6px;">
+                        <div id="asset-quality-preset-select-container"></div>
+                        <div style="display:flex; gap:4px; margin-top:3px;">
+                            <button onclick="addQualityPreset()" style="flex:1; background:var(--accent); color:#fff; border:none; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">추가</button>
+                            <button onclick="duplicateQualityPreset()" style="flex:1; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">복제</button>
+                            <button onclick="deleteQualityPreset()" style="flex:1; background:var(--error); color:#fff; border:none; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">삭제</button>
+                        </div>
                     </div>
                     <div id="asset-quality-tags" class="tag-list"></div>
                     <div class="inline-add" style="margin-top:4px; position:relative;">
@@ -2811,14 +2766,13 @@
                     <!-- 자연어 프리셋 섹션 -->
                     <div style="background:rgba(0,150,136,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
                     <div class="section-title">자연어 프리셋</div>
-                    <div style="display:flex; gap:4px; margin-bottom:6px; flex-wrap:wrap; align-items:center;">
-                        <input type="text" class="asset-select-filter" data-filter-for="asset-natural-language-preset-select" placeholder="검색..." style="flex-basis:100%; margin-bottom:4px;">
-                        <select id="asset-natural-language-preset-select" onchange="loadNaturalLanguagePreset(); this.previousElementSibling.value='';" style="flex:1; min-width:100px; font-size:0.8rem;">
-                            <option value="">-- 프리셋 --</option>
-                        </select>
-                        <button onclick="addNaturalLanguagePreset()" style="flex:0; background:var(--accent); color:#fff; border:none; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">추가</button>
-                        <button onclick="duplicateNaturalLanguagePreset()" style="flex:0; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">복제</button>
-                        <button onclick="deleteNaturalLanguagePreset()" style="flex:0; background:var(--error); color:#fff; border:none; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">삭제</button>
+                    <div style="margin-bottom:6px;">
+                        <div id="asset-natural-language-preset-select-container"></div>
+                        <div style="display:flex; gap:4px; margin-top:3px;">
+                            <button onclick="addNaturalLanguagePreset()" style="flex:1; background:var(--accent); color:#fff; border:none; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">추가</button>
+                            <button onclick="duplicateNaturalLanguagePreset()" style="flex:1; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">복제</button>
+                            <button onclick="deleteNaturalLanguagePreset()" style="flex:1; background:var(--error); color:#fff; border:none; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">삭제</button>
+                        </div>
                     </div>
                     <textarea id="asset-natural-language-text" placeholder="자연어 프롬프트 텍스트 입력..." rows="3" style="width:100%; padding:6px 8px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:6px; font-size:0.8rem; resize:vertical; font-family:inherit;"></textarea>
                     </div>
@@ -2830,14 +2784,13 @@
                     <div style="font-size:0.7rem; color:var(--text-secondary); margin-bottom:6px; padding:4px 6px; background:rgba(0,0,0,0.05); border-radius:4px;">
                         부정 프롬프트 조립 순서: 캐릭터 부정 태그 → 부정 태그
                     </div>
-                    <div style="display:flex; gap:4px; margin-bottom:6px; flex-wrap:wrap; align-items:center;">
-                        <input type="text" class="asset-select-filter" data-filter-for="asset-character-negative-preset-select" placeholder="검색..." style="flex-basis:100%; margin-bottom:4px;">
-                        <select id="asset-character-negative-preset-select" onchange="loadCharacterNegativePreset(); this.previousElementSibling.value='';" style="flex:1; min-width:100px; font-size:0.8rem;">
-                            <option value="">-- 프리셋 --</option>
-                        </select>
-                        <button onclick="addCharacterNegativePreset()" style="flex:0; background:var(--accent); color:#fff; border:none; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">추가</button>
-                        <button onclick="duplicateCharacterNegativePreset()" style="flex:0; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">복제</button>
-                        <button onclick="deleteCharacterNegativePreset()" style="flex:0; background:var(--error); color:#fff; border:none; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">삭제</button>
+                    <div style="margin-bottom:6px;">
+                        <div id="asset-character-negative-preset-select-container"></div>
+                        <div style="display:flex; gap:4px; margin-top:3px;">
+                            <button onclick="addCharacterNegativePreset()" style="flex:1; background:var(--accent); color:#fff; border:none; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">추가</button>
+                            <button onclick="duplicateCharacterNegativePreset()" style="flex:1; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">복제</button>
+                            <button onclick="deleteCharacterNegativePreset()" style="flex:1; background:var(--error); color:#fff; border:none; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">삭제</button>
+                        </div>
                     </div>
                     <div id="asset-character-negative-tags" class="tag-list"></div>
                     <div class="inline-add" style="margin-top:4px; position:relative;">
@@ -2850,14 +2803,13 @@
                     <!-- 부정 태그 섹션 -->
                     <div style="background:rgba(244,67,54,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
                     <div class="section-title">부정 태그</div>
-                    <div style="display:flex; gap:4px; margin-bottom:6px; flex-wrap:wrap; align-items:center;">
-                        <input type="text" class="asset-select-filter" data-filter-for="asset-negative-preset-select" placeholder="검색..." style="flex-basis:100%; margin-bottom:4px;">
-                        <select id="asset-negative-preset-select" onchange="loadNegativePreset(); this.previousElementSibling.value='';" style="flex:1; min-width:100px; font-size:0.8rem;">
-                            <option value="">-- 프리셋 --</option>
-                        </select>
-                        <button onclick="addNegativePreset()" style="flex:0; background:var(--accent); color:#fff; border:none; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">추가</button>
-                        <button onclick="duplicateNegativePreset()" style="flex:0; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">복제</button>
-                        <button onclick="deleteNegativePreset()" style="flex:0; background:var(--error); color:#fff; border:none; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">삭제</button>
+                    <div style="margin-bottom:6px;">
+                        <div id="asset-negative-preset-select-container"></div>
+                        <div style="display:flex; gap:4px; margin-top:3px;">
+                            <button onclick="addNegativePreset()" style="flex:1; background:var(--accent); color:#fff; border:none; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">추가</button>
+                            <button onclick="duplicateNegativePreset()" style="flex:1; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">복제</button>
+                            <button onclick="deleteNegativePreset()" style="flex:1; background:var(--error); color:#fff; border:none; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">삭제</button>
+                        </div>
                     </div>
                     <div id="asset-negative-tags" class="tag-list"></div>
                     <div class="inline-add" style="margin-top:4px; position:relative;">
@@ -12250,40 +12202,21 @@
                 charSelect.appendChild(opt);
             }
 
-            // 전역 외모/복장/표정 드롭다운 렌더
-            const prevApp = document.getElementById('asset-appearance-select').value;
-            const prevOutfit = document.getElementById('asset-outfit-select').value;
-            const prevExpr = document.getElementById('asset-expression-select').value;
+            // 전역 외모/복장/표정 custom-select 렌더
+            const prevApp = getAssetSelectValue('asset-appearance-select');
+            const prevOutfit = getAssetSelectValue('asset-outfit-select');
+            const prevExpr = getAssetSelectValue('asset-expression-select');
 
-            const appSelect = document.getElementById('asset-appearance-select');
-            appSelect.innerHTML = '<option value="">-- 외모 선택 --</option>';
-            for (const name of Object.keys(assetTags.appearances || {}).sort()) {
-                const opt = document.createElement('option');
-                opt.value = name;
-                opt.textContent = name;
-                if (name === prevApp) opt.selected = true;
-                appSelect.appendChild(opt);
-            }
+            const appContainer = document.getElementById('asset-appearance-select-container');
+            appContainer.innerHTML = buildAssetCustomSelect(assetTags.appearances || {}, prevApp, '-- 외모 선택 --', 'asset-appearance-select', 'onAssetAppearanceChange');
 
-            const outfitSelect = document.getElementById('asset-outfit-select');
-            outfitSelect.innerHTML = '<option value="">-- 복장 선택 --</option>';
-            for (const name of Object.keys(assetTags.outfits || {}).sort()) {
-                const opt = document.createElement('option');
-                opt.value = name;
-                opt.textContent = name;
-                if (name === prevOutfit) opt.selected = true;
-                outfitSelect.appendChild(opt);
-            }
+            const outfitContainer = document.getElementById('asset-outfit-select-container');
+            outfitContainer.innerHTML = buildAssetCustomSelect(assetTags.outfits || {}, prevOutfit, '-- 복장 선택 --', 'asset-outfit-select', 'onAssetOutfitChange');
 
-            const exprSelect = document.getElementById('asset-expression-select');
-            exprSelect.innerHTML = '<option value="">-- 표정 선택 --</option>';
-            for (const name of Object.keys(assetTags.expressions || {}).sort()) {
-                const opt = document.createElement('option');
-                opt.value = name;
-                opt.textContent = name;
-                if (name === prevExpr) opt.selected = true;
-                exprSelect.appendChild(opt);
-            }
+            const exprContainer = document.getElementById('asset-expression-select-container');
+            exprContainer.innerHTML = buildAssetCustomSelect(assetTags.expressions || {}, prevExpr, '-- 표정 선택 --', 'asset-expression-select', 'onAssetExpressionChange');
+
+            bindAssetCustomSelects();
 
             // 품질/구도/캐릭터 부정/부정 태그
             renderTagChips('asset-quality-tags', assetTags.quality || [], 'removeAssetQualityTag');
@@ -12291,32 +12224,36 @@
             renderTagChips('asset-character-negative-tags', assetTags.character_negative || [], 'removeAssetCharacterNegativeTag');
             renderTagChips('asset-negative-tags', assetTags.negative || [], 'removeAssetNegativeTag');
 
-            // 모든 프리셋 드롭다운 렌더
-            const presetKeys = [
-                ['quality_presets', 'asset-quality-preset-select', '-- 프리셋 --'],
-                ['composition_presets', 'asset-composition-preset-select', '-- 프리셋 --'],
-                ['character_negative_presets', 'asset-character-negative-preset-select', '-- 프리셋 --'],
-                ['negative_presets', 'asset-negative-preset-select', '-- 프리셋 --'],
-                ['character_presets', 'asset-character-preset-select', '-- 캐릭터 프리셋 --'],
-                ['artist_presets', 'asset-artist-preset-select', '-- 프리셋 --'],
-                ['natural_language_presets', 'asset-natural-language-preset-select', '-- 프리셋 --'],
+            // 모든 프리셋 custom-select 렌더
+            const customSelectPresets = [
+                ['quality_presets', 'asset-quality-preset-select', '-- 프리셋 --', 'loadQualityPreset'],
+                ['composition_presets', 'asset-composition-preset-select', '-- 프리셋 --', 'loadCompositionPreset'],
+                ['character_negative_presets', 'asset-character-negative-preset-select', '-- 프리셋 --', 'loadCharacterNegativePreset'],
+                ['negative_presets', 'asset-negative-preset-select', '-- 프리셋 --', 'loadNegativePreset'],
+                ['artist_presets', 'asset-artist-preset-select', '-- 프리셋 --', 'loadArtistPreset'],
+                ['natural_language_presets', 'asset-natural-language-preset-select', '-- 프리셋 --', 'loadNaturalLanguagePreset'],
             ];
-            presetKeys.forEach(([key, selectId, placeholder]) => {
-                const sel = document.getElementById(selectId);
-                if (!sel) return;
-                const prev = sel.value;
-                sel.innerHTML = `<option value="">${placeholder}</option>`;
-                for (const name of Object.keys(assetTags[key] || {}).sort()) {
+            customSelectPresets.forEach(([key, selectId, placeholder, onChangeFn]) => {
+                const prev = getAssetSelectValue(selectId);
+                const container = document.getElementById(selectId + '-container');
+                if (!container) return;
+                container.innerHTML = buildAssetCustomSelect(assetTags[key] || {}, prev, placeholder, selectId, onChangeFn);
+            });
+            bindAssetCustomSelects();
+
+            // 캐릭터 프리셋 select (기존 방식 유지)
+            const charPresetSel = document.getElementById('asset-character-preset-select');
+            if (charPresetSel) {
+                const prevCharPreset = charPresetSel.value;
+                charPresetSel.innerHTML = '<option value="">-- 캐릭터 프리셋 --</option>';
+                for (const name of Object.keys(assetTags.character_presets || {}).sort()) {
                     const opt = document.createElement('option');
                     opt.value = name;
                     opt.textContent = name;
-                    if (name === prev) opt.selected = true;
-                    sel.appendChild(opt);
+                    if (name === prevCharPreset) opt.selected = true;
+                    charPresetSel.appendChild(opt);
                 }
-            });
-
-            // select 재구성 후 검색 input 클리어
-            document.querySelectorAll('.asset-select-filter').forEach(i => { i.value = ''; });
+            }
 
             onAssetCharacterChange(true);
             onCharacterPresetSelect();
@@ -12385,9 +12322,9 @@
             await assetTagAction('add_character', { name: name.trim() });
             // 새 캐릭터 선택 + 모든 셀렉트 초기화
             document.getElementById('asset-character-select').value = name.trim();
-            document.getElementById('asset-appearance-select').value = '';
-            document.getElementById('asset-outfit-select').value = '';
-            document.getElementById('asset-expression-select').value = '';
+            setAssetSelectValue('asset-appearance-select', '');
+            setAssetSelectValue('asset-outfit-select', '');
+            setAssetSelectValue('asset-expression-select', '');
             onAssetAppearanceChange();
             onAssetOutfitChange();
             onAssetExpressionChange();
@@ -12429,128 +12366,109 @@
             }
         }
 
-        // ─── 에셋 select 검색 자동완성 ───
-        (function() {
-
-            function hideDD(dd) { if (dd) dd.classList.remove('visible'); }
-
-            function showDD(inputEl, selectId, query) {
-                const sel = document.getElementById(selectId);
-                if (!sel) return;
-
-                // 각 input 바로 뒤에 고유 드롭다운
-                let dd = inputEl.nextElementSibling;
-                if (!dd || !dd.classList.contains('asset-select-dd')) {
-                    dd = document.createElement('div');
-                    dd.className = 'asset-select-dd';
-                    inputEl.parentNode.insertBefore(dd, inputEl.nextSibling);
-                }
-
-                const q = query.toLowerCase().trim();
-                const items = [];
-                for (const opt of sel.options) {
-                    if (opt.value && (!q || opt.textContent.toLowerCase().includes(q))) {
-                        items.push({ v: opt.value, t: opt.textContent });
-                    }
-                }
-                dd.innerHTML = '';
-                if (!items.length) { hideDD(dd); return; }
-
-                items.forEach(({ v, t }) => {
-                    const div = document.createElement('div');
-                    div.className = 'asset-select-dd-item';
-                    if (q) {
-                        const idx = t.toLowerCase().indexOf(q);
-                        if (idx >= 0) {
-                            div.innerHTML = t.substring(0, idx) + '<mark>' + t.substring(idx, idx + q.length) + '</mark>' + t.substring(idx + q.length);
-                        } else {
-                            div.textContent = t;
-                        }
-                    } else {
-                        div.textContent = t;
-                    }
-                    div.addEventListener('mousedown', function(e) {
-                        e.preventDefault();
-                        const sidebar = document.getElementById('asset-sidebar');
-                        const savedScroll = sidebar ? sidebar.scrollTop : 0;
-                        sel.value = v;
-                        sel.dispatchEvent(new Event('change'));
-                        inputEl.value = '';
-                        hideDD(dd);
-                        if (sidebar) sidebar.scrollTop = savedScroll;
-                    });
-                    dd.appendChild(div);
-                });
-
-                // input 바로 아래, 부모 기준 position:absolute
-                dd.style.left = inputEl.offsetLeft + 'px';
-                dd.style.top = (inputEl.offsetTop + inputEl.offsetHeight) + 'px';
-                dd.style.width = inputEl.offsetWidth + 'px';
-                dd.classList.add('visible');
+        // ─── 에셋 사이드바 custom-select 헬퍼 ───
+        function buildAssetCustomSelect(dataObj, selectedValue, placeholder, selectId, onChangeFnName) {
+            const sortedKeys = Object.keys(dataObj || {}).sort();
+            const displayText = selectedValue || placeholder;
+            let html = `<div class="custom-select" data-select-id="${selectId}" data-onchange="${onChangeFnName}">`;
+            html += `<div class="custom-select-value">${escapeHtml(displayText)}</div>`;
+            html += `<div class="custom-select-options">`;
+            html += `<input class="custom-select-search" placeholder="검색..." autocomplete="off" />`;
+            html += `<div class="custom-select-option-list">`;
+            html += `<div class="custom-select-option placeholder-opt${!selectedValue ? ' selected' : ''}" data-value="">${escapeHtml(placeholder)}</div>`;
+            for (const name of sortedKeys) {
+                const sel = name === selectedValue ? ' selected' : '';
+                html += `<div class="custom-select-option${sel}" data-value="${escapeHtml(name)}">${escapeHtml(name)}</div>`;
             }
+            html += `</div></div></div>`;
+            return html;
+        }
 
-            // 각 검색 input에 이벤트 연결
-            document.querySelectorAll('.asset-select-filter').forEach(input => {
-                const selectId = input.getAttribute('data-filter-for');
-                if (!selectId) return;
+        function getAssetSelectValue(selectId) {
+            const cs = document.querySelector(`.custom-select[data-select-id="${selectId}"]`);
+            if (!cs) return '';
+            const selected = cs.querySelector('.custom-select-option.selected');
+            return selected ? selected.dataset.value : '';
+        }
 
-                // 부모에 position:relative 보장
-                const parent = input.parentNode;
-                if (getComputedStyle(parent).position === 'static') {
-                    parent.style.position = 'relative';
+        function setAssetSelectValue(selectId, value) {
+            const cs = document.querySelector(`.custom-select[data-select-id="${selectId}"]`);
+            if (!cs) return;
+            const valueEl = cs.querySelector('.custom-select-value');
+            const optionList = cs.querySelector('.custom-select-option-list');
+            const options = optionList.querySelectorAll('.custom-select-option');
+            let found = false;
+            options.forEach(opt => {
+                opt.classList.remove('selected');
+                if (opt.dataset.value === value) {
+                    opt.classList.add('selected');
+                    valueEl.textContent = opt.textContent;
+                    found = true;
                 }
+            });
+            if (!found && !value) {
+                const placeholder = optionList.querySelector('.placeholder-opt');
+                if (placeholder) {
+                    placeholder.classList.add('selected');
+                    valueEl.textContent = placeholder.textContent;
+                }
+            }
+        }
 
-                input.addEventListener('input', function() {
-                    showDD(this, selectId, this.value);
+        function bindAssetCustomSelects() {
+            document.querySelectorAll('.custom-select[data-select-id]').forEach(cs => {
+                const selectId = cs.dataset.selectId;
+                const onChangeFn = cs.dataset.onchange;
+                const valueEl = cs.querySelector('.custom-select-value');
+                const searchInput = cs.querySelector('.custom-select-search');
+                const optionList = cs.querySelector('.custom-select-option-list');
+
+                // 이미 바인딩된 경우 스킵
+                if (cs.dataset.bound) return;
+                cs.dataset.bound = 'true';
+
+                // 열기/닫기 토글
+                cs.addEventListener('click', (e) => {
+                    if (e.target.closest('.custom-select-option')) return;
+                    if (e.target.closest('.custom-select-search')) return;
+                    const wasOpen = cs.classList.contains('open');
+                    document.querySelectorAll('.custom-select.open').forEach(o => o.classList.remove('open'));
+                    if (!wasOpen) {
+                        cs.classList.add('open');
+                        searchInput.value = '';
+                        filterCustomOptions(optionList, '');
+                        requestAnimationFrame(() => searchInput.focus());
+                    }
                 });
 
-                input.addEventListener('focus', function() {
-                    showDD(this, selectId, this.value);
+                // 검색 필터링
+                searchInput.addEventListener('input', (e) => {
+                    e.stopPropagation();
+                    filterCustomOptions(optionList, searchInput.value);
                 });
+                searchInput.addEventListener('click', (e) => e.stopPropagation());
 
-                input.addEventListener('blur', function() {
-                    const dd = this.nextElementSibling;
-                    setTimeout(() => hideDD(dd), 150);
-                });
+                // 옵션 선택
+                optionList.addEventListener('click', (e) => {
+                    const opt = e.target.closest('.custom-select-option');
+                    if (!opt) return;
+                    e.stopPropagation();
+                    const val = opt.dataset.value;
+                    valueEl.textContent = opt.textContent;
+                    optionList.querySelectorAll('.custom-select-option').forEach(o => o.classList.remove('selected'));
+                    opt.classList.add('selected');
+                    cs.classList.remove('open');
 
-                input.addEventListener('keydown', function(e) {
-                    const dd = this.nextElementSibling;
-                    if (!dd || !dd.classList.contains('asset-select-dd')) return;
-                    const items = dd.querySelectorAll('.asset-select-dd-item');
-                    if (!dd.classList.contains('visible') || !items.length) return;
-
-                    let idx = Array.from(items).findIndex(i => i.classList.contains('active'));
-                    if (e.key === 'ArrowDown') {
-                        e.preventDefault();
-                        if (idx >= 0) items[idx].classList.remove('active');
-                        idx = (idx + 1) % items.length;
-                        items[idx].classList.add('active');
-                        items[idx].scrollIntoView({ block: 'nearest' });
-                    } else if (e.key === 'ArrowUp') {
-                        e.preventDefault();
-                        if (idx >= 0) items[idx].classList.remove('active');
-                        idx = (idx - 1 + items.length) % items.length;
-                        items[idx].classList.add('active');
-                        items[idx].scrollIntoView({ block: 'nearest' });
-                    } else if (e.key === 'Enter') {
-                        e.preventDefault();
-                        if (idx >= 0) items[idx].dispatchEvent(new Event('mousedown'));
-                    } else if (e.key === 'Escape') {
-                        hideDD(dd);
+                    // onChange 콜백 실행
+                    if (onChangeFn && typeof window[onChangeFn] === 'function') {
+                        window[onChangeFn]();
                     }
                 });
             });
-
-            // 외부 클릭 시 모든 드롭다운 닫기
-            document.addEventListener('click', function(e) {
-                if (!e.target.closest('.asset-select-filter') && !e.target.closest('.asset-select-dd')) {
-                    document.querySelectorAll('.asset-select-dd.visible').forEach(d => d.classList.remove('visible'));
-                }
-            });
-        })();
+        }
 
         function onAssetAppearanceChange() {
-            const app = document.getElementById('asset-appearance-select').value;
+            const app = getAssetSelectValue('asset-appearance-select');
             const tagsDiv = document.getElementById('asset-appearance-tags');
             tagsDiv.innerHTML = '';
 
@@ -12572,14 +12490,14 @@
         }
 
         function removeAssetAppearance() {
-            const app = document.getElementById('asset-appearance-select').value;
+            const app = getAssetSelectValue('asset-appearance-select');
             if (!app) return;
             if (!confirm(`외모 "${app}" 삭제?`)) return;
             assetTagAction('remove_appearance', { name: app });
         }
 
         function duplicateAssetAppearance() {
-            const app = document.getElementById('asset-appearance-select').value;
+            const app = getAssetSelectValue('asset-appearance-select');
             if (!app) return;
             const newName = prompt(`복제할 외모명`, app + ' 복사본');
             if (!newName || !newName.trim()) return;
@@ -12587,7 +12505,7 @@
         }
 
         function addAssetAppearanceTag() {
-            const app = document.getElementById('asset-appearance-select').value;
+            const app = getAssetSelectValue('asset-appearance-select');
             const input = document.getElementById('asset-new-appearance-tag');
             const val = input.value.trim();
             if (!val || !app) return;
@@ -12596,7 +12514,7 @@
         }
 
         function onAssetOutfitChange() {
-            const outfit = document.getElementById('asset-outfit-select').value;
+            const outfit = getAssetSelectValue('asset-outfit-select');
             const tagsDiv = document.getElementById('asset-outfit-tags');
             tagsDiv.innerHTML = '';
 
@@ -12619,7 +12537,7 @@
         }
 
         function addAssetOutfitTag() {
-            const outfit = document.getElementById('asset-outfit-select').value;
+            const outfit = getAssetSelectValue('asset-outfit-select');
             const input = document.getElementById('asset-new-outfit-tag');
             const val = input.value.trim();
             if (!val || !outfit) return;
@@ -12628,7 +12546,7 @@
         }
 
         function onAssetExpressionChange() {
-            const expr = document.getElementById('asset-expression-select').value;
+            const expr = getAssetSelectValue('asset-expression-select');
             const tagsDiv = document.getElementById('asset-expression-tags');
             tagsDiv.innerHTML = '';
 
@@ -12651,7 +12569,7 @@
         }
 
         function addAssetExpressionTag() {
-            const expr = document.getElementById('asset-expression-select').value;
+            const expr = getAssetSelectValue('asset-expression-select');
             const input = document.getElementById('asset-new-expression-tag');
             const val = input.value.trim();
             if (!val || !expr) return;
@@ -12699,9 +12617,9 @@
         async function previewAssetPrompt() {
             if (!assetTags) return;
             const char = document.getElementById('asset-character-select').value;
-            const app = document.getElementById('asset-appearance-select').value;
-            const outfit = document.getElementById('asset-outfit-select').value;
-            const expr = document.getElementById('asset-expression-select').value;
+            const app = getAssetSelectValue('asset-appearance-select');
+            const outfit = getAssetSelectValue('asset-outfit-select');
+            const expr = getAssetSelectValue('asset-expression-select');
             const refEnabled = document.getElementById('asset-ref-toggle').checked;
             const refStrength = parseFloat(document.getElementById('asset-ref-strength').value) || 0.55;
             const styleRefEnabled = document.getElementById('asset-style-ref-toggle').checked;
@@ -12725,7 +12643,7 @@
             // 구도/기타
             const cTags = (assetTags.composition || []).filter(t => t.trim());
             // 아티스트
-            const artistName = document.getElementById('asset-artist-preset-select')?.value || '';
+            const artistName = getAssetSelectValue('asset-artist-preset-select') || '';
             const artistTags = artistName ? (assetTags.artist_presets?.[artistName] || []).filter(t => t.trim()) : [];
             // 외모 (전역)
             const appTags = app ? (assetTags.appearances?.[app] || []).filter(t => t.trim()) : [];
@@ -12835,7 +12753,7 @@
         }
 
         function duplicateCompositionPreset() {
-            const src = document.getElementById('asset-composition-preset-select').value;
+            const src = getAssetSelectValue('asset-composition-preset-select');
             if (!src) { showToast('복제할 프리셋을 선택하세요', 'error'); return; }
             const newName = prompt('새 프리셋명', src + ' 복사본');
             if (!newName || !newName.trim()) return;
@@ -12843,7 +12761,7 @@
         }
 
         function syncCompositionPreset() {
-            const sel = document.getElementById('asset-composition-preset-select').value;
+            const sel = getAssetSelectValue('asset-composition-preset-select');
             if (!sel || !assetTags) return;
             fetch('/api/asset_mode/tags', {
                 method: 'POST',
@@ -12853,12 +12771,12 @@
         }
 
         function loadCompositionPreset() {
-            const name = document.getElementById('asset-composition-preset-select').value;
+            const name = getAssetSelectValue('asset-composition-preset-select');
             modifyTagLightweight('load_composition_preset', { name }, 'asset-composition-tags', 'removeAssetCompositionTag', 'composition');
         }
 
         function deleteCompositionPreset() {
-            const name = document.getElementById('asset-composition-preset-select').value;
+            const name = getAssetSelectValue('asset-composition-preset-select');
             if (!name) return;
             if (!confirm(`프리셋 "${name}" 삭제?`)) return;
             assetTagAction('delete_composition_preset', { name });
@@ -12866,7 +12784,7 @@
 
         // ─── 아티스트 프리셋 ────────────────────────────────────
         function loadArtistPreset() {
-            const name = document.getElementById('asset-artist-preset-select').value;
+            const name = getAssetSelectValue('asset-artist-preset-select');
             const tagsDiv = document.getElementById('asset-artist-tags');
             tagsDiv.innerHTML = '';
             if (!name || !assetTags) return;
@@ -12893,7 +12811,7 @@
             const input = document.getElementById('asset-new-artist-tag');
             const val = input.value.trim();
             if (!val) return;
-            const presetName = document.getElementById('asset-artist-preset-select').value;
+            const presetName = getAssetSelectValue('asset-artist-preset-select');
             if (!presetName) { showToast('아티스트 프리셋을 먼저 선택하세요', 'error'); return; }
             input.value = '';
             if (!assetTags.artist_presets) assetTags.artist_presets = {};
@@ -12910,7 +12828,7 @@
         }
 
         function duplicateArtistPreset() {
-            const src = document.getElementById('asset-artist-preset-select').value;
+            const src = getAssetSelectValue('asset-artist-preset-select');
             if (!src) { showToast('복제할 프리셋을 선택하세요', 'error'); return; }
             const newName = prompt('새 프리셋명', src + ' 복사본');
             if (!newName || !newName.trim()) return;
@@ -12918,7 +12836,7 @@
         }
 
         function deleteArtistPreset() {
-            const name = document.getElementById('asset-artist-preset-select').value;
+            const name = getAssetSelectValue('asset-artist-preset-select');
             if (!name) return;
             if (!confirm(`프리셋 "${name}" 삭제?`)) return;
             assetTagAction('delete_artist_preset', { name });
@@ -12926,7 +12844,7 @@
 
         // ─── 자연어 프리셋 ────────────────────────────────────
         function loadNaturalLanguagePreset() {
-            const name = document.getElementById('asset-natural-language-preset-select').value;
+            const name = getAssetSelectValue('asset-natural-language-preset-select');
             const textarea = document.getElementById('asset-natural-language-text');
             if (!name || !assetTags) {
                 textarea.value = '';
@@ -12936,7 +12854,7 @@
         }
 
         function saveCurrentNaturalLanguagePreset() {
-            const name = document.getElementById('asset-natural-language-preset-select').value;
+            const name = getAssetSelectValue('asset-natural-language-preset-select');
             const text = document.getElementById('asset-natural-language-text').value;
             if (!name) return;
             assetTagAction('save_natural_language_preset', { name, text });
@@ -12950,7 +12868,7 @@
         }
 
         function duplicateNaturalLanguagePreset() {
-            const src = document.getElementById('asset-natural-language-preset-select').value;
+            const src = getAssetSelectValue('asset-natural-language-preset-select');
             if (!src) { showToast('복제할 프리셋을 선택하세요', 'error'); return; }
             const newName = prompt('새 프리셋명', src + ' 복사본');
             if (!newName || !newName.trim()) return;
@@ -12958,7 +12876,7 @@
         }
 
         function deleteNaturalLanguagePreset() {
-            const name = document.getElementById('asset-natural-language-preset-select').value;
+            const name = getAssetSelectValue('asset-natural-language-preset-select');
             if (!name) return;
             if (!confirm(`프리셋 "${name}" 삭제?`)) return;
             assetTagAction('delete_natural_language_preset', { name });
@@ -12973,7 +12891,7 @@
         }
 
         function duplicateQualityPreset() {
-            const src = document.getElementById('asset-quality-preset-select').value;
+            const src = getAssetSelectValue('asset-quality-preset-select');
             if (!src) { showToast('복제할 프리셋을 선택하세요', 'error'); return; }
             const newName = prompt('새 프리셋명', src + ' 복사본');
             if (!newName || !newName.trim()) return;
@@ -12981,7 +12899,7 @@
         }
 
         function syncQualityPreset() {
-            const sel = document.getElementById('asset-quality-preset-select').value;
+            const sel = getAssetSelectValue('asset-quality-preset-select');
             if (!sel || !assetTags) return;
             fetch('/api/asset_mode/tags', {
                 method: 'POST',
@@ -13013,12 +12931,12 @@
         }
 
         function loadQualityPreset() {
-            const name = document.getElementById('asset-quality-preset-select').value;
+            const name = getAssetSelectValue('asset-quality-preset-select');
             modifyTagLightweight('load_quality_preset', { name }, 'asset-quality-tags', 'removeAssetQualityTag', 'quality');
         }
 
         function deleteQualityPreset() {
-            const name = document.getElementById('asset-quality-preset-select').value;
+            const name = getAssetSelectValue('asset-quality-preset-select');
             if (!name) return;
             if (!confirm(`프리셋 "${name}" 삭제?`)) return;
             assetTagAction('delete_quality_preset', { name });
@@ -13033,7 +12951,7 @@
         }
 
         function duplicateNegativePreset() {
-            const src = document.getElementById('asset-negative-preset-select').value;
+            const src = getAssetSelectValue('asset-negative-preset-select');
             if (!src) { showToast('복제할 프리셋을 선택하세요', 'error'); return; }
             const newName = prompt('새 프리셋명', src + ' 복사본');
             if (!newName || !newName.trim()) return;
@@ -13041,7 +12959,7 @@
         }
 
         function syncNegativePreset() {
-            const sel = document.getElementById('asset-negative-preset-select').value;
+            const sel = getAssetSelectValue('asset-negative-preset-select');
             if (!sel || !assetTags) return;
             fetch('/api/asset_mode/tags', {
                 method: 'POST',
@@ -13051,12 +12969,12 @@
         }
 
         function loadNegativePreset() {
-            const name = document.getElementById('asset-negative-preset-select').value;
+            const name = getAssetSelectValue('asset-negative-preset-select');
             modifyTagLightweight('load_negative_preset', { name }, 'asset-negative-tags', 'removeAssetNegativeTag', 'negative');
         }
 
         function deleteNegativePreset() {
-            const name = document.getElementById('asset-negative-preset-select').value;
+            const name = getAssetSelectValue('asset-negative-preset-select');
             if (!name) return;
             if (!confirm(`프리셋 "${name}" 삭제?`)) return;
             assetTagAction('delete_negative_preset', { name });
@@ -13071,7 +12989,7 @@
         }
 
         function duplicateCharacterNegativePreset() {
-            const src = document.getElementById('asset-character-negative-preset-select').value;
+            const src = getAssetSelectValue('asset-character-negative-preset-select');
             if (!src) { showToast('복제할 프리셋을 선택하세요', 'error'); return; }
             const newName = prompt('새 프리셋명', src + ' 복사본');
             if (!newName || !newName.trim()) return;
@@ -13079,7 +12997,7 @@
         }
 
         function syncCharacterNegativePreset() {
-            const sel = document.getElementById('asset-character-negative-preset-select').value;
+            const sel = getAssetSelectValue('asset-character-negative-preset-select');
             if (!sel || !assetTags) return;
             fetch('/api/asset_mode/tags', {
                 method: 'POST',
@@ -13089,12 +13007,12 @@
         }
 
         function loadCharacterNegativePreset() {
-            const name = document.getElementById('asset-character-negative-preset-select').value;
+            const name = getAssetSelectValue('asset-character-negative-preset-select');
             modifyTagLightweight('load_character_negative_preset', { name }, 'asset-character-negative-tags', 'removeAssetCharacterNegativeTag', 'character_negative');
         }
 
         function deleteCharacterNegativePreset() {
-            const name = document.getElementById('asset-character-negative-preset-select').value;
+            const name = getAssetSelectValue('asset-character-negative-preset-select');
             if (!name) return;
             if (!confirm(`프리셋 "${name}" 삭제?`)) return;
             assetTagAction('delete_character_negative_preset', { name });
@@ -13104,8 +13022,8 @@
         function saveCharacterPresetFromCurrent() {
             const sel = document.getElementById('asset-character-preset-select').value;
             if (!sel) { showToast('저장할 프리셋을 선택하세요', 'error'); return; }
-            const app = document.getElementById('asset-appearance-select').value;
-            const outfit = document.getElementById('asset-outfit-select').value;
+            const app = getAssetSelectValue('asset-appearance-select');
+            const outfit = getAssetSelectValue('asset-outfit-select');
             assetTagAction('save_character_preset', {
                 name: sel,
                 appearance: app,
@@ -13158,8 +13076,8 @@
             await assetTagAction('load_character_preset', { name, character: char });
             const charData = assetTags.characters[char];
             if (charData) {
-                if (charData.appearance) document.getElementById('asset-appearance-select').value = charData.appearance;
-                if (charData.outfit) document.getElementById('asset-outfit-select').value = charData.outfit;
+                if (charData.appearance) setAssetSelectValue('asset-appearance-select', charData.appearance);
+                if (charData.outfit) setAssetSelectValue('asset-outfit-select', charData.outfit);
                 onAssetAppearanceChange();
                 onAssetOutfitChange();
                 onAssetExpressionChange();
@@ -13190,7 +13108,7 @@
 
         // ─── 복장/표정 복제 ────────────────────────────────
         function duplicateAssetOutfit() {
-            const outfit = document.getElementById('asset-outfit-select').value;
+            const outfit = getAssetSelectValue('asset-outfit-select');
             if (!outfit) return;
             const newName = prompt('복제할 복장명', outfit + ' 복사본');
             if (!newName || !newName.trim()) return;
@@ -13198,21 +13116,21 @@
         }
 
         function duplicateAssetExpression() {
-            const expr = document.getElementById('asset-expression-select').value;
+            const expr = getAssetSelectValue('asset-expression-select');
             if (!expr) return;
             const newName = prompt('복제할 표정명', expr + ' 복사본');
             if (!newName || !newName.trim()) return;
             assetTagAction('duplicate_expression', { name: expr, new_name: newName.trim() });
         }
         function removeAssetOutfit() {
-            const outfit = document.getElementById('asset-outfit-select').value;
+            const outfit = getAssetSelectValue('asset-outfit-select');
             if (!outfit) return;
             if (!confirm(`복장 "${outfit}" 삭제?`)) return;
             assetTagAction('remove_outfit', { name: outfit });
         }
 
         function removeAssetExpression() {
-            const expr = document.getElementById('asset-expression-select').value;
+            const expr = getAssetSelectValue('asset-expression-select');
             if (!expr) return;
             if (!confirm(`표정 "${expr}" 삭제?`)) return;
             assetTagAction('remove_expression', { name: expr });
@@ -14485,30 +14403,30 @@
                     } else if (containerId === 'asset-character-negative-tags') {
                         action = { action: 'reorder_global_tags', category: 'character_negative', tags: reorderedTags };
                     } else if (containerId === 'asset-appearance-tags') {
-                        const app = document.getElementById('asset-appearance-select').value;
+                        const app = getAssetSelectValue('asset-appearance-select');
                         action = { action: 'reorder_sub_tags', sub: 'appearances', name: app, order };
                     } else if (containerId === 'asset-outfit-tags') {
-                        const outfit = document.getElementById('asset-outfit-select').value;
+                        const outfit = getAssetSelectValue('asset-outfit-select');
                         action = { action: 'reorder_sub_tags', sub: 'outfits', name: outfit, order };
                     } else if (containerId === 'asset-expression-tags') {
-                        const expr = document.getElementById('asset-expression-select').value;
+                        const expr = getAssetSelectValue('asset-expression-select');
                         action = { action: 'reorder_sub_tags', sub: 'expressions', name: expr, order };
                     }
                     if (action) {
                         assetTagAction(action.action, action);
                         // 활성 프리셋도 같이 업데이트
                         if (containerId === 'asset-quality-tags') {
-                            const ps = document.getElementById('asset-quality-preset-select');
-                            if (ps && ps.value) assetTagAction('save_quality_preset', { name: ps.value, tags: reorderedTags });
+                            const psVal = getAssetSelectValue('asset-quality-preset-select');
+                            if (psVal) assetTagAction('save_quality_preset', { name: psVal, tags: reorderedTags });
                         } else if (containerId === 'asset-composition-tags') {
-                            const ps = document.getElementById('asset-composition-preset-select');
-                            if (ps && ps.value) assetTagAction('save_composition_preset', { name: ps.value, tags: reorderedTags });
+                            const psVal = getAssetSelectValue('asset-composition-preset-select');
+                            if (psVal) assetTagAction('save_composition_preset', { name: psVal, tags: reorderedTags });
                         } else if (containerId === 'asset-negative-tags') {
-                            const ps = document.getElementById('asset-negative-preset-select');
-                            if (ps && ps.value) assetTagAction('save_negative_preset', { name: ps.value, tags: reorderedTags });
+                            const psVal = getAssetSelectValue('asset-negative-preset-select');
+                            if (psVal) assetTagAction('save_negative_preset', { name: psVal, tags: reorderedTags });
                         } else if (containerId === 'asset-character-negative-tags') {
-                            const ps = document.getElementById('asset-character-negative-preset-select');
-                            if (ps && ps.value) assetTagAction('save_character_negative_preset', { name: ps.value, tags: reorderedTags });
+                            const psVal = getAssetSelectValue('asset-character-negative-preset-select');
+                            if (psVal) assetTagAction('save_character_negative_preset', { name: psVal, tags: reorderedTags });
                         }
                     }
                     dragIdx = null;
@@ -15705,13 +15623,13 @@
             // 사이드바 동기화
             document.getElementById('asset-character-select').value = charName;
             onAssetCharacterChange(true);
-            document.getElementById('asset-outfit-select').value = outfit;
-            if (!document.getElementById('asset-outfit-select').value) {
+            setAssetSelectValue('asset-outfit-select', outfit);
+            if (!getAssetSelectValue('asset-outfit-select')) {
                 matchSelectByDirname('asset-outfit-select', outfit);
             }
             onAssetOutfitChange();
-            document.getElementById('asset-expression-select').value = expression;
-            if (!document.getElementById('asset-expression-select').value) {
+            setAssetSelectValue('asset-expression-select', expression);
+            if (!getAssetSelectValue('asset-expression-select')) {
                 matchSelectByDirname('asset-expression-select', expression);
             }
             onAssetExpressionChange();
@@ -15720,14 +15638,22 @@
         }
 
         function matchSelectByDirname(selectId, dirname) {
-            const sel = document.getElementById(selectId);
-            if (!sel) return;
             // Python _safe_dirname()과 동일: \p{L}(유니코드 글자) + \p{N}(유니코드 숫자) + 공백/_/-/. 유지
             const re = /[^\p{L}\p{N} _\-\.]/gu;
-            for (const opt of sel.options) {
-                const sanitized = opt.value.replace(re, '').trim();
-                if (sanitized === dirname && opt.value) {
-                    sel.value = opt.value;
+            const cs = document.querySelector(`.custom-select[data-select-id="${selectId}"]`);
+            if (!cs) return;
+            const options = cs.querySelectorAll('.custom-select-option');
+            for (const opt of options) {
+                const val = opt.dataset.value;
+                if (!val) continue;
+                const sanitized = val.replace(re, '').trim();
+                if (sanitized === dirname) {
+                    setAssetSelectValue(selectId, val);
+                    // onChange 콜백 실행
+                    const onChangeFn = cs.dataset.onchange;
+                    if (onChangeFn && typeof window[onChangeFn] === 'function') {
+                        window[onChangeFn]();
+                    }
                     return;
                 }
             }
@@ -15769,9 +15695,9 @@
 
         function updateGenerateBtn() {
             const char = document.getElementById('asset-character-select').value;
-            const app = document.getElementById('asset-appearance-select').value;
-            const outfit = document.getElementById('asset-outfit-select').value;
-            const expr = document.getElementById('asset-expression-select').value;
+            const app = getAssetSelectValue('asset-appearance-select');
+            const outfit = getAssetSelectValue('asset-outfit-select');
+            const expr = getAssetSelectValue('asset-expression-select');
             const btn = document.getElementById('asset-generate-btn');
             btn.disabled = !char || !app || !outfit || !expr || assetGenerating;
         }
@@ -15779,9 +15705,9 @@
         async function generateAssetImage() {
             if (assetGenerating) return;
             const char = document.getElementById('asset-character-select').value;
-            const outfit = document.getElementById('asset-outfit-select').value;
-            const expr = document.getElementById('asset-expression-select').value;
-            const app = document.getElementById('asset-appearance-select').value;
+            const outfit = getAssetSelectValue('asset-outfit-select');
+            const expr = getAssetSelectValue('asset-expression-select');
+            const app = getAssetSelectValue('asset-appearance-select');
 
             if (!char || !outfit || !expr || !app) {
                 showToast('캐릭터, 외모, 복장, 표정을 모두 선택하세요', 'error');
@@ -15819,7 +15745,7 @@
             }
 
             // 아티스트/자연어/트리거 데이터
-            const artistPreset = document.getElementById('asset-artist-preset-select')?.value || '';
+            const artistPreset = getAssetSelectValue('asset-artist-preset-select') || '';
             const naturalLanguage = document.getElementById('asset-natural-language-text')?.value || '';
             const loraTriggerWords = assetLoraList.map(l => l.trigger).filter(t => t && t.trim()).join(', ');
 
@@ -15916,8 +15842,8 @@
         async function loadAssetImages() {
             // 네비게이션 상태 우선, 없으면 사이드바에서 가져옴
             const char = assetNavCharacter || document.getElementById('asset-character-select').value;
-            const outfit = assetNavOutfit || document.getElementById('asset-outfit-select').value;
-            const expr = assetNavExpression || document.getElementById('asset-expression-select').value;
+            const outfit = assetNavOutfit || getAssetSelectValue('asset-outfit-select');
+            const expr = assetNavExpression || getAssetSelectValue('asset-expression-select');
             const empty = document.getElementById('asset-empty-state');
 
             if (!char || !outfit || !expr) {
