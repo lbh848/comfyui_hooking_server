@@ -2158,7 +2158,7 @@
         .at-empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1; color: var(--text2); font-size: 0.9rem; padding: 40px 20px; }
 
         /* ─── 프리셋매니징 탭 (pm-*) ─── */
-        .pm-container { display: flex; flex-direction: column; height: calc(100vh - 60px); overflow: hidden; }
+        .pm-container { display: flex; flex-direction: column; height: calc(100vh - 100px); overflow: hidden; }
         .pm-toolbar { display: flex; align-items: center; gap: 10px; padding: 6px 8px; background: var(--surface2); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
         .pm-body { display: flex; flex: 1; min-height: 0; overflow: hidden; }
         .pm-sidebar { width: 48px; display: flex; flex-direction: column; align-items: center; padding-top: 2px; background: var(--surface2); border-right: 1px solid var(--border); flex-shrink: 0; height: 100%; }
@@ -2167,19 +2167,19 @@
         .pm-sidebar-btn.active { background: var(--accent); color: #fff; }
         .pm-sidebar-btn .pm-sidebar-tooltip { display: none; position: absolute; left: 44px; top: 50%; transform: translateY(-50%); background: var(--surface); border: 1px solid var(--border); padding: 4px 10px; border-radius: 4px; font-size: 0.78rem; white-space: nowrap; z-index: 10; color: var(--text); box-shadow: 0 2px 8px rgba(0,0,0,0.2); }
         .pm-sidebar-btn:hover .pm-sidebar-tooltip { display: block; }
-        .pm-main { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+        .pm-main { flex: 1; overflow: hidden; display: flex; flex-direction: column; min-width: 0; }
         .pm-main > div { flex: 1; min-height: 0; }
         #tab-smart-asset-content.active { margin: -20px -24px; }
-        #tab-preset-mgmt-content.active { margin: -20px -24px; }
+        #tab-preset-mgmt-content.active { margin: -40px 0; }
         
-        .pm-view { padding: 4px; overflow-y: auto; }
+        .pm-view { padding: 4px; overflow-y: auto; overflow-x: hidden; }
         .pm-section { background: var(--surface2); border-radius: 8px; padding: 14px; margin-bottom: 14px; }
         .pm-section-title { font-weight: 600; font-size: 0.95rem; margin-bottom: 10px; display: flex; align-items: center; gap: 6px; }
         .pm-category-tabs { display: flex; gap: 4px; margin-bottom: 12px; flex-wrap: wrap; }
         .pm-category-tab { padding: 5px 12px; border-radius: 5px; border: 1px solid var(--border); background: var(--surface2); color: var(--text2); font-size: 0.8rem; cursor: pointer; transition: all 0.15s; }
         .pm-category-tab:hover { background: var(--surface); }
         .pm-category-tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
-        .pm-card-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+        .pm-card-grid { display: flex; flex-wrap: wrap; gap: 8px; overflow-x: hidden; }
         .pm-card { min-width: 120px; max-width: 220px; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; background: var(--surface); cursor: pointer; transition: all 0.15s; display: flex; align-items: center; gap: 8px; }
         .pm-card:hover { border-color: rgba(66,133,244,0.4); }
         .pm-card.selected { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(66,133,244,0.3); }
@@ -20381,4 +20381,5 @@
         <div class="ac-tooltip" id="ac-tooltip"></div>
 </body>
 </html>
+
 
