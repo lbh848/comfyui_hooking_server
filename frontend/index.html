@@ -2161,7 +2161,7 @@
         .pm-container { display: flex; flex-direction: column; height: calc(100vh - 60px); overflow: hidden; }
         .pm-toolbar { display: flex; align-items: center; gap: 10px; padding: 6px 8px; background: var(--surface2); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
         .pm-body { display: flex; flex: 1; min-height: 0; overflow: hidden; }
-        .pm-sidebar { width: 48px; display: flex; flex-direction: column; align-items: center; padding-top: 2px; background: var(--surface2); border-right: 1px solid var(--border); flex-shrink: 0; }
+        .pm-sidebar { width: 48px; display: flex; flex-direction: column; align-items: center; padding-top: 2px; background: var(--surface2); border-right: 1px solid var(--border); flex-shrink: 0; height: 100%; }
         .pm-sidebar-btn { width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; border-radius: 6px; cursor: pointer; font-size: 1.1rem; border: none; background: transparent; color: var(--text2); transition: all 0.15s; margin-bottom: 4px; position: relative; }
         .pm-sidebar-btn:hover { background: rgba(66,133,244,0.08); color: var(--text); }
         .pm-sidebar-btn.active { background: var(--accent); color: #fff; }
@@ -11999,6 +11999,8 @@
             if (name === 'backup') {
                 document.querySelectorAll('.tab-btn')[0].classList.add('active');
                 document.getElementById('tab-backup-content').classList.add('active');
+                const sb = document.getElementById('stats-bar');
+                if (sb) sb.style.display = 'flex';
             } else if (name === 'asset') {
                 document.querySelectorAll('.tab-btn')[1].classList.add('active');
                 document.getElementById('tab-asset-content').classList.add('active');
@@ -12029,6 +12031,8 @@
                 document.getElementById('tab-preset-mgmt-content').classList.add('active');
                 if (!assetTags) loadAssetData();
                 pmLoadData();
+                const sb = document.getElementById('stats-bar');
+                if (sb) sb.style.display = 'none';
             } else if (name === 'lora') {
                 document.querySelectorAll('.tab-btn')[7].classList.add('active');
                 document.getElementById('tab-lora-content').classList.add('active');
