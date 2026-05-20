@@ -1942,55 +1942,216 @@
             color: var(--accent);
         }
 
-        .asset-generating-overlay {
+        /* ─── 에셋 생성 큐 UI ─── */
+        .asset-queue-container {
             position: fixed;
-            top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(0,0,0,0.5);
+            bottom: 16px;
+            left: 16px;
+            z-index: 9000;
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 0;
+            font-size: 0.82rem;
+            max-width: 380px;
+            pointer-events: none;
+            animation: queue-slide-in 0.25s ease-out;
+        }
+        .asset-queue-container > * { pointer-events: auto; }
+        @keyframes queue-slide-in {
+            from { transform: translateY(20px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+        /* 슬림 바 */
+        .asset-queue-bar {
             display: flex;
             align-items: center;
-            justify-content: center;
-            z-index: 9999;
-        }
-        .asset-generating-overlay .spinner-box {
+            gap: 8px;
             background: var(--surface);
-            padding: 32px 48px;
-            border-radius: 12px;
-            text-align: center;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 8px 12px;
+            cursor: pointer;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.4);
+            transition: box-shadow 0.2s;
+            min-width: 260px;
+            user-select: none;
         }
-        .asset-generating-overlay .spinner-box .spinner {
-            border: 3px solid var(--border);
-            border-top: 3px solid var(--accent);
+        .asset-queue-bar:hover { box-shadow: 0 4px 18px rgba(0,0,0,0.6); }
+        .asset-queue-bar .queue-spinner {
+            width: 16px; height: 16px;
+            border: 2px solid var(--border);
+            border-top-color: var(--accent);
             border-radius: 50%;
-            width: 32px;
-            height: 32px;
             animation: spin 0.8s linear infinite;
-            margin: 0 auto 12px;
+            flex-shrink: 0;
         }
-        .asset-progress-bar-wrap {
-            width: 100%;
-            max-width: 280px;
-            margin-top: 16px;
+        .asset-queue-bar .queue-info {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            min-width: 0;
         }
-        .asset-progress-bar-wrap .progress-label {
-            font-size: 0.8rem;
-            color: var(--text2);
-            margin-bottom: 4px;
-            text-align: center;
-        }
-        .asset-progress-bar-outer {
-            width: 100%;
-            height: 8px;
-            background: var(--surface2);
-            border-radius: 4px;
+        .asset-queue-bar .queue-current-label {
+            font-weight: 600;
+            white-space: nowrap;
             overflow: hidden;
+            text-overflow: ellipsis;
         }
-        .asset-progress-bar-inner {
+        .asset-queue-bar .queue-current-progress {
+            font-size: 0.75rem;
+            color: var(--text2);
+        }
+        .asset-queue-bar .queue-waiting-badge {
+            background: var(--surface2);
+            color: var(--text2);
+            border-radius: 10px;
+            padding: 2px 8px;
+            font-size: 0.72rem;
+            white-space: nowrap;
+        }
+        .asset-queue-bar .queue-stop-btn {
+            background: #c0392b;
+            color: #fff;
+            border: none;
+            border-radius: 4px;
+            padding: 4px 10px;
+            cursor: pointer;
+            font-size: 0.75rem;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+        .asset-queue-bar .queue-stop-btn:hover { opacity: 0.85; }
+        .asset-queue-bar .queue-expand-icon {
+            color: var(--text2);
+            font-size: 0.9rem;
+            transition: transform 0.2s;
+        }
+        .asset-queue-bar.expanded .queue-expand-icon { transform: rotate(180deg); }
+        .asset-queue-bar .queue-mini-progress {
+            width: 100%;
+            height: 3px;
+            background: var(--surface2);
+            border-radius: 2px;
+            overflow: hidden;
+            margin-top: 2px;
+        }
+        .asset-queue-bar .queue-mini-progress-inner {
             height: 100%;
             background: var(--accent);
-            border-radius: 4px;
-            transition: width 0.2s ease;
             width: 0%;
+            transition: width 0.2s ease;
+            border-radius: 2px;
         }
+        .asset-queue-bar.all-done {
+            opacity: 0.7;
+            cursor: default;
+        }
+        .asset-queue-bar.all-done .queue-spinner { display: none; }
+        /* 확장 패널 */
+        .asset-queue-panel {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            width: 360px;
+            max-height: 400px;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 4px 24px rgba(0,0,0,0.5);
+            margin-bottom: 6px;
+            overflow: hidden;
+            transform-origin: bottom left;
+            transition: opacity 0.2s, transform 0.2s;
+        }
+        .asset-queue-panel.hidden {
+            opacity: 0;
+            transform: scaleY(0.95) translateY(8px);
+            pointer-events: none;
+            position: absolute;
+            bottom: 100%;
+        }
+        .asset-queue-panel.visible {
+            opacity: 1;
+            transform: scaleY(1) translateY(0);
+        }
+        .asset-queue-panel-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 14px;
+            border-bottom: 1px solid var(--border);
+            font-weight: 600;
+            font-size: 0.88rem;
+        }
+        .asset-queue-panel-header .queue-panel-title {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .asset-queue-panel-body {
+            overflow-y: auto;
+            flex: 1;
+            padding: 6px 0;
+        }
+        /* 큐 아이템 행 */
+        .asset-queue-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 7px 14px;
+            transition: background 0.15s;
+        }
+        .asset-queue-item:hover { background: rgba(255,255,255,0.03); }
+        .asset-queue-item .item-icon {
+            width: 18px;
+            text-align: center;
+            flex-shrink: 0;
+            font-size: 0.85rem;
+        }
+        .asset-queue-item .item-label {
+            flex: 1;
+            min-width: 0;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .asset-queue-item .item-status {
+            font-size: 0.72rem;
+            color: var(--text2);
+            white-space: nowrap;
+        }
+        .asset-queue-item .item-progress-bar {
+            width: 50px;
+            height: 4px;
+            background: var(--surface2);
+            border-radius: 2px;
+            overflow: hidden;
+            flex-shrink: 0;
+        }
+        .asset-queue-item .item-progress-bar-inner {
+            height: 100%;
+            background: var(--accent);
+            width: 0%;
+            transition: width 0.2s ease;
+        }
+        .asset-queue-item .item-dismiss-btn {
+            background: none;
+            border: none;
+            color: var(--text2);
+            cursor: pointer;
+            font-size: 0.85rem;
+            padding: 2px 4px;
+            border-radius: 3px;
+            opacity: 0;
+            transition: opacity 0.15s;
+        }
+        .asset-queue-item:hover .item-dismiss-btn { opacity: 1; }
+        .asset-queue-item .item-dismiss-btn:hover { color: #e74c3c; }
+        .asset-queue-item.item-success .item-icon { color: #27ae60; }
+        .asset-queue-item.item-error .item-icon { color: #e74c3c; }
+        .asset-queue-item.item-cancelled .item-icon { color: var(--text2); }
+        .asset-queue-item.item-generating .item-label { color: var(--accent); font-weight: 600; }
         @keyframes spin { to { transform: rotate(360deg); } }
 
         /* ─── 공용 최상단 진행도 바 ─── */
@@ -3452,18 +3613,33 @@
         </div>
     </div>
 
-    <!-- 에셋 생성 오버레이 -->
-    <div class="asset-generating-overlay" id="asset-generating-overlay" style="display:none;">
-        <div class="spinner-box">
-            <div class="spinner"></div>
-            <div id="asset-overlay-text">이미지 생성중...</div>
-            <div class="asset-progress-bar-wrap">
-                <div class="progress-label" id="asset-progress-label">0%</div>
-                <div class="asset-progress-bar-outer">
-                    <div class="asset-progress-bar-inner" id="asset-progress-bar"></div>
+    <!-- 에셋 생성 큐 UI -->
+    <div class="asset-queue-container" id="asset-queue-container" style="display:none;">
+        <!-- 확장 패널 -->
+        <div class="asset-queue-panel hidden" id="asset-queue-panel">
+            <div class="asset-queue-panel-header">
+                <div class="queue-panel-title">
+                    <span class="queue-spinner" id="queue-panel-spinner" style="display:none;width:14px;height:14px;border-width:2px;"></span>
+                    <span id="queue-panel-title-text">생성 큐</span>
                 </div>
             </div>
-            <button id="asset-stop-btn" onclick="stopAssetGeneration()" style="margin-top:14px; padding:8px 24px; border:1px solid #e55; background:#e55; color:#fff; border-radius:6px; cursor:pointer; font-size:0.85rem; display:none;">중단</button>
+            <div class="asset-queue-panel-body" id="asset-queue-panel-body">
+                <!-- 아이템 동적 렌더 -->
+            </div>
+        </div>
+        <!-- 슬림 바 -->
+        <div class="asset-queue-bar" id="asset-queue-bar" onclick="toggleAssetQueuePanel()">
+            <div class="queue-spinner" id="queue-bar-spinner"></div>
+            <div class="queue-info">
+                <div class="queue-current-label" id="queue-bar-label">-</div>
+                <div class="queue-current-progress" id="queue-bar-progress-text">대기중</div>
+                <div class="queue-mini-progress">
+                    <div class="queue-mini-progress-inner" id="queue-bar-progress-bar"></div>
+                </div>
+            </div>
+            <div class="queue-waiting-badge" id="queue-bar-waiting" style="display:none;">0 대기</div>
+            <button class="queue-stop-btn" id="queue-bar-stop-btn" onclick="event.stopPropagation(); stopAssetQueue();">중단</button>
+            <div class="queue-expand-icon" id="queue-bar-expand-icon">&#9660;</div>
         </div>
     </div>
 
@@ -12122,7 +12298,17 @@
         // ─── 에셋 생성 모드 ────────────────────────────────────
         let assetTags = null;
         let assetRepresentatives = {};  // {charName: {outfit, expression, filename}}
-        let assetGenerating = false;
+
+        // ─── 에셋 생성 큐 ────────────────────────────────────
+        let assetQueue = [];
+        let assetQueueCounter = 0;
+        let assetCurrentQueueId = null;
+        let assetQueueProcessing = false;
+        let assetQueueExpanded = false;
+
+        function isAssetGenerating() {
+            return assetQueueProcessing || assetQueue.some(q => q.status === 'generating' || q.status === 'pending');
+        }
 
         // ─── 공용 최상단 진행도 바 ───
         function showTopProgress() {
@@ -15738,11 +15924,170 @@
             const outfit = getAssetSelectValue('asset-outfit-select');
             const expr = getAssetSelectValue('asset-expression-select');
             const btn = document.getElementById('asset-generate-btn');
-            btn.disabled = !char || !app || !outfit || !expr || assetGenerating;
+            btn.disabled = !char || !app || !outfit || !expr;
         }
 
+        // ─── 에셋 생성 큐 관리 ────────────────────────────────────
+        function addQueueItem(label, requestBody) {
+            const id = ++assetQueueCounter;
+            assetQueue.push({
+                id: id,
+                label: label,
+                requestBody: requestBody,
+                status: 'pending',
+                progress: 0,
+                progressMax: 100,
+                startTime: null,
+                endTime: null,
+                errorMsg: '',
+            });
+            renderAssetQueueUI();
+            return assetQueue[assetQueue.length - 1];
+        }
+
+        function removeQueueItem(id) {
+            assetQueue = assetQueue.filter(q => q.id !== id);
+            renderAssetQueueUI();
+            if (assetQueue.length === 0) {
+                document.getElementById('asset-queue-container').style.display = 'none';
+                hideTopProgress();
+                assetQueueExpanded = false;
+            }
+        }
+
+        function scheduleAutoHide(id, delayMs) {
+            setTimeout(() => {
+                removeQueueItem(id);
+            }, delayMs);
+        }
+
+        function renderAssetQueueUI() {
+            const container = document.getElementById('asset-queue-container');
+            const generating = assetQueue.find(q => q.status === 'generating');
+            const pending = assetQueue.filter(q => q.status === 'pending');
+            const hasActive = generating || pending.length > 0;
+
+            container.style.display = assetQueue.length > 0 ? 'flex' : 'none';
+
+            // ─── 슬림 바 ───
+            const barLabel = document.getElementById('queue-bar-label');
+            const barProgressText = document.getElementById('queue-bar-progress-text');
+            const barProgressBar = document.getElementById('queue-bar-progress-bar');
+            const barWaiting = document.getElementById('queue-bar-waiting');
+            const barSpinner = document.getElementById('queue-bar-spinner');
+            const barStopBtn = document.getElementById('queue-bar-stop-btn');
+            const bar = document.getElementById('asset-queue-bar');
+
+            if (generating) {
+                barLabel.textContent = generating.label;
+                const pct = generating.progressMax > 0 ? Math.round(generating.progress / generating.progressMax * 100) : 0;
+                barProgressText.textContent = pct + '%';
+                barProgressBar.style.width = pct + '%';
+                barSpinner.style.display = 'block';
+                barStopBtn.style.display = 'inline-block';
+            } else if (pending.length > 0) {
+                barLabel.textContent = '다음: ' + pending[0].label;
+                barProgressText.textContent = '준비중...';
+                barProgressBar.style.width = '0%';
+                barSpinner.style.display = 'block';
+                barStopBtn.style.display = 'inline-block';
+            }
+
+            if (pending.length > 0) {
+                barWaiting.style.display = 'inline-block';
+                barWaiting.textContent = pending.length + ' 대기';
+            } else {
+                barWaiting.style.display = 'none';
+            }
+
+            if (!hasActive) {
+                barSpinner.style.display = 'none';
+                barStopBtn.style.display = 'none';
+                bar.classList.add('all-done');
+                if (assetQueue.length > 0) {
+                    barLabel.textContent = '완료';
+                    barProgressText.textContent = '';
+                    barProgressBar.style.width = '100%';
+                }
+            } else {
+                bar.classList.remove('all-done');
+            }
+
+            // ─── 패널 ───
+            const panelBody = document.getElementById('asset-queue-panel-body');
+            panelBody.innerHTML = '';
+            assetQueue.forEach(item => {
+                const row = document.createElement('div');
+                row.className = 'asset-queue-item item-' + item.status;
+                let icon = '';
+                let statusText = '';
+                switch (item.status) {
+                    case 'pending':
+                        icon = '○'; break;
+                    case 'generating':
+                        icon = '<span class="queue-spinner" style="width:14px;height:14px;border-width:2px;"></span>';
+                        statusText = (item.progressMax > 0 ? Math.round(item.progress / item.progressMax * 100) : 0) + '%';
+                        break;
+                    case 'success':
+                        icon = '✔'; break;
+                    case 'error':
+                        icon = '✘'; statusText = item.errorMsg || '실패'; break;
+                    case 'cancelled':
+                        icon = '■'; statusText = '취소'; break;
+                }
+                if (!statusText && item.status === 'pending') statusText = '대기';
+                if (!statusText && item.status === 'success') statusText = '완료';
+
+                let actionBtn = '';
+                if (item.status === 'pending') {
+                    actionBtn = '<button class="item-dismiss-btn" style="opacity:1;color:#e74c3c;" onclick="event.stopPropagation(); cancelQueueItem(' + item.id + ');">✕</button>';
+                } else if (item.status === 'generating') {
+                    actionBtn = '<button class="item-dismiss-btn" style="opacity:1;color:#e67e22;" onclick="event.stopPropagation(); skipCurrentItem(' + item.id + ');">건너뛰기</button>';
+                } else {
+                    actionBtn = '<button class="item-dismiss-btn" onclick="event.stopPropagation(); removeQueueItem(' + item.id + ');">✕</button>';
+                }
+
+                row.innerHTML =
+                    '<div class="item-icon">' + icon + '</div>' +
+                    '<div class="item-label">' + escapeHtml(item.label) + '</div>' +
+                    (item.status === 'generating' ? '<div class="item-progress-bar"><div class="item-progress-bar-inner" style="width:' + (item.progressMax > 0 ? Math.round(item.progress / item.progressMax * 100) : 0) + '%"></div></div>' : '') +
+                    '<div class="item-status">' + statusText + '</div>' +
+                    actionBtn;
+                panelBody.appendChild(row);
+            });
+
+            // 패널 헤더
+            const panelSpinner = document.getElementById('queue-panel-spinner');
+            const panelTitle = document.getElementById('queue-panel-title-text');
+            if (hasActive) {
+                panelSpinner.style.display = 'block';
+                panelTitle.textContent = '생성 중 (' + (pending.length + (generating ? 1 : 0)) + '개)';
+            } else {
+                panelSpinner.style.display = 'none';
+                panelTitle.textContent = '완료됨';
+            }
+        }
+
+        function toggleAssetQueuePanel() {
+            assetQueueExpanded = !assetQueueExpanded;
+            const panel = document.getElementById('asset-queue-panel');
+            const bar = document.getElementById('asset-queue-bar');
+            const icon = document.getElementById('queue-bar-expand-icon');
+            if (assetQueueExpanded) {
+                panel.classList.remove('hidden');
+                panel.classList.add('visible');
+                bar.classList.add('expanded');
+                icon.innerHTML = '▲';
+            } else {
+                panel.classList.remove('visible');
+                panel.classList.add('hidden');
+                bar.classList.remove('expanded');
+                icon.innerHTML = '▼';
+            }
+        }
+
+        // ─── 에셋 생성 (큐 기반) ─────────────────────────────────
         async function generateAssetImage() {
-            if (assetGenerating) return;
             const char = document.getElementById('asset-character-select').value;
             const outfit = getAssetSelectValue('asset-outfit-select');
             const expr = getAssetSelectValue('asset-expression-select');
@@ -15771,7 +16116,6 @@
             const imgW = parseInt(document.getElementById('asset-img-w').value) || 936;
             const imgH = parseInt(document.getElementById('asset-img-h').value) || 1408;
 
-            // LoRA 데이터 빌드
             let loraData = '';
             if (loraEnabled && assetLoraList.length > 0) {
                 loraData = JSON.stringify({
@@ -15783,100 +16127,143 @@
                 });
             }
 
-            // 아티스트/자연어/트리거 데이터
             const artistPreset = getAssetSelectValue('asset-artist-preset-select') || '';
             const naturalLanguage = document.getElementById('asset-natural-language-text')?.value || '';
             const loraTriggerWords = assetLoraList.map(l => l.trigger).filter(t => t && t.trim()).join(', ');
 
-            assetGenerating = true;
-            document.getElementById('asset-generate-btn').disabled = true;
-            document.getElementById('asset-generating-overlay').style.display = 'flex';
-            document.getElementById('asset-stop-btn').style.display = totalCount > 1 ? 'inline-block' : 'none';
-            document.getElementById('asset-progress-bar').style.width = '0%';
-            document.getElementById('asset-overlay-text').textContent = totalCount > 1 ? `이미지 생성중... (0/${totalCount})` : '이미지 생성중...';
-            document.getElementById('asset-progress-label').textContent = totalCount > 1 ? `0/${totalCount}` : '0%';
-            showTopProgress();
+            const requestBody = {
+                character: char,
+                outfit: outfit,
+                expression: expr,
+                appearance: app,
+                face_id_enabled: refEnabled,
+                face_id_strength: refStrength,
+                reference_images: refEnabled ? assetRefImages.map(img => ({filename: img.name, local_path: img.local_path})) : [],
+                style_ref_enabled: styleRefEnabled,
+                style_ref_strength: styleRefStrength,
+                style_ref_images: styleRefEnabled ? assetStyleRefImages.map(img => ({filename: img.name, local_path: img.local_path})) : [],
+                lora_activate: loraEnabled,
+                lora_data: loraData,
+                pose_enabled: poseEnabled,
+                pose_id: poseEnabled ? assetSelectedPoseId : '',
+                hrf_activate: hrfActivate,
+                hrf_size: hrfSize,
+                hrf_restore_size: hrfRestoreSize,
+                hrf_control_net: hrfControlNet,
+                img_w: imgW,
+                img_h: imgH,
+                fd_activate: fdActivate,
+                hd_activate: hdActivate,
+                ed_activate: edActivate,
+                artist_preset: artistPreset,
+                natural_language: naturalLanguage,
+                lora_trigger_words: loraTriggerWords,
+            };
 
-            let successCount = 0;
-            let failCount = 0;
+            // 큐 항목 생성 (각 항목에 requestBody 저장)
+            for (let i = 0; i < totalCount; i++) {
+                const label = totalCount > 1 ? char + '/' + outfit + '/' + expr + ' (' + (i + 1) + '/' + totalCount + ')' : char + '/' + outfit + '/' + expr;
+                addQueueItem(label, requestBody);
+            }
+
+            showTopProgress();
+            processAssetQueue();
+        }
+
+        async function processAssetQueue() {
+            // 이미 큐 처리 중이면 새로 시작하지 않음 (새 항목은 while 루프에서 자동 픽업)
+            if (assetQueueProcessing) return;
+            assetQueueProcessing = true;
 
             try {
-                for (let i = 0; i < totalCount; i++) {
-                    if (!assetGenerating) break; // 중단 시 탈출
-                    if (totalCount > 1) {
-                        document.getElementById('asset-overlay-text').textContent = `이미지 생성중... (${i}/${totalCount})`;
-                    }
+                while (assetQueueProcessing) {
+                    const item = assetQueue.find(q => q.status === 'pending');
+                    if (!item) break;
+
+                    assetCurrentQueueId = item.id;
+                    item.status = 'generating';
+                    item.startTime = Date.now();
+                    item.progress = 0;
+                    item.progressMax = 100;
+                    renderAssetQueueUI();
+
                     try {
                         const resp = await fetch('/api/asset_mode/generate', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                character: char,
-                                outfit: outfit,
-                                expression: expr,
-                                appearance: app,
-                                face_id_enabled: refEnabled,
-                                face_id_strength: refStrength,
-                                reference_images: refEnabled ? assetRefImages.map(img => ({filename: img.name, local_path: img.local_path})) : [],
-                                style_ref_enabled: styleRefEnabled,
-                                style_ref_strength: styleRefStrength,
-                                style_ref_images: styleRefEnabled ? assetStyleRefImages.map(img => ({filename: img.name, local_path: img.local_path})) : [],
-                                lora_activate: loraEnabled,
-                                lora_data: loraData,
-                                pose_enabled: poseEnabled,
-                                pose_id: poseEnabled ? assetSelectedPoseId : '',
-                                hrf_activate: hrfActivate,
-                                hrf_size: hrfSize,
-                                hrf_restore_size: hrfRestoreSize,
-                                hrf_control_net: hrfControlNet,
-                                img_w: imgW,
-                                img_h: imgH,
-                                fd_activate: fdActivate,
-                                hd_activate: hdActivate,
-                                ed_activate: edActivate,
-                                artist_preset: artistPreset,
-                                natural_language: naturalLanguage,
-                                lora_trigger_words: loraTriggerWords,
-                            })
+                            body: JSON.stringify(item.requestBody),
                         });
                         const result = await resp.json();
-                        if (result.success) {
-                            successCount++;
-                            if (totalCount > 1) renderAssetMainArea();
+                        if (item.status === 'cancelled') {
+                            // 건너뛰기된 항목 - 결과 무시
+                        } else if (result.success) {
+                            item.status = 'success';
+                            item.endTime = Date.now();
+                            renderAssetMainArea();
+                            scheduleAutoHide(item.id, 8000);
                         } else {
-                            failCount++;
-                            showToast(`[${i+1}/${totalCount}] ${result.error || '생성 실패'}`, 'error');
+                            item.status = 'error';
+                            item.errorMsg = result.error || '생성 실패';
+                            item.endTime = Date.now();
+                            showToast('[' + item.label + '] ' + item.errorMsg, 'error');
+                            scheduleAutoHide(item.id, 15000);
                         }
                     } catch (e) {
-                        failCount++;
-                        showToast(`[${i+1}/${totalCount}] 요청 실패: ${e.message}`, 'error');
+                        if (item.status !== 'cancelled') {
+                            item.status = 'error';
+                            item.errorMsg = e.message;
+                            item.endTime = Date.now();
+                            showToast('[' + item.label + '] 요청 실패: ' + e.message, 'error');
+                            scheduleAutoHide(item.id, 15000);
+                        }
                     }
-                    // 진행도 업데이트
-                    if (totalCount > 1) {
-                        document.getElementById('asset-progress-label').textContent = `${i+1}/${totalCount}`;
-                        document.getElementById('asset-overlay-text').textContent = `이미지 생성중... (${i+1}/${totalCount})`;
-                    }
-                }
 
-                if (successCount > 0) {
-                    showToast(`이미지 생성 완료 (${successCount}장)`, 'success');
-                    renderAssetMainArea();
-                }
-                if (failCount > 0 && successCount === 0) {
-                    showToast('모든 생성 실패', 'error');
+                    renderAssetQueueUI();
                 }
             } finally {
-                assetGenerating = false;
+                assetQueueProcessing = false;
+                assetCurrentQueueId = null;
                 updateGenerateBtn();
-                document.getElementById('asset-stop-btn').style.display = 'none';
-                document.getElementById('asset-generating-overlay').style.display = 'none';
                 hideTopProgress();
             }
         }
 
-        function stopAssetGeneration() {
-            assetGenerating = false;
+        function stopAssetQueue() {
+            assetQueueProcessing = false;
+            for (const item of assetQueue) {
+                if (item.status === 'pending') {
+                    item.status = 'cancelled';
+                    item.endTime = Date.now();
+                    scheduleAutoHide(item.id, 5000);
+                }
+            }
+            renderAssetQueueUI();
+            updateGenerateBtn();
         }
+
+        function cancelQueueItem(id) {
+            const item = assetQueue.find(q => q.id === id);
+            if (!item || item.status !== 'pending') return;
+            item.status = 'cancelled';
+            item.endTime = Date.now();
+            scheduleAutoHide(id, 5000);
+            renderAssetQueueUI();
+        }
+
+        function skipCurrentItem(id) {
+            const item = assetQueue.find(q => q.id === id);
+            if (!item || item.status !== 'generating') return;
+            // 현재 생성 중인 항목은 서버 요청이 진행 중이므로 즉시 취소는 불가능하지만,
+            // 결과가 돌아오면 무시하도록 플래그 설정
+            item.status = 'cancelled';
+            item.endTime = Date.now();
+            scheduleAutoHide(id, 5000);
+            // 다음 항목으로 넘어가기 위해 processing 플래그는 유지
+            renderAssetQueueUI();
+        }
+
+        // 하위 호환성
+        function stopAssetGeneration() { stopAssetQueue(); }
 
         async function loadAssetImages() {
             // 네비게이션 상태 우선, 없으면 사이드바에서 가져옴
@@ -16020,27 +16407,28 @@
 
         // 에셋 모드 WebSocket 이벤트 핸들링 (기존 ws 핸들러에 추가)
         function handleAssetWsEvent(type, data) {
+            const currentItem = assetCurrentQueueId ? assetQueue.find(q => q.id === assetCurrentQueueId) : null;
+
             if (type === 'asset_generation_started') {
-                // 진행도 초기화만 (버튼/assetGenerating는 generateAssetImage에서 관리)
-                document.getElementById('asset-progress-bar').style.width = '0%';
-                document.getElementById('asset-progress-label').textContent = '0%';
-            } else if (type === 'asset_generation_progress') {
-                const totalCount = parseInt(document.getElementById('asset-generate-count').value) || 1;
-                const pct = data.max > 0 ? Math.round(data.value / data.max * 100) : 0;
-                document.getElementById('asset-progress-bar').style.width = pct + '%';
-                if (totalCount <= 1) {
-                    document.getElementById('asset-progress-label').textContent = pct + '%';
+                if (currentItem) {
+                    currentItem.progress = 0;
+                    currentItem.progressMax = 100;
                 }
+                renderAssetQueueUI();
+            } else if (type === 'asset_generation_progress') {
+                if (currentItem) {
+                    currentItem.progress = data.value || 0;
+                    currentItem.progressMax = data.max || 100;
+                }
+                renderAssetQueueUI();
                 updateTopProgress(data.value || 0, data.max || 0);
             } else if (type === 'asset_generation_completed') {
                 if (data.status === 'success') {
                     renderAssetMainArea();
                 }
-                // 배치 모드가 아닐 때만 오버레이/프로그레스 숨김 (배치는 generateAssetImage finally에서 처리)
-                const totalCount = parseInt(document.getElementById('asset-generate-count').value) || 1;
-                if (totalCount <= 1) {
-                    document.getElementById('asset-generating-overlay').style.display = 'none';
-                    hideTopProgress();
+                if (currentItem && data.status === 'success') {
+                    currentItem.progress = currentItem.progressMax;
+                    renderAssetQueueUI();
                 }
             }
         }
