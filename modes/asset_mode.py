@@ -24,7 +24,7 @@ TAGS_FILE = os.path.join(ASSET_DATA_DIR, "tags.json")
 HIDDEN_TAGS_FILE = os.path.join(ASSET_DATA_DIR, "hidden_tags.json")
 NAME_MAPPING_FILE = os.path.join(ASSET_DATA_DIR, "name_mapping.json")
 
-# 프리셋 관리 대상 카테고리
+# 프리셋매니징 대상 카테고리
 PRESET_MGMT_CATEGORIES = [
     "appearances", "outfits", "expressions",
     "quality_presets", "composition_presets",
@@ -1820,7 +1820,7 @@ class AssetMode:
                 created.append(expr_name)
         return {"success": True, "created": created, "skipped": skipped}
 
-    # ─── 프리셋 관리: hidden_tags I/O ──────────────────────
+    # ─── 프리셋매니징: hidden_tags I/O ──────────────────────
     def load_hidden_tags(self):
         """hidden_tags.json 로드"""
         os.makedirs(ASSET_DATA_DIR, exist_ok=True)
@@ -1840,14 +1840,14 @@ class AssetMode:
             json.dump(data, f, indent=2, ensure_ascii=False)
 
     def get_hidden_tags(self) -> dict:
-        """프리셋 관리용: hidden_tags + 활성 tags 병합 반환"""
+        """프리셋매니징용: hidden_tags + 활성 tags 병합 반환"""
         return {
             "active": self._get_active_presets(),
             "hidden": self.load_hidden_tags(),
         }
 
     def _get_active_presets(self) -> dict:
-        """현재 tags.json에서 프리셋 관리 대상 카테고리만 추출"""
+        """현재 tags.json에서 프리셋매니징 대상 카테고리만 추출"""
         result = {}
         for cat in PRESET_MGMT_CATEGORIES:
             val = self._tags.get(cat, {})
@@ -1855,7 +1855,7 @@ class AssetMode:
             result[cat] = copy.deepcopy(val) if isinstance(val, dict) else list(val) if isinstance(val, list) else val
         return result
 
-    # ─── 프리셋 관리: 숨기기 / 복원 ───────────────────────
+    # ─── 프리셋매니징: 숨기기 / 복원 ───────────────────────
     def hide_preset(self, category: str, name: str) -> dict:
         """프리셋을 tags.json에서 hidden_tags.json으로 이동"""
         if category not in PRESET_MGMT_CATEGORIES:
@@ -1936,7 +1936,7 @@ class AssetMode:
             results.append({"name": name, **r})
         return {"success": True, "results": results}
 
-    # ─── 프리셋 관리: 일괄 삽입 ────────────────────────────
+    # ─── 프리셋매니징: 일괄 삽입 ────────────────────────────
     def batch_insert_preset(self, category: str, name: str, tags_text: str) -> dict:
         """쉼표 구분 태그 문자열을 리스트로 파싱하여 tags.json에 저장"""
         if category not in PRESET_MGMT_CATEGORIES:
@@ -1966,7 +1966,7 @@ class AssetMode:
         self._log("preset_batch_inserted", {"category": category, "name": name, "count": len(tags)})
         return {"success": True, "name": name, "count": len(tags)}
 
-    # ─── 프리셋 관리: 에셋 추적 ────────────────────────────
+    # ─── 프리셋매니징: 에셋 추적 ────────────────────────────
     def trace_preset_assets(self, category: str, name: str) -> dict:
         """프리셋이 사용된 에셋 이미지를 추적"""
         if category not in PRESET_MGMT_CATEGORIES:

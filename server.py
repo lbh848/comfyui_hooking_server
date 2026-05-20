@@ -3456,7 +3456,7 @@ async def handle_api_asset_mode_tags_post(request: web.Request) -> web.Response:
             result = asset_mode.ungroup_outfit(
                 body.get("character", ""),
                 body.get("outfit", ""), body.get("expression", ""))
-        # ─── 프리셋 관리 ───
+        # ─── 프리셋매니징 ───
         elif action == "hide_preset":
             result = asset_mode.hide_preset(body.get("category", ""), body.get("name", ""))
         elif action == "hide_presets_batch":
