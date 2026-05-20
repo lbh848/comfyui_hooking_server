@@ -5100,11 +5100,39 @@ async def handle_api_lora_manage_update(request):
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 
+async def handle_api_lora_manage_duplicate(request):
+    """LoRA 항목 복제"""
+    try:
+        body = await request.json()
+        source_character = body.get("source_character", "")
+        source_entry = body.get("source_entry", "")
+        target_character = body.get("target_character", "")
+        target_entry = body.get("target_entry", "")
+        trigger = body.get("trigger", "")
+        description = body.get("description", "")
+        training_config = body.get("training_config")
+        if not source_character or not source_entry:
+            return web.json_response({"success": False, "error": "원본 정보 누락"}, status=400)
+        from modes.lora_mode import duplicate_lora_entry
+        result = duplicate_lora_entry(
+            source_character, source_entry,
+            target_character, target_entry,
+            trigger, description,
+            training_config=training_config
+        )
+        status = 200 if result.get("success") else 400
+        return web.json_response(result, status=status)
+    except Exception as e:
+        print(f"[LORA_MANAGE] 복제 실패: {e}")
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
 app.router.add_get("/api/lora/manage/list", handle_api_lora_manage_list)
 app.router.add_get("/api/lora/for_picker", handle_api_lora_for_picker)
 app.router.add_post("/api/lora/manage/add", handle_api_lora_manage_add)
 app.router.add_post("/api/lora/manage/delete", handle_api_lora_manage_delete)
 app.router.add_post("/api/lora/manage/update", handle_api_lora_manage_update)
+app.router.add_post("/api/lora/manage/duplicate", handle_api_lora_manage_duplicate)
 
 
 async def handle_api_lora_entry_image(request):

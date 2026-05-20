@@ -937,7 +937,7 @@ def list_lora_for_picker(lora_load_path: str = "") -> list:
     return result
 
 
-
+def add_lora_entry(name: str, character: str, trigger: str, description: str) -> dict:
     """새 LoRA 항목 추가"""
     if not name or not name.strip():
         print("[LORA_MANAGE] 이름 누락")
@@ -967,6 +967,101 @@ def list_lora_for_picker(lora_load_path: str = "") -> list:
     _save_lora_manage(data)
     print(f"[LORA_MANAGE] LoRA 추가: {name} (캐릭터: {character}, 트리거: {trigger.strip()})")
     return {"success": True, "name": name}
+
+
+def duplicate_lora_entry(
+    source_character: str, source_entry: str,
+    target_character: str, target_entry: str,
+    trigger: str, description: str,
+    training_config: dict = None
+) -> dict:
+    """LoRA 항목 복제 (학습/테스트 이미지 + 메타데이터)"""
+    # 1) 입력 검증
+    if not target_entry or not target_entry.strip():
+        print("[LORA_MANAGE] 복제: 대상 항목명 누락")
+        return {"success": False, "error": "대상 항목명을 입력하세요"}
+    if not trigger or not trigger.strip():
+        print("[LORA_MANAGE] 복제: 트리거 키워드 누락")
+        return {"success": False, "error": "트리거 키워드를 입력하세요"}
+    if not target_character:
+        print("[LORA_MANAGE] 복제: 대상 캐릭터 누락")
+        return {"success": False, "error": "대상 캐릭터를 선택하세요"}
+
+    target_entry = target_entry.strip()
+    data = _load_lora_manage()
+
+    # 2) 소스 엔트리 존재 확인
+    src = _get_entry(data, source_character, source_entry)
+    if not src:
+        print(f"[LORA_MANAGE] 복제: 소스 없음 {source_character}/{source_entry}")
+        return {"success": False, "error": "원본 항목을 찾을 수 없습니다"}
+
+    # 3) 타겟 중복 확인
+    if _get_entry(data, target_character, target_entry):
+        print(f"[LORA_MANAGE] 복제: 대상 이미 존재 {target_character}/{target_entry}")
+        return {"success": False, "error": "대상 항목명이 이미 존재합니다"}
+
+    # 4) 타겟 폴더 생성
+    target_entry_path = _lora_entry_dir(target_character, target_entry)
+    target_training = _training_dir(target_character, target_entry)
+    target_test = _test_dir(target_character, target_entry)
+    try:
+        os.makedirs(target_training, exist_ok=True)
+        os.makedirs(target_test, exist_ok=True)
+    except Exception as e:
+        print(f"[LORA_MANAGE] 복제: 폴더 생성 실패 - {e}")
+        traceback.print_exc()
+        return {"success": False, "error": f"폴더 생성 실패: {e}"}
+
+    # 5) 학습 이미지 복사 (_representative.json 제외)
+    src_training = _training_dir(source_character, source_entry)
+    copied_training = 0
+    if os.path.isdir(src_training):
+        for fname in os.listdir(src_training):
+            if fname == "_representative.json":
+                continue
+            src_file = os.path.join(src_training, fname)
+            if os.path.isfile(src_file):
+                try:
+                    shutil.copy2(src_file, os.path.join(target_training, fname))
+                    copied_training += 1
+                except Exception as e:
+                    print(f"[LORA_MANAGE] 복제: 학습 이미지 복사 실패 {fname} - {e}")
+
+    # 6) 테스트 이미지 복사
+    src_test = _test_dir(source_character, source_entry)
+    copied_test = 0
+    if os.path.isdir(src_test):
+        for fname in os.listdir(src_test):
+            if fname == "_representative.json":
+                continue
+            src_file = os.path.join(src_test, fname)
+            if os.path.isfile(src_file):
+                try:
+                    shutil.copy2(src_file, os.path.join(target_test, fname))
+                    copied_test += 1
+                except Exception as e:
+                    print(f"[LORA_MANAGE] 복제: 테스트 이미지 복사 실패 {fname} - {e}")
+
+    # 7) JSON 메타데이터 생성
+    entry_meta = {
+        "trigger": trigger.strip(),
+        "description": description.strip() if description else "",
+    }
+    if training_config and isinstance(training_config, dict):
+        entry_meta["training_config"] = training_config
+
+    data.setdefault("loras", {}).setdefault(target_character, {})[target_entry] = entry_meta
+    _save_lora_manage(data)
+
+    print(f"[LORA_MANAGE] 복제 완료: {source_character}/{source_entry} → {target_character}/{target_entry} "
+          f"(학습 {copied_training}장, 테스트 {copied_test}장)")
+    return {
+        "success": True,
+        "name": target_entry,
+        "copied_training": copied_training,
+        "copied_test": copied_test,
+    }
 
 
 def remove_lora_entry(name: str, character: str) -> dict:

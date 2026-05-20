@@ -3581,6 +3581,7 @@
                         <div style="display:flex; gap:6px;">
                             <button onclick="addLoraEntry()" style="flex:1; background:var(--accent); color:#fff; border:none; padding:6px 8px; border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600;">LoRA 추가</button>
                             <button onclick="removeLoraEntry()" id="lora-delete-btn" style="flex:1; background:var(--error); color:#fff; border:none; padding:6px 8px; border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600; display:none;">삭제</button>
+                            <button onclick="openLoraDuplicateModal()" id="lora-duplicate-btn" style="flex:1; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:6px 8px; border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600; display:none;">복제</button>
                         </div>
                     </div>
 
@@ -3821,6 +3822,52 @@
                 <button onclick="loraPickerConfirm()" id="lora-picker-confirm-btn" style="padding:8px 20px; background:var(--accent); color:#fff; border:none; border-radius:6px; cursor:pointer; font-weight:600;">
                     선택 완료
                 </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- LoRA 항목 복제 모달 -->
+    <div class="modal" id="lora-duplicate-modal" onclick="if (event.target === this) closeLoraDuplicateModal()">
+        <div class="modal-content" style="max-width:560px;">
+            <div class="modal-header">
+                <h2>LoRA 항목 복제</h2>
+                <button class="modal-close" onclick="closeLoraDuplicateModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <!-- 원본 정보 -->
+                <div style="margin-bottom:14px; padding:10px; background:var(--surface1); border-radius:8px; font-size:0.85rem;">
+                    <div style="font-weight:600; margin-bottom:4px;">원본</div>
+                    <span id="dup-source-info">-</span>
+                </div>
+                <!-- 대상 캐릭터 -->
+                <div style="margin-bottom:10px;">
+                    <label style="font-size:0.85rem; font-weight:600; display:block; margin-bottom:4px;">대상 캐릭터</label>
+                    <select id="dup-target-character" style="width:100%; padding:8px; border-radius:6px; border:1px solid var(--border); background:#2a2a2e; color:#e0e0e0; font-size:0.9rem;"></select>
+                </div>
+                <!-- 새 항목명 -->
+                <div style="margin-bottom:10px;">
+                    <label style="font-size:0.85rem; font-weight:600; display:block; margin-bottom:4px;">새 항목명 <span style="color:var(--error);">*</span></label>
+                    <input id="dup-target-entry" type="text" placeholder="예: anima-v11" style="width:100%; padding:8px; border-radius:6px; border:1px solid var(--border); background:var(--surface1); color:var(--text); font-size:0.9rem;">
+                </div>
+                <!-- 트리거 키워드 -->
+                <div style="margin-bottom:10px;">
+                    <label style="font-size:0.85rem; font-weight:600; display:block; margin-bottom:4px;">트리거 키워드 <span style="color:var(--error);">*</span></label>
+                    <input id="dup-trigger" type="text" style="width:100%; padding:8px; border-radius:6px; border:1px solid var(--border); background:var(--surface1); color:var(--text); font-size:0.9rem;">
+                </div>
+                <!-- 설명 -->
+                <div style="margin-bottom:10px;">
+                    <label style="font-size:0.85rem; font-weight:600; display:block; margin-bottom:4px;">설명</label>
+                    <textarea id="dup-description" rows="2" style="width:100%; padding:8px; border-radius:6px; border:1px solid var(--border); background:var(--surface1); color:var(--text); font-size:0.9rem; resize:vertical;"></textarea>
+                </div>
+                <!-- 학습 설정 (접힌 형태) -->
+                <details id="dup-training-config-details" style="margin-bottom:10px;">
+                    <summary style="font-size:0.85rem; font-weight:600; cursor:pointer; margin-bottom:6px;">학습 설정</summary>
+                    <textarea id="dup-training-config" rows="6" style="width:100%; padding:8px; border-radius:6px; border:1px solid var(--border); background:var(--surface1); color:var(--text); font-size:0.8rem; font-family:monospace; resize:vertical;"></textarea>
+                </details>
+            </div>
+            <div class="modal-footer">
+                <button onclick="closeLoraDuplicateModal()" style="padding:8px 16px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:6px; cursor:pointer;">취소</button>
+                <button onclick="confirmLoraDuplicate()" style="padding:8px 20px; background:var(--accent); color:#fff; border:none; border-radius:6px; cursor:pointer; font-weight:600;">복제</button>
             </div>
         </div>
     </div>
@@ -10397,6 +10444,12 @@
             document.getElementById('lora-training-section').style.display = 'none';
             document.getElementById('lora-test-section').style.display = 'none';
             document.getElementById('lora-entry-info').style.display = 'none';
+            document.getElementById('lora-training-add-section').style.display = 'none';
+            document.getElementById('lora-test-add-section').style.display = 'none';
+            document.getElementById('lora-training-config-section').style.display = 'none';
+            document.getElementById('lora-training-export-section').style.display = 'none';
+            document.getElementById('lora-delete-btn').style.display = 'none';
+            document.getElementById('lora-duplicate-btn').style.display = 'none';
         }
 
         async function initLoraTab() {
@@ -10404,10 +10457,6 @@
             loraCurrentCharacter = '';
             _loraHideAll();
             document.getElementById('lora-breadcrumb').innerHTML = '<span>로라매니징</span>';
-            document.getElementById('lora-delete-btn').style.display = 'none';
-            document.getElementById('lora-training-add-section').style.display = 'none';
-            document.getElementById('lora-test-add-section').style.display = 'none';
-            document.getElementById('lora-training-config-section').style.display = 'none';
             await loadLoraCharacterGrid();
         }
 
@@ -10448,12 +10497,6 @@
             // breadcrumb
             document.getElementById('lora-breadcrumb').innerHTML =
                 `<span style="cursor:pointer;" onclick="initLoraTab()">로라매니징</span> / <span>${escapeHtml(character)}</span>`;
-
-            // 사이드바: 추가 버튼만
-            document.getElementById('lora-delete-btn').style.display = 'none';
-            document.getElementById('lora-training-add-section').style.display = 'none';
-            document.getElementById('lora-test-add-section').style.display = 'none';
-            document.getElementById('lora-training-config-section').style.display = 'none';
 
             try {
                 const enc = encodeURIComponent;
@@ -10513,6 +10556,7 @@
 
             // 사이드바: 삭제/학습 표시
             document.getElementById('lora-delete-btn').style.display = '';
+            document.getElementById('lora-duplicate-btn').style.display = '';
             document.getElementById('lora-training-add-section').style.display = '';
             document.getElementById('lora-test-add-section').style.display = '';
             document.getElementById('lora-training-config-section').style.display = '';
@@ -10995,6 +11039,102 @@
                     showToast(resp.error || '삭제 실패', 'error');
                 }
             } catch (e) { console.error('[LORA_MANAGE] 삭제 실패:', e); showToast('삭제 실패', 'error'); }
+        }
+
+        // ─── LoRA 항목 복제 ─────────────────────────────────
+        async function openLoraDuplicateModal() {
+            if (!loraCurrentEntry) { showToast('LoRA 항목을 선택하세요', 'error'); return; }
+
+            // 원본 정보 표시
+            document.getElementById('dup-source-info').textContent =
+                `${loraCurrentCharacter} / ${loraCurrentEntry}`;
+
+            // 대상 항목명 초기화
+            document.getElementById('dup-target-entry').value = '';
+            document.getElementById('dup-description').value = '';
+            document.getElementById('dup-training-config').value = '';
+
+            try {
+                // 캐릭터 목록 로드
+                const charResp = await fetchJSON('/api/lora/characters');
+                const sel = document.getElementById('dup-target-character');
+                sel.innerHTML = '';
+                if (charResp.success && charResp.characters) {
+                    charResp.characters.forEach(c => {
+                        const opt = document.createElement('option');
+                        opt.value = c; opt.textContent = c;
+                        if (c === loraCurrentCharacter) opt.selected = true;
+                        sel.appendChild(opt);
+                    });
+                }
+
+                // 현재 엔트리 데이터로 pre-fill
+                const enc = encodeURIComponent;
+                const entryResp = await fetchJSON(`/api/lora/manage/list?character=${enc(loraCurrentCharacter)}`);
+                if (entryResp.success) {
+                    const entry = (entryResp.loras || []).find(l => l.name === loraCurrentEntry);
+                    if (entry) {
+                        document.getElementById('dup-trigger').value = entry.trigger || '';
+                        document.getElementById('dup-description').value = entry.description || '';
+                        if (entry.training_config && Object.keys(entry.training_config).length > 0) {
+                            document.getElementById('dup-training-config').value =
+                                JSON.stringify(entry.training_config, null, 2);
+                        }
+                    }
+                }
+            } catch (e) {
+                console.error('[LORA_MANAGE] 복제 모달 로드 실패:', e);
+            }
+
+            document.getElementById('lora-duplicate-modal').style.display = 'flex';
+        }
+
+        function closeLoraDuplicateModal() {
+            document.getElementById('lora-duplicate-modal').style.display = 'none';
+        }
+
+        async function confirmLoraDuplicate() {
+            const targetEntry = document.getElementById('dup-target-entry').value.trim();
+            const targetCharacter = document.getElementById('dup-target-character').value;
+            const trigger = document.getElementById('dup-trigger').value.trim();
+            const description = document.getElementById('dup-description').value.trim();
+
+            if (!targetEntry) { showToast('대상 항목명을 입력하세요', 'error'); return; }
+            if (!trigger) { showToast('트리거 키워드를 입력하세요', 'error'); return; }
+
+            let trainingConfig = null;
+            const tcRaw = document.getElementById('dup-training-config').value.trim();
+            if (tcRaw) {
+                try { trainingConfig = JSON.parse(tcRaw); }
+                catch (e) { showToast('학습 설정 JSON 형식 오류', 'error'); return; }
+            }
+
+            try {
+                const resp = await fetchJSON('/api/lora/manage/duplicate', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        source_character: loraCurrentCharacter,
+                        source_entry: loraCurrentEntry,
+                        target_character: targetCharacter,
+                        target_entry: targetEntry,
+                        trigger, description,
+                        training_config: trainingConfig
+                    })
+                });
+                if (resp.success) {
+                    showToast(`복제 완료 (학습 ${resp.copied_training || 0}장, 테스트 ${resp.copied_test || 0}장)`, 'success');
+                    closeLoraDuplicateModal();
+                    // 타겟 캐릭터가 현재 캐릭터와 같으면 목록 새로고침
+                    if (targetCharacter === loraCurrentCharacter) {
+                        await enterLoraCharacter(loraCurrentCharacter);
+                    }
+                } else {
+                    showToast(resp.error || '복제 실패', 'error');
+                }
+            } catch (e) {
+                console.error('[LORA_MANAGE] 복제 실패:', e);
+                showToast('복제 실패', 'error');
+            }
         }
 
         async function saveLoraEntryInfo() {
