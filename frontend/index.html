@@ -2712,7 +2712,7 @@
 
                     <!-- 아티스트 프리셋 섹션 -->
                     <div style="background:rgba(233,30,99,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
-                    <div class="section-title">아티스트 프리셋</div>
+                    <div class="section-title">아티스트 프리셋(optional)</div>
                     <div style="margin-bottom:6px;">
                         <div id="asset-artist-preset-select-container"></div>
                         <div style="display:flex; gap:4px; margin-top:3px;">
@@ -2750,7 +2750,7 @@
 
                     <!-- 자연어 프리셋 섹션 -->
                     <div style="background:rgba(0,150,136,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
-                    <div class="section-title">자연어 프리셋</div>
+                    <div class="section-title">자연어 프리셋(optional)</div>
                     <div style="margin-bottom:6px;">
                         <div id="asset-natural-language-preset-select-container"></div>
                         <div style="display:flex; gap:4px; margin-top:3px;">
@@ -12273,6 +12273,12 @@
             if (!prevOutfit || !assetTags.outfits?.[prevOutfit]) document.getElementById('asset-outfit-tags').innerHTML = '';
             if (!prevExpr || !assetTags.expressions?.[prevExpr]) document.getElementById('asset-expression-tags').innerHTML = '';
 
+            // 아티스트/자연어 프리셋 선택값이 있으면 태그도 다시 렌더
+            const prevArtist = getAssetSelectValue('asset-artist-preset-select');
+            if (prevArtist && assetTags.artist_presets?.[prevArtist]) loadArtistPreset();
+            const prevNL = getAssetSelectValue('asset-natural-language-preset-select');
+            if (prevNL && assetTags.natural_language_presets?.[prevNL] !== undefined) loadNaturalLanguagePreset();
+
             // 메인 영역 갤러리 네비게이션 새로고침
             renderAssetMainArea();
 
@@ -12510,13 +12516,24 @@
             assetTagAction('duplicate_appearance', { name: app, new_name: newName.trim() });
         }
 
-        function addAssetAppearanceTag() {
+        async function addAssetAppearanceTag() {
             const app = getAssetSelectValue('asset-appearance-select');
             const input = document.getElementById('asset-new-appearance-tag');
             const val = input.value.trim();
             if (!val || !app) return;
-            assetTagAction('add_appearance_tag', { name: app, value: val });
             input.value = '';
+            try {
+                const resp = await fetch('/api/asset_mode/tags', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'add_appearance_tag', name: app, value: val }) });
+                const result = await resp.json();
+                if (result.success) {
+                    const dataResp = await fetch('/api/asset_mode/tags');
+                    assetTags = await dataResp.json();
+                    const tagsDiv = document.getElementById('asset-appearance-tags');
+                    const appTags = assetTags.appearances?.[app] || [];
+                    renderTagChipsWithFn(tagsDiv, appTags, (idx) => { assetTagAction('remove_appearance_tag', { name: app, index: idx }); });
+                    updateGenerateBtn();
+                } else { showToast(result.error || '오류', 'error'); }
+            } catch (e) { showToast('요청 실패: ' + e.message, 'error'); }
         }
 
         function onAssetOutfitChange() {
@@ -12542,13 +12559,25 @@
             assetTagAction('add_outfit', { name: name.trim() });
         }
 
-        function addAssetOutfitTag() {
+        async function addAssetOutfitTag() {
             const outfit = getAssetSelectValue('asset-outfit-select');
             const input = document.getElementById('asset-new-outfit-tag');
             const val = input.value.trim();
             if (!val || !outfit) return;
-            assetTagAction('add_outfit_tag', { name: outfit, value: val });
             input.value = '';
+            try {
+                const resp = await fetch('/api/asset_mode/tags', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'add_outfit_tag', name: outfit, value: val }) });
+                const result = await resp.json();
+                if (result.success) {
+                    const dataResp = await fetch('/api/asset_mode/tags');
+                    assetTags = await dataResp.json();
+                    const tagsDiv = document.getElementById('asset-outfit-tags');
+                    const outfitTags = assetTags.outfits?.[outfit] || [];
+                    renderTagChipsWithFn(tagsDiv, outfitTags, (idx) => { assetTagAction('remove_outfit_tag', { name: outfit, index: idx }); });
+                    updateGenerateBtn();
+                    if (assetNavLevel === 2) loadAssetImages();
+                } else { showToast(result.error || '오류', 'error'); }
+            } catch (e) { showToast('요청 실패: ' + e.message, 'error'); }
         }
 
         function onAssetExpressionChange() {
@@ -12574,13 +12603,25 @@
             assetTagAction('add_expression', { name: name.trim() });
         }
 
-        function addAssetExpressionTag() {
+        async function addAssetExpressionTag() {
             const expr = getAssetSelectValue('asset-expression-select');
             const input = document.getElementById('asset-new-expression-tag');
             const val = input.value.trim();
             if (!val || !expr) return;
-            assetTagAction('add_expression_tag', { name: expr, value: val });
             input.value = '';
+            try {
+                const resp = await fetch('/api/asset_mode/tags', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'add_expression_tag', name: expr, value: val }) });
+                const result = await resp.json();
+                if (result.success) {
+                    const dataResp = await fetch('/api/asset_mode/tags');
+                    assetTags = await dataResp.json();
+                    const tagsDiv = document.getElementById('asset-expression-tags');
+                    const exprTags = assetTags.expressions?.[expr] || [];
+                    renderTagChipsWithFn(tagsDiv, exprTags, (idx) => { assetTagAction('remove_expression_tag', { name: expr, index: idx }); });
+                    updateGenerateBtn();
+                    if (assetNavLevel === 2) loadAssetImages();
+                } else { showToast(result.error || '오류', 'error'); }
+            } catch (e) { showToast('요청 실패: ' + e.message, 'error'); }
         }
 
         async function addAssetQualityTag() {
@@ -12800,17 +12841,21 @@
             });
         }
 
-        function removeArtistTag(presetName, idx) {
+        async function removeArtistTag(presetName, idx) {
             if (!assetTags?.artist_presets?.[presetName]) return;
-            assetTags.artist_presets[presetName].splice(idx, 1);
-            // 서버에 저장
-            fetch('/api/asset_mode/tags', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ action: 'save_artist_preset', name: presetName, tags: assetTags.artist_presets[presetName] })
-            }).then(r => r.json()).then(result => {
-                if (result.success) loadAssetData();
-            }).catch(() => {});
+            const newTags = [...assetTags.artist_presets[presetName]];
+            newTags.splice(idx, 1);
+            try {
+                const resp = await fetch('/api/asset_mode/tags', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'save_artist_preset', name: presetName, tags: newTags }) });
+                const result = await resp.json();
+                if (result.success) {
+                    const dataResp = await fetch('/api/asset_mode/tags');
+                    assetTags = await dataResp.json();
+                    const tagsDiv = document.getElementById('asset-artist-tags');
+                    const tags = assetTags.artist_presets?.[presetName] || [];
+                    renderTagChipsWithFn(tagsDiv, tags, (i) => { removeArtistTag(presetName, i); });
+                } else { showToast(result.error || '오류', 'error'); }
+            } catch (e) { showToast('요청 실패: ' + e.message, 'error'); }
         }
 
         async function addAssetArtistTag() {
@@ -12820,10 +12865,17 @@
             const presetName = getAssetSelectValue('asset-artist-preset-select');
             if (!presetName) { showToast('아티스트 프리셋을 먼저 선택하세요', 'error'); return; }
             input.value = '';
-            if (!assetTags.artist_presets) assetTags.artist_presets = {};
-            if (!assetTags.artist_presets[presetName]) assetTags.artist_presets[presetName] = [];
-            assetTags.artist_presets[presetName].push(val);
-            await assetTagAction('save_artist_preset', { name: presetName, tags: assetTags.artist_presets[presetName] });
+            try {
+                const resp = await fetch('/api/asset_mode/tags', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'save_artist_preset', name: presetName, tags: [...(assetTags.artist_presets?.[presetName] || []), val] }) });
+                const result = await resp.json();
+                if (result.success) {
+                    const dataResp = await fetch('/api/asset_mode/tags');
+                    assetTags = await dataResp.json();
+                    const tagsDiv = document.getElementById('asset-artist-tags');
+                    const tags = assetTags.artist_presets?.[presetName] || [];
+                    renderTagChipsWithFn(tagsDiv, tags, (idx) => { removeArtistTag(presetName, idx); });
+                } else { showToast(result.error || '오류', 'error'); }
+            } catch (e) { showToast('요청 실패: ' + e.message, 'error'); }
         }
 
         function addArtistPreset() {
