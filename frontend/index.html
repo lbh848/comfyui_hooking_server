@@ -2935,6 +2935,14 @@
                         </div>
                     </div>
 
+                    <!-- 이미지 사이즈 -->
+                    <div style="display:flex; gap:6px; align-items:center; margin-bottom:8px;">
+                        <span style="font-size:0.8rem; min-width:fit-content;">이미지 사이즈</span>
+                        <input type="number" id="asset-img-w" value="936" min="256" max="4096" step="8" style="width:70px; padding:4px 6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:4px; font-size:0.8rem; text-align:center;" title="이미지 너비">
+                        <span style="font-size:0.75rem; color:var(--text-secondary);">x</span>
+                        <input type="number" id="asset-img-h" value="1408" min="256" max="4096" step="8" style="width:70px; padding:4px 6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:4px; font-size:0.8rem; text-align:center;" title="이미지 높이">
+                    </div>
+
                     <!-- HIRES FIX / 페이스/핸드/눈 디테일러 토글 -->
                     <div style="display:flex; flex-direction:column; gap:6px; margin-bottom:8px;">
                         <div style="display:flex; align-items:center; gap:6px; padding:6px 8px; background:var(--surface2); border-radius:6px; border:1px solid var(--border);">
@@ -2944,6 +2952,29 @@
                                 <span class="toggle-slider"></span>
                             </label>
                             <span id="asset-hrf-status" class="toggle-status off">OFF</span>
+                        </div>
+                        <div id="asset-hrf-options" style="display:none; padding:6px 8px; background:var(--surface2); border-radius:6px; border:1px solid var(--border); gap:6px; flex-direction:column;">
+                            <div style="display:flex; align-items:center; gap:6px;">
+                                <span style="font-size:0.75rem; color:var(--text-secondary); min-width:fit-content;">업스케일링 비율</span>
+                                <input type="range" id="asset-hrf-size" min="1" max="4" step="0.05" value="2.0" style="flex:1; cursor:pointer;">
+                                <span id="asset-hrf-size-val" style="font-size:0.75rem; min-width:28px; text-align:right;">2.0</span>
+                            </div>
+                            <div style="display:flex; align-items:center; gap:6px;">
+                                <span style="font-size:0.75rem;">RESTORE SIZE</span>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="asset-hrf-restore-size" checked>
+                                    <span class="toggle-slider"></span>
+                                </label>
+                                <span id="asset-hrf-restore-size-status" class="toggle-status on">ON</span>
+                            </div>
+                            <div style="display:flex; align-items:center; gap:6px;">
+                                <span style="font-size:0.75rem;">CONTROL NET</span>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="asset-hrf-control-net">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                                <span id="asset-hrf-control-net-status" class="toggle-status off">OFF</span>
+                            </div>
                         </div>
                         <div style="display:flex; align-items:center; gap:6px; padding:6px 8px; background:var(--surface2); border-radius:6px; border:1px solid var(--border);">
                             <span style="font-size:0.8rem;">페이스 디테일러</span>
@@ -12645,6 +12676,13 @@
             const hdActivate = document.getElementById('asset-hd-toggle').checked;
             const edActivate = document.getElementById('asset-ed-toggle').checked;
 
+            // HRF 하위 옵션
+            const hrfSize = parseFloat(document.getElementById('asset-hrf-size').value) || 2.0;
+            const hrfRestoreSize = document.getElementById('asset-hrf-restore-size').checked;
+            const hrfControlNet = document.getElementById('asset-hrf-control-net').checked;
+            const imgW = parseInt(document.getElementById('asset-img-w').value) || 936;
+            const imgH = parseInt(document.getElementById('asset-img-h').value) || 1408;
+
             // 품질
             const qTags = (assetTags.quality || []).filter(t => t.trim());
             // 구도/기타
@@ -12694,6 +12732,11 @@
                 positiveFull += `\n[POSE_DATA]\n{"people":[{"pose_keypoints_2d":[509.59,522.31,1,552.52,696.55,1,299.04,600.06,1,73.98,858.17,1,86.61,624.58,1,774.33,791.04,1,484.34,1286.20,1,442.67,1336.70,1,263.38,1096.80,1,354.29,1393.52,1,344.19,1408.67,1,469.19,1128.37,1,561.36,1390.99,1,561.36,1408.67,1,422.47,471.80,1,618.18,404.88,1,351.76,502.11,1,730.55,414.98,1]}],"canvas_height":1408,"canvas_width":936}`;
             }
             positiveFull += `\n[HRF_ACTIVATE]\n${hrfActivate ? 'true' : 'false'}`;
+            positiveFull += `\n[HRF_SIZE]\n${hrfSize}`;
+            positiveFull += `\n[HRF_RESTORE_SIZE]\n${hrfRestoreSize ? 'true' : 'false'}`;
+            positiveFull += `\n[HRF_CONTROL_NET]\n${hrfControlNet ? 'true' : 'false'}`;
+            positiveFull += `\n[IMG_W]\n${imgW}`;
+            positiveFull += `\n[IMG_H]\n${imgH}`;
             positiveFull += `\n[FD_ACTIVATE]\n${fdActivate ? 'true' : 'false'}`;
             positiveFull += `\n[HD_ACTIVATE]\n${hdActivate ? 'true' : 'false'}`;
             positiveFull += `\n[ED_ACTIVATE]\n${edActivate ? 'true' : 'false'}`;
@@ -14126,6 +14169,20 @@
 
         document.getElementById('asset-hrf-toggle').addEventListener('change', function() {
             const status = document.getElementById('asset-hrf-status');
+            status.textContent = this.checked ? 'ON' : 'OFF';
+            status.className = 'toggle-status ' + (this.checked ? 'on' : 'off');
+            document.getElementById('asset-hrf-options').style.display = this.checked ? 'flex' : 'none';
+        });
+        document.getElementById('asset-hrf-size').addEventListener('input', function() {
+            document.getElementById('asset-hrf-size-val').textContent = parseFloat(this.value).toFixed(2);
+        });
+        document.getElementById('asset-hrf-restore-size').addEventListener('change', function() {
+            const status = document.getElementById('asset-hrf-restore-size-status');
+            status.textContent = this.checked ? 'ON' : 'OFF';
+            status.className = 'toggle-status ' + (this.checked ? 'on' : 'off');
+        });
+        document.getElementById('asset-hrf-control-net').addEventListener('change', function() {
+            const status = document.getElementById('asset-hrf-control-net-status');
             status.textContent = this.checked ? 'ON' : 'OFF';
             status.className = 'toggle-status ' + (this.checked ? 'on' : 'off');
         });
@@ -15591,6 +15648,11 @@
             const hrfActivate = document.getElementById('asset-hrf-toggle').checked;
             const hdActivate = document.getElementById('asset-hd-toggle').checked;
             const edActivate = document.getElementById('asset-ed-toggle').checked;
+            const hrfSize = parseFloat(document.getElementById('asset-hrf-size').value) || 2.0;
+            const hrfRestoreSize = document.getElementById('asset-hrf-restore-size').checked;
+            const hrfControlNet = document.getElementById('asset-hrf-control-net').checked;
+            const imgW = parseInt(document.getElementById('asset-img-w').value) || 936;
+            const imgH = parseInt(document.getElementById('asset-img-h').value) || 1408;
 
             // LoRA 데이터 빌드
             let loraData = '';
@@ -15642,6 +15704,11 @@
                                 pose_enabled: poseEnabled,
                                 pose_id: poseEnabled ? assetSelectedPoseId : '',
                                 hrf_activate: hrfActivate,
+                                hrf_size: hrfSize,
+                                hrf_restore_size: hrfRestoreSize,
+                                hrf_control_net: hrfControlNet,
+                                img_w: imgW,
+                                img_h: imgH,
                                 fd_activate: fdActivate,
                                 hd_activate: hdActivate,
                                 ed_activate: edActivate,
@@ -17386,6 +17453,11 @@
                 pose_enabled: false,
                 pose_id: '',
                 hrf_enabled: false,
+                hrf_size: 2.0,
+                hrf_restore_size: true,
+                hrf_control_net: false,
+                img_w: 936,
+                img_h: 1408,
                 fd_enabled: false,
                 hd_enabled: false,
                 ed_enabled: false,
@@ -17511,10 +17583,47 @@
                     </div>
 
                     <div style="border-top:1px solid var(--border); padding-top:10px;">
+                        <div class="batch-field-label" style="margin-bottom:6px;">이미지 사이즈 일괄 설정</div>
+                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+                            <label style="font-size:0.8rem; min-width:fit-content;">IMG_W:</label>
+                            <input type="number" id="bulk-img-w" value="936" min="256" max="4096" step="8" style="width:70px; padding:3px 4px; border:1px solid var(--border); background:var(--surface); color:var(--text); border-radius:4px; font-size:0.8rem; text-align:center;">
+                            <label style="font-size:0.8rem; min-width:fit-content;">IMG_H:</label>
+                            <input type="number" id="bulk-img-h" value="1408" min="256" max="4096" step="8" style="width:70px; padding:3px 4px; border:1px solid var(--border); background:var(--surface); color:var(--text); border-radius:4px; font-size:0.8rem; text-align:center;">
+                            <label style="font-size:0.75rem; display:flex; align-items:center; gap:4px; cursor:pointer;">
+                                <input type="checkbox" id="bulk-img-size-check"> 적용
+                            </label>
+                        </div>
+                    </div>
+
+                    <div style="border-top:1px solid var(--border); padding-top:10px;">
                         <div class="batch-field-label" style="margin-bottom:6px;">디테일러 일괄 설정</div>
                         <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
                             <label style="font-size:0.8rem;">HRF:</label>
                             <select id="bulk-hrf-action" class="batch-select" style="width:auto; min-width:120px;">
+                                <option value="">변경 안함</option>
+                                <option value="on">모두 ON</option>
+                                <option value="off">모두 OFF</option>
+                            </select>
+                        </div>
+                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+                            <label style="font-size:0.8rem; min-width:fit-content;">업스케일링 비율:</label>
+                            <input type="range" id="bulk-hrf-size" min="1" max="4" step="0.05" value="2.0" style="flex:1; cursor:pointer;">
+                            <span id="bulk-hrf-size-val" style="font-size:0.75rem; min-width:28px; text-align:right;">2.0</span>
+                            <label style="font-size:0.75rem; display:flex; align-items:center; gap:4px; cursor:pointer;">
+                                <input type="checkbox" id="bulk-hrf-size-check"> 적용
+                            </label>
+                        </div>
+                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+                            <label style="font-size:0.8rem;">HRF RESTORE SIZE:</label>
+                            <select id="bulk-hrf-restore-size-action" class="batch-select" style="width:auto; min-width:120px;">
+                                <option value="">변경 안함</option>
+                                <option value="on">모두 ON</option>
+                                <option value="off">모두 OFF</option>
+                            </select>
+                        </div>
+                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+                            <label style="font-size:0.8rem;">HRF CONTROL NET:</label>
+                            <select id="bulk-hrf-control-net-action" class="batch-select" style="width:auto; min-width:120px;">
                                 <option value="">변경 안함</option>
                                 <option value="on">모두 ON</option>
                                 <option value="off">모두 OFF</option>
@@ -17604,6 +17713,11 @@
             // ─── 스타일 레퍼런스 일괄 설정 이벤트 ──
             document.getElementById('bulk-style-ref-strength').addEventListener('input', function() {
                 document.getElementById('bulk-style-ref-strength-val').textContent = this.value;
+            });
+
+            // ─── HRF SIZE 일괄 설정 이벤트 ──
+            document.getElementById('bulk-hrf-size').addEventListener('input', function() {
+                document.getElementById('bulk-hrf-size-val').textContent = parseFloat(this.value).toFixed(2);
             });
 
             const bulkStyleRefFile = document.getElementById('bulk-style-ref-file');
@@ -17983,6 +18097,13 @@
             const styleRefStrengthCheck = document.getElementById('bulk-style-ref-strength-check').checked;
             const styleRefStrength = parseFloat(document.getElementById('bulk-style-ref-strength').value);
             const hrfAction = document.getElementById('bulk-hrf-action').value;
+            const hrfSizeCheck = document.getElementById('bulk-hrf-size-check').checked;
+            const hrfSize = parseFloat(document.getElementById('bulk-hrf-size').value);
+            const hrfRestoreSizeAction = document.getElementById('bulk-hrf-restore-size-action').value;
+            const hrfControlNetAction = document.getElementById('bulk-hrf-control-net-action').value;
+            const imgSizeCheck = document.getElementById('bulk-img-size-check').checked;
+            const imgW = parseInt(document.getElementById('bulk-img-w').value) || 936;
+            const imgH = parseInt(document.getElementById('bulk-img-h').value) || 1408;
             const fdAction = document.getElementById('bulk-fd-action').value;
             const hdAction = document.getElementById('bulk-hd-action').value;
             const edAction = document.getElementById('bulk-ed-action').value;
@@ -18024,6 +18145,12 @@
                 if (fdAction === 'off') slot.fd_enabled = false;
                 if (hrfAction === 'on') slot.hrf_enabled = true;
                 if (hrfAction === 'off') slot.hrf_enabled = false;
+                if (hrfSizeCheck) slot.hrf_size = hrfSize;
+                if (hrfRestoreSizeAction === 'on') slot.hrf_restore_size = true;
+                if (hrfRestoreSizeAction === 'off') slot.hrf_restore_size = false;
+                if (hrfControlNetAction === 'on') slot.hrf_control_net = true;
+                if (hrfControlNetAction === 'off') slot.hrf_control_net = false;
+                if (imgSizeCheck) { slot.img_w = imgW; slot.img_h = imgH; }
                 if (hdAction === 'on') slot.hd_enabled = true;
                 if (hdAction === 'off') slot.hd_enabled = false;
                 if (edAction === 'on') slot.ed_enabled = true;
@@ -18210,9 +18337,31 @@
                     </div>
                 </div>
 
+                <div class="batch-field-group" style="display:flex; gap:6px; align-items:center;">
+                    <span style="font-size:0.75rem; min-width:fit-content;">이미지 사이즈</span>
+                    <input type="number" data-field="img_w" value="${slot.img_w || 936}" min="256" max="4096" step="8" style="width:60px; padding:3px 4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:4px; font-size:0.75rem; text-align:center;">
+                    <span style="font-size:0.7rem; color:var(--text-secondary);">x</span>
+                    <input type="number" data-field="img_h" value="${slot.img_h || 1408}" min="256" max="4096" step="8" style="width:60px; padding:3px 4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:4px; font-size:0.75rem; text-align:center;">
+                </div>
+
                 <div class="batch-toggle-row">
                     <label>HIRES FIX</label>
                     <label class="toggle-switch"><input type="checkbox" data-field="hrf_enabled" ${slot.hrf_enabled ? 'checked' : ''}><span class="toggle-slider"></span></label>
+                </div>
+                <div class="batch-hrf-options" style="display:${slot.hrf_enabled ? 'flex' : 'none'}; flex-direction:column; gap:4px; padding:4px 6px; background:var(--surface2); border-radius:4px; border:1px solid var(--border);">
+                    <div style="display:flex; align-items:center; gap:6px;">
+                        <span style="font-size:0.7rem; color:var(--text-secondary); min-width:fit-content;">업스케일링 비율</span>
+                        <input type="range" data-field="hrf_size" min="1" max="4" step="0.05" value="${slot.hrf_size || 2.0}" style="flex:1; cursor:pointer;">
+                        <span class="batch-hrf-size-val" style="font-size:0.7rem; min-width:24px; text-align:right;">${slot.hrf_size || 2.0}</span>
+                    </div>
+                    <div class="batch-toggle-row" style="padding:0; background:none;">
+                        <label style="font-size:0.7rem;">RESTORE SIZE</label>
+                        <label class="toggle-switch"><input type="checkbox" data-field="hrf_restore_size" ${slot.hrf_restore_size !== false ? 'checked' : ''}><span class="toggle-slider"></span></label>
+                    </div>
+                    <div class="batch-toggle-row" style="padding:0; background:none;">
+                        <label style="font-size:0.7rem;">CONTROL NET</label>
+                        <label class="toggle-switch"><input type="checkbox" data-field="hrf_control_net" ${slot.hrf_control_net ? 'checked' : ''}><span class="toggle-slider"></span></label>
+                    </div>
                 </div>
                 <div class="batch-toggle-row">
                     <label>페이스 디테일러</label>
@@ -18334,6 +18483,9 @@
                     if (cb.dataset.field === 'pose_enabled') {
                         slotEl.querySelector('.batch-pose-select-row').style.display = cb.checked ? 'block' : 'none';
                     }
+                    if (cb.dataset.field === 'hrf_enabled') {
+                        slotEl.querySelector('.batch-hrf-options').style.display = cb.checked ? 'flex' : 'none';
+                    }
                     updateBatchPreview(slotEl, idx);
                 });
             });
@@ -18341,10 +18493,22 @@
             slotEl.querySelectorAll('input[type="range"][data-field]').forEach(rng => {
                 rng.addEventListener('input', () => {
                     batchChains[idx][rng.dataset.field] = parseFloat(rng.value);
-                    const valEl = rng.dataset.field === 'style_ref_strength'
-                        ? slotEl.querySelector('.batch-style-ref-str-val')
-                        : slotEl.querySelector('.batch-ref-str-val');
-                    if (valEl) valEl.textContent = rng.value;
+                    let valEl;
+                    if (rng.dataset.field === 'style_ref_strength') {
+                        valEl = slotEl.querySelector('.batch-style-ref-str-val');
+                    } else if (rng.dataset.field === 'hrf_size') {
+                        valEl = slotEl.querySelector('.batch-hrf-size-val');
+                    } else {
+                        valEl = slotEl.querySelector('.batch-ref-str-val');
+                    }
+                    if (valEl) valEl.textContent = rng.dataset.field === 'hrf_size' ? parseFloat(rng.value).toFixed(2) : rng.value;
+                    updateBatchPreview(slotEl, idx);
+                });
+            });
+            // number 변경 (img_w, img_h)
+            slotEl.querySelectorAll('input[type="number"][data-field]').forEach(inp => {
+                inp.addEventListener('change', () => {
+                    batchChains[idx][inp.dataset.field] = parseInt(inp.value) || (inp.dataset.field === 'img_w' ? 936 : 1408);
                     updateBatchPreview(slotEl, idx);
                 });
             });
@@ -19059,6 +19223,11 @@
                 positiveFull += `\n[POSE_DATA]\n{"people":[{"pose_keypoints_2d":[509.59,522.31,1,...]}],"canvas_height":1408,"canvas_width":936}`;
             }
             positiveFull += `\n[HRF_ACTIVATE]\n${slot.hrf_enabled ? 'true' : 'false'}`;
+            positiveFull += `\n[HRF_SIZE]\n${slot.hrf_size || 2.0}`;
+            positiveFull += `\n[HRF_RESTORE_SIZE]\n${slot.hrf_restore_size !== false ? 'true' : 'false'}`;
+            positiveFull += `\n[HRF_CONTROL_NET]\n${slot.hrf_control_net ? 'true' : 'false'}`;
+            positiveFull += `\n[IMG_W]\n${slot.img_w || 936}`;
+            positiveFull += `\n[IMG_H]\n${slot.img_h || 1408}`;
             positiveFull += `\n[FD_ACTIVATE]\n${slot.fd_enabled ? 'true' : 'false'}`;
             positiveFull += `\n[HD_ACTIVATE]\n${slot.hd_enabled ? 'true' : 'false'}`;
             positiveFull += `\n[ED_ACTIVATE]\n${slot.ed_enabled ? 'true' : 'false'}`;
@@ -19171,6 +19340,11 @@
                             pose_id: slot.pose_enabled ? slot.pose_id : '',
                             fd_activate: slot.fd_enabled,
                             hrf_activate: slot.hrf_enabled,
+                            hrf_size: slot.hrf_size || 2.0,
+                            hrf_restore_size: slot.hrf_restore_size !== false,
+                            hrf_control_net: !!slot.hrf_control_net,
+                            img_w: slot.img_w || 936,
+                            img_h: slot.img_h || 1408,
                             hd_activate: slot.hd_enabled,
                             ed_activate: slot.ed_enabled,
                         };
