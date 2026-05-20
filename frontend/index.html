@@ -3121,7 +3121,7 @@
                         <div id="asset-hrf-options" style="display:none; padding:6px 8px; background:var(--surface2); border-radius:6px; border:1px solid var(--border); gap:6px; flex-direction:column;">
                             <div style="display:flex; align-items:center; gap:6px;">
                                 <span style="font-size:0.75rem; color:var(--text-secondary); min-width:fit-content;">업스케일링 비율</span>
-                                <input type="range" id="asset-hrf-size" min="1" max="4" step="0.05" value="2.0" style="flex:1; cursor:pointer;">
+                                <input type="range" id="asset-hrf-size" min="1" max="3" step="0.05" value="2.0" style="flex:1; cursor:pointer;">
                                 <span id="asset-hrf-size-val" style="font-size:0.75rem; min-width:28px; text-align:right;">2.0</span>
                             </div>
                             <div style="display:flex; align-items:center; gap:6px;">
@@ -18176,7 +18176,7 @@
                         </div>
                         <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
                             <label style="font-size:0.8rem; min-width:fit-content;">업스케일링 비율:</label>
-                            <input type="range" id="bulk-hrf-size" min="1" max="4" step="0.05" value="2.0" style="flex:1; cursor:pointer;">
+                            <input type="range" id="bulk-hrf-size" min="1" max="3" step="0.05" value="2.0" style="flex:1; cursor:pointer;">
                             <span id="bulk-hrf-size-val" style="font-size:0.75rem; min-width:28px; text-align:right;">2.0</span>
                             <label style="font-size:0.75rem; display:flex; align-items:center; gap:4px; cursor:pointer;">
                                 <input type="checkbox" id="bulk-hrf-size-check"> 적용
@@ -18926,7 +18926,7 @@
                 <div class="batch-hrf-options" style="display:${slot.hrf_enabled ? 'flex' : 'none'}; flex-direction:column; gap:4px; padding:4px 6px; background:var(--surface2); border-radius:4px; border:1px solid var(--border);">
                     <div style="display:flex; align-items:center; gap:6px;">
                         <span style="font-size:0.7rem; color:var(--text-secondary); min-width:fit-content;">업스케일링 비율</span>
-                        <input type="range" data-field="hrf_size" min="1" max="4" step="0.05" value="${slot.hrf_size || 2.0}" style="flex:1; cursor:pointer;">
+                        <input type="range" data-field="hrf_size" min="1" max="3" step="0.05" value="${slot.hrf_size || 2.0}" style="flex:1; cursor:pointer;">
                         <span class="batch-hrf-size-val" style="font-size:0.7rem; min-width:24px; text-align:right;">${slot.hrf_size || 2.0}</span>
                     </div>
                     <div class="batch-toggle-row" style="padding:0; background:none;">
