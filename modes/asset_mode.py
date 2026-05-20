@@ -2060,7 +2060,7 @@ class AssetMode:
                             field = field_map[category]
                             if prompt_data.get(field) == name:
                                 matched = True
-                        elif category in ("quality_presets", "composition_presets"):
+                        elif category in ("quality_presets", "composition_presets", "artist_presets"):
                             # positive 텍스트에서 태그 포함 여부
                             positive = prompt_data.get("positive", "")
                             if any(tag.lower() in positive.lower() for tag in preset_tags if tag):
@@ -2069,6 +2069,12 @@ class AssetMode:
                             # negative 텍스트에서 태그 포함 여부
                             negative = prompt_data.get("negative", "")
                             if any(tag.lower() in negative.lower() for tag in preset_tags if tag):
+                                matched = True
+                        elif category == "natural_language_presets":
+                            # positive 텍스트에서 자연어 텍스트 포함 여부
+                            positive = prompt_data.get("positive", "")
+                            nl_text = preset_tags[0] if preset_tags else ""
+                            if nl_text and nl_text.lower() in positive.lower():
                                 matched = True
 
                         if matched:

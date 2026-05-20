@@ -3749,7 +3749,7 @@
                                 <div class="pm-section-title">새 프리셋 일괄 추가</div>
                                 <div class="pm-form-group">
                                     <label>카테고리</label>
-                                    <select id="pm-batch-category">
+                                    <select id="pm-batch-category" onchange="pmBatchCategoryChanged()">
                                         <option value="appearances">외모 (appearances)</option>
                                         <option value="outfits">복장 (outfits)</option>
                                         <option value="expressions">표정 (expressions)</option>
@@ -3757,6 +3757,8 @@
                                         <option value="composition_presets">구도 프리셋</option>
                                         <option value="negative_presets">네거티브 프리셋</option>
                                         <option value="character_negative_presets">캐릭터 네거티브 프리셋</option>
+                                        <option value="artist_presets">아티스트 프리셋</option>
+                                        <option value="natural_language_presets">자연어 프리셋</option>
                                     </select>
                                 </div>
                                 <div class="pm-form-group">
@@ -3764,7 +3766,7 @@
                                     <input type="text" id="pm-batch-name" placeholder="예: 기본 외모">
                                 </div>
                                 <div class="pm-form-group">
-                                    <label>태그 (쉼표로 구분)</label>
+                                    <label id="pm-batch-tags-label">태그 (쉼표로 구분)</label>
                                     <textarea id="pm-batch-tags" placeholder="tag1, tag2, tag3, ..."></textarea>
                                 </div>
                                 <div class="pm-tags-preview" id="pm-batch-preview"></div>
@@ -3788,6 +3790,8 @@
                                         <option value="composition_presets">구도 프리셋</option>
                                         <option value="negative_presets">네거티브 프리셋</option>
                                         <option value="character_negative_presets">캐릭터 네거티브 프리셋</option>
+                                        <option value="artist_presets">아티스트 프리셋</option>
+                                        <option value="natural_language_presets">자연어 프리셋</option>
                                     </select>
                                 </div>
                                 <div class="pm-form-group">
@@ -20536,11 +20540,30 @@
         }
 
         // ─── 일괄 삽입 ────────────────────────────────────
+        // 카테고리 변경 시 라벨/placeholder 동적 전환
+        function pmBatchCategoryChanged() {
+            const cat = document.getElementById('pm-batch-category').value;
+            const label = document.getElementById('pm-batch-tags-label');
+            const textarea = document.getElementById('pm-batch-tags');
+            if (cat === 'natural_language_presets') {
+                label.textContent = '텍스트';
+                textarea.placeholder = '자연어 텍스트를 입력하세요...';
+            } else {
+                label.textContent = '태그 (쉼표로 구분)';
+                textarea.placeholder = 'tag1, tag2, tag3, ...';
+            }
+            document.getElementById('pm-batch-preview').innerHTML = '';
+        }
         // 태그 미리보기 (textarea 입력 시)
         document.getElementById('pm-batch-tags').addEventListener('input', function() {
-            const tags = this.value.split(',').map(t => t.trim()).filter(t => t);
+            const cat = document.getElementById('pm-batch-category').value;
             const preview = document.getElementById('pm-batch-preview');
-            preview.innerHTML = tags.map(t => `<span class="pm-tag-chip">${t}</span>`).join('');
+            if (cat === 'natural_language_presets') {
+                preview.innerHTML = this.value.trim() ? `<span class="pm-tag-chip" style="white-space:normal;">${this.value.trim()}</span>` : '';
+            } else {
+                const tags = this.value.split(',').map(t => t.trim()).filter(t => t);
+                preview.innerHTML = tags.map(t => `<span class="pm-tag-chip">${t}</span>`).join('');
+            }
         });
 
         async function pmBatchInsert() {
@@ -20548,7 +20571,8 @@
             const name = document.getElementById('pm-batch-name').value;
             const tagsText = document.getElementById('pm-batch-tags').value;
             if (!name.trim()) { showToast('이름을 입력해주세요', 'error'); return; }
-            if (!tagsText.trim()) { showToast('태그를 입력해주세요', 'error'); return; }
+            const isNL = category === 'natural_language_presets';
+            if (!tagsText.trim()) { showToast(isNL ? '텍스트를 입력해주세요' : '태그를 입력해주세요', 'error'); return; }
 
             try {
                 const resp = await fetch('/api/asset_mode/tags', {
@@ -20558,7 +20582,8 @@
                 });
                 const data = await resp.json();
                 if (data.success) {
-                    showToast(`'${name}' 프리셋 추가 완료 (${data.count}개 태그)`, 'success');
+                    const countLabel = isNL ? `${data.count}자` : `${data.count}개 태그`;
+                    showToast(`'${name}' 프리셋 추가 완료 (${countLabel})`, 'success');
                     document.getElementById('pm-batch-name').value = '';
                     document.getElementById('pm-batch-tags').value = '';
                     document.getElementById('pm-batch-preview').innerHTML = '';
