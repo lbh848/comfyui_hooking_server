@@ -10438,7 +10438,7 @@
         let loraCurrentCharacter = '';
         let loraCurrentEntry = '';
         let loraPickerTarget = 'training'; // 'training' or 'test'
-        let loraPickerState = { level: 'gallery', outfit: '', expression: '', selected: new Set() };
+        let loraPickerState = { level: 'characters', pickerCharacter: '', outfit: '', expression: '', selected: new Set() };
 
         function _loraHideAll() {
             document.getElementById('lora-entries-section').style.display = 'none';
@@ -11793,7 +11793,7 @@
         function openLoraImagePicker(target = 'training') {
             if (!loraCurrentCharacter) { showToast('먼저 캐릭터를 선택하세요', 'error'); return; }
             loraPickerTarget = target;
-            loraPickerState = { level: 'gallery', outfit: '', expression: '', selected: new Set() };
+            loraPickerState = { level: 'characters', pickerCharacter: loraCurrentCharacter, outfit: '', expression: '', selected: new Set() };
             document.getElementById('lora-picker-title').textContent = target === 'test' ? '테스트 이미지 선택' : '학습용 이미지 선택';
             document.getElementById('lora-picker-footer').style.display = 'flex';
             document.getElementById('lora-picker-footer').innerHTML = `
@@ -11802,89 +11802,181 @@
             `;
             const modal = document.getElementById('lora-image-picker-modal');
             modal.style.display = 'flex';
-            loadLoraPickerGallery();
+            // 캐릭터 그리드 로드
+            const body = document.getElementById('lora-picker-body');
+            body.innerHTML = '<div style="text-align:center; padding:32px;"><div class="spinner" style="width:32px;height:32px;border-width:3px;margin:0 auto;"></div></div>';
+            fetchJSON('/api/lora/characters').then(function(resp) {
+                if (!resp || !resp.success || !resp.characters || resp.characters.length === 0) {
+                    body.innerHTML = '<div style="text-align:center; padding:32px; color:var(--text-secondary);">캐릭터가 없습니다.</div>';
+                    return;
+                }
+                var countInfo = loraPickerState.selected.size > 0 ? ' (현재 ' + loraPickerState.selected.size + '장 선택됨)' : '';
+                var html = '<div style="margin-bottom:8px; font-size:0.85rem; color:var(--text-secondary);">에셋을 탐색할 캐릭터를 선택하세요' + countInfo + '</div>';
+                html += '<div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(120px, 1fr)); gap:10px;">';
+                resp.characters.forEach(function(name) {
+                    var border = name === loraPickerState.pickerCharacter ? 'border-color:var(--accent);' : '';
+                    html += '<div class="asset-folder-card" onclick="enterLoraPickerCharacter(\'' + escapeHtml(name) + '\')" style="' + border + '">';
+                    html += '<div class="folder-icon">📁</div>';
+                    html += '<div class="folder-name">' + escapeHtml(name) + '</div>';
+                    html += '</div>';
+                });
+                html += '</div>';
+                body.innerHTML = html;
+                loraPickerState.level = 'characters';
+                loraPickerUpdateCount();
+            }).catch(function(e) {
+                console.error('[LORA] 캐릭터 목록 로드 실패:', e);
+                body.innerHTML = '<div style="text-align:center; padding:32px; color:var(--error);">로드 실패</div>';
+            });
         }
 
         function closeLoraImagePicker() {
             document.getElementById('lora-image-picker-modal').style.display = 'none';
         }
 
-        async function loadLoraPickerGallery() {
-            const body = document.getElementById('lora-picker-body');
-            const enc = encodeURIComponent;
+        function loadLoraPickerCharacters() {
+            var body = document.getElementById('lora-picker-body');
+            body.innerHTML = '<div style="text-align:center; padding:32px;"><div class="spinner" style="width:32px;height:32px;border-width:3px;margin:0 auto;"></div></div>';
+            fetchJSON('/api/lora/characters').then(function(resp) {
+                if (!resp || !resp.success || !resp.characters || resp.characters.length === 0) {
+                    body.innerHTML = '<div style="text-align:center; padding:32px; color:var(--text-secondary);">캐릭터가 없습니다.</div>';
+                    return;
+                }
+                var countInfo = loraPickerState.selected.size > 0 ? ' (현재 ' + loraPickerState.selected.size + '장 선택됨)' : '';
+                var html = '<div style="margin-bottom:8px; font-size:0.85rem; color:var(--text-secondary);">에셋을 탐색할 캐릭터를 선택하세요' + countInfo + '</div>';
+                html += '<div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(120px, 1fr)); gap:10px;">';
+                resp.characters.forEach(function(name) {
+                    var border = name === loraPickerState.pickerCharacter ? 'border-color:var(--accent);' : '';
+                    html += '<div class="asset-folder-card" onclick="enterLoraPickerCharacter(\'' + escapeHtml(name) + '\')" style="' + border + '">';
+                    html += '<div class="folder-icon">📁</div>';
+                    html += '<div class="folder-name">' + escapeHtml(name) + '</div>';
+                    html += '</div>';
+                });
+                html += '</div>';
+                body.innerHTML = html;
+                loraPickerState.level = 'characters';
+                loraPickerUpdateCount();
+            }).catch(function(e) {
+                console.error('[LORA] 캐릭터 목록 로드 실패:', e);
+                body.innerHTML = '<div style="text-align:center; padding:32px; color:var(--error);">로드 실패</div>';
+            });
+        }
+
+        function enterLoraPickerCharacter(character) {
+            loraPickerState.pickerCharacter = character;
+            loadLoraPickerGallery();
+        }
+
+        function loadLoraPickerGallery() {
+            var body = document.getElementById('lora-picker-body');
+            var enc = encodeURIComponent;
+            var pickerChar = loraPickerState.pickerCharacter;
             body.innerHTML = '<div style="text-align:center; padding:32px;"><div class="spinner" style="width:32px;height:32px;border-width:3px;margin:0 auto;"></div></div>';
 
-            try {
-                const resp = await fetchJSON(`/api/asset_mode/characters/${enc(loraCurrentCharacter)}/gallery`);
-                if (!resp.gallery || resp.gallery.length === 0) {
-                    body.innerHTML = '<div style="text-align:center; padding:32px; color:var(--text-secondary);">표시할 이미지가 없습니다.</div>';
+            fetchJSON('/api/asset_mode/characters/' + enc(pickerChar) + '/gallery').then(function(resp) {
+                if (!resp || !resp.gallery || resp.gallery.length === 0) {
+                    body.innerHTML = '<div style="margin-bottom:12px;"><button id="lora-picker-back-chars" style="padding:4px 12px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:4px; cursor:pointer; font-size:0.8rem;">&larr; 캐릭터 선택</button></div><div style="text-align:center; padding:32px; color:var(--text-secondary);">표시할 이미지가 없습니다.</div>';
+                    document.getElementById('lora-picker-back-chars').addEventListener('click', loadLoraPickerCharacters);
                     return;
                 }
 
-                body.innerHTML = `
-                    <div style="margin-bottom:12px; display:flex; align-items:center; gap:8px;">
-                        <button onclick="loraPickerToggleSelectAll()" style="padding:4px 12px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:4px; cursor:pointer; font-size:0.8rem;">전체 선택/해제</button>
-                    </div>
-                    <div class="asset-gallery-grid" id="lora-picker-gallery-grid">
-                        ${resp.gallery.map(item => `
-                            <div class="asset-gallery-item" onclick="loadLoraPickerImages('${escapeHtml(item.outfit)}', '${escapeHtml(item.expression)}')" style="cursor:pointer;">
-                                ${item.representative
-                                    ? `<img src="/api/asset_mode/characters/${enc(loraCurrentCharacter)}/outfits/${enc(item.outfit)}/expressions/${enc(item.expression)}/images/${enc(item.representative)}" style="width:100%; display:block; border-radius:6px;">`
-                                    : '<div style="width:100%; padding:32px; background:var(--surface2); border-radius:6px; display:flex; align-items:center; justify-content:center; color:var(--text-secondary); font-size:0.8rem;">No img</div>'
-                                }
-                                <div style="font-size:0.75rem; margin-top:4px; text-align:center;">${escapeHtml(item.outfit)} / ${escapeHtml(item.expression)}${item.image_count > 1 ? ` (${item.image_count}장)` : ''}</div>
-                            </div>
-                        `).join('')}
-                    </div>
-                `;
+                var html = '<div style="margin-bottom:12px; display:flex; align-items:center; gap:8px;">';
+                html += '<button id="lora-picker-back-chars" style="padding:4px 12px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:4px; cursor:pointer; font-size:0.8rem;">&larr; 캐릭터 선택</button>';
+                html += '<span style="font-size:0.85rem; color:var(--text-secondary);">' + escapeHtml(pickerChar) + '</span>';
+                html += '<button id="lora-picker-toggle-all" style="padding:4px 12px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:4px; cursor:pointer; font-size:0.8rem; margin-left:auto;">전체 선택/해제</button>';
+                html += '</div>';
+                html += '<div class="asset-gallery-grid" id="lora-picker-gallery-grid">';
+                resp.gallery.forEach(function(item) {
+                    html += '<div class="asset-gallery-item" data-outfit="' + escapeHtml(item.outfit) + '" data-expression="' + escapeHtml(item.expression) + '" style="cursor:pointer;">';
+                    if (item.representative) {
+                        html += '<img src="/api/asset_mode/characters/' + enc(pickerChar) + '/outfits/' + enc(item.outfit) + '/expressions/' + enc(item.expression) + '/images/' + enc(item.representative) + '" style="width:100%; display:block; border-radius:6px;">';
+                    } else {
+                        html += '<div style="width:100%; padding:32px; background:var(--surface2); border-radius:6px; display:flex; align-items:center; justify-content:center; color:var(--text-secondary); font-size:0.8rem;">No img</div>';
+                    }
+                    var label = escapeHtml(item.outfit) + ' / ' + escapeHtml(item.expression);
+                    if (item.image_count > 1) label += ' (' + item.image_count + '장)';
+                    html += '<div style="font-size:0.75rem; margin-top:4px; text-align:center;">' + label + '</div>';
+                    html += '</div>';
+                });
+                html += '</div>';
+                body.innerHTML = html;
+
+                // 이벤트 리스너 부착
+                var backBtn = document.getElementById('lora-picker-back-chars');
+                if (backBtn) {
+                    backBtn.addEventListener('click', function() {
+                        loadLoraPickerCharacters();
+                    });
+                }
+                document.getElementById('lora-picker-toggle-all').addEventListener('click', loraPickerToggleSelectAll);
+                document.querySelectorAll('#lora-picker-gallery-grid .asset-gallery-item').forEach(function(el) {
+                    el.addEventListener('click', function() {
+                        loadLoraPickerImages(this.getAttribute('data-outfit'), this.getAttribute('data-expression'));
+                    });
+                });
+
                 loraPickerState.level = 'gallery';
                 loraPickerUpdateCount();
-            } catch (e) {
+            }).catch(function(e) {
                 console.error('[LORA] 갤러리 로드 실패:', e);
                 body.innerHTML = '<div style="text-align:center; padding:32px; color:var(--error);">로드 실패</div>';
-            }
+            });
         }
 
-        async function loadLoraPickerImages(outfit, expression) {
-            const body = document.getElementById('lora-picker-body');
-            const enc = encodeURIComponent;
+        function loadLoraPickerImages(outfit, expression) {
+            var body = document.getElementById('lora-picker-body');
+            var enc = encodeURIComponent;
+            var pickerChar = loraPickerState.pickerCharacter;
             loraPickerState.outfit = outfit;
             loraPickerState.expression = expression;
             loraPickerState.level = 'images';
 
-            body.innerHTML = `
-                <div style="margin-bottom:12px;">
-                    <button onclick="loadLoraPickerGallery()" style="padding:4px 12px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:4px; cursor:pointer; font-size:0.8rem;">&larr; 뒤로</button>
-                    <span style="margin-left:8px; font-size:0.85rem; color:var(--text-secondary);">${escapeHtml(outfit)} / ${escapeHtml(expression)}</span>
-                </div>
-                <div id="lora-picker-images-grid" style="display:grid; grid-template-columns:repeat(3, 1fr); gap:8px;">
-                    <div class="spinner" style="width:32px;height:32px;border-width:3px;margin:16px auto;"></div>
-                </div>
-            `;
+            var headerHtml = '<div style="margin-bottom:12px; display:flex; align-items:center; gap:8px;">';
+            headerHtml += '<button id="lora-picker-back-gallery" style="padding:4px 12px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:4px; cursor:pointer; font-size:0.8rem;">&larr; 갤러리</button>';
+            headerHtml += '<span style="font-size:0.85rem; color:var(--text-secondary);">' + escapeHtml(pickerChar) + ' / ' + escapeHtml(outfit) + ' / ' + escapeHtml(expression) + '</span>';
+            headerHtml += '<button id="lora-picker-img-toggle-all" style="padding:4px 12px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:4px; cursor:pointer; font-size:0.8rem; margin-left:auto;">전체 선택/해제</button>';
+            headerHtml += '</div>';
+            headerHtml += '<div id="lora-picker-images-grid" style="display:grid; grid-template-columns:repeat(3, 1fr); gap:8px;">';
+            headerHtml += '<div class="spinner" style="width:32px;height:32px;border-width:3px;margin:16px auto;"></div>';
+            headerHtml += '</div>';
+            body.innerHTML = headerHtml;
 
-            try {
-                const resp = await fetchJSON(`/api/asset_mode/characters/${enc(loraCurrentCharacter)}/outfits/${enc(outfit)}/expressions/${enc(expression)}/images`);
-                if (!resp.images || resp.images.length === 0) {
+            document.getElementById('lora-picker-back-gallery').addEventListener('click', loadLoraPickerGallery);
+            document.getElementById('lora-picker-img-toggle-all').addEventListener('click', loraPickerToggleSelectAll);
+
+            fetchJSON('/api/asset_mode/characters/' + enc(pickerChar) + '/outfits/' + enc(outfit) + '/expressions/' + enc(expression) + '/images').then(function(resp) {
+                if (!resp || !resp.images || resp.images.length === 0) {
                     document.getElementById('lora-picker-images-grid').innerHTML = '<div style="text-align:center; padding:16px; color:var(--text-secondary); grid-column:1/-1;">이미지가 없습니다.</div>';
                     return;
                 }
 
-                const grid = document.getElementById('lora-picker-images-grid');
-                grid.innerHTML = resp.images.map(img => {
-                    const key = `${outfit}|||${expression}|||${img.filename}`;
-                    const checked = loraPickerState.selected.has(key);
-                    const imgUrl = `/api/asset_mode/characters/${enc(loraCurrentCharacter)}/outfits/${enc(outfit)}/expressions/${enc(expression)}/images/${enc(img.filename)}`;
-                    return `
-                        <div onclick="loraPickerToggle(this, '${escapeHtml(key)}')" style="position:relative; cursor:pointer; border-radius:6px; overflow:hidden; border:2px solid ${checked ? 'var(--accent)' : 'transparent'}; transition:border-color 0.15s;">
-                            <img src="${imgUrl}" style="width:100%; display:block;">
-                            <div style="position:absolute; top:4px; right:4px; width:20px; height:20px; border-radius:50%; background:${checked ? 'var(--accent)' : 'rgba(0,0,0,0.3)'}; display:flex; align-items:center; justify-content:center; color:#fff; font-size:0.7rem;">${checked ? '✓' : ''}</div>
-                            ${img.is_representative ? '<div style="position:absolute; top:4px; left:4px; z-index:10; background:rgba(255,193,7,0.95); color:#000; font-size:0.65rem; font-weight:700; padding:2px 6px; border-radius:4px;">대표</div>' : ''}
-                        </div>
-                    `;
-                }).join('');
-            } catch (e) {
+                var grid = document.getElementById('lora-picker-images-grid');
+                var html = '';
+                resp.images.forEach(function(img) {
+                    var key = pickerChar + '|||' + outfit + '|||' + expression + '|||' + img.filename;
+                    var checked = loraPickerState.selected.has(key);
+                    var imgUrl = '/api/asset_mode/characters/' + enc(pickerChar) + '/outfits/' + enc(outfit) + '/expressions/' + enc(expression) + '/images/' + enc(img.filename);
+                    var borderColor = checked ? 'var(--accent)' : 'transparent';
+                    var bgColor = checked ? 'var(--accent)' : 'rgba(0,0,0,0.3)';
+                    var checkMark = checked ? '&#10003;' : '';
+                    html += '<div data-key="' + escapeHtml(key) + '" style="position:relative; cursor:pointer; border-radius:6px; overflow:hidden; border:2px solid ' + borderColor + '; transition:border-color 0.15s;">';
+                    html += '<img src="' + imgUrl + '" style="width:100%; display:block;">';
+                    html += '<div style="position:absolute; top:4px; right:4px; width:20px; height:20px; border-radius:50%; background:' + bgColor + '; display:flex; align-items:center; justify-content:center; color:#fff; font-size:0.7rem;">' + checkMark + '</div>';
+                    if (img.is_representative) {
+                        html += '<div style="position:absolute; top:4px; left:4px; z-index:10; background:rgba(255,193,7,0.95); color:#000; font-size:0.65rem; font-weight:700; padding:2px 6px; border-radius:4px;">대표</div>';
+                    }
+                    html += '</div>';
+                });
+                grid.innerHTML = html;
+                // 이미지 클릭 이벤트
+                grid.querySelectorAll('[data-key]').forEach(function(el) {
+                    el.addEventListener('click', function() {
+                        loraPickerToggle(this, this.getAttribute('data-key'));
+                    });
+                });
+            }).catch(function(e) {
                 console.error('[LORA] 이미지 로드 실패:', e);
-            }
+            });
         }
 
         function loraPickerToggle(el, key) {
@@ -11919,8 +12011,8 @@
             }
             const sources = [];
             for (const key of loraPickerState.selected) {
-                const [outfit, expression, filename] = key.split('|||');
-                sources.push({ outfit, expression, filename });
+                const [sourceChar, outfit, expression, filename] = key.split('|||');
+                sources.push({ character: sourceChar, outfit, expression, filename });
             }
 
             const apiUrl = loraPickerTarget === 'test' ? '/api/lora/test_images/add' : '/api/lora/training_images/add';
@@ -13875,10 +13967,10 @@
                 </div>`;
             document.body.appendChild(overlay);
             overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
-            await loadLoraPickerCharacters();
+            await loadLoraFilePickerCharacters();
         }
 
-        async function loadLoraPickerCharacters() {
+        async function loadLoraFilePickerCharacters() {
             const grid = document.getElementById('lora-picker-grid');
             if (!grid) return;
             grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--text-secondary);">로딩중...</div>';

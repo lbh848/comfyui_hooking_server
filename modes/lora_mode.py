@@ -316,12 +316,13 @@ def add_training_images(character: str, entry: str, sources: list) -> dict:
 
     added = []
     skipped = []
-    char_dir = os.path.join(ASSET_DIR, _safe_dirname(character))
 
     for src in sources:
         outfit = src.get("outfit", "")
         expression = src.get("expression", "")
         filename = src.get("filename", "")
+        src_char = src.get("character") or character
+        src_char_dir = os.path.join(ASSET_DIR, _safe_dirname(src_char))
 
         if not outfit or not expression or not filename:
             print(f"[LORA] 학습 이미지 추가: 필수 값 누락 - {src}")
@@ -329,7 +330,7 @@ def add_training_images(character: str, entry: str, sources: list) -> dict:
             continue
 
         # 원본 경로
-        src_path = os.path.join(char_dir, _safe_dirname(outfit), _safe_dirname(expression), filename)
+        src_path = os.path.join(src_char_dir, _safe_dirname(outfit), _safe_dirname(expression), filename)
         if not os.path.isfile(src_path):
             print(f"[LORA] 학습 이미지 원본 없음: {src_path}")
             skipped.append({"filename": filename, "reason": "원본 파일 없음"})
@@ -350,7 +351,7 @@ def add_training_images(character: str, entry: str, sources: list) -> dict:
 
             # 프롬프트 JSON도 복사
             base, ext = os.path.splitext(filename)
-            prompt_src = os.path.join(char_dir, _safe_dirname(outfit), _safe_dirname(expression), f"{base}_prompt.json")
+            prompt_src = os.path.join(src_char_dir, _safe_dirname(outfit), _safe_dirname(expression), f"{base}_prompt.json")
             prompt_dest = os.path.join(t_dir, f"{os.path.splitext(dest_name)[0]}_prompt.json")
             if os.path.isfile(prompt_src):
                 # 복사하면서 positive에서 [FACE_ID_ACTIVATE] 위쪽만 추출
@@ -572,19 +573,20 @@ def add_test_images(character: str, entry: str, sources: list) -> dict:
 
     added = []
     skipped = []
-    char_dir = os.path.join(ASSET_DIR, _safe_dirname(character))
 
     for src in sources:
         outfit = src.get("outfit", "")
         expression = src.get("expression", "")
         filename = src.get("filename", "")
+        src_char = src.get("character") or character
+        src_char_dir = os.path.join(ASSET_DIR, _safe_dirname(src_char))
 
         if not outfit or not expression or not filename:
             print(f"[LORA] 테스트 이미지 추가: 필수 값 누락 - {src}")
             skipped.append({"filename": filename, "reason": "필수 값 누락"})
             continue
 
-        src_path = os.path.join(char_dir, _safe_dirname(outfit), _safe_dirname(expression), filename)
+        src_path = os.path.join(src_char_dir, _safe_dirname(outfit), _safe_dirname(expression), filename)
         if not os.path.isfile(src_path):
             print(f"[LORA] 테스트 이미지 원본 없음: {src_path}")
             skipped.append({"filename": filename, "reason": "원본 파일 없음"})
@@ -602,7 +604,7 @@ def add_test_images(character: str, entry: str, sources: list) -> dict:
             shutil.copy2(src_path, dest_path)
 
             base, ext = os.path.splitext(filename)
-            prompt_src = os.path.join(char_dir, _safe_dirname(outfit), _safe_dirname(expression), f"{base}_prompt.json")
+            prompt_src = os.path.join(src_char_dir, _safe_dirname(outfit), _safe_dirname(expression), f"{base}_prompt.json")
             prompt_dest = os.path.join(t_dir, f"{os.path.splitext(dest_name)[0]}_prompt.json")
             if os.path.isfile(prompt_src):
                 with open(prompt_src, "r", encoding="utf-8") as f:
