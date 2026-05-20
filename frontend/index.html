@@ -2656,7 +2656,7 @@
                     <div style="background:rgba(66,133,244,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
                     <div class="section-title">캐릭터</div>
                     <div style="font-size:0.7rem; color:var(--text-secondary); margin-bottom:6px; padding:4px 6px; background:rgba(0,0,0,0.05); border-radius:4px;">
-                        프롬프트 조립 순서: 품질 → 구도/기타 → 외모 → 표정 → 복장
+                        프롬프트 조립 순서: LoRA 트리거 → 품질 → 구도/기타 → 아티스트 → 외모 → 표정 → 복장 → 자연어
                     </div>
                     <select id="asset-character-select" onchange="onAssetCharacterChange()">
                         <option value="">-- 캐릭터 선택 --</option>
@@ -2768,6 +2768,26 @@
                     </div>
                     </div>
 
+                    <!-- 아티스트 프리셋 섹션 -->
+                    <div style="background:rgba(233,30,99,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
+                    <div class="section-title">아티스트 프리셋</div>
+                    <div style="display:flex; gap:4px; margin-bottom:6px; flex-wrap:wrap; align-items:center;">
+                        <input type="text" class="asset-select-filter" data-filter-for="asset-artist-preset-select" placeholder="검색..." style="flex-basis:100%; margin-bottom:4px;">
+                        <select id="asset-artist-preset-select" onchange="loadArtistPreset(); this.previousElementSibling.value='';" style="flex:1; min-width:100px; font-size:0.8rem;">
+                            <option value="">-- 프리셋 --</option>
+                        </select>
+                        <button onclick="addArtistPreset()" style="flex:0; background:var(--accent); color:#fff; border:none; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">추가</button>
+                        <button onclick="duplicateArtistPreset()" style="flex:0; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">복제</button>
+                        <button onclick="deleteArtistPreset()" style="flex:0; background:var(--error); color:#fff; border:none; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">삭제</button>
+                    </div>
+                    <div id="asset-artist-tags" class="tag-list"></div>
+                    <div class="inline-add" style="margin-top:4px; position:relative;">
+                        <input type="text" id="asset-new-artist-tag" placeholder="아티스트 태그">
+                        <div class="tag-autocomplete-dropdown" id="ac-artist-tag"></div>
+                        <button onclick="addAssetArtistTag()">+</button>
+                    </div>
+                    </div>
+
                     <!-- 품질 태그 섹션 -->
                     <div style="background:rgba(76,175,80,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
                     <div class="section-title">품질 태그</div>
@@ -2786,6 +2806,21 @@
                         <div class="tag-autocomplete-dropdown" id="ac-quality-tag"></div>
                         <button onclick="addAssetQualityTag()">+</button>
                     </div>
+                    </div>
+
+                    <!-- 자연어 프리셋 섹션 -->
+                    <div style="background:rgba(0,150,136,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
+                    <div class="section-title">자연어 프리셋</div>
+                    <div style="display:flex; gap:4px; margin-bottom:6px; flex-wrap:wrap; align-items:center;">
+                        <input type="text" class="asset-select-filter" data-filter-for="asset-natural-language-preset-select" placeholder="검색..." style="flex-basis:100%; margin-bottom:4px;">
+                        <select id="asset-natural-language-preset-select" onchange="loadNaturalLanguagePreset(); this.previousElementSibling.value='';" style="flex:1; min-width:100px; font-size:0.8rem;">
+                            <option value="">-- 프리셋 --</option>
+                        </select>
+                        <button onclick="addNaturalLanguagePreset()" style="flex:0; background:var(--accent); color:#fff; border:none; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">추가</button>
+                        <button onclick="duplicateNaturalLanguagePreset()" style="flex:0; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">복제</button>
+                        <button onclick="deleteNaturalLanguagePreset()" style="flex:0; background:var(--error); color:#fff; border:none; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">삭제</button>
+                    </div>
+                    <textarea id="asset-natural-language-text" placeholder="자연어 프롬프트 텍스트 입력..." rows="3" style="width:100%; padding:6px 8px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:6px; font-size:0.8rem; resize:vertical; font-family:inherit;"></textarea>
                     </div>
 
                     <div style="border-top:1px solid var(--border); margin-bottom:8px;"></div>
@@ -12263,6 +12298,8 @@
                 ['character_negative_presets', 'asset-character-negative-preset-select', '-- 프리셋 --'],
                 ['negative_presets', 'asset-negative-preset-select', '-- 프리셋 --'],
                 ['character_presets', 'asset-character-preset-select', '-- 캐릭터 프리셋 --'],
+                ['artist_presets', 'asset-artist-preset-select', '-- 프리셋 --'],
+                ['natural_language_presets', 'asset-natural-language-preset-select', '-- 프리셋 --'],
             ];
             presetKeys.forEach(([key, selectId, placeholder]) => {
                 const sel = document.getElementById(selectId);
@@ -12687,19 +12724,28 @@
             const qTags = (assetTags.quality || []).filter(t => t.trim());
             // 구도/기타
             const cTags = (assetTags.composition || []).filter(t => t.trim());
+            // 아티스트
+            const artistName = document.getElementById('asset-artist-preset-select')?.value || '';
+            const artistTags = artistName ? (assetTags.artist_presets?.[artistName] || []).filter(t => t.trim()) : [];
             // 외모 (전역)
             const appTags = app ? (assetTags.appearances?.[app] || []).filter(t => t.trim()) : [];
             // 표정 (전역)
             const exprTags = expr ? (assetTags.expressions?.[expr] || []).filter(t => t.trim()) : [];
             // 복장 (전역)
             const outfitTags = outfit ? (assetTags.outfits?.[outfit] || []).filter(t => t.trim()) : [];
+            // 자연어
+            const naturalLanguage = document.getElementById('asset-natural-language-text')?.value?.trim() || '';
+            // LoRA 트리거
+            const loraTriggerWords = assetLoraList.map(l => l.trigger).filter(t => t && t.trim()).join(', ');
             // 캐릭터 부정
             const cnTags = (assetTags.character_negative || []).filter(t => t.trim());
             // 부정
             const nTags = (assetTags.negative || []).filter(t => t.trim());
 
             const positive = [
-                ...qTags, ...cTags, ...appTags, ...exprTags, ...outfitTags
+                ...(loraTriggerWords ? [loraTriggerWords] : []),
+                ...qTags, ...cTags, ...artistTags, ...appTags, ...exprTags, ...outfitTags,
+                ...(naturalLanguage ? [naturalLanguage] : []),
             ].join(', ');
 
             let positiveFull = positive;
@@ -12816,6 +12862,106 @@
             if (!name) return;
             if (!confirm(`프리셋 "${name}" 삭제?`)) return;
             assetTagAction('delete_composition_preset', { name });
+        }
+
+        // ─── 아티스트 프리셋 ────────────────────────────────────
+        function loadArtistPreset() {
+            const name = document.getElementById('asset-artist-preset-select').value;
+            const tagsDiv = document.getElementById('asset-artist-tags');
+            tagsDiv.innerHTML = '';
+            if (!name || !assetTags) return;
+            const tags = assetTags.artist_presets?.[name] || [];
+            renderTagChipsWithFn(tagsDiv, tags, (idx) => {
+                removeArtistTag(name, idx);
+            });
+        }
+
+        function removeArtistTag(presetName, idx) {
+            if (!assetTags?.artist_presets?.[presetName]) return;
+            assetTags.artist_presets[presetName].splice(idx, 1);
+            // 서버에 저장
+            fetch('/api/asset_mode/tags', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'save_artist_preset', name: presetName, tags: assetTags.artist_presets[presetName] })
+            }).then(r => r.json()).then(result => {
+                if (result.success) loadAssetData();
+            }).catch(() => {});
+        }
+
+        async function addAssetArtistTag() {
+            const input = document.getElementById('asset-new-artist-tag');
+            const val = input.value.trim();
+            if (!val) return;
+            const presetName = document.getElementById('asset-artist-preset-select').value;
+            if (!presetName) { showToast('아티스트 프리셋을 먼저 선택하세요', 'error'); return; }
+            input.value = '';
+            if (!assetTags.artist_presets) assetTags.artist_presets = {};
+            if (!assetTags.artist_presets[presetName]) assetTags.artist_presets[presetName] = [];
+            assetTags.artist_presets[presetName].push(val);
+            await assetTagAction('save_artist_preset', { name: presetName, tags: assetTags.artist_presets[presetName] });
+        }
+
+        function addArtistPreset() {
+            if (!assetTags) return;
+            const name = prompt('새 아티스트 프리셋명');
+            if (!name || !name.trim()) return;
+            assetTagAction('save_artist_preset', { name: name.trim(), tags: [] });
+        }
+
+        function duplicateArtistPreset() {
+            const src = document.getElementById('asset-artist-preset-select').value;
+            if (!src) { showToast('복제할 프리셋을 선택하세요', 'error'); return; }
+            const newName = prompt('새 프리셋명', src + ' 복사본');
+            if (!newName || !newName.trim()) return;
+            assetTagAction('duplicate_artist_preset', { source: src, name: newName.trim() });
+        }
+
+        function deleteArtistPreset() {
+            const name = document.getElementById('asset-artist-preset-select').value;
+            if (!name) return;
+            if (!confirm(`프리셋 "${name}" 삭제?`)) return;
+            assetTagAction('delete_artist_preset', { name });
+        }
+
+        // ─── 자연어 프리셋 ────────────────────────────────────
+        function loadNaturalLanguagePreset() {
+            const name = document.getElementById('asset-natural-language-preset-select').value;
+            const textarea = document.getElementById('asset-natural-language-text');
+            if (!name || !assetTags) {
+                textarea.value = '';
+                return;
+            }
+            textarea.value = assetTags.natural_language_presets?.[name] || '';
+        }
+
+        function saveCurrentNaturalLanguagePreset() {
+            const name = document.getElementById('asset-natural-language-preset-select').value;
+            const text = document.getElementById('asset-natural-language-text').value;
+            if (!name) return;
+            assetTagAction('save_natural_language_preset', { name, text });
+        }
+
+        function addNaturalLanguagePreset() {
+            if (!assetTags) return;
+            const name = prompt('새 자연어 프리셋명');
+            if (!name || !name.trim()) return;
+            assetTagAction('save_natural_language_preset', { name: name.trim(), text: '' });
+        }
+
+        function duplicateNaturalLanguagePreset() {
+            const src = document.getElementById('asset-natural-language-preset-select').value;
+            if (!src) { showToast('복제할 프리셋을 선택하세요', 'error'); return; }
+            const newName = prompt('새 프리셋명', src + ' 복사본');
+            if (!newName || !newName.trim()) return;
+            assetTagAction('duplicate_natural_language_preset', { source: src, name: newName.trim() });
+        }
+
+        function deleteNaturalLanguagePreset() {
+            const name = document.getElementById('asset-natural-language-preset-select').value;
+            if (!name) return;
+            if (!confirm(`프리셋 "${name}" 삭제?`)) return;
+            assetTagAction('delete_natural_language_preset', { name });
         }
 
         // ─── 품질 프리셋 ────────────────────────────────────
@@ -13973,7 +14119,13 @@
                     ${lora.preview_url ? `<img src="${escapeHtml(lora.preview_url)}" style="width:70%; aspect-ratio:1; object-fit:cover; border-radius:6px; display:block; margin:0 auto;">` : '<div style="width:70%; aspect-ratio:1; background:var(--surface); border-radius:6px; display:flex; align-items:center; justify-content:center; font-size:2rem; margin:0 auto;">📦</div>'}
                     <div style="margin-top:6px;">
                         <div style="font-size:0.8rem; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(lora.name)}</div>
-                        <div style="font-size:0.65rem; color:var(--text-secondary);">${escapeHtml(lora.trigger)} · ${escapeHtml(lora.character)}</div>
+                        <div style="font-size:0.65rem; color:var(--text-secondary);">${escapeHtml(lora.character)}</div>
+                    </div>
+                    <div style="margin-top:4px;">
+                        <div style="font-size:0.65rem; color:var(--text-secondary); margin-bottom:2px;">트리거 워드</div>
+                        <input type="text" value="${escapeHtml(lora.trigger || '')}" onchange="assetLoraList[${i}].trigger=this.value"
+                            style="width:100%; padding:3px 6px; border:1px solid var(--border); background:var(--surface); color:var(--text); border-radius:4px; font-size:0.75rem;"
+                            placeholder="트리거 워드 입력">
                     </div>
                     <select onchange="assetLoraList[${i}].BASE=this.value"
                         style="width:100%; margin-top:6px; background:var(--surface); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:3px 4px; font-size:0.75rem; cursor:pointer;">
@@ -15666,6 +15818,11 @@
                 });
             }
 
+            // 아티스트/자연어/트리거 데이터
+            const artistPreset = document.getElementById('asset-artist-preset-select')?.value || '';
+            const naturalLanguage = document.getElementById('asset-natural-language-text')?.value || '';
+            const loraTriggerWords = assetLoraList.map(l => l.trigger).filter(t => t && t.trim()).join(', ');
+
             assetGenerating = true;
             document.getElementById('asset-generate-btn').disabled = true;
             document.getElementById('asset-generating-overlay').style.display = 'flex';
@@ -15712,6 +15869,9 @@
                                 fd_activate: fdActivate,
                                 hd_activate: hdActivate,
                                 ed_activate: edActivate,
+                                artist_preset: artistPreset,
+                                natural_language: naturalLanguage,
+                                lora_trigger_words: loraTriggerWords,
                             })
                         });
                         const result = await resp.json();
@@ -17461,6 +17621,8 @@
                 fd_enabled: false,
                 hd_enabled: false,
                 ed_enabled: false,
+                artist_preset: '',
+                natural_language: '',
             };
             slot._id = ++batchSlotIdCounter;
             batchChains.push(slot);
@@ -17489,6 +17651,7 @@
             const qualOptions = buildPresetOptions(assetTags?.quality_presets || {}, '', '-- 변경 안함 --');
             const cnOptions = buildPresetOptions(assetTags?.character_negative_presets || {}, '', '-- 변경 안함 --');
             const negOptions = buildPresetOptions(assetTags?.negative_presets || {}, '', '-- 변경 안함 --');
+            const artistOptions = buildPresetOptions(assetTags?.artist_presets || {}, '', '-- 변경 안함 --');
 
             const overlay = document.createElement('div');
             overlay.id = 'batch-bulk-overlay';
@@ -17510,6 +17673,8 @@
                     <div><div class="batch-field-label">품질 태그 프리셋</div><select id="bulk-quality" class="batch-select">${qualOptions}</select></div>
                     <div><div class="batch-field-label">캐릭터 부정(optional)</div><select id="bulk-character-negative" class="batch-select">${cnOptions}</select></div>
                     <div><div class="batch-field-label">부정 태그 프리셋</div><select id="bulk-negative" class="batch-select">${negOptions}</select></div>
+                    <div><div class="batch-field-label">아티스트 프리셋</div><select id="bulk-artist" class="batch-select">${artistOptions}</select></div>
+                    <div><div class="batch-field-label">자연어</div><textarea id="bulk-natural-language" rows="2" placeholder="일괄 적용할 자연어 텍스트 (빈칸=변경 안함)" style="width:100%; padding:4px 6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:4px; font-size:0.8rem; resize:vertical; font-family:inherit;"></textarea></div>
 
                     <div style="border-top:1px solid var(--border); padding-top:10px;">
                         <div class="batch-field-label" style="margin-bottom:6px;">레퍼런스 일괄 설정</div>
@@ -18089,7 +18254,9 @@
                 quality_preset: document.getElementById('bulk-quality').value,
                 character_negative_preset: document.getElementById('bulk-character-negative').value,
                 negative_preset: document.getElementById('bulk-negative').value,
+                artist_preset: document.getElementById('bulk-artist').value,
             };
+            const bulkNaturalLanguage = document.getElementById('bulk-natural-language')?.value?.trim() || '';
             const refAction = document.getElementById('bulk-ref-action').value;
             const refStrengthCheck = document.getElementById('bulk-ref-strength-check').checked;
             const refStrength = parseFloat(document.getElementById('bulk-ref-strength').value);
@@ -18118,6 +18285,8 @@
                 if (fields.quality_preset) slot.quality_preset = fields.quality_preset;
                 if (fields.character_negative_preset) slot.character_negative_preset = fields.character_negative_preset;
                 if (fields.negative_preset) slot.negative_preset = fields.negative_preset;
+                if (fields.artist_preset) slot.artist_preset = fields.artist_preset;
+                if (bulkNaturalLanguage) slot.natural_language = bulkNaturalLanguage;
                 if (refAction === 'on') slot.ref_enabled = true;
                 if (refAction === 'off') slot.ref_enabled = false;
                 if (refStrengthCheck) slot.ref_strength = refStrength;
@@ -18229,6 +18398,7 @@
             const qualSel = buildCustomSelectHTML(assetTags?.quality_presets || {}, slot.quality_preset, '-- 품질 프리셋 --', 'quality_preset');
             const cnSel = buildCustomSelectHTML(assetTags?.character_negative_presets || {}, slot.character_negative_preset, '-- 캐릭터 부정 프리셋 --', 'character_negative_preset');
             const negSel = buildCustomSelectHTML(assetTags?.negative_presets || {}, slot.negative_preset, '-- 부정 프리셋 --', 'negative_preset');
+            const artistSel = buildCustomSelectHTML(assetTags?.artist_presets || {}, slot.artist_preset, '-- 아티스트 프리셋 --', 'artist_preset');
             const refPreviewUrls = slot.ref_preview_url ? slot.ref_preview_url.split('|').filter(Boolean) : [];
             const styleRefPreviewUrls = slot.style_ref_preview_url ? slot.style_ref_preview_url.split('|').filter(Boolean) : [];
 
@@ -18246,6 +18416,8 @@
                 <div class="batch-field-group"><div class="batch-field-label">품질 태그</div>${qualSel}</div>
                 <div class="batch-field-group"><div class="batch-field-label">캐릭터 부정(optional)</div>${cnSel}</div>
                 <div class="batch-field-group"><div class="batch-field-label">부정 태그</div>${negSel}</div>
+                <div class="batch-field-group"><div class="batch-field-label">아티스트 프리셋</div>${artistSel}</div>
+                <div class="batch-field-group"><div class="batch-field-label">자연어</div><textarea data-field="natural_language" rows="2" placeholder="자연어 프롬프트..." style="width:100%; padding:4px 6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:4px; font-size:0.75rem; resize:vertical; font-family:inherit;">${escapeHtml(slot.natural_language || '')}</textarea></div>
 
                 <div class="batch-toggle-row">
                     <label>레퍼런스</label>
@@ -18509,6 +18681,13 @@
             slotEl.querySelectorAll('input[type="number"][data-field]').forEach(inp => {
                 inp.addEventListener('change', () => {
                     batchChains[idx][inp.dataset.field] = parseInt(inp.value) || (inp.dataset.field === 'img_w' ? 936 : 1408);
+                    updateBatchPreview(slotEl, idx);
+                });
+            });
+            // textarea 변경 (natural_language 등)
+            slotEl.querySelectorAll('textarea[data-field]').forEach(ta => {
+                ta.addEventListener('input', () => {
+                    batchChains[idx][ta.dataset.field] = ta.value;
                     updateBatchPreview(slotEl, idx);
                 });
             });
@@ -19347,6 +19526,9 @@
                             img_h: slot.img_h || 1408,
                             hd_activate: slot.hd_enabled,
                             ed_activate: slot.ed_enabled,
+                            artist_preset: slot.artist_preset || '',
+                            natural_language: slot.natural_language || '',
+                            lora_trigger_words: (slot.lora_list || []).map(l => l.trigger).filter(t => t && t.trim()).join(', '),
                         };
 
                         // 프리셋이 지정된 경우 서버에 해당 프리셋 로드 후 생성
@@ -19550,12 +19732,14 @@
                     ...c,
                     _id: ++batchSlotIdCounter,
                     hrf_enabled: !!c.hrf_enabled,
+                    artist_preset: c.artist_preset || '',
+                    natural_language: c.natural_language || '',
                     ref_preview_url: c.ref_preview_url || c.ref_image_data || '',
                 }));
                 document.getElementById('batch-repeat-count').value = preset.repeat || 1;
 
-                // 마이그레이션: hrf_enabled가 없던旧프리셋이면 false로 채우고 자동 저장
-                const needsMigration = (preset.chains || []).some(c => c.hrf_enabled === undefined);
+                // 마이그레이션: hrf_enabled/artist_preset/natural_language가 없던旧프리셋이면 기본값으로 채우고 자동 저장
+                const needsMigration = (preset.chains || []).some(c => c.hrf_enabled === undefined || c.artist_preset === undefined || c.natural_language === undefined);
                 if (needsMigration) {
                     const chainsData = batchChains.map(c => {
                         const copy = { ...c };
@@ -19571,7 +19755,7 @@
                 }
 
                 renderBatchChain();
-                showToast(`프리셋 "${name}" 로드됨${needsMigration ? ' (HRF 필드 자동 마이그레이션)' : ''}`);
+                showToast(`프리셋 "${name}" 로드됨${needsMigration ? ' (필드 자동 마이그레이션)' : ''}`);
             } catch (e) {
                 showToast('로드 실패: ' + e.message, 'error');
             }
@@ -20336,6 +20520,8 @@
             composition_presets: '구도 프리셋',
             negative_presets: '네거티브 프리셋',
             character_negative_presets: '캐릭터 네거티브',
+            artist_presets: '아티스트 프리셋',
+            natural_language_presets: '자연어 프리셋',
         };
 
         async function pmLoadData() {
@@ -20400,10 +20586,12 @@
                     const card = document.createElement('div');
                     card.className = 'pm-card' + (pmSelectedActive.has(name) ? ' selected' : '');
                     const tagArr = Array.isArray(tags) ? tags : [];
+                    const isText = typeof tags === 'string';
+                    const countText = isText ? `${tags.length}자` : `${tagArr.length}개 태그`;
                     card.innerHTML = `<input type="checkbox" ${pmSelectedActive.has(name) ? 'checked' : ''} onchange="pmToggleActive('${name.replace(/'/g, "\\'")}', this.checked)">
                         <div style="flex:1; min-width:0;">
                             <div class="pm-card-name">${name}</div>
-                            <div class="pm-card-count">${tagArr.length}개 태그</div>
+                            <div class="pm-card-count">${countText}</div>
                         </div>`;
                     card.onclick = (e) => { if (e.target.tagName !== 'INPUT') { pmToggleActive(name, !pmSelectedActive.has(name)); pmRenderHideView(); } };
                     activeGrid.appendChild(card);
@@ -20420,10 +20608,12 @@
                     const card = document.createElement('div');
                     card.className = 'pm-card hidden-card' + (pmSelectedHidden.has(name) ? ' selected' : '');
                     const tagArr = Array.isArray(tags) ? tags : [];
+                    const isText = typeof tags === 'string';
+                    const countText = isText ? `${tags.length}자` : `${tagArr.length}개 태그`;
                     card.innerHTML = `<input type="checkbox" ${pmSelectedHidden.has(name) ? 'checked' : ''} onchange="pmToggleHidden('${name.replace(/'/g, "\\'")}', this.checked)">
                         <div style="flex:1; min-width:0;">
                             <div class="pm-card-name">${name}</div>
-                            <div class="pm-card-count">${tagArr.length}개 태그</div>
+                            <div class="pm-card-count">${countText}</div>
                         </div>`;
                     card.onclick = (e) => { if (e.target.tagName !== 'INPUT') { pmToggleHidden(name, !pmSelectedHidden.has(name)); pmRenderHideView(); } };
                     hiddenGrid.appendChild(card);

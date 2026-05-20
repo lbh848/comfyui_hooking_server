@@ -3457,6 +3457,51 @@ async def handle_api_asset_mode_tags_post(request: web.Request) -> web.Response:
                 body.get("character", ""),
                 body.get("outfit", ""), body.get("expression", ""))
         # ─── 프리셋매니징 ───
+        # 아티스트 프리셋
+        elif action == "save_artist_preset":
+            result = asset_mode.save_artist_preset(body.get("name", ""), body.get("tags", []))
+        elif action == "delete_artist_preset":
+            result = asset_mode.delete_artist_preset(body.get("name", ""))
+        elif action == "duplicate_artist_preset":
+            src, dn = body.get("source", ""), body.get("name", "")
+            ps = asset_mode._tags.setdefault("artist_presets", {})
+            if src not in ps: result = {"success": False, "error": "원본 없음"}
+            elif not dn.strip(): result = {"success": False, "error": "빈 이름"}
+            elif dn.strip() in ps: result = {"success": False, "error": "이미 존재"}
+            else: ps[dn.strip()] = list(ps[src]); asset_mode.save_tags(); result = {"success": True}
+        elif action == "load_artist_preset":
+            name = body.get("name", "")
+            if not name:
+                result = {"success": True}
+            else:
+                presets = asset_mode.get_artist_presets()
+                if name in presets:
+                    result = {"success": True, "tags": list(presets[name])}
+                else:
+                    result = {"success": False, "error": "존재하지 않는 프리셋"}
+        # 자연어 프리셋
+        elif action == "save_natural_language_preset":
+            result = asset_mode.save_natural_language_preset(body.get("name", ""), body.get("text", ""))
+        elif action == "delete_natural_language_preset":
+            result = asset_mode.delete_natural_language_preset(body.get("name", ""))
+        elif action == "duplicate_natural_language_preset":
+            src, dn = body.get("source", ""), body.get("name", "")
+            ps = asset_mode._tags.setdefault("natural_language_presets", {})
+            if src not in ps: result = {"success": False, "error": "원본 없음"}
+            elif not dn.strip(): result = {"success": False, "error": "빈 이름"}
+            elif dn.strip() in ps: result = {"success": False, "error": "이미 존재"}
+            else: ps[dn.strip()] = str(ps[src]); asset_mode.save_tags(); result = {"success": True}
+        elif action == "load_natural_language_preset":
+            name = body.get("name", "")
+            if not name:
+                result = {"success": True}
+            else:
+                presets = asset_mode.get_natural_language_presets()
+                if name in presets:
+                    result = {"success": True, "text": str(presets[name])}
+                else:
+                    result = {"success": False, "error": "존재하지 않는 프리셋"}
+        # ─── 프리셋매니징 기존 ───
         elif action == "hide_preset":
             result = asset_mode.hide_preset(body.get("category", ""), body.get("name", ""))
         elif action == "hide_presets_batch":
@@ -3535,6 +3580,9 @@ async def handle_api_asset_mode_generate(request: web.Request) -> web.Response:
             fd_activate=body.get("fd_activate", False),
             hd_activate=body.get("hd_activate", False),
             ed_activate=body.get("ed_activate", False),
+            artist_preset=body.get("artist_preset", ""),
+            natural_language=body.get("natural_language", ""),
+            lora_trigger_words=body.get("lora_trigger_words", ""),
         )
         return web.json_response(result)
     except Exception as e:

@@ -29,6 +29,7 @@ PRESET_MGMT_CATEGORIES = [
     "appearances", "outfits", "expressions",
     "quality_presets", "composition_presets",
     "negative_presets", "character_negative_presets",
+    "artist_presets", "natural_language_presets",
 ]
 CURRENT_MODE_WORK_DIR = os.path.join(BASE_DIR, "current_mode_workflow")
 MODE_WORKFLOW_DIR = os.path.join(BASE_DIR, "mode_workflow")
@@ -76,6 +77,8 @@ DEFAULT_TAGS = {
     "negative_presets": {},
     "character_negative_presets": {},
     "character_presets": {},
+    "artist_presets": {},          # { "name": ["tag1", "tag2"] }
+    "natural_language_presets": {},  # { "name": "긴 텍스트" }
 }
 
 
@@ -788,6 +791,44 @@ class AssetMode:
         self.save_tags()
         return {"success": True}
 
+    # ─── 아티스트 프리셋 ─────────────────────────────────
+    def save_artist_preset(self, name: str, tags: list) -> dict:
+        if not name.strip():
+            return {"success": False, "error": "빈 이름"}
+        self._tags.setdefault("artist_presets", {})[name.strip()] = [t for t in tags if t.strip()]
+        self.save_tags()
+        return {"success": True}
+
+    def delete_artist_preset(self, name: str) -> dict:
+        presets = self._tags.get("artist_presets", {})
+        if name not in presets:
+            return {"success": False, "error": "존재하지 않는 프리셋"}
+        del presets[name]
+        self.save_tags()
+        return {"success": True}
+
+    def get_artist_presets(self) -> dict:
+        return self._tags.get("artist_presets", {})
+
+    # ─── 자연어 프리셋 ────────────────────────────────────
+    def save_natural_language_preset(self, name: str, text: str) -> dict:
+        if not name.strip():
+            return {"success": False, "error": "빈 이름"}
+        self._tags.setdefault("natural_language_presets", {})[name.strip()] = text.strip()
+        self.save_tags()
+        return {"success": True}
+
+    def delete_natural_language_preset(self, name: str) -> dict:
+        presets = self._tags.get("natural_language_presets", {})
+        if name not in presets:
+            return {"success": False, "error": "존재하지 않는 프리셋"}
+        del presets[name]
+        self.save_tags()
+        return {"success": True}
+
+    def get_natural_language_presets(self) -> dict:
+        return self._tags.get("natural_language_presets", {})
+
     # ─── 프롬프트 빌드 ────────────────────────────────────
     def build_prompts(
         self,
@@ -813,6 +854,9 @@ class AssetMode:
         fd_activate: bool = False,
         hd_activate: bool = False,
         ed_activate: bool = False,
+        artist_preset: str = "",
+        natural_language: str = "",
+        lora_trigger_words: str = "",
     ) -> tuple[str, str]:
         q_tags = self._tags.get("quality", [])
         c_tags = self._tags.get("composition", [])
@@ -821,23 +865,39 @@ class AssetMode:
         expr_tags = self._tags.get("expressions", {}).get(expression, [])
         n_tags = self._tags.get("negative", [])
         cn_tags = self._tags.get("character_negative", [])
+        artist_tags = self._tags.get("artist_presets", {}).get(artist_preset, [])
 
         positive_parts = []
+        # 1. LoRA 트리거 워드
+        if lora_trigger_words.strip():
+            positive_parts.append(lora_trigger_words.strip())
+        # 2. quality tags
         for t in q_tags:
             if t.strip():
                 positive_parts.append(t.strip())
+        # 3. composition tags
         for t in c_tags:
             if t.strip():
                 positive_parts.append(t.strip())
+        # 4. artist tags
+        for t in artist_tags:
+            if t.strip():
+                positive_parts.append(t.strip())
+        # 5. appearance tags
         for t in app_tags:
             if t.strip():
                 positive_parts.append(t.strip())
+        # 6. expression tags
         for t in expr_tags:
             if t.strip():
                 positive_parts.append(t.strip())
+        # 7. outfit tags
         for t in outfit_tags:
             if t.strip():
                 positive_parts.append(t.strip())
+        # 8. natural language text
+        if natural_language.strip():
+            positive_parts.append(natural_language.strip())
 
         positive = ", ".join(positive_parts)
 
@@ -1052,6 +1112,9 @@ class AssetMode:
         fd_activate: bool = False,
         hd_activate: bool = False,
         ed_activate: bool = False,
+        artist_preset: str = "",
+        natural_language: str = "",
+        lora_trigger_words: str = "",
     ) -> dict:
         async with self._lock:
             self._is_generating = True
@@ -1064,6 +1127,7 @@ class AssetMode:
                     pose_enabled, pose_id,
                     hrf_activate, hrf_size, hrf_restore_size, hrf_control_net, img_w, img_h,
                     fd_activate, hd_activate, ed_activate,
+                    artist_preset, natural_language, lora_trigger_words,
                 )
             finally:
                 self._is_generating = False
@@ -1093,6 +1157,9 @@ class AssetMode:
         fd_activate: bool,
         hd_activate: bool,
         ed_activate: bool,
+        artist_preset: str,
+        natural_language: str,
+        lora_trigger_words: str,
     ) -> dict:
         ok = await self.update_asset_workflow()
         if not ok:
@@ -1125,6 +1192,9 @@ class AssetMode:
             fd_activate=fd_activate,
             hd_activate=hd_activate,
             ed_activate=ed_activate,
+            artist_preset=artist_preset,
+            natural_language=natural_language,
+            lora_trigger_words=lora_trigger_words,
         )
         if not positive:
             return {"success": False, "error": "프롬프트가 비어있음"}
@@ -1964,7 +2034,7 @@ class AssetMode:
 
     # ─── 프리셋매니징: 일괄 삽입 ────────────────────────────
     def batch_insert_preset(self, category: str, name: str, tags_text: str) -> dict:
-        """쉼표 구분 태그 문자열을 리스트로 파싱하여 tags.json에 저장"""
+        """쉼표 구분 태그 문자열을 리스트로 파싱하여 tags.json에 저장. natural_language_presets는 단일 텍스트로 저장."""
         if category not in PRESET_MGMT_CATEGORIES:
             print(f"[ASSET_MODE] batch_insert_preset: 지원하지 않는 카테고리 '{category}'")
             return {"success": False, "error": f"지원하지 않는 카테고리: {category}"}
@@ -1975,16 +2045,27 @@ class AssetMode:
 
         name = name.strip()
 
-        # 쉼표 구분 파싱
-        tags = [t.strip() for t in tags_text.split(",") if t.strip()]
-        if not tags:
-            print("[ASSET_MODE] batch_insert_preset: 태그가 비어있음")
-            return {"success": False, "error": "태그를 입력해주세요."}
-
         cat_data = self._tags.setdefault(category, {})
         if not isinstance(cat_data, dict):
             print(f"[ASSET_MODE] batch_insert_preset: 카테고리 '{category}'가 dict가 아님")
             return {"success": False, "error": f"카테고리 '{category}' 구조 오류"}
+
+        # natural_language_presets는 단일 텍스트로 저장
+        if category == "natural_language_presets":
+            text = tags_text.strip()
+            if not text:
+                print("[ASSET_MODE] batch_insert_preset: 텍스트가 비어있음")
+                return {"success": False, "error": "텍스트를 입력해주세요."}
+            cat_data[name] = text
+            self.save_tags()
+            self._log("preset_batch_inserted", {"category": category, "name": name, "count": len(text)})
+            return {"success": True, "name": name, "count": len(text)}
+
+        # 기타 카테고리: 쉼표 구분 파싱
+        tags = [t.strip() for t in tags_text.split(",") if t.strip()]
+        if not tags:
+            print("[ASSET_MODE] batch_insert_preset: 태그가 비어있음")
+            return {"success": False, "error": "태그를 입력해주세요."}
 
         cat_data[name] = tags
         self.save_tags()
