@@ -1132,6 +1132,10 @@
             background: rgba(80, 200, 120, 0.12);
             border-radius: 6px;
         }
+        #tab-btn-preset-mgmt {
+            background: rgba(66, 133, 244, 0.12);
+            border-radius: 6px;
+        }
         #tab-btn-lora {
             background: rgba(180, 130, 220, 0.15);
             border-radius: 6px;
@@ -2152,6 +2156,58 @@
         .at-progress-bar-inner { height: 100%; background: var(--accent); width: 0; transition: width 0.3s; }
         .at-empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1; color: var(--text2); font-size: 0.9rem; padding: 40px 20px; }
 
+        /* ─── 프리셋 관리 탭 (pm-*) ─── */
+        .pm-container { display: flex; flex-direction: column; height: calc(100vh - 60px); overflow: hidden; }
+        .pm-toolbar { display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: var(--surface2); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+        .pm-body { display: flex; flex: 1; min-height: 0; overflow: hidden; }
+        .pm-sidebar { width: 48px; display: flex; flex-direction: column; align-items: center; padding-top: 8px; background: var(--surface2); border-right: 1px solid var(--border); flex-shrink: 0; }
+        .pm-sidebar-btn { width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; border-radius: 6px; cursor: pointer; font-size: 1.1rem; border: none; background: transparent; color: var(--text2); transition: all 0.15s; margin-bottom: 4px; position: relative; }
+        .pm-sidebar-btn:hover { background: rgba(66,133,244,0.08); color: var(--text); }
+        .pm-sidebar-btn.active { background: var(--accent); color: #fff; }
+        .pm-sidebar-btn .pm-sidebar-tooltip { display: none; position: absolute; left: 44px; top: 50%; transform: translateY(-50%); background: var(--surface); border: 1px solid var(--border); padding: 4px 10px; border-radius: 4px; font-size: 0.78rem; white-space: nowrap; z-index: 10; color: var(--text); box-shadow: 0 2px 8px rgba(0,0,0,0.2); }
+        .pm-sidebar-btn:hover .pm-sidebar-tooltip { display: block; }
+        .pm-main { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+        .pm-main > div { flex: 1; min-height: 0; }
+        .pm-view { padding: 16px; overflow-y: auto; }
+        .pm-section { background: var(--surface2); border-radius: 8px; padding: 14px; margin-bottom: 14px; }
+        .pm-section-title { font-weight: 600; font-size: 0.95rem; margin-bottom: 10px; display: flex; align-items: center; gap: 6px; }
+        .pm-category-tabs { display: flex; gap: 4px; margin-bottom: 12px; flex-wrap: wrap; }
+        .pm-category-tab { padding: 5px 12px; border-radius: 5px; border: 1px solid var(--border); background: var(--surface2); color: var(--text2); font-size: 0.8rem; cursor: pointer; transition: all 0.15s; }
+        .pm-category-tab:hover { background: var(--surface); }
+        .pm-category-tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+        .pm-card-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+        .pm-card { min-width: 120px; max-width: 220px; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; background: var(--surface); cursor: pointer; transition: all 0.15s; display: flex; align-items: center; gap: 8px; }
+        .pm-card:hover { border-color: rgba(66,133,244,0.4); }
+        .pm-card.selected { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(66,133,244,0.3); }
+        .pm-card.hidden-card { opacity: 0.55; border-style: dashed; }
+        .pm-card input[type="checkbox"] { margin: 0; flex-shrink: 0; }
+        .pm-card-name { font-weight: 600; font-size: 0.85rem; word-break: break-word; flex: 1; }
+        .pm-card-count { font-size: 0.7rem; color: var(--text2); }
+        .pm-tag-highlight { background: rgba(255, 200, 0, 0.3); border-radius: 2px; padding: 0 2px; }
+        .pm-btn-row { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+        .pm-btn { padding: 5px 14px; border-radius: 5px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: 0.85rem; cursor: pointer; transition: all 0.15s; }
+        .pm-btn:hover { background: var(--surface); }
+        .pm-btn-primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+        .pm-btn-primary:hover { opacity: 0.9; }
+        .pm-btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+        .pm-btn-danger { background: #d32f2f; color: #fff; border-color: #d32f2f; }
+        .pm-btn-danger:hover { opacity: 0.85; }
+        .pm-form-group { margin-bottom: 12px; }
+        .pm-form-group label { display: block; font-weight: 600; font-size: 0.85rem; margin-bottom: 4px; }
+        .pm-form-group select, .pm-form-group input, .pm-form-group textarea { width: 100%; padding: 6px 10px; border: 1px solid var(--border); border-radius: 5px; background: var(--surface); color: var(--text); font-size: 0.85rem; }
+        .pm-form-group textarea { min-height: 80px; resize: vertical; font-family: inherit; }
+        .pm-tags-preview { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+        .pm-tag-chip { display: inline-block; background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 2px 8px; font-size: 0.75rem; color: var(--text2); white-space: nowrap; }
+
+        /* 추적 모달 */
+        .pm-trace-row { display: flex; gap: 12px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 8px; background: var(--surface2); }
+        .pm-trace-img { max-width: 200px; max-height: 260px; object-fit: contain; border-radius: 6px; flex-shrink: 0; background: var(--surface); }
+        .pm-trace-prompt { flex: 1; min-width: 0; font-size: 0.8rem; line-height: 1.5; overflow-y: auto; max-height: 120px; word-break: break-word; }
+        .pm-trace-info { font-size: 0.75rem; color: var(--text2); margin-bottom: 4px; }
+        .pm-trace-tags { font-size: 0.7rem; color: var(--text2); margin-top: 8px; }
+        .pm-trace-tags span { display: inline-block; background: var(--surface); border: 1px solid var(--border); border-radius: 3px; padding: 1px 6px; margin: 1px; }
+        .pm-trace-empty { text-align: center; color: var(--text2); padding: 40px 20px; font-size: 0.9rem; }
+
         /* ─── 그림 일괄생성 탭 ─── */
         .batch-chain-container {
             display: flex;
@@ -2512,6 +2568,7 @@
         <button class="tab-btn" onclick="switchTab('batch')">에셋 일괄 생성</button>
         <button id="tab-btn-smart-asset" class="tab-btn" onclick="switchTab('smart-asset')">스마트매치</button>
         <span class="tab-divider"></span>
+        <button id="tab-btn-preset-mgmt" class="tab-btn" onclick="switchTab('preset-mgmt')">프리셋 관리</button>
         <button id="tab-btn-lora" class="tab-btn" onclick="switchTab('lora')">로라매니징</button>
     </div>
 
@@ -3636,6 +3693,116 @@
                         </button>
                     </div>
                 </div>
+            </div>
+        </div>
+
+        <!-- 프리셋 관리 탭 -->
+        <div id="tab-preset-mgmt-content" class="tab-content">
+            <div class="pm-container">
+                <div class="pm-toolbar">
+                    <span style="font-weight:600; font-size:0.9rem;">프리셋 관리</span>
+                </div>
+                <div class="pm-body">
+                    <div class="pm-sidebar">
+                        <button class="pm-sidebar-btn active" id="pm-sidebar-hide" onclick="pmSwitchView('hide')">
+                            👁
+                            <span class="pm-sidebar-tooltip">숨김 관리</span>
+                        </button>
+                        <button class="pm-sidebar-btn" id="pm-sidebar-batch" onclick="pmSwitchView('batch')">
+                            ➕
+                            <span class="pm-sidebar-tooltip">일괄 추가</span>
+                        </button>
+                        <button class="pm-sidebar-btn" id="pm-sidebar-trace" onclick="pmSwitchView('trace')">
+                            🔍
+                            <span class="pm-sidebar-tooltip">조회/추적</span>
+                        </button>
+                    </div>
+                    <div class="pm-main">
+                        <!-- View 1: 숨김 관리 -->
+                        <div id="pm-view-hide" class="pm-view">
+                            <div class="pm-category-tabs" id="pm-hide-categories"></div>
+                            <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px;">
+                                <span style="font-size:0.8rem; color:var(--text2);">활성 프리셋</span>
+                                <button class="pm-btn pm-btn-primary" onclick="pmBatchHide()" id="pm-btn-hide" disabled>선택 숨기기</button>
+                            </div>
+                            <div class="pm-card-grid" id="pm-hide-active-grid"></div>
+                            <div style="display:flex; align-items:center; gap:8px; margin: 16px 0 10px;">
+                                <span style="font-size:0.8rem; color:var(--text2);">숨김 프리셋</span>
+                                <button class="pm-btn" onclick="pmBatchRestore()" id="pm-btn-restore" disabled>선택 복원</button>
+                            </div>
+                            <div class="pm-card-grid" id="pm-hide-hidden-grid"></div>
+                        </div>
+
+                        <!-- View 2: 일괄 삽입 -->
+                        <div id="pm-view-batch" class="pm-view" style="display:none;">
+                            <div class="pm-section">
+                                <div class="pm-section-title">새 프리셋 일괄 추가</div>
+                                <div class="pm-form-group">
+                                    <label>카테고리</label>
+                                    <select id="pm-batch-category">
+                                        <option value="appearances">외모 (appearances)</option>
+                                        <option value="outfits">복장 (outfits)</option>
+                                        <option value="expressions">표정 (expressions)</option>
+                                        <option value="quality_presets">품질 프리셋</option>
+                                        <option value="composition_presets">구도 프리셋</option>
+                                        <option value="negative_presets">네거티브 프리셋</option>
+                                        <option value="character_negative_presets">캐릭터 네거티브 프리셋</option>
+                                    </select>
+                                </div>
+                                <div class="pm-form-group">
+                                    <label>프리셋 이름</label>
+                                    <input type="text" id="pm-batch-name" placeholder="예: 기본 외모">
+                                </div>
+                                <div class="pm-form-group">
+                                    <label>태그 (쉼표로 구분)</label>
+                                    <textarea id="pm-batch-tags" placeholder="tag1, tag2, tag3, ..."></textarea>
+                                </div>
+                                <div class="pm-tags-preview" id="pm-batch-preview"></div>
+                                <div class="pm-btn-row">
+                                    <button class="pm-btn pm-btn-primary" onclick="pmBatchInsert()">추가</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- View 3: 조회/추적 -->
+                        <div id="pm-view-trace" class="pm-view" style="display:none;">
+                            <div class="pm-section">
+                                <div class="pm-section-title">에셋 사용 추적</div>
+                                <div class="pm-form-group">
+                                    <label>카테고리</label>
+                                    <select id="pm-trace-category" onchange="pmUpdateTraceNames()">
+                                        <option value="appearances">외모 (appearances)</option>
+                                        <option value="outfits">복장 (outfits)</option>
+                                        <option value="expressions">표정 (expressions)</option>
+                                        <option value="quality_presets">품질 프리셋</option>
+                                        <option value="composition_presets">구도 프리셋</option>
+                                        <option value="negative_presets">네거티브 프리셋</option>
+                                        <option value="character_negative_presets">캐릭터 네거티브 프리셋</option>
+                                    </select>
+                                </div>
+                                <div class="pm-form-group">
+                                    <label>프리셋</label>
+                                    <select id="pm-trace-name"></select>
+                                </div>
+                                <div class="pm-btn-row">
+                                    <button class="pm-btn pm-btn-primary" onclick="pmTraceSearch()">추적 실행</button>
+                                </div>
+                            </div>
+                            <div id="pm-trace-results" style="margin-top: 16px;"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 프리셋 추적 결과 모달 -->
+        <div class="modal" id="pm-trace-modal" onclick="if (event.target === this) pmCloseTraceModal()">
+            <div class="modal-content" style="max-width:900px;">
+                <div class="modal-header">
+                    <h2 id="pm-trace-modal-title">추적 결과</h2>
+                    <button class="modal-close" onclick="pmCloseTraceModal()">&times;</button>
+                </div>
+                <div id="pm-trace-modal-body" style="padding:16px; max-height:70vh; overflow-y:auto;"></div>
             </div>
         </div>
 
@@ -11713,8 +11880,13 @@
                 if (!assetTags) loadAssetData();
                 atLoadCharacterList();
                 atSwitchView('upload');
-            } else if (name === 'lora') {
+            } else if (name === 'preset-mgmt') {
                 document.querySelectorAll('.tab-btn')[6].classList.add('active');
+                document.getElementById('tab-preset-mgmt-content').classList.add('active');
+                if (!assetTags) loadAssetData();
+                pmLoadData();
+            } else if (name === 'lora') {
+                document.querySelectorAll('.tab-btn')[7].classList.add('active');
                 document.getElementById('tab-lora-content').classList.add('active');
                 initLoraTab();
             }
@@ -19731,6 +19903,331 @@
             } catch (e) {
                 _notiContentEl.innerHTML = `<div style="text-align:center; color:var(--error); padding:20px;">공지 로드 실패: ${e.message}</div>`;
             }
+        }
+
+        // ═══════════════════════════════════════════════════
+        // 프리셋 관리 탭 JavaScript
+        // ═══════════════════════════════════════════════════
+
+        let pmData = null; // { active: {...}, hidden: {...} }
+        let pmCurrentCategory = 'appearances';
+        let pmSelectedActive = new Set();
+        let pmSelectedHidden = new Set();
+
+        const PM_CATEGORIES = {
+            appearances: '외모',
+            outfits: '복장',
+            expressions: '표정',
+            quality_presets: '품질 프리셋',
+            composition_presets: '구도 프리셋',
+            negative_presets: '네거티브 프리셋',
+            character_negative_presets: '캐릭터 네거티브',
+        };
+
+        async function pmLoadData() {
+            try {
+                const [tagsResp, hiddenResp] = await Promise.all([
+                    fetch('/api/asset_mode/tags'),
+                    fetch('/api/asset_mode/hidden_tags'),
+                ]);
+                const tags = await tagsResp.json();
+                const hiddenData = await hiddenResp.json();
+
+                // active: 관리 대상 카테고리만 추출
+                const active = {};
+                for (const cat of Object.keys(PM_CATEGORIES)) {
+                    active[cat] = tags[cat] || {};
+                }
+                pmData = { active, hidden: hiddenData.hidden || hiddenData };
+                pmRenderHideView();
+            } catch (e) {
+                console.error('[PM] 데이터 로드 실패:', e);
+                showToast('프리셋 데이터 로드 실패', 'error');
+            }
+        }
+
+        function pmSwitchView(view) {
+            // sidebar 버튼 활성화
+            document.querySelectorAll('.pm-sidebar-btn').forEach(b => b.classList.remove('active'));
+            document.getElementById('pm-sidebar-' + view).classList.add('active');
+            // 뷰 전환
+            document.getElementById('pm-view-hide').style.display = view === 'hide' ? '' : 'none';
+            document.getElementById('pm-view-batch').style.display = view === 'batch' ? '' : 'none';
+            document.getElementById('pm-view-trace').style.display = view === 'trace' ? '' : 'none';
+            // 뷰 초기화
+            if (view === 'hide' && pmData) pmRenderHideView();
+            if (view === 'trace') pmUpdateTraceNames();
+        }
+
+        // ─── 숨김 관리 ────────────────────────────────────
+        function pmRenderHideView() {
+            if (!pmData) return;
+            // 카테고리 탭
+            const catContainer = document.getElementById('pm-hide-categories');
+            catContainer.innerHTML = '';
+            for (const [cat, label] of Object.entries(PM_CATEGORIES)) {
+                const btn = document.createElement('button');
+                btn.className = 'pm-category-tab' + (cat === pmCurrentCategory ? ' active' : '');
+                btn.textContent = label;
+                btn.onclick = () => { pmCurrentCategory = cat; pmSelectedActive.clear(); pmSelectedHidden.clear(); pmRenderHideView(); };
+                catContainer.appendChild(btn);
+            }
+
+            const activeItems = pmData.active[pmCurrentCategory] || {};
+            const hiddenItems = (pmData.hidden && pmData.hidden[pmCurrentCategory]) || {};
+
+            // 활성 카드
+            const activeGrid = document.getElementById('pm-hide-active-grid');
+            activeGrid.innerHTML = '';
+            if (Object.keys(activeItems).length === 0) {
+                activeGrid.innerHTML = '<div style="color:var(--text2); font-size:0.8rem; padding:8px;">활성 프리셋이 없습니다.</div>';
+            } else {
+                for (const [name, tags] of Object.entries(activeItems)) {
+                    const card = document.createElement('div');
+                    card.className = 'pm-card' + (pmSelectedActive.has(name) ? ' selected' : '');
+                    const tagArr = Array.isArray(tags) ? tags : [];
+                    card.innerHTML = `<input type="checkbox" ${pmSelectedActive.has(name) ? 'checked' : ''} onchange="pmToggleActive('${name.replace(/'/g, "\\'")}', this.checked)">
+                        <div style="flex:1; min-width:0;">
+                            <div class="pm-card-name">${name}</div>
+                            <div class="pm-card-count">${tagArr.length}개 태그</div>
+                        </div>`;
+                    card.onclick = (e) => { if (e.target.tagName !== 'INPUT') { pmToggleActive(name, !pmSelectedActive.has(name)); pmRenderHideView(); } };
+                    activeGrid.appendChild(card);
+                }
+            }
+
+            // 숨김 카드
+            const hiddenGrid = document.getElementById('pm-hide-hidden-grid');
+            hiddenGrid.innerHTML = '';
+            if (Object.keys(hiddenItems).length === 0) {
+                hiddenGrid.innerHTML = '<div style="color:var(--text2); font-size:0.8rem; padding:8px;">숨김 프리셋이 없습니다.</div>';
+            } else {
+                for (const [name, tags] of Object.entries(hiddenItems)) {
+                    const card = document.createElement('div');
+                    card.className = 'pm-card hidden-card' + (pmSelectedHidden.has(name) ? ' selected' : '');
+                    const tagArr = Array.isArray(tags) ? tags : [];
+                    card.innerHTML = `<input type="checkbox" ${pmSelectedHidden.has(name) ? 'checked' : ''} onchange="pmToggleHidden('${name.replace(/'/g, "\\'")}', this.checked)">
+                        <div style="flex:1; min-width:0;">
+                            <div class="pm-card-name">${name}</div>
+                            <div class="pm-card-count">${tagArr.length}개 태그</div>
+                        </div>`;
+                    card.onclick = (e) => { if (e.target.tagName !== 'INPUT') { pmToggleHidden(name, !pmSelectedHidden.has(name)); pmRenderHideView(); } };
+                    hiddenGrid.appendChild(card);
+                }
+            }
+
+            // 버튼 상태
+            document.getElementById('pm-btn-hide').disabled = pmSelectedActive.size === 0;
+            document.getElementById('pm-btn-restore').disabled = pmSelectedHidden.size === 0;
+        }
+
+        function pmToggleActive(name, checked) {
+            if (checked) pmSelectedActive.add(name); else pmSelectedActive.delete(name);
+            document.getElementById('pm-btn-hide').disabled = pmSelectedActive.size === 0;
+        }
+
+        function pmToggleHidden(name, checked) {
+            if (checked) pmSelectedHidden.add(name); else pmSelectedHidden.delete(name);
+            document.getElementById('pm-btn-restore').disabled = pmSelectedHidden.size === 0;
+        }
+
+        async function pmBatchHide() {
+            if (pmSelectedActive.size === 0) return;
+            const names = Array.from(pmSelectedActive);
+            try {
+                const resp = await fetch('/api/asset_mode/tags', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'hide_presets_batch', category: pmCurrentCategory, names }),
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    const failed = (data.results || []).filter(r => !r.success);
+                    if (failed.length > 0) {
+                        showToast(`${names.length - failed.length}개 숨김, ${failed.length}개 실패`, 'error');
+                    } else {
+                        showToast(`${names.length}개 프리셋 숨김 처리`, 'success');
+                    }
+                    pmSelectedActive.clear();
+                    await pmLoadData();
+                    if (assetTags) loadAssetData(); // 다른 탭 데이터 갱신
+                } else {
+                    showToast(data.error || '숨김 실패', 'error');
+                }
+            } catch (e) {
+                console.error('[PM] 숨김 실패:', e);
+                showToast('숨김 처리 중 오류 발생', 'error');
+            }
+        }
+
+        async function pmBatchRestore() {
+            if (pmSelectedHidden.size === 0) return;
+            const names = Array.from(pmSelectedHidden);
+            try {
+                const resp = await fetch('/api/asset_mode/tags', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'restore_presets_batch', category: pmCurrentCategory, names }),
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    const failed = (data.results || []).filter(r => !r.success);
+                    if (failed.length > 0) {
+                        showToast(`${names.length - failed.length}개 복원, ${failed.length}개 실패`, 'error');
+                    } else {
+                        showToast(`${names.length}개 프리셋 복원`, 'success');
+                    }
+                    pmSelectedHidden.clear();
+                    await pmLoadData();
+                    if (assetTags) loadAssetData();
+                } else {
+                    showToast(data.error || '복원 실패', 'error');
+                }
+            } catch (e) {
+                console.error('[PM] 복원 실패:', e);
+                showToast('복원 중 오류 발생', 'error');
+            }
+        }
+
+        // ─── 일괄 삽입 ────────────────────────────────────
+        // 태그 미리보기 (textarea 입력 시)
+        document.getElementById('pm-batch-tags').addEventListener('input', function() {
+            const tags = this.value.split(',').map(t => t.trim()).filter(t => t);
+            const preview = document.getElementById('pm-batch-preview');
+            preview.innerHTML = tags.map(t => `<span class="pm-tag-chip">${t}</span>`).join('');
+        });
+
+        async function pmBatchInsert() {
+            const category = document.getElementById('pm-batch-category').value;
+            const name = document.getElementById('pm-batch-name').value;
+            const tagsText = document.getElementById('pm-batch-tags').value;
+            if (!name.trim()) { showToast('이름을 입력해주세요', 'error'); return; }
+            if (!tagsText.trim()) { showToast('태그를 입력해주세요', 'error'); return; }
+
+            try {
+                const resp = await fetch('/api/asset_mode/tags', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'batch_insert_preset', category, name, tags_text: tagsText }),
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    showToast(`'${name}' 프리셋 추가 완료 (${data.count}개 태그)`, 'success');
+                    document.getElementById('pm-batch-name').value = '';
+                    document.getElementById('pm-batch-tags').value = '';
+                    document.getElementById('pm-batch-preview').innerHTML = '';
+                    await pmLoadData();
+                    if (assetTags) loadAssetData();
+                } else {
+                    showToast(data.error || '추가 실패', 'error');
+                }
+            } catch (e) {
+                console.error('[PM] 일괄 삽입 실패:', e);
+                showToast('삽입 중 오류 발생', 'error');
+            }
+        }
+
+        // ─── 조회/추적 ────────────────────────────────────
+        function pmUpdateTraceNames() {
+            const category = document.getElementById('pm-trace-category').value;
+            const select = document.getElementById('pm-trace-name');
+            select.innerHTML = '';
+
+            // 활성 + 숨김 모두 표시
+            const items = {};
+            if (pmData) {
+                Object.assign(items, pmData.active[category] || {});
+                if (pmData.hidden) Object.assign(items, pmData.hidden[category] || {});
+            } else if (assetTags) {
+                Object.assign(items, assetTags[category] || {});
+            }
+
+            if (Object.keys(items).length === 0) {
+                select.innerHTML = '<option value="">프리셋 없음</option>';
+                return;
+            }
+            for (const name of Object.keys(items)) {
+                const opt = document.createElement('option');
+                opt.value = name;
+                opt.textContent = name;
+                select.appendChild(opt);
+            }
+        }
+
+        async function pmTraceSearch() {
+            const category = document.getElementById('pm-trace-category').value;
+            const name = document.getElementById('pm-trace-name').value;
+            if (!name) { showToast('프리셋을 선택해주세요', 'error'); return; }
+
+            document.getElementById('pm-trace-results').innerHTML = '<div style="text-align:center; padding:20px; color:var(--text2);">추적 중...</div>';
+
+            try {
+                const resp = await fetch('/api/asset_mode/tags', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'trace_preset_assets', category, name }),
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    pmShowTraceResults(data.results, data.preset_tags, name);
+                } else {
+                    showToast(data.error || '추적 실패', 'error');
+                    document.getElementById('pm-trace-results').innerHTML = '';
+                }
+            } catch (e) {
+                console.error('[PM] 추적 실패:', e);
+                showToast('추적 중 오류 발생', 'error');
+                document.getElementById('pm-trace-results').innerHTML = '';
+            }
+        }
+
+        function pmShowTraceResults(results, presetTags, presetName) {
+            const container = document.getElementById('pm-trace-results');
+
+            if (!results || results.length === 0) {
+                container.innerHTML = `<div class="pm-trace-empty">사용된 에셋을 찾을 수 없습니다.</div>`;
+                return;
+            }
+
+            // 프리셋 태그 요약
+            let html = `<div class="pm-section" style="margin-bottom:12px;">
+                <div style="font-size:0.8rem; color:var(--text2); margin-bottom:4px;">검색 태그:</div>
+                <div class="pm-tags-preview">${(presetTags || []).map(t => `<span class="pm-tag-chip">${t}</span>`).join('')}</div>
+                <div style="font-size:0.8rem; color:var(--text2); margin-top:8px;">${results.length}개 에셋 발견</div>
+            </div>`;
+
+            for (const item of results) {
+                const imgUrl = `/api/asset_mode/characters/${encodeURIComponent(item.character)}/outfits/${encodeURIComponent(item.outfit)}/expressions/${encodeURIComponent(item.expression)}/images/${encodeURIComponent(item.image_file)}`;
+                const posText = pmHighlightTags((item.prompt_data.positive || ''), presetTags);
+                const negText = pmHighlightTags((item.prompt_data.negative || ''), presetTags);
+
+                html += `<div class="pm-trace-row">
+                    <img class="pm-trace-img" src="${imgUrl}" onerror="this.style.display='none'" loading="lazy">
+                    <div style="flex:1; min-width:0;">
+                        <div class="pm-trace-info">${item.character} / ${item.outfit} / ${item.expression}</div>
+                        <div class="pm-trace-prompt">${posText}</div>
+                        ${negText ? `<div style="margin-top:4px;"><span style="color:var(--error); font-size:0.7rem;">NEG:</span> ${negText}</div>` : ''}
+                    </div>
+                </div>`;
+            }
+
+            container.innerHTML = html;
+        }
+
+        function pmHighlightTags(text, tags) {
+            if (!text || !tags || tags.length === 0) return text || '';
+            let result = text;
+            for (const tag of tags) {
+                if (!tag) continue;
+                // 대소문자 구분 없이 하이라이트
+                const regex = new RegExp(`(${tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+                result = result.replace(regex, '<span class="pm-tag-highlight">$1</span>');
+            }
+            return result;
+        }
+
+        function pmCloseTraceModal() {
+            document.getElementById('pm-trace-modal').style.display = 'none';
         }
     </script>
         <div class="ac-tooltip" id="ac-tooltip"></div>

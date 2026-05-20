@@ -3216,6 +3216,9 @@ async def handle_api_asset_mode_status(request: web.Request) -> web.Response:
 async def handle_api_asset_mode_tags_get(request: web.Request) -> web.Response:
     return web.json_response(asset_mode.get_tags())
 
+async def handle_api_asset_mode_hidden_tags_get(request: web.Request) -> web.Response:
+    return web.json_response(asset_mode.get_hidden_tags())
+
 async def handle_api_asset_mode_tags_post(request: web.Request) -> web.Response:
     try:
         body = await request.json()
@@ -3453,6 +3456,20 @@ async def handle_api_asset_mode_tags_post(request: web.Request) -> web.Response:
             result = asset_mode.ungroup_outfit(
                 body.get("character", ""),
                 body.get("outfit", ""), body.get("expression", ""))
+        # ─── 프리셋 관리 ───
+        elif action == "hide_preset":
+            result = asset_mode.hide_preset(body.get("category", ""), body.get("name", ""))
+        elif action == "hide_presets_batch":
+            result = asset_mode.hide_presets_batch(body.get("category", ""), body.get("names", []))
+        elif action == "restore_preset":
+            result = asset_mode.restore_preset(body.get("category", ""), body.get("name", ""))
+        elif action == "restore_presets_batch":
+            result = asset_mode.restore_presets_batch(body.get("category", ""), body.get("names", []))
+        elif action == "batch_insert_preset":
+            result = asset_mode.batch_insert_preset(
+                body.get("category", ""), body.get("name", ""), body.get("tags_text", ""))
+        elif action == "trace_preset_assets":
+            result = asset_mode.trace_preset_assets(body.get("category", ""), body.get("name", ""))
 
         return web.json_response(result)
     except Exception as e:
@@ -4279,6 +4296,7 @@ async def handle_api_asset_mode_batch_set_negative(request: web.Request) -> web.
 
 app.router.add_get("/api/asset_mode/status", handle_api_asset_mode_status)
 app.router.add_get("/api/asset_mode/tags", handle_api_asset_mode_tags_get)
+app.router.add_get("/api/asset_mode/hidden_tags", handle_api_asset_mode_hidden_tags_get)
 app.router.add_post("/api/asset_mode/tags", handle_api_asset_mode_tags_post)
 app.router.add_post("/api/asset_mode/generate", handle_api_asset_mode_generate)
 app.router.add_get("/api/asset_mode/characters", handle_api_asset_mode_characters)

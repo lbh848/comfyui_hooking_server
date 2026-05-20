@@ -21,7 +21,15 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ASSET_DATA_DIR = os.path.join(BASE_DIR, "asset_data")
 ASSET_DIR = os.path.join(BASE_DIR, "asset")
 TAGS_FILE = os.path.join(ASSET_DATA_DIR, "tags.json")
+HIDDEN_TAGS_FILE = os.path.join(ASSET_DATA_DIR, "hidden_tags.json")
 NAME_MAPPING_FILE = os.path.join(ASSET_DATA_DIR, "name_mapping.json")
+
+# 프리셋 관리 대상 카테고리
+PRESET_MGMT_CATEGORIES = [
+    "appearances", "outfits", "expressions",
+    "quality_presets", "composition_presets",
+    "negative_presets", "character_negative_presets",
+]
 CURRENT_MODE_WORK_DIR = os.path.join(BASE_DIR, "current_mode_workflow")
 MODE_WORKFLOW_DIR = os.path.join(BASE_DIR, "mode_workflow")
 
@@ -80,6 +88,7 @@ class AssetMode:
         self._asset_api_workflow: Optional[dict] = None
         self._asset_hash: str = ""
         self._tags: dict = copy.deepcopy(DEFAULT_TAGS)
+        self._tags_loaded: bool = False
         self._is_generating: bool = False
         self._lock = asyncio.Lock()
 
@@ -107,12 +116,15 @@ class AssetMode:
                 for k, v in DEFAULT_TAGS.items():
                     if k not in self._tags:
                         self._tags[k] = copy.deepcopy(v)
+                self._tags_loaded = True
                 self._log("tags_loaded", {"characters": len(self._tags.get("characters", {}))})
             except Exception as e:
                 self._log("tags_load_error", {"error": str(e)})
                 self._tags = copy.deepcopy(DEFAULT_TAGS)
+                self._tags_loaded = True
         else:
             self._tags = copy.deepcopy(DEFAULT_TAGS)
+            self._tags_loaded = True
 
     def _migrate_if_needed(self):
         """옛날 구조(캐릭터 하위 appearance/outfits/expressions 딕셔너리) → 새 구조로 변환."""
@@ -148,6 +160,9 @@ class AssetMode:
             self._log("tags_migrated", {})
 
     def save_tags(self):
+        if not self._tags_loaded:
+            print("[ASSET_MODE] WARNING: save_tags() called before load_tags(). Skipping to prevent data loss.")
+            return
         os.makedirs(ASSET_DATA_DIR, exist_ok=True)
         with open(TAGS_FILE, "w", encoding="utf-8") as f:
             json.dump(self._tags, f, indent=2, ensure_ascii=False)
@@ -1804,6 +1819,247 @@ class AssetMode:
                 os.makedirs(expr_dir, exist_ok=True)
                 created.append(expr_name)
         return {"success": True, "created": created, "skipped": skipped}
+
+    # ─── 프리셋 관리: hidden_tags I/O ──────────────────────
+    def load_hidden_tags(self):
+        """hidden_tags.json 로드"""
+        os.makedirs(ASSET_DATA_DIR, exist_ok=True)
+        if os.path.isfile(HIDDEN_TAGS_FILE):
+            try:
+                with open(HIDDEN_TAGS_FILE, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception as e:
+                print(f"[ASSET_MODE] hidden_tags 로드 실패: {e}")
+                traceback.print_exc()
+        return {}
+
+    def save_hidden_tags(self, data: dict):
+        """hidden_tags.json 저장"""
+        os.makedirs(ASSET_DATA_DIR, exist_ok=True)
+        with open(HIDDEN_TAGS_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+
+    def get_hidden_tags(self) -> dict:
+        """프리셋 관리용: hidden_tags + 활성 tags 병합 반환"""
+        return {
+            "active": self._get_active_presets(),
+            "hidden": self.load_hidden_tags(),
+        }
+
+    def _get_active_presets(self) -> dict:
+        """현재 tags.json에서 프리셋 관리 대상 카테고리만 추출"""
+        result = {}
+        for cat in PRESET_MGMT_CATEGORIES:
+            val = self._tags.get(cat, {})
+            # appearances/outfits/expressions은 dict, quality_presets 등도 dict
+            result[cat] = copy.deepcopy(val) if isinstance(val, dict) else list(val) if isinstance(val, list) else val
+        return result
+
+    # ─── 프리셋 관리: 숨기기 / 복원 ───────────────────────
+    def hide_preset(self, category: str, name: str) -> dict:
+        """프리셋을 tags.json에서 hidden_tags.json으로 이동"""
+        if category not in PRESET_MGMT_CATEGORIES:
+            print(f"[ASSET_MODE] hide_preset: 지원하지 않는 카테고리 '{category}'")
+            return {"success": False, "error": f"지원하지 않는 카테고리: {category}"}
+
+        cat_data = self._tags.get(category, {})
+        if isinstance(cat_data, dict):
+            if name not in cat_data:
+                print(f"[ASSET_MODE] hide_preset: '{name}'을(를) {category}에서 찾을 수 없음")
+                return {"success": False, "error": f"'{name}'을(를) 찾을 수 없습니다."}
+            tag_value = copy.deepcopy(cat_data[name])
+        else:
+            print(f"[ASSET_MODE] hide_preset: 카테고리 '{category}'가 dict가 아님")
+            return {"success": False, "error": f"카테고리 '{category}' 구조 오류"}
+
+        # hidden_tags에 추가
+        hidden = self.load_hidden_tags()
+        hidden_cat = hidden.setdefault(category, {})
+        if name in hidden_cat:
+            print(f"[ASSET_MODE] hide_preset: '{name}'이(가) 이미 숨김 상태")
+            return {"success": False, "error": f"'{name}'은(는) 이미 숨김 처리되어 있습니다."}
+        hidden_cat[name] = tag_value
+        self.save_hidden_tags(hidden)
+
+        # tags.json에서 제거
+        del cat_data[name]
+        self.save_tags()
+
+        self._log("preset_hidden", {"category": category, "name": name})
+        return {"success": True}
+
+    def hide_presets_batch(self, category: str, names: list) -> dict:
+        """여러 프리셋을 일괄 숨기기"""
+        results = []
+        for name in names:
+            r = self.hide_preset(category, name)
+            results.append({"name": name, **r})
+        return {"success": True, "results": results}
+
+    def restore_preset(self, category: str, name: str) -> dict:
+        """숨김 프리셋을 hidden_tags.json에서 tags.json으로 복원"""
+        if category not in PRESET_MGMT_CATEGORIES:
+            print(f"[ASSET_MODE] restore_preset: 지원하지 않는 카테고리 '{category}'")
+            return {"success": False, "error": f"지원하지 않는 카테고리: {category}"}
+
+        hidden = self.load_hidden_tags()
+        hidden_cat = hidden.get(category, {})
+        if name not in hidden_cat:
+            print(f"[ASSET_MODE] restore_preset: '{name}'을(를) 숨김 목록에서 찾을 수 없음")
+            return {"success": False, "error": f"'{name}'을(를) 숨김 목록에서 찾을 수 없습니다."}
+
+        tag_value = copy.deepcopy(hidden_cat[name])
+
+        # tags.json에 복원 (이미 존재하면 에러)
+        cat_data = self._tags.setdefault(category, {})
+        if isinstance(cat_data, dict) and name in cat_data:
+            print(f"[ASSET_MODE] restore_preset: '{name}'이(가) 이미 tags.json에 존재함")
+            return {"success": False, "error": f"'{name}'은(는) 이미 활성 상태입니다."}
+        if isinstance(cat_data, dict):
+            cat_data[name] = tag_value
+        self.save_tags()
+
+        # hidden_tags에서 제거
+        del hidden_cat[name]
+        if not hidden_cat:
+            hidden.pop(category, None)
+        self.save_hidden_tags(hidden)
+
+        self._log("preset_restored", {"category": category, "name": name})
+        return {"success": True}
+
+    def restore_presets_batch(self, category: str, names: list) -> dict:
+        """여러 숨김 프리셋을 일괄 복원"""
+        results = []
+        for name in names:
+            r = self.restore_preset(category, name)
+            results.append({"name": name, **r})
+        return {"success": True, "results": results}
+
+    # ─── 프리셋 관리: 일괄 삽입 ────────────────────────────
+    def batch_insert_preset(self, category: str, name: str, tags_text: str) -> dict:
+        """쉼표 구분 태그 문자열을 리스트로 파싱하여 tags.json에 저장"""
+        if category not in PRESET_MGMT_CATEGORIES:
+            print(f"[ASSET_MODE] batch_insert_preset: 지원하지 않는 카테고리 '{category}'")
+            return {"success": False, "error": f"지원하지 않는 카테고리: {category}"}
+
+        if not name or not name.strip():
+            print("[ASSET_MODE] batch_insert_preset: 이름이 비어있음")
+            return {"success": False, "error": "이름을 입력해주세요."}
+
+        name = name.strip()
+
+        # 쉼표 구분 파싱
+        tags = [t.strip() for t in tags_text.split(",") if t.strip()]
+        if not tags:
+            print("[ASSET_MODE] batch_insert_preset: 태그가 비어있음")
+            return {"success": False, "error": "태그를 입력해주세요."}
+
+        cat_data = self._tags.setdefault(category, {})
+        if not isinstance(cat_data, dict):
+            print(f"[ASSET_MODE] batch_insert_preset: 카테고리 '{category}'가 dict가 아님")
+            return {"success": False, "error": f"카테고리 '{category}' 구조 오류"}
+
+        cat_data[name] = tags
+        self.save_tags()
+
+        self._log("preset_batch_inserted", {"category": category, "name": name, "count": len(tags)})
+        return {"success": True, "name": name, "count": len(tags)}
+
+    # ─── 프리셋 관리: 에셋 추적 ────────────────────────────
+    def trace_preset_assets(self, category: str, name: str) -> dict:
+        """프리셋이 사용된 에셋 이미지를 추적"""
+        if category not in PRESET_MGMT_CATEGORIES:
+            print(f"[ASSET_MODE] trace_preset_assets: 지원하지 않는 카테고리 '{category}'")
+            return {"success": False, "error": f"지원하지 않는 카테고리: {category}"}
+
+        # 프리셋 태그 가져오기 (활성 + 숨김 모두 확인)
+        preset_tags = []
+        active_cat = self._tags.get(category, {})
+        hidden = self.load_hidden_tags()
+        hidden_cat = hidden.get(category, {})
+
+        if isinstance(active_cat, dict) and name in active_cat:
+            preset_tags = active_cat[name] if isinstance(active_cat[name], list) else [active_cat[name]]
+        elif isinstance(hidden_cat, dict) and name in hidden_cat:
+            preset_tags = hidden_cat[name] if isinstance(hidden_cat[name], list) else [hidden_cat[name]]
+        else:
+            print(f"[ASSET_MODE] trace_preset_assets: '{name}'을(를) 찾을 수 없음")
+            return {"success": False, "error": f"'{name}'을(를) 찾을 수 없습니다."}
+
+        # asset/ 디렉토리 순회
+        results = []
+        if not os.path.isdir(ASSET_DIR):
+            print(f"[ASSET_MODE] trace_preset_assets: asset/ 디렉토리 없음")
+            return {"success": True, "results": [], "preset_tags": preset_tags}
+
+        for char_name in os.listdir(ASSET_DIR):
+            char_dir = os.path.join(ASSET_DIR, char_name)
+            if not os.path.isdir(char_dir):
+                continue
+            for outfit_name in os.listdir(char_dir):
+                outfit_dir = os.path.join(char_dir, outfit_name)
+                if not os.path.isdir(outfit_dir):
+                    continue
+                for expr_name in os.listdir(outfit_dir):
+                    expr_dir = os.path.join(outfit_dir, expr_name)
+                    if not os.path.isdir(expr_dir):
+                        continue
+                    # _prompt.json 파일 순회
+                    for fname in os.listdir(expr_dir):
+                        if not fname.endswith("_prompt.json"):
+                            continue
+                        prompt_path = os.path.join(expr_dir, fname)
+                        try:
+                            with open(prompt_path, "r", encoding="utf-8") as f:
+                                prompt_data = json.load(f)
+                        except Exception as e:
+                            print(f"[ASSET_MODE] trace: {prompt_path} 읽기 실패: {e}")
+                            continue
+
+                        matched = False
+                        if category in ("appearances", "outfits", "expressions"):
+                            # 필드값 매칭
+                            field_map = {
+                                "appearances": "appearance",
+                                "outfits": "outfit",
+                                "expressions": "expression",
+                            }
+                            field = field_map[category]
+                            if prompt_data.get(field) == name:
+                                matched = True
+                        elif category in ("quality_presets", "composition_presets"):
+                            # positive 텍스트에서 태그 포함 여부
+                            positive = prompt_data.get("positive", "")
+                            if any(tag.lower() in positive.lower() for tag in preset_tags if tag):
+                                matched = True
+                        elif category in ("negative_presets", "character_negative_presets"):
+                            # negative 텍스트에서 태그 포함 여부
+                            negative = prompt_data.get("negative", "")
+                            if any(tag.lower() in negative.lower() for tag in preset_tags if tag):
+                                matched = True
+
+                        if matched:
+                            img_file = fname.replace("_prompt.json", "")
+                            # 실제 이미지 확장자 확인
+                            for ext in [".png", ".jpg", ".jpeg", ".webp"]:
+                                if os.path.isfile(os.path.join(expr_dir, img_file + ext)):
+                                    img_file = img_file + ext
+                                    break
+                            else:
+                                # 이미지 파일이 없으면 prompt 파일명만 유지
+                                img_file = fname
+
+                            results.append({
+                                "character": prompt_data.get("character", char_name),
+                                "outfit": prompt_data.get("outfit", outfit_name),
+                                "expression": prompt_data.get("expression", expr_name),
+                                "image_file": img_file,
+                                "prompt_data": prompt_data,
+                            })
+
+        self._log("preset_traced", {"category": category, "name": name, "matches": len(results)})
+        return {"success": True, "results": results, "preset_tags": preset_tags}
 
     # ─── 상태 ─────────────────────────────────────────────
     def get_status(self) -> dict:
