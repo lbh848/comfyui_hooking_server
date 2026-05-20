@@ -2753,13 +2753,35 @@
                     <div class="section-title">자연어 프리셋(optional)</div>
                     <div style="margin-bottom:6px;">
                         <div id="asset-natural-language-preset-select-container"></div>
+                        <div id="asset-nl-preset-preview" style="margin-top:4px; padding:4px 8px; border:1px solid var(--border); background:var(--surface2); color:var(--text-secondary); border-radius:6px; font-size:0.72rem; min-height:1.4em; max-height:4.2em; overflow-y:auto; word-break:break-word; white-space:pre-wrap;"></div>
                         <div style="display:flex; gap:4px; margin-top:3px;">
                             <button onclick="addNaturalLanguagePreset()" style="flex:1; background:var(--accent); color:#fff; border:none; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">추가</button>
                             <button onclick="duplicateNaturalLanguagePreset()" style="flex:1; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">복제</button>
                             <button onclick="deleteNaturalLanguagePreset()" style="flex:1; background:var(--error); color:#fff; border:none; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">삭제</button>
+                            <button onclick="openNlPresetModal()" style="flex:1; background:var(--accent); color:#fff; border:none; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">✏️ 편집</button>
                         </div>
                     </div>
-                    <textarea id="asset-natural-language-text" placeholder="자연어 프롬프트 텍스트 입력..." rows="3" style="width:100%; padding:6px 8px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:6px; font-size:0.8rem; resize:vertical; font-family:inherit;"></textarea>
+                    <textarea id="asset-natural-language-text" placeholder="자연어 프롬프트 텍스트 입력..." rows="3" style="display:none;"></textarea>
+                    </div>
+
+                    <!-- 자연어 프리셋 편집 모달 -->
+                    <div id="nl-preset-modal" class="modal" onclick="if (event.target === this) closeNlPresetModal()">
+                        <div class="modal-content" style="max-width:560px;">
+                            <div class="modal-header">
+                                <h2>자연어 프리셋 편집</h2>
+                                <button class="modal-close" onclick="closeNlPresetModal()">✕</button>
+                            </div>
+                            <div class="modal-body">
+                                <div class="form-group">
+                                    <label style="font-size:0.85rem; margin-bottom:6px; display:block;">프리셋 내용</label>
+                                    <textarea id="nl-preset-modal-text" placeholder="자연어 프롬프트 텍스트 입력..." rows="8" style="width:100%; padding:8px 10px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:6px; font-size:0.85rem; resize:vertical; font-family:inherit;"></textarea>
+                                </div>
+                            </div>
+                            <div class="modal-footer">
+                                <button onclick="closeNlPresetModal()" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:8px 16px; border-radius:6px; cursor:pointer;">취소</button>
+                                <button onclick="applyNlPresetModal()" style="background:var(--accent); color:#fff; border:none; padding:8px 16px; border-radius:6px; cursor:pointer; font-weight:600;">적용</button>
+                            </div>
+                        </div>
                     </div>
 
                     <div style="border-top:1px solid var(--border); margin-bottom:8px;"></div>
@@ -12901,14 +12923,30 @@
         }
 
         // ─── 자연어 프리셋 ────────────────────────────────────
+        function updateNlPresetPreview() {
+            const name = getAssetSelectValue('asset-natural-language-preset-select');
+            const preview = document.getElementById('asset-nl-preset-preview');
+            if (!preview) return;
+            if (!name || !assetTags) {
+                preview.textContent = '';
+                preview.style.color = 'var(--text-secondary)';
+                return;
+            }
+            const text = assetTags.natural_language_presets?.[name] || '';
+            preview.textContent = text || '내용 없음';
+            preview.style.color = text ? 'var(--text)' : 'var(--text-secondary)';
+        }
+
         function loadNaturalLanguagePreset() {
             const name = getAssetSelectValue('asset-natural-language-preset-select');
             const textarea = document.getElementById('asset-natural-language-text');
             if (!name || !assetTags) {
                 textarea.value = '';
+                updateNlPresetPreview();
                 return;
             }
             textarea.value = assetTags.natural_language_presets?.[name] || '';
+            updateNlPresetPreview();
         }
 
         function saveCurrentNaturalLanguagePreset() {
@@ -12918,11 +12956,42 @@
             assetTagAction('save_natural_language_preset', { name, text });
         }
 
+        function openNlPresetModal() {
+            const presetName = getAssetSelectValue('asset-natural-language-preset-select');
+            if (!presetName) { showToast('자연어 프리셋을 먼저 선택하세요', 'error'); return; }
+            const textarea = document.getElementById('nl-preset-modal-text');
+            textarea.value = assetTags.natural_language_presets?.[presetName] || '';
+            document.getElementById('nl-preset-modal').classList.add('visible');
+            textarea.focus();
+        }
+
+        function closeNlPresetModal() {
+            document.getElementById('nl-preset-modal').classList.remove('visible');
+        }
+
+        function applyNlPresetModal() {
+            const presetName = getAssetSelectValue('asset-natural-language-preset-select');
+            if (!presetName) { showToast('자연어 프리셋을 먼저 선택하세요', 'error'); return; }
+            const text = document.getElementById('nl-preset-modal-text').value;
+            document.getElementById('asset-natural-language-text').value = text;
+            assetTagAction('save_natural_language_preset', { name: presetName, text });
+            updateNlPresetPreview();
+            closeNlPresetModal();
+        }
+
         function addNaturalLanguagePreset() {
             if (!assetTags) return;
             const name = prompt('새 자연어 프리셋명');
             if (!name || !name.trim()) return;
             assetTagAction('save_natural_language_preset', { name: name.trim(), text: '' });
+        }
+
+        function saveNaturalLanguageText() {
+            if (!assetTags) return;
+            const presetName = getAssetSelectValue('asset-natural-language-preset-select');
+            if (!presetName) { showToast('자연어 프리셋을 먼저 선택하세요', 'error'); return; }
+            const text = document.getElementById('asset-natural-language-text').value.trim();
+            assetTagAction('save_natural_language_preset', { name: presetName, text });
         }
 
         function duplicateNaturalLanguagePreset() {
