@@ -334,6 +334,16 @@
             max-height: 600px;
         }
 
+        /* ─── 프롬프트 카테고리별 배경색 ─── */
+        .prompt-cat-lora      { background: rgba(180, 140, 255, 0.18); border-radius: 3px; padding: 1px 4px; }
+        .prompt-cat-artist    { background: rgba(255, 150, 180, 0.18); border-radius: 3px; padding: 1px 4px; }
+        .prompt-cat-quality   { background: rgba(255, 230, 130, 0.18); border-radius: 3px; padding: 1px 4px; }
+        .prompt-cat-composition { background: rgba(130, 210, 255, 0.18); border-radius: 3px; padding: 1px 4px; }
+        .prompt-cat-appearance { background: rgba(200, 230, 130, 0.18); border-radius: 3px; padding: 1px 4px; }
+        .prompt-cat-expression { background: rgba(255, 190, 130, 0.18); border-radius: 3px; padding: 1px 4px; }
+        .prompt-cat-outfit    { background: rgba(130, 220, 170, 0.18); border-radius: 3px; padding: 1px 4px; }
+        .prompt-cat-nl        { background: rgba(200, 200, 210, 0.18); border-radius: 3px; padding: 1px 4px; }
+
         .prompt-toggle-btn {
             background: var(--surface2);
             color: var(--text2);
@@ -12868,6 +12878,31 @@
             await modifyTagLightweight('remove_negative_tag', { index: idx }, 'asset-negative-tags', 'removeAssetNegativeTag', 'negative', syncNegativePreset);
         }
 
+        // ─── 프롬프트 카테고리별 컬러 렌더링 ──────────────────────
+        const PROMPT_CATEGORIES = [
+            { key: 'lora',        label: 'LORA 트리거',  cls: 'prompt-cat-lora' },
+            { key: 'artist',      label: '아티스트',      cls: 'prompt-cat-artist' },
+            { key: 'quality',     label: '품질',          cls: 'prompt-cat-quality' },
+            { key: 'composition', label: '구도/기타',     cls: 'prompt-cat-composition' },
+            { key: 'appearance',  label: '외모',          cls: 'prompt-cat-appearance' },
+            { key: 'expression',  label: '표정',          cls: 'prompt-cat-expression' },
+            { key: 'outfit',      label: '복장',          cls: 'prompt-cat-outfit' },
+            { key: 'nl',          label: '자연어',        cls: 'prompt-cat-nl' },
+        ];
+
+        function renderColoredPrompt(categoryData) {
+            // categoryData: [{key, tags: [string]}, ...]
+            const parts = [];
+            for (const cat of categoryData) {
+                const meta = PROMPT_CATEGORIES.find(c => c.key === cat.key);
+                if (!meta) continue;
+                const validTags = cat.tags.filter(t => t && t.trim()).map(t => escapeHtml(t.trim()));
+                if (validTags.length === 0) continue;
+                parts.push(`<span class="${meta.cls}" title="${meta.label}">${validTags.join(', ')}</span>`);
+            }
+            return parts.join(', ');
+        }
+
         // ─── 프롬프트 미리보기 ───────────────────────────────
         async function previewAssetPrompt() {
             if (!assetTags) return;
@@ -12917,9 +12952,22 @@
 
             const positive = [
                 ...(loraTriggerWords ? [loraTriggerWords] : []),
-                ...qTags, ...cTags, ...artistTags, ...appTags, ...exprTags, ...outfitTags,
+                ...artistTags, ...qTags, ...cTags, ...appTags, ...exprTags, ...outfitTags,
                 ...(naturalLanguage ? [naturalLanguage] : []),
             ].join(', ');
+
+            // 컬러 렌더링용 카테고리 데이터
+            const categoryData = [
+                { key: 'lora',        tags: loraTriggerWords ? [loraTriggerWords] : [] },
+                { key: 'artist',      tags: artistTags },
+                { key: 'quality',     tags: qTags },
+                { key: 'composition', tags: cTags },
+                { key: 'appearance',  tags: appTags },
+                { key: 'expression',  tags: exprTags },
+                { key: 'outfit',      tags: outfitTags },
+                { key: 'nl',          tags: naturalLanguage ? [naturalLanguage] : [] },
+            ];
+            const positiveColored = renderColoredPrompt(categoryData);
 
             let positiveFull = positive;
             positiveFull += `\n[FACE_ID_ACTIVATE]\n${refEnabled ? 'true' : 'false'}`;
@@ -12975,7 +13023,7 @@
                     </div>
                     <div style="margin-bottom:12px;">
                         <div style="font-size:0.8rem; font-weight:600; color:var(--success); margin-bottom:4px;">긍정 프롬프트</div>
-                        <pre style="background:var(--surface2); padding:10px; border-radius:6px; font-size:0.75rem; white-space:pre-wrap; word-break:break-all; max-height:300px; overflow-y:auto; margin:0;">${escapeHtml(positiveFull)}</pre>
+                        <div style="background:var(--surface2); padding:10px; border-radius:6px; font-size:0.75rem; white-space:pre-wrap; word-break:break-all; max-height:300px; overflow-y:auto; margin:0; font-family:'Consolas',monospace;">${positiveColored}${escapeHtml(positiveFull.substring(positive.length))}</div>
                     </div>
                     <div>
                         <div style="font-size:0.8rem; font-weight:600; color:var(--error); margin-bottom:4px;">부정 프롬프트</div>
@@ -18905,7 +18953,7 @@
 
                 <div class="batch-prompt-preview-wrap">
                     <div class="batch-field-label" style="cursor:pointer; user-select:none; margin-bottom:4px;" onclick="toggleBatchPreview(this)">프롬프트 미리보기 ▼</div>
-                    <div class="batch-prompt-preview collapsed" data-preview>${escapeHtml(previewBatchSlotPrompt(slot))}</div>
+                    <div class="batch-prompt-preview collapsed" data-preview>${previewBatchSlotPrompt(slot)}</div>
                 </div>
                 <div class="batch-prompt-preview-wrap">
                     <div class="batch-field-label" style="cursor:pointer; user-select:none; margin-bottom:4px; color:var(--error);" onclick="toggleBatchPreview(this)">부정 프롬프트 미리보기 ▼</div>
@@ -19718,22 +19766,45 @@
 
         function updateBatchPreview(slotEl, idx) {
             const preview = slotEl.querySelector('[data-preview]');
-            if (preview) preview.textContent = previewBatchSlotPrompt(batchChains[idx]);
+            if (preview) preview.innerHTML = previewBatchSlotPrompt(batchChains[idx]);
             const negPreview = slotEl.querySelector('[data-negative-preview]');
             if (negPreview) negPreview.textContent = previewBatchSlotNegativePrompt(batchChains[idx]);
         }
 
         function previewBatchSlotPrompt(slot) {
             if (!assetTags) return '(태그 데이터 로딩중)';
+            const loraTriggerWords = (slot.lora_list || []).map(l => l.trigger).filter(t => t && t.trim()).join(', ');
+            const artistTags = (slot.artist_preset && assetTags.artist_presets?.[slot.artist_preset]) || [];
             const qTags = (slot.quality_preset && assetTags.quality_presets?.[slot.quality_preset]) || [];
             const cTags = (slot.composition_preset && assetTags.composition_presets?.[slot.composition_preset]) || [];
             const appTags = (slot.appearance && assetTags.appearances?.[slot.appearance]) || [];
             const exprTags = (slot.expression && assetTags.expressions?.[slot.expression]) || [];
             const outfitTags = (slot.outfit && assetTags.outfits?.[slot.outfit]) || [];
+            const naturalLanguage = slot.natural_language_preset
+                ? (assetTags?.natural_language_presets?.[slot.natural_language_preset] || slot.natural_language || '')
+                : (slot.natural_language || '');
             const cnTags = (slot.character_negative_preset && assetTags.character_negative_presets?.[slot.character_negative_preset]) || [];
             const nTags = (slot.negative_preset && assetTags.negative_presets?.[slot.negative_preset]) || [];
 
-            const positive = [...qTags, ...cTags, ...appTags, ...exprTags, ...outfitTags].filter(t => t.trim());
+            // 새 순서: LORA → Artist → Quality → Composition → Appearance → Expression → Outfit → NL
+            const positive = [
+                ...(loraTriggerWords ? [loraTriggerWords] : []),
+                ...artistTags, ...qTags, ...cTags, ...appTags, ...exprTags, ...outfitTags,
+                ...(naturalLanguage ? [naturalLanguage] : []),
+            ].filter(t => t.trim());
+
+            // 컬러 렌더링용 카테고리 데이터
+            const categoryData = [
+                { key: 'lora',        tags: loraTriggerWords ? [loraTriggerWords] : [] },
+                { key: 'artist',      tags: artistTags },
+                { key: 'quality',     tags: qTags },
+                { key: 'composition', tags: cTags },
+                { key: 'appearance',  tags: appTags },
+                { key: 'expression',  tags: exprTags },
+                { key: 'outfit',      tags: outfitTags },
+                { key: 'nl',          tags: naturalLanguage ? [naturalLanguage] : [] },
+            ];
+            const positiveColored = renderColoredPrompt(categoryData);
 
             let positiveFull = positive.join(', ');
             positiveFull += `\n[FACE_ID_ACTIVATE]\n${slot.ref_enabled ? 'true' : 'false'}`;
@@ -19769,7 +19840,10 @@
 
             const negative = [...cnTags, ...nTags].filter(t => t.trim()).join(', ');
 
-            return positiveFull;
+            // 컬러 스팬 + 컨트롤 토큰 (이스케이프) 조합
+            const tagsPart = positive.join(', ');
+            const controlPart = positiveFull.substring(tagsPart.length);
+            return positiveColored + escapeHtml(controlPart);
         }
 
         function previewBatchSlotNegativePrompt(slot) {

@@ -796,16 +796,16 @@ class AssetMode:
         # 1. LoRA 트리거 워드
         if lora_trigger_words.strip():
             positive_parts.append(lora_trigger_words.strip())
-        # 2. quality tags
+        # 2. artist tags
+        for t in artist_tags:
+            if t.strip():
+                positive_parts.append(t.strip())
+        # 3. quality tags
         for t in q_tags:
             if t.strip():
                 positive_parts.append(t.strip())
-        # 3. composition tags
+        # 4. composition tags
         for t in c_tags:
-            if t.strip():
-                positive_parts.append(t.strip())
-        # 4. artist tags
-        for t in artist_tags:
             if t.strip():
                 positive_parts.append(t.strip())
         # 5. appearance tags
