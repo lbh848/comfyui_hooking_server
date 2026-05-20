@@ -2100,10 +2100,10 @@
 
         /* ─── 스마트매치 탭 ─── */
         .at-container { display: flex; flex-direction: column; height: calc(100vh - 60px); overflow: hidden; }
-        .at-toolbar { display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: var(--surface2); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+        .at-toolbar { display: flex; align-items: center; gap: 10px; padding: 6px 8px; background: var(--surface2); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
         .at-toolbar select, .at-toolbar button { font-size: 0.85rem; }
         .at-body { display: flex; flex: 1; min-height: 0; overflow: hidden; }
-        .at-sidebar { width: 48px; display: flex; flex-direction: column; align-items: center; padding-top: 8px; background: var(--surface2); border-right: 1px solid var(--border); flex-shrink: 0; }
+        .at-sidebar { width: 48px; display: flex; flex-direction: column; align-items: center; padding-top: 2px; background: var(--surface2); border-right: 1px solid var(--border); flex-shrink: 0; }
         .at-sidebar-btn { width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; border-radius: 6px; cursor: pointer; font-size: 1.1rem; border: none; background: transparent; color: var(--text2); transition: all 0.15s; margin-bottom: 4px; position: relative; }
         .at-sidebar-btn:hover { background: rgba(66,133,244,0.08); color: var(--text); }
         .at-sidebar-btn.active { background: var(--accent); color: #fff; }
@@ -2111,9 +2111,9 @@
         .at-sidebar-btn:hover .at-sidebar-tooltip { display: block; }
         .at-main { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
         .at-main > div { flex: 1; min-height: 0; }
-        #at-view-upload { padding: 16px; overflow-y: auto; }
+        #at-view-upload { padding: 4px; overflow-y: auto; }
         #at-view-result { display: flex; flex-direction: column; min-height: 0; overflow: auto; }
-        .at-canvas { display: flex; flex-direction: column; gap: 16px; padding: 16px; align-items: stretch; }
+        .at-canvas { display: flex; flex-direction: column; gap: 8px; padding: 4px; align-items: stretch; }
         .at-card { min-width: 180px; max-width: 280px; min-height: 0; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; display: flex; flex-direction: column; position: relative; transition: border-color 0.15s, box-shadow 0.15s; }
         .at-card:hover { border-color: rgba(66,133,244,0.4); }
         .at-card.selected { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(66,133,244,0.3); }
@@ -2159,9 +2159,9 @@
 
         /* ─── 프리셋매니징 탭 (pm-*) ─── */
         .pm-container { display: flex; flex-direction: column; height: calc(100vh - 60px); overflow: hidden; }
-        .pm-toolbar { display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: var(--surface2); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+        .pm-toolbar { display: flex; align-items: center; gap: 10px; padding: 6px 8px; background: var(--surface2); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
         .pm-body { display: flex; flex: 1; min-height: 0; overflow: hidden; }
-        .pm-sidebar { width: 48px; display: flex; flex-direction: column; align-items: center; padding-top: 8px; gap: 6px; background: var(--surface2); border-right: 1px solid var(--border); flex-shrink: 0; }
+        .pm-sidebar { width: 48px; display: flex; flex-direction: column; align-items: center; padding-top: 2px; gap: 6px; background: var(--surface2); border-right: 1px solid var(--border); flex-shrink: 0; }
         .pm-sidebar-btn { width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; border-radius: 6px; cursor: pointer; font-size: 1.1rem; border: none; background: transparent; color: var(--text2); transition: all 0.15s; margin-bottom: 4px; position: relative; }
         .pm-sidebar-btn:hover { background: rgba(66,133,244,0.08); color: var(--text); }
         .pm-sidebar-btn.active { background: var(--accent); color: #fff; }
@@ -2169,8 +2169,10 @@
         .pm-sidebar-btn:hover .pm-sidebar-tooltip { display: block; }
         .pm-main { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
         .pm-main > div { flex: 1; min-height: 0; }
-        .pm-view { padding: 16px; overflow-y: auto; }
-        .pm-section { background: var(--surface2); border-radius: 8px; padding: 14px; margin-bottom: 14px; }
+        #tab-smart-asset-content.active { margin: -20px -24px; }
+        #tab-preset-mgmt-content.active { margin: -20px -24px; }
+        .pm-view { padding: 4px; overflow-y: auto; }
+        .pm-section { background: var(--surface2); border-radius: 8px; padding: 8px; margin-bottom: 8px; }
         .pm-section-title { font-weight: 600; font-size: 0.95rem; margin-bottom: 10px; display: flex; align-items: center; gap: 6px; }
         .pm-category-tabs { display: flex; gap: 4px; margin-bottom: 12px; flex-wrap: wrap; }
         .pm-category-tab { padding: 5px 12px; border-radius: 5px; border: 1px solid var(--border); background: var(--surface2); color: var(--text2); font-size: 0.8rem; cursor: pointer; transition: all 0.15s; }
