@@ -76,7 +76,6 @@ DEFAULT_TAGS = {
     "composition_presets": {},
     "negative_presets": {},
     "character_negative_presets": {},
-    "character_presets": {},
     "artist_presets": {},          # { "name": ["tag1", "tag2"] }
     "natural_language_presets": {},  # { "name": "긴 텍스트" }
 }
@@ -716,80 +715,6 @@ class AssetMode:
 
     def get_character(self, name: str) -> dict:
         return copy.deepcopy(self._tags.get("characters", {}).get(name, {}))
-
-    # ─── 캐릭터 프리셋 ────────────────────────────────────
-    def get_character_presets(self) -> dict:
-        return copy.deepcopy(self._tags.get("character_presets", {}))
-
-    def save_character_preset(self, name: str, appearance: str = "", outfit: str = "") -> dict:
-        if not name.strip():
-            return {"success": False, "error": "빈 이름"}
-        self._tags.setdefault("character_presets", {})[name.strip()] = {
-            "appearance": appearance,
-            "outfit": outfit,
-        }
-        self.save_tags()
-        return {"success": True}
-
-    @staticmethod
-    def _convert_to_new_format(data: dict) -> dict:
-        """구형 프리셋/캐릭터 데이터를 신형으로 변환.
-        구형: {"appearance": {"이름": [태그]}, "outfits": {...}, "expressions": {...}}
-        신형: {"appearance": "이름", "outfit": "이름", "expression": "이름"}
-        """
-        result = {}
-        app = data.get("appearance", "")
-        if isinstance(app, dict):
-            result["appearance"] = next(iter(app), "")
-        else:
-            result["appearance"] = str(app)
-
-        outfit = data.get("outfit", "")
-        if isinstance(outfit, str) and outfit:
-            result["outfit"] = outfit
-        elif isinstance(data.get("outfits"), dict):
-            result["outfit"] = next(iter(data["outfits"]), "")
-        else:
-            result["outfit"] = str(outfit) if outfit else ""
-
-        expr = data.get("expression", "")
-        if isinstance(expr, str) and expr:
-            result["expression"] = expr
-        elif isinstance(data.get("expressions"), dict):
-            result["expression"] = next(iter(data["expressions"]), "")
-        else:
-            result["expression"] = str(expr) if expr else ""
-
-        return result
-
-    def load_character_preset(self, name: str, character: str) -> dict:
-        preset = self._tags.get("character_presets", {}).get(name)
-        if not preset:
-            return {"success": False, "error": "존재하지 않는 프리셋"}
-        if not character.strip():
-            return {"success": False, "error": "캐릭터명 필요"}
-        converted = self._convert_to_new_format(preset)
-        self._tags.setdefault("characters", {})[character.strip()] = converted
-        self.save_tags()
-        return {"success": True}
-
-    def delete_character_preset(self, name: str) -> dict:
-        presets = self._tags.get("character_presets", {})
-        if name not in presets:
-            return {"success": False, "error": "존재하지 않는 프리셋"}
-        del presets[name]
-        self.save_tags()
-        return {"success": True}
-
-    def create_character_preset(self, name: str) -> dict:
-        if not name.strip():
-            return {"success": False, "error": "빈 이름"}
-        presets = self._tags.setdefault("character_presets", {})
-        if name.strip() in presets:
-            return {"success": False, "error": "이미 존재하는 프리셋"}
-        presets[name.strip()] = {"appearance": "", "outfit": "", "expression": ""}
-        self.save_tags()
-        return {"success": True}
 
     # ─── 아티스트 프리셋 ─────────────────────────────────
     def save_artist_preset(self, name: str, tags: list) -> dict:

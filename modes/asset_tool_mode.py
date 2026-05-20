@@ -328,10 +328,7 @@ class AssetToolMode:
         elif tag_category == "quality":
             presets = tags_data.get("quality_presets", {})
         elif tag_category == "character":
-            # character_presets는 {name: {appearance, outfit, expression}} 형태
-            # 매칭을 위해 expression 태그와 비교
-            presets = tags_data.get("character_presets", {})
-            return self._match_character_presets(analyzed_set, presets, tags_data, top_n)
+            presets = tags_data.get("characters", {})
         elif tag_category == "appearances":
             presets = tags_data.get("appearances", {})
         elif tag_category == "outfits":
@@ -376,36 +373,6 @@ class AssetToolMode:
         results.sort(key=lambda x: x["jaccard"], reverse=True)
         return results[:top_n]
 
-    def _match_character_presets(self, analyzed_set: set, char_presets: dict,
-                                  tags_data: dict, top_n: int) -> list[dict]:
-        expressions = tags_data.get("expressions", {})
-        results = []
-        for name, char_data in char_presets.items():
-            if not isinstance(char_data, dict):
-                continue
-            # 캐릭터 프리셋의 expression 태그와 비교
-            expr_name = char_data.get("expression", "")
-            expr_tags = expressions.get(expr_name, []) if expr_name else []
-            expr_set = set(t.lower().strip() for t in expr_tags if t.strip())
-            if not expr_set:
-                continue
-
-            intersection = analyzed_set & expr_set
-            union = analyzed_set | expr_set
-            jaccard = len(intersection) / len(union) if union else 0
-
-            results.append({
-                "name": name,
-                "jaccard": round(jaccard, 4),
-                "match_ratio": f"{len(intersection)}/{len(expr_set)}",
-                "matched_tags": sorted(intersection),
-                "unmatched_analyzed": sorted(analyzed_set - expr_set),
-                "unmatched_preset": sorted(expr_set - analyzed_set),
-                "character_data": char_data,
-            })
-
-        results.sort(key=lambda x: x["jaccard"], reverse=True)
-        return results[:top_n]
 
     # ─── 체인 제안 ────────────────────────────────────────
     def suggest_chains(self, match_results: list[dict], tag_category: str,

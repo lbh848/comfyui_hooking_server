@@ -3397,34 +3397,6 @@ async def handle_api_asset_mode_tags_post(request: web.Request) -> web.Response:
                     result = {"success": True}
                 else:
                     result = {"success": False, "error": "존재하지 않는 프리셋"}
-        # 캐릭터 프리셋
-        elif action == "save_character_preset":
-            result = asset_mode.save_character_preset(
-                body.get("name", ""),
-                body.get("appearance", ""),
-                body.get("outfit", ""),
-            )
-        elif action == "load_character_preset":
-            result = asset_mode.load_character_preset(body.get("name", ""), body.get("character", ""))
-        elif action == "delete_character_preset":
-            result = asset_mode.delete_character_preset(body.get("name", ""))
-        elif action == "create_character_preset":
-            result = asset_mode.create_character_preset(body.get("name", ""))
-        elif action == "duplicate_character_preset":
-            src = body.get("source", "")
-            new_name = body.get("name", "")
-            presets = asset_mode._tags.get("character_presets", {})
-            if src not in presets:
-                result = {"success": False, "error": "원본 프리셋이 없음"}
-            elif not new_name.strip():
-                result = {"success": False, "error": "빈 이름"}
-            elif new_name.strip() in presets:
-                result = {"success": False, "error": "이미 존재하는 프리셋명"}
-            else:
-                import copy
-                presets[new_name.strip()] = copy.deepcopy(presets[src])
-                asset_mode.save_tags()
-                result = {"success": True}
         # 외모 프리셋
         elif action == "save_appearance_preset":
             result = asset_mode.save_appearance_preset(body.get("name", ""), body.get("character", ""), body.get("appearance", ""))
@@ -4496,7 +4468,7 @@ async def handle_api_asset_tool_embedding_preview(request: web.Request) -> web.R
         elif tag_category == "outfits":
             presets = tags_data.get("outfits", {})
         elif tag_category == "character":
-            presets = tags_data.get("character_presets", {})
+            presets = tags_data.get("characters", {})
         elif tag_category == "negative":
             presets = tags_data.get("negative_presets", {})
         else:

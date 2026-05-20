@@ -2633,21 +2633,6 @@
                         <button onclick="duplicateAssetCharacter()" style="flex:1; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">복제</button>
                         <button onclick="removeAssetCharacter()" style="flex:1; background:var(--error); color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">삭제</button>
                     </div>
-                    <!-- 캐릭터 프리셋 -->
-                    <div style="margin-top:6px; padding-top:6px; border-top:1px solid var(--border);">
-                        <div style="font-size:0.75rem; font-weight:600; margin-bottom:4px;">캐릭터 프리셋</div>
-                        <select id="asset-character-preset-select" onchange="onCharacterPresetSelect()" style="width:100%; font-size:0.8rem;">
-                            <option value="">-- 프리셋 선택 --</option>
-                        </select>
-                        <div id="asset-character-preset-info" style="font-size:0.7rem; color:var(--text-secondary); margin-top:2px; padding:2px 4px; display:none;"></div>
-                        <div style="display:flex; gap:4px; margin-top:4px;">
-                            <button onclick="addCharacterPreset()" style="flex:1; background:var(--accent); color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">추가</button>
-                            <button onclick="duplicateCharacterPreset()" style="flex:1; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">복제</button>
-                            <button onclick="saveCharacterPresetFromCurrent()" style="flex:1; background:#4CAF50; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">저장</button>
-                            <button onclick="loadCharacterPreset()" style="flex:1; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">불러오기</button>
-                            <button onclick="deleteCharacterPreset()" style="flex:1; background:var(--error); color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">삭제</button>
-                        </div>
-                    </div>
                     </div>
 
                     <!-- 외모/복장/표정 통합 섹션 -->
@@ -9629,7 +9614,6 @@
             else if (category === 'quality') presets = (assetTags && assetTags.quality_presets) || {};
             else if (category === 'appearances') presets = (assetTags && assetTags.appearances) || {};
             else if (category === 'outfits') presets = (assetTags && assetTags.outfits) || {};
-            else if (category === 'character') presets = (assetTags && assetTags.character_presets) || {};
             else if (category === 'negative') presets = (assetTags && assetTags.negative_presets) || {};
             const q = (query || '').toLowerCase().trim();
             const names = Object.keys(presets).sort().filter(name => !q || name.toLowerCase().includes(q));
@@ -12241,22 +12225,8 @@
             });
             bindAssetCustomSelects();
 
-            // 캐릭터 프리셋 select (기존 방식 유지)
-            const charPresetSel = document.getElementById('asset-character-preset-select');
-            if (charPresetSel) {
-                const prevCharPreset = charPresetSel.value;
-                charPresetSel.innerHTML = '<option value="">-- 캐릭터 프리셋 --</option>';
-                for (const name of Object.keys(assetTags.character_presets || {}).sort()) {
-                    const opt = document.createElement('option');
-                    opt.value = name;
-                    opt.textContent = name;
-                    if (name === prevCharPreset) opt.selected = true;
-                    charPresetSel.appendChild(opt);
-                }
-            }
 
             onAssetCharacterChange(true);
-            onCharacterPresetSelect();
 
             // 보존된 선택값이 유효하면 태그도 다시 렌더
             if (prevApp && assetTags.appearances?.[prevApp]) onAssetAppearanceChange();
@@ -13018,93 +12988,6 @@
             assetTagAction('delete_character_negative_preset', { name });
         }
 
-        // ─── 캐릭터 프리셋 ──────────────────────────────────
-        function saveCharacterPresetFromCurrent() {
-            const sel = document.getElementById('asset-character-preset-select').value;
-            if (!sel) { showToast('저장할 프리셋을 선택하세요', 'error'); return; }
-            const app = getAssetSelectValue('asset-appearance-select');
-            const outfit = getAssetSelectValue('asset-outfit-select');
-            assetTagAction('save_character_preset', {
-                name: sel,
-                appearance: app,
-                outfit: outfit,
-            });
-        }
-
-        function onCharacterPresetSelect() {
-            const sel = document.getElementById('asset-character-preset-select').value;
-            const infoDiv = document.getElementById('asset-character-preset-info');
-            if (!sel || !assetTags) {
-                infoDiv.style.display = 'none';
-                return;
-            }
-            const preset = assetTags.character_presets?.[sel];
-            if (!preset) {
-                infoDiv.style.display = 'none';
-                return;
-            }
-            const converted = convertPresetData(preset);
-            const parts = [converted.appearance, converted.outfit].filter(Boolean);
-            if (parts.length) {
-                infoDiv.textContent = '▶ ' + parts.join(' / ');
-                infoDiv.style.display = 'block';
-            } else {
-                infoDiv.textContent = '▶ (빈 프리셋)';
-                infoDiv.style.display = 'block';
-            }
-        }
-
-        function convertPresetData(data) {
-            const result = { appearance: '', outfit: '', expression: '' };
-            const app = data.appearance ?? '';
-            if (typeof app === 'string') result.appearance = app;
-            else if (typeof app === 'object') result.appearance = Object.keys(app)[0] || '';
-            const outfit = data.outfit ?? '';
-            if (typeof outfit === 'string') result.outfit = outfit;
-            else if (typeof data.outfits === 'object') result.outfit = Object.keys(data.outfits)[0] || '';
-            const expr = data.expression ?? '';
-            if (typeof expr === 'string') result.expression = expr;
-            else if (typeof data.expressions === 'object') result.expression = Object.keys(data.expressions)[0] || '';
-            return result;
-        }
-
-        async function loadCharacterPreset() {
-            const name = document.getElementById('asset-character-preset-select').value;
-            if (!name) return;
-            const char = document.getElementById('asset-character-select').value;
-            if (!char) { showToast('캐릭터를 먼저 선택하세요', 'error'); return; }
-            await assetTagAction('load_character_preset', { name, character: char });
-            const charData = assetTags.characters[char];
-            if (charData) {
-                if (charData.appearance) setAssetSelectValue('asset-appearance-select', charData.appearance);
-                if (charData.outfit) setAssetSelectValue('asset-outfit-select', charData.outfit);
-                onAssetAppearanceChange();
-                onAssetOutfitChange();
-                onAssetExpressionChange();
-            }
-            updateGenerateBtn();
-        }
-
-        function deleteCharacterPreset() {
-            const name = document.getElementById('asset-character-preset-select').value;
-            if (!name) return;
-            if (!confirm(`프리셋 "${name}" 삭제?`)) return;
-            assetTagAction('delete_character_preset', { name });
-        }
-
-        function addCharacterPreset() {
-            const name = prompt('새 프리셋명을 입력하세요');
-            if (!name || !name.trim()) return;
-            assetTagAction('create_character_preset', { name: name.trim() });
-        }
-
-        function duplicateCharacterPreset() {
-            const sel = document.getElementById('asset-character-preset-select').value;
-            if (!sel) { showToast('복제할 프리셋을 선택하세요', 'error'); return; }
-            const newName = prompt('새 프리셋명을 입력하세요', sel + ' 복사본');
-            if (!newName || !newName.trim()) return;
-            assetTagAction('duplicate_character_preset', { source: sel, name: newName.trim() });
-        }
 
         // ─── 복장/표정 복제 ────────────────────────────────
         function duplicateAssetOutfit() {
@@ -20198,9 +20081,6 @@
                 await assetTagAction('save_character_negative_preset', { name, tags: importedData || [] });
             } else if (cat === 'characters') {
                 await assetTagAction('add_character', { name });
-                if (importedData && Object.keys(importedData).length > 0) {
-                    await assetTagAction('save_character_preset', { name, character: importedData });
-                }
             }
         }
 

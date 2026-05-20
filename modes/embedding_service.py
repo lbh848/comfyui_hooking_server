@@ -742,16 +742,6 @@ async def build_preset_embeddings(tags_data: dict, progress_callback=None, skip_
             if clean and clean not in all_names_to_embed:
                 all_names_to_embed[clean] = (cat_key, preset_name, "document")
 
-    char_presets = tags_data.get("character_presets", {})
-    if isinstance(char_presets, dict):
-        name_map["character_presets"] = {}
-        for char_name, char_data in char_presets.items():
-            if not isinstance(char_data, dict):
-                continue
-            name_map["character_presets"][char_name] = char_name
-            if char_name not in all_names_to_embed:
-                all_names_to_embed[char_name] = ("character_presets", char_name, "document")
-
     unique_names = list(all_names_to_embed.keys())
 
     if skip_cached:
