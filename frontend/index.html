@@ -2146,18 +2146,27 @@
             transition: width 0.2s ease;
         }
         .asset-queue-item .item-dismiss-btn {
-            background: none;
+            background: rgba(255, 255, 255, 0.85);
             border: none;
-            color: var(--text2);
+            color: #333;
             cursor: pointer;
             font-size: 0.85rem;
-            padding: 2px 4px;
-            border-radius: 3px;
-            opacity: 0;
-            transition: opacity 0.15s;
+            padding: 4px 8px;
+            border-radius: 4px;
+            opacity: 1;
+            transition: background 0.15s, color 0.15s;
+            min-width: 28px;
+            text-align: center;
         }
-        .asset-queue-item:hover .item-dismiss-btn { opacity: 1; }
-        .asset-queue-item .item-dismiss-btn:hover { color: #e74c3c; }
+        .asset-queue-item .item-dismiss-btn:hover { background: rgba(255, 255, 255, 1); color: #e74c3c; }
+        .asset-queue-item.item-cancelled .item-dismiss-btn {
+            background: rgba(128, 128, 128, 0.4);
+            color: #999;
+        }
+        .asset-queue-item.item-cancelled .item-dismiss-btn:hover {
+            background: rgba(128, 128, 128, 0.6);
+            color: #fff;
+        }
         .asset-queue-item.item-success .item-icon { color: #27ae60; }
         .asset-queue-item.item-error .item-icon { color: #e74c3c; }
         .asset-queue-item.item-cancelled .item-icon { color: var(--text2); }
@@ -16003,10 +16012,19 @@
             }
         }
 
+        const autoHideTimers = {};
         function scheduleAutoHide(id, delayMs) {
-            setTimeout(() => {
+            if (autoHideTimers[id]) clearTimeout(autoHideTimers[id]);
+            autoHideTimers[id] = setTimeout(() => {
+                delete autoHideTimers[id];
                 removeQueueItem(id);
             }, delayMs);
+        }
+        function cancelAutoHide(id) {
+            if (autoHideTimers[id]) {
+                clearTimeout(autoHideTimers[id]);
+                delete autoHideTimers[id];
+            }
         }
 
         function renderAssetQueueUI() {
@@ -16053,7 +16071,8 @@
                 barStopBtn.style.display = 'none';
                 bar.classList.add('all-done');
                 if (assetQueue.length > 0) {
-                    barLabel.textContent = '완료';
+                    const cancelledCount = assetQueue.filter(q => q.status === 'cancelled').length;
+                    barLabel.textContent = cancelledCount === assetQueue.length ? '취소됨' : '완료';
                     barProgressText.textContent = '';
                     barProgressBar.style.width = '100%';
                 }
@@ -16087,10 +16106,10 @@
                 if (!statusText && item.status === 'success') statusText = '완료';
 
                 let actionBtn = '';
-                if (item.status === 'pending') {
-                    actionBtn = '<button class="item-dismiss-btn" style="opacity:1;color:#e74c3c;" onclick="event.stopPropagation(); cancelQueueItem(' + item.id + ');">✕</button>';
+                if (item.status === 'pending' || item.status === 'cancelled') {
+                    actionBtn = '<button class="item-dismiss-btn" onclick="event.stopPropagation(); cancelQueueItem(' + item.id + ');">✕</button>';
                 } else if (item.status === 'generating') {
-                    actionBtn = '<button class="item-dismiss-btn" style="opacity:1;color:#e67e22;" onclick="event.stopPropagation(); skipCurrentItem(' + item.id + ');">건너뛰기</button>';
+                    actionBtn = '<button class="item-dismiss-btn" style="background:rgba(230,126,34,0.2);color:#e67e22;" onclick="event.stopPropagation(); skipCurrentItem(' + item.id + ');">건너뛰기</button>';
                 } else {
                     actionBtn = '<button class="item-dismiss-btn" onclick="event.stopPropagation(); removeQueueItem(' + item.id + ');">✕</button>';
                 }
@@ -16225,6 +16244,15 @@
 
             try {
                 while (assetQueueProcessing) {
+                    // 취소된 항목 큐에서 제거
+                    for (let i = assetQueue.length - 1; i >= 0; i--) {
+                        if (assetQueue[i].status === 'cancelled') {
+                            cancelAutoHide(assetQueue[i].id);
+                            assetQueue.splice(i, 1);
+                        }
+                    }
+                    renderAssetQueueUI();
+
                     const item = assetQueue.find(q => q.status === 'pending');
                     if (!item) break;
 
@@ -16282,7 +16310,7 @@
                 if (item.status === 'pending') {
                     item.status = 'cancelled';
                     item.endTime = Date.now();
-                    scheduleAutoHide(item.id, 5000);
+                    scheduleAutoHide(item.id, 15000);
                 }
             }
             renderAssetQueueUI();
@@ -16291,10 +16319,17 @@
 
         function cancelQueueItem(id) {
             const item = assetQueue.find(q => q.id === id);
-            if (!item || item.status !== 'pending') return;
-            item.status = 'cancelled';
-            item.endTime = Date.now();
-            scheduleAutoHide(id, 5000);
+            if (!item) return;
+            if (item.status === 'pending') {
+                item.status = 'cancelled';
+                item.endTime = Date.now();
+                scheduleAutoHide(id, 15000);
+            } else if (item.status === 'cancelled') {
+                item.status = 'pending';
+                item.endTime = null;
+                cancelAutoHide(id);
+                processAssetQueue();
+            }
             renderAssetQueueUI();
         }
 
