@@ -3012,10 +3012,10 @@
                     </div>
 
                     <div style="border-top:1px solid var(--border); margin-bottom:8px;"></div>
-                    <!-- 레퍼런스 (Face ID) 섹션 -->
+                    <!-- FACE-IPAdapter (Face ID) 섹션 -->
                     <div style="background:rgba(255,152,0,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
                         <div style="display:flex; align-items:center; gap:8px;">
-                            <div class="section-title" style="margin-bottom:0;">레퍼런스</div>
+                            <div class="section-title" style="margin-bottom:0;">FACE-IPAdapter</div>
                             <label class="toggle-switch">
                                 <input type="checkbox" id="asset-ref-toggle" onchange="onAssetRefToggle()">
                                 <span class="toggle-slider"></span>
@@ -3030,7 +3030,7 @@
                                     style="width:100%; margin-top:2px;">
                             </div>
                             <div style="margin-bottom:6px;">
-                                <div style="font-size:0.8rem; color:var(--text-secondary); margin-bottom:4px;">레퍼런스 이미지</div>
+                                <div style="font-size:0.8rem; color:var(--text-secondary); margin-bottom:4px;">FACE-IPAdapter 이미지</div>
                                 <div style="display:flex; gap:4px;">
                                     <button onclick="document.getElementById('asset-ref-file-input').click()" style="flex:1; font-size:0.75rem; padding:4px;">파일 업로드</button>
                                     <button onclick="openAssetRefGalleryPicker()" style="flex:1; font-size:0.75rem; padding:4px;">에셋에서 선택</button>
@@ -3047,10 +3047,10 @@
                         </div>
                     </div>
 
-                    <!-- 스타일 레퍼런스 섹션 -->
+                    <!-- IPAdapter 섹션 -->
                     <div style="background:rgba(156,39,176,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
                         <div style="display:flex; align-items:center; gap:8px;">
-                            <div class="section-title" style="margin-bottom:0;">스타일 레퍼런스</div>
+                            <div class="section-title" style="margin-bottom:0;">IPAdapter</div>
                             <label class="toggle-switch">
                                 <input type="checkbox" id="asset-style-ref-toggle" onchange="onAssetStyleRefToggle()">
                                 <span class="toggle-slider"></span>
@@ -3064,7 +3064,7 @@
                                     oninput="document.getElementById('asset-style-ref-strength-val').textContent=this.value">
                             </div>
                             <div style="margin-bottom:6px;">
-                                <div style="font-size:0.8rem; color:var(--text-secondary); margin-bottom:4px;">스타일 레퍼런스 이미지</div>
+                                <div style="font-size:0.8rem; color:var(--text-secondary); margin-bottom:4px;">IPAdapter 이미지</div>
                                 <div style="display:flex; gap:4px;">
                                     <button onclick="document.getElementById('asset-style-ref-file-input').click()" style="flex:1; font-size:0.75rem; padding:4px;">파일 업로드</button>
                                     <button onclick="openAssetStyleRefGalleryPicker()" style="flex:1; font-size:0.75rem; padding:4px;">에셋에서 선택</button>
@@ -3526,7 +3526,7 @@
                                         </div>
                                         <div class="ep-settings-row" style="margin-top:4px;">
                                             <label style="display:flex; align-items:center; gap:4px; font-size:0.8rem;">
-                                                <input type="checkbox" id="ep-ref-toggle" onchange="onExprProfileRefToggle()"> 레퍼런스
+                                                <input type="checkbox" id="ep-ref-toggle" onchange="onExprProfileRefToggle()"> FACE-IPAdapter
                                                 <span id="ep-ref-status" class="toggle-status off" style="font-size:0.7rem;">OFF</span>
                                             </label>
                                         </div>
@@ -8573,7 +8573,7 @@
                     }
                     document.getElementById('ep-ref-preview-img').src = epRefPreviewUrl;
                     document.getElementById('ep-ref-preview').style.display = 'block';
-                    showToast('레퍼런스 이미지 업로드 완료', 'success');
+                    showToast('FACE-IPAdapter 이미지 업로드 완료', 'success');
                 } else {
                     showToast(result.error || '업로드 실패', 'error');
                 }
@@ -8611,7 +8611,7 @@
                     const prevEl = document.querySelector(`.ep-ref-preview-slot[data-ep-idx="${idx}"]`);
                     if (imgEl) imgEl.src = epProfiles[idx].ref_preview_url;
                     if (prevEl) prevEl.style.display = 'block';
-                    showToast('레퍼런스 이미지 업로드 완료', 'success');
+                    showToast('FACE-IPAdapter 이미지 업로드 완료', 'success');
                 } else {
                     showToast(result.error || '업로드 실패', 'error');
                 }
@@ -8637,7 +8637,7 @@
             overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10000; display:flex; align-items:center; justify-content:center;';
             overlay.innerHTML = `<div style="background:var(--surface); border-radius:12px; padding:20px; max-width:700px; width:90%; max-height:80vh; display:flex; flex-direction:column; overflow:hidden;">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; flex-shrink:0;">
-                    <h3 style="margin:0;">에셋에서 레퍼런스 선택</h3>
+                    <h3 style="margin:0;">에셋에서 FACE-IPAdapter 선택</h3>
                     <button onclick="document.getElementById('ep-ref-picker-overlay').remove()" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer;">x</button>
                 </div>
                 <div id="ep-ref-picker-back" style="display:none; margin-bottom:8px; flex-shrink:0;">
@@ -8724,7 +8724,7 @@
                                     document.getElementById('ep-ref-preview-img').src = thumbUrl;
                                     document.getElementById('ep-ref-preview').style.display = 'block';
                                 }
-                                showToast('레퍼런스 이미지 선택 완료', 'success');
+                                showToast('FACE-IPAdapter 이미지 선택 완료', 'success');
                                 document.getElementById('ep-ref-picker-overlay').remove();
                             } else {
                                 showToast(uploadResult.error || '업로드 실패', 'error');
@@ -8745,7 +8745,7 @@
             overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10000; display:flex; align-items:center; justify-content:center;';
             overlay.innerHTML = `<div style="background:var(--surface); border-radius:12px; padding:20px; max-width:700px; width:90%; max-height:80vh; display:flex; flex-direction:column; overflow:hidden;">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; flex-shrink:0;">
-                    <h3 style="margin:0;">에셋에서 레퍼런스 선택</h3>
+                    <h3 style="margin:0;">에셋에서 FACE-IPAdapter 선택</h3>
                     <button onclick="document.getElementById('ep-ref-slot-picker-overlay').remove()" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer;">x</button>
                 </div>
                 <div id="ep-ref-slot-picker-back" style="display:none; margin-bottom:8px; flex-shrink:0;">
@@ -8833,7 +8833,7 @@
                                 const prevEl = document.querySelector(`.ep-ref-preview-slot[data-ep-idx="${idx}"]`);
                                 if (imgEl) imgEl.src = thumbUrl;
                                 if (prevEl) prevEl.style.display = 'block';
-                                showToast('레퍼런스 이미지 선택 완료', 'success');
+                                showToast('FACE-IPAdapter 이미지 선택 완료', 'success');
                                 document.getElementById('ep-ref-slot-picker-overlay').remove();
                             } else {
                                 showToast(uploadResult.error || '업로드 실패', 'error');
@@ -13436,7 +13436,7 @@
             assetTagAction('remove_expression', { name: expr });
         }
 
-        // ─── 레퍼런스 (Face ID) ─────────────────────────────
+        // ─── FACE-IPAdapter (Face ID) ─────────────────────────────
 
         async function updateRefFolderHash() {
             const el = document.getElementById('asset-ref-folder-hash');
@@ -13492,7 +13492,7 @@
                         return { name: img.name, local_path: img.local_path, orig_filename: img.orig_filename, preview_url };
                     });
                     renderAssetRefPreview();
-                    showToast(`${images.length}장 레퍼런스 이미지 업로드 완료`, 'success');
+                    showToast(`${images.length}장 FACE-IPAdapter 이미지 업로드 완료`, 'success');
                 } else {
                     showToast(result.error || '업로드 실패', 'error');
                 }
@@ -13526,7 +13526,7 @@
             renderAssetRefPreview();
         }
 
-        // ─── 스타일 레퍼런스 ──────────────────────────────────────
+        // ─── IPAdapter ──────────────────────────────────────
         let assetStyleRefImages = [];  // [{name, local_path, orig_filename, preview_url}]
 
         function onAssetStyleRefToggle() {
@@ -13560,7 +13560,7 @@
                         return { name: img.name, local_path: img.local_path, orig_filename: img.orig_filename, preview_url };
                     });
                     renderAssetStyleRefPreview();
-                    showToast(`${images.length}장 스타일 레퍼런스 이미지 업로드 완료`, 'success');
+                    showToast(`${images.length}장 IPAdapter 이미지 업로드 완료`, 'success');
                 } else {
                     showToast(result.error || '업로드 실패', 'error');
                 }
@@ -13618,7 +13618,7 @@
         async function openAssetStyleRefGalleryPicker() {
             const char = document.getElementById('asset-character-select').value;
             if (!char) { showToast('캐릭터를 먼저 선택하세요', 'error'); return; }
-            // 레퍼런스 갤러리 피커 재사용 (스타일 레퍼런스 모드로)
+            // FACE-IPAdapter 갤러리 피커 재사용 (IPAdapter 모드로)
             openAssetRefGalleryPickerInternal('style');
         }
 
@@ -14296,12 +14296,12 @@
                         assetStyleRefImages = refImages;
                         renderAssetStyleRefPreview();
                         document.getElementById('asset-ref-picker-overlay').remove();
-                        showToast(`${images.length}장 스타일 레퍼런스 이미지 선택 완료`, 'success');
+                        showToast(`${images.length}장 IPAdapter 이미지 선택 완료`, 'success');
                     } else {
                         assetRefImages = refImages;
                         renderAssetRefPreview();
                         document.getElementById('asset-ref-picker-overlay').remove();
-                        showToast(`${images.length}장 레퍼런스 이미지 선택 완료`, 'success');
+                        showToast(`${images.length}장 FACE-IPAdapter 이미지 선택 완료`, 'success');
                     }
                 } else {
                     showToast(uploadResult.error || '업로드 실패', 'error');
@@ -18268,7 +18268,7 @@
                     <div><div class="batch-field-label">자연어 프리셋</div><select id="bulk-natural-language-preset" class="batch-select">${nlOptions}</select></div>
 
                     <div style="border-top:1px solid var(--border); padding-top:10px;">
-                        <div class="batch-field-label" style="margin-bottom:6px;">레퍼런스 일괄 설정</div>
+                        <div class="batch-field-label" style="margin-bottom:6px;">FACE-IPAdapter 일괄 설정</div>
                         <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
                             <label style="font-size:0.8rem;">적용 여부:</label>
                             <select id="bulk-ref-action" class="batch-select" style="width:auto; min-width:120px;">
@@ -18296,7 +18296,7 @@
                     </div>
 
                     <div style="border-top:1px solid var(--border); padding-top:10px;">
-                        <div class="batch-field-label" style="margin-bottom:6px;">스타일 레퍼런스 일괄 설정</div>
+                        <div class="batch-field-label" style="margin-bottom:6px;">IPAdapter 일괄 설정</div>
                         <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
                             <label style="font-size:0.8rem;">적용 여부:</label>
                             <select id="bulk-style-ref-action" class="batch-select" style="width:auto; min-width:120px;">
@@ -18421,7 +18421,7 @@
                 document.getElementById('bulk-ref-strength-val').textContent = this.value;
             });
 
-            // 레퍼런스 파일 업로드
+            // FACE-IPAdapter 파일 업로드
             const bulkRefFile = document.getElementById('bulk-ref-file');
             document.getElementById('bulk-ref-upload-btn').addEventListener('click', () => bulkRefFile.click());
             bulkRefFile.addEventListener('change', async function() {
@@ -18461,12 +18461,12 @@
             window._bulkRefImages = null;
             window._bulkRefPreviewUrls = null;
 
-            // 에셋에서 레퍼런스 선택
+            // 에셋에서 FACE-IPAdapter 선택
             document.getElementById('bulk-ref-gallery-btn').addEventListener('click', () => {
                 openBulkRefGalleryPicker();
             });
 
-            // ─── 스타일 레퍼런스 일괄 설정 이벤트 ──
+            // ─── IPAdapter 일괄 설정 이벤트 ──
             document.getElementById('bulk-style-ref-strength').addEventListener('input', function() {
                 document.getElementById('bulk-style-ref-strength-val').textContent = this.value;
             });
@@ -18513,20 +18513,20 @@
             });
             window._bulkStyleRefImages = null;
 
-            // 에셋에서 스타일 레퍼런스 선택
+            // 에셋에서 IPAdapter 선택
             document.getElementById('bulk-style-ref-gallery-btn').addEventListener('click', () => {
                 openBulkRefGalleryPicker('style');
             });
         }
 
-        // ─── 일괄 설정용 에셋 레퍼런스 선택 ──
+        // ─── 일괄 설정용 에셋 FACE-IPAdapter 선택 ──
         let bulkRefPickerSelected = [];
         let bulkRefPickerMode = 'ref'; // 'ref' or 'style'
 
         function openBulkRefGalleryPicker(mode) {
             bulkRefPickerMode = mode || 'ref';
             bulkRefPickerSelected = [];
-            const title = bulkRefPickerMode === 'style' ? '에셋에서 스타일 레퍼런스 선택' : '에셋에서 레퍼런스 선택';
+            const title = bulkRefPickerMode === 'style' ? '에셋에서 IPAdapter 선택' : '에셋에서 FACE-IPAdapter 선택';
             const overlay = document.createElement('div');
             overlay.id = 'bulk-ref-picker-overlay';
             overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10010; display:flex; align-items:center; justify-content:center;';
@@ -18669,7 +18669,7 @@
                         ).join('');
                     }
                     document.getElementById('bulk-ref-picker-overlay').remove();
-                    const label = isStyle ? '스타일 레퍼런스' : '레퍼런스';
+                    const label = isStyle ? 'IPAdapter' : 'FACE-IPAdapter';
                     showToast(`${images.length}장 ${label} 이미지 선택 완료`, 'success');
                 } else {
                     showToast(uploadResult.error || '업로드 실패', 'error');
@@ -18964,7 +18964,7 @@
             });
             container.querySelectorAll('.batch-slot').forEach((slotEl, idx) => {
                 bindBatchSlotEvents(slotEl, idx);
-                // 기존 레퍼런스가 있으면 해시 표시
+                // 기존 FACE-IPAdapter가 있으면 해시 표시
                 if (batchChains[idx]?.ref_images?.length) {
                     updateBatchRefFolderHash(idx);
                 }
@@ -19011,7 +19011,7 @@
                 <div class="batch-field-group"><div class="batch-field-label">자연어</div>${nlSel}</div>
 
                 <div class="batch-toggle-row">
-                    <label>레퍼런스</label>
+                    <label>FACE-IPAdapter</label>
                     <label class="toggle-switch"><input type="checkbox" data-field="ref_enabled" ${slot.ref_enabled ? 'checked' : ''}><span class="toggle-slider"></span></label>
                 </div>
                 <div class="batch-ref-section" style="display:${slot.ref_enabled ? 'block' : 'none'};">
@@ -19035,7 +19035,7 @@
                 </div>
 
                 <div class="batch-toggle-row">
-                    <label>스타일 레퍼런스</label>
+                    <label>IPAdapter</label>
                     <label class="toggle-switch"><input type="checkbox" data-field="style_ref_enabled" ${slot.style_ref_enabled ? 'checked' : ''}><span class="toggle-slider"></span></label>
                 </div>
                 <div class="batch-style-ref-section" style="display:${slot.style_ref_enabled ? 'block' : 'none'};">
@@ -19282,7 +19282,7 @@
                 });
             });
 
-            // 레퍼런스 파일 업로드
+            // FACE-IPAdapter 파일 업로드
             const fileInput = slotEl.querySelector('.batch-ref-file-input');
             const uploadBtn = slotEl.querySelector('.batch-ref-upload-btn');
             uploadBtn.addEventListener('click', () => fileInput.click());
@@ -19311,7 +19311,7 @@
                         batchChains[idx].ref_images = refImages.map(img => ({name: img.name, local_path: img.local_path, orig_filename: img.orig_filename}));
                         batchChains[idx].ref_preview_url = refImages.map(img => img.preview_url).join('|');
                         renderBatchRefPreview(idx);
-                        showToast(`${images.length}장 레퍼런스 이미지 업로드 완료`, 'success');
+                        showToast(`${images.length}장 FACE-IPAdapter 이미지 업로드 완료`, 'success');
                         updateBatchPreview(slotEl, idx);
                     } else {
                         showToast(result.error || '업로드 실패', 'error');
@@ -19322,12 +19322,12 @@
                 this.value = '';
             });
 
-            // 에셋에서 레퍼런스 선택
+            // 에셋에서 FACE-IPAdapter 선택
             slotEl.querySelector('.batch-ref-gallery-btn').addEventListener('click', () => {
                 openBatchRefGalleryPicker(idx);
             });
 
-            // 레퍼런스 미리보기 삭제
+            // FACE-IPAdapter 미리보기 삭제
             slotEl.querySelector('.batch-ref-clear-btn').addEventListener('click', () => {
                 batchChains[idx].ref_images = [];
                 batchChains[idx].ref_preview_url = '';
@@ -19335,7 +19335,7 @@
                 updateBatchPreview(slotEl, idx);
             });
 
-            // 스타일 레퍼런스 파일 업로드
+            // IPAdapter 파일 업로드
             const styleFileInput = slotEl.querySelector('.batch-style-ref-file-input');
             const styleUploadBtn = slotEl.querySelector('.batch-style-ref-upload-btn');
             styleUploadBtn.addEventListener('click', () => styleFileInput.click());
@@ -19364,7 +19364,7 @@
                         batchChains[idx].style_ref_images = refImages.map(img => ({name: img.name, local_path: img.local_path, orig_filename: img.orig_filename}));
                         batchChains[idx].style_ref_preview_url = refImages.map(img => img.preview_url).join('|');
                         renderBatchStyleRefPreview(idx);
-                        showToast(`${images.length}장 스타일 레퍼런스 이미지 업로드 완료`, 'success');
+                        showToast(`${images.length}장 IPAdapter 이미지 업로드 완료`, 'success');
                         updateBatchPreview(slotEl, idx);
                     } else {
                         showToast(result.error || '업로드 실패', 'error');
@@ -19375,12 +19375,12 @@
                 this.value = '';
             });
 
-            // 에셋에서 스타일 레퍼런스 선택
+            // 에셋에서 IPAdapter 선택
             slotEl.querySelector('.batch-style-ref-gallery-btn').addEventListener('click', () => {
                 openBatchStyleRefGalleryPicker(idx);
             });
 
-            // 스타일 레퍼런스 미리보기 삭제
+            // IPAdapter 미리보기 삭제
             slotEl.querySelector('.batch-style-ref-clear-btn').addEventListener('click', () => {
                 batchChains[idx].style_ref_images = [];
                 batchChains[idx].style_ref_preview_url = '';
@@ -19632,7 +19632,7 @@
             renderGrid('');
         }
 
-        // ─── 배치 슬롯 레퍼런스 프리뷰/해시 공통 함수 ─────
+        // ─── 배치 슬롯 FACE-IPAdapter 프리뷰/해시 공통 함수 ─────
         function renderBatchRefPreview(slotIdx) {
             const slot = batchChains[slotIdx];
             const slotEl = document.querySelectorAll('.batch-slot')[slotIdx];
@@ -19759,7 +19759,7 @@
             }
         }
 
-        // ─── 배치 슬롯 레퍼런스 에셋 갤러리 선택 ─────────────
+        // ─── 배치 슬롯 FACE-IPAdapter 에셋 갤러리 선택 ─────────────
         let batchRefPickerTarget = -1;
         let batchRefPickerTargetType = 'ref';  // 'ref' or 'style'
         let batchRefPickerSelected = [];
@@ -19791,7 +19791,7 @@
             overlay.innerHTML = `
                 <div style="background:var(--surface); border-radius:12px; padding:20px; max-width:700px; width:90%; max-height:80vh; display:flex; flex-direction:column; overflow:hidden;">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; flex-shrink:0;">
-                        <h3 style="margin:0;">에셋에서 레퍼런스 선택</h3>
+                        <h3 style="margin:0;">에셋에서 FACE-IPAdapter 선택</h3>
                         <div style="display:flex; align-items:center; gap:8px;">
                             <span id="batch-ref-picker-count" style="font-size:0.8rem; color:var(--accent);">${preselectedCount}장 선택</span>
                             <button id="batch-ref-picker-confirm-btn" onclick="confirmBatchRefPickerSelection()" style="background:var(--accent); color:#fff; border:none; padding:4px 12px; border-radius:4px; cursor:pointer; font-size:0.8rem; ${preselectedCount > 0 ? 'display:inline-block;' : 'display:none;'}">선택 완료</button>
@@ -19926,7 +19926,7 @@
                             updateBatchPreview(slotEl, target);
                         }
                         document.getElementById('batch-ref-picker-overlay').remove();
-                        showToast(`${images.length}장 스타일 레퍼런스 이미지 선택 완료`, 'success');
+                        showToast(`${images.length}장 IPAdapter 이미지 선택 완료`, 'success');
                     } else {
                         batchChains[target].ref_images = refImages.map(img => ({name: img.name, local_path: img.local_path, orig_filename: img.orig_filename}));
                         batchChains[target].ref_preview_url = refImages.map(img => img.preview_url).join('|');
@@ -19935,7 +19935,7 @@
                             updateBatchPreview(slotEl, target);
                         }
                         document.getElementById('batch-ref-picker-overlay').remove();
-                        showToast(`${images.length}장 레퍼런스 이미지 선택 완료`, 'success');
+                        showToast(`${images.length}장 FACE-IPAdapter 이미지 선택 완료`, 'success');
                     }
                 } else {
                     showToast(uploadResult.error || '업로드 실패', 'error');
@@ -20460,7 +20460,7 @@
                 } catch (e) { console.warn('[EXPORT] 포즈 로드 실패:', poseId, e); }
             }
 
-            // 4) 레퍼런스 이미지 base64 수집
+            // 4) FACE-IPAdapter 이미지 base64 수집
             for (const slot of slotsNeedingRef) {
                 const urls = (slot.ref_preview_url || '').split('|').filter(Boolean);
                 const dataUrls = [];
@@ -20475,7 +20475,7 @@
                                 reader.onloadend = () => resolve(reader.result);
                                 reader.readAsDataURL(blob);
                             });
-                        } catch (e) { console.warn('[EXPORT] 레퍼런스 이미지 변환 실패:', e); dataUrl = ''; }
+                        } catch (e) { console.warn('[EXPORT] FACE-IPAdapter 이미지 변환 실패:', e); dataUrl = ''; }
                     }
                     if (dataUrl) dataUrls.push(dataUrl);
                 }
@@ -20788,7 +20788,7 @@
                 }
             }
 
-            // ── 레퍼런스 이미지 업로드 ──
+            // ── FACE-IPAdapter 이미지 업로드 ──
             for (const chainSlot of data.chains) {
                 // 다중 이미지 데이터 (ref_image_datas 배열) 처리
                 const dataUrls = chainSlot.ref_image_datas?.length
@@ -20818,7 +20818,7 @@
                                 chainSlot.ref_preview_url = dataUrls.join('|');
                             }
                         }
-                    } catch (e) { console.warn('[IMPORT] 레퍼런스 업로드 실패:', e); }
+                    } catch (e) { console.warn('[IMPORT] FACE-IPAdapter 업로드 실패:', e); }
                 }
             }
 

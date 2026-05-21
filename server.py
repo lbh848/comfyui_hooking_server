@@ -941,7 +941,7 @@ def _compute_ref_folder_hash(filenames: list) -> str:
 
 
 def _prepare_ref_folder(reference_images: list, comfy_input_dir: str) -> str:
-    """레퍼런스 이미지들을 comfy_input_dir/soya_char_ref/<hash>/ 폴더에 복사하고 subfolder 경로 반환."""
+    """FACE-IPAdapter 이미지들을 comfy_input_dir/soya_char_ref/<hash>/ 폴더에 복사하고 subfolder 경로 반환."""
     filenames = [img["filename"] for img in reference_images]
     folder_hash = _compute_ref_folder_hash(filenames)
     ref_dir = os.path.join(comfy_input_dir, "soya_char_ref", folder_hash)
@@ -955,7 +955,7 @@ def _prepare_ref_folder(reference_images: list, comfy_input_dir: str) -> str:
 
 
 def _prepare_style_ref_folder(style_ref_images: list, comfy_input_dir: str) -> str:
-    """스타일 레퍼런스 이미지들을 comfy_input_dir/soya_style_ref/<hash>/ 폴더에 복사하고 subfolder 경로 반환."""
+    """IPAdapter 이미지들을 comfy_input_dir/soya_style_ref/<hash>/ 폴더에 복사하고 subfolder 경로 반환."""
     filenames = [img["filename"] for img in style_ref_images]
     folder_hash = _compute_ref_folder_hash(filenames)
     ref_dir = os.path.join(comfy_input_dir, "soya_style_ref", folder_hash)
@@ -3510,7 +3510,7 @@ async def handle_api_asset_mode_generate(request: web.Request) -> web.Response:
             config = load_config()
             comfy_input_dir = config.get("comfy_input_dir", "")
             if not comfy_input_dir:
-                print("[ASSET] comfy_input_dir가 설정되지 않음, 레퍼런스 폴더 생성 불가")
+                print("[ASSET] comfy_input_dir가 설정되지 않음, FACE-IPAdapter 폴더 생성 불가")
             elif not os.path.isdir(comfy_input_dir):
                 print(f"[ASSET] comfy_input_dir가 존재하지 않음: {comfy_input_dir}")
             else:
@@ -3519,7 +3519,7 @@ async def handle_api_asset_mode_generate(request: web.Request) -> web.Response:
                 if valid_images:
                     reference_subfolder = _prepare_ref_folder(valid_images, comfy_input_dir)
                 else:
-                    print(f"[ASSET] 유효한 레퍼런스 이미지 없음 (received={len(reference_images)})")
+                    print(f"[ASSET] 유효한 FACE-IPAdapter 이미지 없음 (received={len(reference_images)})")
 
         style_ref_images = body.get("style_ref_images", [])
         style_ref_subfolder = ""
@@ -3527,7 +3527,7 @@ async def handle_api_asset_mode_generate(request: web.Request) -> web.Response:
             config = load_config()
             comfy_input_dir = config.get("comfy_input_dir", "")
             if not comfy_input_dir:
-                print("[ASSET] comfy_input_dir가 설정되지 않음, 스타일 레퍼런스 폴더 생성 불가")
+                print("[ASSET] comfy_input_dir가 설정되지 않음, IPAdapter 폴더 생성 불가")
             elif not os.path.isdir(comfy_input_dir):
                 print(f"[ASSET] comfy_input_dir가 존재하지 않음: {comfy_input_dir}")
             else:
@@ -3535,7 +3535,7 @@ async def handle_api_asset_mode_generate(request: web.Request) -> web.Response:
                 if valid_images:
                     style_ref_subfolder = _prepare_style_ref_folder(valid_images, comfy_input_dir)
                 else:
-                    print(f"[ASSET] 유효한 스타일 레퍼런스 이미지 없음 (received={len(style_ref_images)})")
+                    print(f"[ASSET] 유효한 IPAdapter 이미지 없음 (received={len(style_ref_images)})")
 
         result = await asset_mode.generate(
             character=body.get("character", ""),
@@ -3679,7 +3679,7 @@ async def handle_api_asset_mode_delete_image(request: web.Request) -> web.Respon
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 async def handle_api_asset_mode_upload_reference(request: web.Request) -> web.Response:
-    """레퍼런스 이미지를 에셋 폴더에 저장하고 파일명+로컬경로 반환 (다중 파일 지원)."""
+    """FACE-IPAdapter 이미지를 에셋 폴더에 저장하고 파일명+로컬경로 반환 (다중 파일 지원)."""
     try:
         reader = await request.multipart()
         images_data = []  # [{filename, data}]
