@@ -78,6 +78,8 @@ DEFAULT_TAGS = {
     "character_negative_presets": {},
     "artist_presets": {},          # { "name": ["tag1", "tag2"] }
     "natural_language_presets": {},  # { "name": "긴 텍스트" }
+    "anima_quality": [],
+    "anima_negative": [],
 }
 
 
@@ -508,6 +510,38 @@ class AssetMode:
         self.save_tags()
         return {"success": True}
 
+    # ─── ANIMA 품질 태그 ──────────────────────────────────
+    def add_anima_quality_tag(self, value: str) -> dict:
+        if value.strip() in [t.strip() for t in self._tags.get("anima_quality", [])]:
+            return {"success": False, "error": "이미 존재하는 태그"}
+        self._tags.setdefault("anima_quality", []).append(value)
+        self.save_tags()
+        return {"success": True}
+
+    def remove_anima_quality_tag(self, index: int) -> dict:
+        tags = self._tags.get("anima_quality", [])
+        if index < 0 or index >= len(tags):
+            return {"success": False, "error": "잘못된 인덱스"}
+        tags.pop(index)
+        self.save_tags()
+        return {"success": True}
+
+    # ─── ANIMA 부정 태그 ──────────────────────────────────
+    def add_anima_negative_tag(self, value: str) -> dict:
+        if value.strip() in [t.strip() for t in self._tags.get("anima_negative", [])]:
+            return {"success": False, "error": "이미 존재하는 태그"}
+        self._tags.setdefault("anima_negative", []).append(value)
+        self.save_tags()
+        return {"success": True}
+
+    def remove_anima_negative_tag(self, index: int) -> dict:
+        tags = self._tags.get("anima_negative", [])
+        if index < 0 or index >= len(tags):
+            return {"success": False, "error": "잘못된 인덱스"}
+        tags.pop(index)
+        self.save_tags()
+        return {"success": True}
+
     # ─── 캐릭터 관리 (조합 참조만) ─────────────────────────
     def add_character(self, name: str) -> dict:
         if name in self._tags["characters"]:
@@ -798,6 +832,8 @@ class AssetMode:
         cn_tags = self._tags.get("character_negative", [])
         artist_tags = self._tags.get("artist_presets", {}).get(artist_preset, [])
         anima_artist_tags = self._tags.get("artist_presets", {}).get(anima_artist_preset, [])
+        anima_q_tags = self._tags.get("anima_quality", [])
+        anima_n_tags = self._tags.get("anima_negative", [])
 
         if asset_workflow_type == "anima":
             # ANIMA 모드: 2섹션 프롬프트 조립
@@ -809,10 +845,11 @@ class AssetMode:
             for t in anima_artist_tags:
                 if t.strip():
                     section1_parts.append(t.strip())
-            # 3-7. 공통 태그 (quality → composition → appearance → expression → outfit)
-            for t in q_tags:
+            # 3. ANIMA 품질 태그
+            for t in anima_q_tags:
                 if t.strip():
                     section1_parts.append(t.strip())
+            # 4-7. 공통 태그 (composition → appearance → expression → outfit)
             for t in c_tags:
                 if t.strip():
                     section1_parts.append(t.strip())
@@ -837,10 +874,11 @@ class AssetMode:
             for t in artist_tags:
                 if t.strip():
                     section2_parts.append(t.strip())
-            # 3-7. 공통 태그 (중복)
+            # 3. SDXL 품질 태그
             for t in q_tags:
                 if t.strip():
                     section2_parts.append(t.strip())
+            # 4-7. 공통 태그
             for t in c_tags:
                 if t.strip():
                     section2_parts.append(t.strip())
@@ -918,8 +956,13 @@ class AssetMode:
         positive += f"\n[ED_ACTIVATE]\n{'true' if ed_activate else 'false'}"
         positive += "\n[END]"
 
-        negative_parts = [t.strip() for t in cn_tags if t.strip()] + [t.strip() for t in n_tags if t.strip()]
-        negative = ", ".join(negative_parts)
+        if asset_workflow_type == "anima":
+            anima_neg_parts = [t.strip() for t in cn_tags if t.strip()] + [t.strip() for t in anima_n_tags if t.strip()]
+            sdxl_neg_parts = [t.strip() for t in cn_tags if t.strip()] + [t.strip() for t in n_tags if t.strip()]
+            negative = ", ".join(anima_neg_parts) + "\n[SDXL]\n" + ", ".join(sdxl_neg_parts)
+        else:
+            negative_parts = [t.strip() for t in cn_tags if t.strip()] + [t.strip() for t in n_tags if t.strip()]
+            negative = ", ".join(negative_parts)
         return positive, negative
 
     # ─── 워크플로우 관리 ──────────────────────────────────

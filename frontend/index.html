@@ -346,6 +346,10 @@
         .prompt-cat-anima-lora    { background: rgba(255, 120, 50, 0.18); border-radius: 3px; padding: 1px 4px; }
         .prompt-cat-sdxl-lora     { background: rgba(50, 180, 255, 0.18); border-radius: 3px; padding: 1px 4px; }
         .prompt-cat-anima-artist  { background: rgba(255, 100, 150, 0.22); border-radius: 3px; padding: 1px 4px; }
+        .prompt-cat-anima-quality  { background: rgba(255, 152, 0, 0.18); border-radius: 3px; padding: 1px 4px; }
+        .prompt-cat-sdxl-quality   { background: rgba(33, 150, 243, 0.18); border-radius: 3px; padding: 1px 4px; }
+        .prompt-cat-anima-negative { background: rgba(255, 87, 34, 0.18); border-radius: 3px; padding: 1px 4px; }
+        .prompt-cat-sdxl-negative  { background: rgba(33, 150, 243, 0.15); border-radius: 3px; padding: 1px 4px; }
 
         .prompt-toggle-btn {
             background: var(--surface2);
@@ -2966,6 +2970,25 @@
                     </div>
                     </div>
 
+                    <!-- ANIMA 품질 태그 섹션 (ANIMA 모드에서만 표시) -->
+                    <div id="anima-quality-section" style="display:none; background:rgba(255,152,0,0.08); border-radius:8px; padding:10px; margin-bottom:8px; border:1px dashed rgba(255,152,0,0.4);">
+                    <div class="section-title">ANIMA 품질 태그</div>
+                    <div style="margin-bottom:6px;">
+                        <div id="anima-quality-preset-select-container"></div>
+                        <div style="display:flex; gap:4px; margin-top:3px;">
+                            <button onclick="addAnimaQualityPreset()" style="flex:1; background:var(--accent); color:#fff; border:none; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">추가</button>
+                            <button onclick="duplicateAnimaQualityPreset()" style="flex:1; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">복제</button>
+                            <button onclick="deleteAnimaQualityPreset()" style="flex:1; background:var(--error); color:#fff; border:none; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">삭제</button>
+                        </div>
+                    </div>
+                    <div id="anima-quality-tags" class="tag-list"></div>
+                    <div class="inline-add" style="margin-top:4px; position:relative;">
+                        <input type="text" id="anima-new-quality-tag" placeholder="ANIMA 품질 태그">
+                        <div class="tag-autocomplete-dropdown" id="ac-anima-quality-tag"></div>
+                        <button onclick="addAnimaQualityTag()">+</button>
+                    </div>
+                    </div>
+
                     <!-- 자연어 프리셋 섹션 -->
                     <div style="background:rgba(0,150,136,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
                     <div class="section-title">자연어 프리셋(optional)</div>
@@ -3003,6 +3026,7 @@
                     </div>
 
                     <div style="border-top:1px solid var(--border); margin-bottom:8px;"></div>
+
                     <!-- 캐릭터 부정 태그 섹션 -->
                     <div style="background:rgba(156,39,176,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
                     <div class="section-title">캐릭터 부정 태그(optional)</div>
@@ -3041,6 +3065,25 @@
                         <input type="text" id="asset-new-negative-tag" placeholder="부정 태그">
                         <div class="tag-autocomplete-dropdown" id="ac-negative-tag"></div>
                         <button onclick="addAssetNegativeTag()">+</button>
+                    </div>
+                    </div>
+
+                    <!-- ANIMA 부정 태그 섹션 (ANIMA 모드에서만 표시) -->
+                    <div id="anima-negative-section" style="display:none; background:rgba(255,87,34,0.06); border-radius:8px; padding:10px; margin-bottom:8px; border:1px dashed rgba(255,87,34,0.35);">
+                    <div class="section-title">ANIMA 부정 태그</div>
+                    <div style="margin-bottom:6px;">
+                        <div id="anima-negative-preset-select-container"></div>
+                        <div style="display:flex; gap:4px; margin-top:3px;">
+                            <button onclick="addAnimaNegativePreset()" style="flex:1; background:var(--accent); color:#fff; border:none; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">추가</button>
+                            <button onclick="duplicateAnimaNegativePreset()" style="flex:1; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">복제</button>
+                            <button onclick="deleteAnimaNegativePreset()" style="flex:1; background:var(--error); color:#fff; border:none; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">삭제</button>
+                        </div>
+                    </div>
+                    <div id="anima-negative-tags" class="tag-list"></div>
+                    <div class="inline-add" style="margin-top:4px; position:relative;">
+                        <input type="text" id="anima-new-negative-tag" placeholder="ANIMA 부정 태그">
+                        <div class="tag-autocomplete-dropdown" id="ac-anima-negative-tag"></div>
+                        <button onclick="addAnimaNegativeTag()">+</button>
                     </div>
                     </div>
 
@@ -9092,6 +9135,25 @@
                                     body: JSON.stringify({ action: 'load_character_negative_preset', name: characterNegativePreset })
                                 });
                             }
+                            // ANIMA 프리셋 로드
+                            if (isAnima) {
+                                const animaQualPreset = getAssetSelectValue('anima-quality-preset-select') || '';
+                                const animaNegPreset = getAssetSelectValue('anima-negative-preset-select') || '';
+                                if (animaQualPreset) {
+                                    await fetch('/api/asset_mode/tags', {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ action: 'load_anima_quality_preset', name: animaQualPreset })
+                                    });
+                                }
+                                if (animaNegPreset) {
+                                    await fetch('/api/asset_mode/tags', {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ action: 'load_anima_negative_preset', name: animaNegPreset })
+                                    });
+                                }
+                            }
 
                             const resp = await fetch('/api/asset_mode/generate', {
                                 method: 'POST',
@@ -12559,6 +12621,8 @@
                     assetTags.composition = [];
                     assetTags.negative = [];
                     assetTags.character_negative = [];
+                    assetTags.anima_quality = [];
+                    assetTags.anima_negative = [];
                 }
 
                 renderAssetUI();
@@ -12569,6 +12633,8 @@
                     fetch('/api/asset_mode/tags', { method: 'POST', headers: h, body: JSON.stringify({ action: 'load_composition_preset', name: '' }) });
                     fetch('/api/asset_mode/tags', { method: 'POST', headers: h, body: JSON.stringify({ action: 'load_character_negative_preset', name: '' }) });
                     fetch('/api/asset_mode/tags', { method: 'POST', headers: h, body: JSON.stringify({ action: 'load_negative_preset', name: '' }) });
+                    fetch('/api/asset_mode/tags', { method: 'POST', headers: h, body: JSON.stringify({ action: 'load_anima_quality_preset', name: '' }) });
+                    fetch('/api/asset_mode/tags', { method: 'POST', headers: h, body: JSON.stringify({ action: 'load_anima_negative_preset', name: '' }) });
                 }
             } catch (e) {
                 console.error('[ASSET] 태그 로드 실패:', e);
@@ -12655,6 +12721,26 @@
                 bindAssetCustomSelects();
             }
             if (prevAnimaArtist && assetTags.artist_presets?.[prevAnimaArtist]) loadAnimaArtistPreset();
+
+            // ANIMA 품질 프리셋 custom-select
+            const prevAnimaQuality = getAssetSelectValue('anima-quality-preset-select');
+            const animaQualityContainer = document.getElementById('anima-quality-preset-select-container');
+            if (animaQualityContainer) {
+                animaQualityContainer.innerHTML = buildAssetCustomSelect(assetTags.quality_presets || {}, prevAnimaQuality, '-- ANIMA 품질 프리셋 --', 'anima-quality-preset-select', 'loadAnimaQualityPreset');
+                bindAssetCustomSelects();
+            }
+            if (prevAnimaQuality && assetTags.quality_presets?.[prevAnimaQuality]) loadAnimaQualityPreset();
+            renderTagChips('anima-quality-tags', assetTags.anima_quality || [], 'removeAnimaQualityTag');
+
+            // ANIMA 부정 프리셋 custom-select
+            const prevAnimaNeg = getAssetSelectValue('anima-negative-preset-select');
+            const animaNegContainer = document.getElementById('anima-negative-preset-select-container');
+            if (animaNegContainer) {
+                animaNegContainer.innerHTML = buildAssetCustomSelect(assetTags.negative_presets || {}, prevAnimaNeg, '-- ANIMA 부정 프리셋 --', 'anima-negative-preset-select', 'loadAnimaNegativePreset');
+                bindAssetCustomSelects();
+            }
+            if (prevAnimaNeg && assetTags.negative_presets?.[prevAnimaNeg]) loadAnimaNegativePreset();
+            renderTagChips('anima-negative-tags', assetTags.anima_negative || [], 'removeAnimaNegativeTag');
 
             // ANIMA UI 가시성 업데이트
             updateAnimaUIVisibility();
@@ -13048,11 +13134,15 @@
             { key: 'artist',       label: '아티스트',      cls: 'prompt-cat-artist' },
             { key: 'anima_artist', label: 'ANIMA 아티스트', cls: 'prompt-cat-anima-artist' },
             { key: 'quality',      label: '품질',          cls: 'prompt-cat-quality' },
+            { key: 'anima_quality', label: 'ANIMA 품질',   cls: 'prompt-cat-anima-quality' },
+            { key: 'sdxl_quality',  label: 'SDXL 품질',    cls: 'prompt-cat-sdxl-quality' },
             { key: 'composition',  label: '구도/기타',     cls: 'prompt-cat-composition' },
             { key: 'appearance',   label: '외모',          cls: 'prompt-cat-appearance' },
             { key: 'expression',   label: '표정',          cls: 'prompt-cat-expression' },
             { key: 'outfit',       label: '복장',          cls: 'prompt-cat-outfit' },
             { key: 'nl',           label: '자연어',        cls: 'prompt-cat-nl' },
+            { key: 'anima_negative', label: 'ANIMA 부정', cls: 'prompt-cat-anima-negative' },
+            { key: 'sdxl_negative',  label: 'SDXL 부정',  cls: 'prompt-cat-sdxl-negative' },
         ];
 
         function renderColoredPrompt(categoryData) {
@@ -13116,6 +13206,9 @@
             // ANIMA 아티스트 프리셋
             const animaArtistName = getAssetSelectValue('anima-artist-preset-select') || '';
             const animaArtistTags = animaArtistName ? (assetTags.artist_presets?.[animaArtistName] || []).filter(t => t.trim()) : [];
+            // ANIMA 품질/부정 태그
+            const animaQTags = (assetTags.anima_quality || []).filter(t => t.trim());
+            const animaNTags = (assetTags.anima_negative || []).filter(t => t.trim());
             // 캐릭터 부정
             const cnTags = (assetTags.character_negative || []).filter(t => t.trim());
             // 부정
@@ -13130,7 +13223,7 @@
                 // ANIMA 모드: 2섹션 프롬프트
                 const section1 = [
                     ...(animaLoraTriggerWords ? [animaLoraTriggerWords] : []),
-                    ...animaArtistTags, ...qTags, ...cTags, ...appTags, ...exprTags, ...outfitTags,
+                    ...animaArtistTags, ...animaQTags, ...cTags, ...appTags, ...exprTags, ...outfitTags,
                     ...(naturalLanguage ? [naturalLanguage] : []),
                 ].join(', ');
                 const section2 = [
@@ -13143,7 +13236,7 @@
                 const section1Data = [
                     { key: 'anima_lora',    tags: animaLoraTriggerWords ? [animaLoraTriggerWords] : [] },
                     { key: 'anima_artist',  tags: animaArtistTags },
-                    { key: 'quality',      tags: qTags },
+                    { key: 'anima_quality', tags: animaQTags },
                     { key: 'composition',  tags: cTags },
                     { key: 'appearance',   tags: appTags },
                     { key: 'expression',   tags: exprTags },
@@ -13153,7 +13246,7 @@
                 const section2Data = [
                     { key: 'sdxl_lora',     tags: sdxlLoraTriggerWords ? [sdxlLoraTriggerWords] : [] },
                     { key: 'artist',       tags: artistTags },
-                    { key: 'quality',      tags: qTags },
+                    { key: 'sdxl_quality', tags: qTags },
                     { key: 'composition',  tags: cTags },
                     { key: 'appearance',   tags: appTags },
                     { key: 'expression',   tags: exprTags },
@@ -13223,7 +13316,27 @@
             positiveFull += `\n[ED_ACTIVATE]\n${edActivate ? 'true' : 'false'}`;
             positiveFull += '\n[END]';
 
-            const negative = [...cnTags, ...nTags].join(', ');
+            let negative;
+            let negativeColored;
+            if (isAnima) {
+                const animaNegParts = [...cnTags, ...animaNTags].filter(t => t.trim());
+                const sdxlNegParts = [...cnTags, ...nTags].filter(t => t.trim());
+                negative = animaNegParts.join(', ') + '\n[SDXL]\n' + sdxlNegParts.join(', ');
+                const animaNegData = [
+                    { key: 'negative', tags: cnTags },
+                    { key: 'anima_negative', tags: animaNTags },
+                ];
+                const sdxlNegData = [
+                    { key: 'negative', tags: cnTags },
+                    { key: 'sdxl_negative', tags: nTags },
+                ];
+                negativeColored = renderColoredPrompt(animaNegData) +
+                    '\n<span style="color:#ff0;font-weight:bold;">[SDXL]</span>\n' +
+                    renderColoredPrompt(sdxlNegData);
+            } else {
+                negative = [...cnTags, ...nTags].join(', ');
+                negativeColored = null;
+            }
 
             // 모달 표시
             const overlay = document.createElement('div');
@@ -13241,7 +13354,7 @@
                     </div>
                     <div>
                         <div style="font-size:0.8rem; font-weight:600; color:var(--error); margin-bottom:4px;">부정 프롬프트</div>
-                        <pre style="background:var(--surface2); padding:10px; border-radius:6px; font-size:0.75rem; white-space:pre-wrap; word-break:break-all; max-height:150px; overflow-y:auto; margin:0;">${escapeHtml(negative || '(없음)')}</pre>
+                        <div style="background:var(--surface2); padding:10px; border-radius:6px; font-size:0.75rem; white-space:pre-wrap; word-break:break-all; max-height:150px; overflow-y:auto; margin:0; font-family:'Consolas',monospace;">${negativeColored ? negativeColored : escapeHtml(negative || '(없음)')}</div>
                     </div>
                 </div>`;
             document.body.appendChild(overlay);
@@ -13441,11 +13554,114 @@
             assetTagAction('delete_artist_preset', { name });
         }
 
+        // ─── ANIMA 품질 프리셋 ────────────────────────────────
+        function loadAnimaQualityPreset() {
+            const name = getAssetSelectValue('anima-quality-preset-select');
+            modifyTagLightweight('load_anima_quality_preset', { name }, 'anima-quality-tags', 'removeAnimaQualityTag', 'anima_quality', syncAnimaQualityPreset);
+        }
+        function addAnimaQualityTag() {
+            const input = document.getElementById('anima-new-quality-tag');
+            const val = input.value.trim();
+            if (!val) return;
+            input.value = '';
+            modifyTagLightweight('add_anima_quality_tag', { value: val }, 'anima-quality-tags', 'removeAnimaQualityTag', 'anima_quality', syncAnimaQualityPreset);
+        }
+        async function removeAnimaQualityTag(idx) {
+            await modifyTagLightweight('remove_anima_quality_tag', { index: idx }, 'anima-quality-tags', 'removeAnimaQualityTag', 'anima_quality', syncAnimaQualityPreset);
+        }
+        function addAnimaQualityPreset() {
+            if (!assetTags) return;
+            const name = prompt('새 ANIMA 품질 프리셋명');
+            if (!name || !name.trim()) return;
+            assetTagAction('save_quality_preset', { name: name.trim(), tags: [] });
+        }
+        function duplicateAnimaQualityPreset() {
+            const src = getAssetSelectValue('anima-quality-preset-select');
+            if (!src) { showToast('복제할 프리셋을 선택하세요', 'error'); return; }
+            const newName = prompt('새 프리셋명', src + ' 복사본');
+            if (!newName || !newName.trim()) return;
+            assetTagAction('duplicate_quality_preset', { source: src, name: newName.trim() });
+        }
+        function deleteAnimaQualityPreset() {
+            const name = getAssetSelectValue('anima-quality-preset-select');
+            if (!name) return;
+            if (!confirm(`프리셋 "${name}" 삭제?`)) return;
+            assetTagAction('delete_quality_preset', { name });
+        }
+        function syncAnimaQualityPreset() {
+            const sel = getAssetSelectValue('anima-quality-preset-select');
+            if (!sel || !assetTags) return;
+            fetch('/api/asset_mode/tags', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'save_quality_preset', name: sel, tags: assetTags.anima_quality || [] })
+            }).catch(() => {});
+        }
+
+        // ─── ANIMA 부정 프리셋 ────────────────────────────────
+        function loadAnimaNegativePreset() {
+            const name = getAssetSelectValue('anima-negative-preset-select');
+            modifyTagLightweight('load_anima_negative_preset', { name }, 'anima-negative-tags', 'removeAnimaNegativeTag', 'anima_negative', syncAnimaNegativePreset);
+        }
+        function addAnimaNegativeTag() {
+            const input = document.getElementById('anima-new-negative-tag');
+            const val = input.value.trim();
+            if (!val) return;
+            input.value = '';
+            modifyTagLightweight('add_anima_negative_tag', { value: val }, 'anima-negative-tags', 'removeAnimaNegativeTag', 'anima_negative', syncAnimaNegativePreset);
+        }
+        async function removeAnimaNegativeTag(idx) {
+            await modifyTagLightweight('remove_anima_negative_tag', { index: idx }, 'anima-negative-tags', 'removeAnimaNegativeTag', 'anima_negative', syncAnimaNegativePreset);
+        }
+        function addAnimaNegativePreset() {
+            if (!assetTags) return;
+            const name = prompt('새 ANIMA 부정 프리셋명');
+            if (!name || !name.trim()) return;
+            assetTagAction('save_negative_preset', { name: name.trim(), tags: [] });
+        }
+        function duplicateAnimaNegativePreset() {
+            const src = getAssetSelectValue('anima-negative-preset-select');
+            if (!src) { showToast('복제할 프리셋을 선택하세요', 'error'); return; }
+            const newName = prompt('새 프리셋명', src + ' 복사본');
+            if (!newName || !newName.trim()) return;
+            assetTagAction('duplicate_negative_preset', { source: src, name: newName.trim() });
+        }
+        function deleteAnimaNegativePreset() {
+            const name = getAssetSelectValue('anima-negative-preset-select');
+            if (!name) return;
+            if (!confirm(`프리셋 "${name}" 삭제?`)) return;
+            assetTagAction('delete_negative_preset', { name });
+        }
+        function syncAnimaNegativePreset() {
+            const sel = getAssetSelectValue('anima-negative-preset-select');
+            if (!sel || !assetTags) return;
+            fetch('/api/asset_mode/tags', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'save_negative_preset', name: sel, tags: assetTags.anima_negative || [] })
+            }).catch(() => {});
+        }
+
         // ─── ANIMA UI 가시성/포즈 제어 ───────────────────────────
         function updateAnimaUIVisibility() {
             const isAnima = currentConfig?.asset_workflow_type === 'anima';
             const animaSection = document.getElementById('anima-artist-preset-section');
             if (animaSection) animaSection.style.display = isAnima ? 'block' : 'none';
+            const animaQualitySection = document.getElementById('anima-quality-section');
+            if (animaQualitySection) animaQualitySection.style.display = isAnima ? 'block' : 'none';
+            const animaNegSection = document.getElementById('anima-negative-section');
+            if (animaNegSection) animaNegSection.style.display = isAnima ? 'block' : 'none';
+            // ANIMA 모드에서 기존 섹션 라벨 변경
+            const qualitySection = document.getElementById('asset-quality-tags')?.closest('div[style*="rgba(76,175,80"]');
+            if (qualitySection) {
+                const title = qualitySection.querySelector('.section-title');
+                if (title) title.textContent = isAnima ? 'SDXL 품질 태그' : '품질 태그';
+            }
+            const negSection = document.getElementById('asset-negative-tags')?.closest('div[style*="rgba(244,67,54"]');
+            if (negSection) {
+                const title = negSection.querySelector('.section-title');
+                if (title) title.textContent = isAnima ? 'SDXL 부정 태그' : '부정 태그';
+            }
             updatePoseForWorkflowType();
         }
 
@@ -14979,8 +15195,18 @@
                     // 어떤 카테고리인지 판별
                     const reorderedTags = order.map(i => tags[i]);
                     let action;
-                    if (containerId === 'asset-quality-tags') {
+                    if (containerId === 'anima-artist-tags') {
+                        const animaArtistName = getAssetSelectValue('anima-artist-preset-select');
+                        if (animaArtistName) action = { action: 'save_artist_preset', name: animaArtistName, tags: reorderedTags };
+                    } else if (containerId === 'asset-artist-tags') {
+                        const artistName = getAssetSelectValue('asset-artist-preset-select');
+                        if (artistName) action = { action: 'save_artist_preset', name: artistName, tags: reorderedTags };
+                    } else if (containerId === 'asset-quality-tags') {
                         action = { action: 'reorder_global_tags', category: 'quality', tags: reorderedTags };
+                    } else if (containerId === 'anima-quality-tags') {
+                        action = { action: 'reorder_global_tags', category: 'anima_quality', tags: reorderedTags };
+                    } else if (containerId === 'anima-negative-tags') {
+                        action = { action: 'reorder_global_tags', category: 'anima_negative', tags: reorderedTags };
                     } else if (containerId === 'asset-composition-tags') {
                         action = { action: 'reorder_global_tags', category: 'composition', tags: reorderedTags };
                     } else if (containerId === 'asset-negative-tags') {
@@ -15003,6 +15229,16 @@
                         if (containerId === 'asset-quality-tags') {
                             const psVal = getAssetSelectValue('asset-quality-preset-select');
                             if (psVal) assetTagAction('save_quality_preset', { name: psVal, tags: reorderedTags });
+                        } else if (containerId === 'anima-quality-tags') {
+                            const psVal = getAssetSelectValue('anima-quality-preset-select');
+                            if (psVal) assetTagAction('save_quality_preset', { name: psVal, tags: reorderedTags });
+                        } else if (containerId === 'anima-negative-tags') {
+                            const psVal = getAssetSelectValue('anima-negative-preset-select');
+                            if (psVal) assetTagAction('save_negative_preset', { name: psVal, tags: reorderedTags });
+                        } else if (containerId === 'anima-artist-tags') {
+                            // ANIMA 아티스트 프리셋은 action이 이미 위에서 설정됨
+                        } else if (containerId === 'asset-artist-tags') {
+                            // 아티스트 프리셋은 action이 이미 위에서 설정됨
                         } else if (containerId === 'asset-composition-tags') {
                             const psVal = getAssetSelectValue('asset-composition-preset-select');
                             if (psVal) assetTagAction('save_composition_preset', { name: psVal, tags: reorderedTags });
@@ -16667,6 +16903,8 @@
                 natural_language: naturalLanguage,
                 lora_trigger_words: loraTriggerWords,
                 anima_artist_preset: animaArtistPreset,
+                anima_quality_preset: isAnima ? (getAssetSelectValue('anima-quality-preset-select') || '') : '',
+                anima_negative_preset: isAnima ? (getAssetSelectValue('anima-negative-preset-select') || '') : '',
                 asset_workflow_type: isAnima ? 'anima' : 'regular',
                 anima_lora_trigger_words: animaLoraTriggerWords,
                 sdxl_lora_trigger_words: sdxlLoraTriggerWords,
@@ -17210,6 +17448,8 @@
         TagAutocomplete.attach('asset-new-composition-tag', 'ac-composition-tag', 'input');
         TagAutocomplete.attach('asset-new-negative-tag', 'ac-negative-tag', 'input');
         TagAutocomplete.attach('asset-new-character-negative-tag', 'ac-character-negative-tag', 'input');
+        TagAutocomplete.attach('anima-new-quality-tag', 'ac-anima-quality-tag', 'input');
+        TagAutocomplete.attach('anima-new-negative-tag', 'ac-anima-negative-tag', 'input');
         TagAutocomplete.attach('modal-positive', 'ac-modal-positive', 'textarea');
         TagAutocomplete.attach('modal-negative', 'ac-modal-negative', 'textarea');
 
@@ -18507,6 +18747,8 @@
                 ed_enabled: false,
                 artist_preset: '',
                 anima_artist_preset: '',
+                anima_quality_preset: '',
+                anima_negative_preset: '',
                 natural_language_preset: '',
                 natural_language: '',
             };
@@ -18540,6 +18782,8 @@
             const negOptions = buildPresetOptions(assetTags?.negative_presets || {}, '', '-- 변경 안함 --');
             const artistOptions = buildPresetOptions(assetTags?.artist_presets || {}, '', '-- 변경 안함 --');
             const animaArtistOptions = buildPresetOptions(assetTags?.artist_presets || {}, '', '-- 변경 안함 --');
+            const animaQualityOptions = buildPresetOptions(assetTags?.quality_presets || {}, '', '-- 변경 안함 --');
+            const animaNegOptions = buildPresetOptions(assetTags?.negative_presets || {}, '', '-- 변경 안함 --');
             const nlOptions = buildPresetOptions(assetTags?.natural_language_presets || {}, '', '-- 변경 안함 --');
             const isAnima = currentConfig?.asset_workflow_type === 'anima';
 
@@ -18565,6 +18809,8 @@
                     <div><div class="batch-field-label">부정 태그 프리셋</div><select id="bulk-negative" class="batch-select">${negOptions}</select></div>
                     <div><div class="batch-field-label">아티스트 프리셋</div><select id="bulk-artist" class="batch-select">${artistOptions}</select></div>
                     ${isAnima ? `<div id="bulk-anima-artist-row"><div class="batch-field-label">ANIMA 아티스트 프리셋</div><select id="bulk-anima-artist" class="batch-select">${animaArtistOptions}</select></div>` : ''}
+                    ${isAnima ? `<div id="bulk-anima-quality-row"><div class="batch-field-label">ANIMA 품질 프리셋</div><select id="bulk-anima-quality" class="batch-select">${animaQualityOptions}</select></div>` : ''}
+                    ${isAnima ? `<div id="bulk-anima-negative-row"><div class="batch-field-label">ANIMA 부정 태그</div><select id="bulk-anima-negative" class="batch-select">${animaNegOptions}</select></div>` : ''}
                     <div><div class="batch-field-label">자연어 프리셋</div><select id="bulk-natural-language-preset" class="batch-select">${nlOptions}</select></div>
 
                     <div style="border-top:1px solid var(--border); padding-top:10px;">
@@ -19146,6 +19392,8 @@
                 negative_preset: document.getElementById('bulk-negative').value,
                 artist_preset: document.getElementById('bulk-artist').value,
                 anima_artist_preset: document.getElementById('bulk-anima-artist')?.value || '',
+                anima_quality_preset: document.getElementById('bulk-anima-quality')?.value || '',
+                anima_negative_preset: document.getElementById('bulk-anima-negative')?.value || '',
                 natural_language_preset: document.getElementById('bulk-natural-language-preset').value,
             };
             const isAnima = currentConfig?.asset_workflow_type === 'anima';
@@ -19179,6 +19427,8 @@
                 if (fields.negative_preset) slot.negative_preset = fields.negative_preset;
                 if (fields.artist_preset) slot.artist_preset = fields.artist_preset;
                 if (fields.anima_artist_preset) slot.anima_artist_preset = fields.anima_artist_preset;
+                if (fields.anima_quality_preset) slot.anima_quality_preset = fields.anima_quality_preset;
+                if (fields.anima_negative_preset) slot.anima_negative_preset = fields.anima_negative_preset;
                 if (fields.natural_language_preset) slot.natural_language_preset = fields.natural_language_preset;
                 if (isAnima) slot.pose_enabled = false;
                 if (refAction === 'on') slot.ref_enabled = true;
@@ -19294,6 +19544,8 @@
             const negSel = buildCustomSelectHTML(assetTags?.negative_presets || {}, slot.negative_preset, '-- 부정 프리셋 --', 'negative_preset');
             const artistSel = buildCustomSelectHTML(assetTags?.artist_presets || {}, slot.artist_preset, '-- 아티스트 프리셋 --', 'artist_preset');
             const animaArtistSel = buildCustomSelectHTML(assetTags?.artist_presets || {}, slot.anima_artist_preset || '', '-- ANIMA 아티스트 프리셋 --', 'anima_artist_preset');
+            const animaQualitySel = buildCustomSelectHTML(assetTags?.quality_presets || {}, slot.anima_quality_preset || '', '-- ANIMA 품질 프리셋 --', 'anima_quality_preset');
+            const animaNegSel = buildCustomSelectHTML(assetTags?.negative_presets || {}, slot.anima_negative_preset || '', '-- ANIMA 부정 프리셋 --', 'anima_negative_preset');
             const nlSel = buildCustomSelectHTML(assetTags?.natural_language_presets || {}, slot.natural_language_preset, '-- 자연어 프리셋 --', 'natural_language_preset');
             const isAnima = currentConfig?.asset_workflow_type === 'anima';
             const refPreviewUrls = slot.ref_preview_url ? slot.ref_preview_url.split('|').filter(Boolean) : [];
@@ -19315,6 +19567,8 @@
                 <div class="batch-field-group"><div class="batch-field-label">부정 태그</div>${negSel}</div>
                 <div class="batch-field-group"><div class="batch-field-label">아티스트 프리셋</div>${artistSel}</div>
                 ${isAnima ? `<div class="batch-field-group"><div class="batch-field-label">ANIMA 아티스트 프리셋</div>${animaArtistSel}</div>` : ''}
+                ${isAnima ? `<div class="batch-field-group"><div class="batch-field-label">ANIMA 품질 프리셋</div>${animaQualitySel}</div>` : ''}
+                ${isAnima ? `<div class="batch-field-group"><div class="batch-field-label">ANIMA 부정 태그</div>${animaNegSel}</div>` : ''}
                 <div class="batch-field-group"><div class="batch-field-label">자연어</div>${nlSel}</div>
 
                 <div class="batch-toggle-row">
@@ -20282,6 +20536,8 @@
                 : (slot.natural_language || '');
             const cnTags = (slot.character_negative_preset && assetTags.character_negative_presets?.[slot.character_negative_preset]) || [];
             const nTags = (slot.negative_preset && assetTags.negative_presets?.[slot.negative_preset]) || [];
+            const animaQTags = (slot.anima_quality_preset && assetTags.quality_presets?.[slot.anima_quality_preset]) || [];
+            const animaNTags = (slot.anima_negative_preset && assetTags.negative_presets?.[slot.anima_negative_preset]) || [];
 
             const isAnima = currentConfig?.asset_workflow_type === 'anima';
 
@@ -20292,7 +20548,7 @@
                 // ANIMA 모드: 2섹션 프롬프트
                 const section1 = [
                     ...(animaLoraTriggerWords ? [animaLoraTriggerWords] : []),
-                    ...animaArtistTags, ...qTags, ...cTags, ...appTags, ...exprTags, ...outfitTags,
+                    ...animaArtistTags, ...animaQTags, ...cTags, ...appTags, ...exprTags, ...outfitTags,
                     ...(naturalLanguage ? [naturalLanguage] : []),
                 ].filter(t => t.trim());
                 const section2 = [
@@ -20303,7 +20559,7 @@
                 const section1Data = [
                     { key: 'anima_lora',    tags: animaLoraTriggerWords ? [animaLoraTriggerWords] : [] },
                     { key: 'anima_artist',  tags: animaArtistTags },
-                    { key: 'quality',      tags: qTags },
+                    { key: 'anima_quality', tags: animaQTags },
                     { key: 'composition',  tags: cTags },
                     { key: 'appearance',   tags: appTags },
                     { key: 'expression',   tags: exprTags },
@@ -20313,7 +20569,7 @@
                 const section2Data = [
                     { key: 'sdxl_lora',     tags: sdxlLoraTriggerWords ? [sdxlLoraTriggerWords] : [] },
                     { key: 'artist',       tags: artistTags },
-                    { key: 'quality',      tags: qTags },
+                    { key: 'sdxl_quality', tags: qTags },
                     { key: 'composition',  tags: cTags },
                     { key: 'appearance',   tags: appTags },
                     { key: 'expression',   tags: exprTags },
@@ -20350,7 +20606,9 @@
                 positiveFull += `\n[ED_ACTIVATE]\n${slot.ed_enabled ? 'true' : 'false'}`;
                 positiveFull += '\n[END]';
 
-                const negative = [...cnTags, ...nTags].filter(t => t.trim()).join(', ');
+                const animaNegParts = [...cnTags, ...animaNTags].filter(t => t.trim());
+                const sdxlNegParts = [...cnTags, ...nTags].filter(t => t.trim());
+                const negative = animaNegParts.join(', ') + '\n[SDXL]\n' + sdxlNegParts.join(', ');
                 const tagsPart = section1.join(', ') + '\n[SDXL]\n' + section2.join(', ');
                 const controlPart = positiveFull.substring(tagsPart.length);
                 return positiveColored + escapeHtml(controlPart);
@@ -20419,6 +20677,14 @@
             if (!assetTags) return '(태그 데이터 로딩중)';
             const cnTags = (slot.character_negative_preset && assetTags.character_negative_presets?.[slot.character_negative_preset]) || [];
             const nTags = (slot.negative_preset && assetTags.negative_presets?.[slot.negative_preset]) || [];
+            const animaNTags = (slot.anima_negative_preset && assetTags.negative_presets?.[slot.anima_negative_preset]) || [];
+            const isAnima = currentConfig?.asset_workflow_type === 'anima';
+
+            if (isAnima) {
+                const animaNeg = [...cnTags, ...animaNTags].filter(t => t.trim()).join(', ');
+                const sdxlNeg = [...cnTags, ...nTags].filter(t => t.trim()).join(', ');
+                return (animaNeg || '(없음)') + ' | [SDXL] | ' + (sdxlNeg || '(없음)');
+            }
             const negative = [...cnTags, ...nTags].filter(t => t.trim()).join(', ');
             return negative || '(없음)';
         }
@@ -20531,6 +20797,8 @@
                                 : (slot.natural_language || ''),
                             lora_trigger_words: (slot.lora_list || []).map(l => l.trigger).filter(t => t && t.trim()).join(', '),
                             anima_artist_preset: isAnima ? (slot.anima_artist_preset || '') : '',
+                            anima_quality_preset: isAnima ? (slot.anima_quality_preset || '') : '',
+                            anima_negative_preset: isAnima ? (slot.anima_negative_preset || '') : '',
                             asset_workflow_type: isAnima ? 'anima' : 'regular',
                             anima_lora_trigger_words: (slot.lora_list || []).filter(l => (l.BASE || 'anima') === 'anima').map(l => l.trigger).filter(t => t && t.trim()).join(', '),
                             sdxl_lora_trigger_words: (slot.lora_list || []).filter(l => l.BASE === 'sdxl').map(l => l.trigger).filter(t => t && t.trim()).join(', '),
@@ -20568,6 +20836,22 @@
                                     method: 'POST',
                                     headers: { 'Content-Type': 'application/json' },
                                     body: JSON.stringify({ action: 'load_negative_preset', name: slot.negative_preset })
+                                });
+                            }
+                            // ANIMA 품질 프리셋 로드
+                            if (isAnima && slot.anima_quality_preset) {
+                                await fetch('/api/asset_mode/tags', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ action: 'load_anima_quality_preset', name: slot.anima_quality_preset })
+                                });
+                            }
+                            // ANIMA 부정 프리셋 로드
+                            if (isAnima && slot.anima_negative_preset) {
+                                await fetch('/api/asset_mode/tags', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ action: 'load_anima_negative_preset', name: slot.anima_negative_preset })
                                 });
                             }
 

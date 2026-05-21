@@ -3416,6 +3416,44 @@ async def handle_api_asset_mode_tags_post(request: web.Request) -> web.Response:
                     result = {"success": True}
                 else:
                     result = {"success": False, "error": "존재하지 않는 프리셋"}
+        # ANIMA 품질 태그
+        elif action == "add_anima_quality_tag":
+            result = asset_mode.add_anima_quality_tag(body.get("value", ""))
+        elif action == "remove_anima_quality_tag":
+            result = asset_mode.remove_anima_quality_tag(body.get("index", -1))
+        elif action == "load_anima_quality_preset":
+            name = body.get("name", "")
+            if not name:
+                asset_mode._tags["anima_quality"] = []
+                asset_mode.save_tags()
+                result = {"success": True}
+            else:
+                presets = asset_mode.get_quality_presets()
+                if name in presets:
+                    asset_mode._tags["anima_quality"] = list(presets[name])
+                    asset_mode.save_tags()
+                    result = {"success": True}
+                else:
+                    result = {"success": False, "error": "존재하지 않는 프리셋"}
+        # ANIMA 부정 태그
+        elif action == "add_anima_negative_tag":
+            result = asset_mode.add_anima_negative_tag(body.get("value", ""))
+        elif action == "remove_anima_negative_tag":
+            result = asset_mode.remove_anima_negative_tag(body.get("index", -1))
+        elif action == "load_anima_negative_preset":
+            name = body.get("name", "")
+            if not name:
+                asset_mode._tags["anima_negative"] = []
+                asset_mode.save_tags()
+                result = {"success": True}
+            else:
+                presets = asset_mode.get_negative_presets()
+                if name in presets:
+                    asset_mode._tags["anima_negative"] = list(presets[name])
+                    asset_mode.save_tags()
+                    result = {"success": True}
+                else:
+                    result = {"success": False, "error": "존재하지 않는 프리셋"}
         # 외모 프리셋
         elif action == "save_appearance_preset":
             result = asset_mode.save_appearance_preset(body.get("name", ""), body.get("character", ""), body.get("appearance", ""))
