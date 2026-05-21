@@ -2933,24 +2933,6 @@
                     </div>
                     </div>
 
-                    <!-- ANIMA 아티스트 프리셋 섹션 (ANIMA 모드에서만 표시) -->
-                    <div id="anima-artist-preset-section" style="display:none; background:rgba(233,30,99,0.12); border-radius:8px; padding:10px; margin-bottom:8px; border:1px dashed rgba(233,30,99,0.4);">
-                    <div class="section-title">ANIMA 아티스트 프리셋</div>
-                    <div style="margin-bottom:6px;">
-                        <div id="anima-artist-preset-select-container"></div>
-                        <div style="display:flex; gap:4px; margin-top:3px;">
-                            <button onclick="addAnimaArtistPreset()" style="flex:1; background:var(--accent); color:#fff; border:none; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">추가</button>
-                            <button onclick="duplicateAnimaArtistPreset()" style="flex:1; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">복제</button>
-                            <button onclick="deleteAnimaArtistPreset()" style="flex:1; background:var(--error); color:#fff; border:none; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">삭제</button>
-                        </div>
-                    </div>
-                    <div id="anima-artist-tags" class="tag-list"></div>
-                    <div class="inline-add" style="margin-top:4px; position:relative;">
-                        <input type="text" id="anima-new-artist-tag" placeholder="ANIMA 아티스트 태그">
-                        <button onclick="addAnimaArtistTag()">+</button>
-                    </div>
-                    </div>
-
                     <!-- 품질 태그 섹션 -->
                     <div style="background:rgba(76,175,80,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
                     <div class="section-title">품질 태그</div>
@@ -2967,25 +2949,6 @@
                         <input type="text" id="asset-new-quality-tag" placeholder="품질 태그">
                         <div class="tag-autocomplete-dropdown" id="ac-quality-tag"></div>
                         <button onclick="addAssetQualityTag()">+</button>
-                    </div>
-                    </div>
-
-                    <!-- ANIMA 품질 태그 섹션 (ANIMA 모드에서만 표시) -->
-                    <div id="anima-quality-section" style="display:none; background:rgba(255,152,0,0.08); border-radius:8px; padding:10px; margin-bottom:8px; border:1px dashed rgba(255,152,0,0.4);">
-                    <div class="section-title">ANIMA 품질 태그</div>
-                    <div style="margin-bottom:6px;">
-                        <div id="anima-quality-preset-select-container"></div>
-                        <div style="display:flex; gap:4px; margin-top:3px;">
-                            <button onclick="addAnimaQualityPreset()" style="flex:1; background:var(--accent); color:#fff; border:none; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">추가</button>
-                            <button onclick="duplicateAnimaQualityPreset()" style="flex:1; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">복제</button>
-                            <button onclick="deleteAnimaQualityPreset()" style="flex:1; background:var(--error); color:#fff; border:none; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">삭제</button>
-                        </div>
-                    </div>
-                    <div id="anima-quality-tags" class="tag-list"></div>
-                    <div class="inline-add" style="margin-top:4px; position:relative;">
-                        <input type="text" id="anima-new-quality-tag" placeholder="ANIMA 품질 태그">
-                        <div class="tag-autocomplete-dropdown" id="ac-anima-quality-tag"></div>
-                        <button onclick="addAnimaQualityTag()">+</button>
                     </div>
                     </div>
 
@@ -3065,6 +3028,43 @@
                         <input type="text" id="asset-new-negative-tag" placeholder="부정 태그">
                         <div class="tag-autocomplete-dropdown" id="ac-negative-tag"></div>
                         <button onclick="addAssetNegativeTag()">+</button>
+                    </div>
+                    </div>
+
+                    <!-- ANIMA 아티스트 프리셋 섹션 (ANIMA 모드에서만 표시) -->
+                    <div id="anima-artist-preset-section" style="display:none; background:rgba(233,30,99,0.12); border-radius:8px; padding:10px; margin-bottom:8px; border:1px dashed rgba(233,30,99,0.4);">
+                    <div class="section-title">ANIMA 아티스트 프리셋</div>
+                    <div style="margin-bottom:6px;">
+                        <div id="anima-artist-preset-select-container"></div>
+                        <div style="display:flex; gap:4px; margin-top:3px;">
+                            <button onclick="addAnimaArtistPreset()" style="flex:1; background:var(--accent); color:#fff; border:none; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">추가</button>
+                            <button onclick="duplicateAnimaArtistPreset()" style="flex:1; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">복제</button>
+                            <button onclick="deleteAnimaArtistPreset()" style="flex:1; background:var(--error); color:#fff; border:none; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">삭제</button>
+                        </div>
+                    </div>
+                    <div id="anima-artist-tags" class="tag-list"></div>
+                    <div class="inline-add" style="margin-top:4px; position:relative;">
+                        <input type="text" id="anima-new-artist-tag" placeholder="ANIMA 아티스트 태그">
+                        <button onclick="addAnimaArtistTag()">+</button>
+                    </div>
+                    </div>
+
+                    <!-- ANIMA 품질 태그 섹션 (ANIMA 모드에서만 표시) -->
+                    <div id="anima-quality-section" style="display:none; background:rgba(255,152,0,0.08); border-radius:8px; padding:10px; margin-bottom:8px; border:1px dashed rgba(255,152,0,0.4);">
+                    <div class="section-title">ANIMA 품질 태그</div>
+                    <div style="margin-bottom:6px;">
+                        <div id="anima-quality-preset-select-container"></div>
+                        <div style="display:flex; gap:4px; margin-top:3px;">
+                            <button onclick="addAnimaQualityPreset()" style="flex:1; background:var(--accent); color:#fff; border:none; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">추가</button>
+                            <button onclick="duplicateAnimaQualityPreset()" style="flex:1; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">복제</button>
+                            <button onclick="deleteAnimaQualityPreset()" style="flex:1; background:var(--error); color:#fff; border:none; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">삭제</button>
+                        </div>
+                    </div>
+                    <div id="anima-quality-tags" class="tag-list"></div>
+                    <div class="inline-add" style="margin-top:4px; position:relative;">
+                        <input type="text" id="anima-new-quality-tag" placeholder="ANIMA 품질 태그">
+                        <div class="tag-autocomplete-dropdown" id="ac-anima-quality-tag"></div>
+                        <button onclick="addAnimaQualityTag()">+</button>
                     </div>
                     </div>
 
