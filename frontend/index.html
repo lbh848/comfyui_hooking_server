@@ -1810,7 +1810,7 @@
             transition: opacity 0.2s;
         }
         .asset-generate-btn:hover { opacity: 0.9; }
-        .asset-generate-btn:disabled {
+        .asset-generate-btn.is-disabled {
             opacity: 0.5;
             cursor: not-allowed;
         }
@@ -3268,7 +3268,7 @@
                     <button style="width:100%; padding:6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:6px; cursor:pointer; font-size:0.8rem; margin-bottom:4px;" onclick="previewAssetPrompt()">프롬프트 미리보기</button>
                     <div style="display:flex; gap:6px; align-items:stretch;">
                         <input type="number" id="asset-generate-count" value="1" min="1" max="50" style="width:60px; padding:6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:6px; font-size:0.85rem; text-align:center;" title="생성 횟수">
-                        <button class="asset-generate-btn" id="asset-generate-btn" onclick="generateAssetImage()" disabled style="flex:1;">
+                        <button class="asset-generate-btn is-disabled" id="asset-generate-btn" onclick="generateAssetImage()" style="flex:1;">
                             이미지 생성
                         </button>
                     </div>
@@ -16593,7 +16593,9 @@
             const outfit = getAssetSelectValue('asset-outfit-select');
             const expr = getAssetSelectValue('asset-expression-select');
             const btn = document.getElementById('asset-generate-btn');
-            btn.disabled = !char || !app || !outfit || !expr;
+            const missing = !char || !app || !outfit || !expr;
+            btn.classList.toggle('is-disabled', missing);
+            btn.dataset.missing = [!char && '캐릭터', !app && '외형', !outfit && '의상', !expr && '표정'].filter(Boolean).join(', ');
         }
 
         // ─── 에셋 생성 큐 관리 ────────────────────────────────────
@@ -16905,7 +16907,8 @@
             const app = getAssetSelectValue('asset-appearance-select');
 
             if (!char || !outfit || !expr || !app) {
-                showToast('캐릭터, 외모, 복장, 표정을 모두 선택하세요', 'error');
+                const missing = [!char && '캐릭터', !app && '외형', !outfit && '의상', !expr && '표정'].filter(Boolean).join(', ');
+                showToast(missing + '을(를) 선택해야 이미지를 생성할 수 있습니다', 'warning');
                 return;
             }
 
