@@ -2952,42 +2952,6 @@
                     </div>
                     </div>
 
-                    <!-- 자연어 프리셋 섹션 -->
-                    <div style="background:rgba(0,150,136,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
-                    <div class="section-title">자연어 프리셋(optional)</div>
-                    <div style="margin-bottom:6px;">
-                        <div id="asset-natural-language-preset-select-container"></div>
-                        <div id="asset-nl-preset-preview" style="margin-top:4px; padding:4px 8px; border:1px solid var(--border); background:var(--surface2); color:var(--text-secondary); border-radius:6px; font-size:0.72rem; min-height:1.4em; max-height:4.2em; overflow-y:auto; word-break:break-word; white-space:pre-wrap;"></div>
-                        <div style="display:flex; gap:4px; margin-top:3px;">
-                            <button onclick="addNaturalLanguagePreset()" style="flex:1; background:var(--accent); color:#fff; border:none; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">추가</button>
-                            <button onclick="duplicateNaturalLanguagePreset()" style="flex:1; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">복제</button>
-                            <button onclick="deleteNaturalLanguagePreset()" style="flex:1; background:var(--error); color:#fff; border:none; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">삭제</button>
-                            <button onclick="openNlPresetModal()" style="flex:1; background:var(--accent); color:#fff; border:none; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">✏️ 편집</button>
-                        </div>
-                    </div>
-                    <textarea id="asset-natural-language-text" placeholder="자연어 프롬프트 텍스트 입력..." rows="3" style="display:none;"></textarea>
-                    </div>
-
-                    <!-- 자연어 프리셋 편집 모달 -->
-                    <div id="nl-preset-modal" class="modal" onclick="if (event.target === this) closeNlPresetModal()">
-                        <div class="modal-content" style="max-width:560px;">
-                            <div class="modal-header">
-                                <h2>자연어 프리셋 편집</h2>
-                                <button class="modal-close" onclick="closeNlPresetModal()">✕</button>
-                            </div>
-                            <div class="modal-body">
-                                <div class="form-group">
-                                    <label style="font-size:0.85rem; margin-bottom:6px; display:block;">프리셋 내용</label>
-                                    <textarea id="nl-preset-modal-text" placeholder="자연어 프롬프트 텍스트 입력..." rows="8" style="width:100%; padding:8px 10px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:6px; font-size:0.85rem; resize:vertical; font-family:inherit;"></textarea>
-                                </div>
-                            </div>
-                            <div class="modal-footer">
-                                <button onclick="closeNlPresetModal()" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:8px 16px; border-radius:6px; cursor:pointer;">취소</button>
-                                <button onclick="applyNlPresetModal()" style="background:var(--accent); color:#fff; border:none; padding:8px 16px; border-radius:6px; cursor:pointer; font-weight:600;">적용</button>
-                            </div>
-                        </div>
-                    </div>
-
                     <div style="border-top:1px solid var(--border); margin-bottom:8px;"></div>
 
                     <!-- 캐릭터 부정 태그 섹션 -->
@@ -3085,6 +3049,42 @@
                         <div class="tag-autocomplete-dropdown" id="ac-anima-negative-tag"></div>
                         <button onclick="addAnimaNegativeTag()">+</button>
                     </div>
+                    </div>
+
+                    <!-- 자연어 프리셋 섹션 -->
+                    <div style="background:rgba(0,150,136,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
+                    <div class="section-title">자연어 프리셋(optional)</div>
+                    <div style="margin-bottom:6px;">
+                        <div id="asset-natural-language-preset-select-container"></div>
+                        <div id="asset-nl-preset-preview" style="margin-top:4px; padding:4px 8px; border:1px solid var(--border); background:var(--surface2); color:var(--text-secondary); border-radius:6px; font-size:0.72rem; min-height:1.4em; max-height:4.2em; overflow-y:auto; word-break:break-word; white-space:pre-wrap;"></div>
+                        <div style="display:flex; gap:4px; margin-top:3px;">
+                            <button onclick="addNaturalLanguagePreset()" style="flex:1; background:var(--accent); color:#fff; border:none; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">추가</button>
+                            <button onclick="duplicateNaturalLanguagePreset()" style="flex:1; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">복제</button>
+                            <button onclick="deleteNaturalLanguagePreset()" style="flex:1; background:var(--error); color:#fff; border:none; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">삭제</button>
+                            <button onclick="openNlPresetModal()" style="flex:1; background:var(--accent); color:#fff; border:none; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">✏️ 편집</button>
+                        </div>
+                    </div>
+                    <textarea id="asset-natural-language-text" placeholder="자연어 프롬프트 텍스트 입력..." rows="3" style="display:none;"></textarea>
+                    </div>
+
+                    <!-- 자연어 프리셋 편집 모달 -->
+                    <div id="nl-preset-modal" class="modal" onclick="if (event.target === this) closeNlPresetModal()">
+                        <div class="modal-content" style="max-width:560px;">
+                            <div class="modal-header">
+                                <h2>자연어 프리셋 편집</h2>
+                                <button class="modal-close" onclick="closeNlPresetModal()">✕</button>
+                            </div>
+                            <div class="modal-body">
+                                <div class="form-group">
+                                    <label style="font-size:0.85rem; margin-bottom:6px; display:block;">프리셋 내용</label>
+                                    <textarea id="nl-preset-modal-text" placeholder="자연어 프롬프트 텍스트 입력..." rows="8" style="width:100%; padding:8px 10px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:6px; font-size:0.85rem; resize:vertical; font-family:inherit;"></textarea>
+                                </div>
+                            </div>
+                            <div class="modal-footer">
+                                <button onclick="closeNlPresetModal()" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:8px 16px; border-radius:6px; cursor:pointer;">취소</button>
+                                <button onclick="applyNlPresetModal()" style="background:var(--accent); color:#fff; border:none; padding:8px 16px; border-radius:6px; cursor:pointer; font-weight:600;">적용</button>
+                            </div>
+                        </div>
                     </div>
 
                     <div style="border-top:1px solid var(--border); margin-bottom:8px;"></div>
