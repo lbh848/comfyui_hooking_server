@@ -29,7 +29,20 @@ CURRENT_MODE_WORK_DIR = os.path.join(BASE_DIR, "current_mode_workflow")
 OUTFIT_BACKUP_DIR = os.path.join(BASE_DIR, "workflow_backup", "mode", "outfit_mode")
 
 REAL_COMFY_HOST = os.environ.get("REAL_COMFY_HOST", "127.0.0.1")
-REAL_COMFY_PORT = int(os.environ.get("REAL_COMFY_PORT", "8188"))
+# REAL_COMFY_PORT는 런타임에 __main__ 모듈에서 동적으로 가져옴
+REAL_COMFY_PORT = 8188  # 기본값, _get_port()로 실시간 조회
+
+
+def _get_port():
+    """설정에서 ComfyUI 포트를 실시간 조회한다."""
+    import sys as _sys
+    return getattr(_sys.modules.get('__main__'), 'REAL_COMFY_PORT', REAL_COMFY_PORT)
+
+
+def _get_host():
+    """설정에서 ComfyUI 호스트를 실시간 조회한다."""
+    import sys as _sys
+    return getattr(_sys.modules.get('__main__'), 'REAL_COMFY_HOST', REAL_COMFY_HOST)
 
 
 @dataclass
@@ -251,7 +264,7 @@ class OutfitMode:
 
     async def _upload_image_to_comfyui(self, image_bytes: bytes, filename: str) -> bool:
         """이미지를 ComfyUI input 폴더에 업로드"""
-        url = f"http://{REAL_COMFY_HOST}:{REAL_COMFY_PORT}/upload/image"
+        url = f"http://{_get_host()}:{_get_port()}/upload/image"
         try:
             data = aiohttp.FormData()
             data.add_field("image", image_bytes, filename=filename, content_type="image/png")
@@ -324,7 +337,7 @@ class OutfitMode:
 
         # 워크플로우 실행 (server.py의 generate_image_with_prompt 패턴 참고)
         ws_url = (
-            f"ws://{REAL_COMFY_HOST}:{REAL_COMFY_PORT}/ws"
+            f"ws://{_get_host()}:{_get_port()}/ws"
             f"?clientId={ws_client_id}"
         )
 
@@ -332,7 +345,7 @@ class OutfitMode:
             async with aiohttp.ClientSession() as ws_session:
                 async with ws_session.ws_connect(ws_url) as real_ws:
                     # Submit - client_id를 포함해야 WS 메시지를 받을 수 있음
-                    url = f"http://{REAL_COMFY_HOST}:{REAL_COMFY_PORT}/prompt"
+                    url = f"http://{_get_host()}:{_get_port()}/prompt"
                     payload = {"prompt": wf, "client_id": ws_client_id}
                     async with aiohttp.ClientSession() as session:
                         async with session.post(url, json=payload) as resp:
@@ -383,7 +396,7 @@ class OutfitMode:
                             break
 
             # History 조회
-            history_url = f"http://{REAL_COMFY_HOST}:{REAL_COMFY_PORT}/history/{real_prompt_id}"
+            history_url = f"http://{_get_host()}:{_get_port()}/history/{real_prompt_id}"
             async with aiohttp.ClientSession() as session:
                 async with session.get(history_url) as resp:
                     history = await resp.json()
@@ -457,7 +470,7 @@ class OutfitMode:
             text_files = nout.get("text_files", [])
             for tf in text_files:
                 try:
-                    url = f"http://{REAL_COMFY_HOST}:{REAL_COMFY_PORT}/view"
+                    url = f"http://{_get_host()}:{_get_port()}/view"
                     params = {"filename": tf.get("filename", tf) if isinstance(tf, dict) else tf,
                               "subfolder": tf.get("subfolder", "") if isinstance(tf, dict) else "",
                               "type": "output"}
@@ -504,7 +517,7 @@ class OutfitMode:
 
     async def _download_image(self, filename: str, subfolder: str = "", img_type: str = "output") -> Optional[bytes]:
         """ComfyUI에서 이미지 다운로드"""
-        url = f"http://{REAL_COMFY_HOST}:{REAL_COMFY_PORT}/view"
+        url = f"http://{_get_host()}:{_get_port()}/view"
         params = {"filename": filename, "subfolder": subfolder, "type": img_type}
         try:
             async with aiohttp.ClientSession() as session:

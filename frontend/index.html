@@ -4123,6 +4123,16 @@
                 <div class="settings-tab-panel active" id="settings-tab-common">
                     <div class="setting-row">
                         <div class="setting-label">
+                            <div class="title">ComfyUI 포트</div>
+                            <div class="desc">ComfyUI 서버가 실행 중인 포트 번호 (기본값: 8188)</div>
+                        </div>
+                    </div>
+                    <div class="form-group" style="margin-top: 8px;">
+                        <input type="number" id="setting-comfyui-port" placeholder="8188" min="1" max="65535" style="width: 120px;">
+                    </div>
+
+                    <div class="setting-row">
+                        <div class="setting-label">
                             <div class="title">워크플로우 소스 경로</div>
                             <div class="desc">"워크플로우 가져오기" 시 불러올 파일 경로</div>
                         </div>
@@ -6098,6 +6108,7 @@
             }
 
             // 폼에 값 설정
+            document.getElementById('setting-comfyui-port').value = currentConfig.comfyui_port || 8188;
             document.getElementById('setting-send-original').checked = currentConfig.send_original || false;
             document.getElementById('setting-webp-quality').disabled = currentConfig.send_original || false;
             document.getElementById('setting-webp-quality').value = currentConfig.webp_quality || 85;
@@ -6516,6 +6527,7 @@
         async function saveSettings() {
             const config = {
                 data_saving_mode: false,
+                comfyui_port: parseInt(document.getElementById('setting-comfyui-port').value) || 8188,
                 send_original: document.getElementById('setting-send-original').checked,
                 webp_quality: parseInt(document.getElementById('setting-webp-quality').value) || 85,
                 backup_webp_quality: parseInt(document.getElementById('setting-backup-webp-quality').value) || 80,

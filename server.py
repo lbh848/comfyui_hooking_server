@@ -47,7 +47,7 @@ import importlib.util
 HOST = "0.0.0.0"
 PORT = 8189
 REAL_COMFY_HOST = os.environ.get("REAL_COMFY_HOST", "127.0.0.1")
-REAL_COMFY_PORT = int(os.environ.get("REAL_COMFY_PORT", "8188"))
+# REAL_COMFY_PORT는 load_config() 이후 app_config에서 초기화됨
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WORKFLOW_DIR = os.path.join(BASE_DIR, "workflow")
 CURRENT_WORK_DIR = os.path.join(BASE_DIR, "current_work")
@@ -61,6 +61,7 @@ WORKFLOW_BACKUP_STATIC_DIR = os.path.join(BASE_DIR, "workflow_backup_static")
 
 # 기본 설정값
 DEFAULT_CONFIG = {
+    "comfyui_port": 8188,  # ComfyUI 서버 포트
     "comfy_workflow_source_path": "",
     "data_saving_mode": False,
     "send_original": False,  # 전송 시 원본 무변환 전송
@@ -156,6 +157,9 @@ def save_config(config: dict):
 
 # 전역 설정 로드
 app_config = load_config()
+
+# ComfyUI 포트: config → 환경변수 → 기본값(8188) 순서
+REAL_COMFY_PORT = int(app_config.get("comfyui_port", os.environ.get("REAL_COMFY_PORT", "8188")))
 
 
 # ─── 배치 모드 초기화 ─────────────────────────────────────
@@ -2609,6 +2613,11 @@ async def handle_api_config(request: web.Request) -> web.Response:
             for key in body:
                 if key in DEFAULT_CONFIG:
                     app_config[key] = body[key]
+
+            # ComfyUI 포트 업데이트
+            global REAL_COMFY_PORT
+            if "comfyui_port" in body:
+                REAL_COMFY_PORT = int(body["comfyui_port"])
 
             # 배치 모드 타임아웃 업데이트
             if "batch_timeout_seconds" in body:
