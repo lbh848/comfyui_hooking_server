@@ -2131,6 +2131,11 @@
             color: var(--text2);
             white-space: nowrap;
         }
+        .asset-queue-item .item-countdown {
+            font-size: 0.65rem;
+            color: var(--text3);
+            opacity: 0.7;
+        }
         .asset-queue-item .item-progress-bar {
             width: 50px;
             height: 4px;
@@ -2803,7 +2808,7 @@
                     <div style="background:rgba(66,133,244,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
                     <div class="section-title">캐릭터</div>
                     <div style="font-size:0.7rem; color:var(--text-secondary); margin-bottom:6px; padding:4px 6px; background:rgba(0,0,0,0.05); border-radius:4px;">
-                        프롬프트 조립 순서: LoRA 트리거 → 품질 → 구도/기타 → 아티스트 → 외모 → 표정 → 복장 → 자연어
+                        프롬프트 조립 순서: LoRA 트리거 → 아티스트 → 품질 → 구도/기타 → 외모 → 표정 → 복장 → 자연어
                     </div>
                     <select id="asset-character-select" onchange="onAssetCharacterChange()">
                         <option value="">-- 캐릭터 선택 --</option>
@@ -16009,34 +16014,161 @@
                 startTime: null,
                 endTime: null,
                 errorMsg: '',
+                autoHideAt: null,
             });
             renderAssetQueueUI();
             return assetQueue[assetQueue.length - 1];
         }
 
+        const removingQueueItems = new Set();
         function removeQueueItem(id) {
-            assetQueue = assetQueue.filter(q => q.id !== id);
-            renderAssetQueueUI();
-            if (assetQueue.length === 0) {
-                document.getElementById('asset-queue-container').style.display = 'none';
-                hideTopProgress();
-                assetQueueExpanded = false;
+            if (removingQueueItems.has(id)) return;
+            cancelAutoHide(id);
+            const el = document.querySelector('[data-queue-item-id="' + id + '"]');
+            if (el) {
+                removingQueueItems.add(id);
+                // FLIP: 기존 위치 기록
+                const positions = {};
+                el.parentNode.querySelectorAll('.asset-queue-item').forEach(item => {
+                    const itemId = item.dataset.queueItemId;
+                    if (itemId) positions[itemId] = item.getBoundingClientRect().top;
+                });
+                // 종료 애니메이션: 오른쪽으로 슬라이드 + 페이드아웃
+                el.style.transition = 'transform 0.3s ease, opacity 0.3s ease';
+                el.style.transform = 'translateX(80px)';
+                el.style.opacity = '0';
+                setTimeout(() => {
+                    removingQueueItems.delete(id);
+                    assetQueue = assetQueue.filter(q => q.id !== id);
+                    renderAssetQueueUI();
+                    // FLIP: 아래 항목들이 부드럽게 올라오도록 애니메이션
+                    document.querySelectorAll('.asset-queue-item').forEach(item => {
+                        const itemId = item.dataset.queueItemId;
+                        if (positions[itemId] !== undefined) {
+                            const delta = positions[itemId] - item.getBoundingClientRect().top;
+                            if (Math.abs(delta) > 1) {
+                                item.style.transition = 'none';
+                                item.style.transform = 'translateY(' + delta + 'px)';
+                                item.offsetHeight;
+                                item.style.transition = 'transform 0.3s ease, background 0.15s';
+                                item.style.transform = '';
+                            }
+                        }
+                    });
+                    if (assetQueue.length === 0) {
+                        document.getElementById('asset-queue-container').style.display = 'none';
+                        hideTopProgress();
+                        assetQueueExpanded = false;
+                        stopCountdownInterval();
+                    }
+                }, 300);
+            } else {
+                assetQueue = assetQueue.filter(q => q.id !== id);
+                renderAssetQueueUI();
+                if (assetQueue.length === 0) {
+                    document.getElementById('asset-queue-container').style.display = 'none';
+                    hideTopProgress();
+                    assetQueueExpanded = false;
+                    stopCountdownInterval();
+                }
             }
         }
 
         const autoHideTimers = {};
+        let countdownInterval = null;
+
+        // 큐 항목 제거 애니메이션 (슬라이드 아웃 + FLIP 슬라이드 업)
+        function animateQueueRemovals(items) {
+            return new Promise(resolve => {
+                if (items.length === 0) { resolve(); return; }
+                for (const item of items) removingQueueItems.add(item.id);
+                const positions = {};
+                const panelBody = document.getElementById('asset-queue-panel-body');
+                panelBody.querySelectorAll('.asset-queue-item').forEach(el => {
+                    const itemId = el.dataset.queueItemId;
+                    if (itemId) positions[itemId] = el.getBoundingClientRect().top;
+                });
+                for (const item of items) {
+                    cancelAutoHide(item.id);
+                    const el = document.querySelector('[data-queue-item-id="' + item.id + '"]');
+                    if (el) {
+                        el.style.transition = 'transform 0.3s ease, opacity 0.3s ease';
+                        el.style.transform = 'translateX(80px)';
+                        el.style.opacity = '0';
+                    }
+                }
+                setTimeout(() => {
+                    for (const item of items) {
+                        removingQueueItems.delete(item.id);
+                        const idx = assetQueue.indexOf(item);
+                        if (idx >= 0) assetQueue.splice(idx, 1);
+                    }
+                    renderAssetQueueUI();
+                    document.querySelectorAll('.asset-queue-item').forEach(el => {
+                        const itemId = el.dataset.queueItemId;
+                        if (positions[itemId] !== undefined) {
+                            const delta = positions[itemId] - el.getBoundingClientRect().top;
+                            if (Math.abs(delta) > 1) {
+                                el.style.transition = 'none';
+                                el.style.transform = 'translateY(' + delta + 'px)';
+                                el.offsetHeight;
+                                el.style.transition = 'transform 0.3s ease, background 0.15s';
+                                el.style.transform = '';
+                            }
+                        }
+                    });
+                    if (assetQueue.length === 0) {
+                        document.getElementById('asset-queue-container').style.display = 'none';
+                        hideTopProgress();
+                        assetQueueExpanded = false;
+                        stopCountdownInterval();
+                    }
+                    resolve();
+                }, 300);
+            });
+        }
         function scheduleAutoHide(id, delayMs) {
             if (autoHideTimers[id]) clearTimeout(autoHideTimers[id]);
+            const item = assetQueue.find(q => q.id === id);
+            if (item) item.autoHideAt = Date.now() + delayMs;
             autoHideTimers[id] = setTimeout(() => {
                 delete autoHideTimers[id];
+                if (item) item.autoHideAt = null;
                 removeQueueItem(id);
             }, delayMs);
+            startCountdownInterval();
         }
         function cancelAutoHide(id) {
             if (autoHideTimers[id]) {
                 clearTimeout(autoHideTimers[id]);
                 delete autoHideTimers[id];
             }
+            const item = assetQueue.find(q => q.id === id);
+            if (item) item.autoHideAt = null;
+        }
+        function startCountdownInterval() {
+            if (countdownInterval) return;
+            countdownInterval = setInterval(updateCountdowns, 1000);
+        }
+        function stopCountdownInterval() {
+            if (countdownInterval) {
+                clearInterval(countdownInterval);
+                countdownInterval = null;
+            }
+        }
+        function updateCountdowns() {
+            const hasAnyCountdown = assetQueue.some(q => q.autoHideAt !== null);
+            if (!hasAnyCountdown) {
+                stopCountdownInterval();
+                return;
+            }
+            assetQueue.forEach(item => {
+                if (item.autoHideAt !== null) {
+                    const remaining = Math.max(0, Math.ceil((item.autoHideAt - Date.now()) / 1000));
+                    const el = document.querySelector('[data-queue-item-id="' + item.id + '"] .item-countdown');
+                    if (el) el.textContent = remaining + 's';
+                }
+            });
         }
 
         function renderAssetQueueUI() {
@@ -16098,6 +16230,7 @@
             assetQueue.forEach(item => {
                 const row = document.createElement('div');
                 row.className = 'asset-queue-item item-' + item.status;
+                row.dataset.queueItemId = item.id;
                 let icon = '';
                 let statusText = '';
                 switch (item.status) {
@@ -16116,6 +16249,10 @@
                 }
                 if (!statusText && item.status === 'pending') statusText = '대기';
                 if (!statusText && item.status === 'success') statusText = '완료';
+                if (item.autoHideAt !== null) {
+                    const remaining = Math.max(0, Math.ceil((item.autoHideAt - Date.now()) / 1000));
+                    statusText += ' <span class="item-countdown">' + remaining + 's</span>';
+                }
 
                 let actionBtn = '';
                 if (item.status === 'pending' || item.status === 'cancelled') {
@@ -16256,14 +16393,17 @@
 
             try {
                 while (assetQueueProcessing) {
-                    // 취소된 항목 큐에서 제거
-                    for (let i = assetQueue.length - 1; i >= 0; i--) {
-                        if (assetQueue[i].status === 'cancelled') {
-                            cancelAutoHide(assetQueue[i].id);
-                            assetQueue.splice(i, 1);
+                    // 취소된 항목 중 자기 차례가 된 것만 애니메이션과 함께 제거
+                    const firstPendingIdx = assetQueue.findIndex(q => q.status === 'pending');
+                    const toRemove = [];
+                    for (let i = 0; i < assetQueue.length; i++) {
+                        if (assetQueue[i].status === 'cancelled' && (firstPendingIdx === -1 || i < firstPendingIdx)) {
+                            toRemove.push(assetQueue[i]);
                         }
                     }
-                    renderAssetQueueUI();
+                    if (toRemove.length > 0) {
+                        await animateQueueRemovals(toRemove);
+                    }
 
                     const item = assetQueue.find(q => q.status === 'pending');
                     if (!item) break;
@@ -16335,7 +16475,7 @@
             if (item.status === 'pending') {
                 item.status = 'cancelled';
                 item.endTime = Date.now();
-                scheduleAutoHide(id, 15000);
+                // 취소 대기 항목은 자기 차례가 될 때까지 큐에 유지 (auto-hide 없음)
             } else if (item.status === 'cancelled') {
                 item.status = 'pending';
                 item.endTime = null;
