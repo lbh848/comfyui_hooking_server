@@ -3619,6 +3619,7 @@ async def handle_api_asset_mode_generate(request: web.Request) -> web.Response:
             pose_enabled=body.get("pose_enabled", False),
             pose_id=body.get("pose_id", ""),
             hrf_activate=body.get("hrf_activate", False),
+            anima_hrf_activate=body.get("anima_hrf_activate", False),
             hrf_size=float(body.get("hrf_size", 2.0)),
             hrf_restore_size=body.get("hrf_restore_size", True),
             hrf_control_net=body.get("hrf_control_net", False),

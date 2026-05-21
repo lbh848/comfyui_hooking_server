@@ -807,6 +807,7 @@ class AssetMode:
         pose_enabled: bool = False,
         pose_data: dict = None,
         hrf_activate: bool = False,
+        anima_hrf_activate: bool = False,
         hrf_size: float = 2.0,
         hrf_restore_size: bool = True,
         hrf_control_net: bool = False,
@@ -946,6 +947,8 @@ class AssetMode:
         else:
             positive += f"\n[POSE_DATA]\n{json.dumps(DEFAULT_POSE_DATA, ensure_ascii=False)}"
         positive += f"\n[HRF_ACTIVATE]\n{'true' if hrf_activate else 'false'}"
+        if asset_workflow_type == "anima":
+            positive += f"\n[ANIMA_HRF_ACTIVATE]\n{'true' if anima_hrf_activate else 'false'}"
         positive += f"\n[HRF_SIZE]\n{hrf_size}"
         positive += f"\n[HRF_RESTORE_SIZE]\n{'true' if hrf_restore_size else 'false'}"
         positive += f"\n[HRF_CONTROL_NET]\n{'true' if hrf_control_net else 'false'}"
@@ -1140,6 +1143,7 @@ class AssetMode:
         pose_enabled: bool = False,
         pose_id: str = "",
         hrf_activate: bool = False,
+        anima_hrf_activate: bool = False,
         hrf_size: float = 2.0,
         hrf_restore_size: bool = True,
         hrf_control_net: bool = False,
@@ -1165,7 +1169,7 @@ class AssetMode:
                     style_ref_enabled, style_ref_strength, style_ref_subfolder,
                     lora_activate, lora_data,
                     pose_enabled, pose_id,
-                    hrf_activate, hrf_size, hrf_restore_size, hrf_control_net, img_w, img_h,
+                    hrf_activate, anima_hrf_activate, hrf_size, hrf_restore_size, hrf_control_net, img_w, img_h,
                     fd_activate, hd_activate, ed_activate,
                     artist_preset, natural_language, lora_trigger_words,
                     anima_artist_preset, asset_workflow_type,
@@ -1191,6 +1195,7 @@ class AssetMode:
         pose_enabled: bool,
         pose_id: str,
         hrf_activate: bool,
+        anima_hrf_activate: bool,
         hrf_size: float,
         hrf_restore_size: bool,
         hrf_control_net: bool,
@@ -1237,6 +1242,7 @@ class AssetMode:
                 pose_enabled=pose_enabled,
                 pose_data=pose_data,
                 hrf_activate=hrf_activate,
+                anima_hrf_activate=anima_hrf_activate,
                 hrf_size=hrf_size,
                 hrf_restore_size=hrf_restore_size,
                 hrf_control_net=hrf_control_net,
