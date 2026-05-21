@@ -787,6 +787,8 @@ async def wait_for_real_comfy(ws, real_prompt_id: str, progress_callback=None, t
     saw_executing = False
     cumulative_steps = 0
     prev_max = 0
+    prev_node = ""
+    dynamic_total = total_steps  # 새 샘플러 발견 시 동적 보정
     try:
         async for msg in ws:
             if msg.type == aiohttp.WSMsgType.TEXT:
@@ -799,33 +801,49 @@ async def wait_for_real_comfy(ws, real_prompt_id: str, progress_callback=None, t
                 if msg_type == "progress":
                     v = msg_data.get("value", 0)
                     mx = msg_data.get("max", 0)
-                    # 새 ksampler 감지: max가 바뀌면 이전 ksampler 완료
-                    if mx != prev_max and prev_max > 0 and v < mx:
+                    # 새 ksampler 감지: node ID가 바뀌면 이전 ksampler 완료로 간주
+                    if msg_node and prev_node and msg_node != prev_node and prev_max > 0:
                         cumulative_steps += prev_max
-                    prev_max = mx
-                    if total_steps > 0 and mx and mx > 0:
-                        overall_v = cumulative_steps + v
-                        pct = min(100, round(overall_v / total_steps * 100))
-                        print(f"[PROXY] WS progress: {v}/{mx} (전체 {pct}%)", end="\r")
-                        await progress_callback(overall_v, total_steps)
+                    elif not msg_node and mx != prev_max and prev_max > 0 and v < mx:
+                        # node 정보가 없으면 기존 방식(max 변경)으로 폴백
+                        cumulative_steps += prev_max
+                    # 누적+현재가 동적total 초과 시 동적total 보정
+                    if cumulative_steps + mx > dynamic_total and dynamic_total > 0:
+                        dynamic_total = cumulative_steps + mx
+                    if mx > 0:
+                        prev_max = mx
+                    if msg_node:
+                        prev_node = msg_node
+                    if dynamic_total > 0 and mx and mx > 0:
+                        overall_v = min(cumulative_steps + v, dynamic_total)
+                        pct = min(100, round(overall_v / dynamic_total * 100))
+                        print(f"[PROXY] WS progress: {v}/{mx} node={msg_node} (전체 {pct}%)", end="\r")
+                        await progress_callback(overall_v, dynamic_total)
                     else:
-                        print(f"[PROXY] WS progress: {v}/{mx}", end="\r")
+                        print(f"[PROXY] WS progress: {v}/{mx} node={msg_node}", end="\r")
                         if progress_callback and mx and mx > 0:
                             await progress_callback(v, mx)
                 elif msg_type == "progress_state":
                     v = msg_data.get("value", 0)
                     mx = msg_data.get("max", 0)
-                    if mx != prev_max and prev_max > 0 and v < mx:
+                    if msg_node and prev_node and msg_node != prev_node and prev_max > 0:
                         cumulative_steps += prev_max
-                    prev_max = mx
-                    if total_steps > 0 and mx and mx > 0:
-                        overall_v = cumulative_steps + v
-                        pct = min(100, round(overall_v / total_steps * 100))
-                        print(f"[PROXY] WS progress_state: {v}/{mx} (전체 {pct}%)", end="\r")
-                        await progress_callback(overall_v, total_steps)
+                    elif not msg_node and mx != prev_max and prev_max > 0 and v < mx:
+                        cumulative_steps += prev_max
+                    if cumulative_steps + mx > dynamic_total and dynamic_total > 0:
+                        dynamic_total = cumulative_steps + mx
+                    if mx > 0:
+                        prev_max = mx
+                    if msg_node:
+                        prev_node = msg_node
+                    if dynamic_total > 0 and mx and mx > 0:
+                        overall_v = min(cumulative_steps + v, dynamic_total)
+                        pct = min(100, round(overall_v / dynamic_total * 100))
+                        print(f"[PROXY] WS progress_state: {v}/{mx} node={msg_node} (전체 {pct}%)", end="\r")
+                        await progress_callback(overall_v, dynamic_total)
                     else:
                         if v and mx and mx > 0:
-                            print(f"[PROXY] WS progress_state: {v}/{mx}", end="\r")
+                            print(f"[PROXY] WS progress_state: {v}/{mx} node={msg_node}", end="\r")
                             if progress_callback:
                                 await progress_callback(v, mx)
                 elif msg_type not in WS_QUIET_TYPES:
