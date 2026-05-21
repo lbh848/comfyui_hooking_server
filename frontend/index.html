@@ -2269,7 +2269,7 @@
             pointer-events: none;
         }
 
-        /* ─── 스마트매치 탭 ─── */
+        /* ─── 오토매치 탭 ─── */
         .at-container { display: flex; flex-direction: column; height: calc(100vh - 60px); overflow: hidden; }
         .at-toolbar { display: flex; align-items: center; gap: 10px; padding: 6px 8px; background: var(--surface2); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
         .at-toolbar select, .at-toolbar button { font-size: 0.85rem; }
@@ -2584,7 +2584,7 @@
         }
         .batch-chain-plus:hover { border-color: var(--accent); color: var(--accent); background: rgba(66,133,244,0.08); }
 
-        /* ── 표정 프로필 생성 (스마트매치 내부 뷰) ── */
+        /* ── 표정 프로필 생성 (오토매치 내부 뷰) ── */
         .ep-main {
             flex: 1; min-width: 0; display: flex; flex-direction: column;
         }
@@ -2741,7 +2741,7 @@
         <button class="tab-btn" onclick="switchTab('asset-upload')">에셋 업로드</button>
         <button class="tab-btn" onclick="switchTab('pose')">에셋 Pose 편집</button>
         <button class="tab-btn" onclick="switchTab('batch')">에셋 일괄 생성</button>
-        <button id="tab-btn-smart-asset" class="tab-btn" onclick="switchTab('smart-asset')">스마트매치</button>
+        <button id="tab-btn-smart-asset" class="tab-btn" onclick="switchTab('smart-asset')">오토매치</button>
         <span class="tab-divider"></span>
         <button id="tab-btn-preset-mgmt" class="tab-btn" onclick="switchTab('preset-mgmt')">프리셋매니징</button>
         <button id="tab-btn-lora" class="tab-btn" onclick="switchTab('lora')">로라매니징</button>
@@ -3434,11 +3434,11 @@
             </div>
         </div>
 
-        <!-- 스마트매치 탭 -->
+        <!-- 오토매치 탭 -->
         <div id="tab-smart-asset-content" class="tab-content">
             <div class="at-container">
                 <div class="at-toolbar">
-                    <span style="font-weight:600; font-size:0.95rem;">🔍 스마트매치</span>
+                    <span style="font-weight:600; font-size:0.95rem;">🔍 오토매치</span>
                     <label style="display:flex; align-items:center; gap:4px; font-size:0.85rem; cursor:pointer;">
                         <input type="checkbox" id="at-do-analyze" checked style="accent-color:var(--accent); cursor:pointer;"> 태그 분석
                     </label>
@@ -4353,7 +4353,7 @@
                     <div class="setting-row">
                         <div class="setting-label">
                             <div class="title">임베딩 프로바이더</div>
-                            <div class="desc">텍스트 임베딩 서비스 제공자 (스마트매치 유사도 매칭에 사용)</div>
+                            <div class="desc">텍스트 임베딩 서비스 제공자 (오토매치 유사도 매칭에 사용)</div>
                         </div>
                         <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
                             <select id="setting-embedding-provider" onchange="onEmbeddingProviderChange()"
@@ -9065,7 +9065,8 @@
             const sidebarRefImage = epRefImage;
             const hrfEnabled = document.getElementById('ep-hrf-toggle').checked;
             const epHrfMode = document.getElementById('ep-hrf-mode')?.value || 'both';
-            const epIsAnima = currentConfig?.asset_workflow_type === 'anima';
+            const epIsAnima = currentConfig && currentConfig.asset_workflow_type === 'anima';
+            if (epIsAnima) { showToast('현재 sdxl모드만 지원합니다', 'error'); return; }
             const epAnimaHrf = epIsAnima && hrfEnabled ? (epHrfMode === 'sdxl' ? false : true) : false;
             const epEffectiveHrf = epIsAnima && hrfEnabled ? (epHrfMode === 'anima' ? false : true) : hrfEnabled;
             const fdEnabled = document.getElementById('ep-fd-toggle').checked;
@@ -9186,7 +9187,7 @@
                                 });
                             }
                             // ANIMA 프리셋 로드
-                            if (isAnima) {
+                            if (epIsAnima) {
                                 const animaQualPreset = getAssetSelectValue('anima-quality-preset-select') || '';
                                 const animaNegPreset = getAssetSelectValue('anima-negative-preset-select') || '';
                                 if (animaQualPreset) {
@@ -9254,7 +9255,7 @@
             if (grid) grid.style.gridTemplateColumns = `repeat(${epColumns}, minmax(120px, 1fr))`;
         }
 
-        // ─── 스마트매치 ────────────────────────────────────────────
+        // ─── 오토매치 ────────────────────────────────────────────
         const atState = {
             images: [],          // {file, url, tags, status: 'pending'|'analyzing'|'done'|'error', error}
             matches: [],         // [{...match_result, selected: bool}] (태그 매칭 결과)
@@ -9341,7 +9342,7 @@
                 const enc = encodeURIComponent;
                 const imgMap = {};
                 if (category === 'expressions') {
-                    // 1순위: 스마트매치 표정 프로필에 설정된 캐릭터/복장 기준으로 조회
+                    // 1순위: 오토매치 표정 프로필에 설정된 캐릭터/복장 기준으로 조회
                     setStatus('설정된 프로필 조회 중...');
                     try {
                         const epResp = await fetch(`/api/asset_mode/ep_settings/${enc(charName)}`);
@@ -9501,7 +9502,7 @@
             const embedBox = document.getElementById('at-check-embedding');
             if (!profileIcon || !embedIcon) return;
 
-            // 표정 프로필 상태 확인 (스마트매치 표정 프로필 탭에서 스캔한 데이터 기준)
+            // 표정 프로필 상태 확인 (오토매치 표정 프로필 탭에서 스캔한 데이터 기준)
             let profileReady = false;
             // epProfiles는 scanExprProfilePresets() 실행 시 채워짐
             if (typeof epProfiles !== 'undefined' && epProfiles && epProfiles.length > 0) {
@@ -9562,10 +9563,10 @@
             }
         }
 
-        // 스마트매치 상태 플래그
+        // 오토매치 상태 플래그
         let atTagPreviewDone = false;   // 업로드 태그 미리보기 완료 여부
 
-        // 스마트매치 분석 중단 컨트롤러
+        // 오토매치 분석 중단 컨트롤러
         let atAbortController = null;
 
         async function atAnalyzeAll() {
@@ -10251,7 +10252,7 @@
             showToast(`${newChains.length}개 체인이 에셋 일괄 생성에 추가되었습니다`, 'success');
         }
 
-        // ─── 스마트매치 내보내기 (이름 치환 / 체인) ─────────────────────────
+        // ─── 오토매치 내보내기 (이름 치환 / 체인) ─────────────────────────
 
         function _atGetAllImageNames() {
             const names = [];
@@ -15837,7 +15838,7 @@
         let auModalOutfitRules = [];
         let auModalExprRules = [];
 
-        // 정제 규칙 액션 (스마트매치와 동일)
+        // 정제 규칙 액션 (오토매치와 동일)
         const AU_CLEAN_ACTIONS = [
             { value: 'split_by', label: '구분자로 분리', params: ['separator', 'take'] },
             { value: 'strip_suffix', label: '접미사 제거', params: ['pattern'] },
