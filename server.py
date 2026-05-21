@@ -3567,6 +3567,47 @@ async def handle_api_asset_mode_tags_post(request: web.Request) -> web.Response:
     except Exception as e:
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
+async def handle_api_asset_mode_trace_stream(request: web.Request) -> web.StreamResponse:
+    """SSE 엔드포인트: 프리셋 추적 진행도 스트리밍"""
+    body = await request.json()
+    category = body.get("category", "")
+    name = body.get("name", "")
+
+    resp = web.StreamResponse(status=200, headers={
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+    })
+    await resp.prepare(request)
+
+    loop = asyncio.get_event_loop()
+    queue = asyncio.Queue()
+
+    def run_generator():
+        try:
+            for event_type, data in asset_mode.trace_preset_assets_stream(category, name):
+                loop.call_soon_threadsafe(queue.put_nowait, (event_type, data))
+        except Exception as e:
+            loop.call_soon_threadsafe(queue.put_nowait, ("error", {"error": str(e)}))
+        finally:
+            loop.call_soon_threadsafe(queue.put_nowait, (None, None))
+
+    loop.run_in_executor(None, run_generator)
+
+    try:
+        while True:
+            event_type, data = await queue.get()
+            if event_type is None:
+                break
+            payload = json.dumps(data, ensure_ascii=False)
+            await resp.write(f"event: {event_type}\ndata: {payload}\n\n".encode("utf-8"))
+    except Exception as e:
+        error_payload = json.dumps({"error": str(e)}, ensure_ascii=False)
+        await resp.write(f"event: error\ndata: {error_payload}\n\n".encode("utf-8"))
+
+    await resp.write_eof()
+    return resp
+
 async def handle_api_asset_mode_generate(request: web.Request) -> web.Response:
     try:
         body = await request.json()
@@ -4403,6 +4444,7 @@ app.router.add_get("/api/asset_mode/status", handle_api_asset_mode_status)
 app.router.add_get("/api/asset_mode/tags", handle_api_asset_mode_tags_get)
 app.router.add_get("/api/asset_mode/hidden_tags", handle_api_asset_mode_hidden_tags_get)
 app.router.add_post("/api/asset_mode/tags", handle_api_asset_mode_tags_post)
+app.router.add_post("/api/asset_mode/trace_stream", handle_api_asset_mode_trace_stream)
 app.router.add_post("/api/asset_mode/generate", handle_api_asset_mode_generate)
 app.router.add_get("/api/asset_mode/characters", handle_api_asset_mode_characters)
 app.router.add_get("/api/asset_mode/characters/{character}/gallery", handle_api_asset_mode_gallery)

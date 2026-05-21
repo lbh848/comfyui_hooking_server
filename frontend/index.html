@@ -4035,7 +4035,7 @@
                         </button>
                         <button class="pm-sidebar-btn" id="pm-sidebar-trace" onclick="pmSwitchView('trace')">
                             🔍
-                            <span class="pm-sidebar-tooltip">조회/추적</span>
+                            <span class="pm-sidebar-tooltip">조회/추적/수정</span>
                         </button>
                     </div>
                     <div class="pm-main">
@@ -4087,7 +4087,7 @@
                             </div>
                         </div>
 
-                        <!-- View 3: 조회/추적 -->
+                        <!-- View 3: 조회/추적/수정 -->
                         <div id="pm-view-trace" class="pm-view" style="display:none;">
                             <div class="pm-section">
                                 <div class="pm-section-title">에셋 사용 추적</div>
@@ -4107,10 +4107,16 @@
                                 </div>
                                 <div class="pm-form-group">
                                     <label>프리셋</label>
-                                    <select id="pm-trace-name"></select>
+                                    <select id="pm-trace-name" onchange="pmLoadPresetContent()"></select>
+                                </div>
+                                <div class="pm-form-group" id="pm-edit-group" style="display:none;">
+                                    <label id="pm-edit-label">태그 (쉼표로 구분)</label>
+                                    <textarea id="pm-edit-content" placeholder="tag1, tag2, tag3, ..."></textarea>
                                 </div>
                                 <div class="pm-btn-row">
                                     <button class="pm-btn pm-btn-primary" onclick="pmTraceSearch()">추적 실행</button>
+                                    <button class="pm-btn" id="pm-btn-save" onclick="pmSavePresetContent()" disabled style="display:none;">저장</button>
+                                    <button class="pm-btn" id="pm-btn-clear" onclick="pmClearTraceResults()" style="display:none;">초기화</button>
                                 </div>
                             </div>
                             <div id="pm-trace-results" style="margin-top: 16px;"></div>
@@ -22149,7 +22155,7 @@
             }
         }
 
-        // ─── 조회/추적 ────────────────────────────────────
+        // ─── 조회/추적/수정 ────────────────────────────────────
         function pmUpdateTraceNames() {
             const category = document.getElementById('pm-trace-category').value;
             const select = document.getElementById('pm-trace-name');
@@ -22166,6 +22172,8 @@
 
             if (Object.keys(items).length === 0) {
                 select.innerHTML = '<option value="">프리셋 없음</option>';
+                document.getElementById('pm-edit-group').style.display = 'none';
+                document.getElementById('pm-btn-save').style.display = 'none';
                 return;
             }
             for (const name of Object.keys(items)) {
@@ -22174,6 +22182,106 @@
                 opt.textContent = name;
                 select.appendChild(opt);
             }
+            pmLoadPresetContent();
+        }
+
+        function pmLoadPresetContent() {
+            const category = document.getElementById('pm-trace-category').value;
+            const name = document.getElementById('pm-trace-name').value;
+            const editGroup = document.getElementById('pm-edit-group');
+            const editLabel = document.getElementById('pm-edit-label');
+            const editContent = document.getElementById('pm-edit-content');
+            const btnSave = document.getElementById('pm-btn-save');
+
+            if (!name) {
+                editGroup.style.display = 'none';
+                btnSave.style.display = 'none';
+                return;
+            }
+
+            // 프리셋 데이터 찾기
+            const items = {};
+            if (pmData) {
+                Object.assign(items, pmData.active[category] || {});
+                if (pmData.hidden) Object.assign(items, pmData.hidden[category] || {});
+            }
+
+            const value = items[name];
+            const isNL = category === 'natural_language_presets';
+
+            if (isNL) {
+                editLabel.textContent = '텍스트';
+                editContent.placeholder = '자연어 텍스트를 입력하세요...';
+                editContent.value = typeof value === 'string' ? value : (Array.isArray(value) ? value.join(', ') : '');
+            } else {
+                editLabel.textContent = '태그 (쉼표로 구분)';
+                editContent.placeholder = 'tag1, tag2, tag3, ...';
+                editContent.value = Array.isArray(value) ? value.join(', ') : (typeof value === 'string' ? value : '');
+            }
+
+            editGroup.style.display = '';
+            btnSave.style.display = '';
+            btnSave.disabled = true;
+        }
+
+        // 내용 변경 시 저장 버튼 활성화
+        document.getElementById('pm-edit-content').addEventListener('input', function() {
+            document.getElementById('pm-btn-save').disabled = false;
+        });
+
+        async function pmSavePresetContent() {
+            const category = document.getElementById('pm-trace-category').value;
+            const name = document.getElementById('pm-trace-name').value;
+            const content = document.getElementById('pm-edit-content').value.trim();
+            if (!name) { showToast('프리셋을 선택해주세요', 'error'); return; }
+            if (!content) { showToast('내용을 입력해주세요', 'error'); return; }
+
+            const isNL = category === 'natural_language_presets';
+
+            try {
+                const resp = await fetch('/api/asset_mode/tags', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        action: 'batch_insert_preset',
+                        category,
+                        name,
+                        tags_text: content,
+                    }),
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    showToast(`'${name}' 프리셋 수정 완료`, 'success');
+                    document.getElementById('pm-btn-save').disabled = true;
+                    await pmLoadData();
+                    if (assetTags) loadAssetData();
+                } else {
+                    showToast(data.error || '수정 실패', 'error');
+                }
+            } catch (e) {
+                console.error('[PM] 프리셋 수정 실패:', e);
+                showToast('수정 중 오류 발생', 'error');
+            }
+        }
+
+        let pmTraceEs = null;
+
+        function pmBuildTraceRow(item, presetTags) {
+            const imgUrl = `/api/asset_mode/characters/${encodeURIComponent(item.character)}/outfits/${encodeURIComponent(item.outfit)}/expressions/${encodeURIComponent(item.expression)}/images/${encodeURIComponent(item.image_file)}`;
+            const posText = pmHighlightTags((item.positive || ''), presetTags);
+            const negText = pmHighlightTags((item.negative || ''), presetTags);
+            const matchCount = item.match_count || 0;
+            const totalTags = (presetTags || []).filter(t => t).length;
+            const matchLabel = totalTags > 1 ? `<span style="font-size:0.7rem; color:var(--accent); margin-left:6px;">${matchCount}/${totalTags} 일치</span>` : '';
+
+            return `<div class="pm-trace-row">
+                <img class="pm-trace-img" src="${imgUrl}" onerror="this.style.display='none'" loading="lazy">
+                <div style="flex:1; min-width:0;">
+                    <div class="pm-trace-info">${item.character} / ${item.outfit} / ${item.expression}${matchLabel}</div>
+                    <div class="pm-trace-prompt">${posText}</div>
+                    ${negText ? `<div style="margin-top:4px;"><span style="color:var(--error); font-size:0.7rem;">NEG:</span> ${negText}</div>` : ''}
+                </div>
+            </div>`;
         }
 
         async function pmTraceSearch() {
@@ -22181,60 +22289,98 @@
             const name = document.getElementById('pm-trace-name').value;
             if (!name) { showToast('프리셋을 선택해주세요', 'error'); return; }
 
-            document.getElementById('pm-trace-results').innerHTML = '<div style="text-align:center; padding:20px; color:var(--text2);">추적 중...</div>';
+            if (pmTraceEs) { pmTraceEs.close(); pmTraceEs = null; }
+
+            const container = document.getElementById('pm-trace-results');
+            container.innerHTML = '<div style="text-align:center; padding:20px; color:var(--text2);">추적 준비 중...</div>';
+            document.getElementById('pm-btn-clear').style.display = 'none';
 
             try {
-                const resp = await fetch('/api/asset_mode/tags', {
+                const resp = await fetch('/api/asset_mode/trace_stream', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ action: 'trace_preset_assets', category, name }),
+                    body: JSON.stringify({ category, name }),
                 });
-                const data = await resp.json();
-                if (data.success) {
-                    pmShowTraceResults(data.results, data.preset_tags, name);
-                } else {
-                    showToast(data.error || '추적 실패', 'error');
-                    document.getElementById('pm-trace-results').innerHTML = '';
+
+                if (!resp.ok) {
+                    showToast('추적 요청 실패', 'error');
+                    container.innerHTML = '';
+                    return;
+                }
+
+                const reader = resp.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+                let presetTags = [];
+                let total = 0;
+                let matchRows = [];
+                let currentEventType = '';
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop();
+
+                    for (const line of lines) {
+                        if (line.startsWith('event: ')) {
+                            currentEventType = line.slice(7).trim();
+                        } else if (line.startsWith('data: ')) {
+                            let data;
+                            try { data = JSON.parse(line.slice(6)); } catch(e) { continue; }
+
+                            if (currentEventType === 'start') {
+                                total = data.total || 0;
+                                presetTags = data.preset_tags || [];
+                                container.innerHTML = `<div style="text-align:center; padding:20px; color:var(--text2);">추적 중... 0/${total}</div>`;
+                            } else if (currentEventType === 'progress') {
+                                const scanned = data.scanned || 0;
+                                const t = data.total || total;
+                                const found = data.found || 0;
+                                const foundLabel = found > 0 ? ` (발견: ${found})` : '';
+                                container.innerHTML = `<div style="text-align:center; padding:20px; color:var(--text2);">추적 중... ${scanned}/${t}${foundLabel}</div>`;
+                            } else if (currentEventType === 'match') {
+                                matchRows.push(pmBuildTraceRow(data, presetTags));
+                            } else if (currentEventType === 'done') {
+                                pmFinalizeTraceResults(matchRows, presetTags, data.total_found || 0);
+                            } else if (currentEventType === 'error') {
+                                showToast(data.error || '추적 실패', 'error');
+                                container.innerHTML = '';
+                            }
+                            currentEventType = '';
+                        }
+                    }
                 }
             } catch (e) {
                 console.error('[PM] 추적 실패:', e);
                 showToast('추적 중 오류 발생', 'error');
-                document.getElementById('pm-trace-results').innerHTML = '';
+                container.innerHTML = '';
             }
         }
 
-        function pmShowTraceResults(results, presetTags, presetName) {
+        function pmFinalizeTraceResults(matchRows, presetTags, totalFound) {
             const container = document.getElementById('pm-trace-results');
 
-            if (!results || results.length === 0) {
+            if (matchRows.length === 0) {
                 container.innerHTML = `<div class="pm-trace-empty">사용된 에셋을 찾을 수 없습니다.</div>`;
+                document.getElementById('pm-btn-clear').style.display = 'none';
                 return;
             }
 
-            // 프리셋 태그 요약
+            document.getElementById('pm-btn-clear').style.display = '';
+
             let html = `<div class="pm-section" style="margin-bottom:12px;">
                 <div style="font-size:0.8rem; color:var(--text2); margin-bottom:4px;">검색 태그:</div>
                 <div class="pm-tags-preview">${(presetTags || []).map(t => `<span class="pm-tag-chip">${t}</span>`).join('')}</div>
-                <div style="font-size:0.8rem; color:var(--text2); margin-top:8px;">${results.length}개 에셋 발견</div>
+                <div style="font-size:0.8rem; color:var(--text2); margin-top:8px;">${totalFound || matchRows.length}개 에셋 발견</div>
             </div>`;
 
-            for (const item of results) {
-                const imgUrl = `/api/asset_mode/characters/${encodeURIComponent(item.character)}/outfits/${encodeURIComponent(item.outfit)}/expressions/${encodeURIComponent(item.expression)}/images/${encodeURIComponent(item.image_file)}`;
-                const posText = pmHighlightTags((item.prompt_data.positive || ''), presetTags);
-                const negText = pmHighlightTags((item.prompt_data.negative || ''), presetTags);
-
-                html += `<div class="pm-trace-row">
-                    <img class="pm-trace-img" src="${imgUrl}" onerror="this.style.display='none'" loading="lazy">
-                    <div style="flex:1; min-width:0;">
-                        <div class="pm-trace-info">${item.character} / ${item.outfit} / ${item.expression}</div>
-                        <div class="pm-trace-prompt">${posText}</div>
-                        ${negText ? `<div style="margin-top:4px;"><span style="color:var(--error); font-size:0.7rem;">NEG:</span> ${negText}</div>` : ''}
-                    </div>
-                </div>`;
-            }
-
+            html += matchRows.join('');
             container.innerHTML = html;
         }
+
 
         function pmHighlightTags(text, tags) {
             if (!text || !tags || tags.length === 0) return text || '';
@@ -22250,6 +22396,11 @@
 
         function pmCloseTraceModal() {
             document.getElementById('pm-trace-modal').style.display = 'none';
+        }
+
+        function pmClearTraceResults() {
+            document.getElementById('pm-trace-results').innerHTML = '';
+            document.getElementById('pm-btn-clear').style.display = 'none';
         }
     </script>
         <div class="ac-tooltip" id="ac-tooltip"></div>
