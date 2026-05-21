@@ -1797,6 +1797,46 @@
             font-weight: bold;
             font-size: 0.8rem;
         }
+        .lora-prompt-chips-container {
+            display: flex;
+            flex-wrap: wrap;
+            width: 100%;
+            padding: 8px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: var(--surface);
+            color: var(--text);
+            font-size: 0.85rem;
+            line-height: 1.5;
+            overflow-y: auto;
+            min-height: 80px;
+            gap: 4px;
+            align-content: flex-start;
+            word-wrap: break-word;
+        }
+        .lora-prompt-chip {
+            display: inline-flex;
+            align-items: center;
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 2px 8px;
+            font-size: 0.75rem;
+            color: var(--text);
+            gap: 4px;
+            white-space: nowrap;
+        }
+        .lora-prompt-chip.added {
+            background: rgba(50,180,50,0.12);
+            border-color: rgba(50,180,50,0.3);
+        }
+        .lora-prompt-chip .remove-chip {
+            cursor: pointer;
+            color: var(--error);
+            font-weight: bold;
+            font-size: 0.8rem;
+            line-height: 1;
+        }
         .asset-generate-btn {
             width: 100%;
             padding: 12px;
@@ -12155,26 +12195,28 @@
                             </div>
                         </div>
                         <div style="flex:1; display:flex; flex-direction:column; gap:8px;">
-                            <div style="font-size:0.85rem; font-weight:700; color:var(--accent); text-align:center; margin-bottom:4px;">수정</div>
+                            <div style="font-size:0.85rem; font-weight:700; color:var(--accent); margin-bottom:4px; display:flex; align-items:center; justify-content:space-between;"><span>수정</span><button id="lora-prompt-mode-toggle" onclick="toggleLoraPromptEditMode()" style="padding:2px 10px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:0.75rem; cursor:pointer;" title="태그 박스 모드로 전환">태그</button></div>
                             <div>
                                 <label style="font-size:0.8rem; font-weight:600; display:block; margin-bottom:4px;">긍정 프롬프트</label>
-                                <div contenteditable="true" id="lora-prompt-positive" onpaste="event.preventDefault(); document.execCommand('insertText', false, event.clipboardData.getData('text/plain'));" style="${_editStyle} max-height:200px;">${_renderPromptDiffSpans(curPos, origPosTags, 'rgba(50,180,50,0.12)')}</div>
+                                <div><div contenteditable="true" id="lora-prompt-positive" onpaste="event.preventDefault(); document.execCommand('insertText', false, event.clipboardData.getData('text/plain'));" style="${_editStyle} max-height:200px;">${_renderPromptDiffSpans(curPos, origPosTags, 'rgba(50,180,50,0.12)')}</div><div id="lora-prompt-positive-chips" class="lora-prompt-chips-container" style="display:none; max-height:200px;"></div></div>
                             </div>
                             <div>
                                 <label style="font-size:0.8rem; font-weight:600; display:block; margin-bottom:4px;">부정 프롬프트</label>
-                                <div contenteditable="true" id="lora-prompt-negative" onpaste="event.preventDefault(); document.execCommand('insertText', false, event.clipboardData.getData('text/plain'));" style="${_editStyle} max-height:120px;">${_renderPromptDiffSpans(curNeg, origNegTags, 'rgba(50,180,50,0.12)')}</div>
+                                <div><div contenteditable="true" id="lora-prompt-negative" onpaste="event.preventDefault(); document.execCommand('insertText', false, event.clipboardData.getData('text/plain'));" style="${_editStyle} max-height:120px;">${_renderPromptDiffSpans(curNeg, origNegTags, 'rgba(50,180,50,0.12)')}</div><div id="lora-prompt-negative-chips" class="lora-prompt-chips-container" style="display:none; max-height:120px;"></div></div>
                             </div>
                         </div>
                     </div>
                 `;
                 modal.style.display = 'flex';
-                setupPromptLiveDiff(origPos, origNeg, origPosTags, origNegTags);
+                _loraPromptState = { origPos, origNeg, origPosTags, origNegTags };
+                loraPromptEditMode = 'text';
+                setupPromptLiveDiff();
             });
         }
 
         async function saveLoraTestPrompt(filename) {
-            const positive = document.getElementById('lora-prompt-positive').textContent;
-            const negative = document.getElementById('lora-prompt-negative').textContent;
+            const positive = _readLoraPromptContent('positive');
+            const negative = _readLoraPromptContent('negative');
             try {
                 const resp = await fetchJSON('/api/lora/test_images/prompt', {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -12183,6 +12225,88 @@
                 if (resp.success) { showToast('프롬프트 저장 완료', 'success'); closeLoraImagePicker(); await loadLoraTestImages(); }
                 else { showToast(resp.error || '저장 실패', 'error'); }
             } catch (e) { console.error('[LORA] 테스트 프롬프트 저장 실패:', e); showToast('저장 실패', 'error'); }
+        }
+
+        // ─── LoRA 프롬프트 편집 모드 토글 ───
+        let _loraPromptState = { mode: 'text', origPos: '', origNeg: '', origPosTags: new Set(), origNegTags: new Set() };
+        let loraPromptEditMode = 'text';
+
+        function toggleLoraPromptEditMode() {
+            const posText = _readLoraPromptContent('positive');
+            const negText = _readLoraPromptContent('negative');
+            loraPromptEditMode = loraPromptEditMode === 'text' ? 'chips' : 'text';
+            _writeLoraPromptContent('positive', posText);
+            _writeLoraPromptContent('negative', negText);
+            _updateLoraModeToggleBtn();
+            _updateLoraPromptDiff();
+        }
+
+        function _readLoraPromptContent(field) {
+            if (loraPromptEditMode === 'text') {
+                const el = document.getElementById('lora-prompt-' + field);
+                return el ? el.textContent : '';
+            } else {
+                const container = document.getElementById('lora-prompt-' + field + '-chips');
+                if (!container) return '';
+                return Array.from(container.querySelectorAll('.lora-prompt-chip'))
+                    .map(c => c.dataset.tag).filter(t => t).join(', ');
+            }
+        }
+
+        function _writeLoraPromptContent(field, text) {
+            const textEl = document.getElementById('lora-prompt-' + field);
+            const chipsEl = document.getElementById('lora-prompt-' + field + '-chips');
+            if (loraPromptEditMode === 'text') {
+                if (textEl) {
+                    const origKey = field === 'positive' ? 'origPosTags' : 'origNegTags';
+                    textEl.innerHTML = _renderPromptDiffSpans(text, _loraPromptState[origKey], 'rgba(50,180,50,0.12)');
+                    textEl.style.display = '';
+                }
+                if (chipsEl) chipsEl.style.display = 'none';
+            } else {
+                if (textEl) textEl.style.display = 'none';
+                if (chipsEl) {
+                    const origKey = field === 'positive' ? 'origPosTags' : 'origNegTags';
+                    chipsEl.innerHTML = _renderLoraPromptChips(text, _loraPromptState[origKey]);
+                    chipsEl.style.display = '';
+                }
+            }
+        }
+
+        function _renderLoraPromptChips(text, origTagsSet) {
+            if (!text) return '';
+            const tags = text.split(',').map(t => t.trim()).filter(t => t);
+            return tags.map(tag => {
+                const isAdded = !origTagsSet.has(tag);
+                const cls = isAdded ? 'lora-prompt-chip added' : 'lora-prompt-chip';
+                return '<span class="' + cls + '" data-tag="' + escapeHtml(tag) + '">' + escapeHtml(tag) + '<span class="remove-chip" onclick="_removeLoraPromptChip(this)">&times;</span></span>';
+            }).join('');
+        }
+
+        function _removeLoraPromptChip(removeBtn) {
+            removeBtn.parentElement.remove();
+            _updateLoraPromptDiff();
+        }
+
+        function _updateLoraPromptDiff() {
+            const posText = _readLoraPromptContent('positive');
+            const negText = _readLoraPromptContent('negative');
+            const origPosEl = document.getElementById('lora-prompt-positive-orig');
+            const origNegEl = document.getElementById('lora-prompt-negative-orig');
+            if (origPosEl) origPosEl.innerHTML = _renderPromptDiffSpans(_loraPromptState.origPos, _tagSet(posText), 'rgba(220,50,50,0.12)');
+            if (origNegEl) origNegEl.innerHTML = _renderPromptDiffSpans(_loraPromptState.origNeg, _tagSet(negText), 'rgba(220,50,50,0.12)');
+        }
+
+        function _updateLoraModeToggleBtn() {
+            const btn = document.getElementById('lora-prompt-mode-toggle');
+            if (!btn) return;
+            if (loraPromptEditMode === 'text') {
+                btn.textContent = '태그';
+                btn.title = '태그 박스 모드로 전환';
+            } else {
+                btn.textContent = '텍스트';
+                btn.title = '텍스트 편집 모드로 전환';
+            }
         }
 
         function _renderPromptDiffSpans(text, otherTagsSet, highlightColor) {
@@ -12200,28 +12324,24 @@
             return new Set(text.split(',').map(t => t.trim()).filter(t => t));
         }
 
-        function setupPromptLiveDiff(origPos, origNeg, origPosTags, origNegTags) {
-            const origPosEl = document.getElementById('lora-prompt-positive-orig');
-            const origNegEl = document.getElementById('lora-prompt-negative-orig');
+        function setupPromptLiveDiff() {
             const editPosEl = document.getElementById('lora-prompt-positive');
             const editNegEl = document.getElementById('lora-prompt-negative');
-            if (!origPosEl || !origNegEl || !editPosEl || !editNegEl) return;
+            if (!editPosEl || !editNegEl) return;
 
-            function updateOriginalDiff() {
-                const curPosTags = _tagSet(editPosEl.textContent);
-                const curNegTags = _tagSet(editNegEl.textContent);
-                origPosEl.innerHTML = _renderPromptDiffSpans(origPos, curPosTags, 'rgba(220,50,50,0.12)');
-                origNegEl.innerHTML = _renderPromptDiffSpans(origNeg, curNegTags, 'rgba(220,50,50,0.12)');
-            }
-
-            editPosEl.addEventListener('input', updateOriginalDiff);
-            editNegEl.addEventListener('input', updateOriginalDiff);
-            editPosEl.addEventListener('blur', function() {
-                this.innerHTML = _renderPromptDiffSpans(this.textContent, origPosTags, 'rgba(50,180,50,0.12)');
-            });
-            editNegEl.addEventListener('blur', function() {
-                this.innerHTML = _renderPromptDiffSpans(this.textContent, origNegTags, 'rgba(50,180,50,0.12)');
-            });
+            editPosEl.oninput = editNegEl.oninput = function() {
+                if (loraPromptEditMode === 'text') _updateLoraPromptDiff();
+            };
+            editPosEl.onblur = function() {
+                if (loraPromptEditMode === 'text') {
+                    this.innerHTML = _renderPromptDiffSpans(this.textContent, _loraPromptState.origPosTags, 'rgba(50,180,50,0.12)');
+                }
+            };
+            editNegEl.onblur = function() {
+                if (loraPromptEditMode === 'text') {
+                    this.innerHTML = _renderPromptDiffSpans(this.textContent, _loraPromptState.origNegTags, 'rgba(50,180,50,0.12)');
+                }
+            };
         }
 
         function showLoraTrainingPrompt(filename) {
@@ -12268,26 +12388,28 @@
                             </div>
                         </div>
                         <div style="flex:1; display:flex; flex-direction:column; gap:8px;">
-                            <div style="font-size:0.85rem; font-weight:700; color:var(--accent); text-align:center; margin-bottom:4px;">수정</div>
+                            <div style="font-size:0.85rem; font-weight:700; color:var(--accent); margin-bottom:4px; display:flex; align-items:center; justify-content:space-between;"><span>수정</span><button id="lora-prompt-mode-toggle" onclick="toggleLoraPromptEditMode()" style="padding:2px 10px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:0.75rem; cursor:pointer;" title="태그 박스 모드로 전환">태그</button></div>
                             <div>
                                 <label style="font-size:0.8rem; font-weight:600; display:block; margin-bottom:4px;">긍정 프롬프트</label>
-                                <div contenteditable="true" id="lora-prompt-positive" onpaste="event.preventDefault(); document.execCommand('insertText', false, event.clipboardData.getData('text/plain'));" style="${_editStyle} max-height:200px;">${_renderPromptDiffSpans(curPos, origPosTags, 'rgba(50,180,50,0.12)')}</div>
+                                <div><div contenteditable="true" id="lora-prompt-positive" onpaste="event.preventDefault(); document.execCommand('insertText', false, event.clipboardData.getData('text/plain'));" style="${_editStyle} max-height:200px;">${_renderPromptDiffSpans(curPos, origPosTags, 'rgba(50,180,50,0.12)')}</div><div id="lora-prompt-positive-chips" class="lora-prompt-chips-container" style="display:none; max-height:200px;"></div></div>
                             </div>
                             <div>
                                 <label style="font-size:0.8rem; font-weight:600; display:block; margin-bottom:4px;">부정 프롬프트</label>
-                                <div contenteditable="true" id="lora-prompt-negative" onpaste="event.preventDefault(); document.execCommand('insertText', false, event.clipboardData.getData('text/plain'));" style="${_editStyle} max-height:120px;">${_renderPromptDiffSpans(curNeg, origNegTags, 'rgba(50,180,50,0.12)')}</div>
+                                <div><div contenteditable="true" id="lora-prompt-negative" onpaste="event.preventDefault(); document.execCommand('insertText', false, event.clipboardData.getData('text/plain'));" style="${_editStyle} max-height:120px;">${_renderPromptDiffSpans(curNeg, origNegTags, 'rgba(50,180,50,0.12)')}</div><div id="lora-prompt-negative-chips" class="lora-prompt-chips-container" style="display:none; max-height:120px;"></div></div>
                             </div>
                         </div>
                     </div>
                 `;
                 modal.style.display = 'flex';
-                setupPromptLiveDiff(origPos, origNeg, origPosTags, origNegTags);
+                _loraPromptState = { origPos, origNeg, origPosTags, origNegTags };
+                loraPromptEditMode = 'text';
+                setupPromptLiveDiff();
             });
         }
 
         async function saveLoraTrainingPrompt(filename) {
-            const positive = document.getElementById('lora-prompt-positive').textContent;
-            const negative = document.getElementById('lora-prompt-negative').textContent;
+            const positive = _readLoraPromptContent('positive');
+            const negative = _readLoraPromptContent('negative');
             try {
                 const resp = await fetchJSON('/api/lora/training_images/prompt', {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
