@@ -96,6 +96,8 @@ DEFAULT_CONFIG = {
     "enhance_mode_enabled": False,  # 프롬프트 강화 모드 활성화 여부
     "enhance_prompt_file": "",  # 프롬프트 강화 파일명 (customprompt/)
     "asset_workflow_source_path": "",  # 에셋 생성 워크플로우 원본 소스 전체 경로
+    "anima_asset_workflow_source_path": "",  # ANIMA 에셋 생성 워크플로우 원본 소스 전체 경로
+    "asset_workflow_type": "regular",  # 에셋 워크플로우 타입: "regular" | "anima"
     "tag_analysis_workflow_source_path": "",  # 태그 분석 워크플로우 원본 소스 전체 경로
     "asset_tag_analysis_workflow_source_path": "",  # 에셋용 태그 분석 워크플로우 원본 소스 전체 경로
     "lora_training_workflow_source_paths": {"anima": "", "sdxl": ""},  # 로라 학습 워크플로우 원본 소스 경로 (profile별)
@@ -199,6 +201,8 @@ print(f"[ENHANCE_MODE] 초기화: enabled={enhance_mode.enabled}, prompt_file={e
 
 # ─── 에셋 생성 모드 초기화 ───
 asset_mode.workflow_source_path = app_config.get("asset_workflow_source_path", "")
+asset_mode.anima_workflow_source_path = app_config.get("anima_asset_workflow_source_path", "")
+asset_mode.workflow_type = app_config.get("asset_workflow_type", "regular")
 asset_mode.mode_log_func = mode_logger.log
 asset_mode.load_tags()
 print(f"[ASSET_MODE] 초기화: source={asset_mode.workflow_source_path}, characters={len(asset_mode.list_characters())}")
@@ -2646,6 +2650,12 @@ async def handle_api_config(request: web.Request) -> web.Response:
                 asset_mode.workflow_source_path = str(body["asset_workflow_source_path"])
                 asset_mode._asset_api_workflow = None
                 asset_mode._asset_hash = ""
+            if "anima_asset_workflow_source_path" in body:
+                asset_mode.anima_workflow_source_path = str(body["anima_asset_workflow_source_path"])
+                asset_mode._asset_api_workflow = None
+                asset_mode._asset_hash = ""
+            if "asset_workflow_type" in body:
+                asset_mode.workflow_type = str(body["asset_workflow_type"])
 
             # 에셋툴 모드 설정 업데이트
             if "tag_analysis_workflow_source_path" in body:
@@ -3564,6 +3574,10 @@ async def handle_api_asset_mode_generate(request: web.Request) -> web.Response:
             artist_preset=body.get("artist_preset", ""),
             natural_language=body.get("natural_language", ""),
             lora_trigger_words=body.get("lora_trigger_words", ""),
+            anima_artist_preset=body.get("anima_artist_preset", ""),
+            asset_workflow_type=body.get("asset_workflow_type", "regular"),
+            anima_lora_trigger_words=body.get("anima_lora_trigger_words", ""),
+            sdxl_lora_trigger_words=body.get("sdxl_lora_trigger_words", ""),
         )
         return web.json_response(result)
     except Exception as e:

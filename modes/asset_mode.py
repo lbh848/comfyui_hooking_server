@@ -87,6 +87,8 @@ class AssetMode:
     def __init__(self):
         self.enabled: bool = False
         self.workflow_source_path: str = ""
+        self.anima_workflow_source_path: str = ""
+        self.workflow_type: str = "regular"
         self._asset_api_workflow: Optional[dict] = None
         self._asset_hash: str = ""
         self._tags: dict = copy.deepcopy(DEFAULT_TAGS)
@@ -782,6 +784,10 @@ class AssetMode:
         artist_preset: str = "",
         natural_language: str = "",
         lora_trigger_words: str = "",
+        anima_artist_preset: str = "",
+        asset_workflow_type: str = "regular",
+        anima_lora_trigger_words: str = "",
+        sdxl_lora_trigger_words: str = "",
     ) -> tuple[str, str]:
         q_tags = self._tags.get("quality", [])
         c_tags = self._tags.get("composition", [])
@@ -791,40 +797,102 @@ class AssetMode:
         n_tags = self._tags.get("negative", [])
         cn_tags = self._tags.get("character_negative", [])
         artist_tags = self._tags.get("artist_presets", {}).get(artist_preset, [])
+        anima_artist_tags = self._tags.get("artist_presets", {}).get(anima_artist_preset, [])
 
-        positive_parts = []
-        # 1. LoRA 트리거 워드
-        if lora_trigger_words.strip():
-            positive_parts.append(lora_trigger_words.strip())
-        # 2. artist tags
-        for t in artist_tags:
-            if t.strip():
-                positive_parts.append(t.strip())
-        # 3. quality tags
-        for t in q_tags:
-            if t.strip():
-                positive_parts.append(t.strip())
-        # 4. composition tags
-        for t in c_tags:
-            if t.strip():
-                positive_parts.append(t.strip())
-        # 5. appearance tags
-        for t in app_tags:
-            if t.strip():
-                positive_parts.append(t.strip())
-        # 6. expression tags
-        for t in expr_tags:
-            if t.strip():
-                positive_parts.append(t.strip())
-        # 7. outfit tags
-        for t in outfit_tags:
-            if t.strip():
-                positive_parts.append(t.strip())
-        # 8. natural language text
-        if natural_language.strip():
-            positive_parts.append(natural_language.strip())
+        if asset_workflow_type == "anima":
+            # ANIMA 모드: 2섹션 프롬프트 조립
+            section1_parts = []
+            # 1. ANIMA LoRA 트리거 워드
+            if anima_lora_trigger_words.strip():
+                section1_parts.append(anima_lora_trigger_words.strip())
+            # 2. ANIMA 아티스트 프리셋
+            for t in anima_artist_tags:
+                if t.strip():
+                    section1_parts.append(t.strip())
+            # 3-7. 공통 태그 (quality → composition → appearance → expression → outfit)
+            for t in q_tags:
+                if t.strip():
+                    section1_parts.append(t.strip())
+            for t in c_tags:
+                if t.strip():
+                    section1_parts.append(t.strip())
+            for t in app_tags:
+                if t.strip():
+                    section1_parts.append(t.strip())
+            for t in expr_tags:
+                if t.strip():
+                    section1_parts.append(t.strip())
+            for t in outfit_tags:
+                if t.strip():
+                    section1_parts.append(t.strip())
+            # 8. 자연어
+            if natural_language.strip():
+                section1_parts.append(natural_language.strip())
 
-        positive = ", ".join(positive_parts)
+            section2_parts = []
+            # 1. SDXL LoRA 트리거 워드
+            if sdxl_lora_trigger_words.strip():
+                section2_parts.append(sdxl_lora_trigger_words.strip())
+            # 2. 일반 아티스트 프리셋
+            for t in artist_tags:
+                if t.strip():
+                    section2_parts.append(t.strip())
+            # 3-7. 공통 태그 (중복)
+            for t in q_tags:
+                if t.strip():
+                    section2_parts.append(t.strip())
+            for t in c_tags:
+                if t.strip():
+                    section2_parts.append(t.strip())
+            for t in app_tags:
+                if t.strip():
+                    section2_parts.append(t.strip())
+            for t in expr_tags:
+                if t.strip():
+                    section2_parts.append(t.strip())
+            for t in outfit_tags:
+                if t.strip():
+                    section2_parts.append(t.strip())
+            # 자연어 없음
+
+            positive = ", ".join(section1_parts)
+            positive += "\n[SDXL]"
+            positive += "\n" + ", ".join(section2_parts)
+        else:
+            # 일반 모드: 기존 로직 유지
+            positive_parts = []
+            # 1. LoRA 트리거 워드
+            if lora_trigger_words.strip():
+                positive_parts.append(lora_trigger_words.strip())
+            # 2. artist tags
+            for t in artist_tags:
+                if t.strip():
+                    positive_parts.append(t.strip())
+            # 3. quality tags
+            for t in q_tags:
+                if t.strip():
+                    positive_parts.append(t.strip())
+            # 4. composition tags
+            for t in c_tags:
+                if t.strip():
+                    positive_parts.append(t.strip())
+            # 5. appearance tags
+            for t in app_tags:
+                if t.strip():
+                    positive_parts.append(t.strip())
+            # 6. expression tags
+            for t in expr_tags:
+                if t.strip():
+                    positive_parts.append(t.strip())
+            # 7. outfit tags
+            for t in outfit_tags:
+                if t.strip():
+                    positive_parts.append(t.strip())
+            # 8. natural language text
+            if natural_language.strip():
+                positive_parts.append(natural_language.strip())
+
+            positive = ", ".join(positive_parts)
 
         positive += f"\n[FACE_ID_ACTIVATE]\n{'true' if face_id_enabled else 'false'}"
         positive += f"\n[FACE_ID_STR]\n{face_id_strength}"
@@ -1040,6 +1108,10 @@ class AssetMode:
         artist_preset: str = "",
         natural_language: str = "",
         lora_trigger_words: str = "",
+        anima_artist_preset: str = "",
+        asset_workflow_type: str = "regular",
+        anima_lora_trigger_words: str = "",
+        sdxl_lora_trigger_words: str = "",
     ) -> dict:
         async with self._lock:
             self._is_generating = True
@@ -1053,6 +1125,8 @@ class AssetMode:
                     hrf_activate, hrf_size, hrf_restore_size, hrf_control_net, img_w, img_h,
                     fd_activate, hd_activate, ed_activate,
                     artist_preset, natural_language, lora_trigger_words,
+                    anima_artist_preset, asset_workflow_type,
+                    anima_lora_trigger_words, sdxl_lora_trigger_words,
                 )
             finally:
                 self._is_generating = False
@@ -1085,163 +1159,182 @@ class AssetMode:
         artist_preset: str,
         natural_language: str,
         lora_trigger_words: str,
+        anima_artist_preset: str = "",
+        asset_workflow_type: str = "regular",
+        anima_lora_trigger_words: str = "",
+        sdxl_lora_trigger_words: str = "",
     ) -> dict:
-        ok = await self.update_asset_workflow()
-        if not ok:
-            error_msg = "워크플로우 준비 실패 (소스 경로 및 mode_workflow 폴더 모두 탐색 실패)"
-            print(f"[ASSET] {error_msg}")
-            return {"success": False, "error": error_msg}
+        # ANIMA 모드 시 워크플로우 경로 교체
+        saved_workflow_path = self.workflow_source_path
+        if asset_workflow_type == "anima" and self.anima_workflow_source_path:
+            self.workflow_source_path = self.anima_workflow_source_path
+            self._asset_api_workflow = None
+            self._asset_hash = ""
+        try:
+            ok = await self.update_asset_workflow()
+            if not ok:
+                error_msg = "워크플로우 준비 실패 (소스 경로 및 mode_workflow 폴더 모두 탐색 실패)"
+                print(f"[ASSET] {error_msg}")
+                return {"success": False, "error": error_msg}
 
-        pose_data = None
-        if pose_enabled and pose_id:
-            pose_data = self._load_pose_data(pose_id)
+            pose_data = None
+            if pose_enabled and pose_id:
+                pose_data = self._load_pose_data(pose_id)
 
-        positive, negative = self.build_prompts(
-            appearance, outfit, expression,
-            face_id_enabled=face_id_enabled,
-            face_id_strength=face_id_strength,
-            face_id_dir=reference_subfolder,
-            style_ref_enabled=style_ref_enabled,
-            style_ref_strength=style_ref_strength,
-            style_ref_dir=style_ref_subfolder,
-            lora_activate=lora_activate,
-            lora_data=lora_data,
-            pose_enabled=pose_enabled,
-            pose_data=pose_data,
-            hrf_activate=hrf_activate,
-            hrf_size=hrf_size,
-            hrf_restore_size=hrf_restore_size,
-            hrf_control_net=hrf_control_net,
-            img_w=img_w,
-            img_h=img_h,
-            fd_activate=fd_activate,
-            hd_activate=hd_activate,
-            ed_activate=ed_activate,
-            artist_preset=artist_preset,
-            natural_language=natural_language,
-            lora_trigger_words=lora_trigger_words,
-        )
-        if not positive:
-            return {"success": False, "error": "프롬프트가 비어있음"}
+            positive, negative = self.build_prompts(
+                appearance, outfit, expression,
+                face_id_enabled=face_id_enabled,
+                face_id_strength=face_id_strength,
+                face_id_dir=reference_subfolder,
+                style_ref_enabled=style_ref_enabled,
+                style_ref_strength=style_ref_strength,
+                style_ref_dir=style_ref_subfolder,
+                lora_activate=lora_activate,
+                lora_data=lora_data,
+                pose_enabled=pose_enabled,
+                pose_data=pose_data,
+                hrf_activate=hrf_activate,
+                hrf_size=hrf_size,
+                hrf_restore_size=hrf_restore_size,
+                hrf_control_net=hrf_control_net,
+                img_w=img_w,
+                img_h=img_h,
+                fd_activate=fd_activate,
+                hd_activate=hd_activate,
+                ed_activate=ed_activate,
+                artist_preset=artist_preset,
+                natural_language=natural_language,
+                lora_trigger_words=lora_trigger_words,
+                anima_artist_preset=anima_artist_preset,
+                asset_workflow_type=asset_workflow_type,
+                anima_lora_trigger_words=anima_lora_trigger_words,
+                sdxl_lora_trigger_words=sdxl_lora_trigger_words,
+            )
+            if not positive:
+                return {"success": False, "error": "프롬프트가 비어있음"}
 
-        self._log("generate_start", {
-            "character": character, "outfit": outfit, "expression": expression,
-            "positive_preview": positive[:100],
-        })
-
-        if self.notify_frontend_func:
-            await self.notify_frontend_func("asset_generation_started", {
+            self._log("generate_start", {
                 "character": character, "outfit": outfit, "expression": expression,
+                "positive_preview": positive[:100],
             })
 
-        if self.build_prompt_with_workflow_func:
-            workflow = self.build_prompt_with_workflow_func(
-                self._asset_api_workflow, positive, negative,
-            )
-        else:
-            workflow = copy.deepcopy(self._asset_api_workflow)
+            if self.notify_frontend_func:
+                await self.notify_frontend_func("asset_generation_started", {
+                    "character": character, "outfit": outfit, "expression": expression,
+                })
+
+            if self.build_prompt_with_workflow_func:
+                workflow = self.build_prompt_with_workflow_func(
+                    self._asset_api_workflow, positive, negative,
+                )
+            else:
+                workflow = copy.deepcopy(self._asset_api_workflow)
+                for nid, ninfo in workflow.items():
+                    if not isinstance(ninfo, dict):
+                        continue
+                    title = ninfo.get("_meta", {}).get("title", "")
+                    if title == "긍정프롬프트":
+                        ninfo["inputs"]["value"] = positive
+                    elif title == "부정프롬프트":
+                        ninfo["inputs"]["value"] = negative
+
+            final_positive = positive
+            final_negative = negative
             for nid, ninfo in workflow.items():
                 if not isinstance(ninfo, dict):
                     continue
                 title = ninfo.get("_meta", {}).get("title", "")
                 if title == "긍정프롬프트":
-                    ninfo["inputs"]["value"] = positive
+                    final_positive = ninfo.get("inputs", {}).get("value", positive)
                 elif title == "부정프롬프트":
-                    ninfo["inputs"]["value"] = negative
+                    final_negative = ninfo.get("inputs", {}).get("value", negative)
 
-        final_positive = positive
-        final_negative = negative
-        for nid, ninfo in workflow.items():
-            if not isinstance(ninfo, dict):
-                continue
-            title = ninfo.get("_meta", {}).get("title", "")
-            if title == "긍정프롬프트":
-                final_positive = ninfo.get("inputs", {}).get("value", positive)
-            elif title == "부정프롬프트":
-                final_negative = ninfo.get("inputs", {}).get("value", negative)
+            if self.submit_workflow_func:
+                async def _on_progress(value, max_value):
+                    if self.notify_frontend_func:
+                        await self.notify_frontend_func("asset_generation_progress", {
+                            "value": value, "max": max_value,
+                            "character": character, "outfit": outfit, "expression": expression,
+                        })
 
-        if self.submit_workflow_func:
-            async def _on_progress(value, max_value):
+                img_bytes, error = await self.submit_workflow_func(workflow, progress_callback=_on_progress)
+            else:
+                return {"success": False, "error": "submit_workflow_func 미설정"}
+
+            if not img_bytes:
+                error_msg = error if isinstance(error, str) else "이미지 생성 실패"
+                print(f"[ASSET] 에셋 생성 실패 - 캐릭터: {character}, 복장: {outfit}, 표정: {expression}")
+                print(f"[ASSET] 실패 사유: {error_msg}")
+                if isinstance(error, dict):
+                    print(f"[ASSET] 상세 에러: {json.dumps(error, ensure_ascii=False, indent=2)}")
+                self._log("generate_failed", {"error": error_msg})
                 if self.notify_frontend_func:
-                    await self.notify_frontend_func("asset_generation_progress", {
-                        "value": value, "max": max_value,
+                    await self.notify_frontend_func("asset_generation_completed", {
+                        "status": "error", "error": error_msg,
                         "character": character, "outfit": outfit, "expression": expression,
                     })
+                return {"success": False, "error": error_msg}
 
-            img_bytes, error = await self.submit_workflow_func(workflow, progress_callback=_on_progress)
-        else:
-            return {"success": False, "error": "submit_workflow_func 미설정"}
+            save_dir = os.path.join(
+                ASSET_DIR,
+                self._safe_dirname(character),
+                self._safe_dirname(outfit),
+                self._safe_dirname(expression),
+            )
+            os.makedirs(save_dir, exist_ok=True)
 
-        if not img_bytes:
-            error_msg = error if isinstance(error, str) else "이미지 생성 실패"
-            print(f"[ASSET] 에셋 생성 실패 - 캐릭터: {character}, 복장: {outfit}, 표정: {expression}")
-            print(f"[ASSET] 실패 사유: {error_msg}")
-            if isinstance(error, dict):
-                print(f"[ASSET] 상세 에러: {json.dumps(error, ensure_ascii=False, indent=2)}")
-            self._log("generate_failed", {"error": error_msg})
-            if self.notify_frontend_func:
-                await self.notify_frontend_func("asset_generation_completed", {
-                    "status": "error", "error": error_msg,
-                    "character": character, "outfit": outfit, "expression": expression,
-                })
-            return {"success": False, "error": error_msg}
-
-        save_dir = os.path.join(
-            ASSET_DIR,
-            self._safe_dirname(character),
-            self._safe_dirname(outfit),
-            self._safe_dirname(expression),
-        )
-        os.makedirs(save_dir, exist_ok=True)
-
-        filename = f"{int(time.time())}_{uuid.uuid4().hex[:6]}.webp"
-        filepath = os.path.join(save_dir, filename)
-
-        try:
-            from PIL import Image
-            from io import BytesIO
-            img = Image.open(BytesIO(img_bytes))
-            save_img = img if img.mode == "RGBA" else img.convert("RGB")
-            save_img.save(filepath, format="WEBP", quality=90, method=4)
-        except Exception:
-            filename = f"{int(time.time())}_{uuid.uuid4().hex[:6]}.png"
+            filename = f"{int(time.time())}_{uuid.uuid4().hex[:6]}.webp"
             filepath = os.path.join(save_dir, filename)
-            with open(filepath, "wb") as f:
-                f.write(img_bytes)
 
-        prompt_record_path = os.path.join(save_dir, f"{os.path.splitext(filename)[0]}_prompt.json")
-        try:
-            with open(prompt_record_path, "w", encoding="utf-8") as f:
-                json.dump({
-                    "positive": final_positive,
-                    "negative": final_negative,
-                    "character": character,
-                    "appearance": appearance,
-                    "outfit": outfit,
-                    "expression": expression,
-                }, f, ensure_ascii=False, indent=2)
-        except Exception:
-            pass
+            try:
+                from PIL import Image
+                from io import BytesIO
+                img = Image.open(BytesIO(img_bytes))
+                save_img = img if img.mode == "RGBA" else img.convert("RGB")
+                save_img.save(filepath, format="WEBP", quality=90, method=4)
+            except Exception:
+                filename = f"{int(time.time())}_{uuid.uuid4().hex[:6]}.png"
+                filepath = os.path.join(save_dir, filename)
+                with open(filepath, "wb") as f:
+                    f.write(img_bytes)
 
-        self._log("generate_saved", {
-            "character": character, "outfit": outfit, "expression": expression,
-            "filename": filename, "size": len(img_bytes),
-        })
+            prompt_record_path = os.path.join(save_dir, f"{os.path.splitext(filename)[0]}_prompt.json")
+            try:
+                with open(prompt_record_path, "w", encoding="utf-8") as f:
+                    json.dump({
+                        "positive": final_positive,
+                        "negative": final_negative,
+                        "character": character,
+                        "appearance": appearance,
+                        "outfit": outfit,
+                        "expression": expression,
+                    }, f, ensure_ascii=False, indent=2)
+            except Exception:
+                pass
 
-        if self.notify_frontend_func:
-            await self.notify_frontend_func("asset_generation_completed", {
-                "status": "success",
+            self._log("generate_saved", {
                 "character": character, "outfit": outfit, "expression": expression,
-                "filename": filename,
+                "filename": filename, "size": len(img_bytes),
             })
 
-        return {
-            "success": True,
-            "filename": filename,
-            "character": character,
-            "outfit": outfit,
-            "expression": expression,
-        }
+            if self.notify_frontend_func:
+                await self.notify_frontend_func("asset_generation_completed", {
+                    "status": "success",
+                    "character": character, "outfit": outfit, "expression": expression,
+                    "filename": filename,
+                })
+
+            return {
+                "success": True,
+                "filename": filename,
+                "character": character,
+                "outfit": outfit,
+                "expression": expression,
+            }
+        finally:
+            # ANIMA 모드 워크플로우 경로 복원
+            if asset_workflow_type == "anima" and self.anima_workflow_source_path:
+                self.workflow_source_path = saved_workflow_path
 
     # ─── 폴더/이미지 관리 ─────────────────────────────────
     @staticmethod

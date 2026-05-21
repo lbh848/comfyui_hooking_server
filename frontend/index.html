@@ -343,6 +343,9 @@
         .prompt-cat-expression { background: rgba(255, 190, 130, 0.18); border-radius: 3px; padding: 1px 4px; }
         .prompt-cat-outfit    { background: rgba(130, 220, 170, 0.18); border-radius: 3px; padding: 1px 4px; }
         .prompt-cat-nl        { background: rgba(200, 200, 210, 0.18); border-radius: 3px; padding: 1px 4px; }
+        .prompt-cat-anima-lora    { background: rgba(255, 120, 50, 0.18); border-radius: 3px; padding: 1px 4px; }
+        .prompt-cat-sdxl-lora     { background: rgba(50, 180, 255, 0.18); border-radius: 3px; padding: 1px 4px; }
+        .prompt-cat-anima-artist  { background: rgba(255, 100, 150, 0.22); border-radius: 3px; padding: 1px 4px; }
 
         .prompt-toggle-btn {
             background: var(--surface2);
@@ -2926,6 +2929,24 @@
                     </div>
                     </div>
 
+                    <!-- ANIMA 아티스트 프리셋 섹션 (ANIMA 모드에서만 표시) -->
+                    <div id="anima-artist-preset-section" style="display:none; background:rgba(233,30,99,0.12); border-radius:8px; padding:10px; margin-bottom:8px; border:1px dashed rgba(233,30,99,0.4);">
+                    <div class="section-title">ANIMA 아티스트 프리셋</div>
+                    <div style="margin-bottom:6px;">
+                        <div id="anima-artist-preset-select-container"></div>
+                        <div style="display:flex; gap:4px; margin-top:3px;">
+                            <button onclick="addAnimaArtistPreset()" style="flex:1; background:var(--accent); color:#fff; border:none; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">추가</button>
+                            <button onclick="duplicateAnimaArtistPreset()" style="flex:1; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">복제</button>
+                            <button onclick="deleteAnimaArtistPreset()" style="flex:1; background:var(--error); color:#fff; border:none; padding:2px 6px; border-radius:4px; cursor:pointer; font-size:0.7rem;">삭제</button>
+                        </div>
+                    </div>
+                    <div id="anima-artist-tags" class="tag-list"></div>
+                    <div class="inline-add" style="margin-top:4px; position:relative;">
+                        <input type="text" id="anima-new-artist-tag" placeholder="ANIMA 아티스트 태그">
+                        <button onclick="addAnimaArtistTag()">+</button>
+                    </div>
+                    </div>
+
                     <!-- 품질 태그 섹션 -->
                     <div style="background:rgba(76,175,80,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
                     <div class="section-title">품질 태그</div>
@@ -3110,7 +3131,7 @@
                     </div>
 
                     <!-- 포즈 섹션 -->
-                    <div style="background:rgba(0,188,212,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
+                    <div id="asset-pose-container" style="background:rgba(0,188,212,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
                         <div style="display:flex; align-items:center; gap:8px;">
                             <div class="section-title" style="margin-bottom:0;">포즈</div>
                             <label class="toggle-switch">
@@ -4120,7 +4141,7 @@
     </div>
 
     <!-- 설정 모달 -->
-    <div class="modal settings-modal" id="settings-modal" onclick="if (event.target === this) closeSettingsModal()">
+    <div class="modal settings-modal" id="settings-modal">
         <div class="modal-content">
             <div class="modal-header">
                 <h2>⚙️ 설정</h2>
@@ -4553,6 +4574,26 @@
 
                 <!-- Tab 4: 에셋 관련 설정 -->
                 <div class="settings-tab-panel" id="settings-tab-asset">
+                    <!-- 에셋 워크플로우 타입 선택 -->
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="title">에셋 워크플로우 타입</div>
+                            <div class="desc">일반 / ANIMA 워크플로우 중 선택</div>
+                        </div>
+                        <div class="setting-control" style="display:flex; align-items:center; gap:16px;">
+                            <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                                <input type="radio" name="workflow-type" id="setting-workflow-type-regular" value="regular" checked
+                                       onchange="onWorkflowTypeChange('regular')">
+                                <span>일반</span>
+                            </label>
+                            <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                                <input type="radio" name="workflow-type" id="setting-workflow-type-anima" value="anima"
+                                       onchange="onWorkflowTypeChange('anima')">
+                                <span>ANIMA</span>
+                            </label>
+                        </div>
+                    </div>
+
                     <!-- 에셋 생성 모드 -->
                     <div class="setting-row">
                         <div class="setting-label">
@@ -4569,6 +4610,23 @@
                         <div class="hint">공통설정 탭의 '베이스 경로'에서 검색됩니다</div>
                     </div>
                     <input type="hidden" id="setting-asset-workflow-source-path">
+
+                    <!-- ANIMA 에셋 생성 워크플로우 -->
+                    <div class="setting-row" id="setting-anima-workflow-row" style="display:none;">
+                        <div class="setting-label">
+                            <div class="title">🔧 ANIMA 에셋 생성 워크플로우</div>
+                            <div class="desc">ANIMA 모드 에셋 이미지 생성에 사용할 워크플로우 파일 (공통설정 탭 베이스 경로 공유)</div>
+                        </div>
+                    </div>
+                    <div class="form-group" id="setting-anima-workflow-form" style="display:none; margin-top:-8px;">
+                        <div class="autocomplete-wrapper">
+                            <input type="text" id="setting-anima-asset-workflow-filename" placeholder="예: ANIMA에셋생성워크플로우.json"
+                                   oninput="onAnimaAssetFilenameInput(this.value)" onfocus="onAnimaAssetFilenameInput(this.value)">
+                            <div class="autocomplete-list" id="anima-asset-workflow-autocomplete"></div>
+                        </div>
+                        <div class="hint">공통설정 탭의 '베이스 경로'에서 검색됩니다</div>
+                    </div>
+                    <input type="hidden" id="setting-anima-asset-workflow-source-path">
 
                     <!-- 스마트 매치용 태그 분석 모드 -->
                     <div class="setting-row">
@@ -6223,6 +6281,18 @@
             document.getElementById('setting-asset-workflow-filename').value = assetSplit.filename;
             document.getElementById('setting-asset-workflow-source-path').value = assetPath;
 
+            // ANIMA 에셋 생성 모드
+            const animaAssetPath = currentConfig.anima_asset_workflow_source_path || '';
+            const animaAssetSplit = splitWorkflowPath(animaAssetPath);
+            document.getElementById('setting-anima-asset-workflow-filename').value = animaAssetSplit.filename;
+            document.getElementById('setting-anima-asset-workflow-source-path').value = animaAssetPath;
+
+            // 워크플로우 타입
+            const workflowType = currentConfig.asset_workflow_type || 'regular';
+            document.getElementById('setting-workflow-type-regular').checked = (workflowType === 'regular');
+            document.getElementById('setting-workflow-type-anima').checked = (workflowType === 'anima');
+            onWorkflowTypeChange(workflowType);
+
             // 태그 분석 모드
             const tagAnalysisPath = currentConfig.tag_analysis_workflow_source_path || '';
             const tagAnalysisSplit = splitWorkflowPath(tagAnalysisPath);
@@ -6374,6 +6444,8 @@
                 enhance_mode_enabled: '프롬프트 강화 모드',
                 enhance_prompt_file: '강화 프롬프트 파일',
                 asset_workflow_source_path: '에셋 생성 워크플로우',
+                anima_asset_workflow_source_path: 'ANIMA 에셋 생성 워크플로우',
+                asset_workflow_type: '에셋 워크플로우 타입',
                 tag_analysis_workflow_source_path: '스마트 매치용 태그 분석 워크플로우',
                 asset_tag_analysis_workflow_source_path: '에셋용 태그 분석 워크플로우',
                 dwpose_det_model: 'DWPose 탐지 모델',
@@ -6577,6 +6649,8 @@
                 enhance_mode_enabled: document.getElementById('setting-enhance-enabled').checked,
                 enhance_prompt_file: document.getElementById('setting-enhance-prompt-file').value,
                 asset_workflow_source_path: document.getElementById('setting-asset-workflow-source-path').value,
+                anima_asset_workflow_source_path: document.getElementById('setting-anima-asset-workflow-source-path').value,
+                asset_workflow_type: document.getElementById('setting-workflow-type-anima').checked ? 'anima' : 'regular',
                 tag_analysis_workflow_source_path: document.getElementById('setting-tag-analysis-workflow-source-path').value,
                 asset_tag_analysis_workflow_source_path: document.getElementById('setting-asset-tag-analysis-workflow-source-path').value,
                 lora_training_workflow_source_paths: {
@@ -6595,8 +6669,9 @@
 
                 if (result.success) {
                     showToast('설정이 저장되었습니다', 'success');
-                    closeSettingsModal();
                     currentConfig = result.config;
+                    // ANIMA UI 가시성 업데이트
+                    updateAnimaUIVisibility();
                     // 배치 모드 상태 갱신
                     loadBatchModeStatus();
                     // 버튼 가시성 업데이트
@@ -7286,6 +7361,43 @@
             const baseDir = document.getElementById('setting-workflow-base-dir').value;
             const filename = document.getElementById('setting-asset-workflow-filename').value;
             document.getElementById('setting-asset-workflow-source-path').value = combineWorkflowPath(baseDir, filename);
+        }
+
+        // 에셋 워크플로우 타입 변경
+        function onWorkflowTypeChange(type) {
+            const isAnima = type === 'anima';
+            document.getElementById('setting-anima-workflow-row').style.display = isAnima ? 'flex' : 'none';
+            document.getElementById('setting-anima-workflow-form').style.display = isAnima ? 'block' : 'none';
+        }
+
+        // ANIMA 에셋 생성 워크플로우 자동완성
+        let animaAssetAutocompleteTimeout;
+        async function onAnimaAssetFilenameInput(value) {
+            updateAnimaAssetWorkflowPath();
+            const list = document.getElementById('anima-asset-workflow-autocomplete');
+            const baseDir = document.getElementById('setting-workflow-base-dir').value.trim();
+            clearTimeout(animaAssetAutocompleteTimeout);
+            animaAssetAutocompleteTimeout = setTimeout(async () => {
+                try {
+                    const params = new URLSearchParams({ search: value, base_dir: baseDir });
+                    const data = await fetchJSON(`/api/workflow_files?${params}`);
+                    renderAutocompleteItems(data.files, list);
+                } catch (e) {
+                    list.classList.remove('visible');
+                }
+            }, 300);
+        }
+
+        function selectAnimaAssetWorkflowFile(fullPath, filename) {
+            document.getElementById('setting-anima-asset-workflow-filename').value = filename;
+            document.getElementById('setting-anima-asset-workflow-source-path').value = fullPath;
+            document.getElementById('anima-asset-workflow-autocomplete').classList.remove('visible');
+        }
+
+        function updateAnimaAssetWorkflowPath() {
+            const baseDir = document.getElementById('setting-workflow-base-dir').value;
+            const filename = document.getElementById('setting-anima-asset-workflow-filename').value;
+            document.getElementById('setting-anima-asset-workflow-source-path').value = combineWorkflowPath(baseDir, filename);
         }
 
         // 태그 분석 워크플로우 자동완성
@@ -12535,6 +12647,18 @@
             const prevNL = getAssetSelectValue('asset-natural-language-preset-select');
             if (prevNL && assetTags.natural_language_presets?.[prevNL] !== undefined) loadNaturalLanguagePreset();
 
+            // ANIMA 아티스트 프리셋 custom-select 렌더
+            const prevAnimaArtist = getAssetSelectValue('anima-artist-preset-select');
+            const animaArtistContainer = document.getElementById('anima-artist-preset-select-container');
+            if (animaArtistContainer) {
+                animaArtistContainer.innerHTML = buildAssetCustomSelect(assetTags.artist_presets || {}, prevAnimaArtist, '-- ANIMA 아티스트 프리셋 --', 'anima-artist-preset-select', 'loadAnimaArtistPreset');
+                bindAssetCustomSelects();
+            }
+            if (prevAnimaArtist && assetTags.artist_presets?.[prevAnimaArtist]) loadAnimaArtistPreset();
+
+            // ANIMA UI 가시성 업데이트
+            updateAnimaUIVisibility();
+
             // 메인 영역 갤러리 네비게이션 새로고침
             renderAssetMainArea();
 
@@ -12918,14 +13042,17 @@
 
         // ─── 프롬프트 카테고리별 컬러 렌더링 ──────────────────────
         const PROMPT_CATEGORIES = [
-            { key: 'lora',        label: 'LORA 트리거',  cls: 'prompt-cat-lora' },
-            { key: 'artist',      label: '아티스트',      cls: 'prompt-cat-artist' },
-            { key: 'quality',     label: '품질',          cls: 'prompt-cat-quality' },
-            { key: 'composition', label: '구도/기타',     cls: 'prompt-cat-composition' },
-            { key: 'appearance',  label: '외모',          cls: 'prompt-cat-appearance' },
-            { key: 'expression',  label: '표정',          cls: 'prompt-cat-expression' },
-            { key: 'outfit',      label: '복장',          cls: 'prompt-cat-outfit' },
-            { key: 'nl',          label: '자연어',        cls: 'prompt-cat-nl' },
+            { key: 'lora',          label: 'LORA 트리거',  cls: 'prompt-cat-lora' },
+            { key: 'anima_lora',    label: 'ANIMA LORA',  cls: 'prompt-cat-anima-lora' },
+            { key: 'sdxl_lora',     label: 'SDXL LORA',   cls: 'prompt-cat-sdxl-lora' },
+            { key: 'artist',       label: '아티스트',      cls: 'prompt-cat-artist' },
+            { key: 'anima_artist', label: 'ANIMA 아티스트', cls: 'prompt-cat-anima-artist' },
+            { key: 'quality',      label: '품질',          cls: 'prompt-cat-quality' },
+            { key: 'composition',  label: '구도/기타',     cls: 'prompt-cat-composition' },
+            { key: 'appearance',   label: '외모',          cls: 'prompt-cat-appearance' },
+            { key: 'expression',   label: '표정',          cls: 'prompt-cat-expression' },
+            { key: 'outfit',       label: '복장',          cls: 'prompt-cat-outfit' },
+            { key: 'nl',           label: '자연어',        cls: 'prompt-cat-nl' },
         ];
 
         function renderColoredPrompt(categoryData) {
@@ -12983,29 +13110,78 @@
             const naturalLanguage = document.getElementById('asset-natural-language-text')?.value?.trim() || '';
             // LoRA 트리거
             const loraTriggerWords = assetLoraList.map(l => l.trigger).filter(t => t && t.trim()).join(', ');
+            // ANIMA/SDXL LoRA 트리거 분리
+            const animaLoraTriggerWords = assetLoraList.filter(l => (l.BASE || 'anima') === 'anima').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
+            const sdxlLoraTriggerWords = assetLoraList.filter(l => l.BASE === 'sdxl').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
+            // ANIMA 아티스트 프리셋
+            const animaArtistName = getAssetSelectValue('anima-artist-preset-select') || '';
+            const animaArtistTags = animaArtistName ? (assetTags.artist_presets?.[animaArtistName] || []).filter(t => t.trim()) : [];
             // 캐릭터 부정
             const cnTags = (assetTags.character_negative || []).filter(t => t.trim());
             // 부정
             const nTags = (assetTags.negative || []).filter(t => t.trim());
 
-            const positive = [
-                ...(loraTriggerWords ? [loraTriggerWords] : []),
-                ...artistTags, ...qTags, ...cTags, ...appTags, ...exprTags, ...outfitTags,
-                ...(naturalLanguage ? [naturalLanguage] : []),
-            ].join(', ');
+            const isAnima = currentConfig?.asset_workflow_type === 'anima';
 
-            // 컬러 렌더링용 카테고리 데이터
-            const categoryData = [
-                { key: 'lora',        tags: loraTriggerWords ? [loraTriggerWords] : [] },
-                { key: 'artist',      tags: artistTags },
-                { key: 'quality',     tags: qTags },
-                { key: 'composition', tags: cTags },
-                { key: 'appearance',  tags: appTags },
-                { key: 'expression',  tags: exprTags },
-                { key: 'outfit',      tags: outfitTags },
-                { key: 'nl',          tags: naturalLanguage ? [naturalLanguage] : [] },
-            ];
-            const positiveColored = renderColoredPrompt(categoryData);
+            let positive = '';
+            let positiveColored = '';
+
+            if (isAnima) {
+                // ANIMA 모드: 2섹션 프롬프트
+                const section1 = [
+                    ...(animaLoraTriggerWords ? [animaLoraTriggerWords] : []),
+                    ...animaArtistTags, ...qTags, ...cTags, ...appTags, ...exprTags, ...outfitTags,
+                    ...(naturalLanguage ? [naturalLanguage] : []),
+                ].join(', ');
+                const section2 = [
+                    ...(sdxlLoraTriggerWords ? [sdxlLoraTriggerWords] : []),
+                    ...artistTags, ...qTags, ...cTags, ...appTags, ...exprTags, ...outfitTags,
+                ].join(', ');
+                positive = section1 + '\n[SDXL]\n' + section2;
+
+                // 컬러 렌더링
+                const section1Data = [
+                    { key: 'anima_lora',    tags: animaLoraTriggerWords ? [animaLoraTriggerWords] : [] },
+                    { key: 'anima_artist',  tags: animaArtistTags },
+                    { key: 'quality',      tags: qTags },
+                    { key: 'composition',  tags: cTags },
+                    { key: 'appearance',   tags: appTags },
+                    { key: 'expression',   tags: exprTags },
+                    { key: 'outfit',       tags: outfitTags },
+                    { key: 'nl',           tags: naturalLanguage ? [naturalLanguage] : [] },
+                ];
+                const section2Data = [
+                    { key: 'sdxl_lora',     tags: sdxlLoraTriggerWords ? [sdxlLoraTriggerWords] : [] },
+                    { key: 'artist',       tags: artistTags },
+                    { key: 'quality',      tags: qTags },
+                    { key: 'composition',  tags: cTags },
+                    { key: 'appearance',   tags: appTags },
+                    { key: 'expression',   tags: exprTags },
+                    { key: 'outfit',       tags: outfitTags },
+                ];
+                positiveColored = renderColoredPrompt(section1Data) +
+                    '\n<span style="color:#ff0;font-weight:bold;">[SDXL]</span>\n' +
+                    renderColoredPrompt(section2Data);
+            } else {
+                // 일반 모드: 기존 로직
+                positive = [
+                    ...(loraTriggerWords ? [loraTriggerWords] : []),
+                    ...artistTags, ...qTags, ...cTags, ...appTags, ...exprTags, ...outfitTags,
+                    ...(naturalLanguage ? [naturalLanguage] : []),
+                ].join(', ');
+
+                const categoryData = [
+                    { key: 'lora',        tags: loraTriggerWords ? [loraTriggerWords] : [] },
+                    { key: 'artist',      tags: artistTags },
+                    { key: 'quality',     tags: qTags },
+                    { key: 'composition', tags: cTags },
+                    { key: 'appearance',  tags: appTags },
+                    { key: 'expression',  tags: exprTags },
+                    { key: 'outfit',      tags: outfitTags },
+                    { key: 'nl',          tags: naturalLanguage ? [naturalLanguage] : [] },
+                ];
+                positiveColored = renderColoredPrompt(categoryData);
+            }
 
             let positiveFull = positive;
             positiveFull += `\n[FACE_ID_ACTIVATE]\n${refEnabled ? 'true' : 'false'}`;
@@ -13023,7 +13199,7 @@
             } else {
                 positiveFull += `\n[LORA_DATA]\n{"list":[]}`;
             }
-            positiveFull += `\n[POSE_ACTIVATE]\n${poseEnabled ? 'true' : 'false'}`;
+            positiveFull += `\n[POSE_ACTIVATE]\n${(isAnima ? false : poseEnabled) ? 'true' : 'false'}`;
             if (poseEnabled && assetSelectedPoseId) {
                 try {
                     const resp = await fetch(`/api/pose_mode/poses/${encodeURIComponent(assetSelectedPoseId)}`);
@@ -13192,6 +13368,104 @@
             if (!name) return;
             if (!confirm(`프리셋 "${name}" 삭제?`)) return;
             assetTagAction('delete_artist_preset', { name });
+        }
+
+        // ─── ANIMA 아티스트 프리셋 ────────────────────────────────
+        function loadAnimaArtistPreset() {
+            const name = getAssetSelectValue('anima-artist-preset-select');
+            const tagsDiv = document.getElementById('anima-artist-tags');
+            tagsDiv.innerHTML = '';
+            if (!name || !assetTags) return;
+            const tags = assetTags.artist_presets?.[name] || [];
+            renderTagChipsWithFn(tagsDiv, tags, (idx) => {
+                removeAnimaArtistTag(name, idx);
+            });
+        }
+
+        async function removeAnimaArtistTag(presetName, idx) {
+            if (!assetTags?.artist_presets?.[presetName]) return;
+            const newTags = [...assetTags.artist_presets[presetName]];
+            newTags.splice(idx, 1);
+            try {
+                const resp = await fetch('/api/asset_mode/tags', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'save_artist_preset', name: presetName, tags: newTags }) });
+                const result = await resp.json();
+                if (result.success) {
+                    const dataResp = await fetch('/api/asset_mode/tags');
+                    assetTags = await dataResp.json();
+                    const tagsDiv = document.getElementById('anima-artist-tags');
+                    const tags = assetTags.artist_presets?.[presetName] || [];
+                    renderTagChipsWithFn(tagsDiv, tags, (i) => { removeAnimaArtistTag(presetName, i); });
+                } else { showToast(result.error || '오류', 'error'); }
+            } catch (e) { showToast('요청 실패: ' + e.message, 'error'); }
+        }
+
+        async function addAnimaArtistTag() {
+            const input = document.getElementById('anima-new-artist-tag');
+            const val = input.value.trim();
+            if (!val) return;
+            const presetName = getAssetSelectValue('anima-artist-preset-select');
+            if (!presetName) { showToast('ANIMA 아티스트 프리셋을 먼저 선택하세요', 'error'); return; }
+            input.value = '';
+            try {
+                const resp = await fetch('/api/asset_mode/tags', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'save_artist_preset', name: presetName, tags: [...(assetTags.artist_presets?.[presetName] || []), val] }) });
+                const result = await resp.json();
+                if (result.success) {
+                    const dataResp = await fetch('/api/asset_mode/tags');
+                    assetTags = await dataResp.json();
+                    const tagsDiv = document.getElementById('anima-artist-tags');
+                    const tags = assetTags.artist_presets?.[presetName] || [];
+                    renderTagChipsWithFn(tagsDiv, tags, (idx) => { removeAnimaArtistTag(presetName, idx); });
+                } else { showToast(result.error || '오류', 'error'); }
+            } catch (e) { showToast('요청 실패: ' + e.message, 'error'); }
+        }
+
+        function addAnimaArtistPreset() {
+            if (!assetTags) return;
+            const name = prompt('새 ANIMA 아티스트 프리셋명');
+            if (!name || !name.trim()) return;
+            assetTagAction('save_artist_preset', { name: name.trim(), tags: [] });
+        }
+
+        function duplicateAnimaArtistPreset() {
+            const src = getAssetSelectValue('anima-artist-preset-select');
+            if (!src) { showToast('복제할 프리셋을 선택하세요', 'error'); return; }
+            const newName = prompt('새 프리셋명', src + ' 복사본');
+            if (!newName || !newName.trim()) return;
+            assetTagAction('duplicate_artist_preset', { source: src, name: newName.trim() });
+        }
+
+        function deleteAnimaArtistPreset() {
+            const name = getAssetSelectValue('anima-artist-preset-select');
+            if (!name) return;
+            if (!confirm(`프리셋 "${name}" 삭제?`)) return;
+            assetTagAction('delete_artist_preset', { name });
+        }
+
+        // ─── ANIMA UI 가시성/포즈 제어 ───────────────────────────
+        function updateAnimaUIVisibility() {
+            const isAnima = currentConfig?.asset_workflow_type === 'anima';
+            const animaSection = document.getElementById('anima-artist-preset-section');
+            if (animaSection) animaSection.style.display = isAnima ? 'block' : 'none';
+            updatePoseForWorkflowType();
+        }
+
+        function updatePoseForWorkflowType() {
+            const isAnima = currentConfig?.asset_workflow_type === 'anima';
+            const poseContainer = document.getElementById('asset-pose-container');
+            const poseToggle = document.getElementById('asset-pose-toggle');
+            if (isAnima) {
+                poseToggle.checked = false;
+                poseToggle.disabled = true;
+                poseContainer.style.opacity = '0.4';
+                poseContainer.style.pointerEvents = 'none';
+                document.getElementById('asset-pose-status').textContent = 'OFF';
+                document.getElementById('asset-pose-status').className = 'toggle-status off';
+                document.getElementById('asset-pose-section').style.display = 'none';
+            } else {
+                poseToggle.disabled = false;
+                poseContainer.style.opacity = '1';
+                poseContainer.style.pointerEvents = 'auto';
+            }
         }
 
         // ─── 자연어 프리셋 ────────────────────────────────────
@@ -16359,6 +16633,12 @@
             const naturalLanguage = document.getElementById('asset-natural-language-text')?.value || '';
             const loraTriggerWords = assetLoraList.map(l => l.trigger).filter(t => t && t.trim()).join(', ');
 
+            // ANIMA 모드 관련 필드
+            const isAnima = currentConfig?.asset_workflow_type === 'anima';
+            const animaArtistPreset = isAnima ? (getAssetSelectValue('anima-artist-preset-select') || '') : '';
+            const animaLoraTriggerWords = assetLoraList.filter(l => (l.BASE || 'anima') === 'anima').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
+            const sdxlLoraTriggerWords = assetLoraList.filter(l => l.BASE === 'sdxl').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
+
             const requestBody = {
                 character: char,
                 outfit: outfit,
@@ -16372,8 +16652,8 @@
                 style_ref_images: styleRefEnabled ? assetStyleRefImages.map(img => ({filename: img.name, local_path: img.local_path})) : [],
                 lora_activate: loraEnabled,
                 lora_data: loraData,
-                pose_enabled: poseEnabled,
-                pose_id: poseEnabled ? assetSelectedPoseId : '',
+                pose_enabled: isAnima ? false : poseEnabled,
+                pose_id: (isAnima ? false : poseEnabled) ? assetSelectedPoseId : '',
                 hrf_activate: hrfActivate,
                 hrf_size: hrfSize,
                 hrf_restore_size: hrfRestoreSize,
@@ -16386,6 +16666,10 @@
                 artist_preset: artistPreset,
                 natural_language: naturalLanguage,
                 lora_trigger_words: loraTriggerWords,
+                anima_artist_preset: animaArtistPreset,
+                asset_workflow_type: isAnima ? 'anima' : 'regular',
+                anima_lora_trigger_words: animaLoraTriggerWords,
+                sdxl_lora_trigger_words: sdxlLoraTriggerWords,
             };
 
             // 큐 항목 생성 (각 항목에 requestBody 저장)
@@ -18222,6 +18506,7 @@
                 hd_enabled: false,
                 ed_enabled: false,
                 artist_preset: '',
+                anima_artist_preset: '',
                 natural_language_preset: '',
                 natural_language: '',
             };
@@ -18254,7 +18539,9 @@
             const cnOptions = buildPresetOptions(assetTags?.character_negative_presets || {}, '', '-- 변경 안함 --');
             const negOptions = buildPresetOptions(assetTags?.negative_presets || {}, '', '-- 변경 안함 --');
             const artistOptions = buildPresetOptions(assetTags?.artist_presets || {}, '', '-- 변경 안함 --');
+            const animaArtistOptions = buildPresetOptions(assetTags?.artist_presets || {}, '', '-- 변경 안함 --');
             const nlOptions = buildPresetOptions(assetTags?.natural_language_presets || {}, '', '-- 변경 안함 --');
+            const isAnima = currentConfig?.asset_workflow_type === 'anima';
 
             const overlay = document.createElement('div');
             overlay.id = 'batch-bulk-overlay';
@@ -18277,6 +18564,7 @@
                     <div><div class="batch-field-label">캐릭터 부정(optional)</div><select id="bulk-character-negative" class="batch-select">${cnOptions}</select></div>
                     <div><div class="batch-field-label">부정 태그 프리셋</div><select id="bulk-negative" class="batch-select">${negOptions}</select></div>
                     <div><div class="batch-field-label">아티스트 프리셋</div><select id="bulk-artist" class="batch-select">${artistOptions}</select></div>
+                    ${isAnima ? `<div id="bulk-anima-artist-row"><div class="batch-field-label">ANIMA 아티스트 프리셋</div><select id="bulk-anima-artist" class="batch-select">${animaArtistOptions}</select></div>` : ''}
                     <div><div class="batch-field-label">자연어 프리셋</div><select id="bulk-natural-language-preset" class="batch-select">${nlOptions}</select></div>
 
                     <div style="border-top:1px solid var(--border); padding-top:10px;">
@@ -18857,8 +19145,10 @@
                 character_negative_preset: document.getElementById('bulk-character-negative').value,
                 negative_preset: document.getElementById('bulk-negative').value,
                 artist_preset: document.getElementById('bulk-artist').value,
+                anima_artist_preset: document.getElementById('bulk-anima-artist')?.value || '',
                 natural_language_preset: document.getElementById('bulk-natural-language-preset').value,
             };
+            const isAnima = currentConfig?.asset_workflow_type === 'anima';
             const refAction = document.getElementById('bulk-ref-action').value;
             const refStrengthCheck = document.getElementById('bulk-ref-strength-check').checked;
             const refStrength = parseFloat(document.getElementById('bulk-ref-strength').value);
@@ -18888,7 +19178,9 @@
                 if (fields.character_negative_preset) slot.character_negative_preset = fields.character_negative_preset;
                 if (fields.negative_preset) slot.negative_preset = fields.negative_preset;
                 if (fields.artist_preset) slot.artist_preset = fields.artist_preset;
+                if (fields.anima_artist_preset) slot.anima_artist_preset = fields.anima_artist_preset;
                 if (fields.natural_language_preset) slot.natural_language_preset = fields.natural_language_preset;
+                if (isAnima) slot.pose_enabled = false;
                 if (refAction === 'on') slot.ref_enabled = true;
                 if (refAction === 'off') slot.ref_enabled = false;
                 if (refStrengthCheck) slot.ref_strength = refStrength;
@@ -19001,7 +19293,9 @@
             const cnSel = buildCustomSelectHTML(assetTags?.character_negative_presets || {}, slot.character_negative_preset, '-- 캐릭터 부정 프리셋 --', 'character_negative_preset');
             const negSel = buildCustomSelectHTML(assetTags?.negative_presets || {}, slot.negative_preset, '-- 부정 프리셋 --', 'negative_preset');
             const artistSel = buildCustomSelectHTML(assetTags?.artist_presets || {}, slot.artist_preset, '-- 아티스트 프리셋 --', 'artist_preset');
+            const animaArtistSel = buildCustomSelectHTML(assetTags?.artist_presets || {}, slot.anima_artist_preset || '', '-- ANIMA 아티스트 프리셋 --', 'anima_artist_preset');
             const nlSel = buildCustomSelectHTML(assetTags?.natural_language_presets || {}, slot.natural_language_preset, '-- 자연어 프리셋 --', 'natural_language_preset');
+            const isAnima = currentConfig?.asset_workflow_type === 'anima';
             const refPreviewUrls = slot.ref_preview_url ? slot.ref_preview_url.split('|').filter(Boolean) : [];
             const styleRefPreviewUrls = slot.style_ref_preview_url ? slot.style_ref_preview_url.split('|').filter(Boolean) : [];
 
@@ -19020,6 +19314,7 @@
                 <div class="batch-field-group"><div class="batch-field-label">캐릭터 부정(optional)</div>${cnSel}</div>
                 <div class="batch-field-group"><div class="batch-field-label">부정 태그</div>${negSel}</div>
                 <div class="batch-field-group"><div class="batch-field-label">아티스트 프리셋</div>${artistSel}</div>
+                ${isAnima ? `<div class="batch-field-group"><div class="batch-field-label">ANIMA 아티스트 프리셋</div>${animaArtistSel}</div>` : ''}
                 <div class="batch-field-group"><div class="batch-field-label">자연어</div>${nlSel}</div>
 
                 <div class="batch-toggle-row">
@@ -19101,11 +19396,11 @@
                     </div>
                 </div>
 
-                <div class="batch-toggle-row">
+                <div class="batch-toggle-row" ${isAnima ? 'style="opacity:0.4; pointer-events:none;"' : ''}>
                     <label>포즈</label>
-                    <label class="toggle-switch"><input type="checkbox" data-field="pose_enabled" ${slot.pose_enabled ? 'checked' : ''}><span class="toggle-slider"></span></label>
+                    <label class="toggle-switch"><input type="checkbox" data-field="pose_enabled" ${isAnima ? 'disabled' : ''} ${slot.pose_enabled ? 'checked' : ''}><span class="toggle-slider"></span></label>
                 </div>
-                <div class="batch-pose-select-row" style="display:${slot.pose_enabled ? 'block' : 'none'};">
+                <div class="batch-pose-select-row" style="display:${!isAnima && slot.pose_enabled ? 'block' : 'none'};">
                     <div class="batch-pose-selected-display" onclick="openBatchPosePicker(${idx})">
                         ${slot.pose_id ? `<img src="/api/pose_mode/poses/${encodeURIComponent(slot.pose_id)}/image" loading="lazy"><span>${escapeHtml(slot.pose_id)}</span>` : '<span class="placeholder">클릭하여 포즈 선택</span>'}
                     </div>
@@ -19973,7 +20268,10 @@
         function previewBatchSlotPrompt(slot) {
             if (!assetTags) return '(태그 데이터 로딩중)';
             const loraTriggerWords = (slot.lora_list || []).map(l => l.trigger).filter(t => t && t.trim()).join(', ');
+            const animaLoraTriggerWords = (slot.lora_list || []).filter(l => (l.BASE || 'anima') === 'anima').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
+            const sdxlLoraTriggerWords = (slot.lora_list || []).filter(l => l.BASE === 'sdxl').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
             const artistTags = (slot.artist_preset && assetTags.artist_presets?.[slot.artist_preset]) || [];
+            const animaArtistTags = (slot.anima_artist_preset && assetTags.artist_presets?.[slot.anima_artist_preset]) || [];
             const qTags = (slot.quality_preset && assetTags.quality_presets?.[slot.quality_preset]) || [];
             const cTags = (slot.composition_preset && assetTags.composition_presets?.[slot.composition_preset]) || [];
             const appTags = (slot.appearance && assetTags.appearances?.[slot.appearance]) || [];
@@ -19985,14 +20283,86 @@
             const cnTags = (slot.character_negative_preset && assetTags.character_negative_presets?.[slot.character_negative_preset]) || [];
             const nTags = (slot.negative_preset && assetTags.negative_presets?.[slot.negative_preset]) || [];
 
-            // 새 순서: LORA → Artist → Quality → Composition → Appearance → Expression → Outfit → NL
-            const positive = [
+            const isAnima = currentConfig?.asset_workflow_type === 'anima';
+
+            let positive = [];
+            let positiveColored = '';
+
+            if (isAnima) {
+                // ANIMA 모드: 2섹션 프롬프트
+                const section1 = [
+                    ...(animaLoraTriggerWords ? [animaLoraTriggerWords] : []),
+                    ...animaArtistTags, ...qTags, ...cTags, ...appTags, ...exprTags, ...outfitTags,
+                    ...(naturalLanguage ? [naturalLanguage] : []),
+                ].filter(t => t.trim());
+                const section2 = [
+                    ...(sdxlLoraTriggerWords ? [sdxlLoraTriggerWords] : []),
+                    ...artistTags, ...qTags, ...cTags, ...appTags, ...exprTags, ...outfitTags,
+                ].filter(t => t.trim());
+
+                const section1Data = [
+                    { key: 'anima_lora',    tags: animaLoraTriggerWords ? [animaLoraTriggerWords] : [] },
+                    { key: 'anima_artist',  tags: animaArtistTags },
+                    { key: 'quality',      tags: qTags },
+                    { key: 'composition',  tags: cTags },
+                    { key: 'appearance',   tags: appTags },
+                    { key: 'expression',   tags: exprTags },
+                    { key: 'outfit',       tags: outfitTags },
+                    { key: 'nl',           tags: naturalLanguage ? [naturalLanguage] : [] },
+                ];
+                const section2Data = [
+                    { key: 'sdxl_lora',     tags: sdxlLoraTriggerWords ? [sdxlLoraTriggerWords] : [] },
+                    { key: 'artist',       tags: artistTags },
+                    { key: 'quality',      tags: qTags },
+                    { key: 'composition',  tags: cTags },
+                    { key: 'appearance',   tags: appTags },
+                    { key: 'expression',   tags: exprTags },
+                    { key: 'outfit',       tags: outfitTags },
+                ];
+                positiveColored = renderColoredPrompt(section1Data) +
+                    '\n<span style="color:#ff0;font-weight:bold;">[SDXL]</span>\n' +
+                    renderColoredPrompt(section2Data);
+
+                let positiveFull = section1.join(', ') + '\n[SDXL]\n' + section2.join(', ');
+                positiveFull += `\n[FACE_ID_ACTIVATE]\n${slot.ref_enabled ? 'true' : 'false'}`;
+                positiveFull += `\n[FACE_ID_STR]\n${slot.ref_strength}`;
+                positiveFull += `\n[FACE_ID_DIR]\n${slot.ref_dir || 'soya_char_ref/fallback'}`;
+                positiveFull += `\n[STYLE_ACTIVATE]\n${slot.style_ref_enabled ? 'true' : 'false'}`;
+                positiveFull += `\n[STYLE_STR]\n${slot.style_ref_strength || 0.55}`;
+                positiveFull += `\n[STYLE_DIR]\n${slot.style_ref_dir || 'soya_style_ref/fallback'}`;
+                const loraActive = slot.lora_enabled && (slot.lora_list || []).length > 0;
+                positiveFull += `\n[LORA_ACTIVATE]\n${loraActive ? 'true' : 'false'}`;
+                if (loraActive) {
+                    positiveFull += `\n[LORA_DATA]\n${JSON.stringify({list: slot.lora_list.map(l => ({lora_path: 'SOYA_CHAR_LORA\\' + l.lora_path, str: l.strength, BASE: l.BASE || 'anima'}))})}`;
+                } else {
+                    positiveFull += `\n[LORA_DATA]\n{"list":[]}`;
+                }
+                positiveFull += `\n[POSE_ACTIVATE]\nfalse`;
+                positiveFull += `\n[POSE_DATA]\n{"people":[{"pose_keypoints_2d":[509.59,522.31,1,...]}],"canvas_height":1408,"canvas_width":936}`;
+                positiveFull += `\n[HRF_ACTIVATE]\n${slot.hrf_enabled ? 'true' : 'false'}`;
+                positiveFull += `\n[HRF_SIZE]\n${slot.hrf_size || 2.0}`;
+                positiveFull += `\n[HRF_RESTORE_SIZE]\n${slot.hrf_restore_size !== false ? 'true' : 'false'}`;
+                positiveFull += `\n[HRF_CONTROL_NET]\n${slot.hrf_control_net ? 'true' : 'false'}`;
+                positiveFull += `\n[IMG_W]\n${slot.img_w || 936}`;
+                positiveFull += `\n[IMG_H]\n${slot.img_h || 1408}`;
+                positiveFull += `\n[FD_ACTIVATE]\n${slot.fd_enabled ? 'true' : 'false'}`;
+                positiveFull += `\n[HD_ACTIVATE]\n${slot.hd_enabled ? 'true' : 'false'}`;
+                positiveFull += `\n[ED_ACTIVATE]\n${slot.ed_enabled ? 'true' : 'false'}`;
+                positiveFull += '\n[END]';
+
+                const negative = [...cnTags, ...nTags].filter(t => t.trim()).join(', ');
+                const tagsPart = section1.join(', ') + '\n[SDXL]\n' + section2.join(', ');
+                const controlPart = positiveFull.substring(tagsPart.length);
+                return positiveColored + escapeHtml(controlPart);
+            }
+
+            // 일반 모드: 기존 로직
+            positive = [
                 ...(loraTriggerWords ? [loraTriggerWords] : []),
                 ...artistTags, ...qTags, ...cTags, ...appTags, ...exprTags, ...outfitTags,
                 ...(naturalLanguage ? [naturalLanguage] : []),
             ].filter(t => t.trim());
 
-            // 컬러 렌더링용 카테고리 데이터
             const categoryData = [
                 { key: 'lora',        tags: loraTriggerWords ? [loraTriggerWords] : [] },
                 { key: 'artist',      tags: artistTags },
@@ -20003,7 +20373,7 @@
                 { key: 'outfit',      tags: outfitTags },
                 { key: 'nl',          tags: naturalLanguage ? [naturalLanguage] : [] },
             ];
-            const positiveColored = renderColoredPrompt(categoryData);
+            positiveColored = renderColoredPrompt(categoryData);
 
             let positiveFull = positive.join(', ');
             positiveFull += `\n[FACE_ID_ACTIVATE]\n${slot.ref_enabled ? 'true' : 'false'}`;
@@ -20121,6 +20491,7 @@
                             `${(completed / totalJobs * 100).toFixed(1)}%`;
 
                         // 프리셋에서 태그 로드 필요 시 서버에 적용
+                        const isAnima = currentConfig?.asset_workflow_type === 'anima';
                         const genPayload = {
                             character: slot.character,
                             outfit: slot.outfit,
@@ -20143,8 +20514,8 @@
                                     }))
                                 });
                             })(),
-                            pose_enabled: slot.pose_enabled,
-                            pose_id: slot.pose_enabled ? slot.pose_id : '',
+                            pose_enabled: isAnima ? false : slot.pose_enabled,
+                            pose_id: (isAnima ? false : slot.pose_enabled) ? slot.pose_id : '',
                             fd_activate: slot.fd_enabled,
                             hrf_activate: slot.hrf_enabled,
                             hrf_size: slot.hrf_size || 2.0,
@@ -20159,6 +20530,10 @@
                                 ? (assetTags?.natural_language_presets?.[slot.natural_language_preset] || slot.natural_language || '')
                                 : (slot.natural_language || ''),
                             lora_trigger_words: (slot.lora_list || []).map(l => l.trigger).filter(t => t && t.trim()).join(', '),
+                            anima_artist_preset: isAnima ? (slot.anima_artist_preset || '') : '',
+                            asset_workflow_type: isAnima ? 'anima' : 'regular',
+                            anima_lora_trigger_words: (slot.lora_list || []).filter(l => (l.BASE || 'anima') === 'anima').map(l => l.trigger).filter(t => t && t.trim()).join(', '),
+                            sdxl_lora_trigger_words: (slot.lora_list || []).filter(l => l.BASE === 'sdxl').map(l => l.trigger).filter(t => t && t.trim()).join(', '),
                         };
 
                         // 프리셋이 지정된 경우 서버에 해당 프리셋 로드 후 생성
