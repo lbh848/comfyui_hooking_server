@@ -8202,6 +8202,7 @@
         let epSavedPerExpression = {};  // 불러오기 시 임시 보관, 스캔 후 적용
         let epRunning = false;
         let epRefImage = '';
+        let epRefImageLocalPath = '';
         let epRefPreviewUrl = '';
 
         function initExprProfileTab() {
@@ -8469,6 +8470,7 @@
                         ref_enabled: prev ? prev.ref_enabled : false,
                         ref_strength: prev ? prev.ref_strength : 0.55,
                         ref_image: prev ? prev.ref_image : '',
+                        ref_local_path: prev ? prev.ref_local_path : '',
                         ref_preview_url: prev ? prev.ref_preview_url : '',
                         style_ref_enabled: prev ? prev.style_ref_enabled : false,
                         style_ref_strength: prev ? prev.style_ref_strength : 0.55,
@@ -8858,6 +8860,7 @@
                 const result = await resp.json();
                 if (result.success) {
                     epRefImage = result.name;
+                    epRefImageLocalPath = result.name ? (result.images && result.images[0] ? result.images[0].local_path : '') : '';
                     if (result.asset_info) {
                         const enc = encodeURIComponent;
                         const ai = result.asset_info;
@@ -8879,6 +8882,7 @@
 
         function clearExprProfileRefImage() {
             epRefImage = '';
+            epRefImageLocalPath = '';
             epRefPreviewUrl = '';
             document.getElementById('ep-ref-preview-img').src = '';
             document.getElementById('ep-ref-preview').style.display = 'none';
@@ -8894,6 +8898,7 @@
                 const result = await resp.json();
                 if (result.success) {
                     epProfiles[idx].ref_image = result.name;
+                    epProfiles[idx].ref_local_path = result.name ? (result.images && result.images[0] ? result.images[0].local_path : '') : '';
                     if (result.asset_info) {
                         const enc = encodeURIComponent;
                         const ai = result.asset_info;
@@ -8917,6 +8922,7 @@
 
         function clearExprProfileRefImageSlot(idx) {
             epProfiles[idx].ref_image = '';
+            epProfiles[idx].ref_local_path = '';
             epProfiles[idx].ref_preview_url = '';
             const imgEl = document.querySelector(`.ep-ref-preview-img-slot[data-ep-idx="${idx}"]`);
             const prevEl = document.querySelector(`.ep-ref-preview-slot[data-ep-idx="${idx}"]`);
@@ -9003,29 +9009,15 @@
                     card.onmouseleave = () => card.style.borderColor = 'var(--border)';
                     card.onclick = async () => {
                         if (!thumbUrl) { showToast('대표 이미지가 없습니다', 'error'); return; }
-                        try {
-                            const imgResp = await fetch(thumbUrl);
-                            const imgBlob = await imgResp.blob();
-                            const formData = new FormData();
-                            formData.append('image', imgBlob, item.representative);
-                            formData.append('source', 'asset');
-                            const uploadResp = await fetch('/api/asset_mode/upload_reference', { method: 'POST', body: formData });
-                            const uploadResult = await uploadResp.json();
-                            if (uploadResult.success) {
-                                if (epRefPickerState.target === 'sidebar') {
-                                    epRefImage = uploadResult.name;
-                                    epRefPreviewUrl = thumbUrl;
-                                    document.getElementById('ep-ref-preview-img').src = thumbUrl;
-                                    document.getElementById('ep-ref-preview').style.display = 'block';
-                                }
-                                showToast('FACE-IPAdapter 이미지 선택 완료', 'success');
-                                document.getElementById('ep-ref-picker-overlay').remove();
-                            } else {
-                                showToast(uploadResult.error || '업로드 실패', 'error');
-                            }
-                        } catch (e) {
-                            showToast('이미지 업로드 실패: ' + e.message, 'error');
+                        if (epRefPickerState.target === 'sidebar') {
+                            epRefImage = item.representative;
+                            epRefImageLocalPath = item.local_path || '';
+                            epRefPreviewUrl = thumbUrl;
+                            document.getElementById('ep-ref-preview-img').src = thumbUrl;
+                            document.getElementById('ep-ref-preview').style.display = 'block';
                         }
+                        showToast('FACE-IPAdapter 이미지 선택 완료', 'success');
+                        document.getElementById('ep-ref-picker-overlay').remove();
                     };
                     grid.appendChild(card);
                 }
@@ -9112,29 +9104,15 @@
                     card.onmouseleave = () => card.style.borderColor = 'var(--border)';
                     card.onclick = async () => {
                         if (!thumbUrl) { showToast('대표 이미지가 없습니다', 'error'); return; }
-                        try {
-                            const imgResp = await fetch(thumbUrl);
-                            const imgBlob = await imgResp.blob();
-                            const formData = new FormData();
-                            formData.append('image', imgBlob, item.representative);
-                            formData.append('source', 'asset');
-                            const uploadResp = await fetch('/api/asset_mode/upload_reference', { method: 'POST', body: formData });
-                            const uploadResult = await uploadResp.json();
-                            if (uploadResult.success) {
-                                epProfiles[idx].ref_image = uploadResult.name;
-                                epProfiles[idx].ref_preview_url = thumbUrl;
-                                const imgEl = document.querySelector(`.ep-ref-preview-img-slot[data-ep-idx="${idx}"]`);
-                                const prevEl = document.querySelector(`.ep-ref-preview-slot[data-ep-idx="${idx}"]`);
-                                if (imgEl) imgEl.src = thumbUrl;
-                                if (prevEl) prevEl.style.display = 'block';
-                                showToast('FACE-IPAdapter 이미지 선택 완료', 'success');
-                                document.getElementById('ep-ref-slot-picker-overlay').remove();
-                            } else {
-                                showToast(uploadResult.error || '업로드 실패', 'error');
-                            }
-                        } catch (e) {
-                            showToast('이미지 업로드 실패: ' + e.message, 'error');
-                        }
+                        epProfiles[idx].ref_image = item.representative;
+                        epProfiles[idx].ref_local_path = item.local_path || '';
+                        epProfiles[idx].ref_preview_url = thumbUrl;
+                        const imgEl = document.querySelector(`.ep-ref-preview-img-slot[data-ep-idx="${idx}"]`);
+                        const prevEl = document.querySelector(`.ep-ref-preview-slot[data-ep-idx="${idx}"]`);
+                        if (imgEl) imgEl.src = thumbUrl;
+                        if (prevEl) prevEl.style.display = 'block';
+                        showToast('FACE-IPAdapter 이미지 선택 완료', 'success');
+                        document.getElementById('ep-ref-slot-picker-overlay').remove();
                     };
                     grid.appendChild(card);
                 }
@@ -9212,6 +9190,7 @@
 
                         const useRef = profile.ref_enabled ? true : sidebarRefEnabled;
                         const useRefImage = profile.ref_enabled ? profile.ref_image : sidebarRefImage;
+                        const useRefLocalPath = profile.ref_enabled ? (profile.ref_local_path || '') : epRefImageLocalPath;
                         const useRefStrength = profile.ref_enabled ? profile.ref_strength : sidebarRefStrength;
 
                         const genPayload = {
@@ -9219,8 +9198,9 @@
                             appearance: appearanceName,
                             outfit: outfitName,
                             expression: profile.name,
+                            face_id_enabled: useRef,
                             face_id_strength: useRefStrength,
-                            reference_image: useRefImage || '',
+                            reference_images: useRefImage ? [{filename: useRefImage, local_path: useRefLocalPath}] : [],
                             pose_enabled: false,
                             pose_id: '',
                             fd_activate: profile.fd_enabled ? true : fdEnabled,
@@ -10269,6 +10249,7 @@
                         ref_enabled: false,
                         ref_strength: 0.55,
                         ref_image: '',
+                        ref_local_path: '',
                         style_ref_enabled: false,
                         style_ref_strength: 0.55,
                         style_ref_image: '',
@@ -10307,6 +10288,7 @@
                     ref_enabled: false,
                     ref_strength: 0.55,
                     ref_image: '',
+                    ref_local_path: '',
                     style_ref_enabled: false,
                     style_ref_strength: 0.55,
                     style_ref_image: '',
@@ -10461,6 +10443,7 @@
                     ref_enabled: exprSettings.ref_enabled !== undefined ? exprSettings.ref_enabled : (epSettings.ref_enabled || false),
                     ref_strength: exprSettings.ref_strength || epSettings.ref_strength || 0.55,
                     ref_image: '',
+                    ref_local_path: '',
                     style_ref_enabled: exprSettings.style_ref_enabled !== undefined ? exprSettings.style_ref_enabled : (epSettings.style_ref_enabled || false),
                     style_ref_strength: exprSettings.style_ref_strength || epSettings.style_ref_strength || 0.55,
                     style_ref_image: '',
@@ -15234,6 +15217,7 @@
                     card.dataset.char = char;
                     card.dataset.outfit = outfit;
                     card.dataset.expr = expr;
+                    card.dataset.localPath = img.local_path || '';
 
                     // Check if already selected
                     const isSelected = assetRefPickerSelected.some(s => s.imgUrl === imgUrl);
@@ -15252,7 +15236,7 @@
                             if (check) check.remove();
                         } else {
                             // Select
-                            assetRefPickerSelected.push({ filename: img.filename, imgUrl, char, outfit, expr });
+                            assetRefPickerSelected.push({ filename: img.filename, imgUrl, char, outfit, expr, local_path: img.local_path || '' });
                             card.style.borderColor = 'var(--success)';
                             const check = document.createElement('span');
                             check.className = 'check-mark';
@@ -15275,41 +15259,22 @@
 
         async function confirmAssetRefPickerSelection() {
             if (!assetRefPickerSelected.length) return;
-            try {
-                // Upload all selected images
-                const formData = new FormData();
-                for (const sel of assetRefPickerSelected) {
-                    const imgResp = await fetch(sel.imgUrl);
-                    const imgBlob = await imgResp.blob();
-                    formData.append('image', imgBlob, sel.filename);
-                }
-                formData.append('source', 'asset');
-                const uploadResp = await fetch('/api/asset_mode/upload_reference', { method: 'POST', body: formData });
-                const uploadResult = await uploadResp.json();
-                if (uploadResult.success) {
-                    const images = uploadResult.images || [];
-                    const refImages = images.map((img, i) => ({
-                        name: img.name,
-                        local_path: img.local_path,
-                        orig_filename: img.orig_filename,
-                        preview_url: assetRefPickerSelected[i].imgUrl,
-                    }));
-                    if (assetRefPickerTargetType === 'style') {
-                        assetStyleRefImages = refImages;
-                        renderAssetStyleRefPreview();
-                        document.getElementById('asset-ref-picker-overlay').remove();
-                        showToast(`${images.length}장 IPAdapter 이미지 선택 완료`, 'success');
-                    } else {
-                        assetRefImages = refImages;
-                        renderAssetRefPreview();
-                        document.getElementById('asset-ref-picker-overlay').remove();
-                        showToast(`${images.length}장 FACE-IPAdapter 이미지 선택 완료`, 'success');
-                    }
-                } else {
-                    showToast(uploadResult.error || '업로드 실패', 'error');
-                }
-            } catch (e) {
-                showToast('이미지 업로드 실패: ' + e.message, 'error');
+            const refImages = assetRefPickerSelected.map(sel => ({
+                name: sel.filename,
+                local_path: sel.local_path || '',
+                orig_filename: sel.filename,
+                preview_url: sel.imgUrl,
+            }));
+            if (assetRefPickerTargetType === 'style') {
+                assetStyleRefImages = refImages;
+                renderAssetStyleRefPreview();
+                document.getElementById('asset-ref-picker-overlay').remove();
+                showToast(`${refImages.length}장 IPAdapter 이미지 선택 완료`, 'success');
+            } else {
+                assetRefImages = refImages;
+                renderAssetRefPreview();
+                document.getElementById('asset-ref-picker-overlay').remove();
+                showToast(`${refImages.length}장 FACE-IPAdapter 이미지 선택 완료`, 'success');
             }
         }
 
@@ -20980,7 +20945,7 @@
                             const check = card.querySelector('.check-mark');
                             if (check) check.remove();
                         } else {
-                            batchRefPickerSelected.push({ filename: item.representative, imgUrl: thumbUrl, char, outfit: item.outfit, expr: item.expression });
+                            batchRefPickerSelected.push({ filename: item.representative, imgUrl: thumbUrl, char, outfit: item.outfit, expr: item.expression, local_path: item.local_path || '' });
                             card.style.borderColor = 'var(--success)';
                             const check = document.createElement('span');
                             check.className = 'check-mark';
@@ -21000,49 +20965,32 @@
 
         async function confirmBatchRefPickerSelection() {
             if (!batchRefPickerSelected.length) return;
-            try {
-                const formData = new FormData();
-                for (const sel of batchRefPickerSelected) {
-                    const imgResp = await fetch(sel.imgUrl);
-                    const imgBlob = await imgResp.blob();
-                    formData.append('image', imgBlob, sel.filename);
+            const refImages = batchRefPickerSelected.map(sel => ({
+                name: sel.filename,
+                local_path: sel.local_path || '',
+                orig_filename: sel.filename,
+                preview_url: sel.imgUrl,
+            }));
+            const target = batchRefPickerTarget;
+            const slotEl = document.querySelectorAll('.batch-slot')[target];
+            if (batchRefPickerTargetType === 'style') {
+                batchChains[target].style_ref_images = refImages.map(img => ({name: img.name, local_path: img.local_path, orig_filename: img.orig_filename}));
+                batchChains[target].style_ref_preview_url = refImages.map(img => img.preview_url).join('|');
+                if (slotEl) {
+                    renderBatchStyleRefPreview(target);
+                    updateBatchPreview(slotEl, target);
                 }
-                formData.append('source', 'asset');
-                const uploadResp = await fetch('/api/asset_mode/upload_reference', { method: 'POST', body: formData });
-                const uploadResult = await uploadResp.json();
-                if (uploadResult.success) {
-                    const images = uploadResult.images || [];
-                    const enc = encodeURIComponent;
-                    const refImages = images.map((img, i) => {
-                        let preview_url = batchRefPickerSelected[i].imgUrl;
-                        return { name: img.name, local_path: img.local_path, orig_filename: img.orig_filename, preview_url };
-                    });
-                    const target = batchRefPickerTarget;
-                    const slotEl = document.querySelectorAll('.batch-slot')[target];
-                    if (batchRefPickerTargetType === 'style') {
-                        batchChains[target].style_ref_images = refImages.map(img => ({name: img.name, local_path: img.local_path, orig_filename: img.orig_filename}));
-                        batchChains[target].style_ref_preview_url = refImages.map(img => img.preview_url).join('|');
-                        if (slotEl) {
-                            renderBatchStyleRefPreview(target);
-                            updateBatchPreview(slotEl, target);
-                        }
-                        document.getElementById('batch-ref-picker-overlay').remove();
-                        showToast(`${images.length}장 IPAdapter 이미지 선택 완료`, 'success');
-                    } else {
-                        batchChains[target].ref_images = refImages.map(img => ({name: img.name, local_path: img.local_path, orig_filename: img.orig_filename}));
-                        batchChains[target].ref_preview_url = refImages.map(img => img.preview_url).join('|');
-                        if (slotEl) {
-                            renderBatchRefPreview(target);
-                            updateBatchPreview(slotEl, target);
-                        }
-                        document.getElementById('batch-ref-picker-overlay').remove();
-                        showToast(`${images.length}장 FACE-IPAdapter 이미지 선택 완료`, 'success');
-                    }
-                } else {
-                    showToast(uploadResult.error || '업로드 실패', 'error');
+                document.getElementById('batch-ref-picker-overlay').remove();
+                showToast(`${refImages.length}장 IPAdapter 이미지 선택 완료`, 'success');
+            } else {
+                batchChains[target].ref_images = refImages.map(img => ({name: img.name, local_path: img.local_path, orig_filename: img.orig_filename}));
+                batchChains[target].ref_preview_url = refImages.map(img => img.preview_url).join('|');
+                if (slotEl) {
+                    renderBatchRefPreview(target);
+                    updateBatchPreview(slotEl, target);
                 }
-            } catch (e) {
-                showToast('이미지 업로드 실패: ' + e.message, 'error');
+                document.getElementById('batch-ref-picker-overlay').remove();
+                showToast(`${refImages.length}장 FACE-IPAdapter 이미지 선택 완료`, 'success');
             }
         }
 

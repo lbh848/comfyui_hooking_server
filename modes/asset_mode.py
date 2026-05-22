@@ -1461,6 +1461,7 @@ class AssetMode:
                 "prompt_appearance": prompt_data.get("appearance", ""),
                 "prompt_outfit": prompt_data.get("outfit", ""),
                 "prompt_expression": prompt_data.get("expression", ""),
+                "local_path": fpath,
             })
         return {"images": images, "representative": representative}
 
@@ -1635,11 +1636,13 @@ class AssetMode:
                         image_count += 1
 
                 if image_count > 0:
+                    local_path = self.get_image_path(character, outfit_dir_name, expr_dir_name, rep_file) if rep_file else ""
                     results.append({
                         "outfit": outfit_dir_name,
                         "expression": expr_dir_name,
                         "representative": rep_file,
                         "image_count": image_count,
+                        "local_path": local_path,
                     })
         return results
 
