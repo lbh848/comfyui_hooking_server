@@ -22190,6 +22190,7 @@
         async function checkUnreadNotifications() {
             try {
                 const list = await fetchNotiList();
+                _notiList = list;
                 const readIds = getNotiReadIds();
                 // 삭제된 공지 readId 정리
                 const validNames = list.map(f => f.name);
@@ -22234,11 +22235,10 @@
             setTimeout(() => { if (bubble.parentNode) bubble.remove(); }, 10000);
         }
 
-        async function checkAndRemindNoti() {
+        function checkAndRemindNoti() {
             try {
-                const list = await fetchNotiList();
                 const readIds = getNotiReadIds();
-                const unreadCount = list.filter(f => !readIds.includes(f.name)).length;
+                const unreadCount = _notiList.filter(f => !readIds.includes(f.name)).length;
                 if (unreadCount > 0) {
                     showNotiReminderBubble(unreadCount);
                 }
@@ -22246,11 +22246,12 @@
         }
 
         // 페이지 로드 시 체크 + 20분 주기 체크
-        checkUnreadNotifications();
+        checkUnreadNotifications().then(() => {
+            // 최초 공지 로드 후 리마인더 시작 (1분 주기, API 재호출 없음)
+            checkAndRemindNoti();
+            setInterval(checkAndRemindNoti, 60 * 1000);
+        });
         setInterval(checkUnreadNotifications, 20 * 60 * 1000);
-
-        // 안읽은 공지 1분마다 말풍선 리마인더
-        setTimeout(() => { checkAndRemindNoti(); setInterval(checkAndRemindNoti, 60 * 1000); }, 5000);
 
         let _notiList = [];
         let _notiReadIds = [];
