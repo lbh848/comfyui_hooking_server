@@ -11205,6 +11205,12 @@
             stepsEl.style.display = 'none';
             previewsEl.style.display = 'none';
             emptyEl.style.display = 'none';
+
+            // 엔트리 레벨에서는 Loss 차트 숨김
+            if (window._loraLossChart) { window._loraLossChart.destroy(); window._loraLossChart = null; }
+            document.getElementById('lora-loss-chart-container').style.display = 'none';
+            document.getElementById('lora-loss-nodata').style.display = 'none';
+
             loraCurrentTrainedSession = '';
 
             try {
