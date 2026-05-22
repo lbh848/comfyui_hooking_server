@@ -1830,6 +1830,11 @@
             background: rgba(50,180,50,0.12);
             border-color: rgba(50,180,50,0.3);
         }
+        .lora-prompt-chip.blocked {
+            background: rgba(220,50,50,0.18);
+            border-color: rgba(220,50,50,0.5);
+            color: var(--error);
+        }
         .lora-prompt-chip .remove-chip {
             cursor: pointer;
             color: var(--error);
@@ -12285,6 +12290,10 @@
                         <img src="/api/lora/test_image/${enc(loraCurrentCharacter)}/${enc(loraCurrentEntry)}/${enc(filename)}" style="width:120px; height:120px; object-fit:cover; border-radius:8px; display:block; flex-shrink:0;">
                         <div style="display:flex; align-items:center; font-size:0.85rem; color:var(--text-secondary);">${escapeHtml(filename)}</div>
                     </div>
+                    <details style="margin-bottom:8px; border:1px solid var(--border); border-radius:6px; padding:6px 10px; background:var(--surface2);">
+                        <summary style="cursor:pointer; font-size:0.85rem; font-weight:600; color:var(--error);">블록 태그 규칙</summary>
+                        <div id="lora-block-rules-panel" style="margin-top:6px;"></div>
+                    </details>
                     <div style="display:flex; gap:16px;">
                         <div style="flex:1; display:flex; flex-direction:column; gap:8px;">
                             <div style="font-size:0.85rem; font-weight:700; color:var(--text-secondary); text-align:center; margin-bottom:4px;">원본</div>
@@ -12314,6 +12323,7 @@
                 _loraPromptState = { origPos, origNeg, origPosTags, origNegTags };
                 loraPromptEditMode = 'text';
                 setupPromptLiveDiff();
+                _loadLoraBlockRules().then(() => _renderBlockRulesPanel());
             });
         }
 
@@ -12333,6 +12343,115 @@
         // ─── LoRA 프롬프트 편집 모드 토글 ───
         let _loraPromptState = { mode: 'text', origPos: '', origNeg: '', origPosTags: new Set(), origNegTags: new Set() };
         let loraPromptEditMode = 'text';
+        let _loraBlockRules = []; // 전역 블록 태그 규칙
+
+        function _matchBlockRule(tag, rules) {
+            if (!rules || !rules.length) return false;
+            const t = tag.trim().toLowerCase();
+            for (const rule of rules) {
+                const r = rule.trim().toLowerCase();
+                if (r.startsWith('* ')) {
+                    if (t.endsWith(r.substring(2))) return true;
+                } else if (r.endsWith(' *')) {
+                    if (t.startsWith(r.slice(0, -2))) return true;
+                } else {
+                    if (t === r) return true;
+                }
+            }
+            return false;
+        }
+
+        async function _loadLoraBlockRules() {
+            try {
+                const resp = await fetchJSON('/api/lora/block_tag_rules');
+                if (resp.success) _loraBlockRules = resp.rules || [];
+                else _loraBlockRules = [];
+            } catch (e) {
+                console.error('[LORA] 블록 규칙 로드 실패:', e);
+                _loraBlockRules = [];
+            }
+        }
+
+        async function _saveLoraBlockRules(rules) {
+            try {
+                const resp = await fetchJSON('/api/lora/block_tag_rules', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ rules })
+                });
+                if (resp.success) { _loraBlockRules = resp.rules; return true; }
+                else { showToast(resp.error || '블록 규칙 저장 실패', 'error'); return false; }
+            } catch (e) {
+                console.error('[LORA] 블록 규칙 저장 실패:', e);
+                showToast('블록 규칙 저장 실패', 'error');
+                return false;
+            }
+        }
+
+        function _renderBlockRulesPanel() {
+            const panel = document.getElementById('lora-block-rules-panel');
+            if (!panel) return;
+            let html = '<div style="display:flex; flex-wrap:wrap; gap:4px; margin-bottom:8px;">';
+            if (_loraBlockRules.length === 0) {
+                html += '<span style="font-size:0.8rem; color:var(--text-secondary);">규칙 없음</span>';
+            } else {
+                _loraBlockRules.forEach((rule, i) => {
+                    html += `<span style="display:inline-flex; align-items:center; gap:2px; background:rgba(220,50,50,0.12); border:1px solid rgba(220,50,50,0.3); border-radius:4px; padding:2px 6px; font-size:0.75rem; color:var(--error);">${escapeHtml(rule)}<span style="cursor:pointer; font-weight:bold; margin-left:2px;" onclick="_removeBlockRule(${i})">&times;</span></span>`;
+                });
+            }
+            html += '</div>';
+            html += '<div style="display:flex; gap:4px; margin-bottom:8px;">';
+            html += '<input id="lora-block-rule-input" type="text" placeholder="예: * hair, * eyes" style="flex:1; padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); font-size:0.8rem;">';
+            html += '<button onclick="_addBlockRule()" style="padding:4px 10px; background:var(--accent); color:#fff; border:none; border-radius:4px; font-size:0.8rem; cursor:pointer; font-weight:600;">추가</button>';
+            html += '</div>';
+            html += '<div style="display:flex; gap:4px;">';
+            html += '<button onclick="_removeAllBlockedChips(\'positive\')" style="padding:4px 10px; background:rgba(220,50,50,0.15); color:var(--error); border:1px solid rgba(220,50,50,0.3); border-radius:4px; font-size:0.75rem; cursor:pointer;">긍정 매칭 전체 삭제</button>';
+            html += '<button onclick="_removeAllBlockedChips(\'negative\')" style="padding:4px 10px; background:rgba(220,50,50,0.15); color:var(--error); border:1px solid rgba(220,50,50,0.3); border-radius:4px; font-size:0.75rem; cursor:pointer;">부정 매칭 전체 삭제</button>';
+            html += '</div>';
+            panel.innerHTML = html;
+        }
+
+        async function _addBlockRule() {
+            const input = document.getElementById('lora-block-rule-input');
+            if (!input || !input.value.trim()) return;
+            const rule = input.value.trim();
+            if (_loraBlockRules.includes(rule)) { showToast('이미 존재하는 규칙입니다', 'error'); return; }
+            const newRules = [..._loraBlockRules, rule];
+            if (await _saveLoraBlockRules(newRules)) {
+                _renderBlockRulesPanel();
+                _refreshLoraPromptWithBlockRules();
+                input.value = '';
+            }
+        }
+
+        async function _removeBlockRule(index) {
+            const newRules = _loraBlockRules.filter((_, i) => i !== index);
+            if (await _saveLoraBlockRules(newRules)) {
+                _renderBlockRulesPanel();
+                _refreshLoraPromptWithBlockRules();
+            }
+        }
+
+        function _removeAllBlockedChips(field) {
+            if (loraPromptEditMode !== 'chips') {
+                // 텍스트 모드면 칩 모드로 전환 후 삭제
+                toggleLoraPromptEditMode();
+            }
+            const container = document.getElementById('lora-prompt-' + field + '-chips');
+            if (!container) return;
+            const chips = container.querySelectorAll('.lora-prompt-chip.blocked');
+            if (chips.length === 0) { showToast('매칭되는 태그가 없습니다', 'info'); return; }
+            chips.forEach(c => c.remove());
+            _updateLoraPromptDiff();
+            showToast(`${chips.length}개 태그 삭제됨`, 'success');
+        }
+
+        function _refreshLoraPromptWithBlockRules() {
+            const posText = _readLoraPromptContent('positive');
+            const negText = _readLoraPromptContent('negative');
+            _writeLoraPromptContent('positive', posText);
+            _writeLoraPromptContent('negative', negText);
+            _updateLoraPromptDiff();
+        }
 
         function toggleLoraPromptEditMode() {
             const posText = _readLoraPromptContent('positive');
@@ -12381,7 +12500,10 @@
             const tags = text.split(',').map(t => t.trim()).filter(t => t);
             return tags.map(tag => {
                 const isAdded = !origTagsSet.has(tag);
-                const cls = isAdded ? 'lora-prompt-chip added' : 'lora-prompt-chip';
+                const isBlocked = _matchBlockRule(tag, _loraBlockRules);
+                let cls = 'lora-prompt-chip';
+                if (isAdded) cls += ' added';
+                if (isBlocked) cls += ' blocked';
                 return '<span class="' + cls + '" data-tag="' + escapeHtml(tag) + '">' + escapeHtml(tag) + '<span class="remove-chip" onclick="_removeLoraPromptChip(this)">&times;</span></span>';
             }).join('');
         }
@@ -12418,8 +12540,12 @@
             return parts.map((part) => {
                 const trimmed = part.trim();
                 const isDiff = trimmed && !otherTagsSet.has(trimmed);
-                const bg = isDiff ? highlightColor : '';
-                return `<span style="background:${bg}; border-radius:3px;">${escapeHtml(part)}</span>`;
+                const isBlocked = trimmed && _matchBlockRule(trimmed, _loraBlockRules);
+                let bg = '';
+                if (isBlocked) bg = 'rgba(220,50,50,0.2)';
+                else if (isDiff) bg = highlightColor;
+                const extraStyle = isBlocked ? '; color:var(--error); font-weight:600' : '';
+                return `<span style="background:${bg}; border-radius:3px${extraStyle}">${escapeHtml(part)}</span>`;
             }).join(',');
         }
 
@@ -12478,6 +12604,10 @@
                         <img src="/api/lora/training_image/${enc(loraCurrentCharacter)}/${enc(loraCurrentEntry)}/${enc(filename)}" style="width:120px; height:120px; object-fit:cover; border-radius:8px; display:block; flex-shrink:0;">
                         <div style="display:flex; align-items:center; font-size:0.85rem; color:var(--text-secondary);">${escapeHtml(filename)}</div>
                     </div>
+                    <details style="margin-bottom:8px; border:1px solid var(--border); border-radius:6px; padding:6px 10px; background:var(--surface2);">
+                        <summary style="cursor:pointer; font-size:0.85rem; font-weight:600; color:var(--error);">블록 태그 규칙</summary>
+                        <div id="lora-block-rules-panel" style="margin-top:6px;"></div>
+                    </details>
                     <div style="display:flex; gap:16px;">
                         <div style="flex:1; display:flex; flex-direction:column; gap:8px;">
                             <div style="font-size:0.85rem; font-weight:700; color:var(--text-secondary); text-align:center; margin-bottom:4px;">원본</div>
@@ -12507,6 +12637,7 @@
                 _loraPromptState = { origPos, origNeg, origPosTags, origNegTags };
                 loraPromptEditMode = 'text';
                 setupPromptLiveDiff();
+                _loadLoraBlockRules().then(() => _renderBlockRulesPanel());
             });
         }
 

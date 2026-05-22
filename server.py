@@ -5720,6 +5720,31 @@ async def handle_api_lora_untracked_remove(request):
 app.router.add_get("/api/lora/untracked", handle_api_lora_untracked_scan)
 app.router.add_post("/api/lora/untracked/remove", handle_api_lora_untracked_remove)
 
+
+async def handle_api_lora_block_tag_rules_get(request):
+    """전역 블록 태그 규칙 조회"""
+    from modes.lora_mode import get_block_tag_rules
+    rules = get_block_tag_rules()
+    return web.json_response({"success": True, "rules": rules})
+
+
+async def handle_api_lora_block_tag_rules_save(request):
+    """전역 블록 태그 규칙 저장"""
+    from modes.lora_mode import save_block_tag_rules
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"success": False, "error": "Invalid JSON"}, status=400)
+    rules = data.get("rules", [])
+    result = save_block_tag_rules(rules)
+    if not result.get("success"):
+        return web.json_response(result, status=400)
+    return web.json_response(result)
+
+
+app.router.add_get("/api/lora/block_tag_rules", handle_api_lora_block_tag_rules_get)
+app.router.add_post("/api/lora/block_tag_rules", handle_api_lora_block_tag_rules_save)
+
 async def handle_api_open_folder(request):
     """지정한 경로의 폴더를 윈도우 탐색기로 엶"""
     import subprocess

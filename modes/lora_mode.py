@@ -803,13 +803,14 @@ def _load_lora_manage() -> dict:
         try:
             with open(LORA_MANAGE_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
+            data.setdefault("block_tag_rules", [])
             data = _migrate_lora_manage(data)
             return data
         except Exception as e:
             print(f"[LORA_MANAGE] 로드 실패: {e}")
             traceback.print_exc()
-            return {"loras": {}}
-    return {"loras": {}}
+            return {"loras": {}, "block_tag_rules": []}
+    return {"loras": {}, "block_tag_rules": []}
 
 
 def _migrate_lora_manage(data: dict) -> dict:
@@ -849,6 +850,25 @@ def _save_lora_manage(data: dict):
     except Exception as e:
         print(f"[LORA_MANAGE] 저장 실패: {e}")
         traceback.print_exc()
+
+
+def get_block_tag_rules() -> list:
+    """전역 블록 태그 규칙 목록 반환"""
+    data = _load_lora_manage()
+    return data.get("block_tag_rules", [])
+
+
+def save_block_tag_rules(rules: list) -> dict:
+    """전역 블록 태그 규칙 저장"""
+    if not isinstance(rules, list):
+        return {"success": False, "error": "rules must be a list"}
+    for r in rules:
+        if not isinstance(r, str):
+            return {"success": False, "error": "each rule must be a string"}
+    data = _load_lora_manage()
+    data["block_tag_rules"] = rules
+    _save_lora_manage(data)
+    return {"success": True, "rules": rules}
 
 
 def _get_entry(data: dict, character: str, name: str) -> dict | None:
