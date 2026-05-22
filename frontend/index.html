@@ -11768,6 +11768,8 @@
         async function startLoraTraining() {
             if (!loraCurrentCharacter || !loraCurrentEntry) { showToast('LoRA 항목을 선택하세요', 'error'); return; }
             try {
+                // 학습 전 설정 자동 저장
+                await saveLoraTrainingConfig();
                 showToast('학습 시작 중...', 'info');
                 const resp = await fetchJSON('/api/lora/training/start', {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
