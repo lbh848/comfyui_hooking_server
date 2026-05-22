@@ -1,4 +1,4 @@
-"""Git Auto Updater - 최대 3개 프로그램 등록 가능"""
+"""Git Auto Updater - 최대 4개 프로그램 등록 가능"""
 import tkinter as tk
 from tkinter import ttk, filedialog, scrolledtext
 import subprocess
@@ -10,7 +10,7 @@ import sys
 
 
 class GitAutoUpdater:
-    MAX_SLOTS = 3
+    MAX_SLOTS = 4
     DEFAULT_SLOTS = [
         {
             "name": "soya-custom-nodes",
@@ -28,6 +28,12 @@ class GitAutoUpdater:
             "name": "hooking-server",
             "path": r"E:\test2\comfyui_hooking_server",
             "url": "https://github.com/lbh848/comfyui_hooking_server",
+            "branch": "main",
+        },
+        {
+            "name": "",
+            "path": "",
+            "url": "",
             "branch": "main",
         },
     ]
@@ -72,7 +78,7 @@ class GitAutoUpdater:
             side=tk.RIGHT
         )
 
-        # 슬롯 3개
+        # 슬롯 4개
         for i in range(self.MAX_SLOTS):
             self._add_slot(main, i)
 
