@@ -3981,7 +3981,7 @@
                             </div>
                             <div>
                                 <label style="font-size:0.7rem; color:var(--text-secondary); display:block; margin-bottom:2px;">STEP_PER_IMAGE(추천:100)</label>
-                                <input type="number" id="lora-cfg-step" value="50" min="1" style="width:100%; padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); font-size:0.8rem; box-sizing:border-box;">
+                                <input type="number" id="lora-cfg-step" value="50" min="1" onchange="updateSaveAfterDropdown()" style="width:100%; padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); font-size:0.8rem; box-sizing:border-box;">
                             </div>
                             <div>
                                 <label style="font-size:0.7rem; color:var(--text-secondary); display:block; margin-bottom:2px;">IL_RATE (학습률)(추천값-Anima:0.00025/XL:0.0003)</label>
@@ -3989,7 +3989,7 @@
                             </div>
                             <div>
                                 <label style="font-size:0.7rem; color:var(--text-secondary); display:block; margin-bottom:2px;">SAVE_PER_STEP</label>
-                                <input type="number" id="lora-cfg-save-step" value="50" min="1" style="width:100%; padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); font-size:0.8rem; box-sizing:border-box;">
+                                <input type="number" id="lora-cfg-save-step" value="50" min="1" onchange="updateSaveAfterDropdown()" style="width:100%; padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); font-size:0.8rem; box-sizing:border-box;">
                             </div>
                             <div>
                                 <label style="font-size:0.7rem; color:var(--text-secondary); display:block; margin-bottom:2px;">MULTI_IMG_FOLDER_NAME (자동)</label>
@@ -4018,6 +4018,12 @@
                             <div>
                                 <label style="font-size:0.7rem; color:var(--text-secondary); display:block; margin-bottom:2px;">RESOLUTION (학습시 사용하는 이미지 해상도 *짧은변기준*)</label>
                                 <input type="number" id="lora-cfg-resolution" value="1024" min="1" style="width:100%; padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); font-size:0.8rem; box-sizing:border-box;">
+                            </div>
+                            <div>
+                                <label style="font-size:0.7rem; color:var(--text-secondary); display:block; margin-bottom:2px;">SAVE_AFTER (0=전체 기록, 이후 스텝부터 체크포인트 저장)</label>
+                                <select id="lora-cfg-save-after" style="width:100%; padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); font-size:0.8rem; box-sizing:border-box;">
+                                    <option value="0">전체 기록 (0)</option>
+                                </select>
                             </div>
                         </div>
                         <div style="display:flex; gap:4px; margin-top:8px;">
@@ -11960,6 +11966,7 @@
                 section.style.display = '';
                 // N_IMG 자동 업데이트
                 document.getElementById('lora-cfg-nimg').textContent = images.length;
+                updateSaveAfterDropdown();
                 if (images.length === 0) {
                     grid.style.display = 'none';
                     emptyEl.style.display = '';
@@ -11990,6 +11997,39 @@
         }
 
         // ─── 학습 설정 ─────────────────────────────────────
+
+        // SAVE_AFTER 드롭박스 실시간 갱신
+        function updateSaveAfterDropdown() {
+            const nImg = parseInt(document.getElementById('lora-cfg-nimg').textContent) || 0;
+            const stepPerImage = parseInt(document.getElementById('lora-cfg-step').value) || 50;
+            const savePerStep = parseInt(document.getElementById('lora-cfg-save-step').value) || 50;
+            const select = document.getElementById('lora-cfg-save-after');
+            const currentValue = parseInt(select.value) || 0;
+            const maxSteps = nImg * stepPerImage;
+
+            let options = [{value: 0, label: '전체 기록 (0)'}];
+            if (savePerStep > 0) {
+                for (let step = savePerStep; step <= maxSteps; step += savePerStep) {
+                    options.push({value: step, label: step + ' 이후'});
+                }
+            }
+
+            select.innerHTML = '';
+            options.forEach(opt => {
+                const el = document.createElement('option');
+                el.value = opt.value;
+                el.textContent = opt.label;
+                select.appendChild(el);
+            });
+
+            // 기존 선택값 유지, 없으면 0으로 리셋
+            if (options.some(opt => opt.value === currentValue)) {
+                select.value = currentValue;
+            } else {
+                select.value = 0;
+            }
+        }
+
         async function loadLoraTrainingConfig() {
             if (!loraCurrentCharacter || !loraCurrentEntry) return;
             const enc = encodeURIComponent;
@@ -12012,6 +12052,14 @@
                     upscaleStatus.textContent = cfg.upscale ? 'ON' : 'OFF';
                     upscaleStatus.className = 'toggle-status ' + (cfg.upscale ? 'on' : 'off');
                     document.getElementById('lora-cfg-resolution').value = cfg.resolution || 1024;
+                    // SAVE_AFTER 드롭박스 갱신 후 복원
+                    updateSaveAfterDropdown();
+                    if (cfg.save_after !== undefined) {
+                        const saveAfterSelect = document.getElementById('lora-cfg-save-after');
+                        if (saveAfterSelect.querySelector(`option[value="${cfg.save_after}"]`)) {
+                            saveAfterSelect.value = cfg.save_after;
+                        }
+                    }
                     // lora_save_path 자동 생성
                     document.getElementById('lora-cfg-save-path').textContent = loraCurrentCharacter + '/Lora/' + loraCurrentEntry;
                 }
@@ -12025,6 +12073,7 @@
                 step_per_image: parseInt(document.getElementById('lora-cfg-step').value) || 50,
                 il_rate: parseFloat(document.getElementById('lora-cfg-ilrate').value) || 0.0005,
                 save_per_step: parseInt(document.getElementById('lora-cfg-save-step').value) || 50,
+                save_after: parseInt(document.getElementById('lora-cfg-save-after').value) || 0,
                 multi_img_folder_name: document.getElementById('lora-cfg-folder').textContent.trim(),
                 gen_w: parseInt(document.getElementById('lora-cfg-genw').value) || 1024,
                 gen_h: parseInt(document.getElementById('lora-cfg-genh').value) || 1024,
@@ -12082,6 +12131,7 @@
             const loraSavePath = loraCurrentCharacter + '/Lora/' + loraCurrentEntry;
             const upscale = document.getElementById('lora-cfg-upscale').checked;
             const resolution = parseInt(document.getElementById('lora-cfg-resolution').value) || 1024;
+            const saveAfter = parseInt(document.getElementById('lora-cfg-save-after').value) || 0;
 
             // 긍정: [1]트리거 프롬프트\n...\n[PROFILE]\n...\n[TEST_POSITIVE]\n...\n[TEST_NEGATIVE]\n...\n[END]
             const trigger = document.getElementById('lora-entry-trigger').value.trim();
@@ -12094,7 +12144,7 @@
             });
 
             // 설정 블록 (긍정만)
-            let configBlock = `[PROFILE]\n${profile || '(미입력)'}\n[N_IMG]\n${nImg}\n[STEP_PER_IMAGE]\n${stepPerImage}\n[IL_RATE]\n${ilRate}\n[SAVE_PER_STEP]\n${savePerStep}\n[MULTI_IMG_FOLDER_NAME]\n${folderName || '(미입력)'}\n[LORA_SAVE_PATH]\n${loraSavePath}\n[GEN_W]\n${genW}\n[GEN_H]\n${genH}\n[UPSCALE]\n${upscale}\n[RESOLUTION]\n${resolution}`;
+            let configBlock = `[PROFILE]\n${profile || '(미입력)'}\n[N_IMG]\n${nImg}\n[STEP_PER_IMAGE]\n${stepPerImage}\n[IL_RATE]\n${ilRate}\n[SAVE_PER_STEP]\n${savePerStep}\n[MULTI_IMG_FOLDER_NAME]\n${folderName || '(미입력)'}\n[LORA_SAVE_PATH]\n${loraSavePath}\n[GEN_W]\n${genW}\n[GEN_H]\n${genH}\n[UPSCALE]\n${upscale}\n[RESOLUTION]\n${resolution}\n[SAVE_AFTER]\n${saveAfter}`;
 
             // TEST_POSITIVE + TEST_NEGATIVE (긍정 프롬프트 안에 모두 포함)
             let testBlock = '';
