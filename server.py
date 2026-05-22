@@ -5496,6 +5496,8 @@ async def handle_api_lora_training_start(request):
 
         positive_text = _build_lora_training_text(images, trigger, profile, step, il_rate, save_step, folder, "positive", lora_save_path, gen_w, gen_h, upscale, resolution, test_images, save_after)
         negative_text = _build_lora_training_text(images, trigger, profile, step, il_rate, save_step, folder, "negative", lora_save_path, gen_w, gen_h, upscale, resolution, test_images, save_after)
+        print(f"[LORA_TRAIN] 긍정 프롬프트 (실제 전송):\n{positive_text}")
+        print(f"[LORA_TRAIN] 부정 프롬프트 (실제 전송):\n{negative_text}")
 
         # 5. 워크플로우 로드 & 변환 (profile별 선택)
         workflow_paths = config.get("lora_training_workflow_source_paths", {})
