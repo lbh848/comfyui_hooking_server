@@ -2746,6 +2746,7 @@
         .noti-md th, .noti-md td { border:1px solid var(--border); padding:6px 10px; text-align:left; }
         .noti-md th { background:var(--surface2); font-weight:600; }
         .noti-md hr { border:none; border-top:1px solid var(--border); margin:12px 0; }
+        @keyframes noti-bubble-in { from { opacity:0; transform:translateY(20px); } to { opacity:1; transform:translateY(0); } }
     </style>
 </head>
 <body>
@@ -21941,9 +21942,57 @@
             } catch (e) { console.warn('공지 확인 실패:', e); }
         }
 
+        // 전체 읽음 처리
+        function markAllNotiRead() {
+            if (_notiList.length === 0) return;
+            const allNames = _notiList.map(f => f.name);
+            _notiReadIds = [...new Set([..._notiReadIds, ...allNames])];
+            setNotiReadIds(_notiReadIds);
+            document.getElementById('notification-badge').style.display = 'none';
+            renderNotiList();
+        }
+
+        // 안읽은 공지 말풍선 리마인더
+        let _notiReminderTimer = null;
+        let _notiReminderBubble = null;
+
+        function showNotiReminderBubble(unreadCount) {
+            // 기존 말풍선 제거
+            if (_notiReminderBubble) _notiReminderBubble.remove();
+
+            const bell = document.getElementById('notification-bell');
+            if (!bell) return;
+
+            const bellRect = bell.getBoundingClientRect();
+            const bubble = document.createElement('div');
+            bubble.id = 'noti-reminder-bubble';
+            bubble.style.cssText = `position:fixed; left:${bellRect.left + bellRect.width / 2}px; top:${bellRect.bottom + 8}px; transform:translateX(-50%); background:var(--error); color:#fff; padding:10px 16px; border-radius:8px; font-size:0.85rem; font-weight:600; box-shadow:0 4px 16px rgba(0,0,0,0.3); z-index:10001; animation:noti-bubble-in 0.3s ease; cursor:pointer; white-space:nowrap;`;
+            bubble.textContent = `📢 안읽은 공지 ${unreadCount}건`;
+            bubble.onclick = () => { bubble.remove(); openNotificationBoard(); };
+            document.body.appendChild(bubble);
+            _notiReminderBubble = bubble;
+
+            // 10초 후 자동 사라짐
+            setTimeout(() => { if (bubble.parentNode) bubble.remove(); }, 10000);
+        }
+
+        async function checkAndRemindNoti() {
+            try {
+                const list = await fetchNotiList();
+                const readIds = getNotiReadIds();
+                const unreadCount = list.filter(f => !readIds.includes(f.name)).length;
+                if (unreadCount > 0) {
+                    showNotiReminderBubble(unreadCount);
+                }
+            } catch (e) { console.warn('공지 리마인더 실패:', e); }
+        }
+
         // 페이지 로드 시 체크 + 20분 주기 체크
         checkUnreadNotifications();
         setInterval(checkUnreadNotifications, 20 * 60 * 1000);
+
+        // 안읽은 공지 1분마다 말풍선 리마인더
+        setTimeout(() => { checkAndRemindNoti(); setInterval(checkAndRemindNoti, 60 * 1000); }, 5000);
 
         let _notiList = [];
         let _notiReadIds = [];
@@ -22005,6 +22054,7 @@
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-shrink:0;">
                         <h3 style="margin:0;">공지사항</h3>
                         <div style="display:flex; align-items:center; gap:8px;">
+                            <button onclick="markAllNotiRead()" style="background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:4px 10px; border-radius:4px; cursor:pointer; font-size:0.75rem;">전체 읽음</button>
                             <a href="https://arca.live/b/characterai/168601102" target="_blank" rel="noopener" title="아카라이브" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer; text-decoration:none; opacity:0.7; transition:opacity 0.2s;" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.7'">📝</a>
                             <button onclick="document.getElementById('noti-overlay').remove()" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer;">x</button>
                         </div>
