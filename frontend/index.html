@@ -6650,9 +6650,10 @@
                 _untrackedLoraItems = data.items;
                 let html = '<div style="margin-bottom:8px; font-size:13px; color:var(--text-secondary,#aaa);">다음 항목이 로라 매니징에서 추적되지 않고 있습니다:</div>';
 
-                // 전체 선택
+                // 전체 선택 + 선택 카운트
                 html += `<label style="display:flex; align-items:center; gap:6px; margin-bottom:8px; padding:6px 8px; background:var(--bg-tertiary,#2a2a3e); border-radius:6px; font-size:12px; cursor:pointer;">
                     <input type="checkbox" id="untracked-select-all" onchange="toggleAllUntracked(this.checked)" checked> 전체 선택
+                    <span id="untracked-select-count" style="margin-left:auto; color:var(--text-secondary,#aaa);">${data.items.length}개 선택됨</span>
                 </label>`;
 
                 for (let i = 0; i < data.items.length; i++) {
@@ -6660,7 +6661,7 @@
                     const typeLabel = item.type === 'character' ? '캐릭터' : '엔트리';
                     const typeColor = item.type === 'character' ? '#e67e22' : '#3498db';
                     html += `<label style="display:flex; align-items:flex-start; gap:8px; padding:8px; margin-bottom:4px; background:var(--bg-tertiary,#2a2a3e); border-radius:6px; cursor:pointer; font-size:13px;">
-                        <input type="checkbox" class="untracked-item-cb" data-index="${i}" checked style="margin-top:2px;">
+                        <input type="checkbox" class="untracked-item-cb" data-index="${i}" checked onchange="updateUntrackedSelectCount()" style="margin-top:2px;">
                         <div style="flex:1;">
                             <div><span style="color:${typeColor}; font-size:11px; font-weight:600;">[${typeLabel}]</span> ${item.display}</div>
                             <div style="color:var(--text-secondary,#aaa); font-size:11px;">${item.file_count}개 파일 · ${item.size_mb} MB</div>
@@ -6670,7 +6671,11 @@
                 }
 
                 const totalSize = data.items.reduce((s, i) => s + i.size_mb, 0);
-                html += `<div style="margin-top:8px; font-size:12px; color:var(--text-secondary,#aaa);">총 ${data.items.length}개 항목, 약 ${totalSize.toFixed(1)} MB</div>`;
+                html += `<div id="untracked-total" style="margin-top:8px; font-size:12px; color:var(--text-secondary,#aaa);">선택 항목: ${data.items.length}개, 약 ${totalSize.toFixed(1)} MB</div>`;
+                html += `<label style="display:flex; align-items:center; gap:6px; margin-top:10px; padding:6px 8px; background:var(--bg-tertiary,#2a2a3e); border-radius:6px; font-size:12px; cursor:pointer;">
+                    <input type="checkbox" id="untracked-cleanup-manage"> lora_manage.json에서도 추적 제거
+                    <span style="color:var(--text-secondary,#777); font-size:11px;">(체크 시 파일 삭제 + 매니징 데이터 제거)</span>
+                </label>`;
 
                 listDiv.innerHTML = html;
                 listDiv.style.display = '';
@@ -6684,6 +6689,24 @@
 
         function toggleAllUntracked(checked) {
             document.querySelectorAll('.untracked-item-cb').forEach(cb => cb.checked = checked);
+            updateUntrackedSelectCount();
+        }
+
+        function updateUntrackedSelectCount() {
+            const total = document.querySelectorAll('.untracked-item-cb').length;
+            const checked = document.querySelectorAll('.untracked-item-cb:checked').length;
+            const countEl = document.getElementById('untracked-select-count');
+            if (countEl) countEl.textContent = `${checked}개 선택됨`;
+            const allCb = document.getElementById('untracked-select-all');
+            if (allCb) allCb.checked = (checked === total);
+            // 선택 항목 총 용량 동기화
+            let selSize = 0;
+            document.querySelectorAll('.untracked-item-cb:checked').forEach(cb => {
+                const idx = parseInt(cb.dataset.index);
+                if (_untrackedLoraItems[idx]) selSize += _untrackedLoraItems[idx].size_mb;
+            });
+            const totalEl = document.getElementById('untracked-total');
+            if (totalEl) totalEl.textContent = `선택 항목: ${checked}개, 약 ${selSize.toFixed(1)} MB`;
         }
 
         async function removeUntrackedLoras() {
@@ -6700,6 +6723,7 @@
 
             if (!confirm(`선택한 ${selected.length}개 항목을 정말 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.`)) return;
 
+            const cleanupManage = document.getElementById('untracked-cleanup-manage').checked;
             const deleteBtn = document.getElementById('untracked-lora-delete-btn');
             deleteBtn.disabled = true;
             deleteBtn.textContent = '삭제 중...';
@@ -6708,7 +6732,7 @@
                 const res = await fetch('/api/lora/untracked/remove', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ items: selected })
+                    body: JSON.stringify({ items: selected, cleanup_manage: cleanupManage })
                 });
                 const data = await res.json();
 

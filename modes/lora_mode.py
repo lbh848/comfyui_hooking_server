@@ -1205,13 +1205,23 @@ def export_training_images(character: str, entry: str, comfy_input_dir: str) -> 
 
 
 def scan_untracked_loras(lora_load_path: str) -> dict:
-    """lora_load_path에서 lora_manage.json에 추적되지 않는 캐릭터/엔트리/파일 스캔"""
+    """lora_load_path에서 추적되지 않는 캐릭터/엔트리 스캔
+    추적 조건: lora_manage.json에 등록되어 있고, 에셋(tags.json)에도 캐릭터가 존재해야 함"""
     if not lora_load_path or not os.path.isdir(lora_load_path):
         print(f"[LORA_UNTRACKED] lora_load_path 없음: {lora_load_path}")
         return {"success": False, "error": "로라 로드 경로가 존재하지 않습니다", "items": []}
 
     manage_data = _load_lora_manage()
     tracked = manage_data.get("loras", {})
+
+    # 에셋 시스템의 캐릭터 목록 로드
+    asset_chars = set()
+    try:
+        with open(TAGS_FILE, "r", encoding="utf-8") as f:
+            asset_tags = json.load(f)
+        asset_chars = set(asset_tags.get("characters", {}).keys())
+    except Exception as e:
+        print(f"[LORA_UNTRACKED] 에셋 캐릭터 로드 실패, 에셋 체크 생략: {e}")
 
     untracked = []
 
@@ -1229,9 +1239,14 @@ def scan_untracked_loras(lora_load_path: str) -> dict:
             continue
 
         # 이 디렉토리가 tracked의 어떤 캐릭터와 매칭되는지 확인
+        # 단, 에셋 시스템에도 존재해야 추적으로 인정
         matched_char = None
         for tracked_char in tracked:
             if _safe_dirname(tracked_char) == char_dir_name:
+                if asset_chars and tracked_char not in asset_chars:
+                    # lora_manage에는 있지만 에셋에서 삭제된 캐릭터 → 비추적
+                    print(f"[LORA_UNTRACKED] 에셋에 없는 캐릭터: {tracked_char}")
+                    continue
                 matched_char = tracked_char
                 break
 
@@ -1257,46 +1272,32 @@ def scan_untracked_loras(lora_load_path: str) -> dict:
             })
             continue
 
-        # 캐릭터는 추적됨 - 엔트리 레벨 확인
-        tracked_entries = tracked[matched_char]
-        lora_sub = os.path.join(char_path, "Lora")
-        if not os.path.isdir(lora_sub):
-            continue
-
-        try:
-            entry_dirs = os.listdir(lora_sub)
-        except Exception:
-            continue
-
-        for entry_dir_name in entry_dirs:
-            entry_path = os.path.join(lora_sub, entry_dir_name)
-            if not os.path.isdir(entry_path):
-                continue
-
-            # 이 엔트리가 tracked에 있는지 확인
-            matched_entry = None
-            for tracked_entry in tracked_entries:
-                if _safe_dirname(tracked_entry) == entry_dir_name:
-                    matched_entry = tracked_entry
-                    break
-
-            if matched_entry is None:
-                # 엔트리가 추적 안됨
+    # 디스크에 없지만 lora_manage.json에만 있는 항목도 비추적으로 추가
+    disk_dirs = set(top_items) if os.path.isdir(lora_load_path) else set()
+    for tracked_char, entries in tracked.items():
+        safe_char = _safe_dirname(tracked_char)
+        # 에셋에 없는 캐릭터 or 디스크에 없는 캐릭터 → 비추적
+        if (asset_chars and tracked_char not in asset_chars) or safe_char not in disk_dirs:
+            if not any(u["type"] == "character" and u["display"] == safe_char for u in untracked):
+                # 캐릭터 전체가 비추적
+                char_path = os.path.join(lora_load_path, safe_char) if os.path.isdir(lora_load_path) else safe_char
                 file_count = 0
-                size_mb = 0
-                for root, dirs, files in os.walk(entry_path):
-                    for f in files:
-                        fp = os.path.join(root, f)
-                        try:
-                            size_mb += os.path.getsize(fp)
-                            file_count += 1
-                        except Exception:
-                            pass
-                size_mb = round(size_mb / (1024 * 1024), 1)
+                size_mb = 0.0
+                if os.path.isdir(char_path):
+                    for root, dirs, files in os.walk(char_path):
+                        for f in files:
+                            try:
+                                size_mb += os.path.getsize(os.path.join(root, f))
+                                file_count += 1
+                            except Exception:
+                                pass
+                    size_mb = round(size_mb / (1024 * 1024), 1)
+                reason = "에셋에 없음" if (asset_chars and tracked_char not in asset_chars) else "폴더 없음"
+                print(f"[LORA_UNTRACKED] JSON에만 있는 캐릭터 ({reason}): {tracked_char}")
                 untracked.append({
-                    "type": "entry",
-                    "path": entry_path,
-                    "display": f"{char_dir_name}/Lora/{entry_dir_name}",
+                    "type": "character",
+                    "path": char_path,
+                    "display": safe_char,
                     "file_count": file_count,
                     "size_mb": size_mb,
                 })
@@ -1305,15 +1306,27 @@ def scan_untracked_loras(lora_load_path: str) -> dict:
     return {"success": True, "items": untracked}
 
 
-def remove_untracked_loras(items: list) -> dict:
-    """비추적 LoRA 항목 일괄 삭제"""
+def remove_untracked_loras(items: list, cleanup_manage: bool = False) -> dict:
+    """비추적 LoRA 항목 일괄 삭제
+    cleanup_manage=True이면 lora_manage.json에서도 해당 항목 제거"""
     removed = []
     errors = []
 
+    manage_data = None
+    if cleanup_manage:
+        manage_data = _load_lora_manage()
+
     for item in items:
         path = item.get("path", "")
+        item_type = item.get("type", "")
+        display = item.get("display", "")
+
         if not path or not os.path.exists(path):
-            errors.append({"path": path, "reason": "경로 없음"})
+            # 폴더가 없으면 정리만 수행하고 성공으로 처리
+            if cleanup_manage and manage_data and display:
+                _cleanup_manage_entry(manage_data, display, item_type)
+            removed.append(display or path)
+            print(f"[LORA_UNTRACKED] 폴더 없음 (정리만 완료): {display or path}")
             continue
 
         try:
@@ -1324,8 +1337,24 @@ def remove_untracked_loras(items: list) -> dict:
             errors.append({"path": path, "reason": str(e)})
             print(f"[LORA_UNTRACKED] 삭제 실패: {path} - {e}")
             traceback.print_exc()
+            continue
+
+        # 폴더 삭제 성공 시 manage 정리
+        if cleanup_manage and manage_data and display:
+            _cleanup_manage_entry(manage_data, display, item_type)
+
+    if cleanup_manage and manage_data:
+        _save_lora_manage(manage_data)
 
     return {"success": True, "removed": removed, "errors": errors, "removed_count": len(removed)}
+
+
+def _cleanup_manage_entry(manage_data: dict, display: str, item_type: str):
+    """display 이름으로 lora_manage.json에서 캐릭터 제거"""
+    char_name = display
+    if char_name in manage_data.get("loras", {}):
+        del manage_data["loras"][char_name]
+        print(f"[LORA_UNTRACKED] lora_manage에서 캐릭터 제거: {char_name}")
 
 
 def get_entry_image_path(character: str, entry_name: str, filename: str) -> str | None:

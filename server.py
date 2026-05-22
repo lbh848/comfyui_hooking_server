@@ -5700,10 +5700,11 @@ async def handle_api_lora_untracked_remove(request):
     try:
         body = await request.json()
         items = body.get("items", [])
+        cleanup_manage = body.get("cleanup_manage", False)
         if not items:
             return web.json_response({"success": False, "error": "삭제할 항목이 없습니다"}, status=400)
         from modes.lora_mode import remove_untracked_loras
-        result = remove_untracked_loras(items)
+        result = remove_untracked_loras(items, cleanup_manage=cleanup_manage)
         return web.json_response(result)
     except Exception as e:
         print(f"[LORA_UNTRACKED] 삭제 실패: {e}")

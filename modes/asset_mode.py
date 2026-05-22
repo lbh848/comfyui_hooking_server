@@ -563,6 +563,16 @@ class AssetMode:
         char_dir = os.path.join(ASSET_DIR, self._safe_dirname(name))
         if os.path.isdir(char_dir):
             shutil.rmtree(char_dir)
+        # lora_manage.json에서도 해당 캐릭터 제거
+        try:
+            from modes.lora_mode import _load_lora_manage, _save_lora_manage
+            lora_data = _load_lora_manage()
+            if name in lora_data.get("loras", {}):
+                del lora_data["loras"][name]
+                _save_lora_manage(lora_data)
+                print(f"[ASSET] lora_manage에서 캐릭터 제거: {name}")
+        except Exception as e:
+            print(f"[ASSET] lora_manage 캐릭터 제거 실패: {e}")
         self._log("character_removed", {"name": name})
         return {"success": True}
 
