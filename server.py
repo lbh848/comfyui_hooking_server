@@ -5714,6 +5714,24 @@ async def handle_api_lora_untracked_remove(request):
 app.router.add_get("/api/lora/untracked", handle_api_lora_untracked_scan)
 app.router.add_post("/api/lora/untracked/remove", handle_api_lora_untracked_remove)
 
+async def handle_api_open_folder(request):
+    """지정한 경로의 폴더를 윈도우 탐색기로 엶"""
+    import subprocess
+    path = request.query.get("path", "").strip()
+    if not path:
+        return web.json_response({"success": False, "error": "경로 누락"})
+    path = os.path.normpath(path)
+    if not os.path.isdir(path):
+        return web.json_response({"success": False, "error": f"폴더가 존재하지 않음: {path}"})
+    try:
+        subprocess.Popen(f'explorer "{path}"')
+        return web.json_response({"success": True})
+    except Exception as e:
+        print(f"[OPEN_FOLDER] 실패: {e}")
+        return web.json_response({"success": False, "error": str(e)})
+
+app.router.add_get("/api/open-folder", handle_api_open_folder)
+
 
 def _backup_data_on_startup():
     """프로그램 시작 시 asset_data 주요 파일들을 백업 (최대 50개 유지)"""

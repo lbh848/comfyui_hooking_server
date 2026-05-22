@@ -4815,6 +4815,7 @@
                         </div>
                         <div class="hint">학습된 LoRA가 저장되는 폴더 경로 (\SOYA_CHAR_LORA는 자동 추가)</div>
                         <button onclick="scanUntrackedLoras()" style="margin-top: 6px; padding: 6px 14px; font-size: 12px; background: var(--bg-tertiary, #2a2a3e); border: 1px solid var(--border-color, #3a3a4e); border-radius: 6px; color: var(--text-secondary, #aaa); cursor: pointer;">비추적 로라 제거</button>
+                        <button onclick="openLoraFolder()" style="margin-top: 6px; padding: 6px 14px; font-size: 12px; background: var(--bg-tertiary, #2a2a3e); border: 1px solid var(--border-color, #3a3a4e); border-radius: 6px; color: var(--text-secondary, #aaa); cursor: pointer;">📁 폴더 열기</button>
                     </div>
                 </div>
             </div>
@@ -6603,6 +6604,15 @@
 
         // ── 비추적 LoRA 제거 ──
         let _untrackedLoraItems = [];
+
+        async function openLoraFolder() {
+            const pathInput = document.getElementById('setting-lora-load-path').value.trim();
+            if (!pathInput) { showToast('LoRA 경로가 설정되지 않았습니다', 'error'); return; }
+            try {
+                const resp = await fetchJSON(`/api/open-folder?path=${encodeURIComponent(pathInput)}`);
+                if (!resp.success) showToast(resp.error || '폴더 열기 실패', 'error');
+            } catch (e) { showToast('폴더 열기 실패', 'error'); }
+        }
 
         async function scanUntrackedLoras() {
             const modal = document.getElementById('untracked-lora-modal');
@@ -11640,6 +11650,20 @@
                 console.error('[LORA_MANAGE] 복제 모달 로드 실패:', e);
             }
 
+            // 대상 캐릭터/항목명 변경 시 lora_save_path 실시간 갱신
+            const updateDupSavePath = () => {
+                const tc = document.getElementById('dup-training-config');
+                const tcRaw = tc.value.trim();
+                if (!tcRaw) return;
+                try {
+                    const cfg = JSON.parse(tcRaw);
+                    cfg.lora_save_path = document.getElementById('dup-target-character').value + '/Lora/' + (document.getElementById('dup-target-entry').value.trim() || '?');
+                    tc.value = JSON.stringify(cfg, null, 2);
+                } catch {}
+            };
+            document.getElementById('dup-target-character').onchange = updateDupSavePath;
+            document.getElementById('dup-target-entry').oninput = updateDupSavePath;
+
             document.getElementById('lora-duplicate-modal').style.display = 'flex';
         }
 
@@ -11661,6 +11685,11 @@
             if (tcRaw) {
                 try { trainingConfig = JSON.parse(tcRaw); }
                 catch (e) { showToast('학습 설정 JSON 형식 오류', 'error'); return; }
+            }
+
+            // lora_save_path를 대상 캐릭터/항목명에 맞게 재생성
+            if (trainingConfig) {
+                trainingConfig.lora_save_path = targetCharacter + '/Lora/' + targetEntry;
             }
 
             try {
@@ -22054,7 +22083,7 @@
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-shrink:0;">
                         <h3 style="margin:0;">공지사항</h3>
                         <div style="display:flex; align-items:center; gap:8px;">
-                            <button onclick="markAllNotiRead()" style="background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:4px 10px; border-radius:4px; cursor:pointer; font-size:0.75rem;">전체 읽음</button>
+                            <button onclick="markAllNotiRead()" style="background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:4px 10px; border-radius:4px; cursor:pointer; font-size:0.75rem;">전체 읽음 처리</button>
                             <a href="https://arca.live/b/characterai/168601102" target="_blank" rel="noopener" title="아카라이브" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer; text-decoration:none; opacity:0.7; transition:opacity 0.2s;" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.7'">📝</a>
                             <button onclick="document.getElementById('noti-overlay').remove()" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer;">x</button>
                         </div>
