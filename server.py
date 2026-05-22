@@ -5368,14 +5368,14 @@ def _build_lora_training_text(images: list, trigger: str, profile: str, step: in
     lines.append(str(resolution))
     lines.append("[SAVE_AFTER]")
     lines.append(str(save_after))
-    # TEST_POSITIVE
+    # TEST_POSITIVE / TEST_NEGATIVE (항상 포함)
+    lines.append("[TEST_POSITIVE]")
     if test_images:
-        lines.append("[TEST_POSITIVE]")
         for i, img in enumerate(test_images, start=1):
             prefix = f"{trigger}, " if trigger else ""
             lines.append(f"[{i}]{prefix}{img.get('positive', '(프롬프트 없음)')}")
-        # TEST_NEGATIVE (긍정 프롬프트 안에 포함)
-        lines.append("[TEST_NEGATIVE]")
+    lines.append("[TEST_NEGATIVE]")
+    if test_images:
         for i, img in enumerate(test_images, start=1):
             lines.append(f"[{i}]{img.get('negative', '')}")
     lines.append("[END]")

@@ -12146,19 +12146,16 @@
             // 설정 블록 (긍정만)
             let configBlock = `[PROFILE]\n${profile || '(미입력)'}\n[N_IMG]\n${nImg}\n[STEP_PER_IMAGE]\n${stepPerImage}\n[IL_RATE]\n${ilRate}\n[SAVE_PER_STEP]\n${savePerStep}\n[MULTI_IMG_FOLDER_NAME]\n${folderName || '(미입력)'}\n[LORA_SAVE_PATH]\n${loraSavePath}\n[GEN_W]\n${genW}\n[GEN_H]\n${genH}\n[UPSCALE]\n${upscale}\n[RESOLUTION]\n${resolution}\n[SAVE_AFTER]\n${saveAfter}`;
 
-            // TEST_POSITIVE + TEST_NEGATIVE (긍정 프롬프트 안에 모두 포함)
-            let testBlock = '';
-            if (testImages.length > 0) {
-                testBlock = '\n[TEST_POSITIVE]\n';
-                testImages.forEach((img, i) => {
-                    const triggerPrefix = trigger ? trigger + ', ' : '';
-                    testBlock += `[${i + 1}]${triggerPrefix}${img.positive || '(프롬프트 없음)'}\n`;
-                });
-                testBlock += '[TEST_NEGATIVE]\n';
-                testImages.forEach((img, i) => {
-                    testBlock += `[${i + 1}]${img.negative || ''}\n`;
-                });
-            }
+            // TEST_POSITIVE + TEST_NEGATIVE (항상 포함)
+            let testBlock = '\n[TEST_POSITIVE]\n';
+            testImages.forEach((img, i) => {
+                const triggerPrefix = trigger ? trigger + ', ' : '';
+                testBlock += `[${i + 1}]${triggerPrefix}${img.positive || '(프롬프트 없음)'}\n`;
+            });
+            testBlock += '[TEST_NEGATIVE]\n';
+            testImages.forEach((img, i) => {
+                testBlock += `[${i + 1}]${img.negative || ''}\n`;
+            });
 
             positiveRaw += configBlock + testBlock + '\n[END]';
             // 부정: 이미지별 태그만, [END] 없음
