@@ -22177,14 +22177,27 @@
             localStorage.setItem(NOTI_READ_KEY, JSON.stringify(ids));
         }
 
+        const NOTI_CACHE_KEY = 'noti_list_cache';
+        const NOTI_CACHE_TTL = 20 * 60 * 1000; // 20분
+
         async function fetchNotiList() {
+            // 캐시가 20분 이내면 API 호출 없이 캐시 반환
+            const cached = localStorage.getItem(NOTI_CACHE_KEY);
+            if (cached) {
+                try {
+                    const { timestamp, data } = JSON.parse(cached);
+                    if (Date.now() - timestamp < NOTI_CACHE_TTL) return data;
+                } catch (_) {}
+            }
             const resp = await fetch(`https://api.github.com/repos/${NOTI_REPO}/contents?t=${Date.now()}`);
             if (!resp.ok) throw new Error('GitHub API 실패');
             const files = await resp.json();
-            return files.filter(f => f.name.endsWith('.md')).map(f => ({
+            const data = files.filter(f => f.name.endsWith('.md')).map(f => ({
                 name: f.name,
                 download_url: f.download_url,
             }));
+            localStorage.setItem(NOTI_CACHE_KEY, JSON.stringify({ timestamp: Date.now(), data }));
+            return data;
         }
 
         async function checkUnreadNotifications() {
