@@ -151,11 +151,13 @@ def list_trained_steps(lora_load_path: str, character: str, entry: str, session:
         step_name = os.path.splitext(fname)[0]
         safetensors = data.get('lora_file', step_name + '.safetensors')
         previews = data.get('previews', [])
+        avr_loss = data.get('avr_loss', None)
         steps.append({
             "name": step_name,
             "safetensors": safetensors,
             "previews": previews,
             "json_file": fname,
+            "avr_loss": avr_loss,
         })
     return steps
 

@@ -3900,6 +3900,11 @@
                         <!-- 세션 목록 -->
                         <div id="lora-trained-sessions" style="display:none;"></div>
                         <!-- step 목록 -->
+                        <div id="lora-loss-chart-container" style="display:none; margin-bottom:16px;">
+                            <div style="font-weight:600; font-size:0.9rem; margin-bottom:6px; color:var(--text-secondary);">Loss 추이</div>
+                            <canvas id="lora-loss-chart" style="max-height:220px;"></canvas>
+                            <div id="lora-loss-nodata" style="display:none; text-align:center; padding:24px; color:var(--text-secondary); font-size:0.85rem;">loss 데이터가 없습니다</div>
+                        </div>
                         <div id="lora-trained-steps" style="display:none;"></div>
                         <!-- 프리뷰 이미지 -->
                         <div id="lora-trained-previews" style="display:none;"></div>
@@ -5160,6 +5165,7 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
     <script>
         let autoRefreshTimer = null;
         let backupsData = [];
@@ -11302,11 +11308,15 @@
             const stepsEl = document.getElementById('lora-trained-steps');
             const previewsEl = document.getElementById('lora-trained-previews');
             const emptyEl = document.getElementById('lora-trained-empty');
+            const lossChartEl = document.getElementById('lora-loss-chart-container');
 
             sessionsEl.style.display = 'none';
             document.getElementById('lora-representative').style.display = 'none';
             previewsEl.style.display = 'none';
             emptyEl.style.display = 'none';
+
+            // 기존 loss chart 인스턴스 제거
+            if (window._loraLossChart) { window._loraLossChart.destroy(); window._loraLossChart = null; }
 
             try {
                 const enc = encodeURIComponent;
@@ -11322,6 +11332,67 @@
                     return;
                 }
                 stepsEl.style.display = '';
+
+                // Loss 차트 렌더링 (avr_loss가 있는 경우)
+                const lossSteps = steps.filter(s => s.avr_loss != null);
+                const lossCanvas = document.getElementById('lora-loss-chart');
+                const lossNoData = document.getElementById('lora-loss-nodata');
+                if (lossSteps.length >= 2) {
+                    const labels = lossSteps.map(s => {
+                        const m = s.name.match(/step(\d+)/);
+                        return m ? parseInt(m[1], 10) : s.name;
+                    });
+                    const losses = lossSteps.map(s => s.avr_loss);
+                    const ctx = lossCanvas.getContext('2d');
+                    lossCanvas.style.display = '';
+                    lossNoData.style.display = 'none';
+                    window._loraLossChart = new Chart(ctx, {
+                        type: 'line',
+                        data: {
+                            labels: labels,
+                            datasets: [{
+                                label: 'avr_loss',
+                                data: losses,
+                                borderColor: 'rgba(0,120,215,0.9)',
+                                backgroundColor: 'rgba(0,120,215,0.15)',
+                                fill: true,
+                                tension: 0.3,
+                                pointRadius: 3,
+                                pointHoverRadius: 5,
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: {
+                                legend: { display: false },
+                                tooltip: {
+                                    callbacks: {
+                                        title: (items) => 'step ' + items[0].label,
+                                        label: (item) => 'loss: ' + item.formattedValue,
+                                    }
+                                }
+                            },
+                            scales: {
+                                x: {
+                                    title: { display: true, text: 'step', color: 'var(--text-secondary)' },
+                                    ticks: { color: 'var(--text-secondary)' },
+                                    grid: { color: 'rgba(128,128,128,0.15)' }
+                                },
+                                y: {
+                                    title: { display: true, text: 'loss', color: 'var(--text-secondary)' },
+                                    ticks: { color: 'var(--text-secondary)' },
+                                    grid: { color: 'rgba(128,128,128,0.15)' }
+                                }
+                            }
+                        }
+                    });
+                    lossChartEl.style.display = '';
+                } else {
+                    lossCanvas.style.display = 'none';
+                    lossNoData.style.display = '';
+                    lossChartEl.style.display = '';
+                }
                 // 대표 safetensors 파일명 추출
                 let repSafetensors = '';
                 if (loraEntryRepresentative) {
@@ -11357,7 +11428,7 @@
                                 ${previewUrl ? `<img src="${previewUrl}" style="width:100%; border-radius:8px; margin-bottom:10px;">` : ''}
                                 <div style="font-weight:600; font-size:0.9rem;">${escapeHtml(s.name)}</div>
                                 <div style="font-size:0.78rem; color:var(--text-secondary); margin-top:4px;">
-                                    프리뷰 ${s.previews.length}장
+                                    프리뷰 ${s.previews.length}장${s.avr_loss != null ? ` · loss ${Number(s.avr_loss).toFixed(5)}` : ''}
                                 </div>
                             </div>
                             <button onclick="event.stopPropagation(); deleteTrainedStep('${escapeHtml(s.name)}')"
