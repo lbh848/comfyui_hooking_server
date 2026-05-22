@@ -5213,8 +5213,10 @@ async def handle_api_lora_manage_delete(request):
             return web.json_response({"success": False, "error": "이름 누락"}, status=400)
         if not character:
             return web.json_response({"success": False, "error": "캐릭터 누락"}, status=400)
+        config = load_config()
+        lora_load_path = config.get("lora_load_path", "")
         from modes.lora_mode import remove_lora_entry
-        result = remove_lora_entry(name, character)
+        result = remove_lora_entry(name, character, lora_load_path)
         status = 200 if result.get("success") else 400
         return web.json_response(result, status=status)
     except Exception as e:

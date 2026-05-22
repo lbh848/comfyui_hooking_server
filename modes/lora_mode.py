@@ -1086,7 +1086,20 @@ def duplicate_lora_entry(
     }
 
 
-def remove_lora_entry(name: str, character: str) -> dict:
+def _cleanup_empty_dirs(path: str):
+    """빈 디렉토리를 상위로 거슬러 올라가며 삭제"""
+    try:
+        while os.path.isdir(path):
+            if not os.listdir(path):
+                os.rmdir(path)
+                print(f"[LORA_MANAGE] 빈 폴더 삭제: {path}")
+                path = os.path.dirname(path)
+            else:
+                break
+    except Exception as e:
+        print(f"[LORA_MANAGE] 빈 폴더 정리 실패: {path} - {e}")
+
+def remove_lora_entry(name: str, character: str, lora_load_path: str = "") -> dict:
     """LoRA 항목 삭제 (메타데이터 + 폴더)"""
     if not name:
         return {"success": False, "error": "이름 누락"}
@@ -1098,15 +1111,28 @@ def remove_lora_entry(name: str, character: str) -> dict:
         print(f"[LORA_MANAGE] 항목 없음: {character}/{name}")
         return {"success": False, "error": "항목을 찾을 수 없습니다"}
 
-    # 항목 폴더 삭제
+    # 에셋 항목 폴더 삭제
     entry_path = _lora_entry_dir(character, name)
     if os.path.isdir(entry_path):
         try:
             shutil.rmtree(entry_path)
-            print(f"[LORA_MANAGE] 폴더 삭제: {entry_path}")
+            print(f"[LORA_MANAGE] 에셋 폴더 삭제: {entry_path}")
         except Exception as e:
-            print(f"[LORA_MANAGE] 폴더 삭제 실패: {entry_path} - {e}")
+            print(f"[LORA_MANAGE] 에셋 폴더 삭제 실패: {entry_path} - {e}")
             traceback.print_exc()
+    _cleanup_empty_dirs(os.path.dirname(entry_path))
+
+    # lora_load_path 항목 폴더도 삭제
+    if lora_load_path:
+        load_entry_dir = os.path.join(lora_load_path, _safe_dirname(character), "Lora", _safe_dirname(name))
+        if os.path.isdir(load_entry_dir):
+            try:
+                shutil.rmtree(load_entry_dir)
+                print(f"[LORA_MANAGE] 로드 경로 폴더 삭제: {load_entry_dir}")
+            except Exception as e:
+                print(f"[LORA_MANAGE] 로드 경로 폴더 삭제 실패: {load_entry_dir} - {e}")
+                traceback.print_exc()
+            _cleanup_empty_dirs(os.path.dirname(load_entry_dir))
 
     del data["loras"][character][name]
     # 캐릭터 하위가 비었으면 캐릭터 키도 삭제
@@ -1292,6 +1318,43 @@ def scan_untracked_loras(lora_load_path: str) -> dict:
             })
             continue
 
+        # 추적된 캐릭터: Lora 하위 엔트리 중 비추적 항목 스캔
+        lora_dir = os.path.join(char_path, "Lora")
+        if not os.path.isdir(lora_dir):
+            continue
+        tracked_entries = tracked.get(matched_char, {})
+        try:
+            entry_dirs = os.listdir(lora_dir)
+        except Exception:
+            continue
+        for entry_dir_name in entry_dirs:
+            entry_path = os.path.join(lora_dir, entry_dir_name)
+            if not os.path.isdir(entry_path):
+                continue
+            # 이 엔트리 디렉토리가 tracked 엔트리와 매칭되는지 확인
+            is_tracked = any(
+                _safe_dirname(e_name) == entry_dir_name
+                for e_name in tracked_entries
+            )
+            if not is_tracked:
+                file_count = 0
+                size_mb = 0
+                for root, dirs, files in os.walk(entry_path):
+                    for f in files:
+                        try:
+                            size_mb += os.path.getsize(os.path.join(root, f))
+                            file_count += 1
+                        except Exception:
+                            pass
+                size_mb = round(size_mb / (1024 * 1024), 1)
+                untracked.append({
+                    "type": "entry",
+                    "path": entry_path,
+                    "display": f"{char_dir_name}/Lora/{entry_dir_name}",
+                    "file_count": file_count,
+                    "size_mb": size_mb,
+                })
+
     # 디스크에 없지만 lora_manage.json에만 있는 항목도 비추적으로 추가
     disk_dirs = set(top_items) if os.path.isdir(lora_load_path) else set()
     for tracked_char, entries in tracked.items():
@@ -1353,6 +1416,7 @@ def remove_untracked_loras(items: list, cleanup_manage: bool = False) -> dict:
             shutil.rmtree(path)
             removed.append(path)
             print(f"[LORA_UNTRACKED] 삭제: {path}")
+            _cleanup_empty_dirs(os.path.dirname(path))
         except Exception as e:
             errors.append({"path": path, "reason": str(e)})
             print(f"[LORA_UNTRACKED] 삭제 실패: {path} - {e}")
@@ -1370,7 +1434,28 @@ def remove_untracked_loras(items: list, cleanup_manage: bool = False) -> dict:
 
 
 def _cleanup_manage_entry(manage_data: dict, display: str, item_type: str):
-    """display 이름으로 lora_manage.json에서 캐릭터 제거"""
+    """display 이름으로 lora_manage.json에서 항목 제거
+    character 타입: 캐릭터 키 전체 제거
+    entry 타입: display에서 캐릭터/엔트리 파싱하여 엔트리만 제거"""
+    if item_type == "entry" and "/" in display:
+        # display 형식: "캐릭터디렉토리/Lora/엔트리디렉토리"
+        parts = display.split("/Lora/", 1)
+        if len(parts) == 2:
+            safe_char = parts[0]
+            safe_entry = parts[1]
+            # safe_dirname에서 원래 이름 찾기
+            for char_name in list(manage_data.get("loras", {}).keys()):
+                if _safe_dirname(char_name) == safe_char:
+                    for entry_name in list(manage_data["loras"][char_name].keys()):
+                        if _safe_dirname(entry_name) == safe_entry:
+                            del manage_data["loras"][char_name][entry_name]
+                            print(f"[LORA_UNTRACKED] lora_manage에서 엔트리 제거: {char_name}/{entry_name}")
+                            # 캐릭터 하위가 비었으면 캐릭터 키도 제거
+                            if not manage_data["loras"][char_name]:
+                                del manage_data["loras"][char_name]
+                                print(f"[LORA_UNTRACKED] lora_manage에서 빈 캐릭터 제거: {char_name}")
+                            return
+    # character 타입: 캐릭터 키 전체 제거
     char_name = display
     if char_name in manage_data.get("loras", {}):
         del manage_data["loras"][char_name]
