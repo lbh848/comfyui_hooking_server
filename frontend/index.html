@@ -1631,7 +1631,7 @@
         .asset-image-card:hover { border-color: var(--accent); }
         .asset-image-card img {
             width: 100%;
-            aspect-ratio: 936 / 1408;
+            aspect-ratio: 700 / 1024;
             object-fit: contain;
             display: block;
         }
@@ -1917,14 +1917,14 @@
         }
         .asset-gallery-card .gallery-thumb {
             width: 100%;
-            aspect-ratio: 936 / 1408;
+            aspect-ratio: 700 / 1024;
             object-fit: contain;
             display: block;
             background: var(--surface2);
         }
         .asset-gallery-card .gallery-thumb-placeholder {
             width: 100%;
-            aspect-ratio: 936 / 1408;
+            aspect-ratio: 700 / 1024;
             background: var(--surface2);
             display: flex;
             align-items: center;
@@ -3239,9 +3239,9 @@
                     <!-- 이미지 사이즈 -->
                     <div style="display:flex; gap:6px; align-items:center; margin-bottom:8px;">
                         <span style="font-size:0.8rem; min-width:fit-content;">이미지 사이즈</span>
-                        <input type="number" id="asset-img-w" value="936" min="256" max="4096" step="8" style="width:70px; padding:4px 6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:4px; font-size:0.8rem; text-align:center;" title="이미지 너비">
+                        <input type="number" id="asset-img-w" value="700" min="256" max="4096" step="8" style="width:70px; padding:4px 6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:4px; font-size:0.8rem; text-align:center;" title="이미지 너비">
                         <span style="font-size:0.75rem; color:var(--text-secondary);">x</span>
-                        <input type="number" id="asset-img-h" value="1408" min="256" max="4096" step="8" style="width:70px; padding:4px 6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:4px; font-size:0.8rem; text-align:center;" title="이미지 높이">
+                        <input type="number" id="asset-img-h" value="1024" min="256" max="4096" step="8" style="width:70px; padding:4px 6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:4px; font-size:0.8rem; text-align:center;" title="이미지 높이">
                     </div>
 
                     <!-- HIRES FIX / 페이스/핸드/눈 디테일러 토글 -->
@@ -8797,7 +8797,7 @@
                         onmouseenter="this.style.borderColor='var(--accent)'"
                         onmouseleave="this.style.borderColor='${isRep ? 'var(--accent)' : 'var(--border)'}'"
                         onclick="selectExprProfileRepresentative(${idx}, '${escapeHtml(img.filename)}', ${isRep})">
-                        <img src="${imgSrc}" loading="lazy" style="width:100%; display:block; aspect-ratio:936/1408; object-fit:contain;">
+                        <img src="${imgSrc}" loading="lazy" style="width:100%; display:block; aspect-ratio:700/1024; object-fit:contain;">
                         ${isRep ? '<div style="position:absolute;top:4px;left:4px;background:var(--accent);color:#fff;font-size:0.6rem;padding:1px 6px;border-radius:4px;">대표</div>' : ''}
                     </div>`;
                 }).join('');
@@ -13739,8 +13739,8 @@
             const hrfSize = parseFloat(document.getElementById('asset-hrf-size').value) || 2.0;
             const hrfRestoreSize = document.getElementById('asset-hrf-restore-size').checked;
             const hrfControlNet = document.getElementById('asset-hrf-control-net').checked;
-            const imgW = parseInt(document.getElementById('asset-img-w').value) || 936;
-            const imgH = parseInt(document.getElementById('asset-img-h').value) || 1408;
+            const imgW = parseInt(document.getElementById('asset-img-w').value) || 700;
+            const imgH = parseInt(document.getElementById('asset-img-h').value) || 1024;
 
             // 품질
             const qTags = (assetTags.quality || []).filter(t => t.trim());
@@ -13862,7 +13862,7 @@
                     positiveFull += `\n[POSE_DATA]\n(포즈 데이터 로드 실패: ${assetSelectedPoseId})`;
                 }
             } else {
-                positiveFull += `\n[POSE_DATA]\n{"people":[{"pose_keypoints_2d":[509.59,522.31,1,552.52,696.55,1,299.04,600.06,1,73.98,858.17,1,86.61,624.58,1,774.33,791.04,1,484.34,1286.20,1,442.67,1336.70,1,263.38,1096.80,1,354.29,1393.52,1,344.19,1408.67,1,469.19,1128.37,1,561.36,1390.99,1,561.36,1408.67,1,422.47,471.80,1,618.18,404.88,1,351.76,502.11,1,730.55,414.98,1]}],"canvas_height":1408,"canvas_width":936}`;
+                positiveFull += `\n[POSE_DATA]\n{"people":[{"pose_keypoints_2d":[381.10,379.86,1,413.21,506.58,1,223.64,436.41,1,55.33,624.12,1,64.77,454.24,1,579.09,575.30,1,362.22,935.42,1,331.06,972.15,1,196.97,797.67,1,264.96,1013.47,1,257.41,1024.49,1,350.89,820.63,1,419.82,1011.63,1,419.82,1024.49,1,315.95,343.13,1,462.31,294.46,1,263.07,365.17,1,546.35,301.80,1]}],"canvas_height":1024,"canvas_width":700}`;
             }
             const hrfModeVal = document.getElementById('asset-anima-hrf-select')?.value || 'both';
             const _animaHrfOn = isAnima && hrfActivate ? (hrfModeVal === 'sdxl' ? false : true) : false;
@@ -17421,8 +17421,8 @@
             const hrfSize = parseFloat(document.getElementById('asset-hrf-size').value) || 2.0;
             const hrfRestoreSize = document.getElementById('asset-hrf-restore-size').checked;
             const hrfControlNet = document.getElementById('asset-hrf-control-net').checked;
-            const imgW = parseInt(document.getElementById('asset-img-w').value) || 936;
-            const imgH = parseInt(document.getElementById('asset-img-h').value) || 1408;
+            const imgW = parseInt(document.getElementById('asset-img-w').value) || 700;
+            const imgH = parseInt(document.getElementById('asset-img-h').value) || 1024;
 
             let loraData = '';
             if (loraEnabled && assetLoraList.length > 0) {
@@ -18555,7 +18555,7 @@
 
         const DEFAULT_RATIOS = [
             { w: 512, h: 768 }, { w: 768, h: 512 }, { w: 1024, h: 1024 },
-            { w: 832, h: 1216 }, { w: 1216, h: 832 }, { w: 936, h: 1408 },
+            { w: 832, h: 1216 }, { w: 1216, h: 832 }, { w: 700, h: 1024 },
         ];
 
         function getCustomRatios() {
@@ -19311,8 +19311,8 @@
                 hrf_size: 2.0,
                 hrf_restore_size: true,
                 hrf_control_net: false,
-                img_w: 936,
-                img_h: 1408,
+                img_w: 700,
+                img_h: 1024,
                 fd_enabled: false,
                 hd_enabled: false,
                 ed_enabled: false,
@@ -19459,9 +19459,9 @@
                         <div class="batch-field-label" style="margin-bottom:6px;">이미지 사이즈 일괄 설정</div>
                         <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
                             <label style="font-size:0.8rem; min-width:fit-content;">IMG_W:</label>
-                            <input type="number" id="bulk-img-w" value="936" min="256" max="4096" step="8" style="width:70px; padding:3px 4px; border:1px solid var(--border); background:var(--surface); color:var(--text); border-radius:4px; font-size:0.8rem; text-align:center;">
+                            <input type="number" id="bulk-img-w" value="700" min="256" max="4096" step="8" style="width:70px; padding:3px 4px; border:1px solid var(--border); background:var(--surface); color:var(--text); border-radius:4px; font-size:0.8rem; text-align:center;">
                             <label style="font-size:0.8rem; min-width:fit-content;">IMG_H:</label>
-                            <input type="number" id="bulk-img-h" value="1408" min="256" max="4096" step="8" style="width:70px; padding:3px 4px; border:1px solid var(--border); background:var(--surface); color:var(--text); border-radius:4px; font-size:0.8rem; text-align:center;">
+                            <input type="number" id="bulk-img-h" value="1024" min="256" max="4096" step="8" style="width:70px; padding:3px 4px; border:1px solid var(--border); background:var(--surface); color:var(--text); border-radius:4px; font-size:0.8rem; text-align:center;">
                             <label style="font-size:0.75rem; display:flex; align-items:center; gap:4px; cursor:pointer;">
                                 <input type="checkbox" id="bulk-img-size-check"> 적용
                             </label>
@@ -19990,8 +19990,8 @@
             const hrfRestoreSizeAction = document.getElementById('bulk-hrf-restore-size-action').value;
             const hrfControlNetAction = document.getElementById('bulk-hrf-control-net-action').value;
             const imgSizeCheck = document.getElementById('bulk-img-size-check').checked;
-            const imgW = parseInt(document.getElementById('bulk-img-w').value) || 936;
-            const imgH = parseInt(document.getElementById('bulk-img-h').value) || 1408;
+            const imgW = parseInt(document.getElementById('bulk-img-w').value) || 700;
+            const imgH = parseInt(document.getElementById('bulk-img-h').value) || 1024;
             const fdAction = document.getElementById('bulk-fd-action').value;
             const hdAction = document.getElementById('bulk-hd-action').value;
             const edAction = document.getElementById('bulk-ed-action').value;
@@ -20246,9 +20246,9 @@
 
                 <div style="display:flex; gap:6px; align-items:center;">
                     <span style="font-size:0.75rem; min-width:fit-content;">이미지 사이즈</span>
-                    <input type="number" data-field="img_w" value="${slot.img_w || 936}" min="256" max="4096" step="8" style="width:60px; padding:3px 4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:4px; font-size:0.75rem; text-align:center;">
+                    <input type="number" data-field="img_w" value="${slot.img_w || 700}" min="256" max="4096" step="8" style="width:60px; padding:3px 4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:4px; font-size:0.75rem; text-align:center;">
                     <span style="font-size:0.7rem; color:var(--text-secondary);">x</span>
-                    <input type="number" data-field="img_h" value="${slot.img_h || 1408}" min="256" max="4096" step="8" style="width:60px; padding:3px 4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:4px; font-size:0.75rem; text-align:center;">
+                    <input type="number" data-field="img_h" value="${slot.img_h || 1024}" min="256" max="4096" step="8" style="width:60px; padding:3px 4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:4px; font-size:0.75rem; text-align:center;">
                 </div>
 
                 <div class="batch-toggle-row">
@@ -20428,7 +20428,7 @@
             // number 변경 (img_w, img_h)
             slotEl.querySelectorAll('input[type="number"][data-field]').forEach(inp => {
                 inp.addEventListener('change', () => {
-                    batchChains[idx][inp.dataset.field] = parseInt(inp.value) || (inp.dataset.field === 'img_w' ? 936 : 1408);
+                    batchChains[idx][inp.dataset.field] = parseInt(inp.value) || (inp.dataset.field === 'img_w' ? 700 : 1024);
                     updateBatchPreview(slotEl, idx);
                 });
             });
@@ -21174,7 +21174,7 @@
                     positiveFull += `\n[LORA_DATA]\n{"list":[]}`;
                 }
                 positiveFull += `\n[POSE_ACTIVATE]\nfalse`;
-                positiveFull += `\n[POSE_DATA]\n{"people":[{"pose_keypoints_2d":[509.59,522.31,1,...]}],"canvas_height":1408,"canvas_width":936}`;
+                positiveFull += `\n[POSE_DATA]\n{"people":[{"pose_keypoints_2d":[509.59,522.31,1,...]}],"canvas_height":1024,"canvas_width":700}`;
                 const batchHrfMode = slot.hrf_mode || 'both';
                 const _batchAnimaHrf = slot.hrf_enabled ? (batchHrfMode === 'sdxl' ? false : true) : false;
                 const _batchHrf = slot.hrf_enabled ? (batchHrfMode === 'anima' ? false : true) : false;
@@ -21183,8 +21183,8 @@
                 positiveFull += `\n[HRF_SIZE]\n${slot.hrf_size || 2.0}`;
                 positiveFull += `\n[HRF_RESTORE_SIZE]\n${slot.hrf_restore_size !== false ? 'true' : 'false'}`;
                 positiveFull += `\n[HRF_CONTROL_NET]\n${slot.hrf_control_net ? 'true' : 'false'}`;
-                positiveFull += `\n[IMG_W]\n${slot.img_w || 936}`;
-                positiveFull += `\n[IMG_H]\n${slot.img_h || 1408}`;
+                positiveFull += `\n[IMG_W]\n${slot.img_w || 700}`;
+                positiveFull += `\n[IMG_H]\n${slot.img_h || 1024}`;
                 positiveFull += `\n[FD_ACTIVATE]\n${slot.fd_enabled ? 'true' : 'false'}`;
                 positiveFull += `\n[HD_ACTIVATE]\n${slot.hd_enabled ? 'true' : 'false'}`;
                 positiveFull += `\n[ED_ACTIVATE]\n${slot.ed_enabled ? 'true' : 'false'}`;
@@ -21236,14 +21236,14 @@
             if (slot.pose_enabled && slot.pose_id) {
                 positiveFull += `\n[POSE_DATA]\n(포즈 데이터: ${slot.pose_id})`;
             } else {
-                positiveFull += `\n[POSE_DATA]\n{"people":[{"pose_keypoints_2d":[509.59,522.31,1,...]}],"canvas_height":1408,"canvas_width":936}`;
+                positiveFull += `\n[POSE_DATA]\n{"people":[{"pose_keypoints_2d":[509.59,522.31,1,...]}],"canvas_height":1024,"canvas_width":700}`;
             }
             positiveFull += `\n[HRF_ACTIVATE]\n${slot.hrf_enabled ? 'true' : 'false'}`;
             positiveFull += `\n[HRF_SIZE]\n${slot.hrf_size || 2.0}`;
             positiveFull += `\n[HRF_RESTORE_SIZE]\n${slot.hrf_restore_size !== false ? 'true' : 'false'}`;
             positiveFull += `\n[HRF_CONTROL_NET]\n${slot.hrf_control_net ? 'true' : 'false'}`;
-            positiveFull += `\n[IMG_W]\n${slot.img_w || 936}`;
-            positiveFull += `\n[IMG_H]\n${slot.img_h || 1408}`;
+            positiveFull += `\n[IMG_W]\n${slot.img_w || 700}`;
+            positiveFull += `\n[IMG_H]\n${slot.img_h || 1024}`;
             positiveFull += `\n[FD_ACTIVATE]\n${slot.fd_enabled ? 'true' : 'false'}`;
             positiveFull += `\n[HD_ACTIVATE]\n${slot.hd_enabled ? 'true' : 'false'}`;
             positiveFull += `\n[ED_ACTIVATE]\n${slot.ed_enabled ? 'true' : 'false'}`;
@@ -21380,8 +21380,8 @@
                             hrf_size: slot.hrf_size || 2.0,
                             hrf_restore_size: slot.hrf_restore_size !== false,
                             hrf_control_net: !!slot.hrf_control_net,
-                            img_w: slot.img_w || 936,
-                            img_h: slot.img_h || 1408,
+                            img_w: slot.img_w || 700,
+                            img_h: slot.img_h || 1024,
                             hd_activate: slot.hd_enabled,
                             ed_activate: slot.ed_enabled,
                             artist_preset: slot.artist_preset || '',
