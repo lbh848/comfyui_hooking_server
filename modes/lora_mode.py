@@ -162,6 +162,26 @@ def list_trained_steps(lora_load_path: str, character: str, entry: str, session:
     return steps
 
 
+def read_toml_file(lora_load_path: str, character: str, entry: str, session: str, step_name: str) -> dict:
+    """학습된 LoRA step의 TOML 파일 내용 반환"""
+    if not lora_load_path:
+        print("[LORA_TRAINED] lora_load_path 미설정")
+        return {"success": False, "error": "lora_load_path 미설정"}
+    session_dir = os.path.join(lora_load_path, _safe_dirname(character), "Lora", _safe_dirname(entry), session)
+    toml_path = os.path.join(session_dir, step_name + ".toml")
+    if not os.path.isfile(toml_path):
+        print(f"[LORA_TRAINED] TOML 파일 없음: {toml_path}")
+        return {"success": False, "error": "TOML 파일이 없습니다"}
+    try:
+        with open(toml_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        return {"success": True, "content": content, "filename": step_name + ".toml"}
+    except Exception as e:
+        print(f"[LORA_TRAINED] TOML 읽기 실패: {toml_path} - {e}")
+        traceback.print_exc()
+        return {"success": False, "error": str(e)}
+
+
 def delete_trained_step(lora_load_path: str, character: str, entry: str, session: str, step_name: str) -> dict:
     """학습된 LoRA step 삭제 (safetensors, json, toml, 프리뷰 이미지)"""
     if not lora_load_path:

@@ -5617,6 +5617,29 @@ async def handle_api_lora_trained_steps(request):
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 
+async def handle_api_lora_trained_toml(request):
+    """학습된 LoRA step의 TOML 파일 내용 반환"""
+    try:
+        character = request.query.get("character", "")
+        entry = request.query.get("entry", "")
+        session = request.query.get("session", "")
+        step = request.query.get("step", "")
+        if not character or not entry or not session or not step:
+            return web.json_response({"success": False, "error": "character, entry, session, step 필수"}, status=400)
+        config = load_config()
+        lora_load_path = config.get("lora_load_path", "")
+        if not lora_load_path:
+            return web.json_response({"success": False, "error": "lora_load_path 미설정"}, status=400)
+        from modes.lora_mode import read_toml_file
+        result = read_toml_file(lora_load_path, character, entry, session, step)
+        status = 200 if result.get("success") else 404
+        return web.json_response(result, status=status)
+    except Exception as e:
+        print(f"[LORA_TRAINED] TOML 읽기 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
 async def handle_api_lora_trained_preview(request):
     """학습된 LoRA 프리뷰 이미지 서빙"""
     try:
@@ -5663,6 +5686,7 @@ async def handle_api_lora_trained_delete(request):
 
 app.router.add_get("/api/lora/trained/sessions", handle_api_lora_trained_sessions)
 app.router.add_get("/api/lora/trained/steps", handle_api_lora_trained_steps)
+app.router.add_get("/api/lora/trained/toml", handle_api_lora_trained_toml)
 app.router.add_get("/api/lora/trained/preview/{character}/{entry}/{session}/{filename}", handle_api_lora_trained_preview)
 app.router.add_post("/api/lora/trained/delete", handle_api_lora_trained_delete)
 

@@ -3901,7 +3901,10 @@
                         <div id="lora-trained-sessions" style="display:none;"></div>
                         <!-- step 목록 -->
                         <div id="lora-loss-chart-container" style="display:none; margin-bottom:16px;">
-                            <div style="font-weight:600; font-size:0.9rem; margin-bottom:6px; color:var(--text-secondary);">Loss 추이</div>
+                            <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+                                <span style="font-weight:600; font-size:0.9rem; color:var(--text-secondary);">Loss 추이</span>
+                                <button id="lora-toml-preview-btn" onclick="openLoraTomlModal()" style="background:none; border:1px solid var(--border); border-radius:4px; padding:2px 8px; cursor:pointer; color:var(--text-secondary); font-size:0.75rem; display:none;" title="TOML 학습 설정 미리보기">📄 TOML</button>
+                            </div>
                             <canvas id="lora-loss-chart" style="max-height:220px;"></canvas>
                             <div id="lora-loss-nodata" style="display:none; text-align:center; padding:24px; color:var(--text-secondary); font-size:0.85rem;">loss 데이터가 없습니다</div>
                         </div>
@@ -4269,6 +4272,22 @@
             <div class="modal-footer">
                 <button onclick="closeLoraDuplicateModal()" style="padding:8px 16px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:6px; cursor:pointer;">취소</button>
                 <button onclick="confirmLoraDuplicate()" style="padding:8px 20px; background:var(--accent); color:#fff; border:none; border-radius:6px; cursor:pointer; font-weight:600;">복제</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- TOML 미리보기 모달 -->
+    <div class="modal" id="lora-toml-modal" onclick="if (event.target === this) closeLoraTomlModal()">
+        <div class="modal-content" style="max-width:640px;">
+            <div class="modal-header">
+                <h2 id="lora-toml-modal-title">TOML 학습 설정</h2>
+                <button class="modal-close" onclick="closeLoraTomlModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <pre id="lora-toml-modal-content" style="white-space:pre-wrap; word-break:break-all; font-size:0.82rem; line-height:1.5; background:var(--surface1); padding:14px; border-radius:8px; overflow-x:auto; max-height:60vh; overflow-y:auto; margin:0; color:var(--text);"></pre>
+            </div>
+            <div class="modal-footer">
+                <button onclick="closeLoraTomlModal()" style="padding:8px 16px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:6px; cursor:pointer;">닫기</button>
             </div>
         </div>
     </div>
@@ -11396,6 +11415,9 @@
                     lossNoData.style.display = '';
                     lossChartEl.style.display = '';
                 }
+                // TOML 미리보기 버튼: step이 있으면 표시
+                const tomlBtn = document.getElementById('lora-toml-preview-btn');
+                tomlBtn.style.display = steps.length > 0 ? '' : 'none';
                 // 대표 safetensors 파일명 추출
                 let repSafetensors = '';
                 if (loraEntryRepresentative) {
@@ -11424,7 +11446,7 @@
                         if (isRep) badges += '<div style="position:absolute; top:8px; left:8px; z-index:5; background:rgba(0,120,215,0.95); color:#fff; font-size:0.7rem; font-weight:700; padding:3px 8px; border-radius:4px;">엔트리 대표</div>';
                         if (isSessionRep) badges += `<div style="position:absolute; top:8px; left:${isRep ? '110px' : '8px'}; z-index:5; background:rgba(255,193,7,0.95); color:#000; font-size:0.7rem; font-weight:700; padding:3px 8px; border-radius:4px;">세션 대표</div>`;
                         return `
-                        <div style="background:var(--surface); border:1px solid ${isRep ? 'var(--accent)' : (isSessionRep ? 'rgba(255,193,7,0.6)' : 'var(--border)')}; border-radius:10px; padding:12px; transition:border-color 0.2s; position:relative;"
+                        <div data-step-name="${escapeHtml(s.name)}" style="background:var(--surface); border:1px solid ${isRep ? 'var(--accent)' : (isSessionRep ? 'rgba(255,193,7,0.6)' : 'var(--border)')}; border-radius:10px; padding:12px; transition:border-color 0.2s; position:relative;"
                              onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='${isRep ? 'var(--accent)' : (isSessionRep ? 'rgba(255,193,7,0.6)' : 'var(--border)')}'">
                             ${badges}
                             <div onclick="enterTrainedStep('${escapeHtml(s.name)}')" style="cursor:pointer;">
@@ -11778,6 +11800,36 @@
 
         function closeLoraDuplicateModal() {
             document.getElementById('lora-duplicate-modal').style.display = 'none';
+        }
+
+        // --- TOML 미리보기 모달 ---
+        async function openLoraTomlModal() {
+            if (!loraCurrentTrainedSession) { showToast('세션을 먼저 선택하세요', 'error'); return; }
+            const enc = encodeURIComponent;
+            // 현재 표시된 step 목록에서 첫 번째 step 사용
+            const stepsContainer = document.getElementById('lora-trained-steps');
+            const firstStepEl = stepsContainer ? stepsContainer.querySelector('[data-step-name]') : null;
+            if (!firstStepEl) { showToast('step이 없습니다', 'error'); return; }
+            const stepName = firstStepEl.getAttribute('data-step-name');
+            const modal = document.getElementById('lora-toml-modal');
+            const titleEl = document.getElementById('lora-toml-modal-title');
+            const contentEl = document.getElementById('lora-toml-modal-content');
+            titleEl.textContent = 'TOML 학습 설정 — ' + stepName + '.toml';
+            contentEl.textContent = '불러오는 중...';
+            modal.style.display = 'flex';
+            try {
+                const resp = await fetchJSON(`/api/lora/trained/toml?character=${enc(loraCurrentCharacter)}&entry=${enc(loraCurrentEntry)}&session=${enc(loraCurrentTrainedSession)}&step=${enc(stepName)}`);
+                if (resp.success) {
+                    contentEl.textContent = resp.content;
+                } else {
+                    contentEl.textContent = resp.error || 'TOML 파일을 불러올 수 없습니다';
+                }
+            } catch (e) {
+                contentEl.textContent = 'TOML 로드 실패: ' + e;
+            }
+        }
+        function closeLoraTomlModal() {
+            document.getElementById('lora-toml-modal').style.display = 'none';
         }
 
         async function confirmLoraDuplicate() {
