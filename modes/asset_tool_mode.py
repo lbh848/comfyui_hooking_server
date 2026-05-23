@@ -16,7 +16,7 @@ from PIL import Image
 from io import BytesIO
 from typing import Optional, Callable, Awaitable
 
-from modes.embedding_service import match_presets_by_query, match_presets_by_names, get_config as get_embedding_config
+from modes.embedding_service import match_presets_by_query, match_presets_by_names, match_presets_by_names_batch, get_config as get_embedding_config
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CURRENT_MODE_WORK_DIR = os.path.join(BASE_DIR, "current_mode_workflow")
@@ -539,6 +539,59 @@ class AssetToolMode:
             "category": tag_category,
             "results_count": len(results),
         })
+
+        return results
+
+    async def match_presets_by_names_batch(self, image_tags: list[dict],
+                                            tag_category: str = "expressions",
+                                            tags_data: dict = None,
+                                            top_n: int = 10,
+                                            threshold: float = 0.3) -> list[dict]:
+        if tags_data is None:
+            from modes.asset_mode import asset_mode
+            tags_data = asset_mode.get_tags()
+        if tag_category == "expressions":
+            presets = tags_data.get("expressions", {})
+        elif tag_category == "composition":
+            presets = tags_data.get("composition_presets", {})
+        elif tag_category == "quality":
+            presets = tags_data.get("quality_presets", {})
+        elif tag_category == "appearances":
+            presets = tags_data.get("appearances", {})
+        elif tag_category == "outfits":
+            presets = tags_data.get("outfits", {})
+        else:
+            presets = tags_data.get("expressions", {})
+
+        if not presets:
+            print(f"[ASSET_TOOL] match_presets_by_names_batch: 프리셋 없음 (category={tag_category})")
+            return []
+
+        preset_names = [name for name, value in presets.items()
+                       if isinstance(value, list)]
+
+        print(f"[ASSET_TOOL] match_presets_by_names_batch: 이미지={len(image_tags)}개, 프리셋={len(preset_names)}개, category={tag_category}")
+
+        try:
+            results = await match_presets_by_names_batch(
+                image_tags=image_tags,
+                preset_names=preset_names,
+                tag_category=tag_category,
+                top_n=top_n,
+                threshold=threshold,
+                tags_data=tags_data,
+            )
+        except Exception as e:
+            print(f"[ASSET_TOOL] match_presets_by_names_batch 예외: {type(e).__name__}: {e}")
+            import traceback
+            traceback.print_exc()
+            return []
+
+        for item in results:
+            for r in item.get("embedding_matches", []):
+                preset_tags = presets.get(r["name"], [])
+                if isinstance(preset_tags, list):
+                    r["preset_tags"] = preset_tags
 
         return results
 

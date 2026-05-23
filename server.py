@@ -4542,6 +4542,79 @@ async def handle_api_asset_tool_match(request: web.Request) -> web.Response:
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 
+async def handle_api_asset_tool_match_batch(request: web.Request) -> web.Response:
+    try:
+        body = await request.json()
+        items = body.get("items", [])
+        tag_category = body.get("category", "expressions")
+        top_n = body.get("top_n", 10)
+        embedding_threshold = body.get("embedding_threshold", 0)
+
+        if not items:
+            return web.json_response({"success": False, "error": "items가 필요합니다"}, status=400)
+
+        tags_data = asset_mode.get_tags()
+
+        # 1. Jaccard 매칭 (이미지별 개별 처리 - 임베딩 불필요)
+        jaccard_results = []
+        for item in items:
+            image_name = item.get("image_name", "")
+            tags = item.get("tags", [])
+            matches = asset_tool.match_presets(tags, tag_category, tags_data, top_n)
+            chains = asset_tool.suggest_chains(matches, tag_category, tags_data) if matches else []
+            jaccard_results.append({
+                "image_name": image_name,
+                "matches": matches,
+                "chains": chains,
+            })
+
+        # 2. 임베딩 매칭 (배치 처리 - 태그 임베딩 1회 통합)
+        image_tags = []
+        for item in items:
+            image_tags.append({
+                "image_name": item.get("image_name", ""),
+                "tags": item.get("tags", []),
+            })
+
+        embedding_results = []
+        embedding_error = ""
+        if image_tags:
+            try:
+                embedding_results = await asset_tool.match_presets_by_names_batch(
+                    image_tags, tag_category,
+                    tags_data=tags_data,
+                    top_n=top_n, threshold=embedding_threshold,
+                )
+            except Exception as e:
+                embedding_error = str(e)
+                print(f"[ASSET_TOOL] 배치 임베딩 매칭 오류: {e}")
+                import traceback
+                traceback.print_exc()
+
+        # 3. 결과 병합
+        emb_map = {r["image_name"]: r.get("embedding_matches", []) for r in embedding_results}
+        combined = []
+        for jaccard_item in jaccard_results:
+            name = jaccard_item["image_name"]
+            combined.append({
+                "image_name": name,
+                "matches": jaccard_item["matches"],
+                "chains": jaccard_item["chains"],
+                "embedding_matches": emb_map.get(name, []),
+            })
+
+        return web.json_response({
+            "success": True,
+            "results": combined,
+            "embedding_error": embedding_error,
+        })
+    except Exception as e:
+        print(f"[ASSET_TOOL] 배치 매칭 오류: {e}")
+        import traceback
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
 async def handle_api_asset_tool_embedding_match(request: web.Request) -> web.Response:
     try:
         body = await request.json()
@@ -4830,6 +4903,7 @@ async def handle_api_asset_tool_embedding_cache_status(request: web.Request) -> 
 app.router.add_get("/api/asset_tool/status", handle_api_asset_tool_status)
 app.router.add_post("/api/asset_tool/analyze", handle_api_asset_tool_analyze)
 app.router.add_post("/api/asset_tool/match", handle_api_asset_tool_match)
+app.router.add_post("/api/asset_tool/match_batch", handle_api_asset_tool_match_batch)
 app.router.add_post("/api/asset_tool/embedding_match", handle_api_asset_tool_embedding_match)
 app.router.add_get("/api/asset_tool/embedding_preview", handle_api_asset_tool_embedding_preview)
 app.router.add_post("/api/asset_tool/embedding_preview", handle_api_asset_tool_embedding_preview)

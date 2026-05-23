@@ -9716,9 +9716,10 @@
             document.getElementById('at-progress-bar').style.display = 'block';
             document.getElementById('at-progress-inner').style.width = '0%';
 
-            // 전체 단계: 태그 분석 + 임베딩 매칭 + 태그 매칭
+            // 전체 단계: 태그 분석(이미지별) + 임베딩 매칭(배치 1회) + 태그 매칭(배치 1회)
             const analyzeCount = (doAnalyze && pending.length > 0) ? pending.length : 0;
-            const totalSteps = analyzeCount + (doMatch ? atState.images.length * 2 : 0) + (doAnalyze && !doMatch ? atState.images.length : 0);
+            const batchSteps = doMatch ? 2 : (doAnalyze ? 1 : 0);
+            const totalSteps = analyzeCount + batchSteps;
             let completedSteps = 0;
 
             // 1. 태그 분석
@@ -9756,75 +9757,87 @@
                 atAbortController = null;
             }
 
-            // 2. 임베딩 매칭
+            // 2. 임베딩 매칭 + 태그 매칭 (배치)
             if (doMatch) {
                 atState.embeddingMatches = [];
                 atState.imageMatches = [];
                 atState.chains = [];
                 const uploadedFiles = atState.images.filter(i => i.file);
-                const tagNames = uploadedFiles.map(i => {
-                    const name = i.file.name || '';
-                    return name.substring(0, name.lastIndexOf('.')) || name;
-                }).filter(n => n);
-                if (tagNames.length === 0) {
+                if (uploadedFiles.length === 0) {
                     showToast('임베딩 매칭할 파일이 없습니다. 이미지를 업로드하세요.', 'error');
                     document.getElementById('at-analyze-btn').disabled = false;
                     document.getElementById('at-stop-btn').style.display = 'none';
                     document.getElementById('at-progress-bar').style.display = 'none';
                     return;
                 }
-                for (const img of uploadedFiles) {
+
+                // 2-1. 임베딩 매칭: 파일명 기반, 배치 1회 호출
+                const embItems = uploadedFiles.map(img => {
                     const fileName = img.file.name || '';
                     const baseName = fileName.substring(0, fileName.lastIndexOf('.')) || fileName;
-                    try {
-                        const embResp = await fetch('/api/asset_tool/match', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ tags: [baseName], category: category, top_n: 10, embedding_threshold: 0 })
-                        });
-                        const embResult = await embResp.json();
-                        console.log('[임베딩 매칭]', fileName, embResult);
-                        if (embResult.success && embResult.embedding_matches && embResult.embedding_matches.length > 0) {
-                            atState.embeddingMatches.push({
-                                imageName: fileName || '이미지',
-                                imageUrl: img.url || '',
-                                matches: embResult.embedding_matches.map(m => ({ ...m, selected: false }))
-                            });
-                        } else if (!embResult.success) {
-                            console.error('[임베딩 매칭 실패]', fileName, embResult.error);
-                        } else {
-                            console.warn('[임베딩 매칭 결과 없음]', fileName, 'threshold:', 0, 'result:', embResult);
+                    return { image_name: fileName, tags: [baseName] };
+                });
+                try {
+                    const embResp = await fetch('/api/asset_tool/match_batch', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ items: embItems, category: category, top_n: 10, embedding_threshold: 0 })
+                    });
+                    const embResult = await embResp.json();
+                    console.log('[임베딩 매칭 배치]', embResult);
+                    if (embResult.success && embResult.results) {
+                        for (const r of embResult.results) {
+                            if (r.embedding_matches && r.embedding_matches.length > 0) {
+                                const img = uploadedFiles.find(i => (i.file.name || '') === r.image_name);
+                                atState.embeddingMatches.push({
+                                    imageName: r.image_name || '이미지',
+                                    imageUrl: img ? img.url || '' : '',
+                                    matches: r.embedding_matches.map(m => ({ ...m, selected: false }))
+                                });
+                            }
                         }
-                    } catch (e) {
-                        console.error('임베딩 매칭 오류:', e);
+                    } else if (!embResult.success) {
+                        console.error('[임베딩 매칭 배치 실패]', embResult.error);
                     }
-                    completedSteps++;
-                    if (totalSteps > 0) document.getElementById('at-progress-inner').style.width = `${Math.round(completedSteps / totalSteps * 100)}%`;
+                } catch (e) {
+                    console.error('임베딩 매칭 오류:', e);
                 }
+                completedSteps++;
+                if (totalSteps > 0) document.getElementById('at-progress-inner').style.width = `${Math.round(completedSteps / totalSteps * 100)}%`;
 
-                // 3. 태그 매칭
+                // 2-2. 태그 매칭: AI 분석 태그 기반, 배치 1회 호출
                 const doneImages = atState.images.filter(i => i.status === 'done' && i.tags && i.tags.length > 0);
-                for (const img of doneImages) {
-                    const uniqueTags = [...new Set(img.tags.map(t => t.trim()))];
+                if (doneImages.length > 0) {
+                    const tagItems = doneImages.map(img => ({
+                        image_name: img.file.name || '',
+                        tags: [...new Set(img.tags.map(t => t.trim()))]
+                    }));
                     try {
-                        const tagResp = await fetch('/api/asset_tool/match', {
+                        const tagResp = await fetch('/api/asset_tool/match_batch', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ tags: uniqueTags, category: category, top_n: 10 })
+                            body: JSON.stringify({ items: tagItems, category: category, top_n: 10 })
                         });
                         const tagResult = await tagResp.json();
-                        console.log('[태그 매칭]', img.file.name, tagResult);
-                        if (tagResult.success && tagResult.matches && tagResult.matches.length > 0) {
-                            atState.imageMatches.push({
-                                imageName: img.file.name || '이미지',
-                                imageUrl: img.url,
-                                tags: uniqueTags,
-                                matches: tagResult.matches.map(m => ({ ...m, selected: false }))
-                            });
+                        console.log('[태그 매칭 배치]', tagResult);
+                        if (tagResult.success && tagResult.results) {
+                            for (const r of tagResult.results) {
+                                if (r.matches && r.matches.length > 0) {
+                                    const img = doneImages.find(i => (i.file.name || '') === r.image_name);
+                                    const uniqueTags = img ? [...new Set(img.tags.map(t => t.trim()))] : [];
+                                    atState.imageMatches.push({
+                                        imageName: r.image_name || '이미지',
+                                        imageUrl: img ? img.url : '',
+                                        tags: uniqueTags,
+                                        matches: r.matches.map(m => ({ ...m, selected: false }))
+                                    });
+                                }
+                                if (r.chains && r.chains.length > 0) {
+                                    atState.chains.push(...r.chains);
+                                }
+                            }
                         } else if (!tagResult.success) {
-                            console.error('[태그 매칭 실패]', img.file.name, tagResult.error);
-                        } else {
-                            console.warn('[태그 매칭 결과 없음]', img.file.name, tagResult);
+                            console.error('[태그 매칭 배치 실패]', tagResult.error);
                         }
                     } catch (e) {
                         console.error('태그 매칭 오류:', e);
@@ -9833,32 +9846,42 @@
                     if (totalSteps > 0) document.getElementById('at-progress-inner').style.width = `${Math.round(completedSteps / totalSteps * 100)}%`;
                 }
             } else if (doAnalyze) {
-                // 태그 분석만 선택한 경우에도 태그 매칭 실행
+                // 태그 분석만 선택한 경우에도 태그 매칭 실행 (배치)
                 atState.imageMatches = [];
                 atState.embeddingMatches = [];
                 atState.chains = [];
                 const doneImages = atState.images.filter(i => i.status === 'done' && i.tags && i.tags.length > 0);
-                for (const img of doneImages) {
-                    const uniqueTags = [...new Set(img.tags.map(t => t.trim()))];
+                if (doneImages.length > 0) {
+                    const tagItems = doneImages.map(img => ({
+                        image_name: img.file.name || '',
+                        tags: [...new Set(img.tags.map(t => t.trim()))]
+                    }));
                     try {
-                        const tagResp = await fetch('/api/asset_tool/match', {
+                        const tagResp = await fetch('/api/asset_tool/match_batch', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ tags: uniqueTags, category: category, top_n: 10 })
+                            body: JSON.stringify({ items: tagItems, category: category, top_n: 10 })
                         });
                         const tagResult = await tagResp.json();
-                        console.log('[태그 매칭]', img.file.name, tagResult);
-                        if (tagResult.success && tagResult.matches && tagResult.matches.length > 0) {
-                            atState.imageMatches.push({
-                                imageName: img.file.name || '이미지',
-                                imageUrl: img.url,
-                                tags: uniqueTags,
-                                matches: tagResult.matches.map(m => ({ ...m, selected: false }))
-                            });
+                        console.log('[태그 매칭 배치]', tagResult);
+                        if (tagResult.success && tagResult.results) {
+                            for (const r of tagResult.results) {
+                                if (r.matches && r.matches.length > 0) {
+                                    const img = doneImages.find(i => (i.file.name || '') === r.image_name);
+                                    const uniqueTags = img ? [...new Set(img.tags.map(t => t.trim()))] : [];
+                                    atState.imageMatches.push({
+                                        imageName: r.image_name || '이미지',
+                                        imageUrl: img ? img.url : '',
+                                        tags: uniqueTags,
+                                        matches: r.matches.map(m => ({ ...m, selected: false }))
+                                    });
+                                }
+                                if (r.chains && r.chains.length > 0) {
+                                    atState.chains.push(...r.chains);
+                                }
+                            }
                         } else if (!tagResult.success) {
-                            console.error('[태그 매칭 실패]', img.file.name, tagResult.error);
-                        } else {
-                            console.warn('[태그 매칭 결과 없음]', img.file.name, tagResult);
+                            console.error('[태그 매칭 배치 실패]', tagResult.error);
                         }
                     } catch (e) {
                         console.error('태그 매칭 오류:', e);
@@ -9929,40 +9952,43 @@
             atState.matches = [];
             atState.embeddingMatches = [];
 
-            for (const img of atState.images) {
+            // 배치: 임베딩 매칭 + 태그 매칭을 1회 호출로 처리
+            const allImages = atState.images.filter(i => i.file);
+            const items = allImages.map(img => {
                 const fileName = img.file.name || '';
                 const baseName = fileName.substring(0, fileName.lastIndexOf('.')) || fileName;
+                const tags = (img.status === 'done' && img.tags && img.tags.length > 0)
+                    ? [...new Set(img.tags.map(t => t.trim()))]
+                    : [baseName];
+                return { image_name: fileName, tags: tags };
+            });
 
-                // 임베딩 매칭 (파일명 기반)
-                const embResp = await fetch('/api/asset_tool/match', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ tags: [baseName], category: category, top_n: 10, embedding_threshold: 0 })
-                });
-                const embResult = await embResp.json();
-                if (embResult.success && embResult.embedding_matches && embResult.embedding_matches.length > 0) {
-                    atState.embeddingMatches.push({
-                        imageName: fileName || '이미지',
-                        imageUrl: img.url || '',
-                        matches: embResult.embedding_matches.map(m => ({ ...m, selected: false }))
-                    });
-                }
+            const batchResp = await fetch('/api/asset_tool/match_batch', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ items: items, category: category, top_n: 10, embedding_threshold: 0 })
+            });
+            const batchResult = await batchResp.json();
 
-                // 태그 매칭 (AI 분석 결과 기반)
-                if (img.status === 'done' && img.tags && img.tags.length > 0) {
-                    const uniqueTags = [...new Set(img.tags.map(t => t.trim()))];
-                    const tagResp = await fetch('/api/asset_tool/match', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ tags: uniqueTags, category: category, top_n: 10 })
-                    });
-                    const tagResult = await tagResp.json();
-                    if (tagResult.success && tagResult.matches && tagResult.matches.length > 0) {
+            if (batchResult.success && batchResult.results) {
+                for (const r of batchResult.results) {
+                    const img = allImages.find(i => (i.file.name || '') === r.image_name);
+                    // 임베딩 매칭
+                    if (r.embedding_matches && r.embedding_matches.length > 0) {
+                        atState.embeddingMatches.push({
+                            imageName: r.image_name || '이미지',
+                            imageUrl: img ? img.url || '' : '',
+                            matches: r.embedding_matches.map(m => ({ ...m, selected: false }))
+                        });
+                    }
+                    // 태그 매칭 (Jaccard)
+                    if (r.matches && r.matches.length > 0) {
+                        const uniqueTags = (img && img.tags) ? [...new Set(img.tags.map(t => t.trim()))] : [];
                         atState.imageMatches.push({
-                            imageName: fileName || '이미지',
-                            imageUrl: img.url,
+                            imageName: r.image_name || '이미지',
+                            imageUrl: img ? img.url : '',
                             tags: uniqueTags,
-                            matches: tagResult.matches.map(m => ({ ...m, selected: false }))
+                            matches: r.matches.map(m => ({ ...m, selected: false }))
                         });
                     }
                 }

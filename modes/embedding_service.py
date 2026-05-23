@@ -701,6 +701,105 @@ async def match_presets_by_query(
     return results[:top_n]
 
 
+async def match_presets_by_names_batch(
+    image_tags: list[dict],
+    preset_names: list[str],
+    tag_category: str = "expressions",
+    top_n: int = 10,
+    threshold: float = 0.3,
+    tags_data: dict = None,
+) -> list[dict]:
+    """배치 임베딩 매칭: 여러 이미지의 태그를 한번에 임베딩 후 이미지별 결과 반환.
+
+    image_tags: [{"image_name": str, "tags": [str]}, ...]
+    반환: [{"image_name": str, "embedding_matches": [dict]}, ...]
+    """
+    try:
+        api_key = _current_config.get("embedding_api_key", "")
+        if not api_key:
+            _log("API 키 없음 - 배치 임베딩 매칭 스킵")
+            return []
+
+        if not image_tags or not preset_names:
+            _log(f"배치 임베딩 매칭 스킵: images={len(image_tags) if image_tags else 0}, presets={len(preset_names) if preset_names else 0}")
+            return []
+
+        # 1. 모든 이미지의 태그를 수집하고 정제
+        all_tags = []
+        for item in image_tags:
+            all_tags.extend(item.get("tags", []))
+
+        clean_tags = [_clean_tag_name(t) for t in all_tags]
+        clean_tags = [c for c in clean_tags if c]
+        if not clean_tags:
+            _log(f"배치 임베딩 매칭 스킵: 정제 후 태그 없음 (원본: {len(all_tags)})")
+            return []
+
+        clean_presets = [_clean_preset_name(n, tags_data) for n in preset_names]
+        unique_clean_tags = list(dict.fromkeys(clean_tags))
+        unique_clean_presets = list(dict.fromkeys([c for c in clean_presets if c]))
+
+        _log(f"배치 임베딩 매칭 시작: 이미지={len(image_tags)}, 태그={len(unique_clean_tags)}, 프리셋={len(unique_clean_presets)}")
+
+        # 2. 태그 + 프리셋 임베딩을 한 번에 배치 처리
+        tag_embs = await batch_get_embeddings(unique_clean_tags, input_type="query")
+        preset_embs = await batch_get_embeddings(unique_clean_presets, input_type="document")
+
+        if tag_embs is None:
+            _log("배치 임베딩 매칭 실패: 태그 임베딩 결과가 None")
+            return []
+        if preset_embs is None:
+            _log("배치 임베딩 매칭 실패: 프리셋 임베딩 결과가 None")
+            return []
+
+        tag_emb_map = dict(zip(unique_clean_tags, tag_embs))
+        preset_emb_map = dict(zip(unique_clean_presets, preset_embs))
+
+        # 3. 이미지별로 매칭 결과 계산
+        results = []
+        for item in image_tags:
+            image_name = item.get("image_name", "")
+            item_tags = item.get("tags", [])
+            matches = {}
+
+            for tag_name in item_tags:
+                clean_tag = _clean_tag_name(tag_name)
+                if not clean_tag or clean_tag not in tag_emb_map:
+                    continue
+                tag_emb = tag_emb_map[clean_tag]
+
+                for preset_name, clean_preset in zip(preset_names, clean_presets):
+                    if not clean_preset or clean_preset not in preset_emb_map:
+                        continue
+                    sim = cosine_similarity(tag_emb, preset_emb_map[clean_preset])
+                    if sim >= threshold:
+                        key = preset_name
+                        if key not in matches or sim > matches[key]["similarity"]:
+                            matches[key] = {
+                                "name": preset_name,
+                                "clean_name": clean_preset,
+                                "similarity": round(sim, 4),
+                                "matched_tag": clean_tag,
+                                "original_tag": tag_name,
+                            }
+
+            sorted_matches = sorted(matches.values(), key=lambda x: x["similarity"], reverse=True)[:top_n]
+            results.append({
+                "image_name": image_name,
+                "embedding_matches": sorted_matches,
+            })
+            _log(f"배치 매칭: {image_name} → {len(sorted_matches)}개 결과")
+
+        _log(f"배치 임베딩 매칭 완료: {len(image_tags)}개 이미지, 태그={len(unique_clean_tags)}, 프리셋={len(unique_clean_presets)}")
+    except Exception as e:
+        _log(f"배치 임베딩 매칭 예외: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
+        return []
+
+    return results
+
+
 def preview_clean_names(names: list[str], steps: list[dict]) -> list[dict]:
     results = []
     for name in names:
