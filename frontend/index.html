@@ -3881,6 +3881,11 @@
             </div>
             <div class="asset-container">
                 <div class="asset-main" id="lora-main">
+                    <!-- LoRA 로딩 표시 -->
+                    <div class="asset-loading" id="lora-loading" style="display:none;">
+                        <div class="spinner" style="width:32px;height:32px;border-width:3px;"></div>
+                        <span>로딩 중...</span>
+                    </div>
                     <!-- LoRA 항목 폴더 카드 그리드 -->
                     <div id="lora-entries-section">
                         <div class="asset-gallery-grid" id="lora-entry-grid"></div>
@@ -11058,6 +11063,7 @@
         let loraPickerState = { level: 'characters', pickerCharacter: '', outfit: '', expression: '', selected: new Set() };
 
         function _loraHideAll() {
+            document.getElementById('lora-loading').style.display = 'none';
             document.getElementById('lora-entries-section').style.display = 'none';
             document.getElementById('lora-trained-section').style.display = 'none';
             document.getElementById('lora-representative').style.display = 'none';
@@ -11083,6 +11089,8 @@
 
         // ─── Level 1: 전체 캐릭터 그리드 ─────────────────────────
         async function loadLoraCharacterGrid() {
+            const loadingEl = document.getElementById('lora-loading');
+            loadingEl.style.display = 'flex';
             try {
                 const resp = await fetchJSON('/api/lora/characters');
                 const section = document.getElementById('lora-entries-section');
@@ -11104,8 +11112,10 @@
                         <div class="folder-name">${escapeHtml(name)}</div>
                     </div>
                 `).join('');
+                loadingEl.style.display = 'none';
             } catch (e) {
                 console.error('[LORA] 캐릭터 그리드 로드 실패:', e);
+                loadingEl.style.display = 'none';
             }
         }
 
@@ -11114,6 +11124,8 @@
             loraCurrentCharacter = character;
             loraCurrentEntry = '';
             _loraHideAll();
+            const loadingEl = document.getElementById('lora-loading');
+            loadingEl.style.display = 'flex';
 
             // breadcrumb
             document.getElementById('lora-breadcrumb').innerHTML =
@@ -11160,8 +11172,10 @@
                         </div>
                     </div>`;
                 }).join('');
+                loadingEl.style.display = 'none';
             } catch (e) {
                 console.error('[LORA_MANAGE] 항목 그리드 로드 실패:', e);
+                loadingEl.style.display = 'none';
             }
         }
 
@@ -11174,6 +11188,8 @@
                 `<span style="cursor:pointer;" onclick="initLoraTab()">로라매니징</span> / <span style="cursor:pointer;" onclick="enterLoraCharacter('${escapeHtml(loraCurrentCharacter)}')">${escapeHtml(loraCurrentCharacter)}</span> / <span>${escapeHtml(name)}</span>`;
 
             _loraHideAll();
+            const loadingEl = document.getElementById('lora-loading');
+            loadingEl.style.display = 'flex';
 
             // 사이드바: 삭제/학습 표시
             document.getElementById('lora-delete-btn').style.display = '';
@@ -11200,6 +11216,7 @@
             } catch (e) { console.error('[LORA_MANAGE] 항목 정보 로드 실패:', e); }
 
             await Promise.all([loadLoraTrainingImages(), loadLoraTestImages(), loadLoraTrainingConfig(), loadTrainedLoraSessions()]);
+            loadingEl.style.display = 'none';
         }
 
         // ─── 학습된 LoRA (lora_load_path) ─────────────────────────
@@ -11318,6 +11335,8 @@
 
         async function enterTrainedSession(session) {
             loraCurrentTrainedSession = session;
+            const loadingEl = document.getElementById('lora-loading');
+            loadingEl.style.display = 'flex';
 
             // breadcrumb 업데이트
             document.getElementById('lora-breadcrumb').innerHTML =
@@ -11466,6 +11485,7 @@
                 console.error('[LORA_TRAINED] step 로드 실패:', e);
                 showToast('step 로드 실패', 'error');
             }
+            loadingEl.style.display = 'none';
         }
 
         async function setTrainedRepresentative(safetensorsPath, previewUrl) {
