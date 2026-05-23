@@ -16,7 +16,7 @@ class GitAutoUpdater:
             "name": "soya-custom-nodes",
             "path": r"E:\wsl2\matrix\Packages\ComfyUI\comfyui-soya-custom-nodes",
             "url": "https://github.com/lbh848/Comfyui-soya-custom-nodes",
-            "branch": "v3.1",
+            "branch": "main",
         },
         {
             "name": "workflow-to-api",
@@ -31,7 +31,7 @@ class GitAutoUpdater:
             "branch": "main",
         },
         {
-            "name": "",
+            "name": "instance_lora",
             "path": "",
             "url": "",
             "branch": "main",

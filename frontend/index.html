@@ -4035,6 +4035,20 @@
                                     <option value="0">전체 기록 (0)</option>
                                 </select>
                             </div>
+                            <div style="display:flex; gap:8px;">
+                                <div style="flex:1;">
+                                    <label style="font-size:0.7rem; color:var(--text-secondary); display:block; margin-bottom:2px;">DIM (네트워크 차원)</label>
+                                    <select id="lora-cfg-dim" style="width:100%; padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); font-size:0.8rem; box-sizing:border-box;">
+                                        <option value="16">16</option>
+                                        <option value="32" selected>32</option>
+                                        <option value="64">64</option>
+                                    </select>
+                                </div>
+                                <div style="flex:1;">
+                                    <label style="font-size:0.7rem; color:var(--text-secondary); display:block; margin-bottom:2px;">ALPHA (스케일링 계수)</label>
+                                    <input type="number" id="lora-cfg-alpha" value="16" min="1" style="width:100%; padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); font-size:0.8rem; box-sizing:border-box;">
+                                </div>
+                            </div>
                         </div>
                         <div style="display:flex; gap:4px; margin-top:8px;">
                             <button onclick="saveLoraTrainingConfig()" style="flex:1; padding:6px; background:var(--accent); color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600;">저장</button>
@@ -12119,6 +12133,8 @@
                     upscaleStatus.textContent = cfg.upscale ? 'ON' : 'OFF';
                     upscaleStatus.className = 'toggle-status ' + (cfg.upscale ? 'on' : 'off');
                     document.getElementById('lora-cfg-resolution').value = cfg.resolution || 1024;
+                    document.getElementById('lora-cfg-dim').value = cfg.dim || 32;
+                    document.getElementById('lora-cfg-alpha').value = cfg.alpha || 16;
                     // SAVE_AFTER 드롭박스 갱신 후 복원
                     updateSaveAfterDropdown();
                     if (cfg.save_after !== undefined) {
@@ -12146,6 +12162,8 @@
                 gen_h: parseInt(document.getElementById('lora-cfg-genh').value) || 1024,
                 upscale: document.getElementById('lora-cfg-upscale').checked,
                 resolution: parseInt(document.getElementById('lora-cfg-resolution').value) || 1024,
+                dim: parseInt(document.getElementById('lora-cfg-dim').value) || 32,
+                alpha: parseInt(document.getElementById('lora-cfg-alpha').value) || 16,
                 lora_save_path: loraCurrentCharacter + '/Lora/' + loraCurrentEntry,
             };
             try {
@@ -12199,6 +12217,8 @@
             const upscale = document.getElementById('lora-cfg-upscale').checked;
             const resolution = parseInt(document.getElementById('lora-cfg-resolution').value) || 1024;
             const saveAfter = parseInt(document.getElementById('lora-cfg-save-after').value) || 0;
+            const dim = parseInt(document.getElementById('lora-cfg-dim').value) || 32;
+            const alpha = parseInt(document.getElementById('lora-cfg-alpha').value) || 16;
 
             // 긍정: [1]트리거 프롬프트\n...\n[PROFILE]\n...\n[TEST_POSITIVE]\n...\n[TEST_NEGATIVE]\n...\n[END]
             const trigger = document.getElementById('lora-entry-trigger').value.trim();
@@ -12224,7 +12244,7 @@
                 testBlock += `[${i + 1}]${img.negative || ''}\n`;
             });
 
-            positiveRaw += configBlock + testBlock + '\n[END]';
+            positiveRaw += configBlock + testBlock + `\n[DIM]\n${dim}\n[ALPHA]\n${alpha}\n[END]`;
             // 부정: 이미지별 태그만, [END] 없음
 
             let overlay = document.getElementById('lora-raw-overlay');

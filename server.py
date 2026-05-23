@@ -5332,7 +5332,7 @@ async def handle_api_lora_training_export(request):
 app.router.add_post("/api/lora/training_images/export", handle_api_lora_training_export)
 
 
-def _build_lora_training_text(images: list, trigger: str, profile: str, step: int, il_rate: float, save_step: int, folder: str, field: str = "positive", lora_save_path: str = "", gen_w: int = 1024, gen_h: int = 1024, upscale: bool = False, resolution: int = 1024, test_images: list = None, save_after: int = 0) -> str:
+def _build_lora_training_text(images: list, trigger: str, profile: str, step: int, il_rate: float, save_step: int, folder: str, field: str = "positive", lora_save_path: str = "", gen_w: int = 1024, gen_h: int = 1024, upscale: bool = False, resolution: int = 1024, test_images: list = None, save_after: int = 0, dim: int = 32, alpha: int = 16) -> str:
     """LoRA 학습용 프롬프트 텍스트 생성 (긍정/부정)"""
     lines = []
     for i, img in enumerate(images, start=1):
@@ -5380,6 +5380,10 @@ def _build_lora_training_text(images: list, trigger: str, profile: str, step: in
     if test_images:
         for i, img in enumerate(test_images, start=1):
             lines.append(f"[{i}]{img.get('negative', '')}")
+    lines.append("[DIM]")
+    lines.append(str(dim))
+    lines.append("[ALPHA]")
+    lines.append(str(alpha))
     lines.append("[END]")
     return "\n".join(lines)
 
@@ -5486,6 +5490,8 @@ async def handle_api_lora_training_start(request):
         upscale = training_config.get("upscale", False)
         resolution = training_config.get("resolution", 1024)
         save_after = training_config.get("save_after", 0)
+        dim = training_config.get("dim", 32)
+        alpha = training_config.get("alpha", 16)
 
         # 3. 학습 이미지 + 프롬프트 로드
         images = list_training_images(character, entry)
@@ -5496,8 +5502,8 @@ async def handle_api_lora_training_start(request):
         from modes.lora_mode import list_test_images
         test_images = list_test_images(character, entry)
 
-        positive_text = _build_lora_training_text(images, trigger, profile, step, il_rate, save_step, folder, "positive", lora_save_path, gen_w, gen_h, upscale, resolution, test_images, save_after)
-        negative_text = _build_lora_training_text(images, trigger, profile, step, il_rate, save_step, folder, "negative", lora_save_path, gen_w, gen_h, upscale, resolution, test_images, save_after)
+        positive_text = _build_lora_training_text(images, trigger, profile, step, il_rate, save_step, folder, "positive", lora_save_path, gen_w, gen_h, upscale, resolution, test_images, save_after, dim, alpha)
+        negative_text = _build_lora_training_text(images, trigger, profile, step, il_rate, save_step, folder, "negative", lora_save_path, gen_w, gen_h, upscale, resolution, test_images, save_after, dim, alpha)
         print(f"[LORA_TRAIN] 긍정 프롬프트 (실제 전송):\n{positive_text}")
         print(f"[LORA_TRAIN] 부정 프롬프트 (실제 전송):\n{negative_text}")
 
