@@ -1036,17 +1036,15 @@
         }
 
         .autocomplete-list {
-            position: absolute;
-            top: 100%;
-            left: 0;
-            right: 0;
+            position: fixed;
             background: var(--surface);
             border: 1px solid var(--border);
             border-radius: 6px;
             max-height: 200px;
             overflow-y: auto;
-            z-index: 100;
+            z-index: 10000;
             display: none;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
         }
 
         .autocomplete-list.visible {
@@ -6892,6 +6890,17 @@
         // ─── 워크플로우 파일 자동완성 ───
         let autocompleteTimeout = null;
 
+        function positionAutocompleteList(listEl) {
+            const wrapper = listEl.closest('.autocomplete-wrapper');
+            if (!wrapper) return;
+            const input = wrapper.querySelector('input');
+            if (!input) return;
+            const rect = input.getBoundingClientRect();
+            listEl.style.top = rect.bottom + 'px';
+            listEl.style.left = rect.left + 'px';
+            listEl.style.width = rect.width + 'px';
+        }
+
         function renderAutocompleteItems(files, listEl) {
             if (files && files.length > 0) {
                 let html = '';
@@ -6907,6 +6916,7 @@
                 listEl.innerHTML = '<div class="autocomplete-item" data-noselect>검색 결과 없음</div>';
                 listEl.classList.add('visible');
             }
+            positionAutocompleteList(listEl);
         }
 
         function escapeAttr(s) {
@@ -6957,6 +6967,10 @@
                         selectLoraAnimaWorkflowFile(path, filename);
                     } else if (list.id === 'lora-workflow-sdxl-autocomplete') {
                         selectLoraSdxlWorkflowFile(path, filename);
+                    } else if (list.id === 'anima-asset-workflow-autocomplete') {
+                        selectAnimaAssetWorkflowFile(path, filename);
+                    } else if (list.id === 'asset-tag-analysis-workflow-autocomplete') {
+                        selectAssetTagAnalysisWorkflowFile(path, filename);
                     }
                     list.classList.remove('visible');
                 }
@@ -6969,6 +6983,15 @@
                 });
             }
         });
+
+        // 스크롤/리사이즈 시 자동완성 위치 재계산
+        function repositionAllAutocompleteLists() {
+            document.querySelectorAll('.autocomplete-list.visible').forEach(list => {
+                positionAutocompleteList(list);
+            });
+        }
+        document.querySelector('.modal-body').addEventListener('scroll', repositionAllAutocompleteLists);
+        window.addEventListener('resize', repositionAllAutocompleteLists);
 
         // ─── 토스트 알림 ───
         function showToast(message, type) {
