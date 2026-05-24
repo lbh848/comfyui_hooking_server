@@ -5872,7 +5872,7 @@ app.router.add_get("/api/open-folder", handle_api_open_folder)
 
 def _backup_data_on_startup():
     """프로그램 시작 시 asset_data 주요 파일들을 백업 (최대 50개 유지)"""
-    from modes.asset_mode import TAGS_FILE, ASSET_DATA_DIR, NAME_MAPPING_FILE
+    from modes.asset_mode import TAGS_FILE, ASSET_DATA_DIR, NAME_MAPPING_FILE, HIDDEN_TAGS_FILE
     from modes.embedding_service import PROFILE_MAP_FILE
     from modes.lora_mode import LORA_MANAGE_FILE
 
@@ -5883,6 +5883,7 @@ def _backup_data_on_startup():
 
     backup_targets = [
         ("tags", TAGS_FILE),
+        ("hidden_tags", HIDDEN_TAGS_FILE),
         ("embedding_profile_map", PROFILE_MAP_FILE),
         ("name_mapping", NAME_MAPPING_FILE),
         ("lora_manage", LORA_MANAGE_FILE),
