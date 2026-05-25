@@ -62,6 +62,7 @@ WORKFLOW_BACKUP_STATIC_DIR = os.path.join(BASE_DIR, "workflow_backup_static")
 # 기본 설정값
 DEFAULT_CONFIG = {
     "comfyui_port": 8188,  # ComfyUI 서버 포트
+    "comfyui_port_illustration": None,  # 삽화 전용 포트 (null=메인 포트 사용)
     "comfy_workflow_source_path": "",
     "data_saving_mode": False,
     "send_original": False,  # 전송 시 원본 무변환 전송
@@ -162,6 +163,8 @@ app_config = load_config()
 
 # ComfyUI 포트: config → 환경변수 → 기본값(8188) 순서
 REAL_COMFY_PORT = int(app_config.get("comfyui_port", os.environ.get("REAL_COMFY_PORT", "8188")))
+# 삽화 전용 포트: None이면 메인 포트(REAL_COMFY_PORT) 사용
+REAL_COMFY_ILLUST_PORT = app_config.get("comfyui_port_illustration")  # None or int
 
 
 # ─── 배치 모드 초기화 ─────────────────────────────────────
@@ -742,8 +745,16 @@ def cleanup_backups():
 
 
 # ─── ComfyUI 프록시 ─────────────────────────────────────
-async def submit_to_real_comfy(prompt_data: dict) -> tuple[str, dict]:
-    url = f"http://{REAL_COMFY_HOST}:{REAL_COMFY_PORT}/prompt"
+def get_illust_port():
+    """삽화 전용 포트를 반환한다. 설정되지 않으면 메인 포트를 사용한다."""
+    if REAL_COMFY_ILLUST_PORT is not None:
+        return int(REAL_COMFY_ILLUST_PORT)
+    return REAL_COMFY_PORT
+
+
+async def submit_to_real_comfy(prompt_data: dict, port: int | None = None) -> tuple[str, dict]:
+    target_port = port if port is not None else REAL_COMFY_PORT
+    url = f"http://{REAL_COMFY_HOST}:{target_port}/prompt"
     payload = {"prompt": prompt_data}
     print(f"[PROXY] → POST {url}")
     async with aiohttp.ClientSession() as session:
@@ -884,17 +895,20 @@ async def wait_for_real_comfy(ws, real_prompt_id: str, progress_callback=None, t
     return None
 
 
-async def fetch_real_history(real_prompt_id: str) -> dict:
-    url = f"http://{REAL_COMFY_HOST}:{REAL_COMFY_PORT}/history/{real_prompt_id}"
+async def fetch_real_history(real_prompt_id: str, port: int | None = None) -> dict:
+    target_port = port if port is not None else REAL_COMFY_PORT
+    url = f"http://{REAL_COMFY_HOST}:{target_port}/history/{real_prompt_id}"
     async with aiohttp.ClientSession() as session:
         async with session.get(url) as resp:
             return await resp.json()
 
 
 async def fetch_real_image(
-    filename: str, subfolder: str = "", img_type: str = "output"
+    filename: str, subfolder: str = "", img_type: str = "output",
+    port: int | None = None
 ) -> bytes:
-    url = f"http://{REAL_COMFY_HOST}:{REAL_COMFY_PORT}/view"
+    target_port = port if port is not None else REAL_COMFY_PORT
+    url = f"http://{REAL_COMFY_HOST}:{target_port}/view"
     params = {"filename": filename, "subfolder": subfolder, "type": img_type}
     async with aiohttp.ClientSession() as session:
         async with session.get(url, params=params) as resp:
@@ -905,7 +919,8 @@ async def fetch_real_image(
 
 # ─── 이미지 생성 공통 로직 ────────────────────────────────
 async def generate_image_with_prompt(positive: str, negative: str):
-    """현재 워크플로우에 프롬프트를 주입하고 8188에서 이미지를 생성한다.
+    """현재 워크플로우에 프롬프트를 주입하고 삽화 포트에서 이미지를 생성한다.
+    삽화 포트가 설정되어 있으면 해당 포트를, 아니면 메인 포트를 사용한다.
     반환: (image_bytes, node_errors_or_error_msg)
     """
     await update_workflow_if_needed()
@@ -913,6 +928,7 @@ async def generate_image_with_prompt(positive: str, negative: str):
         return None, "API 워크플로우 없음"
 
     risu_prompt = build_prompt(positive, negative)
+    illust_port = get_illust_port()
 
     async def _on_gen_progress(value, max_value):
         await notify_frontend("generation_progress", {
@@ -920,12 +936,12 @@ async def generate_image_with_prompt(positive: str, negative: str):
         })
 
     ws_url = (
-        f"ws://{REAL_COMFY_HOST}:{REAL_COMFY_PORT}/ws"
+        f"ws://{REAL_COMFY_HOST}:{illust_port}/ws"
         f"?clientId=gen_{uuid.uuid4().hex[:8]}"
     )
     async with aiohttp.ClientSession() as ws_session:
         async with ws_session.ws_connect(ws_url) as real_ws:
-            real_prompt_id, submit_result = await submit_to_real_comfy(risu_prompt)
+            real_prompt_id, submit_result = await submit_to_real_comfy(risu_prompt, port=illust_port)
             node_errors = submit_result.get("node_errors", {})
 
             total_steps = count_ksampler_total_steps(current_api_workflow)
@@ -933,7 +949,7 @@ async def generate_image_with_prompt(positive: str, negative: str):
             if ws_result is None:
                 return None, "생성 실패 또는 타임아웃"
 
-    history = await fetch_real_history(real_prompt_id)
+    history = await fetch_real_history(real_prompt_id, port=illust_port)
     real_entry = history.get(real_prompt_id, {})
     real_outputs = real_entry.get("outputs", {})
 
@@ -951,6 +967,7 @@ async def generate_image_with_prompt(positive: str, negative: str):
         first_img["filename"],
         first_img.get("subfolder", ""),
         first_img.get("type", "output"),
+        port=illust_port,
     )
     return img_bytes, node_errors
 
@@ -2637,9 +2654,12 @@ async def handle_api_config(request: web.Request) -> web.Response:
                     app_config[key] = body[key]
 
             # ComfyUI 포트 업데이트
-            global REAL_COMFY_PORT
+            global REAL_COMFY_PORT, REAL_COMFY_ILLUST_PORT
             if "comfyui_port" in body:
                 REAL_COMFY_PORT = int(body["comfyui_port"])
+            if "comfyui_port_illustration" in body:
+                val = body["comfyui_port_illustration"]
+                REAL_COMFY_ILLUST_PORT = int(val) if val else None
 
             # 배치 모드 타임아웃 업데이트
             if "batch_timeout_seconds" in body:
@@ -4113,6 +4133,16 @@ async def _ensure_cloudflared() -> str:
     _cloudflared_path = bin_path
     return bin_path
 
+async def _drain_stderr(proc: asyncio.subprocess.Process):
+    """cloudflared stderr를 계속 소비해서 버퍼가 꽉 차 프로세스가 블록되지 않도록 한다."""
+    try:
+        while True:
+            chunk = await proc.stderr.read(4096)
+            if not chunk:
+                break
+    except Exception:
+        pass
+
 async def handle_api_tunnel_start(request: web.Request) -> web.Response:
     global _tunnel_process, _tunnel_url
     if _tunnel_process is not None and _tunnel_process.returncode is None:
@@ -4124,9 +4154,11 @@ async def handle_api_tunnel_start(request: web.Request) -> web.Response:
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,
         )
-        # stderr에서 trycloudflare.com URL 파싱
+        # 1) URL 파싱  2) "Registered tunnel connection" 대기
+        # URL만 파싱해서 바로 반환하면 엣지 연결이 아직 안 된 상태라 Error 1033 발생
         url = None
-        deadline = asyncio.get_event_loop().time() + 15  # 15초 타임아웃
+        registered = False
+        deadline = asyncio.get_event_loop().time() + 20  # 20초 타임아웃
         buf = b""
         while asyncio.get_event_loop().time() < deadline:
             try:
@@ -4137,19 +4169,33 @@ async def handle_api_tunnel_start(request: web.Request) -> web.Response:
                 break
             buf += chunk
             text = buf.decode("utf-8", errors="ignore")
-            m = re.search(r'(https://[a-z0-9\-]+\.trycloudflare\.com)', text)
-            if m:
-                url = m.group(1)
+            if not url:
+                m = re.search(r'(https://[a-z0-9\-]+\.trycloudflare\.com)', text)
+                if m:
+                    url = m.group(1)
+                    print(f"[TUNNEL] URL 발급: {url}, 엣지 등록 대기 중...")
+            if url and "Registered tunnel connection" in text:
+                registered = True
                 break
-        if url:
+            if "ERR " in text and url is None:
+                # URL 발급 전에 에러 발생 (포트 차단 등)
+                break
+        if url and registered:
             _tunnel_url = url
+            asyncio.ensure_future(_drain_stderr(_tunnel_process))
             return web.json_response({"status": "running", "url": url})
-        else:
-            # URL을 못 찾으면 프로세스 정리
+        elif url and not registered:
+            # URL은 받았지만 엣지 등록 실패
+            print(f"[TUNNEL] URL 발급됐으나 엣지 등록 실패 (20초 타임아웃)")
             _tunnel_process.kill()
             await _tunnel_process.wait()
             _tunnel_process = None
-            return web.json_response({"status": "error", "error": "터널 URL을 가져오지 못했습니다. (15초 타임아웃)"}, status=500)
+            return web.json_response({"status": "error", "error": "터널 엣지 연결에 실패했습니다. 네트워크를 확인하고 재시도하세요."}, status=500)
+        else:
+            _tunnel_process.kill()
+            await _tunnel_process.wait()
+            _tunnel_process = None
+            return web.json_response({"status": "error", "error": "터널 URL을 가져오지 못했습니다. (20초 타임아웃)"}, status=500)
     except Exception as e:
         _tunnel_process = None
         return web.json_response({"status": "error", "error": str(e)}, status=500)
