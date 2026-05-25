@@ -4324,6 +4324,20 @@
                         <input type="number" id="setting-comfyui-port" placeholder="8188" min="1" max="65535" style="width: 120px;">
                     </div>
 
+                    <div class="setting-row" style="margin-top: 12px;">
+                        <div class="setting-label">
+                            <div class="title">삽화 포트 분리</div>
+                            <div class="desc">삽화 생성을 별도 ComfyUI 인스턴스로 라우팅합니다. 듀얼 GPU 환경에서 유용합니다.</div>
+                        </div>
+                    </div>
+                    <div class="form-group" style="margin-top: 8px; display: flex; align-items: center; gap: 12px;">
+                        <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
+                            <input type="checkbox" id="setting-illust-port-enabled" style="width: 16px; height: 16px; cursor: pointer;">
+                            <span style="font-size: 0.85rem;">분리 사용</span>
+                        </label>
+                        <input type="number" id="setting-comfyui-port-illustration" placeholder="8187" min="1" max="65535" style="width: 120px;" disabled>
+                    </div>
+
                     <div class="setting-row">
                         <div class="setting-label">
                             <div class="title">워크플로우 소스 경로</div>
@@ -6341,6 +6355,15 @@
 
             // 폼에 값 설정
             document.getElementById('setting-comfyui-port').value = currentConfig.comfyui_port || 8188;
+            // 삽화 포트 분리 설정
+            const illustPortEnabled = currentConfig.comfyui_port_illustration != null;
+            document.getElementById('setting-illust-port-enabled').checked = illustPortEnabled;
+            document.getElementById('setting-comfyui-port-illustration').value = currentConfig.comfyui_port_illustration || 8187;
+            document.getElementById('setting-comfyui-port-illustration').disabled = !illustPortEnabled;
+            // 삽화 포트 토글 이벤트
+            document.getElementById('setting-illust-port-enabled').addEventListener('change', function() {
+                document.getElementById('setting-comfyui-port-illustration').disabled = !this.checked;
+            });
             document.getElementById('setting-send-original').checked = currentConfig.send_original || false;
             document.getElementById('setting-webp-quality').disabled = currentConfig.send_original || false;
             document.getElementById('setting-webp-quality').value = currentConfig.webp_quality || 85;
@@ -6808,6 +6831,9 @@
             const config = {
                 data_saving_mode: false,
                 comfyui_port: parseInt(document.getElementById('setting-comfyui-port').value) || 8188,
+                comfyui_port_illustration: document.getElementById('setting-illust-port-enabled').checked
+                    ? (parseInt(document.getElementById('setting-comfyui-port-illustration').value) || 8187)
+                    : null,
                 send_original: document.getElementById('setting-send-original').checked,
                 webp_quality: parseInt(document.getElementById('setting-webp-quality').value) || 85,
                 backup_webp_quality: parseInt(document.getElementById('setting-backup-webp-quality').value) || 80,
