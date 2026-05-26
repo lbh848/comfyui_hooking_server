@@ -135,8 +135,8 @@ def load_config() -> dict:
         try:
             with open(CONFIG_FILE, "r", encoding="utf-8") as f:
                 config = json.load(f)
-                # 기본값과 병합
-                merged = DEFAULT_CONFIG.copy()
+                # 기본값과 병합 (deepcopy로 중첩 dict 오염 방지)
+                merged = copy.deepcopy(DEFAULT_CONFIG)
                 merged.update(config)
                 return merged
         except Exception as e:
@@ -2640,7 +2640,8 @@ async def handle_api_config(request: web.Request) -> web.Response:
     global app_config
 
     if request.method == "GET":
-        # 현재 설정 반환
+        # 항상 디스크에서 최신 설정을 읽어 반환 (수동 편집 반영)
+        app_config = load_config()
         return web.json_response(app_config)
 
     elif request.method == "POST":

@@ -6829,7 +6829,7 @@
 
         async function saveSettings() {
             const config = {
-                data_saving_mode: false,
+                data_saving_mode: currentConfig.data_saving_mode || false,
                 comfyui_port: parseInt(document.getElementById('setting-comfyui-port').value) || 8188,
                 comfyui_port_illustration: document.getElementById('setting-illust-port-enabled').checked
                     ? (parseInt(document.getElementById('setting-comfyui-port-illustration').value) || 8187)
@@ -6874,7 +6874,10 @@
                     anima: document.getElementById('setting-lora-workflow-anima-source-path').value,
                     sdxl: document.getElementById('setting-lora-workflow-sdxl-source-path').value
                 },
-                lora_load_path: document.getElementById('setting-lora-load-path').value.trim().replace(/\\?$/, '\\SOYA_CHAR_LORA')
+                lora_load_path: document.getElementById('setting-lora-load-path').value.trim().replace(/\\?$/, '\\SOYA_CHAR_LORA'),
+                batch_mode_enabled: currentConfig.batch_mode_enabled || false,
+                webp_lossless: currentConfig.webp_lossless || false,
+                workflow_filename: currentConfig.workflow_filename || ''
             };
 
             try {
