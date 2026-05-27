@@ -13837,10 +13837,10 @@
             // 자연어
             const naturalLanguage = document.getElementById('asset-natural-language-text')?.value?.trim() || '';
             // LoRA 트리거
-            const loraTriggerWords = assetLoraList.map(l => l.trigger).filter(t => t && t.trim()).join(', ');
+            const loraTriggerWords = loraEnabled ? assetLoraList.map(l => l.trigger).filter(t => t && t.trim()).join(', ') : '';
             // ANIMA/SDXL LoRA 트리거 분리
-            const animaLoraTriggerWords = assetLoraList.filter(l => (l.BASE || 'anima') === 'anima').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
-            const sdxlLoraTriggerWords = assetLoraList.filter(l => l.BASE === 'sdxl').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
+            const animaLoraTriggerWords = loraEnabled ? assetLoraList.filter(l => (l.BASE || 'anima') === 'anima').map(l => l.trigger).filter(t => t && t.trim()).join(', ') : '';
+            const sdxlLoraTriggerWords = loraEnabled ? assetLoraList.filter(l => l.BASE === 'sdxl').map(l => l.trigger).filter(t => t && t.trim()).join(', ') : '';
             // ANIMA 아티스트 프리셋
             const animaArtistName = getAssetSelectValue('anima-artist-preset-select') || '';
             const animaArtistTags = animaArtistName ? (assetTags.artist_presets?.[animaArtistName] || []).filter(t => t.trim()) : [];
@@ -17516,12 +17516,12 @@
 
             const artistPreset = getAssetSelectValue('asset-artist-preset-select') || '';
             const naturalLanguage = document.getElementById('asset-natural-language-text')?.value || '';
-            const loraTriggerWords = assetLoraList.map(l => l.trigger).filter(t => t && t.trim()).join(', ');
+            const loraTriggerWords = loraEnabled ? assetLoraList.map(l => l.trigger).filter(t => t && t.trim()).join(', ') : '';
 
             // ANIMA 모드 관련 필드
             const animaArtistPreset = isAnima ? (getAssetSelectValue('anima-artist-preset-select') || '') : '';
-            const animaLoraTriggerWords = assetLoraList.filter(l => (l.BASE || 'anima') === 'anima').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
-            const sdxlLoraTriggerWords = assetLoraList.filter(l => l.BASE === 'sdxl').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
+            const animaLoraTriggerWords = loraEnabled ? assetLoraList.filter(l => (l.BASE || 'anima') === 'anima').map(l => l.trigger).filter(t => t && t.trim()).join(', ') : '';
+            const sdxlLoraTriggerWords = loraEnabled ? assetLoraList.filter(l => l.BASE === 'sdxl').map(l => l.trigger).filter(t => t && t.trim()).join(', ') : '';
 
             const requestBody = {
                 character: char,
@@ -21467,13 +21467,13 @@
                             natural_language: slot.natural_language_preset
                                 ? (assetTags?.natural_language_presets?.[slot.natural_language_preset] || slot.natural_language || '')
                                 : (slot.natural_language || ''),
-                            lora_trigger_words: (slot.lora_list || []).map(l => l.trigger).filter(t => t && t.trim()).join(', '),
+                            lora_trigger_words: slot.lora_enabled ? (slot.lora_list || []).map(l => l.trigger).filter(t => t && t.trim()).join(', ') : '',
                             anima_artist_preset: isAnima ? (slot.anima_artist_preset || '') : '',
                             anima_quality_preset: isAnima ? (slot.anima_quality_preset || '') : '',
                             anima_negative_preset: isAnima ? (slot.anima_negative_preset || '') : '',
                             asset_workflow_type: isAnima ? 'anima' : 'regular',
-                            anima_lora_trigger_words: (slot.lora_list || []).filter(l => (l.BASE || 'anima') === 'anima').map(l => l.trigger).filter(t => t && t.trim()).join(', '),
-                            sdxl_lora_trigger_words: (slot.lora_list || []).filter(l => l.BASE === 'sdxl').map(l => l.trigger).filter(t => t && t.trim()).join(', '),
+                            anima_lora_trigger_words: slot.lora_enabled ? (slot.lora_list || []).filter(l => (l.BASE || 'anima') === 'anima').map(l => l.trigger).filter(t => t && t.trim()).join(', ') : '',
+                            sdxl_lora_trigger_words: slot.lora_enabled ? (slot.lora_list || []).filter(l => l.BASE === 'sdxl').map(l => l.trigger).filter(t => t && t.trim()).join(', ') : '',
                         };
 
                         // 프리셋이 지정된 경우 서버에 해당 프리셋 로드 후 생성
