@@ -13,6 +13,7 @@ import uuid
 import shutil
 import traceback
 from typing import Optional
+from aiohttp import web
 
 
 # ─── 상수 ───────────────────────────────────────────────
@@ -275,7 +276,7 @@ class BotMode:
             return _json_error("파일을 찾을 수 없습니다.", status=404)
 
         import mimetypes as mt
-        content_type = mt.guess_type(filepath)[0] or "application/octet-stream"
+        content_type = mt.guess_type(filepath)[0] or "image/webp"
         return web.FileResponse(filepath, headers={"Content-Type": content_type})
 
     # ─── 이미지 업로드 ─────────────────────────────────────
@@ -527,12 +528,10 @@ class BotMode:
 
 # ─── 유틸리티 ──────────────────────────────────────────
 def _json_ok(data, status=200):
-    from aiohttp import web
     return web.json_response(data, status=status)
 
 
 def _json_error(msg, status=400):
-    from aiohttp import web
     print(f"[BOT_MODE] 에러: {msg}")
     return web.json_response({"error": msg}, status=status)
 
