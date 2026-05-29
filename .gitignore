@@ -16,6 +16,7 @@ bot/
 current_mode_workflow/
 auto_complete/
 CLAUDE.md
+AGENTS.md
 
 # Key files (보안상 git에 포함하지 않음)
 key/
