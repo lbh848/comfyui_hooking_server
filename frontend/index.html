@@ -1906,6 +1906,17 @@
             display: flex; gap: 8px; justify-content: flex-end;
             margin-left: auto;
         }
+        .bot-char-card .eye-prompt-wrap {
+            position: relative; width: 200px;
+        }
+        .bot-char-card .eye-prompt-wrap input {
+            width: 100%; padding: 4px 8px; font-size: 0.8rem;
+            background: var(--surface2); border: 1px solid var(--border);
+            border-radius: 4px; color: var(--text); outline: none;
+        }
+        .bot-char-card .eye-prompt-wrap input:focus {
+            border-color: var(--accent);
+        }
         .bot-char-card .char-thumbs img {
             width: 300px; height: 438px; object-fit: contain; border-radius: 6px;
             border: 2px solid var(--border); background: var(--surface2);
@@ -13641,7 +13652,8 @@
             updateBotBreadcrumb();
             updateBotCharSelect();
 
-            for (const char of bot.characters) {
+            for (let charIdx = 0; charIdx < bot.characters.length; charIdx++) {
+                const char = bot.characters[charIdx];
                 const repCount = (char.rep_images || []).length;
                 const card = document.createElement('div');
                 card.className = 'bot-char-card asset-folder-card';
@@ -13657,6 +13669,14 @@
                         ${badgeHtml}
                         <button class="btn-view-all" onclick="openCharacterDetail('${escAttr(char.name)}')"
                             style="margin-left:auto; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:8px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600; white-space:nowrap;">전체 이미지 보기</button>
+                        <span style="font-size:0.9rem;">👁️</span>
+                        <div class="inline-add eye-prompt-wrap">
+                            <input type="text" id="eye-prompt-${charIdx}" data-bot="${escAttr(botCurrentBot)}" data-char="${escAttr(char.name)}"
+                                   placeholder="눈 관련 추가 프롬프트"
+                                   value="${escAttr(char.eye_prompt || '')}"
+                                   onblur="saveEyePrompt(this)" onclick="event.stopPropagation()">
+                            <div class="tag-autocomplete-dropdown" id="ac-eye-prompt-${charIdx}"></div>
+                        </div>
                     </div>
                     <div class="char-thumbs"></div>
                 `;
@@ -13717,8 +13737,29 @@
                         console.error(`[BOT] 캐릭터 "${charName}" 이미지 로드 실패:`, e);
                     }
                 })(card, char.name);
+
+                // 눈 프롬프트 자동완성 연결
+                TagAutocomplete.attach(`eye-prompt-${charIdx}`, `ac-eye-prompt-${charIdx}`, 'input');
             }
             showBotView('chars');
+        }
+
+        async function saveEyePrompt(inputEl) {
+            const botName = inputEl.dataset.bot;
+            const charName = inputEl.dataset.char;
+            const eyePrompt = inputEl.value;
+            if (!botName || !charName) return;
+            try {
+                const resp = await fetch('/api/bot_mode/action', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'update_eye_prompt', bot_name: botName, char_name: charName, eye_prompt: eyePrompt })
+                });
+                const data = await resp.json();
+                if (data.bots) botData.bots = data.bots;
+            } catch (e) {
+                console.error('[BOT] 눈 프롬프트 저장 실패:', e);
+            }
         }
 
         async function openCharacterDetail(charName) {
