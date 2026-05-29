@@ -1910,9 +1910,6 @@
             width: 300px; height: 438px; object-fit: contain; border-radius: 6px;
             border: 2px solid var(--border); background: var(--surface2);
         }
-        .bot-char-card .char-thumbs img:first-child {
-            border: 4px solid #ef4444;
-        }
 
         /* ─── 이미지 카드 오버레이 버튼 ─── */
         .bot-img-rep-btn {
@@ -2056,6 +2053,7 @@
             object-fit: contain;
             display: block;
             background: var(--surface2);
+            cursor: zoom-in;
         }
         .asset-gallery-card .gallery-thumb-placeholder {
             width: 100%;
@@ -3010,7 +3008,7 @@
                     <div class="resize-handle" id="bot-sidebar-resize-handle"></div>
 
                     <!-- 봇 선택 섹션 -->
-                    <div style="background:rgba(66,133,244,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
+                    <div id="bot-select-section" style="background:rgba(66,133,244,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
                         <div class="section-title">봇 선택 <span id="bot-char-count" style="font-size:0.75rem; color:var(--text2); font-weight:normal;"></span></div>
                         <select id="bot-select" onchange="onBotChange()">
                             <option value="">-- 봇 선택 --</option>
@@ -3026,7 +3024,13 @@
                     <div id="bot-char-section" style="display:none;">
                         <div style="background:rgba(66,133,244,0.12); border-radius:8px; padding:10px; margin-bottom:8px;">
                             <div class="section-title">캐릭터</div>
-                            <button onclick="addBotCharacter()" style="width:100%; background:var(--accent); color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">추가</button>
+                            <select id="bot-char-select" style="width:100%; margin-bottom:6px; padding:4px 6px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.8rem;">
+                                <option value="">-- 캐릭터 선택 --</option>
+                            </select>
+                            <div style="display:flex; gap:4px;">
+                                <button onclick="addBotCharacter()" style="flex:1; background:var(--accent); color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">추가</button>
+                                <button onclick="removeSelectedBotCharacter()" style="flex:1; background:var(--error); color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">삭제</button>
+                            </div>
                             <button onclick="openBotBatchAddModal()" style="width:100%; margin-top:4px; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">일괄추가</button>
                         </div>
                     </div>
@@ -13560,10 +13564,12 @@
                 const constructionIcon = botEmptyState.querySelector('.construction-icon');
                 if (constructionIcon) constructionIcon.style.display = 'none';
                 updateBotBreadcrumb();
+                updateBotCharSelect();
                 return;
             }
             if (countEl) countEl.textContent = `(${bot.characters.length}개)`;
             updateBotBreadcrumb();
+            updateBotCharSelect();
 
             for (const char of bot.characters) {
                 const repCount = (char.rep_images || []).length;
@@ -13575,25 +13581,46 @@
                     ? `<span class="rep-badge set">대표 (${repCount}/3)</span>`
                     : `<span class="rep-badge unset">대표 미설정</span>`;
 
-                let thumbsHtml = '';
-                if (repCount > 0) {
-                    thumbsHtml = '<div class="char-thumbs">';
-                    for (const fn of char.rep_images) {
-                        const imgUrl = `/api/bot_mode/image/${encodeURIComponent(botCurrentBot)}/${encodeURIComponent(char.name)}/${encodeURIComponent(fn)}`;
-                        thumbsHtml += `<img src="${imgUrl}" loading="lazy" onerror="this.style.display='none'">`;
-                    }
-                    thumbsHtml += '</div>';
-                }
-
                 card.innerHTML = `
                     <div class="card-info">
                         <span style="font-size:1.2rem;">👤</span>
                         <span style="font-weight:600; font-size:0.95rem;">${escHtml(char.name)}</span>
                         ${badgeHtml}
                     </div>
-                    ${thumbsHtml}
+                    <div class="char-thumbs"></div>
                 `;
                 grid.appendChild(card);
+
+                // 비동기로 대표 이미지+프롬프트 로드
+                (async (cardEl, charName) => {
+                    try {
+                        const resp = await fetch(`/api/bot_mode/images?bot=${encodeURIComponent(botCurrentBot)}&character=${encodeURIComponent(charName)}`);
+                        const data = await resp.json();
+                        if (!data.images || data.images.length === 0) return;
+                        const ch = bot.characters.find(c => c.name === charName);
+                        const repImages = (ch && ch.rep_images) ? ch.rep_images : [];
+                        if (repImages.length === 0) return;
+                        // 대표 이미지만, 순서대로
+                        const repImgs = repImages.map(fn => data.images.find(i => i.filename === fn)).filter(Boolean);
+                        const thumbsEl = cardEl.querySelector('.char-thumbs');
+                        repImgs.forEach((img, idx) => {
+                            const isFirst = idx === 0;
+                            const wrap = document.createElement('div');
+                            wrap.style.cssText = 'display:inline-flex; flex-direction:column; align-items:center;';
+                            wrap.innerHTML = `
+                                <img src="${img.url}" loading="lazy" onerror="this.style.display='none'"
+                                    onclick="event.stopPropagation(); openLightbox(this.src)"
+                                    style="cursor:zoom-in; ${isFirst ? 'border:3px solid #ef4444; border-radius:6px;' : ''}">
+                                <div style="width:300px; padding:4px 6px; font-size:0.7rem; color:var(--text2); background:var(--surface2); border-radius:0 0 6px 6px;
+                                    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-height:2.4em; line-height:1.2;"
+                                    title="${escAttr(img.prompt || '')}">${escHtml(img.prompt || '<프롬프트 없음>')}</div>
+                            `;
+                            thumbsEl.appendChild(wrap);
+                        });
+                    } catch (e) {
+                        console.error(`[BOT] 캐릭터 "${charName}" 이미지 로드 실패:`, e);
+                    }
+                })(card, char.name);
             }
             showBotView('chars');
         }
@@ -13609,7 +13636,7 @@
 
             // 기존 사이드바 섹션 숨기기
             if (botSection) botSection.style.display = 'none';
-            const botSelectSection = sidebar.querySelector('div[style*="rgba(66,133,244,0.08)"]');
+            const botSelectSection = document.getElementById('bot-select-section');
             if (botSelectSection) botSelectSection.style.display = 'none';
 
             // 상세 사이드바 표시 또는 생성
@@ -13624,7 +13651,6 @@
                             <button id="btn-detail-upload" style="width:100%; background:var(--accent); color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">업로드</button>
                             <button id="btn-detail-import" style="width:100%; background:var(--accent); color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">에셋 가져오기</button>
                             <button id="btn-detail-rename" style="width:100%; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">이름 변경</button>
-                            <button id="btn-detail-delete" style="width:100%; background:var(--error); color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">삭제</button>
                         </div>
                     </div>
                 `;
@@ -13636,7 +13662,6 @@
             document.getElementById('btn-detail-upload').onclick = () => openBotImageUpload(charName);
             document.getElementById('btn-detail-import').onclick = () => openBotAssetImport(charName);
             document.getElementById('btn-detail-rename').onclick = () => renameBotCharacter(charName);
-            document.getElementById('btn-detail-delete').onclick = () => removeBotCharacter(charName);
 
             // 이미지 로드
             await loadBotCharDetailImages(charName);
@@ -13651,10 +13676,10 @@
             const charDetailSidebar = document.getElementById('bot-char-detail-sidebar');
             if (charDetailSidebar) charDetailSidebar.style.display = 'none';
             const botSection = document.getElementById('bot-char-section');
-            if (botSection) botSection.style.display = '';
+            if (botSection) botSection.style.display = 'block';
             const sidebar = document.getElementById('bot-sidebar');
-            const botSelectSection = sidebar.querySelector('div[style*="rgba(66,133,244,0.08)"]');
-            if (botSelectSection) botSelectSection.style.display = '';
+            const botSelectSection = document.getElementById('bot-select-section');
+            if (botSelectSection) botSelectSection.style.display = 'block';
 
             updateBotBreadcrumb();
             renderBotCharacters();
@@ -13697,7 +13722,7 @@
                     if (isRep) card.dataset.rep = 'true';
                     card.innerHTML = `
                         <div style="position:relative;">
-                            <img class="gallery-thumb" src="${img.url}" loading="lazy" onerror="this.style.display='none'">
+                            <img class="gallery-thumb" src="${img.url}" loading="lazy" onerror="this.style.display='none'" onclick="openLightbox(this.src)" style="cursor:zoom-in;">
                             <button class="bot-img-rep-btn ${isRep ? 'active' : ''}"
                                 onclick="event.stopPropagation(); toggleRepImage('${escAttr(charName)}','${escAttr(img.filename)}')"
                                 title="대표 이미지 지정 (최대 3개)">⭐</button>
@@ -13745,10 +13770,10 @@
             const charDetailSidebar = document.getElementById('bot-char-detail-sidebar');
             if (charDetailSidebar) charDetailSidebar.style.display = 'none';
             const botSection = document.getElementById('bot-char-section');
-            if (botSection) botSection.style.display = '';
+            if (botSection) botSection.style.display = 'block';
             const sidebar = document.getElementById('bot-sidebar');
-            const botSelectSection = sidebar.querySelector('div[style*="rgba(66,133,244,0.08)"]');
-            if (botSelectSection) botSelectSection.style.display = '';
+            const botSelectSection = document.getElementById('bot-select-section');
+            if (botSelectSection) botSelectSection.style.display = 'block';
             renderBotCharacters();
         }
 
@@ -13760,8 +13785,8 @@
             document.getElementById('bot-select').value = '';
             document.getElementById('bot-char-section').style.display = 'none';
             const sidebar = document.getElementById('bot-sidebar');
-            const botSelectSection = sidebar.querySelector('div[style*="rgba(66,133,244,0.08)"]');
-            if (botSelectSection) botSelectSection.style.display = '';
+            const botSelectSection = document.getElementById('bot-select-section');
+            if (botSelectSection) botSelectSection.style.display = 'block';
             renderBotList();
             updateBotBreadcrumb();
         }
@@ -13834,6 +13859,29 @@
                 console.error('[BOT] 봇 이름 변경 실패:', e);
                 alert('봇 이름 변경 실패');
             }
+        }
+
+        // ─── 캐릭터 드롭박스 갱신 ──────────────────────
+        function updateBotCharSelect() {
+            const sel = document.getElementById('bot-char-select');
+            if (!sel) return;
+            const prev = sel.value;
+            sel.innerHTML = '<option value="">-- 캐릭터 선택 --</option>';
+            const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
+            if (!bot || !bot.characters) return;
+            for (const ch of bot.characters) {
+                const opt = document.createElement('option');
+                opt.value = ch.name;
+                opt.textContent = ch.name;
+                sel.appendChild(opt);
+            }
+            if (prev && bot.characters.some(c => c.name === prev)) sel.value = prev;
+        }
+
+        function removeSelectedBotCharacter() {
+            const sel = document.getElementById('bot-char-select');
+            if (!sel || !sel.value) { showToast('삭제할 캐릭터를 선택하세요.'); return; }
+            removeBotCharacter(sel.value);
         }
 
         // ─── 캐릭터 CRUD ──────────────────────────────
@@ -14246,6 +14294,10 @@
             });
             dock.innerHTML = html;
             dock.style.display = 'flex';
+            dock.style.left = '';
+            dock.style.top = '';
+            dock.style.bottom = '';
+            dock.style.transform = '';
 
             // 드래그 핸들 초기화
             const handle = dock.querySelector('.dock-handle');
