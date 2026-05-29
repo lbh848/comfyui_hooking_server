@@ -1885,6 +1885,14 @@
             transition: border-color 0.2s;
             margin-bottom: 8px;
             padding: 12px 16px;
+            display: flex;
+            align-items: center;
+        }
+        .bot-char-card .card-info {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-right: auto;
         }
         .bot-char-card:hover {
             border-color: var(--accent);
@@ -1895,7 +1903,8 @@
         .bot-char-card .rep-badge.set { color: var(--accent); }
         .bot-char-card .rep-badge.unset { color: var(--text2); opacity: 0.6; }
         .bot-char-card .char-thumbs {
-            display: flex; gap: 8px; justify-content: flex-start;
+            display: flex; gap: 8px; justify-content: flex-end;
+            margin-left: auto;
         }
         .bot-char-card .char-thumbs img {
             width: 300px; height: 438px; object-fit: contain; border-radius: 6px;
@@ -1934,7 +1943,7 @@
             opacity: 1;
         }
         .asset-gallery-card.rep-first {
-            outline: 6px solid #3b82f6;
+            outline: 6px solid #ef4444;
         }
 
         /* ─── 플로팅 독 ─── */
@@ -1952,7 +1961,16 @@
             gap: 8px;
             z-index: 1000;
             box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+            user-select: none;
         }
+        #bot-rep-dock .dock-handle {
+            cursor: grab;
+            color: var(--text2);
+            font-size: 0.9rem;
+            padding: 0 4px;
+            opacity: 0.5;
+        }
+        #bot-rep-dock .dock-handle:active { cursor: grabbing; }
         #bot-rep-dock .dock-label {
             font-size: 0.75rem; color: var(--text2); white-space: nowrap;
         }
@@ -1960,23 +1978,24 @@
             position: relative; flex-shrink: 0;
         }
         #bot-rep-dock .dock-item img {
-            width: 112px; height: 112px; object-fit: cover; border-radius: 6px;
-            border: 1px solid var(--border);
+            height: 224px; width: auto; max-width: none;
+            object-fit: contain; border-radius: 6px;
+            border: 1px solid var(--border); background: var(--surface2);
         }
         #bot-rep-dock .dock-item:first-of-type img {
-            border: 3px solid #3b82f6;
+            border: 3px solid #ef4444;
         }
         #bot-rep-dock .dock-remove {
             position: absolute; top: -6px; right: -6px;
             background: var(--error); color: #fff; border: none;
-            width: 18px; height: 18px; border-radius: 50%;
-            font-size: 0.65rem; cursor: pointer; line-height: 1;
+            width: 20px; height: 20px; border-radius: 50%;
+            font-size: 0.7rem; cursor: pointer; line-height: 1;
             display: flex; align-items: center; justify-content: center;
         }
         #bot-rep-dock .dock-order-btn {
             background: rgba(0,0,0,0.4); color: #fff; border: none;
-            width: 20px; height: 20px; border-radius: 4px;
-            font-size: 0.6rem; cursor: pointer; line-height: 1;
+            width: 22px; height: 22px; border-radius: 4px;
+            font-size: 0.65rem; cursor: pointer; line-height: 1;
             display: flex; align-items: center; justify-content: center;
         }
         #bot-rep-dock .dock-order-btn:hover:not([disabled]) { background: var(--accent); }
@@ -2982,7 +3001,7 @@
                         <p>삽화 설정 기능을 준비하고 있습니다.</p>
                     </div>
                     <div class="asset-folder-grid" id="bot-folder-grid" style="display:none;"></div>
-                    <div id="bot-character-grid" style="display:none;"></div>
+                    <div id="bot-character-grid" style="display:none; padding:0 12px;"></div>
                     <div id="bot-char-detail" style="display:none;">
                         <div id="bot-char-detail-grid" class="asset-gallery-grid" style="padding:12px;"></div>
                     </div>
@@ -13567,7 +13586,7 @@
                 }
 
                 card.innerHTML = `
-                    <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+                    <div class="card-info">
                         <span style="font-size:1.2rem;">👤</span>
                         <span style="font-weight:600; font-size:0.95rem;">${escHtml(char.name)}</span>
                         ${badgeHtml}
@@ -14214,7 +14233,7 @@
             const repImages = (ch && ch.rep_images) ? ch.rep_images : [];
             if (repImages.length === 0) { dock.style.display = 'none'; return; }
 
-            let html = '<span class="dock-label">대표</span>';
+            let html = '<span class="dock-handle" title="드래그로 이동">⠿</span><span class="dock-label">대표</span>';
             repImages.forEach((fn, idx) => {
                 const imgUrl = `/api/bot_mode/image/${encodeURIComponent(botCurrentBot)}/${encodeURIComponent(charName)}/${encodeURIComponent(fn)}`;
                 html += `<div class="dock-item">
@@ -14227,6 +14246,32 @@
             });
             dock.innerHTML = html;
             dock.style.display = 'flex';
+
+            // 드래그 핸들 초기화
+            const handle = dock.querySelector('.dock-handle');
+            if (handle && !handle.dataset.bound) {
+                handle.dataset.bound = 'true';
+                let dragging = false, startX, startY, origLeft, origTop;
+                handle.addEventListener('mousedown', e => {
+                    dragging = true;
+                    startX = e.clientX;
+                    startY = e.clientY;
+                    const rect = dock.getBoundingClientRect();
+                    origLeft = rect.left;
+                    origTop = rect.top;
+                    dock.style.transform = 'none';
+                    dock.style.left = origLeft + 'px';
+                    dock.style.top = origTop + 'px';
+                    dock.style.bottom = 'auto';
+                    e.preventDefault();
+                });
+                document.addEventListener('mousemove', e => {
+                    if (!dragging) return;
+                    dock.style.left = (origLeft + e.clientX - startX) + 'px';
+                    dock.style.top = (origTop + e.clientY - startY) + 'px';
+                });
+                document.addEventListener('mouseup', () => { dragging = false; });
+            }
         }
 
         async function removeFromDock(charName, filename) {
