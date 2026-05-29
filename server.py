@@ -2580,6 +2580,7 @@ async def handle_api_patch_comfy_input(request: web.Request) -> web.Response:
             os.path.join(comfy_input_dir, "soya_char_ref"),
             os.path.join(comfy_input_dir, "soya_style_ref"),
             os.path.join(comfy_input_dir, "soya_lora"),
+            os.path.join(comfy_input_dir, "soya_bot"),
             os.path.join(comfy_input_dir, "soya_char_ref", "fallback"),
             os.path.join(comfy_input_dir, "soya_style_ref", "fallback"),
         ]

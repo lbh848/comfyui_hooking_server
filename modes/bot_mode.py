@@ -303,17 +303,20 @@ class BotMode:
                 continue
             base = os.path.splitext(fname)[0]
             prompt = ""
+            negative = ""
             prompt_path = os.path.join(char_dir, f"{base}_prompt.json")
             if os.path.isfile(prompt_path):
                 try:
                     with open(prompt_path, "r", encoding="utf-8") as f:
                         pd = json.load(f)
                         prompt = pd.get("prompt", "")
+                        negative = pd.get("negative", "")
                 except Exception:
                     pass
             images.append({
                 "filename": fname,
                 "prompt": prompt,
+                "negative": negative,
                 "url": f"/api/bot_mode/image/{bot_name}/{char_name}/{fname}",
             })
 
@@ -439,18 +442,20 @@ class BotMode:
                 base = os.path.splitext(os.path.basename(src))[0]
                 asset_prompt_path = os.path.join(os.path.dirname(src), f"{base}_prompt.json")
                 prompt = ""
+                negative = ""
                 if os.path.isfile(asset_prompt_path):
                     try:
                         with open(asset_prompt_path, "r", encoding="utf-8") as f:
                             pd = json.load(f)
                             prompt = pd.get("positive", "")
+                            negative = pd.get("negative", "")
                     except Exception:
                         pass
 
                 new_base = os.path.splitext(new_name)[0]
                 bot_prompt_path = os.path.join(char_dir, f"{new_base}_prompt.json")
                 with open(bot_prompt_path, "w", encoding="utf-8") as f:
-                    json.dump({"prompt": prompt, "source": "asset", "original_path": rel_path}, f, ensure_ascii=False)
+                    json.dump({"prompt": prompt, "negative": negative, "source": "asset", "original_path": rel_path}, f, ensure_ascii=False)
 
                 imported.append({"filename": new_name, "prompt": prompt})
                 print(f"[BOT_MODE] 에셋 가져오기: {rel_path} → {bot_name}/{char_name}/{new_name}")
@@ -710,16 +715,19 @@ class BotMode:
                     base = os.path.splitext(os.path.basename(src))[0]
                     asset_prompt_path = os.path.join(os.path.dirname(src), f"{base}_prompt.json")
                     prompt = ""
+                    negative = ""
                     if os.path.isfile(asset_prompt_path):
                         try:
                             with open(asset_prompt_path, "r", encoding="utf-8") as f:
-                                prompt = json.load(f).get("positive", "")
+                                apd = json.load(f)
+                                prompt = apd.get("positive", "")
+                                negative = apd.get("negative", "")
                         except Exception:
                             pass
                     new_base = os.path.splitext(new_name)[0]
                     bot_prompt_path = os.path.join(char_dir, f"{new_base}_prompt.json")
                     with open(bot_prompt_path, "w", encoding="utf-8") as f:
-                        json.dump({"prompt": prompt, "source": "asset", "original_path": ri["path"]}, f, ensure_ascii=False)
+                        json.dump({"prompt": prompt, "negative": negative, "source": "asset", "original_path": ri["path"]}, f, ensure_ascii=False)
 
                     imported_files.append(new_name)
 
@@ -825,7 +833,7 @@ class BotMode:
                     positive = ", ".join(tags) if tags else ""
 
                     base = os.path.splitext(rep["filename"])[0]
-                    char_dir = os.path.join(BOT_DIR, bot_name, char_name)
+                    char_dir = os.path.join(BOT_DIR, bot_name, rep["character"])
                     prompt_path = os.path.join(char_dir, f"{base}_prompt.json")
                     existing = {}
                     if os.path.isfile(prompt_path):

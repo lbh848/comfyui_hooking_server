@@ -13641,11 +13641,12 @@
                                 <img src="${img.url}" loading="lazy" onerror="this.style.display='none'"
                                     onclick="event.stopPropagation(); openLightbox(this.src)"
                                     style="cursor:zoom-in; ${isFirst ? 'border:6px solid #22c55e; border-radius:6px;' : ''}">
-                                <div class="lv1-prompt-box" data-filename="${escAttr(img.filename)}" data-character="${escAttr(charName)}"
+                                <div class="lv1-prompt-box" data-filename="${escAttr(img.filename)}" data-character="${escAttr(charName)}" data-negative="${escAttr(img.negative || '')}"
                                     style="width:300px; background:var(--surface2); border-radius:0 0 6px 6px;">
                                     <div class="lv1-prompt-text" style="padding:4px 6px; font-size:0.7rem; color:var(--text2); line-height:1.3; word-break:break-word;
                                         max-height:3.9em; overflow:hidden; cursor:pointer;"
                                         onclick="lv1TogglePrompt(this)">${escHtml(img.prompt || '<프롬프트 없음>')}</div>
+                                    <div class="lv1-negative-text" style="padding:4px 6px; font-size:0.7rem; color:#c084fc; line-height:1.3; word-break:break-word; display:none; border-top:1px dashed var(--border);">${escHtml(img.negative || '<부정 프롬프트 없음>')}</div>
                                     <div style="display:flex; border-top:1px solid var(--border);">
                                         <button onclick="event.stopPropagation(); lv1ToggleExpand(this)"
                                             style="flex:1; background:none; border:none; color:var(--text2); cursor:pointer; font-size:0.65rem; padding:2px;">펼치기</button>
@@ -14800,6 +14801,7 @@
                 const ok = data.success_count || 0;
                 const fail = data.fail_count || 0;
                 showToast(`${ok}장에 부정 프롬프트 적용 완료${fail > 0 ? `, ${fail}건 실패` : ''}`, fail > 0 ? 'warning' : 'success');
+                renderBotCharacters();
             } catch (e) {
                 console.error('[BOT] 부정 프롬프트 적용 오류:', e);
                 showToast('부정 프롬프트 적용 오류', 'error');
@@ -14901,12 +14903,15 @@
         function lv1ToggleExpand(btn) {
             const box = btn.closest('.lv1-prompt-box');
             const textEl = box.querySelector('.lv1-prompt-text');
+            const negEl = box.querySelector('.lv1-negative-text');
             const collapsed = textEl.style.maxHeight !== 'none';
             if (collapsed) {
                 textEl.style.maxHeight = 'none';
+                if (negEl) negEl.style.display = 'block';
                 btn.textContent = '접기';
             } else {
                 textEl.style.maxHeight = '3.9em';
+                if (negEl) negEl.style.display = 'none';
                 btn.textContent = '펼치기';
             }
         }
@@ -14968,10 +14973,14 @@
         }
 
         function lv1TogglePrompt(textEl) {
+            const box = textEl.closest('.lv1-prompt-box');
+            const negEl = box ? box.querySelector('.lv1-negative-text') : null;
             if (textEl.style.maxHeight === 'none') {
                 textEl.style.maxHeight = '3.9em';
+                if (negEl) negEl.style.display = 'none';
             } else {
                 textEl.style.maxHeight = 'none';
+                if (negEl) negEl.style.display = 'block';
             }
         }
 
