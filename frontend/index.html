@@ -13437,6 +13437,7 @@
 
         // ─── 에셋 생성 모드 ────────────────────────────────────
         let assetTags = null;
+        let _botNegativePresetsCache = null;
         let assetRepresentatives = {};  // {charName: {outfit, expression, filename}}
 
         // ─── 에셋 생성 큐 ────────────────────────────────────
@@ -13672,7 +13673,7 @@
                         <span style="font-size:0.9rem;">👁️</span>
                         <div class="inline-add eye-prompt-wrap">
                             <input type="text" id="eye-prompt-${charIdx}" data-bot="${escAttr(botCurrentBot)}" data-char="${escAttr(char.name)}"
-                                   placeholder="눈 관련 추가 프롬프트"
+                                   placeholder="눈 관련 추가 프롬프트(옵션)"
                                    value="${escAttr(char.eye_prompt || '')}"
                                    onblur="saveEyePrompt(this)" onclick="event.stopPropagation()">
                             <div class="tag-autocomplete-dropdown" id="ac-eye-prompt-${charIdx}"></div>
@@ -13739,7 +13740,7 @@
                 })(card, char.name);
 
                 // 눈 프롬프트 자동완성 연결
-                TagAutocomplete.attach(`eye-prompt-${charIdx}`, `ac-eye-prompt-${charIdx}`, 'input');
+                TagAutocomplete.attach(`eye-prompt-${charIdx}`, `ac-eye-prompt-${charIdx}`, 'textarea');
             }
             showBotView('chars');
         }
@@ -14730,17 +14731,18 @@
         async function botRenderNegativePresetSelect() {
             const container = document.getElementById('bot-negative-preset-select');
             if (!container) return;
-            if (!assetTags) {
+            if (!_botNegativePresetsCache) {
                 try {
                     const resp = await fetch('/api/asset_mode/tags');
-                    assetTags = await resp.json();
+                    const data = await resp.json();
+                    _botNegativePresetsCache = data.negative_presets || {};
                 } catch (e) {
                     console.error('[BOT] 태그 로드 실패:', e);
                     return;
                 }
             }
             container.innerHTML = buildCustomSelectHTML(
-                assetTags.negative_presets || {},
+                _botNegativePresetsCache,
                 '',
                 '-- 부정 프리셋 선택 --',
                 'bot-negative-preset'
@@ -20221,8 +20223,8 @@
                 });
             },
 
-            _getCurrentWord(el) {
-                if (el.tagName === 'TEXTAREA') {
+            _getCurrentWord(el, mode) {
+                if (mode === 'textarea') {
                     const pos = el.selectionStart;
                     const val = el.value.substring(0, pos);
                     const match = val.match(/([^,;|\n]+)$/);
@@ -20237,7 +20239,7 @@
             },
 
             async _search(input, dropdown, mode) {
-                const info = this._getCurrentWord(input);
+                const info = this._getCurrentWord(input, mode);
                 if (!info) { dropdown.classList.remove('visible'); return; }
                 const query = info.word.replace(/ /g, '_');
                 try {
@@ -20279,8 +20281,8 @@
             },
 
             _select(input, dropdown, tagName, mode) {
-                if (input.tagName === 'TEXTAREA') {
-                    const info = this._getCurrentWord(input);
+                if (mode === 'textarea') {
+                    const info = this._getCurrentWord(input, mode);
                     if (info) {
                         const before = input.value.substring(0, info.start);
                         const after = input.value.substring(input.selectionStart);
