@@ -1876,35 +1876,111 @@
             0%, 100% { transform: translateY(0); }
             50% { transform: translateY(-6px); }
         }
-        .bot-char-section {
-            background: var(--surface1);
-            border: 1px solid var(--border);
+        /* ─── 캐릭터 카드 (Level 1, 한 행에 하나) ─── */
+        .bot-char-card {
+            background: var(--surface);
             border-radius: 10px;
-            padding: 16px;
-            margin-bottom: 12px;
+            border: 1px solid var(--border);
+            cursor: pointer;
+            transition: border-color 0.2s;
+            margin-bottom: 8px;
+            padding: 12px 16px;
         }
-        .bot-char-header {
+        .bot-char-card:hover {
+            border-color: var(--accent);
+        }
+        .bot-char-card .rep-badge {
+            font-size: 0.7rem; font-weight: normal;
+        }
+        .bot-char-card .rep-badge.set { color: var(--accent); }
+        .bot-char-card .rep-badge.unset { color: var(--text2); opacity: 0.6; }
+        .bot-char-card .char-thumbs {
+            display: flex; gap: 8px; justify-content: flex-start;
+        }
+        .bot-char-card .char-thumbs img {
+            width: 300px; height: 438px; object-fit: contain; border-radius: 6px;
+            border: 2px solid var(--border); background: var(--surface2);
+        }
+        .bot-char-card .char-thumbs img:first-child {
+            border: 4px solid #ef4444;
+        }
+
+        /* ─── 이미지 카드 오버레이 버튼 ─── */
+        .bot-img-rep-btn {
+            position: absolute;
+            top: 6px;
+            right: 6px;
+            background: rgba(0,0,0,0.5);
+            border: none;
+            cursor: pointer;
+            font-size: 0.85rem;
+            padding: 2px 5px;
+            border-radius: 4px;
+            opacity: 0.4;
+            transition: opacity 0.2s, transform 0.15s;
+            z-index: 2;
+            line-height: 1;
+        }
+        .bot-img-rep-btn:hover {
+            opacity: 0.8;
+            transform: scale(1.15);
+        }
+        .bot-img-rep-btn.active {
+            opacity: 1;
+            background: rgba(0,0,0,0.7);
+            filter: drop-shadow(0 0 4px rgba(255, 193, 7, 0.7));
+        }
+        .bot-img-rep-btn.active:hover {
+            opacity: 1;
+        }
+        .asset-gallery-card.rep-first {
+            outline: 6px solid #3b82f6;
+        }
+
+        /* ─── 플로팅 독 ─── */
+        #bot-rep-dock {
+            position: fixed;
+            bottom: 16px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 8px 12px;
             display: flex;
             align-items: center;
             gap: 8px;
-            margin-bottom: 12px;
+            z-index: 1000;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.4);
         }
-        .bot-char-name {
-            font-weight: 600;
-            font-size: 1rem;
-            color: var(--text);
-            flex: 1;
+        #bot-rep-dock .dock-label {
+            font-size: 0.75rem; color: var(--text2); white-space: nowrap;
         }
-        .bot-char-actions {
-            display: flex;
-            gap: 4px;
-            flex-shrink: 0;
+        #bot-rep-dock .dock-item {
+            position: relative; flex-shrink: 0;
         }
-        .bot-char-img-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-            gap: 8px;
+        #bot-rep-dock .dock-item img {
+            width: 112px; height: 112px; object-fit: cover; border-radius: 6px;
+            border: 1px solid var(--border);
         }
+        #bot-rep-dock .dock-item:first-of-type img {
+            border: 3px solid #3b82f6;
+        }
+        #bot-rep-dock .dock-remove {
+            position: absolute; top: -6px; right: -6px;
+            background: var(--error); color: #fff; border: none;
+            width: 18px; height: 18px; border-radius: 50%;
+            font-size: 0.65rem; cursor: pointer; line-height: 1;
+            display: flex; align-items: center; justify-content: center;
+        }
+        #bot-rep-dock .dock-order-btn {
+            background: rgba(0,0,0,0.4); color: #fff; border: none;
+            width: 20px; height: 20px; border-radius: 4px;
+            font-size: 0.6rem; cursor: pointer; line-height: 1;
+            display: flex; align-items: center; justify-content: center;
+        }
+        #bot-rep-dock .dock-order-btn:hover:not([disabled]) { background: var(--accent); }
+        #bot-rep-dock .dock-order-btn[disabled] { opacity: 0.25; cursor: default; }
 
         /* ─── 에셋 폴더/갤러리 카드 ─── */
         .asset-folder-grid,
@@ -2906,7 +2982,10 @@
                         <p>삽화 설정 기능을 준비하고 있습니다.</p>
                     </div>
                     <div class="asset-folder-grid" id="bot-folder-grid" style="display:none;"></div>
-                    <div id="bot-character-list" style="display:none;"></div>
+                    <div id="bot-character-grid" style="display:none;"></div>
+                    <div id="bot-char-detail" style="display:none;">
+                        <div id="bot-char-detail-grid" class="asset-gallery-grid" style="padding:12px;"></div>
+                    </div>
                 </div>
                 <div class="asset-sidebar" id="bot-sidebar">
                     <div class="resize-handle" id="bot-sidebar-resize-handle"></div>
@@ -2934,9 +3013,8 @@
                     </div>
                 </div>
             </div>
+            <div id="bot-rep-dock" style="display:none;"></div>
         </div>
-
-        <!-- 에셋 생성 탭 -->
         <div id="tab-asset-content" class="tab-content">
             <div class="asset-breadcrumb" id="asset-breadcrumb">
                 <span>에셋</span>
@@ -13344,12 +13422,14 @@
         // ═══ 삽화 설정 (봇 모드) ═══
         let botData = null;
         let botCurrentBot = '';
+        let botCurrentChar = '';
 
         async function loadBotData() {
             document.getElementById('bot-loading').style.display = 'flex';
             document.getElementById('bot-empty-state').style.display = 'none';
             document.getElementById('bot-folder-grid').style.display = 'none';
-            document.getElementById('bot-character-list').style.display = 'none';
+            document.getElementById('bot-character-grid').style.display = 'none';
+            document.getElementById('bot-char-detail').style.display = 'none';
             try {
                 const resp = await fetch('/api/bot_mode/bots');
                 botData = await resp.json();
@@ -13381,6 +13461,9 @@
 
         function onBotChange() {
             botCurrentBot = document.getElementById('bot-select').value;
+            botCurrentChar = '';
+            const charDetailSidebar = document.getElementById('bot-char-detail-sidebar');
+            if (charDetailSidebar) charDetailSidebar.style.display = 'none';
             if (!botCurrentBot) {
                 document.getElementById('bot-char-section').style.display = 'none';
                 const countEl = document.getElementById('bot-char-count');
@@ -13402,7 +13485,9 @@
             document.getElementById('bot-loading').style.display = view === 'loading' ? 'flex' : 'none';
             document.getElementById('bot-empty-state').style.display = view === 'empty' ? 'block' : 'none';
             document.getElementById('bot-folder-grid').style.display = view === 'bots' ? 'grid' : 'none';
-            document.getElementById('bot-character-list').style.display = view === 'chars' ? 'block' : 'none';
+            document.getElementById('bot-character-grid').style.display = view === 'chars' ? 'block' : 'none';
+            document.getElementById('bot-char-detail').style.display = view === 'detail' ? 'block' : 'none';
+            document.getElementById('bot-rep-dock').style.display = 'none';
             const easterEgg = document.querySelector('.bot-easter-egg');
             if (easterEgg) easterEgg.style.display = view === 'bots' ? '' : 'none';
         }
@@ -13443,8 +13528,8 @@
         }
 
         async function renderBotCharacters() {
-            const list = document.getElementById('bot-character-list');
-            list.innerHTML = '';
+            const grid = document.getElementById('bot-character-grid');
+            grid.innerHTML = '';
             const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
             const countEl = document.getElementById('bot-char-count');
             if (!bot || !bot.characters || bot.characters.length === 0) {
@@ -13462,105 +13547,149 @@
             updateBotBreadcrumb();
 
             for (const char of bot.characters) {
-                const section = document.createElement('div');
-                section.className = 'bot-char-section';
-                section.dataset.char = char.name;
-                section.innerHTML = `
-                    <div class="bot-char-header" style="cursor:pointer;" onclick="toggleBotCharSection(this)">
-                        <span class="bot-char-toggle" style="font-size:0.8rem; transition:transform 0.2s;">▶</span>
-                        <span class="bot-char-name">👤 ${escHtml(char.name)}</span>
-                        <div class="bot-char-actions">
-                            <button onclick="event.stopPropagation(); openBotImageUpload('${escAttr(char.name)}')" style="background:var(--accent); color:#fff; border:none; padding:3px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">업로드</button>
-                            <button onclick="event.stopPropagation(); openBotAssetImport('${escAttr(char.name)}')" style="background:var(--accent); color:#fff; border:none; padding:3px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">에셋가져오기</button>
-                            <button onclick="event.stopPropagation(); renameBotCharacter('${escAttr(char.name)}')" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:3px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">이름변경</button>
-                            <button onclick="event.stopPropagation(); removeBotCharacter('${escAttr(char.name)}')" style="background:var(--error); color:#fff; border:none; padding:3px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">삭제</button>
-                        </div>
+                const repCount = (char.rep_images || []).length;
+                const card = document.createElement('div');
+                card.className = 'bot-char-card asset-folder-card';
+                card.onclick = () => openCharacterDetail(char.name);
+
+                let badgeHtml = repCount > 0
+                    ? `<span class="rep-badge set">대표 (${repCount}/3)</span>`
+                    : `<span class="rep-badge unset">대표 미설정</span>`;
+
+                let thumbsHtml = '';
+                if (repCount > 0) {
+                    thumbsHtml = '<div class="char-thumbs">';
+                    for (const fn of char.rep_images) {
+                        const imgUrl = `/api/bot_mode/image/${encodeURIComponent(botCurrentBot)}/${encodeURIComponent(char.name)}/${encodeURIComponent(fn)}`;
+                        thumbsHtml += `<img src="${imgUrl}" loading="lazy" onerror="this.style.display='none'">`;
+                    }
+                    thumbsHtml += '</div>';
+                }
+
+                card.innerHTML = `
+                    <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+                        <span style="font-size:1.2rem;">👤</span>
+                        <span style="font-weight:600; font-size:0.95rem;">${escHtml(char.name)}</span>
+                        ${badgeHtml}
                     </div>
-                    <div class="bot-char-img-grid" id="bot-img-${escAttr(char.name)}" data-collapsed="true">
-                        <div style="grid-column:1/-1; color:var(--text2); font-size:0.8rem;">로딩 중...</div>
-                    </div>
+                    ${thumbsHtml}
                 `;
-                list.appendChild(section);
+                grid.appendChild(card);
             }
             showBotView('chars');
-
-            const promises = bot.characters.map(char => loadBotCharImages(char.name));
-            await Promise.allSettled(promises);
         }
 
-        function toggleBotCharSection(header) {
-            const section = header.closest('.bot-char-section');
-            const grid = section.querySelector('.bot-char-img-grid');
-            const toggle = header.querySelector('.bot-char-toggle');
-            const isCollapsed = grid.dataset.collapsed === 'true';
-            if (isCollapsed) {
-                grid.dataset.collapsed = 'false';
-                grid.style.maxHeight = 'none';
-                grid.style.overflow = 'visible';
-                toggle.style.transform = 'rotate(90deg)';
-                // 숨겨진 카드 모두 표시
-                grid.querySelectorAll('.bot-char-img-hidden').forEach(el => {
-                    el.style.display = '';
-                    el.classList.remove('bot-char-img-hidden');
-                });
-                // 더보기 버튼 제거
-                const moreBtn = grid.querySelector('.bot-char-more-btn');
-                if (moreBtn) moreBtn.remove();
+        async function openCharacterDetail(charName) {
+            botCurrentChar = charName;
+            updateBotBreadcrumb();
+
+            // 사이드바를 캐릭터 상세 액션으로 교체
+            const sidebar = document.getElementById('bot-sidebar');
+            const botSection = document.getElementById('bot-char-section');
+            const charDetailSidebar = document.getElementById('bot-char-detail-sidebar');
+
+            // 기존 사이드바 섹션 숨기기
+            if (botSection) botSection.style.display = 'none';
+            const botSelectSection = sidebar.querySelector('div[style*="rgba(66,133,244,0.08)"]');
+            if (botSelectSection) botSelectSection.style.display = 'none';
+
+            // 상세 사이드바 표시 또는 생성
+            if (!charDetailSidebar) {
+                const div = document.createElement('div');
+                div.id = 'bot-char-detail-sidebar';
+                div.innerHTML = `
+                    <button onclick="closeCharacterDetail()" style="width:100%; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:6px 8px; border-radius:4px; cursor:pointer; font-size:0.8rem; margin-bottom:8px;">← 캐릭터 목록으로</button>
+                    <div style="background:rgba(66,133,244,0.08); border-radius:8px; padding:10px;">
+                        <div class="section-title" id="bot-detail-title"></div>
+                        <div style="display:flex; flex-direction:column; gap:4px; margin-top:6px;">
+                            <button id="btn-detail-upload" style="width:100%; background:var(--accent); color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">업로드</button>
+                            <button id="btn-detail-import" style="width:100%; background:var(--accent); color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">에셋 가져오기</button>
+                            <button id="btn-detail-rename" style="width:100%; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">이름 변경</button>
+                            <button id="btn-detail-delete" style="width:100%; background:var(--error); color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">삭제</button>
+                        </div>
+                    </div>
+                `;
+                sidebar.insertBefore(div, sidebar.firstChild);
             } else {
-                grid.dataset.collapsed = 'true';
-                applyBotCharCollapse(grid);
-                toggle.style.transform = '';
+                charDetailSidebar.style.display = '';
             }
+            document.getElementById('bot-detail-title').textContent = charName;
+            document.getElementById('btn-detail-upload').onclick = () => openBotImageUpload(charName);
+            document.getElementById('btn-detail-import').onclick = () => openBotAssetImport(charName);
+            document.getElementById('btn-detail-rename').onclick = () => renameBotCharacter(charName);
+            document.getElementById('btn-detail-delete').onclick = () => removeBotCharacter(charName);
+
+            // 이미지 로드
+            await loadBotCharDetailImages(charName);
+            showBotView('detail');
+            renderFloatingDock(charName);
         }
 
-        function applyBotCharCollapse(grid) {
-            const cards = grid.querySelectorAll('.asset-gallery-card');
-            const toggle = grid.closest('.bot-char-section').querySelector('.bot-char-toggle');
-            if (cards.length <= 3) {
-                // 3개 이하면 접을 필요 없음
-                grid.dataset.collapsed = 'false';
-                toggle.style.transform = 'rotate(90deg)';
-                return;
-            }
-            toggle.style.transform = '';
-            // 4번째부터 숨김
-            cards.forEach((card, i) => {
-                if (i >= 3) {
-                    card.style.display = 'none';
-                    card.classList.add('bot-char-img-hidden');
-                }
-            });
-            // 더보기 버튼 추가 (중복 방지)
-            if (!grid.querySelector('.bot-char-more-btn')) {
-                const moreBtn = document.createElement('div');
-                moreBtn.className = 'bot-char-more-btn';
-                moreBtn.style.cssText = 'grid-column:1/-1; text-align:center; padding:8px; color:var(--accent); cursor:pointer; font-size:0.85rem;';
-                moreBtn.textContent = `+${cards.length - 3}개 더보기`;
-                moreBtn.onclick = () => {
-                    const header = grid.closest('.bot-char-section').querySelector('.bot-char-header');
-                    toggleBotCharSection(header);
-                };
-                grid.appendChild(moreBtn);
-            }
+        function closeCharacterDetail() {
+            botCurrentChar = '';
+
+            // 사이드바 복원
+            const charDetailSidebar = document.getElementById('bot-char-detail-sidebar');
+            if (charDetailSidebar) charDetailSidebar.style.display = 'none';
+            const botSection = document.getElementById('bot-char-section');
+            if (botSection) botSection.style.display = '';
+            const sidebar = document.getElementById('bot-sidebar');
+            const botSelectSection = sidebar.querySelector('div[style*="rgba(66,133,244,0.08)"]');
+            if (botSelectSection) botSelectSection.style.display = '';
+
+            updateBotBreadcrumb();
+            renderBotCharacters();
         }
 
-        async function loadBotCharImages(charName) {
-            const grid = document.getElementById(`bot-img-${charName}`);
-            if (!grid) return;
+        async function loadBotCharDetailImages(charName) {
+            const grid = document.getElementById('bot-char-detail-grid');
+            grid.innerHTML = '<div style="color:var(--text2); font-size:0.8rem;">로딩 중...</div>';
             try {
                 const resp = await fetch(`/api/bot_mode/images?bot=${encodeURIComponent(botCurrentBot)}&character=${encodeURIComponent(charName)}`);
                 const data = await resp.json();
                 grid.innerHTML = '';
                 if (!data.images || data.images.length === 0) {
-                    grid.innerHTML = '<div style="grid-column:1/-1; color:var(--text2); font-size:0.8rem;">이미지 없음</div>';
-                    grid.dataset.collapsed = 'false';
+                    grid.innerHTML = '<div style="color:var(--text2); font-size:0.8rem; padding:20px;">이미지 없음</div>';
                     return;
                 }
-                for (const img of data.images) {
+                const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
+                const ch = bot ? bot.characters.find(c => c.name === charName) : null;
+                const repImages = (ch && ch.rep_images) ? ch.rep_images : [];
+
+                // 대표 이미지를 먼저 배치 (순서대로)
+                const sorted = [...data.images].sort((a, b) => {
+                    const ai = repImages.indexOf(a.filename);
+                    const bi = repImages.indexOf(b.filename);
+                    if (ai === -1 && bi === -1) return 0;
+                    if (ai === -1) return 1;
+                    if (bi === -1) return -1;
+                    return ai - bi;
+                });
+
+                for (const img of sorted) {
+                    const isRep = repImages.includes(img.filename);
+                    const repIdx = isRep ? repImages.indexOf(img.filename) : -1;
+                    const isFirst = repIdx === 0;
+                    const canUp = isRep && repIdx > 0;
+                    const canDown = isRep && repIdx < repImages.length - 1;
                     const card = document.createElement('div');
-                    card.className = 'asset-gallery-card';
+                    card.className = 'asset-gallery-card' + (isFirst ? ' rep-first' : '');
+                    card.dataset.filename = img.filename;
+                    if (isRep) card.dataset.rep = 'true';
                     card.innerHTML = `
-                        <img class="gallery-thumb" src="${img.url}" loading="lazy" onerror="this.style.display='none'">
+                        <div style="position:relative;">
+                            <img class="gallery-thumb" src="${img.url}" loading="lazy" onerror="this.style.display='none'">
+                            <button class="bot-img-rep-btn ${isRep ? 'active' : ''}"
+                                onclick="event.stopPropagation(); toggleRepImage('${escAttr(charName)}','${escAttr(img.filename)}')"
+                                title="대표 이미지 지정 (최대 3개)">⭐</button>
+                            ${isRep ? `
+                            <div style="position:absolute; bottom:6px; left:6px; display:flex; gap:4px; z-index:2;">
+                                <button class="bot-img-order-btn" ${canUp ? '' : 'disabled'}
+                                    onclick="event.stopPropagation(); moveRepImage('${escAttr(charName)}','${escAttr(img.filename)}','up')" title="앞으로 이동">◀</button>
+                                <button class="bot-img-order-btn" ${canDown ? '' : 'disabled'}
+                                    onclick="event.stopPropagation(); moveRepImage('${escAttr(charName)}','${escAttr(img.filename)}','down')" title="뒤로 이동">▶</button>
+                            </div>` : ''}
+                        </div>
                         <div style="padding:6px 8px;">
                             <textarea class="bot-prompt-input" data-filename="${escAttr(img.filename)}" data-character="${escAttr(charName)}"
                                 placeholder="프롬프트 (비워두면 자동 태깅 대상)"
@@ -13572,12 +13701,9 @@
                     `;
                     grid.appendChild(card);
                 }
-                // 기본 접힘 상태 적용
-                grid.dataset.collapsed = 'true';
-                applyBotCharCollapse(grid);
             } catch (e) {
                 console.error(`[BOT] 캐릭터 "${charName}" 이미지 로드 실패:`, e);
-                grid.innerHTML = `<div style="grid-column:1/-1; color:var(--error); font-size:0.8rem;">로드 실패</div>`;
+                grid.innerHTML = '<div style="color:var(--error); font-size:0.8rem; padding:20px;">로드 실패</div>';
             }
         }
 
@@ -13586,15 +13712,37 @@
             let html = '<span class="bc-active" style="cursor:pointer;" onclick="botNavBack()">삽화 설정</span>';
             if (botCurrentBot) {
                 html += `<span class="bc-sep">›</span>`;
-                html += `<span class="bc-active">${escHtml(botCurrentBot)}</span>`;
+                html += `<span class="bc-active" style="cursor:pointer;" onclick="navToBotChars()">${escHtml(botCurrentBot)}</span>`;
+            }
+            if (botCurrentChar) {
+                html += `<span class="bc-sep">›</span>`;
+                html += `<span class="bc-active">${escHtml(botCurrentChar)}</span>`;
             }
             bc.innerHTML = html;
         }
 
+        function navToBotChars() {
+            botCurrentChar = '';
+            const charDetailSidebar = document.getElementById('bot-char-detail-sidebar');
+            if (charDetailSidebar) charDetailSidebar.style.display = 'none';
+            const botSection = document.getElementById('bot-char-section');
+            if (botSection) botSection.style.display = '';
+            const sidebar = document.getElementById('bot-sidebar');
+            const botSelectSection = sidebar.querySelector('div[style*="rgba(66,133,244,0.08)"]');
+            if (botSelectSection) botSelectSection.style.display = '';
+            renderBotCharacters();
+        }
+
         function botNavBack() {
             botCurrentBot = '';
+            botCurrentChar = '';
+            const charDetailSidebar = document.getElementById('bot-char-detail-sidebar');
+            if (charDetailSidebar) charDetailSidebar.style.display = 'none';
             document.getElementById('bot-select').value = '';
             document.getElementById('bot-char-section').style.display = 'none';
+            const sidebar = document.getElementById('bot-sidebar');
+            const botSelectSection = sidebar.querySelector('div[style*="rgba(66,133,244,0.08)"]');
+            if (botSelectSection) botSelectSection.style.display = '';
             renderBotList();
             updateBotBreadcrumb();
         }
@@ -13951,7 +14099,11 @@
                 const data = await resp.json();
                 if (data.error) { alert(data.error); return; }
                 botData.bots = data.bots;
-                renderBotCharacters();
+                if (botCurrentChar === charName) {
+                    closeCharacterDetail();
+                } else {
+                    renderBotCharacters();
+                }
                 showToast('캐릭터 삭제됨');
             } catch (e) {
                 console.error('[BOT] 캐릭터 삭제 실패:', e);
@@ -13972,12 +14124,136 @@
                 const data = await resp.json();
                 if (data.error) { alert(data.error); return; }
                 botData.bots = data.bots;
-                renderBotCharacters();
+                if (botCurrentChar === charName) {
+                    botCurrentChar = newName.trim();
+                    const titleEl = document.getElementById('bot-detail-title');
+                    if (titleEl) titleEl.textContent = newName.trim();
+                    const uploadBtn = document.getElementById('btn-detail-upload');
+                    const importBtn = document.getElementById('btn-detail-import');
+                    const renameBtn = document.getElementById('btn-detail-rename');
+                    const deleteBtn = document.getElementById('btn-detail-delete');
+                    if (uploadBtn) uploadBtn.onclick = () => openBotImageUpload(newName.trim());
+                    if (importBtn) importBtn.onclick = () => openBotAssetImport(newName.trim());
+                    if (renameBtn) renameBtn.onclick = () => renameBotCharacter(newName.trim());
+                    if (deleteBtn) deleteBtn.onclick = () => removeBotCharacter(newName.trim());
+                } else {
+                    renderBotCharacters();
+                }
                 updateBotBreadcrumb();
                 showToast('캐릭터 이름 변경됨');
             } catch (e) {
                 console.error('[BOT] 캐릭터 이름 변경 실패:', e);
                 alert('캐릭터 이름 변경 실패');
+            }
+        }
+
+        async function moveRepImage(charName, filename, direction) {
+            if (!botCurrentBot || !charName || !filename) return;
+            try {
+                const resp = await fetch('/api/bot_mode/action', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({action: 'reorder_rep_images', bot_name: botCurrentBot, char_name: charName, filename: filename, direction: direction})
+                });
+                const data = await resp.json();
+                if (data.error) { showToast(data.error, 'error'); return; }
+                botData.bots = data.bots;
+                await loadBotCharDetailImages(charName);
+                renderFloatingDock(charName);
+            } catch (e) {
+                console.error('[BOT] 대표 이미지 순서 변경 실패:', e);
+                showToast('순서 변경 실패', 'error');
+            }
+        }
+
+        async function toggleRepImage(charName, filename) {
+            if (!botCurrentBot || !charName || !filename) return;
+            try {
+                const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
+                if (bot) {
+                    const char = bot.characters.find(c => c.name === charName);
+                    const reps = (char && char.rep_images) || [];
+                    if (!reps.includes(filename) && reps.length >= 3) {
+                        showToast('대표 이미지는 최대 3개까지 지정할 수 있습니다.', 'error');
+                        return;
+                    }
+                }
+                const resp = await fetch('/api/bot_mode/action', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({action: 'toggle_rep_image', bot_name: botCurrentBot, char_name: charName, filename: filename})
+                });
+                const data = await resp.json();
+                if (data.error) { showToast(data.error, 'error'); return; }
+                botData.bots = data.bots;
+                await loadBotCharDetailImages(charName);
+                renderFloatingDock(charName);
+            } catch (e) {
+                console.error('[BOT] 대표 이미지 토글 실패:', e);
+                showToast('대표 이미지 설정 실패', 'error');
+            }
+        }
+
+        function updateRepFirstBorder(charName) {
+            const grid = document.getElementById('bot-char-detail-grid');
+            if (!grid) return;
+            grid.querySelectorAll('.rep-first').forEach(c => c.classList.remove('rep-first'));
+            const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
+            const ch = bot ? bot.characters.find(c => c.name === charName) : null;
+            if (ch && ch.rep_images && ch.rep_images.length > 0) {
+                const firstCard = grid.querySelector(`.asset-gallery-card[data-filename="${CSS.escape(ch.rep_images[0])}"]`);
+                if (firstCard) firstCard.classList.add('rep-first');
+            }
+        }
+
+        function renderFloatingDock(charName) {
+            const dock = document.getElementById('bot-rep-dock');
+            if (!dock || !botCurrentBot || !charName) { if (dock) dock.style.display = 'none'; return; }
+            const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
+            const ch = bot ? bot.characters.find(c => c.name === charName) : null;
+            const repImages = (ch && ch.rep_images) ? ch.rep_images : [];
+            if (repImages.length === 0) { dock.style.display = 'none'; return; }
+
+            let html = '<span class="dock-label">대표</span>';
+            repImages.forEach((fn, idx) => {
+                const imgUrl = `/api/bot_mode/image/${encodeURIComponent(botCurrentBot)}/${encodeURIComponent(charName)}/${encodeURIComponent(fn)}`;
+                html += `<div class="dock-item">
+                    <img src="${imgUrl}" loading="lazy" onerror="this.style.display='none'">
+                    <button class="dock-remove" onclick="removeFromDock('${escAttr(charName)}','${escAttr(fn)}')" title="대표에서 제거">×</button>
+                </div>`;
+                if (idx < repImages.length - 1) {
+                    html += `<button class="dock-order-btn" onclick="moveRepImage('${escAttr(charName)}','${escAttr(fn)}','down')" title="뒤로">▶</button>`;
+                }
+            });
+            dock.innerHTML = html;
+            dock.style.display = 'flex';
+        }
+
+        async function removeFromDock(charName, filename) {
+            if (!botCurrentBot || !charName || !filename) return;
+            try {
+                const resp = await fetch('/api/bot_mode/action', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({action: 'toggle_rep_image', bot_name: botCurrentBot, char_name: charName, filename: filename})
+                });
+                const data = await resp.json();
+                if (data.error) { showToast(data.error, 'error'); return; }
+                botData.bots = data.bots;
+
+                // 카드 상태 업데이트
+                const card = document.querySelector(`#bot-char-detail-grid .asset-gallery-card[data-filename="${CSS.escape(filename)}"]`);
+                if (card) {
+                    delete card.dataset.rep;
+                    const btn = card.querySelector('.bot-img-rep-btn');
+                    if (btn) btn.classList.remove('active');
+                    card.classList.remove('rep-first');
+                }
+                updateRepFirstBorder(charName);
+                renderFloatingDock(charName);
+            } catch (e) {
+                console.error('[BOT] 대표 이미지 제거 실패:', e);
+                showToast('대표 제거 실패', 'error');
             }
         }
 

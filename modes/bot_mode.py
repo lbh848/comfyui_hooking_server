@@ -111,6 +111,10 @@ class BotMode:
                     return await self._remove_character(data, body)
                 elif action == "rename_character":
                     return await self._rename_character(data, body)
+                elif action == "toggle_rep_image":
+                    return await self._toggle_rep_image(data, body)
+                elif action == "reorder_rep_images":
+                    return await self._reorder_rep_images(data, body)
                 else:
                     return _json_error(f"알 수 없는 액션: {action}")
         except Exception as e:
@@ -217,6 +221,62 @@ class BotMode:
             os.rename(old_path, new_path)
         _save_bot_data(data)
         print(f"[BOT_MODE] 캐릭터 이름 변경: {bot_name}/{old_name} → {new_name}")
+        return _json_ok({"bots": data["bots"]})
+
+    async def _toggle_rep_image(self, data, body):
+        bot_name = body.get("bot_name", "").strip()
+        char_name = body.get("char_name", "").strip()
+        filename = body.get("filename", "").strip()
+        if not bot_name or not char_name or not filename:
+            return _json_error("필수 값이 비어있습니다.")
+        bot = next((b for b in data["bots"] if b["name"] == bot_name), None)
+        if not bot:
+            return _json_error(f"봇을 찾을 수 없음: {bot_name}")
+        char = next((c for c in bot.get("characters", []) if c["name"] == char_name), None)
+        if not char:
+            return _json_error(f"캐릭터를 찾을 수 없음: {char_name}")
+
+        rep_images = char.get("rep_images", [])
+        if filename in rep_images:
+            rep_images = [f for f in rep_images if f != filename]
+            print(f"[BOT_MODE] 대표 이미지 해제: {bot_name}/{char_name}/{filename}")
+        else:
+            if len(rep_images) >= 3:
+                return _json_error("대표 이미지는 최대 3개까지 지정할 수 있습니다.")
+            rep_images.append(filename)
+            print(f"[BOT_MODE] 대표 이미지 지정: {bot_name}/{char_name}/{filename}")
+
+        if rep_images:
+            char["rep_images"] = rep_images
+        else:
+            char.pop("rep_images", None)
+        _save_bot_data(data)
+        return _json_ok({"bots": data["bots"]})
+
+    async def _reorder_rep_images(self, data, body):
+        bot_name = body.get("bot_name", "").strip()
+        char_name = body.get("char_name", "").strip()
+        filename = body.get("filename", "").strip()
+        direction = body.get("direction", "").strip()  # "up" or "down"
+        if not bot_name or not char_name or not filename or direction not in ("up", "down"):
+            return _json_error("필수 값이 비어있거나 잘못되었습니다.")
+        bot = next((b for b in data["bots"] if b["name"] == bot_name), None)
+        if not bot:
+            return _json_error(f"봇을 찾을 수 없음: {bot_name}")
+        char = next((c for c in bot.get("characters", []) if c["name"] == char_name), None)
+        if not char:
+            return _json_error(f"캐릭터를 찾을 수 없음: {char_name}")
+        rep_images = char.get("rep_images", [])
+        if filename not in rep_images:
+            return _json_error(f"대표 이미지가 아님: {filename}")
+        idx = rep_images.index(filename)
+        new_idx = idx - 1 if direction == "up" else idx + 1
+        if new_idx < 0 or new_idx >= len(rep_images):
+            return _json_error("이동할 수 없는 위치입니다.")
+        rep_images[idx], rep_images[new_idx] = rep_images[new_idx], rep_images[idx]
+        char["rep_images"] = rep_images
+        _save_bot_data(data)
+        print(f"[BOT_MODE] 대표 이미지 순서 변경: {bot_name}/{char_name}/{filename} {direction}")
         return _json_ok({"bots": data["bots"]})
 
     # ─── 이미지 목록 ─────────────────────────────────────
