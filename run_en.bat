@@ -3,39 +3,44 @@ setlocal
 cd /d %~dp0
 chcp 65001 >nul 2>&1
 
-echo [1/4] Python Checking...
-python --version >nul 2>&1
+echo [1/4] Checking uv...
+where uv >nul 2>&1
 if errorlevel 1 (
-    echo [ERROR] Python is not installed or not in PATH.
-    echo         Install Python 3.10+: https://www.python.org/downloads/
-    echo         Check "Add Python to PATH" during installation.
-    goto :end
-)
-
-if not exist "venv\Scripts\activate.bat" (
-    echo [2/4] Creating venv...
-    if exist "venv" (
-        rmdir /s /q "venv" 2>nul
+    echo       uv not found. Installing automatically...
+    powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+    if errorlevel 1 (
+        echo [ERROR] Failed to install uv.
+        echo         Manual install: https://docs.astral.sh/uv/getting-started/installation/
+        goto :end
     )
-    python -m venv venv --clear
-    if not exist "venv\Scripts\activate.bat" (
-        echo [ERROR] Failed to create venv.
-        echo         Delete venv folder manually and retry.
+    echo       uv installed.
+    set "PATH=%USERPROFILE%\.local\bin;%PATH%"
+    where uv >nul 2>&1
+    if errorlevel 1 (
+        echo [ERROR] uv not found in PATH. Close this terminal and retry.
         goto :end
     )
 ) else (
-    echo [2/4] venv OK.
+    echo       uv OK.
 )
 
-echo [3/4] Installing packages...
-call venv\Scripts\activate.bat
-python -m pip install --upgrade pip >nul 2>&1
-pip install -r requirements.txt
+:: Cleanup legacy venv (one-time)
+if exist "venv" (
+    echo       Cleaning up legacy venv folder...
+    rmdir /s /q "venv" 2>nul
+)
+
+:: Python 3.12 + packages
+echo [2/4] Setting up Python 3.12 environment...
+uv sync
 if errorlevel 1 (
-    echo [ERROR] Failed to install packages. Check network connection.
+    echo [ERROR] Failed to set up environment. Check network connection.
     goto :end
 )
 
+echo [3/4] Packages installed.
+
+:: Create required folders
 echo [4/4] Creating folders...
 if not exist "workflow" mkdir workflow
 if not exist "current_work" mkdir current_work
@@ -55,7 +60,7 @@ echo   ComfyUI Proxy Server Start (port 8189)
 echo   Frontend: http://127.0.0.1:8189/
 echo ============================================
 echo.
-python server.py
+uv run python server.py
 
 :end
 pause

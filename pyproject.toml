@@ -1,0 +1,29 @@
+[project]
+name = "comfyui-hooking-server"
+version = "1.0.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "aiohttp",
+    "httpx",
+    "pillow",
+    "pillow-avif-plugin",
+    "piexif",
+    "websockets",
+    "tiktoken",
+    "pydantic",
+    "regex",
+    "requests",
+    "google-genai",
+    "google-cloud-aiplatform",
+    "google-cloud-storage",
+    "google-cloud-bigquery",
+    "numpy",
+    "onnxruntime",
+    "opencv-python",
+    "mediapipe",
+    "huggingface-hub",
+]
+
+[tool.uv]
+python-downloads = "automatic"
+

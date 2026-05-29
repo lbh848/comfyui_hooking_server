@@ -3,6 +3,7 @@ __pycache__/
 current_work/
 logs/
 venv/
+.venv/
 workflow/
 workflow_backup/
 workflow_backup_static/
