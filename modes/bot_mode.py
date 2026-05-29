@@ -502,7 +502,7 @@ class BotMode:
                         expr_images.append({
                             "filename": fname,
                             "path": rel,
-                            "url": f"/asset/{rel}",
+                            "url": f"/api/asset_mode/characters/{char_name}/outfits/{item}/expressions/{expr_name}/images/{fname}",
                         })
                 if expr_images:
                     expressions.append({"name": expr_name, "images": expr_images})
@@ -515,10 +515,11 @@ class BotMode:
         for fname in sorted(os.listdir(char_dir)):
             if os.path.splitext(fname)[1].lower() in IMAGE_EXTENSIONS:
                 rel = f"{char_name}/{fname}"
+                print(f"[BOT_MODE] 경고: 캐릭터 폴더 바로 아래 이미지({rel})는 가져오기에서 미리보기 불가")
                 direct_images.append({
                     "filename": fname,
                     "path": rel,
-                    "url": f"/asset/{rel}",
+                    "url": "",
                 })
         if direct_images:
             all_images.extend(direct_images)

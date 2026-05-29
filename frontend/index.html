@@ -1902,14 +1902,8 @@
         }
         .bot-char-img-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
             gap: 8px;
-        }
-        .bot-char-img-actions {
-            display: flex;
-            gap: 6px;
-            margin-top: 10px;
-            flex-wrap: wrap;
         }
 
         /* ─── 에셋 폴더/갤러리 카드 ─── */
@@ -2919,7 +2913,7 @@
 
                     <!-- 봇 선택 섹션 -->
                     <div style="background:rgba(66,133,244,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
-                        <div class="section-title">봇 선택</div>
+                        <div class="section-title">봇 선택 <span id="bot-char-count" style="font-size:0.75rem; color:var(--text2); font-weight:normal;"></span></div>
                         <select id="bot-select" onchange="onBotChange()">
                             <option value="">-- 봇 선택 --</option>
                         </select>
@@ -2935,6 +2929,7 @@
                         <div style="background:rgba(66,133,244,0.12); border-radius:8px; padding:10px; margin-bottom:8px;">
                             <div class="section-title">캐릭터</div>
                             <button onclick="addBotCharacter()" style="width:100%; background:var(--accent); color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">추가</button>
+                            <button onclick="openBotBatchAddModal()" style="width:100%; margin-top:4px; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">일괄추가</button>
                         </div>
                     </div>
                 </div>
@@ -13388,6 +13383,8 @@
             botCurrentBot = document.getElementById('bot-select').value;
             if (!botCurrentBot) {
                 document.getElementById('bot-char-section').style.display = 'none';
+                const countEl = document.getElementById('bot-char-count');
+                if (countEl) countEl.textContent = '';
                 showBotView('empty');
                 const botEmptyState = document.getElementById('bot-empty-state');
                 botEmptyState.querySelector('h3').textContent = '현재 공사중..';
@@ -13406,6 +13403,8 @@
             document.getElementById('bot-empty-state').style.display = view === 'empty' ? 'block' : 'none';
             document.getElementById('bot-folder-grid').style.display = view === 'bots' ? 'grid' : 'none';
             document.getElementById('bot-character-list').style.display = view === 'chars' ? 'block' : 'none';
+            const easterEgg = document.querySelector('.bot-easter-egg');
+            if (easterEgg) easterEgg.style.display = view === 'bots' ? '' : 'none';
         }
 
         function renderBotList() {
@@ -13420,6 +13419,14 @@
                 if (constructionIcon) constructionIcon.style.display = '';
                 return;
             }
+            const existingMsg = grid.parentElement.querySelector('.bot-easter-egg');
+            if (existingMsg) existingMsg.remove();
+            const msg = document.createElement('div');
+            msg.className = 'bot-easter-egg';
+            msg.style.cssText = 'text-align:center; padding:12px 16px; color:var(--accent); font-size:0.85rem; font-style:italic;';
+            msg.textContent = '공사중이라고 말했는데 지금 뭐하시나요?';
+            grid.parentElement.insertBefore(msg, grid);
+
             for (const bot of botData.bots) {
                 const charCount = (bot.characters || []).length;
                 const card = document.createElement('div');
@@ -13439,7 +13446,9 @@
             const list = document.getElementById('bot-character-list');
             list.innerHTML = '';
             const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
+            const countEl = document.getElementById('bot-char-count');
             if (!bot || !bot.characters || bot.characters.length === 0) {
+                if (countEl) countEl.textContent = '';
                 showBotView('empty');
                 const botEmptyState = document.getElementById('bot-empty-state');
                 botEmptyState.querySelector('h3').textContent = '캐릭터 없음';
@@ -13449,24 +13458,25 @@
                 updateBotBreadcrumb();
                 return;
             }
+            if (countEl) countEl.textContent = `(${bot.characters.length}개)`;
             updateBotBreadcrumb();
 
-            // 로딩 표시
             for (const char of bot.characters) {
                 const section = document.createElement('div');
                 section.className = 'bot-char-section';
                 section.dataset.char = char.name;
                 section.innerHTML = `
-                    <div class="bot-char-header">
+                    <div class="bot-char-header" style="cursor:pointer;" onclick="toggleBotCharSection(this)">
+                        <span class="bot-char-toggle" style="font-size:0.8rem; transition:transform 0.2s;">▶</span>
                         <span class="bot-char-name">👤 ${escHtml(char.name)}</span>
                         <div class="bot-char-actions">
-                            <button onclick="openBotImageUpload('${escAttr(char.name)}')" style="background:var(--accent); color:#fff; border:none; padding:3px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">업로드</button>
-                            <button onclick="openBotAssetImport('${escAttr(char.name)}')" style="background:var(--accent); color:#fff; border:none; padding:3px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">에셋가져오기</button>
-                            <button onclick="renameBotCharacter('${escAttr(char.name)}')" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:3px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">이름변경</button>
-                            <button onclick="removeBotCharacter('${escAttr(char.name)}')" style="background:var(--error); color:#fff; border:none; padding:3px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">삭제</button>
+                            <button onclick="event.stopPropagation(); openBotImageUpload('${escAttr(char.name)}')" style="background:var(--accent); color:#fff; border:none; padding:3px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">업로드</button>
+                            <button onclick="event.stopPropagation(); openBotAssetImport('${escAttr(char.name)}')" style="background:var(--accent); color:#fff; border:none; padding:3px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">에셋가져오기</button>
+                            <button onclick="event.stopPropagation(); renameBotCharacter('${escAttr(char.name)}')" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:3px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">이름변경</button>
+                            <button onclick="event.stopPropagation(); removeBotCharacter('${escAttr(char.name)}')" style="background:var(--error); color:#fff; border:none; padding:3px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">삭제</button>
                         </div>
                     </div>
-                    <div class="bot-char-img-grid" id="bot-img-${escAttr(char.name)}">
+                    <div class="bot-char-img-grid" id="bot-img-${escAttr(char.name)}" data-collapsed="true">
                         <div style="grid-column:1/-1; color:var(--text2); font-size:0.8rem;">로딩 중...</div>
                     </div>
                 `;
@@ -13474,9 +13484,64 @@
             }
             showBotView('chars');
 
-            // 모든 캐릭터 이미지 병렬 로드
             const promises = bot.characters.map(char => loadBotCharImages(char.name));
             await Promise.allSettled(promises);
+        }
+
+        function toggleBotCharSection(header) {
+            const section = header.closest('.bot-char-section');
+            const grid = section.querySelector('.bot-char-img-grid');
+            const toggle = header.querySelector('.bot-char-toggle');
+            const isCollapsed = grid.dataset.collapsed === 'true';
+            if (isCollapsed) {
+                grid.dataset.collapsed = 'false';
+                grid.style.maxHeight = 'none';
+                grid.style.overflow = 'visible';
+                toggle.style.transform = 'rotate(90deg)';
+                // 숨겨진 카드 모두 표시
+                grid.querySelectorAll('.bot-char-img-hidden').forEach(el => {
+                    el.style.display = '';
+                    el.classList.remove('bot-char-img-hidden');
+                });
+                // 더보기 버튼 제거
+                const moreBtn = grid.querySelector('.bot-char-more-btn');
+                if (moreBtn) moreBtn.remove();
+            } else {
+                grid.dataset.collapsed = 'true';
+                applyBotCharCollapse(grid);
+                toggle.style.transform = '';
+            }
+        }
+
+        function applyBotCharCollapse(grid) {
+            const cards = grid.querySelectorAll('.asset-gallery-card');
+            const toggle = grid.closest('.bot-char-section').querySelector('.bot-char-toggle');
+            if (cards.length <= 3) {
+                // 3개 이하면 접을 필요 없음
+                grid.dataset.collapsed = 'false';
+                toggle.style.transform = 'rotate(90deg)';
+                return;
+            }
+            toggle.style.transform = '';
+            // 4번째부터 숨김
+            cards.forEach((card, i) => {
+                if (i >= 3) {
+                    card.style.display = 'none';
+                    card.classList.add('bot-char-img-hidden');
+                }
+            });
+            // 더보기 버튼 추가 (중복 방지)
+            if (!grid.querySelector('.bot-char-more-btn')) {
+                const moreBtn = document.createElement('div');
+                moreBtn.className = 'bot-char-more-btn';
+                moreBtn.style.cssText = 'grid-column:1/-1; text-align:center; padding:8px; color:var(--accent); cursor:pointer; font-size:0.85rem;';
+                moreBtn.textContent = `+${cards.length - 3}개 더보기`;
+                moreBtn.onclick = () => {
+                    const header = grid.closest('.bot-char-section').querySelector('.bot-char-header');
+                    toggleBotCharSection(header);
+                };
+                grid.appendChild(moreBtn);
+            }
         }
 
         async function loadBotCharImages(charName) {
@@ -13488,6 +13553,7 @@
                 grid.innerHTML = '';
                 if (!data.images || data.images.length === 0) {
                     grid.innerHTML = '<div style="grid-column:1/-1; color:var(--text2); font-size:0.8rem;">이미지 없음</div>';
+                    grid.dataset.collapsed = 'false';
                     return;
                 }
                 for (const img of data.images) {
@@ -13506,6 +13572,9 @@
                     `;
                     grid.appendChild(card);
                 }
+                // 기본 접힘 상태 적용
+                grid.dataset.collapsed = 'true';
+                applyBotCharCollapse(grid);
             } catch (e) {
                 console.error(`[BOT] 캐릭터 "${charName}" 이미지 로드 실패:`, e);
                 grid.innerHTML = `<div style="grid-column:1/-1; color:var(--error); font-size:0.8rem;">로드 실패</div>`;
@@ -13622,6 +13691,254 @@
             }
         }
 
+        // ─── 캐릭터 일괄추가 ─────────────────────────
+        function openBotBatchAddModal() {
+            if (!botCurrentBot) return;
+            let modal = document.getElementById('bot-batch-add-modal');
+            if (!modal) {
+                modal = document.createElement('div');
+                modal.id = 'bot-batch-add-modal';
+                document.body.appendChild(modal);
+            }
+            modal.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.6); z-index:10000; display:flex; align-items:center; justify-content:center;';
+            modal.innerHTML = `
+                <div style="background:var(--surface); border-radius:12px; width:80vw; max-width:700px; max-height:85vh; display:flex; flex-direction:column; overflow:hidden;">
+                    <div style="padding:16px 20px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
+                        <h3 style="margin:0;">캐릭터 일괄추가</h3>
+                        <button onclick="document.getElementById('bot-batch-add-modal').style.display='none'" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer;">✕</button>
+                    </div>
+                    <div style="padding:16px 20px; overflow-y:auto; flex:1;">
+                        <div style="margin-bottom:12px;">
+                            <div style="font-size:0.85rem; font-weight:600; margin-bottom:6px;">이미지 파일 선택 (파일명에서 캐릭터명 추출)</div>
+                            <div id="bot-batch-dropzone" onclick="document.getElementById('bot-batch-file-input').click()"
+                                style="border:2px dashed var(--border); border-radius:8px; padding:24px; text-align:center; cursor:pointer; color:var(--text2); transition:border-color 0.2s;"
+                                ondragover="event.preventDefault(); this.style.borderColor='var(--accent)';"
+                                ondragleave="this.style.borderColor='var(--border)';"
+                                ondrop="event.preventDefault(); this.style.borderColor='var(--border)'; botBatchHandleFiles(event.dataTransfer.files);">
+                                이미지를 드래그하거나 클릭하여 선택
+                                <input type="file" id="bot-batch-file-input" multiple accept="image/*" style="display:none;" onchange="botBatchHandleFiles(this.files)">
+                            </div>
+                        </div>
+                        <div style="margin-bottom:12px;">
+                            <div style="font-size:0.85rem; font-weight:600; margin-bottom:6px;">캐릭터명 추출 규칙</div>
+                            <div id="bot-batch-rules"></div>
+                            <button onclick="botBatchAddRule()" style="margin-top:6px; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:4px 10px; border-radius:4px; cursor:pointer; font-size:0.75rem;">+ 규칙 추가</button>
+                        </div>
+                        <div style="margin-bottom:12px;">
+                            <div style="font-size:0.85rem; font-weight:600; margin-bottom:6px;">추출 결과 미리보기</div>
+                            <div id="bot-batch-preview" style="min-height:40px; padding:8px; background:var(--surface1); border-radius:6px; font-size:0.8rem; color:var(--text2);">
+                                파일을 선택하면 여기에 추출된 캐릭터명이 표시됩니다.
+                            </div>
+                        </div>
+                    </div>
+                    <div id="bot-batch-progress" style="text-align:center; padding:8px 20px; color:var(--text2); font-size:0.8rem; display:none;"></div>
+                    <div style="padding:12px 20px; border-top:1px solid var(--border); display:flex; gap:8px; justify-content:flex-end;">
+                        <button onclick="document.getElementById('bot-batch-add-modal').style.display='none'" style="padding:8px 16px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); cursor:pointer;">취소</button>
+                        <button id="bot-batch-confirm-btn" onclick="confirmBotBatchAdd()" style="padding:8px 16px; border-radius:6px; border:none; background:var(--accent); color:#fff; cursor:pointer;">일괄추가 (0)</button>
+                    </div>
+                </div>
+            `;
+            window._botBatchFiles = [];
+            window._botBatchRules = [
+                { action: 'strip_suffix', pattern: '\\.(webp|png|jpg|jpeg|gif|bmp)$' }
+            ];
+            botBatchRenderRules();
+            botBatchUpdatePreview();
+        }
+
+        function botBatchRenderRules() {
+            const container = document.getElementById('bot-batch-rules');
+            if (!container) return;
+            container.innerHTML = '';
+            const rules = window._botBatchRules || [];
+            rules.forEach((rule, i) => {
+                const row = document.createElement('div');
+                row.style.cssText = 'display:flex; gap:4px; margin-bottom:4px; align-items:center;';
+                let paramsHtml = '';
+                if (rule.action === 'split_by') {
+                    paramsHtml = `<input type="text" value="${escHtml(rule.separator || '_')}" placeholder="구분자" onchange="window._botBatchRules[${i}].separator=this.value; botBatchUpdatePreview()" style="width:50px; padding:2px 4px; font-size:0.75rem; border:1px solid var(--border); border-radius:3px; background:var(--surface2); color:var(--text);">
+                        <input type="text" value="${escHtml(String(rule.take ?? 0))}" placeholder="인덱스" onchange="window._botBatchRules[${i}].take=this.value; botBatchUpdatePreview()" style="width:50px; padding:2px 4px; font-size:0.75rem; border:1px solid var(--border); border-radius:3px; background:var(--surface2); color:var(--text);">`;
+                } else if (rule.action === 'strip_suffix' || rule.action === 'strip_prefix') {
+                    paramsHtml = `<input type="text" value="${escHtml(rule.pattern || '')}" placeholder="패턴(정규식)" onchange="window._botBatchRules[${i}].pattern=this.value; botBatchUpdatePreview()" style="width:120px; padding:2px 4px; font-size:0.75rem; border:1px solid var(--border); border-radius:3px; background:var(--surface2); color:var(--text);">`;
+                } else if (rule.action === 'replace') {
+                    paramsHtml = `<input type="text" value="${escHtml(rule.from || '')}" placeholder="찾을값" onchange="window._botBatchRules[${i}].from=this.value; botBatchUpdatePreview()" style="width:60px; padding:2px 4px; font-size:0.75rem; border:1px solid var(--border); border-radius:3px; background:var(--surface2); color:var(--text);">
+                        <input type="text" value="${escHtml(rule.to || '')}" placeholder="바꿀값" onchange="window._botBatchRules[${i}].to=this.value; botBatchUpdatePreview()" style="width:60px; padding:2px 4px; font-size:0.75rem; border:1px solid var(--border); border-radius:3px; background:var(--surface2); color:var(--text);">`;
+                }
+                row.innerHTML = `
+                    <select onchange="window._botBatchRules[${i}].action=this.value; botBatchRenderRules(); botBatchUpdatePreview()" style="padding:2px 4px; font-size:0.75rem; border:1px solid var(--border); border-radius:3px; background:var(--surface2); color:var(--text);">
+                        <option value="split_by" ${rule.action==='split_by'?'selected':''}>구분자로 분리</option>
+                        <option value="strip_suffix" ${rule.action==='strip_suffix'?'selected':''}>접미사 제거</option>
+                        <option value="strip_prefix" ${rule.action==='strip_prefix'?'selected':''}>접두사 제거</option>
+                        <option value="replace" ${rule.action==='replace'?'selected':''}>치환</option>
+                        <option value="strip" ${rule.action==='strip'?'selected':''}>공백 제거</option>
+                    </select>
+                    ${paramsHtml}
+                    <button onclick="window._botBatchRules.splice(${i},1); botBatchRenderRules(); botBatchUpdatePreview()" style="background:var(--error); color:#fff; border:none; padding:2px 6px; border-radius:3px; cursor:pointer; font-size:0.7rem;">✕</button>
+                `;
+                container.appendChild(row);
+            });
+        }
+
+        function botBatchAddRule() {
+            if (!window._botBatchRules) window._botBatchRules = [];
+            window._botBatchRules.push({ action: 'split_by', separator: '_', take: 0 });
+            botBatchRenderRules();
+            botBatchUpdatePreview();
+        }
+
+        function botBatchApplyRules(filename) {
+            let result = filename;
+            const rules = window._botBatchRules || [];
+            for (const step of rules) {
+                if (!step.action) continue;
+                try {
+                    switch (step.action) {
+                        case 'split_by': {
+                            const sep = step.separator || '_';
+                            const parts = result.split(sep).filter(p => p !== '');
+                            const take = step.take;
+                            if (typeof take === 'number') {
+                                result = take < 0 ? (parts[parts.length + take] || '') : (parts[take] || '');
+                            } else if (typeof take === 'string' && take.includes(':')) {
+                                const [startStr, endStr] = take.split(':').map(s => s.trim());
+                                const s = startStr ? parseInt(startStr) - 1 : 0;
+                                const e = endStr ? parseInt(endStr) : parts.length;
+                                result = parts.slice(Math.max(0, s), Math.min(parts.length, e)).join(sep);
+                            } else {
+                                result = parts[0] || '';
+                            }
+                            break;
+                        }
+                        case 'strip_suffix': {
+                            const re = new RegExp(step.pattern + '$');
+                            result = result.replace(re, '');
+                            break;
+                        }
+                        case 'strip_prefix': {
+                            const re = new RegExp('^' + step.pattern);
+                            result = result.replace(re, '');
+                            break;
+                        }
+                        case 'replace': {
+                            if (step.from) result = result.replaceAll(step.from, step.to || '');
+                            break;
+                        }
+                        case 'strip': {
+                            result = result.trim();
+                            break;
+                        }
+                    }
+                } catch (e) {
+                    console.warn('[BOT-BATCH] 규칙 적용 오류:', step.action, e);
+                }
+            }
+            return result.trim();
+        }
+
+        function botBatchHandleFiles(files) {
+            window._botBatchFileMap = Array.from(files).map(f => ({ file: f, name: f.name }));
+            window._botBatchFiles = window._botBatchFileMap.map(f => f.name);
+            botBatchUpdatePreview();
+        }
+
+        function botBatchUpdatePreview() {
+            const preview = document.getElementById('bot-batch-preview');
+            const confirmBtn = document.getElementById('bot-batch-confirm-btn');
+            if (!preview || !confirmBtn) return;
+            const filenames = window._botBatchFiles || [];
+            if (filenames.length === 0) {
+                preview.innerHTML = '<span style="color:var(--text2);">파일을 선택하면 여기에 추출된 캐릭터명이 표시됩니다.</span>';
+                confirmBtn.textContent = '일괄추가 (0)';
+                return;
+            }
+            const existing = new Set(((botData.bots || []).find(b => b.name === botCurrentBot)?.characters || []).map(c => c.name));
+            const names = new Set();
+            const details = [];
+            for (const fn of filenames) {
+                const name = botBatchApplyRules(fn);
+                if (name) {
+                    names.add(name);
+                    const isDup = existing.has(name);
+                    details.push({ filename: fn, name, isDup });
+                }
+            }
+            preview.innerHTML = details.map(d =>
+                `<div style="display:flex; justify-content:space-between; padding:2px 0; ${d.isDup ? 'opacity:0.5; text-decoration:line-through;' : ''}">
+                    <span>${escHtml(d.filename)}</span>
+                    <span style="color:${d.isDup ? 'var(--text2)' : 'var(--accent)'};">→ ${escHtml(d.name)}${d.isDup ? ' (이미 존재)' : ''}</span>
+                </div>`
+            ).join('');
+            const newCount = Array.from(names).filter(n => !existing.has(n)).length;
+            confirmBtn.textContent = `일괄추가 (${newCount})`;
+            window._botBatchNewNames = Array.from(names).filter(n => !existing.has(n));
+        }
+
+        async function confirmBotBatchAdd() {
+            const names = window._botBatchNewNames || [];
+            const fileMap = window._botBatchFileMap || [];
+            if (names.length === 0 && fileMap.length === 0) { alert('추가할 캐릭터가 없습니다.'); return; }
+
+            const totalSteps = names.length + fileMap.length;
+            let currentStep = 0;
+            const progEl = document.getElementById('bot-batch-progress');
+            if (progEl) { progEl.style.display = ''; progEl.textContent = `로딩 0/${totalSteps}`; }
+            const setStatus = (text) => { if (progEl) progEl.textContent = text; };
+
+            // 1) 캐릭터 생성
+            let added = 0;
+            for (const name of names) {
+                currentStep++;
+                setStatus(`로딩 ${currentStep}/${totalSteps}`);
+                try {
+                    const resp = await fetch('/api/bot_mode/action', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({action: 'add_character', bot_name: botCurrentBot, char_name: name})
+                    });
+                    const data = await resp.json();
+                    if (data.error) { console.error(`[BOT] 캐릭터 "${name}" 추가 실패:`, data.error); }
+                    else { added++; }
+                } catch (e) {
+                    console.error(`[BOT] 캐릭터 "${name}" 추가 실패:`, e);
+                }
+            }
+
+            // 2) 이미지 업로드 (파일명에서 추출한 캐릭터명에 맞춰 업로드)
+            let uploaded = 0;
+            const existing = new Set(((botData.bots || []).find(b => b.name === botCurrentBot)?.characters || []).map(c => c.name));
+            const allCharNames = new Set([...existing, ...names]);
+            for (const item of fileMap) {
+                const charName = botBatchApplyRules(item.name);
+                if (!charName || !allCharNames.has(charName)) continue;
+                currentStep++;
+                setStatus(`로딩 ${currentStep}/${totalSteps}`);
+                const fd = new FormData();
+                fd.append('file', item.file);
+                fd.append('bot', botCurrentBot);
+                fd.append('character', charName);
+                try {
+                    const resp = await fetch('/api/bot_mode/upload', {method: 'POST', body: fd});
+                    const data = await resp.json();
+                    if (data.error) { console.error(`[BOT] 이미지 "${item.name}" 업로드 실패:`, data.error); }
+                    else { uploaded++; }
+                } catch (e) {
+                    console.error(`[BOT] 이미지 "${item.name}" 업로드 실패:`, e);
+                }
+            }
+
+            // 최신 botData 다시 로드
+            try {
+                const resp = await fetch('/api/bot_mode/bots');
+                botData = await resp.json();
+                renderBotSelect();
+            } catch (e) {
+                console.error('[BOT] 데이터 리로드 실패:', e);
+            }
+            document.getElementById('bot-batch-add-modal').style.display = 'none';
+            renderBotCharacters();
+            showToast(`캐릭터 ${added}개 추가, 이미지 ${uploaded}장 업로드됨`);
+        }
+
         async function removeBotCharacter(charName) {
             if (!botCurrentBot || !charName) return;
             if (!confirm(`캐릭터 "${charName}"을(를) 삭제하시겠습니까?`)) return;
@@ -13734,7 +14051,12 @@
 
         async function openBotAssetImportModal(charName) {
             window._botAssetImportCharName = charName;
-            // 모달 생성
+            window._botAssetSelected = new Set();
+            window._botAssetNavLevel = 0;
+            window._botAssetSelectedChar = '';
+            window._botAssetSelectedOutfit = '';
+            window._botAssetData = null;
+
             let modal = document.getElementById('bot-asset-import-modal');
             if (!modal) {
                 modal = document.createElement('div');
@@ -13749,6 +14071,7 @@
                         <h3 style="margin:0;">에셋에서 가져오기</h3>
                         <button onclick="document.getElementById('bot-asset-import-modal').style.display='none'" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer;">✕</button>
                     </div>
+                    <div id="bot-asset-import-breadcrumb" style="padding:8px 20px; border-bottom:1px solid var(--border); font-size:0.8rem;"></div>
                     <div id="bot-asset-import-body" style="padding:16px 20px; overflow-y:auto; flex:1;">
                         <p>에셋 캐릭터를 불러오는 중...</p>
                     </div>
@@ -13759,74 +14082,227 @@
                 </div>
             `;
 
-            // 에셋 캐릭터 목록 로드
+            // 에셋 캐릭터 목록 로드 → LV0
             try {
                 const resp = await fetch('/api/bot_mode/asset_images');
                 const data = await resp.json();
-                const body = document.getElementById('bot-asset-import-body');
                 if (!data.characters || data.characters.length === 0) {
-                    body.innerHTML = '<p>에셋 캐릭터가 없습니다.</p>';
+                    document.getElementById('bot-asset-import-body').innerHTML = '<p>에셋 캐릭터가 없습니다.</p>';
                     return;
                 }
-                let html = '<div style="margin-bottom:12px;"><label style="font-size:0.85rem;">캐릭터 선택: </label>';
-                html += '<select id="bot-asset-char-select" onchange="loadBotAssetCharImages()" style="padding:4px 8px; border-radius:4px;">';
-                html += '<option value="">-- 선택 --</option>';
-                for (const c of data.characters) {
-                    html += `<option value="${escAttr(c)}">${escHtml(c)}</option>`;
-                }
-                html += '</select></div>';
-                html += '<div id="bot-asset-images-grid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(120px, 1fr)); gap:8px;"></div>';
-                body.innerHTML = html;
-                window._botAssetSelected = new Set();
+                window._botAssetData = data;
+                renderAssetImportLV0();
             } catch (e) {
                 console.error('[BOT] 에셋 목록 로드 실패:', e);
             }
         }
 
-        async function loadBotAssetCharImages() {
-            const charName = document.getElementById('bot-asset-char-select').value;
-            const grid = document.getElementById('bot-asset-images-grid');
-            grid.innerHTML = '';
-            window._botAssetSelected = new Set();
-            if (!charName) return;
+        function renderAssetImportLV0() {
+            window._botAssetNavLevel = 0;
+            window._botAssetSelectedChar = '';
+            window._botAssetSelectedOutfit = '';
+            updateAssetImportBreadcrumb();
+
+            const body = document.getElementById('bot-asset-import-body');
+            const chars = (window._botAssetData || {}).characters || [];
+            body.innerHTML = '';
+            const grid = document.createElement('div');
+            grid.style.cssText = 'display:grid; grid-template-columns:repeat(auto-fill, minmax(140px, 1fr)); gap:10px;';
+            for (const c of chars) {
+                const card = document.createElement('div');
+                card.className = 'asset-folder-card';
+                card.innerHTML = `<div class="folder-icon">👤</div><div class="folder-name">${escHtml(c)}</div>`;
+                card.style.cursor = 'pointer';
+                card.onclick = () => renderAssetImportLV1(c);
+                grid.appendChild(card);
+            }
+            body.appendChild(grid);
+        }
+
+        async function renderAssetImportLV1(charName) {
+            window._botAssetNavLevel = 1;
+            window._botAssetSelectedChar = charName;
+            window._botAssetSelectedOutfit = '';
+            updateAssetImportBreadcrumb();
+
+            const body = document.getElementById('bot-asset-import-body');
+            body.innerHTML = '<div style="color:var(--text2); text-align:center; padding:20px;">불러오는 중...</div>';
+
             try {
                 const resp = await fetch(`/api/bot_mode/asset_character_images?character=${encodeURIComponent(charName)}`);
                 const data = await resp.json();
-                const allImages = [];
-                if (data.outfits) {
+                window._botAssetCharData = data;
+                body.innerHTML = '';
+
+                const grid = document.createElement('div');
+                grid.style.cssText = 'display:grid; grid-template-columns:repeat(auto-fill, minmax(140px, 1fr)); gap:10px;';
+
+                if (data.outfits && data.outfits.length > 0) {
                     for (const outfit of data.outfits) {
-                        if (outfit.expressions) {
-                            for (const expr of outfit.expressions) {
-                                for (const img of expr.images) {
-                                    img._label = `${outfit.name} / ${expr.name}`;
-                                    allImages.push(img);
-                                }
-                            }
-                        }
+                        const exprCount = (outfit.expressions || []).length;
+                        const card = document.createElement('div');
+                        card.className = 'asset-folder-card';
+                        card.innerHTML = `<div class="folder-icon">👔</div><div class="folder-name">${escHtml(outfit.name)}</div><div style="font-size:0.75rem; color:var(--text2); margin-top:4px;">표정 ${exprCount}개</div>`;
+                        card.style.cursor = 'pointer';
+                        card.onclick = () => renderAssetImportLV2(charName, outfit.name);
+                        grid.appendChild(card);
                     }
                 }
-                if (data.direct_images) allImages.push(...data.direct_images);
-
-                for (const img of allImages) {
+                if (data.direct_images && data.direct_images.length > 0) {
                     const card = document.createElement('div');
-                    card.style.cssText = 'position:relative; border-radius:6px; overflow:hidden; cursor:pointer; border:2px solid transparent; transition:border-color 0.2s;';
-                    card.innerHTML = `<img src="${img.url}" loading="lazy" style="width:100%; aspect-ratio:700/1024; object-fit:contain; background:var(--surface2); display:block;">
-                        <div style="position:absolute; bottom:0; left:0; right:0; background:rgba(0,0,0,0.7); color:#fff; font-size:0.6rem; padding:2px 4px;">${escHtml(img._label || img.filename)}</div>`;
-                    card.onclick = () => {
-                        if (window._botAssetSelected.has(img.path)) {
-                            window._botAssetSelected.delete(img.path);
-                            card.style.borderColor = 'transparent';
-                        } else {
-                            window._botAssetSelected.add(img.path);
-                            card.style.borderColor = 'var(--accent)';
-                        }
-                        document.getElementById('bot-asset-import-confirm').textContent = `가져오기 (${window._botAssetSelected.size})`;
-                    };
+                    card.className = 'asset-folder-card';
+                    const count = data.direct_images.length;
+                    card.innerHTML = `<div class="folder-icon">🖼️</div><div class="folder-name">직접 이미지</div><div style="font-size:0.75rem; color:var(--text2); margin-top:4px;">${count}장</div>`;
+                    card.style.cursor = 'pointer';
+                    card.onclick = () => renderAssetImportDirectImages(charName);
                     grid.appendChild(card);
                 }
+                if (grid.children.length === 0) {
+                    body.innerHTML = '<div style="color:var(--text2); text-align:center; padding:20px;">의상/표정이 없습니다.</div>';
+                    return;
+                }
+                body.appendChild(grid);
             } catch (e) {
-                console.error('[BOT] 에셋 이미지 로드 실패:', e);
+                console.error('[BOT] 에셋 캐릭터 데이터 로드 실패:', e);
+                body.innerHTML = '<div style="color:var(--error);">로드 실패</div>';
             }
+        }
+
+        function renderAssetImportLV2(charName, outfitName) {
+            window._botAssetNavLevel = 2;
+            window._botAssetSelectedOutfit = outfitName;
+            updateAssetImportBreadcrumb();
+
+            const body = document.getElementById('bot-asset-import-body');
+            body.innerHTML = '';
+
+            const data = window._botAssetCharData || {};
+            const outfit = (data.outfits || []).find(o => o.name === outfitName);
+            if (!outfit || !outfit.expressions || outfit.expressions.length === 0) {
+                body.innerHTML = '<div style="color:var(--text2); text-align:center; padding:20px;">표정이 없습니다.</div>';
+                return;
+            }
+
+            const grid = document.createElement('div');
+            grid.style.cssText = 'display:grid; grid-template-columns:repeat(auto-fill, minmax(140px, 1fr)); gap:10px;';
+
+            for (const expr of outfit.expressions) {
+                const repImg = (expr.images || [])[0];
+                const count = (expr.images || []).length;
+                const card = document.createElement('div');
+                card.className = 'asset-folder-card';
+                if (repImg && repImg.url) {
+                    card.innerHTML = `<img src="${repImg.url}" loading="lazy" style="width:100%; aspect-ratio:1; object-fit:cover; border-radius:6px;" onerror="this.parentElement.querySelector('.folder-icon').style.display='block'; this.style.display='none';">
+                        <div style="display:none;" class="folder-icon">😀</div>
+                        <div class="folder-name">${escHtml(expr.name)}</div>
+                        <div style="font-size:0.75rem; color:var(--text2); margin-top:4px;">${count}장</div>`;
+                } else {
+                    card.innerHTML = `<div class="folder-icon">😀</div><div class="folder-name">${escHtml(expr.name)}</div><div style="font-size:0.75rem; color:var(--text2); margin-top:4px;">${count}장</div>`;
+                }
+                card.style.cursor = 'pointer';
+                card.onclick = () => renderAssetImportExpressionImages(charName, outfitName, expr.name);
+                grid.appendChild(card);
+            }
+            body.appendChild(grid);
+        }
+
+        function renderAssetImportExpressionImages(charName, outfitName, exprName) {
+            window._botAssetNavLevel = 3;
+            window._botAssetSelectedExpr = exprName;
+            updateAssetImportBreadcrumb();
+
+            const body = document.getElementById('bot-asset-import-body');
+            body.innerHTML = '';
+
+            const data = window._botAssetCharData || {};
+            const outfit = (data.outfits || []).find(o => o.name === outfitName);
+            const expr = (outfit?.expressions || []).find(e => e.name === exprName);
+            if (!expr || !expr.images || expr.images.length === 0) {
+                body.innerHTML = '<div style="color:var(--text2); text-align:center; padding:20px;">이미지가 없습니다.</div>';
+                return;
+            }
+
+            const grid = document.createElement('div');
+            grid.style.cssText = 'display:grid; grid-template-columns:repeat(auto-fill, minmax(120px, 1fr)); gap:8px;';
+
+            for (const img of expr.images) {
+                const card = document.createElement('div');
+                card.style.cssText = 'position:relative; border-radius:6px; overflow:hidden; cursor:pointer; border:2px solid transparent; transition:border-color 0.2s;';
+                card.innerHTML = `<img src="${img.url}" loading="lazy" style="width:100%; aspect-ratio:700/1024; object-fit:contain; background:var(--surface2); display:block;">
+                    <div style="position:absolute; bottom:0; left:0; right:0; background:rgba(0,0,0,0.7); color:#fff; font-size:0.6rem; padding:2px 4px;">${escHtml(img.filename)}</div>`;
+                card.onclick = () => {
+                    if (window._botAssetSelected.has(img.path)) {
+                        window._botAssetSelected.delete(img.path);
+                        card.style.borderColor = 'transparent';
+                    } else {
+                        window._botAssetSelected.add(img.path);
+                        card.style.borderColor = 'var(--accent)';
+                    }
+                    document.getElementById('bot-asset-import-confirm').textContent = `가져오기 (${window._botAssetSelected.size})`;
+                };
+                grid.appendChild(card);
+            }
+            body.appendChild(grid);
+        }
+
+        function renderAssetImportDirectImages(charName) {
+            window._botAssetNavLevel = 2;
+            window._botAssetSelectedOutfit = '(직접 이미지)';
+            updateAssetImportBreadcrumb();
+
+            const body = document.getElementById('bot-asset-import-body');
+            body.innerHTML = '';
+
+            const data = window._botAssetCharData || {};
+            const images = data.direct_images || [];
+            if (images.length === 0) {
+                body.innerHTML = '<div style="color:var(--text2); text-align:center; padding:20px;">이미지가 없습니다.</div>';
+                return;
+            }
+
+            body.innerHTML = '<div style="color:var(--text2); font-size:0.8rem; margin-bottom:8px;">경고: 직접 이미지는 미리보기를 지원하지 않습니다.</div>';
+            const list = document.createElement('div');
+            list.style.cssText = 'display:flex; flex-direction:column; gap:4px;';
+            for (const img of images) {
+                const row = document.createElement('div');
+                row.style.cssText = 'padding:6px 10px; border:1px solid var(--border); border-radius:6px; cursor:pointer; font-size:0.8rem; transition:border-color 0.2s;' + (window._botAssetSelected.has(img.path) ? 'border-color:var(--accent);' : '');
+                row.textContent = img.filename;
+                row.onclick = () => {
+                    if (window._botAssetSelected.has(img.path)) {
+                        window._botAssetSelected.delete(img.path);
+                        row.style.borderColor = 'var(--border)';
+                    } else {
+                        window._botAssetSelected.add(img.path);
+                        row.style.borderColor = 'var(--accent)';
+                    }
+                    document.getElementById('bot-asset-import-confirm').textContent = `가져오기 (${window._botAssetSelected.size})`;
+                };
+                list.appendChild(row);
+            }
+            body.appendChild(list);
+        }
+
+        function updateAssetImportBreadcrumb() {
+            const bc = document.getElementById('bot-asset-import-breadcrumb');
+            if (!bc) return;
+            let html = '<span style="cursor:pointer; color:var(--accent);" onclick="renderAssetImportLV0()">에셋</span>';
+            if (window._botAssetNavLevel >= 1 && window._botAssetSelectedChar) {
+                html += ` <span style="color:var(--text2);">›</span> `;
+                html += `<span style="cursor:pointer; color:var(--accent);" onclick="renderAssetImportLV1('${escAttr(window._botAssetSelectedChar)}')">${escHtml(window._botAssetSelectedChar)}</span>`;
+            }
+            if (window._botAssetNavLevel >= 2 && window._botAssetSelectedOutfit) {
+                html += ` <span style="color:var(--text2);">›</span> `;
+                if (window._botAssetSelectedOutfit === '(직접 이미지)') {
+                    html += `<span>직접 이미지</span>`;
+                } else {
+                    html += `<span style="cursor:pointer; color:var(--accent);" onclick="renderAssetImportLV2('${escAttr(window._botAssetSelectedChar)}','${escAttr(window._botAssetSelectedOutfit)}')">${escHtml(window._botAssetSelectedOutfit)}</span>`;
+                }
+            }
+            if (window._botAssetNavLevel >= 3 && window._botAssetSelectedExpr) {
+                html += ` <span style="color:var(--text2);">›</span> `;
+                html += `<span>${escHtml(window._botAssetSelectedExpr)}</span>`;
+            }
+            bc.innerHTML = html;
         }
 
         async function confirmBotAssetImport() {
