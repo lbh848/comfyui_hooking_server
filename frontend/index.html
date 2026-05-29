@@ -1876,6 +1876,41 @@
             0%, 100% { transform: translateY(0); }
             50% { transform: translateY(-6px); }
         }
+        .bot-char-section {
+            background: var(--surface1);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 16px;
+            margin-bottom: 12px;
+        }
+        .bot-char-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+        .bot-char-name {
+            font-weight: 600;
+            font-size: 1rem;
+            color: var(--text);
+            flex: 1;
+        }
+        .bot-char-actions {
+            display: flex;
+            gap: 4px;
+            flex-shrink: 0;
+        }
+        .bot-char-img-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+            gap: 8px;
+        }
+        .bot-char-img-actions {
+            display: flex;
+            gap: 6px;
+            margin-top: 10px;
+            flex-wrap: wrap;
+        }
 
         /* ─── 에셋 폴더/갤러리 카드 ─── */
         .asset-folder-grid,
@@ -2877,8 +2912,7 @@
                         <p>삽화 설정 기능을 준비하고 있습니다.</p>
                     </div>
                     <div class="asset-folder-grid" id="bot-folder-grid" style="display:none;"></div>
-                    <div class="asset-folder-grid" id="bot-char-grid" style="display:none;"></div>
-                    <div class="asset-gallery-grid" id="bot-image-grid" style="display:none;"></div>
+                    <div id="bot-character-list" style="display:none;"></div>
                 </div>
                 <div class="asset-sidebar" id="bot-sidebar">
                     <div class="resize-handle" id="bot-sidebar-resize-handle"></div>
@@ -2900,23 +2934,7 @@
                     <div id="bot-char-section" style="display:none;">
                         <div style="background:rgba(66,133,244,0.12); border-radius:8px; padding:10px; margin-bottom:8px;">
                             <div class="section-title">캐릭터</div>
-                            <div style="display:flex; gap:6px; margin-top:4px;">
-                                <button onclick="addBotCharacter()" style="flex:1; background:var(--accent); color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">추가</button>
-                                <button onclick="renameBotCharacter()" style="flex:1; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">이름변경</button>
-                                <button onclick="removeBotCharacter()" style="flex:1; background:var(--error); color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">삭제</button>
-                            </div>
-                        </div>
-
-                        <!-- 이미지 관리 버튼 -->
-                        <div id="bot-image-actions" style="display:none;">
-                            <div style="background:rgba(76,175,80,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
-                                <div class="section-title">이미지 관리</div>
-                                <div style="display:flex; gap:6px; margin-top:4px;">
-                                    <button onclick="openBotImageUpload()" style="flex:1; background:var(--accent); color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">이미지 업로드</button>
-                                    <button onclick="openBotAssetImport()" style="flex:1; background:var(--accent); color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">에셋에서 가져오기</button>
-                                </div>
-                                <button onclick="openBotAutoTagModal()" style="width:100%; margin-top:6px; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">일괄 자동 태깅</button>
-                            </div>
+                            <button onclick="addBotCharacter()" style="width:100%; background:var(--accent); color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">추가</button>
                         </div>
                     </div>
                 </div>
@@ -13331,13 +13349,12 @@
         // ═══ 삽화 설정 (봇 모드) ═══
         let botData = null;
         let botCurrentBot = '';
-        let botCurrentChar = '';
-        let botNavLevel = 0; // 0=봇목록, 1=캐릭터목록, 2=이미지
 
         async function loadBotData() {
             document.getElementById('bot-loading').style.display = 'flex';
             document.getElementById('bot-empty-state').style.display = 'none';
             document.getElementById('bot-folder-grid').style.display = 'none';
+            document.getElementById('bot-character-list').style.display = 'none';
             try {
                 const resp = await fetch('/api/bot_mode/bots');
                 botData = await resp.json();
@@ -13346,6 +13363,11 @@
             } catch (e) {
                 console.error('[BOT] 데이터 로드 실패:', e);
                 showBotView('empty');
+                const botEmptyState = document.getElementById('bot-empty-state');
+                botEmptyState.querySelector('h3').textContent = '현재 공사중..';
+                botEmptyState.querySelector('p').textContent = '삽화 설정 기능을 준비하고 있습니다.';
+                const constructionIcon = botEmptyState.querySelector('.construction-icon');
+                if (constructionIcon) constructionIcon.style.display = '';
             }
         }
 
@@ -13364,15 +13386,18 @@
 
         function onBotChange() {
             botCurrentBot = document.getElementById('bot-select').value;
-            botCurrentChar = '';
-            botNavLevel = 0;
             if (!botCurrentBot) {
                 document.getElementById('bot-char-section').style.display = 'none';
                 showBotView('empty');
+                const botEmptyState = document.getElementById('bot-empty-state');
+                botEmptyState.querySelector('h3').textContent = '현재 공사중..';
+                botEmptyState.querySelector('p').textContent = '삽화 설정 기능을 준비하고 있습니다.';
+                const constructionIcon = botEmptyState.querySelector('.construction-icon');
+                if (constructionIcon) constructionIcon.style.display = '';
+                updateBotBreadcrumb();
                 return;
             }
             document.getElementById('bot-char-section').style.display = 'block';
-            document.getElementById('bot-image-actions').style.display = 'none';
             renderBotCharacters();
         }
 
@@ -13380,8 +13405,7 @@
             document.getElementById('bot-loading').style.display = view === 'loading' ? 'flex' : 'none';
             document.getElementById('bot-empty-state').style.display = view === 'empty' ? 'block' : 'none';
             document.getElementById('bot-folder-grid').style.display = view === 'bots' ? 'grid' : 'none';
-            document.getElementById('bot-char-grid').style.display = view === 'chars' ? 'grid' : 'none';
-            document.getElementById('bot-image-grid').style.display = view === 'images' ? 'grid' : 'none';
+            document.getElementById('bot-character-list').style.display = view === 'chars' ? 'block' : 'none';
         }
 
         function renderBotList() {
@@ -13411,79 +13435,59 @@
             showBotView('bots');
         }
 
-        function renderBotCharacters() {
-            const grid = document.getElementById('bot-char-grid');
-            grid.innerHTML = '';
+        async function renderBotCharacters() {
+            const list = document.getElementById('bot-character-list');
+            list.innerHTML = '';
             const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
             if (!bot || !bot.characters || bot.characters.length === 0) {
                 showBotView('empty');
-                document.getElementById('bot-empty-state').querySelector('h3').textContent = '캐릭터 없음';
-                document.getElementById('bot-empty-state').querySelector('p').textContent = '캐릭터를 추가하세요.';
+                const botEmptyState = document.getElementById('bot-empty-state');
+                botEmptyState.querySelector('h3').textContent = '캐릭터 없음';
+                botEmptyState.querySelector('p').textContent = '캐릭터를 추가하세요.';
+                const constructionIcon = botEmptyState.querySelector('.construction-icon');
+                if (constructionIcon) constructionIcon.style.display = 'none';
+                updateBotBreadcrumb();
                 return;
             }
-            botNavLevel = 1;
             updateBotBreadcrumb();
+
+            // 로딩 표시
             for (const char of bot.characters) {
-                const card = document.createElement('div');
-                card.className = 'asset-folder-card';
-                card.innerHTML = `<div class="folder-icon">👤</div><div class="folder-name">${escHtml(char.name)}</div>`;
-                card.onclick = () => selectBotCharacter(char.name);
-                grid.appendChild(card);
+                const section = document.createElement('div');
+                section.className = 'bot-char-section';
+                section.dataset.char = char.name;
+                section.innerHTML = `
+                    <div class="bot-char-header">
+                        <span class="bot-char-name">👤 ${escHtml(char.name)}</span>
+                        <div class="bot-char-actions">
+                            <button onclick="openBotImageUpload('${escAttr(char.name)}')" style="background:var(--accent); color:#fff; border:none; padding:3px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">업로드</button>
+                            <button onclick="openBotAssetImport('${escAttr(char.name)}')" style="background:var(--accent); color:#fff; border:none; padding:3px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">에셋가져오기</button>
+                            <button onclick="renameBotCharacter('${escAttr(char.name)}')" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:3px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">이름변경</button>
+                            <button onclick="removeBotCharacter('${escAttr(char.name)}')" style="background:var(--error); color:#fff; border:none; padding:3px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">삭제</button>
+                        </div>
+                    </div>
+                    <div class="bot-char-img-grid" id="bot-img-${escAttr(char.name)}">
+                        <div style="grid-column:1/-1; color:var(--text2); font-size:0.8rem;">로딩 중...</div>
+                    </div>
+                `;
+                list.appendChild(section);
             }
             showBotView('chars');
+
+            // 모든 캐릭터 이미지 병렬 로드
+            const promises = bot.characters.map(char => loadBotCharImages(char.name));
+            await Promise.allSettled(promises);
         }
 
-        async function selectBotCharacter(charName) {
-            botCurrentChar = charName;
-            botNavLevel = 2;
-            document.getElementById('bot-image-actions').style.display = 'block';
-            updateBotBreadcrumb();
-            await loadBotImages();
-        }
-
-        function updateBotBreadcrumb() {
-            const bc = document.getElementById('bot-breadcrumb');
-            let html = '<span class="bc-active" style="cursor:pointer;" onclick="botNavBack(0)">삽화 설정</span>';
-            if (botCurrentBot && botNavLevel >= 1) {
-                html += `<span class="bc-sep">›</span>`;
-                html += `<span class="bc-active" style="cursor:pointer;" onclick="botNavBack(1)">${escHtml(botCurrentBot)}</span>`;
-            }
-            if (botCurrentChar && botNavLevel >= 2) {
-                html += `<span class="bc-sep">›</span>`;
-                html += `<span class="bc-active">${escHtml(botCurrentChar)}</span>`;
-            }
-            bc.innerHTML = html;
-        }
-
-        function botNavBack(level) {
-            if (level <= 0) {
-                botCurrentBot = '';
-                botCurrentChar = '';
-                botNavLevel = 0;
-                document.getElementById('bot-select').value = '';
-                document.getElementById('bot-char-section').style.display = 'none';
-                document.getElementById('bot-image-actions').style.display = 'none';
-                renderBotList();
-                updateBotBreadcrumb();
-            } else if (level <= 1) {
-                botCurrentChar = '';
-                botNavLevel = 1;
-                document.getElementById('bot-image-actions').style.display = 'none';
-                renderBotCharacters();
-            }
-        }
-
-        async function loadBotImages() {
-            if (!botCurrentBot || !botCurrentChar) return;
-            const grid = document.getElementById('bot-image-grid');
-            grid.innerHTML = '';
+        async function loadBotCharImages(charName) {
+            const grid = document.getElementById(`bot-img-${charName}`);
+            if (!grid) return;
             try {
-                const resp = await fetch(`/api/bot_mode/images?bot=${encodeURIComponent(botCurrentBot)}&character=${encodeURIComponent(botCurrentChar)}`);
+                const resp = await fetch(`/api/bot_mode/images?bot=${encodeURIComponent(botCurrentBot)}&character=${encodeURIComponent(charName)}`);
                 const data = await resp.json();
+                grid.innerHTML = '';
                 if (!data.images || data.images.length === 0) {
-                    showBotView('empty');
-                    document.getElementById('bot-empty-state').querySelector('h3').textContent = '이미지 없음';
-                    document.getElementById('bot-empty-state').querySelector('p').textContent = '이미지를 업로드하거나 에셋에서 가져오세요.';
+                    grid.innerHTML = '<div style="grid-column:1/-1; color:var(--text2); font-size:0.8rem;">이미지 없음</div>';
                     return;
                 }
                 for (const img of data.images) {
@@ -13492,21 +13496,38 @@
                     card.innerHTML = `
                         <img class="gallery-thumb" src="${img.url}" loading="lazy" onerror="this.style.display='none'">
                         <div style="padding:6px 8px;">
-                            <textarea class="bot-prompt-input" data-filename="${escAttr(img.filename)}"
+                            <textarea class="bot-prompt-input" data-filename="${escAttr(img.filename)}" data-character="${escAttr(charName)}"
                                 placeholder="프롬프트 (비워두면 자동 태깅 대상)"
                                 style="width:100%; min-height:50px; font-size:0.7rem; resize:vertical; border:1px solid var(--border); border-radius:4px; background:var(--surface2); color:var(--text); padding:4px;"
                                 onblur="updateBotPrompt(this)">${escHtml(img.prompt)}</textarea>
-                            <button onclick="deleteBotImage('${escAttr(img.filename)}')"
+                            <button onclick="deleteBotImage('${escAttr(img.filename)}','${escAttr(charName)}')"
                                 style="width:100%; margin-top:4px; background:var(--error); color:#fff; border:none; padding:3px; border-radius:4px; cursor:pointer; font-size:0.7rem;">삭제</button>
                         </div>
                     `;
                     grid.appendChild(card);
                 }
-                showBotView('images');
             } catch (e) {
-                console.error('[BOT] 이미지 로드 실패:', e);
-                showBotView('empty');
+                console.error(`[BOT] 캐릭터 "${charName}" 이미지 로드 실패:`, e);
+                grid.innerHTML = `<div style="grid-column:1/-1; color:var(--error); font-size:0.8rem;">로드 실패</div>`;
             }
+        }
+
+        function updateBotBreadcrumb() {
+            const bc = document.getElementById('bot-breadcrumb');
+            let html = '<span class="bc-active" style="cursor:pointer;" onclick="botNavBack()">삽화 설정</span>';
+            if (botCurrentBot) {
+                html += `<span class="bc-sep">›</span>`;
+                html += `<span class="bc-active">${escHtml(botCurrentBot)}</span>`;
+            }
+            bc.innerHTML = html;
+        }
+
+        function botNavBack() {
+            botCurrentBot = '';
+            document.getElementById('bot-select').value = '';
+            document.getElementById('bot-char-section').style.display = 'none';
+            renderBotList();
+            updateBotBreadcrumb();
         }
 
         // ─── 봇 CRUD ──────────────────────────────
@@ -13546,7 +13567,6 @@
                 if (data.error) { alert(data.error); return; }
                 botData.bots = data.bots;
                 botCurrentBot = '';
-                botCurrentChar = '';
                 renderBotSelect();
                 renderBotList();
                 onBotChange();
@@ -13602,21 +13622,18 @@
             }
         }
 
-        async function removeBotCharacter() {
-            if (!botCurrentBot || !botCurrentChar) { alert('캐릭터를 먼저 선택하세요.'); return; }
-            if (!confirm(`캐릭터 "${botCurrentChar}"을(를) 삭제하시겠습니까?`)) return;
+        async function removeBotCharacter(charName) {
+            if (!botCurrentBot || !charName) return;
+            if (!confirm(`캐릭터 "${charName}"을(를) 삭제하시겠습니까?`)) return;
             try {
                 const resp = await fetch('/api/bot_mode/action', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({action: 'remove_character', bot_name: botCurrentBot, char_name: botCurrentChar})
+                    body: JSON.stringify({action: 'remove_character', bot_name: botCurrentBot, char_name: charName})
                 });
                 const data = await resp.json();
                 if (data.error) { alert(data.error); return; }
                 botData.bots = data.bots;
-                botCurrentChar = '';
-                botNavLevel = 1;
-                document.getElementById('bot-image-actions').style.display = 'none';
                 renderBotCharacters();
                 showToast('캐릭터 삭제됨');
             } catch (e) {
@@ -13625,20 +13642,19 @@
             }
         }
 
-        async function renameBotCharacter() {
-            if (!botCurrentBot || !botCurrentChar) { alert('캐릭터를 먼저 선택하세요.'); return; }
-            const newName = prompt('새 캐릭터 이름:', botCurrentChar);
-            if (!newName || !newName.trim() || newName.trim() === botCurrentChar) return;
+        async function renameBotCharacter(charName) {
+            if (!botCurrentBot || !charName) return;
+            const newName = prompt('새 캐릭터 이름:', charName);
+            if (!newName || !newName.trim() || newName.trim() === charName) return;
             try {
                 const resp = await fetch('/api/bot_mode/action', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({action: 'rename_character', bot_name: botCurrentBot, old_name: botCurrentChar, new_name: newName.trim()})
+                    body: JSON.stringify({action: 'rename_character', bot_name: botCurrentBot, old_name: charName, new_name: newName.trim()})
                 });
                 const data = await resp.json();
                 if (data.error) { alert(data.error); return; }
                 botData.bots = data.bots;
-                botCurrentChar = newName.trim();
                 renderBotCharacters();
                 updateBotBreadcrumb();
                 showToast('캐릭터 이름 변경됨');
@@ -13651,12 +13667,13 @@
         // ─── 프롬프트 업데이트 ──────────────────────────
         async function updateBotPrompt(textarea) {
             const filename = textarea.dataset.filename;
+            const character = textarea.dataset.character;
             const prompt = textarea.value;
             try {
                 await fetch('/api/bot_mode/prompt', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({bot: botCurrentBot, character: botCurrentChar, filename, prompt})
+                    body: JSON.stringify({bot: botCurrentBot, character, filename, prompt})
                 });
             } catch (e) {
                 console.error('[BOT] 프롬프트 업데이트 실패:', e);
@@ -13664,17 +13681,17 @@
         }
 
         // ─── 이미지 삭제 ──────────────────────────────
-        async function deleteBotImage(filename) {
+        async function deleteBotImage(filename, charName) {
             if (!confirm('이 이미지를 삭제하시겠습니까?')) return;
             try {
                 const resp = await fetch('/api/bot_mode/delete_image', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({bot: botCurrentBot, character: botCurrentChar, filename})
+                    body: JSON.stringify({bot: botCurrentBot, character: charName, filename})
                 });
                 const data = await resp.json();
                 if (data.error) { alert(data.error); return; }
-                await loadBotImages();
+                await loadBotCharImages(charName);
                 showToast('이미지 삭제됨');
             } catch (e) {
                 console.error('[BOT] 이미지 삭제 실패:', e);
@@ -13683,8 +13700,8 @@
         }
 
         // ─── 이미지 업로드 ──────────────────────────────
-        function openBotImageUpload() {
-            if (!botCurrentBot || !botCurrentChar) return;
+        function openBotImageUpload(charName) {
+            if (!botCurrentBot || !charName) return;
             const input = document.createElement('input');
             input.type = 'file';
             input.accept = 'image/*';
@@ -13694,7 +13711,7 @@
                     const fd = new FormData();
                     fd.append('file', file);
                     fd.append('bot', botCurrentBot);
-                    fd.append('character', botCurrentChar);
+                    fd.append('character', charName);
                     try {
                         const resp = await fetch('/api/bot_mode/upload', {method: 'POST', body: fd});
                         const data = await resp.json();
@@ -13703,19 +13720,20 @@
                         console.error('[BOT] 업로드 실패:', e);
                     }
                 }
-                await loadBotImages();
+                await loadBotCharImages(charName);
                 showToast(`${input.files.length}개 이미지 업로드됨`);
             };
             input.click();
         }
 
         // ─── 에셋에서 가져오기 모달 ──────────────────
-        function openBotAssetImport() {
-            if (!botCurrentBot || !botCurrentChar) return;
-            openBotAssetImportModal();
+        function openBotAssetImport(charName) {
+            if (!botCurrentBot || !charName) return;
+            openBotAssetImportModal(charName);
         }
 
-        async function openBotAssetImportModal() {
+        async function openBotAssetImportModal(charName) {
+            window._botAssetImportCharName = charName;
             // 모달 생성
             let modal = document.getElementById('bot-asset-import-modal');
             if (!modal) {
@@ -13818,12 +13836,12 @@
                 const resp = await fetch('/api/bot_mode/import_asset', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({bot: botCurrentBot, character: botCurrentChar, asset_paths: paths})
+                    body: JSON.stringify({bot: botCurrentBot, character: window._botAssetImportCharName, asset_paths: paths})
                 });
                 const data = await resp.json();
                 if (data.error) { alert(data.error); return; }
                 document.getElementById('bot-asset-import-modal').style.display = 'none';
-                await loadBotImages();
+                await loadBotCharImages(window._botAssetImportCharName);
                 showToast(`${data.count}개 이미지 가져옴`);
             } catch (e) {
                 console.error('[BOT] 에셋 가져오기 실패:', e);
@@ -13831,10 +13849,7 @@
             }
         }
 
-        // ─── 일괄 자동 태깅 (TODO: 3단계에서 구현) ──────
-        function openBotAutoTagModal() {
-            alert('일괄 자동 태깅 기능은 추후 구현 예정입니다.');
-        }
+        // ─── 유틸 ──────────────────────────────
 
         // ─── 유틸 ──────────────────────────────
         function escHtml(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
