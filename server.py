@@ -73,6 +73,7 @@ DEFAULT_CONFIG = {
     "backup_base_dir": "",  # 빈 값이면 WORKFLOW_BACKUP_DIR 사용
     "comfy_input_dir": "",  # ComfyUI input 폴더 경로 (빈값=기본경로)
     "workflow_filename": "",  # 빈 값이면 workflow 폴더의 첫 번째 json 사용
+    "utility_workflow_source_path": "",  # 삽화 유틸리티 워크플로우 전체 경로
     "batch_mode_enabled": False,  # 배치 모드 활성화 여부
     "batch_timeout_seconds": 5.0,  # 배치 모드 타임아웃 (초)
     "notification_enabled": True,  # 배치 완료 알림

@@ -4733,6 +4733,21 @@
                     </div>
                     <div class="setting-row">
                         <div class="setting-label">
+                            <div class="title">삽화 유틸리티 파일명</div>
+                            <div class="desc">데이터 준비용 유틸리티 워크플로우 파일 (베이스 경로 공유)</div>
+                        </div>
+                    </div>
+                    <div class="form-group" style="margin-top: -8px;">
+                        <div class="autocomplete-wrapper">
+                            <input type="text" id="setting-utility-filename" placeholder="예: 유틸리티_배경제거.json"
+                                   oninput="onUtilityFilenameInput(this.value)" onfocus="onUtilityFilenameInput(this.value)">
+                            <div class="autocomplete-list" id="utility-autocomplete"></div>
+                        </div>
+                        <div class="hint">검색어를 입력하면 자동으로 파일 목록이 표시됩니다</div>
+                        <input type="hidden" id="setting-utility-workflow-source-path">
+                    </div>
+                    <div class="setting-row">
+                        <div class="setting-label">
                             <div class="title">Risu 전송 품질</div>
                             <div class="desc">Risu(ComfyUI 클라이언트)에 전송할 WebP 품질 (1-99). 100이면 원본 무압축 전송 (백업 파일과 무관)</div>
                         </div>
@@ -6593,6 +6608,12 @@
             document.getElementById('setting-workflow-filename').value = pathParts.filename;
             document.getElementById('setting-workflow-path').value = workflowPath;
 
+            // 삽화 유틸리티 워크플로우 경로를 파일명으로 분리
+            const utilityPath = currentConfig.utility_workflow_source_path || '';
+            const utilityParts = splitWorkflowPath(utilityPath);
+            document.getElementById('setting-utility-filename').value = utilityParts.filename;
+            document.getElementById('setting-utility-workflow-source-path').value = utilityPath;
+
             document.getElementById('setting-comfy-input-dir').value = currentConfig.comfy_input_dir || '';
             document.getElementById('setting-backup-dir').value = currentConfig.backup_base_dir || '';
             document.getElementById('setting-backup-max-count').value = currentConfig.backup_max_count || 500;
@@ -6747,7 +6768,8 @@
             const filename = document.getElementById('setting-workflow-filename').value;
             const fullPath = combineWorkflowPath(baseDir, filename);
             document.getElementById('setting-workflow-path').value = fullPath;
-            // 베이스 경로 변경 시 에셋/복장/로라 경로도 함께 갱신
+            // 베이스 경로 변경 시 에셋/복장/로라/유틸리티 경로도 함께 갱신
+            updateUtilityWorkflowPath();
             updateOutfitWorkflowPath();
             updateAssetWorkflowPath();
             updateTagAnalysisWorkflowPath();
@@ -7072,6 +7094,7 @@
                 auto_reschedule_enabled: document.getElementById('setting-auto-reschedule').checked,
                 outfit_mode_enabled: document.getElementById('setting-outfit-enabled').checked,
                 outfit_workflow_source_path: document.getElementById('setting-outfit-workflow-source-path').value,
+                utility_workflow_source_path: document.getElementById('setting-utility-workflow-source-path').value,
                 outfit_prompt_file: document.getElementById('setting-outfit-prompt-file').value,
                 restore_prompt_file: document.getElementById('setting-restore-prompt-file').value,
                 restore_mode_enabled: document.getElementById('setting-restore-enabled').checked,
@@ -7189,6 +7212,29 @@
             document.getElementById('workflow-autocomplete').classList.remove('visible');
         }
 
+        async function onUtilityFilenameInput(value) {
+            updateUtilityWorkflowPath();
+            const autocompleteList = document.getElementById('utility-autocomplete');
+            clearTimeout(autocompleteTimeout);
+            autocompleteTimeout = setTimeout(async () => {
+                try {
+                    const baseDir = document.getElementById('setting-workflow-base-dir').value;
+                    const params = new URLSearchParams({ search: value, base_dir: baseDir });
+                    const data = await fetchJSON(`/api/workflow_files?${params}`);
+                    renderAutocompleteItems(data.files, autocompleteList);
+                } catch (e) {
+                    console.error('유틸리티 파일 검색 실패:', e);
+                    autocompleteList.classList.remove('visible');
+                }
+            }, 300);
+        }
+
+        function selectUtilityFile(fullPath, filename) {
+            document.getElementById('setting-utility-filename').value = filename;
+            document.getElementById('setting-utility-workflow-source-path').value = fullPath;
+            document.getElementById('utility-autocomplete').classList.remove('visible');
+        }
+
         // 자동완성 이벤트 위임: 모든 .autocomplete-list의 클릭을 한 곳에서 처리
         document.addEventListener('click', (e) => {
             const item = e.target.closest('.autocomplete-item');
@@ -7200,6 +7246,8 @@
                     // 어떤 자동완성인지 id로 분기
                     if (list.id === 'workflow-autocomplete') {
                         selectWorkflowFile(path, filename);
+                    } else if (list.id === 'utility-autocomplete') {
+                        selectUtilityFile(path, filename);
                     } else if (list.id === 'outfit-workflow-autocomplete') {
                         selectOutfitWorkflowFile(path, filename);
                     } else if (list.id === 'asset-workflow-autocomplete') {
@@ -7757,6 +7805,14 @@
                 _llmRunning = false;
                 hideOutfitProgress();
             }
+        }
+
+        function updateUtilityWorkflowPath() {
+            const baseDir = document.getElementById('setting-workflow-base-dir').value.trim();
+            const filename = document.getElementById('setting-utility-filename').value.trim();
+            const sep = baseDir && baseDir.includes('\\') ? '\\' : '/';
+            const fullPath = baseDir && filename ? baseDir.replace(/[\\/]+$/, '') + sep + filename : '';
+            document.getElementById('setting-utility-workflow-source-path').value = fullPath;
         }
 
         function updateOutfitWorkflowPath() {
