@@ -5479,6 +5479,9 @@
                         case 'text_output':
                             handleTextOutput(msg.data);
                             break;
+                        case 'notification_new':
+                            handleNotiWsEvent(msg.data);
+                            break;
                     }
                 } catch (e) {
                     console.error('[Frontend WS] 메시지 처리 실패:', e);
@@ -22338,69 +22341,47 @@
         };
 
         // ─── 공지보드 ──────────────────────────────────────
-        const NOTI_REPO = 'lbh848/comfyui_hooking_server_notification';
-        const NOTI_READ_KEY = 'notification_read_ids';
+        let _notiList = [];
+        let _notiReadIds = [];
+        let _notiContentEl = null;
+        let _notiReminderBubble = null;
 
-        function getNotiReadIds() {
-            try { return JSON.parse(localStorage.getItem(NOTI_READ_KEY)) || []; } catch { return []; }
-        }
-        function setNotiReadIds(ids) {
-            localStorage.setItem(NOTI_READ_KEY, JSON.stringify(ids));
-        }
-
-        const NOTI_CACHE_KEY = 'noti_list_cache';
-        const NOTI_CACHE_TTL = 20 * 60 * 1000; // 20분
-
-        async function fetchNotiList() {
-            // 캐시가 20분 이내면 API 호출 없이 캐시 반환
-            const cached = localStorage.getItem(NOTI_CACHE_KEY);
-            if (cached) {
-                try {
-                    const { timestamp, data } = JSON.parse(cached);
-                    if (Date.now() - timestamp < NOTI_CACHE_TTL) return data;
-                } catch (_) {}
-            }
-            const resp = await fetch(`https://api.github.com/repos/${NOTI_REPO}/contents?t=${Date.now()}`);
-            if (!resp.ok) throw new Error('GitHub API 실패');
-            const files = await resp.json();
-            const data = files.filter(f => f.name.endsWith('.md')).map(f => ({
-                name: f.name,
-                download_url: f.download_url,
-            }));
-            localStorage.setItem(NOTI_CACHE_KEY, JSON.stringify({ timestamp: Date.now(), data }));
-            return data;
+        async function fetchNotiData() {
+            const resp = await fetch('/api/notifications');
+            if (!resp.ok) throw new Error('공지 API 실패');
+            return await resp.json();
         }
 
         async function checkUnreadNotifications() {
             try {
-                const list = await fetchNotiList();
-                _notiList = list;
-                const readIds = getNotiReadIds();
-                // 삭제된 공지 readId 정리
-                const validNames = list.map(f => f.name);
-                const cleaned = readIds.filter(id => validNames.includes(id));
-                if (cleaned.length !== readIds.length) setNotiReadIds(cleaned);
-                const hasUnread = list.some(f => !cleaned.includes(f.name));
+                const data = await fetchNotiData();
+                _notiList = data.items || [];
+                _notiReadIds = data.read || [];
+                const hasUnread = _notiList.some(f => !_notiReadIds.includes(f.name));
                 document.getElementById('notification-badge').style.display = hasUnread ? 'block' : 'none';
             } catch (e) { console.warn('공지 확인 실패:', e); }
         }
 
-        // 전체 읽음 처리
-        function markAllNotiRead() {
+        async function markNotiRead(names) {
+            try {
+                await fetch('/api/notifications/read', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ names })
+                });
+            } catch (e) { console.warn('공지 읽음 처리 실패:', e); }
+        }
+
+        async function markAllNotiRead() {
             if (_notiList.length === 0) return;
             const allNames = _notiList.map(f => f.name);
             _notiReadIds = [...new Set([..._notiReadIds, ...allNames])];
-            setNotiReadIds(_notiReadIds);
+            await markNotiRead(allNames);
             document.getElementById('notification-badge').style.display = 'none';
             renderNotiList();
         }
 
-        // 안읽은 공지 말풍선 리마인더
-        let _notiReminderTimer = null;
-        let _notiReminderBubble = null;
-
         function showNotiReminderBubble(unreadCount) {
-            // 기존 말풍선 제거
             if (_notiReminderBubble) _notiReminderBubble.remove();
 
             const bell = document.getElementById('notification-bell');
@@ -22414,32 +22395,29 @@
             bubble.onclick = () => { bubble.remove(); openNotificationBoard(); };
             document.body.appendChild(bubble);
             _notiReminderBubble = bubble;
-
-            // 10초 후 자동 사라짐
             setTimeout(() => { if (bubble.parentNode) bubble.remove(); }, 10000);
         }
 
         function checkAndRemindNoti() {
             try {
-                const readIds = getNotiReadIds();
-                const unreadCount = _notiList.filter(f => !readIds.includes(f.name)).length;
-                if (unreadCount > 0) {
-                    showNotiReminderBubble(unreadCount);
-                }
+                const unreadCount = _notiList.filter(f => !_notiReadIds.includes(f.name)).length;
+                if (unreadCount > 0) showNotiReminderBubble(unreadCount);
             } catch (e) { console.warn('공지 리마인더 실패:', e); }
         }
 
-        // 페이지 로드 시 체크 + 20분 주기 체크
+        // 페이지 로드 시 체크 + 1분 주기 리마인더 + 20분 주기 목록 갱신
         checkUnreadNotifications().then(() => {
-            // 최초 공지 로드 후 리마인더 시작 (1분 주기, API 재호출 없음)
             checkAndRemindNoti();
             setInterval(checkAndRemindNoti, 60 * 1000);
         });
         setInterval(checkUnreadNotifications, 20 * 60 * 1000);
 
-        let _notiList = [];
-        let _notiReadIds = [];
-        let _notiContentEl = null;
+        // 서버에서 새 공지 이벤트 수신
+        function handleNotiWsEvent(data) {
+            if (data && data.count > 0) {
+                checkUnreadNotifications().then(() => checkAndRemindNoti());
+            }
+        }
 
         function renderNotiList() {
             const contentEl = _notiContentEl;
@@ -22469,7 +22447,7 @@
                 // 읽음 처리
                 if (!_notiReadIds.includes(file.name)) {
                     _notiReadIds.push(file.name);
-                    setNotiReadIds(_notiReadIds);
+                    await markNotiRead([file.name]);
                     const hasUnread = _notiList.some(f => !_notiReadIds.includes(f.name));
                     document.getElementById('notification-badge').style.display = hasUnread ? 'block' : 'none';
                 }
@@ -22511,8 +22489,9 @@
             _notiContentEl = document.getElementById('noti-content');
 
             try {
-                _notiList = await fetchNotiList();
-                _notiReadIds = getNotiReadIds();
+                const data = await fetchNotiData();
+                _notiList = data.items || [];
+                _notiReadIds = data.read || [];
 
                 if (_notiList.length === 0) {
                     _notiContentEl.innerHTML = '<div style="text-align:center; color:var(--text-secondary); padding:20px;">공지사항이 없습니다.</div>';

@@ -42,3 +42,6 @@ graphify-out/
 
 # MCP config (로컬 환경설정)
 .mcp.json
+
+# Notification cache
+notification_cache.json

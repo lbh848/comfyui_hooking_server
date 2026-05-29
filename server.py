@@ -3267,6 +3267,99 @@ async def handle_sound_file(request: web.Request) -> web.Response:
     return web.Response(text="Not found", status=404)
 app.router.add_get("/api/sound/{filename}", handle_sound_file)
 
+# ─── 공지 캐시 시스템 ──────────────────────────────────
+NOTI_CACHE_FILE = os.path.join(BASE_DIR, "notification_cache.json")
+NOTI_REPO = "lbh848/comfyui_hooking_server_notification"
+_noti_new_items = []  # 새로 발견된 공지 (서버 시작 시 또는 갱신 시)
+
+
+def _read_noti_cache():
+    if os.path.exists(NOTI_CACHE_FILE):
+        try:
+            with open(NOTI_CACHE_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"[공지] 캐시 파일 읽기 실패: {e}")
+    return {"items": [], "read": []}
+
+
+def _write_noti_cache(data):
+    try:
+        with open(NOTI_CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[공지] 캐시 파일 쓰기 실패: {e}")
+
+
+async def _fetch_github_noti_list():
+    try:
+        async with aiohttp.ClientSession() as session:
+            url = f"https://api.github.com/repos/{NOTI_REPO}/contents?t={int(time.time())}"
+            headers = {"Accept": "application/vnd.github.v3+json"}
+            async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                if resp.status != 200:
+                    print(f"[공지] GitHub API 실패: {resp.status}")
+                    return None
+                files = await resp.json()
+                return [
+                    {"name": f["name"], "download_url": f["download_url"]}
+                    for f in files
+                    if f.get("name", "").endswith(".md")
+                ]
+    except Exception as e:
+        print(f"[공지] GitHub API 호출 실패: {e}")
+        return None
+
+
+async def refresh_noti_cache():
+    global _noti_new_items
+    cache = _read_noti_cache()
+    old_names = {item["name"] for item in cache.get("items", [])}
+
+    new_items = await _fetch_github_noti_list()
+    if new_items is None:
+        return
+
+    new_names = {item["name"] for item in new_items}
+    added = new_names - old_names
+
+    if added:
+        _noti_new_items = [item for item in new_items if item["name"] in added]
+        print(f"[공지] 새 공지 {len(added)}건 감지: {', '.join(added)}")
+        await notify_frontend("notification_new", {"count": len(added), "items": _noti_new_items})
+    else:
+        _noti_new_items = []
+        print("[공지] 새 공지 없음")
+
+    cache["items"] = new_items
+    _write_noti_cache(cache)
+
+
+async def handle_api_notifications(request: web.Request) -> web.Response:
+    cache = _read_noti_cache()
+    return web.json_response(cache)
+
+
+async def handle_api_notifications_read(request: web.Request) -> web.Response:
+    try:
+        body = await request.json()
+        names = body.get("names", [])
+        if not isinstance(names, list):
+            return web.json_response({"error": "names must be array"}, status=400)
+        cache = _read_noti_cache()
+        read_set = set(cache.get("read", []))
+        read_set.update(names)
+        cache["read"] = list(read_set)
+        _write_noti_cache(cache)
+        return web.json_response({"success": True})
+    except Exception as e:
+        print(f"[공지] 읽음 처리 실패: {e}")
+        return web.json_response({"error": str(e)}, status=500)
+
+
+app.router.add_get("/api/notifications", handle_api_notifications)
+app.router.add_post("/api/notifications/read", handle_api_notifications_read)
+
 # ─── 에셋 생성 모드 API 핸들러 ────────────────────────────
 async def handle_api_asset_mode_status(request: web.Request) -> web.Response:
     return web.json_response(asset_mode.get_status())
@@ -5985,6 +6078,17 @@ async def on_startup(app):
         "embedding_model": app_config.get("embedding_model", "voyage-4-large"),
     })
     embedding_service._load_profiles_from_file()
+    # 공지 캐시 초기 갱신
+    asyncio.create_task(refresh_noti_cache())
+    # 20분 주기 공지 갱신
+    async def _noti_refresh_loop():
+        while True:
+            await asyncio.sleep(20 * 60)
+            try:
+                await refresh_noti_cache()
+            except Exception as e:
+                print(f"[공지] 주기 갱신 실패: {e}")
+    asyncio.create_task(_noti_refresh_loop())
     # 프런트엔드 자동 열기
     webbrowser.open(f"http://127.0.0.1:{PORT}/")
 
