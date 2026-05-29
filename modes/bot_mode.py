@@ -757,16 +757,20 @@ class BotMode:
                 char_dir = os.path.join(BOT_DIR, bot_name, rep["character"])
                 prompt_path = os.path.join(char_dir, f"{base}_prompt.json")
                 prompt = ""
+                negative = ""
                 if os.path.isfile(prompt_path):
                     try:
                         with open(prompt_path, "r", encoding="utf-8") as pf:
-                            prompt = json.load(pf).get("prompt", "")
+                            pdata = json.load(pf)
+                            prompt = pdata.get("prompt", "")
+                            negative = pdata.get("negative", "")
                     except Exception:
                         pass
                 results.append({
                     "character": rep["character"],
                     "filename": rep["filename"],
                     "prompt": prompt,
+                    "negative": negative,
                     "url": f"/api/bot_mode/image/{bot_name}/{rep['character']}/{rep['filename']}",
                 })
             return _json_ok({"images": results})
@@ -870,12 +874,19 @@ class BotMode:
             if not reps:
                 return _json_ok({"total": 0, "success_count": 0, "fail_count": 0})
 
+            # filenames 필터
+            only_filenames = body.get("filenames", [])
+            if only_filenames:
+                reps = [r for r in reps if r["filename"] in only_filenames]
+            if not reps:
+                return _json_ok({"total": 0, "success_count": 0, "fail_count": 0})
+
             success_count = 0
             fail_count = 0
             for rep in reps:
                 try:
                     base = os.path.splitext(rep["filename"])[0]
-                    char_dir = os.path.join(BOT_DIR, bot_name, char_name)
+                    char_dir = os.path.join(BOT_DIR, bot_name, rep["character"])
                     prompt_path = os.path.join(char_dir, f"{base}_prompt.json")
                     existing = {}
                     if os.path.isfile(prompt_path):
