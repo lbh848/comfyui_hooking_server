@@ -12,6 +12,7 @@ mode_workflow/
 asset/
 asset_data/
 pose_data/
+bot/
 current_mode_workflow/
 auto_complete/
 CLAUDE.md
