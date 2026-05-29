@@ -216,6 +216,7 @@ print(f"[ASSET_MODE] 초기화: source={asset_mode.workflow_source_path}, charac
 asset_tool = asset_tool_mode.AssetToolMode()
 asset_tool.workflow_source_path = app_config.get("tag_analysis_workflow_source_path", "")
 asset_tool.mode_log_func = mode_logger.log
+bot_mode.set_asset_tool(asset_tool)
 print(f"[ASSET_TOOL] 초기화: source={asset_tool.workflow_source_path}")
 
 # ─── 포즈 편집 모드 초기화 ───
@@ -4621,6 +4622,13 @@ app.router.add_post("/api/bot_mode/upload", bot_mode.handle_upload_image)
 app.router.add_post("/api/bot_mode/import_asset", bot_mode.handle_import_asset)
 app.router.add_post("/api/bot_mode/prompt", bot_mode.handle_update_prompt)
 app.router.add_post("/api/bot_mode/delete_image", bot_mode.handle_delete_image)
+app.router.add_post("/api/bot_mode/batch_analyze_rep", bot_mode.handle_batch_analyze_rep)
+app.router.add_get("/api/bot_mode/rep_preview", bot_mode.handle_get_rep_preview)
+app.router.add_get("/api/bot_mode/asset_chars_with_rep", bot_mode.handle_get_asset_chars_with_rep)
+app.router.add_post("/api/bot_mode/import_asset_chars", bot_mode.handle_import_asset_chars)
+app.router.add_post("/api/bot_mode/batch_set_negative", bot_mode.handle_batch_set_negative)
+app.router.add_post("/api/bot_mode/analyze_single", bot_mode.handle_analyze_single)
+app.router.add_post("/api/bot_mode/set_negative_single", bot_mode.handle_set_negative_single)
 app.router.add_get("/api/bot_mode/asset_images", bot_mode.handle_get_asset_images)
 app.router.add_get("/api/bot_mode/asset_character_images", bot_mode.handle_get_asset_character_images)
 # 자동완성 API

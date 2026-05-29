@@ -68,6 +68,10 @@ class BotMode:
 
     def __init__(self):
         self._lock = asyncio.Lock()
+        self._asset_tool = None
+
+    def set_asset_tool(self, tool):
+        self._asset_tool = tool
 
     # ─── 봇 데이터 조회 ──────────────────────────────────
     async def handle_get_bots(self, request):
@@ -293,7 +297,7 @@ class BotMode:
             return _json_ok({"images": []})
 
         images = []
-        for fname in sorted(os.listdir(char_dir), reverse=True):
+        for fname in sorted(os.listdir(char_dir)):
             ext = os.path.splitext(fname)[1].lower()
             if ext not in IMAGE_EXTENSIONS:
                 continue
@@ -360,8 +364,13 @@ class BotMode:
             ext = os.path.splitext(file_field.filename)[1].lower()
             if ext not in IMAGE_EXTENSIONS:
                 ext = ".webp"
-            filename = f"{int(time.time())}_{uuid.uuid4().hex[:6]}{ext}"
+            # 원래 파일명 유지, 충돌 시 해시 추가
+            base_name = os.path.splitext(file_field.filename)[0]
+            filename = f"{base_name}{ext}"
             filepath = os.path.join(char_dir, filename)
+            if os.path.exists(filepath):
+                filename = f"{base_name}_{uuid.uuid4().hex[:6]}{ext}"
+                filepath = os.path.join(char_dir, filename)
 
             with open(filepath, "wb") as f:
                 f.write(file_field.file.read())
@@ -408,8 +417,22 @@ class BotMode:
                     continue
 
                 ext = os.path.splitext(src)[1].lower()
-                new_name = f"{int(time.time())}_{uuid.uuid4().hex[:6]}{ext}"
+                if ext not in IMAGE_EXTENSIONS:
+                    ext = ".webp"
+                # rel_path: "캐릭터/의상/표정/파일명" → "이름-복장-표정-해시"
+                parts = rel_path.replace("\\", "/").split("/")
+                asset_char = parts[0] if len(parts) > 0 else ""
+                asset_outfit = parts[1] if len(parts) > 1 else ""
+                asset_expr = parts[2] if len(parts) > 2 else ""
+                file_hash = uuid.uuid4().hex[:8]
+                name_parts = [p for p in [asset_char, asset_outfit, asset_expr] if p]
+                new_name = "-".join(name_parts) + f"-{file_hash}{ext}"
                 dst = os.path.join(char_dir, new_name)
+                # 충돌 시 해시 변경
+                if os.path.exists(dst):
+                    file_hash = uuid.uuid4().hex[:8]
+                    new_name = "-".join(name_parts) + f"-{file_hash}{ext}"
+                    dst = os.path.join(char_dir, new_name)
                 shutil.copy2(src, dst)
 
                 # 에셋 프롬프트도 복사
@@ -585,6 +608,376 @@ class BotMode:
             all_images.extend(direct_images)
 
         return _json_ok({"outfits": outfits, "direct_images": direct_images, "all_count": len(all_images)})
+
+    def _get_rep_image_paths(self, bot_name: str, char_name: str) -> list[dict]:
+        """대표이미지 파일 경로 목록 반환."""
+        data = _load_bot_data()
+        bot = next((b for b in data.get("bots", []) if b["name"] == bot_name), None)
+        if not bot:
+            return []
+        ch = next((c for c in bot.get("characters", []) if c["name"] == char_name), None)
+        if not ch:
+            return []
+        rep_images = ch.get("rep_images", [])
+        char_dir = os.path.join(BOT_DIR, bot_name, char_name)
+        results = []
+        for fn in rep_images:
+            fp = os.path.join(char_dir, fn)
+            if os.path.isfile(fp):
+                results.append({"character": char_name, "filename": fn, "filepath": fp})
+            else:
+                print(f"[BOT_MODE] 대표이미지 파일 없음: {fp}")
+        return results
+
+    async def handle_get_asset_chars_with_rep(self, request):
+        """GET /api/bot_mode/asset_chars_with_rep - 에셋 캐릭터별 대표 이미지 목록."""
+        try:
+            from modes import asset_mode as _am
+            chars = _am.list_characters()
+            results = []
+            for char_name in chars:
+                gallery = _am.list_character_gallery(char_name)
+                reps = [g for g in gallery if g.get("representative")]
+                if not reps:
+                    continue
+                rep_images = []
+                for g in reps:
+                    fn = g["representative"]
+                    rel = f"{char_name}/{g['outfit']}/{g['expression']}/{fn}"
+                    url = f"/api/asset_mode/characters/{char_name}/outfits/{g['outfit']}/expressions/{g['expression']}/images/{fn}"
+                    rep_images.append({"filename": fn, "outfit": g["outfit"], "expression": g["expression"], "path": rel, "url": url})
+                results.append({"name": char_name, "rep_count": len(rep_images), "rep_images": rep_images})
+            return _json_ok({"characters": results})
+        except Exception as e:
+            print(f"[BOT_MODE] asset_chars_with_rep 오류: {e}")
+            traceback.print_exc()
+            return _json_error(str(e))
+
+    async def handle_import_asset_chars(self, request):
+        """POST /api/bot_mode/import_asset_chars - 에셋 캐릭터를 봇으로 가져오기."""
+        try:
+            body = await request.json()
+            bot_name = body.get("bot", "").strip()
+            characters = body.get("characters", [])  # [{name, rep_images: [{path, ...}]}]
+            if not bot_name or not characters:
+                return _json_error("봇 이름과 캐릭터 목록이 필요합니다.")
+
+            imported = []
+            for char_info in characters:
+                char_name = char_info.get("name", "").strip()
+                rep_images = char_info.get("rep_images", [])
+                if not char_name or not rep_images:
+                    continue
+
+                # 캐릭터 생성 (없으면)
+                data = _load_bot_data()
+                bot = next((b for b in data["bots"] if b["name"] == bot_name), None)
+                if not bot:
+                    return _json_error(f"봇을 찾을 수 없음: {bot_name}")
+                if not any(c["name"] == char_name for c in bot.get("characters", [])):
+                    if "characters" not in bot:
+                        bot["characters"] = []
+                    bot["characters"].append({"name": char_name})
+                    _save_bot_data(data)
+
+                char_dir = os.path.join(BOT_DIR, bot_name, char_name)
+                os.makedirs(char_dir, exist_ok=True)
+
+                imported_files = []
+                for ri in rep_images:
+                    src = os.path.join(ASSET_DIR, ri["path"])
+                    src = os.path.normpath(src)
+                    if not os.path.isfile(src):
+                        print(f"[BOT_MODE] 에셋 파일 없음: {src}")
+                        continue
+
+                    ext = os.path.splitext(src)[1].lower()
+                    if ext not in IMAGE_EXTENSIONS:
+                        ext = ".webp"
+                    outfit = ri.get("outfit", "")
+                    expr = ri.get("expression", "")
+                    file_hash = uuid.uuid4().hex[:8]
+                    name_parts = [p for p in [char_name, outfit, expr] if p]
+                    new_name = "-".join(name_parts) + f"-{file_hash}{ext}"
+                    dst = os.path.join(char_dir, new_name)
+                    if os.path.exists(dst):
+                        file_hash = uuid.uuid4().hex[:8]
+                        new_name = "-".join(name_parts) + f"-{file_hash}{ext}"
+                        dst = os.path.join(char_dir, new_name)
+                    shutil.copy2(src, dst)
+
+                    # 프롬프트 복사
+                    base = os.path.splitext(os.path.basename(src))[0]
+                    asset_prompt_path = os.path.join(os.path.dirname(src), f"{base}_prompt.json")
+                    prompt = ""
+                    if os.path.isfile(asset_prompt_path):
+                        try:
+                            with open(asset_prompt_path, "r", encoding="utf-8") as f:
+                                prompt = json.load(f).get("positive", "")
+                        except Exception:
+                            pass
+                    new_base = os.path.splitext(new_name)[0]
+                    bot_prompt_path = os.path.join(char_dir, f"{new_base}_prompt.json")
+                    with open(bot_prompt_path, "w", encoding="utf-8") as f:
+                        json.dump({"prompt": prompt, "source": "asset", "original_path": ri["path"]}, f, ensure_ascii=False)
+
+                    imported_files.append(new_name)
+
+                imported.append({"character": char_name, "files": imported_files})
+                print(f"[BOT_MODE] 에셋 캐릭터 가져오기: {char_name} ({len(imported_files)}장)")
+
+            return _json_ok({"imported": imported})
+        except Exception as e:
+            print(f"[BOT_MODE] 에셋 캐릭터 가져오기 오류: {e}")
+            traceback.print_exc()
+            return _json_error(str(e))
+
+    async def handle_get_rep_preview(self, request):
+        """GET /api/bot_mode/rep_preview?bot=xxx - 대표이미지 프리뷰 (파일명+프롬프트)."""
+        try:
+            bot_name = request.query.get("bot", "").strip()
+            char_name = request.query.get("character", "").strip()
+            if not bot_name:
+                return _json_error("봇 이름이 필요합니다.")
+
+            if char_name:
+                reps = self._get_rep_image_paths(bot_name, char_name)
+            else:
+                reps = []
+                data = _load_bot_data()
+                bot = next((b for b in data.get("bots", []) if b["name"] == bot_name), None)
+                if bot:
+                    for ch in bot.get("characters", []):
+                        if (ch.get("rep_images") or []):
+                            reps.extend(self._get_rep_image_paths(bot_name, ch["name"]))
+
+            results = []
+            for rep in reps:
+                base = os.path.splitext(rep["filename"])[0]
+                char_dir = os.path.join(BOT_DIR, bot_name, rep["character"])
+                prompt_path = os.path.join(char_dir, f"{base}_prompt.json")
+                prompt = ""
+                if os.path.isfile(prompt_path):
+                    try:
+                        with open(prompt_path, "r", encoding="utf-8") as pf:
+                            prompt = json.load(pf).get("prompt", "")
+                    except Exception:
+                        pass
+                results.append({
+                    "character": rep["character"],
+                    "filename": rep["filename"],
+                    "prompt": prompt,
+                    "url": f"/api/bot_mode/image/{bot_name}/{rep['character']}/{rep['filename']}",
+                })
+            return _json_ok({"images": results})
+        except Exception as e:
+            print(f"[BOT_MODE] rep_preview 오류: {e}")
+            traceback.print_exc()
+            return _json_error(str(e))
+
+    async def handle_batch_analyze_rep(self, request):
+        """POST /api/bot_mode/batch_analyze_rep - 대표이미지 일괄 태그 분석."""
+        try:
+            body = await request.json()
+            bot_name = body.get("bot", "").strip()
+            char_name = body.get("character", "").strip()
+            if not bot_name:
+                return _json_error("봇 이름이 필요합니다.")
+
+            # character가 없으면 봇 내 모든 대표 이미지 있는 캐릭터 대상
+            if char_name:
+                reps = self._get_rep_image_paths(bot_name, char_name)
+            else:
+                reps = []
+                data = _load_bot_data()
+                bot = next((b for b in data.get("bots", []) if b["name"] == bot_name), None)
+                if bot:
+                    for ch in bot.get("characters", []):
+                        if (ch.get("rep_images") or []):
+                            reps.extend(self._get_rep_image_paths(bot_name, ch["name"]))
+            if not reps:
+                return _json_ok({"total": 0, "success_count": 0, "fail_count": 0})
+
+            # filenames 필터: 지정된 파일만 분석
+            only_filenames = body.get("filenames", [])
+            if only_filenames:
+                reps = [r for r in reps if r["filename"] in only_filenames]
+            if not reps:
+                return _json_ok({"total": 0, "success_count": 0, "fail_count": 0})
+
+            asset_tool = self._asset_tool
+            if not asset_tool or not asset_tool.workflow_source_path:
+                return _json_error("태그 분석 워크플로우 경로가 설정되지 않았습니다")
+
+            total = len(reps)
+            success_count = 0
+            fail_count = 0
+            for i, rep in enumerate(reps):
+                try:
+                    with open(rep["filepath"], "rb") as f:
+                        image_data = f.read()
+                    analyze_result = await asset_tool.analyze_image(image_data, "expressions")
+                    tags = analyze_result.get("tags", [])
+                    positive = ", ".join(tags) if tags else ""
+
+                    base = os.path.splitext(rep["filename"])[0]
+                    char_dir = os.path.join(BOT_DIR, bot_name, char_name)
+                    prompt_path = os.path.join(char_dir, f"{base}_prompt.json")
+                    existing = {}
+                    if os.path.isfile(prompt_path):
+                        try:
+                            with open(prompt_path, "r", encoding="utf-8") as pf:
+                                existing = json.load(pf)
+                        except Exception:
+                            pass
+                    existing["prompt"] = positive
+                    existing.setdefault("negative", "")
+                    with open(prompt_path, "w", encoding="utf-8") as pf:
+                        json.dump(existing, pf, ensure_ascii=False, indent=2)
+                    success_count += 1
+                    print(f"[BOT_MODE] 대표이미지 분석 완료 ({i+1}/{total}): {rep['filename']} ({len(tags)}개 태그)")
+                except Exception as e:
+                    fail_count += 1
+                    print(f"[BOT_MODE] 대표이미지 분석 실패 ({i+1}/{total}): {rep['filename']} - {e}")
+                    traceback.print_exc()
+
+            return _json_ok({"total": total, "success_count": success_count, "fail_count": fail_count})
+        except Exception as e:
+            print(f"[BOT_MODE] 일괄 분석 오류: {e}")
+            traceback.print_exc()
+            return _json_error(str(e))
+
+    async def handle_batch_set_negative(self, request):
+        """POST /api/bot_mode/batch_set_negative - 대표이미지에 부정프롬프트 일괄 적용."""
+        try:
+            body = await request.json()
+            bot_name = body.get("bot", "").strip()
+            char_name = body.get("character", "").strip()
+            negative_tags = body.get("negative_tags", "")
+            if not bot_name:
+                return _json_error("봇 이름이 필요합니다.")
+
+            if char_name:
+                reps = self._get_rep_image_paths(bot_name, char_name)
+            else:
+                reps = []
+                data = _load_bot_data()
+                bot = next((b for b in data.get("bots", []) if b["name"] == bot_name), None)
+                if bot:
+                    for ch in bot.get("characters", []):
+                        if (ch.get("rep_images") or []):
+                            reps.extend(self._get_rep_image_paths(bot_name, ch["name"]))
+            if not reps:
+                return _json_ok({"total": 0, "success_count": 0, "fail_count": 0})
+
+            success_count = 0
+            fail_count = 0
+            for rep in reps:
+                try:
+                    base = os.path.splitext(rep["filename"])[0]
+                    char_dir = os.path.join(BOT_DIR, bot_name, char_name)
+                    prompt_path = os.path.join(char_dir, f"{base}_prompt.json")
+                    existing = {}
+                    if os.path.isfile(prompt_path):
+                        try:
+                            with open(prompt_path, "r", encoding="utf-8") as pf:
+                                existing = json.load(pf)
+                        except Exception:
+                            pass
+                    existing["negative"] = negative_tags
+                    with open(prompt_path, "w", encoding="utf-8") as pf:
+                        json.dump(existing, pf, ensure_ascii=False, indent=2)
+                    success_count += 1
+                    print(f"[BOT_MODE] 부정 프롬프트 적용 완료: {rep['filename']}")
+                except Exception as e:
+                    fail_count += 1
+                    print(f"[BOT_MODE] 부정 프롬프트 적용 실패: {rep['filename']} - {e}")
+                    traceback.print_exc()
+
+            return _json_ok({"total": len(reps), "success_count": success_count, "fail_count": fail_count})
+        except Exception as e:
+            print(f"[BOT_MODE] batch_set_negative 오류: {e}")
+            traceback.print_exc()
+            return _json_error(str(e))
+
+    async def handle_analyze_single(self, request):
+        """POST /api/bot_mode/analyze_single - 단일 이미지 태그 분석."""
+        try:
+            body = await request.json()
+            bot_name = body.get("bot", "").strip()
+            char_name = body.get("character", "").strip()
+            filename = body.get("filename", "").strip()
+            if not bot_name or not char_name or not filename:
+                return _json_error("봇, 캐릭터, 파일명이 필요합니다.")
+
+            filepath = os.path.join(BOT_DIR, bot_name, char_name, filename)
+            filepath = os.path.normpath(filepath)
+            if not filepath.startswith(os.path.normpath(BOT_DIR)):
+                return _json_error("잘못된 경로입니다.")
+            if not os.path.isfile(filepath):
+                return _json_error("파일을 찾을 수 없습니다.")
+
+            asset_tool = self._asset_tool
+            if not asset_tool or not asset_tool.workflow_source_path:
+                return _json_error("태그 분석 워크플로우 경로가 설정되지 않았습니다")
+
+            with open(filepath, "rb") as f:
+                image_data = f.read()
+            analyze_result = await asset_tool.analyze_image(image_data, "expressions")
+            tags = analyze_result.get("tags", [])
+            positive = ", ".join(tags) if tags else ""
+
+            base = os.path.splitext(filename)[0]
+            char_dir = os.path.join(BOT_DIR, bot_name, char_name)
+            prompt_path = os.path.join(char_dir, f"{base}_prompt.json")
+            existing = {}
+            if os.path.isfile(prompt_path):
+                try:
+                    with open(prompt_path, "r", encoding="utf-8") as pf:
+                        existing = json.load(pf)
+                except Exception:
+                    pass
+            existing["prompt"] = positive
+            existing.setdefault("negative", "")
+            with open(prompt_path, "w", encoding="utf-8") as pf:
+                json.dump(existing, pf, ensure_ascii=False, indent=2)
+
+            return _json_ok({"tags": tags, "prompt": positive, "tags_count": len(tags)})
+        except Exception as e:
+            print(f"[BOT_MODE] 단일 이미지 분석 오류: {e}")
+            traceback.print_exc()
+            return _json_error(str(e))
+
+    async def handle_set_negative_single(self, request):
+        """POST /api/bot_mode/set_negative_single - 단일 이미지 부정프롬프트 적용."""
+        try:
+            body = await request.json()
+            bot_name = body.get("bot", "").strip()
+            char_name = body.get("character", "").strip()
+            filename = body.get("filename", "").strip()
+            negative_tags = body.get("negative_tags", "")
+            if not bot_name or not char_name or not filename:
+                return _json_error("봇, 캐릭터, 파일명이 필요합니다.")
+
+            base = os.path.splitext(filename)[0]
+            char_dir = os.path.join(BOT_DIR, bot_name, char_name)
+            prompt_path = os.path.join(char_dir, f"{base}_prompt.json")
+            existing = {}
+            if os.path.isfile(prompt_path):
+                try:
+                    with open(prompt_path, "r", encoding="utf-8") as pf:
+                        existing = json.load(pf)
+                except Exception:
+                    pass
+            existing["negative"] = negative_tags
+            with open(prompt_path, "w", encoding="utf-8") as pf:
+                json.dump(existing, pf, ensure_ascii=False, indent=2)
+
+            return _json_ok({"updated": True})
+        except Exception as e:
+            print(f"[BOT_MODE] 단일 부정프롬프트 적용 오류: {e}")
+            traceback.print_exc()
+            return _json_error(str(e))
 
 
 # ─── 유틸리티 ──────────────────────────────────────────

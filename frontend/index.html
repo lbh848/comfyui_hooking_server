@@ -3032,6 +3032,17 @@
                                 <button onclick="removeSelectedBotCharacter()" style="flex:1; background:var(--error); color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">삭제</button>
                             </div>
                             <button onclick="openBotBatchAddModal()" style="width:100%; margin-top:4px; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">일괄추가</button>
+                            <button onclick="openBotAssetCharImportModal()" style="width:100%; margin-top:4px; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">에셋에서 캐릭터 가져오기</button>
+                        </div>
+                        <div style="background:rgba(76,175,80,0.08); border-radius:8px; padding:10px; margin-top:8px;">
+                            <div class="section-title">태그 분석</div>
+                            <button id="btn-bot-batch-analyze" onclick="botBatchAnalyzeRep()" style="width:100%; background:#2E7D32; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">대표이미지 일괄 태그 분석</button>
+                            <div id="bot-analyze-status" style="font-size:0.7rem; color:var(--text2); margin-top:4px; display:none;"></div>
+                        </div>
+                        <div style="background:rgba(156,39,176,0.08); border-radius:8px; padding:10px; margin-top:8px;">
+                            <div class="section-title">부정 프롬프트 일괄 적용</div>
+                            <div id="bot-negative-preset-select" style="margin-bottom:6px;"></div>
+                            <button id="btn-bot-batch-negative" onclick="botBatchSetNegative()" style="width:100%; background:#9C27B0; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">대표이미지에 부정 프롬프트 적용</button>
                         </div>
                     </div>
                 </div>
@@ -13501,6 +13512,7 @@
                 return;
             }
             document.getElementById('bot-char-section').style.display = 'block';
+            botRenderNegativePresetSelect();
             renderBotCharacters();
         }
 
@@ -13617,14 +13629,10 @@
                                     <div class="lv1-prompt-text" style="padding:4px 6px; font-size:0.7rem; color:var(--text2); line-height:1.3; word-break:break-word;
                                         max-height:3.9em; overflow:hidden; cursor:pointer;"
                                         onclick="lv1TogglePrompt(this)">${escHtml(img.prompt || '<프롬프트 없음>')}</div>
-                                    <div class="lv1-prompt-edit" style="display:none; padding:4px;">
-                                        <textarea style="width:100%; min-height:50px; font-size:0.7rem; resize:vertical; border:1px solid var(--border); border-radius:4px; background:var(--surface1); color:var(--text); padding:4px;"
-                                            onblur="lv1SavePrompt(this)">${escHtml(img.prompt)}</textarea>
-                                    </div>
                                     <div style="display:flex; border-top:1px solid var(--border);">
                                         <button onclick="event.stopPropagation(); lv1ToggleExpand(this)"
                                             style="flex:1; background:none; border:none; color:var(--text2); cursor:pointer; font-size:0.65rem; padding:2px;">펼치기</button>
-                                        <button onclick="event.stopPropagation(); lv1ToggleEdit(this)"
+                                        <button onclick="event.stopPropagation(); lv1OpenEditModal(this)"
                                             style="flex:1; background:none; border:none; color:var(--accent); cursor:pointer; font-size:0.65rem; padding:2px;">편집</button>
                                     </div>
                                 </div>
@@ -13749,12 +13757,19 @@
                             </div>` : ''}
                         </div>
                         <div style="padding:6px 8px;">
+                            <div style="font-size:0.65rem; color:var(--text2); margin-bottom:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escAttr(img.filename)}">${escHtml(img.filename)}</div>
                             <textarea class="bot-prompt-input" data-filename="${escAttr(img.filename)}" data-character="${escAttr(charName)}"
                                 placeholder="프롬프트 (비워두면 자동 태깅 대상)"
                                 style="width:100%; min-height:50px; font-size:0.7rem; resize:vertical; border:1px solid var(--border); border-radius:4px; background:var(--surface2); color:var(--text); padding:4px;"
                                 onblur="updateBotPrompt(this)">${escHtml(img.prompt)}</textarea>
                             <button onclick="deleteBotImage('${escAttr(img.filename)}','${escAttr(charName)}')"
                                 style="width:100%; margin-top:4px; background:var(--error); color:#fff; border:none; padding:3px; border-radius:4px; cursor:pointer; font-size:0.7rem;">삭제</button>
+                            <div style="display:flex; gap:4px; margin-top:4px;">
+                                <button onclick="event.stopPropagation(); botAnalyzeSingle('${escAttr(charName)}','${escAttr(img.filename)}', this)"
+                                    style="flex:1; background:#2E7D32; color:#fff; border:none; padding:3px; border-radius:4px; cursor:pointer; font-size:0.7rem;">태그 분석</button>
+                                <button onclick="event.stopPropagation(); botSetNegativeSingle('${escAttr(charName)}','${escAttr(img.filename)}', this)"
+                                    style="flex:1; background:#9C27B0; color:#fff; border:none; padding:3px; border-radius:4px; cursor:pointer; font-size:0.7rem;">부정 프롬프트</button>
+                            </div>
                         </div>
                     `;
                     grid.appendChild(card);
@@ -13883,13 +13898,117 @@
             sel.innerHTML = '<option value="">-- 캐릭터 선택 --</option>';
             const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
             if (!bot || !bot.characters) return;
+            // 대표 이미지가 있는 캐릭터 수 카운트
+            const withRep = bot.characters.filter(c => (c.rep_images || []).length > 0);
+            if (withRep.length > 0) {
+                const allOpt = document.createElement('option');
+                allOpt.value = '__all__';
+                allOpt.textContent = `전체 (대표 ${withRep.length}개)`;
+                sel.appendChild(allOpt);
+            }
             for (const ch of bot.characters) {
                 const opt = document.createElement('option');
                 opt.value = ch.name;
                 opt.textContent = ch.name;
                 sel.appendChild(opt);
             }
-            if (prev && bot.characters.some(c => c.name === prev)) sel.value = prev;
+            if (prev && (prev === '__all__' || bot.characters.some(c => c.name === prev))) sel.value = prev;
+        }
+
+        // ─── 에셋에서 캐릭터 가져오기 ───
+        async function openBotAssetCharImportModal() {
+            if (!botCurrentBot) { showToast('봇을 먼저 선택하세요', 'error'); return; }
+            let modal = document.getElementById('bot-asset-char-modal');
+            if (!modal) {
+                modal = document.createElement('div');
+                modal.id = 'bot-asset-char-modal';
+                document.body.appendChild(modal);
+            }
+            modal.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:10000; display:flex; align-items:center; justify-content:center;';
+            modal.innerHTML = `<div style="background:var(--surface); border-radius:12px; width:90vw; max-width:800px; max-height:85vh; display:flex; flex-direction:column; overflow:hidden;">
+                <div style="padding:16px 20px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
+                    <h3 style="margin:0;">에셋에서 캐릭터 가져오기</h3>
+                    <button onclick="document.getElementById('bot-asset-char-modal').style.display='none'" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer;">&times;</button>
+                </div>
+                <div style="padding:12px 20px; font-size:0.75rem; color:var(--text2); border-bottom:1px solid var(--border);">
+                    대표 이미지가 설정된 에셋 캐릭터만 표시됩니다.
+                    <button onclick="document.querySelectorAll('.asset-char-check').forEach(c=>c.checked=true)" style="margin-left:12px; background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:2px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">전체 선택</button>
+                    <button onclick="document.querySelectorAll('.asset-char-check').forEach(c=>c.checked=false)" style="margin-left:4px; background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:2px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">전체 해제</button>
+                </div>
+                <div id="bot-asset-char-list" style="padding:12px 20px; overflow-y:auto; flex:1; display:flex; flex-direction:column; gap:8px;">
+                    <div style="color:var(--text2); text-align:center; padding:20px;">로드 중...</div>
+                </div>
+                <div style="padding:12px 20px; border-top:1px solid var(--border); display:flex; justify-content:flex-end; gap:8px;">
+                    <button onclick="document.getElementById('bot-asset-char-modal').style.display='none'" style="padding:8px 16px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); cursor:pointer;">취소</button>
+                    <button onclick="botDoAssetCharImport()" style="padding:8px 16px; border-radius:6px; border:none; background:var(--accent); color:#fff; cursor:pointer; font-weight:600;">선택 가져오기</button>
+                </div>
+            </div>`;
+
+            // 에셋 캐릭터 목록 로드
+            try {
+                const resp = await fetch('/api/bot_mode/asset_chars_with_rep');
+                const data = await resp.json();
+                if (data.error) { showToast(data.error, 'error'); modal.style.display = 'none'; return; }
+                const list = document.getElementById('bot-asset-char-list');
+                const chars = data.characters || [];
+                if (chars.length === 0) {
+                    list.innerHTML = '<div style="color:var(--text2); text-align:center; padding:20px;">대표 이미지가 있는 에셋 캐릭터가 없습니다.</div>';
+                    return;
+                }
+                // 이미 봇에 있는 캐릭터 표시
+                const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
+                const existingChars = new Set((bot?.characters || []).map(c => c.name));
+                list.innerHTML = chars.map(ch => {
+                    const exists = existingChars.has(ch.name);
+                    const labelStyle = exists ? 'opacity:0.4; text-decoration:line-through;' : '';
+                    const thumbsHtml = ch.rep_images.slice(0, 4).map(ri =>
+                        `<img src="${ri.url}" loading="lazy" style="width:48px; height:48px; object-fit:cover; border-radius:4px;">`
+                    ).join('');
+                    return `<label style="display:flex; align-items:center; gap:10px; padding:8px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); cursor:${exists?'default':'pointer'}; ${labelStyle}">
+                        <input type="checkbox" class="asset-char-check" value="${escAttr(ch.name)}" ${exists?'disabled':''} style="width:18px; height:18px; cursor:pointer;">
+                        <div style="display:flex; gap:4px; flex-shrink:0;">${thumbsHtml}</div>
+                        <div style="flex:1; min-width:0;">
+                            <div style="font-size:0.85rem; font-weight:600;">${escHtml(ch.name)}${exists?' (이미 존재)':''}</div>
+                            <div style="font-size:0.7rem; color:var(--text2);">대표 ${ch.rep_count}장</div>
+                        </div>
+                    </label>`;
+                }).join('');
+                // rep_images 데이터를 전역에 저장
+                window._assetCharData = chars;
+            } catch (e) {
+                console.error('[BOT] 에셋 캐릭터 로드 오류:', e);
+                showToast('에셋 캐릭터 목록 로드 실패', 'error');
+                modal.style.display = 'none';
+            }
+        }
+
+        async function botDoAssetCharImport() {
+            const checks = document.querySelectorAll('.asset-char-check:checked');
+            if (checks.length === 0) { showToast('가져올 캐릭터를 선택하세요', 'error'); return; }
+            const selectedNames = [...checks].map(c => c.value);
+            const charsData = (window._assetCharData || []).filter(ch => selectedNames.includes(ch.name));
+            if (!confirm(`${charsData.length}개 캐릭터의 대표 이미지를 가져옵니다. 진행하시겠습니까?`)) return;
+            document.getElementById('bot-asset-char-modal').style.display = 'none';
+            try {
+                const resp = await fetch('/api/bot_mode/import_asset_chars', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({bot: botCurrentBot, characters: charsData})
+                });
+                const data = await resp.json();
+                if (data.error) { showToast(data.error, 'error'); return; }
+                const total = (data.imported || []).reduce((s, c) => s + c.files.length, 0);
+                showToast(`${charsData.length}개 캐릭터, ${total}장 가져오기 완료`, 'success');
+                // 봇 데이터 새로고침
+                const botResp = await fetch('/api/bot_mode/bots');
+                const botDataResp = await botResp.json();
+                if (botDataResp.bots) { botData.bots = botDataResp.bots; }
+                updateBotCharSelect();
+                renderBotCharacters();
+            } catch (e) {
+                console.error('[BOT] 에셋 캐릭터 가져오기 오류:', e);
+                showToast('가져오기 실패', 'error');
+            }
         }
 
         function removeSelectedBotCharacter() {
@@ -14340,6 +14459,256 @@
             }
         }
 
+        // ─── LV1 대표이미지 일괄 태그 분석 / 부정프롬프트 ───
+        async function botBatchAnalyzeRep() {
+            if (!botCurrentBot) return;
+            const sel = document.getElementById('bot-char-select');
+            const raw = sel ? sel.value : '';
+            if (!raw) { showToast('캐릭터를 먼저 선택하세요', 'error'); return; }
+            const isAll = raw === '__all__';
+            const charName = isAll ? '' : raw;
+
+            // 프리뷰 로드
+            const status = document.getElementById('bot-analyze-status');
+            status.style.display = 'block';
+            status.textContent = '이미지 목록 로드 중...';
+            try {
+                const prevResp = await fetch(`/api/bot_mode/rep_preview?bot=${encodeURIComponent(botCurrentBot)}&character=${encodeURIComponent(charName)}`);
+                const prevData = await prevResp.json();
+                if (prevData.error) { showToast(prevData.error, 'error'); status.style.display = 'none'; return; }
+                const images = prevData.images || [];
+                if (images.length === 0) { showToast('대표 이미지가 없습니다', 'error'); status.style.display = 'none'; return; }
+                botShowAnalyzeModal(images, charName, status);
+            } catch (e) {
+                console.error('[BOT] 프리뷰 로드 오류:', e);
+                showToast('이미지 목록 로드 실패', 'error');
+                status.style.display = 'none';
+            }
+        }
+
+        function botShowAnalyzeModal(images, charName, statusEl) {
+            let modal = document.getElementById('bot-analyze-modal');
+            if (!modal) {
+                modal = document.createElement('div');
+                modal.id = 'bot-analyze-modal';
+                document.body.appendChild(modal);
+            }
+            const hasPrompt = images.filter(i => i.prompt).length;
+            const noPrompt = images.length - hasPrompt;
+            modal.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:10000; display:flex; align-items:center; justify-content:center;';
+            let listHtml = images.map((img, i) => {
+                const preview = img.prompt ? escHtml(img.prompt.substring(0, 80)) + (img.prompt.length > 80 ? '...' : '') : '<span style="color:var(--text2);">프롬프트 없음</span>';
+                const hasP = img.prompt ? 'has-prompt' : '';
+                return `<label style="display:flex; align-items:center; gap:10px; padding:8px; border-radius:6px; cursor:pointer; border:1px solid var(--border); background:var(--surface2);"
+                    class="analyze-item ${hasP}" data-idx="${i}">
+                    <input type="checkbox" checked class="analyze-check" data-filename="${escAttr(img.filename)}" data-character="${escAttr(img.character)}"
+                        style="width:18px; height:18px; cursor:pointer;">
+                    <img src="${img.url}" loading="lazy" style="width:60px; height:60px; object-fit:cover; border-radius:4px; flex-shrink:0;">
+                    <div style="flex:1; min-width:0;">
+                        <div style="font-size:0.8rem; font-weight:600;">${escHtml(img.character)} / ${escHtml(img.filename)}</div>
+                        <div style="font-size:0.7rem; color:var(--text2); margin-top:2px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${preview}</div>
+                    </div>
+                </label>`;
+            }).join('');
+
+            modal.innerHTML = `<div style="background:var(--surface); border-radius:12px; width:90vw; max-width:700px; max-height:85vh; display:flex; flex-direction:column; overflow:hidden;">
+                <div style="padding:16px 20px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
+                    <h3 style="margin:0;">태그 분석 대상 선택</h3>
+                    <button onclick="document.getElementById('bot-analyze-modal').style.display='none'" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer;">&times;</button>
+                </div>
+                <div style="padding:8px 20px; font-size:0.75rem; color:var(--text2); display:flex; gap:12px; align-items:center; border-bottom:1px solid var(--border);">
+                    <span>총 ${images.length}장 (프롬프트 있음: ${hasPrompt}, 없음: ${noPrompt})</span>
+                    <button onclick="document.querySelectorAll('.analyze-check').forEach(c=>c.checked=true)" style="background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:2px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">전체 선택</button>
+                    <button onclick="document.querySelectorAll('.analyze-check').forEach(c=>c.checked=false)" style="background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:2px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">전체 해제</button>
+                    <button onclick="document.querySelectorAll('.analyze-item.has-prompt .analyze-check').forEach(c=>c.checked=false)" style="background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:2px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">프롬프트 있는것만 해제</button>
+                </div>
+                <div style="padding:12px 20px; overflow-y:auto; flex:1; display:flex; flex-direction:column; gap:6px;">
+                    ${listHtml}
+                </div>
+                <div style="padding:12px 20px; border-top:1px solid var(--border); display:flex; justify-content:flex-end; gap:8px;">
+                    <button onclick="document.getElementById('bot-analyze-modal').style.display='none'" style="padding:8px 16px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); cursor:pointer;">취소</button>
+                    <button id="bot-analyze-confirm-btn" onclick="botDoBatchAnalyze('${escAttr(charName)}')" style="padding:8px 16px; border-radius:6px; border:none; background:#2E7D32; color:#fff; cursor:pointer; font-weight:600;">선택 분석 실행</button>
+                </div>
+            </div>`;
+        }
+
+        async function botDoBatchAnalyze(charName) {
+            const checks = document.querySelectorAll('.analyze-check:checked');
+            if (checks.length === 0) { showToast('선택된 이미지가 없습니다', 'error'); return; }
+            const filenames = [...checks].map(c => c.dataset.filename);
+            document.getElementById('bot-analyze-modal').style.display = 'none';
+            const btn = document.getElementById('btn-bot-batch-analyze');
+            const status = document.getElementById('bot-analyze-status');
+            btn.disabled = true;
+            btn.textContent = '분석 중...';
+            status.style.display = 'block';
+            status.textContent = `0/${filenames.length} 분석 중...`;
+            try {
+                const resp = await fetch('/api/bot_mode/batch_analyze_rep', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({bot: botCurrentBot, character: charName, filenames})
+                });
+                const data = await resp.json();
+                if (data.error) { showToast(data.error, 'error'); return; }
+                const ok = data.success_count || 0;
+                const fail = data.fail_count || 0;
+                status.textContent = `완료: ${ok}장 성공${fail > 0 ? `, ${fail}장 실패` : ''}`;
+                showToast(`태그 분석 완료 (${ok}장)`, fail > 0 ? 'warning' : 'success');
+                renderBotCharacters();
+            } catch (e) {
+                console.error('[BOT] 일괄 분석 오류:', e);
+                showToast('태그 분석 오류', 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '대표이미지 일괄 태그 분석';
+            }
+        }
+
+        function botRenderNegativePresetSelect() {
+            const container = document.getElementById('bot-negative-preset-select');
+            if (!container || !assetTags) return;
+            container.innerHTML = buildCustomSelectHTML(
+                assetTags.negative_presets || {},
+                '',
+                '-- 부정 프리셋 선택 --',
+                'bot-negative-preset'
+            );
+            const cs = container.querySelector('.custom-select[data-field="bot-negative-preset"]');
+            if (!cs) return;
+            const valueEl = cs.querySelector('.custom-select-value');
+            const searchInput = cs.querySelector('.custom-select-search');
+            const optionList = cs.querySelector('.custom-select-option-list');
+            cs.addEventListener('click', (e) => {
+                if (e.target.closest('.custom-select-option')) return;
+                const wasOpen = cs.classList.contains('open');
+                document.querySelectorAll('.custom-select.open').forEach(o => o.classList.remove('open'));
+                if (!wasOpen) {
+                    cs.classList.add('open');
+                    searchInput.value = '';
+                    filterCustomOptions(optionList, '');
+                    requestAnimationFrame(() => searchInput.focus());
+                }
+            });
+            searchInput.addEventListener('input', (e) => { e.stopPropagation(); filterCustomOptions(optionList, searchInput.value); });
+            searchInput.addEventListener('click', (e) => e.stopPropagation());
+            optionList.querySelectorAll('.custom-select-option').forEach(opt => {
+                opt.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    valueEl.textContent = opt.textContent;
+                    optionList.querySelectorAll('.custom-select-option').forEach(o => o.classList.remove('selected'));
+                    opt.classList.add('selected');
+                    cs.classList.remove('open');
+                });
+            });
+        }
+
+        async function botBatchSetNegative() {
+            if (!botCurrentBot) return;
+            const sel = document.getElementById('bot-char-select');
+            const raw = sel ? sel.value : '';
+            if (!raw) { showToast('캐릭터를 먼저 선택하세요', 'error'); return; }
+            const isAll = raw === '__all__';
+            const charName = isAll ? '' : raw;
+            const container = document.getElementById('bot-negative-preset-select');
+            const selEl = container ? container.querySelector('.custom-select-value') : null;
+            const presetName = selEl ? selEl.textContent : '';
+            if (!presetName || presetName.startsWith('--')) {
+                showToast('부정 프리셋를 먼저 선택하세요', 'error');
+                return;
+            }
+            const presetTags = assetTags.negative_presets?.[presetName];
+            if (!presetTags || !Array.isArray(presetTags) || presetTags.length === 0) {
+                showToast('선택한 프리셋에 태그가 없습니다', 'error');
+                return;
+            }
+            const negativeTags = presetTags.join(', ');
+            const msg = isAll
+                ? '대표 이미지가 있는 모든 캐릭터에 부정 프롬프트를 일괄 적용합니다. 진행하시겠습니까?'
+                : '대표이미지에 부정 프롬프트를 일괄 적용하시겠습니까?\n기존 부정 프롬프트가 덮어씌워집니다.';
+            if (!confirm(msg)) return;
+            const btn = document.getElementById('btn-bot-batch-negative');
+            btn.disabled = true;
+            btn.textContent = '적용 중...';
+            try {
+                const resp = await fetch('/api/bot_mode/batch_set_negative', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({bot: botCurrentBot, character: charName, negative_tags: negativeTags})
+                });
+                const data = await resp.json();
+                if (data.error) { showToast(data.error, 'error'); return; }
+                const ok = data.success_count || 0;
+                const fail = data.fail_count || 0;
+                showToast(`${ok}장에 부정 프롬프트 적용 완료${fail > 0 ? `, ${fail}건 실패` : ''}`, fail > 0 ? 'warning' : 'success');
+            } catch (e) {
+                console.error('[BOT] 부정 프롬프트 적용 오류:', e);
+                showToast('부정 프롬프트 적용 오류', 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '대표이미지에 부정 프롬프트 적용';
+            }
+        }
+
+        // ─── LV2 개별 이미지 태그 분석 / 부정프롬프트 ───
+        async function botAnalyzeSingle(charName, filename, btn) {
+            if (!botCurrentBot || !charName || !filename) return;
+            btn.disabled = true;
+            btn.textContent = '분석 중...';
+            try {
+                const resp = await fetch('/api/bot_mode/analyze_single', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({bot: botCurrentBot, character: charName, filename})
+                });
+                const data = await resp.json();
+                if (data.error) { showToast(data.error, 'error'); return; }
+                const ta = btn.closest('div[style*="padding:6px 8px"]')?.querySelector('.bot-prompt-input');
+                if (ta && data.prompt) { ta.value = data.prompt; }
+                showToast(`분석 완료 (${data.tags_count || 0}개 태그)`, 'success');
+            } catch (e) {
+                console.error('[BOT] 단일 분석 오류:', e);
+                showToast('태그 분석 오류', 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '태그 분석';
+            }
+        }
+
+        async function botSetNegativeSingle(charName, filename, btn) {
+            if (!botCurrentBot || !charName || !filename) return;
+            const container = document.getElementById('bot-negative-preset-select');
+            const selEl = container ? container.querySelector('.custom-select-value') : null;
+            const presetName = selEl ? selEl.textContent : '';
+            if (!presetName || presetName.startsWith('--')) {
+                showToast('LV1 사이드바에서 부정 프리셋를 먼저 선택하세요', 'error');
+                return;
+            }
+            const presetTags = assetTags?.negative_presets?.[presetName];
+            if (!presetTags || !Array.isArray(presetTags) || presetTags.length === 0) {
+                showToast('선택한 프리셋에 태그가 없습니다', 'error');
+                return;
+            }
+            btn.disabled = true;
+            btn.textContent = '적용 중...';
+            try {
+                const resp = await fetch('/api/bot_mode/set_negative_single', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({bot: botCurrentBot, character: charName, filename, negative_tags: presetTags.join(', ')})
+                });
+                const data = await resp.json();
+                if (data.error) { showToast(data.error, 'error'); return; }
+                showToast('부정 프롬프트 적용 완료', 'success');
+            } catch (e) {
+                console.error('[BOT] 단일 부정프롬프트 오류:', e);
+                showToast('부정 프롬프트 적용 오류', 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '부정 프롬프트';
+            }
+        }
+
         async function removeFromDock(charName, filename) {
             if (!botCurrentBot || !charName || !filename) return;
             try {
@@ -14383,38 +14752,60 @@
             }
         }
 
-        function lv1ToggleEdit(btn) {
-            const box = btn.closest('.lv1-prompt-box');
-            const textEl = box.querySelector('.lv1-prompt-text');
-            const editEl = box.querySelector('.lv1-prompt-edit');
-            if (editEl.style.display === 'none') {
-                textEl.style.display = 'none';
-                editEl.style.display = 'block';
-                editEl.querySelector('textarea').focus();
-                btn.textContent = '완료';
-            } else {
-                editEl.style.display = 'none';
-                textEl.style.display = '';
-                btn.textContent = '편집';
-            }
-        }
+        function lv1ToggleEdit(btn) { /* unused, kept for compat */ }
 
-        async function lv1SavePrompt(textarea) {
-            const box = textarea.closest('.lv1-prompt-box');
+        function lv1OpenEditModal(btn) {
+            const box = btn.closest('.lv1-prompt-box');
             const filename = box.dataset.filename;
             const character = box.dataset.character;
-            const prompt = textarea.value;
-            try {
-                await fetch('/api/bot_mode/prompt', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({bot: botCurrentBot, character, filename, prompt})
-                });
-                const textEl = box.querySelector('.lv1-prompt-text');
-                textEl.textContent = prompt || '<프롬프트 없음>';
-            } catch (e) {
-                console.error('[BOT] LV1 프롬프트 업데이트 실패:', e);
+            const textEl = box.querySelector('.lv1-prompt-text');
+            const currentPrompt = textEl.textContent === '<프롬프트 없음>' ? '' : textEl.textContent;
+
+            let modal = document.getElementById('lv1-prompt-edit-modal');
+            if (!modal) {
+                modal = document.createElement('div');
+                modal.id = 'lv1-prompt-edit-modal';
+                document.body.appendChild(modal);
             }
+            modal.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:10000; display:flex; align-items:center; justify-content:center;';
+            modal.innerHTML = `<div style="background:var(--surface); border-radius:12px; width:90vw; max-width:600px; max-height:80vh; display:flex; flex-direction:column; overflow:hidden;">
+                <div style="padding:12px 16px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
+                    <h3 style="margin:0; font-size:0.95rem;">프롬프트 편집</h3>
+                    <button onclick="document.getElementById('lv1-prompt-edit-modal').style.display='none'" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer;">&times;</button>
+                </div>
+                <div style="padding:12px 16px; font-size:0.75rem; color:var(--text2);">${escHtml(character)} / ${escHtml(filename)}</div>
+                <div style="padding:0 16px 16px; flex:1; overflow:auto;">
+                    <textarea id="lv1-prompt-edit-ta" style="width:100%; min-height:200px; font-size:0.8rem; resize:vertical; border:1px solid var(--border); border-radius:6px; background:var(--surface1); color:var(--text); padding:8px; font-family:inherit;">${escHtml(currentPrompt)}</textarea>
+                </div>
+                <div style="padding:12px 16px; border-top:1px solid var(--border); display:flex; justify-content:flex-end; gap:8px;">
+                    <button onclick="document.getElementById('lv1-prompt-edit-modal').style.display='none'" style="padding:6px 14px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); cursor:pointer;">취소</button>
+                    <button id="lv1-prompt-edit-save" style="padding:6px 14px; border-radius:6px; border:none; background:var(--accent); color:#fff; cursor:pointer; font-weight:600;">저장</button>
+                </div>
+            </div>`;
+
+            const ta = document.getElementById('lv1-prompt-edit-ta');
+            const saveBtn = document.getElementById('lv1-prompt-edit-save');
+            saveBtn.onclick = async () => {
+                const prompt = ta.value;
+                saveBtn.disabled = true;
+                saveBtn.textContent = '저장 중...';
+                try {
+                    await fetch('/api/bot_mode/prompt', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({bot: botCurrentBot, character, filename, prompt})
+                    });
+                    textEl.textContent = prompt || '<프롬프트 없음>';
+                    modal.style.display = 'none';
+                    showToast('프롬프트 저장됨', 'success');
+                } catch (e) {
+                    console.error('[BOT] LV1 프롬프트 저장 실패:', e);
+                    showToast('저장 실패', 'error');
+                } finally {
+                    saveBtn.disabled = false;
+                    saveBtn.textContent = '저장';
+                }
+            };
         }
 
         function lv1TogglePrompt(textEl) {
@@ -14451,7 +14842,7 @@
                 });
                 const data = await resp.json();
                 if (data.error) { alert(data.error); return; }
-                await loadBotCharImages(charName);
+                await loadBotCharDetailImages(charName);
                 showToast('이미지 삭제됨');
             } catch (e) {
                 console.error('[BOT] 이미지 삭제 실패:', e);
@@ -14480,7 +14871,7 @@
                         console.error('[BOT] 업로드 실패:', e);
                     }
                 }
-                await loadBotCharImages(charName);
+                await loadBotCharDetailImages(charName);
                 showToast(`${input.files.length}개 이미지 업로드됨`);
             };
             input.click();
@@ -14760,7 +15151,7 @@
                 const data = await resp.json();
                 if (data.error) { alert(data.error); return; }
                 document.getElementById('bot-asset-import-modal').style.display = 'none';
-                await loadBotCharImages(window._botAssetImportCharName);
+                await loadBotCharDetailImages(window._botAssetImportCharName);
                 showToast(`${data.count}개 이미지 가져옴`);
             } catch (e) {
                 console.error('[BOT] 에셋 가져오기 실패:', e);
