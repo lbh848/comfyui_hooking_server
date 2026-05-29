@@ -40,6 +40,7 @@ logging.basicConfig(level=logging.INFO, format='[%(name)s] %(message)s')
 from modes import llm_service
 from modes import autocomplete_service
 from modes import asset_tool_mode
+from modes import bot_mode
 from modes import embedding_service
 import importlib.util
 
@@ -124,6 +125,7 @@ REPORT_FILE = os.path.join(REPORT_DIR, "enhence_prompt_report.md")
 for _d in [WORKFLOW_DIR, CURRENT_WORK_DIR, WORKFLOW_BACKUP_DIR, LOG_DIR, FRONTEND_DIR, MODE_WORKFLOW_DIR, CURRENT_MODE_WORK_DIR,
            os.path.join(WORKFLOW_BACKUP_DIR, "mode", "outfit_mode"), REPORT_DIR,
            os.path.join(BASE_DIR, "asset_data"), os.path.join(BASE_DIR, "asset"),
+           os.path.join(BASE_DIR, "bot"),
            os.path.join(BASE_DIR, "pose_data")]:
     os.makedirs(_d, exist_ok=True)
 
@@ -4610,6 +4612,17 @@ app.router.add_get("/api/asset_mode/ep_settings/{character}", handle_api_ep_sett
 app.router.add_get("/api/asset_mode/ep_settings_last", handle_api_ep_settings_last_get)
 app.router.add_post("/api/asset_mode/ep_settings", handle_api_ep_settings_post)
 app.router.add_get("/api/asset_mode/export/{character}", handle_api_asset_mode_export)
+# ─── 봇 모드 API 라우트 ──────────────────────────────────
+app.router.add_get("/api/bot_mode/bots", bot_mode.handle_get_bots)
+app.router.add_post("/api/bot_mode/action", bot_mode.handle_bot_action)
+app.router.add_get("/api/bot_mode/images", bot_mode.handle_get_images)
+app.router.add_get("/api/bot_mode/image/{bot}/{character}/{filename}", bot_mode.handle_get_image)
+app.router.add_post("/api/bot_mode/upload", bot_mode.handle_upload_image)
+app.router.add_post("/api/bot_mode/import_asset", bot_mode.handle_import_asset)
+app.router.add_post("/api/bot_mode/prompt", bot_mode.handle_update_prompt)
+app.router.add_post("/api/bot_mode/delete_image", bot_mode.handle_delete_image)
+app.router.add_get("/api/bot_mode/asset_images", bot_mode.handle_get_asset_images)
+app.router.add_get("/api/bot_mode/asset_character_images", bot_mode.handle_get_asset_character_images)
 # 자동완성 API
 app.router.add_get("/api/autocomplete", handle_api_autocomplete)
 # ─── 에셋툴 API 핸들러 ──────────────────────────────────
@@ -6015,6 +6028,7 @@ def _backup_data_on_startup():
     from modes.asset_mode import TAGS_FILE, ASSET_DATA_DIR, NAME_MAPPING_FILE, HIDDEN_TAGS_FILE
     from modes.embedding_service import PROFILE_MAP_FILE
     from modes.lora_mode import LORA_MANAGE_FILE
+    from modes.bot_mode import BOT_DATA_FILE
 
     MAX_BACKUPS = 50
     backup_dir = os.path.join(ASSET_DATA_DIR, "backup")
@@ -6027,6 +6041,7 @@ def _backup_data_on_startup():
         ("embedding_profile_map", PROFILE_MAP_FILE),
         ("name_mapping", NAME_MAPPING_FILE),
         ("lora_manage", LORA_MANAGE_FILE),
+        ("bot", BOT_DATA_FILE),
     ]
 
     for prefix, src_path in backup_targets:

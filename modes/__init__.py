@@ -4,6 +4,7 @@ from .outfit_mode import OutfitMode, outfit_mode
 from .prompt_enhance_mode import PromptEnhanceMode, enhance_mode
 from .asset_mode import AssetMode, asset_mode
 from .asset_tool_mode import AssetToolMode
+from .bot_mode import BotMode, bot_mode
 from .pose_mode import PoseMode, pose_mode
 from .chain_preset_mode import ChainPresetMode, chain_preset_mode
 from .mode_logger import ModeLogger, mode_logger
@@ -15,6 +16,7 @@ __all__ = [
     "PromptEnhanceMode", "enhance_mode",
     "AssetMode", "asset_mode",
     "AssetToolMode",
+    "BotMode", "bot_mode",
     "PoseMode", "pose_mode",
     "ChainPresetMode", "chain_preset_mode",
     "ModeLogger", "mode_logger",
