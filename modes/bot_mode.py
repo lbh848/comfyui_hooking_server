@@ -1228,12 +1228,21 @@ class BotDataPatcher:
             return _json_error(str(e))
 
     async def handle_run_utility(self, request):
-        """POST /api/bot_mode/run_utility - 캐릭터별로 유틸리티 워크플로우 순환 실행"""
+        """POST /api/bot_mode/run_utility - 단일 캐릭터 유틸리티 워크플로우 실행"""
         try:
             body = await request.json()
             bot_name = body.get("bot_name", "").strip()
+            char_name = body.get("char_name", "").strip()
             if not bot_name:
                 return _json_error("봇 이름이 비어있습니다.")
+            if not char_name:
+                return _json_error("캐릭터 이름이 비어있습니다.")
+
+            # 기존 유틸리티 결과 삭제
+            result_path = os.path.join(BOT_DIR, bot_name, char_name, "_utility_result.webp")
+            if os.path.isfile(result_path):
+                os.remove(result_path)
+                print(f"[UTILITY] 기존 결과 삭제: {result_path}")
 
             # 워크플로우 로드
             wf_api, wf_err = await self._load_utility_workflow()
@@ -1245,67 +1254,39 @@ class BotDataPatcher:
             bot = next((b for b in data["bots"] if b["name"] == bot_name), None)
             if not bot:
                 return _json_error(f"봇을 찾을 수 없습니다: {bot_name}")
+            char = next((c for c in bot.get("characters", []) if c["name"] == char_name), None)
+            if not char:
+                return _json_error(f"캐릭터를 찾을 수 없습니다: {char_name}")
+            if not char.get("rep_images"):
+                return _json_error(f"대표 이미지가 없는 캐릭터입니다: {char_name}")
 
-            # server.py의 함수들을 사용하기 위해 지연 import
-            from server import (
-                submit_workflow_to_comfy, build_prompt_with_workflow,
-                fetch_real_history, fetch_real_image
-            )
+            # 설정 로드
+            settings = _load_utility_settings(bot_name, char_name)
+            prompt_text = build_utility_prompt(bot_name, char_name, settings)
+            print(f"[UTILITY] 실행: {char_name} | 프롬프트:\n{prompt_text}")
 
-            results = []
-            errors = []
-
-            for char in bot.get("characters", []):
-                char_name = char["name"]
-                rep_images = char.get("rep_images", [])
-                if not rep_images:
-                    print(f"[UTILITY] 캐릭터 '{char_name}' 대표 이미지 없음, 스킵")
+            # 워크플로우에 프롬프트 주입
+            import copy
+            wf = copy.deepcopy(wf_api)
+            for nid, ninfo in wf.items():
+                if not isinstance(ninfo, dict):
                     continue
+                title = ninfo.get("_meta", {}).get("title", "")
+                if title == "긍정프롬프트":
+                    ninfo["inputs"]["value"] = prompt_text
 
-                # 설정 로드
-                settings = _load_utility_settings(bot_name, char_name)
-                prompt_text = build_utility_prompt(bot_name, char_name, settings)
+            # ComfyUI에 제출
+            from server import submit_workflow_to_comfy
+            img_bytes, submit_err = await submit_workflow_to_comfy(wf)
+            if submit_err or not img_bytes:
+                return _json_error(f"{char_name}: {submit_err or '이미지 없음'}")
 
-                print(f"[UTILITY] 실행: {char_name} | 프롬프트:\n{prompt_text}")
-
-                # 워크플로우에 프롬프트 주입
-                import copy
-                wf = copy.deepcopy(wf_api)
-                for nid, ninfo in wf.items():
-                    if not isinstance(ninfo, dict):
-                        continue
-                    title = ninfo.get("_meta", {}).get("title", "")
-                    if title == "긍정프롬프트":
-                        ninfo["inputs"]["value"] = prompt_text
-
-                # ComfyUI에 제출
-                try:
-                    img_bytes, submit_err = await submit_workflow_to_comfy(wf)
-                    if submit_err or not img_bytes:
-                        errors.append(f"{char_name}: {submit_err or '이미지 없음'}")
-                        print(f"[UTILITY] {char_name} 실패: {submit_err}")
-                        continue
-
-                    # 결과 이미지 저장
-                    result_path = os.path.join(BOT_DIR, bot_name, char_name, "_utility_result.webp")
-                    os.makedirs(os.path.dirname(result_path), exist_ok=True)
-                    with open(result_path, "wb") as f:
-                        f.write(img_bytes)
-                    results.append(char_name)
-                    print(f"[UTILITY] {char_name} 결과 저장: {result_path} ({len(img_bytes):,} bytes)")
-                except Exception as e:
-                    errors.append(f"{char_name}: {e}")
-                    print(f"[UTILITY] {char_name} 예외: {e}")
-                    traceback.print_exc()
-
-            msg = f"성공 {len(results)}개"
-            if errors:
-                msg += f", 실패 {len(errors)}개"
-            return _json_ok({
-                "message": msg,
-                "results": results,
-                "errors": errors
-            })
+            # 결과 이미지 저장
+            os.makedirs(os.path.dirname(result_path), exist_ok=True)
+            with open(result_path, "wb") as f:
+                f.write(img_bytes)
+            print(f"[UTILITY] {char_name} 결과 저장: {result_path} ({len(img_bytes):,} bytes)")
+            return _json_ok({"character": char_name, "message": f"{char_name} 완료"})
         except Exception as e:
             print(f"[UTILITY] 실행 실패: {e}")
             traceback.print_exc()

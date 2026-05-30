@@ -14834,24 +14834,42 @@
                     showToast('데이터 패치 실패: ' + patchResult.error, 'error');
                     return;
                 }
-                statusDiv.textContent = '2/2: 유틸리티 워크플로우 실행 중…';
-                showToast(patchResult.message, 'success');
 
-                // 2단계: 유틸리티 워크플로우 실행
-                const utilResp = await fetch('/api/bot_mode/run_utility', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ bot_name: botCurrentBot })
-                });
-                const utilResult = await utilResp.json();
-                if (utilResult.error) {
-                    statusDiv.textContent = '패치 완료, 유틸리티 실패: ' + utilResult.error;
-                    showToast('유틸리티 실행 실패: ' + utilResult.error, 'error');
-                } else {
-                    statusDiv.textContent = `완료: ${patchResult.message} / 유틸리티 ${utilResult.message}`;
-                    showToast(`유틸리티 ${utilResult.message}`, 'success');
+                // 2단계: 유틸리티 워크플로우 - 캐릭터별 순환 실행
+                const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
+                const chars = (bot?.characters || []).filter(c => (c.rep_images || []).length > 0);
+                if (chars.length === 0) {
+                    statusDiv.textContent = `완료: ${patchResult.message} (유틸리티 대상 없음)`;
+                    showToast(patchResult.message, 'success');
                     renderBotCharacters();
+                    return;
                 }
+
+                let success = 0, fail = 0;
+                for (let i = 0; i < chars.length; i++) {
+                    statusDiv.textContent = `2/2: 유틸리티 ${i + 1}/${chars.length} - ${chars[i].name}`;
+                    try {
+                        const resp = await fetch('/api/bot_mode/run_utility', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ bot_name: botCurrentBot, char_name: chars[i].name })
+                        });
+                        const result = await resp.json();
+                        if (result.error) {
+                            fail++;
+                            showToast(`${chars[i].name} 실패: ${result.error}`, 'error');
+                        } else {
+                            success++;
+                        }
+                    } catch (e) {
+                        fail++;
+                        showToast(`${chars[i].name} 요청 실패`, 'error');
+                    }
+                }
+                const utilMsg = `유틸리티 완료: 성공 ${success}/${chars.length}` + (fail > 0 ? ` 실패 ${fail}` : '');
+                statusDiv.textContent = `${patchResult.message} / ${utilMsg}`;
+                showToast(utilMsg, success === chars.length ? 'success' : 'error');
+                renderBotCharacters();
             } catch (e) {
                 statusDiv.textContent = '요청 실패: ' + e.message;
                 showToast('데이터 패치 요청 실패: ' + e.message, 'error');
