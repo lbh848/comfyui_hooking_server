@@ -653,6 +653,59 @@ class BotMode:
                 print(f"[BOT_MODE] 대표이미지 파일 없음: {fp}")
         return results
 
+    def _get_utility_image_paths(self, bot_name: str, char_name: str = "") -> list[dict]:
+        """유틸리티 결과 이미지(_utility_result.webp) 경로 목록 반환."""
+        results = []
+        if char_name:
+            chars = [char_name]
+        else:
+            data = _load_bot_data()
+            bot = next((b for b in data.get("bots", []) if b["name"] == bot_name), None)
+            chars = [c["name"] for c in (bot.get("characters", []) if bot else [])] if bot else []
+
+        for cn in chars:
+            fp = os.path.join(BOT_DIR, bot_name, cn, "_utility_result.webp")
+            if os.path.isfile(fp):
+                results.append({"character": cn, "filename": "_utility_result.webp", "filepath": fp})
+        return results
+
+    async def handle_get_utility_preview(self, request):
+        """GET /api/bot_mode/utility_preview?bot=X&character=Y"""
+        try:
+            bot_name = request.query.get("bot", "").strip()
+            char_name = request.query.get("character", "").strip()
+            if not bot_name:
+                return _json_error("봇 이름이 필요합니다.")
+
+            reps = self._get_utility_image_paths(bot_name, char_name)
+            results = []
+            for rep in reps:
+                base = os.path.splitext(rep["filename"])[0]
+                char_dir = os.path.join(BOT_DIR, bot_name, rep["character"])
+                prompt_path = os.path.join(char_dir, f"{base}_prompt.json")
+                prompt = ""
+                negative = ""
+                if os.path.isfile(prompt_path):
+                    try:
+                        with open(prompt_path, "r", encoding="utf-8") as pf:
+                            pdata = json.load(pf)
+                            prompt = pdata.get("prompt", "")
+                            negative = pdata.get("negative", "")
+                    except Exception:
+                        pass
+                results.append({
+                    "character": rep["character"],
+                    "filename": rep["filename"],
+                    "prompt": prompt,
+                    "negative": negative,
+                    "url": f"/api/bot_mode/image/{bot_name}/{rep['character']}/{rep['filename']}",
+                })
+            return _json_ok({"images": results})
+        except Exception as e:
+            print(f"[BOT_MODE] utility_preview 오류: {e}")
+            traceback.print_exc()
+            return _json_error(str(e))
+
     async def handle_get_asset_chars_with_rep(self, request):
         """GET /api/bot_mode/asset_chars_with_rep - 에셋 캐릭터별 대표 이미지 목록."""
         try:
@@ -935,6 +988,111 @@ class BotMode:
             return _json_ok({"total": len(reps), "success_count": success_count, "fail_count": fail_count})
         except Exception as e:
             print(f"[BOT_MODE] batch_set_negative 오류: {e}")
+            traceback.print_exc()
+            return _json_error(str(e))
+
+    async def handle_batch_analyze_utility(self, request):
+        """POST /api/bot_mode/batch_analyze_utility - 유틸리티 이미지 일괄 태그 분석."""
+        try:
+            body = await request.json()
+            bot_name = body.get("bot", "").strip()
+            char_name = body.get("character", "").strip()
+            if not bot_name:
+                return _json_error("봇 이름이 필요합니다.")
+
+            reps = self._get_utility_image_paths(bot_name, char_name)
+            only_filenames = body.get("filenames", [])
+            if only_filenames:
+                reps = [r for r in reps if r["filename"] in only_filenames]
+            if not reps:
+                return _json_ok({"total": 0, "success_count": 0, "fail_count": 0})
+
+            asset_tool = self._asset_tool
+            if not asset_tool or not asset_tool.workflow_source_path:
+                return _json_error("태그 분석 워크플로우 경로가 설정되지 않았습니다")
+
+            total = len(reps)
+            success_count = 0
+            fail_count = 0
+            for i, rep in enumerate(reps):
+                try:
+                    with open(rep["filepath"], "rb") as f:
+                        image_data = f.read()
+                    analyze_result = await asset_tool.analyze_image(image_data, "expressions")
+                    tags = analyze_result.get("tags", [])
+                    positive = ", ".join(tags) if tags else ""
+
+                    base = os.path.splitext(rep["filename"])[0]
+                    char_dir = os.path.join(BOT_DIR, bot_name, rep["character"])
+                    prompt_path = os.path.join(char_dir, f"{base}_prompt.json")
+                    existing = {}
+                    if os.path.isfile(prompt_path):
+                        try:
+                            with open(prompt_path, "r", encoding="utf-8") as pf:
+                                existing = json.load(pf)
+                        except Exception:
+                            pass
+                    existing["prompt"] = positive
+                    existing.setdefault("negative", "")
+                    with open(prompt_path, "w", encoding="utf-8") as pf:
+                        json.dump(existing, pf, ensure_ascii=False, indent=2)
+                    success_count += 1
+                    print(f"[BOT_MODE] 유틸리티 분석 완료 ({i+1}/{total}): {rep['character']}/{rep['filename']} ({len(tags)}개 태그)")
+                except Exception as e:
+                    fail_count += 1
+                    print(f"[BOT_MODE] 유틸리티 분석 실패 ({i+1}/{total}): {rep['character']}/{rep['filename']} - {e}")
+                    traceback.print_exc()
+
+            return _json_ok({"total": total, "success_count": success_count, "fail_count": fail_count})
+        except Exception as e:
+            print(f"[BOT_MODE] 유틸리티 일괄 분석 오류: {e}")
+            traceback.print_exc()
+            return _json_error(str(e))
+
+    async def handle_batch_set_negative_utility(self, request):
+        """POST /api/bot_mode/batch_set_negative_utility - 유틸리티 이미지에 부정프롬프트 일괄 적용."""
+        try:
+            body = await request.json()
+            bot_name = body.get("bot", "").strip()
+            char_name = body.get("character", "").strip()
+            negative_tags = body.get("negative_tags", "")
+            if not bot_name:
+                return _json_error("봇 이름이 필요합니다.")
+
+            reps = self._get_utility_image_paths(bot_name, char_name)
+            only_filenames = body.get("filenames", [])
+            if only_filenames:
+                reps = [r for r in reps if r["filename"] in only_filenames]
+            if not reps:
+                return _json_ok({"total": 0, "success_count": 0, "fail_count": 0})
+
+            success_count = 0
+            fail_count = 0
+            for rep in reps:
+                try:
+                    base = os.path.splitext(rep["filename"])[0]
+                    char_dir = os.path.join(BOT_DIR, bot_name, rep["character"])
+                    prompt_path = os.path.join(char_dir, f"{base}_prompt.json")
+                    existing = {}
+                    if os.path.isfile(prompt_path):
+                        try:
+                            with open(prompt_path, "r", encoding="utf-8") as pf:
+                                existing = json.load(pf)
+                        except Exception:
+                            pass
+                    existing["negative"] = negative_tags
+                    with open(prompt_path, "w", encoding="utf-8") as pf:
+                        json.dump(existing, pf, ensure_ascii=False, indent=2)
+                    success_count += 1
+                    print(f"[BOT_MODE] 유틸리티 부정프롬프트 적용: {rep['character']}/{rep['filename']}")
+                except Exception as e:
+                    fail_count += 1
+                    print(f"[BOT_MODE] 유틸리티 부정프롬프트 실패: {rep['character']}/{rep['filename']} - {e}")
+                    traceback.print_exc()
+
+            return _json_ok({"total": len(reps), "success_count": success_count, "fail_count": fail_count})
+        except Exception as e:
+            print(f"[BOT_MODE] batch_set_negative_utility 오류: {e}")
             traceback.print_exc()
             return _json_error(str(e))
 

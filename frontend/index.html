@@ -3062,6 +3062,12 @@
                             <button id="btn-data-patch" onclick="dataPatchStart()" style="width:100%; background:#1565C0; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">데이터 패치 시작</button>
                             <div id="data-patch-status" style="font-size:0.7rem; color:var(--text2); margin-top:4px; display:none;"></div>
                         </div>
+                        <div style="background:rgba(255,152,0,0.08); border-radius:8px; padding:10px; margin-top:8px;">
+                            <div class="section-title">유틸리티 이미지 일괄 작업</div>
+                            <button id="btn-bot-util-analyze" onclick="botUtilityBatchAnalyze()" style="width:100%; background:#E65100; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">유틸리티 태그 일괄 분석</button>
+                            <button id="btn-bot-util-negative" onclick="botUtilityBatchNegative()" style="width:100%; margin-top:4px; background:#BF360C; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">유틸리티 부정 태그 일괄 적용</button>
+                            <div id="bot-util-status" style="font-size:0.7rem; color:var(--text2); margin-top:4px; display:none;"></div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -13720,6 +13726,19 @@
                                 <img src="${utilUrl}" loading="lazy" onerror="this.style.display='none'"
                                     onclick="event.stopPropagation(); openLightbox(this.src)"
                                     style="cursor:zoom-in; border:3px solid var(--accent); border-radius:6px;">
+                                <div class="lv1-prompt-box" data-filename="_utility_result.webp" data-character="${escAttr(charName)}" data-negative="${escAttr(utilImg.negative || '')}"
+                                    style="width:300px; background:var(--surface2); border-radius:0 0 6px 6px;">
+                                    <div class="lv1-prompt-text" style="padding:4px 6px; font-size:0.7rem; color:var(--text2); line-height:1.3; word-break:break-word;
+                                        max-height:3.9em; overflow:hidden; cursor:pointer;"
+                                        onclick="lv1TogglePrompt(this)">${escHtml(utilImg.prompt || '<프롬프트 없음>')}</div>
+                                    <div class="lv1-negative-text" style="padding:4px 6px; font-size:0.7rem; color:#c084fc; line-height:1.3; word-break:break-word; display:none; border-top:1px dashed var(--border);">${escHtml(utilImg.negative || '<부정 프롬프트 없음>')}</div>
+                                    <div style="display:flex; border-top:1px solid var(--border);">
+                                        <button onclick="event.stopPropagation(); lv1ToggleExpand(this)"
+                                            style="flex:1; background:none; border:none; color:var(--text2); cursor:pointer; font-size:0.65rem; padding:2px;">펼치기</button>
+                                        <button onclick="event.stopPropagation(); lv1OpenEditModal(this)"
+                                            style="flex:1; background:none; border:none; color:var(--accent); cursor:pointer; font-size:0.65rem; padding:2px;">편집</button>
+                                    </div>
+                                </div>
                             `;
                             thumbsEl.appendChild(utilWrap);
                         }
@@ -14992,6 +15011,213 @@
             } finally {
                 btn.disabled = false;
                 btn.textContent = '저장';
+            }
+        }
+
+        // ─── 유틸리티 이미지 일괄 작업 ──────────────────────────
+        async function botUtilityBatchAnalyze() {
+            if (!botCurrentBot) { showToast('봇을 먼저 선택하세요', 'error'); return; }
+            const statusDiv = document.getElementById('bot-util-status');
+            statusDiv.style.display = 'block';
+            statusDiv.textContent = '유틸리티 이미지 목록 로드 중...';
+            try {
+                const prevResp = await fetch(`/api/bot_mode/utility_preview?bot=${encodeURIComponent(botCurrentBot)}&character=`);
+                const prevData = await prevResp.json();
+                if (prevData.error) { showToast(prevData.error, 'error'); statusDiv.style.display = 'none'; return; }
+                const images = prevData.images || [];
+                if (images.length === 0) { showToast('유틸리티 이미지가 없습니다. 데이터 패치를 먼저 실행하세요.', 'error'); statusDiv.style.display = 'none'; return; }
+                botShowUtilityAnalyzeModal(images, statusDiv);
+            } catch (e) {
+                showToast('유틸리티 이미지 로드 실패', 'error');
+                statusDiv.style.display = 'none';
+            }
+        }
+
+        function botShowUtilityAnalyzeModal(images, statusEl) {
+            let modal = document.getElementById('bot-util-analyze-modal');
+            if (!modal) { modal = document.createElement('div'); modal.id = 'bot-util-analyze-modal'; document.body.appendChild(modal); }
+            const hasPrompt = images.filter(i => i.prompt).length;
+            const noPrompt = images.length - hasPrompt;
+            let listHtml = images.map((img, i) => {
+                const preview = img.prompt ? escHtml(img.prompt.substring(0, 80)) + (img.prompt.length > 80 ? '...' : '') : '<span style="color:var(--text2);">프롬프트 없음</span>';
+                const hasP = img.prompt ? 'util-has-prompt' : '';
+                return `<label style="display:flex; align-items:center; gap:10px; padding:8px; border-radius:6px; cursor:pointer; border:1px solid var(--border); background:var(--surface2);"
+                    class="util-analyze-item ${hasP}" data-idx="${i}">
+                    <input type="checkbox" checked class="util-analyze-check" data-filename="${escAttr(img.filename)}" data-character="${escAttr(img.character)}"
+                        style="width:18px; height:18px; cursor:pointer;">
+                    <img src="${img.url}" loading="lazy" style="width:60px; height:60px; object-fit:cover; border-radius:4px; flex-shrink:0;">
+                    <div style="flex:1; min-width:0;">
+                        <div style="font-size:0.8rem; font-weight:600;">${escHtml(img.character)}</div>
+                        <div style="font-size:0.7rem; color:var(--text2); margin-top:2px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${preview}</div>
+                    </div>
+                </label>`;
+            }).join('');
+            modal.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:10000; display:flex; align-items:center; justify-content:center;';
+            modal.innerHTML = `<div style="background:var(--surface); border-radius:12px; width:90vw; max-width:700px; max-height:85vh; display:flex; flex-direction:column; overflow:hidden;">
+                <div style="padding:16px 20px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
+                    <h3 style="margin:0;">유틸리티 태그 분석 대상 선택</h3>
+                    <button onclick="document.getElementById('bot-util-analyze-modal').style.display='none'" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer;">&times;</button>
+                </div>
+                <div style="padding:8px 20px; font-size:0.75rem; color:var(--text2); display:flex; gap:12px; align-items:center; border-bottom:1px solid var(--border);">
+                    <span>총 ${images.length}장 (프롬프트 있음: ${hasPrompt}, 없음: ${noPrompt})</span>
+                    <button onclick="document.querySelectorAll('.util-analyze-check').forEach(c=>c.checked=true)" style="background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:2px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">전체 선택</button>
+                    <button onclick="document.querySelectorAll('.util-analyze-check').forEach(c=>c.checked=false)" style="background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:2px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">전체 해제</button>
+                    <button onclick="document.querySelectorAll('.util-analyze-item.util-has-prompt .util-analyze-check').forEach(c=>c.checked=false)" style="background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:2px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">프롬프트 있는것만 해제</button>
+                </div>
+                <div style="padding:12px 20px; overflow-y:auto; flex:1; display:flex; flex-direction:column; gap:6px;">${listHtml}</div>
+                <div style="padding:12px 20px; border-top:1px solid var(--border); display:flex; justify-content:flex-end; gap:8px;">
+                    <button onclick="document.getElementById('bot-util-analyze-modal').style.display='none'" style="padding:8px 16px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); cursor:pointer;">취소</button>
+                    <button onclick="botDoUtilityAnalyze()" style="padding:8px 16px; border-radius:6px; border:none; background:#E65100; color:#fff; cursor:pointer; font-weight:600;">선택 분석 실행</button>
+                </div>
+            </div>`;
+        }
+
+        async function botDoUtilityAnalyze() {
+            const checks = document.querySelectorAll('.util-analyze-check:checked');
+            if (checks.length === 0) { showToast('선택된 이미지가 없습니다', 'error'); return; }
+            const filenames = [...checks].map(c => c.dataset.filename);
+            document.getElementById('bot-util-analyze-modal').style.display = 'none';
+            const btn = document.getElementById('btn-bot-util-analyze');
+            const statusDiv = document.getElementById('bot-util-status');
+            btn.disabled = true;
+            btn.textContent = '분석 중...';
+            statusDiv.style.display = 'block';
+            statusDiv.textContent = `0/${filenames.length} 분석 중...`;
+            try {
+                const resp = await fetch('/api/bot_mode/batch_analyze_utility', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({bot: botCurrentBot, filenames})
+                });
+                const data = await resp.json();
+                if (data.error) { showToast(data.error, 'error'); return; }
+                const ok = data.success_count || 0;
+                const fail = data.fail_count || 0;
+                statusDiv.textContent = `완료: ${ok}장 성공${fail > 0 ? `, ${fail}장 실패` : ''}`;
+                showToast(`유틸리티 태그 분석 완료 (${ok}장)`, fail > 0 ? 'warning' : 'success');
+                renderBotCharacters();
+            } catch (e) {
+                showToast('유틸리티 태그 분석 오류', 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '유틸리티 태그 일괄 분석';
+            }
+        }
+
+        async function botUtilityBatchNegative() {
+            if (!botCurrentBot) { showToast('봇을 먼저 선택하세요', 'error'); return; }
+            // 부정 프리셋 로드
+            if (!assetTags) {
+                try {
+                    const resp = await fetch('/api/asset_mode/tags');
+                    assetTags = await resp.json();
+                } catch (e) { showToast('태그 로드 실패', 'error'); return; }
+            }
+            const presets = assetTags.negative_presets || {};
+            const presetNames = Object.keys(presets);
+            if (presetNames.length === 0) { showToast('부정 프리셋이 없습니다', 'error'); return; }
+
+            const statusDiv = document.getElementById('bot-util-status');
+            statusDiv.style.display = 'block';
+            statusDiv.textContent = '유틸리티 이미지 목록 로드 중...';
+            try {
+                const prevResp = await fetch(`/api/bot_mode/utility_preview?bot=${encodeURIComponent(botCurrentBot)}&character=`);
+                const prevData = await prevResp.json();
+                if (prevData.error) { showToast(prevData.error, 'error'); statusDiv.style.display = 'none'; return; }
+                const images = prevData.images || [];
+                if (images.length === 0) { showToast('유틸리티 이미지가 없습니다', 'error'); statusDiv.style.display = 'none'; return; }
+                botShowUtilityNegativeModal(images, presets, presetNames);
+            } catch (e) {
+                showToast('유틸리티 이미지 로드 실패', 'error');
+                statusDiv.style.display = 'none';
+            }
+        }
+
+        function botShowUtilityNegativeModal(images, presets, presetNames) {
+            let modal = document.getElementById('bot-util-negative-modal');
+            if (!modal) { modal = document.createElement('div'); modal.id = 'bot-util-negative-modal'; document.body.appendChild(modal); }
+            const presetOptionsHtml = presetNames.map(n => `<option value="${escAttr(n)}">${escHtml(n)} (${(presets[n]||[]).length}개)</option>`).join('');
+            let listHtml = images.map((img, i) => {
+                const negPreview = img.negative ? escHtml(img.negative.substring(0, 60)) + (img.negative.length > 60 ? '...' : '') : '<span style="color:var(--text2);">없음</span>';
+                const hasNegClass = img.negative ? 'util-has-neg' : '';
+                return `<label style="display:flex; align-items:center; gap:10px; padding:8px; border-radius:6px; cursor:pointer; border:1px solid var(--border); background:var(--surface2);"
+                    class="util-neg-item ${hasNegClass}" data-idx="${i}">
+                    <input type="checkbox" checked class="util-neg-check" data-filename="${escAttr(img.filename)}" data-character="${escAttr(img.character)}"
+                        style="width:18px; height:18px; cursor:pointer;">
+                    <img src="${img.url}" loading="lazy" style="width:60px; height:60px; object-fit:cover; border-radius:4px; flex-shrink:0;">
+                    <div style="flex:1; min-width:0;">
+                        <div style="font-size:0.8rem; font-weight:600;">${escHtml(img.character)}</div>
+                        <div style="font-size:0.7rem; color:var(--text2); margin-top:2px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">부정: ${negPreview}</div>
+                    </div>
+                </label>`;
+            }).join('');
+            modal.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:10000; display:flex; align-items:center; justify-content:center;';
+            modal.innerHTML = `<div style="background:var(--surface); border-radius:12px; width:90vw; max-width:700px; max-height:85vh; display:flex; flex-direction:column; overflow:hidden;">
+                <div style="padding:16px 20px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
+                    <h3 style="margin:0;">유틸리티 부정 태그 일괄 적용</h3>
+                    <button onclick="document.getElementById('bot-util-negative-modal').style.display='none'" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer;">&times;</button>
+                </div>
+                <div style="padding:8px 20px; border-bottom:1px solid var(--border);">
+                    <div style="display:flex; gap:8px; align-items:center; margin-bottom:6px;">
+                        <span style="font-size:0.8rem; font-weight:600;">프리셋:</span>
+                        <select id="util-neg-modal-preset" style="flex:1; padding:4px 8px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text);">${presetOptionsHtml}</select>
+                    </div>
+                    <div id="util-neg-modal-preview" style="font-size:0.7rem; color:var(--text2); padding:4px 6px; background:var(--surface2); border-radius:4px; min-height:1.5em; word-break:break-all;"></div>
+                </div>
+                <div style="padding:8px 20px; font-size:0.75rem; color:var(--text2); display:flex; gap:8px; align-items:center; border-bottom:1px solid var(--border);">
+                    <button onclick="document.querySelectorAll('.util-neg-check').forEach(c=>c.checked=true)" style="background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:2px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">전체 선택</button>
+                    <button onclick="document.querySelectorAll('.util-neg-check').forEach(c=>c.checked=false)" style="background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:2px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">전체 해제</button>
+                    <button onclick="document.querySelectorAll('.util-neg-item.util-has-neg .util-neg-check').forEach(c=>c.checked=false)" style="background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:2px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">부정있는것만 해제</button>
+                </div>
+                <div style="padding:12px 20px; overflow-y:auto; flex:1; display:flex; flex-direction:column; gap:6px;">${listHtml}</div>
+                <div style="padding:12px 20px; border-top:1px solid var(--border); display:flex; justify-content:flex-end; gap:8px;">
+                    <button onclick="document.getElementById('bot-util-negative-modal').style.display='none'" style="padding:8px 16px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); cursor:pointer;">취소</button>
+                    <button onclick="botDoUtilityNegative()" style="padding:8px 16px; border-radius:6px; border:none; background:#BF360C; color:#fff; cursor:pointer; font-weight:600;">선택 적용 실행</button>
+                </div>
+            </div>`;
+            const presetSel = document.getElementById('util-neg-modal-preset');
+            const previewEl = document.getElementById('util-neg-modal-preview');
+            function updatePreview() {
+                const p = presets[presetSel.value] || [];
+                previewEl.textContent = p.join(', ') || '태그 없음';
+            }
+            presetSel.addEventListener('change', updatePreview);
+            updatePreview();
+        }
+
+        async function botDoUtilityNegative() {
+            const checks = document.querySelectorAll('.util-neg-check:checked');
+            if (checks.length === 0) { showToast('선택된 이미지가 없습니다', 'error'); return; }
+            const filenames = [...checks].map(c => c.dataset.filename);
+            const presetSel = document.getElementById('util-neg-modal-preset');
+            const presetName = presetSel.value;
+            const presetTags = (assetTags.negative_presets || {})[presetName] || [];
+            const negativeTags = presetTags.join(', ');
+            document.getElementById('bot-util-negative-modal').style.display = 'none';
+            const btn = document.getElementById('btn-bot-util-negative');
+            const statusDiv = document.getElementById('bot-util-status');
+            btn.disabled = true;
+            btn.textContent = '적용 중...';
+            statusDiv.style.display = 'block';
+            statusDiv.textContent = `0/${filenames.length} 적용 중...`;
+            try {
+                const resp = await fetch('/api/bot_mode/batch_set_negative_utility', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({bot: botCurrentBot, negative_tags: negativeTags, filenames})
+                });
+                const data = await resp.json();
+                if (data.error) { showToast(data.error, 'error'); return; }
+                const ok = data.success_count || 0;
+                const fail = data.fail_count || 0;
+                statusDiv.textContent = `완료: ${ok}장 성공${fail > 0 ? `, ${fail}장 실패` : ''}`;
+                showToast(`유틸리티 부정 태그 적용 완료 (${ok}장)`, fail > 0 ? 'warning' : 'success');
+                renderBotCharacters();
+            } catch (e) {
+                showToast('유틸리티 부정 태그 적용 오류', 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '유틸리티 부정 태그 일괄 적용';
             }
         }
 

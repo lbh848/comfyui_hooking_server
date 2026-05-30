@@ -4638,6 +4638,9 @@ app.router.add_post("/api/bot_mode/data_patch", data_patcher.handle_data_patch)
 app.router.add_post("/api/bot_mode/run_utility", data_patcher.handle_run_utility)
 app.router.add_get("/api/bot_mode/utility_settings", bot_mode.handle_get_utility_settings)
 app.router.add_post("/api/bot_mode/utility_settings", bot_mode.handle_save_utility_settings)
+app.router.add_get("/api/bot_mode/utility_preview", bot_mode.handle_get_utility_preview)
+app.router.add_post("/api/bot_mode/batch_analyze_utility", bot_mode.handle_batch_analyze_utility)
+app.router.add_post("/api/bot_mode/batch_set_negative_utility", bot_mode.handle_batch_set_negative_utility)
 # 자동완성 API
 app.router.add_get("/api/autocomplete", handle_api_autocomplete)
 # ─── 에셋툴 API 핸들러 ──────────────────────────────────
