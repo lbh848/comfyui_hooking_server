@@ -3057,6 +3057,11 @@
                             <button id="btn-bot-batch-negative" onclick="botBatchSetNegative()" style="width:100%; background:#9C27B0; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">선택 캐릭터 부정 프롬프트 적용</button>
                             <button id="btn-bot-negative-all" onclick="botSetNegativeAllChars()" style="width:100%; margin-top:4px; background:#6A1B9A; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">전체 캐릭터 일괄 부정 프롬프트 적용</button>
                         </div>
+                        <div style="background:rgba(33,150,243,0.08); border-radius:8px; padding:10px; margin-top:8px;">
+                            <div class="section-title">데이터 패치</div>
+                            <button id="btn-data-patch" onclick="dataPatchStart()" style="width:100%; background:#1565C0; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">데이터 패치 시작</button>
+                            <div id="data-patch-status" style="font-size:0.7rem; color:var(--text2); margin-top:4px; display:none;"></div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -13670,6 +13675,9 @@
                         ${badgeHtml}
                         <button class="btn-view-all" onclick="openCharacterDetail('${escAttr(char.name)}')"
                             style="margin-left:auto; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:8px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600; white-space:nowrap;">전체 이미지 보기</button>
+                        <button onclick="event.stopPropagation(); toggleUtilitySettingsModal('${escAttr(char.name)}', this)"
+                            style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:6px 10px; border-radius:6px; cursor:pointer; font-size:0.85rem;"
+                            title="유틸리티 설정">⚙️</button>
                         <span style="font-size:0.9rem;">👁️</span>
                         <div class="inline-add eye-prompt-wrap">
                             <input type="text" id="eye-prompt-${charIdx}" data-bot="${escAttr(botCurrentBot)}" data-char="${escAttr(char.name)}"
@@ -13701,6 +13709,19 @@
                         // 대표 이미지만, 순서대로
                         const repImgs = repImages.map(fn => data.images.find(i => i.filename === fn)).filter(Boolean);
                         const thumbsEl = cardEl.querySelector('.char-thumbs');
+                        // 유틸리티 결과 이미지 (가장 좌측)
+                        const utilImg = data.images.find(i => i.filename === '_utility_result.webp');
+                        if (utilImg) {
+                            const utilWrap = document.createElement('div');
+                            utilWrap.style.cssText = 'display:inline-flex; flex-direction:column; align-items:center; margin-right:6px;';
+                            utilWrap.innerHTML = `
+                                <div style="font-size:0.6rem; color:var(--accent); margin-bottom:2px; font-weight:600;">유틸리티</div>
+                                <img src="${utilImg.url}" loading="lazy" onerror="this.style.display='none'"
+                                    onclick="event.stopPropagation(); openLightbox(this.src)"
+                                    style="cursor:zoom-in; border:3px solid var(--accent); border-radius:6px;">
+                            `;
+                            thumbsEl.appendChild(utilWrap);
+                        }
                         repImgs.forEach((img, idx) => {
                             const isFirst = idx === 0;
                             const wrap = document.createElement('div');
@@ -14787,6 +14808,172 @@
         async function botSetNegativeAllChars() {
             if (!botCurrentBot) return;
             await botShowNegativeModal('');
+        }
+
+        async function dataPatchStart() {
+            if (!botCurrentBot) {
+                showToast('봇을 먼저 선택하세요.', 'error');
+                return;
+            }
+            const btn = document.getElementById('btn-data-patch');
+            const statusDiv = document.getElementById('data-patch-status');
+            btn.disabled = true;
+            btn.textContent = '패치 중…';
+            statusDiv.style.display = 'block';
+            statusDiv.textContent = '1/2: 폴더 생성 + 이미지 복사 중…';
+            try {
+                // 1단계: 데이터 패치 (폴더 + 이미지)
+                const patchResp = await fetch('/api/bot_mode/data_patch', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ bot_name: botCurrentBot })
+                });
+                const patchResult = await patchResp.json();
+                if (patchResult.error) {
+                    statusDiv.textContent = '실패: ' + patchResult.error;
+                    showToast('데이터 패치 실패: ' + patchResult.error, 'error');
+                    return;
+                }
+                statusDiv.textContent = '2/2: 유틸리티 워크플로우 실행 중…';
+                showToast(patchResult.message, 'success');
+
+                // 2단계: 유틸리티 워크플로우 실행
+                const utilResp = await fetch('/api/bot_mode/run_utility', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ bot_name: botCurrentBot })
+                });
+                const utilResult = await utilResp.json();
+                if (utilResult.error) {
+                    statusDiv.textContent = '패치 완료, 유틸리티 실패: ' + utilResult.error;
+                    showToast('유틸리티 실행 실패: ' + utilResult.error, 'error');
+                } else {
+                    statusDiv.textContent = `완료: ${patchResult.message} / 유틸리티 ${utilResult.message}`;
+                    showToast(`유틸리티 ${utilResult.message}`, 'success');
+                    renderBotCharacters();
+                }
+            } catch (e) {
+                statusDiv.textContent = '요청 실패: ' + e.message;
+                showToast('데이터 패치 요청 실패: ' + e.message, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '데이터 패치 시작';
+            }
+        }
+
+        // ─── 유틸리티 설정 모달 ──────────────────────────────
+        function toggleUtilitySettingsModal(charName, btnEl) {
+            const existing = document.getElementById(`utility-modal-${charName}`);
+            if (existing) {
+                existing.remove();
+                return;
+            }
+            // 닫기: 다른 모달이 열려있으면 닫기
+            document.querySelectorAll('[id^="utility-modal-"]').forEach(el => el.remove());
+
+            const modal = document.createElement('div');
+            modal.id = `utility-modal-${charName}`;
+            modal.style.cssText = 'position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:10000; background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:20px; min-width:420px; max-width:520px; box-shadow:0 8px 32px rgba(0,0,0,0.4);';
+            modal.innerHTML = `
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+                    <div style="font-weight:700; font-size:1rem;">⚙️ 유틸리티 설정 - ${escHtml(charName)}</div>
+                    <button onclick="document.getElementById('utility-modal-${escAttr(charName)}').remove()"
+                        style="background:none; border:none; color:var(--text2); font-size:1.2rem; cursor:pointer;">✕</button>
+                </div>
+                <div style="display:flex; flex-direction:column; gap:10px;">
+                    <label style="display:flex; flex-direction:column; gap:4px;">
+                        <span style="font-size:0.8rem; color:var(--text2);">FACE_CROP_TOP</span>
+                        <input type="number" step="0.1" id="util-face-crop-top-${escAttr(charName)}" style="padding:6px 8px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.85rem;">
+                    </label>
+                    <label style="display:flex; flex-direction:column; gap:4px;">
+                        <span style="font-size:0.8rem; color:var(--text2);">FACE_CROP_BOTTOM</span>
+                        <input type="number" step="0.1" id="util-face-crop-bottom-${escAttr(charName)}" style="padding:6px 8px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.85rem;">
+                    </label>
+                    <label style="display:flex; flex-direction:column; gap:4px;">
+                        <span style="font-size:0.8rem; color:var(--text2);">EMB_TARGET</span>
+                        <select id="util-emb-target-${escAttr(charName)}" style="padding:6px 8px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.85rem;">
+                            <option value="대표만">대표만</option>
+                            <option value="둘다">둘다</option>
+                        </select>
+                    </label>
+                    <div style="margin-top:4px;">
+                        <div style="font-size:0.8rem; color:var(--text2); margin-bottom:4px;">프롬프트 미리보기</div>
+                        <pre id="util-prompt-preview-${escAttr(charName)}" style="padding:8px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.75rem; white-space:pre-wrap; word-break:break-all; min-height:60px; font-family:monospace;"></pre>
+                    </div>
+                </div>
+                <div style="display:flex; gap:8px; margin-top:14px; justify-content:flex-end;">
+                    <button id="util-save-btn-${escAttr(charName)}" onclick="saveUtilitySettings('${escAttr(charName)}')"
+                        style="background:var(--accent); color:#fff; border:none; padding:6px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem;">저장</button>
+                </div>
+            `;
+            document.body.appendChild(modal);
+
+            // 설정 로드
+            (async () => {
+                try {
+                    const resp = await fetch(`/api/bot_mode/utility_settings?bot=${encodeURIComponent(botCurrentBot)}&character=${encodeURIComponent(charName)}`);
+                    const data = await resp.json();
+                    const s = data.settings || {};
+                    document.getElementById(`util-face-crop-top-${charName}`).value = s.face_crop_top ?? 1.0;
+                    document.getElementById(`util-face-crop-bottom-${charName}`).value = s.face_crop_bottom ?? 1.0;
+                    document.getElementById(`util-emb-target-${charName}`).value = s.emb_target || '대표만';
+                    document.getElementById(`util-prompt-preview-${charName}`).textContent = data.prompt_preview || '';
+                } catch (e) {
+                    console.error('유틸리티 설정 로드 실패:', e);
+                }
+            })();
+
+            // 입력 변경 시 미리보기 업데이트
+            const updatePreview = () => updateUtilityPreview(charName);
+            modal.querySelectorAll('input, select').forEach(el => {
+                el.addEventListener('input', updatePreview);
+                el.addEventListener('change', updatePreview);
+            });
+        }
+
+        function buildUtilityPromptLocal(charName) {
+            const top = document.getElementById(`util-face-crop-top-${charName}`)?.value ?? 1.0;
+            const bottom = document.getElementById(`util-face-crop-bottom-${charName}`)?.value ?? 1.0;
+            const embSelect = document.getElementById(`util-emb-target-${charName}`)?.value || '대표만';
+            const embValue = embSelect === '대표만' ? 'representation' : 'representation,sub';
+            return `[PATH]soya_bot/${botCurrentBot}/${charName}\n[FACE_CROP_TOP]${top}\n[FACE_CROP_BOTTOM]${bottom}\n[EMB_TARGET]${embValue}\n[END]`;
+        }
+
+        function updateUtilityPreview(charName) {
+            const preview = document.getElementById(`util-prompt-preview-${charName}`);
+            if (preview) preview.textContent = buildUtilityPromptLocal(charName);
+        }
+
+        async function saveUtilitySettings(charName) {
+            const top = parseFloat(document.getElementById(`util-face-crop-top-${charName}`).value) || 1.0;
+            const bottom = parseFloat(document.getElementById(`util-face-crop-bottom-${charName}`).value) || 1.0;
+            const embTarget = document.getElementById(`util-emb-target-${charName}`).value;
+            const btn = document.getElementById(`util-save-btn-${charName}`);
+            btn.disabled = true;
+            btn.textContent = '저장 중…';
+            try {
+                const resp = await fetch('/api/bot_mode/utility_settings', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        bot: botCurrentBot,
+                        character: charName,
+                        settings: { face_crop_top: top, face_crop_bottom: bottom, emb_target: embTarget }
+                    })
+                });
+                const data = await resp.json();
+                if (data.error) {
+                    showToast('저장 실패: ' + data.error, 'error');
+                } else {
+                    showToast('설정 저장 완료', 'success');
+                    document.getElementById(`util-prompt-preview-${charName}`).textContent = data.prompt_preview || '';
+                }
+            } catch (e) {
+                showToast('저장 실패: ' + e.message, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '저장';
+            }
         }
 
         async function botShowNegativeModal(charName) {

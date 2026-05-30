@@ -41,6 +41,7 @@ from modes import llm_service
 from modes import autocomplete_service
 from modes import asset_tool_mode
 from modes import bot_mode
+from modes.bot_mode import data_patcher
 from modes import embedding_service
 import importlib.util
 
@@ -4633,6 +4634,10 @@ app.router.add_post("/api/bot_mode/analyze_single", bot_mode.handle_analyze_sing
 app.router.add_post("/api/bot_mode/set_negative_single", bot_mode.handle_set_negative_single)
 app.router.add_get("/api/bot_mode/asset_images", bot_mode.handle_get_asset_images)
 app.router.add_get("/api/bot_mode/asset_character_images", bot_mode.handle_get_asset_character_images)
+app.router.add_post("/api/bot_mode/data_patch", data_patcher.handle_data_patch)
+app.router.add_post("/api/bot_mode/run_utility", data_patcher.handle_run_utility)
+app.router.add_get("/api/bot_mode/utility_settings", bot_mode.handle_get_utility_settings)
+app.router.add_post("/api/bot_mode/utility_settings", bot_mode.handle_save_utility_settings)
 # 자동완성 API
 app.router.add_get("/api/autocomplete", handle_api_autocomplete)
 # ─── 에셋툴 API 핸들러 ──────────────────────────────────

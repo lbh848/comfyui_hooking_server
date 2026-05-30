@@ -1017,6 +1017,39 @@ class BotMode:
             traceback.print_exc()
             return _json_error(str(e))
 
+    # ─── 유틸리티 설정 ──────────────────────────────────────
+    async def handle_get_utility_settings(self, request):
+        """GET /api/bot_mode/utility_settings?bot=X&character=Y"""
+        try:
+            bot_name = request.query.get("bot", "").strip()
+            char_name = request.query.get("character", "").strip()
+            if not bot_name or not char_name:
+                return _json_error("봇, 캐릭터 이름이 필요합니다.")
+            settings = _load_utility_settings(bot_name, char_name)
+            prompt = build_utility_prompt(bot_name, char_name, settings)
+            return _json_ok({"settings": settings, "prompt_preview": prompt})
+        except Exception as e:
+            print(f"[BOT_MODE] utility_settings 로드 실패: {e}")
+            traceback.print_exc()
+            return _json_error(str(e))
+
+    async def handle_save_utility_settings(self, request):
+        """POST /api/bot_mode/utility_settings"""
+        try:
+            body = await request.json()
+            bot_name = body.get("bot", "").strip()
+            char_name = body.get("character", "").strip()
+            settings = body.get("settings", {})
+            if not bot_name or not char_name:
+                return _json_error("봇, 캐릭터 이름이 필요합니다.")
+            _save_utility_settings(bot_name, char_name, settings)
+            prompt = build_utility_prompt(bot_name, char_name, settings)
+            return _json_ok({"saved": True, "prompt_preview": prompt})
+        except Exception as e:
+            print(f"[BOT_MODE] utility_settings 저장 실패: {e}")
+            traceback.print_exc()
+            return _json_error(str(e))
+
 
 # ─── 유틸리티 ──────────────────────────────────────────
 def _json_ok(data, status=200):
@@ -1028,5 +1061,250 @@ def _json_error(msg, status=400):
     return web.json_response({"error": msg}, status=status)
 
 
+# ─── 유틸리티 설정 (캐릭터별) ─────────────────────────────
+UTILITY_SETTINGS_FILE = "_utility_settings.json"
+
+
+def _utility_settings_path(bot_name: str, char_name: str) -> str:
+    return os.path.join(BOT_DIR, bot_name, char_name, UTILITY_SETTINGS_FILE)
+
+
+def _load_utility_settings(bot_name: str, char_name: str) -> dict:
+    path = _utility_settings_path(bot_name, char_name)
+    if os.path.isfile(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"[BOT_MODE] utility_settings 로드 실패: {e}")
+    return {"face_crop_top": 1.0, "face_crop_bottom": 1.0, "emb_target": "대표만"}
+
+
+def _save_utility_settings(bot_name: str, char_name: str, settings: dict):
+    path = _utility_settings_path(bot_name, char_name)
+    char_dir = os.path.dirname(path)
+    os.makedirs(char_dir, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(settings, f, indent=2, ensure_ascii=False)
+
+
+def build_utility_prompt(bot_name: str, char_name: str, settings: dict) -> str:
+    """캐릭터의 유틸리티 프롬프트 문자열을 생성한다."""
+    emb_value = "representation" if settings.get("emb_target") == "대표만" else "representation,sub"
+    return (
+        f"[PATH]soya_bot/{bot_name}/{char_name}\n"
+        f"[FACE_CROP_TOP]{settings.get('face_crop_top', 1.0)}\n"
+        f"[FACE_CROP_BOTTOM]{settings.get('face_crop_bottom', 1.0)}\n"
+        f"[EMB_TARGET]{emb_value}\n"
+        f"[END]"
+    )
+
+
+class BotDataPatcher:
+    """Comfy Input /soya_bot/ 폴더에 봇 데이터 패치 + 유틸리티 워크플로우 실행"""
+
+    def __init__(self):
+        self._workflow_api = None
+        self._workflow_hash = None
+
+    def _load_utility_workflow(self) -> tuple[dict | None, str | None]:
+        """utility_workflow_source_path에서 워크플로우를 로드한다.
+        반환: (workflow_api_dict, error_msg)"""
+        config_path = os.path.join(BASE_DIR, "config.json")
+        if not os.path.isfile(config_path):
+            return None, "config.json이 없습니다."
+        with open(config_path, "r", encoding="utf-8") as f:
+            config = json.load(f)
+        wf_path = config.get("utility_workflow_source_path", "").strip()
+        if not wf_path:
+            return None, "삽화 유틸리티 워크플로우 경로가 설정되지 않았습니다."
+        if not os.path.isfile(wf_path):
+            return None, f"유틸리티 워크플로우 파일이 없습니다: {wf_path}"
+
+        import hashlib
+        with open(wf_path, "r", encoding="utf-8") as f:
+            raw = f.read()
+        current_hash = hashlib.md5(raw.encode()).hexdigest()
+
+        if self._workflow_api and self._workflow_hash == current_hash:
+            return self._workflow_api, None
+
+        wf_json = json.loads(raw)
+        # API 형식인지 확인 (최상위가 dict이고 값에 class_type이 있으면 API 형식)
+        is_api = isinstance(wf_json, dict) and any(
+            isinstance(v, dict) and "class_type" in v for v in wf_json.values()
+        )
+        if is_api:
+            self._workflow_api = wf_json
+        else:
+            return None, "워크플로우를 API 형식으로 변환해야 합니다. 서버의 convert 기능을 사용하세요."
+
+        self._workflow_hash = current_hash
+        return self._workflow_api, None
+
+    async def handle_data_patch(self, request):
+        """POST /api/bot_mode/data_patch - 선택된 봇의 캐릭터 폴더 + 대표 이미지를 soya_bot/에 복사"""
+        try:
+            body = await request.json()
+            bot_name = body.get("bot_name", "").strip()
+            if not bot_name:
+                return _json_error("봇 이름이 비어있습니다.")
+
+            # config.json에서 comfy_input_dir 읽기
+            config_path = os.path.join(BASE_DIR, "config.json")
+            if not os.path.isfile(config_path):
+                return _json_error("config.json이 없습니다.")
+            with open(config_path, "r", encoding="utf-8") as f:
+                config = json.load(f)
+            comfy_input_dir = config.get("comfy_input_dir", "").strip()
+            if not comfy_input_dir:
+                return _json_error("Comfy Input 폴더 경로가 설정되지 않았습니다.")
+            if not os.path.isdir(comfy_input_dir):
+                return _json_error(f"Comfy Input 폴더가 존재하지 않습니다: {comfy_input_dir}")
+
+            # 봇 데이터에서 해당 봇 찾기
+            data = _load_bot_data()
+            bot = next((b for b in data["bots"] if b["name"] == bot_name), None)
+            if not bot:
+                return _json_error(f"봇을 찾을 수 없습니다: {bot_name}")
+
+            # 기존 봇 폴더 삭제 후 재생성
+            bot_dst_root = os.path.join(comfy_input_dir, "soya_bot", bot_name)
+            if os.path.isdir(bot_dst_root):
+                shutil.rmtree(bot_dst_root)
+                print(f"[DATA_PATCH] 기존 폴더 삭제: {bot_dst_root}")
+
+            created_dirs = []
+            copied_files = []
+            skipped_files = []
+
+            for char in bot.get("characters", []):
+                char_name = char["name"]
+                dst_dir = os.path.join(bot_dst_root, char_name)
+                os.makedirs(dst_dir, exist_ok=True)
+                created_dirs.append(f"soya_bot/{bot_name}/{char_name}")
+                print(f"[DATA_PATCH] 폴더 생성: {dst_dir}")
+
+                rep_images = char.get("rep_images", [])
+                for i, img_name in enumerate(rep_images):
+                    src_file = os.path.join(BOT_DIR, bot_name, char_name, img_name)
+                    if not os.path.isfile(src_file):
+                        skipped_files.append(img_name)
+                        print(f"[DATA_PATCH] 소스 파일 없음: {src_file}")
+                        continue
+
+                    # 첫 번째 이미지: representation, 이후: sub_1, sub_2
+                    ext = os.path.splitext(img_name)[1]
+                    if i == 0:
+                        dst_name = f"representation{ext}"
+                    else:
+                        dst_name = f"sub_{i}{ext}"
+
+                    dst_file = os.path.join(dst_dir, dst_name)
+                    shutil.copy2(src_file, dst_file)
+                    copied_files.append(f"{char_name}/{dst_name}")
+                    print(f"[DATA_PATCH] 복사: {img_name} -> {dst_name}")
+
+            msg = f"폴더 {len(created_dirs)}개 생성, 이미지 {len(copied_files)}개 복사"
+            if skipped_files:
+                msg += f", 스킵 {len(skipped_files)}개"
+            print(f"[DATA_PATCH] 완료: {msg}")
+            return _json_ok({
+                "message": msg,
+                "created_dirs": created_dirs,
+                "copied_files": copied_files,
+                "skipped_files": skipped_files
+            })
+        except Exception as e:
+            print(f"[DATA_PATCH] 데이터 패치 실패: {e}")
+            traceback.print_exc()
+            return _json_error(str(e))
+
+    async def handle_run_utility(self, request):
+        """POST /api/bot_mode/run_utility - 캐릭터별로 유틸리티 워크플로우 순환 실행"""
+        try:
+            body = await request.json()
+            bot_name = body.get("bot_name", "").strip()
+            if not bot_name:
+                return _json_error("봇 이름이 비어있습니다.")
+
+            # 워크플로우 로드
+            wf_api, wf_err = self._load_utility_workflow()
+            if wf_err:
+                return _json_error(wf_err)
+
+            # 봇 데이터 로드
+            data = _load_bot_data()
+            bot = next((b for b in data["bots"] if b["name"] == bot_name), None)
+            if not bot:
+                return _json_error(f"봇을 찾을 수 없습니다: {bot_name}")
+
+            # server.py의 함수들을 사용하기 위해 지연 import
+            from server import (
+                submit_workflow_to_comfy, build_prompt_with_workflow,
+                fetch_real_history, fetch_real_image
+            )
+
+            results = []
+            errors = []
+
+            for char in bot.get("characters", []):
+                char_name = char["name"]
+                rep_images = char.get("rep_images", [])
+                if not rep_images:
+                    print(f"[UTILITY] 캐릭터 '{char_name}' 대표 이미지 없음, 스킵")
+                    continue
+
+                # 설정 로드
+                settings = _load_utility_settings(bot_name, char_name)
+                prompt_text = build_utility_prompt(bot_name, char_name, settings)
+
+                print(f"[UTILITY] 실행: {char_name} | 프롬프트:\n{prompt_text}")
+
+                # 워크플로우에 프롬프트 주입
+                import copy
+                wf = copy.deepcopy(wf_api)
+                for nid, ninfo in wf.items():
+                    if not isinstance(ninfo, dict):
+                        continue
+                    title = ninfo.get("_meta", {}).get("title", "")
+                    if title == "긍정프롬프트":
+                        ninfo["inputs"]["value"] = prompt_text
+
+                # ComfyUI에 제출
+                try:
+                    img_bytes, submit_err = await submit_workflow_to_comfy(wf)
+                    if submit_err or not img_bytes:
+                        errors.append(f"{char_name}: {submit_err or '이미지 없음'}")
+                        print(f"[UTILITY] {char_name} 실패: {submit_err}")
+                        continue
+
+                    # 결과 이미지 저장
+                    result_path = os.path.join(BOT_DIR, bot_name, char_name, "_utility_result.webp")
+                    os.makedirs(os.path.dirname(result_path), exist_ok=True)
+                    with open(result_path, "wb") as f:
+                        f.write(img_bytes)
+                    results.append(char_name)
+                    print(f"[UTILITY] {char_name} 결과 저장: {result_path} ({len(img_bytes):,} bytes)")
+                except Exception as e:
+                    errors.append(f"{char_name}: {e}")
+                    print(f"[UTILITY] {char_name} 예외: {e}")
+                    traceback.print_exc()
+
+            msg = f"성공 {len(results)}개"
+            if errors:
+                msg += f", 실패 {len(errors)}개"
+            return _json_ok({
+                "message": msg,
+                "results": results,
+                "errors": errors
+            })
+        except Exception as e:
+            print(f"[UTILITY] 실행 실패: {e}")
+            traceback.print_exc()
+            return _json_error(str(e))
+
+
 # 싱글톤
 bot_mode = BotMode()
+data_patcher = BotDataPatcher()
