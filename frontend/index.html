@@ -4106,6 +4106,17 @@
 
         <!-- 로라매니징 탭 -->
         <div id="tab-lora-content" class="tab-content">
+            <!-- 에셋/봇 모드 선택 -->
+            <div style="display:flex; align-items:center; gap:12px; padding:8px 16px; border-bottom:1px solid var(--border); background:var(--surface);">
+                <span style="font-weight:600; font-size:0.85rem;">로라매니징</span>
+                <div style="display:flex; border:1px solid var(--border); border-radius:6px; overflow:hidden;">
+                    <button id="lora-mode-asset-btn" onclick="switchLoraMode('asset')" style="padding:4px 14px; font-size:0.8rem; font-weight:600; cursor:pointer; border:none; background:var(--accent); color:#fff;">에셋</button>
+                    <button id="lora-mode-bot-btn" onclick="switchLoraMode('bot')" style="padding:4px 14px; font-size:0.8rem; font-weight:600; cursor:pointer; border:none; background:var(--surface2); color:var(--text);">봇</button>
+                </div>
+            </div>
+
+            <!-- 에셋 모드 컨테이너 -->
+            <div id="lora-asset-mode">
             <div class="asset-breadcrumb" id="lora-breadcrumb">
                 <span>로라매니징</span>
             </div>
@@ -4324,6 +4335,149 @@
                     </div>
                 </div>
             </div>
+            </div><!-- /lora-asset-mode -->
+
+            <!-- 봇 모드 컨테이너 -->
+            <div id="lora-bot-mode" style="display:none;">
+                <div class="asset-breadcrumb" id="bot-lora-breadcrumb">
+                    <span>봇 로라매니징</span>
+                </div>
+                <div class="asset-container">
+                    <div class="asset-main" id="bot-lora-main">
+                        <!-- 봇 목록 -->
+                        <div id="bot-lora-bots-section">
+                            <div class="asset-gallery-grid" id="bot-lora-bot-grid"></div>
+                            <div id="bot-lora-bot-empty" style="display:none; text-align:center; padding:48px; color:var(--text-secondary);">
+                                <p>봇이 없습니다. 삽화 설정에서 봇을 생성하세요.</p>
+                            </div>
+                        </div>
+                        <!-- 프로젝트 목록 (봇 선택 후) -->
+                        <div id="bot-lora-projects-section" style="display:none;">
+                            <div class="asset-gallery-grid" id="bot-lora-project-grid"></div>
+                            <div id="bot-lora-project-empty" style="display:none; text-align:center; padding:48px; color:var(--text-secondary);">
+                                <p>학습 프로젝트가 없습니다. 사이드바에서 추가하세요.</p>
+                            </div>
+                        </div>
+                        <!-- 프로젝트 상세 (프로젝트 선택 후) -->
+                        <div id="bot-lora-project" style="display:none;">
+                            <!-- 학습 진행률 (전체) -->
+                            <div id="bot-lora-progress-section" style="display:none; padding:16px; margin-bottom:8px; background:var(--surface); border:1px solid var(--accent); border-radius:10px;">
+                                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                                    <span id="bot-lora-progress-phase" style="font-size:0.85rem; font-weight:600; color:var(--accent);">학습 준비 중...</span>
+                                    <span id="bot-lora-progress-char" style="font-size:0.75rem; color:var(--text-secondary);"></span>
+                                </div>
+                                <div style="width:100%; height:8px; background:var(--bg); border-radius:4px; overflow:hidden;">
+                                    <div id="bot-lora-progress-bar" style="width:0%; height:100%; background:var(--accent); border-radius:4px; transition:width 0.3s ease;"></div>
+                                </div>
+                                <div id="bot-lora-progress-detail" style="margin-top:4px; font-size:0.72rem; color:var(--text-secondary);"></div>
+                            </div>
+                            <!-- 캐릭터별 행 -->
+                            <div id="bot-lora-characters"></div>
+                            <!-- 공통 테스트 이미지 -->
+                            <div id="bot-lora-test-section" style="padding:16px; margin-top:12px; border-top:2px solid var(--border);">
+                                <div style="font-weight:700; font-size:1.1rem; margin-bottom:12px; padding-bottom:6px; border-bottom:1px solid var(--border);">공통 테스트 이미지</div>
+                                <div class="asset-image-grid" id="bot-lora-test-grid" style="display:none;"></div>
+                                <div id="bot-lora-test-empty" style="text-align:center; padding:24px; color:var(--text-secondary); font-size:0.85rem;">
+                                    테스트 이미지가 없습니다. 사이드바에서 추가하세요.
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="asset-sidebar" id="bot-lora-sidebar">
+                        <!-- 프로젝트 관리 버튼 (봇/프로젝트 선택 시) -->
+                        <div style="margin-bottom:8px; display:flex; gap:6px;">
+                            <button id="bot-lora-project-add-btn" onclick="addBotLoraProject()" style="flex:1; background:var(--accent); color:#fff; border:none; padding:6px 8px; border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600; display:none;">프로젝트 추가</button>
+                            <button id="bot-lora-project-del-btn" onclick="removeBotLoraProject()" style="flex:1; background:var(--error); color:#fff; border:none; padding:6px 8px; border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600; display:none;">삭제</button>
+                        </div>
+                        <!-- 학습 설정 (프로젝트 진입 후) -->
+                        <div id="bot-lora-config-section" style="display:none;">
+                            <div style="margin-bottom:8px; font-weight:700; font-size:0.9rem;">학습 설정</div>
+                            <!-- 테스트 이미지 추가 -->
+                            <div style="background:rgba(0,150,255,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
+                                <div style="font-size:0.8rem; font-weight:600; margin-bottom:6px;">테스트 이미지</div>
+                                <button onclick="openBotLoraImagePicker()" style="width:100%; padding:8px; background:rgba(180,130,220,0.2); color:var(--text); border:1px solid rgba(180,130,220,0.3); border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">
+                                    에셋에서 선택
+                                </button>
+                            </div>
+                            <!-- 학습 설정 폼 -->
+                            <div style="background:rgba(100,150,255,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
+                                <div style="font-size:0.8rem; font-weight:600; margin-bottom:8px;">학습 설정</div>
+                                <div style="display:flex; flex-direction:column; gap:6px;">
+                                    <div>
+                                        <label style="font-size:0.7rem; color:var(--text-secondary); display:block; margin-bottom:2px;">PROFILE</label>
+                                        <select id="bot-lora-cfg-profile" style="width:100%; padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); font-size:0.8rem; box-sizing:border-box;">
+                                            <option value="anima">anima</option>
+                                            <option value="sdxl">sdxl</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label style="font-size:0.7rem; color:var(--text-secondary); display:block; margin-bottom:2px;">STEP_PER_IMAGE</label>
+                                        <input type="number" id="bot-lora-cfg-step" value="50" min="1" style="width:100%; padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); font-size:0.8rem; box-sizing:border-box;">
+                                    </div>
+                                    <div>
+                                        <label style="font-size:0.7rem; color:var(--text-secondary); display:block; margin-bottom:2px;">IL_RATE</label>
+                                        <input type="number" id="bot-lora-cfg-ilrate" value="0.0005" step="0.0001" style="width:100%; padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); font-size:0.8rem; box-sizing:border-box;">
+                                    </div>
+                                    <div>
+                                        <label style="font-size:0.7rem; color:var(--text-secondary); display:block; margin-bottom:2px;">SAVE_PER_STEP</label>
+                                        <input type="number" id="bot-lora-cfg-save-step" value="50" min="1" style="width:100%; padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); font-size:0.8rem; box-sizing:border-box;">
+                                    </div>
+                                    <div>
+                                        <label style="font-size:0.7rem; color:var(--text-secondary); display:block; margin-bottom:2px;">MULTI_IMG_FOLDER_NAME</label>
+                                        <input type="text" id="bot-lora-cfg-folder" value="soya_lora" style="width:100%; padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); font-size:0.8rem; box-sizing:border-box;">
+                                    </div>
+                                    <div>
+                                        <label style="font-size:0.7rem; color:var(--text-secondary); display:block; margin-bottom:2px;">GEN_W</label>
+                                        <input type="number" id="bot-lora-cfg-genw" value="1024" min="1" style="width:100%; padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); font-size:0.8rem; box-sizing:border-box;">
+                                    </div>
+                                    <div>
+                                        <label style="font-size:0.7rem; color:var(--text-secondary); display:block; margin-bottom:2px;">GEN_H</label>
+                                        <input type="number" id="bot-lora-cfg-genh" value="1024" min="1" style="width:100%; padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); font-size:0.8rem; box-sizing:border-box;">
+                                    </div>
+                                    <div style="display:flex; align-items:center; gap:6px; padding:6px 8px; background:var(--surface2); border-radius:6px; border:1px solid var(--border);">
+                                        <span style="font-size:0.8rem;">업스케일링</span>
+                                        <label class="toggle-switch">
+                                            <input type="checkbox" id="bot-lora-cfg-upscale">
+                                            <span class="toggle-slider"></span>
+                                        </label>
+                                    </div>
+                                    <div>
+                                        <label style="font-size:0.7rem; color:var(--text-secondary); display:block; margin-bottom:2px;">RESOLUTION</label>
+                                        <input type="number" id="bot-lora-cfg-resolution" value="1024" min="1" style="width:100%; padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); font-size:0.8rem; box-sizing:border-box;">
+                                    </div>
+                                    <div>
+                                        <label style="font-size:0.7rem; color:var(--text-secondary); display:block; margin-bottom:2px;">SAVE_AFTER</label>
+                                        <input type="number" id="bot-lora-cfg-save-after" value="0" min="0" style="width:100%; padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); font-size:0.8rem; box-sizing:border-box;">
+                                    </div>
+                                    <div style="display:flex; gap:8px;">
+                                        <div style="flex:1;">
+                                            <label style="font-size:0.7rem; color:var(--text-secondary); display:block; margin-bottom:2px;">DIM</label>
+                                            <select id="bot-lora-cfg-dim" style="width:100%; padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); font-size:0.8rem; box-sizing:border-box;">
+                                                <option value="16">16</option>
+                                                <option value="32" selected>32</option>
+                                                <option value="64">64</option>
+                                            </select>
+                                        </div>
+                                        <div style="flex:1;">
+                                            <label style="font-size:0.7rem; color:var(--text-secondary); display:block; margin-bottom:2px;">ALPHA</label>
+                                            <input type="number" id="bot-lora-cfg-alpha" value="16" min="1" style="width:100%; padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); font-size:0.8rem; box-sizing:border-box;">
+                                        </div>
+                                    </div>
+                                </div>
+                                <button onclick="saveBotLoraConfig()" style="width:100%; padding:6px; margin-top:8px; background:var(--accent); color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600;">설정 저장</button>
+                            </div>
+                            <!-- 학습 버튼 -->
+                            <div style="margin-bottom:8px;">
+                                <button onclick="startBotLoraTraining()" style="width:100%; padding:10px; background:rgba(80,180,120,0.2); color:var(--text); border:1px solid rgba(80,180,120,0.3); border-radius:6px; cursor:pointer; font-size:0.9rem; font-weight:700;">
+                                    전체 순차 학습 시작
+                                </button>
+                            </div>
+                            <!-- Raw 보기 -->
+                            <button onclick="previewBotLoraPromptsRaw()" style="width:100%; padding:6px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600;">프롬프트 Raw 보기</button>
+                        </div>
+                    </div>
+                </div>
+            </div><!-- /lora-bot-mode -->
         </div>
 
         <!-- 프리셋매니징 탭 -->
@@ -5620,6 +5774,12 @@
                         case 'lora_training_progress':
                             if (typeof updateLoraTrainingUI === 'function') {
                                 updateLoraTrainingUI(msg.data.phase, msg.data);
+                            }
+                            break;
+                        // 봇 LoRA 학습 진행률
+                        case 'bot_lora_training_progress':
+                            if (typeof updateBotLoraTrainingUI === 'function') {
+                                updateBotLoraTrainingUI(msg.data.phase, msg.data);
                             }
                             break;
                         // 공용 이미지 생성 진행도
@@ -13402,6 +13562,28 @@
                 sources.push({ character: sourceChar, outfit, expression, filename });
             }
 
+            // 봇 LoRA 테스트 이미지 모드
+            if (loraPickerTarget === 'bot_test') {
+                try {
+                    const resp = await fetchJSON('/api/bot_lora/test_images/add', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ bot: botLoraCurrentBot, project: botLoraCurrentProject, sources })
+                    });
+                    if (resp.success) {
+                        const msg = `${resp.added.length}장 추가됨${resp.skipped.length > 0 ? ` (${resp.skipped.length}장 스킵)` : ''}`;
+                        showToast(msg, 'success');
+                        closeLoraImagePicker();
+                        await loadBotLoraProject();
+                    } else {
+                        showToast(resp.error || '추가 실패', 'error');
+                    }
+                } catch (e) {
+                    console.error('[BOT_LORA] 이미지 추가 실패:', e);
+                    showToast('추가 실패', 'error');
+                }
+                return;
+            }
+
             const apiUrl = loraPickerTarget === 'test' ? '/api/lora/test_images/add' : '/api/lora/training_images/add';
             try {
                 const resp = await fetchJSON(apiUrl, {
@@ -13530,7 +13712,540 @@
             } else if (name === 'lora') {
                 document.querySelectorAll('.tab-btn')[8].classList.add('active');
                 document.getElementById('tab-lora-content').classList.add('active');
+                const savedMode = sessionStorage.getItem('loraMode') || 'asset';
+                switchLoraMode(savedMode);
+            }
+        }
+
+        // ═══ 봇 LoRA 매니징 ═══
+        let botLoraCurrentBot = '';
+        let botLoraCurrentProject = '';
+        let botLoraProjectData = null;
+
+        function switchLoraMode(mode) {
+            const assetBtn = document.getElementById('lora-mode-asset-btn');
+            const botBtn = document.getElementById('lora-mode-bot-btn');
+            const assetMode = document.getElementById('lora-asset-mode');
+            const botMode = document.getElementById('lora-bot-mode');
+            if (mode === 'asset') {
+                assetBtn.style.background = 'var(--accent)'; assetBtn.style.color = '#fff';
+                botBtn.style.background = 'var(--surface2)'; botBtn.style.color = 'var(--text)';
+                assetMode.style.display = '';
+                botMode.style.display = 'none';
                 initLoraTab();
+            } else {
+                botBtn.style.background = 'var(--accent)'; botBtn.style.color = '#fff';
+                assetBtn.style.background = 'var(--surface2)'; assetBtn.style.color = 'var(--text)';
+                assetMode.style.display = 'none';
+                botMode.style.display = '';
+                initBotLoraTab();
+            }
+            sessionStorage.setItem('loraMode', mode);
+        }
+
+        async function initBotLoraTab() {
+            botLoraCurrentBot = '';
+            botLoraCurrentProject = '';
+            botLoraProjectData = null;
+            document.getElementById('bot-lora-breadcrumb').innerHTML = '<span>봇 로라매니징</span>';
+            document.getElementById('bot-lora-bots-section').style.display = '';
+            document.getElementById('bot-lora-projects-section').style.display = 'none';
+            document.getElementById('bot-lora-project').style.display = 'none';
+            document.getElementById('bot-lora-config-section').style.display = 'none';
+            document.getElementById('bot-lora-project-add-btn').style.display = 'none';
+            document.getElementById('bot-lora-project-del-btn').style.display = 'none';
+            await loadBotLoraBotGrid();
+        }
+
+        async function loadBotLoraBotGrid() {
+            const grid = document.getElementById('bot-lora-bot-grid');
+            const emptyEl = document.getElementById('bot-lora-bot-empty');
+            try {
+                const resp = await fetchJSON('/api/bot_lora/bots');
+                if (!resp.success || !resp.bots || resp.bots.length === 0) {
+                    grid.style.display = 'none';
+                    emptyEl.style.display = '';
+                    return;
+                }
+                emptyEl.style.display = 'none';
+                grid.style.display = '';
+                grid.innerHTML = resp.bots.map(b => {
+                    const charCount = b.characters ? b.characters.length : 0;
+                    return `<div class="asset-folder-card" onclick="enterBotLoraBot('${escapeHtml(b.name)}')">
+                        <div class="folder-icon">📁</div>
+                        <div class="folder-name">${escapeHtml(b.name)}</div>
+                        <div style="font-size:0.7rem; color:var(--text-secondary); margin-top:2px;">${charCount} 캐릭터</div>
+                    </div>`;
+                }).join('');
+            } catch (e) {
+                console.error('[BOT_LORA] 봇 목록 로드 실패:', e);
+                grid.style.display = 'none';
+                emptyEl.style.display = '';
+            }
+        }
+
+        async function enterBotLoraBot(botName) {
+            botLoraCurrentBot = botName;
+            botLoraCurrentProject = '';
+            document.getElementById('bot-lora-breadcrumb').innerHTML =
+                `<span style="cursor:pointer;" onclick="initBotLoraTab()">봇 로라매니징</span> / <span>${escapeHtml(botName)}</span>`;
+            document.getElementById('bot-lora-bots-section').style.display = 'none';
+            document.getElementById('bot-lora-projects-section').style.display = '';
+            document.getElementById('bot-lora-project').style.display = 'none';
+            document.getElementById('bot-lora-config-section').style.display = 'none';
+            document.getElementById('bot-lora-project-add-btn').style.display = '';
+            document.getElementById('bot-lora-project-del-btn').style.display = 'none';
+            await loadBotLoraProjectGrid();
+        }
+
+        async function loadBotLoraProjectGrid() {
+            const grid = document.getElementById('bot-lora-project-grid');
+            const emptyEl = document.getElementById('bot-lora-project-empty');
+            const enc = encodeURIComponent;
+            try {
+                const resp = await fetchJSON(`/api/bot_lora/projects?bot=${enc(botLoraCurrentBot)}`);
+                if (!resp.success || !resp.projects || resp.projects.length === 0) {
+                    grid.style.display = 'none';
+                    emptyEl.style.display = '';
+                    return;
+                }
+                emptyEl.style.display = 'none';
+                grid.style.display = '';
+                grid.innerHTML = resp.projects.map(p => `
+                    <div class="asset-gallery-card" onclick="enterBotLoraProject('${escapeHtml(p.name)}')">
+                        <div class="gallery-thumb-placeholder" style="display:flex;align-items:center;justify-content:center;font-size:2.5rem;opacity:0.4;">📁</div>
+                        <div style="padding:10px;">
+                            <div style="font-weight:600; font-size:0.9rem;">${escapeHtml(p.name)}</div>
+                            <div style="font-size:0.75rem; color:var(--text-secondary); margin-top:2px;">${p.character_count} 캐릭터 / ${p.profile}</div>
+                        </div>
+                    </div>
+                `).join('');
+            } catch (e) {
+                console.error('[BOT_LORA] 프로젝트 목록 로드 실패:', e);
+                grid.style.display = 'none';
+                emptyEl.style.display = '';
+            }
+        }
+
+        async function enterBotLoraProject(projectName) {
+            botLoraCurrentProject = projectName;
+            document.getElementById('bot-lora-breadcrumb').innerHTML =
+                `<span style="cursor:pointer;" onclick="initBotLoraTab()">봇 로라매니징</span> / <span style="cursor:pointer;" onclick="enterBotLoraBot('${escapeHtml(botLoraCurrentBot)}')">${escapeHtml(botLoraCurrentBot)}</span> / <span>${escapeHtml(projectName)}</span>`;
+            document.getElementById('bot-lora-projects-section').style.display = 'none';
+            document.getElementById('bot-lora-project').style.display = '';
+            document.getElementById('bot-lora-config-section').style.display = '';
+            document.getElementById('bot-lora-project-add-btn').style.display = 'none';
+            document.getElementById('bot-lora-project-del-btn').style.display = '';
+            await loadBotLoraProject();
+        }
+
+        async function loadBotLoraProject() {
+            const enc = encodeURIComponent;
+            try {
+                const resp = await fetchJSON(`/api/bot_lora/project?bot=${enc(botLoraCurrentBot)}&project=${enc(botLoraCurrentProject)}`);
+                if (!resp.success) { showToast(resp.error || '프로젝트 로드 실패', 'error'); return; }
+                botLoraProjectData = resp;
+                renderBotLoraProject(resp);
+                loadBotLoraConfig(resp.training_config || {});
+            } catch (e) {
+                console.error('[BOT_LORA] 프로젝트 로드 실패:', e);
+                showToast('프로젝트 로드 실패', 'error');
+            }
+        }
+
+        function renderBotLoraProject(data) {
+            const container = document.getElementById('bot-lora-characters');
+            const chars = data.characters || [];
+            if (chars.length === 0) {
+                container.innerHTML = '<div style="text-align:center; padding:48px; color:var(--text-secondary);">캐릭터가 없습니다.</div>';
+                return;
+            }
+            container.innerHTML = chars.map((ch, idx) => {
+                const enc = encodeURIComponent;
+                // 학습 이미지
+                const trainingImgs = (ch.training_images || []).map(img => `
+                    <div class="bot-lora-training-thumb" style="position:relative; width:80px; height:80px; border-radius:6px; overflow:hidden; border:1px solid var(--border); cursor:pointer;" onclick="editBotLoraTrainingPrompt('${enc(botLoraCurrentBot)}', '${enc(ch.name)}', '${enc(img.filename)}')">
+                        <img src="/api/bot_lora/training_image/${enc(botLoraCurrentBot)}/${enc(ch.name)}/${enc(img.filename)}" style="width:100%; height:100%; object-fit:cover;" loading="lazy">
+                        ${img.source === 'face' ? '<div style="position:absolute; bottom:2px; right:2px; background:rgba(0,0,0,0.7); color:#fff; font-size:0.6rem; padding:1px 4px; border-radius:3px;">얼굴</div>' : ''}
+                        <div style="position:absolute; top:2px; right:2px; background:rgba(0,0,0,0.7); color:#fff; font-size:0.6rem; padding:1px 4px; border-radius:3px;">✏️</div>
+                    </div>
+                `).join('');
+
+                // 학습된 LoRA 세션
+                const sessions = ch.trained_sessions || [];
+                const sessionHtml = sessions.length > 0 ? sessions.map(s => `
+                    <div style="display:flex; align-items:center; gap:6px; padding:4px 8px; background:var(--surface2); border-radius:4px; font-size:0.75rem;">
+                        <span>${escapeHtml(s.name)}</span>
+                        <span style="color:var(--text-secondary);">${s.step_count} step</span>
+                    </div>
+                `).join('') : '<span style="font-size:0.75rem; color:var(--text-secondary);">학습 이력 없음</span>';
+
+                // 대표 이미지 (session_representative)
+                const sessionReps = ch.session_representatives || {};
+                const repHtml = Object.keys(sessionReps).length > 0 ? (() => {
+                    const latest = Object.entries(sessionReps).sort((a,b) => b[0].localeCompare(a[0]))[0];
+                    try {
+                        const repData = JSON.parse(latest[1]);
+                        return repData.preview ? `<img src="${repData.preview}" style="width:60px; height:60px; object-fit:cover; border-radius:6px; border:2px solid var(--accent);">` : '';
+                    } catch(e) { return ''; }
+                })() : '';
+
+                return `<div style="padding:16px; margin-bottom:12px; background:var(--surface); border:1px solid var(--border); border-radius:10px;">
+                    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
+                        <div style="display:flex; align-items:center; gap:10px;">
+                            <span style="font-weight:700; font-size:1rem;">${escapeHtml(ch.name)}</span>
+                            <input type="text" value="${escapeHtml(ch.trigger || '')}" placeholder="trigger 키워드" onchange="updateBotLoraTrigger('${enc(ch.name)}', this.value)"
+                                style="padding:3px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface1); color:var(--text); font-size:0.8rem; width:150px;">
+                        </div>
+                        <div style="display:flex; gap:4px;">
+                            <button onclick="startBotLoraTrainingSingle('${enc(ch.name)}')" style="padding:4px 10px; background:rgba(80,180,120,0.2); color:var(--text); border:1px solid rgba(80,180,120,0.3); border-radius:4px; cursor:pointer; font-size:0.75rem; font-weight:600;">재학습</button>
+                        </div>
+                    </div>
+                    <div style="display:flex; gap:8px; align-items:flex-start;">
+                        <!-- 학습 이미지 -->
+                        <div style="flex:1;">
+                            <div style="font-size:0.75rem; color:var(--text-secondary); margin-bottom:6px;">학습 이미지 (${(ch.training_images || []).length}장)</div>
+                            <div style="display:flex; flex-wrap:wrap; gap:6px;">
+                                ${trainingImgs || '<span style="font-size:0.75rem; color:var(--text-secondary);">이미지 없음</span>'}
+                            </div>
+                        </div>
+                        <!-- 학습된 LoRA -->
+                        <div style="min-width:200px;">
+                            <div style="font-size:0.75rem; color:var(--text-secondary); margin-bottom:6px;">학습된 LoRA</div>
+                            <div style="display:flex; flex-direction:column; gap:4px;">
+                                ${repHtml}
+                                ${sessionHtml}
+                            </div>
+                        </div>
+                    </div>
+                </div>`;
+            }).join('');
+
+            // 테스트 이미지
+            renderBotLoraTestImages(data.test_images || []);
+        }
+
+        function renderBotLoraTestImages(testImages) {
+            const grid = document.getElementById('bot-lora-test-grid');
+            const emptyEl = document.getElementById('bot-lora-test-empty');
+            const enc = encodeURIComponent;
+            if (!testImages || testImages.length === 0) {
+                grid.style.display = 'none';
+                emptyEl.style.display = '';
+                return;
+            }
+            emptyEl.style.display = 'none';
+            grid.style.display = '';
+            grid.innerHTML = testImages.map(img => `
+                <div class="asset-image-card" style="position:relative;">
+                    <img src="/api/bot_lora/test_image/${enc(botLoraCurrentBot)}/${enc(botLoraCurrentProject)}/${enc(img.filename)}" loading="lazy" style="width:100%; aspect-ratio:1; object-fit:cover; cursor:pointer;" onclick="editBotLoraTestPrompt('${enc(img.filename)}')">
+                    <button onclick="deleteBotLoraTestImage('${enc(img.filename)}')" style="position:absolute; top:4px; right:4px; background:rgba(220,80,80,0.9); color:#fff; border:none; border-radius:50%; width:20px; height:20px; font-size:0.7rem; cursor:pointer; display:flex; align-items:center; justify-content:center;">&times;</button>
+                </div>
+            `).join('');
+        }
+
+        function loadBotLoraConfig(cfg) {
+            document.getElementById('bot-lora-cfg-profile').value = cfg.profile || 'anima';
+            document.getElementById('bot-lora-cfg-step').value = cfg.step_per_image || 50;
+            document.getElementById('bot-lora-cfg-ilrate').value = cfg.il_rate || 0.0005;
+            document.getElementById('bot-lora-cfg-save-step').value = cfg.save_per_step || 50;
+            document.getElementById('bot-lora-cfg-folder').value = cfg.multi_img_folder_name || 'soya_lora';
+            document.getElementById('bot-lora-cfg-genw').value = cfg.gen_w || 1024;
+            document.getElementById('bot-lora-cfg-genh').value = cfg.gen_h || 1024;
+            document.getElementById('bot-lora-cfg-upscale').checked = cfg.upscale || false;
+            document.getElementById('bot-lora-cfg-resolution').value = cfg.resolution || 1024;
+            document.getElementById('bot-lora-cfg-save-after').value = cfg.save_after || 0;
+            document.getElementById('bot-lora-cfg-dim').value = cfg.dim || 32;
+            document.getElementById('bot-lora-cfg-alpha').value = cfg.alpha || 16;
+        }
+
+        function getBotLoraConfig() {
+            return {
+                profile: document.getElementById('bot-lora-cfg-profile').value,
+                step_per_image: parseInt(document.getElementById('bot-lora-cfg-step').value) || 50,
+                il_rate: parseFloat(document.getElementById('bot-lora-cfg-ilrate').value) || 0.0005,
+                save_per_step: parseInt(document.getElementById('bot-lora-cfg-save-step').value) || 50,
+                multi_img_folder_name: document.getElementById('bot-lora-cfg-folder').value || 'soya_lora',
+                gen_w: parseInt(document.getElementById('bot-lora-cfg-genw').value) || 1024,
+                gen_h: parseInt(document.getElementById('bot-lora-cfg-genh').value) || 1024,
+                upscale: document.getElementById('bot-lora-cfg-upscale').checked,
+                resolution: parseInt(document.getElementById('bot-lora-cfg-resolution').value) || 1024,
+                save_after: parseInt(document.getElementById('bot-lora-cfg-save-after').value) || 0,
+                dim: parseInt(document.getElementById('bot-lora-cfg-dim').value) || 32,
+                alpha: parseInt(document.getElementById('bot-lora-cfg-alpha').value) || 16,
+            };
+        }
+
+        async function addBotLoraProject() {
+            if (!botLoraCurrentBot) return;
+            const name = prompt('학습 프로젝트 이름:');
+            if (!name || !name.trim()) return;
+            try {
+                const resp = await fetchJSON('/api/bot_lora/project/add', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ bot: botLoraCurrentBot, name: name.trim() })
+                });
+                if (resp.success) {
+                    showToast('프로젝트 추가 완료', 'success');
+                    await loadBotLoraProjectGrid();
+                } else {
+                    showToast(resp.error || '추가 실패', 'error');
+                }
+            } catch (e) { console.error('[BOT_LORA] 프로젝트 추가 실패:', e); showToast('추가 실패', 'error'); }
+        }
+
+        async function removeBotLoraProject() {
+            if (!botLoraCurrentBot || !botLoraCurrentProject) return;
+            if (!confirm(`프로젝트 "${botLoraCurrentProject}"를 삭제하시겠습니까?`)) return;
+            try {
+                const resp = await fetchJSON('/api/bot_lora/project/delete', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ bot: botLoraCurrentBot, project: botLoraCurrentProject })
+                });
+                if (resp.success) {
+                    showToast('프로젝트 삭제 완료', 'success');
+                    enterBotLoraBot(botLoraCurrentBot);
+                } else {
+                    showToast(resp.error || '삭제 실패', 'error');
+                }
+            } catch (e) { console.error('[BOT_LORA] 프로젝트 삭제 실패:', e); showToast('삭제 실패', 'error'); }
+        }
+
+        async function saveBotLoraConfig() {
+            if (!botLoraCurrentBot) return;
+            try {
+                const resp = await fetchJSON('/api/bot_lora/config', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ bot: botLoraCurrentBot, project: botLoraCurrentProject, training_config: getBotLoraConfig() })
+                });
+                if (resp.success) showToast('설정 저장 완료', 'success');
+                else showToast(resp.error || '저장 실패', 'error');
+            } catch (e) { console.error('[BOT_LORA] 설정 저장 실패:', e); showToast('저장 실패', 'error'); }
+        }
+
+        async function updateBotLoraTrigger(charName, trigger) {
+            if (!botLoraCurrentBot) return;
+            try {
+                const resp = await fetchJSON('/api/bot_lora/trigger', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ bot: botLoraCurrentBot, project: botLoraCurrentProject, character: charName, trigger })
+                });
+                if (!resp.success) showToast(resp.error || 'trigger 저장 실패', 'error');
+            } catch (e) { console.error('[BOT_LORA] trigger 업데이트 실패:', e); showToast('trigger 저장 실패', 'error'); }
+        }
+
+        async function startBotLoraTraining() {
+            if (!botLoraCurrentBot) return;
+            if (!confirm('모든 캐릭터의 LoRA를 순차 학습하시겠습니까?')) return;
+            await saveBotLoraConfig();
+            try {
+                const resp = await fetchJSON('/api/bot_lora/training/start', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ bot: botLoraCurrentBot, project: botLoraCurrentProject })
+                });
+                if (resp.success) {
+                    showToast(`순차 학습 시작 (${resp.total_characters}명)`, 'success');
+                    document.getElementById('bot-lora-progress-section').style.display = '';
+                } else {
+                    showToast(resp.error || '학습 시작 실패', 'error');
+                }
+            } catch (e) { console.error('[BOT_LORA] 학습 시작 실패:', e); showToast('학습 시작 실패', 'error'); }
+        }
+
+        async function startBotLoraTrainingSingle(charName) {
+            if (!botLoraCurrentBot) return;
+            await saveBotLoraConfig();
+            try {
+                const resp = await fetchJSON('/api/bot_lora/training/start', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ bot: botLoraCurrentBot, project: botLoraCurrentProject, character: charName })
+                });
+                if (resp.success) {
+                    showToast(`'${charName}' 학습 시작`, 'success');
+                    document.getElementById('bot-lora-progress-section').style.display = '';
+                } else {
+                    showToast(resp.error || '학습 시작 실패', 'error');
+                }
+            } catch (e) { console.error('[BOT_LORA] 학습 시작 실패:', e); showToast('학습 시작 실패', 'error'); }
+        }
+
+        async function deleteBotLoraTestImage(filename) {
+            if (!confirm(`"${filename}" 삭제하시겠습니까?`)) return;
+            try {
+                const resp = await fetchJSON('/api/bot_lora/test_images/delete', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ bot: botLoraCurrentBot, project: botLoraCurrentProject, filename })
+                });
+                if (resp.success) { showToast('삭제 완료', 'success'); await loadBotLoraProject(); }
+                else { showToast(resp.error || '삭제 실패', 'error'); }
+            } catch (e) { console.error('[BOT_LORA] 테스트 이미지 삭제 실패:', e); showToast('삭제 실패', 'error'); }
+        }
+
+        async function editBotLoraTestPrompt(filename) {
+            const testImages = (botLoraProjectData?.test_images) || [];
+            const img = testImages.find(i => i.filename === filename);
+            if (!img) return;
+            const newPositive = prompt(`긍정 프롬프트 (${filename}):`, img.positive || '');
+            if (newPositive === null) return;
+            const newNegative = prompt(`부정 프롬프트 (${filename}):`, img.negative || '');
+            if (newNegative === null) return;
+            try {
+                const resp = await fetchJSON('/api/bot_lora/test_images/prompt', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ bot: botLoraCurrentBot, project: botLoraCurrentProject, filename, positive: newPositive, negative: newNegative })
+                });
+                if (resp.success) { await loadBotLoraProject(); }
+                else { showToast(resp.error || '저장 실패', 'error'); }
+            } catch (e) { showToast('저장 실패', 'error'); }
+        }
+
+        async function editBotLoraTrainingPrompt(botName, charName, filename) {
+            const chars = botLoraProjectData?.characters || [];
+            const ch = chars.find(c => c.name === charName);
+            if (!ch) return;
+            const img = (ch.training_images || []).find(i => i.filename === filename);
+            if (!img) return;
+            const newPositive = prompt(`긍정 프롬프트 (${charName} / ${filename}):`, img.positive || '');
+            if (newPositive === null) return;
+            const newNegative = prompt(`부정 프롬프트 (${charName} / ${filename}):`, img.negative || '');
+            if (newNegative === null) return;
+            try {
+                const resp = await fetchJSON('/api/bot_lora/training_images/prompt', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ bot: botName, character: charName, filename, positive: newPositive, negative: newNegative })
+                });
+                if (resp.success) { await loadBotLoraProject(); }
+                else { showToast(resp.error || '저장 실패', 'error'); }
+            } catch (e) { showToast('저장 실패', 'error'); }
+        }
+
+        function openBotLoraImagePicker() {
+            // 기존 lora-image-picker-modal 재사용
+            loraPickerTarget = 'bot_test';
+            loraPickerState = { level: 'characters', pickerCharacter: '', outfit: '', expression: '', selected: new Set() };
+            document.getElementById('lora-image-picker-modal').style.display = 'flex';
+            loadLoraPickerCharacters();
+        }
+
+        async function previewBotLoraPromptsRaw() {
+            if (!botLoraProjectData) { showToast('프로젝트를 먼저 선택하세요', 'error'); return; }
+            const chars = botLoraProjectData.characters || [];
+            if (chars.length === 0) { showToast('캐릭터가 없습니다', 'error'); return; }
+
+            // 캐릭터 선택 드롭다운
+            const charOptions = chars.map((ch, i) => `<option value="${i}">${escapeHtml(ch.name)}</option>`).join('');
+
+            let overlay = document.getElementById('bot-lora-raw-overlay');
+            if (overlay) overlay.remove();
+            overlay = document.createElement('div');
+            overlay.id = 'bot-lora-raw-overlay';
+            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:10000; display:flex; align-items:center; justify-content:center;';
+            overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+
+            const buildRawForChar = (charIdx) => {
+                const ch = chars[charIdx];
+                const images = ch.training_images || [];
+                const testImages = botLoraProjectData.test_images || [];
+                const trigger = ch.trigger || '';
+                const cfg = getBotLoraConfig();
+
+                let positiveRaw = '';
+                let negativeRaw = '';
+                images.forEach((img, i) => {
+                    const triggerPrefix = trigger ? trigger + ', ' : '';
+                    positiveRaw += `[${i + 1}]${triggerPrefix}${img.positive || '(프롬프트 없음)'}\n`;
+                    negativeRaw += `[${i + 1}]${img.negative || ''}\n`;
+                });
+
+                let configBlock = `[PROFILE]\n${cfg.profile}\n[N_IMG]\n${images.length}\n[STEP_PER_IMAGE]\n${cfg.step_per_image}\n[IL_RATE]\n${cfg.il_rate}\n[SAVE_PER_STEP]\n${cfg.save_per_step}\n[MULTI_IMG_FOLDER_NAME]\n${cfg.multi_img_folder_name}\n[LORA_SAVE_PATH]\n${botLoraCurrentBot}/Lora/${ch.name}\n[GEN_W]\n${cfg.gen_w}\n[GEN_H]\n${cfg.gen_h}\n[UPSCALE]\n${cfg.upscale}\n[RESOLUTION]\n${cfg.resolution}\n[SAVE_AFTER]\n${cfg.save_after}`;
+                let testBlock = '\n[TEST_POSITIVE]\n';
+                testImages.forEach((img, i) => {
+                    const triggerPrefix = trigger ? trigger + ', ' : '';
+                    testBlock += `[${i + 1}]${triggerPrefix}${img.positive || '(프롬프트 없음)'}\n`;
+                });
+                testBlock += '[TEST_NEGATIVE]\n';
+                testImages.forEach((img, i) => {
+                    testBlock += `[${i + 1}]${img.negative || ''}\n`;
+                });
+                positiveRaw += configBlock + testBlock + `\n[DIM]\n${cfg.dim}\n[ALPHA]\n${cfg.alpha}\n[END]`;
+                return { positiveRaw, negativeRaw, charName: ch.name, imgCount: images.length, testCount: testImages.length };
+            };
+
+            const initial = buildRawForChar(0);
+
+            overlay.innerHTML = `<div style="background:var(--surface); border-radius:12px; padding:20px; max-width:700px; width:90%; max-height:85vh; display:flex; flex-direction:column; overflow:hidden;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                    <div style="display:flex; align-items:center; gap:12px;">
+                        <h3 style="margin:0;">프롬프트 Raw 보기</h3>
+                        <select id="bot-lora-raw-char-select" onchange="document.getElementById('bot-lora-raw-content').innerHTML = this._buildRaw(parseInt(this.value));" style="padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); font-size:0.8rem;">
+                            ${charOptions}
+                        </select>
+                    </div>
+                    <button onclick="document.getElementById('bot-lora-raw-overlay').remove()" style="background:none; border:none; font-size:1.4rem; cursor:pointer; color:var(--text);">&times;</button>
+                </div>
+                <div id="bot-lora-raw-content" style="flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:12px;">
+                    <div>
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                            <span style="font-weight:600; font-size:0.9rem;">긍정 (${escapeHtml(initial.charName)} / ${initial.imgCount}장 학습${initial.testCount > 0 ? ', ' + initial.testCount + '장 테스트' : ''})</span>
+                            <button onclick="navigator.clipboard.writeText(document.getElementById('bot-lora-raw-positive').textContent); showToast('복사 완료','success')" style="padding:2px 8px; font-size:0.75rem; background:var(--surface2); border:1px solid var(--border); border-radius:4px; cursor:pointer;">복사</button>
+                        </div>
+                        <pre id="bot-lora-raw-positive" style="background:var(--surface2); padding:10px; border-radius:8px; font-size:0.8rem; white-space:pre-wrap; word-break:break-all; margin:0; max-height:300px; overflow-y:auto;">${escapeHtml(initial.positiveRaw.trim())}</pre>
+                    </div>
+                    <div>
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                            <span style="font-weight:600; font-size:0.9rem;">부정</span>
+                            <button onclick="navigator.clipboard.writeText(document.getElementById('bot-lora-raw-negative').textContent); showToast('복사 완료','success')" style="padding:2px 8px; font-size:0.75rem; background:var(--surface2); border:1px solid var(--border); border-radius:4px; cursor:pointer;">복사</button>
+                        </div>
+                        <pre id="bot-lora-raw-negative" style="background:var(--surface2); padding:10px; border-radius:8px; font-size:0.8rem; white-space:pre-wrap; word-break:break-all; margin:0; max-height:300px; overflow-y:auto;">${escapeHtml(initial.negativeRaw.trim())}</pre>
+                    </div>
+                </div>
+            </div>`;
+            document.body.appendChild(overlay);
+
+            // 캐릭터 선택 핸들러 바인딩
+            const sel = document.getElementById('bot-lora-raw-char-select');
+            sel._buildRaw = (idx) => {
+                const d = buildRawForChar(idx);
+                return `<div>
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                        <span style="font-weight:600; font-size:0.9rem;">긍정 (${escapeHtml(d.charName)} / ${d.imgCount}장${d.testCount > 0 ? ', ' + d.testCount + '장 테스트' : ''})</span>
+                        <button onclick="navigator.clipboard.writeText(document.getElementById('bot-lora-raw-positive').textContent); showToast('복사 완료','success')" style="padding:2px 8px; font-size:0.75rem; background:var(--surface2); border:1px solid var(--border); border-radius:4px; cursor:pointer;">복사</button>
+                    </div>
+                    <pre id="bot-lora-raw-positive" style="background:var(--surface2); padding:10px; border-radius:8px; font-size:0.8rem; white-space:pre-wrap; word-break:break-all; margin:0; max-height:300px; overflow-y:auto;">${escapeHtml(d.positiveRaw.trim())}</pre>
+                </div>
+                <div>
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                        <span style="font-weight:600; font-size:0.9rem;">부정</span>
+                        <button onclick="navigator.clipboard.writeText(document.getElementById('bot-lora-raw-negative').textContent); showToast('복사 완료','success')" style="padding:2px 8px; font-size:0.75rem; background:var(--surface2); border:1px solid var(--border); border-radius:4px; cursor:pointer;">복사</button>
+                    </div>
+                    <pre id="bot-lora-raw-negative" style="background:var(--surface2); padding:10px; border-radius:8px; font-size:0.8rem; white-space:pre-wrap; word-break:break-all; margin:0; max-height:300px; overflow-y:auto;">${escapeHtml(d.negativeRaw.trim())}</pre>
+                </div>`;
+            };
+        }
+
+        // 봇 LoRA 학습 진행률 UI 업데이트 (기존 SSE 핸들러에서 호출)
+        function updateBotLoraTrainingUI(phase, data) {
+            const section = document.getElementById('bot-lora-progress-section');
+            if (!section) return;
+            section.style.display = '';
+            const charInfo = data.character ? `${data.character} (${(data.char_index || 0) + 1}/${data.total_chars || '?'})` : '';
+            document.getElementById('bot-lora-progress-phase').textContent = phase === 'starting_next' ? `다음 캐릭터 준비 중...` : phase === 'all_chars_complete' ? '전체 학습 완료!' : phase === 'error' ? '에러' : phase;
+            document.getElementById('bot-lora-progress-char').textContent = charInfo;
+            if (phase === 'all_complete' || phase === 'all_chars_complete') {
+                document.getElementById('bot-lora-progress-bar').style.width = '100%';
+                showToast(phase === 'all_chars_complete' ? '모든 캐릭터 학습 완료!' : `${data.character || ''} 학습 완료`, 'success');
+                if (phase === 'all_chars_complete') {
+                    setTimeout(() => { section.style.display = 'none'; }, 3000);
+                }
+                loadBotLoraProject();
+            } else if (phase === 'error') {
+                showToast(data.message || '학습 에러', 'error');
+            } else if (phase === 'md_soya_progress') {
+                const pct = data.progress || 0;
+                document.getElementById('bot-lora-progress-bar').style.width = pct + '%';
+                document.getElementById('bot-lora-progress-detail').textContent = data.message || '';
+            } else if (phase === 'starting_next') {
+                document.getElementById('bot-lora-progress-bar').style.width = '0%';
             }
         }
 

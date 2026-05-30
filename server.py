@@ -6022,6 +6022,652 @@ async def handle_api_lora_block_tag_rules_save(request):
 app.router.add_get("/api/lora/block_tag_rules", handle_api_lora_block_tag_rules_get)
 app.router.add_post("/api/lora/block_tag_rules", handle_api_lora_block_tag_rules_save)
 
+
+# ─── Bot LoRA API ─────────────────────────────────────────────────────
+
+async def handle_api_bot_lora_bots(request):
+    """봇 LoRA용 봇 목록 반환"""
+    try:
+        from modes.bot_lora_mode import list_bots
+        bots = list_bots()
+        return web.json_response({"success": True, "bots": bots})
+    except Exception as e:
+        print(f"[BOT_LORA_API] 봇 목록 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_bot_lora_projects(request):
+    """봇의 학습 프로젝트 목록"""
+    try:
+        bot_name = request.query.get("bot", "")
+        if not bot_name:
+            return web.json_response({"success": False, "error": "봇 이름 필수"}, status=400)
+        from modes.bot_lora_mode import list_projects
+        projects = list_projects(bot_name)
+        return web.json_response({"success": True, "projects": projects})
+    except Exception as e:
+        print(f"[BOT_LORA_API] 프로젝트 목록 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_bot_lora_project_add(request):
+    """학습 프로젝트 추가"""
+    try:
+        body = await request.json()
+        bot_name = body.get("bot", "")
+        project_name = body.get("name", "")
+        if not bot_name or not project_name:
+            return web.json_response({"success": False, "error": "봇/프로젝트 이름 필수"}, status=400)
+        from modes.bot_lora_mode import add_project
+        result = add_project(bot_name, project_name)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[BOT_LORA_API] 프로젝트 추가 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_bot_lora_project_delete(request):
+    """학습 프로젝트 삭제"""
+    try:
+        body = await request.json()
+        bot_name = body.get("bot", "")
+        project_name = body.get("project", "")
+        if not bot_name or not project_name:
+            return web.json_response({"success": False, "error": "봇/프로젝트 이름 필수"}, status=400)
+        config = load_config()
+        lora_load_path = config.get("lora_load_path", "")
+        from modes.bot_lora_mode import remove_project
+        result = remove_project(bot_name, project_name, lora_load_path)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[BOT_LORA_API] 프로젝트 삭제 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_bot_lora_project(request):
+    """프로젝트 상세 데이터"""
+    try:
+        bot_name = request.query.get("bot", "")
+        project_name = request.query.get("project", "")
+        if not bot_name or not project_name:
+            return web.json_response({"success": False, "error": "봇/프로젝트 이름 필수"}, status=400)
+        config = load_config()
+        lora_load_path = config.get("lora_load_path", "")
+        from modes.bot_lora_mode import get_project_data
+        result = get_project_data(bot_name, project_name, lora_load_path)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[BOT_LORA_API] 프로젝트 데이터 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_bot_lora_config(request):
+    """프로젝트 학습 설정 업데이트"""
+    try:
+        body = await request.json()
+        bot_name = body.get("bot", "")
+        project_name = body.get("project", "")
+        training_config = body.get("training_config", {})
+        if not bot_name or not project_name:
+            return web.json_response({"success": False, "error": "봇/프로젝트 필수"}, status=400)
+        from modes.bot_lora_mode import update_training_config
+        result = update_training_config(bot_name, project_name, training_config)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[BOT_LORA_API] 학습 설정 업데이트 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_bot_lora_trigger(request):
+    """캐릭터 trigger 업데이트"""
+    try:
+        body = await request.json()
+        bot_name = body.get("bot", "")
+        project_name = body.get("project", "")
+        char_name = body.get("character", "")
+        trigger = body.get("trigger", "")
+        if not bot_name or not project_name or not char_name:
+            return web.json_response({"success": False, "error": "봇/프로젝트/캐릭터 필수"}, status=400)
+        from modes.bot_lora_mode import update_char_trigger
+        result = update_char_trigger(bot_name, project_name, char_name, trigger)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[BOT_LORA_API] trigger 업데이트 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_bot_lora_test_add(request):
+    """테스트 이미지 추가"""
+    try:
+        body = await request.json()
+        bot_name = body.get("bot", "")
+        project_name = body.get("project", "")
+        sources = body.get("sources", [])
+        if not bot_name or not project_name:
+            return web.json_response({"success": False, "error": "봇/프로젝트 필수"}, status=400)
+        from modes.bot_lora_mode import add_bot_test_images
+        result = add_bot_test_images(bot_name, project_name, sources)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[BOT_LORA_API] 테스트 이미지 추가 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_bot_lora_test_image(request):
+    """테스트 이미지 서빙"""
+    try:
+        bot_name = request.match_info.get("bot", "")
+        project_name = request.match_info.get("project", "")
+        filename = request.match_info.get("filename", "")
+        if not bot_name or not project_name or not filename:
+            return web.Response(status=400)
+        from modes.bot_lora_mode import get_bot_test_image_path
+        fpath = get_bot_test_image_path(bot_name, project_name, filename)
+        if not fpath:
+            return web.Response(status=404)
+        return web.FileResponse(fpath)
+    except Exception as e:
+        print(f"[BOT_LORA_API] 테스트 이미지 서빙 실패: {e}")
+        return web.Response(status=500)
+
+
+async def handle_api_bot_lora_test_delete(request):
+    """테스트 이미지 삭제"""
+    try:
+        body = await request.json()
+        bot_name = body.get("bot", "")
+        project_name = body.get("project", "")
+        filename = body.get("filename", "")
+        if not bot_name or not project_name or not filename:
+            return web.json_response({"success": False, "error": "봇/프로젝트/파일명 필수"}, status=400)
+        from modes.bot_lora_mode import delete_bot_test_image
+        result = delete_bot_test_image(bot_name, project_name, filename)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[BOT_LORA_API] 테스트 이미지 삭제 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_bot_lora_test_prompt(request):
+    """테스트 프롬프트 저장"""
+    try:
+        body = await request.json()
+        bot_name = body.get("bot", "")
+        project_name = body.get("project", "")
+        filename = body.get("filename", "")
+        positive = body.get("positive", "")
+        negative = body.get("negative", "")
+        if not bot_name or not project_name or not filename:
+            return web.json_response({"success": False, "error": "봇/프로젝트/파일명 필수"}, status=400)
+        from modes.bot_lora_mode import save_bot_test_prompt
+        result = save_bot_test_prompt(bot_name, project_name, filename, positive, negative)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[BOT_LORA_API] 테스트 프롬프트 저장 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_bot_lora_training_image(request):
+    """학습 이미지 서빙"""
+    try:
+        bot_name = request.match_info.get("bot", "")
+        char_name = request.match_info.get("character", "")
+        filename = request.match_info.get("filename", "")
+        if not bot_name or not char_name or not filename:
+            return web.Response(status=400)
+        from modes.bot_lora_mode import get_bot_training_image_path
+        fpath = get_bot_training_image_path(bot_name, char_name, filename)
+        if not fpath:
+            return web.Response(status=404)
+        return web.FileResponse(fpath)
+    except Exception as e:
+        print(f"[BOT_LORA_API] 학습 이미지 서빙 실패: {e}")
+        return web.Response(status=500)
+
+
+async def handle_api_bot_lora_training_prompt(request):
+    """학습 프롬프트 저장"""
+    try:
+        body = await request.json()
+        bot_name = body.get("bot", "")
+        char_name = body.get("character", "")
+        filename = body.get("filename", "")
+        positive = body.get("positive", "")
+        negative = body.get("negative", "")
+        if not bot_name or not char_name or not filename:
+            return web.json_response({"success": False, "error": "봇/캐릭터/파일명 필수"}, status=400)
+        from modes.bot_lora_mode import save_bot_training_prompt
+        result = save_bot_training_prompt(bot_name, char_name, filename, positive, negative)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[BOT_LORA_API] 학습 프롬프트 저장 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_bot_lora_training_export(request):
+    """학습 이미지 Comfy Input 전송"""
+    try:
+        body = await request.json()
+        bot_name = body.get("bot", "")
+        char_name = body.get("character", "")
+        if not bot_name or not char_name:
+            return web.json_response({"success": False, "error": "봇/캐릭터 필수"}, status=400)
+        config = load_config()
+        comfy_input_dir = config.get("comfy_input_dir", "")
+        if not comfy_input_dir:
+            return web.json_response({"success": False, "error": "Comfy Input 미설정"}, status=400)
+        from modes.bot_lora_mode import export_bot_training_images, _load_bot_lora_manage
+        manage_data = _load_bot_lora_manage()
+        project_name = body.get("project", "")
+        bot_cfg = manage_data.get("bot_loras", {}).get(bot_name, {}).get(project_name, {})
+        training_config = bot_cfg.get("training_config", {})
+        folder_name = training_config.get("multi_img_folder_name", "soya_lora")
+        result = export_bot_training_images(bot_name, char_name, comfy_input_dir, folder_name)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[BOT_LORA_API] 이미지 전송 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+def _safe_dirname_bot(name: str) -> str:
+    return "".join(c for c in name if c.isalnum() or c in (' ', '_', '-', '.')).strip() or "unnamed"
+
+
+async def handle_api_bot_lora_training_start(request):
+    """봇 LoRA 학습 시작"""
+    try:
+        body = await request.json()
+        bot_name = body.get("bot", "")
+        project_name = body.get("project", "")
+        char_name = body.get("character", "")
+        if not bot_name or not project_name:
+            return web.json_response({"success": False, "error": "봇/프로젝트 필수"}, status=400)
+
+        config = load_config()
+        comfy_input_dir = config.get("comfy_input_dir", "")
+        if not comfy_input_dir or not os.path.isdir(comfy_input_dir):
+            return web.json_response({"success": False, "error": "Comfy Input 폴더가 유효하지 않습니다"}, status=400)
+
+        from modes.bot_lora_mode import (
+            _load_bot_data, _load_bot_lora_manage,
+            export_bot_training_images, _get_char_training_images,
+            list_bot_test_images,
+        )
+
+        bot_data = _load_bot_data()
+        bot_info = None
+        for b in bot_data.get("bots", []):
+            if b.get("name") == bot_name:
+                bot_info = b
+                break
+        if not bot_info:
+            return web.json_response({"success": False, "error": "봇을 찾을 수 없습니다"}, status=400)
+
+        characters_to_train = []
+        for ch in bot_info.get("characters", []):
+            cn = ch.get("name", "")
+            if not cn:
+                continue
+            if char_name and cn != char_name:
+                continue
+            characters_to_train.append(ch)
+        if not characters_to_train:
+            return web.json_response({"success": False, "error": "학습할 캐릭터가 없습니다"}, status=400)
+
+        manage_data = _load_bot_lora_manage()
+        proj_cfg = manage_data.get("bot_loras", {}).get(bot_name, {}).get(project_name, {})
+        training_config = proj_cfg.get("training_config", {})
+        char_configs = proj_cfg.get("characters", {})
+
+        profile = training_config.get("profile", "anima")
+        step = training_config.get("step_per_image", 50)
+        il_rate = training_config.get("il_rate", 0.0005)
+        save_step = training_config.get("save_per_step", 50)
+        folder = training_config.get("multi_img_folder_name", "soya_lora")
+        gen_w = training_config.get("gen_w", 1024)
+        gen_h = training_config.get("gen_h", 1024)
+        upscale = training_config.get("upscale", False)
+        resolution = training_config.get("resolution", 1024)
+        save_after = training_config.get("save_after", 0)
+        dim = training_config.get("dim", 32)
+        alpha = training_config.get("alpha", 16)
+
+        test_images = list_bot_test_images(bot_name, project_name)
+
+        ch = characters_to_train[0]
+        cn = ch.get("name", "")
+        trigger = char_configs.get(cn, {}).get("trigger", "")
+        lora_save_path = f"{_safe_dirname_bot(bot_name)}/Lora/{_safe_dirname_bot(project_name)}/{_safe_dirname_bot(cn)}"
+
+        export_result = export_bot_training_images(bot_name, cn, comfy_input_dir, folder)
+        if not export_result.get("success"):
+            return web.json_response(export_result)
+
+        images = _get_char_training_images(bot_name, cn, ch.get("rep_images", []))
+        if not images:
+            return web.json_response({"success": False, "error": f"{cn}: 학습 이미지가 없습니다"})
+
+        positive_text = _build_lora_training_text(images, trigger, profile, step, il_rate, save_step, folder, "positive", lora_save_path, gen_w, gen_h, upscale, resolution, test_images, save_after, dim, alpha)
+        negative_text = _build_lora_training_text(images, trigger, profile, step, il_rate, save_step, folder, "negative", lora_save_path, gen_w, gen_h, upscale, resolution, test_images, save_after, dim, alpha)
+
+        workflow_paths = config.get("lora_training_workflow_source_paths", {})
+        if isinstance(workflow_paths, dict) and workflow_paths:
+            workflow_path = workflow_paths.get(profile, "")
+            if not workflow_path:
+                for k, v in workflow_paths.items():
+                    if v: workflow_path = v; break
+        else:
+            workflow_path = config.get("lora_training_workflow_source_path", "")
+
+        if not workflow_path or not os.path.isfile(workflow_path):
+            return web.json_response({"success": False, "error": f"워크플로우 파일 없음: {workflow_path}"})
+
+        with open(workflow_path, "r", encoding="utf-8") as f:
+            original_wf = json.load(f)
+        api_wf, conv_err = await convert_workflow_via_endpoint(original_wf)
+        if conv_err or api_wf is None:
+            return web.json_response({"success": False, "error": f"워크플로우 변환 실패: {conv_err}"})
+
+        import copy
+        wf = copy.deepcopy(api_wf)
+        for nid, ninfo in wf.items():
+            if not isinstance(ninfo, dict): continue
+            title = ninfo.get("_meta", {}).get("title", "")
+            if title == "긍정프롬프트": ninfo["inputs"]["value"] = positive_text
+            elif title == "부정프롬프트": ninfo["inputs"]["value"] = negative_text
+
+        prompt_id, submit_result = await submit_to_real_comfy(wf)
+        asyncio.create_task(_monitor_bot_lora_training(prompt_id, bot_name, project_name, cn, characters_to_train, 0, config, training_config, test_images))
+
+        return web.json_response({
+            "success": True, "prompt_id": prompt_id, "character": cn,
+            "exported_count": export_result.get("count", 0),
+            "total_characters": len(characters_to_train), "current_index": 0,
+        })
+    except RuntimeError as e:
+        return web.json_response({"success": False, "error": str(e)}, status=400)
+    except Exception as e:
+        print(f"[BOT_LORA_TRAIN] 학습 시작 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def _monitor_bot_lora_training(prompt_id, bot_name, project_name, current_char, characters_to_train, current_idx, config, training_config, test_images):
+    ws_url = f"ws://{REAL_COMFY_HOST}:{REAL_COMFY_PORT}/ws?clientId=bot_lora_{uuid.uuid4().hex[:8]}"
+    print(f"[BOT_LORA_MONITOR] 시작: {bot_name}/{project_name}/{current_char} ({current_idx+1}/{len(characters_to_train)})")
+    try:
+        async with aiohttp.ClientSession() as ws_session:
+            async with ws_session.ws_connect(ws_url) as ws:
+                async for msg in ws:
+                    if msg.type == aiohttp.WSMsgType.TEXT:
+                        data = json.loads(msg.data)
+                        msg_type = data.get("type", "")
+                        msg_data = data.get("data", {})
+                        if msg_type == "md_soya_progress":
+                            msg_data.update({"bot_name": bot_name, "project_name": project_name, "character": current_char, "char_index": current_idx, "total_chars": len(characters_to_train)})
+                            await notify_frontend("bot_lora_training_progress", msg_data)
+                            if msg_data.get("phase") == "all_complete":
+                                print(f"[BOT_LORA_MONITOR] {current_char} 학습 완료")
+                                if current_idx + 1 < len(characters_to_train):
+                                    await _start_next_bot_char_training(bot_name, project_name, characters_to_train, current_idx + 1, config, training_config, test_images)
+                                else:
+                                    await notify_frontend("bot_lora_training_progress", {"phase": "all_chars_complete", "bot_name": bot_name, "project_name": project_name, "message": f"모든 캐릭터({len(characters_to_train)}) 학습 완료"})
+                                return
+                        if msg_type == "executing":
+                            exec_prompt = msg_data.get("prompt_id", "")
+                            exec_node = msg_data.get("node")
+                            if exec_prompt == prompt_id and exec_node is None:
+                                print(f"[BOT_LORA_MONITOR] {current_char} 워크플로우 완료")
+                                await notify_frontend("bot_lora_training_progress", {"phase": "all_complete", "bot_name": bot_name, "project_name": project_name, "character": current_char, "char_index": current_idx, "total_chars": len(characters_to_train)})
+                                if current_idx + 1 < len(characters_to_train):
+                                    await _start_next_bot_char_training(bot_name, project_name, characters_to_train, current_idx + 1, config, training_config, test_images)
+                                else:
+                                    await notify_frontend("bot_lora_training_progress", {"phase": "all_chars_complete", "bot_name": bot_name, "project_name": project_name, "message": f"모든 캐릭터 학습 완료"})
+                                return
+                        if msg_type == "execution_error":
+                            err_prompt = msg_data.get("data", {}).get("prompt_id", "")
+                            if err_prompt == prompt_id:
+                                err_msg = msg_data.get("data", {}).get("exception_message", "Unknown error")
+                                print(f"[BOT_LORA_MONITOR] {current_char} 에러: {err_msg}")
+                                await notify_frontend("bot_lora_training_progress", {"phase": "error", "bot_name": bot_name, "project_name": project_name, "character": current_char, "char_index": current_idx, "message": err_msg})
+                                return
+                    elif msg.type in (aiohttp.WSMsgType.ERROR, aiohttp.WSMsgType.CLOSED):
+                        break
+    except Exception as e:
+        print(f"[BOT_LORA_MONITOR] 예외: {e}")
+        traceback.print_exc()
+        await notify_frontend("bot_lora_training_progress", {"phase": "error", "bot_name": bot_name, "project_name": project_name, "character": current_char, "message": str(e)})
+
+
+async def _start_next_bot_char_training(bot_name, project_name, characters_to_train, next_idx, config, training_config, test_images):
+    from modes.bot_lora_mode import export_bot_training_images, _get_char_training_images, _load_bot_lora_manage
+    ch = characters_to_train[next_idx]
+    cn = ch.get("name", "")
+    manage_data = _load_bot_lora_manage()
+    proj_cfg = manage_data.get("bot_loras", {}).get(bot_name, {}).get(project_name, {})
+    char_configs = proj_cfg.get("characters", {})
+    trigger = char_configs.get(cn, {}).get("trigger", "")
+    profile = training_config.get("profile", "anima")
+    step = training_config.get("step_per_image", 50)
+    il_rate = training_config.get("il_rate", 0.0005)
+    save_step = training_config.get("save_per_step", 50)
+    folder = training_config.get("multi_img_folder_name", "soya_lora")
+    gen_w = training_config.get("gen_w", 1024)
+    gen_h = training_config.get("gen_h", 1024)
+    upscale = training_config.get("upscale", False)
+    resolution = training_config.get("resolution", 1024)
+    save_after = training_config.get("save_after", 0)
+    dim = training_config.get("dim", 32)
+    alpha = training_config.get("alpha", 16)
+    lora_save_path = f"{_safe_dirname_bot(bot_name)}/Lora/{_safe_dirname_bot(project_name)}/{_safe_dirname_bot(cn)}"
+    comfy_input_dir = config.get("comfy_input_dir", "")
+
+    await notify_frontend("bot_lora_training_progress", {"phase": "starting_next", "bot_name": bot_name, "project_name": project_name, "character": cn, "char_index": next_idx, "total_chars": len(characters_to_train), "message": f"'{cn}' 학습 시작 ({next_idx+1}/{len(characters_to_train)})"})
+
+    try:
+        export_result = export_bot_training_images(bot_name, cn, comfy_input_dir, folder)
+        if not export_result.get("success"):
+            await notify_frontend("bot_lora_training_progress", {"phase": "error", "bot_name": bot_name, "project_name": project_name, "character": cn, "message": f"이미지 전송 실패: {export_result.get('error')}"})
+            return
+        images = _get_char_training_images(bot_name, cn, ch.get("rep_images", []))
+        if not images:
+            await notify_frontend("bot_lora_training_progress", {"phase": "error", "bot_name": bot_name, "project_name": project_name, "character": cn, "message": f"{cn}: 학습 이미지 없음"})
+            return
+
+        positive_text = _build_lora_training_text(images, trigger, profile, step, il_rate, save_step, folder, "positive", lora_save_path, gen_w, gen_h, upscale, resolution, test_images, save_after, dim, alpha)
+        negative_text = _build_lora_training_text(images, trigger, profile, step, il_rate, save_step, folder, "negative", lora_save_path, gen_w, gen_h, upscale, resolution, test_images, save_after, dim, alpha)
+
+        workflow_paths = config.get("lora_training_workflow_source_paths", {})
+        if isinstance(workflow_paths, dict) and workflow_paths:
+            workflow_path = workflow_paths.get(profile, "")
+            if not workflow_path:
+                for k, v in workflow_paths.items():
+                    if v: workflow_path = v; break
+        else:
+            workflow_path = config.get("lora_training_workflow_source_path", "")
+        if not workflow_path or not os.path.isfile(workflow_path):
+            await notify_frontend("bot_lora_training_progress", {"phase": "error", "bot_name": bot_name, "project_name": project_name, "character": cn, "message": "워크플로우 파일 없음"})
+            return
+
+        with open(workflow_path, "r", encoding="utf-8") as f:
+            original_wf = json.load(f)
+        api_wf, conv_err = await convert_workflow_via_endpoint(original_wf)
+        if conv_err or api_wf is None:
+            await notify_frontend("bot_lora_training_progress", {"phase": "error", "bot_name": bot_name, "project_name": project_name, "character": cn, "message": f"워크플로우 변환 실패: {conv_err}"})
+            return
+
+        import copy
+        wf = copy.deepcopy(api_wf)
+        for nid, ninfo in wf.items():
+            if not isinstance(ninfo, dict): continue
+            title = ninfo.get("_meta", {}).get("title", "")
+            if title == "긍정프롬프트": ninfo["inputs"]["value"] = positive_text
+            elif title == "부정프롬프트": ninfo["inputs"]["value"] = negative_text
+
+        prompt_id, _ = await submit_to_real_comfy(wf)
+        asyncio.create_task(_monitor_bot_lora_training(prompt_id, bot_name, project_name, cn, characters_to_train, next_idx, config, training_config, test_images))
+    except Exception as e:
+        print(f"[BOT_LORA_TRAIN] 다음 캐릭터 실패: {cn} - {e}")
+        traceback.print_exc()
+        await notify_frontend("bot_lora_training_progress", {"phase": "error", "bot_name": bot_name, "project_name": project_name, "character": cn, "message": str(e)})
+
+
+async def handle_api_bot_lora_trained_sessions(request):
+    try:
+        bot_name = request.query.get("bot", "")
+        project_name = request.query.get("project", "")
+        char_name = request.query.get("character", "")
+        if not bot_name or not project_name or not char_name:
+            return web.json_response({"success": False, "error": "bot, project, character 필수"}, status=400)
+        config = load_config()
+        lora_load_path = config.get("lora_load_path", "")
+        if not lora_load_path:
+            return web.json_response({"success": False, "error": "lora_load_path 미설정"}, status=400)
+        from modes.bot_lora_mode import list_bot_trained_sessions
+        sessions = list_bot_trained_sessions(lora_load_path, bot_name, project_name, char_name)
+        return web.json_response({"success": True, "sessions": sessions})
+    except Exception as e:
+        print(f"[BOT_LORA_API] 세션 목록 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_bot_lora_trained_steps(request):
+    try:
+        bot_name = request.query.get("bot", "")
+        project_name = request.query.get("project", "")
+        char_name = request.query.get("character", "")
+        session = request.query.get("session", "")
+        if not bot_name or not project_name or not char_name or not session:
+            return web.json_response({"success": False, "error": "bot, project, character, session 필수"}, status=400)
+        config = load_config()
+        lora_load_path = config.get("lora_load_path", "")
+        from modes.bot_lora_mode import list_bot_trained_steps
+        steps = list_bot_trained_steps(lora_load_path, bot_name, project_name, char_name, session)
+        return web.json_response({"success": True, "steps": steps})
+    except Exception as e:
+        print(f"[BOT_LORA_API] step 목록 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_bot_lora_trained_toml(request):
+    try:
+        bot_name = request.query.get("bot", "")
+        project_name = request.query.get("project", "")
+        char_name = request.query.get("character", "")
+        session = request.query.get("session", "")
+        step = request.query.get("step", "")
+        if not bot_name or not project_name or not char_name or not session or not step:
+            return web.json_response({"success": False, "error": "bot, project, character, session, step 필수"}, status=400)
+        config = load_config()
+        lora_load_path = config.get("lora_load_path", "")
+        from modes.bot_lora_mode import read_bot_toml_file
+        result = read_bot_toml_file(lora_load_path, bot_name, project_name, char_name, session, step)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[BOT_LORA_API] TOML 읽기 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_bot_lora_trained_preview(request):
+    try:
+        bot_name = request.match_info.get("bot", "")
+        project_name = request.match_info.get("project", "")
+        char_name = request.match_info.get("character", "")
+        session = request.match_info.get("session", "")
+        filename = request.match_info.get("filename", "")
+        if not bot_name or not project_name or not char_name or not session or not filename:
+            return web.Response(status=400)
+        config = load_config()
+        lora_load_path = config.get("lora_load_path", "")
+        from modes.bot_lora_mode import get_bot_trained_preview_path
+        fpath = get_bot_trained_preview_path(lora_load_path, bot_name, project_name, char_name, session, filename)
+        if not fpath:
+            return web.Response(status=404)
+        return web.FileResponse(fpath)
+    except Exception as e:
+        print(f"[BOT_LORA_API] 프리뷰 서빙 실패: {e}")
+        return web.Response(status=500)
+
+
+async def handle_api_bot_lora_trained_delete(request):
+    try:
+        body = await request.json()
+        bot_name = body.get("bot", "")
+        project_name = body.get("project", "")
+        char_name = body.get("character", "")
+        session = body.get("session", "")
+        step = body.get("step", "")
+        if not bot_name or not project_name or not char_name or not session or not step:
+            return web.json_response({"success": False, "error": "bot, project, character, session, step 필수"}, status=400)
+        config = load_config()
+        lora_load_path = config.get("lora_load_path", "")
+        from modes.bot_lora_mode import delete_bot_trained_step
+        result = delete_bot_trained_step(lora_load_path, bot_name, project_name, char_name, session, step)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[BOT_LORA_API] step 삭제 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_bot_lora_trained_delete_session(request):
+    try:
+        body = await request.json()
+        bot_name = body.get("bot", "")
+        project_name = body.get("project", "")
+        char_name = body.get("character", "")
+        session = body.get("session", "")
+        if not bot_name or not project_name or not char_name or not session:
+            return web.json_response({"success": False, "error": "bot, project, character, session 필수"}, status=400)
+        config = load_config()
+        lora_load_path = config.get("lora_load_path", "")
+        from modes.bot_lora_mode import delete_bot_trained_session
+        result = delete_bot_trained_session(lora_load_path, bot_name, project_name, char_name, session)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[BOT_LORA_API] 세션 삭제 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+app.router.add_get("/api/bot_lora/bots", handle_api_bot_lora_bots)
+app.router.add_get("/api/bot_lora/projects", handle_api_bot_lora_projects)
+app.router.add_post("/api/bot_lora/project/add", handle_api_bot_lora_project_add)
+app.router.add_post("/api/bot_lora/project/delete", handle_api_bot_lora_project_delete)
+app.router.add_get("/api/bot_lora/project", handle_api_bot_lora_project)
+app.router.add_post("/api/bot_lora/config", handle_api_bot_lora_config)
+app.router.add_post("/api/bot_lora/trigger", handle_api_bot_lora_trigger)
+app.router.add_post("/api/bot_lora/test_images/add", handle_api_bot_lora_test_add)
+app.router.add_get("/api/bot_lora/test_image/{bot}/{project}/{filename}", handle_api_bot_lora_test_image)
+app.router.add_post("/api/bot_lora/test_images/delete", handle_api_bot_lora_test_delete)
+app.router.add_post("/api/bot_lora/test_images/prompt", handle_api_bot_lora_test_prompt)
+app.router.add_get("/api/bot_lora/training_image/{bot}/{character}/{filename}", handle_api_bot_lora_training_image)
+app.router.add_post("/api/bot_lora/training_images/prompt", handle_api_bot_lora_training_prompt)
+app.router.add_post("/api/bot_lora/training_images/export", handle_api_bot_lora_training_export)
+app.router.add_post("/api/bot_lora/training/start", handle_api_bot_lora_training_start)
+app.router.add_get("/api/bot_lora/trained/sessions", handle_api_bot_lora_trained_sessions)
+app.router.add_get("/api/bot_lora/trained/steps", handle_api_bot_lora_trained_steps)
+app.router.add_get("/api/bot_lora/trained/toml", handle_api_bot_lora_trained_toml)
+app.router.add_get("/api/bot_lora/trained/preview/{bot}/{project}/{character}/{session}/{filename}", handle_api_bot_lora_trained_preview)
+app.router.add_post("/api/bot_lora/trained/delete", handle_api_bot_lora_trained_delete)
+app.router.add_post("/api/bot_lora/trained/delete-session", handle_api_bot_lora_trained_delete_session)
+
+
 async def handle_api_open_folder(request):
     """지정한 경로의 폴더를 윈도우 탐색기로 엶"""
     import subprocess
@@ -6047,6 +6693,7 @@ def _backup_data_on_startup():
     from modes.embedding_service import PROFILE_MAP_FILE
     from modes.lora_mode import LORA_MANAGE_FILE
     from modes.bot_mode import BOT_DATA_FILE
+    from modes.bot_lora_mode import BOT_LORA_MANAGE_FILE
 
     MAX_BACKUPS = 50
     backup_dir = os.path.join(ASSET_DATA_DIR, "backup")
@@ -6060,6 +6707,7 @@ def _backup_data_on_startup():
         ("name_mapping", NAME_MAPPING_FILE),
         ("lora_manage", LORA_MANAGE_FILE),
         ("bot", BOT_DATA_FILE),
+        ("bot_lora_manage", BOT_LORA_MANAGE_FILE),
     ]
 
     for prefix, src_path in backup_targets:
