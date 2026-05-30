@@ -1398,6 +1398,7 @@ class BotDataPatcher:
 
             # 기존 유틸리티 결과 + 프롬프트 삭제
             char_dir = os.path.join(BOT_DIR, bot_name, char_name)
+            result_path = os.path.join(char_dir, "_utility_result.webp")
             for old in ["_utility_result.webp", "_utility_result_prompt.json"]:
                 old_path = os.path.join(char_dir, old)
                 if os.path.isfile(old_path):
