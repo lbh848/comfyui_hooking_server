@@ -249,6 +249,18 @@ def add_project(bot_name: str, project_name: str) -> dict:
         "characters": characters,
     }
     _save_bot_lora_manage(data)
+
+    # 프로젝트 생성 시에만 학습 이미지 동기화
+    for ch_entry in characters:
+        bot_data2 = _load_bot_data()
+        for b in bot_data2.get("bots", []):
+            if b.get("name") == bot_name:
+                for ch in b.get("characters", []):
+                    if ch.get("name") == ch_entry:
+                        _sync_training_images_to_project(bot_name, project_name, ch_entry, ch.get("rep_images", []))
+                        break
+                break
+
     print(f"[BOT_LORA] 프로젝트 추가: {bot_name}/{project_name} ({len(characters)}명)")
     return {"success": True, "name": project_name}
 
@@ -327,7 +339,6 @@ def get_project_data(bot_name: str, project_name: str, lora_load_path: str = "")
         if not char_name:
             continue
 
-        _sync_training_images_to_project(bot_name, project_name, char_name, ch.get("rep_images", []))
         training_images = _get_project_training_images(bot_name, project_name, char_name)
         char_cfg = char_configs.get(char_name, {})
         trigger = char_cfg.get("trigger", "") or char_name

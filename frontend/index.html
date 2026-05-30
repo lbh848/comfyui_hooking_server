@@ -1844,6 +1844,22 @@
             font-size: 0.8rem;
             line-height: 1;
         }
+        .lora-chip-desc {
+            position: fixed;
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 6px 10px;
+            font-size: 0.78rem;
+            color: var(--text);
+            max-width: 300px;
+            z-index: 1100;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            line-height: 1.4;
+            pointer-events: none;
+            white-space: normal;
+            word-break: break-word;
+        }
         .asset-generate-btn {
             width: 100%;
             padding: 12px;
@@ -13186,6 +13202,10 @@
             }
         }
 
+        const _chipDescCache = {};
+        let _chipDescTimer = null;
+        let _chipDescTooltip = null;
+
         function _renderLoraPromptChips(text, origTagsSet) {
             if (!text) return '';
             const tags = text.split(',').map(t => t.trim()).filter(t => t);
@@ -13195,8 +13215,43 @@
                 let cls = 'lora-prompt-chip';
                 if (isAdded) cls += ' added';
                 if (isBlocked) cls += ' blocked';
-                return '<span class="' + cls + '" data-tag="' + escapeHtml(tag) + '">' + escapeHtml(tag) + '<span class="remove-chip" onclick="_removeLoraPromptChip(this)">&times;</span></span>';
+                return '<span class="' + cls + '" data-tag="' + escapeHtml(tag) + '" onmouseenter="_showChipDesc(this)" onmouseleave="_hideChipDesc()">' + escapeHtml(tag) + '<span class="remove-chip" onclick="_removeLoraPromptChip(this)">&times;</span></span>';
             }).join('');
+        }
+
+        async function _showChipDesc(chipEl) {
+            _hideChipDesc();
+            const tag = chipEl.dataset.tag;
+            if (!tag) return;
+            const key = tag.toLowerCase().replace(/_/g, ' ');
+            _chipDescTimer = setTimeout(async () => {
+                let desc = _chipDescCache[key];
+                if (desc === undefined) {
+                    try {
+                        const query = tag.replace(/ /g, '_');
+                        const resp = await fetch(`/api/autocomplete?query=${encodeURIComponent(query)}&limit=5`);
+                        const results = await resp.json();
+                        if (!results.length) { _chipDescCache[key] = null; return; }
+                        const match = results.find(r => r.name === key) || results[0];
+                        desc = match.description || null;
+                        _chipDescCache[key] = desc;
+                    } catch (e) { _chipDescCache[key] = null; return; }
+                }
+                if (!desc) return;
+                const tip = document.createElement('div');
+                tip.className = 'lora-chip-desc';
+                tip.textContent = desc;
+                document.body.appendChild(tip);
+                const rect = chipEl.getBoundingClientRect();
+                tip.style.left = rect.left + 'px';
+                tip.style.top = (rect.bottom + 4) + 'px';
+                _chipDescTooltip = tip;
+            }, 200);
+        }
+
+        function _hideChipDesc() {
+            clearTimeout(_chipDescTimer);
+            if (_chipDescTooltip) { _chipDescTooltip.remove(); _chipDescTooltip = null; }
         }
 
         function _removeLoraPromptChip(removeBtn) {
@@ -13876,7 +13931,8 @@
                 const resp = await fetchJSON(`/api/bot_lora/project?bot=${enc(botLoraCurrentBot)}&project=${enc(botLoraCurrentProject)}`);
                 if (!resp.success) { showToast(resp.error || '프로젝트 로드 실패', 'error'); return; }
                 botLoraProjectData = resp;
-                renderBotLoraProject(resp);
+                const saved = _saveBotLoraDetailsState();
+                renderBotLoraProject(resp, saved);
                 loadBotLoraConfig(resp.training_config || {});
             } catch (e) {
                 console.error('[BOT_LORA] 프로젝트 로드 실패:', e);
@@ -13884,7 +13940,30 @@
             }
         }
 
-        function renderBotLoraProject(data) {
+        function _saveBotLoraDetailsState() {
+            const states = {};
+            document.querySelectorAll('#bot-lora-characters details[open]').forEach(d => {
+                const summary = d.querySelector('summary');
+                if (summary) states[summary.textContent.trim()] = true;
+            });
+            const testPromptDetails = document.getElementById('bot-lora-test-prompt-details');
+            if (testPromptDetails && testPromptDetails.open) states['__test_prompt'] = true;
+            return states;
+        }
+
+        function _restoreBotLoraDetailsState(states) {
+            if (!states) return;
+            document.querySelectorAll('#bot-lora-characters details').forEach(d => {
+                const summary = d.querySelector('summary');
+                if (summary && states[summary.textContent.trim()]) d.open = true;
+            });
+            if (states['__test_prompt']) {
+                const testPromptDetails = document.getElementById('bot-lora-test-prompt-details');
+                if (testPromptDetails) testPromptDetails.open = true;
+            }
+        }
+
+        function renderBotLoraProject(data, savedDetailsState) {
             const container = document.getElementById('bot-lora-characters');
             const chars = data.characters || [];
             if (chars.length === 0) {
@@ -14067,6 +14146,8 @@
 
             // 테스트 이미지
             renderBotLoraTestImages(data.test_images || []);
+
+            _restoreBotLoraDetailsState(savedDetailsState);
         }
 
         function renderBotLoraTestImages(testImages) {
