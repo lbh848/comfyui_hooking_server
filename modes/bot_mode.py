@@ -1107,8 +1107,9 @@ class BotDataPatcher:
         self._workflow_api = None
         self._workflow_hash = None
 
-    def _load_utility_workflow(self) -> tuple[dict | None, str | None]:
+    async def _load_utility_workflow(self) -> tuple[dict | None, str | None]:
         """utility_workflow_source_path에서 워크플로우를 로드한다.
+        이미 API 형식이면 그대로 사용, 아니면 ComfyUI /workflow/convert로 변환.
         반환: (workflow_api_dict, error_msg)"""
         config_path = os.path.join(BASE_DIR, "config.json")
         if not os.path.isfile(config_path):
@@ -1137,7 +1138,13 @@ class BotDataPatcher:
         if is_api:
             self._workflow_api = wf_json
         else:
-            return None, "워크플로우를 API 형식으로 변환해야 합니다. 서버의 convert 기능을 사용하세요."
+            # ComfyUI /workflow/convert로 변환
+            from server import convert_workflow_via_endpoint
+            api_wf, conv_err = await convert_workflow_via_endpoint(wf_json)
+            if conv_err:
+                return None, f"워크플로우 변환 실패: {conv_err}"
+            self._workflow_api = api_wf
+            print(f"[UTILITY] 워크플로우 변환 완료: {len(api_wf)} 노드")
 
         self._workflow_hash = current_hash
         return self._workflow_api, None
@@ -1229,7 +1236,7 @@ class BotDataPatcher:
                 return _json_error("봇 이름이 비어있습니다.")
 
             # 워크플로우 로드
-            wf_api, wf_err = self._load_utility_workflow()
+            wf_api, wf_err = await self._load_utility_workflow()
             if wf_err:
                 return _json_error(wf_err)
 
