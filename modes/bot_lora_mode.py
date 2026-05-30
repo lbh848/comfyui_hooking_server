@@ -241,7 +241,7 @@ def add_project(bot_name: str, project_name: str) -> dict:
             for ch in b.get("characters", []):
                 cn = ch.get("name", "")
                 if cn:
-                    characters[cn] = {"trigger": ""}
+                    characters[cn] = {"trigger": cn}
             break
 
     bot_projects[project_name] = {
@@ -330,7 +330,7 @@ def get_project_data(bot_name: str, project_name: str, lora_load_path: str = "")
         _sync_training_images_to_project(bot_name, project_name, char_name, ch.get("rep_images", []))
         training_images = _get_project_training_images(bot_name, project_name, char_name)
         char_cfg = char_configs.get(char_name, {})
-        trigger = char_cfg.get("trigger", "")
+        trigger = char_cfg.get("trigger", "") or char_name
         trained_sessions = _list_bot_trained_sessions(lora_load_path, bot_name, project_name, char_name) if lora_load_path else []
 
         characters.append({
@@ -339,6 +339,7 @@ def get_project_data(bot_name: str, project_name: str, lora_load_path: str = "")
             "training_images": training_images,
             "trained_sessions": trained_sessions,
             "session_representatives": char_cfg.get("session_representatives", {}),
+            "char_test_images": list_bot_char_test_images(bot_name, project_name, char_name),
         })
 
     test_images = list_bot_test_images(bot_name, project_name)
@@ -447,6 +448,255 @@ def _load_image_with_prompt(fpath: str, char_dir: str, fname: str) -> dict | Non
     except Exception as e:
         print(f"[BOT_LORA] 이미지 정보 읽기 실패: {fpath} - {e}")
         return None
+
+
+# ─── 캐릭터별 테스트 이미지 ─────────────────────────────────
+
+def _bot_char_test_dir(bot_name: str, project_name: str, char_name: str) -> str:
+    """캐릭터별 테스트 이미지 폴더: bot/<봇>/Lora/<프로젝트>/<캐릭터>/_test/"""
+    return os.path.join(_bot_project_char_dir(bot_name, project_name, char_name), TEST_DIR_NAME)
+
+
+def list_bot_char_test_images(bot_name: str, project_name: str, char_name: str) -> list:
+    """캐릭터별 테스트 이미지 목록 반환"""
+    t_dir = _bot_char_test_dir(bot_name, project_name, char_name)
+    if not os.path.isdir(t_dir):
+        return []
+
+    rep_path = os.path.join(t_dir, "_representative.json")
+    representative = ""
+    if os.path.isfile(rep_path):
+        try:
+            with open(rep_path, "r", encoding="utf-8") as f:
+                representative = json.load(f).get("filename", "")
+        except Exception:
+            pass
+
+    images = []
+    for fname in sorted(os.listdir(t_dir)):
+        if fname.startswith("_"):
+            continue
+        ext = os.path.splitext(fname)[1].lower()
+        if ext not in IMAGE_EXTENSIONS:
+            continue
+        fpath = os.path.join(t_dir, fname)
+        base = os.path.splitext(fname)[0]
+        prompt_path = os.path.join(t_dir, f"{base}_prompt.json")
+        positive = ""
+        negative = ""
+        original_positive = ""
+        original_negative = ""
+        if os.path.isfile(prompt_path):
+            try:
+                with open(prompt_path, "r", encoding="utf-8") as f:
+                    pdata = json.load(f)
+                positive = pdata.get("positive", "")
+                negative = pdata.get("negative", "")
+                original_positive = pdata.get("original_positive", positive)
+                original_negative = pdata.get("original_negative", negative)
+            except Exception as e:
+                print(f"[BOT_LORA] 캐릭터 테스트 프롬프트 로드 실패: {prompt_path} - {e}")
+        try:
+            fstat = os.stat(fpath)
+            images.append({
+                "filename": fname,
+                "positive": positive,
+                "negative": negative,
+                "original_positive": original_positive,
+                "original_negative": original_negative,
+                "is_representative": fname == representative,
+                "size": fstat.st_size,
+                "modified": fstat.st_mtime,
+            })
+        except Exception as e:
+            print(f"[BOT_LORA] 캐릭터 테스트 이미지 정보 읽기 실패: {fpath} - {e}")
+    return images
+
+
+def add_bot_char_test_images(bot_name: str, project_name: str, char_name: str, sources: list) -> dict:
+    """에셋에서 캐릭터별 테스트 이미지 추가"""
+    from modes.asset_mode import ASSET_DIR, AssetMode
+
+    t_dir = _bot_char_test_dir(bot_name, project_name, char_name)
+    os.makedirs(t_dir, exist_ok=True)
+
+    added = []
+    skipped = []
+    for src in sources:
+        outfit = src.get("outfit", "")
+        expression = src.get("expression", "")
+        filename = src.get("filename", "")
+        src_char = src.get("character", "")
+        src_char_dir = os.path.join(ASSET_DIR, AssetMode._safe_dirname(src_char)) if src_char else ""
+
+        if not outfit or not expression or not filename or not src_char:
+            print(f"[BOT_LORA] 캐릭터 테스트 이미지 추가: 필수 값 누락 - {src}")
+            skipped.append({"filename": filename, "reason": "필수 값 누락"})
+            continue
+
+        src_path = os.path.join(src_char_dir, AssetMode._safe_dirname(outfit), AssetMode._safe_dirname(expression), filename)
+        if not os.path.isfile(src_path):
+            print(f"[BOT_LORA] 캐릭터 테스트 이미지 원본 없음: {src_path}")
+            skipped.append({"filename": filename, "reason": "원본 파일 없음"})
+            continue
+
+        dest_name = filename
+        dest_path = os.path.join(t_dir, dest_name)
+        if os.path.exists(dest_path):
+            import time
+            base, ext = os.path.splitext(filename)
+            dest_name = f"{int(time.time())}_{base}{ext}"
+            dest_path = os.path.join(t_dir, dest_name)
+
+        try:
+            shutil.copy2(src_path, dest_path)
+            base, ext = os.path.splitext(filename)
+            prompt_src = os.path.join(src_char_dir, AssetMode._safe_dirname(outfit), AssetMode._safe_dirname(expression), f"{base}_prompt.json")
+            prompt_dest = os.path.join(t_dir, f"{os.path.splitext(dest_name)[0]}_prompt.json")
+            if os.path.isfile(prompt_src):
+                with open(prompt_src, "r", encoding="utf-8") as f:
+                    pdata = json.load(f)
+                positive = pdata.get("positive", "")
+                marker = "[FACE_ID_ACTIVATE]"
+                if marker in positive:
+                    pdata["positive"] = positive.split(marker)[0].strip()
+                pdata["original_positive"] = pdata["positive"]
+                pdata["original_negative"] = pdata.get("negative", "")
+                with open(prompt_dest, "w", encoding="utf-8") as f:
+                    json.dump(pdata, f, ensure_ascii=False, indent=2)
+            else:
+                with open(prompt_dest, "w", encoding="utf-8") as f:
+                    json.dump({"positive": "", "negative": "", "original_positive": "", "original_negative": ""}, f, ensure_ascii=False, indent=2)
+            added.append(dest_name)
+            print(f"[BOT_LORA] 캐릭터 테스트 이미지 추가: {dest_path}")
+        except Exception as e:
+            print(f"[BOT_LORA] 캐릭터 테스트 이미지 복사 실패: {src_path} -> {dest_path} - {e}")
+            traceback.print_exc()
+            skipped.append({"filename": filename, "reason": str(e)})
+
+    return {"success": True, "added": added, "skipped": skipped}
+
+
+def copy_project_test_to_char(bot_name: str, project_name: str, char_name: str, filenames: list = None) -> dict:
+    """프로젝트 공통 테스트 이미지를 캐릭터 _test/ 로 복제"""
+    src_dir = _bot_test_dir(bot_name, project_name)
+    dst_dir = _bot_char_test_dir(bot_name, project_name, char_name)
+
+    if not os.path.isdir(src_dir):
+        print(f"[BOT_LORA] 공통 테스트 폴더 없음: {src_dir}")
+        return {"success": False, "error": "공통 테스트 이미지 폴더가 없습니다"}
+
+    os.makedirs(dst_dir, exist_ok=True)
+
+    # filenames가 None이면 전체 복사
+    src_files = []
+    for fname in sorted(os.listdir(src_dir)):
+        if fname.startswith("_"):
+            continue
+        ext = os.path.splitext(fname)[1].lower()
+        if ext not in IMAGE_EXTENSIONS:
+            continue
+        if filenames and fname not in filenames:
+            continue
+        src_files.append(fname)
+
+    if not src_files:
+        print(f"[BOT_LORA] 복사할 공통 테스트 이미지 없음")
+        return {"success": True, "copied": [], "skipped": 0}
+
+    copied = []
+    skipped = 0
+    for fname in src_files:
+        src_path = os.path.join(src_dir, fname)
+        dst_path = os.path.join(dst_dir, fname)
+        if os.path.exists(dst_path):
+            skipped += 1
+            continue
+        try:
+            shutil.copy2(src_path, dst_path)
+            # 프롬프트 JSON도 복사
+            base = os.path.splitext(fname)[0]
+            prompt_src = os.path.join(src_dir, f"{base}_prompt.json")
+            prompt_dst = os.path.join(dst_dir, f"{base}_prompt.json")
+            if os.path.isfile(prompt_src) and not os.path.isfile(prompt_dst):
+                shutil.copy2(prompt_src, prompt_dst)
+            copied.append(fname)
+        except Exception as e:
+            print(f"[BOT_LORA] 공통 테스트 복사 실패: {src_path} -> {dst_path} - {e}")
+            skipped += 1
+
+    print(f"[BOT_LORA] 공통→캐릭터 복제 완료: {bot_name}/{project_name}/{char_name} - 복사:{len(copied)}, 스킵:{skipped}")
+    return {"success": True, "copied": copied, "skipped": skipped}
+
+
+def delete_bot_char_test_image(bot_name: str, project_name: str, char_name: str, filename: str) -> dict:
+    """캐릭터별 테스트 이미지 삭제"""
+    if ".." in filename or os.path.sep in filename:
+        return {"success": False, "error": "잘못된 파일명"}
+    t_dir = _bot_char_test_dir(bot_name, project_name, char_name)
+    fpath = os.path.join(t_dir, filename)
+    if not os.path.isfile(fpath):
+        print(f"[BOT_LORA] 캐릭터 테스트 이미지 없음: {fpath}")
+        return {"success": False, "error": "파일을 찾을 수 없습니다"}
+    try:
+        os.remove(fpath)
+        base = os.path.splitext(filename)[0]
+        prompt_path = os.path.join(t_dir, f"{base}_prompt.json")
+        if os.path.isfile(prompt_path):
+            os.remove(prompt_path)
+        rep_path = os.path.join(t_dir, "_representative.json")
+        if os.path.isfile(rep_path):
+            try:
+                with open(rep_path, "r", encoding="utf-8") as f:
+                    if json.load(f).get("filename") == filename:
+                        os.remove(rep_path)
+            except Exception:
+                pass
+        print(f"[BOT_LORA] 캐릭터 테스트 이미지 삭제 완료: {fpath}")
+        return {"success": True}
+    except Exception as e:
+        print(f"[BOT_LORA] 캐릭터 테스트 이미지 삭제 실패: {fpath} - {e}")
+        traceback.print_exc()
+        return {"success": False, "error": str(e)}
+
+
+def save_bot_char_test_prompt(bot_name: str, project_name: str, char_name: str, filename: str, positive: str, negative: str) -> dict:
+    """캐릭터별 테스트 이미지 프롬프트 저장"""
+    if ".." in filename or os.path.sep in filename:
+        return {"success": False, "error": "잘못된 파일명"}
+    t_dir = _bot_char_test_dir(bot_name, project_name, char_name)
+    base = os.path.splitext(filename)[0]
+    prompt_path = os.path.join(t_dir, f"{base}_prompt.json")
+    try:
+        existing = {}
+        if os.path.isfile(prompt_path):
+            with open(prompt_path, "r", encoding="utf-8") as f:
+                existing = json.load(f)
+        if "original_positive" not in existing:
+            existing["original_positive"] = existing.get("positive", "")
+        if "original_negative" not in existing:
+            existing["original_negative"] = existing.get("negative", "")
+        existing["positive"] = positive
+        existing["negative"] = negative
+        with open(prompt_path, "w", encoding="utf-8") as f:
+            json.dump(existing, f, ensure_ascii=False, indent=2)
+        print(f"[BOT_LORA] 캐릭터 테스트 프롬프트 저장 완료: {prompt_path}")
+        return {"success": True}
+    except Exception as e:
+        print(f"[BOT_LORA] 캐릭터 테스트 프롬프트 저장 실패: {prompt_path} - {e}")
+        return {"success": False, "error": str(e)}
+
+
+def get_bot_char_test_image_path(bot_name: str, project_name: str, char_name: str, filename: str) -> str | None:
+    """캐릭터별 테스트 이미지 파일 경로 반환"""
+    if ".." in filename or os.path.sep in filename:
+        print(f"[BOT_LORA] 잘못된 파일명: {filename}")
+        return None
+    fpath = os.path.join(_bot_char_test_dir(bot_name, project_name, char_name), filename)
+    if os.path.isfile(fpath):
+        return fpath
+    print(f"[BOT_LORA] 캐릭터 테스트 이미지 없음: {fpath}")
+    return None
 
 
 # ─── 학습 설정 ─────────────────────────────────────────────────

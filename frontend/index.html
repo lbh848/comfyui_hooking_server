@@ -13584,6 +13584,28 @@
                 return;
             }
 
+            // 봇 LoRA 캐릭터별 테스트 이미지 모드
+            if (loraPickerTarget === 'bot_char_test') {
+                try {
+                    const resp = await fetchJSON('/api/bot_lora/char_test_images/add', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ bot: botLoraCurrentBot, project: botLoraCurrentProject, character: botLoraCharTestTarget, sources })
+                    });
+                    if (resp.success) {
+                        const msg = `${resp.added.length}장 추가됨${resp.skipped.length > 0 ? ` (${resp.skipped.length}장 스킵)` : ''}`;
+                        showToast(msg, 'success');
+                        closeLoraImagePicker();
+                        await loadBotLoraProject();
+                    } else {
+                        showToast(resp.error || '추가 실패', 'error');
+                    }
+                } catch (e) {
+                    console.error('[BOT_LORA] 캐릭터 테스트 이미지 추가 실패:', e);
+                    showToast('추가 실패', 'error');
+                }
+                return;
+            }
+
             const apiUrl = loraPickerTarget === 'test' ? '/api/lora/test_images/add' : '/api/lora/training_images/add';
             try {
                 const resp = await fetchJSON(apiUrl, {
@@ -13937,8 +13959,8 @@
                     <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
                         <div style="display:flex; align-items:center; gap:10px;">
                             <span style="font-weight:700; font-size:1rem;">${escapeHtml(ch.name)}</span>
-                            <input type="text" value="${escapeHtml(ch.trigger || '')}" placeholder="trigger 키워드" onchange="updateBotLoraTrigger('${enc(ch.name)}', this.value)"
-                                style="padding:3px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface1); color:var(--text); font-size:0.8rem; width:150px;">
+                            <input type="text" value="${escapeHtml(ch.trigger || '')}" placeholder="트리거 워드 (기본값: ${escapeHtml(ch.name)})" onchange="updateBotLoraTrigger('${enc(ch.name)}', this.value)"
+                                style="padding:3px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface1); color:var(--text); font-size:0.8rem; width:200px;">
                         </div>
                         <div style="display:flex; gap:4px;">
                             <button onclick="startBotLoraTrainingSingle('${enc(ch.name)}')" style="padding:4px 10px; background:rgba(80,180,120,0.2); color:var(--text); border:1px solid rgba(80,180,120,0.3); border-radius:4px; cursor:pointer; font-size:0.75rem; font-weight:600;">재학습</button>
@@ -13966,6 +13988,24 @@
                         <summary style="cursor:pointer; font-weight:700; font-size:0.9rem; user-select:none;">프롬프트 (${(ch.training_images || []).length}장)</summary>
                         <div style="margin-top:8px;">
                             ${promptRows || '<div style="text-align:center; padding:16px; color:var(--text-secondary); font-size:0.85rem;">프롬프트가 없습니다.</div>'}
+                        </div>
+                    </details>
+                    <!-- 캐릭터별 테스트 이미지 -->
+                    <details style="margin-top:8px; border-top:1px solid var(--border); padding-top:12px;">
+                        <summary style="cursor:pointer; font-weight:700; font-size:0.9rem; user-select:none;">테스트 이미지 (${(ch.char_test_images || []).length}장)</summary>
+                        <div style="margin-top:8px;">
+                            <div style="display:flex; gap:6px; margin-bottom:8px;">
+                                <button onclick="openBotLoraCharImagePicker('${enc(ch.name)}')" style="padding:4px 10px; background:rgba(180,130,220,0.2); color:var(--text); border:1px solid rgba(180,130,220,0.3); border-radius:4px; cursor:pointer; font-size:0.75rem; font-weight:600;">에셋에서 선택</button>
+                                <button onclick="copyProjectTestToChar('${enc(ch.name)}')" style="padding:4px 10px; background:rgba(80,150,220,0.2); color:var(--text); border:1px solid rgba(80,150,220,0.3); border-radius:4px; cursor:pointer; font-size:0.75rem; font-weight:600;">공통에서 복제</button>
+                            </div>
+                            <div id="bot-lora-char-test-${enc(ch.name)}" style="display:flex; flex-wrap:wrap; gap:8px;">
+                                ${(ch.char_test_images || []).length > 0 ? (ch.char_test_images || []).map(img => `
+                                    <div class="asset-image-card" style="position:relative; width:120px;">
+                                        <img src="/api/bot_lora/char_test_image/${enc(botLoraCurrentBot)}/${enc(botLoraCurrentProject)}/${enc(ch.name)}/${enc(img.filename)}" loading="lazy" style="width:100%; aspect-ratio:1; object-fit:cover; cursor:pointer; border-radius:6px;" onclick="editBotLoraCharTestPrompt('${enc(ch.name)}', '${enc(img.filename)}')">
+                                        <button onclick="deleteBotLoraCharTestImage('${enc(ch.name)}', '${enc(img.filename)}')" style="position:absolute; top:2px; right:2px; background:rgba(220,80,80,0.9); color:#fff; border:none; border-radius:50%; width:18px; height:18px; font-size:0.65rem; cursor:pointer; display:flex; align-items:center; justify-content:center;">&times;</button>
+                                    </div>
+                                `).join('') : '<span style="font-size:0.75rem; color:var(--text-secondary);">테스트 이미지 없음</span>'}
+                            </div>
                         </div>
                     </details>
                 </div>`;
@@ -14149,6 +14189,71 @@
             } catch (e) { showToast('저장 실패', 'error'); }
         }
 
+        // ─── 캐릭터별 테스트 이미지 ───
+
+        let botLoraCharTestTarget = '';
+
+        function openBotLoraCharImagePicker(charName) {
+            botLoraCharTestTarget = charName;
+            loraPickerTarget = 'bot_char_test';
+            loraPickerState = { level: 'characters', pickerCharacter: '', outfit: '', expression: '', selected: new Set() };
+            document.getElementById('lora-image-picker-modal').style.display = 'flex';
+            loadLoraPickerCharacters();
+        }
+
+        async function copyProjectTestToChar(charName) {
+            if (!botLoraCurrentBot || !botLoraCurrentProject) return;
+            const testImages = (botLoraProjectData?.test_images) || [];
+            if (testImages.length === 0) {
+                showToast('공통 테스트 이미지가 없습니다', 'error');
+                return;
+            }
+            try {
+                const resp = await fetchJSON('/api/bot_lora/char_test_images/copy_from_project', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ bot: botLoraCurrentBot, project: botLoraCurrentProject, character: charName })
+                });
+                if (resp.success) {
+                    const msg = `${(resp.copied || []).length}장 복제됨${resp.skipped > 0 ? ` (${resp.skipped}장 스킵)` : ''}`;
+                    showToast(msg, 'success');
+                    await loadBotLoraProject();
+                } else {
+                    showToast(resp.error || '복제 실패', 'error');
+                }
+            } catch (e) { console.error('[BOT_LORA] 공통→캐릭터 복제 실패:', e); showToast('복제 실패', 'error'); }
+        }
+
+        async function deleteBotLoraCharTestImage(charName, filename) {
+            if (!confirm(`"${filename}" 삭제하시겠습니까?`)) return;
+            try {
+                const resp = await fetchJSON('/api/bot_lora/char_test_images/delete', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ bot: botLoraCurrentBot, project: botLoraCurrentProject, character: charName, filename })
+                });
+                if (resp.success) { showToast('삭제 완료', 'success'); await loadBotLoraProject(); }
+                else { showToast(resp.error || '삭제 실패', 'error'); }
+            } catch (e) { console.error('[BOT_LORA] 캐릭터 테스트 이미지 삭제 실패:', e); showToast('삭제 실패', 'error'); }
+        }
+
+        async function editBotLoraCharTestPrompt(charName, filename) {
+            const ch = (botLoraProjectData?.characters || []).find(c => c.name === charName);
+            const imgs = ch?.char_test_images || [];
+            const img = imgs.find(i => i.filename === filename);
+            if (!img) return;
+            const newPositive = prompt(`긍정 프롬프트 (${filename}):`, img.positive || '');
+            if (newPositive === null) return;
+            const newNegative = prompt(`부정 프롬프트 (${filename}):`, img.negative || '');
+            if (newNegative === null) return;
+            try {
+                const resp = await fetchJSON('/api/bot_lora/char_test_images/prompt', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ bot: botLoraCurrentBot, project: botLoraCurrentProject, character: charName, filename, positive: newPositive, negative: newNegative })
+                });
+                if (resp.success) { await loadBotLoraProject(); }
+                else { showToast(resp.error || '저장 실패', 'error'); }
+            } catch (e) { showToast('저장 실패', 'error'); }
+        }
+
         function scrollToBotLoraPrompt(charName, filename) {
             const row = document.getElementById(`bot-lora-prompt-row-${charName}-${filename}`);
             if (row) {
@@ -14263,7 +14368,8 @@
             const buildRawForChar = (charIdx) => {
                 const ch = chars[charIdx];
                 const images = ch.training_images || [];
-                const testImages = botLoraProjectData.test_images || [];
+                // 캐릭터별 테스트 이미지 우선, 없으면 공통 테스트 이미지 폴백
+                const testImages = (ch.char_test_images && ch.char_test_images.length > 0) ? ch.char_test_images : (botLoraProjectData.test_images || []);
                 const trigger = ch.trigger || '';
                 const cfg = getBotLoraConfig();
 

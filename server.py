@@ -6217,6 +6217,103 @@ async def handle_api_bot_lora_test_prompt(request):
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 
+async def handle_api_bot_lora_char_test_image(request):
+    """캐릭터별 테스트 이미지 서빙"""
+    try:
+        bot_name = request.match_info.get("bot", "")
+        project_name = request.match_info.get("project", "")
+        char_name = request.match_info.get("character", "")
+        filename = request.match_info.get("filename", "")
+        if not bot_name or not project_name or not char_name or not filename:
+            return web.Response(status=400)
+        from modes.bot_lora_mode import get_bot_char_test_image_path
+        fpath = get_bot_char_test_image_path(bot_name, project_name, char_name, filename)
+        if not fpath:
+            return web.Response(status=404)
+        return web.FileResponse(fpath)
+    except Exception as e:
+        print(f"[BOT_LORA_API] 캐릭터 테스트 이미지 서빙 실패: {e}")
+        return web.Response(status=500)
+
+
+async def handle_api_bot_lora_char_test_add(request):
+    """에셋에서 캐릭터별 테스트 이미지 추가"""
+    try:
+        body = await request.json()
+        bot_name = body.get("bot", "")
+        project_name = body.get("project", "")
+        char_name = body.get("character", "")
+        sources = body.get("sources", [])
+        if not bot_name or not project_name or not char_name:
+            return web.json_response({"success": False, "error": "봇/프로젝트/캐릭터 필수"}, status=400)
+        from modes.bot_lora_mode import add_bot_char_test_images
+        result = add_bot_char_test_images(bot_name, project_name, char_name, sources)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[BOT_LORA_API] 캐릭터 테스트 이미지 추가 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_bot_lora_char_test_copy(request):
+    """공통 테스트 이미지를 캐릭터로 복제"""
+    try:
+        body = await request.json()
+        bot_name = body.get("bot", "")
+        project_name = body.get("project", "")
+        char_name = body.get("character", "")
+        filenames = body.get("filenames", None)
+        if not bot_name or not project_name or not char_name:
+            return web.json_response({"success": False, "error": "봇/프로젝트/캐릭터 필수"}, status=400)
+        from modes.bot_lora_mode import copy_project_test_to_char
+        result = copy_project_test_to_char(bot_name, project_name, char_name, filenames)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[BOT_LORA_API] 공통→캐릭터 복제 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_bot_lora_char_test_delete(request):
+    """캐릭터별 테스트 이미지 삭제"""
+    try:
+        body = await request.json()
+        bot_name = body.get("bot", "")
+        project_name = body.get("project", "")
+        char_name = body.get("character", "")
+        filename = body.get("filename", "")
+        if not bot_name or not project_name or not char_name or not filename:
+            return web.json_response({"success": False, "error": "봇/프로젝트/캐릭터/파일명 필수"}, status=400)
+        from modes.bot_lora_mode import delete_bot_char_test_image
+        result = delete_bot_char_test_image(bot_name, project_name, char_name, filename)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[BOT_LORA_API] 캐릭터 테스트 이미지 삭제 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_bot_lora_char_test_prompt(request):
+    """캐릭터별 테스트 프롬프트 저장"""
+    try:
+        body = await request.json()
+        bot_name = body.get("bot", "")
+        project_name = body.get("project", "")
+        char_name = body.get("character", "")
+        filename = body.get("filename", "")
+        positive = body.get("positive", "")
+        negative = body.get("negative", "")
+        if not bot_name or not project_name or not char_name or not filename:
+            return web.json_response({"success": False, "error": "봇/프로젝트/캐릭터/파일명 필수"}, status=400)
+        from modes.bot_lora_mode import save_bot_char_test_prompt
+        result = save_bot_char_test_prompt(bot_name, project_name, char_name, filename, positive, negative)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[BOT_LORA_API] 캐릭터 테스트 프롬프트 저장 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
 async def handle_api_bot_lora_training_image(request):
     """학습 이미지 서빙"""
     try:
@@ -6305,7 +6402,7 @@ async def handle_api_bot_lora_training_start(request):
         from modes.bot_lora_mode import (
             _load_bot_data, _load_bot_lora_manage,
             export_bot_training_images, _get_project_training_images,
-            list_bot_test_images,
+            list_bot_test_images, list_bot_char_test_images,
         )
 
         bot_data = _load_bot_data()
@@ -6350,7 +6447,10 @@ async def handle_api_bot_lora_training_start(request):
 
         ch = characters_to_train[0]
         cn = ch.get("name", "")
-        trigger = char_configs.get(cn, {}).get("trigger", "")
+        # 캐릭터별 테스트 이미지 우선 사용, 없으면 공통 테스트 이미지로 폴백
+        char_test_images = list_bot_char_test_images(bot_name, project_name, cn)
+        effective_test_images = char_test_images if char_test_images else test_images
+        trigger = char_configs.get(cn, {}).get("trigger", "") or cn
         lora_save_path = f"{_safe_dirname_bot(bot_name)}/Lora/{_safe_dirname_bot(project_name)}/{_safe_dirname_bot(cn)}"
 
         export_result = export_bot_training_images(bot_name, project_name, cn, comfy_input_dir, folder)
@@ -6361,8 +6461,8 @@ async def handle_api_bot_lora_training_start(request):
         if not images:
             return web.json_response({"success": False, "error": f"{cn}: 학습 이미지가 없습니다"})
 
-        positive_text = _build_lora_training_text(images, trigger, profile, step, il_rate, save_step, folder, "positive", lora_save_path, gen_w, gen_h, upscale, resolution, test_images, save_after, dim, alpha)
-        negative_text = _build_lora_training_text(images, trigger, profile, step, il_rate, save_step, folder, "negative", lora_save_path, gen_w, gen_h, upscale, resolution, test_images, save_after, dim, alpha)
+        positive_text = _build_lora_training_text(images, trigger, profile, step, il_rate, save_step, folder, "positive", lora_save_path, gen_w, gen_h, upscale, resolution, effective_test_images, save_after, dim, alpha)
+        negative_text = _build_lora_training_text(images, trigger, profile, step, il_rate, save_step, folder, "negative", lora_save_path, gen_w, gen_h, upscale, resolution, effective_test_images, save_after, dim, alpha)
 
         workflow_paths = config.get("lora_training_workflow_source_paths", {})
         if isinstance(workflow_paths, dict) and workflow_paths:
@@ -6454,13 +6554,16 @@ async def _monitor_bot_lora_training(prompt_id, bot_name, project_name, current_
 
 
 async def _start_next_bot_char_training(bot_name, project_name, characters_to_train, next_idx, config, training_config, test_images):
-    from modes.bot_lora_mode import export_bot_training_images, _get_project_training_images, _load_bot_lora_manage
+    from modes.bot_lora_mode import export_bot_training_images, _get_project_training_images, _load_bot_lora_manage, list_bot_char_test_images
     ch = characters_to_train[next_idx]
     cn = ch.get("name", "")
     manage_data = _load_bot_lora_manage()
     proj_cfg = manage_data.get("bot_loras", {}).get(bot_name, {}).get(project_name, {})
     char_configs = proj_cfg.get("characters", {})
-    trigger = char_configs.get(cn, {}).get("trigger", "")
+    trigger = char_configs.get(cn, {}).get("trigger", "") or cn
+    # 캐릭터별 테스트 이미지 우선, 없으면 공통 테스트 이미지 폴백
+    char_test_images = list_bot_char_test_images(bot_name, project_name, cn)
+    effective_test_images = char_test_images if char_test_images else test_images
     profile = training_config.get("profile", "anima")
     step = training_config.get("step_per_image", 50)
     il_rate = training_config.get("il_rate", 0.0005)
@@ -6488,8 +6591,8 @@ async def _start_next_bot_char_training(bot_name, project_name, characters_to_tr
             await notify_frontend("bot_lora_training_progress", {"phase": "error", "bot_name": bot_name, "project_name": project_name, "character": cn, "message": f"{cn}: 학습 이미지 없음"})
             return
 
-        positive_text = _build_lora_training_text(images, trigger, profile, step, il_rate, save_step, folder, "positive", lora_save_path, gen_w, gen_h, upscale, resolution, test_images, save_after, dim, alpha)
-        negative_text = _build_lora_training_text(images, trigger, profile, step, il_rate, save_step, folder, "negative", lora_save_path, gen_w, gen_h, upscale, resolution, test_images, save_after, dim, alpha)
+        positive_text = _build_lora_training_text(images, trigger, profile, step, il_rate, save_step, folder, "positive", lora_save_path, gen_w, gen_h, upscale, resolution, effective_test_images, save_after, dim, alpha)
+        negative_text = _build_lora_training_text(images, trigger, profile, step, il_rate, save_step, folder, "negative", lora_save_path, gen_w, gen_h, upscale, resolution, effective_test_images, save_after, dim, alpha)
 
         workflow_paths = config.get("lora_training_workflow_source_paths", {})
         if isinstance(workflow_paths, dict) and workflow_paths:
@@ -6658,6 +6761,11 @@ app.router.add_post("/api/bot_lora/test_images/add", handle_api_bot_lora_test_ad
 app.router.add_get("/api/bot_lora/test_image/{bot}/{project}/{filename}", handle_api_bot_lora_test_image)
 app.router.add_post("/api/bot_lora/test_images/delete", handle_api_bot_lora_test_delete)
 app.router.add_post("/api/bot_lora/test_images/prompt", handle_api_bot_lora_test_prompt)
+app.router.add_get("/api/bot_lora/char_test_image/{bot}/{project}/{character}/{filename}", handle_api_bot_lora_char_test_image)
+app.router.add_post("/api/bot_lora/char_test_images/add", handle_api_bot_lora_char_test_add)
+app.router.add_post("/api/bot_lora/char_test_images/copy_from_project", handle_api_bot_lora_char_test_copy)
+app.router.add_post("/api/bot_lora/char_test_images/delete", handle_api_bot_lora_char_test_delete)
+app.router.add_post("/api/bot_lora/char_test_images/prompt", handle_api_bot_lora_char_test_prompt)
 app.router.add_get("/api/bot_lora/training_image/{bot}/{project}/{character}/{filename}", handle_api_bot_lora_training_image)
 app.router.add_post("/api/bot_lora/training_images/prompt", handle_api_bot_lora_training_prompt)
 app.router.add_post("/api/bot_lora/training_images/export", handle_api_bot_lora_training_export)
