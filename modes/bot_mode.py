@@ -1396,11 +1396,13 @@ class BotDataPatcher:
             if not char_name:
                 return _json_error("캐릭터 이름이 비어있습니다.")
 
-            # 기존 유틸리티 결과 삭제
-            result_path = os.path.join(BOT_DIR, bot_name, char_name, "_utility_result.webp")
-            if os.path.isfile(result_path):
-                os.remove(result_path)
-                print(f"[UTILITY] 기존 결과 삭제: {result_path}")
+            # 기존 유틸리티 결과 + 프롬프트 삭제
+            char_dir = os.path.join(BOT_DIR, bot_name, char_name)
+            for old in ["_utility_result.webp", "_utility_result_prompt.json"]:
+                old_path = os.path.join(char_dir, old)
+                if os.path.isfile(old_path):
+                    os.remove(old_path)
+                    print(f"[UTILITY] 기존 파일 삭제: {old_path}")
 
             # 워크플로우 로드
             wf_api, wf_err = await self._load_utility_workflow()
