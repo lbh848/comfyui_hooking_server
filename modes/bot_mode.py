@@ -654,7 +654,7 @@ class BotMode:
         return results
 
     def _get_utility_image_paths(self, bot_name: str, char_name: str = "") -> list[dict]:
-        """유틸리티 결과 이미지(_utility_result.webp) 경로 목록 반환."""
+        """유틸리티 결과 이미지(_face_image.webp) 경로 목록 반환."""
         results = []
         if char_name:
             chars = [char_name]
@@ -664,9 +664,9 @@ class BotMode:
             chars = [c["name"] for c in (bot.get("characters", []) if bot else [])] if bot else []
 
         for cn in chars:
-            fp = os.path.join(BOT_DIR, bot_name, cn, "_utility_result.webp")
+            fp = os.path.join(BOT_DIR, bot_name, cn, "_face_image.webp")
             if os.path.isfile(fp):
-                results.append({"character": cn, "filename": "_utility_result.webp", "filepath": fp})
+                results.append({"character": cn, "filename": "_face_image.webp", "filepath": fp})
         return results
 
     async def handle_get_utility_preview(self, request):
@@ -1398,8 +1398,8 @@ class BotDataPatcher:
 
             # 기존 유틸리티 결과 + 프롬프트 삭제
             char_dir = os.path.join(BOT_DIR, bot_name, char_name)
-            result_path = os.path.join(char_dir, "_utility_result.webp")
-            for old in ["_utility_result.webp", "_utility_result_prompt.json"]:
+            result_path = os.path.join(char_dir, "_face_image.webp")
+            for old in ["_face_image.webp", "_face_image_prompt.json"]:
                 old_path = os.path.join(char_dir, old)
                 if os.path.isfile(old_path):
                     os.remove(old_path)

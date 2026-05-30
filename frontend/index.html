@@ -3063,9 +3063,9 @@
                             <div id="data-patch-status" style="font-size:0.7rem; color:var(--text2); margin-top:4px; display:none;"></div>
                         </div>
                         <div style="background:rgba(255,152,0,0.08); border-radius:8px; padding:10px; margin-top:8px;">
-                            <div class="section-title">유틸리티 이미지 일괄 작업</div>
-                            <button id="btn-bot-util-analyze" onclick="botUtilityBatchAnalyze()" style="width:100%; background:#E65100; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">유틸리티 태그 일괄 분석</button>
-                            <button id="btn-bot-util-negative" onclick="botUtilityBatchNegative()" style="width:100%; margin-top:4px; background:#BF360C; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">유틸리티 부정 태그 일괄 적용</button>
+                            <div class="section-title">얼굴 이미지 일괄 작업</div>
+                            <button id="btn-bot-util-analyze" onclick="botUtilityBatchAnalyze()" style="width:100%; background:#E65100; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">얼굴 태그 일괄 분석</button>
+                            <button id="btn-bot-util-negative" onclick="botUtilityBatchNegative()" style="width:100%; margin-top:4px; background:#BF360C; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">얼굴 부정 태그 일괄 적용</button>
                             <div id="bot-util-status" style="font-size:0.7rem; color:var(--text2); margin-top:4px; display:none;"></div>
                         </div>
                     </div>
@@ -13683,7 +13683,7 @@
                             style="margin-left:auto; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:8px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600; white-space:nowrap;">전체 이미지 보기</button>
                         <button onclick="event.stopPropagation(); toggleUtilitySettingsModal('${escAttr(char.name)}', this)"
                             style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:6px 10px; border-radius:6px; cursor:pointer; font-size:0.85rem;"
-                            title="유틸리티 설정">⚙️</button>
+                            title="얼굴 설정">⚙️</button>
                         <span style="font-size:0.9rem;">👁️</span>
                         <div class="inline-add eye-prompt-wrap">
                             <input type="text" id="eye-prompt-${charIdx}" data-bot="${escAttr(botCurrentBot)}" data-char="${escAttr(char.name)}"
@@ -13715,18 +13715,18 @@
                         // 대표 이미지만, 순서대로
                         const repImgs = repImages.map(fn => data.images.find(i => i.filename === fn)).filter(Boolean);
                         const thumbsEl = cardEl.querySelector('.char-thumbs');
-                        // 유틸리티 결과 이미지 (가장 좌측)
-                        const utilImg = data.images.find(i => i.filename === '_utility_result.webp');
+                        // 얼굴 결과 이미지 (가장 좌측)
+                        const utilImg = data.images.find(i => i.filename === '_face_image.webp');
                         if (utilImg) {
                             const utilUrl = `${utilImg.url}?t=${Date.now()}`;
                             const utilWrap = document.createElement('div');
                             utilWrap.style.cssText = 'display:inline-flex; flex-direction:column; align-items:center; margin-right:6px;';
                             utilWrap.innerHTML = `
-                                <div style="font-size:0.6rem; color:var(--accent); margin-bottom:2px; font-weight:600;">유틸리티</div>
+                                <div style="font-size:0.6rem; color:var(--accent); margin-bottom:2px; font-weight:600;">얼굴</div>
                                 <img src="${utilUrl}" loading="lazy" onerror="this.style.display='none'"
                                     onclick="event.stopPropagation(); openLightbox(this.src)"
                                     style="cursor:zoom-in; border:3px solid var(--accent); border-radius:6px;">
-                                <div class="lv1-prompt-box" data-filename="_utility_result.webp" data-character="${escAttr(charName)}" data-negative="${escAttr(utilImg.negative || '')}"
+                                <div class="lv1-prompt-box" data-filename="_face_image.webp" data-character="${escAttr(charName)}" data-negative="${escAttr(utilImg.negative || '')}"
                                     style="width:300px; background:var(--surface2); border-radius:0 0 6px 6px;">
                                     <div class="lv1-prompt-text" style="padding:4px 6px; font-size:0.7rem; color:var(--text2); line-height:1.3; word-break:break-word;
                                         max-height:3.9em; overflow:hidden; cursor:pointer;"
@@ -14855,11 +14855,11 @@
                     return;
                 }
 
-                // 2단계: 유틸리티 워크플로우 - 캐릭터별 순환 실행
+                // 2단계: 얼굴 워크플로우 - 캐릭터별 순환 실행
                 const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
                 const chars = (bot?.characters || []).filter(c => (c.rep_images || []).length > 0);
                 if (chars.length === 0) {
-                    statusDiv.textContent = `완료: ${patchResult.message} (유틸리티 대상 없음)`;
+                    statusDiv.textContent = `완료: ${patchResult.message} (얼굴 대상 없음)`;
                     showToast(patchResult.message, 'success');
                     renderBotCharacters();
                     return;
@@ -14867,7 +14867,7 @@
 
                 let success = 0, fail = 0;
                 for (let i = 0; i < chars.length; i++) {
-                    statusDiv.textContent = `2/2: 유틸리티 ${i + 1}/${chars.length} - ${chars[i].name}`;
+                    statusDiv.textContent = `2/2: 얼굴 ${i + 1}/${chars.length} - ${chars[i].name}`;
                     try {
                         const resp = await fetch('/api/bot_mode/run_utility', {
                             method: 'POST',
@@ -14886,7 +14886,7 @@
                         showToast(`${chars[i].name} 요청 실패`, 'error');
                     }
                 }
-                const utilMsg = `유틸리티 완료: 성공 ${success}/${chars.length}` + (fail > 0 ? ` 실패 ${fail}` : '');
+                const utilMsg = `얼굴 완료: 성공 ${success}/${chars.length}` + (fail > 0 ? ` 실패 ${fail}` : '');
                 statusDiv.textContent = `${patchResult.message} / ${utilMsg}`;
                 showToast(utilMsg, success === chars.length ? 'success' : 'error');
                 renderBotCharacters();
@@ -14899,7 +14899,7 @@
             }
         }
 
-        // ─── 유틸리티 설정 모달 ──────────────────────────────
+        // ─── 얼굴 설정 모달 ──────────────────────────────
         function toggleUtilitySettingsModal(charName, btnEl) {
             const existing = document.getElementById(`utility-modal-${charName}`);
             if (existing) {
@@ -14914,7 +14914,7 @@
             modal.style.cssText = 'position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:10000; background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:20px; min-width:420px; max-width:520px; box-shadow:0 8px 32px rgba(0,0,0,0.4);';
             modal.innerHTML = `
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
-                    <div style="font-weight:700; font-size:1rem;">⚙️ 유틸리티 설정 - ${escHtml(charName)}</div>
+                    <div style="font-weight:700; font-size:1rem;">⚙️ 얼굴 설정 - ${escHtml(charName)}</div>
                     <button onclick="document.getElementById('utility-modal-${escAttr(charName)}').remove()"
                         style="background:none; border:none; color:var(--text2); font-size:1.2rem; cursor:pointer;">✕</button>
                 </div>
@@ -14957,7 +14957,7 @@
                     document.getElementById(`util-emb-target-${charName}`).value = s.emb_target || '대표만';
                     document.getElementById(`util-prompt-preview-${charName}`).textContent = data.prompt_preview || '';
                 } catch (e) {
-                    console.error('유틸리티 설정 로드 실패:', e);
+                    console.error('얼굴 설정 로드 실패:', e);
                 }
             })();
 
@@ -15014,21 +15014,21 @@
             }
         }
 
-        // ─── 유틸리티 이미지 일괄 작업 ──────────────────────────
+        // ─── 얼굴 이미지 일괄 작업 ──────────────────────────
         async function botUtilityBatchAnalyze() {
             if (!botCurrentBot) { showToast('봇을 먼저 선택하세요', 'error'); return; }
             const statusDiv = document.getElementById('bot-util-status');
             statusDiv.style.display = 'block';
-            statusDiv.textContent = '유틸리티 이미지 목록 로드 중...';
+            statusDiv.textContent = '얼굴 이미지 목록 로드 중...';
             try {
                 const prevResp = await fetch(`/api/bot_mode/utility_preview?bot=${encodeURIComponent(botCurrentBot)}&character=`);
                 const prevData = await prevResp.json();
                 if (prevData.error) { showToast(prevData.error, 'error'); statusDiv.style.display = 'none'; return; }
                 const images = prevData.images || [];
-                if (images.length === 0) { showToast('유틸리티 이미지가 없습니다. 데이터 패치를 먼저 실행하세요.', 'error'); statusDiv.style.display = 'none'; return; }
+                if (images.length === 0) { showToast('얼굴 이미지가 없습니다. 데이터 패치를 먼저 실행하세요.', 'error'); statusDiv.style.display = 'none'; return; }
                 botShowUtilityAnalyzeModal(images, statusDiv);
             } catch (e) {
-                showToast('유틸리티 이미지 로드 실패', 'error');
+                showToast('얼굴 이미지 로드 실패', 'error');
                 statusDiv.style.display = 'none';
             }
         }
@@ -15055,7 +15055,7 @@
             modal.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:10000; display:flex; align-items:center; justify-content:center;';
             modal.innerHTML = `<div style="background:var(--surface); border-radius:12px; width:90vw; max-width:700px; max-height:85vh; display:flex; flex-direction:column; overflow:hidden;">
                 <div style="padding:16px 20px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
-                    <h3 style="margin:0;">유틸리티 태그 분석 대상 선택</h3>
+                    <h3 style="margin:0;">얼굴 태그 분석 대상 선택</h3>
                     <button onclick="document.getElementById('bot-util-analyze-modal').style.display='none'" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer;">&times;</button>
                 </div>
                 <div style="padding:8px 20px; font-size:0.75rem; color:var(--text2); display:flex; gap:12px; align-items:center; border-bottom:1px solid var(--border);">
@@ -15094,13 +15094,13 @@
                 const ok = data.success_count || 0;
                 const fail = data.fail_count || 0;
                 statusDiv.textContent = `완료: ${ok}장 성공${fail > 0 ? `, ${fail}장 실패` : ''}`;
-                showToast(`유틸리티 태그 분석 완료 (${ok}장)`, fail > 0 ? 'warning' : 'success');
+                showToast(`얼굴 태그 분석 완료 (${ok}장)`, fail > 0 ? 'warning' : 'success');
                 renderBotCharacters();
             } catch (e) {
-                showToast('유틸리티 태그 분석 오류', 'error');
+                showToast('얼굴 태그 분석 오류', 'error');
             } finally {
                 btn.disabled = false;
-                btn.textContent = '유틸리티 태그 일괄 분석';
+                btn.textContent = '얼굴 태그 일괄 분석';
             }
         }
 
@@ -15119,16 +15119,16 @@
 
             const statusDiv = document.getElementById('bot-util-status');
             statusDiv.style.display = 'block';
-            statusDiv.textContent = '유틸리티 이미지 목록 로드 중...';
+            statusDiv.textContent = '얼굴 이미지 목록 로드 중...';
             try {
                 const prevResp = await fetch(`/api/bot_mode/utility_preview?bot=${encodeURIComponent(botCurrentBot)}&character=`);
                 const prevData = await prevResp.json();
                 if (prevData.error) { showToast(prevData.error, 'error'); statusDiv.style.display = 'none'; return; }
                 const images = prevData.images || [];
-                if (images.length === 0) { showToast('유틸리티 이미지가 없습니다', 'error'); statusDiv.style.display = 'none'; return; }
+                if (images.length === 0) { showToast('얼굴 이미지가 없습니다', 'error'); statusDiv.style.display = 'none'; return; }
                 botShowUtilityNegativeModal(images, presets, presetNames);
             } catch (e) {
-                showToast('유틸리티 이미지 로드 실패', 'error');
+                showToast('얼굴 이미지 로드 실패', 'error');
                 statusDiv.style.display = 'none';
             }
         }
@@ -15154,7 +15154,7 @@
             modal.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:10000; display:flex; align-items:center; justify-content:center;';
             modal.innerHTML = `<div style="background:var(--surface); border-radius:12px; width:90vw; max-width:700px; max-height:85vh; display:flex; flex-direction:column; overflow:hidden;">
                 <div style="padding:16px 20px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
-                    <h3 style="margin:0;">유틸리티 부정 태그 일괄 적용</h3>
+                    <h3 style="margin:0;">얼굴 부정 태그 일괄 적용</h3>
                     <button onclick="document.getElementById('bot-util-negative-modal').style.display='none'" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer;">&times;</button>
                 </div>
                 <div style="padding:8px 20px; border-bottom:1px solid var(--border);">
@@ -15211,13 +15211,13 @@
                 const ok = data.success_count || 0;
                 const fail = data.fail_count || 0;
                 statusDiv.textContent = `완료: ${ok}장 성공${fail > 0 ? `, ${fail}장 실패` : ''}`;
-                showToast(`유틸리티 부정 태그 적용 완료 (${ok}장)`, fail > 0 ? 'warning' : 'success');
+                showToast(`얼굴 부정 태그 적용 완료 (${ok}장)`, fail > 0 ? 'warning' : 'success');
                 renderBotCharacters();
             } catch (e) {
-                showToast('유틸리티 부정 태그 적용 오류', 'error');
+                showToast('얼굴 부정 태그 적용 오류', 'error');
             } finally {
                 btn.disabled = false;
-                btn.textContent = '유틸리티 부정 태그 일괄 적용';
+                btn.textContent = '얼굴 부정 태그 일괄 적용';
             }
         }
 
