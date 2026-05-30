@@ -4375,8 +4375,17 @@
                             <div id="bot-lora-characters"></div>
                             <!-- 공통 테스트 이미지 -->
                             <div id="bot-lora-test-section" style="padding:16px; margin-top:12px; border-top:2px solid var(--border);">
-                                <div style="font-weight:700; font-size:1.1rem; margin-bottom:12px; padding-bottom:6px; border-bottom:1px solid var(--border);">공통 테스트 이미지</div>
+                                <div style="font-weight:700; font-size:1.1rem; margin-bottom:12px; padding-bottom:6px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:6px;">
+                                    공통 테스트 이미지
+                                    <span style="position:relative; cursor:help; font-size:0.85rem; font-weight:400; color:var(--text-secondary);" onmouseenter="this.querySelector('span').style.display='block'" onmouseleave="this.querySelector('span').style.display='none'">?
+                                        <span style="display:none; position:absolute; bottom:calc(100% + 6px); left:50%; transform:translateX(-50%); background:var(--surface2); border:1px solid var(--border); border-radius:6px; padding:8px 12px; font-size:0.78rem; font-weight:400; color:var(--text); white-space:normal; word-break:break-word; width:280px; z-index:100; box-shadow:0 4px 12px rgba(0,0,0,0.3); line-height:1.4; pointer-events:none;">테스트 이미지가 세팅되지 않은 캐릭터는 공통 테스트 이미지로 로라 프리뷰를 생성합니다.</span>
+                                    </span>
+                                </div>
                                 <div class="asset-image-grid" id="bot-lora-test-grid" style="display:none;"></div>
+                                <details id="bot-lora-test-prompt-details" style="display:none; margin-top:12px; border-top:1px solid var(--border); padding-top:12px;">
+                                    <summary style="cursor:pointer; font-weight:700; font-size:0.9rem; user-select:none;">프롬프트 (<span id="bot-lora-test-prompt-count">0</span>장)</summary>
+                                    <div id="bot-lora-test-prompt-rows" style="margin-top:8px;"></div>
+                                </details>
                                 <div id="bot-lora-test-empty" style="text-align:center; padding:24px; color:var(--text-secondary); font-size:0.85rem;">
                                     테스트 이미지가 없습니다. 사이드바에서 추가하세요.
                                 </div>
@@ -14018,20 +14027,66 @@
         function renderBotLoraTestImages(testImages) {
             const grid = document.getElementById('bot-lora-test-grid');
             const emptyEl = document.getElementById('bot-lora-test-empty');
+            const promptDetails = document.getElementById('bot-lora-test-prompt-details');
+            const promptRowsEl = document.getElementById('bot-lora-test-prompt-rows');
+            const promptCountEl = document.getElementById('bot-lora-test-prompt-count');
             const enc = encodeURIComponent;
             if (!testImages || testImages.length === 0) {
                 grid.style.display = 'none';
+                promptDetails.style.display = 'none';
                 emptyEl.style.display = '';
                 return;
             }
             emptyEl.style.display = 'none';
             grid.style.display = '';
+            promptDetails.style.display = '';
+            promptCountEl.textContent = testImages.length;
             grid.innerHTML = testImages.map(img => `
                 <div class="asset-image-card" style="position:relative;">
-                    <img src="/api/bot_lora/test_image/${enc(botLoraCurrentBot)}/${enc(botLoraCurrentProject)}/${enc(img.filename)}" loading="lazy" style="width:100%; aspect-ratio:1; object-fit:cover; cursor:pointer;" onclick="editBotLoraTestPrompt('${enc(img.filename)}')">
+                    <img src="/api/bot_lora/test_image/${enc(botLoraCurrentBot)}/${enc(botLoraCurrentProject)}/${enc(img.filename)}" loading="lazy" style="width:100%; aspect-ratio:1; object-fit:cover; cursor:zoom-in; border-radius:6px;" onclick="openLightbox('/api/bot_lora/test_image/${enc(botLoraCurrentBot)}/${enc(botLoraCurrentProject)}/${enc(img.filename)}')">
                     <button onclick="deleteBotLoraTestImage('${enc(img.filename)}')" style="position:absolute; top:4px; right:4px; background:rgba(220,80,80,0.9); color:#fff; border:none; border-radius:50%; width:20px; height:20px; font-size:0.7rem; cursor:pointer; display:flex; align-items:center; justify-content:center;">&times;</button>
                 </div>
             `).join('');
+            const _roBox = 'padding:6px 8px; border:1px solid var(--border); border-radius:4px; font-size:0.78rem; line-height:1.4; white-space:pre-wrap; word-wrap:break-word; overflow-y:auto; max-height:100px; cursor:default;';
+            promptRowsEl.innerHTML = testImages.map(img => {
+                const origPos = img.original_positive || '';
+                const origNeg = img.original_negative || '';
+                const curPos = img.positive || '';
+                const curNeg = img.negative || '';
+                const posDiff = origPos !== curPos;
+                const negDiff = origNeg !== curNeg;
+                return `<div style="padding:10px; margin-bottom:6px; background:var(--surface2); border:1px solid var(--border); border-radius:8px;">
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <img src="/api/bot_lora/test_image/${enc(botLoraCurrentBot)}/${enc(botLoraCurrentProject)}/${enc(img.filename)}" style="width:40px; height:40px; object-fit:cover; border-radius:6px; border:1px solid var(--border);">
+                        <span style="font-size:0.8rem; font-weight:600;">${escapeHtml(img.filename)}</span>
+                        <button onclick="showBotLoraTestPromptModal('${enc(img.filename)}')" style="margin-left:auto; padding:2px 10px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:4px; cursor:pointer; font-size:0.75rem;">✏️ 편집</button>
+                    </div>
+                    <div style="display:flex; gap:12px; margin-top:8px;">
+                        <div style="flex:1; min-width:0; display:flex; flex-direction:column; gap:4px;">
+                            <div style="font-size:0.75rem; font-weight:700; color:var(--text-secondary); text-align:center;">원본</div>
+                            <div>
+                                <div style="font-size:0.7rem; color:var(--text-secondary); margin-bottom:2px;">긍정</div>
+                                <div style="${_roBox} background:var(--surface2); color:var(--text-secondary);">${escapeHtml(origPos) || '<span style="color:var(--text-secondary);">-</span>'}</div>
+                            </div>
+                            <div>
+                                <div style="font-size:0.7rem; color:var(--text-secondary); margin-bottom:2px;">부정</div>
+                                <div style="${_roBox} background:var(--surface2); color:var(--text-secondary);">${escapeHtml(origNeg) || '<span style="color:var(--text-secondary);">-</span>'}</div>
+                            </div>
+                        </div>
+                        <div style="flex:1; min-width:0; display:flex; flex-direction:column; gap:4px;">
+                            <div style="font-size:0.75rem; font-weight:700; color:var(--accent); text-align:center;">수정 ${posDiff || negDiff ? '<span style="font-weight:400;">(변경됨)</span>' : ''}</div>
+                            <div>
+                                <div style="font-size:0.7rem; color:var(--text-secondary); margin-bottom:2px;">긍정</div>
+                                <div style="${_roBox} background:var(--surface); color:var(--text);">${escapeHtml(curPos) || '<span style="color:var(--text-secondary);">-</span>'}</div>
+                            </div>
+                            <div>
+                                <div style="font-size:0.7rem; color:var(--text-secondary); margin-bottom:2px;">부정</div>
+                                <div style="${_roBox} background:var(--surface); color:var(--text);">${escapeHtml(curNeg) || '<span style="color:var(--text-secondary);">-</span>'}</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>`;
+            }).join('');
         }
 
         function loadBotLoraConfig(cfg) {
@@ -14187,6 +14242,90 @@
                 if (resp.success) { await loadBotLoraProject(); }
                 else { showToast(resp.error || '저장 실패', 'error'); }
             } catch (e) { showToast('저장 실패', 'error'); }
+        }
+
+        function showBotLoraTestPromptModal(filename) {
+            const testImages = botLoraProjectData?.test_images || [];
+            const img = testImages.find(i => i.filename === filename);
+            if (!img) return;
+            const enc = encodeURIComponent;
+            const origPos = img.original_positive || img.positive || '';
+            const origNeg = img.original_negative || img.negative || '';
+            const curPos = img.positive || '';
+            const curNeg = img.negative || '';
+            const curPosTags = _tagSet(curPos);
+            const origPosTags = _tagSet(origPos);
+            const curNegTags = _tagSet(curNeg);
+            const origNegTags = _tagSet(origNeg);
+            const _roStyle = 'width:100%; padding:8px; border:1px solid var(--border); border-radius:6px; background:var(--surface2); color:var(--text-secondary); font-size:0.85rem; line-height:1.5; white-space:pre-wrap; word-wrap:break-word; overflow-y:auto; cursor:default;';
+            const _editStyle = 'width:100%; padding:8px; border:1px solid var(--border); border-radius:6px; background:var(--surface); color:var(--text); font-size:0.85rem; line-height:1.5; white-space:pre-wrap; word-wrap:break-word; overflow-y:auto; outline:none; min-height:80px;';
+            const modal = document.getElementById('lora-image-picker-modal');
+            document.getElementById('lora-picker-title').textContent = '테스트 이미지 프롬프트 편집';
+            document.getElementById('lora-picker-footer').style.display = 'flex';
+            document.getElementById('lora-picker-footer').innerHTML = `
+                <button onclick="closeLoraImagePicker()" style="padding:8px 16px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:6px; cursor:pointer;">닫기</button>
+                <button onclick="saveBotLoraTestPromptModal('${escapeHtml(filename)}')" style="padding:8px 16px; background:var(--accent); color:#fff; border:none; border-radius:6px; cursor:pointer; font-weight:600;">저장</button>
+            `;
+            document.getElementById('lora-picker-body').innerHTML = `
+                <div style="display:flex; gap:16px; margin-bottom:12px;">
+                    <img src="/api/bot_lora/test_image/${enc(botLoraCurrentBot)}/${enc(botLoraCurrentProject)}/${enc(filename)}" style="width:120px; height:120px; object-fit:cover; border-radius:8px; display:block; flex-shrink:0;">
+                    <div style="display:flex; align-items:center; font-size:0.85rem; color:var(--text-secondary);">${escapeHtml(filename)}</div>
+                </div>
+                <details style="margin-bottom:8px; border:1px solid var(--border); border-radius:6px; padding:6px 10px; background:var(--surface2);">
+                    <summary style="cursor:pointer; font-size:0.85rem; font-weight:600; color:var(--error);">블록 태그 규칙</summary>
+                    <div id="lora-block-rules-panel" style="margin-top:6px;"></div>
+                </details>
+                <div style="display:flex; gap:16px;">
+                    <div style="flex:1; display:flex; flex-direction:column; gap:8px;">
+                        <div style="font-size:0.85rem; font-weight:700; color:var(--text-secondary); text-align:center; margin-bottom:4px;">원본</div>
+                        <div>
+                            <label style="font-size:0.8rem; font-weight:600; display:block; margin-bottom:4px;">긍정 프롬프트</label>
+                            <div id="lora-prompt-positive-orig" style="${_roStyle} max-height:200px;">${_renderPromptDiffSpans(origPos, curPosTags, 'rgba(220,50,50,0.12)')}</div>
+                        </div>
+                        <div>
+                            <label style="font-size:0.8rem; font-weight:600; display:block; margin-bottom:4px;">부정 프롬프트</label>
+                            <div id="lora-prompt-negative-orig" style="${_roStyle} max-height:120px;">${_renderPromptDiffSpans(origNeg, curNegTags, 'rgba(220,50,50,0.12)')}</div>
+                        </div>
+                    </div>
+                    <div style="flex:1; display:flex; flex-direction:column; gap:8px;">
+                        <div style="font-size:0.85rem; font-weight:700; color:var(--accent); margin-bottom:4px; display:flex; align-items:center; justify-content:space-between;"><span>수정</span><button id="lora-prompt-mode-toggle" onclick="toggleLoraPromptEditMode()" style="padding:2px 10px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:0.75rem; cursor:pointer;" title="태그 박스 모드로 전환">태그</button></div>
+                        <div>
+                            <label style="font-size:0.8rem; font-weight:600; display:block; margin-bottom:4px;">긍정 프롬프트</label>
+                            <div><div contenteditable="true" id="lora-prompt-positive" onpaste="event.preventDefault(); document.execCommand('insertText', false, event.clipboardData.getData('text/plain'));" style="${_editStyle} max-height:200px;">${_renderPromptDiffSpans(curPos, origPosTags, 'rgba(50,180,50,0.12)')}</div><div id="lora-prompt-positive-chips" class="lora-prompt-chips-container" style="display:none; max-height:200px;"></div></div>
+                        </div>
+                        <div>
+                            <label style="font-size:0.8rem; font-weight:600; display:block; margin-bottom:4px;">부정 프롬프트</label>
+                            <div><div contenteditable="true" id="lora-prompt-negative" onpaste="event.preventDefault(); document.execCommand('insertText', false, event.clipboardData.getData('text/plain'));" style="${_editStyle} max-height:120px;">${_renderPromptDiffSpans(curNeg, origNegTags, 'rgba(50,180,50,0.12)')}</div><div id="lora-prompt-negative-chips" class="lora-prompt-chips-container" style="display:none; max-height:120px;"></div></div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            modal.style.display = 'flex';
+            _loraPromptState = { origPos, origNeg, origPosTags, origNegTags };
+            loraPromptEditMode = 'text';
+            setupPromptLiveDiff();
+            _loadLoraBlockRules().then(() => _renderBlockRulesPanel());
+        }
+
+        async function saveBotLoraTestPromptModal(filename) {
+            const positive = _readLoraPromptContent('positive');
+            const negative = _readLoraPromptContent('negative');
+            try {
+                const resp = await fetchJSON('/api/bot_lora/test_images/prompt', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ bot: botLoraCurrentBot, project: botLoraCurrentProject, filename, positive, negative })
+                });
+                if (resp.success) {
+                    showToast('프롬프트 저장 완료', 'success');
+                    closeLoraImagePicker();
+                    await loadBotLoraProject();
+                } else {
+                    showToast(resp.error || '저장 실패', 'error');
+                }
+            } catch (e) {
+                console.error('[BOT_LORA] 테스트 프롬프트 저장 실패:', e);
+                showToast('저장 실패', 'error');
+            }
         }
 
         // ─── 캐릭터별 테스트 이미지 ───
