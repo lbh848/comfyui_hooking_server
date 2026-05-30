@@ -6221,12 +6221,13 @@ async def handle_api_bot_lora_training_image(request):
     """학습 이미지 서빙"""
     try:
         bot_name = request.match_info.get("bot", "")
+        project_name = request.match_info.get("project", "")
         char_name = request.match_info.get("character", "")
         filename = request.match_info.get("filename", "")
-        if not bot_name or not char_name or not filename:
+        if not bot_name or not project_name or not char_name or not filename:
             return web.Response(status=400)
         from modes.bot_lora_mode import get_bot_training_image_path
-        fpath = get_bot_training_image_path(bot_name, char_name, filename)
+        fpath = get_bot_training_image_path(bot_name, project_name, char_name, filename)
         if not fpath:
             return web.Response(status=404)
         return web.FileResponse(fpath)
@@ -6240,14 +6241,15 @@ async def handle_api_bot_lora_training_prompt(request):
     try:
         body = await request.json()
         bot_name = body.get("bot", "")
+        project_name = body.get("project", "")
         char_name = body.get("character", "")
         filename = body.get("filename", "")
         positive = body.get("positive", "")
         negative = body.get("negative", "")
-        if not bot_name or not char_name or not filename:
-            return web.json_response({"success": False, "error": "봇/캐릭터/파일명 필수"}, status=400)
+        if not bot_name or not project_name or not char_name or not filename:
+            return web.json_response({"success": False, "error": "봇/프로젝트/캐릭터/파일명 필수"}, status=400)
         from modes.bot_lora_mode import save_bot_training_prompt
-        result = save_bot_training_prompt(bot_name, char_name, filename, positive, negative)
+        result = save_bot_training_prompt(bot_name, project_name, char_name, filename, positive, negative)
         return web.json_response(result)
     except Exception as e:
         print(f"[BOT_LORA_API] 학습 프롬프트 저장 실패: {e}")
@@ -6260,20 +6262,20 @@ async def handle_api_bot_lora_training_export(request):
     try:
         body = await request.json()
         bot_name = body.get("bot", "")
+        project_name = body.get("project", "")
         char_name = body.get("character", "")
-        if not bot_name or not char_name:
-            return web.json_response({"success": False, "error": "봇/캐릭터 필수"}, status=400)
+        if not bot_name or not project_name or not char_name:
+            return web.json_response({"success": False, "error": "봇/프로젝트/캐릭터 필수"}, status=400)
         config = load_config()
         comfy_input_dir = config.get("comfy_input_dir", "")
         if not comfy_input_dir:
             return web.json_response({"success": False, "error": "Comfy Input 미설정"}, status=400)
         from modes.bot_lora_mode import export_bot_training_images, _load_bot_lora_manage
         manage_data = _load_bot_lora_manage()
-        project_name = body.get("project", "")
         bot_cfg = manage_data.get("bot_loras", {}).get(bot_name, {}).get(project_name, {})
         training_config = bot_cfg.get("training_config", {})
         folder_name = training_config.get("multi_img_folder_name", "soya_lora")
-        result = export_bot_training_images(bot_name, char_name, comfy_input_dir, folder_name)
+        result = export_bot_training_images(bot_name, project_name, char_name, comfy_input_dir, folder_name)
         return web.json_response(result)
     except Exception as e:
         print(f"[BOT_LORA_API] 이미지 전송 실패: {e}")
@@ -6302,7 +6304,7 @@ async def handle_api_bot_lora_training_start(request):
 
         from modes.bot_lora_mode import (
             _load_bot_data, _load_bot_lora_manage,
-            export_bot_training_images, _get_char_training_images,
+            export_bot_training_images, _get_project_training_images,
             list_bot_test_images,
         )
 
@@ -6351,11 +6353,11 @@ async def handle_api_bot_lora_training_start(request):
         trigger = char_configs.get(cn, {}).get("trigger", "")
         lora_save_path = f"{_safe_dirname_bot(bot_name)}/Lora/{_safe_dirname_bot(project_name)}/{_safe_dirname_bot(cn)}"
 
-        export_result = export_bot_training_images(bot_name, cn, comfy_input_dir, folder)
+        export_result = export_bot_training_images(bot_name, project_name, cn, comfy_input_dir, folder)
         if not export_result.get("success"):
             return web.json_response(export_result)
 
-        images = _get_char_training_images(bot_name, cn, ch.get("rep_images", []))
+        images = _get_project_training_images(bot_name, project_name, cn)
         if not images:
             return web.json_response({"success": False, "error": f"{cn}: 학습 이미지가 없습니다"})
 
@@ -6452,7 +6454,7 @@ async def _monitor_bot_lora_training(prompt_id, bot_name, project_name, current_
 
 
 async def _start_next_bot_char_training(bot_name, project_name, characters_to_train, next_idx, config, training_config, test_images):
-    from modes.bot_lora_mode import export_bot_training_images, _get_char_training_images, _load_bot_lora_manage
+    from modes.bot_lora_mode import export_bot_training_images, _get_project_training_images, _load_bot_lora_manage
     ch = characters_to_train[next_idx]
     cn = ch.get("name", "")
     manage_data = _load_bot_lora_manage()
@@ -6477,11 +6479,11 @@ async def _start_next_bot_char_training(bot_name, project_name, characters_to_tr
     await notify_frontend("bot_lora_training_progress", {"phase": "starting_next", "bot_name": bot_name, "project_name": project_name, "character": cn, "char_index": next_idx, "total_chars": len(characters_to_train), "message": f"'{cn}' 학습 시작 ({next_idx+1}/{len(characters_to_train)})"})
 
     try:
-        export_result = export_bot_training_images(bot_name, cn, comfy_input_dir, folder)
+        export_result = export_bot_training_images(bot_name, project_name, cn, comfy_input_dir, folder)
         if not export_result.get("success"):
             await notify_frontend("bot_lora_training_progress", {"phase": "error", "bot_name": bot_name, "project_name": project_name, "character": cn, "message": f"이미지 전송 실패: {export_result.get('error')}"})
             return
-        images = _get_char_training_images(bot_name, cn, ch.get("rep_images", []))
+        images = _get_project_training_images(bot_name, project_name, cn)
         if not images:
             await notify_frontend("bot_lora_training_progress", {"phase": "error", "bot_name": bot_name, "project_name": project_name, "character": cn, "message": f"{cn}: 학습 이미지 없음"})
             return
@@ -6656,7 +6658,7 @@ app.router.add_post("/api/bot_lora/test_images/add", handle_api_bot_lora_test_ad
 app.router.add_get("/api/bot_lora/test_image/{bot}/{project}/{filename}", handle_api_bot_lora_test_image)
 app.router.add_post("/api/bot_lora/test_images/delete", handle_api_bot_lora_test_delete)
 app.router.add_post("/api/bot_lora/test_images/prompt", handle_api_bot_lora_test_prompt)
-app.router.add_get("/api/bot_lora/training_image/{bot}/{character}/{filename}", handle_api_bot_lora_training_image)
+app.router.add_get("/api/bot_lora/training_image/{bot}/{project}/{character}/{filename}", handle_api_bot_lora_training_image)
 app.router.add_post("/api/bot_lora/training_images/prompt", handle_api_bot_lora_training_prompt)
 app.router.add_post("/api/bot_lora/training_images/export", handle_api_bot_lora_training_export)
 app.router.add_post("/api/bot_lora/training/start", handle_api_bot_lora_training_start)

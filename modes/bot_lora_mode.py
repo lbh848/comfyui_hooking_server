@@ -1,7 +1,7 @@
 """
 Bot LoRA 매니징 모듈
 - 봇 단위로 LoRA 학습 프로젝트 관리 (에셋의 엔트리와 동일 구조)
-- 학습 이미지: 봇 캐릭터의 대표 이미지 + 얼굴 이미지 자동 참조
+- 학습 이미지: 봇 캐릭터의 대표 이미지 + 얼굴 이미지를 프로젝트에 복사하여 관리
 - 테스트 이미지: bot/<봇>/Lora/<프로젝트>/_test/ 에 저장
 - 학습된 LoRA: <lora_load_path>/<봇>/Lora/<프로젝트>/<캐릭터>/ 에 저장
 """
@@ -41,9 +41,86 @@ def _bot_char_dir(bot_name: str, char_name: str) -> str:
     return os.path.join(BOT_DIR, _safe_dirname(bot_name), _safe_dirname(char_name))
 
 
+def _bot_project_char_dir(bot_name: str, project_name: str, char_name: str) -> str:
+    """프로젝트 내 캐릭터 폴더: bot/<봇>/Lora/<프로젝트>/<캐릭터>/"""
+    return os.path.join(_bot_project_dir(bot_name, project_name), _safe_dirname(char_name))
+
+
 def _trained_lora_dir(lora_load_path: str, bot_name: str, project_name: str, char_name: str) -> str:
     """학습된 LoRA 경로: <lora_load_path>/<봇>/Lora/<프로젝트>/<캐릭터>/"""
     return os.path.join(lora_load_path, _safe_dirname(bot_name), "Lora", _safe_dirname(project_name), _safe_dirname(char_name))
+
+
+# ─── 학습 이미지 프로젝트 동기화 ───────────────────────────────
+
+def _sync_training_images_to_project(bot_name: str, project_name: str, char_name: str, rep_images: list) -> dict:
+    """원본 캐릭터 폴더의 학습 이미지를 프로젝트 폴더로 복사 (기존 파일 유지)"""
+    src_dir = _bot_char_dir(bot_name, char_name)
+    dst_dir = _bot_project_char_dir(bot_name, project_name, char_name)
+    if not os.path.isdir(src_dir):
+        print(f"[BOT_LORA_SYNC] 원본 캐릭터 폴더 없음: {src_dir}")
+        return {"synced": 0, "skipped": 0}
+
+    os.makedirs(dst_dir, exist_ok=True)
+
+    # 복사할 파일 목록: rep_images + _face_image.webp
+    files_to_copy = []
+    for fname in rep_images:
+        files_to_copy.append(fname)
+    if os.path.isfile(os.path.join(src_dir, "_face_image.webp")):
+        files_to_copy.append("_face_image.webp")
+
+    synced = 0
+    skipped = 0
+    for fname in files_to_copy:
+        src_path = os.path.join(src_dir, fname)
+        if not os.path.isfile(src_path):
+            print(f"[BOT_LORA_SYNC] 원본 파일 없음: {src_path}")
+            continue
+
+        dst_path = os.path.join(dst_dir, fname)
+        # 이미 존재하면 스킵 (사용자가 편집했을 수 있음)
+        if os.path.isfile(dst_path):
+            skipped += 1
+            continue
+
+        try:
+            shutil.copy2(src_path, dst_path)
+            synced += 1
+        except Exception as e:
+            print(f"[BOT_LORA_SYNC] 이미지 복사 실패: {src_path} -> {dst_path} - {e}")
+
+        # 프롬프트 JSON도 복사
+        base = os.path.splitext(fname)[0]
+        prompt_src = os.path.join(src_dir, f"{base}_prompt.json")
+        prompt_dst = os.path.join(dst_dir, f"{base}_prompt.json")
+        if os.path.isfile(prompt_dst):
+            continue
+        if os.path.isfile(prompt_src):
+            try:
+                with open(prompt_src, "r", encoding="utf-8") as f:
+                    pdata = json.load(f)
+                # "prompt" 키를 "positive"로 통일
+                if "positive" not in pdata and "prompt" in pdata:
+                    pdata["positive"] = pdata.pop("prompt")
+                # 원본 보존
+                if "original_positive" not in pdata:
+                    pdata["original_positive"] = pdata.get("positive", "")
+                if "original_negative" not in pdata:
+                    pdata["original_negative"] = pdata.get("negative", "")
+                with open(prompt_dst, "w", encoding="utf-8") as f:
+                    json.dump(pdata, f, ensure_ascii=False, indent=2)
+            except Exception as e:
+                print(f"[BOT_LORA_SYNC] 프롬프트 복사 실패: {prompt_src} -> {prompt_dst} - {e}")
+        else:
+            try:
+                with open(prompt_dst, "w", encoding="utf-8") as f:
+                    json.dump({"positive": "", "negative": "", "original_positive": "", "original_negative": ""}, f, ensure_ascii=False, indent=2)
+            except Exception as e:
+                print(f"[BOT_LORA_SYNC] 빈 프롬프트 생성 실패: {prompt_dst} - {e}")
+
+    print(f"[BOT_LORA_SYNC] 완료: {bot_name}/{project_name}/{char_name} - 복사:{synced}, 스킵:{skipped}")
+    return {"synced": synced, "skipped": skipped}
 
 
 # ─── 데이터 관리 ─────────────────────────────────────────────
@@ -250,7 +327,8 @@ def get_project_data(bot_name: str, project_name: str, lora_load_path: str = "")
         if not char_name:
             continue
 
-        training_images = _get_char_training_images(bot_name, char_name, ch.get("rep_images", []))
+        _sync_training_images_to_project(bot_name, project_name, char_name, ch.get("rep_images", []))
+        training_images = _get_project_training_images(bot_name, project_name, char_name)
         char_cfg = char_configs.get(char_name, {})
         trigger = char_cfg.get("trigger", "")
         trained_sessions = _list_bot_trained_sessions(lora_load_path, bot_name, project_name, char_name) if lora_load_path else []
@@ -276,7 +354,7 @@ def get_project_data(bot_name: str, project_name: str, lora_load_path: str = "")
 
 
 def _get_char_training_images(bot_name: str, char_name: str, rep_images: list) -> list:
-    """캐릭터의 학습 이미지 목록 반환"""
+    """캐릭터의 원본 학습 이미지 목록 반환 (학습 Export용)"""
     char_dir = _bot_char_dir(bot_name, char_name)
     if not os.path.isdir(char_dir):
         print(f"[BOT_LORA] 캐릭터 폴더 없음: {char_dir}")
@@ -303,6 +381,30 @@ def _get_char_training_images(bot_name: str, char_name: str, rep_images: list) -
     return images
 
 
+def _get_project_training_images(bot_name: str, project_name: str, char_name: str) -> list:
+    """프로젝트 폴더에서 학습 이미지 목록 반환"""
+    proj_char_dir = _bot_project_char_dir(bot_name, project_name, char_name)
+    if not os.path.isdir(proj_char_dir):
+        print(f"[BOT_LORA] 프로젝트 캐릭터 폴더 없음: {proj_char_dir}")
+        return []
+
+    images = []
+    for fname in sorted(os.listdir(proj_char_dir)):
+        ext = os.path.splitext(fname)[1].lower()
+        if ext not in IMAGE_EXTENSIONS:
+            continue
+        fpath = os.path.join(proj_char_dir, fname)
+        img_data = _load_image_with_prompt(fpath, proj_char_dir, fname)
+        if img_data:
+            if fname == "_face_image.webp":
+                img_data["source"] = "face"
+            else:
+                img_data["source"] = "rep"
+            images.append(img_data)
+
+    return images
+
+
 def _load_image_with_prompt(fpath: str, char_dir: str, fname: str) -> dict | None:
     try:
         fstat = os.stat(fpath)
@@ -323,7 +425,7 @@ def _load_image_with_prompt(fpath: str, char_dir: str, fname: str) -> dict | Non
             try:
                 with open(prompt_path, "r", encoding="utf-8") as f:
                     pdata = json.load(f)
-                positive = pdata.get("positive", "")
+                positive = pdata.get("positive", pdata.get("prompt", ""))
                 negative = pdata.get("negative", "")
                 original_positive = pdata.get("original_positive", positive)
                 original_negative = pdata.get("original_negative", negative)
@@ -572,13 +674,13 @@ def save_bot_test_prompt(bot_name: str, project_name: str, filename: str, positi
 
 # ─── 학습 이미지 프롬프트 수정 ───────────────────────────────
 
-def save_bot_training_prompt(bot_name: str, char_name: str, filename: str, positive: str, negative: str) -> dict:
-    """원본 bot 폴더의 _prompt.json 수정 (프로젝트 무관)"""
+def save_bot_training_prompt(bot_name: str, project_name: str, char_name: str, filename: str, positive: str, negative: str) -> dict:
+    """프로젝트 폴더의 _prompt.json 수정"""
     if ".." in filename or os.path.sep in filename:
         return {"success": False, "error": "잘못된 파일명"}
-    char_dir = _bot_char_dir(bot_name, char_name)
+    proj_char_dir = _bot_project_char_dir(bot_name, project_name, char_name)
     base = os.path.splitext(filename)[0]
-    prompt_path = os.path.join(char_dir, f"{base}_prompt.json")
+    prompt_path = os.path.join(proj_char_dir, f"{base}_prompt.json")
     try:
         existing = {}
         if os.path.isfile(prompt_path):
@@ -755,32 +857,19 @@ def get_bot_trained_preview_path(lora_load_path: str, bot_name: str, project_nam
 
 # ─── 학습 이미지 Export ──────────────────────────────────────
 
-def export_bot_training_images(bot_name: str, char_name: str, comfy_input_dir: str, folder_name: str = "soya_lora") -> dict:
-    """봇 캐릭터의 학습 이미지를 Comfy Input 폴더로 복사"""
-    bot_data = _load_bot_data()
-    bot_info = None
-    char_info = None
-    for b in bot_data.get("bots", []):
-        if b.get("name") == bot_name:
-            bot_info = b
-            for ch in b.get("characters", []):
-                if ch.get("name") == char_name:
-                    char_info = ch
-                    break
-            break
+def export_bot_training_images(bot_name: str, project_name: str, char_name: str, comfy_input_dir: str, folder_name: str = "soya_lora") -> dict:
+    """프로젝트 폴더의 학습 이미지를 Comfy Input 폴더로 복사"""
+    proj_char_dir = _bot_project_char_dir(bot_name, project_name, char_name)
+    if not os.path.isdir(proj_char_dir):
+        print(f"[BOT_LORA_EXPORT] 프로젝트 캐릭터 폴더 없음: {proj_char_dir}")
+        return {"success": False, "error": f"프로젝트 학습 이미지 폴더 없음: {bot_name}/{project_name}/{char_name}"}
 
-    if not bot_info or not char_info:
-        return {"success": False, "error": f"봇/캐릭터를 찾을 수 없습니다: {bot_name}/{char_name}"}
-
-    char_dir = _bot_char_dir(bot_name, char_name)
     image_files = []
-    for fname in char_info.get("rep_images", []):
-        fpath = os.path.join(char_dir, fname)
-        if os.path.isfile(fpath):
-            image_files.append(fpath)
-    face_path = os.path.join(char_dir, "_face_image.webp")
-    if os.path.isfile(face_path):
-        image_files.append(face_path)
+    for fname in sorted(os.listdir(proj_char_dir)):
+        ext = os.path.splitext(fname)[1].lower()
+        if ext not in IMAGE_EXTENSIONS:
+            continue
+        image_files.append(os.path.join(proj_char_dir, fname))
 
     if not image_files:
         print(f"[BOT_LORA_EXPORT] 학습 이미지 없음: {bot_name}/{char_name}")
@@ -817,11 +906,12 @@ def export_bot_training_images(bot_name: str, char_name: str, comfy_input_dir: s
 
 # ─── 학습 이미지 파일 서빙 ──────────────────────────────────
 
-def get_bot_training_image_path(bot_name: str, char_name: str, filename: str) -> str | None:
+def get_bot_training_image_path(bot_name: str, project_name: str, char_name: str, filename: str) -> str | None:
+    """프로젝트 폴더에서 학습 이미지 경로 반환"""
     if ".." in filename or os.path.sep in filename:
         print(f"[BOT_LORA] 잘못된 파일명: {filename}")
         return None
-    fpath = os.path.join(_bot_char_dir(bot_name, char_name), filename)
+    fpath = os.path.join(_bot_project_char_dir(bot_name, project_name, char_name), filename)
     if os.path.isfile(fpath):
         return fpath
     print(f"[BOT_LORA] 학습 이미지 없음: {fpath}")
