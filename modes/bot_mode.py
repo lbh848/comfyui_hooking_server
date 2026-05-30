@@ -1092,10 +1092,10 @@ def build_utility_prompt(bot_name: str, char_name: str, settings: dict) -> str:
     """캐릭터의 유틸리티 프롬프트 문자열을 생성한다."""
     emb_value = "representation" if settings.get("emb_target") == "대표만" else "representation,sub"
     return (
-        f"[PATH]soya_bot/{bot_name}/{char_name}\n"
-        f"[FACE_CROP_TOP]{settings.get('face_crop_top', 1.0)}\n"
-        f"[FACE_CROP_BOTTOM]{settings.get('face_crop_bottom', 1.0)}\n"
-        f"[EMB_TARGET]{emb_value}\n"
+        f"[PATH]\nsoya_bot/{bot_name}/{char_name}\n"
+        f"[FACE_CROP_TOP]\n{settings.get('face_crop_top', 1.0)}\n"
+        f"[FACE_CROP_BOTTOM]\n{settings.get('face_crop_bottom', 1.0)}\n"
+        f"[EMB_TARGET]\n{emb_value}\n"
         f"[END]"
     )
 

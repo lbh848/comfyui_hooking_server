@@ -14936,7 +14936,7 @@
             const bottom = document.getElementById(`util-face-crop-bottom-${charName}`)?.value ?? 1.0;
             const embSelect = document.getElementById(`util-emb-target-${charName}`)?.value || '대표만';
             const embValue = embSelect === '대표만' ? 'representation' : 'representation,sub';
-            return `[PATH]soya_bot/${botCurrentBot}/${charName}\n[FACE_CROP_TOP]${top}\n[FACE_CROP_BOTTOM]${bottom}\n[EMB_TARGET]${embValue}\n[END]`;
+            return `[PATH]\nsoya_bot/${botCurrentBot}/${charName}\n[FACE_CROP_TOP]\n${top}\n[FACE_CROP_BOTTOM]\n${bottom}\n[EMB_TARGET]\n${embValue}\n[END]`;
         }
 
         function updateUtilityPreview(charName) {
