@@ -13712,11 +13712,12 @@
                         // 유틸리티 결과 이미지 (가장 좌측)
                         const utilImg = data.images.find(i => i.filename === '_utility_result.webp');
                         if (utilImg) {
+                            const utilUrl = `${utilImg.url}?t=${Date.now()}`;
                             const utilWrap = document.createElement('div');
                             utilWrap.style.cssText = 'display:inline-flex; flex-direction:column; align-items:center; margin-right:6px;';
                             utilWrap.innerHTML = `
                                 <div style="font-size:0.6rem; color:var(--accent); margin-bottom:2px; font-weight:600;">유틸리티</div>
-                                <img src="${utilImg.url}" loading="lazy" onerror="this.style.display='none'"
+                                <img src="${utilUrl}" loading="lazy" onerror="this.style.display='none'"
                                     onclick="event.stopPropagation(); openLightbox(this.src)"
                                     style="cursor:zoom-in; border:3px solid var(--accent); border-radius:6px;">
                             `;
