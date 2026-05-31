@@ -945,6 +945,8 @@ def list_bot_char_available_images(bot_name: str, char_name: str) -> list:
         print(f"[BOT_LORA] 봇 캐릭터 폴더 없음: {char_dir}")
         return []
 
+    bot_dir = os.path.join(BOT_DIR, _safe_dirname(bot_name))
+
     images = []
     for fname in sorted(os.listdir(char_dir)):
         ext = os.path.splitext(fname)[1].lower()
@@ -953,6 +955,21 @@ def list_bot_char_available_images(bot_name: str, char_name: str) -> list:
         fpath = os.path.join(char_dir, fname)
         img_data = _load_image_with_prompt(fpath, char_dir, fname)
         if img_data:
+            # 캐릭터 폴더 안에 프롬프트가 없으면 bot 레벨(바깥)에서도 확인
+            if not img_data["positive"]:
+                base = os.path.splitext(fname)[0]
+                bot_prompt_path = os.path.join(bot_dir, f"{base}_prompt.json")
+                if os.path.isfile(bot_prompt_path):
+                    try:
+                        with open(bot_prompt_path, "r", encoding="utf-8") as f:
+                            pdata = json.load(f)
+                        img_data["positive"] = pdata.get("positive", pdata.get("prompt", ""))
+                        img_data["negative"] = pdata.get("negative", "")
+                        img_data["original_positive"] = pdata.get("original_positive", img_data["positive"])
+                        img_data["original_negative"] = pdata.get("original_negative", img_data["negative"])
+                    except Exception as e:
+                        print(f"[BOT_LORA] bot 레벨 프롬프트 로드 실패: {bot_prompt_path} - {e}")
+
             if fname == "_face_image.webp":
                 img_data["source"] = "face"
             else:

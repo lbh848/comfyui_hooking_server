@@ -14223,6 +14223,10 @@
                     </div>`;
                 }).join('');
 
+                const nonFaceCount = (ch.training_images || []).filter(i => i.source !== 'face').length;
+                const hasFace = (ch.training_images || []).some(i => i.source === 'face');
+                const atImageLimit = nonFaceCount >= 3;
+
                 return `<div style="padding:16px; margin-bottom:12px; background:var(--surface); border:1px solid var(--border); border-radius:10px;">
                     <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
                         <div style="display:flex; align-items:center; gap:10px;">
@@ -14231,14 +14235,14 @@
                                 style="padding:3px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface1); color:var(--text); font-size:0.8rem; width:200px;">
                         </div>
                         <div style="display:flex; gap:4px;">
-                            <button onclick="openBotLoraTrainingImagePicker('${enc(ch.name)}')" style="padding:4px 10px; background:rgba(180,130,220,0.2); color:var(--text); border:1px solid rgba(180,130,220,0.3); border-radius:4px; cursor:pointer; font-size:0.75rem; font-weight:600;">이미지 추가</button>
+                            <button onclick="openBotLoraTrainingImagePicker('${enc(ch.name)}')" ${atImageLimit ? 'disabled' : ''} style="padding:4px 10px; background:rgba(180,130,220,0.2); color:var(--text); border:1px solid rgba(180,130,220,0.3); border-radius:4px; cursor:pointer; font-size:0.75rem; font-weight:600;${atImageLimit ? ' opacity:0.5; cursor:not-allowed;' : ''}">이미지 추가 (${nonFaceCount}/3)</button>
                             <button onclick="startBotLoraTrainingSingle('${enc(ch.name)}')" style="padding:4px 10px; background:rgba(80,180,120,0.2); color:var(--text); border:1px solid rgba(80,180,120,0.3); border-radius:4px; cursor:pointer; font-size:0.75rem; font-weight:600;">재학습</button>
                         </div>
                     </div>
                     <div style="display:flex; gap:8px; align-items:flex-start;">
                         <!-- 학습 이미지 -->
                         <div style="flex:1;">
-                            <div style="font-size:0.75rem; color:var(--text-secondary); margin-bottom:6px;">학습 이미지 (${(ch.training_images || []).length}장)</div>
+                            <div style="font-size:0.75rem; color:var(--text-secondary); margin-bottom:6px;">학습 이미지 (${nonFaceCount}/3장${hasFace ? ' + 얼굴 1장' : ''})</div>
                             <div style="display:flex; flex-wrap:wrap; gap:8px;">
                                 ${trainingImgs || '<span style="font-size:0.75rem; color:var(--text-secondary);">이미지 없음</span>'}
                             </div>
@@ -14640,6 +14644,8 @@
 
         let botTrainingPickerTarget = '';
         let botTrainingPickerSelected = new Set();
+        let botTrainingExistingNonFaceCount = 0;
+        let botTrainingPickerImageData = [];
 
         async function openBotLoraTrainingImagePicker(charName) {
             botTrainingPickerTarget = charName;
@@ -14662,21 +14668,33 @@
                 }
                 const currentTraining = (botLoraProjectData?.characters || []).find(c => c.name === charName);
                 const currentFilenames = new Set((currentTraining?.training_images || []).map(i => i.filename));
+                botTrainingExistingNonFaceCount = (currentTraining?.training_images || []).filter(i => i.source !== 'face').length;
                 const images = resp.images.filter(img => !currentFilenames.has(img.filename));
+                botTrainingPickerImageData = images;
                 if (images.length === 0) {
                     document.getElementById('lora-picker-body').innerHTML = '<div style="text-align:center; padding:32px; color:var(--text-secondary);">추가할 이미지가 없습니다. (모두 학습에 포함됨)</div>';
                     return;
                 }
+                const remainSlots = Math.max(0, 3 - botTrainingExistingNonFaceCount);
                 document.getElementById('lora-picker-body').innerHTML = `
-                    <div style="display:flex; flex-wrap:wrap; gap:8px; max-height:60vh; overflow-y:auto; padding:4px;">
-                        ${images.map(img => `
-                            <div onclick="toggleBotTrainingPickerImage(this, '${escapeHtml(img.filename)}')" data-filename="${escapeAttr(img.filename)}" style="position:relative; width:120px; border-radius:8px; overflow:hidden; border:2px solid transparent; cursor:pointer; transition:border-color 0.15s;">
+                    <div style="margin-bottom:8px; padding:6px 10px; background:var(--surface2); border-radius:6px; font-size:0.8rem; color:var(--text-secondary); display:flex; justify-content:space-between;">
+                        <span>학습 이미지: ${botTrainingExistingNonFaceCount}/3장</span>
+                        <span>${remainSlots > 0 ? `최대 ${remainSlots}장 추가 가능` : '추가 불가 (얼굴만 가능)'}</span>
+                    </div>
+                    <div style="display:flex; flex-wrap:wrap; gap:8px; max-height:55vh; overflow-y:auto; padding:4px;">
+                        ${images.map(img => {
+                            const isFace = img.source === 'face';
+                            const hasPrompt = !!img.positive;
+                            const canSelect = isFace || hasPrompt;
+                            return `
+                            <div onclick="${canSelect ? `toggleBotTrainingPickerImage(this, '${escapeHtml(img.filename)}')` : `showToast('프롬프트가 처리되지 않은 이미지는 선택할 수 없습니다.', 'error')`}" data-filename="${escapeAttr(img.filename)}" style="position:relative; width:120px; border-radius:8px; overflow:hidden; border:2px solid transparent; cursor:${canSelect ? 'pointer' : 'not-allowed'}; transition:border-color 0.15s;${!canSelect ? ' opacity:0.5;' : ''}">
                                 <img src="/api/bot_lora/char_image/${enc(botLoraCurrentBot)}/${enc(charName)}/${enc(img.filename)}" style="width:100%; aspect-ratio:1; object-fit:cover; display:block;">
                                 <div style="position:absolute; bottom:0; left:0; right:0; background:rgba(0,0,0,0.6); color:#fff; font-size:0.65rem; padding:2px 4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(img.filename)}</div>
-                                ${img.source === 'face' ? '<div style="position:absolute; top:2px; right:2px; background:var(--accent); color:#fff; font-size:0.55rem; padding:1px 4px; border-radius:3px;">얼굴</div>' : ''}
-                                <div class="picker-check" style="position:absolute; top:4px; left:4px; width:18px; height:18px; border-radius:4px; border:2px solid rgba(255,255,255,0.5); background:rgba(0,0,0,0.3); display:flex; align-items:center; justify-content:center; font-size:0.7rem; color:#fff; transition:background 0.15s;"></div>
-                            </div>
-                        `).join('')}
+                                ${isFace ? '<div style="position:absolute; top:2px; right:2px; background:var(--accent); color:#fff; font-size:0.55rem; padding:1px 4px; border-radius:3px;">얼굴</div>' : ''}
+                                ${hasPrompt ? '<div style="position:absolute; top:2px; right:2px; background:rgba(76,175,80,0.9); color:#fff; font-size:0.5rem; padding:1px 3px; border-radius:3px;">프롬프트</div>' : (!isFace ? '<div style="position:absolute; top:2px; right:2px; background:rgba(220,80,80,0.9); color:#fff; font-size:0.5rem; padding:1px 3px; border-radius:3px;">프롬프트 없음</div>' : '')}
+                                ${canSelect ? '<div class="picker-check" style="position:absolute; top:4px; left:4px; width:18px; height:18px; border-radius:4px; border:2px solid rgba(255,255,255,0.5); background:rgba(0,0,0,0.3); display:flex; align-items:center; justify-content:center; font-size:0.7rem; color:#fff; transition:background 0.15s;"></div>' : ''}
+                            </div>`;
+                        }).join('')}
                     </div>
                 `;
             } catch (e) {
@@ -14692,6 +14710,17 @@
                 el.querySelector('.picker-check').textContent = '';
                 el.querySelector('.picker-check').style.background = 'rgba(0,0,0,0.3)';
             } else {
+                const isFace = filename === '_face_image.webp';
+                const imgData = botTrainingPickerImageData.find(i => i.filename === filename);
+                if (!isFace && (!imgData || !imgData.positive)) {
+                    showToast('프롬프트가 처리되지 않은 이미지는 추가할 수 없습니다.', 'error');
+                    return;
+                }
+                const selectedNonFace = Array.from(botTrainingPickerSelected).filter(f => f !== '_face_image.webp').length;
+                if (!isFace && botTrainingExistingNonFaceCount + selectedNonFace >= 3) {
+                    showToast('학습 이미지는 최대 3장까지 추가할 수 있습니다.', 'error');
+                    return;
+                }
                 botTrainingPickerSelected.add(filename);
                 el.style.borderColor = 'var(--accent)';
                 el.querySelector('.picker-check').textContent = '✓';
