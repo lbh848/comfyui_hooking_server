@@ -5732,7 +5732,7 @@ async def handle_api_lora_training_start(request):
         folder = training_config.get("multi_img_folder_name", "soya_lora")
         gen_w = training_config.get("gen_w", 1024)
         gen_h = training_config.get("gen_h", 1024)
-        lora_save_path = training_config.get("lora_save_path", f"SOYA_CHAR_LORA/{character}/Lora/{entry}")
+        lora_save_path = training_config.get("lora_save_path", f"{character}/Lora/{entry}")
         upscale = training_config.get("upscale", False)
         resolution = training_config.get("resolution", 1024)
         save_after = training_config.get("save_after", 0)
@@ -6079,7 +6079,7 @@ async def handle_api_bot_lora_project_delete(request):
         if not bot_name or not project_name:
             return web.json_response({"success": False, "error": "봇/프로젝트 이름 필수"}, status=400)
         config = load_config()
-        lora_load_path = config.get("bot_lora_load_path", "") or config.get("lora_load_path", "").replace("SOYA_CHAR_LORA", "SOYA_BOT_LORA")
+        lora_load_path = config.get("bot_lora_load_path", "") or os.path.join(config.get("lora_load_path", ""), "SOYA_BOT_LORA")
         from modes.bot_lora_mode import remove_project
         result = remove_project(bot_name, project_name, lora_load_path)
         return web.json_response(result)
@@ -6097,7 +6097,7 @@ async def handle_api_bot_lora_project(request):
         if not bot_name or not project_name:
             return web.json_response({"success": False, "error": "봇/프로젝트 이름 필수"}, status=400)
         config = load_config()
-        lora_load_path = config.get("bot_lora_load_path", "") or config.get("lora_load_path", "").replace("SOYA_CHAR_LORA", "SOYA_BOT_LORA")
+        lora_load_path = config.get("bot_lora_load_path", "") or os.path.join(config.get("lora_load_path", ""), "SOYA_BOT_LORA")
         from modes.bot_lora_mode import get_project_data
         result = get_project_data(bot_name, project_name, lora_load_path)
         return web.json_response(result)
@@ -6545,7 +6545,12 @@ async def handle_api_bot_lora_training_start(request):
         char_test_images = list_bot_char_test_images(bot_name, project_name, cn)
         effective_test_images = char_test_images if char_test_images else test_images
         trigger = char_configs.get(cn, {}).get("trigger", "") or cn
-        lora_save_path = f"SOYA_BOT_LORA/{_safe_dirname_bot(bot_name)}/Lora/{_safe_dirname_bot(project_name)}/{_safe_dirname_bot(cn)}"
+        # training_config의 lora_save_path 사용, 없으면 기본값 (SOYA_BOT_LORA/{bot}/Lora/{project}/{char})
+        default_save_path = f"SOYA_BOT_LORA/{_safe_dirname_bot(bot_name)}/Lora/{_safe_dirname_bot(project_name)}/{_safe_dirname_bot(cn)}"
+        lora_save_path = training_config.get("lora_save_path", default_save_path)
+        # lora_save_path가 프로젝트 레벨이면 캐릭터명을 자동 추가
+        if not lora_save_path.rstrip("/").endswith(_safe_dirname_bot(cn)):
+            lora_save_path = lora_save_path.rstrip("/") + "/" + _safe_dirname_bot(cn)
 
         export_result = export_bot_training_images(bot_name, project_name, cn, comfy_input_dir, folder)
         if not export_result.get("success"):
@@ -6585,6 +6590,8 @@ async def handle_api_bot_lora_training_start(request):
             elif title == "부정프롬프트": ninfo["inputs"]["value"] = negative_text
 
         prompt_id, submit_result = await submit_to_real_comfy(wf)
+        # 학습 시작 알림 전송
+        await notify_frontend("bot_lora_training_progress", {"phase": "preparing", "bot_name": bot_name, "project_name": project_name, "character": cn, "char_index": 0, "total_chars": len(characters_to_train), "message": f"'{cn}' 학습 시작됨"})
         asyncio.create_task(_monitor_bot_lora_training(prompt_id, bot_name, project_name, cn, characters_to_train, 0, config, training_config, test_images))
 
         return web.json_response({
@@ -6602,15 +6609,19 @@ async def handle_api_bot_lora_training_start(request):
 
 async def _monitor_bot_lora_training(prompt_id, bot_name, project_name, current_char, characters_to_train, current_idx, config, training_config, test_images):
     ws_url = f"ws://{REAL_COMFY_HOST}:{REAL_COMFY_PORT}/ws?clientId=bot_lora_{uuid.uuid4().hex[:8]}"
-    print(f"[BOT_LORA_MONITOR] 시작: {bot_name}/{project_name}/{current_char} ({current_idx+1}/{len(characters_to_train)})")
+    print(f"[BOT_LORA_MONITOR] 시작: {bot_name}/{project_name}/{current_char} ({current_idx+1}/{len(characters_to_train)}), prompt_id={prompt_id}")
     try:
         async with aiohttp.ClientSession() as ws_session:
             async with ws_session.ws_connect(ws_url) as ws:
+                print(f"[BOT_LORA_MONITOR] WebSocket 연결 성공: {ws_url}")
                 async for msg in ws:
                     if msg.type == aiohttp.WSMsgType.TEXT:
                         data = json.loads(msg.data)
                         msg_type = data.get("type", "")
                         msg_data = data.get("data", {})
+                        # 모든 메시지 타입 로깅 (디버그)
+                        if msg_type not in ("status",):
+                            print(f"[BOT_LORA_MONITOR] 수신: type={msg_type}, data={json.dumps(msg_data, ensure_ascii=False)[:200]}")
                         if msg_type == "md_soya_progress":
                             msg_data.update({"bot_name": bot_name, "project_name": project_name, "character": current_char, "char_index": current_idx, "total_chars": len(characters_to_train)})
                             await notify_frontend("bot_lora_training_progress", msg_data)
@@ -6670,7 +6681,12 @@ async def _start_next_bot_char_training(bot_name, project_name, characters_to_tr
     save_after = training_config.get("save_after", 0)
     dim = training_config.get("dim", 32)
     alpha = training_config.get("alpha", 16)
-    lora_save_path = f"{_safe_dirname_bot(bot_name)}/Lora/{_safe_dirname_bot(project_name)}/{_safe_dirname_bot(cn)}"
+    # training_config의 lora_save_path 사용, 없으면 기본값 (SOYA_BOT_LORA/{bot}/Lora/{project}/{char})
+    default_save_path = f"SOYA_BOT_LORA/{_safe_dirname_bot(bot_name)}/Lora/{_safe_dirname_bot(project_name)}/{_safe_dirname_bot(cn)}"
+    lora_save_path = training_config.get("lora_save_path", default_save_path)
+    # lora_save_path가 프로젝트 레벨이면 캐릭터명을 자동 추가
+    if not lora_save_path.rstrip("/").endswith(_safe_dirname_bot(cn)):
+        lora_save_path = lora_save_path.rstrip("/") + "/" + _safe_dirname_bot(cn)
     comfy_input_dir = config.get("comfy_input_dir", "")
 
     await notify_frontend("bot_lora_training_progress", {"phase": "starting_next", "bot_name": bot_name, "project_name": project_name, "character": cn, "char_index": next_idx, "total_chars": len(characters_to_train), "message": f"'{cn}' 학습 시작 ({next_idx+1}/{len(characters_to_train)})"})
@@ -6731,9 +6747,10 @@ async def handle_api_bot_lora_trained_sessions(request):
         if not bot_name or not project_name or not char_name:
             return web.json_response({"success": False, "error": "bot, project, character 필수"}, status=400)
         config = load_config()
-        lora_load_path = config.get("bot_lora_load_path", "") or config.get("lora_load_path", "").replace("SOYA_CHAR_LORA", "SOYA_BOT_LORA")
+        lora_load_path = config.get("bot_lora_load_path", "") or os.path.join(config.get("lora_load_path", ""), "SOYA_BOT_LORA")
         if not lora_load_path:
             return web.json_response({"success": False, "error": "lora_load_path 미설정"}, status=400)
+        print(f"[BOT_LORA_TRAINED] 세션 조회: bot={bot_name}, project={project_name}, char={char_name}, lora_load_path={lora_load_path}")
         from modes.bot_lora_mode import list_bot_trained_sessions
         sessions = list_bot_trained_sessions(lora_load_path, bot_name, project_name, char_name)
         return web.json_response({"success": True, "sessions": sessions})
@@ -6752,7 +6769,7 @@ async def handle_api_bot_lora_trained_steps(request):
         if not bot_name or not project_name or not char_name or not session:
             return web.json_response({"success": False, "error": "bot, project, character, session 필수"}, status=400)
         config = load_config()
-        lora_load_path = config.get("bot_lora_load_path", "") or config.get("lora_load_path", "").replace("SOYA_CHAR_LORA", "SOYA_BOT_LORA")
+        lora_load_path = config.get("bot_lora_load_path", "") or os.path.join(config.get("lora_load_path", ""), "SOYA_BOT_LORA")
         from modes.bot_lora_mode import list_bot_trained_steps
         steps = list_bot_trained_steps(lora_load_path, bot_name, project_name, char_name, session)
         return web.json_response({"success": True, "steps": steps})
@@ -6772,7 +6789,7 @@ async def handle_api_bot_lora_trained_toml(request):
         if not bot_name or not project_name or not char_name or not session or not step:
             return web.json_response({"success": False, "error": "bot, project, character, session, step 필수"}, status=400)
         config = load_config()
-        lora_load_path = config.get("bot_lora_load_path", "") or config.get("lora_load_path", "").replace("SOYA_CHAR_LORA", "SOYA_BOT_LORA")
+        lora_load_path = config.get("bot_lora_load_path", "") or os.path.join(config.get("lora_load_path", ""), "SOYA_BOT_LORA")
         from modes.bot_lora_mode import read_bot_toml_file
         result = read_bot_toml_file(lora_load_path, bot_name, project_name, char_name, session, step)
         return web.json_response(result)
@@ -6792,7 +6809,7 @@ async def handle_api_bot_lora_trained_preview(request):
         if not bot_name or not project_name or not char_name or not session or not filename:
             return web.Response(status=400)
         config = load_config()
-        lora_load_path = config.get("bot_lora_load_path", "") or config.get("lora_load_path", "").replace("SOYA_CHAR_LORA", "SOYA_BOT_LORA")
+        lora_load_path = config.get("bot_lora_load_path", "") or os.path.join(config.get("lora_load_path", ""), "SOYA_BOT_LORA")
         from modes.bot_lora_mode import get_bot_trained_preview_path
         fpath = get_bot_trained_preview_path(lora_load_path, bot_name, project_name, char_name, session, filename)
         if not fpath:
@@ -6814,7 +6831,7 @@ async def handle_api_bot_lora_trained_delete(request):
         if not bot_name or not project_name or not char_name or not session or not step:
             return web.json_response({"success": False, "error": "bot, project, character, session, step 필수"}, status=400)
         config = load_config()
-        lora_load_path = config.get("bot_lora_load_path", "") or config.get("lora_load_path", "").replace("SOYA_CHAR_LORA", "SOYA_BOT_LORA")
+        lora_load_path = config.get("bot_lora_load_path", "") or os.path.join(config.get("lora_load_path", ""), "SOYA_BOT_LORA")
         from modes.bot_lora_mode import delete_bot_trained_step
         result = delete_bot_trained_step(lora_load_path, bot_name, project_name, char_name, session, step)
         return web.json_response(result)
@@ -6834,7 +6851,7 @@ async def handle_api_bot_lora_trained_delete_session(request):
         if not bot_name or not project_name or not char_name or not session:
             return web.json_response({"success": False, "error": "bot, project, character, session 필수"}, status=400)
         config = load_config()
-        lora_load_path = config.get("bot_lora_load_path", "") or config.get("lora_load_path", "").replace("SOYA_CHAR_LORA", "SOYA_BOT_LORA")
+        lora_load_path = config.get("bot_lora_load_path", "") or os.path.join(config.get("lora_load_path", ""), "SOYA_BOT_LORA")
         from modes.bot_lora_mode import delete_bot_trained_session
         result = delete_bot_trained_session(lora_load_path, bot_name, project_name, char_name, session)
         return web.json_response(result)

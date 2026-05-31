@@ -1306,6 +1306,11 @@ def scan_untracked_loras(lora_load_path: str) -> dict:
         if not os.path.isdir(char_path):
             continue
 
+        # SOYA_BOT_LORA 폴더는 봇 LoRA용이므로 비추적 스캔에서 제외
+        if char_dir_name == "SOYA_BOT_LORA":
+            print(f"[LORA_UNTRACKED] SOYA_BOT_LORA 폴더 스킵: {char_path}")
+            continue
+
         # 이 디렉토리가 tracked의 어떤 캐릭터와 매칭되는지 확인
         # 단, 에셋 시스템에도 존재해야 추적으로 인정
         matched_char = None
