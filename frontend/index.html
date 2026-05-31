@@ -5363,10 +5363,15 @@
                         </div>
                     </div>
                     <div class="form-group" style="margin-top: -8px;">
-                        <div style="display: flex; align-items: center; gap: 0;">
-                            <input type="text" id="setting-lora-load-path" placeholder="예: E:\ComfyUI\models\loras" style="flex: 1; border-radius: 6px 0 0 0;">
-                            <span style="display: inline-flex; align-items: center; padding: 8px 10px; background: var(--bg-tertiary, #2a2a3e); border: 1px solid var(--border-color, #3a3a4e); border-left: none; font-size: 13px; color: var(--text-secondary, #aaa); white-space: nowrap; user-select: none;">\SOYA_CHAR_LORA</span>
-                            <span style="display: inline-flex; align-items: center; padding: 8px 10px; background: var(--bg-tertiary, #2a2a3e); border: 1px solid var(--border-color, #3a3a4e); border-left: none; border-radius: 0 6px 6px 0; font-size: 13px; color: var(--text-secondary, #aaa); white-space: nowrap; user-select: none;">\SOYA_BOT_LORA</span>
+                        <div style="display: flex; flex-direction: column; gap: 0;">
+                            <div style="display: flex; align-items: center; gap: 0;">
+                                <input type="text" id="setting-lora-load-path" placeholder="예: E:\ComfyUI\models\loras" style="flex: 1; border-radius: 6px 0 0 0;">
+                                <span style="display: inline-flex; align-items: center; padding: 8px 10px; background: var(--bg-tertiary, #2a2a3e); border: 1px solid var(--border-color, #3a3a4e); border-left: none; font-size: 13px; color: var(--text-secondary, #aaa); white-space: nowrap; user-select: none;">\SOYA_CHAR_LORA</span>
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 0;">
+                                <span style="flex: 1; display: inline-flex; align-items: center; height: 36px;"></span>
+                                <span style="display: inline-flex; align-items: center; padding: 8px 10px; background: var(--bg-tertiary, #2a2a3e); border: 1px solid var(--border-color, #3a3a4e); border-left: none; border-radius: 0 0 6px 0; font-size: 13px; color: var(--text-secondary, #aaa); white-space: nowrap; user-select: none;">\SOYA_BOT_LORA</span>
+                            </div>
                         </div>
                         <div class="hint">학습된 LoRA가 저장되는 폴더 경로 (\SOYA_CHAR_LORA와 \SOYA_BOT_LORA는 자동 추가)</div>
                         <button onclick="scanUntrackedLoras()" style="margin-top: 6px; padding: 6px 14px; font-size: 12px; background: var(--bg-tertiary, #2a2a3e); border: 1px solid var(--border-color, #3a3a4e); border-radius: 6px; color: var(--text-secondary, #aaa); cursor: pointer;">비추적 로라 제거</button>
