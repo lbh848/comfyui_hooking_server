@@ -6293,6 +6293,81 @@ async def handle_api_bot_lora_char_test_delete(request):
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 
+async def handle_api_bot_lora_training_delete(request):
+    """봇 LoRA 학습 이미지 삭제"""
+    try:
+        body = await request.json()
+        bot_name = body.get("bot", "")
+        project_name = body.get("project", "")
+        char_name = body.get("character", "")
+        filename = body.get("filename", "")
+        if not bot_name or not project_name or not char_name or not filename:
+            return web.json_response({"success": False, "error": "봇/프로젝트/캐릭터/파일명 필수"}, status=400)
+        from modes.bot_lora_mode import delete_bot_training_image
+        result = delete_bot_training_image(bot_name, project_name, char_name, filename)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[BOT_LORA_API] 학습 이미지 삭제 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_bot_lora_training_add(request):
+    """봇 LoRA 학습 이미지 추가"""
+    try:
+        body = await request.json()
+        bot_name = body.get("bot", "")
+        project_name = body.get("project", "")
+        char_name = body.get("character", "")
+        sources = body.get("sources", [])
+        if not bot_name or not project_name or not char_name:
+            return web.json_response({"success": False, "error": "봇/프로젝트/캐릭터 필수"}, status=400)
+        from modes.bot_lora_mode import add_bot_training_images
+        result = add_bot_training_images(bot_name, project_name, char_name, sources)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[BOT_LORA_API] 학습 이미지 추가 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_bot_lora_char_available_images(request):
+    """봇 캐릭터 원본 이미지 목록 (학습에 추가 가능한 이미지)"""
+    try:
+        bot_name = request.match_info.get("bot", "")
+        char_name = request.match_info.get("character", "")
+        if not bot_name or not char_name:
+            return web.json_response({"success": False, "error": "봇/캐릭터 필수"}, status=400)
+        from modes.bot_lora_mode import list_bot_char_available_images
+        images = list_bot_char_available_images(bot_name, char_name)
+        return web.json_response({"success": True, "images": images})
+    except Exception as e:
+        print(f"[BOT_LORA_API] 캐릭터 이미지 목록 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_bot_lora_training_add_from_bot(request):
+    """봇 캐릭터 원본에서 학습 이미지 복사 추가"""
+    try:
+        body = await request.json()
+        bot_name = body.get("bot", "")
+        project_name = body.get("project", "")
+        char_name = body.get("character", "")
+        filenames = body.get("filenames", [])
+        if not bot_name or not project_name or not char_name:
+            return web.json_response({"success": False, "error": "봇/프로젝트/캐릭터 필수"}, status=400)
+        if not filenames:
+            return web.json_response({"success": False, "error": "파일명 필수"}, status=400)
+        from modes.bot_lora_mode import add_bot_training_from_bot
+        result = add_bot_training_from_bot(bot_name, project_name, char_name, filenames)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[BOT_LORA_API] 봇 학습 이미지 추가(원본에서) 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
 async def handle_api_bot_lora_char_test_prompt(request):
     """캐릭터별 테스트 프롬프트 저장"""
     try:
@@ -6312,6 +6387,24 @@ async def handle_api_bot_lora_char_test_prompt(request):
         print(f"[BOT_LORA_API] 캐릭터 테스트 프롬프트 저장 실패: {e}")
         traceback.print_exc()
         return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_bot_lora_char_image(request):
+    """봇 캐릭터 원본 이미지 서빙"""
+    try:
+        bot_name = request.match_info.get("bot", "")
+        char_name = request.match_info.get("character", "")
+        filename = request.match_info.get("filename", "")
+        if not bot_name or not char_name or not filename:
+            return web.Response(status=400)
+        from modes.bot_lora_mode import get_bot_char_image_path
+        fpath = get_bot_char_image_path(bot_name, char_name, filename)
+        if not fpath:
+            return web.Response(status=404)
+        return web.FileResponse(fpath)
+    except Exception as e:
+        print(f"[BOT_LORA_API] 캐릭터 이미지 서빙 실패: {e}")
+        return web.Response(status=500)
 
 
 async def handle_api_bot_lora_training_image(request):
@@ -6766,8 +6859,13 @@ app.router.add_post("/api/bot_lora/char_test_images/add", handle_api_bot_lora_ch
 app.router.add_post("/api/bot_lora/char_test_images/copy_from_project", handle_api_bot_lora_char_test_copy)
 app.router.add_post("/api/bot_lora/char_test_images/delete", handle_api_bot_lora_char_test_delete)
 app.router.add_post("/api/bot_lora/char_test_images/prompt", handle_api_bot_lora_char_test_prompt)
+app.router.add_get("/api/bot_lora/char_image/{bot}/{character}/{filename}", handle_api_bot_lora_char_image)
 app.router.add_get("/api/bot_lora/training_image/{bot}/{project}/{character}/{filename}", handle_api_bot_lora_training_image)
 app.router.add_post("/api/bot_lora/training_images/prompt", handle_api_bot_lora_training_prompt)
+app.router.add_post("/api/bot_lora/training_images/add", handle_api_bot_lora_training_add)
+app.router.add_post("/api/bot_lora/training_images/add_from_bot", handle_api_bot_lora_training_add_from_bot)
+app.router.add_get("/api/bot_lora/char_available_images/{bot}/{character}", handle_api_bot_lora_char_available_images)
+app.router.add_post("/api/bot_lora/training_images/delete", handle_api_bot_lora_training_delete)
 app.router.add_post("/api/bot_lora/training_images/export", handle_api_bot_lora_training_export)
 app.router.add_post("/api/bot_lora/training/start", handle_api_bot_lora_training_start)
 app.router.add_get("/api/bot_lora/trained/sessions", handle_api_bot_lora_trained_sessions)

@@ -907,6 +907,186 @@ def delete_bot_test_image(bot_name: str, project_name: str, filename: str) -> di
         return {"success": False, "error": str(e)}
 
 
+def delete_bot_training_image(bot_name: str, project_name: str, char_name: str, filename: str) -> dict:
+    """봇 LoRA 학습 이미지 + 프롬프트 JSON 삭제"""
+    if ".." in filename or os.path.sep in filename:
+        return {"success": False, "error": "잘못된 파일명"}
+    t_dir = _bot_project_char_dir(bot_name, project_name, char_name)
+    fpath = os.path.join(t_dir, filename)
+    if not os.path.isfile(fpath):
+        print(f"[BOT_LORA] 학습 이미지 없음: {fpath}")
+        return {"success": False, "error": "파일을 찾을 수 없습니다"}
+    try:
+        os.remove(fpath)
+        base = os.path.splitext(filename)[0]
+        prompt_path = os.path.join(t_dir, f"{base}_prompt.json")
+        if os.path.isfile(prompt_path):
+            os.remove(prompt_path)
+        rep_path = os.path.join(t_dir, "_representative.json")
+        if os.path.isfile(rep_path):
+            try:
+                with open(rep_path, "r", encoding="utf-8") as f:
+                    if json.load(f).get("filename") == filename:
+                        os.remove(rep_path)
+            except Exception:
+                pass
+        print(f"[BOT_LORA] 학습 이미지 삭제 완료: {fpath}")
+        return {"success": True}
+    except Exception as e:
+        print(f"[BOT_LORA] 학습 이미지 삭제 실패: {fpath} - {e}")
+        traceback.print_exc()
+        return {"success": False, "error": str(e)}
+
+
+def list_bot_char_available_images(bot_name: str, char_name: str) -> list:
+    """봇 캐릭터 원본 폴더에서 사용 가능한 이미지 목록 반환"""
+    char_dir = _bot_char_dir(bot_name, char_name)
+    if not os.path.isdir(char_dir):
+        print(f"[BOT_LORA] 봇 캐릭터 폴더 없음: {char_dir}")
+        return []
+
+    images = []
+    for fname in sorted(os.listdir(char_dir)):
+        ext = os.path.splitext(fname)[1].lower()
+        if ext not in IMAGE_EXTENSIONS:
+            continue
+        fpath = os.path.join(char_dir, fname)
+        img_data = _load_image_with_prompt(fpath, char_dir, fname)
+        if img_data:
+            if fname == "_face_image.webp":
+                img_data["source"] = "face"
+            else:
+                img_data["source"] = "rep"
+            images.append(img_data)
+
+    return images
+
+
+def add_bot_training_images(bot_name: str, project_name: str, char_name: str, sources: list) -> dict:
+    """에셋에서 봇 LoRA 학습 이미지 추가"""
+    from modes.asset_mode import ASSET_DIR, AssetMode
+
+    t_dir = _bot_project_char_dir(bot_name, project_name, char_name)
+    os.makedirs(t_dir, exist_ok=True)
+
+    added = []
+    skipped = []
+    for src in sources:
+        outfit = src.get("outfit", "")
+        expression = src.get("expression", "")
+        filename = src.get("filename", "")
+        src_char = src.get("character", "")
+        src_char_dir = os.path.join(ASSET_DIR, AssetMode._safe_dirname(src_char)) if src_char else ""
+
+        if not outfit or not expression or not filename or not src_char:
+            print(f"[BOT_LORA] 학습 이미지 추가: 필수 값 누락 - {src}")
+            skipped.append({"filename": filename, "reason": "필수 값 누락"})
+            continue
+
+        src_path = os.path.join(src_char_dir, AssetMode._safe_dirname(outfit), AssetMode._safe_dirname(expression), filename)
+        if not os.path.isfile(src_path):
+            print(f"[BOT_LORA] 학습 이미지 원본 없음: {src_path}")
+            skipped.append({"filename": filename, "reason": "원본 파일 없음"})
+            continue
+
+        dest_name = filename
+        dest_path = os.path.join(t_dir, dest_name)
+        if os.path.exists(dest_path):
+            import time
+            base, ext = os.path.splitext(filename)
+            dest_name = f"{int(time.time())}_{base}{ext}"
+            dest_path = os.path.join(t_dir, dest_name)
+
+        try:
+            shutil.copy2(src_path, dest_path)
+            base, ext = os.path.splitext(filename)
+            prompt_src = os.path.join(src_char_dir, AssetMode._safe_dirname(outfit), AssetMode._safe_dirname(expression), f"{base}_prompt.json")
+            prompt_dest = os.path.join(t_dir, f"{os.path.splitext(dest_name)[0]}_prompt.json")
+            if os.path.isfile(prompt_src):
+                with open(prompt_src, "r", encoding="utf-8") as f:
+                    pdata = json.load(f)
+                positive = pdata.get("positive", "")
+                marker = "[FACE_ID_ACTIVATE]"
+                if marker in positive:
+                    pdata["positive"] = positive.split(marker)[0].strip()
+                pdata["original_positive"] = pdata["positive"]
+                pdata["original_negative"] = pdata.get("negative", "")
+                with open(prompt_dest, "w", encoding="utf-8") as f:
+                    json.dump(pdata, f, ensure_ascii=False, indent=2)
+            else:
+                with open(prompt_dest, "w", encoding="utf-8") as f:
+                    json.dump({"positive": "", "negative": "", "original_positive": "", "original_negative": ""}, f, ensure_ascii=False, indent=2)
+            added.append(dest_name)
+            print(f"[BOT_LORA] 학습 이미지 추가: {dest_path}")
+        except Exception as e:
+            print(f"[BOT_LORA] 학습 이미지 복사 실패: {src_path} -> {dest_path} - {e}")
+            traceback.print_exc()
+            skipped.append({"filename": filename, "reason": str(e)})
+
+    return {"success": True, "added": added, "skipped": skipped}
+
+
+def add_bot_training_from_bot(bot_name: str, project_name: str, char_name: str, filenames: list) -> dict:
+    """봇 캐릭터 원본 폴더에서 학습 이미지를 프로젝트로 복사"""
+    src_dir = _bot_char_dir(bot_name, char_name)
+    dst_dir = _bot_project_char_dir(bot_name, project_name, char_name)
+    if not os.path.isdir(src_dir):
+        print(f"[BOT_LORA] 봇 캐릭터 폴더 없음: {src_dir}")
+        return {"success": False, "error": "봇 캐릭터 폴더 없음"}
+
+    os.makedirs(dst_dir, exist_ok=True)
+
+    added = []
+    skipped = []
+    for filename in filenames:
+        if ".." in filename or os.path.sep in filename:
+            skipped.append({"filename": filename, "reason": "잘못된 파일명"})
+            continue
+        src_path = os.path.join(src_dir, filename)
+        if not os.path.isfile(src_path):
+            print(f"[BOT_LORA] 원본 이미지 없음: {src_path}")
+            skipped.append({"filename": filename, "reason": "원본 파일 없음"})
+            continue
+
+        dest_name = filename
+        dest_path = os.path.join(dst_dir, dest_name)
+        if os.path.exists(dest_path):
+            import time
+            base, ext = os.path.splitext(filename)
+            dest_name = f"{int(time.time())}_{base}{ext}"
+            dest_path = os.path.join(dst_dir, dest_name)
+
+        try:
+            shutil.copy2(src_path, dest_path)
+            base, ext = os.path.splitext(filename)
+            prompt_src = os.path.join(src_dir, f"{base}_prompt.json")
+            prompt_dest = os.path.join(dst_dir, f"{os.path.splitext(dest_name)[0]}_prompt.json")
+            if os.path.isfile(prompt_src):
+                with open(prompt_src, "r", encoding="utf-8") as f:
+                    pdata = json.load(f)
+                positive = pdata.get("positive", "")
+                marker = "[FACE_ID_ACTIVATE]"
+                if marker in positive:
+                    pdata["positive"] = positive.split(marker)[0].strip()
+                if "original_positive" not in pdata:
+                    pdata["original_positive"] = pdata.get("positive", "")
+                if "original_negative" not in pdata:
+                    pdata["original_negative"] = pdata.get("negative", "")
+                with open(prompt_dest, "w", encoding="utf-8") as f:
+                    json.dump(pdata, f, ensure_ascii=False, indent=2)
+            else:
+                with open(prompt_dest, "w", encoding="utf-8") as f:
+                    json.dump({"positive": "", "negative": "", "original_positive": "", "original_negative": ""}, f, ensure_ascii=False, indent=2)
+            added.append(dest_name)
+            print(f"[BOT_LORA] 학습 이미지 추가(봇에서): {dest_path}")
+        except Exception as e:
+            print(f"[BOT_LORA] 학습 이미지 복사 실패: {src_path} -> {dest_path} - {e}")
+            traceback.print_exc()
+            skipped.append({"filename": filename, "reason": str(e)})
+
+    return {"success": True, "added": added, "skipped": skipped}
+
+
 def save_bot_test_prompt(bot_name: str, project_name: str, filename: str, positive: str, negative: str) -> dict:
     if ".." in filename or os.path.sep in filename:
         return {"success": False, "error": "잘못된 파일명"}
@@ -1176,4 +1356,16 @@ def get_bot_training_image_path(bot_name: str, project_name: str, char_name: str
     if os.path.isfile(fpath):
         return fpath
     print(f"[BOT_LORA] 학습 이미지 없음: {fpath}")
+    return None
+
+
+def get_bot_char_image_path(bot_name: str, char_name: str, filename: str) -> str | None:
+    """봇 캐릭터 원본 이미지 경로 반환"""
+    if ".." in filename or os.path.sep in filename:
+        print(f"[BOT_LORA] 잘못된 파일명: {filename}")
+        return None
+    fpath = os.path.join(_bot_char_dir(bot_name, char_name), filename)
+    if os.path.isfile(fpath):
+        return fpath
+    print(f"[BOT_LORA] 캐릭터 이미지 없음: {fpath}")
     return None
