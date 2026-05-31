@@ -14221,7 +14221,7 @@
                     const latest = Object.entries(sessionReps).sort((a,b) => b[0].localeCompare(a[0]))[0];
                     try {
                         const repData = JSON.parse(latest[1]);
-                        return repData.preview ? `<img src="${repData.preview}" style="width:120px; max-height:160px; object-fit:contain; border-radius:6px; border:2px solid var(--accent);">` : '';
+                        return repData.preview ? `<img src="${repData.preview}" onclick="openLightbox(this.src)" style="width:180px; max-height:240px; object-fit:contain; border-radius:6px; border:2px solid var(--accent); cursor:zoom-in;">` : '';
                     } catch(e) { return ''; }
                 })() : '';
 
@@ -14294,7 +14294,7 @@
                             </div>
                         </div>
                         <!-- 학습된 LoRA -->
-                        <div style="min-width:260px;">
+                        <div style="min-width:320px;">
                             <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px;">
                                 <span style="font-size:0.75rem; color:var(--text-secondary);">학습된 LoRA</span>
                                 <button onclick="openBotLoraTrainedModal('${enc(ch.name)}')" style="padding:2px 8px; background:rgba(0,120,215,0.15); color:var(--text); border:1px solid rgba(0,120,215,0.3); border-radius:4px; cursor:pointer; font-size:0.7rem; font-weight:600;">관리</button>
