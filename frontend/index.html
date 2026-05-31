@@ -15257,6 +15257,12 @@
             // 기존 lora-image-picker-modal 재사용
             loraPickerTarget = 'bot_test';
             loraPickerState = { level: 'characters', pickerCharacter: '', outfit: '', expression: '', selected: new Set() };
+            document.getElementById('lora-picker-title').textContent = '에셋에서 이미지 선택';
+            document.getElementById('lora-picker-footer').style.display = 'flex';
+            document.getElementById('lora-picker-footer').innerHTML = `
+                <span id="lora-picker-count" style="font-size:0.85rem; color:var(--text-secondary);"></span>
+                <button onclick="loraPickerConfirm()" style="padding:8px 20px; background:var(--accent); color:#fff; border:none; border-radius:6px; cursor:pointer; font-weight:600;">선택 완료</button>
+            `;
             document.getElementById('lora-image-picker-modal').style.display = 'flex';
             loadLoraPickerCharacters();
         }
