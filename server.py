@@ -105,7 +105,8 @@ DEFAULT_CONFIG = {
     "tag_analysis_workflow_source_path": "",  # 태그 분석 워크플로우 원본 소스 전체 경로
     "asset_tag_analysis_workflow_source_path": "",  # 에셋용 태그 분석 워크플로우 원본 소스 전체 경로
     "lora_training_workflow_source_paths": {"anima": "", "sdxl": ""},  # 로라 학습 워크플로우 원본 소스 경로 (profile별)
-    "lora_load_path": "",  # 로라 모델 로드 폴더 절대 경로
+    "lora_load_path": "",  # 로라 모델 로드 폴더 절대 경로 (에셋, SOYA_CHAR_LORA 자동 추가)
+    "bot_lora_load_path": "",  # 봇 LoRA 모델 로드 폴더 절대 경로 (SOYA_BOT_LORA 자동 추가)
     "dwpose_det_model": "",  # DWPose 탐지 모델 경로 (빈값=자동 다운로드)
     "dwpose_pose_model": "",  # DWPose 포즈 모델 경로 (빈값=자동 다운로드)
     "dwpose_model_cache_dir": "",  # 모델 캐시 디렉토리 (빈값=기본경로)
@@ -5731,7 +5732,7 @@ async def handle_api_lora_training_start(request):
         folder = training_config.get("multi_img_folder_name", "soya_lora")
         gen_w = training_config.get("gen_w", 1024)
         gen_h = training_config.get("gen_h", 1024)
-        lora_save_path = training_config.get("lora_save_path", f"{character}/Lora/{entry}")
+        lora_save_path = training_config.get("lora_save_path", f"SOYA_CHAR_LORA/{character}/Lora/{entry}")
         upscale = training_config.get("upscale", False)
         resolution = training_config.get("resolution", 1024)
         save_after = training_config.get("save_after", 0)
@@ -6078,7 +6079,7 @@ async def handle_api_bot_lora_project_delete(request):
         if not bot_name or not project_name:
             return web.json_response({"success": False, "error": "봇/프로젝트 이름 필수"}, status=400)
         config = load_config()
-        lora_load_path = config.get("lora_load_path", "")
+        lora_load_path = config.get("bot_lora_load_path", "") or config.get("lora_load_path", "").replace("SOYA_CHAR_LORA", "SOYA_BOT_LORA")
         from modes.bot_lora_mode import remove_project
         result = remove_project(bot_name, project_name, lora_load_path)
         return web.json_response(result)
@@ -6096,7 +6097,7 @@ async def handle_api_bot_lora_project(request):
         if not bot_name or not project_name:
             return web.json_response({"success": False, "error": "봇/프로젝트 이름 필수"}, status=400)
         config = load_config()
-        lora_load_path = config.get("lora_load_path", "")
+        lora_load_path = config.get("bot_lora_load_path", "") or config.get("lora_load_path", "").replace("SOYA_CHAR_LORA", "SOYA_BOT_LORA")
         from modes.bot_lora_mode import get_project_data
         result = get_project_data(bot_name, project_name, lora_load_path)
         return web.json_response(result)
@@ -6544,7 +6545,7 @@ async def handle_api_bot_lora_training_start(request):
         char_test_images = list_bot_char_test_images(bot_name, project_name, cn)
         effective_test_images = char_test_images if char_test_images else test_images
         trigger = char_configs.get(cn, {}).get("trigger", "") or cn
-        lora_save_path = f"{_safe_dirname_bot(bot_name)}/Lora/{_safe_dirname_bot(project_name)}/{_safe_dirname_bot(cn)}"
+        lora_save_path = f"SOYA_BOT_LORA/{_safe_dirname_bot(bot_name)}/Lora/{_safe_dirname_bot(project_name)}/{_safe_dirname_bot(cn)}"
 
         export_result = export_bot_training_images(bot_name, project_name, cn, comfy_input_dir, folder)
         if not export_result.get("success"):
@@ -6730,7 +6731,7 @@ async def handle_api_bot_lora_trained_sessions(request):
         if not bot_name or not project_name or not char_name:
             return web.json_response({"success": False, "error": "bot, project, character 필수"}, status=400)
         config = load_config()
-        lora_load_path = config.get("lora_load_path", "")
+        lora_load_path = config.get("bot_lora_load_path", "") or config.get("lora_load_path", "").replace("SOYA_CHAR_LORA", "SOYA_BOT_LORA")
         if not lora_load_path:
             return web.json_response({"success": False, "error": "lora_load_path 미설정"}, status=400)
         from modes.bot_lora_mode import list_bot_trained_sessions
@@ -6751,7 +6752,7 @@ async def handle_api_bot_lora_trained_steps(request):
         if not bot_name or not project_name or not char_name or not session:
             return web.json_response({"success": False, "error": "bot, project, character, session 필수"}, status=400)
         config = load_config()
-        lora_load_path = config.get("lora_load_path", "")
+        lora_load_path = config.get("bot_lora_load_path", "") or config.get("lora_load_path", "").replace("SOYA_CHAR_LORA", "SOYA_BOT_LORA")
         from modes.bot_lora_mode import list_bot_trained_steps
         steps = list_bot_trained_steps(lora_load_path, bot_name, project_name, char_name, session)
         return web.json_response({"success": True, "steps": steps})
@@ -6771,7 +6772,7 @@ async def handle_api_bot_lora_trained_toml(request):
         if not bot_name or not project_name or not char_name or not session or not step:
             return web.json_response({"success": False, "error": "bot, project, character, session, step 필수"}, status=400)
         config = load_config()
-        lora_load_path = config.get("lora_load_path", "")
+        lora_load_path = config.get("bot_lora_load_path", "") or config.get("lora_load_path", "").replace("SOYA_CHAR_LORA", "SOYA_BOT_LORA")
         from modes.bot_lora_mode import read_bot_toml_file
         result = read_bot_toml_file(lora_load_path, bot_name, project_name, char_name, session, step)
         return web.json_response(result)
@@ -6791,7 +6792,7 @@ async def handle_api_bot_lora_trained_preview(request):
         if not bot_name or not project_name or not char_name or not session or not filename:
             return web.Response(status=400)
         config = load_config()
-        lora_load_path = config.get("lora_load_path", "")
+        lora_load_path = config.get("bot_lora_load_path", "") or config.get("lora_load_path", "").replace("SOYA_CHAR_LORA", "SOYA_BOT_LORA")
         from modes.bot_lora_mode import get_bot_trained_preview_path
         fpath = get_bot_trained_preview_path(lora_load_path, bot_name, project_name, char_name, session, filename)
         if not fpath:
@@ -6813,7 +6814,7 @@ async def handle_api_bot_lora_trained_delete(request):
         if not bot_name or not project_name or not char_name or not session or not step:
             return web.json_response({"success": False, "error": "bot, project, character, session, step 필수"}, status=400)
         config = load_config()
-        lora_load_path = config.get("lora_load_path", "")
+        lora_load_path = config.get("bot_lora_load_path", "") or config.get("lora_load_path", "").replace("SOYA_CHAR_LORA", "SOYA_BOT_LORA")
         from modes.bot_lora_mode import delete_bot_trained_step
         result = delete_bot_trained_step(lora_load_path, bot_name, project_name, char_name, session, step)
         return web.json_response(result)
@@ -6833,7 +6834,7 @@ async def handle_api_bot_lora_trained_delete_session(request):
         if not bot_name or not project_name or not char_name or not session:
             return web.json_response({"success": False, "error": "bot, project, character, session 필수"}, status=400)
         config = load_config()
-        lora_load_path = config.get("lora_load_path", "")
+        lora_load_path = config.get("bot_lora_load_path", "") or config.get("lora_load_path", "").replace("SOYA_CHAR_LORA", "SOYA_BOT_LORA")
         from modes.bot_lora_mode import delete_bot_trained_session
         result = delete_bot_trained_session(lora_load_path, bot_name, project_name, char_name, session)
         return web.json_response(result)

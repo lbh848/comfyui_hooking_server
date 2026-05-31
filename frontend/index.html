@@ -5364,10 +5364,11 @@
                     </div>
                     <div class="form-group" style="margin-top: -8px;">
                         <div style="display: flex; align-items: center; gap: 0;">
-                            <input type="text" id="setting-lora-load-path" placeholder="예: E:\ComfyUI\models\loras" style="flex: 1; border-radius: 6px 0 0 6px;">
-                            <span style="display: inline-flex; align-items: center; padding: 8px 12px; background: var(--bg-tertiary, #2a2a3e); border: 1px solid var(--border-color, #3a3a4e); border-left: none; border-radius: 0 6px 6px 0; font-size: 13px; color: var(--text-secondary, #aaa); white-space: nowrap; user-select: none;">\SOYA_CHAR_LORA</span>
+                            <input type="text" id="setting-lora-load-path" placeholder="예: E:\ComfyUI\models\loras" style="flex: 1; border-radius: 6px 0 0 0;">
+                            <span style="display: inline-flex; align-items: center; padding: 8px 10px; background: var(--bg-tertiary, #2a2a3e); border: 1px solid var(--border-color, #3a3a4e); border-left: none; font-size: 13px; color: var(--text-secondary, #aaa); white-space: nowrap; user-select: none;">\SOYA_CHAR_LORA</span>
+                            <span style="display: inline-flex; align-items: center; padding: 8px 10px; background: var(--bg-tertiary, #2a2a3e); border: 1px solid var(--border-color, #3a3a4e); border-left: none; border-radius: 0 6px 6px 0; font-size: 13px; color: var(--text-secondary, #aaa); white-space: nowrap; user-select: none;">\SOYA_BOT_LORA</span>
                         </div>
-                        <div class="hint">학습된 LoRA가 저장되는 폴더 경로 (\SOYA_CHAR_LORA는 자동 추가)</div>
+                        <div class="hint">학습된 LoRA가 저장되는 폴더 경로 (\SOYA_CHAR_LORA와 \SOYA_BOT_LORA는 자동 추가)</div>
                         <button onclick="scanUntrackedLoras()" style="margin-top: 6px; padding: 6px 14px; font-size: 12px; background: var(--bg-tertiary, #2a2a3e); border: 1px solid var(--border-color, #3a3a4e); border-radius: 6px; color: var(--text-secondary, #aaa); cursor: pointer;">비추적 로라 제거</button>
                         <button onclick="openLoraFolder()" style="margin-top: 6px; padding: 6px 14px; font-size: 12px; background: var(--bg-tertiary, #2a2a3e); border: 1px solid var(--border-color, #3a3a4e); border-radius: 6px; color: var(--text-secondary, #aaa); cursor: pointer;">📁 폴더 열기</button>
                     </div>
@@ -7001,10 +7002,11 @@
             document.getElementById('setting-lora-workflow-sdxl-filename').value = loraSdxlSplit.filename;
             document.getElementById('setting-lora-workflow-sdxl-source-path').value = loraSdxlPath;
 
-            // 로라 로드 경로 (SOYA_CHAR_LORA 접미사 제거 후 표시)
+            // 로라 로드 경로 (SOYA_CHAR_LORA, SOYA_BOT_LORA 접미사 제거 후 표시)
             const loraLoadPath = currentConfig.lora_load_path || '';
-            const loraSuffix = '\\SOYA_CHAR_LORA';
-            document.getElementById('setting-lora-load-path').value = loraLoadPath.endsWith(loraSuffix) ? loraLoadPath.slice(0, -loraSuffix.length) : loraLoadPath;
+            const botLoraLoadPath = currentConfig.bot_lora_load_path || '';
+            const basePath = loraLoadPath.replace(/\\SOYA_CHAR_LORA$/, '') || botLoraLoadPath.replace(/\\SOYA_BOT_LORA$/, '');
+            document.getElementById('setting-lora-load-path').value = basePath || loraLoadPath;
 
             document.getElementById('settings-modal').classList.add('visible');
             // 항상 첫 번째 탭으로 시작
@@ -7380,6 +7382,7 @@
                     sdxl: document.getElementById('setting-lora-workflow-sdxl-source-path').value
                 },
                 lora_load_path: document.getElementById('setting-lora-load-path').value.trim().replace(/\\?$/, '\\SOYA_CHAR_LORA'),
+                bot_lora_load_path: document.getElementById('setting-lora-load-path').value.trim().replace(/\\?$/, '\\SOYA_BOT_LORA'),
                 batch_mode_enabled: currentConfig.batch_mode_enabled || false,
                 webp_lossless: currentConfig.webp_lossless || false,
                 workflow_filename: currentConfig.workflow_filename || ''
@@ -12833,7 +12836,7 @@
                         }
                     }
                     // lora_save_path 자동 생성
-                    document.getElementById('lora-cfg-save-path').textContent = loraCurrentCharacter + '/Lora/' + loraCurrentEntry;
+                    document.getElementById('lora-cfg-save-path').textContent = 'SOYA_CHAR_LORA/' + loraCurrentCharacter + '/Lora/' + loraCurrentEntry;
                 }
             } catch (e) { console.error('[LORA] 학습 설정 로드 실패:', e); }
         }
@@ -12853,7 +12856,7 @@
                 resolution: parseInt(document.getElementById('lora-cfg-resolution').value) || 1024,
                 dim: parseInt(document.getElementById('lora-cfg-dim').value) || 32,
                 alpha: parseInt(document.getElementById('lora-cfg-alpha').value) || 16,
-                lora_save_path: loraCurrentCharacter + '/Lora/' + loraCurrentEntry,
+                lora_save_path: 'SOYA_CHAR_LORA/' + loraCurrentCharacter + '/Lora/' + loraCurrentEntry,
             };
             try {
                 const resp = await fetchJSON('/api/lora/manage/update', {
