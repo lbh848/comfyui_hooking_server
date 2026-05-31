@@ -4760,7 +4760,7 @@
 
     <!-- 봇 LoRA 학습된 세션 관리 모달 -->
     <div class="modal" id="bot-lora-trained-modal" onclick="if (event.target === this) closeBotLoraTrainedModal()">
-        <div class="modal-content" style="max-width:1080px;">
+        <div class="modal-content" style="max-width:1200px;">
             <div class="modal-header">
                 <h2 id="bot-lora-trained-title">학습된 LoRA 관리</h2>
                 <button class="modal-close" onclick="closeBotLoraTrainedModal()">&times;</button>
@@ -14975,7 +14975,7 @@
                 const sessions = resp.sessions || [];
                 if (sessions.length === 0) { body.innerHTML = '<div style="text-align:center; padding:32px; color:var(--text-secondary);">학습된 세션이 없습니다.</div>'; return; }
                 body.innerHTML = `<div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(320px, 1fr)); gap:12px;">${sessions.map(s => {
-                    const previewHtml = s.preview_url ? `<img src="${s.preview_url}" style="width:100%; aspect-ratio:1; object-fit:cover; border-radius:8px 8px 0 0; display:block;">` : '';
+                    const previewHtml = s.preview_url ? `<img src="${s.preview_url}" style="width:100%; max-height:400px; object-fit:contain; background:var(--surface2); border-radius:8px 8px 0 0; display:block;">` : '';
                     let repBadge = '';
                     if (s.representative) { try { const rd = JSON.parse(s.representative); if (rd.preview) repBadge = '<div style="position:absolute; top:6px; left:6px; background:gold; color:#333; font-size:0.65rem; font-weight:700; padding:2px 6px; border-radius:3px;">세션 대표</div>'; } catch(_){} }
                     return `<div onclick="enterBotLoraTrainedSession('${escapeHtml(s.name)}')" style="position:relative; border:1px solid var(--border); border-radius:10px; overflow:hidden; cursor:pointer; transition:border-color 0.15s; background:var(--surface);" onmouseenter="this.style.borderColor='var(--accent)'" onmouseleave="this.style.borderColor='var(--border)'">
@@ -15042,7 +15042,7 @@
                     return `<div onclick="enterBotLoraTrainedStep('${escapeHtml(session)}', '${escapeHtml(s.name)}')" style="position:relative; border:1px solid var(--border); border-radius:8px; overflow:hidden; cursor:pointer; transition:border-color 0.15s; background:var(--surface);" onmouseenter="this.style.borderColor='var(--accent)'" onmouseleave="this.style.borderColor='var(--border)'">
                         <button class="trained-delete-btn" onclick="event.stopPropagation(); deleteBotLoraTrainedStep('${escapeHtml(session)}', '${escapeHtml(s.name)}')" style="position:absolute; top:6px; right:6px; z-index:5; background:rgba(220,80,80,0.9); color:#fff; border:none; border-radius:50%; width:22px; height:22px; font-size:0.7rem; cursor:pointer; display:flex; align-items:center; justify-content:center; opacity:0; transition:opacity 0.15s;">&times;</button>
                         ${isSessionRep ? '<div style="position:absolute; top:6px; left:6px; z-index:5; background:gold; color:#333; font-size:0.65rem; font-weight:700; padding:2px 6px; border-radius:3px;">세션 대표</div>' : ''}
-                        ${previewUrl ? `<img src="${previewUrl}" style="width:100%; aspect-ratio:1; object-fit:cover; display:block;">` : '<div style="width:100%; aspect-ratio:1; background:var(--surface2); display:flex; align-items:center; justify-content:center; color:var(--text-secondary); font-size:0.75rem;">no preview</div>'}
+                        ${previewUrl ? `<img src="${previewUrl}" style="width:100%; max-height:500px; object-fit:contain; background:var(--surface2); display:block;">` : '<div style="width:100%; padding:40px 0; background:var(--surface2); display:flex; align-items:center; justify-content:center; color:var(--text-secondary); font-size:0.75rem;">no preview</div>'}
                         <div style="padding:8px;">
                             <div style="font-size:0.8rem; font-weight:600;">${escapeHtml(s.name)}</div>
                             <div style="font-size:0.7rem; color:var(--text-secondary);">프리뷰 ${s.previews.length}장${s.avr_loss != null ? ` · loss ${s.avr_loss.toFixed(5)}` : ''}</div>
@@ -15052,7 +15052,7 @@
 
                 body.innerHTML = `${lossHtml}
                     <div style="font-size:0.82rem; color:var(--text-secondary); margin-bottom:10px;">step 파일을 클릭하면 프리뷰 이미지를 볼 수 있습니다.</div>
-                    <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(340px, 1fr)); gap:12px;">${stepCards}</div>`;
+                    <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(480px, 1fr)); gap:12px;">${stepCards}</div>`;
 
                 // Loss 차트 렌더
                 if (lossSteps.length >= 2) {
@@ -15104,8 +15104,8 @@
                 const previewCards = (step.previews || []).map(p => {
                     const url = `${previewBase}/${enc(p)}`;
                     const isRep = p === currentRepPreview;
-                    return `<div style="position:relative; border-radius:8px; overflow:hidden; border:1px solid var(--border);">
-                        <img src="${url}" onclick="openLightbox('${url}')" style="width:100%; display:block; cursor:zoom-in;">
+                    return `<div style="position:relative; border-radius:8px; overflow:hidden; border:1px solid var(--border); background:var(--surface2);">
+                        <img src="${url}" onclick="openLightbox('${url}')" style="width:100%; display:block; cursor:zoom-in; max-height:600px; object-fit:contain; background:var(--surface2);">
                         ${isRep ? '<div style="position:absolute; top:8px; left:8px; background:gold; color:#333; font-size:0.7rem; font-weight:700; padding:3px 8px; border-radius:4px; z-index:5;">현재 세션 대표</div>' : ''}
                         <button onclick="setBotLoraSessionRepresentative('${escapeHtml(session)}', '${escapeHtml(step.safetensors)}', '${escapeHtml(url)}')" style="position:absolute; bottom:0; left:0; right:0; background:rgba(0,0,0,0.65); color:#fff; border:none; padding:6px; cursor:pointer; font-size:0.75rem; font-weight:600; text-align:center; opacity:0; transition:opacity 0.2s;" onmouseenter="this.style.opacity='1'; this.style.background='rgba(0,120,215,0.85)'" onmouseleave="this.style.opacity='0'; this.style.background='rgba(0,0,0,0.65)'">세션 대표로 설정</button>
                     </div>`;
@@ -15119,7 +15119,7 @@
                         </div>
                         <button onclick="showBotLoraTomlModal('${escapeHtml(session)}', '${escapeHtml(stepName)}')" style="padding:4px 10px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:4px; cursor:pointer; font-size:0.75rem;">📄 TOML</button>
                     </div>
-                    <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(400px, 1fr)); gap:12px;">${previewCards}</div>`;
+                    <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(480px, 1fr)); gap:12px;">${previewCards}</div>`;
             } catch (e) {
                 console.error('[BOT_LORA] 프리뷰 로드 실패:', e);
                 body.innerHTML = '<div style="text-align:center; padding:32px; color:var(--error);">프리뷰 로드 실패</div>';
