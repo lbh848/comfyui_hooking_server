@@ -4421,13 +4421,19 @@
                             <!-- 학습 진행률 (전체) -->
                             <div id="bot-lora-progress-section" style="display:none; padding:16px; margin-bottom:8px; background:var(--surface); border:1px solid var(--accent); border-radius:10px;">
                                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-                                    <span id="bot-lora-progress-phase" style="font-size:0.85rem; font-weight:600; color:var(--accent);">학습 준비 중...</span>
+                                    <div style="display:flex; align-items:center; gap:8px;">
+                                        <span id="bot-lora-progress-phase" style="font-size:0.85rem; font-weight:600; color:var(--accent);">학습 준비 중...</span>
+                                        <span id="bot-lora-progress-pct" style="font-size:0.85rem; font-weight:600; color:var(--accent);"></span>
+                                    </div>
                                     <span id="bot-lora-progress-char" style="font-size:0.75rem; color:var(--text-secondary);"></span>
                                 </div>
-                                <div style="width:100%; height:8px; background:var(--bg); border-radius:4px; overflow:hidden;">
+                                <div style="width:100%; height:6px; background:var(--bg); border-radius:4px; overflow:hidden;">
                                     <div id="bot-lora-progress-bar" style="width:0%; height:100%; background:var(--accent); border-radius:4px; transition:width 0.3s ease;"></div>
                                 </div>
-                                <div id="bot-lora-progress-detail" style="margin-top:4px; font-size:0.72rem; color:var(--text-secondary);"></div>
+                                <div style="display:flex; justify-content:space-between; margin-top:4px;">
+                                    <span id="bot-lora-progress-step" style="font-size:0.72rem; color:var(--text-secondary);"></span>
+                                    <span id="bot-lora-progress-time" style="font-size:0.72rem; color:var(--text-secondary);"></span>
+                                </div>
                             </div>
                             <!-- 캐릭터별 행 -->
                             <div id="bot-lora-characters"></div>
@@ -4744,6 +4750,20 @@
             </div>
             <div class="modal-footer">
                 <button onclick="closeLoraTomlModal()" style="padding:8px 16px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:6px; cursor:pointer;">닫기</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 봇 LoRA 학습된 세션 관리 모달 -->
+    <div class="modal" id="bot-lora-trained-modal" onclick="if (event.target === this) closeBotLoraTrainedModal()">
+        <div class="modal-content" style="max-width:1080px;">
+            <div class="modal-header">
+                <h2 id="bot-lora-trained-title">학습된 LoRA 관리</h2>
+                <button class="modal-close" onclick="closeBotLoraTrainedModal()">&times;</button>
+            </div>
+            <div id="bot-lora-trained-breadcrumb" style="padding:4px 16px 8px; font-size:0.82rem; color:var(--text-secondary);"></div>
+            <div class="modal-body" id="bot-lora-trained-body" style="min-height:200px;">
+                <div style="text-align:center; padding:32px; color:var(--text-secondary);">로딩 중...</div>
             </div>
         </div>
     </div>
@@ -13471,6 +13491,18 @@
             editPosEl.oninput = editNegEl.oninput = function() {
                 if (loraPromptEditMode === 'text') _updateLoraPromptDiff();
             };
+            editPosEl.onfocus = function() {
+                if (loraPromptEditMode === 'text') {
+                    const text = this.textContent;
+                    this.textContent = text;
+                }
+            };
+            editNegEl.onfocus = function() {
+                if (loraPromptEditMode === 'text') {
+                    const text = this.textContent;
+                    this.textContent = text;
+                }
+            };
             editPosEl.onblur = function() {
                 if (loraPromptEditMode === 'text') {
                     this.innerHTML = _renderPromptDiffSpans(this.textContent, _loraPromptState.origPosTags, 'rgba(50,180,50,0.12)');
@@ -14122,8 +14154,8 @@
         function _saveBotLoraDetailsState() {
             const states = {};
             document.querySelectorAll('#bot-lora-characters details[open]').forEach(d => {
-                const summary = d.querySelector('summary');
-                if (summary) states[summary.textContent.trim()] = true;
+                const key = d.getAttribute('data-key');
+                if (key) states[key] = true;
             });
             const testPromptDetails = document.getElementById('bot-lora-test-prompt-details');
             if (testPromptDetails && testPromptDetails.open) states['__test_prompt'] = true;
@@ -14133,8 +14165,8 @@
         function _restoreBotLoraDetailsState(states) {
             if (!states) return;
             document.querySelectorAll('#bot-lora-characters details').forEach(d => {
-                const summary = d.querySelector('summary');
-                if (summary && states[summary.textContent.trim()]) d.open = true;
+                const key = d.getAttribute('data-key');
+                if (key && states[key]) d.open = true;
             });
             if (states['__test_prompt']) {
                 const testPromptDetails = document.getElementById('bot-lora-test-prompt-details');
@@ -14235,7 +14267,8 @@
                                 style="padding:3px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface1); color:var(--text); font-size:0.8rem; width:200px;">
                         </div>
                         <div style="display:flex; gap:4px;">
-                            <button onclick="openBotLoraTrainingImagePicker('${enc(ch.name)}')" ${atImageLimit ? 'disabled' : ''} style="padding:4px 10px; background:rgba(180,130,220,0.2); color:var(--text); border:1px solid rgba(180,130,220,0.3); border-radius:4px; cursor:pointer; font-size:0.75rem; font-weight:600;${atImageLimit ? ' opacity:0.5; cursor:not-allowed;' : ''}">이미지 추가 (${nonFaceCount}/3)</button>
+                            <button onclick="openBotLoraTrainingImagePicker('${enc(ch.name)}')" ${atImageLimit ? 'disabled' : ''} style="padding:4px 10px; background:rgba(180,130,220,0.2); color:var(--text); border:1px solid rgba(180,130,220,0.3); border-radius:4px; cursor:pointer; font-size:0.75rem; font-weight:600;${atImageLimit ? ' opacity:0.5; cursor:not-allowed;' : ''}">이미지 추가</button>
+                            <span style="font-size:0.7rem; color:var(--text-secondary);">전체 ${nonFaceCount}/3 · 얼굴 ${hasFace ? 1 : 0}/1</span>
                             <button onclick="startBotLoraTrainingSingle('${enc(ch.name)}')" style="padding:4px 10px; background:rgba(80,180,120,0.2); color:var(--text); border:1px solid rgba(80,180,120,0.3); border-radius:4px; cursor:pointer; font-size:0.75rem; font-weight:600;">재학습</button>
                         </div>
                     </div>
@@ -14249,7 +14282,10 @@
                         </div>
                         <!-- 학습된 LoRA -->
                         <div style="min-width:200px;">
-                            <div style="font-size:0.75rem; color:var(--text-secondary); margin-bottom:6px;">학습된 LoRA</div>
+                            <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px;">
+                                <span style="font-size:0.75rem; color:var(--text-secondary);">학습된 LoRA</span>
+                                <button onclick="openBotLoraTrainedModal('${enc(ch.name)}')" style="padding:2px 8px; background:rgba(0,120,215,0.15); color:var(--text); border:1px solid rgba(0,120,215,0.3); border-radius:4px; cursor:pointer; font-size:0.7rem; font-weight:600;">관리</button>
+                            </div>
                             <div style="display:flex; flex-direction:column; gap:4px;">
                                 ${repHtml}
                                 ${sessionHtml}
@@ -14257,14 +14293,14 @@
                         </div>
                     </div>
                     <!-- 프롬프트 (기본 접힘) -->
-                    <details style="margin-top:12px; border-top:1px solid var(--border); padding-top:12px;">
+                    <details data-key="${enc(ch.name)}-prompt" style="margin-top:12px; border-top:1px solid var(--border); padding-top:12px;">
                         <summary style="cursor:pointer; font-weight:700; font-size:0.9rem; user-select:none;">프롬프트 (${(ch.training_images || []).length}장)</summary>
                         <div style="margin-top:8px;">
                             ${promptRows || '<div style="text-align:center; padding:16px; color:var(--text-secondary); font-size:0.85rem;">프롬프트가 없습니다.</div>'}
                         </div>
                     </details>
                     <!-- 캐릭터별 테스트 이미지 -->
-                    <details style="margin-top:8px; border-top:1px solid var(--border); padding-top:12px;">
+                    <details data-key="${enc(ch.name)}-test" style="margin-top:8px; border-top:1px solid var(--border); padding-top:12px;">
                         <summary style="cursor:pointer; font-weight:700; font-size:0.9rem; user-select:none;">테스트 이미지 (${(ch.char_test_images || []).length}장)</summary>
                         <div style="margin-top:8px;">
                             <div style="display:flex; gap:6px; margin-bottom:8px;">
@@ -14279,7 +14315,7 @@
                                     </div>
                                 `).join('') : '<span style="font-size:0.75rem; color:var(--text-secondary);">테스트 이미지 없음</span>'}
                             </div>
-                            ${(ch.char_test_images || []).length > 0 ? `<details style="margin-top:10px; border-top:1px solid var(--border); padding-top:8px;">
+                            ${(ch.char_test_images || []).length > 0 ? `<details data-key="${enc(ch.name)}-test-prompt" style="margin-top:10px; border-top:1px solid var(--border); padding-top:8px;">
                                 <summary style="cursor:pointer; font-weight:600; font-size:0.85rem; user-select:none;">테스트 프롬프트 (${(ch.char_test_images || []).length}장)</summary>
                                 <div style="margin-top:6px;">
                                     ${(ch.char_test_images || []).map(img => {
@@ -14676,9 +14712,10 @@
                     return;
                 }
                 const remainSlots = Math.max(0, 3 - botTrainingExistingNonFaceCount);
+                const existingFace = (currentTraining?.training_images || []).filter(i => i.source === 'face').length;
                 document.getElementById('lora-picker-body').innerHTML = `
                     <div style="margin-bottom:8px; padding:6px 10px; background:var(--surface2); border-radius:6px; font-size:0.8rem; color:var(--text-secondary); display:flex; justify-content:space-between;">
-                        <span>학습 이미지: ${botTrainingExistingNonFaceCount}/3장</span>
+                        <span>전체 ${botTrainingExistingNonFaceCount}/3 · 얼굴 ${existingFace}/1</span>
                         <span>${remainSlots > 0 ? `최대 ${remainSlots}장 추가 가능` : '추가 불가 (얼굴만 가능)'}</span>
                     </div>
                     <div style="display:flex; flex-wrap:wrap; gap:8px; max-height:55vh; overflow-y:auto; padding:4px;">
@@ -14873,6 +14910,248 @@
                 if (resp.success) { showToast('프롬프트 저장 완료', 'success'); closeLoraImagePicker(); await loadBotLoraProject(); }
                 else { showToast(resp.error || '저장 실패', 'error'); }
             } catch (e) { console.error('[BOT_LORA] 캐릭터 테스트 프롬프트 저장 실패:', e); showToast('저장 실패', 'error'); }
+        }
+
+        // ─── 봇 LoRA 학습된 세션 관리 모달 ──────────────────────────
+        let _botTrainedModalChar = '';
+        let _botTrainedModalSession = '';
+        let _botTrainedSessionRepSafetensors = '';
+
+        function closeBotLoraTrainedModal() {
+            document.getElementById('bot-lora-trained-modal').style.display = 'none';
+            if (window._botLoraLossChart) { window._botLoraLossChart.destroy(); window._botLoraLossChart = null; }
+        }
+
+        async function openBotLoraTrainedModal(charName) {
+            _botTrainedModalChar = charName;
+            _botTrainedModalSession = '';
+            const modal = document.getElementById('bot-lora-trained-modal');
+            document.getElementById('bot-lora-trained-title').textContent = `학습된 LoRA 관리 - ${charName}`;
+            modal.style.display = 'flex';
+            await loadBotLoraTrainedSessions();
+        }
+
+        function _botTrainedBreadcrumb(parts) {
+            document.getElementById('bot-lora-trained-breadcrumb').innerHTML = parts.map((p, i) => {
+                if (i === parts.length - 1) return `<span style="color:var(--text);">${p.label}</span>`;
+                return `<span style="cursor:pointer; color:var(--accent);" onclick="${p.onclick}">${p.label}</span> <span style="color:var(--text-secondary);">/</span> `;
+            }).join('');
+        }
+
+        async function loadBotLoraTrainedSessions() {
+            _botTrainedModalSession = '';
+            const body = document.getElementById('bot-lora-trained-body');
+            _botTrainedBreadcrumb([{label: '세션 목록', onclick: 'loadBotLoraTrainedSessions()'}]);
+            body.innerHTML = '<div style="text-align:center; padding:32px; color:var(--text-secondary);">로딩 중...</div>';
+            try {
+                const enc = encodeURIComponent;
+                const resp = await fetchJSON(`/api/bot_lora/trained/sessions?bot=${enc(botLoraCurrentBot)}&project=${enc(botLoraCurrentProject)}&character=${enc(_botTrainedModalChar)}`);
+                if (!resp.success) { body.innerHTML = `<div style="text-align:center; padding:32px; color:var(--error);">${resp.error || '로드 실패'}</div>`; return; }
+                const sessions = resp.sessions || [];
+                if (sessions.length === 0) { body.innerHTML = '<div style="text-align:center; padding:32px; color:var(--text-secondary);">학습된 세션이 없습니다.</div>'; return; }
+                body.innerHTML = `<div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(320px, 1fr)); gap:12px;">${sessions.map(s => {
+                    const previewHtml = s.preview_url ? `<img src="${s.preview_url}" style="width:100%; aspect-ratio:1; object-fit:cover; border-radius:8px 8px 0 0; display:block;">` : '';
+                    let repBadge = '';
+                    if (s.representative) { try { const rd = JSON.parse(s.representative); if (rd.preview) repBadge = '<div style="position:absolute; top:6px; left:6px; background:gold; color:#333; font-size:0.65rem; font-weight:700; padding:2px 6px; border-radius:3px;">세션 대표</div>'; } catch(_){} }
+                    return `<div onclick="enterBotLoraTrainedSession('${escapeHtml(s.name)}')" style="position:relative; border:1px solid var(--border); border-radius:10px; overflow:hidden; cursor:pointer; transition:border-color 0.15s; background:var(--surface);" onmouseenter="this.style.borderColor='var(--accent)'" onmouseleave="this.style.borderColor='var(--border)'">
+                        <button class="trained-delete-btn" onclick="event.stopPropagation(); deleteBotLoraTrainedSession('${escapeHtml(s.name)}')" style="position:absolute; top:6px; right:6px; z-index:5; background:rgba(220,80,80,0.9); color:#fff; border:none; border-radius:50%; width:22px; height:22px; font-size:0.7rem; cursor:pointer; display:flex; align-items:center; justify-content:center; opacity:0; transition:opacity 0.15s;">&times;</button>
+                        ${repBadge}
+                        ${previewHtml}
+                        <div style="padding:10px;">
+                            <div style="font-weight:700; font-size:0.85rem;">${escapeHtml(s.name)}</div>
+                            <div style="font-size:0.75rem; color:var(--text-secondary); margin-top:2px;">${s.step_count} files${s.has_final ? ' (최종 포함)' : ''}</div>
+                        </div>
+                    </div>`;
+                }).join('')}</div>`;
+            } catch (e) {
+                console.error('[BOT_LORA] 세션 로드 실패:', e);
+                body.innerHTML = '<div style="text-align:center; padding:32px; color:var(--error);">세션 로드 실패</div>';
+            }
+        }
+
+        async function enterBotLoraTrainedSession(session) {
+            _botTrainedModalSession = session;
+            const body = document.getElementById('bot-lora-trained-body');
+            _botTrainedBreadcrumb([
+                {label: '세션 목록', onclick: 'loadBotLoraTrainedSessions()'},
+                {label: session, onclick: `enterBotLoraTrainedSession('${escapeHtml(session)}')`}
+            ]);
+            body.innerHTML = '<div style="text-align:center; padding:32px; color:var(--text-secondary);">로딩 중...</div>';
+            if (window._botLoraLossChart) { window._botLoraLossChart.destroy(); window._botLoraLossChart = null; }
+            try {
+                const enc = encodeURIComponent;
+                const resp = await fetchJSON(`/api/bot_lora/trained/steps?bot=${enc(botLoraCurrentBot)}&project=${enc(botLoraCurrentProject)}&character=${enc(_botTrainedModalChar)}&session=${enc(session)}`);
+                if (!resp.success) { body.innerHTML = `<div style="text-align:center; padding:32px; color:var(--error);">${resp.error || '로드 실패'}</div>`; return; }
+                const steps = resp.steps || [];
+                if (steps.length === 0) { body.innerHTML = '<div style="text-align:center; padding:32px; color:var(--text-secondary);">step 파일이 없습니다.</div>'; return; }
+
+                // 세션 대표 safetensors 파일명 조회
+                _botTrainedSessionRepSafetensors = '';
+                try {
+                    const sessResp = await fetchJSON(`/api/bot_lora/trained/sessions?bot=${enc(botLoraCurrentBot)}&project=${enc(botLoraCurrentProject)}&character=${enc(_botTrainedModalChar)}`);
+                    if (sessResp.success) {
+                        const sess = (sessResp.sessions || []).find(x => x.name === session);
+                        if (sess && sess.representative) { _botTrainedSessionRepSafetensors = JSON.parse(sess.representative).safetensors || ''; }
+                    }
+                } catch(_){}
+
+                // Loss 차트
+                const lossSteps = steps.filter(s => s.avr_loss != null);
+                let lossHtml = '';
+                if (lossSteps.length >= 2) {
+                    lossHtml = `<div style="margin-bottom:16px; border:1px solid var(--border); border-radius:8px; padding:12px; background:var(--surface);">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                            <span style="font-size:0.85rem; font-weight:700;">Loss 추이</span>
+                            <button onclick="showBotLoraTomlModal('${escapeHtml(session)}', '${escapeHtml(steps[0].name)}')" style="padding:3px 8px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:4px; cursor:pointer; font-size:0.75rem;">📄 TOML</button>
+                        </div>
+                        <canvas id="bot-lora-loss-canvas" style="max-height:220px;"></canvas>
+                    </div>`;
+                }
+
+                // 스텝 카드
+                const stepCards = steps.map(s => {
+                    const previewUrl = s.previews.length > 0
+                        ? `/api/bot_lora/trained/preview/${enc(botLoraCurrentBot)}/${enc(botLoraCurrentProject)}/${enc(_botTrainedModalChar)}/${enc(session)}/${enc(s.previews[0])}`
+                        : '';
+                    const isSessionRep = s.safetensors === _botTrainedSessionRepSafetensors;
+                    return `<div onclick="enterBotLoraTrainedStep('${escapeHtml(session)}', '${escapeHtml(s.name)}')" style="position:relative; border:1px solid var(--border); border-radius:8px; overflow:hidden; cursor:pointer; transition:border-color 0.15s; background:var(--surface);" onmouseenter="this.style.borderColor='var(--accent)'" onmouseleave="this.style.borderColor='var(--border)'">
+                        <button class="trained-delete-btn" onclick="event.stopPropagation(); deleteBotLoraTrainedStep('${escapeHtml(session)}', '${escapeHtml(s.name)}')" style="position:absolute; top:6px; right:6px; z-index:5; background:rgba(220,80,80,0.9); color:#fff; border:none; border-radius:50%; width:22px; height:22px; font-size:0.7rem; cursor:pointer; display:flex; align-items:center; justify-content:center; opacity:0; transition:opacity 0.15s;">&times;</button>
+                        ${isSessionRep ? '<div style="position:absolute; top:6px; left:6px; z-index:5; background:gold; color:#333; font-size:0.65rem; font-weight:700; padding:2px 6px; border-radius:3px;">세션 대표</div>' : ''}
+                        ${previewUrl ? `<img src="${previewUrl}" style="width:100%; aspect-ratio:1; object-fit:cover; display:block;">` : '<div style="width:100%; aspect-ratio:1; background:var(--surface2); display:flex; align-items:center; justify-content:center; color:var(--text-secondary); font-size:0.75rem;">no preview</div>'}
+                        <div style="padding:8px;">
+                            <div style="font-size:0.8rem; font-weight:600;">${escapeHtml(s.name)}</div>
+                            <div style="font-size:0.7rem; color:var(--text-secondary);">프리뷰 ${s.previews.length}장${s.avr_loss != null ? ` · loss ${s.avr_loss.toFixed(5)}` : ''}</div>
+                        </div>
+                    </div>`;
+                }).join('');
+
+                body.innerHTML = `${lossHtml}
+                    <div style="font-size:0.82rem; color:var(--text-secondary); margin-bottom:10px;">step 파일을 클릭하면 프리뷰 이미지를 볼 수 있습니다.</div>
+                    <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(340px, 1fr)); gap:12px;">${stepCards}</div>`;
+
+                // Loss 차트 렌더
+                if (lossSteps.length >= 2) {
+                    const canvas = document.getElementById('bot-lora-loss-canvas');
+                    if (canvas) {
+                        const labels = lossSteps.map(s => { const m = s.name.match(/step(\d+)/); return m ? parseInt(m[1], 10) : s.name; });
+                        const losses = lossSteps.map(s => s.avr_loss);
+                        window._botLoraLossChart = new Chart(canvas.getContext('2d'), {
+                            type: 'line',
+                            data: { labels, datasets: [{ label: 'avr_loss', data: losses, borderColor: 'rgba(0,120,215,0.9)', backgroundColor: 'rgba(0,120,215,0.15)', fill: true, tension: 0.3, pointRadius: 3, pointHoverRadius: 5 }] },
+                            options: {
+                                responsive: true, maintainAspectRatio: false,
+                                plugins: { legend: { display: false }, tooltip: { callbacks: { title: (items) => 'step ' + items[0].label, label: (item) => 'loss: ' + item.formattedValue } } },
+                                scales: { x: { title: { display: true, text: 'step', color: 'var(--text-secondary)' }, ticks: { color: 'var(--text-secondary)' }, grid: { color: 'rgba(128,128,128,0.15)' } }, y: { title: { display: true, text: 'loss', color: 'var(--text-secondary)' }, ticks: { color: 'var(--text-secondary)' }, grid: { color: 'rgba(128,128,128,0.15)' } } }
+                            }
+                        });
+                    }
+                }
+            } catch (e) {
+                console.error('[BOT_LORA] 스텝 로드 실패:', e);
+                body.innerHTML = '<div style="text-align:center; padding:32px; color:var(--error);">스텝 로드 실패</div>';
+            }
+        }
+
+        async function enterBotLoraTrainedStep(session, stepName) {
+            const body = document.getElementById('bot-lora-trained-body');
+            _botTrainedBreadcrumb([
+                {label: '세션 목록', onclick: 'loadBotLoraTrainedSessions()'},
+                {label: session, onclick: `enterBotLoraTrainedSession('${escapeHtml(session)}')`},
+                {label: stepName, onclick: `enterBotLoraTrainedStep('${escapeHtml(session)}', '${escapeHtml(stepName)}')`}
+            ]);
+            body.innerHTML = '<div style="text-align:center; padding:32px; color:var(--text-secondary);">로딩 중...</div>';
+            try {
+                const enc = encodeURIComponent;
+                const resp = await fetchJSON(`/api/bot_lora/trained/steps?bot=${enc(botLoraCurrentBot)}&project=${enc(botLoraCurrentProject)}&character=${enc(_botTrainedModalChar)}&session=${enc(session)}`);
+                if (!resp.success) { body.innerHTML = `<div style="text-align:center; padding:32px; color:var(--error);">${resp.error}</div>`; return; }
+                const step = (resp.steps || []).find(s => s.name === stepName);
+                if (!step) { body.innerHTML = '<div style="text-align:center; padding:32px; color:var(--text-secondary);">step을 찾을 수 없습니다.</div>'; return; }
+
+                const previewBase = `/api/bot_lora/trained/preview/${enc(botLoraCurrentBot)}/${enc(botLoraCurrentProject)}/${enc(_botTrainedModalChar)}/${enc(session)}`;
+
+                // 현재 세션 대표의 preview 파일명
+                let currentRepPreview = '';
+                if (_botTrainedSessionRepSafetensors === step.safetensors) {
+                    // 이 스텝이 세션 대표 - 첫 preview가 대표 이미지
+                    currentRepPreview = step.previews[0] || '';
+                }
+
+                const previewCards = (step.previews || []).map(p => {
+                    const url = `${previewBase}/${enc(p)}`;
+                    const isRep = p === currentRepPreview;
+                    return `<div style="position:relative; border-radius:8px; overflow:hidden; border:1px solid var(--border);">
+                        <img src="${url}" onclick="openLightbox('${url}')" style="width:100%; display:block; cursor:zoom-in;">
+                        ${isRep ? '<div style="position:absolute; top:8px; left:8px; background:gold; color:#333; font-size:0.7rem; font-weight:700; padding:3px 8px; border-radius:4px; z-index:5;">현재 세션 대표</div>' : ''}
+                        <button onclick="setBotLoraSessionRepresentative('${escapeHtml(session)}', '${escapeHtml(step.safetensors)}', '${escapeHtml(url)}')" style="position:absolute; bottom:0; left:0; right:0; background:rgba(0,0,0,0.65); color:#fff; border:none; padding:6px; cursor:pointer; font-size:0.75rem; font-weight:600; text-align:center; opacity:0; transition:opacity 0.2s;" onmouseenter="this.style.opacity='1'; this.style.background='rgba(0,120,215,0.85)'" onmouseleave="this.style.opacity='0'; this.style.background='rgba(0,0,0,0.65)'">세션 대표로 설정</button>
+                    </div>`;
+                }).join('');
+
+                body.innerHTML = `
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                        <div>
+                            <span style="font-weight:700; font-size:0.9rem;">${escapeHtml(stepName)}</span>
+                            <span style="font-size:0.8rem; color:var(--text-secondary); margin-left:8px;">프리뷰 ${step.previews.length}장${step.avr_loss != null ? ` · loss ${step.avr_loss.toFixed(5)}` : ''}</span>
+                        </div>
+                        <button onclick="showBotLoraTomlModal('${escapeHtml(session)}', '${escapeHtml(stepName)}')" style="padding:4px 10px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:4px; cursor:pointer; font-size:0.75rem;">📄 TOML</button>
+                    </div>
+                    <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(400px, 1fr)); gap:12px;">${previewCards}</div>`;
+            } catch (e) {
+                console.error('[BOT_LORA] 프리뷰 로드 실패:', e);
+                body.innerHTML = '<div style="text-align:center; padding:32px; color:var(--error);">프리뷰 로드 실패</div>';
+            }
+        }
+
+        async function deleteBotLoraTrainedStep(session, step) {
+            if (!confirm(`"${step}" 삭제하시겠습니까? safetensors, json, toml, preview 파일이 모두 삭제됩니다.`)) return;
+            try {
+                const resp = await fetchJSON('/api/bot_lora/trained/delete', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ bot: botLoraCurrentBot, project: botLoraCurrentProject, character: _botTrainedModalChar, session, step })
+                });
+                if (resp.success) { showToast('삭제 완료', 'success'); await enterBotLoraTrainedSession(session); loadBotLoraProject(); }
+                else { showToast(resp.error || '삭제 실패', 'error'); }
+            } catch (e) { console.error('[BOT_LORA] 스텝 삭제 실패:', e); showToast('삭제 실패', 'error'); }
+        }
+
+        async function deleteBotLoraTrainedSession(session) {
+            if (!confirm(`"${session}" 세션 폴더를 전체 삭제하시겠습니까? 폴더 내 모든 파일이 삭제되며 복구할 수 없습니다.`)) return;
+            try {
+                const resp = await fetchJSON('/api/bot_lora/trained/delete-session', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ bot: botLoraCurrentBot, project: botLoraCurrentProject, character: _botTrainedModalChar, session })
+                });
+                if (resp.success) { showToast('세션 삭제 완료', 'success'); await loadBotLoraTrainedSessions(); loadBotLoraProject(); }
+                else { showToast(resp.error || '삭제 실패', 'error'); }
+            } catch (e) { console.error('[BOT_LORA] 세션 삭제 실패:', e); showToast('삭제 실패', 'error'); }
+        }
+
+        async function setBotLoraSessionRepresentative(session, safetensors, previewUrl) {
+            try {
+                const repData = JSON.stringify({ safetensors, preview: previewUrl });
+                const resp = await fetchJSON('/api/bot_lora/trained/session-representative', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ bot: botLoraCurrentBot, project: botLoraCurrentProject, character: _botTrainedModalChar, session, representative: repData })
+                });
+                if (resp.success) {
+                    _botTrainedSessionRepSafetensors = safetensors;
+                    showToast('세션 대표 설정 완료', 'success');
+                    await enterBotLoraTrainedSession(session);
+                    loadBotLoraProject();
+                } else { showToast(resp.error || '설정 실패', 'error'); }
+            } catch (e) { console.error('[BOT_LORA] 세션 대표 설정 실패:', e); showToast('설정 실패', 'error'); }
+        }
+
+        async function showBotLoraTomlModal(session, step) {
+            try {
+                const enc = encodeURIComponent;
+                const resp = await fetchJSON(`/api/bot_lora/trained/toml?bot=${enc(botLoraCurrentBot)}&project=${enc(botLoraCurrentProject)}&character=${enc(_botTrainedModalChar)}&session=${enc(session)}&step=${enc(step)}`);
+                document.getElementById('lora-toml-modal-content').textContent = resp.content || resp.error || 'TOML 데이터 없음';
+                document.getElementById('lora-toml-modal-title').textContent = `TOML - ${step}`;
+                document.getElementById('lora-toml-modal').style.display = 'flex';
+            } catch (e) {
+                console.error('[BOT_LORA] TOML 로드 실패:', e);
+                showToast('TOML 로드 실패', 'error');
+            }
         }
 
         function scrollToBotLoraPrompt(charName, filename) {
@@ -15076,24 +15355,79 @@
             const section = document.getElementById('bot-lora-progress-section');
             if (!section) return;
             section.style.display = '';
+            const phaseEl = document.getElementById('bot-lora-progress-phase');
+            const pctEl = document.getElementById('bot-lora-progress-pct');
+            const barEl = document.getElementById('bot-lora-progress-bar');
+            const stepEl = document.getElementById('bot-lora-progress-step');
+            const timeEl = document.getElementById('bot-lora-progress-time');
+            const charEl = document.getElementById('bot-lora-progress-char');
             const charInfo = data.character ? `${data.character} (${(data.char_index || 0) + 1}/${data.total_chars || '?'})` : '';
-            document.getElementById('bot-lora-progress-phase').textContent = phase === 'starting_next' ? `다음 캐릭터 준비 중...` : phase === 'all_chars_complete' ? '전체 학습 완료!' : phase === 'error' ? '에러' : phase;
-            document.getElementById('bot-lora-progress-char').textContent = charInfo;
-            if (phase === 'all_complete' || phase === 'all_chars_complete') {
-                document.getElementById('bot-lora-progress-bar').style.width = '100%';
+            if (charEl) charEl.textContent = charInfo;
+
+            if (phase === 'preparing') {
+                if (phaseEl) phaseEl.textContent = '준비 중';
+                if (pctEl) pctEl.textContent = '';
+                if (barEl) barEl.style.width = '0%';
+                if (stepEl) stepEl.textContent = data.message || '';
+                if (timeEl) timeEl.textContent = '';
+            } else if (phase === 'training') {
+                const step = data.step || 0;
+                const total = data.total || 1;
+                const pct = Math.round(step / total * 100);
+                if (phaseEl) phaseEl.textContent = '학습 진행 중';
+                if (pctEl) pctEl.textContent = pct + '%';
+                if (barEl) { barEl.style.width = pct + '%'; barEl.style.background = 'var(--accent)'; }
+                if (stepEl) stepEl.textContent = `스텝 ${step}/${total}`;
+                const remainMin = data.remaining_min || 0;
+                const elapsedSec = data.elapsed_sec || 0;
+                const elapsedMin = (elapsedSec / 60).toFixed(1);
+                if (timeEl) timeEl.textContent = `경과 ${elapsedMin}분 / 남은 ${remainMin.toFixed(1)}분`;
+            } else if (phase === 'training_complete') {
+                if (phaseEl) phaseEl.textContent = '학습 완료';
+                if (pctEl) pctEl.textContent = '100%';
+                if (barEl) { barEl.style.width = '100%'; barEl.style.background = '#4caf50'; }
+                if (stepEl) stepEl.textContent = data.message || '학습 완료!';
+                if (timeEl) timeEl.textContent = '';
+            } else if (phase === 'preview' || phase === 'preview_start') {
+                const current = data.current || 0;
+                const total = data.total || 1;
+                const pct = total > 0 ? Math.round(current / total * 100) : 0;
+                if (phaseEl) phaseEl.textContent = '프리뷰 이미지 생성';
+                if (pctEl) pctEl.textContent = pct + '%';
+                if (barEl) { barEl.style.width = pct + '%'; barEl.style.background = '#2196f3'; }
+                if (stepEl) stepEl.textContent = `프리뷰 ${current}/${total}`;
+                const remainMin = data.remaining_min || 0;
+                if (timeEl) timeEl.textContent = remainMin > 0 ? `남은 약 ${remainMin.toFixed(1)}분` : '';
+            } else if (phase === 'all_complete' || phase === 'all_chars_complete') {
+                if (phaseEl) phaseEl.textContent = phase === 'all_chars_complete' ? '전체 학습 완료!' : '학습 완료';
+                if (pctEl) pctEl.textContent = '';
+                if (barEl) { barEl.style.width = '100%'; barEl.style.background = '#4caf50'; }
+                if (stepEl) stepEl.textContent = '';
+                if (timeEl) timeEl.textContent = '';
                 showToast(phase === 'all_chars_complete' ? '모든 캐릭터 학습 완료!' : `${data.character || ''} 학습 완료`, 'success');
                 if (phase === 'all_chars_complete') {
                     setTimeout(() => { section.style.display = 'none'; }, 3000);
                 }
                 loadBotLoraProject();
             } else if (phase === 'error') {
+                if (phaseEl) { phaseEl.textContent = '에러 발생'; phaseEl.style.color = 'var(--error)'; }
+                if (pctEl) pctEl.textContent = '';
+                if (barEl) barEl.style.background = 'var(--error)';
+                if (stepEl) stepEl.textContent = data.message || '알 수 없는 에러';
+                if (timeEl) timeEl.textContent = '';
                 showToast(data.message || '학습 에러', 'error');
+            } else if (phase === 'starting_next') {
+                if (phaseEl) phaseEl.textContent = '다음 캐릭터 준비 중...';
+                if (pctEl) pctEl.textContent = '';
+                if (barEl) { barEl.style.width = '0%'; barEl.style.background = 'var(--accent)'; }
+                if (stepEl) stepEl.textContent = '';
+                if (timeEl) timeEl.textContent = '';
             } else if (phase === 'md_soya_progress') {
                 const pct = data.progress || 0;
-                document.getElementById('bot-lora-progress-bar').style.width = pct + '%';
-                document.getElementById('bot-lora-progress-detail').textContent = data.message || '';
-            } else if (phase === 'starting_next') {
-                document.getElementById('bot-lora-progress-bar').style.width = '0%';
+                if (pctEl) pctEl.textContent = pct + '%';
+                if (barEl) barEl.style.width = pct + '%';
+                if (stepEl) stepEl.textContent = data.message || '';
+                if (timeEl) timeEl.textContent = '';
             }
         }
 

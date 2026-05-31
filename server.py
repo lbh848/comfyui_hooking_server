@@ -6843,6 +6843,25 @@ async def handle_api_bot_lora_trained_delete_session(request):
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 
+async def handle_api_bot_lora_session_representative(request):
+    try:
+        body = await request.json()
+        bot_name = body.get("bot", "")
+        project_name = body.get("project", "")
+        char_name = body.get("character", "")
+        session_name = body.get("session", "")
+        representative = body.get("representative", "")
+        if not bot_name or not project_name or not char_name or not session_name:
+            return web.json_response({"success": False, "error": "bot, project, character, session 필수"}, status=400)
+        from modes.bot_lora_mode import update_char_session_representative
+        result = update_char_session_representative(bot_name, project_name, char_name, session_name, representative)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[BOT_LORA_API] 세션 대표 설정 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
 app.router.add_get("/api/bot_lora/bots", handle_api_bot_lora_bots)
 app.router.add_get("/api/bot_lora/projects", handle_api_bot_lora_projects)
 app.router.add_post("/api/bot_lora/project/add", handle_api_bot_lora_project_add)
@@ -6874,6 +6893,7 @@ app.router.add_get("/api/bot_lora/trained/toml", handle_api_bot_lora_trained_tom
 app.router.add_get("/api/bot_lora/trained/preview/{bot}/{project}/{character}/{session}/{filename}", handle_api_bot_lora_trained_preview)
 app.router.add_post("/api/bot_lora/trained/delete", handle_api_bot_lora_trained_delete)
 app.router.add_post("/api/bot_lora/trained/delete-session", handle_api_bot_lora_trained_delete_session)
+app.router.add_post("/api/bot_lora/trained/session-representative", handle_api_bot_lora_session_representative)
 
 
 async def handle_api_open_folder(request):

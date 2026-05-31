@@ -72,6 +72,7 @@ def _sync_training_images_to_project(bot_name: str, project_name: str, char_name
 
     synced = 0
     skipped = 0
+    prompts_synced = 0
     for fname in files_to_copy:
         src_path = os.path.join(src_dir, fname)
         if not os.path.isfile(src_path):
@@ -79,18 +80,17 @@ def _sync_training_images_to_project(bot_name: str, project_name: str, char_name
             continue
 
         dst_path = os.path.join(dst_dir, fname)
-        # 이미 존재하면 스킵 (사용자가 편집했을 수 있음)
-        if os.path.isfile(dst_path):
+        # 이미지: 이미 존재하면 스킵 (사용자가 편집했을 수 있음)
+        if not os.path.isfile(dst_path):
+            try:
+                shutil.copy2(src_path, dst_path)
+                synced += 1
+            except Exception as e:
+                print(f"[BOT_LORA_SYNC] 이미지 복사 실패: {src_path} -> {dst_path} - {e}")
+        else:
             skipped += 1
-            continue
 
-        try:
-            shutil.copy2(src_path, dst_path)
-            synced += 1
-        except Exception as e:
-            print(f"[BOT_LORA_SYNC] 이미지 복사 실패: {src_path} -> {dst_path} - {e}")
-
-        # 프롬프트 JSON도 복사
+        # 프롬프트 JSON도 복사 (이미지 스킵과 별개로 항상 체크)
         base = os.path.splitext(fname)[0]
         prompt_src = os.path.join(src_dir, f"{base}_prompt.json")
         prompt_dst = os.path.join(dst_dir, f"{base}_prompt.json")
@@ -110,17 +110,19 @@ def _sync_training_images_to_project(bot_name: str, project_name: str, char_name
                     pdata["original_negative"] = pdata.get("negative", "")
                 with open(prompt_dst, "w", encoding="utf-8") as f:
                     json.dump(pdata, f, ensure_ascii=False, indent=2)
+                prompts_synced += 1
             except Exception as e:
                 print(f"[BOT_LORA_SYNC] 프롬프트 복사 실패: {prompt_src} -> {prompt_dst} - {e}")
         else:
             try:
                 with open(prompt_dst, "w", encoding="utf-8") as f:
                     json.dump({"positive": "", "negative": "", "original_positive": "", "original_negative": ""}, f, ensure_ascii=False, indent=2)
+                prompts_synced += 1
             except Exception as e:
                 print(f"[BOT_LORA_SYNC] 빈 프롬프트 생성 실패: {prompt_dst} - {e}")
 
-    print(f"[BOT_LORA_SYNC] 완료: {bot_name}/{project_name}/{char_name} - 복사:{synced}, 스킵:{skipped}")
-    return {"synced": synced, "skipped": skipped}
+    print(f"[BOT_LORA_SYNC] 완료: {bot_name}/{project_name}/{char_name} - 이미지 복사:{synced}, 스킵:{skipped}, 프롬프트:{prompts_synced}")
+    return {"synced": synced, "skipped": skipped, "prompts_synced": prompts_synced}
 
 
 # ─── 데이터 관리 ─────────────────────────────────────────────
@@ -945,8 +947,6 @@ def list_bot_char_available_images(bot_name: str, char_name: str) -> list:
         print(f"[BOT_LORA] 봇 캐릭터 폴더 없음: {char_dir}")
         return []
 
-    bot_dir = os.path.join(BOT_DIR, _safe_dirname(bot_name))
-
     images = []
     for fname in sorted(os.listdir(char_dir)):
         ext = os.path.splitext(fname)[1].lower()
@@ -955,21 +955,6 @@ def list_bot_char_available_images(bot_name: str, char_name: str) -> list:
         fpath = os.path.join(char_dir, fname)
         img_data = _load_image_with_prompt(fpath, char_dir, fname)
         if img_data:
-            # 캐릭터 폴더 안에 프롬프트가 없으면 bot 레벨(바깥)에서도 확인
-            if not img_data["positive"]:
-                base = os.path.splitext(fname)[0]
-                bot_prompt_path = os.path.join(bot_dir, f"{base}_prompt.json")
-                if os.path.isfile(bot_prompt_path):
-                    try:
-                        with open(bot_prompt_path, "r", encoding="utf-8") as f:
-                            pdata = json.load(f)
-                        img_data["positive"] = pdata.get("positive", pdata.get("prompt", ""))
-                        img_data["negative"] = pdata.get("negative", "")
-                        img_data["original_positive"] = pdata.get("original_positive", img_data["positive"])
-                        img_data["original_negative"] = pdata.get("original_negative", img_data["negative"])
-                    except Exception as e:
-                        print(f"[BOT_LORA] bot 레벨 프롬프트 로드 실패: {bot_prompt_path} - {e}")
-
             if fname == "_face_image.webp":
                 img_data["source"] = "face"
             else:
@@ -1078,15 +1063,19 @@ def add_bot_training_from_bot(bot_name: str, project_name: str, char_name: str, 
             base, ext = os.path.splitext(filename)
             prompt_src = os.path.join(src_dir, f"{base}_prompt.json")
             prompt_dest = os.path.join(dst_dir, f"{os.path.splitext(dest_name)[0]}_prompt.json")
+            pdata = None
             if os.path.isfile(prompt_src):
                 with open(prompt_src, "r", encoding="utf-8") as f:
                     pdata = json.load(f)
-                positive = pdata.get("positive", "")
+
+            if pdata:
+                positive = pdata.get("positive", pdata.get("prompt", ""))
+                pdata["positive"] = positive
                 marker = "[FACE_ID_ACTIVATE]"
                 if marker in positive:
                     pdata["positive"] = positive.split(marker)[0].strip()
                 if "original_positive" not in pdata:
-                    pdata["original_positive"] = pdata.get("positive", "")
+                    pdata["original_positive"] = pdata["positive"]
                 if "original_negative" not in pdata:
                     pdata["original_negative"] = pdata.get("negative", "")
                 with open(prompt_dest, "w", encoding="utf-8") as f:
