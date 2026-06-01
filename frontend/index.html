@@ -16065,7 +16065,6 @@
                     <div id="bclp-grid" style="display:grid; grid-template-columns:repeat(3,1fr); gap:12px; overflow-y:auto; max-height:calc(95vh - 160px);"></div>
                 </div>`;
             document.body.appendChild(overlay);
-            overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
             await loadBclpAssetCharacters();
         }
 
@@ -16306,7 +16305,7 @@
             });
         }
 
-        function loadBclpBotCharacters(projectName) {
+        async function loadBclpBotCharacters(projectName) {
             const grid = document.getElementById('bclp-grid');
             if (!grid) return;
             _bclpBreadcrumb([
@@ -16316,93 +16315,67 @@
             ]);
             _botCharLoraPickerState.botSelectedProject = projectName;
             _botCharLoraPickerState.botStep = 'characters';
-            const botData = (_botCharLoraPickerState.botBots || []).find(b => b.name === _botCharLoraPickerState.botSelectedBot);
-            const chars = botData ? (botData.characters || []) : [];
-            grid.innerHTML = '';
-            if (chars.length === 0) { grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--text-secondary);">캐릭터가 없습니다</div>'; return; }
-            chars.forEach(ch => {
-                const card = document.createElement('div');
-                card.style.cssText = 'cursor:pointer; border-radius:8px; border:2px solid var(--border); padding:16px 8px; text-align:center; transition:border-color 0.2s, background 0.2s;';
-                card.innerHTML = `<div style="font-size:1.2rem; margin-bottom:4px;">👤</div><div style="font-size:0.85rem; word-break:break-all;">${escapeHtml(ch.name)}</div>`;
-                card.onmouseenter = () => { card.style.borderColor = 'var(--accent)'; card.style.background = 'var(--surface2)'; };
-                card.onmouseleave = () => { card.style.borderColor = 'var(--border)'; card.style.background = 'transparent'; };
-                card.onclick = () => loadBclpBotSessions(_botCharLoraPickerState.botSelectedBot, projectName, ch.name);
-                grid.appendChild(card);
-            });
-        }
-
-        async function loadBclpBotSessions(botName, projectName, charName) {
-            const grid = document.getElementById('bclp-grid');
-            if (!grid) return;
             grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--text-secondary);">로딩중...</div>';
-            _bclpBreadcrumb([
-                { label: '봇 목록', action: 'loadBclpBotGrid()' },
-                { label: _botCharLoraPickerState.botSelectedBot, action: `_botCharLoraPickerState.botStep='projects'; loadBclpBotProjects('${escapeHtml(_botCharLoraPickerState.botSelectedBot)}')` },
-                { label: _botCharLoraPickerState.botSelectedProject, action: `loadBclpBotCharacters('${escapeHtml(_botCharLoraPickerState.botSelectedProject)}')` },
-                { label: charName },
-            ]);
-            _botCharLoraPickerState.botSelectedChar = charName;
-            _botCharLoraPickerState.botStep = 'sessions';
             try {
                 const enc = encodeURIComponent;
-                const [sessResp, projResp] = await Promise.all([
-                    fetchJSON(`/api/bot_lora/trained/sessions?bot=${enc(botName)}&project=${enc(projectName)}&character=${enc(charName)}`),
-                    fetchJSON(`/api/bot_lora/project?bot=${enc(botName)}&project=${enc(projectName)}`),
-                ]);
-                if (!sessResp.success) { grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--error);">로드 실패</div>'; return; }
+                const projResp = await fetchJSON(`/api/bot_lora/project?bot=${enc(_botCharLoraPickerState.botSelectedBot)}&project=${enc(projectName)}`);
+                if (!projResp.success) { grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--error);">로드 실패</div>'; return; }
                 const profile = (projResp.training_config && projResp.training_config.profile) || 'anima';
-                const charInfo = (projResp.characters || []).find(c => c.name === charName);
-                const trigger = (charInfo && charInfo.trigger) || charName;
-                renderBclpBotSessions(sessResp.sessions || [], botName, projectName, charName, trigger, profile);
+                const characters = projResp.characters || [];
+                grid.innerHTML = '';
+                if (characters.length === 0) { grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--text-secondary);">캐릭터가 없습니다</div>'; return; }
+                characters.forEach(ch => {
+                    const repSession = (ch.trained_sessions || []).find(s => !!s.representative);
+                    const hasRep = !!repSession;
+                    let previewUrl = hasRep ? (repSession.preview_url || '') : '';
+                    let repData = {};
+                    if (hasRep) { try { repData = JSON.parse(repSession.representative); } catch(_) {} }
+                    const card = document.createElement('div');
+                    card.style.cssText = `cursor:${hasRep ? 'pointer' : 'not-allowed'}; border-radius:8px; overflow:hidden; border:2px solid var(--border); transition:border-color 0.2s, background 0.2s; ${hasRep ? '' : 'opacity:0.6;'}`;
+                    if (hasRep && previewUrl) {
+                        card.innerHTML = `<img src="${escapeHtml(previewUrl)}" style="width:100%; display:block; aspect-ratio:1; object-fit:contain;" loading="lazy">`;
+                    } else {
+                        card.innerHTML = `<div style="width:100%; aspect-ratio:1; background:var(--surface2); display:flex; align-items:center; justify-content:center; font-size:2rem;">👤</div>`;
+                    }
+                    const infoHtml = `
+                        <div style="font-size:0.85rem; font-weight:bold; padding:6px 8px 2px; word-break:break-all;">${escapeHtml(ch.name)}</div>
+                        ${hasRep ? `
+                            <div style="font-size:0.7rem; padding:0 8px 2px; color:var(--text-secondary);">trigger: ${escapeHtml(ch.trigger || ch.name)}</div>
+                            <div style="font-size:0.65rem; padding:0 8px 6px; color:var(--text-secondary);">${escapeHtml(repSession.name)}</div>
+                        ` : `
+                            <div style="font-size:0.7rem; padding:0 8px 6px; color:var(--warning);">대표 로라 미선택</div>
+                        `}
+                    `;
+                    card.innerHTML += `<div style="background:var(--surface2);">${infoHtml}</div>`;
+                    if (hasRep) {
+                        card.onmouseenter = () => { card.style.borderColor = 'var(--accent)'; card.style.background = 'var(--surface2)'; };
+                        card.onmouseleave = () => { card.style.borderColor = 'var(--border)'; card.style.background = 'transparent'; };
+                        card.onclick = () => {
+                            const loras = getBotCharLoras(_botCharLoraPickerState.charName);
+                            loras.push({
+                                source: 'bot',
+                                name: ch.name,
+                                bot_name: _botCharLoraPickerState.botSelectedBot,
+                                project_name: projectName,
+                                character: ch.name,
+                                lora_path: repData.safetensors || '',
+                                strength: 0.5,
+                                preview_url: previewUrl,
+                                trigger: ch.trigger || ch.name,
+                                BASE: profile,
+                            });
+                            setBotCharLoras(_botCharLoraPickerState.charName, loras);
+                            renderBotCharLoraList(_botCharLoraPickerState.charIdx, _botCharLoraPickerState.charName, loras);
+                            saveBotCharLoras(_botCharLoraPickerState.charName);
+                            document.getElementById('bot-char-lora-picker-overlay').remove();
+                            showToast(`LoRA "${ch.name}" (${repSession.name}) 추가됨`, 'success');
+                        };
+                    }
+                    grid.appendChild(card);
+                });
             } catch (e) {
                 grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--error);">로드 실패: ' + e.message + '</div>';
             }
-        }
-
-        function renderBclpBotSessions(sessions, botName, projectName, charName, trigger, BASE) {
-            const grid = document.getElementById('bclp-grid');
-            grid.innerHTML = '';
-            if (sessions.length === 0) { grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--text-secondary);">학습 세션이 없습니다</div>'; return; }
-            const enc = encodeURIComponent;
-            sessions.forEach(sess => {
-                const hasRep = !!sess.representative;
-                let previewUrl = sess.preview_url || '';
-                const card = document.createElement('div');
-                card.style.cssText = `cursor:${hasRep ? 'pointer' : 'not-allowed'}; border-radius:8px; overflow:hidden; border:2px solid var(--border); transition:border-color 0.2s; ${hasRep ? '' : 'opacity:0.6;'}`;
-                if (previewUrl) {
-                    card.innerHTML = `<img src="${escapeHtml(previewUrl)}" style="width:100%; display:block; aspect-ratio:1; object-fit:contain;" loading="lazy">`;
-                } else {
-                    card.innerHTML = `<div style="width:100%; aspect-ratio:1; background:var(--surface2); display:flex; align-items:center; justify-content:center;">📂</div>`;
-                }
-                card.innerHTML += `<div style="font-size:0.7rem; padding:4px; text-align:center; background:var(--surface2);">${escapeHtml(sess.name)}${!hasRep ? ' <span style="color:var(--warning);">(대표 로라 선택 안됨)</span>' : ''}</div>`;
-                if (hasRep) {
-                    card.onmouseenter = () => { card.style.borderColor = 'var(--accent)'; };
-                    card.onmouseleave = () => { card.style.borderColor = 'var(--border)'; };
-                    card.onclick = () => {
-                        let repData = {};
-                        try { repData = JSON.parse(sess.representative); } catch(_) {}
-                        const loras = getBotCharLoras(_botCharLoraPickerState.charName);
-                        loras.push({
-                            source: 'bot',
-                            name: charName,
-                            bot_name: botName,
-                            project_name: projectName,
-                            character: charName,
-                            lora_path: repData.safetensors || '',
-                            strength: 0.5,
-                            preview_url: previewUrl,
-                            trigger: trigger,
-                            BASE: BASE,
-                        });
-                        setBotCharLoras(_botCharLoraPickerState.charName, loras);
-                        renderBotCharLoraList(_botCharLoraPickerState.charIdx, _botCharLoraPickerState.charName, loras);
-                        saveBotCharLoras(_botCharLoraPickerState.charName);
-                        document.getElementById('bot-char-lora-picker-overlay').remove();
-                        showToast(`LoRA "${charName}" (${sess.name}) 추가됨`, 'success');
-                    };
-                }
-                grid.appendChild(card);
-            });
         }
 
         async function checkPatchFiles() {
