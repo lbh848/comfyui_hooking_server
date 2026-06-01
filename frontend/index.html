@@ -4276,7 +4276,7 @@
                     <!-- LoRA 항목 관리 버튼 -->
                     <div style="margin-bottom:8px;">
                         <div style="display:flex; gap:6px;">
-                            <button onclick="addLoraEntry()" style="flex:1; background:var(--accent); color:#fff; border:none; padding:6px 8px; border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600;">LoRA 추가</button>
+                            <button onclick="addLoraEntry()" id="lora-project-add-btn" style="flex:1; background:var(--accent); color:#fff; border:none; padding:6px 8px; border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600; display:none;">프로젝트 추가</button>
                             <button onclick="removeLoraEntry()" id="lora-delete-btn" style="flex:1; background:var(--error); color:#fff; border:none; padding:6px 8px; border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600; display:none;">삭제</button>
                             <button onclick="openLoraDuplicateModal()" id="lora-duplicate-btn" style="flex:1; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:6px 8px; border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600; display:none;">복제</button>
                         </div>
@@ -11768,6 +11768,7 @@
             document.getElementById('lora-training-export-section').style.display = 'none';
             document.getElementById('lora-delete-btn').style.display = 'none';
             document.getElementById('lora-duplicate-btn').style.display = 'none';
+            document.getElementById('lora-project-add-btn').style.display = 'none';
         }
 
         async function initLoraTab() {
@@ -11815,6 +11816,7 @@
             loraCurrentCharacter = character;
             loraCurrentEntry = '';
             _loraHideAll();
+            document.getElementById('lora-project-add-btn').style.display = '';
             const loadingEl = document.getElementById('lora-loading');
             loadingEl.style.display = 'flex';
 
