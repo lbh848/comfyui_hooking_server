@@ -15459,7 +15459,7 @@
 
                 // lora_save_path: training_config에서 읽거나 기본값 사용 (캐릭터명 자동 추가)
                 let loraSavePath = cfg.lora_save_path || `SOYA_BOT_LORA/${botLoraCurrentBot}/Lora/${botLoraCurrentProject}`;
-                if (!loraSavePath.rstrip('/')?.endsWith(safeDirname(ch.name))) {
+                if (!loraSavePath.replace(/\/+$/, '').endsWith(safeDirname(ch.name))) {
                     loraSavePath = loraSavePath.replace(/\/+$/, '') + '/' + safeDirname(ch.name);
                 }
                 let configBlock = `[PROFILE]\n${cfg.profile}\n[N_IMG]\n${images.length}\n[STEP_PER_IMAGE]\n${cfg.step_per_image}\n[IL_RATE]\n${cfg.il_rate}\n[SAVE_PER_STEP]\n${cfg.save_per_step}\n[MULTI_IMG_FOLDER_NAME]\n${cfg.multi_img_folder_name}\n[LORA_SAVE_PATH]\n${loraSavePath}\n[GEN_W]\n${cfg.gen_w}\n[GEN_H]\n${cfg.gen_h}\n[UPSCALE]\n${cfg.upscale}\n[RESOLUTION]\n${cfg.resolution}\n[SAVE_AFTER]\n${cfg.save_after}`;
@@ -15482,7 +15482,7 @@
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
                     <div style="display:flex; align-items:center; gap:12px;">
                         <h3 style="margin:0;">프롬프트 Raw 보기</h3>
-                        <select id="bot-lora-raw-char-select" onchange="document.getElementById('bot-lora-raw-content').innerHTML = this._buildRaw(parseInt(this.value));" style="padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); font-size:0.8rem;">
+                        <select id="bot-lora-raw-char-select" style="padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); font-size:0.8rem;">
                             ${charOptions}
                         </select>
                     </div>
@@ -15525,6 +15525,10 @@
                     </div>
                     <pre id="bot-lora-raw-negative" style="background:var(--surface2); padding:10px; border-radius:8px; font-size:0.8rem; white-space:pre-wrap; word-break:break-all; margin:0; max-height:300px; overflow-y:auto;">${escapeHtml(d.negativeRaw.trim())}</pre>
                 </div>`;
+            };
+            sel.onchange = () => {
+                const contentEl = document.getElementById('bot-lora-raw-content');
+                if (contentEl) contentEl.innerHTML = sel._buildRaw(parseInt(sel.value));
             };
         }
 
