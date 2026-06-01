@@ -4977,14 +4977,14 @@
 
     <!-- 인스턴스 로라 생성 모달 -->
     <div class="modal" id="instance-lora-create-modal">
-        <div class="modal-content" style="max-width:900px;">
+        <div class="modal-content" style="width:900px; max-width:900px; height:80vh; max-height:80vh; overflow:hidden;">
             <div class="modal-header">
                 <h2>인스턴스 로라 생성</h2>
                 <button class="modal-close" onclick="closeInstanceLoraCreateModal()">&times;</button>
             </div>
-            <div class="modal-body" style="display:flex; gap:16px; min-height:400px;">
+            <div class="modal-body" style="display:flex; gap:16px; padding:16px; height:calc(80vh - 130px); min-height:0; overflow:hidden;">
                 <!-- 왼쪽: 트리거워드 + 파일 업로드 + 선택된 이미지 -->
-                <div style="width:240px; flex-shrink:0; display:flex; flex-direction:column; gap:10px;">
+                <div style="width:240px; flex-shrink:0; display:flex; flex-direction:column; gap:10px; min-height:0;">
                     <div>
                         <label style="font-size:0.85rem; font-weight:600; display:block; margin-bottom:4px;">트리거워드 <span style="color:var(--error);">*</span></label>
                         <input id="instance-lora-create-trigger" type="text" placeholder="예: my_character" style="width:100%; padding:8px; border-radius:6px; border:1px solid var(--border); background:var(--surface1); color:var(--text); font-size:0.9rem;">
@@ -4997,18 +4997,18 @@
                         <input type="file" id="instance-create-file-input" accept="image/*" multiple style="display:none;" onchange="handleInstanceCreateFileSelect(this)">
                     </div>
                     <div style="font-size:0.8rem; font-weight:600; color:var(--text-secondary);">선택된 이미지 <span id="instance-create-count">0</span>장</div>
-                    <div id="instance-create-preview" style="display:grid; grid-template-columns:repeat(2, 1fr); gap:4px; overflow-y:auto; flex:1;"></div>
+                    <div id="instance-create-preview" style="display:grid; grid-template-columns:repeat(2, 1fr); gap:4px; overflow-y:auto; flex:1; min-height:0;"></div>
                 </div>
                 <!-- 오른쪽: 에셋/봇 폴더 탐색 -->
-                <div style="flex:1; border-left:1px solid var(--border); padding-left:16px; display:flex; flex-direction:column;">
-                    <div style="display:flex; gap:8px; margin-bottom:10px;">
+                <div style="flex:1; border-left:1px solid var(--border); padding-left:16px; display:flex; flex-direction:column; min-height:0; min-width:0;">
+                    <div style="display:flex; gap:8px; margin-bottom:10px; flex-shrink:0;">
                         <button id="ic-browser-tab-asset" onclick="switchInstanceCreateBrowser('asset')" style="padding:4px 12px; background:var(--accent); color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600;">에셋</button>
                         <button id="ic-browser-tab-bot" onclick="switchInstanceCreateBrowser('bot')" style="padding:4px 12px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600;">봇</button>
                     </div>
-                    <div id="instance-create-browser" style="flex:1; overflow-y:auto;"></div>
+                    <div id="instance-create-browser" style="flex:1; overflow-y:auto; min-height:0;"></div>
                 </div>
             </div>
-            <div class="modal-footer">
+            <div class="modal-footer" style="flex-shrink:0;">
                 <button onclick="closeInstanceLoraCreateModal()" style="padding:8px 16px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:6px; cursor:pointer;">취소</button>
                 <button onclick="confirmCreateInstanceLora()" style="padding:8px 20px; background:var(--accent); color:#fff; border:none; border-radius:6px; cursor:pointer; font-weight:600;">생성</button>
             </div>
