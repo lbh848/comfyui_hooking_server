@@ -318,9 +318,14 @@ def duplicate_project(bot_name: str, src_project_name: str, dst_project_name: st
     # lora_save_path에 원본 프로젝트명이 포함되어 있으면 대상 프로젝트명으로 교체
     training_config = dst_cfg.get("training_config", {})
     if training_config.get("lora_save_path"):
-        training_config["lora_save_path"] = training_config["lora_save_path"].replace(
-            f"/{src_project_name}/", f"/{dst_project_name}/"
-        )
+        old_path = training_config["lora_save_path"]
+        # /프로젝트명/ (중간) 또는 /프로젝트명 (끝) 패턴 모두 처리
+        new_path = old_path.replace(f"/{src_project_name}/", f"/{dst_project_name}/")
+        if new_path == old_path and old_path.endswith(f"/{src_project_name}"):
+            new_path = old_path[:-len(src_project_name)] + dst_project_name
+        if new_path == old_path:
+            new_path = old_path.replace(src_project_name, dst_project_name)
+        training_config["lora_save_path"] = new_path
 
     bot_projects[dst_project_name] = dst_cfg
     _save_bot_lora_manage(data)
