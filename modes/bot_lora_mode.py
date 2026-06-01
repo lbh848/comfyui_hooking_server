@@ -267,6 +267,83 @@ def add_project(bot_name: str, project_name: str) -> dict:
     return {"success": True, "name": project_name}
 
 
+def duplicate_project(bot_name: str, src_project_name: str, dst_project_name: str, lora_load_path: str = "") -> dict:
+    """학습 프로젝트 복제 (학습 데이터, 설정, 학습된 LoRA 포함)"""
+    if not bot_name:
+        return {"success": False, "error": "봇 이름 누락"}
+    if not src_project_name or not dst_project_name:
+        return {"success": False, "error": "원본/대상 프로젝트 이름 누락"}
+
+    dst_project_name = dst_project_name.strip()
+    if not dst_project_name:
+        return {"success": False, "error": "프로젝트 이름을 입력하세요"}
+
+    data = _load_bot_lora_manage()
+    bot_projects = data.setdefault("bot_loras", {}).setdefault(bot_name, {})
+
+    # 원본 프로젝트 확인
+    src_cfg = bot_projects.get(src_project_name)
+    if not src_cfg:
+        print(f"[BOT_LORA] 원본 프로젝트 없음: {bot_name}/{src_project_name}")
+        return {"success": False, "error": "원본 프로젝트를 찾을 수 없습니다"}
+
+    # 대상 프로젝트 이름 중복 확인
+    if dst_project_name in bot_projects:
+        print(f"[BOT_LORA] 대상 프로젝트 이미 존재: {bot_name}/{dst_project_name}")
+        return {"success": False, "error": "이미 존재하는 프로젝트명입니다"}
+
+    # 프로젝트 폴더 복제
+    src_dir = _bot_project_dir(bot_name, src_project_name)
+    dst_dir = _bot_project_dir(bot_name, dst_project_name)
+    if os.path.isdir(src_dir):
+        try:
+            shutil.copytree(src_dir, dst_dir)
+            print(f"[BOT_LORA] 프로젝트 폴더 복제: {src_dir} -> {dst_dir}")
+        except Exception as e:
+            print(f"[BOT_LORA] 프로젝트 폴더 복제 실패: {e}")
+            traceback.print_exc()
+            return {"success": False, "error": f"프로젝트 폴더 복제 실패: {e}"}
+    else:
+        os.makedirs(dst_dir, exist_ok=True)
+
+    # JSON 설정 복제
+    import copy
+    dst_cfg = copy.deepcopy(src_cfg)
+
+    # lora_save_path에 원본 프로젝트명이 포함되어 있으면 대상 프로젝트명으로 교체
+    training_config = dst_cfg.get("training_config", {})
+    if training_config.get("lora_save_path"):
+        training_config["lora_save_path"] = training_config["lora_save_path"].replace(
+            f"/{src_project_name}/", f"/{dst_project_name}/"
+        )
+
+    bot_projects[dst_project_name] = dst_cfg
+    _save_bot_lora_manage(data)
+
+    # 학습된 LoRA 폴더 복제
+    copied_lora_chars = []
+    if lora_load_path:
+        bot_data = _load_bot_data()
+        for b in bot_data.get("bots", []):
+            if b.get("name") == bot_name:
+                for ch in b.get("characters", []):
+                    cn = ch.get("name", "")
+                    if cn:
+                        src_lora_dir = _trained_lora_dir(lora_load_path, bot_name, src_project_name, cn)
+                        if os.path.isdir(src_lora_dir):
+                            dst_lora_dir = _trained_lora_dir(lora_load_path, bot_name, dst_project_name, cn)
+                            try:
+                                shutil.copytree(src_lora_dir, dst_lora_dir)
+                                copied_lora_chars.append(cn)
+                                print(f"[BOT_LORA] 학습된 LoRA 복제: {src_lora_dir} -> {dst_lora_dir}")
+                            except Exception as e:
+                                print(f"[BOT_LORA] 학습된 LoRA 복제 실패: {cn} - {e}")
+                break
+
+    print(f"[BOT_LORA] 프로젝트 복제 완료: {bot_name}/{src_project_name} -> {dst_project_name} (LoRA {len(copied_lora_chars)}명)")
+    return {"success": True, "name": dst_project_name, "copied_lora_chars": copied_lora_chars}
+
+
 def remove_project(bot_name: str, project_name: str, lora_load_path: str = "") -> dict:
     """학습 프로젝트 삭제"""
     if not bot_name or not project_name:
@@ -1231,6 +1308,123 @@ def list_bot_trained_steps(lora_load_path: str, bot_name: str, project_name: str
             "avr_loss": data.get('avr_loss', None),
         })
     return steps
+
+
+def cleanup_non_representative_loras(lora_load_path: str, bot_name: str, project_name: str, char_name: str) -> dict:
+    """대표로 설정된 LoRA 외에 해당 캐릭터의 모든 LoRA를 정리.
+    - 대표가 설정된 세션: 대표 step만 남기고 나머지 step 삭제
+    - 대표가 없는 세션: 세션 전체 삭제
+    """
+    if not lora_load_path:
+        print("[BOT_LORA_CLEANUP] lora_load_path 미설정")
+        return {"success": False, "error": "lora_load_path 미설정"}
+
+    entry_dir = _trained_lora_dir(lora_load_path, bot_name, project_name, char_name)
+    if not os.path.isdir(entry_dir):
+        print(f"[BOT_LORA_CLEANUP] 캐릭터 LoRA 폴더 없음: {entry_dir}")
+        return {"success": False, "error": "캐릭터 LoRA 폴더가 없습니다"}
+
+    manage_data = _load_bot_lora_manage()
+    char_cfg = _get_char_config(manage_data, bot_name, project_name, char_name) or {}
+    session_reps = char_cfg.get("session_representatives", {})
+
+    deleted_sessions = []
+    deleted_steps = []
+    errors = []
+
+    for session_name in sorted(os.listdir(entry_dir)):
+        session_dir = os.path.join(entry_dir, session_name)
+        if not os.path.isdir(session_dir):
+            continue
+
+        rep_json = session_reps.get(session_name, "")
+        rep_safetensors = ""
+        if rep_json:
+            try:
+                rep_data = json.loads(rep_json)
+                rep_safetensors = rep_data.get("safetensors", "")
+            except Exception:
+                pass
+
+        # 대표가 없는 세션: 전체 삭제
+        if not rep_safetensors:
+            try:
+                file_count = sum(1 for _ in os.listdir(session_dir))
+                shutil.rmtree(session_dir)
+                deleted_sessions.append(session_name)
+                if session_name in session_reps:
+                    del session_reps[session_name]
+                print(f"[BOT_LORA_CLEANUP] 대표 없는 세션 삭제: {session_name} ({file_count}개 파일)")
+            except Exception as e:
+                errors.append(f"세션 {session_name} 삭제 실패: {e}")
+                print(f"[BOT_LORA_CLEANUP] 세션 삭제 실패: {session_dir} - {e}")
+                traceback.print_exc()
+            continue
+
+        # 대표가 있는 세션: 대표 step만 남기고 나머지 삭제
+        for fname in sorted(os.listdir(session_dir)):
+            if not fname.endswith('.json'):
+                continue
+            step_name = os.path.splitext(fname)[0]
+            json_path = os.path.join(session_dir, fname)
+            try:
+                with open(json_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+            except Exception as e:
+                errors.append(f"JSON 읽기 실패 {fname}: {e}")
+                continue
+
+            st_name = data.get('lora_file', step_name + '.safetensors')
+
+            # 대표 safetensors면 유지
+            if st_name == rep_safetensors:
+                continue
+
+            # 대표가 아닌 step 삭제
+            # safetensors
+            fp = os.path.join(session_dir, st_name)
+            if os.path.isfile(fp):
+                try:
+                    os.remove(fp)
+                    deleted_steps.append(f"{session_name}/{st_name}")
+                except Exception as e:
+                    errors.append(f"{st_name}: {e}")
+            # previews
+            for p in data.get('previews', []):
+                fp = os.path.join(session_dir, p)
+                if os.path.isfile(fp):
+                    try:
+                        os.remove(fp)
+                    except Exception as e:
+                        errors.append(f"{p}: {e}")
+            # toml
+            toml_path = os.path.join(session_dir, step_name + ".toml")
+            if os.path.isfile(toml_path):
+                try:
+                    os.remove(toml_path)
+                except Exception as e:
+                    errors.append(f"{step_name}.toml: {e}")
+            # json
+            try:
+                os.remove(json_path)
+                deleted_steps.append(f"{session_name}/{step_name}")
+            except Exception as e:
+                errors.append(f"{fname}: {e}")
+
+            print(f"[BOT_LORA_CLEANUP] 비대표 step 삭제: {session_name}/{step_name}")
+
+    # session_representatives 업데이트 저장
+    if deleted_sessions:
+        _save_bot_lora_manage(manage_data)
+
+    result = {
+        "success": True,
+        "deleted_sessions": deleted_sessions,
+        "deleted_steps": deleted_steps,
+        "errors": errors,
+    }
+    print(f"[BOT_LORA_CLEANUP] 정리 완료: 세션 {len(deleted_sessions)}개 삭제, step {len(deleted_steps)}개 삭제")
+    return result
 
 
 def read_bot_toml_file(lora_load_path: str, bot_name: str, project_name: str, char_name: str, session: str, step_name: str) -> dict:

@@ -6089,6 +6089,26 @@ async def handle_api_bot_lora_project_delete(request):
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 
+async def handle_api_bot_lora_project_duplicate(request):
+    """학습 프로젝트 복제"""
+    try:
+        body = await request.json()
+        bot_name = body.get("bot", "")
+        src_project = body.get("src_project", "")
+        dst_project = body.get("dst_project", "")
+        if not bot_name or not src_project or not dst_project:
+            return web.json_response({"success": False, "error": "봇/원본/대상 프로젝트 이름 필수"}, status=400)
+        config = load_config()
+        lora_load_path = config.get("bot_lora_load_path", "") or os.path.join(config.get("lora_load_path", ""), "SOYA_BOT_LORA")
+        from modes.bot_lora_mode import duplicate_project
+        result = duplicate_project(bot_name, src_project, dst_project, lora_load_path)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[BOT_LORA_API] 프로젝트 복제 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
 async def handle_api_bot_lora_project(request):
     """프로젝트 상세 데이터"""
     try:
@@ -6908,10 +6928,30 @@ async def handle_api_bot_lora_session_representative(request):
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 
+async def handle_api_bot_lora_cleanup_non_representative(request):
+    try:
+        body = await request.json()
+        bot_name = body.get("bot", "")
+        project_name = body.get("project", "")
+        char_name = body.get("character", "")
+        if not bot_name or not project_name or not char_name:
+            return web.json_response({"success": False, "error": "bot, project, character 필수"}, status=400)
+        config = load_config()
+        lora_load_path = config.get("bot_lora_load_path", "") or os.path.join(config.get("lora_load_path", ""), "SOYA_BOT_LORA")
+        from modes.bot_lora_mode import cleanup_non_representative_loras
+        result = cleanup_non_representative_loras(lora_load_path, bot_name, project_name, char_name)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[BOT_LORA_API] 대표외 LoRA 정리 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
 app.router.add_get("/api/bot_lora/bots", handle_api_bot_lora_bots)
 app.router.add_get("/api/bot_lora/projects", handle_api_bot_lora_projects)
 app.router.add_post("/api/bot_lora/project/add", handle_api_bot_lora_project_add)
 app.router.add_post("/api/bot_lora/project/delete", handle_api_bot_lora_project_delete)
+app.router.add_post("/api/bot_lora/project/duplicate", handle_api_bot_lora_project_duplicate)
 app.router.add_get("/api/bot_lora/project", handle_api_bot_lora_project)
 app.router.add_post("/api/bot_lora/config", handle_api_bot_lora_config)
 app.router.add_post("/api/bot_lora/trigger", handle_api_bot_lora_trigger)
@@ -6941,6 +6981,7 @@ app.router.add_get("/api/bot_lora/trained/preview/{bot}/{project}/{character}/{s
 app.router.add_post("/api/bot_lora/trained/delete", handle_api_bot_lora_trained_delete)
 app.router.add_post("/api/bot_lora/trained/delete-session", handle_api_bot_lora_trained_delete_session)
 app.router.add_post("/api/bot_lora/trained/session-representative", handle_api_bot_lora_session_representative)
+app.router.add_post("/api/bot_lora/trained/cleanup-non-representative", handle_api_bot_lora_cleanup_non_representative)
 
 
 async def handle_api_open_folder(request):
