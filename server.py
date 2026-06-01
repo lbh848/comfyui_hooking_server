@@ -6952,6 +6952,530 @@ async def handle_api_bot_lora_cleanup_non_representative(request):
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 
+# ─── Instance LoRA API ─────────────────────────────────────────
+
+async def handle_api_instance_lora_list(request):
+    try:
+        from modes.instance_lora_mode import list_loras
+        result = list_loras()
+        return web.json_response({"success": True, "data": result})
+    except Exception as e:
+        print(f"[INSTANCE_LORA_API] 목록 조회 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_instance_lora_create(request):
+    try:
+        body = await request.json()
+        trigger = body.get("trigger", "").strip()
+        if not trigger:
+            return web.json_response({"success": False, "error": "트리거워드 필수"}, status=400)
+        from modes.instance_lora_mode import create_lora
+        result = create_lora(trigger)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[INSTANCE_LORA_API] 생성 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_instance_lora_delete(request):
+    try:
+        body = await request.json()
+        lora_id = body.get("id", "").strip()
+        if not lora_id:
+            return web.json_response({"success": False, "error": "id 필수"}, status=400)
+        config = load_config()
+        instance_lora_load_path = config.get("instance_lora_load_path", "")
+        from modes.instance_lora_mode import delete_lora
+        result = delete_lora(lora_id, instance_lora_load_path)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[INSTANCE_LORA_API] 삭제 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_instance_lora_detail(request):
+    try:
+        lora_id = request.query.get("id", "").strip()
+        if not lora_id:
+            return web.json_response({"success": False, "error": "id 필수"}, status=400)
+        from modes.instance_lora_mode import get_lora_detail
+        result = get_lora_detail(lora_id)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[INSTANCE_LORA_API] 상세 조회 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_instance_lora_image(request):
+    try:
+        lora_id = request.match_info.get("id", "")
+        filename = request.match_info.get("filename", "")
+        from modes.instance_lora_mode import get_image_path
+        img_path = get_image_path(lora_id, filename)
+        if not os.path.isfile(img_path):
+            print(f"[INSTANCE_LORA_API] 이미지 없음: {img_path}")
+            return web.json_response({"error": "not found"}, status=404)
+        return web.FileResponse(img_path)
+    except Exception as e:
+        print(f"[INSTANCE_LORA_API] 이미지 서빙 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def handle_api_instance_lora_images_add(request):
+    try:
+        body = await request.json()
+        lora_id = body.get("id", "").strip()
+        images = body.get("images", [])
+        if not lora_id:
+            return web.json_response({"success": False, "error": "id 필수"}, status=400)
+        from modes.instance_lora_mode import add_image
+        from modes.asset_mode import ASSET_DIR
+        from modes.bot_lora_mode import _bot_char_dir as bot_char_dir_fn
+        results = []
+        for img in images:
+            src_type = img.get("type", "asset")
+            filename = img.get("filename", "")
+            if not filename:
+                continue
+            if src_type == "asset":
+                character = img.get("character", "")
+                outfit = img.get("outfit", "")
+                expression = img.get("expression", "")
+                if character and outfit and expression:
+                    src_path = os.path.join(ASSET_DIR, character, outfit, expression, filename)
+                else:
+                    src_path = img.get("path", "")
+            elif src_type == "bot":
+                bot_name = img.get("bot", "")
+                char_name = img.get("character", "")
+                if bot_name and char_name:
+                    src_path = os.path.join(bot_char_dir_fn(bot_name, char_name), filename)
+                else:
+                    src_path = img.get("path", "")
+            else:
+                src_path = img.get("path", "")
+            if not src_path or not os.path.isfile(src_path):
+                print(f"[INSTANCE_LORA_API] 소스 파일 없음: {src_path}")
+                results.append({"success": False, "error": f"파일 없음: {filename}"})
+                continue
+            r = add_image(lora_id, src_path, filename)
+            results.append(r)
+        return web.json_response({"success": True, "results": results})
+    except Exception as e:
+        print(f"[INSTANCE_LORA_API] 이미지 추가 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_instance_lora_images_delete(request):
+    try:
+        body = await request.json()
+        lora_id = body.get("id", "").strip()
+        filename = body.get("filename", "").strip()
+        if not lora_id or not filename:
+            return web.json_response({"success": False, "error": "id, filename 필수"}, status=400)
+        from modes.instance_lora_mode import delete_image
+        result = delete_image(lora_id, filename)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[INSTANCE_LORA_API] 이미지 삭제 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_instance_lora_analyze(request):
+    try:
+        body = await request.json()
+        lora_id = body.get("id", "").strip()
+        if not lora_id:
+            return web.json_response({"success": False, "error": "id 필수"}, status=400)
+
+        from modes.instance_lora_mode import list_images, save_image_prompt, _safe_dirname
+        lora_id = _safe_dirname(lora_id)
+        images = list_images(lora_id)
+        if not images:
+            return web.json_response({"success": False, "error": "분석할 이미지가 없습니다"}, status=400)
+
+        success_count = 0
+        fail_count = 0
+        for i, filename in enumerate(images):
+            try:
+                await notify_frontend("instance_lora_analyze_progress", {
+                    "id": lora_id, "current": i + 1, "total": len(images), "filename": filename
+                })
+
+                from modes.instance_lora_mode import get_image_path
+                img_path = get_image_path(lora_id, filename)
+                if not os.path.isfile(img_path):
+                    print(f"[INSTANCE_LORA_API] 분석할 이미지 없음: {img_path}")
+                    fail_count += 1
+                    continue
+
+                with open(img_path, "rb") as f:
+                    image_data = f.read()
+
+                analysis = await asset_tool.analyze_image(image_data, "expressions")
+                if analysis.get("success"):
+                    tags = analysis.get("tags", [])
+                    positive = ", ".join(tags)
+                    prompt_data = {
+                        "positive": positive,
+                        "negative": "",
+                        "original_positive": positive,
+                        "original_negative": "",
+                    }
+                    save_image_prompt(lora_id, filename, prompt_data)
+                    success_count += 1
+                else:
+                    print(f"[INSTANCE_LORA_API] 태그 분석 실패: {filename}")
+                    fail_count += 1
+            except Exception as e:
+                print(f"[INSTANCE_LORA_API] 이미지 분석 오류: {filename} - {e}")
+                traceback.print_exc()
+                fail_count += 1
+
+        return web.json_response({
+            "success": True,
+            "total": len(images),
+            "success_count": success_count,
+            "fail_count": fail_count,
+        })
+    except Exception as e:
+        print(f"[INSTANCE_LORA_API] 분석 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_instance_lora_config_get(request):
+    try:
+        from modes.instance_lora_mode import get_settings
+        result = get_settings()
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[INSTANCE_LORA_API] 설정 조회 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_instance_lora_config_save(request):
+    try:
+        body = await request.json()
+        from modes.instance_lora_mode import save_settings
+        result = save_settings(body)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[INSTANCE_LORA_API] 설정 저장 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_instance_lora_increment_usage(request):
+    try:
+        body = await request.json()
+        lora_id = body.get("id", "").strip()
+        if not lora_id:
+            return web.json_response({"success": False, "error": "id 필수"}, status=400)
+        from modes.instance_lora_mode import increment_usage
+        result = increment_usage(lora_id)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[INSTANCE_LORA_API] 호출횟수 증가 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_instance_lora_prompt_save(request):
+    try:
+        body = await request.json()
+        lora_id = body.get("id", "").strip()
+        filename = body.get("filename", "").strip()
+        prompt_data = body.get("prompt", {})
+        if not lora_id or not filename:
+            return web.json_response({"success": False, "error": "id, filename 필수"}, status=400)
+        from modes.instance_lora_mode import save_image_prompt
+        result = save_image_prompt(lora_id, filename, prompt_data)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[INSTANCE_LORA_API] 프롬프트 저장 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_instance_lora_prompt_get(request):
+    try:
+        lora_id = request.query.get("id", "").strip()
+        filename = request.query.get("filename", "").strip()
+        if not lora_id or not filename:
+            return web.json_response({"success": False, "error": "id, filename 필수"}, status=400)
+        from modes.instance_lora_mode import get_image_prompt
+        result = get_image_prompt(lora_id, filename)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[INSTANCE_LORA_API] 프롬프트 조회 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def _monitor_instance_lora_training(prompt_id: str, lora_id: str, profile: str):
+    ws_url = (
+        f"ws://{REAL_COMFY_HOST}:{REAL_COMFY_PORT}/ws"
+        f"?clientId=instance_lora_{uuid.uuid4().hex[:8]}"
+    )
+    print(f"[INSTANCE_LORA_MONITOR] 시작: lora_id={lora_id}, prompt_id={prompt_id}")
+    try:
+        async with aiohttp.ClientSession() as ws_session:
+            async with ws_session.ws_connect(ws_url) as ws:
+                async for msg in ws:
+                    if msg.type == aiohttp.WSMsgType.TEXT:
+                        data = json.loads(msg.data)
+                        msg_type = data.get("type", "")
+                        msg_data = data.get("data", {})
+
+                        if msg_type == "md_soya_progress":
+                            phase = msg_data.get("phase", "")
+                            msg_data["lora_id"] = lora_id
+                            msg_data["profile"] = profile
+                            print(f"[INSTANCE_LORA_MONITOR] phase={phase}")
+                            await notify_frontend("instance_lora_training_progress", msg_data)
+                            if phase == "all_complete":
+                                print(f"[INSTANCE_LORA_MONITOR] 학습 완료: {lora_id}")
+                                from modes.instance_lora_mode import add_session
+                                import datetime
+                                session_id = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+                                add_session(lora_id, session_id, profile)
+                                return
+
+                        if msg_type == "executing":
+                            exec_prompt = msg_data.get("prompt_id", "")
+                            exec_node = msg_data.get("node")
+                            if exec_prompt == prompt_id and exec_node is None:
+                                print(f"[INSTANCE_LORA_MONITOR] 워크플로우 완료")
+                                from modes.instance_lora_mode import add_session
+                                import datetime
+                                session_id = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+                                add_session(lora_id, session_id, profile)
+                                await notify_frontend("instance_lora_training_progress", {
+                                    "phase": "all_complete", "lora_id": lora_id, "profile": profile,
+                                })
+                                return
+
+                        if msg_type == "execution_error":
+                            err_prompt = msg_data.get("data", {}).get("prompt_id", "")
+                            if err_prompt == prompt_id:
+                                err_msg = msg_data.get("data", {}).get("exception_message", "Unknown error")
+                                print(f"[INSTANCE_LORA_MONITOR] 에러: {err_msg}")
+                                await notify_frontend("instance_lora_training_progress", {
+                                    "phase": "error", "message": err_msg, "lora_id": lora_id,
+                                })
+                                return
+
+                    elif msg.type in (aiohttp.WSMsgType.ERROR, aiohttp.WSMsgType.CLOSED):
+                        print(f"[INSTANCE_LORA_MONITOR] WebSocket 종료")
+                        break
+    except Exception as e:
+        print(f"[INSTANCE_LORA_MONITOR] 예외: {e}")
+        traceback.print_exc()
+        await notify_frontend("instance_lora_training_progress", {
+            "phase": "error", "message": f"모니터링 연결 실패: {e}", "lora_id": lora_id,
+        })
+
+
+async def handle_api_instance_lora_images_upload(request):
+    try:
+        from modes.instance_lora_mode import add_image, _safe_dirname
+        reader = await request.multipart()
+        results = []
+        lora_id = None
+        while True:
+            part = await reader.next()
+            if part is None:
+                break
+            if part.name == 'lora_id':
+                lora_id = (await part.text()).strip()
+                continue
+            if part.name == 'files':
+                filename = part.filename
+                if not filename:
+                    continue
+                if not lora_id:
+                    lora_id = request.query.get("id", "").strip()
+                if not lora_id:
+                    results.append({"success": False, "error": "lora_id 없음"})
+                    continue
+                tmp_dir = os.path.join(BASE_DIR, "instance_lora", _safe_dirname(lora_id))
+                os.makedirs(tmp_dir, exist_ok=True)
+                tmp_path = os.path.join(tmp_dir, filename)
+                with open(tmp_path, "wb") as f:
+                    while True:
+                        chunk = await part.read_chunk()
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                r = add_image(lora_id, tmp_path, filename)
+                results.append(r)
+        return web.json_response({"success": True, "results": results})
+    except Exception as e:
+        print(f"[INSTANCE_LORA_API] 이미지 업로드 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_instance_lora_training_start(request):
+    try:
+        body = await request.json()
+        lora_id = body.get("id", "").strip()
+        profile = body.get("profile", "anima").strip()
+        if not lora_id:
+            return web.json_response({"success": False, "error": "id 필수"}, status=400)
+        if profile not in ("anima", "sdxl"):
+            return web.json_response({"success": False, "error": "profile은 anima 또는 sdxl만 가능"}, status=400)
+
+        config = load_config()
+        comfy_input_dir = config.get("comfy_input_dir", "")
+        if not comfy_input_dir or not os.path.isdir(comfy_input_dir):
+            return web.json_response({"success": False, "error": "Comfy Input 폴더가 유효하지 않습니다"}, status=400)
+
+        from modes.instance_lora_mode import (
+            get_lora_detail, list_images, get_image_prompt, _safe_dirname, get_image_path,
+        )
+        lora_detail = get_lora_detail(lora_id)
+        if not lora_detail.get("success"):
+            return web.json_response(lora_detail)
+        lora_data = lora_detail["data"]
+
+        images_list = list_images(lora_id)
+        if not images_list:
+            return web.json_response({"success": False, "error": "학습할 이미지가 없습니다"})
+
+        # 1-pass: 프롬프트 없는 이미지 자동 태그 분석
+        for filename in images_list:
+            prompt_result = get_image_prompt(lora_id, filename)
+            if not prompt_result.get("success"):
+                print(f"[INSTANCE_LORA] 자동 태그 분석: {filename}")
+                img_path = get_image_path(lora_id, filename)
+                if os.path.isfile(img_path):
+                    with open(img_path, "rb") as f:
+                        image_data = f.read()
+                    analysis = await asset_tool.analyze_image(image_data, "expressions")
+                    if analysis.get("success"):
+                        tags = analysis.get("tags", [])
+                        positive = ", ".join(tags)
+                        from modes.instance_lora_mode import save_image_prompt
+                        save_image_prompt(lora_id, filename, {
+                            "positive": positive, "negative": "",
+                            "original_positive": positive, "original_negative": "",
+                        })
+
+        # 학습 이미지 프롬프트 수집
+        training_images = []
+        for filename in images_list:
+            prompt_result = get_image_prompt(lora_id, filename)
+            training_images.append({
+                "filename": filename,
+                "positive": prompt_result.get("data", {}).get("positive", "") if prompt_result.get("success") else "",
+                "negative": prompt_result.get("data", {}).get("negative", "") if prompt_result.get("success") else "",
+            })
+
+        trigger = lora_data.get("trigger", "")
+
+        # 설정 로드
+        from modes.instance_lora_mode import get_settings
+        settings = get_settings().get("data", {})
+        profile_settings = settings.get(profile, {})
+
+        step = profile_settings.get("step_per_image", 125)
+        il_rate = profile_settings.get("il_rate", 0.00025)
+        save_step = profile_settings.get("save_per_step", 25)
+        folder = profile_settings.get("multi_img_folder_name", "soya_lora")
+        gen_w = profile_settings.get("gen_w", 700)
+        gen_h = profile_settings.get("gen_h", 1024)
+        upscale = profile_settings.get("upscale", False)
+        resolution = profile_settings.get("resolution", 1024)
+        save_after = profile_settings.get("save_after", 30)
+        dim = profile_settings.get("dim", 32)
+        alpha = profile_settings.get("alpha", 16)
+
+        # LORA_SAVE_PATH: 프로필별 분기
+        instance_lora_load_path = config.get("instance_lora_load_path", "")
+        lora_save_path = f"SOYA_INSTANCE_LORA/{profile}/{_safe_dirname(lora_id)}"
+
+        # 이미지를 ComfyUI input 디렉토리에 익스포트
+        export_dir = os.path.join(comfy_input_dir, folder)
+        os.makedirs(export_dir, exist_ok=True)
+        for i, img in enumerate(training_images, start=1):
+            src = get_image_path(lora_id, img["filename"])
+            ext = os.path.splitext(img["filename"])[1]
+            dst = os.path.join(export_dir, f"[{i}]{ext}")
+            if os.path.isfile(src):
+                shutil.copy2(src, dst)
+
+        # 트레이닝 텍스트 빌드 (instance 전용: TEST_POSITIVE/TEST_NEGATIVE = "instance")
+        positive_text = _build_lora_training_text(
+            training_images, trigger, profile, step, il_rate, save_step, folder,
+            "positive", lora_save_path, gen_w, gen_h, upscale, resolution,
+            [], save_after, dim, alpha,
+        )
+        # Instance LoRA: TEST_POSITIVE/TEST_NEGATIVE를 "instance"로 덮어쓰기
+        positive_text = positive_text.replace("[TEST_POSITIVE]\n", "[TEST_POSITIVE]\ninstance\n")
+        positive_text = positive_text.replace("[TEST_NEGATIVE]\n", "[TEST_NEGATIVE]\ninstance\n")
+
+        negative_text = _build_lora_training_text(
+            training_images, trigger, profile, step, il_rate, save_step, folder,
+            "negative", lora_save_path, gen_w, gen_h, upscale, resolution,
+            [], save_after, dim, alpha,
+        )
+
+        # 워크플로우 로드
+        workflow_paths = config.get("lora_training_workflow_source_paths", {})
+        workflow_path = workflow_paths.get(profile, "") if isinstance(workflow_paths, dict) else ""
+        if not workflow_path:
+            for v in (workflow_paths or {}).values():
+                if v:
+                    workflow_path = v
+                    break
+        if not workflow_path or not os.path.isfile(workflow_path):
+            return web.json_response({"success": False, "error": f"워크플로우 파일 없음: {workflow_path}"})
+
+        with open(workflow_path, "r", encoding="utf-8") as f:
+            original_wf = json.load(f)
+        api_wf, conv_err = await convert_workflow_via_endpoint(original_wf)
+        if conv_err or api_wf is None:
+            return web.json_response({"success": False, "error": f"워크플로우 변환 실패: {conv_err}"})
+
+        import copy
+        wf = copy.deepcopy(api_wf)
+        for nid, ninfo in wf.items():
+            if not isinstance(ninfo, dict):
+                continue
+            title = ninfo.get("_meta", {}).get("title", "")
+            if title == "긍정프롬프트":
+                ninfo["inputs"]["value"] = positive_text
+            elif title == "부정프롬프트":
+                ninfo["inputs"]["value"] = negative_text
+
+        prompt_id, submit_result = await submit_to_real_comfy(wf)
+        await notify_frontend("instance_lora_training_progress", {
+            "phase": "preparing", "lora_id": lora_id, "profile": profile,
+            "message": f"'{trigger}' 인스턴스 로라 학습 시작 ({profile})",
+        })
+        asyncio.create_task(_monitor_instance_lora_training(prompt_id, lora_id, profile))
+
+        return web.json_response({
+            "success": True, "prompt_id": prompt_id, "lora_id": lora_id, "profile": profile,
+            "image_count": len(training_images),
+        })
+    except Exception as e:
+        print(f"[INSTANCE_LORA_API] 학습 시작 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
 app.router.add_get("/api/bot_lora/bots", handle_api_bot_lora_bots)
 app.router.add_get("/api/bot_lora/projects", handle_api_bot_lora_projects)
 app.router.add_post("/api/bot_lora/project/add", handle_api_bot_lora_project_add)
@@ -6988,6 +7512,22 @@ app.router.add_post("/api/bot_lora/trained/delete-session", handle_api_bot_lora_
 app.router.add_post("/api/bot_lora/trained/session-representative", handle_api_bot_lora_session_representative)
 app.router.add_post("/api/bot_lora/trained/cleanup-non-representative", handle_api_bot_lora_cleanup_non_representative)
 
+app.router.add_get("/api/instance_lora/list", handle_api_instance_lora_list)
+app.router.add_post("/api/instance_lora/create", handle_api_instance_lora_create)
+app.router.add_post("/api/instance_lora/delete", handle_api_instance_lora_delete)
+app.router.add_get("/api/instance_lora/detail", handle_api_instance_lora_detail)
+app.router.add_get("/api/instance_lora/image/{id}/{filename}", handle_api_instance_lora_image)
+app.router.add_post("/api/instance_lora/images/add", handle_api_instance_lora_images_add)
+app.router.add_post("/api/instance_lora/images/delete", handle_api_instance_lora_images_delete)
+app.router.add_post("/api/instance_lora/analyze", handle_api_instance_lora_analyze)
+app.router.add_get("/api/instance_lora/config", handle_api_instance_lora_config_get)
+app.router.add_post("/api/instance_lora/config", handle_api_instance_lora_config_save)
+app.router.add_post("/api/instance_lora/increment_usage", handle_api_instance_lora_increment_usage)
+app.router.add_post("/api/instance_lora/prompt", handle_api_instance_lora_prompt_save)
+app.router.add_get("/api/instance_lora/prompt", handle_api_instance_lora_prompt_get)
+app.router.add_post("/api/instance_lora/training/start", handle_api_instance_lora_training_start)
+app.router.add_post("/api/instance_lora/images/upload", handle_api_instance_lora_images_upload)
+
 
 async def handle_api_open_folder(request):
     """지정한 경로의 폴더를 윈도우 탐색기로 엶"""
@@ -7015,6 +7555,7 @@ def _backup_data_on_startup():
     from modes.lora_mode import LORA_MANAGE_FILE
     from modes.bot_mode import BOT_DATA_FILE
     from modes.bot_lora_mode import BOT_LORA_MANAGE_FILE
+    from modes.instance_lora_mode import INSTANCE_LORA_MANAGE_FILE
 
     MAX_BACKUPS = 50
     backup_dir = os.path.join(ASSET_DATA_DIR, "backup")
@@ -7029,6 +7570,7 @@ def _backup_data_on_startup():
         ("lora_manage", LORA_MANAGE_FILE),
         ("bot", BOT_DATA_FILE),
         ("bot_lora_manage", BOT_LORA_MANAGE_FILE),
+        ("instance_lora_manage", INSTANCE_LORA_MANAGE_FILE),
     ]
 
     for prefix, src_path in backup_targets:

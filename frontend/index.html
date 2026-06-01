@@ -4237,6 +4237,7 @@
                 <div style="display:flex; border:1px solid var(--border); border-radius:6px; overflow:hidden;">
                     <button id="lora-mode-asset-btn" onclick="switchLoraMode('asset')" style="padding:4px 14px; font-size:0.8rem; font-weight:600; cursor:pointer; border:none; background:var(--accent); color:#fff;">에셋</button>
                     <button id="lora-mode-bot-btn" onclick="switchLoraMode('bot')" style="padding:4px 14px; font-size:0.8rem; font-weight:600; cursor:pointer; border:none; background:var(--surface2); color:var(--text);">봇</button>
+                    <button id="lora-mode-instance-btn" onclick="switchLoraMode('instance')" style="padding:4px 14px; font-size:0.8rem; font-weight:600; cursor:pointer; border:none; background:var(--surface2); color:var(--text);">인스턴스</button>
                 </div>
             </div>
 
@@ -4623,6 +4624,76 @@
                     </div>
                 </div>
             </div><!-- /lora-bot-mode -->
+
+            <!-- 인스턴스 모드 컨테이너 -->
+            <div id="lora-instance-mode" style="display:none;">
+                <div class="asset-container">
+                    <div class="asset-main" id="instance-lora-main">
+                        <!-- 상단 도구바 -->
+                        <div style="padding:12px 16px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; gap:12px;">
+                            <span style="font-weight:700; font-size:1.05rem;">인스턴스 로라</span>
+                            <div style="display:flex; gap:8px;">
+                                <button onclick="showInstanceLoraCreateModal()" style="padding:6px 14px; background:var(--accent); color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600;">+ 로라 생성</button>
+                            </div>
+                        </div>
+                        <!-- 인스턴스 로라 카드 그리드 -->
+                        <div id="instance-lora-grid" style="padding:16px; display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); gap:16px;"></div>
+                        <div id="instance-lora-empty" style="display:none; text-align:center; padding:48px; color:var(--text-secondary);">
+                            <p>인스턴스 로라가 없습니다.</p>
+                            <p>"+ 로라 생성" 버튼으로 새 로라를 만드세요.</p>
+                        </div>
+                    </div>
+                    <!-- 인스턴스 로라 사이드바 (상세 뷰) -->
+                    <div class="asset-sidebar" id="instance-lora-sidebar" style="display:none;">
+                        <div style="padding:12px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between;">
+                            <span id="instance-lora-detail-title" style="font-weight:600; font-size:0.9rem;"></span>
+                            <button onclick="closeInstanceLoraDetail()" style="background:none; border:none; cursor:pointer; color:var(--text-secondary); font-size:1.2rem;">&times;</button>
+                        </div>
+                        <!-- 학습 이미지 목록 -->
+                        <div id="instance-lora-detail-images" style="padding:12px; overflow-y:auto; max-height:40vh;"></div>
+                        <!-- 설정 (인라인) -->
+                        <div style="padding:12px; border-top:1px solid var(--border);">
+                            <details id="instance-lora-settings-details">
+                                <summary style="font-weight:600; font-size:0.85rem; cursor:pointer; margin-bottom:8px;">학습 설정</summary>
+                                <div style="margin-bottom:8px;">
+                                    <label style="font-size:0.8rem; font-weight:600; display:block; margin-bottom:4px;">프로필</label>
+                                    <select id="instance-lora-train-profile" onchange="loadInstanceLoraInlineSettings()" style="width:100%; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); font-size:0.85rem;">
+                                        <option value="anima">ANIMA</option>
+                                        <option value="sdxl">SDXL</option>
+                                    </select>
+                                </div>
+                                <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
+                                    <div><label style="font-size:0.75rem; color:var(--text-secondary);">STEP</label><input id="iset-step" type="number" value="125" style="width:100%;padding:4px;border:1px solid var(--border);border-radius:4px;background:var(--surface1);color:var(--text);font-size:0.8rem;"></div>
+                                    <div><label style="font-size:0.75rem; color:var(--text-secondary);">IL_RATE</label><input id="iset-ilrate" type="number" step="0.00001" value="0.00025" style="width:100%;padding:4px;border:1px solid var(--border);border-radius:4px;background:var(--surface1);color:var(--text);font-size:0.8rem;"></div>
+                                    <div><label style="font-size:0.75rem; color:var(--text-secondary);">SAVE_STEP</label><input id="iset-save-step" type="number" value="25" style="width:100%;padding:4px;border:1px solid var(--border);border-radius:4px;background:var(--surface1);color:var(--text);font-size:0.8rem;"></div>
+                                    <div><label style="font-size:0.75rem; color:var(--text-secondary);">GEN_W</label><input id="iset-genw" type="number" value="700" style="width:100%;padding:4px;border:1px solid var(--border);border-radius:4px;background:var(--surface1);color:var(--text);font-size:0.8rem;"></div>
+                                    <div><label style="font-size:0.75rem; color:var(--text-secondary);">GEN_H</label><input id="iset-genh" type="number" value="1024" style="width:100%;padding:4px;border:1px solid var(--border);border-radius:4px;background:var(--surface1);color:var(--text);font-size:0.8rem;"></div>
+                                    <div><label style="font-size:0.75rem; color:var(--text-secondary);">RESOLUTION</label><input id="iset-resolution" type="number" value="1024" style="width:100%;padding:4px;border:1px solid var(--border);border-radius:4px;background:var(--surface1);color:var(--text);font-size:0.8rem;"></div>
+                                    <div><label style="font-size:0.75rem; color:var(--text-secondary);">SAVE_AFTER</label><input id="iset-save-after" type="number" value="30" style="width:100%;padding:4px;border:1px solid var(--border);border-radius:4px;background:var(--surface1);color:var(--text);font-size:0.8rem;"></div>
+                                    <div><label style="font-size:0.75rem; color:var(--text-secondary);">DIM</label><input id="iset-dim" type="number" value="32" style="width:100%;padding:4px;border:1px solid var(--border);border-radius:4px;background:var(--surface1);color:var(--text);font-size:0.8rem;"></div>
+                                    <div><label style="font-size:0.75rem; color:var(--text-secondary);">ALPHA</label><input id="iset-alpha" type="number" value="16" style="width:100%;padding:4px;border:1px solid var(--border);border-radius:4px;background:var(--surface1);color:var(--text);font-size:0.8rem;"></div>
+                                </div>
+                                <button onclick="saveInstanceLoraInlineSettings()" style="width:100%;margin-top:8px;padding:4px 10px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.78rem;">설정 저장</button>
+                            </details>
+                        </div>
+                        <!-- 학습 시작 -->
+                        <div style="padding:12px; border-top:1px solid var(--border);">
+                            <button onclick="startInstanceLoraTraining()" style="width:100%; padding:8px; background:var(--accent); color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">학습 시작</button>
+                        </div>
+                    </div>
+                </div>
+                <!-- 학습 진행률 -->
+                <div id="instance-lora-progress" style="display:none; padding:16px; margin:8px; background:var(--surface); border:1px solid var(--accent); border-radius:10px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                        <span id="instance-lora-progress-phase" style="font-weight:600; font-size:0.9rem;"></span>
+                        <span id="instance-lora-progress-pct" style="font-size:0.85rem; color:var(--accent);"></span>
+                    </div>
+                    <div style="width:100%; height:6px; background:var(--surface2); border-radius:3px; overflow:hidden;">
+                        <div id="instance-lora-progress-bar" style="height:100%; background:var(--accent); border-radius:3px; transition:width 0.3s; width:0%;"></div>
+                    </div>
+                    <div id="instance-lora-progress-info" style="margin-top:6px; font-size:0.75rem; color:var(--text-secondary);"></div>
+                </div>
+            </div><!-- /lora-instance-mode -->
         </div>
 
         <!-- 프리셋매니징 탭 -->
@@ -4853,6 +4924,46 @@
             </div>
             <div class="modal-footer">
                 <button onclick="closeLoraTomlModal()" style="padding:8px 16px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:6px; cursor:pointer;">닫기</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 인스턴스 로라 생성 모달 -->
+    <div class="modal" id="instance-lora-create-modal">
+        <div class="modal-content" style="max-width:900px;">
+            <div class="modal-header">
+                <h2>인스턴스 로라 생성</h2>
+                <button class="modal-close" onclick="closeInstanceLoraCreateModal()">&times;</button>
+            </div>
+            <div class="modal-body" style="display:flex; gap:16px; min-height:400px;">
+                <!-- 왼쪽: 트리거워드 + 파일 업로드 + 선택된 이미지 -->
+                <div style="width:240px; flex-shrink:0; display:flex; flex-direction:column; gap:10px;">
+                    <div>
+                        <label style="font-size:0.85rem; font-weight:600; display:block; margin-bottom:4px;">트리거워드 <span style="color:var(--error);">*</span></label>
+                        <input id="instance-lora-create-trigger" type="text" placeholder="예: my_character" style="width:100%; padding:8px; border-radius:6px; border:1px solid var(--border); background:var(--surface1); color:var(--text); font-size:0.9rem;">
+                    </div>
+                    <div style="padding:8px 10px; background:rgba(255,180,0,0.1); border:1px solid rgba(255,180,0,0.3); border-radius:8px; font-size:0.78rem; color:var(--text-secondary);">
+                        트리거워드는 생성 후 <strong style="color:var(--text);">수정할 수 없습니다.</strong>
+                    </div>
+                    <div>
+                        <button onclick="document.getElementById('instance-create-file-input').click()" style="width:100%;padding:6px 12px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600;">파일 업로드</button>
+                        <input type="file" id="instance-create-file-input" accept="image/*" multiple style="display:none;" onchange="handleInstanceCreateFileSelect(this)">
+                    </div>
+                    <div style="font-size:0.8rem; font-weight:600; color:var(--text-secondary);">선택된 이미지 <span id="instance-create-count">0</span>장</div>
+                    <div id="instance-create-preview" style="display:grid; grid-template-columns:repeat(2, 1fr); gap:4px; overflow-y:auto; flex:1;"></div>
+                </div>
+                <!-- 오른쪽: 에셋/봇 폴더 탐색 -->
+                <div style="flex:1; border-left:1px solid var(--border); padding-left:16px; display:flex; flex-direction:column;">
+                    <div style="display:flex; gap:8px; margin-bottom:10px;">
+                        <button id="ic-browser-tab-asset" onclick="switchInstanceCreateBrowser('asset')" style="padding:4px 12px; background:var(--accent); color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600;">에셋</button>
+                        <button id="ic-browser-tab-bot" onclick="switchInstanceCreateBrowser('bot')" style="padding:4px 12px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600;">봇</button>
+                    </div>
+                    <div id="instance-create-browser" style="flex:1; overflow-y:auto;"></div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button onclick="closeInstanceLoraCreateModal()" style="padding:8px 16px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:6px; cursor:pointer;">취소</button>
+                <button onclick="confirmCreateInstanceLora()" style="padding:8px 20px; background:var(--accent); color:#fff; border:none; border-radius:6px; cursor:pointer; font-weight:600;">생성</button>
             </div>
         </div>
     </div>
@@ -5986,6 +6097,14 @@
                             if (typeof updateBotLoraTrainingUI === 'function') {
                                 updateBotLoraTrainingUI(msg.data.phase, msg.data);
                             }
+                            break;
+                        case 'instance_lora_training_progress':
+                            if (typeof handleInstanceLoraTrainingProgress === 'function') {
+                                handleInstanceLoraTrainingProgress(msg.data);
+                            }
+                            break;
+                        case 'instance_lora_analyze_progress':
+                            if (msg.data) showToast(`태그 분석 중... (${msg.data.current}/${msg.data.total}) - ${msg.data.filename}`, 'info');
                             break;
                         // 공용 이미지 생성 진행도
                         case 'generation_progress':
@@ -14006,6 +14125,33 @@
                 return;
             }
 
+            // 인스턴스 로라 생성 모드
+            if (loraPickerTarget === 'instance_create') {
+                for (const src of sources) {
+                    // 에셋 이미지 경로 구성
+                    const srcType = _instanceCreatePickerSource;
+                    _instanceCreateFiles.push({
+                        type: srcType,
+                        source: { ...src, type: srcType },
+                        previewUrl: null,
+                    });
+                }
+                showToast(`${sources.length}장 선택됨`, 'success');
+                closeLoraImagePicker();
+                // 에셋 이미지 미리보기 로드
+                for (const f of _instanceCreateFiles) {
+                    if (!f.previewUrl && f.source) {
+                        const s = f.source;
+                        try {
+                            const imgUrl = `/api/asset_mode/characters/${encodeURIComponent(s.character)}/outfits/${encodeURIComponent(s.outfit)}/expressions/${encodeURIComponent(s.expression)}/images/${encodeURIComponent(s.filename)}`;
+                            f.previewUrl = imgUrl;
+                        } catch (e) {}
+                    }
+                }
+                renderInstanceCreatePreview();
+                return;
+            }
+
             const apiUrl = loraPickerTarget === 'test' ? '/api/lora/test_images/add' : '/api/lora/training_images/add';
             try {
                 const resp = await fetchJSON(apiUrl, {
@@ -14148,23 +14294,725 @@
         function switchLoraMode(mode) {
             const assetBtn = document.getElementById('lora-mode-asset-btn');
             const botBtn = document.getElementById('lora-mode-bot-btn');
+            const instBtn = document.getElementById('lora-mode-instance-btn');
             const assetMode = document.getElementById('lora-asset-mode');
             const botMode = document.getElementById('lora-bot-mode');
+            const instMode = document.getElementById('lora-instance-mode');
+            // 모두 비활성화
+            [assetBtn, botBtn, instBtn].forEach(b => { b.style.background = 'var(--surface2)'; b.style.color = 'var(--text)'; });
+            [assetMode, botMode, instMode].forEach(m => m.style.display = 'none');
             if (mode === 'asset') {
                 assetBtn.style.background = 'var(--accent)'; assetBtn.style.color = '#fff';
-                botBtn.style.background = 'var(--surface2)'; botBtn.style.color = 'var(--text)';
                 assetMode.style.display = '';
-                botMode.style.display = 'none';
                 initLoraTab();
-            } else {
+            } else if (mode === 'bot') {
                 botBtn.style.background = 'var(--accent)'; botBtn.style.color = '#fff';
-                assetBtn.style.background = 'var(--surface2)'; assetBtn.style.color = 'var(--text)';
-                assetMode.style.display = 'none';
                 botMode.style.display = '';
                 initBotLoraTab();
+            } else if (mode === 'instance') {
+                instBtn.style.background = 'var(--accent)'; instBtn.style.color = '#fff';
+                instMode.style.display = '';
+                initInstanceLoraTab();
             }
             sessionStorage.setItem('loraMode', mode);
         }
+
+        // ─── Instance LoRA ─────────────────────────────────────────
+        let _instanceLoraCurrentId = null;
+
+        async function initInstanceLoraTab() {
+            _instanceLoraCurrentId = null;
+            document.getElementById('instance-lora-sidebar').style.display = 'none';
+            await loadInstanceLoraGrid();
+        }
+
+        async function loadInstanceLoraGrid() {
+            const grid = document.getElementById('instance-lora-grid');
+            const empty = document.getElementById('instance-lora-empty');
+            grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:24px;color:var(--text-secondary);">로딩 중...</div>';
+            try {
+                const resp = await fetchJSON('/api/instance_lora/list');
+                if (!resp.success) { showToast(resp.error || '목록 로드 실패', 'error'); return; }
+                const items = resp.data || [];
+                if (items.length === 0) {
+                    grid.innerHTML = '';
+                    empty.style.display = '';
+                    return;
+                }
+                empty.style.display = 'none';
+                grid.innerHTML = items.map(lora => {
+                    const imgSrc = lora.first_image ? `/api/instance_lora/image/${encodeURIComponent(lora.id)}/${encodeURIComponent(lora.first_image)}` : '';
+                    const badges = [];
+                    if (lora.has_anima) badges.push('<span style="background:rgba(80,200,120,0.15);color:#50c878;padding:2px 6px;border-radius:4px;font-size:0.7rem;font-weight:600;">ANIMA</span>');
+                    if (lora.has_sdxl) badges.push('<span style="background:rgba(100,150,255,0.15);color:#6496ff;padding:2px 6px;border-radius:4px;font-size:0.7rem;font-weight:600;">SDXL</span>');
+                    return `<div class="asset-card" onclick="openInstanceLoraDetail('${esc(lora.id)}')" style="cursor:pointer;position:relative;">
+                        <button onclick="event.stopPropagation();deleteInstanceLora('${esc(lora.id)}')" style="position:absolute;top:6px;right:6px;z-index:2;background:rgba(200,60,60,0.85);color:#fff;border:none;border-radius:6px;padding:3px 8px;cursor:pointer;font-size:0.75rem;font-weight:600;">삭제</button>
+                        <div class="asset-card-img" style="height:200px;${imgSrc ? `background-image:url('${imgSrc}');` : ''}">
+                            ${imgSrc ? '' : '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-secondary);">이미지 없음</div>'}
+                        </div>
+                        <div style="padding:8px;">
+                            <div style="font-weight:600;font-size:0.9rem;margin-bottom:4px;">${esc(lora.trigger)}</div>
+                            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+                                <span style="font-size:0.75rem;color:var(--text-secondary);">호출 ${lora.usage_count}회</span>
+                                ${badges.join('')}
+                            </div>
+                        </div>
+                    </div>`;
+                }).join('');
+            } catch (e) {
+                console.error('[INSTANCE_LORA] 그리드 로드 실패:', e);
+                grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:var(--error);">로드 실패</div>';
+            }
+        }
+
+        async function openInstanceLoraDetail(loraId) {
+            _instanceLoraCurrentId = loraId;
+            const sidebar = document.getElementById('instance-lora-sidebar');
+            sidebar.style.display = '';
+            try {
+                const resp = await fetchJSON(`/api/instance_lora/detail?id=${encodeURIComponent(loraId)}`);
+                if (!resp.success) { showToast(resp.error, 'error'); return; }
+                const d = resp.data;
+                document.getElementById('instance-lora-detail-title').textContent = d.trigger;
+                const container = document.getElementById('instance-lora-detail-images');
+                if (!d.images || d.images.length === 0) {
+                    container.innerHTML = '<div style="text-align:center;padding:16px;color:var(--text-secondary);font-size:0.85rem;">이미지가 없습니다.<br>아래에서 파일을 추가하세요.</div>';
+                } else {
+                    container.innerHTML = d.images.map(fn => {
+                        const imgSrc = `/api/instance_lora/image/${encodeURIComponent(loraId)}/${encodeURIComponent(fn)}`;
+                        return `<div style="margin-bottom:8px;border:1px solid var(--border);border-radius:8px;overflow:hidden;">
+                            <img src="${imgSrc}" style="width:100%;display:block;cursor:pointer;" onclick="toggleInstanceImagePrompt('${esc(loraId)}','${esc(fn)}',this)">
+                            <div class="instance-img-prompt" data-fn="${esc(fn)}" style="display:none;padding:8px;background:var(--surface1);font-size:0.8rem;">
+                                <div style="color:var(--text-secondary);">로딩 중...</div>
+                            </div>
+                            <div style="padding:4px 8px;display:flex;justify-content:space-between;align-items:center;">
+                                <span style="font-size:0.75rem;color:var(--text-secondary);">${esc(fn)}</span>
+                                <button onclick="event.stopPropagation();deleteInstanceLoraImage('${esc(loraId)}','${esc(fn)}')" style="background:none;border:none;cursor:pointer;color:var(--error);font-size:0.75rem;">삭제</button>
+                            </div>
+                        </div>`;
+                    }).join('');
+                }
+            } catch (e) {
+                console.error('[INSTANCE_LORA] 상세 로드 실패:', e);
+                showToast('상세 로드 실패', 'error');
+            }
+            loadInstanceLoraInlineSettings(loraId);
+        }
+
+        async function toggleInstanceImagePrompt(loraId, filename, imgEl) {
+            const promptDiv = imgEl.parentElement.querySelector('.instance-img-prompt');
+            if (promptDiv.style.display === 'none') {
+                promptDiv.style.display = '';
+                try {
+                    const resp = await fetchJSON(`/api/instance_lora/prompt?id=${encodeURIComponent(loraId)}&filename=${encodeURIComponent(filename)}`);
+                    if (resp.success && resp.data) {
+                        promptDiv.innerHTML = `
+                            <div style="margin-bottom:4px;"><strong>긍정:</strong></div>
+                            <textarea class="instance-prompt-edit" data-field="positive" style="width:100%;height:60px;font-size:0.8rem;padding:4px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);resize:vertical;">${esc(resp.data.positive || '')}</textarea>
+                            <div style="margin-top:4px;margin-bottom:4px;"><strong>부정:</strong></div>
+                            <textarea class="instance-prompt-edit" data-field="negative" style="width:100%;height:40px;font-size:0.8rem;padding:4px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);resize:vertical;">${esc(resp.data.negative || '')}</textarea>
+                            <button onclick="saveInstanceImagePrompt('${esc(loraId)}','${esc(filename)}')" style="margin-top:6px;padding:4px 10px;background:var(--accent);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.75rem;font-weight:600;">저장</button>
+                            <button onclick="analyzeInstanceImage('${esc(loraId)}','${esc(filename)}')" style="margin-top:6px;padding:4px 10px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.75rem;font-weight:600;">태그 분석</button>`;
+                    } else {
+                        promptDiv.innerHTML = `<div style="color:var(--text-secondary);">프롬프트 없음</div>
+                            <button onclick="analyzeInstanceImage('${esc(loraId)}','${esc(filename)}')" style="margin-top:4px;padding:4px 10px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.75rem;font-weight:600;">태그 분석</button>`;
+                    }
+                } catch (e) {
+                    promptDiv.innerHTML = '<div style="color:var(--error);">로드 실패</div>';
+                }
+            } else {
+                promptDiv.style.display = 'none';
+            }
+        }
+
+        async function saveInstanceImagePrompt(loraId, filename) {
+            const promptDiv = document.querySelector(`.instance-img-prompt[data-fn="${filename}"]`);
+            const textareas = promptDiv.querySelectorAll('.instance-prompt-edit');
+            const positive = textareas[0]?.value || '';
+            const negative = textareas[1]?.value || '';
+            try {
+                const resp = await (await fetch('/api/instance_lora/prompt', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({id: loraId, filename, prompt: {positive, negative}})
+                })).json();
+                if (resp.success) showToast('프롬프트 저장됨');
+                else showToast(resp.error || '저장 실패', 'error');
+            } catch (e) { showToast('저장 실패', 'error'); }
+        }
+
+        async function analyzeInstanceImage(loraId, filename) {
+            showToast('태그 분석 중...', 'info');
+            try {
+                const resp = await (await fetch('/api/instance_lora/analyze', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({id: loraId})
+                })).json();
+                if (resp.success) {
+                    showToast(`분석 완료: ${resp.success_count}성공, ${resp.fail_count}실패`, 'success');
+                    openInstanceLoraDetail(loraId);
+                } else showToast(resp.error || '분석 실패', 'error');
+            } catch (e) { showToast('분석 실패', 'error'); }
+        }
+
+        async function deleteInstanceLoraImage(loraId, filename) {
+            if (!confirm(`이미지 "${filename}"을(를) 삭제하시겠습니까?`)) return;
+            try {
+                const resp = await (await fetch('/api/instance_lora/images/delete', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({id: loraId, filename})
+                })).json();
+                if (resp.success) {
+                    showToast('이미지 삭제됨');
+                    openInstanceLoraDetail(loraId);
+                    loadInstanceLoraGrid();
+                } else showToast(resp.error || '삭제 실패', 'error');
+            } catch (e) { showToast('삭제 실패', 'error'); }
+        }
+
+        function closeInstanceLoraDetail() {
+            _instanceLoraCurrentId = null;
+            document.getElementById('instance-lora-sidebar').style.display = 'none';
+        }
+
+        async function deleteInstanceLora(loraId) {
+            if (!confirm(`인스턴스 로라 "${loraId}"를 삭제하시겠습니까?\n학습 이미지와 학습 결과도 함께 삭제됩니다.`)) return;
+            try {
+                const resp = await (await fetch('/api/instance_lora/delete', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({id: loraId})
+                })).json();
+                if (resp.success) {
+                    showToast('삭제됨', 'success');
+                    if (_instanceLoraCurrentId === loraId) closeInstanceLoraDetail();
+                    loadInstanceLoraGrid();
+                } else showToast(resp.error || '삭제 실패', 'error');
+            } catch (e) { showToast('삭제 실패', 'error'); }
+        }
+
+        // ─── Instance LoRA 모달 ───────────────────────────────────
+        let _instanceCreateFiles = []; // {type: 'upload'|'asset'|'bot', file?: File, source?: object, previewUrl?: string}
+        let _icBrowserSource = 'asset'; // 'asset' or 'bot'
+        let _icBrowserState = { level: 'characters', character: '', outfit: '', expression: '', selected: new Set() };
+
+        function showInstanceLoraCreateModal() {
+            document.getElementById('instance-lora-create-trigger').value = '';
+            _instanceCreateFiles = [];
+            _icBrowserSource = 'asset';
+            _icBrowserState = { level: 'characters', character: '', outfit: '', expression: '', selected: new Set() };
+            renderInstanceCreatePreview();
+            document.getElementById('instance-lora-create-modal').style.display = 'flex';
+            switchInstanceCreateBrowser('asset');
+        }
+        function closeInstanceLoraCreateModal() {
+            document.getElementById('instance-lora-create-modal').style.display = 'none';
+            _instanceCreateFiles.forEach(f => { if (f.previewUrl && f.previewUrl.startsWith('blob:')) URL.revokeObjectURL(f.previewUrl); });
+            _instanceCreateFiles = [];
+        }
+        function handleInstanceCreateFileSelect(inputEl) {
+            const files = inputEl.files;
+            if (!files) return;
+            for (const f of files) {
+                _instanceCreateFiles.push({ type: 'upload', file: f, previewUrl: URL.createObjectURL(f) });
+            }
+            inputEl.value = '';
+            renderInstanceCreatePreview();
+        }
+        function removeInstanceCreateImage(index) {
+            if (_instanceCreateFiles[index]?.previewUrl?.startsWith('blob:')) URL.revokeObjectURL(_instanceCreateFiles[index].previewUrl);
+            _instanceCreateFiles.splice(index, 1);
+            renderInstanceCreatePreview();
+        }
+        function renderInstanceCreatePreview() {
+            const container = document.getElementById('instance-create-preview');
+            document.getElementById('instance-create-count').textContent = _instanceCreateFiles.length;
+            if (_instanceCreateFiles.length === 0) {
+                container.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:12px;color:var(--text-secondary);font-size:0.78rem;">없음</div>';
+                return;
+            }
+            container.innerHTML = _instanceCreateFiles.map((f, i) => {
+                const src = f.previewUrl || '';
+                return `<div style="position:relative;aspect-ratio:1;border-radius:6px;overflow:hidden;border:1px solid var(--border);">
+                    <img src="${src}" style="width:100%;height:100%;object-fit:cover;">
+                    <button onclick="removeInstanceCreateImage(${i})" style="position:absolute;top:2px;right:2px;background:rgba(0,0,0,0.6);color:#fff;border:none;border-radius:50%;width:16px;height:16px;cursor:pointer;font-size:0.65rem;display:flex;align-items:center;justify-content:center;">&times;</button>
+                </div>`;
+            }).join('');
+        }
+
+        // ─── 인라인 브라우저 (에셋/봇) ──────────────────────────────
+        function switchInstanceCreateBrowser(source) {
+            _icBrowserSource = source;
+            _icBrowserState = { level: 'characters', character: '', outfit: '', expression: '', selected: new Set() };
+            const assetBtn = document.getElementById('ic-browser-tab-asset');
+            const botBtn = document.getElementById('ic-browser-tab-bot');
+            if (source === 'asset') {
+                assetBtn.style.background = 'var(--accent)'; assetBtn.style.color = '#fff'; assetBtn.style.border = 'none';
+                botBtn.style.background = 'var(--surface2)'; botBtn.style.color = 'var(--text)'; botBtn.style.border = '1px solid var(--border)';
+                loadIcBrowserCharacters();
+            } else {
+                botBtn.style.background = 'var(--accent)'; botBtn.style.color = '#fff'; botBtn.style.border = 'none';
+                assetBtn.style.background = 'var(--surface2)'; assetBtn.style.color = 'var(--text)'; assetBtn.style.border = '1px solid var(--border)';
+                loadIcBrowserBots();
+            }
+        }
+
+        function getIcBrowserEl() { return document.getElementById('instance-create-browser'); }
+
+        // 에셋: 캐릭터 목록
+        function loadIcBrowserCharacters() {
+            const el = getIcBrowserEl();
+            el.innerHTML = '<div style="text-align:center;padding:32px;"><div class="spinner" style="width:28px;height:28px;border-width:3px;margin:0 auto;"></div></div>';
+            _icBrowserState.level = 'characters';
+            fetchJSON('/api/lora/characters').then(resp => {
+                if (!resp || !resp.success || !resp.characters || resp.characters.length === 0) {
+                    el.innerHTML = '<div style="text-align:center;padding:32px;color:var(--text-secondary);">캐릭터가 없습니다.</div>';
+                    return;
+                }
+                let html = '<div style="margin-bottom:8px;font-size:0.82rem;color:var(--text-secondary);">캐릭터를 선택하세요</div>';
+                html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:8px;">';
+                resp.characters.forEach(name => {
+                    html += `<div class="asset-folder-card" onclick="loadIcBrowserGallery('${esc(name)}')" style="cursor:pointer;">
+                        <div class="folder-icon">📁</div>
+                        <div class="folder-name">${esc(name)}</div>
+                    </div>`;
+                });
+                html += '</div>';
+                el.innerHTML = html;
+            }).catch(e => { el.innerHTML = '<div style="text-align:center;padding:32px;color:var(--error);">로드 실패</div>'; });
+        }
+
+        // 에셋: 갤러리 (outfit/expression)
+        function loadIcBrowserGallery(character) {
+            _icBrowserState.character = character;
+            _icBrowserState.level = 'gallery';
+            const enc = encodeURIComponent;
+            const el = getIcBrowserEl();
+            el.innerHTML = '<div style="text-align:center;padding:32px;"><div class="spinner" style="width:28px;height:28px;border-width:3px;margin:0 auto;"></div></div>';
+            fetchJSON(`/api/asset_mode/characters/${enc(character)}/gallery`).then(resp => {
+                if (!resp || !resp.gallery || resp.gallery.length === 0) {
+                    el.innerHTML = `<div style="margin-bottom:8px;"><button onclick="loadIcBrowserCharacters()" style="padding:4px 10px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.8rem;">&larr; 캐릭터</button></div>
+                    <div style="text-align:center;padding:32px;color:var(--text-secondary);">이미지가 없습니다.</div>`;
+                    return;
+                }
+                let html = `<div style="margin-bottom:8px;display:flex;align-items:center;gap:8px;">
+                    <button onclick="loadIcBrowserCharacters()" style="padding:4px 10px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.8rem;">&larr; 캐릭터</button>
+                    <span style="font-size:0.82rem;color:var(--text-secondary);">${esc(character)}</span>
+                </div>`;
+                html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px;">';
+                resp.gallery.forEach(item => {
+                    const label = esc(item.outfit) + ' / ' + esc(item.expression) + (item.image_count > 1 ? ` (${item.image_count}장)` : '');
+                    let imgHtml = '';
+                    if (item.representative) {
+                        imgHtml = `<img src="/api/asset_mode/characters/${enc(character)}/outfits/${enc(item.outfit)}/expressions/${enc(item.expression)}/images/${enc(item.representative)}" style="width:100%;display:block;border-radius:6px;">`;
+                    } else {
+                        imgHtml = '<div style="width:100%;padding:24px;background:var(--surface2);border-radius:6px;text-align:center;color:var(--text-secondary);font-size:0.75rem;">No img</div>';
+                    }
+                    html += `<div style="cursor:pointer;border:1px solid var(--border);border-radius:8px;overflow:hidden;" onclick="loadIcBrowserImages('${esc(character)}','${esc(item.outfit)}','${esc(item.expression)}')">
+                        ${imgHtml}
+                        <div style="font-size:0.7rem;padding:4px;text-align:center;">${label}</div>
+                    </div>`;
+                });
+                html += '</div>';
+                el.innerHTML = html;
+            }).catch(e => { el.innerHTML = '<div style="text-align:center;padding:32px;color:var(--error);">로드 실패</div>'; });
+        }
+
+        // 에셋: 개별 이미지 (체크박스로 선택)
+        function loadIcBrowserImages(character, outfit, expression) {
+            _icBrowserState.outfit = outfit;
+            _icBrowserState.expression = expression;
+            _icBrowserState.level = 'images';
+            const enc = encodeURIComponent;
+            const el = getIcBrowserEl();
+            el.innerHTML = '<div style="text-align:center;padding:32px;"><div class="spinner" style="width:28px;height:28px;border-width:3px;margin:0 auto;"></div></div>';
+            fetchJSON(`/api/asset_mode/characters/${enc(character)}/outfits/${enc(outfit)}/expressions/${enc(expression)}/images`).then(resp => {
+                let html = `<div style="margin-bottom:8px;display:flex;align-items:center;gap:8px;">
+                    <button onclick="loadIcBrowserGallery('${esc(character)}')" style="padding:4px 10px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.8rem;">&larr; 갤러리</button>
+                    <span style="font-size:0.82rem;color:var(--text-secondary);">${esc(character)} / ${esc(outfit)} / ${esc(expression)}</span>
+                    <button onclick="icBrowserToggleAll(this)" data-character="${esc(character)}" data-outfit="${esc(outfit)}" data-expression="${esc(expression)}" style="padding:4px 10px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.78rem;margin-left:auto;">전체 선택/해제</button>
+                </div>`;
+                html += '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;">';
+                if (!resp || !resp.images || resp.images.length === 0) {
+                    html += '<div style="text-align:center;padding:24px;color:var(--text-secondary);grid-column:1/-1;">이미지가 없습니다.</div>';
+                } else {
+                    resp.images.forEach(img => {
+                        const key = `${character}|||${outfit}|||${expression}|||${img.filename}`;
+                        const selected = _icBrowserState.selected.has(key);
+                        const imgUrl = `/api/asset_mode/characters/${enc(character)}/outfits/${enc(outfit)}/expressions/${enc(expression)}/images/${enc(img.filename)}`;
+                        const border = selected ? 'border-color:var(--accent);' : '';
+                        const bg = selected ? 'var(--accent)' : 'rgba(0,0,0,0.3)';
+                        const check = selected ? '&#10003;' : '';
+                        html += `<div data-key="${esc(key)}" onclick="icBrowserToggle(this)" data-character="${esc(character)}" data-outfit="${esc(outfit)}" data-expression="${esc(expression)}" data-filename="${esc(img.filename)}" style="position:relative;cursor:pointer;border-radius:6px;overflow:hidden;border:2px solid ${selected ? 'var(--accent)' : 'transparent'};transition:border-color 0.15s;">
+                            <img src="${imgUrl}" style="width:100%;display:block;">
+                            <div style="position:absolute;top:4px;right:4px;width:20px;height:20px;border-radius:50%;background:${bg};display:flex;align-items:center;justify-content:center;color:#fff;font-size:0.7rem;">${check}</div>
+                        </div>`;
+                    });
+                }
+                html += '</div>';
+                el.innerHTML = html;
+            }).catch(e => { el.innerHTML = '<div style="text-align:center;padding:32px;color:var(--error);">로드 실패</div>'; });
+        }
+
+        function icBrowserToggle(el) {
+            const key = el.getAttribute('data-key');
+            const character = el.getAttribute('data-character');
+            const outfit = el.getAttribute('data-outfit');
+            const expression = el.getAttribute('data-expression');
+            const filename = el.getAttribute('data-filename');
+            if (_icBrowserState.selected.has(key)) {
+                _icBrowserState.selected.delete(key);
+                el.style.borderColor = 'transparent';
+                el.querySelector('div').style.background = 'rgba(0,0,0,0.3)';
+                el.querySelector('div').innerHTML = '';
+                _instanceCreateFiles = _instanceCreateFiles.filter(f => !(f.source && `${f.source.character}|||${f.source.outfit}|||${f.source.expression}|||${f.source.filename}` === key));
+            } else {
+                _icBrowserState.selected.add(key);
+                el.style.borderColor = 'var(--accent)';
+                el.querySelector('div').style.background = 'var(--accent)';
+                el.querySelector('div').innerHTML = '&#10003;';
+                const enc = encodeURIComponent;
+                _instanceCreateFiles.push({
+                    type: _icBrowserSource,
+                    source: { character, outfit, expression, filename, type: _icBrowserSource },
+                    previewUrl: `/api/asset_mode/characters/${enc(character)}/outfits/${enc(outfit)}/expressions/${enc(expression)}/images/${enc(filename)}`,
+                });
+            }
+            renderInstanceCreatePreview();
+        }
+
+        function icBrowserToggleAll(btn) {
+            const character = btn.getAttribute('data-character');
+            const outfit = btn.getAttribute('data-outfit');
+            const expression = btn.getAttribute('data-expression');
+            const items = getIcBrowserEl().querySelectorAll('[data-key]');
+            const allSelected = [...items].every(el => _icBrowserState.selected.has(el.getAttribute('data-key')));
+            items.forEach(el => {
+                const key = el.getAttribute('data-key');
+                const filename = el.getAttribute('data-filename');
+                if (allSelected) {
+                    _icBrowserState.selected.delete(key);
+                    el.style.borderColor = 'transparent';
+                    el.querySelector('div').style.background = 'rgba(0,0,0,0.3)';
+                    el.querySelector('div').innerHTML = '';
+                    _instanceCreateFiles = _instanceCreateFiles.filter(f => !(f.source && `${f.source.character}|||${f.source.outfit}|||${f.source.expression}|||${f.source.filename}` === key));
+                } else {
+                    if (!_icBrowserState.selected.has(key)) {
+                        _icBrowserState.selected.add(key);
+                        el.style.borderColor = 'var(--accent)';
+                        el.querySelector('div').style.background = 'var(--accent)';
+                        el.querySelector('div').innerHTML = '&#10003;';
+                        const enc = encodeURIComponent;
+                        _instanceCreateFiles.push({
+                            type: _icBrowserSource,
+                            source: { character, outfit, expression, filename, type: _icBrowserSource },
+                            previewUrl: `/api/asset_mode/characters/${enc(character)}/outfits/${enc(outfit)}/expressions/${enc(expression)}/images/${enc(filename)}`,
+                        });
+                    }
+                }
+            });
+            renderInstanceCreatePreview();
+        }
+
+        // 봇: 봇 목록 → 캐릭터 → 이미지
+        function loadIcBrowserBots() {
+            const el = getIcBrowserEl();
+            el.innerHTML = '<div style="text-align:center;padding:32px;"><div class="spinner" style="width:28px;height:28px;border-width:3px;margin:0 auto;"></div></div>';
+            _icBrowserState.level = 'characters';
+            fetchJSON('/api/bot_lora/bots').then(resp => {
+                if (!resp || !resp.success || !resp.bots || resp.bots.length === 0) {
+                    el.innerHTML = '<div style="text-align:center;padding:32px;color:var(--text-secondary);">봇이 없습니다.</div>';
+                    return;
+                }
+                let html = '<div style="margin-bottom:8px;font-size:0.82rem;color:var(--text-secondary);">봇을 선택하세요</div>';
+                html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:8px;">';
+                resp.bots.forEach(bot => {
+                    const charCount = (bot.characters || []).length;
+                    html += `<div class="asset-folder-card" onclick="loadIcBrowserBotChars('${esc(bot.name)}')" style="cursor:pointer;">
+                        <div class="folder-icon">📁</div>
+                        <div class="folder-name">${esc(bot.name)}<br><span style="font-size:0.7rem;color:var(--text-secondary);">${charCount} 캐릭터</span></div>
+                    </div>`;
+                });
+                html += '</div>';
+                el.innerHTML = html;
+            }).catch(e => { el.innerHTML = '<div style="text-align:center;padding:32px;color:var(--error);">로드 실패</div>'; });
+        }
+
+        function loadIcBrowserBotChars(botName) {
+            _icBrowserState.character = botName;
+            const enc = encodeURIComponent;
+            const el = getIcBrowserEl();
+            el.innerHTML = `<div style="margin-bottom:8px;display:flex;align-items:center;gap:8px;">
+                <button onclick="loadIcBrowserBots()" style="padding:4px 10px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.8rem;">&larr; 봇 선택</button>
+                <span style="font-size:0.82rem;color:var(--text-secondary);">${esc(botName)}</span>
+            </div>
+            <div id="ic-bot-chars-container" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:8px;">
+                <div style="text-align:center;padding:32px;"><div class="spinner" style="width:28px;height:28px;border-width:3px;margin:0 auto;"></div></div>
+            </div>`;
+
+            // /api/bot_lora/bots에서 캐릭터 목록을 이미 가져왔으니 다시 호출해서 캐릭터 찾기
+            fetchJSON('/api/bot_lora/bots').then(async resp => {
+                const bot = (resp?.bots || []).find(b => b.name === botName);
+                if (!bot || !bot.characters || bot.characters.length === 0) {
+                    document.getElementById('ic-bot-chars-container').innerHTML = '<div style="text-align:center;padding:16px;color:var(--text-secondary);">캐릭터가 없습니다.</div>';
+                    return;
+                }
+                let html = '';
+                for (const ch of bot.characters) {
+                    const charName = ch.name;
+                    let imgTag = '';
+                    const repImg = (ch.rep_images || [])[0];
+                    if (repImg) {
+                        imgTag = `<img src="/api/bot_lora/char_image/${enc(botName)}/${enc(charName)}/${enc(repImg)}" style="width:100%;display:block;border-radius:6px;">`;
+                    } else {
+                        imgTag = '<div style="width:100%;padding:20px;background:var(--surface2);border-radius:6px;text-align:center;color:var(--text-secondary);font-size:0.7rem;">No img</div>';
+                    }
+                    html += `<div style="cursor:pointer;border:1px solid var(--border);border-radius:8px;overflow:hidden;" onclick="loadIcBotCharImages('${esc(botName)}','${esc(charName)}')">
+                        ${imgTag}
+                        <div style="font-size:0.7rem;padding:4px;text-align:center;">${esc(charName)}</div>
+                    </div>`;
+                }
+                document.getElementById('ic-bot-chars-container').innerHTML = html;
+            }).catch(e => {
+                document.getElementById('ic-bot-chars-container').innerHTML = '<div style="text-align:center;padding:16px;color:var(--error);">로드 실패</div>';
+            });
+        }
+
+        function loadIcBotCharImages(botName, charName) {
+            _icBrowserState.level = 'images';
+            const enc = encodeURIComponent;
+            const el = getIcBrowserEl();
+            el.innerHTML = '<div style="text-align:center;padding:32px;"><div class="spinner" style="width:28px;height:28px;border-width:3px;margin:0 auto;"></div></div>';
+            fetchJSON(`/api/bot_lora/char_available_images/${enc(botName)}/${enc(charName)}`).then(resp => {
+                const imgs = resp?.images || [];
+                let html = `<div style="margin-bottom:8px;display:flex;align-items:center;gap:8px;">
+                    <button onclick="loadIcBrowserBotChars('${esc(botName)}')" style="padding:4px 10px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.8rem;">&larr; 캐릭터</button>
+                    <span style="font-size:0.82rem;color:var(--text-secondary);">${esc(botName)} / ${esc(charName)}</span>
+                    <button onclick="icBotToggleAll(this)" data-bot="${esc(botName)}" data-char="${esc(charName)}" style="padding:4px 10px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.78rem;margin-left:auto;">전체 선택/해제</button>
+                </div>`;
+                html += '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;">';
+                if (imgs.length === 0) {
+                    html += '<div style="text-align:center;padding:24px;color:var(--text-secondary);grid-column:1/-1;">이미지가 없습니다.</div>';
+                } else {
+                    imgs.forEach(img => {
+                        const key = `bot|||${botName}|||${charName}|||${img.filename}`;
+                        const selected = _icBrowserState.selected.has(key);
+                        const imgUrl = `/api/bot_lora/char_image/${enc(botName)}/${enc(charName)}/${enc(img.filename)}`;
+                        html += `<div data-key="${esc(key)}" onclick="icBotImgToggle(this)" data-bot="${esc(botName)}" data-char="${esc(charName)}" data-filename="${esc(img.filename)}" style="position:relative;cursor:pointer;border-radius:6px;overflow:hidden;border:2px solid ${selected ? 'var(--accent)' : 'transparent'};transition:border-color 0.15s;">
+                            <img src="${imgUrl}" style="width:100%;display:block;">
+                            <div style="position:absolute;top:4px;right:4px;width:20px;height:20px;border-radius:50%;background:${selected ? 'var(--accent)' : 'rgba(0,0,0,0.3)'};display:flex;align-items:center;justify-content:center;color:#fff;font-size:0.7rem;">${selected ? '&#10003;' : ''}</div>
+                        </div>`;
+                    });
+                }
+                html += '</div>';
+                el.innerHTML = html;
+            }).catch(e => { el.innerHTML = '<div style="text-align:center;padding:32px;color:var(--error);">로드 실패</div>'; });
+        }
+
+        function icBotImgToggle(el) {
+            const key = el.getAttribute('data-key');
+            const bot = el.getAttribute('data-bot');
+            const char = el.getAttribute('data-char');
+            const filename = el.getAttribute('data-filename');
+            const enc = encodeURIComponent;
+            if (_icBrowserState.selected.has(key)) {
+                _icBrowserState.selected.delete(key);
+                el.style.borderColor = 'transparent';
+                el.querySelector('div').style.background = 'rgba(0,0,0,0.3)';
+                el.querySelector('div').innerHTML = '';
+                _instanceCreateFiles = _instanceCreateFiles.filter(f => !(f.source && f.source.bot === bot && f.source.character === char && f.source.filename === filename));
+            } else {
+                _icBrowserState.selected.add(key);
+                el.style.borderColor = 'var(--accent)';
+                el.querySelector('div').style.background = 'var(--accent)';
+                el.querySelector('div').innerHTML = '&#10003;';
+                _instanceCreateFiles.push({
+                    type: 'bot',
+                    source: { type: 'bot', bot, character: char, filename, outfit: '', expression: '' },
+                    previewUrl: `/api/bot_lora/char_image/${enc(bot)}/${enc(char)}/${enc(filename)}`,
+                });
+            }
+            renderInstanceCreatePreview();
+        }
+
+        function icBotToggleAll(btn) {
+            const bot = btn.getAttribute('data-bot');
+            const char = btn.getAttribute('data-char');
+            const enc = encodeURIComponent;
+            const items = getIcBrowserEl().querySelectorAll('[data-key]');
+            const allSelected = [...items].every(el => _icBrowserState.selected.has(el.getAttribute('data-key')));
+            items.forEach(el => {
+                const key = el.getAttribute('data-key');
+                const filename = el.getAttribute('data-filename');
+                if (allSelected) {
+                    _icBrowserState.selected.delete(key);
+                    el.style.borderColor = 'transparent';
+                    el.querySelector('div').style.background = 'rgba(0,0,0,0.3)';
+                    el.querySelector('div').innerHTML = '';
+                    _instanceCreateFiles = _instanceCreateFiles.filter(f => !(f.source && f.source.bot === bot && f.source.character === char && f.source.filename === filename));
+                } else {
+                    if (!_icBrowserState.selected.has(key)) {
+                        _icBrowserState.selected.add(key);
+                        el.style.borderColor = 'var(--accent)';
+                        el.querySelector('div').style.background = 'var(--accent)';
+                        el.querySelector('div').innerHTML = '&#10003;';
+                        _instanceCreateFiles.push({
+                            type: 'bot',
+                            source: { type: 'bot', bot, character: char, filename, outfit: '', expression: '' },
+                            previewUrl: `/api/bot_lora/char_image/${enc(bot)}/${enc(char)}/${enc(filename)}`,
+                        });
+                    }
+                }
+            });
+            renderInstanceCreatePreview();
+        }
+
+        async function confirmCreateInstanceLora() {
+            const trigger = document.getElementById('instance-lora-create-trigger').value.trim();
+            if (!trigger) { showToast('트리거워드를 입력하세요', 'error'); return; }
+            if (_instanceCreateFiles.length === 0) { showToast('최소 1장의 이미지를 추가하세요', 'error'); return; }
+            try {
+                const createResp = await (await fetch('/api/instance_lora/create', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({trigger})
+                })).json();
+                if (!createResp.success) { showToast(createResp.error || '생성 실패', 'error'); return; }
+                const loraId = createResp.id;
+
+                // 업로드 파일 전송
+                const uploadFiles = _instanceCreateFiles.filter(f => f.type === 'upload');
+                if (uploadFiles.length > 0) {
+                    const fd = new FormData();
+                    for (const f of uploadFiles) fd.append('files', f.file);
+                    fd.append('lora_id', loraId);
+                    await fetch('/api/instance_lora/images/upload', { method: 'POST', body: fd });
+                }
+
+                // 에셋/봇 소스 이미지 전송
+                const sourceFiles = _instanceCreateFiles.filter(f => f.type === 'asset' || f.type === 'bot');
+                if (sourceFiles.length > 0) {
+                    await fetch('/api/instance_lora/images/add', {
+                        method: 'POST', headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ id: loraId, images: sourceFiles.map(f => f.source) })
+                    });
+                }
+
+                showToast('인스턴스 로라 생성됨', 'success');
+                closeInstanceLoraCreateModal();
+                loadInstanceLoraGrid();
+            } catch (e) {
+                console.error('[INSTANCE_LORA] 생성 실패:', e);
+                showToast('생성 실패', 'error');
+            }
+        }
+
+        // 인라인 설정 로드/저장
+        async function loadInstanceLoraInlineSettings(loraId) {
+            try {
+                const resp = await fetchJSON('/api/instance_lora/config');
+                if (!resp.success) return;
+                const s = resp.data || {};
+                // 프로필 선택에 따라 설정 로드
+                const profileEl = document.getElementById('instance-lora-train-profile');
+                const profile = profileEl?.value || 'anima';
+                const ps = s[profile] || {};
+                const fields = [
+                    ['step_per_image', 'iset-step'], ['il_rate', 'iset-ilrate'],
+                    ['save_per_step', 'iset-save-step'], ['gen_w', 'iset-genw'],
+                    ['gen_h', 'iset-genh'], ['resolution', 'iset-resolution'],
+                    ['save_after', 'iset-save-after'], ['dim', 'iset-dim'], ['alpha', 'iset-alpha'],
+                ];
+                for (const [key, elId] of fields) {
+                    const el = document.getElementById(elId);
+                    if (el && ps[key] !== undefined) el.value = ps[key];
+                }
+            } catch (e) { console.error('[INSTANCE_LORA] 인라인 설정 로드 실패:', e); }
+        }
+
+        async function saveInstanceLoraInlineSettings() {
+            const profile = document.getElementById('instance-lora-train-profile')?.value || 'anima';
+            // 먼저 기존 설정 로드
+            let existingSettings = { anima: {}, sdxl: {}, instance: {} };
+            try {
+                const r = await fetchJSON('/api/instance_lora/config');
+                if (r.success) existingSettings = r.data || existingSettings;
+            } catch (e) {}
+            const fields = [
+                ['step_per_image', 'iset-step'], ['il_rate', 'iset-ilrate'],
+                ['save_per_step', 'iset-save-step'], ['gen_w', 'iset-genw'],
+                ['gen_h', 'iset-genh'], ['resolution', 'iset-resolution'],
+                ['save_after', 'iset-save-after'], ['dim', 'iset-dim'], ['alpha', 'iset-alpha'],
+            ];
+            const ps = {};
+            for (const [key, elId] of fields) {
+                const v = document.getElementById(elId)?.value;
+                if (v !== undefined) ps[key] = isNaN(Number(v)) ? v : Number(v);
+            }
+            existingSettings[profile] = ps;
+            try {
+                const resp = await (await fetch('/api/instance_lora/config', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(existingSettings)
+                })).json();
+                if (resp.success) showToast('설정 저장됨', 'success');
+                else showToast(resp.error || '저장 실패', 'error');
+            } catch (e) { showToast('저장 실패', 'error'); }
+        }
+
+        // ─── Instance LoRA 학습 ────────────────────────────────────
+        async function startInstanceLoraTraining() {
+            if (!_instanceLoraCurrentId) return;
+            const profile = document.getElementById('instance-lora-train-profile').value;
+            if (!confirm(`인스턴스 로라 "${_instanceLoraCurrentId}"를 ${profile.toUpperCase()} 프로필로 학습하시겠습니까?`)) return;
+            try {
+                const resp = await (await fetch('/api/instance_lora/training/start', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({id: _instanceLoraCurrentId, profile})
+                })).json();
+                if (resp.success) {
+                    showToast('학습 시작됨', 'success');
+                    document.getElementById('instance-lora-progress').style.display = '';
+                } else showToast(resp.error || '학습 시작 실패', 'error');
+            } catch (e) { showToast('학습 시작 실패', 'error'); }
+        }
+
+        // Instance LoRA 진행률 SSE
+        function handleInstanceLoraTrainingProgress(data) {
+            const section = document.getElementById('instance-lora-progress');
+            const phaseEl = document.getElementById('instance-lora-progress-phase');
+            const pctEl = document.getElementById('instance-lora-progress-pct');
+            const barEl = document.getElementById('instance-lora-progress-bar');
+            const infoEl = document.getElementById('instance-lora-progress-info');
+            section.style.display = '';
+            const phase = data.phase || '';
+            if (phase === 'preparing') {
+                phaseEl.textContent = data.message || '준비 중...';
+                pctEl.textContent = '';
+                barEl.style.width = '0%';
+                infoEl.textContent = '';
+            } else if (phase === 'all_complete') {
+                phaseEl.textContent = '학습 완료';
+                pctEl.textContent = '100%';
+                barEl.style.width = '100%';
+                infoEl.textContent = '인스턴스 로라 학습이 완료되었습니다.';
+                showToast('인스턴스 로라 학습 완료!', 'success');
+                loadInstanceLoraGrid();
+                if (_instanceLoraCurrentId) openInstanceLoraDetail(_instanceLoraCurrentId);
+            } else if (phase === 'error') {
+                phaseEl.textContent = '에러';
+                pctEl.textContent = '';
+                infoEl.textContent = data.message || '알 수 없는 오류';
+                showToast('학습 에러: ' + (data.message || ''), 'error');
+            } else {
+                const pct = data.percentage || 0;
+                const step = data.current_step || 0;
+                const total = data.total_steps || 0;
+                phaseEl.textContent = phase || '학습 중...';
+                pctEl.textContent = `${pct}%`;
+                barEl.style.width = `${pct}%`;
+                infoEl.textContent = `Step ${step}/${total}`;
+            }
+        }
+
+        function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
         async function initBotLoraTab() {
             botLoraCurrentBot = '';
