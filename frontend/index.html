@@ -938,6 +938,24 @@
             transform: translateX(24px);
         }
 
+        /* 작은 토글 (스킵 토글 등) */
+        .toggle-switch.sm {
+            width: 36px;
+            height: 18px;
+        }
+        .toggle-switch.sm .toggle-slider {
+            border-radius: 18px;
+        }
+        .toggle-switch.sm .toggle-slider:before {
+            height: 14px;
+            width: 14px;
+            left: 2px;
+            bottom: 2px;
+        }
+        .toggle-switch.sm input:checked + .toggle-slider:before {
+            transform: translateX(18px);
+        }
+
         /* 토글 상태 텍스트 */
         .toggle-status {
             font-size: 0.8rem;
@@ -14271,13 +14289,21 @@
                 const nonFaceCount = (ch.training_images || []).filter(i => i.source !== 'face').length;
                 const hasFace = (ch.training_images || []).some(i => i.source === 'face');
                 const atImageLimit = nonFaceCount >= 3;
+                const isSkipped = !!ch.skip_training;
 
-                return `<div style="padding:16px; margin-bottom:12px; background:var(--surface); border:1px solid var(--border); border-radius:10px;">
+                return `<div id="bot-lora-char-card-${enc(ch.name)}" style="position:relative; padding:16px; margin-bottom:12px; background:var(--surface); border:1px solid var(--border); border-radius:10px;">
+                    ${isSkipped ? '<div class="bot-lora-skip-overlay" style="position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(100,100,100,0.45);border-radius:10px;z-index:1;pointer-events:none;"></div>' : ''}
+                    <div>
                     <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
                         <div style="display:flex; align-items:center; gap:10px;">
                             <span style="font-weight:700; font-size:1rem;">${escapeHtml(ch.name)}</span>
                             <input type="text" value="${escapeHtml(ch.trigger || '')}" placeholder="트리거 워드 (기본값: ${escapeHtml(ch.name)})" onchange="updateBotLoraTrigger('${enc(ch.name)}', this.value)"
                                 style="padding:3px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface1); color:var(--text); font-size:0.8rem; width:200px;">
+                            <label class="toggle-switch sm" style="position:relative;z-index:2;${isSkipped ? 'pointer-events:auto;' : ''}" title="순차 학습 시 이 캐릭터 건너뛰기">
+                                <input type="checkbox" ${isSkipped ? 'checked' : ''} onchange="updateBotLoraSkipTraining('${enc(ch.name)}', this.checked)">
+                                <span class="toggle-slider"></span>
+                            </label>
+                            <span style="font-size:0.7rem; color:var(--text-secondary); white-space:nowrap; position:relative; z-index:2;">순차 학습 스킵</span>
                         </div>
                         <div style="display:flex; gap:4px;">
                             <button onclick="openBotLoraTrainingImagePicker('${enc(ch.name)}')" ${atImageLimit ? 'disabled' : ''} style="padding:4px 10px; background:rgba(180,130,220,0.2); color:var(--text); border:1px solid rgba(180,130,220,0.3); border-radius:4px; cursor:pointer; font-size:0.75rem; font-weight:600;${atImageLimit ? ' opacity:0.5; cursor:not-allowed;' : ''}">이미지 추가</button>
@@ -14375,6 +14401,7 @@
                             </details>` : ''}
                         </div>
                     </details>
+                    </div>
                 </div>`;
             }).join('');
 
@@ -14551,9 +14578,39 @@
             } catch (e) { console.error('[BOT_LORA] trigger 업데이트 실패:', e); showToast('trigger 저장 실패', 'error'); }
         }
 
+        async function updateBotLoraSkipTraining(charName, skip) {
+            if (!botLoraCurrentBot) return;
+            try {
+                const resp = await fetchJSON('/api/bot_lora/skip_training', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ bot: botLoraCurrentBot, project: botLoraCurrentProject, character: charName, skip })
+                });
+                if (!resp.success) {
+                    showToast(resp.error || '스킵 설정 실패', 'error');
+                    return;
+                }
+                showToast(skip ? `'${charName}' 순차 학습 스킵 설정` : `'${charName}' 순차 학습 스킵 해제`, 'success');
+                // 카드 시각적 상태 업데이트
+                const card = document.getElementById('bot-lora-char-card-' + encodeURIComponent(charName));
+                if (card) {
+                    let overlay = card.querySelector('.bot-lora-skip-overlay');
+                    if (skip) {
+                        if (!overlay) {
+                            overlay = document.createElement('div');
+                            overlay.className = 'bot-lora-skip-overlay';
+                            overlay.style.cssText = 'position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(100,100,100,0.45);border-radius:10px;z-index:1;pointer-events:none;';
+                            card.insertBefore(overlay, card.firstChild);
+                        }
+                    } else {
+                        if (overlay) overlay.remove();
+                    }
+                }
+            } catch (e) { console.error('[BOT_LORA] skip_training 업데이트 실패:', e); showToast('스킵 설정 실패', 'error'); }
+        }
+
         async function startBotLoraTraining() {
             if (!botLoraCurrentBot) return;
-            if (!confirm('모든 캐릭터의 LoRA를 순차 학습하시겠습니까?')) return;
+            if (!confirm('모든 캐릭터의 LoRA를 순차 학습하시겠습니까? (스킵 설정된 캐릭터는 제외됩니다)')) return;
             await saveBotLoraConfig();
             try {
                 const resp = await fetchJSON('/api/bot_lora/training/start', {
@@ -14561,7 +14618,8 @@
                     body: JSON.stringify({ bot: botLoraCurrentBot, project: botLoraCurrentProject })
                 });
                 if (resp.success) {
-                    showToast(`순차 학습 시작 (${resp.total_characters}명)`, 'success');
+                    const skipMsg = resp.skipped_count > 0 ? ` (스킵 ${resp.skipped_count}명)` : '';
+                    showToast(`순차 학습 시작 (${resp.total_characters}명${skipMsg})`, 'success');
                     document.getElementById('bot-lora-progress-section').style.display = '';
                 } else {
                     showToast(resp.error || '학습 시작 실패', 'error');

@@ -6144,6 +6144,25 @@ async def handle_api_bot_lora_trigger(request):
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 
+async def handle_api_bot_lora_skip_training(request):
+    """캐릭터 순차학습 스킵 토글"""
+    try:
+        body = await request.json()
+        bot_name = body.get("bot", "")
+        project_name = body.get("project", "")
+        char_name = body.get("character", "")
+        skip = body.get("skip", False)
+        if not bot_name or not project_name or not char_name:
+            return web.json_response({"success": False, "error": "봇/프로젝트/캐릭터 필수"}, status=400)
+        from modes.bot_lora_mode import update_char_skip_training
+        result = update_char_skip_training(bot_name, project_name, char_name, skip)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[BOT_LORA_API] skip_training 업데이트 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
 async def handle_api_bot_lora_test_add(request):
     """테스트 이미지 추가"""
     try:
@@ -6509,11 +6528,19 @@ async def handle_api_bot_lora_training_start(request):
             return web.json_response({"success": False, "error": "봇을 찾을 수 없습니다"}, status=400)
 
         characters_to_train = []
+        skipped_count = 0
+        manage_data_prefilter = _load_bot_lora_manage()
+        proj_cfg_prefilter = manage_data_prefilter.get("bot_loras", {}).get(bot_name, {}).get(project_name, {})
+        char_configs_prefilter = proj_cfg_prefilter.get("characters", {})
         for ch in bot_info.get("characters", []):
             cn = ch.get("name", "")
             if not cn:
                 continue
             if char_name and cn != char_name:
+                continue
+            if char_configs_prefilter.get(cn, {}).get("skip_training", False):
+                print(f"[BOT_LORA] '{cn}' 스킵 (skip_training=true)")
+                skipped_count += 1
                 continue
             characters_to_train.append(ch)
         if not characters_to_train:
@@ -6598,6 +6625,7 @@ async def handle_api_bot_lora_training_start(request):
             "success": True, "prompt_id": prompt_id, "character": cn,
             "exported_count": export_result.get("count", 0),
             "total_characters": len(characters_to_train), "current_index": 0,
+            "skipped_count": skipped_count,
         })
     except RuntimeError as e:
         return web.json_response({"success": False, "error": str(e)}, status=400)
@@ -6887,6 +6915,7 @@ app.router.add_post("/api/bot_lora/project/delete", handle_api_bot_lora_project_
 app.router.add_get("/api/bot_lora/project", handle_api_bot_lora_project)
 app.router.add_post("/api/bot_lora/config", handle_api_bot_lora_config)
 app.router.add_post("/api/bot_lora/trigger", handle_api_bot_lora_trigger)
+app.router.add_post("/api/bot_lora/skip_training", handle_api_bot_lora_skip_training)
 app.router.add_post("/api/bot_lora/test_images/add", handle_api_bot_lora_test_add)
 app.router.add_get("/api/bot_lora/test_image/{bot}/{project}/{filename}", handle_api_bot_lora_test_image)
 app.router.add_post("/api/bot_lora/test_images/delete", handle_api_bot_lora_test_delete)

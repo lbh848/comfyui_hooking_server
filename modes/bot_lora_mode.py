@@ -349,6 +349,7 @@ def get_project_data(bot_name: str, project_name: str, lora_load_path: str = "")
         characters.append({
             "name": char_name,
             "trigger": trigger,
+            "skip_training": char_cfg.get("skip_training", False),
             "training_images": training_images,
             "trained_sessions": trained_sessions,
             "session_representatives": char_cfg.get("session_representatives", {}),
@@ -733,6 +734,17 @@ def update_char_trigger(bot_name: str, project_name: str, char_name: str, trigge
     char_cfg["trigger"] = trigger.strip()
     _save_bot_lora_manage(data)
     print(f"[BOT_LORA] trigger 업데이트: {bot_name}/{project_name}/{char_name} -> {trigger.strip()}")
+    return {"success": True}
+
+
+def update_char_skip_training(bot_name: str, project_name: str, char_name: str, skip: bool) -> dict:
+    if not bot_name or not project_name or not char_name:
+        return {"success": False, "error": "봇/프로젝트/캐릭터 이름 누락"}
+    data = _load_bot_lora_manage()
+    char_cfg = data.setdefault("bot_loras", {}).setdefault(bot_name, {}).setdefault(project_name, {}).setdefault("characters", {}).setdefault(char_name, {})
+    char_cfg["skip_training"] = bool(skip)
+    _save_bot_lora_manage(data)
+    print(f"[BOT_LORA] skip_training 업데이트: {bot_name}/{project_name}/{char_name} -> {bool(skip)}")
     return {"success": True}
 
 
