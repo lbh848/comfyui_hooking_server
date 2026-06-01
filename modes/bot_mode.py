@@ -1191,6 +1191,35 @@ class BotMode:
             traceback.print_exc()
             return _json_error(str(e))
 
+    async def handle_get_patch_settings(self, request):
+        """GET /api/bot_mode/patch_settings?bot=X"""
+        try:
+            bot_name = request.query.get("bot", "").strip()
+            if not bot_name:
+                return _json_error("봇 이름이 필요합니다.")
+            settings = _load_patch_settings(bot_name)
+            return _json_ok(settings)
+        except Exception as e:
+            print(f"[BOT_MODE] patch_settings 로드 실패: {e}")
+            traceback.print_exc()
+            return _json_error(str(e))
+
+    async def handle_save_patch_settings(self, request):
+        """POST /api/bot_mode/patch_settings"""
+        try:
+            body = await request.json()
+            bot_name = body.get("bot", "").strip()
+            settings = body.get("settings", {})
+            if not bot_name:
+                return _json_error("봇 이름이 필요합니다.")
+            _save_patch_settings(bot_name, settings)
+            print(f"[BOT_MODE] 패치 설정 저장: bot={bot_name}, settings={settings}")
+            return _json_ok({"saved": True})
+        except Exception as e:
+            print(f"[BOT_MODE] patch_settings 저장 실패: {e}")
+            traceback.print_exc()
+            return _json_error(str(e))
+
     async def handle_save_utility_settings(self, request):
         """POST /api/bot_mode/utility_settings"""
         try:
@@ -1221,6 +1250,30 @@ def _json_error(msg, status=400):
 
 # ─── 유틸리티 설정 (캐릭터별) ─────────────────────────────
 UTILITY_SETTINGS_FILE = "_utility_settings.json"
+PATCH_SETTINGS_FILE = "_patch_settings.json"
+
+
+def _patch_settings_path(bot_name: str) -> str:
+    return os.path.join(BOT_DIR, bot_name, PATCH_SETTINGS_FILE)
+
+
+def _load_patch_settings(bot_name: str) -> dict:
+    path = _patch_settings_path(bot_name)
+    if os.path.isfile(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"[BOT_MODE] patch_settings 로드 실패: {e}")
+    return {"face_crop_top": 1.0, "face_crop_bottom": 1.0, "emb_target": "대표만"}
+
+
+def _save_patch_settings(bot_name: str, settings: dict):
+    path = _patch_settings_path(bot_name)
+    bot_dir = os.path.dirname(path)
+    os.makedirs(bot_dir, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(settings, f, indent=2, ensure_ascii=False)
 
 
 def _utility_settings_path(bot_name: str, char_name: str) -> str:
@@ -1421,8 +1474,8 @@ class BotDataPatcher:
             if not char.get("rep_images"):
                 return _json_error(f"대표 이미지가 없는 캐릭터입니다: {char_name}")
 
-            # 설정 로드
-            settings = _load_utility_settings(bot_name, char_name)
+            # 설정 로드 (봇별 패치 설정 사용)
+            settings = _load_patch_settings(bot_name)
             prompt_text = build_utility_prompt(bot_name, char_name, settings)
             print(f"[UTILITY] 실행: {char_name} | 프롬프트:\n{prompt_text}")
 
@@ -1453,7 +1506,50 @@ class BotDataPatcher:
             traceback.print_exc()
             return _json_error(str(e))
 
+    async def handle_check_patch_files(self, request):
+        """GET /api/bot_mode/check_patch_files - 각 캐릭터의 ipadpt/pt 파일 존재 여부 확인"""
+        try:
+            bot_name = request.query.get("bot_name", "").strip()
+            print(f"[CHECK_PATCH] 요청: bot_name={bot_name}")
+            if not bot_name:
+                return _json_error("봇 이름이 비어있습니다.")
 
-# 싱글톤
+            config_path = os.path.join(BASE_DIR, "config.json")
+            if not os.path.isfile(config_path):
+                return _json_error("config.json이 없습니다.")
+            with open(config_path, "r", encoding="utf-8") as f:
+                config = json.load(f)
+            comfy_input_dir = config.get("comfy_input_dir", "").strip()
+            print(f"[CHECK_PATCH] comfy_input_dir={comfy_input_dir}")
+            if not comfy_input_dir or not os.path.isdir(comfy_input_dir):
+                return _json_error("Comfy Input 폴더 경로가 설정되지 않았습니다.")
+
+            data = _load_bot_data()
+            bot = next((b for b in data["bots"] if b["name"] == bot_name), None)
+            if not bot:
+                return _json_error(f"봇을 찾을 수 없습니다: {bot_name}")
+
+            results = {}
+            for char in bot.get("characters", []):
+                char_name = char["name"]
+                char_dir = os.path.join(comfy_input_dir, "soya_bot", bot_name, char_name)
+                has_ipadpt = False
+                has_pt = False
+                print(f"[CHECK_PATCH] 검사: {char_dir} (exists={os.path.isdir(char_dir)})")
+                if os.path.isdir(char_dir):
+                    files = os.listdir(char_dir)
+                    print(f"[CHECK_PATCH] 파일 목록: {files}")
+                    for f in files:
+                        if f.endswith(".ipadpt"):
+                            has_ipadpt = True
+                        if f.endswith(".pt"):
+                            has_pt = True
+                results[char_name] = {"ipadpt": has_ipadpt, "pt": has_pt}
+                print(f"[CHECK_PATCH] {char_name}: ipadpt={has_ipadpt}, pt={has_pt}")
+            return _json_ok(results)
+        except Exception as e:
+            print(f"[CHECK_PATCH] 확인 실패: {e}")
+            traceback.print_exc()
+            return _json_error(str(e))
 bot_mode = BotMode()
 data_patcher = BotDataPatcher()

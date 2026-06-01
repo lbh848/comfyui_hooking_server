@@ -3135,6 +3135,7 @@
                         </div>
                         <div style="background:rgba(33,150,243,0.08); border-radius:8px; padding:10px; margin-top:8px;">
                             <div class="section-title">데이터 패치</div>
+                            <button id="btn-patch-settings" onclick="openPatchSettingsModal()" style="width:100%; margin-bottom:4px; background:#0D47A1; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">데이터 패치 설정</button>
                             <button id="btn-data-patch" onclick="dataPatchStart()" style="width:100%; background:#1565C0; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">데이터 패치 시작</button>
                             <div id="data-patch-status" style="font-size:0.7rem; color:var(--text2); margin-top:4px; display:none;"></div>
                         </div>
@@ -5424,10 +5425,19 @@
                             </div>
                             <div style="display: flex; align-items: center; gap: 0;">
                                 <span style="flex: 1; display: inline-flex; align-items: center; height: 36px;"></span>
-                                <span style="display: inline-flex; align-items: center; padding: 8px 10px; background: var(--bg-tertiary, #2a2a3e); border: 1px solid var(--border-color, #3a3a4e); border-left: none; border-radius: 0 0 6px 0; font-size: 13px; color: var(--text-secondary, #aaa); white-space: nowrap; user-select: none;">\SOYA_CHAR_LORA\SOYA_BOT_LORA</span>
+                                <span style="display: inline-flex; align-items: center; padding: 8px 10px; background: var(--bg-tertiary, #2a2a3e); border: 1px solid var(--border-color, #3a3a4e); border-left: none; font-size: 13px; color: var(--text-secondary, #aaa); white-space: nowrap; user-select: none;">\SOYA_CHAR_LORA\SOYA_BOT_LORA</span>
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 0;">
+                                <span style="flex: 1; display: inline-flex; align-items: center; height: 36px;"></span>
+                                <span style="display: inline-flex; align-items: center; padding: 8px 10px; background: var(--bg-tertiary, #2a2a3e); border: 1px solid var(--border-color, #3a3a4e); border-left: none; border-radius: 0 0 6px 0; font-size: 13px; color: var(--text-secondary, #aaa); white-space: nowrap; user-select: none;">\SOYA_CHAR_LORA\SOYA_INSTANCE_LORA</span>
                             </div>
                         </div>
-                        <div class="hint">에셋 LoRA: \SOYA_CHAR_LORA, 봇 LoRA: \SOYA_CHAR_LORA\SOYA_BOT_LORA 자동 추가</div>
+                        <div class="hint" style="line-height: 1.6;">
+                            다음 항목이 자동 추가됩니다:<br>
+                            · 에셋 LoRA → \SOYA_CHAR_LORA<br>
+                            · 봇 LoRA → \SOYA_CHAR_LORA\SOYA_BOT_LORA<br>
+                            · 인스턴스 LoRA → \SOYA_CHAR_LORA\SOYA_INSTANCE_LORA
+                        </div>
                         <button onclick="scanUntrackedLoras()" style="margin-top: 6px; padding: 6px 14px; font-size: 12px; background: var(--bg-tertiary, #2a2a3e); border: 1px solid var(--border-color, #3a3a4e); border-radius: 6px; color: var(--text-secondary, #aaa); cursor: pointer;">비추적 로라 제거</button>
                         <button onclick="openLoraFolder()" style="margin-top: 6px; padding: 6px 14px; font-size: 12px; background: var(--bg-tertiary, #2a2a3e); border: 1px solid var(--border-color, #3a3a4e); border-radius: 6px; color: var(--text-secondary, #aaa); cursor: pointer;">📁 폴더 열기</button>
                     </div>
@@ -7061,10 +7071,11 @@
             document.getElementById('setting-lora-workflow-sdxl-filename').value = loraSdxlSplit.filename;
             document.getElementById('setting-lora-workflow-sdxl-source-path').value = loraSdxlPath;
 
-            // 로라 로드 경로 (SOYA_CHAR_LORA, SOYA_CHAR_LORA\SOYA_BOT_LORA 접미사 제거 후 표시)
+            // 로라 로드 경로 (SOYA_CHAR_LORA, SOYA_CHAR_LORA\SOYA_BOT_LORA, SOYA_CHAR_LORA\SOYA_INSTANCE_LORA 접미사 제거 후 표시)
             const loraLoadPath = currentConfig.lora_load_path || '';
             const botLoraLoadPath = currentConfig.bot_lora_load_path || '';
-            const basePath = loraLoadPath.replace(/\\SOYA_CHAR_LORA$/, '') || botLoraLoadPath.replace(/\\SOYA_CHAR_LORA\\SOYA_BOT_LORA$/, '').replace(/\\SOYA_BOT_LORA$/, '');
+            const instanceLoraLoadPath = currentConfig.instance_lora_load_path || '';
+            const basePath = loraLoadPath.replace(/\\SOYA_CHAR_LORA$/, '') || botLoraLoadPath.replace(/\\SOYA_CHAR_LORA\\SOYA_BOT_LORA$/, '').replace(/\\SOYA_BOT_LORA$/, '') || instanceLoraLoadPath.replace(/\\SOYA_CHAR_LORA\\SOYA_INSTANCE_LORA$/, '').replace(/\\SOYA_INSTANCE_LORA$/, '');
             document.getElementById('setting-lora-load-path').value = basePath || loraLoadPath;
 
             document.getElementById('settings-modal').classList.add('visible');
@@ -7442,6 +7453,7 @@
                 },
                 lora_load_path: document.getElementById('setting-lora-load-path').value.trim().replace(/\\?$/, '\\SOYA_CHAR_LORA'),
                 bot_lora_load_path: document.getElementById('setting-lora-load-path').value.trim().replace(/\\?$/, '\\SOYA_CHAR_LORA\\SOYA_BOT_LORA'),
+                instance_lora_load_path: document.getElementById('setting-lora-load-path').value.trim().replace(/\\?$/, '\\SOYA_CHAR_LORA\\SOYA_INSTANCE_LORA'),
                 batch_mode_enabled: currentConfig.batch_mode_enabled || false,
                 webp_lossless: currentConfig.webp_lossless || false,
                 workflow_filename: currentConfig.workflow_filename || ''
@@ -14036,7 +14048,8 @@
             } else if (name === 'bot') {
                 document.querySelectorAll('.tab-btn')[1].classList.add('active');
                 document.getElementById('tab-bot-content').classList.add('active');
-                if (!botData) loadBotData();
+                if (!botData) await loadBotData();
+                else if (botCurrentBot) checkPatchFiles();
             } else if (name === 'asset') {
                 document.querySelectorAll('.tab-btn')[2].classList.add('active');
                 document.getElementById('tab-asset-content').classList.add('active');
@@ -15760,17 +15773,20 @@
                         ${badgeHtml}
                         <button class="btn-view-all" onclick="openCharacterDetail('${escAttr(char.name)}')"
                             style="margin-left:auto; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:8px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600; white-space:nowrap;">전체 이미지 보기</button>
-                        <button onclick="event.stopPropagation(); toggleUtilitySettingsModal('${escAttr(char.name)}', this)"
-                            style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:6px 10px; border-radius:6px; cursor:pointer; font-size:0.85rem;"
-                            title="프롬프트 설정">⚙️</button>
-                        <span style="font-size:0.9rem;">👁️</span>
-                        <div class="inline-add eye-prompt-wrap">
+                        <button onclick="event.stopPropagation(); togglePromptPreviewModal('${escAttr(char.name)}', this)"
+                            style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:6px 10px; border-radius:6px; cursor:pointer; font-size:0.8rem; white-space:nowrap;">패치 프롬프트 미리보기</button>
+                        <div style="display:flex; align-items:center; gap:0; border:1px solid var(--border); border-radius:6px; overflow:hidden; flex-shrink:0;">
+                            <span style="padding:5px 8px; font-size:0.85rem; background:var(--surface2); border-right:1px solid var(--border);">👁️</span>
                             <input type="text" id="eye-prompt-${charIdx}" data-bot="${escAttr(botCurrentBot)}" data-char="${escAttr(char.name)}"
                                    placeholder="눈 관련 추가 프롬프트(옵션)"
                                    value="${escAttr(char.eye_prompt || '')}"
-                                   onblur="saveEyePrompt(this)" onclick="event.stopPropagation()">
-                            <div class="tag-autocomplete-dropdown" id="ac-eye-prompt-${charIdx}"></div>
+                                   onblur="saveEyePrompt(this)" onclick="event.stopPropagation()"
+                                   style="border:none; background:var(--surface); color:var(--text); font-size:0.8rem; padding:5px 8px; min-width:180px;">
                         </div>
+                        <span id="patch-status-${charIdx}" style="display:inline-flex; align-items:center; gap:3px; margin-left:4px; font-size:0.7rem; color:gray; flex-shrink:0;">
+                            <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:gray;"></span>
+                            <span class="patch-label">확인중</span>
+                        </span>
                     </div>
                     <div class="char-thumbs"></div>
                 `;
@@ -15859,10 +15875,45 @@
                     }
                 })(card, char.name);
 
-                // 눈 프롬프트 자동완성 연결
-                TagAutocomplete.attach(`eye-prompt-${charIdx}`, `ac-eye-prompt-${charIdx}`, 'textarea');
+
             }
             showBotView('chars');
+            checkPatchFiles();
+        }
+
+        async function checkPatchFiles() {
+            console.log(`[CHECK_PATCH] 호출: botCurrentBot=${botCurrentBot}`);
+            if (!botCurrentBot) { console.log('[CHECK_PATCH] botCurrentBot 없음, 중단'); return; }
+            try {
+                const resp = await fetch(`/api/bot_mode/check_patch_files?bot_name=${encodeURIComponent(botCurrentBot)}`);
+                const result = await resp.json();
+                console.log(`[CHECK_PATCH] API 응답:`, result);
+                if (result.error) { console.log(`[CHECK_PATCH] 실패: ${result.error}`); return; }
+                const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
+                if (!bot) { console.log('[CHECK_PATCH] 봇 데이터 없음'); return; }
+                bot.characters.forEach((char, idx) => {
+                    const dot = document.getElementById(`patch-status-${idx}`);
+                    if (!dot) { console.log(`[CHECK_PATCH] dot 요소 없음: patch-status-${idx}`); return; }
+                    const dotCircle = dot.querySelector('span:first-child');
+                    const dotLabel = dot.querySelector('.patch-label');
+                    const info = result[char.name];
+                    if (info && info.ipadpt && info.pt) {
+                        if (dotCircle) dotCircle.style.background = '#22c55e';
+                        if (dotLabel) dotLabel.textContent = '패치됨';
+                        dot.style.color = '#22c55e';
+                    } else {
+                        if (dotCircle) dotCircle.style.background = '#ef4444';
+                        dot.style.color = '#ef4444';
+                        const missing = [];
+                        if (!info || !info.ipadpt) missing.push('ipadpt');
+                        if (!info || !info.pt) missing.push('pt');
+                        if (dotLabel) dotLabel.textContent = `패치 안됨 (${missing.join(', ')})`;
+                    }
+                    console.log(`[CHECK_PATCH] ${char.name}: ipadpt=${info?.ipadpt}, pt=${info?.pt}`);
+                });
+            } catch (e) {
+                console.error('[BOT] 패치 파일 확인 실패:', e);
+            }
         }
 
         async function saveEyePrompt(inputEl) {
@@ -16909,11 +16960,142 @@
             await botShowNegativeModal('');
         }
 
+        async function openPatchSettingsModal() {
+            if (!botCurrentBot) { showToast('봇을 먼저 선택하세요.', 'error'); return; }
+            const existing = document.getElementById('patch-settings-modal');
+            if (existing) { existing.remove(); return; }
+
+            const modal = document.createElement('div');
+            modal.id = 'patch-settings-modal';
+            modal.style.cssText = 'position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:10000; background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:20px; min-width:380px; max-width:480px; box-shadow:0 8px 32px rgba(0,0,0,0.4);';
+            modal.innerHTML = `
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+                    <div style="font-weight:700; font-size:1rem;">데이터 패치 설정 - ${escHtml(botCurrentBot)}</div>
+                    <button onclick="document.getElementById('patch-settings-modal').remove()"
+                        style="background:none; border:none; color:var(--text2); font-size:1.2rem; cursor:pointer;">✕</button>
+                </div>
+                <div style="display:flex; flex-direction:column; gap:10px;">
+                    <label style="display:flex; flex-direction:column; gap:4px;">
+                        <span style="font-size:0.8rem; color:var(--text2);">FACE_CROP_TOP</span>
+                        <input type="number" step="0.1" id="patch-face-crop-top" placeholder="1" style="padding:6px 8px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.85rem;">
+                    </label>
+                    <label style="display:flex; flex-direction:column; gap:4px;">
+                        <span style="font-size:0.8rem; color:var(--text2);">FACE_CROP_BOTTOM</span>
+                        <input type="number" step="0.1" id="patch-face-crop-bottom" placeholder="1" style="padding:6px 8px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.85rem;">
+                    </label>
+                    <label style="display:flex; flex-direction:column; gap:4px;">
+                        <span style="font-size:0.8rem; color:var(--text2);">EMB_TARGET</span>
+                        <select id="patch-emb-target" style="padding:6px 8px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.85rem;">
+                            <option value="대표만">대표만</option>
+                            <option value="둘다">둘다</option>
+                        </select>
+                    </label>
+                </div>
+                <div style="display:flex; gap:8px; margin-top:14px; justify-content:flex-end;">
+                    <button onclick="savePatchSettings()"
+                        style="background:var(--accent); color:#fff; border:none; padding:6px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem;">저장</button>
+                </div>
+            `;
+            document.body.appendChild(modal);
+
+            try {
+                const resp = await fetch(`/api/bot_mode/patch_settings?bot=${encodeURIComponent(botCurrentBot)}`);
+                const data = await resp.json();
+                document.getElementById('patch-face-crop-top').value = data.face_crop_top ?? 1.0;
+                document.getElementById('patch-face-crop-bottom').value = data.face_crop_bottom ?? 1.0;
+                document.getElementById('patch-emb-target').value = data.emb_target || '대표만';
+            } catch (e) { console.error('[PATCH_SETTINGS] 로드 실패:', e); }
+        }
+
+        async function savePatchSettings() {
+            const settings = {
+                face_crop_top: parseFloat(document.getElementById('patch-face-crop-top').value) || 1.0,
+                face_crop_bottom: parseFloat(document.getElementById('patch-face-crop-bottom').value) || 1.0,
+                emb_target: document.getElementById('patch-emb-target').value
+            };
+            try {
+                await fetch('/api/bot_mode/patch_settings', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ bot: botCurrentBot, settings })
+                });
+                showToast('패치 설정 저장 완료', 'success');
+                document.getElementById('patch-settings-modal').remove();
+            } catch (e) { showToast('저장 실패', 'error'); }
+        }
+
         async function dataPatchStart() {
             if (!botCurrentBot) {
                 showToast('봇을 먼저 선택하세요.', 'error');
                 return;
             }
+
+            // 확인 모달 표시
+            const existing = document.getElementById('data-patch-confirm-modal');
+            if (existing) { existing.remove(); return; }
+
+            let patchSettings = {};
+            try {
+                const resp = await fetch(`/api/bot_mode/patch_settings?bot=${encodeURIComponent(botCurrentBot)}`);
+                patchSettings = await resp.json();
+            } catch (e) { console.error('[DATA_PATCH] 설정 로드 실패:', e); }
+
+            const modal = document.createElement('div');
+            modal.id = 'data-patch-confirm-modal';
+            modal.style.cssText = 'position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:10000; background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:20px; min-width:400px; max-width:520px; box-shadow:0 8px 32px rgba(0,0,0,0.4);';
+            modal.innerHTML = `
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+                    <div style="font-weight:700; font-size:1rem;">데이터 패치 확인</div>
+                    <button onclick="document.getElementById('data-patch-confirm-modal').remove()"
+                        style="background:none; border:none; color:var(--text2); font-size:1.2rem; cursor:pointer;">✕</button>
+                </div>
+                <div style="display:flex; flex-direction:column; gap:10px;">
+                    <label style="display:flex; flex-direction:column; gap:4px;">
+                        <span style="font-size:0.8rem; color:var(--text2);">FACE_CROP_TOP</span>
+                        <input type="number" step="0.1" id="confirm-face-crop-top" value="${patchSettings.face_crop_top ?? 1}" placeholder="1" style="padding:6px 8px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.85rem;">
+                    </label>
+                    <label style="display:flex; flex-direction:column; gap:4px;">
+                        <span style="font-size:0.8rem; color:var(--text2);">FACE_CROP_BOTTOM</span>
+                        <input type="number" step="0.1" id="confirm-face-crop-bottom" value="${patchSettings.face_crop_bottom ?? 1}" placeholder="1" style="padding:6px 8px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.85rem;">
+                    </label>
+                    <label style="display:flex; flex-direction:column; gap:4px;">
+                        <span style="font-size:0.8rem; color:var(--text2);">EMB_TARGET</span>
+                        <select id="confirm-emb-target" style="padding:6px 8px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.85rem;">
+                            <option value="대표만" ${patchSettings.emb_target !== '둘다' ? 'selected' : ''}>대표만</option>
+                            <option value="둘다" ${patchSettings.emb_target === '둘다' ? 'selected' : ''}>둘다</option>
+                        </select>
+                    </label>
+                </div>
+                <div style="display:flex; gap:8px; margin-top:14px; justify-content:flex-end;">
+                    <button onclick="document.getElementById('data-patch-confirm-modal').remove()"
+                        style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:6px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem;">취소</button>
+                    <button onclick="confirmDataPatch()"
+                        style="background:#1565C0; color:#fff; border:none; padding:6px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">진행</button>
+                </div>
+            `;
+            document.body.appendChild(modal);
+        }
+
+        async function confirmDataPatch() {
+            // 모달에서 설정값 가져와서 저장
+            const settings = {
+                face_crop_top: parseFloat(document.getElementById('confirm-face-crop-top').value) || 1.0,
+                face_crop_bottom: parseFloat(document.getElementById('confirm-face-crop-bottom').value) || 1.0,
+                emb_target: document.getElementById('confirm-emb-target').value
+            };
+            try {
+                await fetch('/api/bot_mode/patch_settings', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ bot: botCurrentBot, settings })
+                });
+            } catch (e) { console.error('[DATA_PATCH] 설정 저장 실패:', e); }
+
+            // 모달 닫기
+            const modal = document.getElementById('data-patch-confirm-modal');
+            if (modal) modal.remove();
+
+            // 실제 패치 실행
             const btn = document.getElementById('btn-data-patch');
             const statusDiv = document.getElementById('data-patch-status');
             btn.disabled = true;
@@ -16921,7 +17103,6 @@
             statusDiv.style.display = 'block';
             statusDiv.textContent = '1/2: 폴더 생성 + 이미지 복사 중…';
             try {
-                // 1단계: 데이터 패치 (폴더 + 이미지)
                 const patchResp = await fetch('/api/bot_mode/data_patch', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -16934,7 +17115,6 @@
                     return;
                 }
 
-                // 2단계: 얼굴 워크플로우 - 캐릭터별 순환 실행
                 const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
                 const chars = (bot?.characters || []).filter(c => (c.rep_images || []).length > 0);
                 if (chars.length === 0) {
@@ -16978,14 +17158,13 @@
             }
         }
 
-        // ─── 프롬프트 설정 모달 ──────────────────────────────
-        function toggleUtilitySettingsModal(charName, btnEl) {
+        // ─── 패치 프롬프트 미리보기 모달 ──────────────────────────────
+        function togglePromptPreviewModal(charName, btnEl) {
             const existing = document.getElementById(`utility-modal-${charName}`);
             if (existing) {
                 existing.remove();
                 return;
             }
-            // 닫기: 다른 모달이 열려있으면 닫기
             document.querySelectorAll('[id^="utility-modal-"]').forEach(el => el.remove());
 
             const modal = document.createElement('div');
@@ -16993,104 +17172,38 @@
             modal.style.cssText = 'position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:10000; background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:20px; min-width:420px; max-width:520px; box-shadow:0 8px 32px rgba(0,0,0,0.4);';
             modal.innerHTML = `
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
-                    <div style="font-weight:700; font-size:1rem;">⚙️ 프롬프트 설정 - ${escHtml(charName)}</div>
+                    <div style="font-weight:700; font-size:1rem;">패치 프롬프트 미리보기 - ${escHtml(charName)}</div>
                     <button onclick="document.getElementById('utility-modal-${escAttr(charName)}').remove()"
                         style="background:none; border:none; color:var(--text2); font-size:1.2rem; cursor:pointer;">✕</button>
                 </div>
-                <div style="display:flex; flex-direction:column; gap:10px;">
-                    <label style="display:flex; flex-direction:column; gap:4px;">
-                        <span style="font-size:0.8rem; color:var(--text2);">FACE_CROP_TOP</span>
-                        <input type="number" step="0.1" id="util-face-crop-top-${escAttr(charName)}" style="padding:6px 8px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.85rem;">
-                    </label>
-                    <label style="display:flex; flex-direction:column; gap:4px;">
-                        <span style="font-size:0.8rem; color:var(--text2);">FACE_CROP_BOTTOM</span>
-                        <input type="number" step="0.1" id="util-face-crop-bottom-${escAttr(charName)}" style="padding:6px 8px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.85rem;">
-                    </label>
-                    <label style="display:flex; flex-direction:column; gap:4px;">
-                        <span style="font-size:0.8rem; color:var(--text2);">EMB_TARGET</span>
-                        <select id="util-emb-target-${escAttr(charName)}" style="padding:6px 8px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.85rem;">
-                            <option value="대표만">대표만</option>
-                            <option value="둘다">둘다</option>
-                        </select>
-                    </label>
-                    <div style="margin-top:4px;">
-                        <div style="font-size:0.8rem; color:var(--text2); margin-bottom:4px;">데이터 패치 프롬프트 미리보기</div>
-                        <pre id="util-prompt-preview-${escAttr(charName)}" style="padding:8px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.75rem; white-space:pre-wrap; word-break:break-all; min-height:60px; font-family:monospace;"></pre>
-                    </div>
+                <div>
+                    <div style="font-size:0.8rem; color:var(--text2); margin-bottom:4px;">데이터 패치 프롬프트 미리보기</div>
+                    <pre id="util-prompt-preview-${escAttr(charName)}" style="padding:8px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.75rem; white-space:pre-wrap; word-break:break-all; min-height:60px; font-family:monospace;"></pre>
                 </div>
                 <div style="display:flex; gap:8px; margin-top:14px; justify-content:flex-end;">
-                    <button id="util-save-btn-${escAttr(charName)}" onclick="saveUtilitySettings('${escAttr(charName)}')"
-                        style="background:var(--accent); color:#fff; border:none; padding:6px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem;">저장</button>
+                    <button onclick="document.getElementById('utility-modal-${escAttr(charName)}').remove()"
+                        style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:6px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem;">닫기</button>
                 </div>
             `;
             document.body.appendChild(modal);
 
-            // 설정 로드
+            // 봇별 패치 설정 + 캐릭터 경로로 프롬프트 생성
             (async () => {
                 try {
-                    const resp = await fetch(`/api/bot_mode/utility_settings?bot=${encodeURIComponent(botCurrentBot)}&character=${encodeURIComponent(charName)}`);
-                    const data = await resp.json();
-                    const s = data.settings || {};
-                    document.getElementById(`util-face-crop-top-${charName}`).value = s.face_crop_top ?? 1.0;
-                    document.getElementById(`util-face-crop-bottom-${charName}`).value = s.face_crop_bottom ?? 1.0;
-                    document.getElementById(`util-emb-target-${charName}`).value = s.emb_target || '대표만';
-                    document.getElementById(`util-prompt-preview-${charName}`).textContent = data.prompt_preview || '';
+                    const [settingsResp, utilResp] = await Promise.all([
+                        fetch(`/api/bot_mode/patch_settings?bot=${encodeURIComponent(botCurrentBot)}`),
+                        fetch(`/api/bot_mode/utility_settings?bot=${encodeURIComponent(botCurrentBot)}&character=${encodeURIComponent(charName)}`)
+                    ]);
+                    const settings = await settingsResp.json();
+                    const utilData = await utilResp.json();
+                    // 봇별 설정으로 프롬프트 생성
+                    const embValue = (settings.emb_target === '둘다') ? 'representation,sub' : 'representation';
+                    const prompt = `[PATH]\nsoya_bot/${botCurrentBot}/${charName}\n[FACE_CROP_TOP]\n${settings.face_crop_top ?? 1.0}\n[FACE_CROP_BOTTOM]\n${settings.face_crop_bottom ?? 1.0}\n[EMB_TARGET]\n${embValue}\n[END]`;
+                    document.getElementById(`util-prompt-preview-${charName}`).textContent = prompt;
                 } catch (e) {
-                    console.error('프롬프트 설정 로드 실패:', e);
+                    console.error('프롬프트 미리보기 로드 실패:', e);
                 }
             })();
-
-            // 입력 변경 시 미리보기 업데이트
-            const updatePreview = () => updateUtilityPreview(charName);
-            modal.querySelectorAll('input, select').forEach(el => {
-                el.addEventListener('input', updatePreview);
-                el.addEventListener('change', updatePreview);
-            });
-        }
-
-        function buildUtilityPromptLocal(charName) {
-            const top = document.getElementById(`util-face-crop-top-${charName}`)?.value ?? 1.0;
-            const bottom = document.getElementById(`util-face-crop-bottom-${charName}`)?.value ?? 1.0;
-            const embSelect = document.getElementById(`util-emb-target-${charName}`)?.value || '대표만';
-            const embValue = embSelect === '대표만' ? 'representation' : 'representation,sub';
-            return `[PATH]\nsoya_bot/${botCurrentBot}/${charName}\n[FACE_CROP_TOP]\n${top}\n[FACE_CROP_BOTTOM]\n${bottom}\n[EMB_TARGET]\n${embValue}\n[END]`;
-        }
-
-        function updateUtilityPreview(charName) {
-            const preview = document.getElementById(`util-prompt-preview-${charName}`);
-            if (preview) preview.textContent = buildUtilityPromptLocal(charName);
-        }
-
-        async function saveUtilitySettings(charName) {
-            const top = parseFloat(document.getElementById(`util-face-crop-top-${charName}`).value) || 1.0;
-            const bottom = parseFloat(document.getElementById(`util-face-crop-bottom-${charName}`).value) || 1.0;
-            const embTarget = document.getElementById(`util-emb-target-${charName}`).value;
-            const btn = document.getElementById(`util-save-btn-${charName}`);
-            btn.disabled = true;
-            btn.textContent = '저장 중…';
-            try {
-                const resp = await fetch('/api/bot_mode/utility_settings', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        bot: botCurrentBot,
-                        character: charName,
-                        settings: { face_crop_top: top, face_crop_bottom: bottom, emb_target: embTarget }
-                    })
-                });
-                const data = await resp.json();
-                if (data.error) {
-                    showToast('저장 실패: ' + data.error, 'error');
-                } else {
-                    showToast('설정 저장 완료', 'success');
-                    document.getElementById(`util-prompt-preview-${charName}`).textContent = data.prompt_preview || '';
-                }
-            } catch (e) {
-                showToast('저장 실패: ' + e.message, 'error');
-            } finally {
-                btn.disabled = false;
-                btn.textContent = '저장';
-            }
         }
 
         // ─── 얼굴 이미지 일괄 작업 ──────────────────────────

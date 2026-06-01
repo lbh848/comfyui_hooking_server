@@ -107,6 +107,7 @@ DEFAULT_CONFIG = {
     "lora_training_workflow_source_paths": {"anima": "", "sdxl": ""},  # 로라 학습 워크플로우 원본 소스 경로 (profile별)
     "lora_load_path": "",  # 로라 모델 로드 폴더 절대 경로 (에셋, SOYA_CHAR_LORA 자동 추가)
     "bot_lora_load_path": "",  # 봇 LoRA 모델 로드 폴더 절대 경로 (SOYA_BOT_LORA 자동 추가)
+    "instance_lora_load_path": "",  # 인스턴스 LoRA 모델 로드 폴더 절대 경로 (SOYA_INSTANCE_LORA 자동 추가)
     "dwpose_det_model": "",  # DWPose 탐지 모델 경로 (빈값=자동 다운로드)
     "dwpose_pose_model": "",  # DWPose 포즈 모델 경로 (빈값=자동 다운로드)
     "dwpose_model_cache_dir": "",  # 모델 캐시 디렉토리 (빈값=기본경로)
@@ -2595,8 +2596,9 @@ async def handle_api_patch_comfy_input(request: web.Request) -> web.Response:
                 created.append(folder)
                 print(f"[patch] 폴더 생성: {folder}")
             else:
-                # fallback 폴더와 soya_lora는 기존 내용물을 비운 뒤 다시 패치
-                if folder.endswith("fallback") or os.path.basename(folder) == "soya_lora":
+                # soya_char_ref, soya_style_ref, soya_lora는 기존 내용물을 비운 뒤 다시 패치
+                basename = os.path.basename(folder)
+                if basename in ("soya_char_ref", "soya_style_ref", "soya_lora") or folder.endswith("fallback"):
                     _clear_folder(folder)
                     cleared.append(folder)
                     print(f"[patch] 폴더 비움: {folder}")
@@ -4636,9 +4638,12 @@ app.router.add_post("/api/bot_mode/set_negative_single", bot_mode.handle_set_neg
 app.router.add_get("/api/bot_mode/asset_images", bot_mode.handle_get_asset_images)
 app.router.add_get("/api/bot_mode/asset_character_images", bot_mode.handle_get_asset_character_images)
 app.router.add_post("/api/bot_mode/data_patch", data_patcher.handle_data_patch)
+app.router.add_get("/api/bot_mode/check_patch_files", data_patcher.handle_check_patch_files)
 app.router.add_post("/api/bot_mode/run_utility", data_patcher.handle_run_utility)
 app.router.add_get("/api/bot_mode/utility_settings", bot_mode.handle_get_utility_settings)
 app.router.add_post("/api/bot_mode/utility_settings", bot_mode.handle_save_utility_settings)
+app.router.add_get("/api/bot_mode/patch_settings", bot_mode.handle_get_patch_settings)
+app.router.add_post("/api/bot_mode/patch_settings", bot_mode.handle_save_patch_settings)
 app.router.add_get("/api/bot_mode/utility_preview", bot_mode.handle_get_utility_preview)
 app.router.add_post("/api/bot_mode/batch_analyze_utility", bot_mode.handle_batch_analyze_utility)
 app.router.add_post("/api/bot_mode/batch_set_negative_utility", bot_mode.handle_batch_set_negative_utility)
