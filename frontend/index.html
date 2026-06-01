@@ -2014,7 +2014,7 @@
         .bot-char-card .lora-section-inner {
             display: flex;
             flex-direction: column;
-            align-items: flex-end;
+            align-items: flex-start;
         }
         .bot-char-card .lora-section-inner .lora-add-btn {
             width: auto;
@@ -2024,7 +2024,6 @@
             display: flex;
             flex-wrap: wrap;
             gap: 8px;
-            justify-content: flex-end;
         }
         .bot-char-card .eye-prompt-wrap {
             position: relative; width: 200px;
@@ -2043,7 +2042,7 @@
         }
         .bot-char-card .face-col img,
         .bot-char-card .rep-col img {
-            width: 300px; height: 438px; object-fit: contain; border-radius: 6px;
+            width: 240px; height: 350px; object-fit: contain; border-radius: 6px;
             border: 2px solid var(--border); background: var(--surface2);
         }
 
@@ -15823,9 +15822,8 @@
                         <span style="font-weight:600; font-size:0.95rem;">${escHtml(char.name)}</span>
                         ${badgeHtml}
                         <button class="btn-view-all" onclick="event.stopPropagation(); openCharacterDetail('${escAttr(char.name)}')"
-                            style="margin-left:auto; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:8px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600; white-space:nowrap;">전체 이미지 보기</button>
-                        <button onclick="event.stopPropagation(); togglePromptPreviewModal('${escAttr(char.name)}', this)"
-                            style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:6px 10px; border-radius:6px; cursor:pointer; font-size:0.8rem; white-space:nowrap;">패치 프롬프트 미리보기</button>
+                            style="background:rgba(244,114,182,0.12); color:var(--text); border:1px solid rgba(244,114,182,0.3); padding:8px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600; white-space:nowrap;">전체 이미지 보기</button>
+                        <div style="margin-left:auto;"></div>
                         <div style="display:flex; align-items:center; gap:0; border:1px solid var(--border); border-radius:6px; overflow:hidden; flex-shrink:0;">
                             <span style="padding:5px 8px; font-size:0.85rem; background:var(--surface2); border-right:1px solid var(--border);">👁️</span>
                             <input type="text" id="eye-prompt-${charIdx}" data-bot="${escAttr(botCurrentBot)}" data-char="${escAttr(char.name)}"
@@ -15834,6 +15832,8 @@
                                    onblur="saveEyePrompt(this)" onclick="event.stopPropagation()"
                                    style="border:none; background:var(--surface); color:var(--text); font-size:0.8rem; padding:5px 8px; min-width:180px;">
                         </div>
+                        <button onclick="event.stopPropagation(); togglePromptPreviewModal('${escAttr(char.name)}', this)"
+                            style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:6px 10px; border-radius:6px; cursor:pointer; font-size:0.8rem; white-space:nowrap;">패치 프롬프트 미리보기</button>
                         <span id="patch-status-${charIdx}" style="display:inline-flex; align-items:center; gap:3px; margin-left:4px; font-size:0.7rem; color:gray; flex-shrink:0;">
                             <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:gray;"></span>
                             <span class="patch-label">확인중</span>
@@ -15848,12 +15848,12 @@
                         </div>
                     </div>
                     <div class="card-section" id="char-lora-section-${charIdx}">
-                        <div class="card-section-title">로라 설정</div>
-                        <div class="lora-section-inner">
+                        <div class="card-section-title" style="display:inline-flex; align-items:center; gap:10px; margin-bottom:0;">
+                            <span>로라 설정</span>
                             <button class="lora-add-btn" onclick="event.stopPropagation(); openBotCharLoraPicker('${escAttr(char.name)}', ${charIdx})"
-                                style="font-size:0.8rem; padding:8px 16px; border:1px dashed var(--border); background:var(--surface2); border-radius:6px; cursor:pointer; color:var(--text2); transition:border-color 0.15s;">+ LoRA 추가</button>
-                            <div id="char-lora-list-${charIdx}" class="lora-cards-row" style="margin-top:8px;"></div>
+                                style="font-size:0.75rem; padding:4px 10px; border:1px dashed var(--border); background:var(--surface2); border-radius:6px; cursor:pointer; color:var(--text2); transition:border-color 0.15s;">+ LoRA 추가</button>
                         </div>
+                        <div id="char-lora-list-${charIdx}" class="lora-cards-row" style="margin-top:8px;"></div>
                     </div>
                 `;
                 grid.appendChild(card);
@@ -15889,7 +15889,7 @@
                                     onclick="event.stopPropagation(); openLightbox(this.src)"
                                     style="cursor:zoom-in; border:3px solid var(--accent); border-radius:6px;">
                                 <div class="lv1-prompt-box" data-filename="_face_image.webp" data-character="${escAttr(charName)}" data-negative="${escAttr(utilImg.negative || '')}"
-                                    style="width:300px; background:var(--surface2); border-radius:0 0 6px 6px;">
+                                    style="width:240px; background:var(--surface2); border-radius:0 0 6px 6px;">
                                     <div class="lv1-prompt-text" style="padding:4px 6px; font-size:0.7rem; color:var(--text2); line-height:1.3; word-break:break-word;
                                         max-height:3.9em; overflow:hidden; cursor:pointer;"
                                         onclick="lv1TogglePrompt(this)">${escHtml(utilImg.prompt || '<프롬프트 없음>')}</div>
@@ -15923,7 +15923,7 @@
                                     onclick="event.stopPropagation(); openLightbox(this.src)"
                                     style="cursor:zoom-in; ${isFirst ? 'border:6px solid #22c55e; border-radius:6px;' : ''}">
                                 <div class="lv1-prompt-box" data-filename="${escAttr(img.filename)}" data-character="${escAttr(charName)}" data-negative="${escAttr(img.negative || '')}"
-                                    style="width:300px; background:var(--surface2); border-radius:0 0 6px 6px;">
+                                    style="width:240px; background:var(--surface2); border-radius:0 0 6px 6px;">
                                     <div class="lv1-prompt-text" style="padding:4px 6px; font-size:0.7rem; color:var(--text2); line-height:1.3; word-break:break-word;
                                         max-height:3.9em; overflow:hidden; cursor:pointer;"
                                         onclick="lv1TogglePrompt(this)">${escHtml(img.prompt || '<프롬프트 없음>')}</div>
@@ -15959,40 +15959,35 @@
             if (!container) return;
             if (!loras || loras.length === 0) { container.innerHTML = ''; return; }
             container.innerHTML = loras.map((lora, i) => {
-                const source = lora.source === 'bot' ? `봇/${escHtml(lora.bot_name || '')}/${escHtml(lora.project_name || '')}` : `에셋/${escHtml(lora.character || '')}/${escHtml(lora.name || '')}`;
-                return `<div style="background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:10px; width:220px; display:flex; flex-direction:column; gap:6px;">
-                    <div style="display:flex; align-items:center; gap:8px;">
-                        ${lora.preview_url ? `<img src="${escHtml(lora.preview_url)}" style="width:40px; height:40px; object-fit:contain; border-radius:4px; border:1px solid var(--border);" loading="lazy" onerror="this.style.display='none'">` : '<div style="width:40px; height:40px; background:var(--surface); border-radius:4px; display:flex; align-items:center; justify-content:center; font-size:1.2rem;">📦</div>'}
-                        <div style="flex:1; min-width:0;">
-                            <div style="font-size:0.75rem; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escHtml(lora.name || '')}</div>
-                            <div style="font-size:0.65rem; color:var(--text2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${source}</div>
-                        </div>
+                const source = lora.source === 'bot' ? `${escHtml(lora.bot_name || '')}/${escHtml(lora.project_name || '')}` : `${escHtml(lora.character || '')}`;
+                return `<div style="padding:8px; background:var(--surface2); border-radius:6px; border:1px solid var(--border); position:relative; width:180px;">
+                    <button onclick="event.stopPropagation(); removeBotCharLora(${charIdx},'${escAttr(charName)}',${i})"
+                        style="position:absolute; top:2px; right:4px; background:none; border:none; color:var(--error); cursor:pointer; font-size:1.2rem; padding:2px 4px;">x</button>
+                    ${lora.preview_url ? `<img src="${escHtml(lora.preview_url)}" style="width:70%; aspect-ratio:1; object-fit:cover; border-radius:6px; display:block; margin:0 auto; cursor:zoom-in;" loading="lazy" onerror="this.style.display='none'" onclick="event.stopPropagation(); openLightbox(this.src)">` : '<div style="width:70%; aspect-ratio:1; background:var(--surface); border-radius:6px; display:flex; align-items:center; justify-content:center; font-size:2rem; margin:0 auto;">📦</div>'}
+                    <div style="margin-top:6px;">
+                        <div style="font-size:0.8rem; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escHtml(lora.name || '')}</div>
+                        <div style="font-size:0.65rem; color:var(--text-secondary);">${escHtml(source)}</div>
                     </div>
-                    <div style="display:flex; align-items:center; gap:4px;">
-                        <span style="font-size:0.65rem; color:var(--text2); width:40px; flex-shrink:0;">트리거</span>
+                    <div style="margin-top:4px;">
+                        <div style="font-size:0.65rem; color:var(--text-secondary); margin-bottom:2px;">트리거 워드</div>
                         <input type="text" value="${escAttr(lora.trigger || '')}" onchange="updateBotCharLoraField(${charIdx},'${escAttr(charName)}',${i},'trigger',this.value)"
                             onclick="event.stopPropagation()"
-                            style="flex:1; padding:2px 6px; font-size:0.7rem; background:var(--surface); border:1px solid var(--border); border-radius:3px; color:var(--text);">
+                            style="width:100%; padding:3px 6px; border:1px solid var(--border); background:var(--surface); color:var(--text); border-radius:4px; font-size:0.75rem;"
+                            placeholder="트리거 워드 입력">
                     </div>
-                    <div style="display:flex; align-items:center; gap:4px;">
-                        <span style="font-size:0.65rem; color:var(--text2); width:40px; flex-shrink:0;">강도</span>
-                        <input type="range" min="0" max="1" step="0.05" value="${lora.strength ?? 0.5}"
+                    <select onchange="updateBotCharLoraField(${charIdx},'${escAttr(charName)}',${i},'BASE',this.value)"
+                        onclick="event.stopPropagation()"
+                        style="width:100%; margin-top:6px; background:var(--surface); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:3px 4px; font-size:0.75rem; cursor:pointer;">
+                        <option value="anima" ${(lora.BASE || 'anima') === 'anima' ? 'selected' : ''}>anima</option>
+                        <option value="sdxl" ${lora.BASE === 'sdxl' ? 'selected' : ''}>sdxl</option>
+                    </select>
+                    <div style="display:flex; align-items:center; gap:6px; margin-top:6px;">
+                        <input type="range" min="0" max="1" step="0.01" value="${lora.strength ?? 0.5}"
                             oninput="updateBotCharLoraField(${charIdx},'${escAttr(charName)}',${i},'strength',parseFloat(this.value)); this.nextElementSibling.textContent=parseFloat(this.value).toFixed(2)"
                             onclick="event.stopPropagation()"
-                            style="flex:1;">
-                        <span style="font-size:0.7rem; width:30px; text-align:right;">${(lora.strength ?? 0.5).toFixed(2)}</span>
+                            style="flex:1; cursor:pointer;">
+                        <span style="font-size:0.7rem; min-width:28px; text-align:right;">${(lora.strength ?? 0.5).toFixed(2)}</span>
                     </div>
-                    <div style="display:flex; align-items:center; gap:4px;">
-                        <span style="font-size:0.65rem; color:var(--text2); width:40px; flex-shrink:0;">BASE</span>
-                        <select onchange="updateBotCharLoraField(${charIdx},'${escAttr(charName)}',${i},'BASE',this.value)"
-                            onclick="event.stopPropagation()"
-                            style="flex:1; padding:2px 6px; font-size:0.7rem; background:var(--surface); border:1px solid var(--border); border-radius:3px; color:var(--text);">
-                            <option value="anima" ${(lora.BASE || 'anima') === 'anima' ? 'selected' : ''}>anima</option>
-                            <option value="sdxl" ${lora.BASE === 'sdxl' ? 'selected' : ''}>sdxl</option>
-                        </select>
-                    </div>
-                    <button onclick="event.stopPropagation(); removeBotCharLora(${charIdx},'${escAttr(charName)}',${i})"
-                        style="width:100%; padding:3px; background:var(--surface); border:1px solid var(--border); border-radius:4px; color:var(--error); cursor:pointer; font-size:0.7rem;">삭제</button>
                 </div>`;
             }).join('');
         }
@@ -16057,7 +16052,7 @@
             overlay.id = 'bot-char-lora-picker-overlay';
             overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10010; display:flex; align-items:center; justify-content:center;';
             overlay.innerHTML = `
-                <div style="background:var(--surface); border-radius:12px; padding:20px; max-width:750px; width:90%; max-height:80vh; display:flex; flex-direction:column;">
+                <div style="background:var(--surface); border-radius:12px; padding:24px; max-width:1100px; width:95%; max-height:95vh; display:flex; flex-direction:column;">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
                         <h3 style="margin:0;">LoRA 선택</h3>
                         <button onclick="document.getElementById('bot-char-lora-picker-overlay').remove()" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer;">x</button>
@@ -16066,10 +16061,8 @@
                         <button id="bclp-tab-asset" onclick="switchBotCharLoraPickerTab('asset')" style="flex:1; padding:8px; border:none; background:var(--accent); color:#fff; cursor:pointer; font-size:0.85rem; font-weight:600;">에셋에서 탐색</button>
                         <button id="bclp-tab-bot" onclick="switchBotCharLoraPickerTab('bot')" style="flex:1; padding:8px; border:none; background:var(--surface2); color:var(--text); cursor:pointer; font-size:0.85rem; font-weight:600;">봇에서 탐색</button>
                     </div>
-                    <div id="bclp-back" style="display:none; margin-bottom:8px;">
-                        <button onclick="bclpGoBack()" style="background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:4px 12px; border-radius:4px; cursor:pointer; font-size:0.8rem;">← 뒤로</button>
-                    </div>
-                    <div id="bclp-grid" style="display:grid; grid-template-columns:repeat(4,1fr); gap:8px; overflow-y:auto; max-height:calc(80vh - 120px);"></div>
+                    <div id="bclp-breadcrumb" style="margin-bottom:10px; font-size:0.8rem; color:var(--text2); display:flex; align-items:center; gap:4px; flex-wrap:wrap;"></div>
+                    <div id="bclp-grid" style="display:grid; grid-template-columns:repeat(3,1fr); gap:12px; overflow-y:auto; max-height:calc(95vh - 160px);"></div>
                 </div>`;
             document.body.appendChild(overlay);
             overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
@@ -16091,14 +16084,18 @@
             }
         }
 
-        function bclpGoBack() {
-            if (_botCharLoraPickerState.tab === 'asset') {
-                showBclpAssetCharacters();
-            } else {
-                const step = _botCharLoraPickerState.botStep;
-                if (step === 'characters') loadBclpBotGrid();
-                else if (step === 'sessions') loadBclpBotCharacters();
-            }
+        function _bclpBreadcrumb(items) {
+            const el = document.getElementById('bclp-breadcrumb');
+            if (!el) return;
+            if (!items || items.length === 0) { el.innerHTML = ''; return; }
+            el.innerHTML = items.map((item, i) => {
+                const isLast = i === items.length - 1;
+                const sep = i > 0 ? '<span style="opacity:0.4;">/</span>' : '';
+                if (isLast) {
+                    return `${sep}<span style="color:var(--text); font-weight:600;">${item.label}</span>`;
+                }
+                return `${sep}<span style="cursor:pointer; transition:color 0.15s;" onclick="${item.action}" onmouseenter="this.style.color='var(--accent)'" onmouseleave="this.style.color=''">${item.label}</span>`;
+            }).join(' ');
         }
 
         // ─── 에셋 탭 ───
@@ -16106,7 +16103,7 @@
             const grid = document.getElementById('bclp-grid');
             if (!grid) return;
             grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--text-secondary);">로딩중...</div>';
-            document.getElementById('bclp-back').style.display = 'none';
+            _bclpBreadcrumb([{ label: '캐릭터 목록' }]);
             try {
                 const resp = await fetch('/api/lora/for_picker');
                 const data = await resp.json();
@@ -16121,14 +16118,14 @@
         function showBclpAssetCharacters() {
             const grid = document.getElementById('bclp-grid');
             if (!grid) return;
-            document.getElementById('bclp-back').style.display = 'none';
+            _bclpBreadcrumb([{ label: '캐릭터 목록' }]);
             const groups = _botCharLoraPickerState.assetData || [];
             grid.innerHTML = '';
             if (groups.length === 0) { grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--text-secondary);">LoRA 항목이 없습니다</div>'; return; }
             groups.forEach(group => {
                 const card = document.createElement('div');
-                card.style.cssText = 'cursor:pointer; border-radius:8px; border:2px solid var(--border); padding:16px 8px; text-align:center; transition:border-color 0.2s, background 0.2s;';
-                card.innerHTML = `<div style="font-size:1.2rem; margin-bottom:4px;">📁</div><div style="font-size:0.85rem; word-break:break-all;">${escapeHtml(group.character)}</div><div style="font-size:0.7rem; color:var(--text-secondary);">${group.entries.length}개</div>`;
+                card.style.cssText = 'cursor:pointer; border-radius:10px; border:2px solid var(--border); padding:24px 12px; text-align:center; transition:border-color 0.2s, background 0.2s;';
+                card.innerHTML = `<div style="font-size:1.6rem; margin-bottom:6px;">📁</div><div style="font-size:0.85rem; word-break:break-all;">${escapeHtml(group.character)}</div><div style="font-size:0.7rem; color:var(--text-secondary);">${group.entries.length}개</div>`;
                 card.onmouseenter = () => { card.style.borderColor = 'var(--accent)'; card.style.background = 'var(--surface2)'; };
                 card.onmouseleave = () => { card.style.borderColor = 'var(--border)'; card.style.background = 'transparent'; };
                 card.onclick = () => showBclpAssetEntries(group);
@@ -16139,8 +16136,10 @@
         function showBclpAssetEntries(group) {
             const grid = document.getElementById('bclp-grid');
             if (!grid) return;
-            document.getElementById('bclp-back').style.display = 'block';
-            document.getElementById('bclp-back').onclick = () => showBclpAssetCharacters();
+            _bclpBreadcrumb([
+                { label: '캐릭터 목록', action: 'showBclpAssetCharacters()' },
+                { label: group.character },
+            ]);
             grid.innerHTML = '';
             if (group.entries.length === 0) { grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--text-secondary);">LoRA 항목이 없습니다</div>'; return; }
             group.entries.forEach(entry => {
@@ -16172,8 +16171,11 @@
         function showBclpAssetSessions(group, entry) {
             const grid = document.getElementById('bclp-grid');
             if (!grid) return;
-            document.getElementById('bclp-back').style.display = 'block';
-            document.getElementById('bclp-back').onclick = () => showBclpAssetEntries(group);
+            _bclpBreadcrumb([
+                { label: '캐릭터 목록', action: 'showBclpAssetCharacters()' },
+                { label: group.character, action: `showBclpAssetEntries(loraPickerData.find(g=>g.character==='${escapeHtml(group.character)}'))` },
+                { label: entry.name },
+            ]);
             grid.innerHTML = '';
             const sessionReps = entry.session_representatives || {};
             const sessionMap = {};
@@ -16233,7 +16235,7 @@
             const grid = document.getElementById('bclp-grid');
             if (!grid) return;
             grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--text-secondary);">로딩중...</div>';
-            document.getElementById('bclp-back').style.display = 'none';
+            _bclpBreadcrumb([{ label: '봇 목록' }]);
             _botCharLoraPickerState.botStep = 'bots';
             try {
                 const resp = await fetchJSON('/api/bot_lora/bots');
@@ -16247,6 +16249,7 @@
 
         function renderBclpBotGrid() {
             const grid = document.getElementById('bclp-grid');
+            _bclpBreadcrumb([{ label: '봇 목록' }]);
             const bots = _botCharLoraPickerState.botBots || [];
             grid.innerHTML = '';
             if (bots.length === 0) { grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--text-secondary);">봇이 없습니다</div>'; return; }
@@ -16266,8 +16269,10 @@
             const grid = document.getElementById('bclp-grid');
             if (!grid) return;
             grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--text-secondary);">로딩중...</div>';
-            document.getElementById('bclp-back').style.display = 'block';
-            document.getElementById('bclp-back').onclick = () => { _botCharLoraPickerState.botStep = 'bots'; renderBclpBotGrid(); };
+            _bclpBreadcrumb([
+                { label: '봇 목록', action: 'loadBclpBotGrid()' },
+                { label: botName },
+            ]);
             _botCharLoraPickerState.botSelectedBot = botName;
             _botCharLoraPickerState.botStep = 'projects';
             try {
@@ -16283,6 +16288,10 @@
 
         function renderBclpBotProjects() {
             const grid = document.getElementById('bclp-grid');
+            _bclpBreadcrumb([
+                { label: '봇 목록', action: 'loadBclpBotGrid()' },
+                { label: _botCharLoraPickerState.botSelectedBot },
+            ]);
             const projects = _botCharLoraPickerState.botProjects || [];
             grid.innerHTML = '';
             if (projects.length === 0) { grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--text-secondary);">학습 프로젝트가 없습니다</div>'; return; }
@@ -16300,8 +16309,11 @@
         function loadBclpBotCharacters(projectName) {
             const grid = document.getElementById('bclp-grid');
             if (!grid) return;
-            document.getElementById('bclp-back').style.display = 'block';
-            document.getElementById('bclp-back').onclick = () => { _botCharLoraPickerState.botStep = 'projects'; renderBclpBotProjects(); };
+            _bclpBreadcrumb([
+                { label: '봇 목록', action: 'loadBclpBotGrid()' },
+                { label: _botCharLoraPickerState.botSelectedBot, action: `_botCharLoraPickerState.botStep='projects'; loadBclpBotProjects('${escapeHtml(_botCharLoraPickerState.botSelectedBot)}')` },
+                { label: projectName },
+            ]);
             _botCharLoraPickerState.botSelectedProject = projectName;
             _botCharLoraPickerState.botStep = 'characters';
             const botData = (_botCharLoraPickerState.botBots || []).find(b => b.name === _botCharLoraPickerState.botSelectedBot);
@@ -16323,21 +16335,31 @@
             const grid = document.getElementById('bclp-grid');
             if (!grid) return;
             grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--text-secondary);">로딩중...</div>';
-            document.getElementById('bclp-back').style.display = 'block';
-            document.getElementById('bclp-back').onclick = () => loadBclpBotCharacters(projectName);
+            _bclpBreadcrumb([
+                { label: '봇 목록', action: 'loadBclpBotGrid()' },
+                { label: _botCharLoraPickerState.botSelectedBot, action: `_botCharLoraPickerState.botStep='projects'; loadBclpBotProjects('${escapeHtml(_botCharLoraPickerState.botSelectedBot)}')` },
+                { label: _botCharLoraPickerState.botSelectedProject, action: `loadBclpBotCharacters('${escapeHtml(_botCharLoraPickerState.botSelectedProject)}')` },
+                { label: charName },
+            ]);
             _botCharLoraPickerState.botSelectedChar = charName;
             _botCharLoraPickerState.botStep = 'sessions';
             try {
                 const enc = encodeURIComponent;
-                const resp = await fetchJSON(`/api/bot_lora/trained/sessions?bot=${enc(botName)}&project=${enc(projectName)}&character=${enc(charName)}`);
-                if (!resp.success) { grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--error);">로드 실패</div>'; return; }
-                renderBclpBotSessions(resp.sessions || [], botName, projectName, charName);
+                const [sessResp, projResp] = await Promise.all([
+                    fetchJSON(`/api/bot_lora/trained/sessions?bot=${enc(botName)}&project=${enc(projectName)}&character=${enc(charName)}`),
+                    fetchJSON(`/api/bot_lora/project?bot=${enc(botName)}&project=${enc(projectName)}`),
+                ]);
+                if (!sessResp.success) { grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--error);">로드 실패</div>'; return; }
+                const profile = (projResp.training_config && projResp.training_config.profile) || 'anima';
+                const charInfo = (projResp.characters || []).find(c => c.name === charName);
+                const trigger = (charInfo && charInfo.trigger) || charName;
+                renderBclpBotSessions(sessResp.sessions || [], botName, projectName, charName, trigger, profile);
             } catch (e) {
                 grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--error);">로드 실패: ' + e.message + '</div>';
             }
         }
 
-        function renderBclpBotSessions(sessions, botName, projectName, charName) {
+        function renderBclpBotSessions(sessions, botName, projectName, charName, trigger, BASE) {
             const grid = document.getElementById('bclp-grid');
             grid.innerHTML = '';
             if (sessions.length === 0) { grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--text-secondary);">학습 세션이 없습니다</div>'; return; }
@@ -16369,8 +16391,8 @@
                             lora_path: repData.safetensors || '',
                             strength: 0.5,
                             preview_url: previewUrl,
-                            trigger: charName,
-                            BASE: 'anima',
+                            trigger: trigger,
+                            BASE: BASE,
                         });
                         setBotCharLoras(_botCharLoraPickerState.charName, loras);
                         renderBotCharLoraList(_botCharLoraPickerState.charIdx, _botCharLoraPickerState.charName, loras);
