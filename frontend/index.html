@@ -4479,6 +4479,7 @@
                         <div style="margin-bottom:8px; display:flex; gap:6px;">
                             <button id="bot-lora-project-add-btn" onclick="addBotLoraProject()" style="flex:1; background:var(--accent); color:#fff; border:none; padding:6px 8px; border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600; display:none;">프로젝트 추가</button>
                             <button id="bot-lora-project-del-btn" onclick="removeBotLoraProject()" style="flex:1; background:var(--error); color:#fff; border:none; padding:6px 8px; border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600; display:none;">삭제</button>
+                            <button id="bot-lora-project-dup-btn" onclick="openBotLoraDuplicateModal()" style="flex:1; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:6px 8px; border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600; display:none;">복제</button>
                         </div>
                         <!-- 학습 설정 (프로젝트 진입 후) -->
                         <div id="bot-lora-config-section" style="display:none;">
@@ -4756,6 +4757,37 @@
             <div class="modal-footer">
                 <button onclick="closeLoraDuplicateModal()" style="padding:8px 16px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:6px; cursor:pointer;">취소</button>
                 <button onclick="confirmLoraDuplicate()" style="padding:8px 20px; background:var(--accent); color:#fff; border:none; border-radius:6px; cursor:pointer; font-weight:600;">복제</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 봇 LoRA 프로젝트 복제 모달 -->
+    <div class="modal" id="bot-lora-duplicate-modal" onclick="if (event.target === this) closeBotLoraDuplicateModal()">
+        <div class="modal-content" style="max-width:480px;">
+            <div class="modal-header">
+                <h2>학습 프로젝트 복제</h2>
+                <button class="modal-close" onclick="closeBotLoraDuplicateModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <!-- 원본 정보 -->
+                <div style="margin-bottom:14px; padding:10px; background:var(--surface1); border-radius:8px; font-size:0.85rem;">
+                    <div style="font-weight:600; margin-bottom:4px;">원본 프로젝트</div>
+                    <span id="bot-dup-source-info">-</span>
+                </div>
+                <!-- 안내 메시지 -->
+                <div style="margin-bottom:14px; padding:10px; background:rgba(255,180,0,0.1); border:1px solid rgba(255,180,0,0.3); border-radius:8px; font-size:0.8rem; color:var(--text-secondary);">
+                    학습 이미지, 테스트 이미지, 프롬프트, 학습 설정이 복제됩니다.<br>
+                    <strong style="color:var(--text);">학습된 LoRA는 복제되지 않습니다.</strong>
+                </div>
+                <!-- 새 프로젝트명 -->
+                <div style="margin-bottom:10px;">
+                    <label style="font-size:0.85rem; font-weight:600; display:block; margin-bottom:4px;">새 프로젝트 이름 <span style="color:var(--error);">*</span></label>
+                    <input id="bot-dup-project-name" type="text" placeholder="예: anima-v11-v2" style="width:100%; padding:8px; border-radius:6px; border:1px solid var(--border); background:var(--surface1); color:var(--text); font-size:0.9rem;">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button onclick="closeBotLoraDuplicateModal()" style="padding:8px 16px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:6px; cursor:pointer;">취소</button>
+                <button onclick="confirmBotLoraDuplicate()" style="padding:8px 20px; background:var(--accent); color:#fff; border:none; border-radius:6px; cursor:pointer; font-weight:600;">복제</button>
             </div>
         </div>
     </div>
@@ -14123,6 +14155,7 @@
             document.getElementById('bot-lora-config-section').style.display = 'none';
             document.getElementById('bot-lora-project-add-btn').style.display = '';
             document.getElementById('bot-lora-project-del-btn').style.display = 'none';
+            document.getElementById('bot-lora-project-dup-btn').style.display = 'none';
             await loadBotLoraProjectGrid();
         }
 
@@ -14140,8 +14173,7 @@
                 emptyEl.style.display = 'none';
                 grid.style.display = '';
                 grid.innerHTML = resp.projects.map(p => `
-                    <div class="asset-gallery-card" onclick="enterBotLoraProject('${escapeHtml(p.name)}')" style="position:relative;" onmouseenter="this.querySelector('.dup-btn').style.opacity=1" onmouseleave="this.querySelector('.dup-btn').style.opacity=0">
-                        <button class="dup-btn" onclick="event.stopPropagation(); duplicateBotLoraProject('${escapeHtml(p.name)}')" style="position:absolute; top:6px; right:6px; z-index:5; background:rgba(0,120,215,0.15); color:var(--text); border:1px solid rgba(0,120,215,0.3); border-radius:4px; padding:2px 8px; font-size:0.7rem; font-weight:600; cursor:pointer; opacity:0; transition:opacity 0.15s;">복제</button>
+                    <div class="asset-gallery-card" onclick="enterBotLoraProject('${escapeHtml(p.name)}')">
                         <div class="gallery-thumb-placeholder" style="display:flex;align-items:center;justify-content:center;font-size:2.5rem;opacity:0.4;">📁</div>
                         <div style="padding:10px;">
                             <div style="font-weight:600; font-size:0.9rem;">${escapeHtml(p.name)}</div>
@@ -14165,6 +14197,7 @@
             document.getElementById('bot-lora-config-section').style.display = '';
             document.getElementById('bot-lora-project-add-btn').style.display = 'none';
             document.getElementById('bot-lora-project-del-btn').style.display = '';
+            document.getElementById('bot-lora-project-dup-btn').style.display = '';
             await loadBotLoraProject();
         }
 
@@ -14540,19 +14573,30 @@
             } catch (e) { console.error('[BOT_LORA] 프로젝트 추가 실패:', e); showToast('추가 실패', 'error'); }
         }
 
-        async function duplicateBotLoraProject(srcProject) {
-            if (!botLoraCurrentBot) return;
-            const dstName = prompt(`프로젝트 "${srcProject}" 복제\n새 프로젝트 이름:`);
-            if (!dstName || !dstName.trim()) return;
+        async function openBotLoraDuplicateModal() {
+            if (!botLoraCurrentBot || !botLoraCurrentProject) return;
+            document.getElementById('bot-dup-source-info').textContent = `${botLoraCurrentBot} / ${botLoraCurrentProject}`;
+            document.getElementById('bot-dup-project-name').value = '';
+            document.getElementById('bot-lora-duplicate-modal').style.display = 'flex';
+        }
+
+        function closeBotLoraDuplicateModal() {
+            document.getElementById('bot-lora-duplicate-modal').style.display = 'none';
+        }
+
+        async function confirmBotLoraDuplicate() {
+            const dstName = document.getElementById('bot-dup-project-name').value.trim();
+            if (!dstName) { showToast('새 프로젝트 이름을 입력하세요', 'error'); return; }
             try {
                 const resp = await fetchJSON('/api/bot_lora/project/duplicate', {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ bot: botLoraCurrentBot, src_project: srcProject, dst_project: dstName.trim() })
+                    body: JSON.stringify({ bot: botLoraCurrentBot, src_project: botLoraCurrentProject, dst_project: dstName })
                 });
                 if (resp.success) {
-                    const loraInfo = (resp.copied_lora_chars && resp.copied_lora_chars.length > 0) ? ` (LoRA ${resp.copied_lora_chars.length}명 복제)` : '';
-                    showToast(`프로젝트 복제 완료${loraInfo}`, 'success');
+                    showToast(`프로젝트 복제 완료: ${dstName}`, 'success');
+                    closeBotLoraDuplicateModal();
                     await loadBotLoraProjectGrid();
+                    enterBotLoraBot(botLoraCurrentBot);
                 } else {
                     showToast(resp.error || '복제 실패', 'error');
                 }

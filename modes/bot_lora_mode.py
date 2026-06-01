@@ -268,7 +268,7 @@ def add_project(bot_name: str, project_name: str) -> dict:
 
 
 def duplicate_project(bot_name: str, src_project_name: str, dst_project_name: str, lora_load_path: str = "") -> dict:
-    """학습 프로젝트 복제 (학습 데이터, 설정, 학습된 LoRA 포함)"""
+    """학습 프로젝트 복제 (학습 데이터, 설정만 복제. 학습된 LoRA는 복제하지 않음)"""
     if not bot_name:
         return {"success": False, "error": "봇 이름 누락"}
     if not src_project_name or not dst_project_name:
@@ -306,9 +306,14 @@ def duplicate_project(bot_name: str, src_project_name: str, dst_project_name: st
     else:
         os.makedirs(dst_dir, exist_ok=True)
 
-    # JSON 설정 복제
+    # JSON 설정 복제 (session_representatives는 학습된 LoRA 참조이므로 제외)
     import copy
     dst_cfg = copy.deepcopy(src_cfg)
+
+    # 학습된 LoRA 참조 제거
+    for char_name, char_data in dst_cfg.get("characters", {}).items():
+        if "session_representatives" in char_data:
+            del char_data["session_representatives"]
 
     # lora_save_path에 원본 프로젝트명이 포함되어 있으면 대상 프로젝트명으로 교체
     training_config = dst_cfg.get("training_config", {})
@@ -320,28 +325,8 @@ def duplicate_project(bot_name: str, src_project_name: str, dst_project_name: st
     bot_projects[dst_project_name] = dst_cfg
     _save_bot_lora_manage(data)
 
-    # 학습된 LoRA 폴더 복제
-    copied_lora_chars = []
-    if lora_load_path:
-        bot_data = _load_bot_data()
-        for b in bot_data.get("bots", []):
-            if b.get("name") == bot_name:
-                for ch in b.get("characters", []):
-                    cn = ch.get("name", "")
-                    if cn:
-                        src_lora_dir = _trained_lora_dir(lora_load_path, bot_name, src_project_name, cn)
-                        if os.path.isdir(src_lora_dir):
-                            dst_lora_dir = _trained_lora_dir(lora_load_path, bot_name, dst_project_name, cn)
-                            try:
-                                shutil.copytree(src_lora_dir, dst_lora_dir)
-                                copied_lora_chars.append(cn)
-                                print(f"[BOT_LORA] 학습된 LoRA 복제: {src_lora_dir} -> {dst_lora_dir}")
-                            except Exception as e:
-                                print(f"[BOT_LORA] 학습된 LoRA 복제 실패: {cn} - {e}")
-                break
-
-    print(f"[BOT_LORA] 프로젝트 복제 완료: {bot_name}/{src_project_name} -> {dst_project_name} (LoRA {len(copied_lora_chars)}명)")
-    return {"success": True, "name": dst_project_name, "copied_lora_chars": copied_lora_chars}
+    print(f"[BOT_LORA] 프로젝트 복제 완료: {bot_name}/{src_project_name} -> {dst_project_name}")
+    return {"success": True, "name": dst_project_name}
 
 
 def remove_project(bot_name: str, project_name: str, lora_load_path: str = "") -> dict:
