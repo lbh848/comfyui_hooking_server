@@ -14221,7 +14221,7 @@
                     const latest = Object.entries(sessionReps).sort((a,b) => b[0].localeCompare(a[0]))[0];
                     try {
                         const repData = JSON.parse(latest[1]);
-                        return repData.preview ? `<img src="${repData.preview}" onclick="openLightbox(this.src)" style="width:180px; max-height:240px; object-fit:contain; border-radius:6px; border:2px solid var(--accent); cursor:zoom-in;">` : '';
+                        return repData.preview ? `<img src="${repData.preview}" onclick="openLightbox(this.src)" onerror="this.style.display='none'" style="width:180px; max-height:240px; object-fit:contain; border-radius:6px; border:2px solid var(--accent); cursor:zoom-in;">` : '';
                     } catch(e) { return ''; }
                 })() : '';
 

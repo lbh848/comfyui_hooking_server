@@ -1285,6 +1285,14 @@ def delete_bot_trained_session(lora_load_path: str, bot_name: str, project_name:
     try:
         file_count = sum(1 for _ in os.listdir(session_dir))
         shutil.rmtree(session_dir)
+        # 세션 대표 설정에서도 해당 세션 키 제거
+        manage_data = _load_bot_lora_manage()
+        char_cfg = _get_char_config(manage_data, bot_name, project_name, char_name) or {}
+        session_reps = char_cfg.get("session_representatives", {})
+        if session in session_reps:
+            del session_reps[session]
+            _save_bot_lora_manage(manage_data)
+            print(f"[BOT_LORA_TRAINED] 세션 대표 설정에서 제거: {session}")
         print(f"[BOT_LORA_TRAINED] 세션 폴더 삭제 완료: {session_dir} ({file_count}개 파일)")
         return {"success": True, "deleted_session": session, "file_count": file_count}
     except Exception as e:
