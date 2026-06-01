@@ -71,16 +71,20 @@ def list_loras() -> list:
 
 def create_lora(trigger: str) -> dict:
     data = _load_data()
-    lora_id = _safe_dirname(trigger)
+    base = _safe_dirname(trigger)
+    import hashlib, time
+    short_hash = hashlib.md5(f"{trigger}{time.time()}".encode()).hexdigest()[:6]
+    lora_id = f"{base}-{short_hash}"
     if lora_id in data.get("instance_loras", {}):
         print(f"[INSTANCE_LORA] 이미 존재: {lora_id}")
-        return {"success": False, "error": "이미 존재하는 트리거워드입니다"}
+        return {"success": False, "error": "이미 존재하는 로라입니다"}
 
     import datetime
     now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 
     data.setdefault("instance_loras", {})[lora_id] = {
         "trigger": trigger,
+        "lora_name": lora_id,
         "images": [],
         "sessions": {},
         "usage_count": 0,

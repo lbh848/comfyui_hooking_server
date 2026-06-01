@@ -7391,13 +7391,13 @@ async def handle_api_instance_lora_training_start(request):
 
         step = profile_settings.get("step_per_image", 125)
         il_rate = profile_settings.get("il_rate", 0.00025)
-        save_step = profile_settings.get("save_per_step", 25)
+        save_step = 25
         folder = profile_settings.get("multi_img_folder_name", "soya_lora")
-        gen_w = profile_settings.get("gen_w", 700)
-        gen_h = profile_settings.get("gen_h", 1024)
+        gen_w = 1
+        gen_h = 1
         upscale = profile_settings.get("upscale", False)
         resolution = profile_settings.get("resolution", 1024)
-        save_after = profile_settings.get("save_after", 30)
+        save_after = 0
         dim = profile_settings.get("dim", 32)
         alpha = profile_settings.get("alpha", 16)
 
@@ -7527,6 +7527,73 @@ app.router.add_post("/api/instance_lora/prompt", handle_api_instance_lora_prompt
 app.router.add_get("/api/instance_lora/prompt", handle_api_instance_lora_prompt_get)
 app.router.add_post("/api/instance_lora/training/start", handle_api_instance_lora_training_start)
 app.router.add_post("/api/instance_lora/images/upload", handle_api_instance_lora_images_upload)
+
+
+async def handle_api_instance_lora_preview(request):
+    """인스턴스 로라 학습 프롬프트 미리보기 - 실제 전송 프롬프트와 동일"""
+    try:
+        profile = request.query.get("profile", "anima")
+        lora_id = request.query.get("id", "").strip()
+        if profile not in ("anima", "sdxl"):
+            return web.json_response({"success": False, "error": "profile 오류"}, status=400)
+        if not lora_id:
+            return web.json_response({"success": True, "data": {"positive": "(캐릭터를 선택하면 프롬프트가 표시됩니다)", "profile": profile}})
+
+        from modes.instance_lora_mode import get_settings, get_lora_detail, list_images, get_image_prompt, _safe_dirname
+        settings = get_settings().get("data", {})
+        ps = settings.get(profile, {})
+
+        step = ps.get("step_per_image", 125)
+        il_rate = ps.get("il_rate", 0.00025)
+        save_step = 25
+        folder = ps.get("multi_img_folder_name", "soya_lora")
+        resolution = ps.get("resolution", 1024)
+        dim = ps.get("dim", 32)
+        alpha = ps.get("alpha", 16)
+
+        lora_id = _safe_dirname(lora_id)
+        lora_detail = get_lora_detail(lora_id)
+        if not lora_detail.get("success"):
+            return web.json_response({"success": True, "data": {"positive": f"(로라 없음: {lora_id})", "profile": profile}})
+
+        trigger = lora_detail["data"].get("trigger", "")
+        lora_save_path = f"SOYA_INSTANCE_LORA/{profile}/{_safe_dirname(lora_id)}"
+
+        images_list = list_images(lora_id)
+        training_images = []
+        for filename in images_list:
+            prompt_result = get_image_prompt(lora_id, filename)
+            training_images.append({
+                "filename": filename,
+                "positive": prompt_result.get("data", {}).get("positive", "") if prompt_result.get("success") else "",
+                "negative": prompt_result.get("data", {}).get("negative", "") if prompt_result.get("success") else "",
+            })
+
+        positive_text = _build_lora_training_text(
+            training_images, trigger, profile, step, il_rate, save_step, folder,
+            "positive", lora_save_path, 1, 1, False, resolution,
+            [], 0, dim, alpha,
+        )
+        positive_text = positive_text.replace("[TEST_POSITIVE]\n", "[TEST_POSITIVE]\ninstance\n")
+        positive_text = positive_text.replace("[TEST_NEGATIVE]\n", "[TEST_NEGATIVE]\ninstance\n")
+
+        negative_text = _build_lora_training_text(
+            training_images, trigger, profile, step, il_rate, save_step, folder,
+            "negative", lora_save_path, 1, 1, False, resolution,
+            [], 0, dim, alpha,
+        )
+
+        return web.json_response({
+            "success": True,
+            "data": {"positive": positive_text, "negative": negative_text, "profile": profile}
+        })
+    except Exception as e:
+        print(f"[INSTANCE_LORA_API] 프리뷰 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+app.router.add_get("/api/instance_lora/preview", handle_api_instance_lora_preview)
 
 
 async def handle_api_open_folder(request):

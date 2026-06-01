@@ -3020,6 +3020,8 @@
         .noti-md th { background:var(--surface2); font-weight:600; }
         .noti-md hr { border:none; border-top:1px solid var(--border); margin:12px 0; }
         @keyframes noti-bubble-in { from { opacity:0; transform:translateY(20px); } to { opacity:1; transform:translateY(0); } }
+        .iset-input { width:100%; padding:4px; border:1px solid var(--border); border-radius:4px; background:var(--surface1); color:var(--text); font-size:0.8rem; }
+        .iset-input:disabled { opacity:0.4; cursor:not-allowed; background:var(--surface2); }
     </style>
 </head>
 <body>
@@ -4637,44 +4639,68 @@
                             </div>
                         </div>
                         <!-- 인스턴스 로라 카드 그리드 -->
-                        <div id="instance-lora-grid" style="padding:16px; display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); gap:16px;"></div>
+                        <div id="instance-lora-grid" style="padding:16px; display:grid; grid-template-columns:repeat(auto-fill, minmax(280px, 1fr)); gap:16px;"></div>
                         <div id="instance-lora-empty" style="display:none; text-align:center; padding:48px; color:var(--text-secondary);">
                             <p>인스턴스 로라가 없습니다.</p>
                             <p>"+ 로라 생성" 버튼으로 새 로라를 만드세요.</p>
                         </div>
                     </div>
-                    <!-- 인스턴스 로라 사이드바 (상세 뷰) -->
-                    <div class="asset-sidebar" id="instance-lora-sidebar" style="display:none;">
-                        <div style="padding:12px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between;">
-                            <span id="instance-lora-detail-title" style="font-weight:600; font-size:0.9rem;"></span>
-                            <button onclick="closeInstanceLoraDetail()" style="background:none; border:none; cursor:pointer; color:var(--text-secondary); font-size:1.2rem;">&times;</button>
+                    <!-- 인스턴스 로라 사이드바 (공통 학습 설정) -->
+                    <div class="asset-sidebar" id="instance-lora-sidebar">
+                        <div style="padding:12px; border-bottom:1px solid var(--border);">
+                            <span style="font-weight:600; font-size:0.9rem;">학습 설정</span>
                         </div>
-                        <!-- 학습 이미지 목록 -->
-                        <div id="instance-lora-detail-images" style="padding:12px; overflow-y:auto; max-height:40vh;"></div>
-                        <!-- 설정 (인라인) -->
+                        <!-- 설정 (항상 펼쳐짐) -->
                         <div style="padding:12px; border-top:1px solid var(--border);">
-                            <details id="instance-lora-settings-details">
-                                <summary style="font-weight:600; font-size:0.85rem; cursor:pointer; margin-bottom:8px;">학습 설정</summary>
-                                <div style="margin-bottom:8px;">
-                                    <label style="font-size:0.8rem; font-weight:600; display:block; margin-bottom:4px;">프로필</label>
-                                    <select id="instance-lora-train-profile" onchange="loadInstanceLoraInlineSettings()" style="width:100%; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); font-size:0.85rem;">
-                                        <option value="anima">ANIMA</option>
-                                        <option value="sdxl">SDXL</option>
-                                    </select>
+                            <div style="margin-bottom:10px;">
+                                <label style="font-size:0.8rem; font-weight:600; display:block; margin-bottom:4px;">캐릭터</label>
+                                <select id="instance-lora-target" onchange="onInstanceTargetChange()" style="width:100%; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); font-size:0.85rem;">
+                                    <option value="">-- 선택 --</option>
+                                </select>
+                            </div>
+                            <div style="margin-bottom:10px;">
+                                <label style="font-size:0.8rem; font-weight:600; display:block; margin-bottom:4px;">프로필</label>
+                                <select id="instance-lora-train-profile" onchange="onInstanceProfileChange()" style="width:100%; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); font-size:0.85rem;">
+                                    <option value="anima">ANIMA만</option>
+                                    <option value="sdxl">SDXL만</option>
+                                    <option value="both">둘 다 (ANIMA + SDXL)</option>
+                                </select>
+                            </div>
+                            <!-- ANIMA 설정 블록 -->
+                            <div id="iset-anima-block" style="margin-bottom:10px; padding:8px; border:1px solid var(--border); border-radius:6px;">
+                                <div onclick="toggleBlock('iset-anima-body')" style="font-weight:600; font-size:0.78rem; margin-bottom:6px; color:var(--accent); cursor:pointer; display:flex; align-items:center; gap:4px;">
+                                    <span id="iset-anima-body-arrow" style="transition:transform 0.2s;">▼</span> ANIMA
                                 </div>
-                                <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
-                                    <div><label style="font-size:0.75rem; color:var(--text-secondary);">STEP</label><input id="iset-step" type="number" value="125" style="width:100%;padding:4px;border:1px solid var(--border);border-radius:4px;background:var(--surface1);color:var(--text);font-size:0.8rem;"></div>
-                                    <div><label style="font-size:0.75rem; color:var(--text-secondary);">IL_RATE</label><input id="iset-ilrate" type="number" step="0.00001" value="0.00025" style="width:100%;padding:4px;border:1px solid var(--border);border-radius:4px;background:var(--surface1);color:var(--text);font-size:0.8rem;"></div>
-                                    <div><label style="font-size:0.75rem; color:var(--text-secondary);">SAVE_STEP</label><input id="iset-save-step" type="number" value="25" style="width:100%;padding:4px;border:1px solid var(--border);border-radius:4px;background:var(--surface1);color:var(--text);font-size:0.8rem;"></div>
-                                    <div><label style="font-size:0.75rem; color:var(--text-secondary);">GEN_W</label><input id="iset-genw" type="number" value="700" style="width:100%;padding:4px;border:1px solid var(--border);border-radius:4px;background:var(--surface1);color:var(--text);font-size:0.8rem;"></div>
-                                    <div><label style="font-size:0.75rem; color:var(--text-secondary);">GEN_H</label><input id="iset-genh" type="number" value="1024" style="width:100%;padding:4px;border:1px solid var(--border);border-radius:4px;background:var(--surface1);color:var(--text);font-size:0.8rem;"></div>
-                                    <div><label style="font-size:0.75rem; color:var(--text-secondary);">RESOLUTION</label><input id="iset-resolution" type="number" value="1024" style="width:100%;padding:4px;border:1px solid var(--border);border-radius:4px;background:var(--surface1);color:var(--text);font-size:0.8rem;"></div>
-                                    <div><label style="font-size:0.75rem; color:var(--text-secondary);">SAVE_AFTER</label><input id="iset-save-after" type="number" value="30" style="width:100%;padding:4px;border:1px solid var(--border);border-radius:4px;background:var(--surface1);color:var(--text);font-size:0.8rem;"></div>
-                                    <div><label style="font-size:0.75rem; color:var(--text-secondary);">DIM</label><input id="iset-dim" type="number" value="32" style="width:100%;padding:4px;border:1px solid var(--border);border-radius:4px;background:var(--surface1);color:var(--text);font-size:0.8rem;"></div>
-                                    <div><label style="font-size:0.75rem; color:var(--text-secondary);">ALPHA</label><input id="iset-alpha" type="number" value="16" style="width:100%;padding:4px;border:1px solid var(--border);border-radius:4px;background:var(--surface1);color:var(--text);font-size:0.8rem;"></div>
+                                <div id="iset-anima-body">
+                                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
+                                        <div><label style="font-size:0.7rem; color:var(--text-secondary);">STEP</label><input data-profile="anima" data-key="step_per_image" type="number" value="125" class="iset-input"></div>
+                                        <div><label style="font-size:0.7rem; color:var(--text-secondary);">IL_RATE</label><input data-profile="anima" data-key="il_rate" type="number" step="0.00001" value="0.00025" class="iset-input"></div>
+                                        <div><label style="font-size:0.7rem; color:var(--text-secondary);">RESOLUTION</label><input data-profile="anima" data-key="resolution" type="number" value="1024" class="iset-input"></div>
+                                        <div><label style="font-size:0.7rem; color:var(--text-secondary);">DIM</label><input data-profile="anima" data-key="dim" type="number" value="32" class="iset-input"></div>
+                                        <div><label style="font-size:0.7rem; color:var(--text-secondary);">ALPHA</label><input data-profile="anima" data-key="alpha" type="number" value="16" class="iset-input"></div>
+                                    </div>
                                 </div>
-                                <button onclick="saveInstanceLoraInlineSettings()" style="width:100%;margin-top:8px;padding:4px 10px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.78rem;">설정 저장</button>
-                            </details>
+                                <button onclick="showPromptPreview('anima')" style="margin-top:6px;width:100%;padding:4px 8px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.72rem;font-weight:600;">프롬프트 Raw 보기</button>
+                            </div>
+                            </div>
+                            <!-- SDXL 설정 블록 -->
+                            <div id="iset-sdxl-block" style="margin-bottom:10px; padding:8px; border:1px solid var(--border); border-radius:6px;">
+                                <div onclick="toggleBlock('iset-sdxl-body')" style="font-weight:600; font-size:0.78rem; margin-bottom:6px; color:var(--accent); cursor:pointer; display:flex; align-items:center; gap:4px;">
+                                    <span id="iset-sdxl-body-arrow" style="transition:transform 0.2s;">▼</span> SDXL
+                                </div>
+                                <div id="iset-sdxl-body">
+                                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
+                                        <div><label style="font-size:0.7rem; color:var(--text-secondary);">STEP</label><input data-profile="sdxl" data-key="step_per_image" type="number" value="125" class="iset-input"></div>
+                                        <div><label style="font-size:0.7rem; color:var(--text-secondary);">IL_RATE</label><input data-profile="sdxl" data-key="il_rate" type="number" step="0.00001" value="0.00025" class="iset-input"></div>
+                                        <div><label style="font-size:0.7rem; color:var(--text-secondary);">RESOLUTION</label><input data-profile="sdxl" data-key="resolution" type="number" value="1024" class="iset-input"></div>
+                                        <div><label style="font-size:0.7rem; color:var(--text-secondary);">DIM</label><input data-profile="sdxl" data-key="dim" type="number" value="32" class="iset-input"></div>
+                                        <div><label style="font-size:0.7rem; color:var(--text-secondary);">ALPHA</label><input data-profile="sdxl" data-key="alpha" type="number" value="16" class="iset-input"></div>
+                                    </div>
+                                </div>
+                                <button onclick="showPromptPreview('sdxl')" style="margin-top:6px;width:100%;padding:4px 8px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.72rem;font-weight:600;">프롬프트 Raw 보기</button>
+                            </div>
+                            </div>
+                            <button onclick="saveInstanceLoraInlineSettings()" style="width:100%;margin-top:4px;padding:4px 10px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.78rem;">설정 저장</button>
                         </div>
                         <!-- 학습 시작 -->
                         <div style="padding:12px; border-top:1px solid var(--border);">
@@ -4692,6 +4718,31 @@
                         <div id="instance-lora-progress-bar" style="height:100%; background:var(--accent); border-radius:3px; transition:width 0.3s; width:0%;"></div>
                     </div>
                     <div id="instance-lora-progress-info" style="margin-top:6px; font-size:0.75rem; color:var(--text-secondary);"></div>
+                </div>
+                <!-- 인스턴스 로라 이미지 상세 모달 -->
+                <div class="modal" id="instance-lora-image-modal" style="display:none;">
+                    <div class="modal-content" style="max-width:420px;">
+                        <div style="padding:12px 16px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between;">
+                            <span id="instance-image-modal-title" style="font-weight:600; font-size:0.95rem;"></span>
+                            <button onclick="closeInstanceImageModal()" style="background:none; border:none; cursor:pointer; color:var(--text-secondary); font-size:1.2rem;">&times;</button>
+                        </div>
+                        <div id="instance-image-modal-body" style="padding:16px; max-height:70vh; overflow-y:auto;"></div>
+                    </div>
+                </div>
+                <!-- 프롬프트 Raw 보기 모달 -->
+                <div class="modal" id="instance-prompt-modal" style="display:none;">
+                    <div class="modal-content" style="max-width:800px;">
+                        <div style="padding:12px 16px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between;">
+                            <span id="instance-prompt-modal-title" style="font-weight:600; font-size:0.95rem;"></span>
+                            <button onclick="document.getElementById('instance-prompt-modal').style.display='none'" style="background:none; border:none; cursor:pointer; color:var(--text-secondary); font-size:1.2rem;">&times;</button>
+                        </div>
+                        <div style="padding:16px;">
+                            <div style="font-weight:600;font-size:0.8rem;margin-bottom:4px;">긍정 프롬프트</div>
+                            <textarea id="instance-prompt-positive" readonly style="width:100%;height:40vh;padding:8px;background:var(--surface1);color:var(--text);border:1px solid var(--border);border-radius:6px;font-size:0.78rem;font-family:monospace;resize:vertical;white-space:pre;overflow:auto;"></textarea>
+                            <div style="font-weight:600;font-size:0.8rem;margin-top:8px;margin-bottom:4px;">부정 프롬프트</div>
+                            <textarea id="instance-prompt-negative" readonly style="width:100%;height:15vh;padding:8px;background:var(--surface1);color:var(--text);border:1px solid var(--border);border-radius:6px;font-size:0.78rem;font-family:monospace;resize:vertical;white-space:pre;overflow:auto;"></textarea>
+                        </div>
+                    </div>
                 </div>
             </div><!-- /lora-instance-mode -->
         </div>
@@ -14319,11 +14370,30 @@
 
         // ─── Instance LoRA ─────────────────────────────────────────
         let _instanceLoraCurrentId = null;
+        let _instanceLoraPendingProfile = null;
 
         async function initInstanceLoraTab() {
             _instanceLoraCurrentId = null;
-            document.getElementById('instance-lora-sidebar').style.display = 'none';
+            closeInstanceImageModal();
             await loadInstanceLoraGrid();
+            loadInstanceLoraInlineSettings();
+            refreshInstanceTargetDropdown();
+        }
+
+        function onInstanceTargetChange() {
+            _instanceLoraCurrentId = document.getElementById('instance-lora-target').value || null;
+        }
+
+        async function refreshInstanceTargetDropdown() {
+            const sel = document.getElementById('instance-lora-target');
+            const prev = _instanceLoraCurrentId;
+            try {
+                const resp = await fetchJSON('/api/instance_lora/list');
+                if (!resp.success) return;
+                const items = resp.data || [];
+                sel.innerHTML = '<option value="">-- 선택 --</option>' + items.map(l => `<option value="${esc(l.id)}">${esc(l.trigger)} (${esc(l.id)})</option>`).join('');
+                if (prev && items.some(l => l.id === prev)) sel.value = prev;
+            } catch (e) {}
         }
 
         async function loadInstanceLoraGrid() {
@@ -14345,13 +14415,14 @@
                     const badges = [];
                     if (lora.has_anima) badges.push('<span style="background:rgba(80,200,120,0.15);color:#50c878;padding:2px 6px;border-radius:4px;font-size:0.7rem;font-weight:600;">ANIMA</span>');
                     if (lora.has_sdxl) badges.push('<span style="background:rgba(100,150,255,0.15);color:#6496ff;padding:2px 6px;border-radius:4px;font-size:0.7rem;font-weight:600;">SDXL</span>');
-                    return `<div class="asset-card" onclick="openInstanceLoraDetail('${esc(lora.id)}')" style="cursor:pointer;position:relative;">
+                    return `<div class="asset-card" onclick="openInstanceLoraDetail('${esc(lora.id)}')" style="cursor:pointer;position:relative;border-radius:8px;overflow:hidden;background:var(--surface);border:1px solid var(--border);">
                         <button onclick="event.stopPropagation();deleteInstanceLora('${esc(lora.id)}')" style="position:absolute;top:6px;right:6px;z-index:2;background:rgba(200,60,60,0.85);color:#fff;border:none;border-radius:6px;padding:3px 8px;cursor:pointer;font-size:0.75rem;font-weight:600;">삭제</button>
-                        <div class="asset-card-img" style="height:200px;${imgSrc ? `background-image:url('${imgSrc}');` : ''}">
+                        <div class="asset-card-img" style="height:300px;background-size:cover;background-position:center top;background-repeat:no-repeat;border-radius:8px 8px 0 0;${imgSrc ? `background-image:url('${imgSrc}');` : ''}">
                             ${imgSrc ? '' : '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-secondary);">이미지 없음</div>'}
                         </div>
                         <div style="padding:8px;">
-                            <div style="font-weight:600;font-size:0.9rem;margin-bottom:4px;">${esc(lora.trigger)}</div>
+                            <div style="font-weight:600;font-size:0.9rem;margin-bottom:2px;">${esc(lora.trigger)}</div>
+                            <div style="font-size:0.72rem;color:var(--text-secondary);margin-bottom:4px;opacity:0.7;">${esc(lora.id)}</div>
                             <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
                                 <span style="font-size:0.75rem;color:var(--text-secondary);">호출 ${lora.usage_count}회</span>
                                 ${badges.join('')}
@@ -14359,6 +14430,7 @@
                         </div>
                     </div>`;
                 }).join('');
+                refreshInstanceTargetDropdown();
             } catch (e) {
                 console.error('[INSTANCE_LORA] 그리드 로드 실패:', e);
                 grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:var(--error);">로드 실패</div>';
@@ -14367,36 +14439,41 @@
 
         async function openInstanceLoraDetail(loraId) {
             _instanceLoraCurrentId = loraId;
-            const sidebar = document.getElementById('instance-lora-sidebar');
-            sidebar.style.display = '';
+            const modal = document.getElementById('instance-lora-image-modal');
+            const titleEl = document.getElementById('instance-image-modal-title');
+            const body = document.getElementById('instance-image-modal-body');
             try {
                 const resp = await fetchJSON(`/api/instance_lora/detail?id=${encodeURIComponent(loraId)}`);
                 if (!resp.success) { showToast(resp.error, 'error'); return; }
                 const d = resp.data;
-                document.getElementById('instance-lora-detail-title').textContent = d.trigger;
-                const container = document.getElementById('instance-lora-detail-images');
+                titleEl.textContent = d.trigger;
                 if (!d.images || d.images.length === 0) {
-                    container.innerHTML = '<div style="text-align:center;padding:16px;color:var(--text-secondary);font-size:0.85rem;">이미지가 없습니다.<br>아래에서 파일을 추가하세요.</div>';
+                    body.innerHTML = '<div style="text-align:center;padding:32px;color:var(--text-secondary);font-size:0.85rem;">이미지가 없습니다.<br>로라 생성 시 이미지를 추가하세요.</div>';
                 } else {
-                    container.innerHTML = d.images.map(fn => {
+                    body.innerHTML = d.images.map(fn => {
                         const imgSrc = `/api/instance_lora/image/${encodeURIComponent(loraId)}/${encodeURIComponent(fn)}`;
                         return `<div style="margin-bottom:8px;border:1px solid var(--border);border-radius:8px;overflow:hidden;">
                             <img src="${imgSrc}" style="width:100%;display:block;cursor:pointer;" onclick="toggleInstanceImagePrompt('${esc(loraId)}','${esc(fn)}',this)">
                             <div class="instance-img-prompt" data-fn="${esc(fn)}" style="display:none;padding:8px;background:var(--surface1);font-size:0.8rem;">
                                 <div style="color:var(--text-secondary);">로딩 중...</div>
                             </div>
-                            <div style="padding:4px 8px;display:flex;justify-content:space-between;align-items:center;">
-                                <span style="font-size:0.75rem;color:var(--text-secondary);">${esc(fn)}</span>
-                                <button onclick="event.stopPropagation();deleteInstanceLoraImage('${esc(loraId)}','${esc(fn)}')" style="background:none;border:none;cursor:pointer;color:var(--error);font-size:0.75rem;">삭제</button>
-                            </div>
                         </div>`;
                     }).join('');
                 }
+                modal.style.display = 'flex';
             } catch (e) {
                 console.error('[INSTANCE_LORA] 상세 로드 실패:', e);
                 showToast('상세 로드 실패', 'error');
             }
-            loadInstanceLoraInlineSettings(loraId);
+        }
+
+        function closeInstanceImageModal() {
+            document.getElementById('instance-lora-image-modal').style.display = 'none';
+        }
+
+        function closeInstanceLoraDetail() {
+            _instanceLoraCurrentId = null;
+            closeInstanceImageModal();
         }
 
         async function toggleInstanceImagePrompt(loraId, filename, imgEl) {
@@ -14411,11 +14488,9 @@
                             <textarea class="instance-prompt-edit" data-field="positive" style="width:100%;height:60px;font-size:0.8rem;padding:4px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);resize:vertical;">${esc(resp.data.positive || '')}</textarea>
                             <div style="margin-top:4px;margin-bottom:4px;"><strong>부정:</strong></div>
                             <textarea class="instance-prompt-edit" data-field="negative" style="width:100%;height:40px;font-size:0.8rem;padding:4px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);resize:vertical;">${esc(resp.data.negative || '')}</textarea>
-                            <button onclick="saveInstanceImagePrompt('${esc(loraId)}','${esc(filename)}')" style="margin-top:6px;padding:4px 10px;background:var(--accent);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.75rem;font-weight:600;">저장</button>
-                            <button onclick="analyzeInstanceImage('${esc(loraId)}','${esc(filename)}')" style="margin-top:6px;padding:4px 10px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.75rem;font-weight:600;">태그 분석</button>`;
+                            <button onclick="saveInstanceImagePrompt('${esc(loraId)}','${esc(filename)}')" style="margin-top:6px;padding:4px 10px;background:var(--accent);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.75rem;font-weight:600;">저장</button>`;
                     } else {
-                        promptDiv.innerHTML = `<div style="color:var(--text-secondary);">프롬프트 없음</div>
-                            <button onclick="analyzeInstanceImage('${esc(loraId)}','${esc(filename)}')" style="margin-top:4px;padding:4px 10px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.75rem;font-weight:600;">태그 분석</button>`;
+                        promptDiv.innerHTML = `<div style="color:var(--text-secondary);">프롬프트 없음</div>`;
                     }
                 } catch (e) {
                     promptDiv.innerHTML = '<div style="color:var(--error);">로드 실패</div>';
@@ -14471,7 +14546,9 @@
 
         function closeInstanceLoraDetail() {
             _instanceLoraCurrentId = null;
-            document.getElementById('instance-lora-sidebar').style.display = 'none';
+            document.getElementById('instance-lora-detail-title').textContent = '캐릭터를 선택하세요';
+            document.getElementById('instance-lora-detail-title').style.color = 'var(--text-secondary)';
+            document.getElementById('instance-lora-detail-images').innerHTML = '<div style="text-align:center;padding:32px 16px;color:var(--text-secondary);font-size:0.85rem;">왼쪽 카드를 클릭하면<br>상세 정보가 표시됩니다.</div>';
         }
 
         async function deleteInstanceLora(loraId) {
@@ -14905,48 +14982,83 @@
         }
 
         // 인라인 설정 로드/저장
+        function toggleBlock(bodyId) {
+            const body = document.getElementById(bodyId);
+            const arrow = document.getElementById(bodyId + '-arrow');
+            if (body.style.display === 'none') {
+                body.style.display = '';
+                arrow.style.transform = '';
+            } else {
+                body.style.display = 'none';
+                arrow.style.transform = 'rotate(-90deg)';
+            }
+        }
+        function onInstanceProfileChange() {
+            const v = document.getElementById('instance-lora-train-profile').value;
+            const animaBlock = document.getElementById('iset-anima-block');
+            const sdxlBlock = document.getElementById('iset-sdxl-block');
+            animaBlock.querySelectorAll('.iset-input').forEach(el => el.disabled = (v === 'sdxl'));
+            sdxlBlock.querySelectorAll('.iset-input').forEach(el => el.disabled = (v === 'anima'));
+            animaBlock.style.opacity = (v === 'sdxl') ? '0.45' : '1';
+            sdxlBlock.style.opacity = (v === 'anima') ? '0.45' : '1';
+        }
+
+        async function showPromptPreview(profile) {
+            const modal = document.getElementById('instance-prompt-modal');
+            const titleEl = document.getElementById('instance-prompt-modal-title');
+            const posEl = document.getElementById('instance-prompt-positive');
+            const negEl = document.getElementById('instance-prompt-negative');
+            titleEl.textContent = `${profile.toUpperCase()} 프롬프트 Raw`;
+            posEl.value = '로딩 중...';
+            negEl.value = '';
+            modal.style.display = 'flex';
+            try {
+                const idParam = _instanceLoraCurrentId ? `&id=${encodeURIComponent(_instanceLoraCurrentId)}` : '';
+                const resp = await fetchJSON(`/api/instance_lora/preview?profile=${profile}${idParam}`);
+                if (!resp.success) { posEl.value = '로드 실패: ' + (resp.error || ''); return; }
+                posEl.value = resp.data.positive || '';
+                negEl.value = resp.data.negative || '';
+            } catch (e) { posEl.value = '오류: ' + e.message; }
+        }
+
         async function loadInstanceLoraInlineSettings(loraId) {
             try {
                 const resp = await fetchJSON('/api/instance_lora/config');
                 if (!resp.success) return;
                 const s = resp.data || {};
-                // 프로필 선택에 따라 설정 로드
+                // 드롭박스 복원
                 const profileEl = document.getElementById('instance-lora-train-profile');
-                const profile = profileEl?.value || 'anima';
-                const ps = s[profile] || {};
-                const fields = [
-                    ['step_per_image', 'iset-step'], ['il_rate', 'iset-ilrate'],
-                    ['save_per_step', 'iset-save-step'], ['gen_w', 'iset-genw'],
-                    ['gen_h', 'iset-genh'], ['resolution', 'iset-resolution'],
-                    ['save_after', 'iset-save-after'], ['dim', 'iset-dim'], ['alpha', 'iset-alpha'],
-                ];
-                for (const [key, elId] of fields) {
-                    const el = document.getElementById(elId);
-                    if (el && ps[key] !== undefined) el.value = ps[key];
-                }
+                if (s.selected_profile) profileEl.value = s.selected_profile;
+                // 각 프로필 블록에 data-profile별로 값 채우기
+                document.querySelectorAll('.iset-input').forEach(el => {
+                    const profile = el.dataset.profile;
+                    const key = el.dataset.key;
+                    const ps = s[profile] || {};
+                    if (ps[key] !== undefined) el.value = ps[key];
+                });
+                onInstanceProfileChange();
             } catch (e) { console.error('[INSTANCE_LORA] 인라인 설정 로드 실패:', e); }
         }
 
         async function saveInstanceLoraInlineSettings() {
-            const profile = document.getElementById('instance-lora-train-profile')?.value || 'anima';
-            // 먼저 기존 설정 로드
             let existingSettings = { anima: {}, sdxl: {}, instance: {} };
             try {
                 const r = await fetchJSON('/api/instance_lora/config');
                 if (r.success) existingSettings = r.data || existingSettings;
             } catch (e) {}
-            const fields = [
-                ['step_per_image', 'iset-step'], ['il_rate', 'iset-ilrate'],
-                ['save_per_step', 'iset-save-step'], ['gen_w', 'iset-genw'],
-                ['gen_h', 'iset-genh'], ['resolution', 'iset-resolution'],
-                ['save_after', 'iset-save-after'], ['dim', 'iset-dim'], ['alpha', 'iset-alpha'],
-            ];
-            const ps = {};
-            for (const [key, elId] of fields) {
-                const v = document.getElementById(elId)?.value;
-                if (v !== undefined) ps[key] = isNaN(Number(v)) ? v : Number(v);
+            // 드롭박스 값 저장
+            existingSettings.selected_profile = document.getElementById('instance-lora-train-profile').value;
+            // 각 프로필별로 비활성화되지 않은 입력만 수집
+            for (const profile of ['anima', 'sdxl']) {
+                const ps = {};
+                document.querySelectorAll(`.iset-input[data-profile="${profile}"]`).forEach(el => {
+                    if (!el.disabled) {
+                        const v = el.value;
+                        ps[el.dataset.key] = isNaN(Number(v)) ? v : Number(v);
+                    }
+                });
+                if (Object.keys(ps).length > 0) existingSettings[profile] = ps;
             }
-            existingSettings[profile] = ps;
             try {
                 const resp = await (await fetch('/api/instance_lora/config', {
                     method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -14958,20 +15070,37 @@
         }
 
         // ─── Instance LoRA 학습 ────────────────────────────────────
-        async function startInstanceLoraTraining() {
-            if (!_instanceLoraCurrentId) return;
-            const profile = document.getElementById('instance-lora-train-profile').value;
-            if (!confirm(`인스턴스 로라 "${_instanceLoraCurrentId}"를 ${profile.toUpperCase()} 프로필로 학습하시겠습니까?`)) return;
+        async function _startInstanceLoraSingle(profile, phaseLabel) {
             try {
                 const resp = await (await fetch('/api/instance_lora/training/start', {
                     method: 'POST', headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({id: _instanceLoraCurrentId, profile})
                 })).json();
                 if (resp.success) {
-                    showToast('학습 시작됨', 'success');
+                    showToast(`${phaseLabel} ${profile.toUpperCase()} 학습 시작됨`, 'success');
                     document.getElementById('instance-lora-progress').style.display = '';
-                } else showToast(resp.error || '학습 시작 실패', 'error');
-            } catch (e) { showToast('학습 시작 실패', 'error'); }
+                } else {
+                    _instanceLoraPendingProfile = null;
+                    showToast(`${profile.toUpperCase()} 학습 실패: ${resp.error}`, 'error');
+                }
+            } catch (e) {
+                _instanceLoraPendingProfile = null;
+                showToast(`${profile.toUpperCase()} 학습 시작 실패`, 'error');
+            }
+        }
+
+        async function startInstanceLoraTraining() {
+            if (!_instanceLoraCurrentId) return;
+            const profileValue = document.getElementById('instance-lora-train-profile').value;
+            const label = profileValue === 'both' ? 'ANIMA + SDXL (순차)' : profileValue.toUpperCase();
+            if (!confirm(`인스턴스 로라 "${_instanceLoraCurrentId}"를 ${label} 프로필로 학습하시겠습니까?`)) return;
+            if (profileValue === 'both') {
+                _instanceLoraPendingProfile = 'sdxl';
+                await _startInstanceLoraSingle('anima', '[1/2]');
+            } else {
+                _instanceLoraPendingProfile = null;
+                await _startInstanceLoraSingle(profileValue, '');
+            }
         }
 
         // Instance LoRA 진행률 SSE
@@ -14989,6 +15118,16 @@
                 barEl.style.width = '0%';
                 infoEl.textContent = '';
             } else if (phase === 'all_complete') {
+                // 순차 학습: pending profile이 있으면 다음 단계 시작
+                if (_instanceLoraPendingProfile) {
+                    const nextProfile = _instanceLoraPendingProfile;
+                    _instanceLoraPendingProfile = null;
+                    const curLabel = (data.profile || '').toUpperCase();
+                    showToast(`${curLabel} 완료 → ${nextProfile.toUpperCase()} 시작`, 'success');
+                    barEl.style.width = '0%';
+                    _startInstanceLoraSingle(nextProfile, '[2/2]');
+                    return;
+                }
                 phaseEl.textContent = '학습 완료';
                 pctEl.textContent = '100%';
                 barEl.style.width = '100%';
@@ -14997,6 +15136,7 @@
                 loadInstanceLoraGrid();
                 if (_instanceLoraCurrentId) openInstanceLoraDetail(_instanceLoraCurrentId);
             } else if (phase === 'error') {
+                _instanceLoraPendingProfile = null;
                 phaseEl.textContent = '에러';
                 pctEl.textContent = '';
                 infoEl.textContent = data.message || '알 수 없는 오류';
