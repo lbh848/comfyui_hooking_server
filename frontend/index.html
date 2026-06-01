@@ -15857,7 +15857,7 @@
                             <div style="display:flex; gap:4px; margin-top:4px;">
                                 <button onclick="event.stopPropagation(); botAnalyzeSingle('${escAttr(charName)}','${escAttr(img.filename)}', this)"
                                     style="flex:1; background:#2E7D32; color:#fff; border:none; padding:3px; border-radius:4px; cursor:pointer; font-size:0.7rem;">태그 분석</button>
-                                <button onclick="event.stopPropagation(); botSetNegativeSingle('${escAttr(charName)}','${escAttr(img.filename)}', this)"
+                                <button onclick="event.stopPropagation(); botShowNegativeSingleModal('${escAttr(charName)}','${escAttr(img.filename)}')"
                                     style="flex:1; background:#9C27B0; color:#fff; border:none; padding:3px; border-radius:4px; cursor:pointer; font-size:0.7rem;">부정 프롬프트</button>
                             </div>
                         </div>
@@ -17300,38 +17300,77 @@
             }
         }
 
-        async function botSetNegativeSingle(charName, filename, btn) {
+        async function botShowNegativeSingleModal(charName, filename) {
             if (!botCurrentBot || !charName || !filename) return;
-            const container = document.getElementById('bot-negative-preset-select');
-            const selEl = container ? container.querySelector('.custom-select-value') : null;
-            const presetName = selEl ? selEl.textContent : '';
-            if (!presetName || presetName.startsWith('--')) {
-                showToast('LV1 사이드바에서 부정 프리셋을 먼저 선택하세요', 'error');
-                return;
+            if (!assetTags) {
+                try {
+                    const resp = await fetch('/api/asset_mode/tags');
+                    assetTags = await resp.json();
+                } catch (e) { showToast('태그 로드 실패', 'error'); return; }
             }
-            const presetTags = assetTags?.negative_presets?.[presetName];
-            if (!presetTags || !Array.isArray(presetTags) || presetTags.length === 0) {
-                showToast('선택한 프리셋에 태그가 없습니다', 'error');
-                return;
+            const presets = assetTags.negative_presets || {};
+            const presetNames = Object.keys(presets);
+            if (presetNames.length === 0) { showToast('부정 프리셋이 없습니다', 'error'); return; }
+
+            const modal = document.createElement('div');
+            modal.id = 'bot-neg-single-modal';
+            const presetOptionsHtml = presetNames.map(n => `<option value="${escAttr(n)}">${escHtml(n)} (${(presets[n]||[]).length}개)</option>`).join('');
+
+            modal.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:10000; display:flex; align-items:center; justify-content:center;';
+            modal.innerHTML = `<div style="background:var(--surface); border-radius:12px; width:90vw; max-width:500px; max-height:85vh; display:flex; flex-direction:column; overflow:hidden;">
+                <div style="padding:16px 20px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
+                    <h3 style="margin:0;">부정 프롬프트 적용</h3>
+                    <button onclick="document.getElementById('bot-neg-single-modal').remove()" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer;">&times;</button>
+                </div>
+                <div style="padding:12px 20px;">
+                    <div style="font-size:0.85rem; color:var(--text2); margin-bottom:10px;">대상: <strong>${escHtml(charName)} / ${escHtml(filename)}</strong></div>
+                    <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+                        <span style="font-size:0.8rem; font-weight:600;">적용할 프리셋:</span>
+                        <select id="bot-neg-single-preset" style="flex:1; padding:4px 8px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.8rem;">${presetOptionsHtml}</select>
+                    </div>
+                    <div id="bot-neg-single-preview" style="font-size:0.7rem; color:var(--text2); padding:4px 8px; background:var(--surface1); border-radius:4px; max-height:80px; overflow-y:auto;"></div>
+                </div>
+                <div style="padding:12px 20px; border-top:1px solid var(--border); display:flex; justify-content:flex-end; gap:8px;">
+                    <button onclick="document.getElementById('bot-neg-single-modal').remove()" style="padding:8px 16px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); cursor:pointer;">취소</button>
+                    <button id="bot-neg-single-apply" style="padding:8px 16px; border-radius:6px; border:none; background:#9C27B0; color:#fff; cursor:pointer; font-weight:600;">적용</button>
+                </div>
+            </div>`;
+            document.body.appendChild(modal);
+
+            const presetSel = document.getElementById('bot-neg-single-preset');
+            const previewEl = document.getElementById('bot-neg-single-preview');
+            const applyBtn = document.getElementById('bot-neg-single-apply');
+            function updatePreview() {
+                const p = presets[presetSel.value] || [];
+                previewEl.textContent = p.join(', ') || '태그 없음';
             }
-            btn.disabled = true;
-            btn.textContent = '적용 중...';
-            try {
-                const resp = await fetch('/api/bot_mode/set_negative_single', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({bot: botCurrentBot, character: charName, filename, negative_tags: presetTags.join(', ')})
-                });
-                const data = await resp.json();
-                if (data.error) { showToast(data.error, 'error'); return; }
-                showToast('부정 프롬프트 적용 완료', 'success');
-            } catch (e) {
-                console.error('[BOT] 단일 부정프롬프트 오류:', e);
-                showToast('부정 프롬프트 적용 오류', 'error');
-            } finally {
-                btn.disabled = false;
-                btn.textContent = '부정 프롬프트';
-            }
+            presetSel.addEventListener('change', updatePreview);
+            updatePreview();
+
+            applyBtn.addEventListener('click', async () => {
+                const presetName = presetSel.value;
+                const presetTags = presets[presetName];
+                if (!presetTags || presetTags.length === 0) { showToast('프리셋에 태그가 없습니다', 'error'); return; }
+                applyBtn.disabled = true;
+                applyBtn.textContent = '적용 중...';
+                try {
+                    const resp = await fetch('/api/bot_mode/set_negative_single', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({bot: botCurrentBot, character: charName, filename, negative_tags: presetTags.join(', ')})
+                    });
+                    const data = await resp.json();
+                    if (data.error) { showToast(data.error, 'error'); return; }
+                    showToast('부정 프롬프트 적용 완료', 'success');
+                    modal.remove();
+                } catch (e) {
+                    console.error('[BOT] 단일 부정프롬프트 오류:', e);
+                    showToast('부정 프롬프트 적용 오류', 'error');
+                } finally {
+                    applyBtn.disabled = false;
+                    applyBtn.textContent = '적용';
+                }
+            });
         }
 
         async function removeFromDock(charName, filename) {
