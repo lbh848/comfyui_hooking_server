@@ -333,35 +333,51 @@ def update_session_representative(lora_id: str, session_id: str, rep_data: dict)
 
 
 def list_instance_lora_for_picker(instance_lora_load_path: str = "") -> list:
-    """LoRA 피커용 목록 반환. lora_id 목록 + 각 프로필별 대표 safetensors 경로 포함."""
+    """LoRA 피커용 목록 반환. lora_id 목록 + 각 프로필별 safetensors 경로 포함.
+    메타데이터 representative 대신 파일시스템에서 직접 최신 세션 스캔."""
     data = _load_data()
     result = []
     for lora_id, lora_data in data.get("instance_loras", {}).items():
-        sessions = lora_data.get("sessions", {})
         profiles = {}
-        # 각 프로필(anima/sdxl)에서 대표 세션 찾기
-        for session_id, session_info in sorted(sessions.items(), key=lambda x: x[0], reverse=True):
-            profile = session_info.get("profile", "anima")
-            if profile in profiles:
-                continue  # 이미 해당 프로필의 대표를 찾음
-            rep = session_info.get("representative")
-            if not rep:
+        safe_id = _safe_dirname(lora_id)
+        # 각 프로필별로 파일시스템에서 최신 세션 찾기
+        for profile in ("anima", "sdxl"):
+            if not instance_lora_load_path:
                 continue
-            safetensors = rep.get("safetensors", "") if isinstance(rep, dict) else ""
-            preview = rep.get("preview", "") if isinstance(rep, dict) else ""
-            if not safetensors:
+            profile_dir = os.path.join(instance_lora_load_path, profile, safe_id)
+            if not os.path.isdir(profile_dir):
                 continue
-            # 실제 파일 존재 확인
-            if instance_lora_load_path:
-                full_dir = os.path.join(instance_lora_load_path, profile, _safe_dirname(lora_id))
-                if os.path.isfile(os.path.join(full_dir, session_id, safetensors)):
-                    rel_path = os.path.join(profile, _safe_dirname(lora_id), session_id, safetensors)
-                    profiles[profile] = {
-                        "lora_path": rel_path,
-                        "preview_url": preview,
-                        "session": session_id,
-                    }
-        # 대표가 하나라도 있으면 포함
+            # 가장 최신 세션 폴더 선택
+            session_dirs = sorted(
+                [d for d in os.listdir(profile_dir) if os.path.isdir(os.path.join(profile_dir, d))],
+                reverse=True
+            )
+            for session_name in session_dirs:
+                session_dir = os.path.join(profile_dir, session_name)
+                # JSON 파일에서 safetensors 정보 읽기
+                json_files = [f for f in os.listdir(session_dir) if f.endswith('.json')]
+                if not json_files:
+                    continue
+                # 첫 번째 json 파일 사용
+                json_path = os.path.join(session_dir, json_files[0])
+                try:
+                    with open(json_path, 'r', encoding='utf-8') as f:
+                        jdata = json.load(f)
+                    safetensors = jdata.get('lora_file', '')
+                    previews = jdata.get('previews', [])
+                    if safetensors and os.path.isfile(os.path.join(session_dir, safetensors)):
+                        rel_path = os.path.join(profile, safe_id, session_name, safetensors)
+                        preview = previews[0] if previews else ""
+                        profiles[profile] = {
+                            "lora_path": rel_path,
+                            "preview_url": preview,
+                            "session": session_name,
+                        }
+                        break  # 해당 프로필의 최신 세션 찾음
+                except Exception as e:
+                    print(f"[INSTANCE_LORA_PICKER] JSON 읽기 실패: {json_path} - {e}")
+                    continue
+        # 학습된 파일이 하나라도 있으면 포함
         if profiles:
             images = lora_data.get("images", [])
             result.append({
