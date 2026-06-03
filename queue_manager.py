@@ -123,7 +123,26 @@ class QueueManager:
             await self.notify_frontend("queue_updated", self.get_status())
 
     async def _notify_progress(self, item: QueueItem, detail: dict):
-        item.progress = detail.get("percentage", item.progress)
+        percentage = detail.get("percentage")
+        phase = detail.get("phase", "")
+        if percentage is None:
+            if phase == "training":
+                step = detail.get("step")
+                total = detail.get("total")
+                if step is not None and total and total > 0:
+                    percentage = (step / total) * 50
+            elif phase in ("generating", "preview"):
+                current = detail.get("current") or detail.get("value")
+                total = detail.get("total") or detail.get("max")
+                if current is not None and total and total > 0:
+                    percentage = 50 + (current / total) * 50
+            else:
+                step = detail.get("step")
+                total = detail.get("total")
+                if step is not None and total and total > 0:
+                    percentage = (step / total) * 100
+        if percentage is not None:
+            item.progress = percentage
         item.progress_detail = detail
         if self.notify_frontend:
             await self.notify_frontend("queue_progress", {
@@ -168,6 +187,8 @@ class QueueManager:
                     traceback.print_exc()
                 next_item.completed_at = time.time()
                 self.current_item = None
+                # 완료/실패 항목 자동 제거
+                self.items = [i for i in self.items if i.status in ("pending", "processing")]
                 await self._notify_queue_updated()
         finally:
             self._processing = False
@@ -479,6 +500,8 @@ class QueueManager:
                 "phase": "preparing",
                 "bot_name": bot_name, "project_name": project_name,
                 "character": char_name,
+                "char_index": params.get("char_index", 0),
+                "total_chars": params.get("total_chars", 0),
                 "message": f"'{char_name}' 학습 시작",
             })
 
@@ -486,7 +509,11 @@ class QueueManager:
         await self._monitor_training_ws(
             item, prompt_id,
             event_type="bot_lora_training_progress",
-            extra_data={"bot_name": bot_name, "project_name": project_name, "character": char_name},
+            extra_data={
+                "bot_name": bot_name, "project_name": project_name, "character": char_name,
+                "char_index": params.get("char_index", 0),
+                "total_chars": params.get("total_chars", 0),
+            },
         )
 
         return {"success": True, "character": char_name}

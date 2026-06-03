@@ -6459,6 +6459,8 @@ async def handle_api_bot_lora_training_start(request):
         label = f"[봇] {char_name}"
         item = await queue_manager.add_item("bot_lora_training", label, {
             "bot": bot_name, "project": project_name, "character": char_name,
+            "char_index": body.get("char_index", 0),
+            "total_chars": body.get("total_chars", 0),
         })
         return web.json_response({"success": True, "queue_item_id": item.id, "label": item.label})
     except Exception as e:
