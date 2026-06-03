@@ -19,7 +19,7 @@ from typing import Optional
 @dataclass
 class QueueItem:
     id: str
-    type: str  # illustration | asset_generation | asset_lora_training | bot_lora_training | instance_lora_training | instance_lora_analysis | tag_analysis | auto_match_batch
+    type: str  # illustration | asset_generation | asset_lora_training | bot_lora_training | instance_lora_training | instance_lora_analysis | tag_analysis | auto_match_batch | data_patch_utility
     label: str
     status: str = "pending"  # pending | processing | completed | failed | cancelled
     params: dict = field(default_factory=dict)
@@ -235,6 +235,7 @@ class QueueManager:
             "instance_lora_analysis": self._handle_instance_lora_analysis,
             "tag_analysis": self._handle_tag_analysis,
             "auto_match_batch": self._handle_auto_match_batch,
+            "data_patch_utility": self._handle_data_patch_utility,
         }
         handler = dispatch.get(item.type)
         if not handler:
@@ -1133,6 +1134,37 @@ class QueueManager:
             await self.notify_frontend(event_type, {"phase": "completed", "results": combined})
 
         return {"success": True, "results": combined}
+
+    async def _handle_data_patch_utility(self, item: QueueItem) -> dict:
+        """데이터 패치 유틸리티 (캐릭터당 얼굴 워크플로우 실행)."""
+        params = item.params
+        bot_name = params.get("bot_name", "")
+        char_name = params.get("char_name", "")
+        event_type = "data_patch_progress"
+
+        if not bot_name or not char_name:
+            raise ValueError("bot_name, char_name이 필요합니다")
+
+        await self._notify_progress(item, {"percentage": 0, "phase": "running"})
+        if self.notify_frontend:
+            await self.notify_frontend(event_type, {"phase": "running", "bot_name": bot_name, "char_name": char_name})
+
+        try:
+            result = await self.run_data_patch_utility(bot_name, char_name)
+            await self._notify_progress(item, {"percentage": 100, "phase": "completed"})
+            if self.notify_frontend:
+                await self.notify_frontend(event_type, {
+                    "phase": "completed", "bot_name": bot_name, "char_name": char_name, "result": result
+                })
+            return {"success": True, "char_name": char_name}
+        except Exception as e:
+            print(f"[QUEUE:DATA_PATCH] {char_name} 실패: {e}")
+            traceback.print_exc()
+            if self.notify_frontend:
+                await self.notify_frontend(event_type, {
+                    "phase": "failed", "bot_name": bot_name, "char_name": char_name, "error": str(e)
+                })
+            raise
 
     @staticmethod
     def _save_asset_prompt(img: dict, positive: str):

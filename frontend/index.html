@@ -6388,6 +6388,9 @@
                         case 'auto_match_batch_progress':
                             handleAutoMatchBatchProgress(msg.data);
                             break;
+                        case 'data_patch_progress':
+                            handleDataPatchProgress(msg.data);
+                            break;
                         case 'text_output':
                             handleTextOutput(msg.data);
                             break;
@@ -7506,6 +7509,7 @@
             instance_lora_training: '인스턴스 LoRA 분석 및 학습',
             tag_analysis: '태그 분석',
             auto_match_batch: '배치 매칭',
+            data_patch_utility: '데이터 패치',
             asset_generation: '에셋 이미지 생성',
         };
 
@@ -19145,37 +19149,71 @@
                     return;
                 }
 
-                let success = 0, fail = 0;
-                for (let i = 0; i < chars.length; i++) {
-                    statusDiv.textContent = `2/2: 얼굴 ${i + 1}/${chars.length} - ${chars[i].name}`;
+                // 캐릭터당 개별 큐 아이템으로 유틸리티 실행
+                statusDiv.textContent = `큐에 ${chars.length}개 유틸리티 추가 중…`;
+                _dataPatchQueueTotal = chars.length;
+                _dataPatchQueueDone = 0;
+                for (const char of chars) {
                     try {
-                        const resp = await fetch('/api/bot_mode/run_utility', {
+                        await fetchJSON('/api/queue/add', {
                             method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ bot_name: botCurrentBot, char_name: chars[i].name })
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({
+                                type: 'data_patch_utility',
+                                label: `데이터 패치 (${char.name})`,
+                                params: { bot_name: botCurrentBot, char_name: char.name }
+                            })
                         });
-                        const result = await resp.json();
-                        if (result.error) {
-                            fail++;
-                            showToast(`${chars[i].name} 실패: ${result.error}`, 'error');
-                        } else {
-                            success++;
-                        }
                     } catch (e) {
-                        fail++;
-                        showToast(`${chars[i].name} 요청 실패`, 'error');
+                        console.error('[DATA_PATCH] 큐 추가 오류:', char.name, e);
                     }
                 }
-                const utilMsg = `얼굴 완료: 성공 ${success}/${chars.length}` + (fail > 0 ? ` 실패 ${fail}` : '');
-                statusDiv.textContent = `${patchResult.message} / ${utilMsg}`;
-                showToast(utilMsg, success === chars.length ? 'success' : 'error');
-                renderBotCharacters();
+                statusDiv.textContent = `${patchResult.message} / 큐에 ${chars.length}개 추가됨`;
+                showToast(`큐에 ${chars.length}개 유틸리티 추가됨`, 'info');
             } catch (e) {
                 statusDiv.textContent = '요청 실패: ' + e.message;
                 showToast('데이터 패치 요청 실패: ' + e.message, 'error');
-            } finally {
                 btn.disabled = false;
                 btn.textContent = '데이터 패치 시작';
+            }
+        }
+
+        let _dataPatchQueueTotal = 0;
+        let _dataPatchQueueDone = 0;
+
+        function handleDataPatchProgress(data) {
+            const phase = data.phase || '';
+            const statusDiv = document.getElementById('data-patch-status');
+
+            if (phase === 'completed') {
+                _dataPatchQueueDone++;
+                if (statusDiv) {
+                    statusDiv.textContent = `얼굴 완료: ${_dataPatchQueueDone}/${_dataPatchQueueTotal} - ${data.char_name || ''}`;
+                }
+                if (typeof renderBotCharacters === 'function') renderBotCharacters();
+
+                if (_dataPatchQueueDone >= _dataPatchQueueTotal) {
+                    const btn = document.getElementById('btn-data-patch');
+                    if (btn) { btn.disabled = false; btn.textContent = '데이터 패치 시작'; }
+                    const failCount = _dataPatchQueueTotal - _dataPatchQueueDone;
+                    const msg = `얼굴 완료: 성공 ${_dataPatchQueueDone}/${_dataPatchQueueTotal}`;
+                    showToast(msg, 'success');
+                    _dataPatchQueueTotal = 0;
+                    _dataPatchQueueDone = 0;
+                }
+            } else if (phase === 'failed') {
+                _dataPatchQueueDone++;
+                if (statusDiv) {
+                    statusDiv.textContent = `실패: ${data.char_name || ''} - ${data.error || ''}`;
+                }
+                showToast(`${data.char_name || ''} 실패: ${data.error || ''}`, 'error');
+
+                if (_dataPatchQueueDone >= _dataPatchQueueTotal) {
+                    const btn = document.getElementById('btn-data-patch');
+                    if (btn) { btn.disabled = false; btn.textContent = '데이터 패치 시작'; }
+                    _dataPatchQueueTotal = 0;
+                    _dataPatchQueueDone = 0;
+                }
             }
         }
 
@@ -23017,6 +23055,7 @@
         // ─── 일괄 대표 설정 ───
         async function auBatchSetRepresentative() {
             if (auNavLevel !== 1 || !auNavCharacter) { showToast('LV1(캐릭터 갤러리)에서만 사용 가능합니다', 'error'); return; }
+            if (!confirm('각 조합의 첫 이미지를 대표이미지로 일괄 설정하시겠습니까?')) return;
             const btn = document.getElementById('au-batch-rep-set-btn');
             const statusEl = document.getElementById('au-batch-rep-set-status');
             btn.disabled = true;
@@ -24287,6 +24326,7 @@
                     case 'instance_lora_analysis': return { icon: '🔍', color: '#2ecc71' };
                     case 'tag_analysis': return { icon: '🏷', color: '#f39c12' };
                     case 'auto_match_batch': return { icon: '🔗', color: '#16a085' };
+                    case 'data_patch_utility': return { icon: '🖼', color: '#1565C0' };
                     default: return { icon: '○', color: 'var(--text2)' };
                 }
             }

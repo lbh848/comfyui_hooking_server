@@ -1251,8 +1251,58 @@ def init_queue_manager():
     queue_manager.get_real_comfy_host = lambda: REAL_COMFY_HOST
     queue_manager.get_real_comfy_port = lambda: REAL_COMFY_PORT
     queue_manager.process_prompt_full = process_prompt
+    queue_manager.run_data_patch_utility = _run_data_patch_utility
     print("[QUEUE] 통합 큐 매니저 초기화 완료")
 
+
+async def _run_data_patch_utility(bot_name: str, char_name: str) -> dict:
+    """큐에서 호출하는 데이터 패치 유틸리티 실행."""
+    from modes.bot_mode import _load_bot_data, _load_patch_settings, build_utility_prompt, BOT_DIR
+    import copy
+
+    # 기존 결과 삭제
+    char_dir = os.path.join(BOT_DIR, bot_name, char_name)
+    result_path = os.path.join(char_dir, "_face_image.webp")
+    for old in ["_face_image.webp", "_face_image_prompt.json"]:
+        old_path = os.path.join(char_dir, old)
+        if os.path.isfile(old_path):
+            os.remove(old_path)
+
+    wf_api, wf_err = await data_patcher._load_utility_workflow()
+    if wf_err:
+        raise RuntimeError(wf_err)
+
+    data = _load_bot_data()
+    bot = next((b for b in data["bots"] if b["name"] == bot_name), None)
+    if not bot:
+        raise RuntimeError(f"봇을 찾을 수 없습니다: {bot_name}")
+    char = next((c for c in bot.get("characters", []) if c["name"] == char_name), None)
+    if not char:
+        raise RuntimeError(f"캐릭터를 찾을 수 없습니다: {char_name}")
+    if not char.get("rep_images"):
+        raise RuntimeError(f"대표 이미지가 없습니다: {char_name}")
+
+    settings = _load_patch_settings(bot_name)
+    prompt_text = build_utility_prompt(bot_name, char_name, settings)
+    print(f"[DATA_PATCH_UTILITY] 실행: {char_name} | 프롬프트: {prompt_text[:80]}...")
+
+    wf = copy.deepcopy(wf_api)
+    for nid, ninfo in wf.items():
+        if not isinstance(ninfo, dict):
+            continue
+        title = ninfo.get("_meta", {}).get("title", "")
+        if title == "긍정프롬프트":
+            ninfo["inputs"]["value"] = prompt_text
+
+    img_bytes, submit_err = await submit_workflow_to_comfy(wf)
+    if submit_err or not img_bytes:
+        raise RuntimeError(f"{char_name}: {submit_err or '이미지 없음'}")
+
+    os.makedirs(os.path.dirname(result_path), exist_ok=True)
+    with open(result_path, "wb") as f:
+        f.write(img_bytes)
+    print(f"[DATA_PATCH_UTILITY] {char_name} 결과 저장: {len(img_bytes):,} bytes")
+    return {"character": char_name, "message": f"{char_name} 완료"}
 
 # ─── 프롬프트 강화 콜백 ───
 async def _before_generate_enhance(request, batch):
@@ -7137,7 +7187,7 @@ async def handle_api_queue_add(request):
         label = body.get("label", "")
         params = body.get("params", {})
 
-        if item_type not in ("asset_generation", "asset_lora_training", "bot_lora_training", "instance_lora_training", "instance_lora_analysis", "tag_analysis", "auto_match_batch"):
+        if item_type not in ("asset_generation", "asset_lora_training", "bot_lora_training", "instance_lora_training", "instance_lora_analysis", "tag_analysis", "auto_match_batch", "data_patch_utility"):
             return web.json_response({"success": False, "error": f"알 수 없는 타입: {item_type}"}, status=400)
 
         item = await queue_manager.add_item(item_type, label, params)
