@@ -1683,3 +1683,63 @@ def get_bot_char_image_path(bot_name: str, char_name: str, filename: str) -> str
         return fpath
     print(f"[BOT_LORA] 캐릭터 이미지 없음: {fpath}")
     return None
+
+
+def list_bot_lora_for_picker(lora_load_path: str = "") -> list:
+    """LoRA 피커용 목록 반환. 봇→프로젝트→캐릭터 계층 + 대표 safetensors 경로 포함."""
+    data = _load_bot_lora_manage()
+    result = []
+    for bot_name, projects in data.get("bot_loras", {}).items():
+        bot_group = {"bot_name": bot_name, "projects": []}
+        for proj_name, proj_data in projects.items():
+            proj_entry = {"project_name": proj_name, "characters": []}
+            training_config = proj_data.get("training_config", {})
+            for char_name, char_cfg in proj_data.get("characters", {}).items():
+                if char_cfg.get("skip_training"):
+                    continue
+                session_reps = char_cfg.get("session_representatives", {})
+                if not session_reps:
+                    continue
+                # 대표가 설정된 가장 최신 세션 찾기
+                rep_path = ""
+                rep_preview = ""
+                rep_session = ""
+                for sname in sorted(session_reps.keys(), reverse=True):
+                    rep_str = session_reps[sname]
+                    if not rep_str:
+                        continue
+                    try:
+                        rep_data = json.loads(rep_str)
+                    except Exception:
+                        continue
+                    safetensors = rep_data.get("safetensors", "")
+                    preview = rep_data.get("preview", "")
+                    if not safetensors:
+                        continue
+                    # 실제 파일 존재 확인
+                    if lora_load_path:
+                        full_dir = _trained_lora_dir(lora_load_path, bot_name, proj_name, char_name)
+                        if os.path.isfile(os.path.join(full_dir, sname, safetensors)):
+                            rep_path = os.path.join(
+                                _safe_dirname(bot_name), "Lora",
+                                _safe_dirname(proj_name), _safe_dirname(char_name),
+                                sname, safetensors
+                            )
+                            rep_preview = preview
+                            rep_session = sname
+                            break
+                if not rep_path:
+                    continue
+                proj_entry["characters"].append({
+                    "char_name": char_name,
+                    "trigger": char_cfg.get("trigger", char_name),
+                    "lora_path": rep_path,
+                    "preview_url": rep_preview,
+                    "session": rep_session,
+                    "BASE": training_config.get("profile", "anima"),
+                })
+            if proj_entry["characters"]:
+                bot_group["projects"].append(proj_entry)
+        if bot_group["projects"]:
+            result.append(bot_group)
+    return result

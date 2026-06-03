@@ -5495,6 +5495,38 @@ app.router.add_post("/api/lora/manage/update", handle_api_lora_manage_update)
 app.router.add_post("/api/lora/manage/duplicate", handle_api_lora_manage_duplicate)
 
 
+async def handle_api_bot_lora_for_picker(request):
+    """봇 LoRA 피커용 목록 (봇→프로젝트→캐릭터 + 대표 경로)"""
+    try:
+        from modes.bot_lora_mode import list_bot_lora_for_picker
+        config = load_config()
+        lora_load_path = config.get("bot_lora_load_path", "") or os.path.join(config.get("lora_load_path", ""), "SOYA_BOT_LORA")
+        groups = list_bot_lora_for_picker(lora_load_path)
+        return web.json_response({"success": True, "groups": groups})
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        print(f"[BOT_LORA_PICKER] 목록 조회 실패: {e}")
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_instance_lora_for_picker(request):
+    """인스턴스 LoRA 피커용 목록 (lora_id + 프로필별 대표 경로)"""
+    try:
+        from modes.instance_lora_mode import list_instance_lora_for_picker
+        config = load_config()
+        instance_lora_load_path = config.get("instance_lora_load_path", "")
+        items = list_instance_lora_for_picker(instance_lora_load_path)
+        return web.json_response({"success": True, "items": items})
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        print(f"[INSTANCE_LORA_PICKER] 목록 조회 실패: {e}")
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+app.router.add_get("/api/bot_lora/for_picker", handle_api_bot_lora_for_picker)
+app.router.add_get("/api/instance_lora/for_picker", handle_api_instance_lora_for_picker)
+
+
 async def handle_api_lora_entry_image(request):
     """LoRA 항목 이미지 서빙 (대표 이미지 등)"""
     try:

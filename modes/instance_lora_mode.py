@@ -330,3 +330,44 @@ def update_session_representative(lora_id: str, session_id: str, rep_data: dict)
     sessions[session_id]["representative"] = rep_data
     _save_data(data)
     return {"success": True}
+
+
+def list_instance_lora_for_picker(instance_lora_load_path: str = "") -> list:
+    """LoRA 피커용 목록 반환. lora_id 목록 + 각 프로필별 대표 safetensors 경로 포함."""
+    data = _load_data()
+    result = []
+    for lora_id, lora_data in data.get("instance_loras", {}).items():
+        sessions = lora_data.get("sessions", {})
+        profiles = {}
+        # 각 프로필(anima/sdxl)에서 대표 세션 찾기
+        for session_id, session_info in sorted(sessions.items(), key=lambda x: x[0], reverse=True):
+            profile = session_info.get("profile", "anima")
+            if profile in profiles:
+                continue  # 이미 해당 프로필의 대표를 찾음
+            rep = session_info.get("representative")
+            if not rep:
+                continue
+            safetensors = rep.get("safetensors", "") if isinstance(rep, dict) else ""
+            preview = rep.get("preview", "") if isinstance(rep, dict) else ""
+            if not safetensors:
+                continue
+            # 실제 파일 존재 확인
+            if instance_lora_load_path:
+                full_dir = os.path.join(instance_lora_load_path, profile, _safe_dirname(lora_id))
+                if os.path.isfile(os.path.join(full_dir, session_id, safetensors)):
+                    rel_path = os.path.join(profile, _safe_dirname(lora_id), session_id, safetensors)
+                    profiles[profile] = {
+                        "lora_path": rel_path,
+                        "preview_url": preview,
+                        "session": session_id,
+                    }
+        # 대표가 하나라도 있으면 포함
+        if profiles:
+            images = lora_data.get("images", [])
+            result.append({
+                "lora_id": lora_id,
+                "trigger": lora_data.get("trigger", ""),
+                "first_image": images[0] if images else "",
+                "profiles": profiles,
+            })
+    return result
