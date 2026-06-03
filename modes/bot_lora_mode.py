@@ -174,6 +174,77 @@ def _get_char_config(data: dict, bot_name: str, project_name: str, char_name: st
     return proj.get("characters", {}).get(char_name)
 
 
+# ─── 캐릭터 임포트 ──────────────────────────────────────────
+
+def list_importable_characters(bot_name: str, project_name: str) -> dict:
+    """봇에는 있지만 프로젝트에는 없는 캐릭터 목록 반환"""
+    if not bot_name or not project_name:
+        print("[BOT_LORA_IMPORT] 봇/프로젝트 이름 누락")
+        return {"success": False, "error": "봇/프로젝트 이름 필수"}
+
+    bot_data = _load_bot_data()
+    bot_chars = []
+    for b in bot_data.get("bots", []):
+        if b.get("name") == bot_name:
+            for ch in b.get("characters", []):
+                cn = ch.get("name", "")
+                if cn:
+                    bot_chars.append({
+                        "name": cn,
+                        "rep_images": ch.get("rep_images", []),
+                        "has_face_image": os.path.isfile(
+                            os.path.join(BOT_DIR, bot_name, cn, "_face_image.webp")
+                        ),
+                    })
+            break
+
+    manage_data = _load_bot_lora_manage()
+    proj = _get_project_config(manage_data, bot_name, project_name)
+    existing = set(proj.get("characters", {}).keys()) if proj else set()
+
+    importable = [ch for ch in bot_chars if ch["name"] not in existing]
+    print(f"[BOT_LORA_IMPORT] 임포트 가능 캐릭터: {len(importable)}명 (기존 {len(existing)}명)")
+    return {"success": True, "characters": importable}
+
+
+def import_characters(bot_name: str, project_name: str, char_names: list) -> dict:
+    """선택한 캐릭터를 프로젝트에 추가"""
+    if not bot_name or not project_name:
+        print("[BOT_LORA_IMPORT] 봇/프로젝트 이름 누락")
+        return {"success": False, "error": "봇/프로젝트 이름 필수"}
+    if not char_names:
+        print("[BOT_LORA_IMPORT] 선택된 캐릭터 없음")
+        return {"success": False, "error": "임포트할 캐릭터를 선택하세요"}
+
+    bot_data = _load_bot_data()
+    manage_data = _load_bot_lora_manage()
+    proj = _get_project_config(manage_data, bot_name, project_name)
+    if not proj:
+        print(f"[BOT_LORA_IMPORT] 프로젝트 없음: {bot_name}/{project_name}")
+        return {"success": False, "error": "프로젝트를 찾을 수 없습니다"}
+
+    existing_chars = proj.setdefault("characters", {})
+    added = []
+
+    for b in bot_data.get("bots", []):
+        if b.get("name") == bot_name:
+            for ch in b.get("characters", []):
+                cn = ch.get("name", "")
+                if cn in char_names and cn not in existing_chars:
+                    existing_chars[cn] = {"trigger": cn}
+                    _sync_training_images_to_project(bot_name, project_name, cn, ch.get("rep_images", []))
+                    added.append(cn)
+            break
+
+    if added:
+        _save_bot_lora_manage(manage_data)
+        print(f"[BOT_LORA_IMPORT] 캐릭터 임포트 완료: {added}")
+    else:
+        print("[BOT_LORA_IMPORT] 임포트할 새 캐릭터가 없음")
+
+    return {"success": True, "added": added, "count": len(added)}
+
+
 # ─── 봇 목록 ─────────────────────────────────────────────────
 
 def list_bots() -> list:

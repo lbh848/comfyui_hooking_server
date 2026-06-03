@@ -4569,6 +4569,12 @@
                                     테스트 이미지가 없습니다. 사이드바에서 추가하세요.
                                 </div>
                             </div>
+                            <!-- 봇에서 캐릭터 추가 임포트 -->
+                            <div style="padding:16px; margin-top:8px;">
+                                <button onclick="openBotLoraCharImportModal()" style="padding:8px 16px; background:rgba(80,150,220,0.15); color:var(--text); border:1px solid rgba(80,150,220,0.3); border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">
+                                    봇에서 캐릭터 추가 임포트
+                                </button>
+                            </div>
                         </div>
                     </div>
                     <div class="asset-sidebar" id="bot-lora-sidebar">
@@ -5008,6 +5014,29 @@
             <div class="modal-footer">
                 <button onclick="closeBotLoraDuplicateModal()" style="padding:8px 16px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:6px; cursor:pointer;">취소</button>
                 <button onclick="confirmBotLoraDuplicate()" style="padding:8px 20px; background:var(--accent); color:#fff; border:none; border-radius:6px; cursor:pointer; font-weight:600;">복제</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 봇 캐릭터 임포트 모달 -->
+    <div class="modal" id="bot-lora-char-import-modal" onclick="if (event.target === this) closeBotLoraCharImportModal()">
+        <div class="modal-content" style="max-width:520px;">
+            <div class="modal-header">
+                <h2>봇에서 캐릭터 추가 임포트</h2>
+                <button class="modal-close" onclick="closeBotLoraCharImportModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div style="margin-bottom:12px; padding:10px; background:rgba(255,180,0,0.1); border:1px solid rgba(255,180,0,0.3); border-radius:8px; font-size:0.8rem; color:var(--text-secondary);">
+                    현재 봇에 있지만 프로젝트에 없는 캐릭터만 표시됩니다.<br>선택한 캐릭터가 프로젝트에 추가되며, 학습 이미지도 함께 동기화됩니다.
+                </div>
+                <div id="bot-lora-char-import-list" style="display:flex; flex-direction:column; gap:6px; max-height:360px; overflow-y:auto;"></div>
+                <div id="bot-lora-char-import-empty" style="display:none; text-align:center; padding:32px; color:var(--text-secondary); font-size:0.85rem;">
+                    임포트할 새 캐릭터가 없습니다.
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button onclick="closeBotLoraCharImportModal()" style="padding:8px 16px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:6px; cursor:pointer;">취소</button>
+                <button onclick="confirmBotLoraCharImport()" id="bot-lora-char-import-confirm-btn" style="padding:8px 20px; background:var(--accent); color:#fff; border:none; border-radius:6px; cursor:pointer; font-weight:600;">임포트</button>
             </div>
         </div>
     </div>
@@ -16189,6 +16218,67 @@
                     showToast(resp.error || '복제 실패', 'error');
                 }
             } catch (e) { console.error('[BOT_LORA] 프로젝트 복제 실패:', e); showToast('복제 실패', 'error'); }
+        }
+
+        async function openBotLoraCharImportModal() {
+            if (!botLoraCurrentBot || !botLoraCurrentProject) return;
+            const listEl = document.getElementById('bot-lora-char-import-list');
+            const emptyEl = document.getElementById('bot-lora-char-import-empty');
+            const confirmBtn = document.getElementById('bot-lora-char-import-confirm-btn');
+            listEl.innerHTML = '<div style="text-align:center; padding:24px; color:var(--text-secondary);">로딩 중...</div>';
+            emptyEl.style.display = 'none';
+            confirmBtn.disabled = true;
+            document.getElementById('bot-lora-char-import-modal').style.display = 'flex';
+            try {
+                const resp = await fetchJSON(`/api/bot_lora/characters/importable?bot=${encodeURIComponent(botLoraCurrentBot)}&project=${encodeURIComponent(botLoraCurrentProject)}`);
+                if (!resp.success) {
+                    listEl.innerHTML = `<div style="text-align:center; padding:24px; color:var(--error);">${escapeHtml(resp.error || '조회 실패')}</div>`;
+                    return;
+                }
+                const chars = resp.characters || [];
+                if (chars.length === 0) {
+                    listEl.innerHTML = '';
+                    emptyEl.style.display = 'block';
+                    return;
+                }
+                confirmBtn.disabled = false;
+                listEl.innerHTML = chars.map(ch => `
+                    <label style="display:flex; align-items:center; gap:10px; padding:10px; background:var(--surface2); border:1px solid var(--border); border-radius:8px; cursor:pointer;">
+                        <input type="checkbox" class="bot-lora-char-import-check" value="${escapeHtml(ch.name)}" checked style="width:18px; height:18px; cursor:pointer;">
+                        <span style="font-weight:600; font-size:0.9rem;">${escapeHtml(ch.name)}</span>
+                        <span style="font-size:0.75rem; color:var(--text-secondary);">${(ch.rep_images || []).length}장 대표이미지${ch.has_face_image ? ' + 얼굴' : ''}</span>
+                    </label>
+                `).join('');
+            } catch (e) {
+                console.error('[BOT_LORA] 임포트 캐릭터 조회 실패:', e);
+                listEl.innerHTML = '<div style="text-align:center; padding:24px; color:var(--error);">조회 실패</div>';
+            }
+        }
+
+        function closeBotLoraCharImportModal() {
+            document.getElementById('bot-lora-char-import-modal').style.display = 'none';
+        }
+
+        async function confirmBotLoraCharImport() {
+            if (!botLoraCurrentBot || !botLoraCurrentProject) return;
+            const checked = [...document.querySelectorAll('.bot-lora-char-import-check:checked')].map(el => el.value);
+            if (checked.length === 0) { showToast('임포트할 캐릭터를 선택하세요', 'error'); return; }
+            try {
+                const resp = await fetchJSON('/api/bot_lora/characters/import', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ bot: botLoraCurrentBot, project: botLoraCurrentProject, characters: checked })
+                });
+                if (resp.success) {
+                    showToast(`${resp.count}명 캐릭터 임포트 완료`, 'success');
+                    closeBotLoraCharImportModal();
+                    await loadBotLoraProject();
+                } else {
+                    showToast(resp.error || '임포트 실패', 'error');
+                }
+            } catch (e) {
+                console.error('[BOT_LORA] 캐릭터 임포트 실패:', e);
+                showToast('임포트 실패', 'error');
+            }
         }
 
         async function removeBotLoraProject() {

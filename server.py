@@ -5890,6 +5890,40 @@ app.router.add_post("/api/lora/block_tag_rules", handle_api_lora_block_tag_rules
 
 # ─── Bot LoRA API ─────────────────────────────────────────────────────
 
+async def handle_api_bot_lora_characters_importable(request):
+    """봇에는 있지만 프로젝트에는 없는 캐릭터 목록"""
+    try:
+        bot_name = request.query.get("bot", "")
+        project_name = request.query.get("project", "")
+        if not bot_name or not project_name:
+            return web.json_response({"success": False, "error": "봇/프로젝트 이름 필수"}, status=400)
+        from modes.bot_lora_mode import list_importable_characters
+        result = list_importable_characters(bot_name, project_name)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[BOT_LORA_API] 임포트 가능 캐릭터 조회 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_bot_lora_characters_import(request):
+    """선택한 캐릭터를 프로젝트에 임포트"""
+    try:
+        body = await request.json()
+        bot_name = body.get("bot", "")
+        project_name = body.get("project", "")
+        char_names = body.get("characters", [])
+        if not bot_name or not project_name:
+            return web.json_response({"success": False, "error": "봇/프로젝트 이름 필수"}, status=400)
+        from modes.bot_lora_mode import import_characters
+        result = import_characters(bot_name, project_name, char_names)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[BOT_LORA_API] 캐릭터 임포트 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
 async def handle_api_bot_lora_bots(request):
     """봇 LoRA용 봇 목록 반환"""
     try:
@@ -7118,6 +7152,8 @@ async def handle_api_instance_lora_prompt_filter_save(request):
 
 
 app.router.add_get("/api/bot_lora/bots", handle_api_bot_lora_bots)
+app.router.add_get("/api/bot_lora/characters/importable", handle_api_bot_lora_characters_importable)
+app.router.add_post("/api/bot_lora/characters/import", handle_api_bot_lora_characters_import)
 app.router.add_get("/api/bot_lora/projects", handle_api_bot_lora_projects)
 app.router.add_post("/api/bot_lora/project/add", handle_api_bot_lora_project_add)
 app.router.add_post("/api/bot_lora/project/delete", handle_api_bot_lora_project_delete)
