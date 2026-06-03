@@ -53,7 +53,7 @@ def _trained_lora_dir(lora_load_path: str, bot_name: str, project_name: str, cha
 
 # ─── 학습 이미지 프로젝트 동기화 ───────────────────────────────
 
-def _sync_training_images_to_project(bot_name: str, project_name: str, char_name: str, rep_images: list) -> dict:
+def _sync_training_images_to_project(bot_name: str, project_name: str, char_name: str, rep_images: list, include_face: bool = True) -> dict:
     """원본 캐릭터 폴더의 학습 이미지를 프로젝트 폴더로 복사 (기존 파일 유지)"""
     src_dir = _bot_char_dir(bot_name, char_name)
     dst_dir = _bot_project_char_dir(bot_name, project_name, char_name)
@@ -67,7 +67,7 @@ def _sync_training_images_to_project(bot_name: str, project_name: str, char_name
     files_to_copy = []
     for fname in rep_images:
         files_to_copy.append(fname)
-    if os.path.isfile(os.path.join(src_dir, "_face_image.webp")):
+    if include_face and os.path.isfile(os.path.join(src_dir, "_face_image.webp")):
         files_to_copy.append("_face_image.webp")
 
     synced = 0
@@ -207,7 +207,7 @@ def list_importable_characters(bot_name: str, project_name: str) -> dict:
     return {"success": True, "characters": importable}
 
 
-def import_characters(bot_name: str, project_name: str, char_names: list) -> dict:
+def import_characters(bot_name: str, project_name: str, char_names: list, face_chars: list | None = None) -> dict:
     """선택한 캐릭터를 프로젝트에 추가"""
     if not bot_name or not project_name:
         print("[BOT_LORA_IMPORT] 봇/프로젝트 이름 누락")
@@ -215,6 +215,9 @@ def import_characters(bot_name: str, project_name: str, char_names: list) -> dic
     if not char_names:
         print("[BOT_LORA_IMPORT] 선택된 캐릭터 없음")
         return {"success": False, "error": "임포트할 캐릭터를 선택하세요"}
+
+    if face_chars is None:
+        face_chars = []
 
     bot_data = _load_bot_data()
     manage_data = _load_bot_lora_manage()
@@ -232,7 +235,8 @@ def import_characters(bot_name: str, project_name: str, char_names: list) -> dic
                 cn = ch.get("name", "")
                 if cn in char_names and cn not in existing_chars:
                     existing_chars[cn] = {"trigger": cn}
-                    _sync_training_images_to_project(bot_name, project_name, cn, ch.get("rep_images", []))
+                    include_face = cn in face_chars
+                    _sync_training_images_to_project(bot_name, project_name, cn, ch.get("rep_images", []), include_face)
                     added.append(cn)
             break
 
@@ -243,6 +247,39 @@ def import_characters(bot_name: str, project_name: str, char_names: list) -> dic
         print("[BOT_LORA_IMPORT] 임포트할 새 캐릭터가 없음")
 
     return {"success": True, "added": added, "count": len(added)}
+
+
+def remove_character_from_project(bot_name: str, project_name: str, char_name: str) -> dict:
+    """프로젝트에서 캐릭터 제거"""
+    if not bot_name or not project_name or not char_name:
+        print("[BOT_LORA_REMOVE] 필수 파라미터 누락")
+        return {"success": False, "error": "봇/프로젝트/캐릭터 이름 필수"}
+
+    manage_data = _load_bot_lora_manage()
+    proj = _get_project_config(manage_data, bot_name, project_name)
+    if not proj:
+        print(f"[BOT_LORA_REMOVE] 프로젝트 없음: {bot_name}/{project_name}")
+        return {"success": False, "error": "프로젝트를 찾을 수 없습니다"}
+
+    characters = proj.get("characters", {})
+    if char_name not in characters:
+        print(f"[BOT_LORA_REMOVE] 캐릭터 없음: {char_name}")
+        return {"success": False, "error": f"캐릭터 '{char_name}'가 프로젝트에 없습니다"}
+
+    del characters[char_name]
+    _save_bot_lora_manage(manage_data)
+
+    # 프로젝트 내 캐릭터 폴더 삭제 (학습 이미지, 캐릭터별 테스트 이미지)
+    char_dir = _bot_project_char_dir(bot_name, project_name, char_name)
+    if os.path.isdir(char_dir):
+        try:
+            shutil.rmtree(char_dir)
+            print(f"[BOT_LORA_REMOVE] 캐릭터 폴더 삭제: {char_dir}")
+        except Exception as e:
+            print(f"[BOT_LORA_REMOVE] 캐릭터 폴더 삭제 실패: {char_dir} - {e}")
+
+    print(f"[BOT_LORA_REMOVE] 캐릭터 제거 완료: {bot_name}/{project_name}/{char_name}")
+    return {"success": True}
 
 
 # ─── 봇 목록 ─────────────────────────────────────────────────
@@ -287,8 +324,8 @@ def list_projects(bot_name: str) -> list:
     return projects
 
 
-def add_project(bot_name: str, project_name: str) -> dict:
-    """새 학습 프로젝트 추가"""
+def add_project(bot_name: str, project_name: str, selected_chars: list | None = None, face_chars: list | None = None) -> dict:
+    """새 학습 프로젝트 추가 (selected_chars: 포함할 캐릭터, face_chars: 얼굴 이미지 포함할 캐릭터)"""
     if not bot_name:
         return {"success": False, "error": "봇 이름 누락"}
     if not project_name or not project_name.strip():
@@ -306,7 +343,10 @@ def add_project(bot_name: str, project_name: str) -> dict:
     project_dir = _bot_project_dir(bot_name, project_name)
     os.makedirs(project_dir, exist_ok=True)
 
-    # 캐릭터별 기본 설정 생성 (trigger 빈값)
+    if face_chars is None:
+        face_chars = []
+
+    # 캐릭터별 기본 설정 생성
     bot_data = _load_bot_data()
     characters = {}
     for b in bot_data.get("bots", []):
@@ -314,7 +354,8 @@ def add_project(bot_name: str, project_name: str) -> dict:
             for ch in b.get("characters", []):
                 cn = ch.get("name", "")
                 if cn:
-                    characters[cn] = {"trigger": cn}
+                    if selected_chars is None or cn in selected_chars:
+                        characters[cn] = {"trigger": cn}
             break
 
     bot_projects[project_name] = {
@@ -330,7 +371,8 @@ def add_project(bot_name: str, project_name: str) -> dict:
             if b.get("name") == bot_name:
                 for ch in b.get("characters", []):
                     if ch.get("name") == ch_entry:
-                        _sync_training_images_to_project(bot_name, project_name, ch_entry, ch.get("rep_images", []))
+                        include_face = ch_entry in face_chars
+                        _sync_training_images_to_project(bot_name, project_name, ch_entry, ch.get("rep_images", []), include_face)
                         break
                 break
 
@@ -466,8 +508,7 @@ def get_project_data(bot_name: str, project_name: str, lora_load_path: str = "")
     char_configs = proj_cfg.get("characters", {})
 
     characters = []
-    for ch in bot_info.get("characters", []):
-        char_name = ch.get("name", "")
+    for char_name in char_configs:
         if not char_name:
             continue
 

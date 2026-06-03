@@ -4569,18 +4569,12 @@
                                     테스트 이미지가 없습니다. 사이드바에서 추가하세요.
                                 </div>
                             </div>
-                            <!-- 봇에서 캐릭터 추가 임포트 -->
-                            <div style="padding:16px; margin-top:8px;">
-                                <button onclick="openBotLoraCharImportModal()" style="padding:8px 16px; background:rgba(80,150,220,0.15); color:var(--text); border:1px solid rgba(80,150,220,0.3); border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">
-                                    봇에서 캐릭터 추가 임포트
-                                </button>
-                            </div>
                         </div>
                     </div>
                     <div class="asset-sidebar" id="bot-lora-sidebar">
                         <!-- 프로젝트 관리 버튼 (봇/프로젝트 선택 시) -->
                         <div style="margin-bottom:8px; display:flex; gap:6px;">
-                            <button id="bot-lora-project-add-btn" onclick="addBotLoraProject()" style="flex:1; background:var(--accent); color:#fff; border:none; padding:6px 8px; border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600; display:none;">프로젝트 추가</button>
+                            <button id="bot-lora-project-add-btn" onclick="openBotLoraProjectAddModal()" style="flex:1; background:var(--accent); color:#fff; border:none; padding:6px 8px; border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600; display:none;">프로젝트 추가</button>
                             <button id="bot-lora-project-del-btn" onclick="removeBotLoraProject()" style="flex:1; background:var(--error); color:#fff; border:none; padding:6px 8px; border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600; display:none;">삭제</button>
                             <button id="bot-lora-project-dup-btn" onclick="openBotLoraDuplicateModal()" style="flex:1; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:6px 8px; border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600; display:none;">복제</button>
                         </div>
@@ -4592,6 +4586,13 @@
                                 <div style="font-size:0.8rem; font-weight:600; margin-bottom:6px;">테스트 이미지</div>
                                 <button onclick="openBotLoraImagePicker()" style="width:100%; padding:8px; background:rgba(180,130,220,0.2); color:var(--text); border:1px solid rgba(180,130,220,0.3); border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">
                                     에셋에서 선택
+                                </button>
+                            </div>
+                            <!-- 캐릭터 임포트 -->
+                            <div style="background:rgba(80,150,220,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
+                                <div style="font-size:0.8rem; font-weight:600; margin-bottom:6px;">캐릭터 추가</div>
+                                <button onclick="openBotLoraCharImportModal()" style="width:100%; padding:8px; background:rgba(80,150,220,0.15); color:var(--text); border:1px solid rgba(80,150,220,0.3); border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">
+                                    봇에서 캐릭터 임포트
                                 </button>
                             </div>
                             <!-- 학습 설정 폼 -->
@@ -5014,6 +5015,28 @@
             <div class="modal-footer">
                 <button onclick="closeBotLoraDuplicateModal()" style="padding:8px 16px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:6px; cursor:pointer;">취소</button>
                 <button onclick="confirmBotLoraDuplicate()" style="padding:8px 20px; background:var(--accent); color:#fff; border:none; border-radius:6px; cursor:pointer; font-weight:600;">복제</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 프로젝트 추가 모달 -->
+    <div class="modal" id="bot-lora-project-add-modal" onclick="if (event.target === this) closeBotLoraProjectAddModal()">
+        <div class="modal-content" style="max-width:520px;">
+            <div class="modal-header">
+                <h2>학습 프로젝트 추가</h2>
+                <button class="modal-close" onclick="closeBotLoraProjectAddModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div style="margin-bottom:12px;">
+                    <label style="font-size:0.85rem; font-weight:600; display:block; margin-bottom:4px;">프로젝트 이름 <span style="color:var(--error);">*</span></label>
+                    <input id="bot-lora-project-add-name" type="text" placeholder="예: anima-v11" style="width:100%; padding:8px; border-radius:6px; border:1px solid var(--border); background:var(--surface1); color:var(--text); font-size:0.9rem;">
+                </div>
+                <div style="font-size:0.85rem; font-weight:600; margin-bottom:6px;">포함할 캐릭터</div>
+                <div id="bot-lora-project-add-chars" style="display:flex; flex-direction:column; gap:6px; max-height:300px; overflow-y:auto;"></div>
+            </div>
+            <div class="modal-footer">
+                <button onclick="closeBotLoraProjectAddModal()" style="padding:8px 16px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:6px; cursor:pointer;">취소</button>
+                <button onclick="confirmBotLoraProjectAdd()" style="padding:8px 20px; background:var(--accent); color:#fff; border:none; border-radius:6px; cursor:pointer; font-weight:600;">추가</button>
             </div>
         </div>
     </div>
@@ -15960,6 +15983,7 @@
                             <button onclick="openBotLoraTrainingImagePicker('${enc(ch.name)}')" ${atImageLimit ? 'disabled' : ''} style="padding:4px 10px; background:rgba(180,130,220,0.2); color:var(--text); border:1px solid rgba(180,130,220,0.3); border-radius:4px; cursor:pointer; font-size:0.75rem; font-weight:600;${atImageLimit ? ' opacity:0.5; cursor:not-allowed;' : ''}">이미지 추가</button>
                             <span style="font-size:0.7rem; color:var(--text-secondary);">전체 ${nonFaceCount}/3 · 얼굴 ${hasFace ? 1 : 0}/1</span>
                             <button onclick="startBotLoraTrainingSingle('${enc(ch.name)}')" style="padding:4px 10px; background:rgba(80,180,120,0.2); color:var(--text); border:1px solid rgba(80,180,120,0.3); border-radius:4px; cursor:pointer; font-size:0.75rem; font-weight:600;">재학습</button>
+                            <button onclick="removeBotLoraCharFromProject('${enc(ch.name)}')" style="padding:4px 10px; background:rgba(220,80,80,0.12); color:var(--text); border:1px solid rgba(220,80,80,0.3); border-radius:4px; cursor:pointer; font-size:0.75rem; font-weight:600;">제외</button>
                         </div>
                     </div>
                     <div style="display:flex; gap:8px; align-items:flex-start;">
@@ -16172,17 +16196,73 @@
             };
         }
 
-        async function addBotLoraProject() {
+        function _renderCharCardForModal(ch, checkClass, faceClass) {
+            const enc = encodeURIComponent;
+            const thumbSrc = (ch.rep_images && ch.rep_images.length > 0)
+                ? `/api/bot_lora/char_image/${enc(botLoraCurrentBot)}/${enc(ch.name)}/${enc(ch.rep_images[0])}`
+                : '';
+            const thumbHtml = thumbSrc
+                ? `<img src="${thumbSrc}" loading="lazy" style="width:48px; height:48px; object-fit:cover; border-radius:6px; border:1px solid var(--border); flex-shrink:0;">`
+                : '<div style="width:48px; height:48px; background:var(--surface1); border-radius:6px; display:flex; align-items:center; justify-content:center; flex-shrink:0; font-size:0.7rem; color:var(--text-secondary);">No img</div>';
+            const faceToggle = ch.has_face_image
+                ? `<label style="display:flex; align-items:center; gap:4px; margin-left:auto; cursor:pointer; flex-shrink:0;" onclick="event.stopPropagation()">
+                        <input type="checkbox" class="${faceClass}" value="${escapeHtml(ch.name)}" checked style="width:16px; height:16px; cursor:pointer;">
+                        <span style="font-size:0.72rem; color:var(--text-secondary); white-space:nowrap;">얼굴</span>
+                   </label>`
+                : '';
+            return `
+                <div class="char-select-card" data-active="true" style="display:flex; align-items:center; gap:10px; padding:10px; background:var(--surface2); border:1px solid var(--border); border-radius:8px; transition:opacity 0.15s, filter 0.15s;">
+                    <input type="checkbox" class="${checkClass}" value="${escapeHtml(ch.name)}" checked style="width:18px; height:18px; cursor:pointer; flex-shrink:0;" onchange="this.closest('.char-select-card').dataset.active=this.checked; this.closest('.char-select-card').style.opacity=this.checked?'1':'0.35'; this.closest('.char-select-card').style.filter=this.checked?'none':'grayscale(0.8)';">
+                    ${thumbHtml}
+                    <div style="display:flex; flex-direction:column; gap:2px; min-width:0;">
+                        <span style="font-weight:600; font-size:0.9rem;">${escapeHtml(ch.name)}</span>
+                        <span style="font-size:0.72rem; color:var(--text-secondary);">${(ch.rep_images || []).length}장 대표이미지${ch.has_face_image ? ' · 얼굴 있음' : ''}</span>
+                    </div>
+                    ${faceToggle}
+                </div>`;
+        }
+
+        async function openBotLoraProjectAddModal() {
             if (!botLoraCurrentBot) return;
-            const name = prompt('학습 프로젝트 이름:');
-            if (!name || !name.trim()) return;
+            document.getElementById('bot-lora-project-add-name').value = '';
+            const charsEl = document.getElementById('bot-lora-project-add-chars');
+            charsEl.innerHTML = '<div style="text-align:center; padding:24px; color:var(--text-secondary);">로딩 중...</div>';
+            document.getElementById('bot-lora-project-add-modal').style.display = 'flex';
+            try {
+                const resp = await fetchJSON(`/api/bot_lora/bots`);
+                if (!resp.success) { charsEl.innerHTML = '<div style="color:var(--error);">봇 목록 조회 실패</div>'; return; }
+                const bot = (resp.bots || []).find(b => b.name === botLoraCurrentBot);
+                const chars = (bot && bot.characters) || [];
+                if (chars.length === 0) {
+                    charsEl.innerHTML = '<div style="text-align:center; padding:16px; color:var(--text-secondary);">봇에 캐릭터가 없습니다.</div>';
+                    return;
+                }
+                charsEl.innerHTML = chars.map(ch => _renderCharCardForModal(ch, 'bot-lora-project-add-char-check', 'bot-lora-project-add-face-check')).join('');
+            } catch (e) {
+                console.error('[BOT_LORA] 프로젝트 추가 모달 로드 실패:', e);
+                charsEl.innerHTML = '<div style="color:var(--error);">조회 실패</div>';
+            }
+        }
+
+        function closeBotLoraProjectAddModal() {
+            document.getElementById('bot-lora-project-add-modal').style.display = 'none';
+        }
+
+        async function confirmBotLoraProjectAdd() {
+            if (!botLoraCurrentBot) return;
+            const name = document.getElementById('bot-lora-project-add-name').value.trim();
+            if (!name) { showToast('프로젝트 이름을 입력하세요', 'error'); return; }
+            const selected = [...document.querySelectorAll('.bot-lora-project-add-char-check:checked')].map(el => el.value);
+            if (selected.length === 0) { showToast('캐릭터를 최소 1명 선택하세요', 'error'); return; }
+            const faceChars = [...document.querySelectorAll('.bot-lora-project-add-face-check:checked')].map(el => el.value);
             try {
                 const resp = await fetchJSON('/api/bot_lora/project/add', {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ bot: botLoraCurrentBot, name: name.trim() })
+                    body: JSON.stringify({ bot: botLoraCurrentBot, name: name, characters: selected, face_chars: faceChars })
                 });
                 if (resp.success) {
-                    showToast('프로젝트 추가 완료', 'success');
+                    showToast(`프로젝트 추가 완료 (${selected.length}명)`, 'success');
+                    closeBotLoraProjectAddModal();
                     await loadBotLoraProjectGrid();
                 } else {
                     showToast(resp.error || '추가 실패', 'error');
@@ -16242,13 +16322,7 @@
                     return;
                 }
                 confirmBtn.disabled = false;
-                listEl.innerHTML = chars.map(ch => `
-                    <label style="display:flex; align-items:center; gap:10px; padding:10px; background:var(--surface2); border:1px solid var(--border); border-radius:8px; cursor:pointer;">
-                        <input type="checkbox" class="bot-lora-char-import-check" value="${escapeHtml(ch.name)}" checked style="width:18px; height:18px; cursor:pointer;">
-                        <span style="font-weight:600; font-size:0.9rem;">${escapeHtml(ch.name)}</span>
-                        <span style="font-size:0.75rem; color:var(--text-secondary);">${(ch.rep_images || []).length}장 대표이미지${ch.has_face_image ? ' + 얼굴' : ''}</span>
-                    </label>
-                `).join('');
+                listEl.innerHTML = chars.map(ch => _renderCharCardForModal(ch, 'bot-lora-char-import-check', 'bot-lora-char-import-face-check')).join('');
             } catch (e) {
                 console.error('[BOT_LORA] 임포트 캐릭터 조회 실패:', e);
                 listEl.innerHTML = '<div style="text-align:center; padding:24px; color:var(--error);">조회 실패</div>';
@@ -16263,10 +16337,11 @@
             if (!botLoraCurrentBot || !botLoraCurrentProject) return;
             const checked = [...document.querySelectorAll('.bot-lora-char-import-check:checked')].map(el => el.value);
             if (checked.length === 0) { showToast('임포트할 캐릭터를 선택하세요', 'error'); return; }
+            const faceChars = [...document.querySelectorAll('.bot-lora-char-import-face-check:checked')].map(el => el.value);
             try {
                 const resp = await fetchJSON('/api/bot_lora/characters/import', {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ bot: botLoraCurrentBot, project: botLoraCurrentProject, characters: checked })
+                    body: JSON.stringify({ bot: botLoraCurrentBot, project: botLoraCurrentProject, characters: checked, face_chars: faceChars })
                 });
                 if (resp.success) {
                     showToast(`${resp.count}명 캐릭터 임포트 완료`, 'success');
@@ -16279,6 +16354,23 @@
                 console.error('[BOT_LORA] 캐릭터 임포트 실패:', e);
                 showToast('임포트 실패', 'error');
             }
+        }
+
+        async function removeBotLoraCharFromProject(charName) {
+            if (!botLoraCurrentBot || !botLoraCurrentProject) return;
+            if (!confirm(`캐릭터 "${charName}"를 이 프로젝트에서 제외하시겠습니까?`)) return;
+            try {
+                const resp = await fetchJSON('/api/bot_lora/character/remove', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ bot: botLoraCurrentBot, project: botLoraCurrentProject, character: charName })
+                });
+                if (resp.success) {
+                    showToast(`캐릭터 "${charName}" 제외 완료`, 'success');
+                    await loadBotLoraProject();
+                } else {
+                    showToast(resp.error || '제외 실패', 'error');
+                }
+            } catch (e) { console.error('[BOT_LORA] 캐릭터 제외 실패:', e); showToast('제외 실패', 'error'); }
         }
 
         async function removeBotLoraProject() {

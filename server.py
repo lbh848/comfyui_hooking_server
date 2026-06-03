@@ -5913,13 +5913,32 @@ async def handle_api_bot_lora_characters_import(request):
         bot_name = body.get("bot", "")
         project_name = body.get("project", "")
         char_names = body.get("characters", [])
+        face_chars = body.get("face_chars", [])
         if not bot_name or not project_name:
             return web.json_response({"success": False, "error": "봇/프로젝트 이름 필수"}, status=400)
         from modes.bot_lora_mode import import_characters
-        result = import_characters(bot_name, project_name, char_names)
+        result = import_characters(bot_name, project_name, char_names, face_chars)
         return web.json_response(result)
     except Exception as e:
         print(f"[BOT_LORA_API] 캐릭터 임포트 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_bot_lora_character_remove(request):
+    """프로젝트에서 캐릭터 제거"""
+    try:
+        body = await request.json()
+        bot_name = body.get("bot", "")
+        project_name = body.get("project", "")
+        char_name = body.get("character", "")
+        if not bot_name or not project_name or not char_name:
+            return web.json_response({"success": False, "error": "봇/프로젝트/캐릭터 필수"}, status=400)
+        from modes.bot_lora_mode import remove_character_from_project
+        result = remove_character_from_project(bot_name, project_name, char_name)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[BOT_LORA_API] 캐릭터 제거 실패: {e}")
         traceback.print_exc()
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
@@ -5957,10 +5976,12 @@ async def handle_api_bot_lora_project_add(request):
         body = await request.json()
         bot_name = body.get("bot", "")
         project_name = body.get("name", "")
+        selected_chars = body.get("characters", None)
+        face_chars = body.get("face_chars", None)
         if not bot_name or not project_name:
             return web.json_response({"success": False, "error": "봇/프로젝트 이름 필수"}, status=400)
         from modes.bot_lora_mode import add_project
-        result = add_project(bot_name, project_name)
+        result = add_project(bot_name, project_name, selected_chars, face_chars)
         return web.json_response(result)
     except Exception as e:
         print(f"[BOT_LORA_API] 프로젝트 추가 실패: {e}")
@@ -7154,6 +7175,7 @@ async def handle_api_instance_lora_prompt_filter_save(request):
 app.router.add_get("/api/bot_lora/bots", handle_api_bot_lora_bots)
 app.router.add_get("/api/bot_lora/characters/importable", handle_api_bot_lora_characters_importable)
 app.router.add_post("/api/bot_lora/characters/import", handle_api_bot_lora_characters_import)
+app.router.add_post("/api/bot_lora/character/remove", handle_api_bot_lora_character_remove)
 app.router.add_get("/api/bot_lora/projects", handle_api_bot_lora_projects)
 app.router.add_post("/api/bot_lora/project/add", handle_api_bot_lora_project_add)
 app.router.add_post("/api/bot_lora/project/delete", handle_api_bot_lora_project_delete)
