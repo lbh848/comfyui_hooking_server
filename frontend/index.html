@@ -7627,6 +7627,7 @@
                         showToast(`태그 분석 완료 (${data.tags_count || 0}개)`, 'success');
                     }
                 } else if (source === 'auto_match') {
+                    // 개별 이미지 분석 완료
                     if (data.results) {
                         data.results.forEach(r => {
                             const img = atState.images.find(i => i.file && i.file.name === r.filename);
@@ -7637,18 +7638,26 @@
                         });
                     }
                     if (typeof atRenderImages === 'function') atRenderImages();
-                    const progressInner = document.getElementById('at-progress-inner');
-                    if (progressInner) progressInner.style.width = '100%';
 
-                    const doMatch = document.getElementById('at-do-match');
-                    if (doMatch && doMatch.checked) {
-                        showToast('태그 분석 완료, 배치 매칭 시작...', 'info');
-                        if (typeof atProceedToMatching === 'function') atProceedToMatching();
-                    } else {
-                        document.getElementById('at-analyze-btn').disabled = false;
-                        document.getElementById('at-stop-btn').style.display = 'none';
-                        setTimeout(() => { document.getElementById('at-progress-bar').style.display = 'none'; }, 500);
-                        showToast('태그 분석 완료', 'success');
+                    atState.analyzeCompleted++;
+                    const progressInner = document.getElementById('at-progress-inner');
+                    if (progressInner && atState.analyzeTotal > 0) {
+                        progressInner.style.width = Math.round((atState.analyzeCompleted / atState.analyzeTotal) * 100) + '%';
+                    }
+
+                    // 전체 분석 완료 확인
+                    if (atState.analyzeCompleted >= atState.analyzeTotal) {
+                        atState.queueItemIds = [];
+                        const doMatch = document.getElementById('at-do-match');
+                        if (doMatch && doMatch.checked) {
+                            showToast('태그 분석 완료, 배치 매칭 시작...', 'info');
+                            if (typeof atProceedToMatching === 'function') atProceedToMatching();
+                        } else {
+                            document.getElementById('at-analyze-btn').disabled = false;
+                            document.getElementById('at-stop-btn').style.display = 'none';
+                            setTimeout(() => { document.getElementById('at-progress-bar').style.display = 'none'; }, 500);
+                            showToast('태그 분석 완료', 'success');
+                        }
                     }
                 } else if (source === 'instance_lora') {
                     if (typeof loadInstanceLoraGrid === 'function') loadInstanceLoraGrid();
@@ -10585,6 +10594,10 @@
             embeddingMatches: [], // [{...embedding_result, selected: bool}] (임베딩 매칭 결과)
             compareImages: {},    // {presetName: imageUrl} 비교 캐릭터 이미지 맵
             chains: [],          // 제안된 체인
+            // 개별 큐 추적
+            queueItemIds: [],    // 현재 세션에서 추가한 큐 아이템 ID 목록
+            analyzeTotal: 0,     // 전체 분석/매칭 큐 아이템 수
+            analyzeCompleted: 0, // 완료된 큐 아이템 수
         };
 
         _atLoadState();
@@ -10928,59 +10941,54 @@
             document.getElementById('at-progress-bar').style.display = 'block';
             document.getElementById('at-progress-inner').style.width = '0%';
 
-            // 전체 단계: 태그 분석(이미지별) + 임베딩 매칭(배치 1회) + 태그 매칭(배치 1회)
-            const analyzeCount = (doAnalyze && pending.length > 0) ? pending.length : 0;
-            const batchSteps = doMatch ? 2 : (doAnalyze ? 1 : 0);
-            const totalSteps = analyzeCount + batchSteps;
-            let completedSteps = 0;
+            // 전체 단계: 태그 분석(이미지별) + 배치 매칭(이미지별)
+            atState.queueItemIds = [];
+            atState.analyzeCompleted = 0;
 
-            // 1. 태그 분석 (큐 사용)
+            // 1. 태그 분석 (큐 사용, 이미지당 개별 큐 아이템)
             if (doAnalyze && pending.length > 0) {
                 atAbortController = new AbortController();
-                // 모든 이미지를 base64로 변환 후 큐에 추가
-                const queueImages = [];
+                atState.analyzeTotal = pending.length;
+
                 for (const item of pending) {
                     item.status = 'analyzing';
-                    try {
-                        const b64 = await fileToBase64(item.file);
-                        queueImages.push({data: b64, filename: item.file.name});
-                    } catch (e) {
-                        item.error = '파일 변환 실패';
-                        item.status = 'error';
-                    }
                 }
                 atRenderImages();
 
-                if (queueImages.length > 0) {
+                let addedCount = 0;
+                for (const item of pending) {
                     try {
-                        await fetchJSON('/api/queue/add', {
+                        const b64 = await fileToBase64(item.file);
+                        const resp = await fetchJSON('/api/queue/add', {
                             method: 'POST',
                             headers: {'Content-Type': 'application/json'},
                             body: JSON.stringify({
                                 type: 'tag_analysis',
-                                label: `태그 분석 (오토매치: ${queueImages.length}장)`,
-                                params: { source: 'auto_match', images: queueImages, category: category }
+                                label: `태그 분석 (${item.file.name})`,
+                                params: { source: 'auto_match', images: [{data: b64, filename: item.file.name}], category: category }
                             })
                         });
-                        showToast(`큐에 ${queueImages.length}장 추가됨`, 'info');
+                        if (resp.item_id) {
+                            atState.queueItemIds.push(resp.item_id);
+                            addedCount++;
+                        }
                     } catch (e) {
-                        console.error('[AT] 큐 추가 오류:', e);
-                        showToast('큐 추가 오류', 'error');
-                        pending.forEach(i => { if (i.status === 'analyzing') i.status = 'pending'; });
-                        atRenderImages();
-                        document.getElementById('at-analyze-btn').disabled = false;
-                        document.getElementById('at-stop-btn').style.display = 'none';
-                        document.getElementById('at-progress-bar').style.display = 'none';
-                        return;
+                        console.error('[AT] 큐 추가 오류:', item.file.name, e);
+                        item.error = '큐 추가 실패';
+                        item.status = 'error';
                     }
-                    // 완료는 handleTagAnalysisProgress에서 처리 후 atProceedToMatching 호출
-                    // 분석만 하는 경우 (doMatch=false) 대기 상태 유지
-                    if (!doMatch) {
-                        // 분석 완료 후 매칭 없이 종료 - handleTagAnalysisProgress에서 버튼 복원
-                    }
-                    return; // 큐 완료 이벤트로 후속 처리
                 }
-                atAbortController = null;
+
+                if (addedCount > 0) {
+                    showToast(`큐에 ${addedCount}장 추가됨`, 'info');
+                } else {
+                    showToast('큐 추가 실패', 'error');
+                    document.getElementById('at-analyze-btn').disabled = false;
+                    document.getElementById('at-stop-btn').style.display = 'none';
+                    document.getElementById('at-progress-bar').style.display = 'none';
+                    return;
+                }
+                return; // 큐 완료 이벤트로 후속 처리
             }
 
             // 2. 배치 매칭 (큐 사용)
@@ -11008,6 +11016,11 @@
                 showToast('태그 분석 완료', 'success');
                 return;
             }
+
+            // 매칭 결과 초기화 (새 세션 시작)
+            atState.embeddingMatches = [];
+            atState.imageMatches = [];
+            atState.chains = [];
 
             const uploadedFiles = atState.images.filter(i => i.file);
             const doneImages = atState.images.filter(i => i.status === 'done' && i.tags && i.tags.length > 0);
@@ -11047,45 +11060,73 @@
                 return;
             }
 
-            showToast('배치 매칭 큐에 추가됨', 'info');
+            // 이미지당 개별 큐 아이템으로 분해
+            atState.queueItemIds = [];
+            atState.analyzeTotal = allItems.length;
+            atState.analyzeCompleted = 0;
+
             const progressInner = document.getElementById('at-progress-inner');
             if (progressInner) progressInner.style.width = '0%';
 
-            try {
-                await fetchJSON('/api/queue/add', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                        type: 'auto_match_batch',
-                        label: `배치 매칭 (${allItems.length}항목)`,
-                        params: {
-                            items: allItems,
-                            category: category,
-                            top_n: 10,
-                            embedding_threshold: 0,
-                        }
-                    })
-                });
-            } catch (e) {
-                console.error('[AT] 배치 매칭 큐 추가 오류:', e);
-                showToast('배치 매칭 큐 추가 오류', 'error');
+            let addedCount = 0;
+            for (const matchItem of allItems) {
+                try {
+                    const resp = await fetchJSON('/api/queue/add', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({
+                            type: 'auto_match_batch',
+                            label: `배치 매칭 (${matchItem.image_name})`,
+                            params: {
+                                items: [matchItem],
+                                category: category,
+                                top_n: 10,
+                                embedding_threshold: 0,
+                            }
+                        })
+                    });
+                    if (resp.item_id) {
+                        atState.queueItemIds.push(resp.item_id);
+                        addedCount++;
+                    }
+                } catch (e) {
+                    console.error('[AT] 배치 매칭 큐 추가 오류:', matchItem.image_name, e);
+                }
+            }
+
+            if (addedCount > 0) {
+                showToast(`배치 매칭 ${addedCount}건 큐에 추가됨`, 'info');
+            } else {
+                showToast('배치 매칭 큐 추가 실패', 'error');
                 document.getElementById('at-analyze-btn').disabled = false;
                 document.getElementById('at-stop-btn').style.display = 'none';
                 document.getElementById('at-progress-bar').style.display = 'none';
             }
         }
 
-        function atStopAnalysis() {
+        async function atStopAnalysis() {
+            // 대기 중인 큐 아이템 모두 취소
+            if (atState.queueItemIds.length > 0) {
+                for (const itemId of atState.queueItemIds) {
+                    try {
+                        await fetchJSON('/api/queue/cancel', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({ id: itemId })
+                        });
+                    } catch (e) { console.error('[AT] 큐 취소 오류:', itemId, e); }
+                }
+                atState.queueItemIds = [];
+            }
             if (atAbortController) {
                 atAbortController.abort();
-                // analyzing 상태를 pending으로 되돌림
-                atState.images.forEach(i => { if (i.status === 'analyzing') i.status = 'pending'; });
-                atRenderImages();
-                document.getElementById('at-analyze-btn').disabled = false;
-                document.getElementById('at-stop-btn').style.display = 'none';
-                document.getElementById('at-progress-bar').style.display = 'none';
-                showToast('분석이 중지되었습니다', 'warning');
             }
+            atState.images.forEach(i => { if (i.status === 'analyzing') i.status = 'pending'; });
+            atRenderImages();
+            document.getElementById('at-analyze-btn').disabled = false;
+            document.getElementById('at-stop-btn').style.display = 'none';
+            document.getElementById('at-progress-bar').style.display = 'none';
+            showToast('분석이 중지되었습니다', 'warning');
         }
 
         function atShowAnalysisResults() {
@@ -11110,30 +11151,11 @@
             const phase = data.phase || '';
 
             if (phase === 'started') {
-                const progressInner = document.getElementById('at-progress-inner');
-                if (progressInner) progressInner.style.width = '0%';
-                return;
-            }
-
-            if (phase === 'jaccard_matching') {
-                const progressInner = document.getElementById('at-progress-inner');
-                if (progressInner && data.current && data.total) {
-                    progressInner.style.width = Math.round((data.current / data.total) * 50) + '%';
-                }
-                return;
-            }
-
-            if (phase === 'embedding_matching') {
-                const progressInner = document.getElementById('at-progress-inner');
-                if (progressInner) progressInner.style.width = '50%';
                 return;
             }
 
             if (phase === 'completed') {
-                atState.embeddingMatches = [];
-                atState.imageMatches = [];
-                atState.chains = [];
-
+                // 개별 이미지 매칭 결과 누적
                 const uploadedFiles = atState.images.filter(i => i.file);
                 const doneImages = atState.images.filter(i => i.status === 'done' && i.tags && i.tags.length > 0);
 
@@ -11163,18 +11185,27 @@
                     }
                 }
 
-                document.getElementById('at-analyze-btn').disabled = false;
-                document.getElementById('at-stop-btn').style.display = 'none';
+                atState.analyzeCompleted++;
                 const progressInner = document.getElementById('at-progress-inner');
-                if (progressInner) progressInner.style.width = '100%';
-                setTimeout(() => { document.getElementById('at-progress-bar').style.display = 'none'; }, 500);
+                if (progressInner && atState.analyzeTotal > 0) {
+                    progressInner.style.width = Math.round((atState.analyzeCompleted / atState.analyzeTotal) * 100) + '%';
+                }
 
-                if (atState.embeddingMatches.length > 0 || atState.imageMatches.length > 0) {
-                    atSwitchView('result');
-                    atRenderMatches();
-                    showToast('배치 매칭 완료', 'success');
-                } else {
-                    showToast('매칭 결과가 없습니다', 'warning');
+                // 전체 매칭 완료 확인
+                if (atState.analyzeCompleted >= atState.analyzeTotal) {
+                    atState.queueItemIds = [];
+                    document.getElementById('at-analyze-btn').disabled = false;
+                    document.getElementById('at-stop-btn').style.display = 'none';
+                    if (progressInner) progressInner.style.width = '100%';
+                    setTimeout(() => { document.getElementById('at-progress-bar').style.display = 'none'; }, 500);
+
+                    if (atState.embeddingMatches.length > 0 || atState.imageMatches.length > 0) {
+                        atSwitchView('result');
+                        atRenderMatches();
+                        showToast('배치 매칭 완료', 'success');
+                    } else {
+                        showToast('매칭 결과가 없습니다', 'warning');
+                    }
                 }
             }
         }
