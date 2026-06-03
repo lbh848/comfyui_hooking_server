@@ -3758,6 +3758,14 @@
                         <button id="au-upload-btn" onclick="auOpenUploadModal()" style="width:100%; background:#FF9800; color:#fff; border:none; padding:6px 10px; border-radius:6px; cursor:pointer; font-size:0.82rem; font-weight:600;">이미지 업로드</button>
                     </div>
 
+                    <!-- 일괄 대표 설정 -->
+                    <div id="au-batch-rep-set-block" style="background:rgba(33,150,243,0.08); border-radius:8px; padding:10px; margin-bottom:8px; display:none;">
+                        <div class="section-title">일괄 대표 설정</div>
+                        <div style="font-size:0.72rem; color:var(--text-secondary); margin-bottom:6px;">각 조합의 첫 이미지를 대표이미지로 일괄 설정합니다.</div>
+                        <button id="au-batch-rep-set-btn" onclick="auBatchSetRepresentative()" style="width:100%; background:#1976D2; color:#fff; border:none; padding:6px 10px; border-radius:6px; cursor:pointer; font-size:0.82rem; font-weight:600;">LV2 첫 이미지 일괄 대표 설정</button>
+                        <div id="au-batch-rep-set-status" style="font-size:0.72rem; color:var(--text2); margin-top:4px; display:none;"></div>
+                    </div>
+
                     <!-- 태그 분석 -->
                     <div style="background:rgba(76,175,80,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
                         <div class="section-title">태그 분석</div>
@@ -7576,7 +7584,7 @@
         }
 
         // ─── 태그 분석 진행률 이벤트 처리 ───
-        function handleTagAnalysisProgress(data) {
+        async function handleTagAnalysisProgress(data) {
             const source = data.source || '';
             const phase = data.phase || '';
             if (phase === 'completed') {
@@ -7628,7 +7636,12 @@
                     // 진행률 바 업데이트
                     const progressInner = document.getElementById('at-progress-inner');
                     if (progressInner) progressInner.style.width = '100%';
-                    // 후속 매칭 단계 진행
+                    // 후속 매칭 단계 진행 (상태 표시)
+                    const doMatch = document.getElementById('at-do-match');
+                    if (doMatch && doMatch.checked) {
+                        showToast('태그 분석 완료, 매칭 진행 중...', 'info');
+                        if (progressInner) progressInner.style.width = '0%';
+                    }
                     if (typeof atProceedToMatching === 'function') atProceedToMatching();
                 } else if (source === 'instance_lora') {
                     if (typeof loadInstanceLoraGrid === 'function') loadInstanceLoraGrid();
@@ -11122,6 +11135,8 @@
 
             if (doMatch && uploadedFiles.length > 0) {
                 // 임베딩 매칭
+                const progressInner = document.getElementById('at-progress-inner');
+                if (progressInner) progressInner.style.width = '50%';
                 const embItems = uploadedFiles.map(img => {
                     const fileName = img.file.name || '';
                     const baseName = fileName.substring(0, fileName.lastIndexOf('.')) || fileName;
@@ -11151,6 +11166,8 @@
 
             // 태그 매칭
             if (doneImages.length > 0) {
+                const progressInner = document.getElementById('at-progress-inner');
+                if (progressInner) progressInner.style.width = '75%';
                 const tagItems = doneImages.map(img => ({
                     image_name: img.file.name || '',
                     tags: [...new Set(img.tags.map(t => t.trim()))]
@@ -11184,7 +11201,9 @@
 
             document.getElementById('at-analyze-btn').disabled = false;
             document.getElementById('at-stop-btn').style.display = 'none';
-            document.getElementById('at-progress-bar').style.display = 'none';
+            const progressInner2 = document.getElementById('at-progress-inner');
+            if (progressInner2) progressInner2.style.width = '100%';
+            setTimeout(() => { document.getElementById('at-progress-bar').style.display = 'none'; }, 500);
 
             if (atState.embeddingMatches.length > 0 || atState.imageMatches.length > 0) {
                 atSwitchView('result');
@@ -23024,6 +23043,71 @@
                 : '선택 이미지 태그 분석';
             const batchBtn = document.getElementById('au-batch-rep-btn');
             batchBtn.style.opacity = auNavLevel < 1 ? '0.5' : '1';
+            // 일괄 대표 설정 블록: LV1에서만 표시
+            const repSetBlock = document.getElementById('au-batch-rep-set-block');
+            if (repSetBlock) repSetBlock.style.display = auNavLevel === 1 ? '' : 'none';
+        }
+
+        // ─── 일괄 대표 설정 ───
+        async function auBatchSetRepresentative() {
+            if (auNavLevel !== 1 || !auNavCharacter) { showToast('LV1(캐릭터 갤러리)에서만 사용 가능합니다', 'error'); return; }
+            const btn = document.getElementById('au-batch-rep-set-btn');
+            const statusEl = document.getElementById('au-batch-rep-set-status');
+            btn.disabled = true;
+            btn.textContent = '처리 중...';
+            statusEl.style.display = 'block';
+            try {
+                const enc = encodeURIComponent;
+                const resp = await fetch(`/api/asset_mode/characters/${enc(auNavCharacter)}/gallery`);
+                const data = await resp.json();
+                const items = (data.gallery || []).filter(i => i.image_count > 0 && !i.representative);
+                if (items.length === 0) {
+                    statusEl.textContent = '대표 미설정 조합이 없습니다.';
+                    showToast('모든 조합에 대표이미지가 이미 설정되어 있습니다', 'info');
+                    btn.disabled = false;
+                    btn.textContent = 'LV2 첫 이미지 일괄 대표 설정';
+                    return;
+                }
+                let success = 0, fail = 0;
+                for (const item of items) {
+                    statusEl.textContent = `${success + fail + 1}/${items.length} 처리 중: ${item.outfit} - ${item.expression}`;
+                    try {
+                        // 해당 조합의 이미지 목록 조회
+                        const imgResp = await fetch(`/api/asset_mode/characters/${enc(auNavCharacter)}/outfits/${enc(item.outfit)}/expressions/${enc(item.expression)}/images`);
+                        const imgData = await imgResp.json();
+                        const images = imgData.images || imgData || [];
+                        if (images.length > 0) {
+                            const firstImg = images[0];
+                            const filename = firstImg.filename || firstImg.name || firstImg;
+                            const setResp = await fetch('/api/asset_mode/set_representative', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                    character: auNavCharacter,
+                                    outfit: item.outfit,
+                                    expression: item.expression,
+                                    filename: filename,
+                                })
+                            });
+                            const setResult = await setResp.json();
+                            if (setResult.success) success++;
+                            else fail++;
+                        }
+                    } catch (e) {
+                        fail++;
+                    }
+                }
+                statusEl.textContent = `완료: ${success}건 설정${fail > 0 ? `, ${fail}건 실패` : ''}`;
+                showToast(`대표이미지 ${success}건 설정 완료`, fail > 0 ? 'warning' : 'success');
+                // 갤러리 새로고침
+                await auRenderGallery(auNavCharacter);
+            } catch (e) {
+                statusEl.textContent = '오류: ' + e.message;
+                showToast('일괄 대표 설정 오류', 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'LV2 첫 이미지 일괄 대표 설정';
+            }
         }
 
         async function auAnalyzeSelectedImages() {

@@ -977,6 +977,14 @@ class QueueManager:
         auto_match_results = []
 
         for i, img in enumerate(images_to_analyze):
+            # 큐 UI 진행률 업데이트
+            await self._notify_progress(item, {
+                "percentage": ((i + 1) / total) * 100 if total > 0 else 0,
+                "phase": "analyzing",
+                "current": i + 1, "total": total,
+                "filename": img.get("filename", ""),
+            })
+
             if self.notify_frontend:
                 await self.notify_frontend(event_type, {
                     "source": source, "phase": "analyzing",
