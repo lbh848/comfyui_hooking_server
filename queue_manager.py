@@ -1,0 +1,752 @@
+"""
+통합 큐 매니저 - 에셋 생성 + LoRA 학습을 하나의 큐에서 순차 처리한다.
+백엔드 메모리에 상태를 유지하여 브라우저 새로고침에도 큐가 유지된다.
+"""
+
+import asyncio
+import copy
+import datetime
+import json
+import os
+import re
+import time
+import traceback
+import uuid
+from dataclasses import dataclass, field, asdict
+from typing import Optional
+
+
+@dataclass
+class QueueItem:
+    id: str
+    type: str  # illustration | asset_generation | asset_lora_training | bot_lora_training | instance_lora_training
+    label: str
+    status: str = "pending"  # pending | processing | completed | failed | cancelled
+    params: dict = field(default_factory=dict)
+    progress: float = 0.0
+    progress_detail: dict = field(default_factory=dict)
+    created_at: float = field(default_factory=time.time)
+    started_at: Optional[float] = None
+    completed_at: Optional[float] = None
+    error: Optional[str] = None
+    result: Optional[dict] = None
+    priority: int = 10  # 낮을수록 높은 우선순위 (삽화=0, 나머지=10)
+
+    def to_dict(self) -> dict:
+        d = asdict(self)
+        return d
+
+
+class QueueManager:
+    """모든 에셋 생성/LoRA 학습 작업을 순차 처리하는 통합 큐."""
+
+    def __init__(self):
+        self.items: list[QueueItem] = []
+        self.current_item: Optional[QueueItem] = None
+        self._processing = False
+        self._lock = asyncio.Lock()
+        # server.py에서 주입될 콜백 함수들
+        self.notify_frontend = None  # async def(event_type, data)
+        self.get_config = None       # def() -> dict
+        self.asset_mode = None       # AssetMode 인스턴스
+        self.asset_tool = None       # AssetToolMode 인스턴스 (analyze_image용)
+        # 학습 실행 함수들 (server.py에서 주입)
+        self.submit_to_real_comfy = None       # async def(prompt_data) -> (prompt_id, result)
+        self.convert_workflow_via_endpoint = None  # async def(wf) -> (api_wf, error)
+        self.build_lora_training_text = None   # def(...)
+        self.prepare_ref_folder = None         # def(images, comfy_input_dir) -> str
+        self.prepare_style_ref_folder = None   # def(images, comfy_input_dir) -> str
+        self.get_real_comfy_host = None        # def() -> str
+        self.get_real_comfy_port = None        # def() -> int
+        # 삽화 생성 콜백 (server.py에서 주입)
+        self.generate_image_with_prompt = None  # async def(positive, negative) -> bytes
+        self.process_prompt_full = None         # async def(prompt_id, prompt_data, positive, negative) -> None
+
+    async def add_item(self, item_type: str, label: str, params: dict, priority: int = 10) -> QueueItem:
+        item = QueueItem(
+            id=uuid.uuid4().hex[:12],
+            type=item_type,
+            label=label,
+            params=params,
+            priority=priority,
+        )
+        self.items.append(item)
+        print(f"[QUEUE] 항목 추가: type={item_type}, label={label}, id={item.id}, priority={priority}, 대기={len([i for i in self.items if i.status == 'pending'])}")
+        await self._notify_queue_updated()
+        # 처리 루프가 idle이면 시작
+        asyncio.ensure_future(self._process_loop())
+        return item
+
+    async def cancel_item(self, item_id: str) -> bool:
+        for item in self.items:
+            if item.id == item_id:
+                if item.status in ("pending",):
+                    item.status = "cancelled"
+                    item.completed_at = time.time()
+                    print(f"[QUEUE] 항목 취소: id={item_id}, label={item.label}")
+                    await self._notify_queue_updated()
+                    return True
+                return False
+        return False
+
+    async def cancel_all_pending(self):
+        cancelled = 0
+        for item in self.items:
+            if item.status == "pending":
+                item.status = "cancelled"
+                item.completed_at = time.time()
+                cancelled += 1
+        if cancelled > 0:
+            print(f"[QUEUE] 대기 항목 {cancelled}개 전체 취소")
+            await self._notify_queue_updated()
+
+    def get_status(self) -> dict:
+        return {
+            "items": [i.to_dict() for i in self.items],
+            "current": self.current_item.to_dict() if self.current_item else None,
+            "processing": self._processing,
+            "pending_count": len([i for i in self.items if i.status == "pending"]),
+        }
+
+    def remove_item(self, item_id: str) -> bool:
+        """완료/취소된 항목을 목록에서 제거."""
+        for i, item in enumerate(self.items):
+            if item.id == item_id and item.status in ("completed", "failed", "cancelled"):
+                self.items.pop(i)
+                return True
+        return False
+
+    # ─── 내부 처리 ──────────────────────────────────────────
+
+    async def _notify_queue_updated(self):
+        if self.notify_frontend:
+            await self.notify_frontend("queue_updated", self.get_status())
+
+    async def _notify_progress(self, item: QueueItem, detail: dict):
+        item.progress = detail.get("percentage", item.progress)
+        item.progress_detail = detail
+        if self.notify_frontend:
+            await self.notify_frontend("queue_progress", {
+                "item_id": item.id,
+                "item_type": item.type,
+                "item_label": item.label,
+                "progress": item.progress,
+                "detail": detail,
+            })
+
+    async def _process_loop(self):
+        async with self._lock:
+            if self._processing:
+                return
+            self._processing = True
+        try:
+            while True:
+                # pending 항목 중 우선순위가 가장 높은 것 (priority 낮은 것) 선택
+                pending_items = [i for i in self.items if i.status == "pending"]
+                if not pending_items:
+                    break
+                pending_items.sort(key=lambda i: (i.priority, i.created_at))
+                next_item = pending_items[0]
+                if next_item is None:
+                    break
+                self.current_item = next_item
+                next_item.status = "processing"
+                next_item.started_at = time.time()
+                next_item.progress = 0.0
+                print(f"[QUEUE] 처리 시작: type={next_item.type}, label={next_item.label}, id={next_item.id}")
+                await self._notify_queue_updated()
+                try:
+                    result = await self._execute_item(next_item)
+                    next_item.status = "completed"
+                    next_item.result = result
+                    next_item.progress = 100.0
+                    print(f"[QUEUE] 처리 완료: id={next_item.id}")
+                except Exception as e:
+                    next_item.status = "failed"
+                    next_item.error = str(e)
+                    print(f"[QUEUE] 처리 실패: id={next_item.id}, error={e}")
+                    traceback.print_exc()
+                next_item.completed_at = time.time()
+                self.current_item = None
+                await self._notify_queue_updated()
+        finally:
+            self._processing = False
+
+    async def _execute_item(self, item: QueueItem) -> dict:
+        dispatch = {
+            "illustration": self._handle_illustration,
+            "asset_generation": self._handle_asset_generation,
+            "asset_lora_training": self._handle_asset_lora_training,
+            "bot_lora_training": self._handle_bot_lora_training,
+            "instance_lora_training": self._handle_instance_lora_training,
+        }
+        handler = dispatch.get(item.type)
+        if not handler:
+            raise ValueError(f"알 수 없는 큐 아이템 타입: {item.type}")
+        return await handler(item)
+
+    # ─── 타입별 핸들러 ──────────────────────────────────────
+
+    async def _handle_illustration(self, item: QueueItem) -> dict:
+        """삽화 생성 (최우선, RisuAI 프롬프트 플로우)."""
+        params = item.params
+        prompt_id = params.get("prompt_id", "")
+        prompt_data = params.get("prompt_data", {})
+        raw_body = params.get("raw_body", {})
+
+        if self.process_prompt_full:
+            await self.process_prompt_full(prompt_id, prompt_data, raw_body)
+        else:
+            raise RuntimeError("process_prompt_full 콜백이 설정되지 않았습니다")
+
+        return {"success": True, "prompt_id": prompt_id}
+
+    async def _handle_asset_generation(self, item: QueueItem) -> dict:
+        """에셋 이미지 생성 (기존 handle_api_asset_mode_generate 로직)."""
+        params = item.params
+        body = params.get("body", {})
+        presets = params.get("presets", {})
+
+        # 프리셋 로드 (배치 체인용)
+        if presets and self.asset_mode:
+            _load_presets(self.asset_mode, presets)
+
+        # 참조 이미지 준비 (face_id, style_ref)
+        reference_subfolder = ""
+        style_ref_subfolder = ""
+        config = self.get_config()
+        comfy_input_dir = config.get("comfy_input_dir", "")
+
+        if body.get("face_id_enabled", False) and body.get("reference_images", []):
+            if comfy_input_dir and os.path.isdir(comfy_input_dir):
+                valid_images = [img for img in body.get("reference_images", [])
+                                if img.get("local_path") and os.path.isfile(img.get("local_path", ""))]
+                if valid_images:
+                    reference_subfolder = self.prepare_ref_folder(valid_images, comfy_input_dir)
+
+        if body.get("style_ref_enabled", False) and body.get("style_ref_images", []):
+            if comfy_input_dir and os.path.isdir(comfy_input_dir):
+                valid_images = [img for img in body.get("style_ref_images", [])
+                                if img.get("local_path") and os.path.isfile(img.get("local_path", ""))]
+                if valid_images:
+                    style_ref_subfolder = self.prepare_style_ref_folder(valid_images, comfy_input_dir)
+
+        result = await self.asset_mode.generate(
+            character=body.get("character", ""),
+            outfit=body.get("outfit", ""),
+            expression=body.get("expression", ""),
+            appearance=body.get("appearance", ""),
+            face_id_enabled=body.get("face_id_enabled", False),
+            face_id_strength=float(body.get("face_id_strength", 0.55)),
+            reference_subfolder=reference_subfolder,
+            style_ref_enabled=body.get("style_ref_enabled", False),
+            style_ref_strength=float(body.get("style_ref_strength", 0.55)),
+            style_ref_subfolder=style_ref_subfolder,
+            lora_activate=body.get("lora_activate", False),
+            lora_data=body.get("lora_data", ""),
+            pose_enabled=body.get("pose_enabled", False),
+            pose_id=body.get("pose_id", ""),
+            hrf_activate=body.get("hrf_activate", False),
+            anima_hrf_activate=body.get("anima_hrf_activate", False),
+            hrf_size=float(body.get("hrf_size", 2.0)),
+            hrf_restore_size=body.get("hrf_restore_size", True),
+            hrf_control_net=body.get("hrf_control_net", False),
+            img_w=int(body.get("img_w", 700)),
+            img_h=int(body.get("img_h", 1024)),
+            fd_activate=body.get("fd_activate", False),
+            hd_activate=body.get("hd_activate", False),
+            ed_activate=body.get("ed_activate", False),
+            artist_preset=body.get("artist_preset", ""),
+            natural_language=body.get("natural_language", ""),
+            lora_trigger_words=body.get("lora_trigger_words", ""),
+            anima_artist_preset=body.get("anima_artist_preset", ""),
+            asset_workflow_type=body.get("asset_workflow_type", "regular"),
+            anima_lora_trigger_words=body.get("anima_lora_trigger_words", ""),
+            sdxl_lora_trigger_words=body.get("sdxl_lora_trigger_words", ""),
+        )
+
+        # 완료 알림 (기존 에셋 탭 UI 갱신용)
+        if self.notify_frontend:
+            await self.notify_frontend("asset_generation_completed", {
+                "status": "success" if result.get("success") else "error",
+                "item_id": item.id,
+                "result": result,
+            })
+
+        return result
+
+    async def _handle_asset_lora_training(self, item: QueueItem) -> dict:
+        """에셋 LoRA 학습 (기존 handle_api_lora_training_start 로직)."""
+        import aiohttp
+        params = item.params
+        character = params.get("character", "")
+        entry = params.get("entry", "")
+
+        config = self.get_config()
+        comfy_input_dir = config.get("comfy_input_dir", "")
+        if not comfy_input_dir or not os.path.isdir(comfy_input_dir):
+            raise ValueError("Comfy Input 폴더가 유효하지 않습니다")
+
+        from modes.lora_mode import export_training_images, list_training_images, _get_entry, _load_lora_manage
+        export_result = export_training_images(character, entry, comfy_input_dir)
+        if not export_result.get("success"):
+            raise ValueError(f"이미지 전송 실패: {export_result.get('error', '')}")
+
+        data = _load_lora_manage()
+        entry_info = _get_entry(data, character, entry) or {}
+        training_config = entry_info.get("training_config", {})
+        trigger = entry_info.get("trigger", "")
+
+        profile = training_config.get("profile", "anima")
+        step = training_config.get("step_per_image", 50)
+        il_rate = training_config.get("il_rate", 0.0005)
+        save_step = training_config.get("save_per_step", 50)
+        folder = training_config.get("multi_img_folder_name", "soya_lora")
+        gen_w = training_config.get("gen_w", 1024)
+        gen_h = training_config.get("gen_h", 1024)
+        lora_save_path = training_config.get("lora_save_path", f"{character}/Lora/{entry}")
+        upscale = training_config.get("upscale", False)
+        resolution = training_config.get("resolution", 1024)
+        save_after = training_config.get("save_after", 0)
+        dim = training_config.get("dim", 32)
+        alpha = training_config.get("alpha", 16)
+
+        images = list_training_images(character, entry)
+        if not images:
+            raise ValueError("학습 이미지가 없습니다")
+
+        from modes.lora_mode import list_test_images
+        test_images = list_test_images(character, entry)
+
+        positive_text = self.build_lora_training_text(
+            images, trigger, profile, step, il_rate, save_step, folder,
+            "positive", lora_save_path, gen_w, gen_h, upscale, resolution,
+            test_images, save_after, dim, alpha,
+        )
+        negative_text = self.build_lora_training_text(
+            images, trigger, profile, step, il_rate, save_step, folder,
+            "negative", lora_save_path, gen_w, gen_h, upscale, resolution,
+            test_images, save_after, dim, alpha,
+        )
+
+        # 워크플로우 로드 & 변환
+        workflow_paths = config.get("lora_training_workflow_source_paths", {})
+        workflow_path = ""
+        if isinstance(workflow_paths, dict) and workflow_paths:
+            workflow_path = workflow_paths.get(profile, "")
+            if not workflow_path:
+                for v in workflow_paths.values():
+                    if v:
+                        workflow_path = v
+                        break
+        else:
+            workflow_path = config.get("lora_training_workflow_source_path", "")
+        if not workflow_path or not os.path.isfile(workflow_path):
+            raise ValueError(f"워크플로우 파일 없음: {workflow_path}")
+
+        with open(workflow_path, "r", encoding="utf-8") as f:
+            original_wf = json.load(f)
+        api_wf, conv_err = await self.convert_workflow_via_endpoint(original_wf)
+        if conv_err or api_wf is None:
+            raise ValueError(f"워크플로우 변환 실패: {conv_err}")
+
+        wf = copy.deepcopy(api_wf)
+        for nid, ninfo in wf.items():
+            if not isinstance(ninfo, dict):
+                continue
+            title = ninfo.get("_meta", {}).get("title", "")
+            if title == "긍정프롬프트":
+                ninfo["inputs"]["value"] = positive_text
+            elif title == "부정프롬프트":
+                ninfo["inputs"]["value"] = negative_text
+
+        prompt_id, submit_result = await self.submit_to_real_comfy(wf)
+        print(f"[QUEUE-ASSET_LORA] 워크플로우 제출: prompt_id={prompt_id}")
+
+        # 진행률 모니터링 (WebSocket)
+        await self._monitor_training_ws(item, prompt_id, "lora_training_progress")
+
+        return {
+            "success": True,
+            "prompt_id": prompt_id,
+            "exported_count": export_result.get("count", 0),
+        }
+
+    async def _handle_bot_lora_training(self, item: QueueItem) -> dict:
+        """봇 LoRA 학습 - 단일 캐릭터 처리 (캐릭터별 큐 아이템으로 분리되어 호출됨)."""
+        params = item.params
+        bot_name = params.get("bot", "")
+        project_name = params.get("project", "")
+        char_name = params.get("character", "")
+        if not char_name:
+            raise ValueError("캐릭터 이름이 필요합니다")
+
+        config = self.get_config()
+        comfy_input_dir = config.get("comfy_input_dir", "")
+        if not comfy_input_dir or not os.path.isdir(comfy_input_dir):
+            raise ValueError("Comfy Input 폴더가 유효하지 않습니다")
+
+        from modes.bot_lora_mode import (
+            _load_bot_lora_manage,
+            export_bot_training_images, _get_project_training_images,
+            list_bot_test_images, list_bot_char_test_images,
+        )
+
+        manage_data = _load_bot_lora_manage()
+        proj_cfg = manage_data.get("bot_loras", {}).get(bot_name, {}).get(project_name, {})
+        training_config = proj_cfg.get("training_config", {})
+        char_configs = proj_cfg.get("characters", {})
+        trigger = char_configs.get(char_name, {}).get("trigger", "") or char_name
+
+        char_test_images = list_bot_char_test_images(bot_name, project_name, char_name)
+        test_images = list_bot_test_images(bot_name, project_name)
+        effective_test_images = char_test_images if char_test_images else test_images
+
+        profile = training_config.get("profile", "anima")
+        step = training_config.get("step_per_image", 50)
+        il_rate = training_config.get("il_rate", 0.0005)
+        save_step = training_config.get("save_per_step", 50)
+        folder = training_config.get("multi_img_folder_name", "soya_lora")
+        gen_w = training_config.get("gen_w", 1024)
+        gen_h = training_config.get("gen_h", 1024)
+        upscale = training_config.get("upscale", False)
+        resolution = training_config.get("resolution", 1024)
+        save_after = training_config.get("save_after", 0)
+        dim = training_config.get("dim", 32)
+        alpha = training_config.get("alpha", 16)
+
+        def _safe_dirname_bot(name: str) -> str:
+            return re.sub(r'[\\/*?:"<>|]', '_', name).strip() or "unnamed"
+
+        default_save_path = f"SOYA_BOT_LORA/{_safe_dirname_bot(bot_name)}/Lora/{_safe_dirname_bot(project_name)}/{_safe_dirname_bot(char_name)}"
+        lora_save_path = training_config.get("lora_save_path", default_save_path)
+        if not lora_save_path.rstrip("/").endswith(_safe_dirname_bot(char_name)):
+            lora_save_path = lora_save_path.rstrip("/") + "/" + _safe_dirname_bot(char_name)
+
+        export_result = export_bot_training_images(bot_name, project_name, char_name, comfy_input_dir, folder)
+        if not export_result.get("success"):
+            raise ValueError(f"{char_name} 이미지 전송 실패: {export_result.get('error', '')}")
+
+        images = _get_project_training_images(bot_name, project_name, char_name)
+        if not images:
+            raise ValueError(f"{char_name}: 학습 이미지가 없습니다")
+
+        positive_text = self.build_lora_training_text(
+            images, trigger, profile, step, il_rate, save_step, folder,
+            "positive", lora_save_path, gen_w, gen_h, upscale, resolution,
+            effective_test_images, save_after, dim, alpha,
+        )
+        negative_text = self.build_lora_training_text(
+            images, trigger, profile, step, il_rate, save_step, folder,
+            "negative", lora_save_path, gen_w, gen_h, upscale, resolution,
+            effective_test_images, save_after, dim, alpha,
+        )
+
+        workflow_paths = config.get("lora_training_workflow_source_paths", {})
+        if isinstance(workflow_paths, dict) and workflow_paths:
+            workflow_path = workflow_paths.get(profile, "")
+            if not workflow_path:
+                for k, v in workflow_paths.items():
+                    if v:
+                        workflow_path = v
+                        break
+        else:
+            workflow_path = config.get("lora_training_workflow_source_path", "")
+        if not workflow_path or not os.path.isfile(workflow_path):
+            raise ValueError(f"워크플로우 파일 없음: {workflow_path}")
+
+        with open(workflow_path, "r", encoding="utf-8") as f:
+            original_wf = json.load(f)
+        api_wf, conv_err = await self.convert_workflow_via_endpoint(original_wf)
+        if conv_err or api_wf is None:
+            raise ValueError(f"워크플로우 변환 실패: {conv_err}")
+
+        wf = copy.deepcopy(api_wf)
+        for nid, ninfo in wf.items():
+            if not isinstance(ninfo, dict):
+                continue
+            title = ninfo.get("_meta", {}).get("title", "")
+            if title == "긍정프롬프트":
+                ninfo["inputs"]["value"] = positive_text
+            elif title == "부정프롬프트":
+                ninfo["inputs"]["value"] = negative_text
+
+        prompt_id, submit_result = await self.submit_to_real_comfy(wf)
+
+        # 진행률 알림
+        if self.notify_frontend:
+            await self.notify_frontend("bot_lora_training_progress", {
+                "phase": "preparing",
+                "bot_name": bot_name, "project_name": project_name,
+                "character": char_name,
+                "message": f"'{char_name}' 학습 시작",
+            })
+
+        # 모니터링 대기
+        await self._monitor_training_ws(
+            item, prompt_id,
+            event_type="bot_lora_training_progress",
+            extra_data={"bot_name": bot_name, "project_name": project_name, "character": char_name},
+        )
+
+        return {"success": True, "character": char_name}
+
+    async def _handle_instance_lora_training(self, item: QueueItem) -> dict:
+        """인스턴스 LoRA 학습 (기존 handle_api_instance_lora_training_start 로직, both 모드 포함)."""
+        import aiohttp
+        import shutil
+        params = item.params
+        lora_id = params.get("id", "")
+        profiles_to_train = params.get("profiles", ["anima"])  # ["anima"] or ["sdxl"] or ["anima", "sdxl"]
+
+        config = self.get_config()
+        comfy_input_dir = config.get("comfy_input_dir", "")
+        if not comfy_input_dir or not os.path.isdir(comfy_input_dir):
+            raise ValueError("Comfy Input 폴더가 유효하지 않습니다")
+
+        from modes.instance_lora_mode import (
+            get_lora_detail, list_images, get_image_prompt, _safe_dirname,
+            get_image_path, save_image_prompt, get_settings, add_session,
+        )
+
+        lora_detail = get_lora_detail(lora_id)
+        if not lora_detail.get("success"):
+            raise ValueError(lora_detail.get("error", "로라를 찾을 수 없습니다"))
+        lora_data = lora_detail["data"]
+        trigger = lora_data.get("trigger", "")
+
+        for profile in profiles_to_train:
+            images_list = list_images(lora_id)
+            if not images_list:
+                raise ValueError("학습할 이미지가 없습니다")
+
+            # 1-pass: 프롬프트 없는 이미지 자동 태그 분석
+            for filename in images_list:
+                prompt_result = get_image_prompt(lora_id, filename)
+                if not prompt_result.get("success"):
+                    img_path = get_image_path(lora_id, filename)
+                    if os.path.isfile(img_path):
+                        with open(img_path, "rb") as f:
+                            image_data = f.read()
+                        analysis = await self.asset_tool.analyze_image(image_data, "expressions")
+                        if analysis.get("success"):
+                            tags = analysis.get("tags", [])
+                            positive = ", ".join(tags)
+                            save_image_prompt(lora_id, filename, {
+                                "positive": positive, "negative": "",
+                                "original_positive": positive, "original_negative": "",
+                            })
+
+            training_images = []
+            for filename in images_list:
+                prompt_result = get_image_prompt(lora_id, filename)
+                training_images.append({
+                    "filename": filename,
+                    "positive": prompt_result.get("data", {}).get("positive", "") if prompt_result.get("success") else "",
+                    "negative": prompt_result.get("data", {}).get("negative", "") if prompt_result.get("success") else "",
+                })
+
+            settings = get_settings().get("data", {})
+            profile_settings = settings.get(profile, {})
+            step = profile_settings.get("step_per_image", 125)
+            il_rate = profile_settings.get("il_rate", 0.00025)
+            save_step = 25
+            folder = profile_settings.get("multi_img_folder_name", "soya_lora")
+            gen_w = 1
+            gen_h = 1
+            upscale = profile_settings.get("upscale", False)
+            resolution = profile_settings.get("resolution", 1024)
+            save_after = 0
+            dim = profile_settings.get("dim", 32)
+            alpha = profile_settings.get("alpha", 16)
+
+            lora_save_path = f"SOYA_INSTANCE_LORA/{profile}/{_safe_dirname(lora_id)}"
+
+            # 이미지 익스포트
+            export_dir = os.path.join(comfy_input_dir, folder)
+            os.makedirs(export_dir, exist_ok=True)
+            for i, img in enumerate(training_images, start=1):
+                src = get_image_path(lora_id, img["filename"])
+                ext = os.path.splitext(img["filename"])[1]
+                dst = os.path.join(export_dir, f"[{i}]{ext}")
+                if os.path.isfile(src):
+                    shutil.copy2(src, dst)
+
+            positive_text = self.build_lora_training_text(
+                training_images, trigger, profile, step, il_rate, save_step, folder,
+                "positive", lora_save_path, gen_w, gen_h, upscale, resolution,
+                [], save_after, dim, alpha,
+            )
+            positive_text = positive_text.replace("[TEST_POSITIVE]\n", "[TEST_POSITIVE]\ninstance\n")
+            positive_text = positive_text.replace("[TEST_NEGATIVE]\n", "[TEST_NEGATIVE]\ninstance\n")
+
+            negative_text = self.build_lora_training_text(
+                training_images, trigger, profile, step, il_rate, save_step, folder,
+                "negative", lora_save_path, gen_w, gen_h, upscale, resolution,
+                [], save_after, dim, alpha,
+            )
+
+            # 워크플로우 로드
+            workflow_paths = config.get("lora_training_workflow_source_paths", {})
+            workflow_path = ""
+            if isinstance(workflow_paths, dict) and workflow_paths:
+                workflow_path = workflow_paths.get(profile, "")
+                if not workflow_path:
+                    for v in workflow_paths.values():
+                        if v:
+                            workflow_path = v
+                            break
+            if not workflow_path or not os.path.isfile(workflow_path):
+                raise ValueError(f"워크플로우 파일 없음: {workflow_path}")
+
+            with open(workflow_path, "r", encoding="utf-8") as f:
+                original_wf = json.load(f)
+            api_wf, conv_err = await self.convert_workflow_via_endpoint(original_wf)
+            if conv_err or api_wf is None:
+                raise ValueError(f"워크플로우 변환 실패: {conv_err}")
+
+            wf = copy.deepcopy(api_wf)
+            for nid, ninfo in wf.items():
+                if not isinstance(ninfo, dict):
+                    continue
+                title = ninfo.get("_meta", {}).get("title", "")
+                if title == "긍정프롬프트":
+                    ninfo["inputs"]["value"] = positive_text
+                elif title == "부정프롬프트":
+                    ninfo["inputs"]["value"] = negative_text
+
+            prompt_id, submit_result = await self.submit_to_real_comfy(wf)
+
+            profile_label = f" ({profile})" if len(profiles_to_train) > 1 else ""
+            await self._notify_progress(item, {
+                "phase": "preparing",
+                "lora_id": lora_id,
+                "profile": profile,
+                "percentage": 0,
+            })
+            if self.notify_frontend:
+                await self.notify_frontend("instance_lora_training_progress", {
+                    "phase": "preparing", "lora_id": lora_id, "profile": profile,
+                    "message": f"'{trigger}' 인스턴스 로라 학습 시작{profile_label}",
+                })
+
+            # 모니터링 대기
+            await self._monitor_training_ws(
+                item, prompt_id,
+                event_type="instance_lora_training_progress",
+                extra_data={"lora_id": lora_id, "profile": profile},
+                on_complete=lambda pid=prompt_id, lid=lora_id, prof=profile:
+                    add_session(lid, datetime.datetime.now().strftime("%Y%m%d-%H%M%S"), prof),
+            )
+
+        return {
+            "success": True,
+            "lora_id": lora_id,
+            "profiles": profiles_to_train,
+            "image_count": len(training_images),
+        }
+
+    # ─── WebSocket 모니터링 공통 ────────────────────────────
+
+    async def _monitor_training_ws(
+        self,
+        item: QueueItem,
+        prompt_id: str,
+        event_type: str = "lora_training_progress",
+        extra_data: dict = None,
+        on_complete=None,
+    ):
+        """ComfyUI WebSocket에 연결하여 학습 진행률을 모니터링하고 완료를 대기한다."""
+        import aiohttp as _aiohttp
+        host = self.get_real_comfy_host()
+        port = self.get_real_comfy_port()
+        ws_url = f"ws://{host}:{port}/ws?clientId=queue_{uuid.uuid4().hex[:8]}"
+        print(f"[QUEUE-MONITOR] 시작: prompt_id={prompt_id}, type={event_type}")
+
+        try:
+            async with _aiohttp.ClientSession() as ws_session:
+                async with ws_session.ws_connect(ws_url) as ws:
+                    async for msg in ws:
+                        if msg.type == _aiohttp.WSMsgType.TEXT:
+                            data = json.loads(msg.data)
+                            msg_type = data.get("type", "")
+                            msg_data = data.get("data", {})
+
+                            if msg_type == "md_soya_progress":
+                                phase = msg_data.get("phase", "")
+                                # 큐 진행률 업데이트
+                                await self._notify_progress(item, {
+                                    **msg_data,
+                                    **(extra_data or {}),
+                                })
+                                # 기존 탭 UI 업데이트용 이벤트
+                                if self.notify_frontend:
+                                    fwd_data = {**msg_data, **(extra_data or {})}
+                                    await self.notify_frontend(event_type, fwd_data)
+                                if phase == "all_complete":
+                                    if on_complete:
+                                        on_complete()
+                                    return
+
+                            if msg_type == "executing":
+                                exec_prompt = msg_data.get("prompt_id", "")
+                                exec_node = msg_data.get("node")
+                                if exec_prompt == prompt_id and exec_node is None:
+                                    if self.notify_frontend:
+                                        await self.notify_frontend(event_type, {
+                                            "phase": "all_complete",
+                                            **(extra_data or {}),
+                                        })
+                                    if on_complete:
+                                        on_complete()
+                                    return
+
+                            if msg_type == "execution_error":
+                                err_prompt = msg_data.get("data", {}).get("prompt_id", "")
+                                if err_prompt == prompt_id:
+                                    err_msg = msg_data.get("data", {}).get("exception_message", "Unknown error")
+                                    if self.notify_frontend:
+                                        await self.notify_frontend(event_type, {
+                                            "phase": "error",
+                                            "message": err_msg,
+                                            **(extra_data or {}),
+                                        })
+                                    raise RuntimeError(f"학습 실행 에러: {err_msg}")
+
+                        elif msg.type in (_aiohttp.WSMsgType.ERROR, _aiohttp.WSMsgType.CLOSED):
+                            break
+        except Exception as e:
+            if not isinstance(e, RuntimeError) or "학습 실행 에러" not in str(e):
+                print(f"[QUEUE-MONITOR] 예외: {e}")
+                traceback.print_exc()
+            raise
+
+
+def _load_presets(asset_mode_obj, presets: dict):
+    """배치 체인에서 프리셋을 로드한다."""
+    _preset_map = {
+        "quality_preset": ("get_quality_presets", "quality"),
+        "composition_preset": ("get_composition_presets", "composition"),
+        "negative_preset": ("get_negative_presets", "negative"),
+        "character_negative_preset": ("get_character_negative_presets", "character_negative"),
+        "anima_quality_preset": ("get_anima_quality_presets", "anima_quality"),
+        "anima_negative_preset": ("get_anima_negative_presets", "anima_negative"),
+    }
+    for preset_type, preset_name in presets.items():
+        if not preset_name or preset_type not in _preset_map:
+            continue
+        getter_name, tag_key = _preset_map[preset_type]
+        try:
+            getter_fn = getattr(asset_mode_obj, getter_name, None)
+            if getter_fn:
+                all_presets = getter_fn()
+                if preset_name in all_presets:
+                    asset_mode_obj._tags[tag_key] = list(all_presets[preset_name])
+                else:
+                    print(f"[QUEUE] 프리셋 '{preset_name}' 없음 (type={preset_type})")
+        except Exception as e:
+            print(f"[QUEUE] 프리셋 로드 실패 ({preset_type}={preset_name}): {e}")
+
+
+# 싱글톤
+queue_manager = QueueManager()

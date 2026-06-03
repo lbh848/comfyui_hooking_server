@@ -35,6 +35,7 @@ from modes import asset_mode
 from modes import pose_mode
 from modes import chain_preset_mode
 from modes import mode_logger
+from queue_manager import queue_manager
 import logging
 logging.basicConfig(level=logging.INFO, format='[%(name)s] %(message)s')
 from modes import llm_service
@@ -231,7 +232,6 @@ pose_mode.mode_log_func = mode_logger.log
 pose_mode.load()
 print(f"[POSE_MODE] 초기화: poses={len(pose_mode.list_poses())}")
 
-
 def get_comfy_workflow_source_path() -> str:
     """현재 설정된 ComfyUI 워크플로우 소스 경로를 반환한다."""
     return app_config.get("comfy_workflow_source_path", DEFAULT_CONFIG["comfy_workflow_source_path"])
@@ -261,6 +261,21 @@ def get_backup_webp_lossless() -> bool:
 prompts = {}          # prompt_id -> { status, prompt, outputs, ... }
 ws_connections = {}   # client_id -> ws
 frontend_ws_connections = {}   # frontend client_id -> {"ws": ws, "last_pong": time}
+
+# ─── 프론트엔드 WebSocket 이벤트 전송 ───────────────────
+async def notify_frontend(event_type: str, data: dict = None):
+    """프론트엔드 대시보드에 이벤트를 전송한다."""
+    message = {"type": event_type, "data": data or {}}
+    client_count = len(frontend_ws_connections)
+    if event_type.startswith("asset_"):
+        print(f"[WS] → 프론트엔드 전송: {event_type} (클라이언트 {client_count}명)")
+    for client_id, entry in list(frontend_ws_connections.items()):
+        try:
+            await entry["ws"].send_json(message)
+        except Exception as e:
+            print(f"[WS] 프론트엔드 전송 실패 ({client_id}): {e}")
+            frontend_ws_connections.pop(client_id, None)
+
 WS_HEARTBEAT_INTERVAL = 30  # 초
 WS_STALE_TIMEOUT = 15       # 핑 후 응답 없으면 제거 (초)
 
@@ -289,21 +304,6 @@ def log_to_file(filename: str, data: str):
             pass
     with open(path, "a", encoding="utf-8") as f:
         f.write(f"[{ts}] {data}\n")
-
-
-# ─── 프론트엔드 WebSocket 이벤트 전송 ───────────────────
-async def notify_frontend(event_type: str, data: dict = None):
-    """프론트엔드 대시보드에 이벤트를 전송한다."""
-    message = {"type": event_type, "data": data or {}}
-    client_count = len(frontend_ws_connections)
-    if event_type.startswith("asset_"):
-        print(f"[WS] → 프론트엔드 전송: {event_type} (클라이언트 {client_count}명)")
-    for client_id, entry in list(frontend_ws_connections.items()):
-        try:
-            await entry["ws"].send_json(message)
-        except Exception as e:
-            print(f"[WS] 프론트엔드 전송 실패 ({client_id}): {e}")
-            frontend_ws_connections.pop(client_id, None)
 
 
 def cleanup_logs(keep=3):
@@ -1229,6 +1229,23 @@ batch_mode.mode_log_func = mode_logger.log
 batch_mode.on_batch_complete = outfit_mode.process_batch_images
 
 
+# ─── 통합 큐 매니저 초기화 (init_queue_manager에서 호출) ───
+def init_queue_manager():
+    queue_manager.notify_frontend = notify_frontend
+    queue_manager.get_config = lambda: load_config()
+    queue_manager.asset_mode = asset_mode
+    queue_manager.asset_tool = asset_tool
+    queue_manager.submit_to_real_comfy = submit_to_real_comfy
+    queue_manager.convert_workflow_via_endpoint = convert_workflow_via_endpoint
+    queue_manager.build_lora_training_text = _build_lora_training_text
+    queue_manager.prepare_ref_folder = _prepare_ref_folder
+    queue_manager.prepare_style_ref_folder = _prepare_style_ref_folder
+    queue_manager.get_real_comfy_host = lambda: REAL_COMFY_HOST
+    queue_manager.get_real_comfy_port = lambda: REAL_COMFY_PORT
+    queue_manager.process_prompt_full = process_prompt
+    print("[QUEUE] 통합 큐 매니저 초기화 완료")
+
+
 # ─── 프롬프트 강화 콜백 ───
 async def _before_generate_enhance(request, batch):
     """배치 이미지 생성 전 프롬프트 강화"""
@@ -1691,7 +1708,7 @@ async def handle_prompt(request: web.Request) -> web.Response:
                 {"prompt_id": prompt_id, "number": len(prompts), "node_errors": {}}
             )
 
-        # Normal prompt processing
+        # Normal prompt processing - 통합 큐에 추가 (최우선)
         prompt_data = body.get("prompt", {})
         save_node = find_save_image_node(prompt_data)
         print(
@@ -1710,7 +1727,15 @@ async def handle_prompt(request: web.Request) -> web.Response:
             "image_bytes": None,
             "timestamp": time.time(),
         }
-        asyncio.create_task(process_prompt(prompt_id, prompt_data, body))
+
+        # 큐에 삽화로 추가 (priority=0, 최우선)
+        _illust_positive = extract_prompts_by_title(prompt_data, "긍정프롬프트") or ""
+        _illust_label = f"삽화: {_illust_positive[:40]}..."
+        asyncio.create_task(queue_manager.add_item(
+            "illustration", _illust_label,
+            {"prompt_id": prompt_id, "prompt_data": prompt_data, "raw_body": body},
+            priority=0,
+        ))
         return web.json_response(
             {"prompt_id": prompt_id, "number": len(prompts), "node_errors": {}}
         )
@@ -5703,7 +5728,7 @@ async def _monitor_lora_training(prompt_id: str):
 
 
 async def handle_api_lora_training_start(request):
-    """이미지 전송 후 LoRA 학습 워크플로우 구동"""
+    """에셋 LoRA 학습 - 통합 큐에 추가"""
     try:
         body = await request.json()
         character = body.get("character", "")
@@ -5711,113 +5736,12 @@ async def handle_api_lora_training_start(request):
         if not character or not entry:
             return web.json_response({"success": False, "error": "캐릭터/엔트리 미지정"}, status=400)
 
-        config = load_config()
-        comfy_input_dir = config.get("comfy_input_dir", "")
-        if not comfy_input_dir:
-            return web.json_response({"success": False, "error": "Comfy Input 폴더 경로가 설정되지 않았습니다"}, status=400)
-        if not os.path.isdir(comfy_input_dir):
-            return web.json_response({"success": False, "error": f"Comfy Input 폴더가 존재하지 않습니다: {comfy_input_dir}"}, status=400)
-
-        # 1. 학습 이미지 전송
-        from modes.lora_mode import export_training_images, list_training_images, _get_entry, _load_lora_manage
-        export_result = export_training_images(character, entry, comfy_input_dir)
-        if not export_result.get("success"):
-            return web.json_response(export_result)
-
-        # 2. 학습 설정 읽기
-        data = _load_lora_manage()
-        entry_info = _get_entry(data, character, entry) or {}
-        training_config = entry_info.get("training_config", {})
-        trigger = entry_info.get("trigger", "")
-
-        profile = training_config.get("profile", "anima")
-        step = training_config.get("step_per_image", 50)
-        il_rate = training_config.get("il_rate", 0.0005)
-        save_step = training_config.get("save_per_step", 50)
-        folder = training_config.get("multi_img_folder_name", "soya_lora")
-        gen_w = training_config.get("gen_w", 1024)
-        gen_h = training_config.get("gen_h", 1024)
-        lora_save_path = training_config.get("lora_save_path", f"{character}/Lora/{entry}")
-        upscale = training_config.get("upscale", False)
-        resolution = training_config.get("resolution", 1024)
-        save_after = training_config.get("save_after", 0)
-        dim = training_config.get("dim", 32)
-        alpha = training_config.get("alpha", 16)
-
-        # 3. 학습 이미지 + 프롬프트 로드
-        images = list_training_images(character, entry)
-        if not images:
-            return web.json_response({"success": False, "error": "학습 이미지가 없습니다"})
-
-        # 4. 테스트 이미지 로드
-        from modes.lora_mode import list_test_images
-        test_images = list_test_images(character, entry)
-
-        positive_text = _build_lora_training_text(images, trigger, profile, step, il_rate, save_step, folder, "positive", lora_save_path, gen_w, gen_h, upscale, resolution, test_images, save_after, dim, alpha)
-        negative_text = _build_lora_training_text(images, trigger, profile, step, il_rate, save_step, folder, "negative", lora_save_path, gen_w, gen_h, upscale, resolution, test_images, save_after, dim, alpha)
-        print(f"[LORA_TRAIN] 긍정 프롬프트 (실제 전송):\n{positive_text}")
-        print(f"[LORA_TRAIN] 부정 프롬프트 (실제 전송):\n{negative_text}")
-
-        # 5. 워크플로우 로드 & 변환 (profile별 선택)
-        workflow_paths = config.get("lora_training_workflow_source_paths", {})
-        if not isinstance(workflow_paths, dict) or not workflow_paths:
-            # 구형 설정 호환: 단일 경로가 있으면 사용
-            legacy_path = config.get("lora_training_workflow_source_path", "")
-            workflow_path = legacy_path
-            print(f"[LORA_TRAIN] 구형 설정(lora_training_workflow_source_path) 사용: {workflow_path}")
-        else:
-            workflow_path = workflow_paths.get(profile, "")
-            if not workflow_path:
-                # fallback: 첫 번째 사용 가능한 경로
-                for k, v in workflow_paths.items():
-                    if v:
-                        workflow_path = v
-                        print(f"[LORA_TRAIN] profile '{profile}' 경로 없음, fallback '{k}' 사용: {workflow_path}")
-                        break
-            else:
-                print(f"[LORA_TRAIN] profile '{profile}' 워크플로우 사용: {workflow_path}")
-        if not workflow_path or not os.path.isfile(workflow_path):
-            return web.json_response({"success": False, "error": f"LoRA 학습 워크플로우 파일이 없습니다: {workflow_path}"})
-
-        with open(workflow_path, "r", encoding="utf-8") as f:
-            original_wf = json.load(f)
-
-        api_wf, conv_err = await convert_workflow_via_endpoint(original_wf)
-        if conv_err or api_wf is None:
-            return web.json_response({"success": False, "error": f"워크플로우 변환 실패: {conv_err}"})
-
-        # 6. 프롬프트 주입
-        import copy
-        wf = copy.deepcopy(api_wf)
-        for nid, ninfo in wf.items():
-            if not isinstance(ninfo, dict):
-                continue
-            title = ninfo.get("_meta", {}).get("title", "")
-            if title == "긍정프롬프트":
-                ninfo["inputs"]["value"] = positive_text
-            elif title == "부정프롬프트":
-                ninfo["inputs"]["value"] = negative_text
-
-        # 7. ComfyUI에 제출
-        prompt_id, submit_result = await submit_to_real_comfy(wf)
-        node_errors = submit_result.get("node_errors", {})
-        print(f"[LORA_TRAIN] 학습 워크플로우 제출 완료: prompt_id={prompt_id}")
-
-        # 8. 백그라운드 진행률 모니터링 시작
-        asyncio.create_task(_monitor_lora_training(prompt_id))
-        print(f"[LORA_TRAIN] 백그라운드 모니터링 태스크 시작됨")
-
-        return web.json_response({
-            "success": True,
-            "prompt_id": prompt_id,
-            "exported_count": export_result.get("count", 0),
-            "node_errors": node_errors,
+        item = await queue_manager.add_item("asset_lora_training", f"[에셋] {character}/{entry} LoRA 학습", {
+            "character": character, "entry": entry,
         })
-    except RuntimeError as e:
-        print(f"[LORA_TRAIN] 워크플로우 제출 거부: {e}")
-        return web.json_response({"success": False, "error": str(e)}, status=400)
+        return web.json_response({"success": True, "queue_item_id": item.id, "label": item.label})
     except Exception as e:
-        print(f"[LORA_TRAIN] 학습 시작 실패: {e}")
+        print(f"[LORA_TRAIN] 큐 추가 실패: {e}")
         traceback.print_exc()
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
@@ -6523,139 +6447,22 @@ def _safe_dirname_bot(name: str) -> str:
 
 
 async def handle_api_bot_lora_training_start(request):
-    """봇 LoRA 학습 시작"""
+    """봇 LoRA 학습 - 단일 캐릭터 큐에 추가"""
     try:
         body = await request.json()
         bot_name = body.get("bot", "")
         project_name = body.get("project", "")
         char_name = body.get("character", "")
-        if not bot_name or not project_name:
-            return web.json_response({"success": False, "error": "봇/프로젝트 필수"}, status=400)
+        if not bot_name or not project_name or not char_name:
+            return web.json_response({"success": False, "error": "봇/프로젝트/캐릭터 필수"}, status=400)
 
-        config = load_config()
-        comfy_input_dir = config.get("comfy_input_dir", "")
-        if not comfy_input_dir or not os.path.isdir(comfy_input_dir):
-            return web.json_response({"success": False, "error": "Comfy Input 폴더가 유효하지 않습니다"}, status=400)
-
-        from modes.bot_lora_mode import (
-            _load_bot_data, _load_bot_lora_manage,
-            export_bot_training_images, _get_project_training_images,
-            list_bot_test_images, list_bot_char_test_images,
-        )
-
-        bot_data = _load_bot_data()
-        bot_info = None
-        for b in bot_data.get("bots", []):
-            if b.get("name") == bot_name:
-                bot_info = b
-                break
-        if not bot_info:
-            return web.json_response({"success": False, "error": "봇을 찾을 수 없습니다"}, status=400)
-
-        characters_to_train = []
-        skipped_count = 0
-        manage_data_prefilter = _load_bot_lora_manage()
-        proj_cfg_prefilter = manage_data_prefilter.get("bot_loras", {}).get(bot_name, {}).get(project_name, {})
-        char_configs_prefilter = proj_cfg_prefilter.get("characters", {})
-        for ch in bot_info.get("characters", []):
-            cn = ch.get("name", "")
-            if not cn:
-                continue
-            if char_name and cn != char_name:
-                continue
-            if char_configs_prefilter.get(cn, {}).get("skip_training", False):
-                print(f"[BOT_LORA] '{cn}' 스킵 (skip_training=true)")
-                skipped_count += 1
-                continue
-            characters_to_train.append(ch)
-        if not characters_to_train:
-            return web.json_response({"success": False, "error": "학습할 캐릭터가 없습니다"}, status=400)
-
-        manage_data = _load_bot_lora_manage()
-        proj_cfg = manage_data.get("bot_loras", {}).get(bot_name, {}).get(project_name, {})
-        training_config = proj_cfg.get("training_config", {})
-        char_configs = proj_cfg.get("characters", {})
-
-        profile = training_config.get("profile", "anima")
-        step = training_config.get("step_per_image", 50)
-        il_rate = training_config.get("il_rate", 0.0005)
-        save_step = training_config.get("save_per_step", 50)
-        folder = training_config.get("multi_img_folder_name", "soya_lora")
-        gen_w = training_config.get("gen_w", 1024)
-        gen_h = training_config.get("gen_h", 1024)
-        upscale = training_config.get("upscale", False)
-        resolution = training_config.get("resolution", 1024)
-        save_after = training_config.get("save_after", 0)
-        dim = training_config.get("dim", 32)
-        alpha = training_config.get("alpha", 16)
-
-        test_images = list_bot_test_images(bot_name, project_name)
-
-        ch = characters_to_train[0]
-        cn = ch.get("name", "")
-        # 캐릭터별 테스트 이미지 우선 사용, 없으면 공통 테스트 이미지로 폴백
-        char_test_images = list_bot_char_test_images(bot_name, project_name, cn)
-        effective_test_images = char_test_images if char_test_images else test_images
-        trigger = char_configs.get(cn, {}).get("trigger", "") or cn
-        # training_config의 lora_save_path 사용, 없으면 기본값 (SOYA_BOT_LORA/{bot}/Lora/{project}/{char})
-        default_save_path = f"SOYA_BOT_LORA/{_safe_dirname_bot(bot_name)}/Lora/{_safe_dirname_bot(project_name)}/{_safe_dirname_bot(cn)}"
-        lora_save_path = training_config.get("lora_save_path", default_save_path)
-        # lora_save_path가 프로젝트 레벨이면 캐릭터명을 자동 추가
-        if not lora_save_path.rstrip("/").endswith(_safe_dirname_bot(cn)):
-            lora_save_path = lora_save_path.rstrip("/") + "/" + _safe_dirname_bot(cn)
-
-        export_result = export_bot_training_images(bot_name, project_name, cn, comfy_input_dir, folder)
-        if not export_result.get("success"):
-            return web.json_response(export_result)
-
-        images = _get_project_training_images(bot_name, project_name, cn)
-        if not images:
-            return web.json_response({"success": False, "error": f"{cn}: 학습 이미지가 없습니다"})
-
-        positive_text = _build_lora_training_text(images, trigger, profile, step, il_rate, save_step, folder, "positive", lora_save_path, gen_w, gen_h, upscale, resolution, effective_test_images, save_after, dim, alpha)
-        negative_text = _build_lora_training_text(images, trigger, profile, step, il_rate, save_step, folder, "negative", lora_save_path, gen_w, gen_h, upscale, resolution, effective_test_images, save_after, dim, alpha)
-
-        workflow_paths = config.get("lora_training_workflow_source_paths", {})
-        if isinstance(workflow_paths, dict) and workflow_paths:
-            workflow_path = workflow_paths.get(profile, "")
-            if not workflow_path:
-                for k, v in workflow_paths.items():
-                    if v: workflow_path = v; break
-        else:
-            workflow_path = config.get("lora_training_workflow_source_path", "")
-
-        if not workflow_path or not os.path.isfile(workflow_path):
-            return web.json_response({"success": False, "error": f"워크플로우 파일 없음: {workflow_path}"})
-
-        with open(workflow_path, "r", encoding="utf-8") as f:
-            original_wf = json.load(f)
-        api_wf, conv_err = await convert_workflow_via_endpoint(original_wf)
-        if conv_err or api_wf is None:
-            return web.json_response({"success": False, "error": f"워크플로우 변환 실패: {conv_err}"})
-
-        import copy
-        wf = copy.deepcopy(api_wf)
-        for nid, ninfo in wf.items():
-            if not isinstance(ninfo, dict): continue
-            title = ninfo.get("_meta", {}).get("title", "")
-            if title == "긍정프롬프트": ninfo["inputs"]["value"] = positive_text
-            elif title == "부정프롬프트": ninfo["inputs"]["value"] = negative_text
-
-        prompt_id, submit_result = await submit_to_real_comfy(wf)
-        # 학습 시작 알림 전송
-        await notify_frontend("bot_lora_training_progress", {"phase": "preparing", "bot_name": bot_name, "project_name": project_name, "character": cn, "char_index": 0, "total_chars": len(characters_to_train), "message": f"'{cn}' 학습 시작됨"})
-        asyncio.create_task(_monitor_bot_lora_training(prompt_id, bot_name, project_name, cn, characters_to_train, 0, config, training_config, test_images))
-
-        return web.json_response({
-            "success": True, "prompt_id": prompt_id, "character": cn,
-            "exported_count": export_result.get("count", 0),
-            "total_characters": len(characters_to_train), "current_index": 0,
-            "skipped_count": skipped_count,
+        label = f"[봇] {char_name}"
+        item = await queue_manager.add_item("bot_lora_training", label, {
+            "bot": bot_name, "project": project_name, "character": char_name,
         })
-    except RuntimeError as e:
-        return web.json_response({"success": False, "error": str(e)}, status=400)
+        return web.json_response({"success": True, "queue_item_id": item.id, "label": item.label})
     except Exception as e:
-        print(f"[BOT_LORA_TRAIN] 학습 시작 실패: {e}")
+        print(f"[BOT_LORA_TRAIN] 큐 추가 실패: {e}")
         traceback.print_exc()
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
@@ -7327,151 +7134,27 @@ async def handle_api_instance_lora_images_upload(request):
 
 
 async def handle_api_instance_lora_training_start(request):
+    """인스턴스 LoRA 학습 - 통합 큐에 추가"""
     try:
         body = await request.json()
         lora_id = body.get("id", "").strip()
         profile = body.get("profile", "anima").strip()
         if not lora_id:
             return web.json_response({"success": False, "error": "id 필수"}, status=400)
-        if profile not in ("anima", "sdxl"):
-            return web.json_response({"success": False, "error": "profile은 anima 또는 sdxl만 가능"}, status=400)
+        if profile not in ("anima", "sdxl", "both"):
+            return web.json_response({"success": False, "error": "profile은 anima, sdxl, both만 가능"}, status=400)
 
-        config = load_config()
-        comfy_input_dir = config.get("comfy_input_dir", "")
-        if not comfy_input_dir or not os.path.isdir(comfy_input_dir):
-            return web.json_response({"success": False, "error": "Comfy Input 폴더가 유효하지 않습니다"}, status=400)
+        # "both" 모드: anima → sdxl 순차 처리를 위해 profiles 배열로 변환
+        profiles = ["anima", "sdxl"] if profile == "both" else [profile]
+        profile_label = " (anima+sdxl)" if profile == "both" else f" ({profile})"
+        label = f"[인스턴스] {lora_id}{profile_label}"
 
-        from modes.instance_lora_mode import (
-            get_lora_detail, list_images, get_image_prompt, _safe_dirname, get_image_path,
-        )
-        lora_detail = get_lora_detail(lora_id)
-        if not lora_detail.get("success"):
-            return web.json_response(lora_detail)
-        lora_data = lora_detail["data"]
-
-        images_list = list_images(lora_id)
-        if not images_list:
-            return web.json_response({"success": False, "error": "학습할 이미지가 없습니다"})
-
-        # 1-pass: 프롬프트 없는 이미지 자동 태그 분석
-        for filename in images_list:
-            prompt_result = get_image_prompt(lora_id, filename)
-            if not prompt_result.get("success"):
-                print(f"[INSTANCE_LORA] 자동 태그 분석: {filename}")
-                img_path = get_image_path(lora_id, filename)
-                if os.path.isfile(img_path):
-                    with open(img_path, "rb") as f:
-                        image_data = f.read()
-                    analysis = await asset_tool.analyze_image(image_data, "expressions")
-                    if analysis.get("success"):
-                        tags = analysis.get("tags", [])
-                        positive = ", ".join(tags)
-                        from modes.instance_lora_mode import save_image_prompt
-                        save_image_prompt(lora_id, filename, {
-                            "positive": positive, "negative": "",
-                            "original_positive": positive, "original_negative": "",
-                        })
-
-        # 학습 이미지 프롬프트 수집
-        training_images = []
-        for filename in images_list:
-            prompt_result = get_image_prompt(lora_id, filename)
-            training_images.append({
-                "filename": filename,
-                "positive": prompt_result.get("data", {}).get("positive", "") if prompt_result.get("success") else "",
-                "negative": prompt_result.get("data", {}).get("negative", "") if prompt_result.get("success") else "",
-            })
-
-        trigger = lora_data.get("trigger", "")
-
-        # 설정 로드
-        from modes.instance_lora_mode import get_settings
-        settings = get_settings().get("data", {})
-        profile_settings = settings.get(profile, {})
-
-        step = profile_settings.get("step_per_image", 125)
-        il_rate = profile_settings.get("il_rate", 0.00025)
-        save_step = 25
-        folder = profile_settings.get("multi_img_folder_name", "soya_lora")
-        gen_w = 1
-        gen_h = 1
-        upscale = profile_settings.get("upscale", False)
-        resolution = profile_settings.get("resolution", 1024)
-        save_after = 0
-        dim = profile_settings.get("dim", 32)
-        alpha = profile_settings.get("alpha", 16)
-
-        # LORA_SAVE_PATH: 프로필별 분기
-        instance_lora_load_path = config.get("instance_lora_load_path", "")
-        lora_save_path = f"SOYA_INSTANCE_LORA/{profile}/{_safe_dirname(lora_id)}"
-
-        # 이미지를 ComfyUI input 디렉토리에 익스포트
-        export_dir = os.path.join(comfy_input_dir, folder)
-        os.makedirs(export_dir, exist_ok=True)
-        for i, img in enumerate(training_images, start=1):
-            src = get_image_path(lora_id, img["filename"])
-            ext = os.path.splitext(img["filename"])[1]
-            dst = os.path.join(export_dir, f"[{i}]{ext}")
-            if os.path.isfile(src):
-                shutil.copy2(src, dst)
-
-        # 트레이닝 텍스트 빌드 (instance 전용: TEST_POSITIVE/TEST_NEGATIVE = "instance")
-        positive_text = _build_lora_training_text(
-            training_images, trigger, profile, step, il_rate, save_step, folder,
-            "positive", lora_save_path, gen_w, gen_h, upscale, resolution,
-            [], save_after, dim, alpha,
-        )
-        # Instance LoRA: TEST_POSITIVE/TEST_NEGATIVE를 "instance"로 덮어쓰기
-        positive_text = positive_text.replace("[TEST_POSITIVE]\n", "[TEST_POSITIVE]\ninstance\n")
-        positive_text = positive_text.replace("[TEST_NEGATIVE]\n", "[TEST_NEGATIVE]\ninstance\n")
-
-        negative_text = _build_lora_training_text(
-            training_images, trigger, profile, step, il_rate, save_step, folder,
-            "negative", lora_save_path, gen_w, gen_h, upscale, resolution,
-            [], save_after, dim, alpha,
-        )
-
-        # 워크플로우 로드
-        workflow_paths = config.get("lora_training_workflow_source_paths", {})
-        workflow_path = workflow_paths.get(profile, "") if isinstance(workflow_paths, dict) else ""
-        if not workflow_path:
-            for v in (workflow_paths or {}).values():
-                if v:
-                    workflow_path = v
-                    break
-        if not workflow_path or not os.path.isfile(workflow_path):
-            return web.json_response({"success": False, "error": f"워크플로우 파일 없음: {workflow_path}"})
-
-        with open(workflow_path, "r", encoding="utf-8") as f:
-            original_wf = json.load(f)
-        api_wf, conv_err = await convert_workflow_via_endpoint(original_wf)
-        if conv_err or api_wf is None:
-            return web.json_response({"success": False, "error": f"워크플로우 변환 실패: {conv_err}"})
-
-        import copy
-        wf = copy.deepcopy(api_wf)
-        for nid, ninfo in wf.items():
-            if not isinstance(ninfo, dict):
-                continue
-            title = ninfo.get("_meta", {}).get("title", "")
-            if title == "긍정프롬프트":
-                ninfo["inputs"]["value"] = positive_text
-            elif title == "부정프롬프트":
-                ninfo["inputs"]["value"] = negative_text
-
-        prompt_id, submit_result = await submit_to_real_comfy(wf)
-        await notify_frontend("instance_lora_training_progress", {
-            "phase": "preparing", "lora_id": lora_id, "profile": profile,
-            "message": f"'{trigger}' 인스턴스 로라 학습 시작 ({profile})",
+        item = await queue_manager.add_item("instance_lora_training", label, {
+            "id": lora_id, "profiles": profiles,
         })
-        asyncio.create_task(_monitor_instance_lora_training(prompt_id, lora_id, profile))
-
-        return web.json_response({
-            "success": True, "prompt_id": prompt_id, "lora_id": lora_id, "profile": profile,
-            "image_count": len(training_images),
-        })
+        return web.json_response({"success": True, "queue_item_id": item.id, "label": item.label})
     except Exception as e:
-        print(f"[INSTANCE_LORA_API] 학습 시작 실패: {e}")
+        print(f"[INSTANCE_LORA_API] 큐 추가 실패: {e}")
         traceback.print_exc()
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
@@ -7527,6 +7210,62 @@ app.router.add_post("/api/instance_lora/prompt", handle_api_instance_lora_prompt
 app.router.add_get("/api/instance_lora/prompt", handle_api_instance_lora_prompt_get)
 app.router.add_post("/api/instance_lora/training/start", handle_api_instance_lora_training_start)
 app.router.add_post("/api/instance_lora/images/upload", handle_api_instance_lora_images_upload)
+
+
+# ─── 통합 큐 API ───────────────────────────────────────────
+
+async def handle_api_queue_status(request):
+    """큐 전체 상태 조회"""
+    return web.json_response(queue_manager.get_status())
+
+async def handle_api_queue_add(request):
+    """큐에 작업 추가"""
+    try:
+        body = await request.json()
+        item_type = body.get("type", "")
+        label = body.get("label", "")
+        params = body.get("params", {})
+
+        if item_type not in ("asset_generation", "asset_lora_training", "bot_lora_training", "instance_lora_training"):
+            return web.json_response({"success": False, "error": f"알 수 없는 타입: {item_type}"}, status=400)
+
+        item = await queue_manager.add_item(item_type, label, params)
+        return web.json_response({"success": True, "item_id": item.id, "label": item.label})
+    except Exception as e:
+        print(f"[QUEUE_API] 추가 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+async def handle_api_queue_cancel(request):
+    """특정 큐 아이템 취소"""
+    try:
+        body = await request.json()
+        item_id = body.get("id", "")
+        cancelled = await queue_manager.cancel_item(item_id)
+        return web.json_response({"success": cancelled})
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+async def handle_api_queue_cancel_all(request):
+    """대기중인 모든 큐 아이템 취소"""
+    await queue_manager.cancel_all_pending()
+    return web.json_response({"success": True})
+
+async def handle_api_queue_remove(request):
+    """완료/취소된 큐 아이템 제거"""
+    try:
+        body = await request.json()
+        item_id = body.get("id", "")
+        removed = queue_manager.remove_item(item_id)
+        return web.json_response({"success": removed})
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+app.router.add_get("/api/queue/status", handle_api_queue_status)
+app.router.add_post("/api/queue/add", handle_api_queue_add)
+app.router.add_post("/api/queue/cancel", handle_api_queue_cancel)
+app.router.add_post("/api/queue/cancel_all", handle_api_queue_cancel_all)
+app.router.add_post("/api/queue/remove", handle_api_queue_remove)
 
 
 async def handle_api_instance_lora_preview(request):
@@ -7708,6 +7447,7 @@ app.on_startup.append(on_startup)
 app.on_cleanup.append(_tunnel_cleanup)
 
 if __name__ == "__main__":
+    init_queue_manager()
     print(f"=== ComfyUI Proxy Server (port {PORT}) ===")
     print(f"실제 ComfyUI: {REAL_COMFY_HOST}:{REAL_COMFY_PORT}")
     print(f"워크플로우 폴더: {WORKFLOW_DIR}")

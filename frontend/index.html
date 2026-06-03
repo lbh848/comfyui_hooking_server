@@ -6070,6 +6070,10 @@
             
             frontendWs.onopen = function() {
                 console.log('[Frontend WS] 연결됨');
+                // 연결 시 큐 상태 동기화
+                fetch('/api/queue/status').then(r => r.json()).then(data => {
+                    handleQueueUpdated(data);
+                }).catch(e => console.error('[QUEUE] 초기 상태 로드 실패:', e));
             };
             
             frontendWs.onmessage = function(event) {
@@ -6248,6 +6252,13 @@
                         case 'asset_generation_progress':
                         case 'asset_generation_completed':
                             handleAssetWsEvent(msg.type, msg.data);
+                            break;
+                        // 통합 큐 이벤트
+                        case 'queue_updated':
+                            handleQueueUpdated(msg.data);
+                            break;
+                        case 'queue_progress':
+                            handleQueueProgress(msg.data);
                             break;
                         // 에셋 분석 진행률 이벤트
                         case 'asset_mode_batch_progress':
@@ -12828,20 +12839,16 @@
             try {
                 // 학습 전 설정 자동 저장
                 await saveLoraTrainingConfig();
-                showToast('학습 시작 중...', 'info');
                 const resp = await fetchJSON('/api/lora/training/start', {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ character: loraCurrentCharacter, entry: loraCurrentEntry })
                 });
                 if (resp.success) {
-                    const errs = resp.node_errors && Object.keys(resp.node_errors).length > 0;
-                    showToast(`학습 시작 완료 (이미지 ${resp.exported_count}장 전송)`, errs ? 'warning' : 'success');
-                    // 진행률 UI 표시
-                    showLoraTrainingProgress();
+                    showToast(`큐에 추가됨: ${resp.label}`, 'success');
                 } else {
-                    showToast(resp.error || '학습 시작 실패', 'error');
+                    showToast(resp.error || '큐 추가 실패', 'error');
                 }
-            } catch (e) { console.error('[LORA] 학습 시작 실패:', e); showToast('학습 시작 실패', 'error'); }
+            } catch (e) { console.error('[LORA] 큐 추가 실패:', e); showToast('큐 추가 실패', 'error'); }
         }
 
         function showLoraTrainingProgress() {
@@ -14256,7 +14263,7 @@
         let assetQueueExpanded = false;
 
         function isAssetGenerating() {
-            return assetQueueProcessing || assetQueue.some(q => q.status === 'generating' || q.status === 'pending');
+            return assetQueue.some(q => q.status === 'processing' || q.status === 'pending');
         }
 
         // ─── 공용 최상단 진행도 바 ───
@@ -15073,15 +15080,12 @@
                     body: JSON.stringify({id: _instanceLoraCurrentId, profile})
                 })).json();
                 if (resp.success) {
-                    showToast(`${phaseLabel} ${profile.toUpperCase()} 학습 시작됨`, 'success');
-                    document.getElementById('instance-lora-progress').style.display = '';
+                    showToast(`큐에 추가됨: ${resp.label}`, 'success');
                 } else {
-                    _instanceLoraPendingProfile = null;
-                    showToast(`${profile.toUpperCase()} 학습 실패: ${resp.error}`, 'error');
+                    showToast(`큐 추가 실패: ${resp.error}`, 'error');
                 }
             } catch (e) {
-                _instanceLoraPendingProfile = null;
-                showToast(`${profile.toUpperCase()} 학습 시작 실패`, 'error');
+                showToast(`큐 추가 실패`, 'error');
             }
         }
 
@@ -15089,14 +15093,9 @@
             if (!_instanceLoraCurrentId) return;
             const profileValue = document.getElementById('instance-lora-train-profile').value;
             const label = profileValue === 'both' ? 'ANIMA + SDXL (순차)' : profileValue.toUpperCase();
-            if (!confirm(`인스턴스 로라 "${_instanceLoraCurrentId}"를 ${label} 프로필로 학습하시겠습니까?`)) return;
-            if (profileValue === 'both') {
-                _instanceLoraPendingProfile = 'sdxl';
-                await _startInstanceLoraSingle('anima', '[1/2]');
-            } else {
-                _instanceLoraPendingProfile = null;
-                await _startInstanceLoraSingle(profileValue, '');
-            }
+            if (!confirm(`인스턴스 로라 "${_instanceLoraCurrentId}"를 ${label} 프로필로 학습을 큐에 추가하시겠습니까?`)) return;
+            // "both" 모드 처리도 백엔드 큐에서 담당
+            await _startInstanceLoraSingle(profileValue, '');
         }
 
         // Instance LoRA 진행률 SSE
@@ -15114,16 +15113,6 @@
                 barEl.style.width = '0%';
                 infoEl.textContent = '';
             } else if (phase === 'all_complete') {
-                // 순차 학습: pending profile이 있으면 다음 단계 시작
-                if (_instanceLoraPendingProfile) {
-                    const nextProfile = _instanceLoraPendingProfile;
-                    _instanceLoraPendingProfile = null;
-                    const curLabel = (data.profile || '').toUpperCase();
-                    showToast(`${curLabel} 완료 → ${nextProfile.toUpperCase()} 시작`, 'success');
-                    barEl.style.width = '0%';
-                    _startInstanceLoraSingle(nextProfile, '[2/2]');
-                    return;
-                }
                 phaseEl.textContent = '학습 완료';
                 pctEl.textContent = '100%';
                 barEl.style.width = '100%';
@@ -15132,7 +15121,6 @@
                 loadInstanceLoraGrid();
                 if (_instanceLoraCurrentId) openInstanceLoraDetail(_instanceLoraCurrentId);
             } else if (phase === 'error') {
-                _instanceLoraPendingProfile = null;
                 phaseEl.textContent = '에러';
                 pctEl.textContent = '';
                 infoEl.textContent = data.message || '알 수 없는 오류';
@@ -15721,27 +15709,32 @@
         }
 
         async function startBotLoraTraining() {
-            if (!botLoraCurrentBot) return;
-            if (!confirm('모든 캐릭터의 LoRA를 순차 학습하시겠습니까? (스킵 설정된 캐릭터는 제외됩니다)')) return;
+            if (!botLoraCurrentBot || !botLoraCurrentProject) return;
+            const allChars = botLoraProjectData?.characters || [];
+            const charsToTrain = allChars.filter(c => !c.skip_training);
+            if (!charsToTrain.length) { showToast('학습할 캐릭터가 없습니다', 'error'); return; }
+            const skipped = allChars.length - charsToTrain.length;
+            const msg = `${charsToTrain.length}개 캐릭터의 LoRA를 큐에 추가하시겠습니까?${skipped ? ` (${skipped}개 스킵)` : ''}`;
+            if (!confirm(msg)) return;
             await saveBotLoraConfig();
-            try {
-                const resp = await fetchJSON('/api/bot_lora/training/start', {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ bot: botLoraCurrentBot, project: botLoraCurrentProject })
-                });
-                if (resp.success) {
-                    const skipMsg = resp.skipped_count > 0 ? ` (스킵 ${resp.skipped_count}명)` : '';
-                    showToast(`순차 학습 시작 (${resp.total_characters}명${skipMsg})`, 'success');
-                    document.getElementById('bot-lora-progress-section').style.display = '';
-                } else {
-                    showToast(resp.error || '학습 시작 실패', 'error');
-                }
-            } catch (e) { console.error('[BOT_LORA] 학습 시작 실패:', e); showToast('학습 시작 실패', 'error'); }
+            let added = 0, failed = 0;
+            for (const ch of charsToTrain) {
+                try {
+                    const resp = await fetchJSON('/api/bot_lora/training/start', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ bot: botLoraCurrentBot, project: botLoraCurrentProject, character: ch.name })
+                    });
+                    if (resp.success) added++;
+                    else { failed++; console.error(`[BOT_LORA] ${ch.name} 큐 추가 실패:`, resp.error); }
+                } catch (e) { failed++; console.error(`[BOT_LORA] ${ch.name} 큐 추가 실패:`, e); }
+            }
+            if (added > 0) showToast(`${added}개 캐릭터 큐에 추가됨${failed ? ` (${failed}개 실패)` : ''}`, 'success');
+            else showToast('큐 추가 실패', 'error');
         }
 
         async function startBotLoraTrainingSingle(charName) {
             if (!botLoraCurrentBot) return;
-            if (!confirm(`'${charName}'의 재학습을 시작하시겠습니까?`)) return;
+            if (!confirm(`'${charName}'의 재학습을 큐에 추가하시겠습니까?`)) return;
             await saveBotLoraConfig();
             try {
                 const resp = await fetchJSON('/api/bot_lora/training/start', {
@@ -15749,12 +15742,11 @@
                     body: JSON.stringify({ bot: botLoraCurrentBot, project: botLoraCurrentProject, character: charName })
                 });
                 if (resp.success) {
-                    showToast(`'${charName}' 학습 시작`, 'success');
-                    document.getElementById('bot-lora-progress-section').style.display = '';
+                    showToast(`큐에 추가됨: ${resp.label}`, 'success');
                 } else {
-                    showToast(resp.error || '학습 시작 실패', 'error');
+                    showToast(resp.error || '큐 추가 실패', 'error');
                 }
-            } catch (e) { console.error('[BOT_LORA] 학습 시작 실패:', e); showToast('학습 시작 실패', 'error'); }
+            } catch (e) { console.error('[BOT_LORA] 큐 추가 실패:', e); showToast('큐 추가 실패', 'error'); }
         }
 
         async function deleteBotLoraTestImage(filename) {
@@ -23698,11 +23690,23 @@
 
         function renderAssetQueueUI() {
             const container = document.getElementById('asset-queue-container');
-            const generating = assetQueue.find(q => q.status === 'generating');
+            const processing = assetQueue.find(q => q.status === 'processing');
             const pending = assetQueue.filter(q => q.status === 'pending');
-            const hasActive = generating || pending.length > 0;
+            const hasActive = processing || pending.length > 0;
 
             container.style.display = assetQueue.length > 0 ? 'flex' : 'none';
+
+            // ─── 타입별 아이콘/색상 ───
+            function getTypeStyle(type) {
+                switch (type) {
+                    case 'illustration': return { icon: '🖼', color: '#e74c3c' };
+                    case 'asset_generation': return { icon: '🎨', color: '#3498db' };
+                    case 'asset_lora_training': return { icon: '🔶', color: '#e67e22' };
+                    case 'bot_lora_training': return { icon: '🟣', color: '#9b59b6' };
+                    case 'instance_lora_training': return { icon: '🔵', color: '#1abc9c' };
+                    default: return { icon: '○', color: 'var(--text2)' };
+                }
+            }
 
             // ─── 슬림 바 ───
             const barLabel = document.getElementById('queue-bar-label');
@@ -23713,9 +23717,9 @@
             const barStopBtn = document.getElementById('queue-bar-stop-btn');
             const bar = document.getElementById('asset-queue-bar');
 
-            if (generating) {
-                barLabel.textContent = generating.label;
-                const pct = generating.progressMax > 0 ? Math.round(generating.progress / generating.progressMax * 100) : 0;
+            if (processing) {
+                barLabel.textContent = processing.label;
+                const pct = Math.round(processing.progress || 0);
                 barProgressText.textContent = pct + '%';
                 barProgressBar.style.width = pct + '%';
                 barSpinner.style.display = 'block';
@@ -23753,6 +23757,7 @@
             const panelBody = document.getElementById('asset-queue-panel-body');
             panelBody.innerHTML = '';
             assetQueue.forEach(item => {
+                const ts = getTypeStyle(item.type);
                 const row = document.createElement('div');
                 row.className = 'asset-queue-item item-' + item.status;
                 row.dataset.queueItemId = item.id;
@@ -23760,38 +23765,45 @@
                 let statusText = '';
                 switch (item.status) {
                     case 'pending':
-                        icon = '○'; break;
-                    case 'generating':
+                        icon = ts.icon; break;
+                    case 'processing':
                         icon = '<span class="queue-spinner" style="width:14px;height:14px;border-width:2px;"></span>';
-                        statusText = (item.progressMax > 0 ? Math.round(item.progress / item.progressMax * 100) : 0) + '%';
+                        statusText = Math.round(item.progress || 0) + '%';
                         break;
-                    case 'success':
+                    case 'completed':
                         icon = '✔'; break;
-                    case 'error':
+                    case 'failed':
                         icon = '✘'; statusText = item.errorMsg || '실패'; break;
                     case 'cancelled':
                         icon = '■'; statusText = '취소'; break;
                 }
                 if (!statusText && item.status === 'pending') statusText = '대기';
-                if (!statusText && item.status === 'success') statusText = '완료';
-                if (item.autoHideAt !== null) {
-                    const remaining = Math.max(0, Math.ceil((item.autoHideAt - Date.now()) / 1000));
-                    statusText += ' <span class="item-countdown">' + remaining + 's</span>';
+                if (!statusText && item.status === 'completed') statusText = '완료';
+
+                // 학습 진행률 상세 (step/total)
+                if (item.status === 'processing' && item.progress_detail) {
+                    const d = item.progress_detail;
+                    if (d.step && d.total) {
+                        statusText = d.step + '/' + d.total;
+                    } else if (d.phase === 'training' && d.step !== undefined) {
+                        statusText = 'step ' + d.step;
+                    }
                 }
 
                 let actionBtn = '';
-                if (item.status === 'pending' || item.status === 'cancelled') {
-                    actionBtn = '<button class="item-dismiss-btn" onclick="event.stopPropagation(); cancelQueueItem(' + item.id + ');">✕</button>';
-                } else if (item.status === 'generating') {
-                    actionBtn = '<button class="item-dismiss-btn" style="background:rgba(230,126,34,0.2);color:#e67e22;" onclick="event.stopPropagation(); skipCurrentItem(' + item.id + ');">건너뛰기</button>';
+                if (item.status === 'pending') {
+                    actionBtn = '<button class="item-dismiss-btn" onclick="event.stopPropagation(); cancelQueueItem(\'' + item.id + '\');">✕</button>';
+                } else if (item.status === 'processing') {
+                    actionBtn = '<button class="item-dismiss-btn" style="background:rgba(230,126,34,0.2);color:#e67e22;" onclick="event.stopPropagation(); skipCurrentItem(\'' + item.id + '\');">건너뛰기</button>';
                 } else {
-                    actionBtn = '<button class="item-dismiss-btn" onclick="event.stopPropagation(); removeQueueItem(' + item.id + ');">✕</button>';
+                    actionBtn = '<button class="item-dismiss-btn" onclick="event.stopPropagation(); removeQueueItemBackend(\'' + item.id + '\');">✕</button>';
                 }
 
+                const labelColor = item.status === 'processing' ? ts.color : '';
                 row.innerHTML =
                     '<div class="item-icon">' + icon + '</div>' +
-                    '<div class="item-label">' + escapeHtml(item.label) + '</div>' +
-                    (item.status === 'generating' ? '<div class="item-progress-bar"><div class="item-progress-bar-inner" style="width:' + (item.progressMax > 0 ? Math.round(item.progress / item.progressMax * 100) : 0) + '%"></div></div>' : '') +
+                    '<div class="item-label" style="' + (labelColor ? 'color:' + labelColor : '') + '">' + escapeHtml(item.label) + '</div>' +
+                    (item.status === 'processing' ? '<div class="item-progress-bar"><div class="item-progress-bar-inner" style="width:' + Math.round(item.progress || 0) + '%"></div></div>' : '') +
                     '<div class="item-status">' + statusText + '</div>' +
                     actionBtn;
                 panelBody.appendChild(row);
@@ -23802,11 +23814,20 @@
             const panelTitle = document.getElementById('queue-panel-title-text');
             if (hasActive) {
                 panelSpinner.style.display = 'block';
-                panelTitle.textContent = '생성 중 (' + (pending.length + (generating ? 1 : 0)) + '개)';
+                panelTitle.textContent = '처리 중 (' + (pending.length + (processing ? 1 : 0)) + '개)';
             } else {
                 panelSpinner.style.display = 'none';
                 panelTitle.textContent = '완료됨';
             }
+        }
+
+        async function removeQueueItemBackend(id) {
+            try {
+                await fetchJSON('/api/queue/remove', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id: id }),
+                });
+            } catch (e) { console.error('[QUEUE] 항목 제거 실패:', e); }
         }
 
         function toggleAssetQueuePanel() {
@@ -23918,125 +23939,44 @@
                 sdxl_lora_trigger_words: sdxlLoraTriggerWords,
             };
 
-            // 큐 항목 생성 (각 항목에 requestBody 저장)
+            // 큐 항목 생성 (백엔드 통합 큐에 추가)
             for (let i = 0; i < totalCount; i++) {
                 const label = totalCount > 1 ? char + '/' + outfit + '/' + expr + ' (' + (i + 1) + '/' + totalCount + ')' : char + '/' + outfit + '/' + expr;
-                addQueueItem(label, requestBody);
+                try {
+                    await fetchJSON('/api/queue/add', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ type: 'asset_generation', label: label, params: { body: requestBody } }),
+                    });
+                } catch (e) {
+                    console.error('[QUEUE] 에셋 생성 큐 추가 실패:', e);
+                    showToast('큐 추가 실패: ' + e.message, 'error');
+                }
             }
-
-            showTopProgress();
-            processAssetQueue();
         }
 
         async function processAssetQueue() {
-            // 이미 큐 처리 중이면 새로 시작하지 않음 (새 항목은 while 루프에서 자동 픽업)
-            if (assetQueueProcessing) return;
-            assetQueueProcessing = true;
+            // 통합 큐에서 처리하므로 프론트엔드 루프 불필요
+        }
 
+        async function stopAssetQueue() {
             try {
-                while (assetQueueProcessing) {
-                    // 취소된 항목 중 자기 차례가 된 것만 애니메이션과 함께 제거
-                    const firstPendingIdx = assetQueue.findIndex(q => q.status === 'pending');
-                    const toRemove = [];
-                    for (let i = 0; i < assetQueue.length; i++) {
-                        if (assetQueue[i].status === 'cancelled' && (firstPendingIdx === -1 || i < firstPendingIdx)) {
-                            toRemove.push(assetQueue[i]);
-                        }
-                    }
-                    if (toRemove.length > 0) {
-                        await animateQueueRemovals(toRemove);
-                    }
-
-                    const item = assetQueue.find(q => q.status === 'pending');
-                    if (!item) break;
-
-                    assetCurrentQueueId = item.id;
-                    item.status = 'generating';
-                    item.startTime = Date.now();
-                    item.progress = 0;
-                    item.progressMax = 100;
-                    renderAssetQueueUI();
-
-                    try {
-                        const resp = await fetch('/api/asset_mode/generate', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(item.requestBody),
-                        });
-                        const result = await resp.json();
-                        if (item.status === 'cancelled') {
-                            // 건너뛰기된 항목 - 결과 무시
-                        } else if (result.success) {
-                            item.status = 'success';
-                            item.endTime = Date.now();
-                            renderAssetMainArea();
-                            scheduleAutoHide(item.id, 8000);
-                        } else {
-                            item.status = 'error';
-                            item.errorMsg = result.error || '생성 실패';
-                            item.endTime = Date.now();
-                            showToast('[' + item.label + '] ' + item.errorMsg, 'error');
-                            scheduleAutoHide(item.id, 15000);
-                        }
-                    } catch (e) {
-                        if (item.status !== 'cancelled') {
-                            item.status = 'error';
-                            item.errorMsg = e.message;
-                            item.endTime = Date.now();
-                            showToast('[' + item.label + '] 요청 실패: ' + e.message, 'error');
-                            scheduleAutoHide(item.id, 15000);
-                        }
-                    }
-
-                    renderAssetQueueUI();
-                }
-            } finally {
-                assetQueueProcessing = false;
-                assetCurrentQueueId = null;
-                updateGenerateBtn();
-                hideTopProgress();
-            }
+                await fetchJSON('/api/queue/cancel_all', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                });
+            } catch (e) { console.error('[QUEUE] 전체 취소 실패:', e); }
         }
 
-        function stopAssetQueue() {
-            assetQueueProcessing = false;
-            for (const item of assetQueue) {
-                if (item.status === 'pending') {
-                    item.status = 'cancelled';
-                    item.endTime = Date.now();
-                    scheduleAutoHide(item.id, 15000);
-                }
-            }
-            renderAssetQueueUI();
-            updateGenerateBtn();
-        }
-
-        function cancelQueueItem(id) {
-            const item = assetQueue.find(q => q.id === id);
-            if (!item) return;
-            if (item.status === 'pending') {
-                item.status = 'cancelled';
-                item.endTime = Date.now();
-                // 취소 대기 항목은 자기 차례가 될 때까지 큐에 유지 (auto-hide 없음)
-            } else if (item.status === 'cancelled') {
-                item.status = 'pending';
-                item.endTime = null;
-                cancelAutoHide(id);
-                processAssetQueue();
-            }
-            renderAssetQueueUI();
+        async function cancelQueueItem(id) {
+            try {
+                await fetchJSON('/api/queue/cancel', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id: id }),
+                });
+            } catch (e) { console.error('[QUEUE] 취소 실패:', e); }
         }
 
         function skipCurrentItem(id) {
-            const item = assetQueue.find(q => q.id === id);
-            if (!item || item.status !== 'generating') return;
-            // 현재 생성 중인 항목은 서버 요청이 진행 중이므로 즉시 취소는 불가능하지만,
-            // 결과가 돌아오면 무시하도록 플래그 설정
-            item.status = 'cancelled';
-            item.endTime = Date.now();
-            scheduleAutoHide(id, 5000);
-            // 다음 항목으로 넘어가기 위해 processing 플래그는 유지
-            renderAssetQueueUI();
+            cancelQueueItem(id);
         }
 
         // 하위 호환성
@@ -24184,30 +24124,62 @@
 
         // 에셋 모드 WebSocket 이벤트 핸들링 (기존 ws 핸들러에 추가)
         function handleAssetWsEvent(type, data) {
-            const currentItem = assetCurrentQueueId ? assetQueue.find(q => q.id === assetCurrentQueueId) : null;
-
-            if (type === 'asset_generation_started') {
-                if (currentItem) {
-                    currentItem.progress = 0;
-                    currentItem.progressMax = 100;
+            if (type === 'asset_generation_progress') {
+                // 큐에서 현재 에셋 생성 항목 찾아서 진행률 업데이트
+                const current = assetQueue.find(q => q.status === 'processing' && q.type === 'asset_generation');
+                if (current) {
+                    current.progress = data.max > 0 ? (data.value / data.max * 100) : 0;
+                    current.progress_detail = data;
                 }
-                renderAssetQueueUI();
-            } else if (type === 'asset_generation_progress') {
-                if (currentItem) {
-                    currentItem.progress = data.value || 0;
-                    currentItem.progressMax = data.max || 100;
-                }
-                renderAssetQueueUI();
                 updateTopProgress(data.value || 0, data.max || 0);
+                renderAssetQueueUI();
             } else if (type === 'asset_generation_completed') {
                 if (data.status === 'success') {
                     renderAssetMainArea();
                 }
-                if (currentItem && data.status === 'success') {
-                    currentItem.progress = currentItem.progressMax;
-                    renderAssetQueueUI();
+                hideTopProgress();
+            }
+        }
+
+        // ─── 통합 큐 WebSocket 핸들러 ────────────────────────
+        function handleQueueUpdated(data) {
+            if (!data || !data.items) return;
+            // 백엔드 상태를 프론트엔드 assetQueue에 동기화
+            assetQueue = data.items.map(item => ({
+                id: item.id,
+                type: item.type || 'asset_generation',
+                label: item.label,
+                status: item.status,
+                progress: item.progress || 0,
+                progress_detail: item.progress_detail || {},
+                startTime: item.started_at ? item.started_at * 1000 : null,
+                endTime: item.completed_at ? item.completed_at * 1000 : null,
+                errorMsg: item.error || '',
+                autoHideAt: null,
+            }));
+            assetQueueProcessing = data.processing;
+            assetCurrentQueueId = data.current ? data.current.id : null;
+            renderAssetQueueUI();
+            updateGenerateBtn();
+            // 처리중이 아닐 때 상단 진행도 바 숨김
+            if (!data.processing) hideTopProgress();
+        }
+
+        function handleQueueProgress(data) {
+            if (!data) return;
+            const item = assetQueue.find(q => q.id === data.item_id);
+            if (item) {
+                item.progress = data.progress || 0;
+                item.progress_detail = data.detail || {};
+                if (data.detail) {
+                    if (data.detail.phase === 'generating') {
+                        updateTopProgress(data.detail.value || 0, data.detail.max || 100);
+                    } else if (data.detail.phase === 'training') {
+                        updateTopProgress(data.detail.step || 0, data.detail.total || 100);
+                    }
                 }
             }
+            renderAssetQueueUI();
         }
 
         // 에셋 태그 분석 진행률 WebSocket 핸들러
@@ -27736,190 +27708,88 @@
 
             const repeatCount = Math.max(1, parseInt(document.getElementById('batch-repeat-count').value) || 1);
             const totalJobs = batchChains.length * repeatCount;
+            const isAnima = currentConfig?.asset_workflow_type === 'anima';
 
-            batchRunning = true;
-            batchActuallyRunning = true;
-            document.getElementById('batch-start-btn').disabled = true;
-            document.getElementById('batch-stop-btn').style.display = 'inline-block';
-            document.getElementById('batch-progress-bar').style.display = 'block';
-            document.getElementById('batch-progress-inner').style.width = '0%';
-            document.getElementById('batch-status-text').style.display = 'block';
-            document.getElementById('batch-status-text').textContent = `준비중... (0/${totalJobs})`;
-            showTopProgress();
-
-            let completed = 0;
-            let successCount = 0;
-            let failCount = 0;
-            const batchStartTime = Date.now();
-
-            function formatDuration(ms) {
-                const s = Math.floor(ms / 1000);
-                const m = Math.floor(s / 60);
-                const sec = s % 60;
-                return m > 0 ? `${m}분 ${sec}초` : `${sec}초`;
-            }
-            function updateBatchStatusText(round, ci, jobNum) {
-                const elapsed = Date.now() - batchStartTime;
-                const avgPerJob = completed > 0 ? elapsed / completed : 0;
-                const remaining = Math.round(avgPerJob * (totalJobs - completed));
-                const etaStr = completed > 0 ? `예상 남은시간: ${formatDuration(remaining)}` : '';
-                document.getElementById('batch-status-text').textContent =
-                    `${round + 1}바퀴 — 슬롯 #${ci + 1} (${jobNum}/${totalJobs}) | 경과: ${formatDuration(elapsed)}${etaStr ? ' | ' + etaStr : ''}`;
-            }
-
-            try {
-                for (let round = 0; round < repeatCount; round++) {
-                    for (let ci = 0; ci < batchChains.length; ci++) {
-                        if (!batchRunning) break;
-                        const slot = batchChains[ci];
-                        const jobNum = completed + 1;
-
-                        updateBatchStatusText(round, ci, jobNum);
-                        document.getElementById('batch-progress-inner').style.width =
-                            `${(completed / totalJobs * 100).toFixed(1)}%`;
-
-                        // 프리셋에서 태그 로드 필요 시 서버에 적용
-                        const isAnima = currentConfig?.asset_workflow_type === 'anima';
-                        const genPayload = {
-                            character: slot.character,
-                            outfit: slot.outfit,
-                            expression: slot.expression,
-                            appearance: slot.appearance,
-                            face_id_enabled: slot.ref_enabled,
-                            face_id_strength: slot.ref_strength,
-                            reference_images: (slot.ref_images || []).map(img => ({filename: img.name, local_path: img.local_path})),
-                            style_ref_enabled: slot.style_ref_enabled,
-                            style_ref_strength: slot.style_ref_strength || 0.55,
-                            style_ref_images: (slot.style_ref_images || []).map(img => ({filename: img.name, local_path: img.local_path})),
-                            lora_activate: slot.lora_enabled && (slot.lora_list || []).length > 0,
-                            lora_data: (() => {
-                                if (!slot.lora_enabled || !(slot.lora_list || []).length) return '';
-                                return JSON.stringify({
-                                    list: slot.lora_list.map(l => ({
-                                        lora_path: 'SOYA_CHAR_LORA\\' + l.lora_path,
-                                        str: l.strength,
-                                        BASE: l.BASE || 'anima',
-                                    }))
-                                });
-                            })(),
-                            pose_enabled: isAnima ? false : slot.pose_enabled,
-                            pose_id: (isAnima ? false : slot.pose_enabled) ? slot.pose_id : '',
-                            fd_activate: slot.fd_enabled,
-                            hrf_activate: (function() {
-                                if (!isAnima) return slot.hrf_enabled;
-                                const mode = slot.hrf_mode || 'both';
-                                return slot.hrf_enabled ? (mode === 'anima' ? false : true) : false;
-                            })(),
-                            anima_hrf_activate: (function() {
-                                if (!isAnima) return false;
-                                const mode = slot.hrf_mode || 'both';
-                                return slot.hrf_enabled ? (mode === 'sdxl' ? false : true) : false;
-                            })(),
-                            hrf_size: slot.hrf_size || 2.0,
-                            hrf_restore_size: slot.hrf_restore_size !== false,
-                            hrf_control_net: !!slot.hrf_control_net,
-                            img_w: slot.img_w || 700,
-                            img_h: slot.img_h || 1024,
-                            hd_activate: slot.hd_enabled,
-                            ed_activate: slot.ed_enabled,
-                            artist_preset: slot.artist_preset || '',
-                            natural_language: slot.natural_language_preset
-                                ? (assetTags?.natural_language_presets?.[slot.natural_language_preset] || slot.natural_language || '')
-                                : (slot.natural_language || ''),
-                            lora_trigger_words: slot.lora_enabled ? (slot.lora_list || []).map(l => l.trigger).filter(t => t && t.trim()).join(', ') : '',
-                            anima_artist_preset: isAnima ? (slot.anima_artist_preset || '') : '',
-                            anima_quality_preset: isAnima ? (slot.anima_quality_preset || '') : '',
-                            anima_negative_preset: isAnima ? (slot.anima_negative_preset || '') : '',
-                            asset_workflow_type: isAnima ? 'anima' : 'regular',
-                            anima_lora_trigger_words: slot.lora_enabled ? (slot.lora_list || []).filter(l => (l.BASE || 'anima') === 'anima').map(l => l.trigger).filter(t => t && t.trim()).join(', ') : '',
-                            sdxl_lora_trigger_words: slot.lora_enabled ? (slot.lora_list || []).filter(l => l.BASE === 'sdxl').map(l => l.trigger).filter(t => t && t.trim()).join(', ') : '',
-                        };
-
-                        // 프리셋이 지정된 경우 서버에 해당 프리셋 로드 후 생성
-                        try {
-                            // 품질 프리셋 로드
-                            if (slot.quality_preset) {
-                                await fetch('/api/asset_mode/tags', {
-                                    method: 'POST',
-                                    headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify({ action: 'load_quality_preset', name: slot.quality_preset })
-                                });
-                            }
-                            // 구도 프리셋 로드
-                            if (slot.composition_preset) {
-                                await fetch('/api/asset_mode/tags', {
-                                    method: 'POST',
-                                    headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify({ action: 'load_composition_preset', name: slot.composition_preset })
-                                });
-                            }
-                            // 캐릭터 부정 프리셋 로드
-                            if (slot.character_negative_preset) {
-                                await fetch('/api/asset_mode/tags', {
-                                    method: 'POST',
-                                    headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify({ action: 'load_character_negative_preset', name: slot.character_negative_preset })
-                                });
-                            }
-                            // 부정 프리셋 로드
-                            if (slot.negative_preset) {
-                                await fetch('/api/asset_mode/tags', {
-                                    method: 'POST',
-                                    headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify({ action: 'load_negative_preset', name: slot.negative_preset })
-                                });
-                            }
-                            // ANIMA 품질 프리셋 로드
-                            if (isAnima && slot.anima_quality_preset) {
-                                await fetch('/api/asset_mode/tags', {
-                                    method: 'POST',
-                                    headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify({ action: 'load_anima_quality_preset', name: slot.anima_quality_preset })
-                                });
-                            }
-                            // ANIMA 부정 프리셋 로드
-                            if (isAnima && slot.anima_negative_preset) {
-                                await fetch('/api/asset_mode/tags', {
-                                    method: 'POST',
-                                    headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify({ action: 'load_anima_negative_preset', name: slot.anima_negative_preset })
-                                });
-                            }
-
-                            const resp = await fetch('/api/asset_mode/generate', {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify(genPayload)
+            // 각 슬롯을 통합 큐에 추가
+            let addedCount = 0;
+            for (let round = 0; round < repeatCount; round++) {
+                for (let ci = 0; ci < batchChains.length; ci++) {
+                    const slot = batchChains[ci];
+                    const label = `일괄 [${round + 1}/${repeatCount}] ${slot.character}/${slot.outfit}/${slot.expression}`;
+                    const genPayload = {
+                        character: slot.character,
+                        outfit: slot.outfit,
+                        expression: slot.expression,
+                        appearance: slot.appearance,
+                        face_id_enabled: slot.ref_enabled,
+                        face_id_strength: slot.ref_strength,
+                        reference_images: (slot.ref_images || []).map(img => ({filename: img.name, local_path: img.local_path})),
+                        style_ref_enabled: slot.style_ref_enabled,
+                        style_ref_strength: slot.style_ref_strength || 0.55,
+                        style_ref_images: (slot.style_ref_images || []).map(img => ({filename: img.name, local_path: img.local_path})),
+                        lora_activate: slot.lora_enabled && (slot.lora_list || []).length > 0,
+                        lora_data: (() => {
+                            if (!slot.lora_enabled || !(slot.lora_list || []).length) return '';
+                            return JSON.stringify({
+                                list: slot.lora_list.map(l => ({
+                                    lora_path: 'SOYA_CHAR_LORA\\' + l.lora_path,
+                                    str: l.strength,
+                                    BASE: l.BASE || 'anima',
+                                }))
                             });
-                            const result = await resp.json();
-                            if (result.success) {
-                                successCount++;
-                            } else {
-                                failCount++;
-                                showToast(`[슬롯 #${ci + 1}] ${result.error || '생성 실패'}`, 'error');
-                            }
-                        } catch (e) {
-                            failCount++;
-                            showToast(`[슬롯 #${ci + 1}] 요청 실패: ${e.message}`, 'error');
-                        }
-                        completed++;
-                        document.getElementById('batch-progress-inner').style.width =
-                            `${(completed / totalJobs * 100).toFixed(1)}%`;
-                    }
-                    if (!batchRunning) break;
-                }
+                        })(),
+                        pose_enabled: isAnima ? false : slot.pose_enabled,
+                        pose_id: (isAnima ? false : slot.pose_enabled) ? slot.pose_id : '',
+                        fd_activate: slot.fd_enabled,
+                        hrf_activate: (function() {
+                            if (!isAnima) return slot.hrf_enabled;
+                            const mode = slot.hrf_mode || 'both';
+                            return slot.hrf_enabled ? (mode === 'anima' ? false : true) : false;
+                        })(),
+                        anima_hrf_activate: (function() {
+                            if (!isAnima) return false;
+                            const mode = slot.hrf_mode || 'both';
+                            return slot.hrf_enabled ? (mode === 'sdxl' ? false : true) : false;
+                        })(),
+                        hrf_size: slot.hrf_size || 2.0,
+                        hrf_restore_size: slot.hrf_restore_size !== false,
+                        hrf_control_net: !!slot.hrf_control_net,
+                        img_w: slot.img_w || 700,
+                        img_h: slot.img_h || 1024,
+                        hd_activate: slot.hd_enabled,
+                        ed_activate: slot.ed_enabled,
+                        artist_preset: slot.artist_preset || '',
+                        natural_language: slot.natural_language_preset
+                            ? (assetTags?.natural_language_presets?.[slot.natural_language_preset] || slot.natural_language || '')
+                            : (slot.natural_language || ''),
+                        lora_trigger_words: slot.lora_enabled ? (slot.lora_list || []).map(l => l.trigger).filter(t => t && t.trim()).join(', ') : '',
+                        anima_artist_preset: isAnima ? (slot.anima_artist_preset || '') : '',
+                        anima_quality_preset: isAnima ? (slot.anima_quality_preset || '') : '',
+                        anima_negative_preset: isAnima ? (slot.anima_negative_preset || '') : '',
+                        asset_workflow_type: isAnima ? 'anima' : 'regular',
+                        anima_lora_trigger_words: slot.lora_enabled ? (slot.lora_list || []).filter(l => (l.BASE || 'anima') === 'anima').map(l => l.trigger).filter(t => t && t.trim()).join(', ') : '',
+                        sdxl_lora_trigger_words: slot.lora_enabled ? (slot.lora_list || []).filter(l => l.BASE === 'sdxl').map(l => l.trigger).filter(t => t && t.trim()).join(', ') : '',
+                    };
+                    const presets = {};
+                    if (slot.quality_preset) presets.quality_preset = slot.quality_preset;
+                    if (slot.composition_preset) presets.composition_preset = slot.composition_preset;
+                    if (slot.negative_preset) presets.negative_preset = slot.negative_preset;
+                    if (slot.character_negative_preset) presets.character_negative_preset = slot.character_negative_preset;
+                    if (isAnima && slot.anima_quality_preset) presets.anima_quality_preset = slot.anima_quality_preset;
+                    if (isAnima && slot.anima_negative_preset) presets.anima_negative_preset = slot.anima_negative_preset;
 
-                document.getElementById('batch-status-text').textContent =
-                    `완료 — 성공: ${successCount}, 실패: ${failCount} (총 ${totalJobs}건) | 소요: ${formatDuration(Date.now() - batchStartTime)}`;
-                if (successCount > 0) showToast(`일괄 생성 완료 (${successCount}장)`, 'success');
-                if (failCount > 0 && successCount === 0) showToast('모든 생성 실패', 'error');
-            } finally {
-                batchRunning = false;
-                batchActuallyRunning = false;
-                document.getElementById('batch-start-btn').disabled = false;
-                document.getElementById('batch-stop-btn').style.display = 'none';
-                hideTopProgress();
+                    try {
+                        await fetchJSON('/api/queue/add', {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ type: 'asset_generation', label: label, params: { body: genPayload, presets: presets } }),
+                        });
+                        addedCount++;
+                    } catch (e) {
+                        console.error('[BATCH] 큐 추가 실패:', e);
+                    }
+                }
             }
+            showToast(`큐에 ${addedCount}/${totalJobs}개 추가됨`, addedCount > 0 ? 'success' : 'error');
         }
 
         let _batchStoppingToastInterval = null;
