@@ -16425,6 +16425,11 @@
                     return;
                 }
                 showToast(skip ? `'${charName}' 순차 학습 스킵 설정` : `'${charName}' 순차 학습 스킵 해제`, 'success');
+                // 메모리 상태 동기화
+                if (botLoraProjectData?.characters) {
+                    const ch = botLoraProjectData.characters.find(c => c.name === charName);
+                    if (ch) ch.skip_training = skip;
+                }
                 // 카드 시각적 상태 업데이트
                 const card = document.getElementById('bot-lora-char-card-' + encodeURIComponent(charName));
                 if (card) {
