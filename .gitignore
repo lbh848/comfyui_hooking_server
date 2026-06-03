@@ -13,6 +13,7 @@ asset/
 asset_data/
 pose_data/
 bot/
+instance_lora/
 current_mode_workflow/
 auto_complete/
 CLAUDE.md

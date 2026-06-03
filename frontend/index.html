@@ -536,7 +536,7 @@
         /* ─── 토스트 알림 ─── */
         .toast {
             position: fixed;
-            top: 80px;
+            top: 130px;
             left: 50%;
             transform: translateX(-50%);
             padding: 12px 24px;
@@ -3902,7 +3902,7 @@
                     <select id="at-compare-char" style="font-size:0.85rem; padding:2px 6px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); color:var(--text);">
                         <option value="">비교 캐릭터</option>
                     </select>
-                    <button class="at-btn" id="at-compare-apply-btn" onclick="atLoadCompareImages()" style="font-size:0.8rem;">적용</button>
+                    <button class="at-btn" id="at-compare-apply-btn" onclick="atLoadCompareImages()" style="font-size:0.8rem; background:#2196F3; color:#fff; border-color:#2196F3;">적용</button>
                     <button class="at-btn" onclick="atExportNameMapping()" style="font-size:0.8rem; background:#2a7; color:#fff; border-color:#2a7;">이름치환내보내기</button>
                     <button class="at-btn" onclick="atExportChain()" style="font-size:0.8rem; background:#2a7; color:#fff; border-color:#2a7;">체인내보내기</button>
                     <span id="at-compare-status" style="font-size:0.75rem; color:var(--text2); display:none;"></span>
@@ -6385,6 +6385,9 @@
                         case 'tag_analysis_progress':
                             handleTagAnalysisProgress(msg.data);
                             break;
+                        case 'auto_match_batch_progress':
+                            handleAutoMatchBatchProgress(msg.data);
+                            break;
                         case 'text_output':
                             handleTextOutput(msg.data);
                             break;
@@ -7502,6 +7505,7 @@
             instance_lora_analysis: '인스턴스 LoRA 분석 및 학습',
             instance_lora_training: '인스턴스 LoRA 분석 및 학습',
             tag_analysis: '태그 분석',
+            auto_match_batch: '배치 매칭',
             asset_generation: '에셋 이미지 생성',
         };
 
@@ -7633,16 +7637,19 @@
                         });
                     }
                     if (typeof atRenderImages === 'function') atRenderImages();
-                    // 진행률 바 업데이트
                     const progressInner = document.getElementById('at-progress-inner');
                     if (progressInner) progressInner.style.width = '100%';
-                    // 후속 매칭 단계 진행 (상태 표시)
+
                     const doMatch = document.getElementById('at-do-match');
                     if (doMatch && doMatch.checked) {
-                        showToast('태그 분석 완료, 매칭 진행 중...', 'info');
-                        if (progressInner) progressInner.style.width = '0%';
+                        showToast('태그 분석 완료, 배치 매칭 시작...', 'info');
+                        if (typeof atProceedToMatching === 'function') atProceedToMatching();
+                    } else {
+                        document.getElementById('at-analyze-btn').disabled = false;
+                        document.getElementById('at-stop-btn').style.display = 'none';
+                        setTimeout(() => { document.getElementById('at-progress-bar').style.display = 'none'; }, 500);
+                        showToast('태그 분석 완료', 'success');
                     }
-                    if (typeof atProceedToMatching === 'function') atProceedToMatching();
                 } else if (source === 'instance_lora') {
                     if (typeof loadInstanceLoraGrid === 'function') loadInstanceLoraGrid();
                     showToast(`분석 완료: 성공 ${data.success_count}건, 실패 ${data.fail_count}건`, data.success_count > 0 ? 'success' : 'error');
@@ -10976,240 +10983,95 @@
                 atAbortController = null;
             }
 
-            // 2. 임베딩 매칭 + 태그 매칭 (배치)
+            // 2. 배치 매칭 (큐 사용)
             if (doMatch) {
-                atState.embeddingMatches = [];
-                atState.imageMatches = [];
-                atState.chains = [];
-                const uploadedFiles = atState.images.filter(i => i.file);
-                if (uploadedFiles.length === 0) {
-                    showToast('임베딩 매칭할 파일이 없습니다. 이미지를 업로드하세요.', 'error');
-                    document.getElementById('at-analyze-btn').disabled = false;
-                    document.getElementById('at-stop-btn').style.display = 'none';
-                    document.getElementById('at-progress-bar').style.display = 'none';
-                    return;
-                }
-
-                // 2-1. 임베딩 매칭: 파일명 기반, 배치 1회 호출
-                const embItems = uploadedFiles.map(img => {
-                    const fileName = img.file.name || '';
-                    const baseName = fileName.substring(0, fileName.lastIndexOf('.')) || fileName;
-                    return { image_name: fileName, tags: [baseName] };
-                });
-                try {
-                    const embResp = await fetch('/api/asset_tool/match_batch', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ items: embItems, category: category, top_n: 10, embedding_threshold: 0 })
-                    });
-                    const embResult = await embResp.json();
-                    console.log('[임베딩 매칭 배치]', embResult);
-                    if (embResult.success && embResult.results) {
-                        for (const r of embResult.results) {
-                            if (r.embedding_matches && r.embedding_matches.length > 0) {
-                                const img = uploadedFiles.find(i => (i.file.name || '') === r.image_name);
-                                atState.embeddingMatches.push({
-                                    imageName: r.image_name || '이미지',
-                                    imageUrl: img ? img.url || '' : '',
-                                    matches: r.embedding_matches.map(m => ({ ...m, selected: false }))
-                                });
-                            }
-                        }
-                    } else if (!embResult.success) {
-                        console.error('[임베딩 매칭 배치 실패]', embResult.error);
-                    }
-                } catch (e) {
-                    console.error('임베딩 매칭 오류:', e);
-                }
-                completedSteps++;
-                if (totalSteps > 0) document.getElementById('at-progress-inner').style.width = `${Math.round(completedSteps / totalSteps * 100)}%`;
-
-                // 2-2. 태그 매칭: AI 분석 태그 기반, 배치 1회 호출
-                const doneImages = atState.images.filter(i => i.status === 'done' && i.tags && i.tags.length > 0);
-                if (doneImages.length > 0) {
-                    const tagItems = doneImages.map(img => ({
-                        image_name: img.file.name || '',
-                        tags: [...new Set(img.tags.map(t => t.trim()))]
-                    }));
-                    try {
-                        const tagResp = await fetch('/api/asset_tool/match_batch', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ items: tagItems, category: category, top_n: 10 })
-                        });
-                        const tagResult = await tagResp.json();
-                        console.log('[태그 매칭 배치]', tagResult);
-                        if (tagResult.success && tagResult.results) {
-                            for (const r of tagResult.results) {
-                                if (r.matches && r.matches.length > 0) {
-                                    const img = doneImages.find(i => (i.file.name || '') === r.image_name);
-                                    const uniqueTags = img ? [...new Set(img.tags.map(t => t.trim()))] : [];
-                                    atState.imageMatches.push({
-                                        imageName: r.image_name || '이미지',
-                                        imageUrl: img ? img.url : '',
-                                        tags: uniqueTags,
-                                        matches: r.matches.map(m => ({ ...m, selected: false }))
-                                    });
-                                }
-                                if (r.chains && r.chains.length > 0) {
-                                    atState.chains.push(...r.chains);
-                                }
-                            }
-                        } else if (!tagResult.success) {
-                            console.error('[태그 매칭 배치 실패]', tagResult.error);
-                        }
-                    } catch (e) {
-                        console.error('태그 매칭 오류:', e);
-                    }
-                    completedSteps++;
-                    if (totalSteps > 0) document.getElementById('at-progress-inner').style.width = `${Math.round(completedSteps / totalSteps * 100)}%`;
-                }
-            } else if (doAnalyze) {
-                // 태그 분석만 선택한 경우에도 태그 매칭 실행 (배치)
-                atState.imageMatches = [];
-                atState.embeddingMatches = [];
-                atState.chains = [];
-                const doneImages = atState.images.filter(i => i.status === 'done' && i.tags && i.tags.length > 0);
-                if (doneImages.length > 0) {
-                    const tagItems = doneImages.map(img => ({
-                        image_name: img.file.name || '',
-                        tags: [...new Set(img.tags.map(t => t.trim()))]
-                    }));
-                    try {
-                        const tagResp = await fetch('/api/asset_tool/match_batch', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ items: tagItems, category: category, top_n: 10 })
-                        });
-                        const tagResult = await tagResp.json();
-                        console.log('[태그 매칭 배치]', tagResult);
-                        if (tagResult.success && tagResult.results) {
-                            for (const r of tagResult.results) {
-                                if (r.matches && r.matches.length > 0) {
-                                    const img = doneImages.find(i => (i.file.name || '') === r.image_name);
-                                    const uniqueTags = img ? [...new Set(img.tags.map(t => t.trim()))] : [];
-                                    atState.imageMatches.push({
-                                        imageName: r.image_name || '이미지',
-                                        imageUrl: img ? img.url : '',
-                                        tags: uniqueTags,
-                                        matches: r.matches.map(m => ({ ...m, selected: false }))
-                                    });
-                                }
-                                if (r.chains && r.chains.length > 0) {
-                                    atState.chains.push(...r.chains);
-                                }
-                            }
-                        } else if (!tagResult.success) {
-                            console.error('[태그 매칭 배치 실패]', tagResult.error);
-                        }
-                    } catch (e) {
-                        console.error('태그 매칭 오류:', e);
-                    }
-                    completedSteps++;
-                    if (totalSteps > 0) document.getElementById('at-progress-inner').style.width = `${Math.round(completedSteps / totalSteps * 100)}%`;
-                }
+                await atProceedToMatching();
+                return; // 큐 완료 이벤트가 UI를 처리함
             }
 
             document.getElementById('at-analyze-btn').disabled = false;
             document.getElementById('at-stop-btn').style.display = 'none';
             document.getElementById('at-progress-bar').style.display = 'none';
-
-            // 모든 작업 완료 후 매칭 결과 화면으로 전환
-            console.log("[ANALYZE_COMPLETE] doMatch=" + doMatch + ", emb=" + atState.embeddingMatches.length + ", img=" + atState.imageMatches.length);
-            if (atState.embeddingMatches.length > 0 || atState.imageMatches.length > 0) {
-                atSwitchView('result');
-                atRenderMatches();
-            }
         }
 
         // 큐 기반 태그 분석 완료 후 매칭 단계 진행
         async function atProceedToMatching() {
             const category = document.getElementById('at-category').value;
             const doMatch = document.getElementById('at-do-match').checked;
-            atState.embeddingMatches = [];
-            atState.imageMatches = [];
-            atState.chains = [];
+
+            if (!doMatch) {
+                document.getElementById('at-analyze-btn').disabled = false;
+                document.getElementById('at-stop-btn').style.display = 'none';
+                const progressInner = document.getElementById('at-progress-inner');
+                if (progressInner) progressInner.style.width = '100%';
+                setTimeout(() => { document.getElementById('at-progress-bar').style.display = 'none'; }, 500);
+                showToast('태그 분석 완료', 'success');
+                return;
+            }
 
             const uploadedFiles = atState.images.filter(i => i.file);
             const doneImages = atState.images.filter(i => i.status === 'done' && i.tags && i.tags.length > 0);
 
-            if (doMatch && uploadedFiles.length > 0) {
-                // 임베딩 매칭
-                const progressInner = document.getElementById('at-progress-inner');
-                if (progressInner) progressInner.style.width = '50%';
-                const embItems = uploadedFiles.map(img => {
-                    const fileName = img.file.name || '';
-                    const baseName = fileName.substring(0, fileName.lastIndexOf('.')) || fileName;
-                    return { image_name: fileName, tags: [baseName] };
+            // 임베딩 항목 (파일명 기반)
+            const embItems = uploadedFiles.map(img => {
+                const fileName = img.file.name || '';
+                const baseName = fileName.substring(0, fileName.lastIndexOf('.')) || fileName;
+                return { image_name: fileName, tags: [baseName] };
+            });
+
+            // 태그 항목 (분석된 태그 기반)
+            const tagItems = doneImages.map(img => ({
+                image_name: img.file.name || '',
+                tags: [...new Set(img.tags.map(t => t.trim()))]
+            }));
+
+            // 중복 제거하여 병합
+            const allItemsMap = {};
+            for (const item of [...embItems, ...tagItems]) {
+                const key = item.image_name;
+                if (!allItemsMap[key]) {
+                    allItemsMap[key] = { image_name: key, tags: [] };
+                }
+                const existingTags = new Set(allItemsMap[key].tags);
+                for (const t of item.tags) {
+                    if (!existingTags.has(t)) allItemsMap[key].tags.push(t);
+                }
+            }
+            const allItems = Object.values(allItemsMap);
+
+            if (allItems.length === 0) {
+                showToast('매칭할 항목이 없습니다', 'error');
+                document.getElementById('at-analyze-btn').disabled = false;
+                document.getElementById('at-stop-btn').style.display = 'none';
+                document.getElementById('at-progress-bar').style.display = 'none';
+                return;
+            }
+
+            showToast('배치 매칭 큐에 추가됨', 'info');
+            const progressInner = document.getElementById('at-progress-inner');
+            if (progressInner) progressInner.style.width = '0%';
+
+            try {
+                await fetchJSON('/api/queue/add', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        type: 'auto_match_batch',
+                        label: `배치 매칭 (${allItems.length}항목)`,
+                        params: {
+                            items: allItems,
+                            category: category,
+                            top_n: 10,
+                            embedding_threshold: 0,
+                        }
+                    })
                 });
-                try {
-                    const embResp = await fetch('/api/asset_tool/match_batch', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ items: embItems, category: category, top_n: 10, embedding_threshold: 0 })
-                    });
-                    const embResult = await embResp.json();
-                    if (embResult.success && embResult.results) {
-                        for (const r of embResult.results) {
-                            if (r.embedding_matches && r.embedding_matches.length > 0) {
-                                const img = uploadedFiles.find(i => (i.file.name || '') === r.image_name);
-                                atState.embeddingMatches.push({
-                                    imageName: r.image_name || '이미지',
-                                    imageUrl: img ? img.url || '' : '',
-                                    matches: r.embedding_matches.map(m => ({ ...m, selected: false }))
-                                });
-                            }
-                        }
-                    }
-                } catch (e) { console.error('임베딩 매칭 오류:', e); }
-            }
-
-            // 태그 매칭
-            if (doneImages.length > 0) {
-                const progressInner = document.getElementById('at-progress-inner');
-                if (progressInner) progressInner.style.width = '75%';
-                const tagItems = doneImages.map(img => ({
-                    image_name: img.file.name || '',
-                    tags: [...new Set(img.tags.map(t => t.trim()))]
-                }));
-                try {
-                    const tagResp = await fetch('/api/asset_tool/match_batch', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ items: tagItems, category: category, top_n: 10 })
-                    });
-                    const tagResult = await tagResp.json();
-                    if (tagResult.success && tagResult.results) {
-                        for (const r of tagResult.results) {
-                            if (r.matches && r.matches.length > 0) {
-                                const img = doneImages.find(i => (i.file.name || '') === r.image_name);
-                                const uniqueTags = img ? [...new Set(img.tags.map(t => t.trim()))] : [];
-                                atState.imageMatches.push({
-                                    imageName: r.image_name || '이미지',
-                                    imageUrl: img ? img.url : '',
-                                    tags: uniqueTags,
-                                    matches: r.matches.map(m => ({ ...m, selected: false }))
-                                });
-                            }
-                            if (r.chains && r.chains.length > 0) {
-                                atState.chains.push(...r.chains);
-                            }
-                        }
-                    }
-                } catch (e) { console.error('태그 매칭 오류:', e); }
-            }
-
-            document.getElementById('at-analyze-btn').disabled = false;
-            document.getElementById('at-stop-btn').style.display = 'none';
-            const progressInner2 = document.getElementById('at-progress-inner');
-            if (progressInner2) progressInner2.style.width = '100%';
-            setTimeout(() => { document.getElementById('at-progress-bar').style.display = 'none'; }, 500);
-
-            if (atState.embeddingMatches.length > 0 || atState.imageMatches.length > 0) {
-                atSwitchView('result');
-                atRenderMatches();
-            } else if (!doMatch) {
-                showToast('태그 분석 완료', 'success');
+            } catch (e) {
+                console.error('[AT] 배치 매칭 큐 추가 오류:', e);
+                showToast('배치 매칭 큐 추가 오류', 'error');
+                document.getElementById('at-analyze-btn').disabled = false;
+                document.getElementById('at-stop-btn').style.display = 'none';
+                document.getElementById('at-progress-bar').style.display = 'none';
             }
         }
 
@@ -11242,6 +11104,79 @@
                 div.innerHTML = `<div style="font-weight:600; font-size:0.85rem; margin-bottom:4px;">${escapeHtml(name)}</div><div class="at-tags-preview">${tagsHtml}</div>`;
                 container.appendChild(div);
             });
+        }
+
+        function handleAutoMatchBatchProgress(data) {
+            const phase = data.phase || '';
+
+            if (phase === 'started') {
+                const progressInner = document.getElementById('at-progress-inner');
+                if (progressInner) progressInner.style.width = '0%';
+                return;
+            }
+
+            if (phase === 'jaccard_matching') {
+                const progressInner = document.getElementById('at-progress-inner');
+                if (progressInner && data.current && data.total) {
+                    progressInner.style.width = Math.round((data.current / data.total) * 50) + '%';
+                }
+                return;
+            }
+
+            if (phase === 'embedding_matching') {
+                const progressInner = document.getElementById('at-progress-inner');
+                if (progressInner) progressInner.style.width = '50%';
+                return;
+            }
+
+            if (phase === 'completed') {
+                atState.embeddingMatches = [];
+                atState.imageMatches = [];
+                atState.chains = [];
+
+                const uploadedFiles = atState.images.filter(i => i.file);
+                const doneImages = atState.images.filter(i => i.status === 'done' && i.tags && i.tags.length > 0);
+
+                if (data.results) {
+                    for (const r of data.results) {
+                        if (r.embedding_matches && r.embedding_matches.length > 0) {
+                            const img = uploadedFiles.find(i => (i.file.name || '') === r.image_name);
+                            atState.embeddingMatches.push({
+                                imageName: r.image_name || '이미지',
+                                imageUrl: img ? img.url || '' : '',
+                                matches: r.embedding_matches.map(m => ({ ...m, selected: false }))
+                            });
+                        }
+                        if (r.matches && r.matches.length > 0) {
+                            const img = doneImages.find(i => (i.file.name || '') === r.image_name);
+                            const uniqueTags = img ? [...new Set(img.tags.map(t => t.trim()))] : [];
+                            atState.imageMatches.push({
+                                imageName: r.image_name || '이미지',
+                                imageUrl: img ? img.url : '',
+                                tags: uniqueTags,
+                                matches: r.matches.map(m => ({ ...m, selected: false }))
+                            });
+                        }
+                        if (r.chains && r.chains.length > 0) {
+                            atState.chains.push(...r.chains);
+                        }
+                    }
+                }
+
+                document.getElementById('at-analyze-btn').disabled = false;
+                document.getElementById('at-stop-btn').style.display = 'none';
+                const progressInner = document.getElementById('at-progress-inner');
+                if (progressInner) progressInner.style.width = '100%';
+                setTimeout(() => { document.getElementById('at-progress-bar').style.display = 'none'; }, 500);
+
+                if (atState.embeddingMatches.length > 0 || atState.imageMatches.length > 0) {
+                    atSwitchView('result');
+                    atRenderMatches();
+                    showToast('배치 매칭 완료', 'success');
+                } else {
+                    showToast('매칭 결과가 없습니다', 'warning');
+                }
+            }
         }
 
         async function atMatchPresets(fileNames) {
@@ -24320,6 +24255,7 @@
                     case 'instance_lora_training': return { icon: '🔵', color: '#1abc9c' };
                     case 'instance_lora_analysis': return { icon: '🔍', color: '#2ecc71' };
                     case 'tag_analysis': return { icon: '🏷', color: '#f39c12' };
+                    case 'auto_match_batch': return { icon: '🔗', color: '#16a085' };
                     default: return { icon: '○', color: 'var(--text2)' };
                 }
             }

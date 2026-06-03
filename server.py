@@ -7137,7 +7137,7 @@ async def handle_api_queue_add(request):
         label = body.get("label", "")
         params = body.get("params", {})
 
-        if item_type not in ("asset_generation", "asset_lora_training", "bot_lora_training", "instance_lora_training", "instance_lora_analysis", "tag_analysis"):
+        if item_type not in ("asset_generation", "asset_lora_training", "bot_lora_training", "instance_lora_training", "instance_lora_analysis", "tag_analysis", "auto_match_batch"):
             return web.json_response({"success": False, "error": f"알 수 없는 타입: {item_type}"}, status=400)
 
         item = await queue_manager.add_item(item_type, label, params)

@@ -19,7 +19,7 @@ from typing import Optional
 @dataclass
 class QueueItem:
     id: str
-    type: str  # illustration | asset_generation | asset_lora_training | bot_lora_training | instance_lora_training | instance_lora_analysis | tag_analysis
+    type: str  # illustration | asset_generation | asset_lora_training | bot_lora_training | instance_lora_training | instance_lora_analysis | tag_analysis | auto_match_batch
     label: str
     status: str = "pending"  # pending | processing | completed | failed | cancelled
     params: dict = field(default_factory=dict)
@@ -234,6 +234,7 @@ class QueueManager:
             "instance_lora_training": self._handle_instance_lora_training,
             "instance_lora_analysis": self._handle_instance_lora_analysis,
             "tag_analysis": self._handle_tag_analysis,
+            "auto_match_batch": self._handle_auto_match_batch,
         }
         handler = dispatch.get(item.type)
         if not handler:
@@ -1067,6 +1068,71 @@ class QueueManager:
             await self.notify_frontend(event_type, result_data)
 
         return {"success": True, "total": total, "success_count": success_count, "fail_count": fail_count}
+
+    async def _handle_auto_match_batch(self, item: QueueItem) -> dict:
+        """오토매치 배치 매칭 (임베딩 + 태그 매칭)."""
+        params = item.params
+        items = params.get("items", [])
+        tag_category = params.get("category", "expressions")
+        top_n = params.get("top_n", 10)
+        embedding_threshold = params.get("embedding_threshold", 0)
+        event_type = "auto_match_batch_progress"
+
+        if not items:
+            return {"success": True, "results": []}
+
+        tags_data = self.asset_mode.get_tags()
+
+        # 시작 알림
+        if self.notify_frontend:
+            await self.notify_frontend(event_type, {"phase": "started", "total": len(items)})
+
+        # 1. Jaccard 태그 매칭
+        jaccard_results = []
+        total = len(items)
+        for i, item_data in enumerate(items):
+            image_name = item_data.get("image_name", "")
+            tags = item_data.get("tags", [])
+            matches = self.asset_tool.match_presets(tags, tag_category, tags_data, top_n)
+            chains = self.asset_tool.suggest_chains(matches, tag_category, tags_data) if matches else []
+            jaccard_results.append({"image_name": image_name, "matches": matches, "chains": chains})
+
+            pct = ((i + 1) / total) * 50
+            await self._notify_progress(item, {"percentage": pct, "phase": "jaccard_matching", "current": i + 1, "total": total})
+            if self.notify_frontend:
+                await self.notify_frontend(event_type, {"phase": "jaccard_matching", "current": i + 1, "total": total})
+
+        # 2. 임베딩 매칭
+        embedding_results = []
+        try:
+            await self._notify_progress(item, {"percentage": 50, "phase": "embedding_matching"})
+            if self.notify_frontend:
+                await self.notify_frontend(event_type, {"phase": "embedding_matching"})
+            embedding_results = await self.asset_tool.match_presets_by_names_batch(
+                items, tag_category, tags_data=tags_data, top_n=top_n, threshold=embedding_threshold
+            )
+        except Exception as e:
+            print(f"[QUEUE:AUTO_MATCH_BATCH] 임베딩 매칭 오류: {e}")
+            traceback.print_exc()
+
+        # 3. 결과 병합
+        emb_map = {r["image_name"]: r.get("embedding_matches", []) for r in embedding_results}
+        combined = []
+        for jaccard_item in jaccard_results:
+            name = jaccard_item["image_name"]
+            combined.append({
+                "image_name": name,
+                "matches": jaccard_item["matches"],
+                "chains": jaccard_item["chains"],
+                "embedding_matches": emb_map.get(name, []),
+            })
+
+        # 완료 알림
+        await self._notify_progress(item, {"percentage": 100, "phase": "completed"})
+        if self.notify_frontend:
+            await self.notify_frontend(event_type, {"phase": "completed", "results": combined})
+
+        return {"success": True, "results": combined}
 
     @staticmethod
     def _save_asset_prompt(img: dict, positive: str):
