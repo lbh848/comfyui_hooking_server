@@ -7146,19 +7146,84 @@ async def handle_api_instance_lora_training_start(request):
         if profile not in ("anima", "sdxl", "both"):
             return web.json_response({"success": False, "error": "profile은 anima, sdxl, both만 가능"}, status=400)
 
-        # "both" 모드: anima → sdxl 순차 처리를 위해 profiles 배열로 변환
+        # "both" 모드: ANIMA/SDXL 각각 별도 큐 아이템으로 분리 (큐 정렬 최적화용)
         profiles = ["anima", "sdxl"] if profile == "both" else [profile]
-        profile_label = " (anima+sdxl)" if profile == "both" else f" ({profile})"
-        label = f"[인스턴스] {lora_id}{profile_label}"
-
-        item = await queue_manager.add_item("instance_lora_training", label, {
-            "id": lora_id, "profiles": profiles,
-        })
-        return web.json_response({"success": True, "queue_item_id": item.id, "label": item.label})
+        items = []
+        for p in profiles:
+            label = f"[인스턴스] {lora_id} ({p})"
+            item = await queue_manager.add_item("instance_lora_training", label, {
+                "id": lora_id, "profiles": [p],
+            })
+            items.append(item)
+        return web.json_response({"success": True, "queue_item_ids": [i.id for i in items], "labels": [i.label for i in items]})
     except Exception as e:
         print(f"[INSTANCE_LORA_API] 큐 추가 실패: {e}")
         traceback.print_exc()
         return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_instance_lora_retrain(request):
+    """인스턴스 LoRA 재학습 - 기존 학습 결과 삭제 후 큐에 추가"""
+    try:
+        body = await request.json()
+        lora_id = body.get("id", "").strip()
+        profile = body.get("profile", "anima").strip()
+        if not lora_id:
+            return web.json_response({"success": False, "error": "id 필수"}, status=400)
+
+        config = load_config()
+        from modes.instance_lora_mode import reset_training, list_images, get_image_prompt
+        reset_result = reset_training(lora_id, config.get("instance_lora_load_path", ""))
+        if not reset_result.get("success"):
+            return web.json_response(reset_result, status=400)
+
+        # 프롬프트 없는 이미지가 있으면 분석 큐에 추가
+        has_missing = False
+        for filename in list_images(lora_id):
+            r = get_image_prompt(lora_id, filename)
+            if not r.get("success") or not r.get("data", {}).get("positive"):
+                has_missing = True
+                break
+        if has_missing:
+            await queue_manager.add_item("instance_lora_analysis", f"[재] 프롬프트 분석: {lora_id}", {
+                "lora_id": lora_id, "negative_prompt": "",
+            })
+
+        profiles = ["anima", "sdxl"] if profile == "both" else [profile]
+        items = []
+        for p in profiles:
+            label = f"[인스턴스:재] {lora_id} ({p})"
+            item = await queue_manager.add_item("instance_lora_training", label, {
+                "id": lora_id, "profiles": [p],
+            })
+            items.append(item)
+        return web.json_response({"success": True, "queue_item_ids": [i.id for i in items], "labels": [i.label for i in items]})
+    except Exception as e:
+        print(f"[INSTANCE_LORA_API] 재학습 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_instance_lora_prompt_filter_get(request):
+    try:
+        from modes.instance_lora_mode import _load_data
+        data = _load_data()
+        return web.json_response({"success": True, "filter": data.get("prompt_filter", [])})
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)})
+
+
+async def handle_api_instance_lora_prompt_filter_save(request):
+    try:
+        body = await request.json()
+        steps = body.get("steps", [])
+        from modes.instance_lora_mode import _load_data, _save_data
+        data = _load_data()
+        data["prompt_filter"] = steps
+        _save_data(data)
+        return web.json_response({"success": True})
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)})
 
 
 app.router.add_get("/api/bot_lora/bots", handle_api_bot_lora_bots)
@@ -7211,6 +7276,9 @@ app.router.add_post("/api/instance_lora/increment_usage", handle_api_instance_lo
 app.router.add_post("/api/instance_lora/prompt", handle_api_instance_lora_prompt_save)
 app.router.add_get("/api/instance_lora/prompt", handle_api_instance_lora_prompt_get)
 app.router.add_post("/api/instance_lora/training/start", handle_api_instance_lora_training_start)
+app.router.add_post("/api/instance_lora/retrain", handle_api_instance_lora_retrain)
+app.router.add_get("/api/instance_lora/prompt_filter", handle_api_instance_lora_prompt_filter_get)
+app.router.add_post("/api/instance_lora/prompt_filter", handle_api_instance_lora_prompt_filter_save)
 app.router.add_post("/api/instance_lora/images/upload", handle_api_instance_lora_images_upload)
 
 
@@ -7228,7 +7296,7 @@ async def handle_api_queue_add(request):
         label = body.get("label", "")
         params = body.get("params", {})
 
-        if item_type not in ("asset_generation", "asset_lora_training", "bot_lora_training", "instance_lora_training"):
+        if item_type not in ("asset_generation", "asset_lora_training", "bot_lora_training", "instance_lora_training", "instance_lora_analysis"):
             return web.json_response({"success": False, "error": f"알 수 없는 타입: {item_type}"}, status=400)
 
         item = await queue_manager.add_item(item_type, label, params)
@@ -7268,6 +7336,18 @@ app.router.add_post("/api/queue/add", handle_api_queue_add)
 app.router.add_post("/api/queue/cancel", handle_api_queue_cancel)
 app.router.add_post("/api/queue/cancel_all", handle_api_queue_cancel_all)
 app.router.add_post("/api/queue/remove", handle_api_queue_remove)
+
+
+async def handle_api_negative_presets(request):
+    """부정 프롬프트 프리셋 목록 반환"""
+    try:
+        presets = asset_mode.get_negative_presets()
+        return web.json_response({"success": True, "presets": {k: ", ".join(v) for k, v in presets.items()}})
+    except Exception as e:
+        print(f"[API] 부정 프리셋 로드 실패: {e}")
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+app.router.add_get("/api/negative_presets", handle_api_negative_presets)
 
 
 async def handle_api_instance_lora_preview(request):

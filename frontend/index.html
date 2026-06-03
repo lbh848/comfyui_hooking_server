@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ComfyUI 에셋/삽화 매니저-V4(Beta)</title>
     <style>
+        select option { background: var(--surface2); color: var(--text); }
         :root {
             --bg: #1a1a2e;
             --surface: #16213e;
@@ -4735,30 +4736,37 @@
                             </div>
                             <div style="display:flex;flex-direction:column;gap:8px;">
                                 <button onclick="saveInstanceLoraInlineSettings()" style="width:100%;padding:6px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.78rem;">설정 저장</button>
-                                <button onclick="startInstanceLoraTraining()" style="width:100%;padding:8px;background:var(--accent);color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:0.85rem;font-weight:600;">학습 시작</button>
+                                <!-- 학습은 로라 생성 시 자동으로 큐에 추가됨 -->
                             </div>
                         </div>
                     </div>
                 </div>
-                <!-- 학습 진행률 -->
-                <div id="instance-lora-progress" style="display:none; padding:16px; margin:8px; background:var(--surface); border:1px solid var(--accent); border-radius:10px;">
-                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-                        <span id="instance-lora-progress-phase" style="font-weight:600; font-size:0.9rem;"></span>
-                        <span id="instance-lora-progress-pct" style="font-size:0.85rem; color:var(--accent);"></span>
-                    </div>
-                    <div style="width:100%; height:6px; background:var(--surface2); border-radius:3px; overflow:hidden;">
-                        <div id="instance-lora-progress-bar" style="height:100%; background:var(--accent); border-radius:3px; transition:width 0.3s; width:0%;"></div>
-                    </div>
-                    <div id="instance-lora-progress-info" style="margin-top:6px; font-size:0.75rem; color:var(--text-secondary);"></div>
-                </div>
                 <!-- 인스턴스 로라 이미지 상세 모달 -->
-                <div class="modal" id="instance-lora-image-modal" style="display:none;">
-                    <div class="modal-content" style="max-width:420px;">
-                        <div style="padding:12px 16px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between;">
-                            <span id="instance-image-modal-title" style="font-weight:600; font-size:0.95rem;"></span>
-                            <button onclick="closeInstanceImageModal()" style="background:none; border:none; cursor:pointer; color:var(--text-secondary); font-size:1.2rem;">&times;</button>
+                <!-- 인스턴스 로라 라이트박스 -->
+                <div id="instance-lora-lightbox" onclick="closeInstanceLightbox()" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.85);z-index:10000;cursor:zoom-out;display:flex;align-items:center;justify-content:center;">
+                    <img id="instance-lightbox-img" src="" style="max-width:90vw;max-height:90vh;object-fit:contain;border-radius:4px;">
+                </div>
+                <!-- 인스턴스 로라 프롬프트 모달 -->
+                <div class="modal" id="instance-lora-prompt-modal" onclick="if(event.target===this)closeInstancePromptModal()">
+                    <div class="modal-content" style="max-width:600px;">
+                        <div class="modal-header">
+                            <h2 id="instance-prompt-modal-title">프롬프트</h2>
+                            <button class="modal-close" onclick="closeInstancePromptModal()">&times;</button>
                         </div>
-                        <div id="instance-image-modal-body" style="padding:16px; max-height:70vh; overflow-y:auto;"></div>
+                        <div class="modal-body" style="display:flex;flex-direction:column;gap:12px;">
+                            <div>
+                                <div style="font-size:0.78rem;color:var(--text-secondary);font-weight:600;margin-bottom:4px;">트리거 워드</div>
+                                <div id="instance-prompt-modal-trigger" style="padding:8px;background:var(--surface1);border:1px solid var(--accent);border-radius:6px;font-size:0.9rem;color:var(--accent);font-weight:700;"></div>
+                            </div>
+                            <div>
+                                <div style="font-size:0.78rem;color:var(--text-secondary);font-weight:600;margin-bottom:4px;">긍정</div>
+                                <div id="instance-prompt-modal-positive" style="padding:8px;background:var(--surface1);border:1px solid var(--border);border-radius:6px;font-size:0.82rem;color:var(--text);white-space:pre-wrap;max-height:300px;overflow-y:auto;"></div>
+                            </div>
+                            <div>
+                                <div style="font-size:0.78rem;color:var(--text-secondary);font-weight:600;margin-bottom:4px;">부정</div>
+                                <div id="instance-prompt-modal-negative" style="padding:8px;background:var(--surface1);border:1px solid var(--border);border-radius:6px;font-size:0.82rem;color:var(--text);white-space:pre-wrap;max-height:200px;overflow-y:auto;"></div>
+                            </div>
+                        </div>
                     </div>
                 </div>
                 <!-- 프롬프트 Raw 보기 모달 -->
@@ -4776,6 +4784,7 @@
                         </div>
                     </div>
                 </div>
+
             </div><!-- /lora-instance-mode -->
         </div>
 
@@ -5019,7 +5028,7 @@
                 <button class="modal-close" onclick="closeInstanceLoraCreateModal()">&times;</button>
             </div>
             <div class="modal-body" style="display:flex; gap:16px; padding:16px; height:calc(80vh - 130px); min-height:0; overflow:hidden;">
-                <!-- 왼쪽: 트리거워드 + 파일 업로드 + 선택된 이미지 -->
+                <!-- 왼쪽: 트리거워드 + 부정프롬프트 + 선택된 이미지 -->
                 <div style="width:240px; flex-shrink:0; display:flex; flex-direction:column; gap:10px; min-height:0;">
                     <div>
                         <label style="font-size:0.85rem; font-weight:600; display:block; margin-bottom:4px;">트리거워드 <span style="color:var(--error);">*</span></label>
@@ -5029,20 +5038,40 @@
                         트리거워드는 생성 후 <strong style="color:var(--text);">수정할 수 없습니다.</strong>
                     </div>
                     <div>
-                        <button onclick="document.getElementById('instance-create-file-input').click()" style="width:100%;padding:6px 12px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600;">파일 업로드</button>
-                        <input type="file" id="instance-create-file-input" accept="image/*" multiple style="display:none;" onchange="handleInstanceCreateFileSelect(this)">
+                        <label style="font-size:0.85rem; font-weight:600; display:block; margin-bottom:4px;">부정 프롬프트</label>
+                        <select id="instance-lora-create-negative" style="width:100%;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--surface1);color:var(--text);font-size:0.8rem;">
+                        </select>
                     </div>
-                    <div style="font-size:0.8rem; font-weight:600; color:var(--text-secondary);">선택된 이미지 <span id="instance-create-count">0</span>장</div>
-                    <div id="instance-create-preview" style="display:grid; grid-template-columns:repeat(2, 1fr); gap:4px; overflow-y:auto; flex:1; min-height:0;"></div>
+                    <!-- 프롬프트 필터/미리보기 (에셋 소스일 때만 표시) -->
+                    <div id="instance-create-prompt-section" style="display:none; flex-shrink:0;">
+                        <div style="font-size:0.8rem; font-weight:600; color:var(--text-secondary); margin-bottom:4px;">가져올 프롬프트</div>
+                        <div id="instance-create-prompt-preview" style="padding:6px 8px; background:var(--surface1); border:1px solid var(--border); border-radius:6px; font-size:0.72rem; color:var(--text); white-space:pre-wrap; min-height:40px; max-height:200px; overflow-y:auto; line-height:1.4; resize:vertical;"></div>
+                        <div style="display:flex;align-items:center;gap:4px;margin-top:6px;cursor:pointer;" onclick="const b=document.getElementById('ic-filter-body');b.style.display=b.style.display==='none'?'':'none';">
+                            <span style="font-size:0.78rem;font-weight:600;color:var(--text-secondary);">프롬프트 필터</span>
+                            <span style="font-size:0.65rem;color:var(--text-secondary);">▼</span>
+                            <div style="margin-left:auto;display:flex;gap:3px;">
+                                <button onclick="event.stopPropagation();_icSaveFilter()" style="padding:1px 6px;font-size:0.65rem;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:3px;cursor:pointer;">저장</button>
+                                <button onclick="event.stopPropagation();_icResetFilter()" style="padding:1px 6px;font-size:0.65rem;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:3px;cursor:pointer;">초기화</button>
+                                <button onclick="event.stopPropagation();_icAddFilterStep()" style="padding:1px 6px;font-size:0.65rem;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:3px;cursor:pointer;">+ 단계</button>
+                            </div>
+                        </div>
+                        <div id="ic-filter-body" style="display:none;margin-top:4px;max-height:120px;overflow-y:auto;">
+                            <div id="ic-filter-steps"></div>
+                        </div>
+                    </div>
+                    <div style="font-size:0.8rem; font-weight:600; color:var(--text-secondary);">선택된 이미지</div>
+                    <div id="instance-create-preview" style="overflow-y:auto; flex:1; min-height:0;"></div>
                 </div>
-                <!-- 오른쪽: 에셋/봇 폴더 탐색 -->
+                <!-- 오른쪽: 에셋/봇/업로드 탭 -->
                 <div style="flex:1; border-left:1px solid var(--border); padding-left:16px; display:flex; flex-direction:column; min-height:0; min-width:0;">
                     <div style="display:flex; gap:8px; margin-bottom:10px; flex-shrink:0;">
                         <button id="ic-browser-tab-asset" onclick="switchInstanceCreateBrowser('asset')" style="padding:4px 12px; background:var(--accent); color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600;">에셋</button>
                         <button id="ic-browser-tab-bot" onclick="switchInstanceCreateBrowser('bot')" style="padding:4px 12px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600;">봇</button>
+                        <button id="ic-browser-tab-upload" onclick="switchInstanceCreateBrowser('upload')" style="padding:4px 12px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600;">이미지 업로드</button>
                     </div>
                     <div id="instance-create-browser" style="flex:1; overflow-y:auto; min-height:0;"></div>
                 </div>
+                <input type="file" id="instance-create-file-input" accept="image/*" style="display:none;" onchange="handleInstanceCreateFileSelect(this)">
             </div>
             <div class="modal-footer" style="flex-shrink:0;">
                 <button onclick="closeInstanceLoraCreateModal()" style="padding:8px 16px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:6px; cursor:pointer;">취소</button>
@@ -6208,7 +6237,13 @@
                             }
                             break;
                         case 'instance_lora_analyze_progress':
-                            if (msg.data) showToast(`태그 분석 중... (${msg.data.current}/${msg.data.total}) - ${msg.data.filename}`, 'info');
+                            if (msg.data && msg.data.phase === 'completed') {
+                                loadInstanceLoraGrid();
+                                const result = msg.data.fail_count > 0
+                                    ? `분석 완료 (${msg.data.success_count}성공, ${msg.data.fail_count}실패)`
+                                    : '이미지 프롬프트 분석 완료';
+                                showToast(result, 'success');
+                            }
                             break;
                         // 공용 이미지 생성 진행도
                         case 'generation_progress':
@@ -14431,7 +14466,7 @@
 
         async function initInstanceLoraTab() {
             _instanceLoraCurrentId = null;
-            closeInstanceImageModal();
+            closeInstanceLightbox();
             await loadInstanceLoraGrid();
             loadInstanceLoraInlineSettings();
             refreshInstanceTargetDropdown();
@@ -14469,20 +14504,27 @@
                 empty.style.display = 'none';
                 grid.innerHTML = items.map(lora => {
                     const imgSrc = lora.first_image ? `/api/instance_lora/image/${encodeURIComponent(lora.id)}/${encodeURIComponent(lora.first_image)}` : '';
-                    const badges = [];
-                    if (lora.has_anima) badges.push('<span style="background:rgba(80,200,120,0.15);color:#50c878;padding:2px 6px;border-radius:4px;font-size:0.7rem;font-weight:600;">ANIMA</span>');
-                    if (lora.has_sdxl) badges.push('<span style="background:rgba(100,150,255,0.15);color:#6496ff;padding:2px 6px;border-radius:4px;font-size:0.7rem;font-weight:600;">SDXL</span>');
-                    return `<div class="asset-card" onclick="openInstanceLoraDetail('${esc(lora.id)}')" style="cursor:pointer;position:relative;border-radius:8px;overflow:hidden;background:var(--surface);border:1px solid var(--border);">
+                    const animaDot = lora.has_anima ? '#4fc3f7' : '#ef5350';
+                    const sdxlDot = lora.has_sdxl ? '#4fc3f7' : '#ef5350';
+                    const prompt = lora.prompt || {};
+                    const posPrompt = (prompt.positive || '').trim();
+                    const negPrompt = (prompt.negative || '').trim();
+                    return `<div class="asset-card" style="position:relative;border-radius:8px;overflow:hidden;background:var(--surface);border:1px solid var(--border);">
                         <button onclick="event.stopPropagation();deleteInstanceLora('${esc(lora.id)}')" style="position:absolute;top:6px;right:6px;z-index:2;background:rgba(200,60,60,0.85);color:#fff;border:none;border-radius:6px;padding:3px 8px;cursor:pointer;font-size:0.75rem;font-weight:600;">삭제</button>
-                        <div class="asset-card-img" style="height:300px;background-size:cover;background-position:center top;background-repeat:no-repeat;border-radius:8px 8px 0 0;${imgSrc ? `background-image:url('${imgSrc}');` : ''}">
+                        <div class="asset-card-img" onclick="openInstanceLightbox('${esc(imgSrc)}')" style="height:300px;background-size:contain;background-position:center;background-repeat:no-repeat;border-radius:8px 8px 0 0;cursor:zoom-in;background-color:#111;${imgSrc ? `background-image:url('${imgSrc}');` : ''}">
                             ${imgSrc ? '' : '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-secondary);">이미지 없음</div>'}
                         </div>
                         <div style="padding:8px;">
                             <div style="font-weight:600;font-size:0.9rem;margin-bottom:2px;">${esc(lora.trigger)}</div>
                             <div style="font-size:0.72rem;color:var(--text-secondary);margin-bottom:4px;opacity:0.7;">${esc(lora.id)}</div>
-                            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+                            <div style="display:flex;flex-direction:column;gap:2px;margin-bottom:4px;">
+                                <div style="display:flex;align-items:center;gap:5px;font-size:0.72rem;"><span style="width:8px;height:8px;border-radius:50%;background:${animaDot};display:inline-block;flex-shrink:0;"></span><span>ANIMA LoRA ${lora.has_anima ? 'Ready' : '없음'}</span></div>
+                                <div style="display:flex;align-items:center;gap:5px;font-size:0.72rem;"><span style="width:8px;height:8px;border-radius:50%;background:${sdxlDot};display:inline-block;flex-shrink:0;"></span><span>SDXL LoRA ${lora.has_sdxl ? 'Ready' : '없음'}</span></div>
+                            </div>
+                            <div style="display:flex;align-items:center;gap:6px;">
                                 <span style="font-size:0.75rem;color:var(--text-secondary);">호출 ${lora.usage_count}회</span>
-                                ${badges.join('')}
+                                <button onclick="event.stopPropagation();retrainInstanceLora('${esc(lora.id)}','${esc(lora.trigger)}')" style="padding:2px 8px;background:var(--surface2);color:var(--text-secondary);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.7rem;margin-left:auto;">재학습</button>
+                                <button onclick="event.stopPropagation();showInstancePromptModal('${esc(lora.id)}','${esc(lora.trigger)}','${esc(posPrompt)}','${esc(negPrompt)}')" style="padding:2px 8px;background:var(--surface2);color:var(--text-secondary);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.7rem;">프롬프트</button>
                             </div>
                         </div>
                     </div>`;
@@ -14494,82 +14536,27 @@
             }
         }
 
-        async function openInstanceLoraDetail(loraId) {
-            _instanceLoraCurrentId = loraId;
-            const modal = document.getElementById('instance-lora-image-modal');
-            const titleEl = document.getElementById('instance-image-modal-title');
-            const body = document.getElementById('instance-image-modal-body');
-            try {
-                const resp = await fetchJSON(`/api/instance_lora/detail?id=${encodeURIComponent(loraId)}`);
-                if (!resp.success) { showToast(resp.error, 'error'); return; }
-                const d = resp.data;
-                titleEl.textContent = d.trigger;
-                if (!d.images || d.images.length === 0) {
-                    body.innerHTML = '<div style="text-align:center;padding:32px;color:var(--text-secondary);font-size:0.85rem;">이미지가 없습니다.<br>로라 생성 시 이미지를 추가하세요.</div>';
-                } else {
-                    body.innerHTML = d.images.map(fn => {
-                        const imgSrc = `/api/instance_lora/image/${encodeURIComponent(loraId)}/${encodeURIComponent(fn)}`;
-                        return `<div style="margin-bottom:8px;border:1px solid var(--border);border-radius:8px;overflow:hidden;">
-                            <img src="${imgSrc}" style="width:100%;display:block;cursor:pointer;" onclick="toggleInstanceImagePrompt('${esc(loraId)}','${esc(fn)}',this)">
-                            <div class="instance-img-prompt" data-fn="${esc(fn)}" style="display:none;padding:8px;background:var(--surface1);font-size:0.8rem;">
-                                <div style="color:var(--text-secondary);">로딩 중...</div>
-                            </div>
-                        </div>`;
-                    }).join('');
-                }
-                modal.style.display = 'flex';
-            } catch (e) {
-                console.error('[INSTANCE_LORA] 상세 로드 실패:', e);
-                showToast('상세 로드 실패', 'error');
-            }
+        function openInstanceLightbox(imgSrc) {
+            if (!imgSrc) return;
+            const lb = document.getElementById('instance-lora-lightbox');
+            document.getElementById('instance-lightbox-img').src = imgSrc;
+            lb.style.display = 'flex';
         }
 
-        function closeInstanceImageModal() {
-            document.getElementById('instance-lora-image-modal').style.display = 'none';
+        function closeInstanceLightbox() {
+            document.getElementById('instance-lora-lightbox').style.display = 'none';
         }
 
-        function closeInstanceLoraDetail() {
-            _instanceLoraCurrentId = null;
-            closeInstanceImageModal();
+        function showInstancePromptModal(loraId, trigger, positive, negative) {
+            document.getElementById('instance-prompt-modal-title').textContent = `${trigger} 프롬프트`;
+            document.getElementById('instance-prompt-modal-trigger').textContent = trigger || '없음';
+            document.getElementById('instance-prompt-modal-positive').textContent = positive || '없음';
+            document.getElementById('instance-prompt-modal-negative').textContent = negative || '없음';
+            document.getElementById('instance-lora-prompt-modal').style.display = 'flex';
         }
 
-        async function toggleInstanceImagePrompt(loraId, filename, imgEl) {
-            const promptDiv = imgEl.parentElement.querySelector('.instance-img-prompt');
-            if (promptDiv.style.display === 'none') {
-                promptDiv.style.display = '';
-                try {
-                    const resp = await fetchJSON(`/api/instance_lora/prompt?id=${encodeURIComponent(loraId)}&filename=${encodeURIComponent(filename)}`);
-                    if (resp.success && resp.data) {
-                        promptDiv.innerHTML = `
-                            <div style="margin-bottom:4px;"><strong>긍정:</strong></div>
-                            <textarea class="instance-prompt-edit" data-field="positive" style="width:100%;height:60px;font-size:0.8rem;padding:4px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);resize:vertical;">${esc(resp.data.positive || '')}</textarea>
-                            <div style="margin-top:4px;margin-bottom:4px;"><strong>부정:</strong></div>
-                            <textarea class="instance-prompt-edit" data-field="negative" style="width:100%;height:40px;font-size:0.8rem;padding:4px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);resize:vertical;">${esc(resp.data.negative || '')}</textarea>
-                            <button onclick="saveInstanceImagePrompt('${esc(loraId)}','${esc(filename)}')" style="margin-top:6px;padding:4px 10px;background:var(--accent);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.75rem;font-weight:600;">저장</button>`;
-                    } else {
-                        promptDiv.innerHTML = `<div style="color:var(--text-secondary);">프롬프트 없음</div>`;
-                    }
-                } catch (e) {
-                    promptDiv.innerHTML = '<div style="color:var(--error);">로드 실패</div>';
-                }
-            } else {
-                promptDiv.style.display = 'none';
-            }
-        }
-
-        async function saveInstanceImagePrompt(loraId, filename) {
-            const promptDiv = document.querySelector(`.instance-img-prompt[data-fn="${filename}"]`);
-            const textareas = promptDiv.querySelectorAll('.instance-prompt-edit');
-            const positive = textareas[0]?.value || '';
-            const negative = textareas[1]?.value || '';
-            try {
-                const resp = await (await fetch('/api/instance_lora/prompt', {
-                    method: 'POST', headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({id: loraId, filename, prompt: {positive, negative}})
-                })).json();
-                if (resp.success) showToast('프롬프트 저장됨');
-                else showToast(resp.error || '저장 실패', 'error');
-            } catch (e) { showToast('저장 실패', 'error'); }
+        function closeInstancePromptModal() {
+            document.getElementById('instance-lora-prompt-modal').style.display = 'none';
         }
 
         async function analyzeInstanceImage(loraId, filename) {
@@ -14581,7 +14568,7 @@
                 })).json();
                 if (resp.success) {
                     showToast(`분석 완료: ${resp.success_count}성공, ${resp.fail_count}실패`, 'success');
-                    openInstanceLoraDetail(loraId);
+                    loadInstanceLoraGrid();
                 } else showToast(resp.error || '분석 실패', 'error');
             } catch (e) { showToast('분석 실패', 'error'); }
         }
@@ -14595,7 +14582,6 @@
                 })).json();
                 if (resp.success) {
                     showToast('이미지 삭제됨');
-                    openInstanceLoraDetail(loraId);
                     loadInstanceLoraGrid();
                 } else showToast(resp.error || '삭제 실패', 'error');
             } catch (e) { showToast('삭제 실패', 'error'); }
@@ -14603,9 +14589,7 @@
 
         function closeInstanceLoraDetail() {
             _instanceLoraCurrentId = null;
-            document.getElementById('instance-lora-detail-title').textContent = '캐릭터를 선택하세요';
-            document.getElementById('instance-lora-detail-title').style.color = 'var(--text-secondary)';
-            document.getElementById('instance-lora-detail-images').innerHTML = '<div style="text-align:center;padding:32px 16px;color:var(--text-secondary);font-size:0.85rem;">왼쪽 카드를 클릭하면<br>상세 정보가 표시됩니다.</div>';
+            closeInstanceLightbox();
         }
 
         async function deleteInstanceLora(loraId) {
@@ -14628,12 +14612,30 @@
         let _icBrowserSource = 'asset'; // 'asset' or 'bot'
         let _icBrowserState = { level: 'characters', character: '', outfit: '', expression: '', selected: new Set() };
 
-        function showInstanceLoraCreateModal() {
+        async function showInstanceLoraCreateModal() {
             document.getElementById('instance-lora-create-trigger').value = '';
             _instanceCreateFiles = [];
             _icBrowserSource = 'asset';
             _icBrowserState = { level: 'characters', character: '', outfit: '', expression: '', selected: new Set() };
+            await _icLoadFilter();
+            _icRenderFilterSteps();
             renderInstanceCreatePreview();
+            // 부정 프롬프트 프리셋 로드
+            const negSel = document.getElementById('instance-lora-create-negative');
+            negSel.innerHTML = '';
+            try {
+                const resp = await fetchJSON('/api/negative_presets');
+                if (resp.success && resp.presets) {
+                    Object.keys(resp.presets).sort().forEach(name => {
+                        const opt = document.createElement('option');
+                        opt.value = resp.presets[name];
+                        opt.textContent = name;
+                        opt.style.background = 'var(--surface2)';
+                        opt.style.color = 'var(--text)';
+                        negSel.appendChild(opt);
+                    });
+                }
+            } catch (e) { console.error('[INSTANCE_LORA] 부정 프리셋 로드 실패:', e); }
             document.getElementById('instance-lora-create-modal').style.display = 'flex';
             switchInstanceCreateBrowser('asset');
         }
@@ -14644,10 +14646,12 @@
         }
         function handleInstanceCreateFileSelect(inputEl) {
             const files = inputEl.files;
-            if (!files) return;
-            for (const f of files) {
-                _instanceCreateFiles.push({ type: 'upload', file: f, previewUrl: URL.createObjectURL(f) });
-            }
+            if (!files || files.length === 0) return;
+            // 기존 선택 초기화 후 1장만
+            _instanceCreateFiles.forEach(f => { if (f.previewUrl && f.previewUrl.startsWith('blob:')) URL.revokeObjectURL(f.previewUrl); });
+            _instanceCreateFiles = [];
+            _icBrowserState.selected.clear();
+            _instanceCreateFiles.push({ type: 'upload', file: files[0], previewUrl: URL.createObjectURL(files[0]) });
             inputEl.value = '';
             renderInstanceCreatePreview();
         }
@@ -14658,34 +14662,215 @@
         }
         function renderInstanceCreatePreview() {
             const container = document.getElementById('instance-create-preview');
-            document.getElementById('instance-create-count').textContent = _instanceCreateFiles.length;
+            const promptSection = document.getElementById('instance-create-prompt-section');
+            const promptPreview = document.getElementById('instance-create-prompt-preview');
             if (_instanceCreateFiles.length === 0) {
-                container.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:12px;color:var(--text-secondary);font-size:0.78rem;">없음</div>';
+                container.innerHTML = '<div style="text-align:center;padding:12px;color:var(--text-secondary);font-size:0.78rem;">없음</div>';
+                promptSection.style.display = 'none';
                 return;
             }
-            container.innerHTML = _instanceCreateFiles.map((f, i) => {
-                const src = f.previewUrl || '';
-                return `<div style="position:relative;aspect-ratio:1;border-radius:6px;overflow:hidden;border:1px solid var(--border);">
-                    <img src="${src}" style="width:100%;height:100%;object-fit:cover;">
-                    <button onclick="removeInstanceCreateImage(${i})" style="position:absolute;top:2px;right:2px;background:rgba(0,0,0,0.6);color:#fff;border:none;border-radius:50%;width:16px;height:16px;cursor:pointer;font-size:0.65rem;display:flex;align-items:center;justify-content:center;">&times;</button>
+            const f = _instanceCreateFiles[0];
+            const src = f.previewUrl || '';
+            container.innerHTML = `<div style="position:relative;border-radius:6px;overflow:hidden;border:1px solid var(--border);aspect-ratio:1;">
+                <img src="${src}" style="width:100%;height:100%;object-fit:contain;background:#111;">
+                <button onclick="removeInstanceCreateImage(0)" style="position:absolute;top:4px;right:4px;background:rgba(0,0,0,0.6);color:#fff;border:none;border-radius:50%;width:20px;height:20px;cursor:pointer;font-size:0.75rem;display:flex;align-items:center;justify-content:center;">&times;</button>
+            </div>`;
+
+            // 에셋 소스: 기존 프롬프트 가져와서 필터링 후 미리보기
+            if (f.type === 'asset' && f.source) {
+                const enc = encodeURIComponent;
+                const apiUrl = `/api/asset_mode/characters/${enc(f.source.character)}/outfits/${enc(f.source.outfit)}/expressions/${enc(f.source.expression)}/images`;
+                fetchJSON(apiUrl).then(resp => {
+                    if (!resp || !resp.images) { promptSection.style.display = 'none'; return; }
+                    const img = resp.images.find(i => i.filename === f.source.filename);
+                    if (!img || !img.positive) { promptSection.style.display = 'none'; return; }
+                    f._rawPrompt = { positive: img.positive, negative: img.negative || '' };
+                    _icUpdatePromptPreview();
+                    promptSection.style.display = '';
+                }).catch(() => { promptSection.style.display = 'none'; });
+            } else {
+                f._rawPrompt = null;
+                f._existingPrompt = null;
+                promptSection.style.display = 'none';
+            }
+        }
+
+        // ─── 인스턴스 로라 프롬프트 필터 ──────────────────────────
+        const IC_FILTER_ACTIONS = [
+            { value: 'remove_block', label: '블록 제거', params: ['pattern'] },
+            { value: 'regex_remove', label: '정규식 제거', params: ['pattern'] },
+            { value: 'replace', label: '치환', params: ['from', 'to'] },
+            { value: 'split_by', label: '구분자 분리', params: ['separator', 'take'] },
+            { value: 'strip', label: '공백 정리', params: [] },
+        ];
+        const IC_DEFAULT_FILTER = [];
+        let _icPromptFilterSteps = [];
+
+        function _icApplyFilterSteps(text, steps) {
+            if (!text) return '';
+            let result = text;
+            for (const step of steps) {
+                switch (step.action) {
+                    case 'remove_block': {
+                        const pat = step.pattern || '.*';
+                        const regex = new RegExp('^\\[' + pat + '\\]', 'i');
+                        const lines = result.split('\n');
+                        const kept = [];
+                        let skip = false;
+                        for (const line of lines) {
+                            const trimmed = line.trim();
+                            if (/^\[.+\]$/.test(trimmed)) {
+                                if (regex.test(trimmed)) { skip = true; continue; }
+                                skip = false; continue;
+                            }
+                            if (!skip) kept.push(line);
+                        }
+                        result = kept.join('\n');
+                        break;
+                    }
+                    case 'regex_remove': {
+                        try { result = result.replace(new RegExp(step.pattern || '', 'g'), ''); } catch(e) {}
+                        break;
+                    }
+                    case 'replace': {
+                        result = result.split(step.from || '').join(step.to || '');
+                        break;
+                    }
+                    case 'split_by': {
+                        const sep = step.separator || '\n';
+                        const parts = result.split(sep);
+                        const take = step.take || '1';
+                        if (take.includes(':')) {
+                            const [s, e] = take.split(':').map(Number);
+                            result = parts.slice(s - 1, e || undefined).join(sep);
+                        } else {
+                            const idx = parseInt(take) - 1;
+                            result = (idx >= 0 && idx < parts.length) ? parts[idx] : result;
+                        }
+                        break;
+                    }
+                    case 'strip': {
+                        result = result.replace(/,\s*,/g, ',').replace(/,\s*$/gm, '').replace(/^\s+|\s+$/gm, '').trim();
+                        break;
+                    }
+                }
+            }
+            return result.trim();
+        }
+
+        function _icUpdatePromptPreview() {
+            const f = _instanceCreateFiles[0];
+            const promptPreview = document.getElementById('instance-create-prompt-preview');
+            if (!f || !f._rawPrompt) { promptPreview.textContent = '(프롬프트 없음)'; return; }
+            if (_icPromptFilterSteps.length === 0) {
+                f._existingPrompt = { positive: f._rawPrompt.positive, negative: f._rawPrompt.negative };
+                promptPreview.textContent = f._rawPrompt.positive || '(프롬프트 없음)';
+            } else {
+                const filtered = _icApplyFilterSteps(f._rawPrompt.positive, _icPromptFilterSteps);
+                const negFiltered = f._rawPrompt.negative ? _icApplyFilterSteps(f._rawPrompt.negative, _icPromptFilterSteps) : '';
+                f._existingPrompt = { positive: filtered, negative: negFiltered };
+                promptPreview.textContent = filtered || '(필터 후 빈 프롬프트)';
+            }
+        }
+
+        function _icRenderFilterSteps() {
+            const container = document.getElementById('ic-filter-steps');
+            if (!container) return;
+            if (_icPromptFilterSteps.length === 0) {
+                container.innerHTML = '<div style="font-size:0.7rem;color:var(--text-secondary);padding:4px;">필터 단계 없음</div>';
+                return;
+            }
+            container.innerHTML = _icPromptFilterSteps.map((step, i) => {
+                const actionDef = IC_FILTER_ACTIONS.find(a => a.value === step.action) || IC_FILTER_ACTIONS[0];
+                const paramInputs = actionDef.params.map(p => {
+                    const val = step[p] || '';
+                    if (p === 'take') return `<input value="${esc(val)}" data-step="${i}" data-param="take" placeholder="N 또는 N:M" style="width:50px;padding:2px 4px;font-size:0.68rem;border:1px solid var(--border);border-radius:3px;background:var(--surface1);color:var(--text);">`;
+                    return `<input value="${esc(val)}" data-step="${i}" data-param="${p}" placeholder="${p}" style="width:80px;padding:2px 4px;font-size:0.68rem;border:1px solid var(--border);border-radius:3px;background:var(--surface1);color:var(--text);">`;
+                }).join(' ');
+                return `<div style="display:flex;align-items:center;gap:4px;margin-bottom:3px;">
+                    <select data-step="${i}" style="padding:2px 4px;font-size:0.68rem;border:1px solid var(--border);border-radius:3px;background:var(--surface1);color:var(--text);flex-shrink:0;">${IC_FILTER_ACTIONS.map(a => `<option value="${a.value}"${a.value===step.action?' selected':''}>${a.label}</option>`).join('')}</select>
+                    ${paramInputs}
+                    <button onclick="_icRemoveFilterStep(${i})" style="background:none;border:none;cursor:pointer;color:var(--error);font-size:0.75rem;padding:0 2px;flex-shrink:0;">✕</button>
                 </div>`;
             }).join('');
+            container.querySelectorAll('select').forEach(sel => {
+                sel.addEventListener('change', e => {
+                    const idx = parseInt(e.target.dataset.step);
+                    const newAction = e.target.value;
+                    const actionDef = IC_FILTER_ACTIONS.find(a => a.value === newAction);
+                    const newStep = { action: newAction };
+                    actionDef.params.forEach(p => { newStep[p] = _icPromptFilterSteps[idx][p] || ''; });
+                    _icPromptFilterSteps[idx] = newStep;
+                    _icRenderFilterSteps();
+                    _icUpdatePromptPreview();
+                });
+            });
+            container.querySelectorAll('input[data-param]').forEach(inp => {
+                inp.addEventListener('input', e => {
+                    const idx = parseInt(e.target.dataset.step);
+                    _icPromptFilterSteps[idx][e.target.dataset.param] = e.target.value;
+                    _icUpdatePromptPreview();
+                });
+            });
+        }
+
+        function _icAddFilterStep() {
+            _icPromptFilterSteps.push({ action: 'replace', from: '', to: '' });
+            _icRenderFilterSteps();
+        }
+        function _icRemoveFilterStep(idx) {
+            _icPromptFilterSteps.splice(idx, 1);
+            _icRenderFilterSteps();
+            _icUpdatePromptPreview();
+        }
+        function _icResetFilter() {
+            _icPromptFilterSteps = JSON.parse(JSON.stringify(IC_DEFAULT_FILTER));
+            _icRenderFilterSteps();
+            _icUpdatePromptPreview();
+        }
+        async function _icSaveFilter() {
+            try {
+                const resp = await fetchJSON('/api/instance_lora/prompt_filter', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ steps: _icPromptFilterSteps })
+                });
+                showToast(resp.success ? '필터 저장됨' : '저장 실패', resp.success ? 'success' : 'error');
+            } catch (e) { showToast('저장 실패', 'error'); }
+        }
+        async function _icLoadFilter() {
+            try {
+                const resp = await fetchJSON('/api/instance_lora/prompt_filter');
+                _icPromptFilterSteps = resp.success && resp.filter && resp.filter.length > 0
+                    ? resp.filter : JSON.parse(JSON.stringify(IC_DEFAULT_FILTER));
+            } catch (e) {
+                _icPromptFilterSteps = JSON.parse(JSON.stringify(IC_DEFAULT_FILTER));
+            }
         }
 
         // ─── 인라인 브라우저 (에셋/봇) ──────────────────────────────
+        function _setIcTabActive(activeId) {
+            ['ic-browser-tab-asset', 'ic-browser-tab-bot', 'ic-browser-tab-upload'].forEach(id => {
+                const btn = document.getElementById(id);
+                if (id === activeId) {
+                    btn.style.background = 'var(--accent)'; btn.style.color = '#fff'; btn.style.border = 'none';
+                } else {
+                    btn.style.background = 'var(--surface2)'; btn.style.color = 'var(--text)'; btn.style.border = '1px solid var(--border)';
+                }
+            });
+        }
+
         function switchInstanceCreateBrowser(source) {
             _icBrowserSource = source;
             _icBrowserState = { level: 'characters', character: '', outfit: '', expression: '', selected: new Set() };
-            const assetBtn = document.getElementById('ic-browser-tab-asset');
-            const botBtn = document.getElementById('ic-browser-tab-bot');
             if (source === 'asset') {
-                assetBtn.style.background = 'var(--accent)'; assetBtn.style.color = '#fff'; assetBtn.style.border = 'none';
-                botBtn.style.background = 'var(--surface2)'; botBtn.style.color = 'var(--text)'; botBtn.style.border = '1px solid var(--border)';
+                _setIcTabActive('ic-browser-tab-asset');
                 loadIcBrowserCharacters();
-            } else {
-                botBtn.style.background = 'var(--accent)'; botBtn.style.color = '#fff'; botBtn.style.border = 'none';
-                assetBtn.style.background = 'var(--surface2)'; assetBtn.style.color = 'var(--text)'; assetBtn.style.border = '1px solid var(--border)';
+            } else if (source === 'bot') {
+                _setIcTabActive('ic-browser-tab-bot');
                 loadIcBrowserBots();
+            } else {
+                _setIcTabActive('ic-browser-tab-upload');
+                loadIcBrowserUpload();
             }
         }
 
@@ -14762,7 +14947,6 @@
                 let html = `<div style="margin-bottom:8px;display:flex;align-items:center;gap:8px;">
                     <button onclick="loadIcBrowserGallery('${esc(character)}')" style="padding:4px 10px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.8rem;">&larr; 갤러리</button>
                     <span style="font-size:0.82rem;color:var(--text-secondary);">${esc(character)} / ${esc(outfit)} / ${esc(expression)}</span>
-                    <button onclick="icBrowserToggleAll(this)" data-character="${esc(character)}" data-outfit="${esc(outfit)}" data-expression="${esc(expression)}" style="padding:4px 10px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.78rem;margin-left:auto;">전체 선택/해제</button>
                 </div>`;
                 html += '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;">';
                 if (!resp || !resp.images || resp.images.length === 0) {
@@ -14793,12 +14977,21 @@
             const expression = el.getAttribute('data-expression');
             const filename = el.getAttribute('data-filename');
             if (_icBrowserState.selected.has(key)) {
+                // 선택 해제
                 _icBrowserState.selected.delete(key);
                 el.style.borderColor = 'transparent';
                 el.querySelector('div').style.background = 'rgba(0,0,0,0.3)';
                 el.querySelector('div').innerHTML = '';
                 _instanceCreateFiles = _instanceCreateFiles.filter(f => !(f.source && `${f.source.character}|||${f.source.outfit}|||${f.source.expression}|||${f.source.filename}` === key));
             } else {
+                // 기존 선택 전부 해제 후 이 이미지만 선택
+                _instanceCreateFiles = [];
+                _icBrowserState.selected.clear();
+                getIcBrowserEl().querySelectorAll('[data-key]').forEach(item => {
+                    item.style.borderColor = 'transparent';
+                    const chk = item.querySelector('div');
+                    if (chk) { chk.style.background = 'rgba(0,0,0,0.3)'; chk.innerHTML = ''; }
+                });
                 _icBrowserState.selected.add(key);
                 el.style.borderColor = 'var(--accent)';
                 el.querySelector('div').style.background = 'var(--accent)';
@@ -14813,38 +15006,7 @@
             renderInstanceCreatePreview();
         }
 
-        function icBrowserToggleAll(btn) {
-            const character = btn.getAttribute('data-character');
-            const outfit = btn.getAttribute('data-outfit');
-            const expression = btn.getAttribute('data-expression');
-            const items = getIcBrowserEl().querySelectorAll('[data-key]');
-            const allSelected = [...items].every(el => _icBrowserState.selected.has(el.getAttribute('data-key')));
-            items.forEach(el => {
-                const key = el.getAttribute('data-key');
-                const filename = el.getAttribute('data-filename');
-                if (allSelected) {
-                    _icBrowserState.selected.delete(key);
-                    el.style.borderColor = 'transparent';
-                    el.querySelector('div').style.background = 'rgba(0,0,0,0.3)';
-                    el.querySelector('div').innerHTML = '';
-                    _instanceCreateFiles = _instanceCreateFiles.filter(f => !(f.source && `${f.source.character}|||${f.source.outfit}|||${f.source.expression}|||${f.source.filename}` === key));
-                } else {
-                    if (!_icBrowserState.selected.has(key)) {
-                        _icBrowserState.selected.add(key);
-                        el.style.borderColor = 'var(--accent)';
-                        el.querySelector('div').style.background = 'var(--accent)';
-                        el.querySelector('div').innerHTML = '&#10003;';
-                        const enc = encodeURIComponent;
-                        _instanceCreateFiles.push({
-                            type: _icBrowserSource,
-                            source: { character, outfit, expression, filename, type: _icBrowserSource },
-                            previewUrl: `/api/asset_mode/characters/${enc(character)}/outfits/${enc(outfit)}/expressions/${enc(expression)}/images/${enc(filename)}`,
-                        });
-                    }
-                }
-            });
-            renderInstanceCreatePreview();
-        }
+        // icBrowserToggleAll 제거됨 (1장만 선택 가능)
 
         // 봇: 봇 목록 → 캐릭터 → 이미지
         function loadIcBrowserBots() {
@@ -14868,6 +15030,28 @@
                 html += '</div>';
                 el.innerHTML = html;
             }).catch(e => { el.innerHTML = '<div style="text-align:center;padding:32px;color:var(--error);">로드 실패</div>'; });
+        }
+
+        function loadIcBrowserUpload() {
+            const el = getIcBrowserEl();
+            el.innerHTML = `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:16px;">
+                <div style="text-align:center;color:var(--text-secondary);font-size:0.85rem;">이미지 파일을 드래그하거나 클릭하여 업로드</div>
+                <div id="ic-upload-dropzone" onclick="document.getElementById('instance-create-file-input').click()" style="width:200px;height:160px;border:2px dashed var(--border);border-radius:12px;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:border-color 0.2s,background 0.2s;">
+                    <span style="font-size:2rem;color:var(--text-secondary);">+</span>
+                </div>
+            </div>`;
+            const dropzone = document.getElementById('ic-upload-dropzone');
+            dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.style.borderColor = 'var(--accent)'; dropzone.style.background = 'rgba(0,120,255,0.05)'; });
+            dropzone.addEventListener('dragleave', () => { dropzone.style.borderColor = 'var(--border)'; dropzone.style.background = ''; });
+            dropzone.addEventListener('drop', e => {
+                e.preventDefault();
+                dropzone.style.borderColor = 'var(--border)'; dropzone.style.background = '';
+                if (e.dataTransfer.files.length > 0) {
+                    const input = document.getElementById('instance-create-file-input');
+                    input.files = e.dataTransfer.files;
+                    handleInstanceCreateFileSelect(input);
+                }
+            });
         }
 
         function loadIcBrowserBotChars(botName) {
@@ -14920,7 +15104,6 @@
                 let html = `<div style="margin-bottom:8px;display:flex;align-items:center;gap:8px;">
                     <button onclick="loadIcBrowserBotChars('${esc(botName)}')" style="padding:4px 10px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.8rem;">&larr; 캐릭터</button>
                     <span style="font-size:0.82rem;color:var(--text-secondary);">${esc(botName)} / ${esc(charName)}</span>
-                    <button onclick="icBotToggleAll(this)" data-bot="${esc(botName)}" data-char="${esc(charName)}" style="padding:4px 10px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.78rem;margin-left:auto;">전체 선택/해제</button>
                 </div>`;
                 html += '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;">';
                 if (imgs.length === 0) {
@@ -14948,12 +15131,21 @@
             const filename = el.getAttribute('data-filename');
             const enc = encodeURIComponent;
             if (_icBrowserState.selected.has(key)) {
+                // 선택 해제
                 _icBrowserState.selected.delete(key);
                 el.style.borderColor = 'transparent';
                 el.querySelector('div').style.background = 'rgba(0,0,0,0.3)';
                 el.querySelector('div').innerHTML = '';
                 _instanceCreateFiles = _instanceCreateFiles.filter(f => !(f.source && f.source.bot === bot && f.source.character === char && f.source.filename === filename));
             } else {
+                // 기존 선택 전부 해제 후 이 이미지만 선택
+                _instanceCreateFiles = [];
+                _icBrowserState.selected.clear();
+                getIcBrowserEl().querySelectorAll('[data-key]').forEach(item => {
+                    item.style.borderColor = 'transparent';
+                    const chk = item.querySelector('div');
+                    if (chk) { chk.style.background = 'rgba(0,0,0,0.3)'; chk.innerHTML = ''; }
+                });
                 _icBrowserState.selected.add(key);
                 el.style.borderColor = 'var(--accent)';
                 el.querySelector('div').style.background = 'var(--accent)';
@@ -14967,42 +15159,13 @@
             renderInstanceCreatePreview();
         }
 
-        function icBotToggleAll(btn) {
-            const bot = btn.getAttribute('data-bot');
-            const char = btn.getAttribute('data-char');
-            const enc = encodeURIComponent;
-            const items = getIcBrowserEl().querySelectorAll('[data-key]');
-            const allSelected = [...items].every(el => _icBrowserState.selected.has(el.getAttribute('data-key')));
-            items.forEach(el => {
-                const key = el.getAttribute('data-key');
-                const filename = el.getAttribute('data-filename');
-                if (allSelected) {
-                    _icBrowserState.selected.delete(key);
-                    el.style.borderColor = 'transparent';
-                    el.querySelector('div').style.background = 'rgba(0,0,0,0.3)';
-                    el.querySelector('div').innerHTML = '';
-                    _instanceCreateFiles = _instanceCreateFiles.filter(f => !(f.source && f.source.bot === bot && f.source.character === char && f.source.filename === filename));
-                } else {
-                    if (!_icBrowserState.selected.has(key)) {
-                        _icBrowserState.selected.add(key);
-                        el.style.borderColor = 'var(--accent)';
-                        el.querySelector('div').style.background = 'var(--accent)';
-                        el.querySelector('div').innerHTML = '&#10003;';
-                        _instanceCreateFiles.push({
-                            type: 'bot',
-                            source: { type: 'bot', bot, character: char, filename, outfit: '', expression: '' },
-                            previewUrl: `/api/bot_lora/char_image/${enc(bot)}/${enc(char)}/${enc(filename)}`,
-                        });
-                    }
-                }
-            });
-            renderInstanceCreatePreview();
-        }
+        // icBotToggleAll 제거됨 (1장만 선택 가능)
 
         async function confirmCreateInstanceLora() {
             const trigger = document.getElementById('instance-lora-create-trigger').value.trim();
             if (!trigger) { showToast('트리거워드를 입력하세요', 'error'); return; }
-            if (_instanceCreateFiles.length === 0) { showToast('최소 1장의 이미지를 추가하세요', 'error'); return; }
+            if (_instanceCreateFiles.length === 0) { showToast('이미지를 1장 선택하세요', 'error'); return; }
+            const negativePrompt = document.getElementById('instance-lora-create-negative').value.trim();
             try {
                 const createResp = await (await fetch('/api/instance_lora/create', {
                     method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -15029,7 +15192,50 @@
                     });
                 }
 
-                showToast('인스턴스 로라 생성됨', 'success');
+                // 에셋 소스: 기존 프롬프트 필터링해서 바로 저장 (분석 생략)
+                const firstImg = _instanceCreateFiles[0];
+                const filename = firstImg.type === 'upload' ? firstImg.file.name : (firstImg.source?.filename || '');
+                const isAssetWithPrompt = firstImg.type === 'asset' && firstImg._existingPrompt;
+
+                if (isAssetWithPrompt && filename) {
+                    const ep = firstImg._existingPrompt;
+                    const neg = negativePrompt || ep.negative || '';
+                    await fetch('/api/instance_lora/prompt', {
+                        method: 'POST', headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ id: loraId, filename, prompt: { positive: ep.positive, negative: neg } })
+                    });
+                } else {
+                    // 봇/업로드: 부정 프롬프트 저장 후 분석 큐에 추가
+                    if (negativePrompt && filename) {
+                        await fetch('/api/instance_lora/prompt', {
+                            method: 'POST', headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({ id: loraId, filename, prompt: { positive: '', negative: negativePrompt } })
+                        });
+                    }
+                    const queueResp = await fetchJSON('/api/queue/add', {
+                        method: 'POST', headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({
+                            type: 'instance_lora_analysis',
+                            label: `이미지 프롬프트 분석: ${trigger}`,
+                            params: { lora_id: loraId, negative_prompt: negativePrompt }
+                        })
+                    });
+                    if (!queueResp.success) {
+                        console.error('[INSTANCE_LORA] 분석 큐 추가 실패:', queueResp.error);
+                    }
+                }
+
+                // 학습도 자동 큐에 추가
+                const trainProfile = document.getElementById('instance-lora-train-profile').value;
+                const trainResp = await fetchJSON('/api/instance_lora/training/start', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({id: loraId, profile: trainProfile})
+                });
+                if (!trainResp.success) {
+                    console.error('[INSTANCE_LORA] 학습 큐 추가 실패:', trainResp.error);
+                }
+
+                showToast(isAssetWithPrompt ? '인스턴스 로라 생성됨 (학습 큐에 추가)' : '인스턴스 로라 생성됨 (분석 + 학습 큐에 추가)', 'success');
                 closeInstanceLoraCreateModal();
                 loadInstanceLoraGrid();
             } catch (e) {
@@ -15134,7 +15340,8 @@
                     body: JSON.stringify({id: _instanceLoraCurrentId, profile})
                 })).json();
                 if (resp.success) {
-                    showToast(`큐에 추가됨: ${resp.label}`, 'success');
+                    const labels = resp.labels || [];
+                    showToast(`큐에 추가됨: ${labels.join(', ')}`, 'success');
                 } else {
                     showToast(`큐 추가 실패: ${resp.error}`, 'error');
                 }
@@ -15152,41 +15359,34 @@
             await _startInstanceLoraSingle(profileValue, '');
         }
 
-        // Instance LoRA 진행률 SSE
+        async function retrainInstanceLora(loraId, trigger) {
+            const profileValue = document.getElementById('instance-lora-train-profile').value;
+            const label = profileValue === 'both' ? 'ANIMA + SDXL' : profileValue.toUpperCase();
+            if (!confirm(`"${trigger}"의 기존 학습 결과를 모두 삭제하고 ${label} 프로필로 재학습하시겠습니까?`)) return;
+            try {
+                const resp = await fetchJSON('/api/instance_lora/retrain', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({id: loraId, profile: profileValue})
+                });
+                if (resp.success) {
+                    showToast(`재학습 큐 추가됨: ${(resp.labels || []).join(', ')}`, 'success');
+                    loadInstanceLoraGrid();
+                } else {
+                    showToast(`재학습 실패: ${resp.error}`, 'error');
+                }
+            } catch (e) {
+                showToast('재학습 실패', 'error');
+            }
+        }
+
+        // Instance LoRA 진행률 - 완료/에러만 토스트
         function handleInstanceLoraTrainingProgress(data) {
-            const section = document.getElementById('instance-lora-progress');
-            const phaseEl = document.getElementById('instance-lora-progress-phase');
-            const pctEl = document.getElementById('instance-lora-progress-pct');
-            const barEl = document.getElementById('instance-lora-progress-bar');
-            const infoEl = document.getElementById('instance-lora-progress-info');
-            section.style.display = '';
             const phase = data.phase || '';
-            if (phase === 'preparing') {
-                phaseEl.textContent = data.message || '준비 중...';
-                pctEl.textContent = '';
-                barEl.style.width = '0%';
-                infoEl.textContent = '';
-            } else if (phase === 'all_complete') {
-                phaseEl.textContent = '학습 완료';
-                pctEl.textContent = '100%';
-                barEl.style.width = '100%';
-                infoEl.textContent = '인스턴스 로라 학습이 완료되었습니다.';
+            if (phase === 'all_complete') {
                 showToast('인스턴스 로라 학습 완료!', 'success');
                 loadInstanceLoraGrid();
-                if (_instanceLoraCurrentId) openInstanceLoraDetail(_instanceLoraCurrentId);
             } else if (phase === 'error') {
-                phaseEl.textContent = '에러';
-                pctEl.textContent = '';
-                infoEl.textContent = data.message || '알 수 없는 오류';
                 showToast('학습 에러: ' + (data.message || ''), 'error');
-            } else {
-                const pct = data.percentage || 0;
-                const step = data.current_step || 0;
-                const total = data.total_steps || 0;
-                phaseEl.textContent = phase || '학습 중...';
-                pctEl.textContent = `${pct}%`;
-                barEl.style.width = `${pct}%`;
-                infoEl.textContent = `Step ${step}/${total}`;
             }
         }
 
@@ -23763,6 +23963,7 @@
                     case 'asset_lora_training': return { icon: '🔶', color: '#e67e22' };
                     case 'bot_lora_training': return { icon: '🟣', color: '#9b59b6' };
                     case 'instance_lora_training': return { icon: '🔵', color: '#1abc9c' };
+                    case 'instance_lora_analysis': return { icon: '🔍', color: '#2ecc71' };
                     default: return { icon: '○', color: 'var(--text2)' };
                 }
             }

@@ -19,7 +19,7 @@ from typing import Optional
 @dataclass
 class QueueItem:
     id: str
-    type: str  # illustration | asset_generation | asset_lora_training | bot_lora_training | instance_lora_training
+    type: str  # illustration | asset_generation | asset_lora_training | bot_lora_training | instance_lora_training | instance_lora_analysis
     label: str
     status: str = "pending"  # pending | processing | completed | failed | cancelled
     params: dict = field(default_factory=dict)
@@ -71,6 +71,7 @@ class QueueManager:
             priority=priority,
         )
         self.items.append(item)
+        self._resort_pending()
         print(f"[QUEUE] 항목 추가: type={item_type}, label={label}, id={item.id}, priority={priority}, 대기={len([i for i in self.items if i.status == 'pending'])}")
         await self._notify_queue_updated()
         # 처리 루프가 idle이면 시작
@@ -118,6 +119,22 @@ class QueueManager:
 
     # ─── 내부 처리 ──────────────────────────────────────────
 
+    def _resort_pending(self):
+        """대기 중인 항목을 분석 → ANIMA 학습 → SDXL 학습 순으로 재정렬"""
+        pending = [i for i in self.items if i.status == "pending"]
+        other = [i for i in self.items if i.status != "pending"]
+        pending.sort(key=self._sort_key)
+        self.items = other + pending
+
+    @staticmethod
+    def _sort_key(item):
+        if item.type == "instance_lora_training":
+            profiles = item.params.get("profiles", ["anima"])
+            profile = profiles[0] if profiles else "anima"
+            profile_order = 0 if profile == "anima" else 1
+            return (item.priority, 1, profile_order, item.created_at)
+        return (item.priority, 0, 0, item.created_at)
+
     async def _notify_queue_updated(self):
         if self.notify_frontend:
             await self.notify_frontend("queue_updated", self.get_status())
@@ -164,7 +181,7 @@ class QueueManager:
                 pending_items = [i for i in self.items if i.status == "pending"]
                 if not pending_items:
                     break
-                pending_items.sort(key=lambda i: (i.priority, i.created_at))
+                pending_items.sort(key=self._sort_key)
                 next_item = pending_items[0]
                 if next_item is None:
                     break
@@ -187,7 +204,9 @@ class QueueManager:
                     traceback.print_exc()
                 next_item.completed_at = time.time()
                 self.current_item = None
-                # 완료/실패 항목 자동 제거
+                # 완료 알림 후 잠시 유지
+                await self._notify_queue_updated()
+                await asyncio.sleep(2.0)
                 self.items = [i for i in self.items if i.status in ("pending", "processing")]
                 await self._notify_queue_updated()
         finally:
@@ -200,6 +219,7 @@ class QueueManager:
             "asset_lora_training": self._handle_asset_lora_training,
             "bot_lora_training": self._handle_bot_lora_training,
             "instance_lora_training": self._handle_instance_lora_training,
+            "instance_lora_analysis": self._handle_instance_lora_analysis,
         }
         handler = dispatch.get(item.type)
         if not handler:
@@ -589,8 +609,13 @@ class QueueManager:
 
             lora_save_path = f"SOYA_INSTANCE_LORA/{profile}/{_safe_dirname(lora_id)}"
 
-            # 이미지 익스포트
+            # 이미지 익스포트 (기존 파일 먼저 비움)
             export_dir = os.path.join(comfy_input_dir, folder)
+            if os.path.isdir(export_dir):
+                for f in os.listdir(export_dir):
+                    fp = os.path.join(export_dir, f)
+                    if os.path.isfile(fp):
+                        os.remove(fp)
             os.makedirs(export_dir, exist_ok=True)
             for i, img in enumerate(training_images, start=1):
                 src = get_image_path(lora_id, img["filename"])
@@ -672,6 +697,72 @@ class QueueManager:
             "profiles": profiles_to_train,
             "image_count": len(training_images),
         }
+
+    async def _handle_instance_lora_analysis(self, item: QueueItem) -> dict:
+        """인스턴스 LoRA 이미지 프롬프트 분석 (에셋 태그 분석 워크플로우 사용)."""
+        params = item.params
+        lora_id = params.get("lora_id", "")
+        negative_prompt = params.get("negative_prompt", "")
+        if not lora_id:
+            raise ValueError("lora_id가 없습니다")
+
+        from modes.instance_lora_mode import list_images, save_image_prompt, get_image_path, _safe_dirname
+        lora_id = _safe_dirname(lora_id)
+        images = list_images(lora_id)
+        if not images:
+            raise ValueError("분석할 이미지가 없습니다")
+
+        if self.notify_frontend:
+            await self.notify_frontend("instance_lora_analyze_progress", {
+                "lora_id": lora_id, "phase": "started", "total": len(images),
+            })
+
+        success_count = 0
+        fail_count = 0
+        for i, filename in enumerate(images):
+            try:
+                if self.notify_frontend:
+                    await self.notify_frontend("instance_lora_analyze_progress", {
+                        "lora_id": lora_id, "phase": "analyzing",
+                        "current": i + 1, "total": len(images), "filename": filename,
+                    })
+
+                img_path = get_image_path(lora_id, filename)
+                if not os.path.isfile(img_path):
+                    print(f"[QUEUE:INSTANCE_ANALYSIS] 이미지 없음: {img_path}")
+                    fail_count += 1
+                    continue
+
+                with open(img_path, "rb") as f:
+                    image_data = f.read()
+
+                analysis = await self.asset_tool.analyze_image(image_data, "expressions")
+                if analysis.get("success"):
+                    tags = analysis.get("tags", [])
+                    positive = ", ".join(tags)
+                    prompt_data = {
+                        "positive": positive,
+                        "negative": negative_prompt,
+                        "original_positive": positive,
+                        "original_negative": negative_prompt,
+                    }
+                    save_image_prompt(lora_id, filename, prompt_data)
+                    success_count += 1
+                else:
+                    print(f"[QUEUE:INSTANCE_ANALYSIS] 태그 분석 실패: {filename}")
+                    fail_count += 1
+            except Exception as e:
+                print(f"[QUEUE:INSTANCE_ANALYSIS] 이미지 분석 오류: {filename} - {e}")
+                traceback.print_exc()
+                fail_count += 1
+
+        if self.notify_frontend:
+            await self.notify_frontend("instance_lora_analyze_progress", {
+                "lora_id": lora_id, "phase": "completed",
+                "success_count": success_count, "fail_count": fail_count,
+            })
+
+        return {"success": True, "lora_id": lora_id, "success_count": success_count, "fail_count": fail_count}
 
     # ─── WebSocket 모니터링 공통 ────────────────────────────
 

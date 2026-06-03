@@ -56,7 +56,7 @@ def list_loras() -> list:
     for lora_id, lora_data in data.get("instance_loras", {}).items():
         images = lora_data.get("images", [])
         sessions = lora_data.get("sessions", {})
-        result.append({
+        entry = {
             "id": lora_id,
             "trigger": lora_data.get("trigger", ""),
             "image_count": len(images),
@@ -65,7 +65,13 @@ def list_loras() -> list:
             "has_anima": any(s.get("profile") == "anima" for s in sessions.values()),
             "has_sdxl": any(s.get("profile") == "sdxl" for s in sessions.values()),
             "created_at": lora_data.get("created_at", ""),
-        })
+        }
+        # 첫 이미지의 프롬프트 포함
+        if images:
+            prompt_result = get_image_prompt(lora_id, images[0])
+            if prompt_result.get("success") and prompt_result.get("data"):
+                entry["prompt"] = prompt_result["data"]
+        result.append(entry)
     return result
 
 
@@ -127,6 +133,30 @@ def delete_lora(lora_id: str, instance_lora_load_path: str = "") -> dict:
                     print(f"[INSTANCE_LORA] 학습 결과 삭제 실패: {trained_dir} - {e}")
 
     print(f"[INSTANCE_LORA] 로라 삭제: {lora_id}")
+    return {"success": True}
+
+
+def reset_training(lora_id: str, instance_lora_load_path: str = "") -> dict:
+    """학습 결과물(anima/sdxl)과 세션 기록만 삭제. 이미지/프롬프트는 유지."""
+    data = _load_data()
+    lora_id = _safe_dirname(lora_id)
+    if lora_id not in data.get("instance_loras", {}):
+        return {"success": False, "error": "존재하지 않는 로라입니다"}
+
+    data["instance_loras"][lora_id]["sessions"] = {}
+    _save_data(data)
+
+    if instance_lora_load_path:
+        for profile in ("anima", "sdxl"):
+            trained_dir = os.path.join(instance_lora_load_path, profile, lora_id)
+            if os.path.isdir(trained_dir):
+                try:
+                    shutil.rmtree(trained_dir)
+                    print(f"[INSTANCE_LORA] 학습 결과 삭제: {trained_dir}")
+                except Exception as e:
+                    print(f"[INSTANCE_LORA] 학습 결과 삭제 실패: {trained_dir} - {e}")
+
+    print(f"[INSTANCE_LORA] 학습 리셋: {lora_id}")
     return {"success": True}
 
 
