@@ -19,7 +19,7 @@ from typing import Optional
 @dataclass
 class QueueItem:
     id: str
-    type: str  # illustration | asset_generation | asset_lora_training | bot_lora_training | instance_lora_training | instance_lora_analysis
+    type: str  # illustration | asset_generation | asset_lora_training | bot_lora_training | instance_lora_training | instance_lora_analysis | tag_analysis
     label: str
     status: str = "pending"  # pending | processing | completed | failed | cancelled
     params: dict = field(default_factory=dict)
@@ -233,6 +233,7 @@ class QueueManager:
             "bot_lora_training": self._handle_bot_lora_training,
             "instance_lora_training": self._handle_instance_lora_training,
             "instance_lora_analysis": self._handle_instance_lora_analysis,
+            "tag_analysis": self._handle_tag_analysis,
         }
         handler = dispatch.get(item.type)
         if not handler:
@@ -851,6 +852,299 @@ class QueueManager:
                 print(f"[QUEUE-MONITOR] 예외: {e}")
                 traceback.print_exc()
             raise
+
+
+    # ─── 태그 분석 (공통) ──────────────────────────────────────
+
+    async def _handle_tag_analysis(self, item: QueueItem) -> dict:
+        """태그 분석 통합 핸들러 (source별 분기)."""
+        import base64
+        params = item.params
+        source = params.get("source", "")
+        event_type = "tag_analysis_progress"
+
+        # source별 이미지 리스트 준비
+        images_to_analyze = []  # [{filepath, filename, ...metadata}]
+        save_mode = None  # "asset" | "bot" | "instance_lora" | None
+
+        if source == "asset_batch":
+            save_mode = "asset"
+            character = params.get("character", "")
+            if not character:
+                raise ValueError("character가 없습니다")
+            images_to_analyze = self.asset_mode.batch_analyze_representatives(character)
+            for img in images_to_analyze:
+                img["character"] = character
+
+        elif source == "asset_selected":
+            save_mode = "asset"
+            character = params.get("character", "")
+            images_info = params.get("images", [])
+            if not character or not images_info:
+                raise ValueError("character와 images가 필요합니다")
+            from modes.asset_mode import ASSET_DIR
+            for img_info in images_info:
+                outfit = img_info.get("outfit", "")
+                expression = img_info.get("expression", "")
+                filename = img_info.get("filename", "")
+                filepath = os.path.join(ASSET_DIR,
+                    self.asset_mode._safe_dirname(character),
+                    self.asset_mode._safe_dirname(outfit),
+                    self.asset_mode._safe_dirname(expression),
+                    filename)
+                images_to_analyze.append({
+                    "filepath": filepath, "filename": filename,
+                    "character": character, "outfit": outfit, "expression": expression,
+                })
+
+        elif source == "bot_rep":
+            save_mode = "bot"
+            bot = params.get("bot", "")
+            character = params.get("character", "")
+            filenames = params.get("filenames", [])
+            if not bot:
+                raise ValueError("bot이 없습니다")
+            reps = self._get_bot_rep_paths(bot, character)
+            if filenames:
+                reps = [r for r in reps if r["filename"] in filenames]
+            images_to_analyze = reps
+
+        elif source == "bot_utility":
+            save_mode = "bot"
+            bot = params.get("bot", "")
+            filenames = params.get("filenames", [])
+            if not bot:
+                raise ValueError("bot이 없습니다")
+            reps = self._get_bot_utility_paths(bot)
+            if filenames:
+                reps = [r for r in reps if r["filename"] in filenames]
+            images_to_analyze = reps
+
+        elif source == "bot_single":
+            save_mode = "bot"
+            bot = params.get("bot", "")
+            character = params.get("character", "")
+            filename = params.get("filename", "")
+            if not bot or not character or not filename:
+                raise ValueError("bot, character, filename이 필요합니다")
+            from modes.bot_mode import BOT_DIR
+            filepath = os.path.join(BOT_DIR, bot, character, filename)
+            images_to_analyze = [{"filepath": filepath, "filename": filename, "character": character, "bot": bot}]
+
+        elif source == "auto_match":
+            save_mode = None
+            raw_images = params.get("images", [])
+            category = params.get("category", "expressions")
+            for img in raw_images:
+                data_b64 = img.get("data", "")
+                filename = img.get("filename", "image.png")
+                if data_b64:
+                    images_to_analyze.append({
+                        "image_data": base64.b64decode(data_b64),
+                        "filename": filename,
+                        "category": category,
+                    })
+
+        elif source == "instance_lora":
+            save_mode = "instance_lora"
+            lora_id = params.get("lora_id", "")
+            if not lora_id:
+                raise ValueError("lora_id가 없습니다")
+            from modes.instance_lora_mode import list_images, get_image_path, _safe_dirname
+            lora_id = _safe_dirname(lora_id)
+            filenames = list_images(lora_id)
+            for fn in filenames:
+                images_to_analyze.append({
+                    "filepath": get_image_path(lora_id, fn),
+                    "filename": fn, "lora_id": lora_id,
+                })
+        else:
+            raise ValueError(f"알 수 없는 tag_analysis source: {source}")
+
+        if not images_to_analyze:
+            return {"success": True, "total": 0, "success_count": 0, "fail_count": 0}
+
+        total = len(images_to_analyze)
+
+        # 시작 알림
+        if self.notify_frontend:
+            await self.notify_frontend(event_type, {
+                "source": source, "phase": "started", "total": total,
+            })
+
+        success_count = 0
+        fail_count = 0
+        auto_match_results = []
+
+        for i, img in enumerate(images_to_analyze):
+            if self.notify_frontend:
+                await self.notify_frontend(event_type, {
+                    "source": source, "phase": "analyzing",
+                    "current": i + 1, "total": total,
+                    "filename": img.get("filename", ""),
+                })
+
+            try:
+                # 이미지 데이터 로드
+                if "image_data" in img:
+                    image_data = img["image_data"]
+                    category = img.get("category", "expressions")
+                else:
+                    filepath = img.get("filepath", "")
+                    if not os.path.isfile(filepath):
+                        print(f"[QUEUE:TAG_ANALYSIS] 이미지 없음: {filepath}")
+                        fail_count += 1
+                        continue
+                    with open(filepath, "rb") as f:
+                        image_data = f.read()
+                    category = "expressions"
+
+                result = await self.asset_tool.analyze_image(image_data, category)
+
+                if not result.get("success") and source != "auto_match":
+                    print(f"[QUEUE:TAG_ANALYSIS] 분석 실패: {img.get('filename', '')} - {result.get('error', '')}")
+                    fail_count += 1
+                    continue
+
+                tags = result.get("tags", [])
+                positive = ", ".join(tags) if tags else ""
+
+                # source별 결과 저장
+                if save_mode == "asset":
+                    self._save_asset_prompt(img, positive)
+                    success_count += 1
+                elif save_mode == "bot":
+                    self._save_bot_prompt(img, positive)
+                    success_count += 1
+                elif save_mode == "instance_lora":
+                    from modes.instance_lora_mode import save_image_prompt
+                    save_image_prompt(img["lora_id"], img["filename"], {
+                        "positive": positive, "negative": "",
+                        "original_positive": positive, "original_negative": "",
+                    })
+                    success_count += 1
+                elif source == "auto_match":
+                    auto_match_results.append({
+                        "filename": img.get("filename", ""),
+                        "tags": tags, "success": True,
+                    })
+                    success_count += 1
+
+            except Exception as e:
+                print(f"[QUEUE:TAG_ANALYSIS] 분석 오류: {img.get('filename', '')} - {e}")
+                traceback.print_exc()
+                fail_count += 1
+                if source == "auto_match":
+                    auto_match_results.append({
+                        "filename": img.get("filename", ""),
+                        "tags": [], "success": False, "error": str(e),
+                    })
+
+        # 완료 알림
+        result_data = {
+            "source": source, "phase": "completed",
+            "total": total, "success_count": success_count, "fail_count": fail_count,
+        }
+        if source == "auto_match":
+            result_data["results"] = auto_match_results
+        if source == "bot_single":
+            # 단일 분석은 prompt 텍스트 반환
+            if success_count > 0:
+                last_tags = auto_match_results[0]["tags"] if auto_match_results else []
+                result_data["tags"] = last_tags
+                result_data["prompt"] = ", ".join(last_tags)
+                result_data["tags_count"] = len(last_tags)
+
+        if self.notify_frontend:
+            await self.notify_frontend(event_type, result_data)
+
+        return {"success": True, "total": total, "success_count": success_count, "fail_count": fail_count}
+
+    @staticmethod
+    def _save_asset_prompt(img: dict, positive: str):
+        """에셋 모드 _prompt.json 저장."""
+        filepath = img.get("filepath", "")
+        filename = img.get("filename", "")
+        if not filepath or not filename:
+            return
+        img_dir = os.path.dirname(filepath)
+        prompt_path = os.path.join(img_dir, f"{os.path.splitext(filename)[0]}_prompt.json")
+        existing = {}
+        if os.path.isfile(prompt_path):
+            try:
+                with open(prompt_path, "r", encoding="utf-8") as pf:
+                    existing = json.load(pf)
+            except Exception:
+                pass
+        existing["positive"] = positive
+        existing.setdefault("negative", "")
+        existing.setdefault("character", img.get("character", ""))
+        existing.setdefault("appearance", "")
+        existing.setdefault("outfit", img.get("outfit", ""))
+        existing.setdefault("expression", img.get("expression", ""))
+        with open(prompt_path, "w", encoding="utf-8") as pf:
+            json.dump(existing, pf, ensure_ascii=False, indent=2)
+
+    @staticmethod
+    def _save_bot_prompt(img: dict, positive: str):
+        """봇 모드 _prompt.json 저장."""
+        from modes.bot_mode import BOT_DIR
+        bot = img.get("bot", "")
+        character = img.get("character", "")
+        filename = img.get("filename", "")
+        if not bot or not character or not filename:
+            return
+        base = os.path.splitext(filename)[0]
+        char_dir = os.path.join(BOT_DIR, bot, character)
+        prompt_path = os.path.join(char_dir, f"{base}_prompt.json")
+        existing = {}
+        if os.path.isfile(prompt_path):
+            try:
+                with open(prompt_path, "r", encoding="utf-8") as pf:
+                    existing = json.load(pf)
+            except Exception:
+                pass
+        existing["prompt"] = positive
+        existing.setdefault("negative", "")
+        with open(prompt_path, "w", encoding="utf-8") as pf:
+            json.dump(existing, pf, ensure_ascii=False, indent=2)
+
+    @staticmethod
+    def _get_bot_rep_paths(bot_name: str, char_name: str) -> list[dict]:
+        """봇 대표이미지 경로 목록 반환."""
+        from modes.bot_mode import BOT_DIR, _load_bot_data
+        data = _load_bot_data()
+        bot = next((b for b in data.get("bots", []) if b["name"] == bot_name), None)
+        if not bot:
+            return []
+        if char_name:
+            chars = [c for c in bot.get("characters", []) if c["name"] == char_name]
+        else:
+            chars = bot.get("characters", [])
+        results = []
+        for ch in chars:
+            for fn in ch.get("rep_images", []):
+                fp = os.path.join(BOT_DIR, bot_name, ch["name"], fn)
+                if os.path.isfile(fp):
+                    results.append({"character": ch["name"], "filename": fn, "filepath": fp, "bot": bot_name})
+        return results
+
+    @staticmethod
+    def _get_bot_utility_paths(bot_name: str, char_name: str = "") -> list[dict]:
+        """봇 유틸리티 이미지 경로 목록 반환."""
+        from modes.bot_mode import BOT_DIR, _load_bot_data
+        results = []
+        if char_name:
+            chars = [char_name]
+        else:
+            data = _load_bot_data()
+            bot = next((b for b in data.get("bots", []) if b["name"] == bot_name), None)
+            chars = [c["name"] for c in (bot.get("characters", []) if bot else [])]
+        for cn in chars:
+            fp = os.path.join(BOT_DIR, bot_name, cn, "_face_image.webp")
+            if os.path.isfile(fp):
+                results.append({"character": cn, "filename": "_face_image.webp", "filepath": fp, "bot": bot_name})
+        return results
 
 
 def _load_presets(asset_mode_obj, presets: dict):

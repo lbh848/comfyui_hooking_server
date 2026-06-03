@@ -6373,6 +6373,10 @@
                         case 'asset_mode_selected_progress':
                             handleAssetAnalyzeProgress(msg.type, msg.data);
                             break;
+                        // 태그 분석 진행률 이벤트
+                        case 'tag_analysis_progress':
+                            handleTagAnalysisProgress(msg.data);
+                            break;
                         case 'text_output':
                             handleTextOutput(msg.data);
                             break;
@@ -7487,8 +7491,9 @@
         const QUEUE_TYPE_LABELS = {
             asset_lora_training: '에셋 LoRA 학습',
             bot_lora_training: '봇 LoRA 학습',
-            instance_lora_analysis: '인스턴스 LoRA 분석',
-            instance_lora_training: '인스턴스 LoRA 학습',
+            instance_lora_analysis: '인스턴스 LoRA 분석 및 학습',
+            instance_lora_training: '인스턴스 LoRA 분석 및 학습',
+            tag_analysis: '태그 분석',
             asset_generation: '에셋 이미지 생성',
         };
 
@@ -7532,56 +7537,21 @@
             groups.forEach((group, gIdx) => {
                 const isFirst = gIdx === 0;
                 const isLast = gIdx === groups.length - 1;
-                const isPair = group.length === 2;
+                const displayType = group[0]; // 묶음이면 analysis로 통일
 
-                const block = document.createElement('div');
-                block.style.cssText = isPair
-                    ? 'display:flex;flex-direction:column;border-radius:8px;border:1px solid var(--accent,#6c8aff);overflow:hidden;'
-                    : '';
-
-                group.forEach((type, subIdx) => {
-                    const row = document.createElement('div');
-                    row.style.cssText = isPair
-                        ? 'display:flex;align-items:center;gap:8px;padding:8px 14px;background:var(--bg-tertiary,#2a2a3e);'
-                        : 'display:flex;align-items:center;gap:8px;padding:10px 14px;background:var(--bg-tertiary,#2a2a3e);border-radius:8px;border:1px solid var(--border-color,#3a3a4e);';
-
-                    const labelHTML = isPair && subIdx === 0
-                        ? `<span style="font-weight:700;color:var(--accent);min-width:24px;text-align:center;grid-row:span 2;">${rank}</span>`
-                        : isPair && subIdx === 1
-                        ? `<span style="min-width:24px;"></span>`
-                        : `<span style="font-weight:700;color:var(--accent);min-width:24px;text-align:center;">${rank}</span>`;
-
-                    // 묶음이면 ▲▼는 첫 줄에만, 독립이면 각 항목에
-                    let btnsHTML = '';
-                    if (isPair) {
-                        if (subIdx === 0) {
-                            btnsHTML = `
-                                <button onclick="moveQueueGroupUp(${gIdx})" ${isFirst ? 'disabled' : ''} style="padding:4px 10px;font-size:0.8rem;cursor:${isFirst ? 'not-allowed' : 'pointer'};opacity:${isFirst ? '0.3' : '1'};background:var(--bg-secondary,#1e1e2e);border:1px solid var(--border-color,#3a3a4e);border-radius:4px;color:var(--text-primary,#eee);">▲</button>
-                                <button onclick="moveQueueGroupDown(${gIdx})" ${isLast ? 'disabled' : ''} style="padding:4px 10px;font-size:0.8rem;cursor:${isLast ? 'not-allowed' : 'pointer'};opacity:${isLast ? '0.3' : '1'};background:var(--bg-secondary,#1e1e2e);border:1px solid var(--border-color,#3a3a4e);border-radius:4px;color:var(--text-primary,#eee);">▼</button>
-                            `;
-                        } else {
-                            btnsHTML = `<span style="min-width:52px;"></span>`;
-                        }
-                    } else {
-                        btnsHTML = `
-                            <button onclick="moveQueueGroupUp(${gIdx})" ${isFirst ? 'disabled' : ''} style="padding:4px 10px;font-size:0.8rem;cursor:${isFirst ? 'not-allowed' : 'pointer'};opacity:${isFirst ? '0.3' : '1'};background:var(--bg-secondary,#1e1e2e);border:1px solid var(--border-color,#3a3a4e);border-radius:4px;color:var(--text-primary,#eee);">▲</button>
-                            <button onclick="moveQueueGroupDown(${gIdx})" ${isLast ? 'disabled' : ''} style="padding:4px 10px;font-size:0.8rem;cursor:${isLast ? 'not-allowed' : 'pointer'};opacity:${isLast ? '0.3' : '1'};background:var(--bg-secondary,#1e1e2e);border:1px solid var(--border-color,#3a3a4e);border-radius:4px;color:var(--text-primary,#eee);">▼</button>
-                        `;
-                    }
-
-                    row.innerHTML = `${labelHTML}<span style="flex:1;font-size:0.88rem;">${QUEUE_TYPE_LABELS[type]}</span>${btnsHTML}`;
-                    block.appendChild(row);
-                });
-
-                // 묶음이 아니면 block 자체가 단일 row
-                if (!isPair) {
-                    container.appendChild(block);
-                } else {
-                    container.appendChild(block);
-                }
-                rank += group.length;
+                const row = document.createElement('div');
+                row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:10px 14px;background:var(--bg-tertiary,#2a2a3e);border-radius:8px;border:1px solid var(--border-color,#3a3a4e);';
+                row.innerHTML = `
+                    <span style="font-weight:700;color:var(--accent);min-width:24px;text-align:center;">${rank}</span>
+                    <span style="flex:1;font-size:0.88rem;">${QUEUE_TYPE_LABELS[displayType]}</span>
+                    <button onclick="moveQueueGroupUp(${gIdx})" ${isFirst ? 'disabled' : ''} style="padding:4px 10px;font-size:0.8rem;cursor:${isFirst ? 'not-allowed' : 'pointer'};opacity:${isFirst ? '0.3' : '1'};background:var(--bg-secondary,#1e1e2e);border:1px solid var(--border-color,#3a3a4e);border-radius:4px;color:var(--text-primary,#eee);">▲</button>
+                    <button onclick="moveQueueGroupDown(${gIdx})" ${isLast ? 'disabled' : ''} style="padding:4px 10px;font-size:0.8rem;cursor:${isLast ? 'not-allowed' : 'pointer'};opacity:${isLast ? '0.3' : '1'};background:var(--bg-secondary,#1e1e2e);border:1px solid var(--border-color,#3a3a4e);border-radius:4px;color:var(--text-primary,#eee);">▼</button>
+                `;
+                container.appendChild(row);
+                rank++;
             });
         }
+
 
         function moveQueueGroupUp(gIdx) {
             const groups = getQueueGroups();
@@ -7603,6 +7573,104 @@
             const orderMap = {};
             types.forEach((t, i) => { orderMap[t] = i + 1; });
             currentConfig.queue_type_order = orderMap;
+        }
+
+        // ─── 태그 분석 진행률 이벤트 처리 ───
+        function handleTagAnalysisProgress(data) {
+            const source = data.source || '';
+            const phase = data.phase || '';
+            if (phase === 'completed') {
+                // source별 완료 처리
+                if (source === 'asset_batch') {
+                    const statusEl = document.getElementById('au-analyze-status');
+                    if (statusEl) statusEl.textContent = `완료: 성공 ${data.success_count}건, 실패 ${data.fail_count}건`;
+                    if (typeof auSetAnalyzingState === 'function') auSetAnalyzingState(false);
+                } else if (source === 'asset_selected') {
+                    const statusEl = document.getElementById('au-analyze-status');
+                    if (statusEl) statusEl.textContent = `완료: 성공 ${data.success_count}건, 실패 ${data.fail_count}건`;
+                    if (typeof auSetAnalyzingState === 'function') auSetAnalyzingState(false);
+                    if (typeof auNavLevel !== 'undefined' && auNavLevel >= 2 && auNavOutfit && auNavExpression) {
+                        auRenderImages(auNavCharacter, auNavOutfit, auNavExpression);
+                    }
+                } else if (source === 'bot_rep') {
+                    const statusEl = document.getElementById('bot-analyze-status');
+                    if (statusEl) statusEl.textContent = `완료: 성공 ${data.success_count}건, 실패 ${data.fail_count}건`;
+                    const btn = document.getElementById('btn-bot-batch-analyze');
+                    if (btn) { btn.disabled = false; btn.textContent = '선택 분석 실행'; }
+                    if (typeof renderBotCharacters === 'function') renderBotCharacters();
+                } else if (source === 'bot_utility') {
+                    const statusEl = document.getElementById('bot-util-status');
+                    if (statusEl) statusEl.textContent = `완료: 성공 ${data.success_count}건, 실패 ${data.fail_count}건`;
+                    const btn = document.getElementById('btn-bot-util-analyze');
+                    if (btn) { btn.disabled = false; btn.textContent = '선택 분석 실행'; }
+                    if (typeof renderBotCharacters === 'function') renderBotCharacters();
+                } else if (source === 'bot_single') {
+                    // 단일 분석 결과를 전역 변수에 저장
+                    window._pendingBotSingleResult = data;
+                    const btn = window._pendingBotSingleBtn;
+                    if (btn) { btn.disabled = false; btn.textContent = '태그 분석'; }
+                    if (data.tags && data.prompt) {
+                        const ta = window._pendingBotSingleTa;
+                        if (ta) ta.value = data.prompt;
+                        showToast(`태그 분석 완료 (${data.tags_count || 0}개)`, 'success');
+                    }
+                } else if (source === 'auto_match') {
+                    if (data.results) {
+                        data.results.forEach(r => {
+                            const img = atState.images.find(i => i.file && i.file.name === r.filename);
+                            if (img) {
+                                if (r.success) { img.tags = r.tags; img.status = 'done'; }
+                                else { img.error = r.error || '분석 실패'; img.status = 'error'; }
+                            }
+                        });
+                    }
+                    if (typeof atRenderImages === 'function') atRenderImages();
+                    // 진행률 바 업데이트
+                    const progressInner = document.getElementById('at-progress-inner');
+                    if (progressInner) progressInner.style.width = '100%';
+                    // 후속 매칭 단계 진행
+                    if (typeof atProceedToMatching === 'function') atProceedToMatching();
+                } else if (source === 'instance_lora') {
+                    if (typeof loadInstanceLoraGrid === 'function') loadInstanceLoraGrid();
+                    showToast(`분석 완료: 성공 ${data.success_count}건, 실패 ${data.fail_count}건`, data.success_count > 0 ? 'success' : 'error');
+                }
+                return;
+            }
+            // 진행 중 표시
+            if (phase === 'started') {
+                if (source === 'auto_match' && typeof atRenderImages === 'function') atRenderImages();
+            } else if (phase === 'analyzing') {
+                if (source === 'asset_batch') {
+                    const statusEl = document.getElementById('au-analyze-status');
+                    if (statusEl) statusEl.textContent = `분석 중... (${data.current}/${data.total}) ${data.filename || ''}`;
+                } else if (source === 'asset_selected') {
+                    const statusEl = document.getElementById('au-analyze-status');
+                    if (statusEl) statusEl.textContent = `분석 중... (${data.current}/${data.total}) ${data.filename || ''}`;
+                } else if (source === 'bot_rep') {
+                    const statusEl = document.getElementById('bot-analyze-status');
+                    if (statusEl) statusEl.textContent = `분석 중... (${data.current}/${data.total})`;
+                } else if (source === 'bot_utility') {
+                    const statusEl = document.getElementById('bot-util-status');
+                    if (statusEl) statusEl.textContent = `분석 중... (${data.current}/${data.total})`;
+                } else if (source === 'auto_match') {
+                    const total = data.total || 1;
+                    const progressInner = document.getElementById('at-progress-inner');
+                    if (progressInner) progressInner.style.width = `${(data.current / total) * 100}%`;
+                    // auto_match는 per-image 업데이트를 completed에서만 함 (results 배열에 있을 때)
+                }
+            }
+        }
+
+        function fileToBase64(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => {
+                    const base64 = reader.result.split(',')[1];
+                    resolve(base64);
+                };
+                reader.onerror = reject;
+                reader.readAsDataURL(file);
+            });
         }
 
         function closeSettingsModal() {
@@ -10846,37 +10914,51 @@
             const totalSteps = analyzeCount + batchSteps;
             let completedSteps = 0;
 
-            // 1. 태그 분석
+            // 1. 태그 분석 (큐 사용)
             if (doAnalyze && pending.length > 0) {
                 atAbortController = new AbortController();
+                // 모든 이미지를 base64로 변환 후 큐에 추가
+                const queueImages = [];
                 for (const item of pending) {
-                    if (atAbortController.signal.aborted) break;
                     item.status = 'analyzing';
-                    atRenderImages();
                     try {
-                        const formData = new FormData();
-                        formData.append('image', item.file);
-                        formData.append('category', category);
-                        const resp = await fetch('/api/asset_tool/analyze', { method: 'POST', body: formData, signal: atAbortController.signal });
-                        const result = await resp.json();
-                        if (result.success) {
-                            item.tags = result.tags;
-                            item.status = 'done';
-                        } else {
-                            item.error = result.error || '분석 실패';
-                            item.status = 'error';
-                        }
+                        const b64 = await fileToBase64(item.file);
+                        queueImages.push({data: b64, filename: item.file.name});
                     } catch (e) {
-                        if (e.name === 'AbortError') {
-                            item.status = 'pending';
-                            break;
-                        }
-                        item.error = e.message;
+                        item.error = '파일 변환 실패';
                         item.status = 'error';
                     }
-                    completedSteps++;
-                    if (totalSteps > 0) document.getElementById('at-progress-inner').style.width = `${Math.round(completedSteps / totalSteps * 100)}%`;
-                    atRenderImages();
+                }
+                atRenderImages();
+
+                if (queueImages.length > 0) {
+                    try {
+                        await fetchJSON('/api/queue/add', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({
+                                type: 'tag_analysis',
+                                label: `태그 분석 (오토매치: ${queueImages.length}장)`,
+                                params: { source: 'auto_match', images: queueImages, category: category }
+                            })
+                        });
+                        showToast(`큐에 ${queueImages.length}장 추가됨`, 'info');
+                    } catch (e) {
+                        console.error('[AT] 큐 추가 오류:', e);
+                        showToast('큐 추가 오류', 'error');
+                        pending.forEach(i => { if (i.status === 'analyzing') i.status = 'pending'; });
+                        atRenderImages();
+                        document.getElementById('at-analyze-btn').disabled = false;
+                        document.getElementById('at-stop-btn').style.display = 'none';
+                        document.getElementById('at-progress-bar').style.display = 'none';
+                        return;
+                    }
+                    // 완료는 handleTagAnalysisProgress에서 처리 후 atProceedToMatching 호출
+                    // 분석만 하는 경우 (doMatch=false) 대기 상태 유지
+                    if (!doMatch) {
+                        // 분석 완료 후 매칭 없이 종료 - handleTagAnalysisProgress에서 버튼 복원
+                    }
+                    return; // 큐 완료 이벤트로 후속 처리
                 }
                 atAbortController = null;
             }
@@ -11024,6 +11106,91 @@
             if (atState.embeddingMatches.length > 0 || atState.imageMatches.length > 0) {
                 atSwitchView('result');
                 atRenderMatches();
+            }
+        }
+
+        // 큐 기반 태그 분석 완료 후 매칭 단계 진행
+        async function atProceedToMatching() {
+            const category = document.getElementById('at-category').value;
+            const doMatch = document.getElementById('at-do-match').checked;
+            atState.embeddingMatches = [];
+            atState.imageMatches = [];
+            atState.chains = [];
+
+            const uploadedFiles = atState.images.filter(i => i.file);
+            const doneImages = atState.images.filter(i => i.status === 'done' && i.tags && i.tags.length > 0);
+
+            if (doMatch && uploadedFiles.length > 0) {
+                // 임베딩 매칭
+                const embItems = uploadedFiles.map(img => {
+                    const fileName = img.file.name || '';
+                    const baseName = fileName.substring(0, fileName.lastIndexOf('.')) || fileName;
+                    return { image_name: fileName, tags: [baseName] };
+                });
+                try {
+                    const embResp = await fetch('/api/asset_tool/match_batch', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ items: embItems, category: category, top_n: 10, embedding_threshold: 0 })
+                    });
+                    const embResult = await embResp.json();
+                    if (embResult.success && embResult.results) {
+                        for (const r of embResult.results) {
+                            if (r.embedding_matches && r.embedding_matches.length > 0) {
+                                const img = uploadedFiles.find(i => (i.file.name || '') === r.image_name);
+                                atState.embeddingMatches.push({
+                                    imageName: r.image_name || '이미지',
+                                    imageUrl: img ? img.url || '' : '',
+                                    matches: r.embedding_matches.map(m => ({ ...m, selected: false }))
+                                });
+                            }
+                        }
+                    }
+                } catch (e) { console.error('임베딩 매칭 오류:', e); }
+            }
+
+            // 태그 매칭
+            if (doneImages.length > 0) {
+                const tagItems = doneImages.map(img => ({
+                    image_name: img.file.name || '',
+                    tags: [...new Set(img.tags.map(t => t.trim()))]
+                }));
+                try {
+                    const tagResp = await fetch('/api/asset_tool/match_batch', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ items: tagItems, category: category, top_n: 10 })
+                    });
+                    const tagResult = await tagResp.json();
+                    if (tagResult.success && tagResult.results) {
+                        for (const r of tagResult.results) {
+                            if (r.matches && r.matches.length > 0) {
+                                const img = doneImages.find(i => (i.file.name || '') === r.image_name);
+                                const uniqueTags = img ? [...new Set(img.tags.map(t => t.trim()))] : [];
+                                atState.imageMatches.push({
+                                    imageName: r.image_name || '이미지',
+                                    imageUrl: img ? img.url : '',
+                                    tags: uniqueTags,
+                                    matches: r.matches.map(m => ({ ...m, selected: false }))
+                                });
+                            }
+                            if (r.chains && r.chains.length > 0) {
+                                atState.chains.push(...r.chains);
+                            }
+                        }
+                    }
+                } catch (e) { console.error('태그 매칭 오류:', e); }
+            }
+
+            document.getElementById('at-analyze-btn').disabled = false;
+            document.getElementById('at-stop-btn').style.display = 'none';
+            document.getElementById('at-progress-bar').style.display = 'none';
+
+            if (atState.embeddingMatches.length > 0 || atState.imageMatches.length > 0) {
+                atSwitchView('result');
+                atRenderMatches();
+            } else if (!doMatch) {
+                showToast('태그 분석 완료', 'success');
             }
         }
 
@@ -14705,17 +14872,15 @@
         }
 
         async function analyzeInstanceImage(loraId, filename) {
-            showToast('태그 분석 중...', 'info');
             try {
-                const resp = await (await fetch('/api/instance_lora/analyze', {
+                const data = await fetchJSON('/api/instance_lora/analyze', {
                     method: 'POST', headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({id: loraId})
-                })).json();
-                if (resp.success) {
-                    showToast(`분석 완료: ${resp.success_count}성공, ${resp.fail_count}실패`, 'success');
-                    loadInstanceLoraGrid();
-                } else showToast(resp.error || '분석 실패', 'error');
-            } catch (e) { showToast('분석 실패', 'error'); }
+                });
+                if (data.success) {
+                    showToast('큐에 추가되었습니다', 'info');
+                } else showToast(data.error || '큐 추가 실패', 'error');
+            } catch (e) { showToast('큐 추가 실패', 'error'); }
         }
 
         async function deleteInstanceLoraImage(loraId, filename) {
@@ -18725,26 +18890,21 @@
             const btn = document.getElementById('btn-bot-batch-analyze');
             const status = document.getElementById('bot-analyze-status');
             btn.disabled = true;
-            btn.textContent = '분석 중...';
+            btn.textContent = '큐에 추가 중...';
             status.style.display = 'block';
-            status.textContent = `0/${filenames.length} 분석 중...`;
+            status.textContent = `큐에 추가 중... (${filenames.length}장)`;
             try {
-                const resp = await fetch('/api/bot_mode/batch_analyze_rep', {
+                const data = await fetchJSON('/api/bot_mode/batch_analyze_rep', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({bot: botCurrentBot, character: charName, filenames})
                 });
-                const data = await resp.json();
-                if (data.error) { showToast(data.error, 'error'); return; }
-                const ok = data.success_count || 0;
-                const fail = data.fail_count || 0;
-                status.textContent = `완료: ${ok}장 성공${fail > 0 ? `, ${fail}장 실패` : ''}`;
-                showToast(`태그 분석 완료 (${ok}장)`, fail > 0 ? 'warning' : 'success');
-                renderBotCharacters();
+                if (data.error) { showToast(data.error, 'error'); btn.disabled = false; btn.textContent = '선택 캐릭터 태그 분석'; return; }
+                status.textContent = `큐에 추가됨 (${filenames.length}장) - 대기 중...`;
+                showToast('큐에 추가되었습니다', 'info');
             } catch (e) {
-                console.error('[BOT] 일괄 분석 오류:', e);
-                showToast('태그 분석 오류', 'error');
-            } finally {
+                console.error('[BOT] 일괄 분석 큐 추가 오류:', e);
+                showToast('큐 추가 오류', 'error');
                 btn.disabled = false;
                 btn.textContent = '선택 캐릭터 태그 분석';
             }
@@ -19148,25 +19308,20 @@
             const btn = document.getElementById('btn-bot-util-analyze');
             const statusDiv = document.getElementById('bot-util-status');
             btn.disabled = true;
-            btn.textContent = '분석 중...';
+            btn.textContent = '큐에 추가 중...';
             statusDiv.style.display = 'block';
-            statusDiv.textContent = `0/${filenames.length} 분석 중...`;
+            statusDiv.textContent = `큐에 추가 중... (${filenames.length}장)`;
             try {
-                const resp = await fetch('/api/bot_mode/batch_analyze_utility', {
+                const data = await fetchJSON('/api/bot_mode/batch_analyze_utility', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({bot: botCurrentBot, filenames})
                 });
-                const data = await resp.json();
-                if (data.error) { showToast(data.error, 'error'); return; }
-                const ok = data.success_count || 0;
-                const fail = data.fail_count || 0;
-                statusDiv.textContent = `완료: ${ok}장 성공${fail > 0 ? `, ${fail}장 실패` : ''}`;
-                showToast(`얼굴 태그 분석 완료 (${ok}장)`, fail > 0 ? 'warning' : 'success');
-                renderBotCharacters();
+                if (data.error) { showToast(data.error, 'error'); btn.disabled = false; btn.textContent = '얼굴 태그 일괄 분석'; return; }
+                statusDiv.textContent = `큐에 추가됨 (${filenames.length}장) - 대기 중...`;
+                showToast('큐에 추가되었습니다', 'info');
             } catch (e) {
-                showToast('얼굴 태그 분석 오류', 'error');
-            } finally {
+                showToast('큐 추가 오류', 'error');
                 btn.disabled = false;
                 btn.textContent = '얼굴 태그 일괄 분석';
             }
@@ -19414,22 +19569,23 @@
         async function botAnalyzeSingle(charName, filename, btn) {
             if (!botCurrentBot || !charName || !filename) return;
             btn.disabled = true;
-            btn.textContent = '분석 중...';
+            btn.textContent = '큐에 추가 중...';
+            // 결과 수신용 전역 참조 저장
+            const ta = btn.closest('div[style*="padding:6px 8px"]')?.querySelector('.bot-prompt-input');
+            window._pendingBotSingleBtn = btn;
+            window._pendingBotSingleTa = ta;
             try {
-                const resp = await fetch('/api/bot_mode/analyze_single', {
+                const data = await fetchJSON('/api/bot_mode/analyze_single', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({bot: botCurrentBot, character: charName, filename})
                 });
-                const data = await resp.json();
-                if (data.error) { showToast(data.error, 'error'); return; }
-                const ta = btn.closest('div[style*="padding:6px 8px"]')?.querySelector('.bot-prompt-input');
-                if (ta && data.prompt) { ta.value = data.prompt; }
-                showToast(`분석 완료 (${data.tags_count || 0}개 태그)`, 'success');
+                if (data.error) { showToast(data.error, 'error'); btn.disabled = false; btn.textContent = '태그 분석'; return; }
+                btn.textContent = '큐 대기 중...';
+                showToast('큐에 추가되었습니다', 'info');
             } catch (e) {
-                console.error('[BOT] 단일 분석 오류:', e);
-                showToast('태그 분석 오류', 'error');
-            } finally {
+                console.error('[BOT] 단일 분석 큐 추가 오류:', e);
+                showToast('큐 추가 오류', 'error');
                 btn.disabled = false;
                 btn.textContent = '태그 분석';
             }
@@ -22885,39 +23041,22 @@
                 return { outfit: auNavOutfit, expression: auNavExpression, filename };
             }).filter(img => img.filename);
 
-            statusEl.textContent = '분석 중... (0/' + images.length + ')';
+            statusEl.textContent = `큐에 추가 중... (${images.length}장)`;
             auSetAnalyzingState(true);
             try {
-                const resp = await fetch('/api/asset_mode/analyze_selected', {
+                const data = await fetchJSON('/api/asset_mode/analyze_selected', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ character: auNavCharacter, images }),
                 });
-                const data = await resp.json();
                 if (!data.success) {
                     statusEl.textContent = '오류: ' + (data.error || '알 수 없는 오류');
-                    showToast(data.error || '분석 실패', 'error');
-                    return;
-                }
-                const ok = data.success_count || 0;
-                const fail = data.fail_count || 0;
-                const total = data.total || 0;
-                const cancelled = total > 0 && (ok + fail) < total;
-                statusEl.textContent = cancelled
-                    ? `분석 중지됨 (${ok}/${total})`
-                    : `분석 완료 (${ok}/${total})` + (fail > 0 ? ` 실패 ${fail}건` : '');
-                showToast(cancelled
-                    ? `분석 중지됨 (${ok}장 완료)`
-                    : `${ok}장 분석 완료` + (fail > 0 ? `, ${fail}건 실패` : ''),
-                    cancelled ? 'warning' : fail > 0 ? 'warning' : 'success');
-                // 분석 완료 후 이미지 뷰 갱신
-                if (auNavLevel >= 2 && auNavOutfit && auNavExpression) {
-                    await auRenderImages(auNavCharacter, auNavOutfit, auNavExpression);
+                    auSetAnalyzingState(false);
+                } else {
+                    statusEl.textContent = `큐에 추가됨 (${data.total}장) - 대기 중...`;
                 }
             } catch (e) {
                 statusEl.textContent = '오류: ' + e.message;
-                showToast('분석 오류', 'error');
-            } finally {
                 auSetAnalyzingState(false);
             }
         }
@@ -22953,38 +23092,25 @@
         async function auBatchAnalyzeRepresentatives() {
             if (auNavLevel < 1 || !auNavCharacter) { showToast('캐릭터를 먼저 선택하세요', 'error'); return; }
             if (!confirm('대표이미지 일괄 태그 분석을 실행하시겠습니까?\n기존 프롬프트가 있으면 덮어씌워집니다.')) return;
-            showToast('대표이미지 일괄 태그 분석을 시작합니다', 'info');
+            showToast('큐에 추가되었습니다', 'info');
             auSetAnalyzingState(true);
             const statusEl = document.getElementById('au-analyze-status');
             statusEl.style.display = 'block';
-            statusEl.textContent = '대표이미지 목록 조회 중...';
+            statusEl.textContent = '큐에 추가 중...';
             try {
-                const resp = await fetch('/api/asset_mode/batch_analyze_representatives', {
+                const data = await fetchJSON('/api/asset_mode/batch_analyze_representatives', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ character: auNavCharacter }),
                 });
-                const data = await resp.json();
                 if (!data.success) {
                     statusEl.textContent = '오류: ' + (data.error || '알 수 없는 오류');
-                    showToast(data.error || '분석 실패', 'error');
-                    return;
+                    auSetAnalyzingState(false);
+                } else {
+                    statusEl.textContent = `큐에 추가됨 (${data.total}장) - 대기 중...`;
                 }
-                const total = data.total || 0;
-                const ok = data.success_count || 0;
-                const fail = data.fail_count || 0;
-                const cancelled = total > 0 && (ok + fail) < total;
-                statusEl.textContent = cancelled
-                    ? `분석 중지됨 (${ok}/${total})`
-                    : `대표이미지 분석 완료 (${ok}/${total})` + (fail > 0 ? ` 실패 ${fail}건` : '');
-                showToast(cancelled
-                    ? `분석 중지됨 (${ok}장 완료)`
-                    : `대표이미지 ${ok}장 분석 완료` + (fail > 0 ? `, ${fail}건 실패` : ''),
-                    cancelled ? 'warning' : fail > 0 ? 'warning' : 'success');
             } catch (e) {
                 statusEl.textContent = '오류: ' + e.message;
-                showToast('일괄 분석 오류', 'error');
-            } finally {
                 auSetAnalyzingState(false);
             }
         }
@@ -24109,6 +24235,7 @@
                     case 'bot_lora_training': return { icon: '🟣', color: '#9b59b6' };
                     case 'instance_lora_training': return { icon: '🔵', color: '#1abc9c' };
                     case 'instance_lora_analysis': return { icon: '🔍', color: '#2ecc71' };
+                    case 'tag_analysis': return { icon: '🏷', color: '#f39c12' };
                     default: return { icon: '○', color: 'var(--text2)' };
                 }
             }
@@ -24618,6 +24745,8 @@
             illustration: '삽화', asset_generation: '에셋',
             asset_lora_training: '에셋로라', bot_lora_training: '봇로라',
             instance_lora_training: '인스턴스로라',
+            instance_lora_analysis: '인스턴스분석',
+            tag_analysis: '태그분석',
         };
 
         function renderQueueModal() {

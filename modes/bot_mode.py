@@ -879,7 +879,7 @@ class BotMode:
             return _json_error(str(e))
 
     async def handle_batch_analyze_rep(self, request):
-        """POST /api/bot_mode/batch_analyze_rep - 대표이미지 일괄 태그 분석."""
+        """POST /api/bot_mode/batch_analyze_rep - 대표이미지 일괄 태그 분석 → 큐에 추가."""
         try:
             body = await request.json()
             bot_name = body.get("bot", "").strip()
@@ -887,66 +887,19 @@ class BotMode:
             if not bot_name:
                 return _json_error("봇 이름이 필요합니다.")
 
-            # character가 없으면 봇 내 모든 대표 이미지 있는 캐릭터 대상
-            if char_name:
-                reps = self._get_rep_image_paths(bot_name, char_name)
-            else:
-                reps = []
-                data = _load_bot_data()
-                bot = next((b for b in data.get("bots", []) if b["name"] == bot_name), None)
-                if bot:
-                    for ch in bot.get("characters", []):
-                        if (ch.get("rep_images") or []):
-                            reps.extend(self._get_rep_image_paths(bot_name, ch["name"]))
-            if not reps:
-                return _json_ok({"total": 0, "success_count": 0, "fail_count": 0})
-
-            # filenames 필터: 지정된 파일만 분석
-            only_filenames = body.get("filenames", [])
-            if only_filenames:
-                reps = [r for r in reps if r["filename"] in only_filenames]
-            if not reps:
-                return _json_ok({"total": 0, "success_count": 0, "fail_count": 0})
-
             asset_tool = self._asset_tool
             if not asset_tool or not asset_tool.workflow_source_path:
                 return _json_error("태그 분석 워크플로우 경로가 설정되지 않았습니다")
 
-            total = len(reps)
-            success_count = 0
-            fail_count = 0
-            for i, rep in enumerate(reps):
-                try:
-                    with open(rep["filepath"], "rb") as f:
-                        image_data = f.read()
-                    analyze_result = await asset_tool.analyze_image(image_data, "expressions")
-                    tags = analyze_result.get("tags", [])
-                    positive = ", ".join(tags) if tags else ""
-
-                    base = os.path.splitext(rep["filename"])[0]
-                    char_dir = os.path.join(BOT_DIR, bot_name, rep["character"])
-                    prompt_path = os.path.join(char_dir, f"{base}_prompt.json")
-                    existing = {}
-                    if os.path.isfile(prompt_path):
-                        try:
-                            with open(prompt_path, "r", encoding="utf-8") as pf:
-                                existing = json.load(pf)
-                        except Exception:
-                            pass
-                    existing["prompt"] = positive
-                    existing.setdefault("negative", "")
-                    with open(prompt_path, "w", encoding="utf-8") as pf:
-                        json.dump(existing, pf, ensure_ascii=False, indent=2)
-                    success_count += 1
-                    print(f"[BOT_MODE] 대표이미지 분석 완료 ({i+1}/{total}): {rep['filename']} ({len(tags)}개 태그)")
-                except Exception as e:
-                    fail_count += 1
-                    print(f"[BOT_MODE] 대표이미지 분석 실패 ({i+1}/{total}): {rep['filename']} - {e}")
-                    traceback.print_exc()
-
-            return _json_ok({"total": total, "success_count": success_count, "fail_count": fail_count})
+            from queue_manager import queue_manager
+            label = f"태그 분석 (봇 대표: {bot_name}/{char_name or '전체'})"
+            item = await queue_manager.add_item("tag_analysis", label, {
+                "source": "bot_rep", "bot": bot_name, "character": char_name,
+                "filenames": body.get("filenames", []),
+            })
+            return _json_ok({"success": True, "item_id": item.id})
         except Exception as e:
-            print(f"[BOT_MODE] 일괄 분석 오류: {e}")
+            print(f"[BOT_MODE] 일괄 분석 큐 추가 오류: {e}")
             traceback.print_exc()
             return _json_error(str(e))
 
@@ -1011,7 +964,7 @@ class BotMode:
             return _json_error(str(e))
 
     async def handle_batch_analyze_utility(self, request):
-        """POST /api/bot_mode/batch_analyze_utility - 유틸리티 이미지 일괄 태그 분석."""
+        """POST /api/bot_mode/batch_analyze_utility - 유틸리티 이미지 일괄 태그 분석 → 큐에 추가."""
         try:
             body = await request.json()
             bot_name = body.get("bot", "").strip()
@@ -1019,52 +972,19 @@ class BotMode:
             if not bot_name:
                 return _json_error("봇 이름이 필요합니다.")
 
-            reps = self._get_utility_image_paths(bot_name, char_name)
-            only_filenames = body.get("filenames", [])
-            if only_filenames:
-                reps = [r for r in reps if r["filename"] in only_filenames]
-            if not reps:
-                return _json_ok({"total": 0, "success_count": 0, "fail_count": 0})
-
             asset_tool = self._asset_tool
             if not asset_tool or not asset_tool.workflow_source_path:
                 return _json_error("태그 분석 워크플로우 경로가 설정되지 않았습니다")
 
-            total = len(reps)
-            success_count = 0
-            fail_count = 0
-            for i, rep in enumerate(reps):
-                try:
-                    with open(rep["filepath"], "rb") as f:
-                        image_data = f.read()
-                    analyze_result = await asset_tool.analyze_image(image_data, "expressions")
-                    tags = analyze_result.get("tags", [])
-                    positive = ", ".join(tags) if tags else ""
-
-                    base = os.path.splitext(rep["filename"])[0]
-                    char_dir = os.path.join(BOT_DIR, bot_name, rep["character"])
-                    prompt_path = os.path.join(char_dir, f"{base}_prompt.json")
-                    existing = {}
-                    if os.path.isfile(prompt_path):
-                        try:
-                            with open(prompt_path, "r", encoding="utf-8") as pf:
-                                existing = json.load(pf)
-                        except Exception:
-                            pass
-                    existing["prompt"] = positive
-                    existing.setdefault("negative", "")
-                    with open(prompt_path, "w", encoding="utf-8") as pf:
-                        json.dump(existing, pf, ensure_ascii=False, indent=2)
-                    success_count += 1
-                    print(f"[BOT_MODE] 유틸리티 분석 완료 ({i+1}/{total}): {rep['character']}/{rep['filename']} ({len(tags)}개 태그)")
-                except Exception as e:
-                    fail_count += 1
-                    print(f"[BOT_MODE] 유틸리티 분석 실패 ({i+1}/{total}): {rep['character']}/{rep['filename']} - {e}")
-                    traceback.print_exc()
-
-            return _json_ok({"total": total, "success_count": success_count, "fail_count": fail_count})
+            from queue_manager import queue_manager
+            label = f"태그 분석 (봇 유틸: {bot_name})"
+            item = await queue_manager.add_item("tag_analysis", label, {
+                "source": "bot_utility", "bot": bot_name, "character": char_name,
+                "filenames": body.get("filenames", []),
+            })
+            return _json_ok({"success": True, "item_id": item.id})
         except Exception as e:
-            print(f"[BOT_MODE] 유틸리티 일괄 분석 오류: {e}")
+            print(f"[BOT_MODE] 유틸리티 분석 큐 추가 오류: {e}")
             traceback.print_exc()
             return _json_error(str(e))
 
@@ -1116,7 +1036,7 @@ class BotMode:
             return _json_error(str(e))
 
     async def handle_analyze_single(self, request):
-        """POST /api/bot_mode/analyze_single - 단일 이미지 태그 분석."""
+        """POST /api/bot_mode/analyze_single - 단일 이미지 태그 분석 → 큐에 추가."""
         try:
             body = await request.json()
             bot_name = body.get("bot", "").strip()
@@ -1125,41 +1045,18 @@ class BotMode:
             if not bot_name or not char_name or not filename:
                 return _json_error("봇, 캐릭터, 파일명이 필요합니다.")
 
-            filepath = os.path.join(BOT_DIR, bot_name, char_name, filename)
-            filepath = os.path.normpath(filepath)
-            if not filepath.startswith(os.path.normpath(BOT_DIR)):
-                return _json_error("잘못된 경로입니다.")
-            if not os.path.isfile(filepath):
-                return _json_error("파일을 찾을 수 없습니다.")
-
             asset_tool = self._asset_tool
             if not asset_tool or not asset_tool.workflow_source_path:
                 return _json_error("태그 분석 워크플로우 경로가 설정되지 않았습니다")
 
-            with open(filepath, "rb") as f:
-                image_data = f.read()
-            analyze_result = await asset_tool.analyze_image(image_data, "expressions")
-            tags = analyze_result.get("tags", [])
-            positive = ", ".join(tags) if tags else ""
-
-            base = os.path.splitext(filename)[0]
-            char_dir = os.path.join(BOT_DIR, bot_name, char_name)
-            prompt_path = os.path.join(char_dir, f"{base}_prompt.json")
-            existing = {}
-            if os.path.isfile(prompt_path):
-                try:
-                    with open(prompt_path, "r", encoding="utf-8") as pf:
-                        existing = json.load(pf)
-                except Exception:
-                    pass
-            existing["prompt"] = positive
-            existing.setdefault("negative", "")
-            with open(prompt_path, "w", encoding="utf-8") as pf:
-                json.dump(existing, pf, ensure_ascii=False, indent=2)
-
-            return _json_ok({"tags": tags, "prompt": positive, "tags_count": len(tags)})
+            from queue_manager import queue_manager
+            label = f"태그 분석 (봇: {bot_name}/{char_name}/{filename})"
+            item = await queue_manager.add_item("tag_analysis", label, {
+                "source": "bot_single", "bot": bot_name, "character": char_name, "filename": filename,
+            })
+            return _json_ok({"success": True, "item_id": item.id})
         except Exception as e:
-            print(f"[BOT_MODE] 단일 이미지 분석 오류: {e}")
+            print(f"[BOT_MODE] 단일 분석 큐 추가 오류: {e}")
             traceback.print_exc()
             return _json_error(str(e))
 

@@ -119,7 +119,8 @@ DEFAULT_CONFIG = {
         "bot_lora_training": 2,
         "instance_lora_analysis": 3,
         "instance_lora_training": 4,
-        "asset_generation": 5,
+        "tag_analysis": 5,
+        "asset_generation": 6,
     },
 }
 
@@ -4380,8 +4381,7 @@ async def handle_api_asset_mode_cancel_analyze(request: web.Request) -> web.Resp
     return web.json_response({"success": True})
 
 async def handle_api_asset_mode_batch_analyze(request: web.Request) -> web.Response:
-    """대표이미지 일괄 태그 분석."""
-    global _asset_analyze_cancel
+    """대표이미지 일괄 태그 분석 → 큐에 추가."""
     if not asset_tool.workflow_source_path:
         return web.json_response({"success": False, "error": "태그 분석 워크플로우 경로가 설정되지 않았습니다"}, status=400)
     try:
@@ -4394,73 +4394,19 @@ async def handle_api_asset_mode_batch_analyze(request: web.Request) -> web.Respo
         if not reps:
             return web.json_response({"success": True, "results": [], "total": 0, "success_count": 0, "fail_count": 0})
 
-        _asset_analyze_cancel = False
-        results = []
-        success_count = 0
-        fail_count = 0
-        total = len(reps)
-
-        for i, rep in enumerate(reps):
-            if _asset_analyze_cancel:
-                print(f"[ASSET_MODE] 일괄 분석 중지됨 ({i}/{total} 완료)")
-                break
-            await notify_frontend("asset_mode_batch_progress", {
-                "current": i + 1, "total": total,
-                "outfit": rep["outfit"], "expression": rep["expression"],
-            })
-            try:
-                with open(rep["filepath"], "rb") as f:
-                    image_data = f.read()
-                analyze_result = await asset_tool.analyze_image(image_data, "expressions")
-                tags = analyze_result.get("tags", [])
-                positive = ", ".join(tags) if tags else ""
-
-                # _prompt.json 저장
-                img_dir = os.path.dirname(rep["filepath"])
-                prompt_path = os.path.join(img_dir, f"{os.path.splitext(rep['filename'])[0]}_prompt.json")
-                existing = {}
-                if os.path.isfile(prompt_path):
-                    try:
-                        with open(prompt_path, "r", encoding="utf-8") as pf:
-                            existing = json.load(pf)
-                    except Exception:
-                        pass
-                existing["positive"] = positive
-                existing.setdefault("negative", "")
-                existing.setdefault("character", character)
-                existing.setdefault("appearance", "")
-                existing.setdefault("outfit", rep["outfit"])
-                existing.setdefault("expression", rep["expression"])
-                with open(prompt_path, "w", encoding="utf-8") as pf:
-                    json.dump(existing, pf, ensure_ascii=False, indent=2)
-
-                results.append({"outfit": rep["outfit"], "expression": rep["expression"], "filename": rep["filename"], "tags_count": len(tags)})
-                success_count += 1
-                print(f"[ASSET_MODE] 대표이미지 분석 완료 ({i+1}/{total}): {rep['filename']} ({len(tags)}개 태그)")
-            except Exception as e:
-                fail_count += 1
-                results.append({"outfit": rep["outfit"], "expression": rep["expression"], "filename": rep["filename"], "tags_count": 0, "error": str(e)})
-                print(f"[ASSET_MODE] 대표이미지 분석 실패 ({i+1}/{total}): {rep['filename']} - {e}")
-                import traceback
-                traceback.print_exc()
-
-        return web.json_response({
-            "success": True,
-            "results": results,
-            "total": total,
-            "success_count": success_count,
-            "fail_count": fail_count,
+        label = f"태그 분석 (에셋: {character}, {len(reps)}장)"
+        item = await queue_manager.add_item("tag_analysis", label, {
+            "source": "asset_batch", "character": character,
         })
+        return web.json_response({"success": True, "item_id": item.id, "total": len(reps)})
     except Exception as e:
-        print(f"[ASSET_MODE] 일괄 분석 오류: {e}")
-        import traceback
+        print(f"[ASSET_MODE] 일괄 분석 큐 추가 오류: {e}")
         traceback.print_exc()
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 
 async def handle_api_asset_mode_analyze_selected(request: web.Request) -> web.Response:
-    """선택 이미지 태그 분석 + _prompt.json 저장."""
-    global _asset_analyze_cancel
+    """선택 이미지 태그 분석 → 큐에 추가."""
     if not asset_tool.workflow_source_path:
         return web.json_response({"success": False, "error": "태그 분석 워크플로우 경로가 설정되지 않았습니다"}, status=400)
     try:
@@ -4470,90 +4416,13 @@ async def handle_api_asset_mode_analyze_selected(request: web.Request) -> web.Re
         if not character or not images:
             return web.json_response({"success": False, "error": "character와 images가 필요합니다"}, status=400)
 
-        _asset_analyze_cancel = False
-
-        total = len(images)
-        success_count = 0
-        fail_count = 0
-        results = []
-
-        for i, img_info in enumerate(images):
-            if _asset_analyze_cancel:
-                print(f"[ASSET_MODE] 선택 분석 중지됨 ({i}/{total} 완료)")
-                break
-            outfit = img_info.get("outfit", "")
-            expression = img_info.get("expression", "")
-            filename = img_info.get("filename", "")
-            if not outfit or not expression or not filename:
-                fail_count += 1
-                results.append({"filename": filename, "tags_count": 0, "error": "필드 누락"})
-                continue
-
-            await notify_frontend("asset_mode_selected_progress", {
-                "current": i + 1, "total": total,
-                "outfit": outfit, "expression": expression, "filename": filename,
-            })
-
-            try:
-                from modes.asset_mode import ASSET_DIR
-                filepath = os.path.join(ASSET_DIR,
-                    asset_mode._safe_dirname(character),
-                    asset_mode._safe_dirname(outfit),
-                    asset_mode._safe_dirname(expression),
-                    filename)
-
-                if not os.path.isfile(filepath):
-                    fail_count += 1
-                    results.append({"filename": filename, "tags_count": 0, "error": "파일 없음"})
-                    print(f"[ASSET_MODE] 선택 분석: 파일 없음 - {filepath}")
-                    continue
-
-                with open(filepath, "rb") as f:
-                    image_data = f.read()
-
-                analyze_result = await asset_tool.analyze_image(image_data, "expressions")
-                tags = analyze_result.get("tags", [])
-                positive = ", ".join(tags) if tags else ""
-
-                # _prompt.json 저장
-                prompt_path = os.path.join(os.path.dirname(filepath),
-                    f"{os.path.splitext(filename)[0]}_prompt.json")
-                existing = {}
-                if os.path.isfile(prompt_path):
-                    try:
-                        with open(prompt_path, "r", encoding="utf-8") as pf:
-                            existing = json.load(pf)
-                    except Exception:
-                        pass
-                existing["positive"] = positive
-                existing.setdefault("negative", "")
-                existing.setdefault("character", character)
-                existing.setdefault("appearance", "")
-                existing.setdefault("outfit", outfit)
-                existing.setdefault("expression", expression)
-                with open(prompt_path, "w", encoding="utf-8") as pf:
-                    json.dump(existing, pf, ensure_ascii=False, indent=2)
-
-                results.append({"filename": filename, "tags_count": len(tags)})
-                success_count += 1
-                print(f"[ASSET_MODE] 선택 분석 완료 ({i+1}/{total}): {filename} ({len(tags)}개 태그)")
-            except Exception as e:
-                fail_count += 1
-                results.append({"filename": filename, "tags_count": 0, "error": str(e)})
-                print(f"[ASSET_MODE] 선택 분석 실패 ({i+1}/{total}): {filename} - {e}")
-                import traceback
-                traceback.print_exc()
-
-        return web.json_response({
-            "success": True,
-            "results": results,
-            "total": total,
-            "success_count": success_count,
-            "fail_count": fail_count,
+        label = f"태그 분석 (에셋 선택: {character}, {len(images)}장)"
+        item = await queue_manager.add_item("tag_analysis", label, {
+            "source": "asset_selected", "character": character, "images": images,
         })
+        return web.json_response({"success": True, "item_id": item.id, "total": len(images)})
     except Exception as e:
-        print(f"[ASSET_MODE] 선택 분석 오류: {e}")
-        import traceback
+        print(f"[ASSET_MODE] 선택 분석 큐 추가 오류: {e}")
         traceback.print_exc()
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
@@ -6915,64 +6784,20 @@ async def handle_api_instance_lora_images_delete(request):
 
 
 async def handle_api_instance_lora_analyze(request):
+    """인스턴스 LoRA 이미지 분석 → 큐에 추가."""
     try:
         body = await request.json()
         lora_id = body.get("id", "").strip()
         if not lora_id:
             return web.json_response({"success": False, "error": "id 필수"}, status=400)
 
-        from modes.instance_lora_mode import list_images, save_image_prompt, _safe_dirname
-        lora_id = _safe_dirname(lora_id)
-        images = list_images(lora_id)
-        if not images:
-            return web.json_response({"success": False, "error": "분석할 이미지가 없습니다"}, status=400)
-
-        success_count = 0
-        fail_count = 0
-        for i, filename in enumerate(images):
-            try:
-                await notify_frontend("instance_lora_analyze_progress", {
-                    "id": lora_id, "current": i + 1, "total": len(images), "filename": filename
-                })
-
-                from modes.instance_lora_mode import get_image_path
-                img_path = get_image_path(lora_id, filename)
-                if not os.path.isfile(img_path):
-                    print(f"[INSTANCE_LORA_API] 분석할 이미지 없음: {img_path}")
-                    fail_count += 1
-                    continue
-
-                with open(img_path, "rb") as f:
-                    image_data = f.read()
-
-                analysis = await asset_tool.analyze_image(image_data, "expressions")
-                if analysis.get("success"):
-                    tags = analysis.get("tags", [])
-                    positive = ", ".join(tags)
-                    prompt_data = {
-                        "positive": positive,
-                        "negative": "",
-                        "original_positive": positive,
-                        "original_negative": "",
-                    }
-                    save_image_prompt(lora_id, filename, prompt_data)
-                    success_count += 1
-                else:
-                    print(f"[INSTANCE_LORA_API] 태그 분석 실패: {filename}")
-                    fail_count += 1
-            except Exception as e:
-                print(f"[INSTANCE_LORA_API] 이미지 분석 오류: {filename} - {e}")
-                traceback.print_exc()
-                fail_count += 1
-
-        return web.json_response({
-            "success": True,
-            "total": len(images),
-            "success_count": success_count,
-            "fail_count": fail_count,
+        label = f"태그 분석 (인스턴스: {lora_id})"
+        item = await queue_manager.add_item("tag_analysis", label, {
+            "source": "instance_lora", "lora_id": lora_id,
         })
+        return web.json_response({"success": True, "item_id": item.id})
     except Exception as e:
-        print(f"[INSTANCE_LORA_API] 분석 실패: {e}")
+        print(f"[INSTANCE_LORA_API] 분석 큐 추가 실패: {e}")
         traceback.print_exc()
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
@@ -7312,7 +7137,7 @@ async def handle_api_queue_add(request):
         label = body.get("label", "")
         params = body.get("params", {})
 
-        if item_type not in ("asset_generation", "asset_lora_training", "bot_lora_training", "instance_lora_training", "instance_lora_analysis"):
+        if item_type not in ("asset_generation", "asset_lora_training", "bot_lora_training", "instance_lora_training", "instance_lora_analysis", "tag_analysis"):
             return web.json_response({"success": False, "error": f"알 수 없는 타입: {item_type}"}, status=400)
 
         item = await queue_manager.add_item(item_type, label, params)
