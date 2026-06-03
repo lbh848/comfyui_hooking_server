@@ -114,6 +114,13 @@ DEFAULT_CONFIG = {
     "dwpose_model_cache_dir": "",  # 모델 캐시 디렉토리 (빈값=기본경로)
     "backup_max_count": 500,  # 워크플로우 백업 최대 보관 수
     "webp_lossless": False,
+    "queue_type_order": {
+        "asset_lora_training": 1,
+        "bot_lora_training": 2,
+        "instance_lora_analysis": 3,
+        "instance_lora_training": 4,
+        "asset_generation": 5,
+    },
 }
 
 # 워크플로우 백업 최대 보관 수 (기본값, config에서 덮어씀)
@@ -2687,6 +2694,15 @@ async def handle_api_config(request: web.Request) -> web.Response:
             for key in body:
                 if key in DEFAULT_CONFIG:
                     app_config[key] = body[key]
+
+            # 큐 타입 순서 검증: 분석이 항상 학습보다 먼저여야 함
+            qto = app_config.get("queue_type_order", {})
+            analysis_order = qto.get("instance_lora_analysis", 99)
+            training_order = qto.get("instance_lora_training", 99)
+            if training_order <= analysis_order:
+                print(f"[CONFIG] 인스턴스 LoRA 분석/학습 순서 자동 교정: 분석={analysis_order}, 학습={training_order}")
+                qto["instance_lora_training"] = analysis_order + 1
+                app_config["queue_type_order"] = qto
 
             # ComfyUI 포트 업데이트
             global REAL_COMFY_PORT, REAL_COMFY_ILLUST_PORT

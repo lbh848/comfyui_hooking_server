@@ -5109,6 +5109,7 @@
                     <button class="settings-tab-btn" onclick="switchSettingsTab('illustration')">삽화</button>
                     <button class="settings-tab-btn" onclick="switchSettingsTab('asset')">에셋</button>
                     <button class="settings-tab-btn" onclick="switchSettingsTab('lora')">로라</button>
+                    <button class="settings-tab-btn" onclick="switchSettingsTab('queue')">큐</button>
                 </div>
 
                 <!-- Tab 1: 공통설정 -->
@@ -5711,6 +5712,25 @@
                         </div>
                         <button onclick="scanUntrackedLoras()" style="margin-top: 6px; padding: 6px 14px; font-size: 12px; background: var(--bg-tertiary, #2a2a3e); border: 1px solid var(--border-color, #3a3a4e); border-radius: 6px; color: var(--text-secondary, #aaa); cursor: pointer;">비추적 로라 제거</button>
                         <button onclick="openLoraFolder()" style="margin-top: 6px; padding: 6px 14px; font-size: 12px; background: var(--bg-tertiary, #2a2a3e); border: 1px solid var(--border-color, #3a3a4e); border-radius: 6px; color: var(--text-secondary, #aaa); cursor: pointer;">📁 폴더 열기</button>
+                    </div>
+                </div>
+
+                <!-- Tab: 큐 우선순위 -->
+                <div class="settings-tab-panel" id="settings-tab-queue">
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="title">작업 큐 우선순위</div>
+                            <div class="desc">큐에 여러 작업이 대기 중일 때 실행 순서를 결정합니다. 위쪽이 먼저 실행됩니다.</div>
+                        </div>
+                    </div>
+                    <div style="margin-top: 8px; padding: 10px 14px; background: var(--bg-tertiary, #2a2a3e); border-radius: 8px; border: 1px solid var(--border-color, #3a3a4e); color: var(--text-secondary, #aaa); font-size: 0.85rem;">
+                        <span style="font-weight: 600;">삽화 생성</span> — 항상 1순위 (고정)
+                    </div>
+                    <div id="queue-type-list" style="margin-top: 8px; display: flex; flex-direction: column; gap: 4px;">
+                        <!-- JS에서 동적 렌더링 -->
+                    </div>
+                    <div style="margin-top: 10px; font-size: 0.78rem; color: var(--text-secondary, #aaa); line-height: 1.5;">
+                        인스턴스 LoRA 분석은 항상 인스턴스 LoRA 학습보다 먼저 실행됩니다 (순서 교환 불가).
                     </div>
                 </div>
             </div>
@@ -7392,6 +7412,8 @@
             document.getElementById('setting-lora-load-path').value = basePath || loraLoadPath;
 
             document.getElementById('settings-modal').classList.add('visible');
+            // 큐 우선순위 리스트 렌더링
+            renderQueueTypeList();
             // 항상 첫 번째 탭으로 시작
             switchSettingsTab('common');
         }
@@ -7459,6 +7481,128 @@
                 statusEl.className = 'toggle-status off';
                 valueRow.style.display = 'none';
             }
+        }
+
+        // ─── 큐 우선순위 설정 ───
+        const QUEUE_TYPE_LABELS = {
+            asset_lora_training: '에셋 LoRA 학습',
+            bot_lora_training: '봇 LoRA 학습',
+            instance_lora_analysis: '인스턴스 LoRA 분석',
+            instance_lora_training: '인스턴스 LoRA 학습',
+            asset_generation: '에셋 이미지 생성',
+        };
+
+        // 독립 항목 + 묶음 항목(분석→학습 고정)으로 구성된 정렬 목록 반환
+        function getQueueGroups() {
+            const orderMap = currentConfig.queue_type_order || {};
+            const types = Object.keys(QUEUE_TYPE_LABELS);
+            types.sort((a, b) => (orderMap[a] ?? 99) - (orderMap[b] ?? 99));
+            // 분석과 학습을 하나의 그룹으로 묶음
+            const groups = [];
+            const used = new Set();
+            for (const t of types) {
+                if (used.has(t)) continue;
+                if (t === 'instance_lora_analysis') {
+                    groups.push(['instance_lora_analysis', 'instance_lora_training']);
+                    used.add('instance_lora_analysis');
+                    used.add('instance_lora_training');
+                } else if (t === 'instance_lora_training') {
+                    // 분석이 이미 처리되지 않은 경우 (비정상), 강제로 묶음
+                    groups.push(['instance_lora_analysis', 'instance_lora_training']);
+                    used.add('instance_lora_analysis');
+                    used.add('instance_lora_training');
+                } else {
+                    groups.push([t]);
+                    used.add(t);
+                }
+            }
+            return groups;
+        }
+
+        function getSortedQueueTypes() {
+            return getQueueGroups().flat();
+        }
+
+        function renderQueueTypeList() {
+            const container = document.getElementById('queue-type-list');
+            if (!container) return;
+            const groups = getQueueGroups();
+            container.innerHTML = '';
+            let rank = 2; // 삽화가 1순위이므로 2부터
+            groups.forEach((group, gIdx) => {
+                const isFirst = gIdx === 0;
+                const isLast = gIdx === groups.length - 1;
+                const isPair = group.length === 2;
+
+                const block = document.createElement('div');
+                block.style.cssText = isPair
+                    ? 'display:flex;flex-direction:column;border-radius:8px;border:1px solid var(--accent,#6c8aff);overflow:hidden;'
+                    : '';
+
+                group.forEach((type, subIdx) => {
+                    const row = document.createElement('div');
+                    row.style.cssText = isPair
+                        ? 'display:flex;align-items:center;gap:8px;padding:8px 14px;background:var(--bg-tertiary,#2a2a3e);'
+                        : 'display:flex;align-items:center;gap:8px;padding:10px 14px;background:var(--bg-tertiary,#2a2a3e);border-radius:8px;border:1px solid var(--border-color,#3a3a4e);';
+
+                    const labelHTML = isPair && subIdx === 0
+                        ? `<span style="font-weight:700;color:var(--accent);min-width:24px;text-align:center;grid-row:span 2;">${rank}</span>`
+                        : isPair && subIdx === 1
+                        ? `<span style="min-width:24px;"></span>`
+                        : `<span style="font-weight:700;color:var(--accent);min-width:24px;text-align:center;">${rank}</span>`;
+
+                    // 묶음이면 ▲▼는 첫 줄에만, 독립이면 각 항목에
+                    let btnsHTML = '';
+                    if (isPair) {
+                        if (subIdx === 0) {
+                            btnsHTML = `
+                                <button onclick="moveQueueGroupUp(${gIdx})" ${isFirst ? 'disabled' : ''} style="padding:4px 10px;font-size:0.8rem;cursor:${isFirst ? 'not-allowed' : 'pointer'};opacity:${isFirst ? '0.3' : '1'};background:var(--bg-secondary,#1e1e2e);border:1px solid var(--border-color,#3a3a4e);border-radius:4px;color:var(--text-primary,#eee);">▲</button>
+                                <button onclick="moveQueueGroupDown(${gIdx})" ${isLast ? 'disabled' : ''} style="padding:4px 10px;font-size:0.8rem;cursor:${isLast ? 'not-allowed' : 'pointer'};opacity:${isLast ? '0.3' : '1'};background:var(--bg-secondary,#1e1e2e);border:1px solid var(--border-color,#3a3a4e);border-radius:4px;color:var(--text-primary,#eee);">▼</button>
+                            `;
+                        } else {
+                            btnsHTML = `<span style="min-width:52px;"></span>`;
+                        }
+                    } else {
+                        btnsHTML = `
+                            <button onclick="moveQueueGroupUp(${gIdx})" ${isFirst ? 'disabled' : ''} style="padding:4px 10px;font-size:0.8rem;cursor:${isFirst ? 'not-allowed' : 'pointer'};opacity:${isFirst ? '0.3' : '1'};background:var(--bg-secondary,#1e1e2e);border:1px solid var(--border-color,#3a3a4e);border-radius:4px;color:var(--text-primary,#eee);">▲</button>
+                            <button onclick="moveQueueGroupDown(${gIdx})" ${isLast ? 'disabled' : ''} style="padding:4px 10px;font-size:0.8rem;cursor:${isLast ? 'not-allowed' : 'pointer'};opacity:${isLast ? '0.3' : '1'};background:var(--bg-secondary,#1e1e2e);border:1px solid var(--border-color,#3a3a4e);border-radius:4px;color:var(--text-primary,#eee);">▼</button>
+                        `;
+                    }
+
+                    row.innerHTML = `${labelHTML}<span style="flex:1;font-size:0.88rem;">${QUEUE_TYPE_LABELS[type]}</span>${btnsHTML}`;
+                    block.appendChild(row);
+                });
+
+                // 묶음이 아니면 block 자체가 단일 row
+                if (!isPair) {
+                    container.appendChild(block);
+                } else {
+                    container.appendChild(block);
+                }
+                rank += group.length;
+            });
+        }
+
+        function moveQueueGroupUp(gIdx) {
+            const groups = getQueueGroups();
+            if (gIdx <= 0) return;
+            [groups[gIdx - 1], groups[gIdx]] = [groups[gIdx], groups[gIdx - 1]];
+            applyQueueTypeOrder(groups.flat());
+            renderQueueTypeList();
+        }
+
+        function moveQueueGroupDown(gIdx) {
+            const groups = getQueueGroups();
+            if (gIdx >= groups.length - 1) return;
+            [groups[gIdx], groups[gIdx + 1]] = [groups[gIdx + 1], groups[gIdx]];
+            applyQueueTypeOrder(groups.flat());
+            renderQueueTypeList();
+        }
+
+        function applyQueueTypeOrder(types) {
+            const orderMap = {};
+            types.forEach((t, i) => { orderMap[t] = i + 1; });
+            currentConfig.queue_type_order = orderMap;
         }
 
         function closeSettingsModal() {
@@ -7769,7 +7913,8 @@
                 instance_lora_load_path: document.getElementById('setting-lora-load-path').value.trim().replace(/\\?$/, '\\SOYA_CHAR_LORA\\SOYA_INSTANCE_LORA'),
                 batch_mode_enabled: currentConfig.batch_mode_enabled || false,
                 webp_lossless: currentConfig.webp_lossless || false,
-                workflow_filename: currentConfig.workflow_filename || ''
+                workflow_filename: currentConfig.workflow_filename || '',
+                queue_type_order: currentConfig.queue_type_order || {}
             };
 
             try {

@@ -120,20 +120,33 @@ class QueueManager:
     # ─── 내부 처리 ──────────────────────────────────────────
 
     def _resort_pending(self):
-        """대기 중인 항목을 분석 → ANIMA 학습 → SDXL 학습 순으로 재정렬"""
+        """대기 중인 항목을 config의 queue_type_order 기준으로 재정렬"""
         pending = [i for i in self.items if i.status == "pending"]
         other = [i for i in self.items if i.status != "pending"]
         pending.sort(key=self._sort_key)
         self.items = other + pending
 
-    @staticmethod
-    def _sort_key(item):
+    def _sort_key(self, item):
+        # illustration은 항상 최우선 (priority=0)
+        if item.type == "illustration":
+            return (item.priority, 0, 0, item.created_at)
+
+        # config에서 타입별 순서 읽기
+        type_order_map = {}
+        if self.get_config:
+            cfg = self.get_config()
+            type_order_map = cfg.get("queue_type_order", {})
+
+        type_order = type_order_map.get(item.type, 99)
+
+        # instance_lora_training 내에서 anima > sdxl 순서 유지
+        profile_order = 0
         if item.type == "instance_lora_training":
             profiles = item.params.get("profiles", ["anima"])
             profile = profiles[0] if profiles else "anima"
             profile_order = 0 if profile == "anima" else 1
-            return (item.priority, 1, profile_order, item.created_at)
-        return (item.priority, 0, 0, item.created_at)
+
+        return (item.priority, type_order, profile_order, item.created_at)
 
     async def _notify_queue_updated(self):
         if self.notify_frontend:
