@@ -854,6 +854,39 @@
             max-width: 680px;
         }
 
+        /* 큐 모달 아이템 */
+        .queue-modal-item {
+            display:flex; align-items:center; gap:10px;
+            padding:10px 12px; border-radius:8px;
+            background:var(--surface2); margin-bottom:6px;
+            transition:background 0.15s, transform 0.15s, opacity 0.3s;
+            border:1px solid transparent;
+        }
+        .queue-modal-item:hover { background:var(--surface3); }
+        .queue-modal-item.processing { border-color:var(--accent); }
+        .queue-modal-item.completed { opacity:0.5; }
+        .queue-modal-item.dragging { opacity:0.4; transform:scale(0.97); }
+        .queue-modal-item .qm-handle {
+            cursor:grab; color:var(--text3); font-size:1rem; padding:0 4px; user-select:none;
+        }
+        .queue-modal-item .qm-handle:active { cursor:grabbing; }
+        .queue-modal-item .qm-type {
+            font-size:0.65rem; padding:2px 6px; border-radius:4px;
+            background:var(--surface1); color:var(--text2); white-space:nowrap;
+        }
+        .queue-modal-item .qm-label {
+            flex:1; font-size:0.82rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+        }
+        .queue-modal-item .qm-progress {
+            font-size:0.7rem; color:var(--text2); min-width:36px; text-align:right;
+        }
+        .queue-modal-item .qm-actions { display:flex; gap:4px; }
+        .queue-modal-item .qm-actions button {
+            background:transparent; border:none; color:var(--text3); cursor:pointer;
+            font-size:0.8rem; padding:2px 4px; border-radius:3px;
+        }
+        .queue-modal-item .qm-actions button:hover { color:var(--text); background:var(--surface1); }
+
         .setting-row {
             display: flex;
             align-items: center;
@@ -3036,6 +3069,9 @@
             <button id="notification-bell" onclick="openNotificationBoard()" style="position:relative; background:transparent; border:none; color:var(--text2); font-size:1.2rem; cursor:pointer; padding:6px 10px; transition:color 0.2s;" onmouseenter="this.style.color='var(--text)'" onmouseleave="this.style.color='var(--text2)'">
                 &#x1F514;
                 <span id="notification-badge" style="position:absolute; top:4px; right:4px; width:8px; height:8px; background:var(--error); border-radius:50%; display:none;"></span>
+            </button>
+            <button id="queue-toggle-btn" onclick="toggleQueueModal()" style="position:relative;">📋 작업 큐
+                <span id="queue-badge" style="position:absolute; top:-2px; right:-4px; min-width:14px; height:14px; background:var(--accent); border-radius:7px; font-size:0.6rem; color:#fff; display:none; align-items:center; justify-content:center; padding:0 3px;"></span>
             </button>
             <button onclick="openSettingsModal()">⚙️ 설정</button>
             <button id="tunnel-btn" onclick="toggleTunnel()">🔗 공유</button>
@@ -5657,6 +5693,23 @@
         </div>
     </div>
 
+    <!-- 통합 큐 모달 -->
+    <div class="modal" id="queue-modal">
+        <div class="modal-content" style="max-width:520px;">
+            <div class="modal-header">
+                <h2>&#x1F4CB; 작업 큐</h2>
+                <div style="display:flex;gap:8px;align-items:center;">
+                    <button onclick="queueModalClearCompleted()" style="background:transparent;border:1px solid var(--border);color:var(--text2);padding:4px 10px;border-radius:4px;cursor:pointer;font-size:0.75rem;">완료 정리</button>
+                    <button onclick="queueModalCancelAll()" style="background:transparent;border:1px solid var(--border);color:var(--text2);padding:4px 10px;border-radius:4px;cursor:pointer;font-size:0.75rem;">전체 취소</button>
+                    <button class="modal-close" onclick="closeQueueModal()">&times;</button>
+                </div>
+            </div>
+            <div id="queue-modal-body" style="padding:12px;max-height:60vh;overflow-y:auto;min-height:80px;">
+                <div id="queue-modal-empty" style="text-align:center;color:var(--text2);padding:40px 0;font-size:0.9rem;">대기 중인 작업이 없습니다</div>
+            </div>
+        </div>
+    </div>
+
     <!-- 비추적 로라 제거 확인 모달 -->
     <div class="modal" id="untracked-lora-modal" onclick="if (event.target === this) this.classList.remove('visible')">
         <div class="modal-content" style="max-width: 600px;">
@@ -7896,6 +7949,7 @@
                 closeLightbox();
                 closePromptModal();
                 closeSettingsModal();
+                closeQueueModal();
             }
         });
 
@@ -15718,11 +15772,13 @@
             if (!confirm(msg)) return;
             await saveBotLoraConfig();
             let added = 0, failed = 0;
-            for (const ch of charsToTrain) {
+            const totalChars = charsToTrain.length;
+            for (let i = 0; i < charsToTrain.length; i++) {
+                const ch = charsToTrain[i];
                 try {
                     const resp = await fetchJSON('/api/bot_lora/training/start', {
                         method: 'POST', headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ bot: botLoraCurrentBot, project: botLoraCurrentProject, character: ch.name })
+                        body: JSON.stringify({ bot: botLoraCurrentBot, project: botLoraCurrentProject, character: ch.name, char_index: i, total_chars: totalChars })
                     });
                     if (resp.success) added++;
                     else { failed++; console.error(`[BOT_LORA] ${ch.name} 큐 추가 실패:`, resp.error); }
@@ -16582,7 +16638,9 @@
             const stepEl = document.getElementById('bot-lora-progress-step');
             const timeEl = document.getElementById('bot-lora-progress-time');
             const charEl = document.getElementById('bot-lora-progress-char');
-            const charInfo = data.character ? `${data.character} (${(data.char_index || 0) + 1}/${data.total_chars || '?'})` : '';
+            const charInfo = data.character
+                ? (data.total_chars ? `${data.character} (${(data.char_index || 0) + 1}/${data.total_chars})` : data.character)
+                : '';
             if (charEl) charEl.textContent = charInfo;
 
             if (phase === 'preparing') {
@@ -23690,6 +23748,7 @@
 
         function renderAssetQueueUI() {
             const container = document.getElementById('asset-queue-container');
+            if (!container) { console.error('[QUEUE] renderAssetQueueUI: asset-queue-container 요소 없음'); return; }
             const processing = assetQueue.find(q => q.status === 'processing');
             const pending = assetQueue.filter(q => q.status === 'pending');
             const hasActive = processing || pending.length > 0;
@@ -23716,6 +23775,10 @@
             const barSpinner = document.getElementById('queue-bar-spinner');
             const barStopBtn = document.getElementById('queue-bar-stop-btn');
             const bar = document.getElementById('asset-queue-bar');
+            if (!bar || !barLabel || !barProgressText || !barProgressBar || !barWaiting || !barSpinner || !barStopBtn) {
+                console.error('[QUEUE] renderAssetQueueUI: 큐 바 하위 요소 누락', { bar: !!bar, barLabel: !!barLabel, barProgressText: !!barProgressText, barProgressBar: !!barProgressBar, barWaiting: !!barWaiting, barSpinner: !!barSpinner, barStopBtn: !!barStopBtn });
+                return;
+            }
 
             if (processing) {
                 barLabel.textContent = processing.label;
@@ -23755,6 +23818,7 @@
 
             // ─── 패널 ───
             const panelBody = document.getElementById('asset-queue-panel-body');
+            if (!panelBody) { console.error('[QUEUE] renderAssetQueueUI: asset-queue-panel-body 요소 없음'); return; }
             panelBody.innerHTML = '';
             assetQueue.forEach(item => {
                 const ts = getTypeStyle(item.type);
@@ -23780,13 +23844,24 @@
                 if (!statusText && item.status === 'pending') statusText = '대기';
                 if (!statusText && item.status === 'completed') statusText = '완료';
 
-                // 학습 진행률 상세 (step/total)
+                // 학습 진행률 상세 (phase별 표시)
+                let phaseHint = '';
                 if (item.status === 'processing' && item.progress_detail) {
                     const d = item.progress_detail;
-                    if (d.step && d.total) {
+                    if (d.phase === 'generating' || d.phase === 'preview') {
+                        const cur = d.current || d.value || 0;
+                        const tot = d.total || d.max || 0;
+                        statusText = '프리뷰';
+                        phaseHint = '<span style="font-size:0.65rem;color:var(--text3);margin-left:2px;">' + cur + '/' + tot + '</span>';
+                    } else if (d.phase === 'training') {
+                        if (d.step !== undefined && d.total) {
+                            statusText = '학습';
+                            phaseHint = '<span style="font-size:0.65rem;color:var(--text3);margin-left:2px;">' + d.step + '/' + d.total + '</span>';
+                        } else if (d.step !== undefined) {
+                            statusText = '학습 step ' + d.step;
+                        }
+                    } else if (d.step && d.total) {
                         statusText = d.step + '/' + d.total;
-                    } else if (d.phase === 'training' && d.step !== undefined) {
-                        statusText = 'step ' + d.step;
                     }
                 }
 
@@ -23804,7 +23879,7 @@
                     '<div class="item-icon">' + icon + '</div>' +
                     '<div class="item-label" style="' + (labelColor ? 'color:' + labelColor : '') + '">' + escapeHtml(item.label) + '</div>' +
                     (item.status === 'processing' ? '<div class="item-progress-bar"><div class="item-progress-bar-inner" style="width:' + Math.round(item.progress || 0) + '%"></div></div>' : '') +
-                    '<div class="item-status">' + statusText + '</div>' +
+                    '<div class="item-status">' + statusText + phaseHint + '</div>' +
                     actionBtn;
                 panelBody.appendChild(row);
             });
@@ -23959,6 +24034,7 @@
         }
 
         async function stopAssetQueue() {
+            if (!confirm('대기 중인 모든 작업을 취소하시겠습니까?')) return;
             try {
                 await fetchJSON('/api/queue/cancel_all', {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -24141,9 +24217,220 @@
             }
         }
 
+        // ─── 통합 큐 모달 ──────────────────────────────────────
+        let queueModalOpen = false;
+        let queueModalData = []; // 큐 모달 전용 상태
+
+        function toggleQueueModal() {
+            if (queueModalOpen) closeQueueModal();
+            else openQueueModal();
+        }
+        async function openQueueModal() {
+            queueModalOpen = true;
+            document.getElementById('queue-modal').classList.add('visible');
+            // 서버에서 최신 큐 상태를 가져와 모달 데이터 동기화
+            try {
+                const data = await fetchJSON('/api/queue/status');
+                if (data && data.items) {
+                    const prevStatus = {};
+                    queueModalData.forEach(i => prevStatus[i.id] = i.status);
+                    queueModalData = data.items.map(item => ({
+                        id: item.id,
+                        type: item.type || '',
+                        label: item.label || '',
+                        status: item.status,
+                        progress: item.progress || 0,
+                        progress_detail: item.progress_detail || {},
+                        _completedLocalTs: null,
+                    }));
+                    updateQueueBadge();
+                }
+            } catch (e) { console.error('[QUEUE] 모달 열 때 상태 로드 실패:', e); }
+            renderQueueModal();
+        }
+        function closeQueueModal() {
+            queueModalOpen = false;
+            const modal = document.getElementById('queue-modal');
+            if (modal) modal.classList.remove('visible');
+            else console.error('[QUEUE] closeQueueModal: queue-modal 요소 없음');
+        }
+
+        function updateQueueBadge() {
+            const pending = queueModalData.filter(i => i.status === 'pending').length;
+            const processing = queueModalData.filter(i => i.status === 'processing').length;
+            const badge = document.getElementById('queue-badge');
+            if (!badge) { console.error('[QUEUE] updateQueueBadge: queue-badge 요소 없음'); return; }
+            if (pending + processing > 0) {
+                badge.textContent = pending + processing;
+                badge.style.display = 'flex';
+            } else {
+                badge.style.display = 'none';
+            }
+        }
+
+        const _queueTypeLabels = {
+            illustration: '삽화', asset_generation: '에셋',
+            asset_lora_training: '에셋로라', bot_lora_training: '봇로라',
+            instance_lora_training: '인스턴스로라',
+        };
+
+        function renderQueueModal() {
+            const body = document.getElementById('queue-modal-body');
+            if (!body) { console.error('[QUEUE] renderQueueModal: queue-modal-body 요소 없음'); return; }
+            let empty = document.getElementById('queue-modal-empty');
+            // innerHTML='' 로 삭제된 경우 재생성
+            if (!empty) {
+                console.warn('[QUEUE] renderQueueModal: queue-modal-empty 요소가 DOM에서 사라짐, 재생성');
+                empty = document.createElement('div');
+                empty.id = 'queue-modal-empty';
+                empty.style.cssText = 'text-align:center;color:var(--text2);padding:40px 0;font-size:0.9rem;';
+                empty.textContent = '대기 중인 작업이 없습니다';
+            }
+            const items = queueModalData;
+            if (!items.length) {
+                body.innerHTML = '';
+                body.appendChild(empty);
+                empty.style.display = 'block';
+                return;
+            }
+            empty.style.display = 'none';
+            body.innerHTML = '';
+            body.appendChild(empty);
+            try {
+            items.forEach((item, idx) => {
+                const el = document.createElement('div');
+                el.className = 'queue-modal-item' + (item.status === 'processing' ? ' processing' : '') + (item.status === 'completed' ? ' completed' : '');
+                el.dataset.queueModalIdx = idx;
+                const isPending = item.status === 'pending';
+                const isProcessing = item.status === 'processing';
+                const pct = item.progress ? Math.round(item.progress) : 0;
+                let progressLabel = pct + '%';
+                if (isProcessing && item.progress_detail) {
+                    const d = item.progress_detail;
+                    if (d.phase === 'generating' || d.phase === 'preview') {
+                        const cur = d.current || d.value || 0;
+                        const tot = d.total || d.max || 0;
+                        progressLabel = '프리뷰 <span style="font-size:0.65rem;color:var(--text3);">' + cur + '/' + tot + '</span>';
+                    } else if (d.phase === 'training' && d.step !== undefined && d.total) {
+                        progressLabel = pct + '% <span style="font-size:0.65rem;color:var(--text3);">' + d.step + '/' + d.total + '</span>';
+                    }
+                }
+                const typeLabel = _queueTypeLabels[item.type] || item.type || '';
+                el.innerHTML = `
+                    <span class="qm-handle" title="드래그하여 이동">${isPending ? '⠿' : '&nbsp;'}</span>
+                    <span class="qm-type">${typeLabel}</span>
+                    <span class="qm-label">${escapeHtml(item.label || '')}</span>
+                    <span class="qm-progress">${isProcessing ? progressLabel : (item.status === 'completed' ? '✓' : item.status === 'failed' ? '✗' : item.status === 'cancelled' ? '—' : '')}</span>
+                    <span class="qm-actions">
+                        ${isPending ? '<button onclick="queueModalMoveUp('+idx+')" title="위로">▲</button><button onclick="queueModalMoveDown('+idx+')" title="아래로">▼</button>' : ''}
+                        ${isPending ? '<button onclick="queueModalCancelItem(\''+item.id+'\')" title="취소">✕</button>' : ''}
+                    </span>
+                `;
+                // 드래그 핸들
+                if (isPending) {
+                    const handle = el.querySelector('.qm-handle');
+                    handle.addEventListener('mousedown', (e) => queueModalDragStart(e, idx));
+                }
+                body.appendChild(el);
+            });
+            } catch (err) { console.error('[QUEUE] renderQueueModal 아이템 렌더링 실패:', err, 'items:', items); }
+        }
+
+        // 완료/실패 항목 3초 후 자동 제거
+        let _queueAutoRemoveTimers = {};
+        function queueModalAutoRemoveCompleted() {
+            const now = Date.now();
+            queueModalData = queueModalData.filter(item => {
+                if (item.status === 'completed' || item.status === 'failed' || item.status === 'cancelled') {
+                    const elapsed = item._completedLocalTs ? now - item._completedLocalTs : 999999;
+                    if (elapsed < 3000) return true; // 3초 유지
+                    delete _queueAutoRemoveTimers[item.id];
+                    return false;
+                }
+                return true;
+            });
+        }
+
+        // 드래그 앤 드롭 (pending 항목끼리만)
+        let _queueDragIdx = null;
+        function queueModalDragStart(e, idx) {
+            _queueDragIdx = idx;
+            const item = queueModalData[idx];
+            if (!item || item.status !== 'pending') return;
+            e.preventDefault();
+            const body = document.getElementById('queue-modal-body');
+            if (!body) { console.error('[QUEUE] queueModalDragStart: queue-modal-body 요소 없음'); return; }
+            const el = body.children[idx];
+            if (el) el.classList.add('dragging');
+
+            const onMove = (ev) => {
+                const items = body.querySelectorAll('.queue-modal-item');
+                items.forEach((child, ci) => {
+                    if (ci === idx) return;
+                    const rect = child.getBoundingClientRect();
+                    const mid = rect.top + rect.height / 2;
+                    if (ev.clientY < mid && ci > idx) child.style.borderTop = '2px solid var(--accent)';
+                    else if (ev.clientY > mid && ci < idx) child.style.borderBottom = '2px solid var(--accent)';
+                    else { child.style.borderTop = ''; child.style.borderBottom = ''; }
+                });
+            };
+            const onUp = (ev) => {
+                document.removeEventListener('mousemove', onMove);
+                document.removeEventListener('mouseup', onUp);
+                body.querySelectorAll('.queue-modal-item').forEach(c => { c.classList.remove('dragging'); c.style.borderTop = ''; c.style.borderBottom = ''; });
+                // 타겟 인덱스 찾기
+                const items = body.querySelectorAll('.queue-modal-item');
+                let targetIdx = idx;
+                items.forEach((child, ci) => {
+                    if (ci === idx) return;
+                    const rect = child.getBoundingClientRect();
+                    const mid = rect.top + rect.height / 2;
+                    if (ev.clientY < mid && ci < idx) targetIdx = Math.min(targetIdx, ci);
+                    else if (ev.clientY > mid && ci > idx) targetIdx = Math.max(targetIdx, ci);
+                });
+                if (targetIdx !== idx && queueModalData[targetIdx]?.status === 'pending') {
+                    const [moved] = queueModalData.splice(idx, 1);
+                    queueModalData.splice(targetIdx, 0, moved);
+                }
+                renderQueueModal();
+            };
+            document.addEventListener('mousemove', onMove);
+            document.addEventListener('mouseup', onUp);
+        }
+
+        function queueModalMoveUp(idx) {
+            // pending 항목 중 이전 항목 찾기
+            const pendingIndices = queueModalData.map((i, ci) => i.status === 'pending' ? ci : -1).filter(ci => ci >= 0);
+            const posInPending = pendingIndices.indexOf(idx);
+            if (posInPending <= 0) return;
+            const prevIdx = pendingIndices[posInPending - 1];
+            [queueModalData[idx], queueModalData[prevIdx]] = [queueModalData[prevIdx], queueModalData[idx]];
+            renderQueueModal();
+        }
+        function queueModalMoveDown(idx) {
+            const pendingIndices = queueModalData.map((i, ci) => i.status === 'pending' ? ci : -1).filter(ci => ci >= 0);
+            const posInPending = pendingIndices.indexOf(idx);
+            if (posInPending < 0 || posInPending >= pendingIndices.length - 1) return;
+            const nextIdx = pendingIndices[posInPending + 1];
+            [queueModalData[idx], queueModalData[nextIdx]] = [queueModalData[nextIdx], queueModalData[idx]];
+            renderQueueModal();
+        }
+
+        async function queueModalCancelItem(id) {
+            try { await fetchJSON('/api/queue/cancel', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) }); } catch (e) {}
+        }
+        async function queueModalCancelAll() {
+            if (!confirm('대기 중인 모든 작업을 취소하시겠습니까?')) return;
+            try { await fetchJSON('/api/queue/cancel_all', { method: 'POST' }); } catch (e) { console.error('[QUEUE] 전체 취소 실패:', e); }
+        }
+        function queueModalClearCompleted() {
+            queueModalData = queueModalData.filter(i => i.status === 'pending' || i.status === 'processing');
+            renderQueueModal();
+        }
+
         // ─── 통합 큐 WebSocket 핸들러 ────────────────────────
         function handleQueueUpdated(data) {
-            if (!data || !data.items) return;
+            if (!data || !data.items) { console.warn('[QUEUE] handleQueueUpdated: 데이터 없음', data); return; }
             // 백엔드 상태를 프론트엔드 assetQueue에 동기화
             assetQueue = data.items.map(item => ({
                 id: item.id,
@@ -24163,10 +24450,28 @@
             updateGenerateBtn();
             // 처리중이 아닐 때 상단 진행도 바 숨김
             if (!data.processing) hideTopProgress();
+
+            // 큐 모달 상태 동기화
+            const prevStatus = {};
+            queueModalData.forEach(i => prevStatus[i.id] = i.status);
+            queueModalData = data.items.map(item => ({
+                id: item.id,
+                type: item.type || '',
+                label: item.label || '',
+                status: item.status,
+                progress: item.progress || 0,
+                progress_detail: item.progress_detail || {},
+                _completedLocalTs: (item.status === 'completed' || item.status === 'failed' || item.status === 'cancelled')
+                    ? (prevStatus[item.id] !== item.status ? Date.now() : (queueModalData.find(q => q.id === item.id)?._completedLocalTs || Date.now()))
+                    : null,
+            }));
+            queueModalAutoRemoveCompleted();
+            updateQueueBadge();
+            if (queueModalOpen) renderQueueModal();
         }
 
         function handleQueueProgress(data) {
-            if (!data) return;
+            if (!data) { console.warn('[QUEUE] handleQueueProgress: 데이터 없음'); return; }
             const item = assetQueue.find(q => q.id === data.item_id);
             if (item) {
                 item.progress = data.progress || 0;
@@ -24178,8 +24483,17 @@
                         updateTopProgress(data.detail.step || 0, data.detail.total || 100);
                     }
                 }
+            } else {
+                console.warn('[QUEUE] handleQueueProgress: assetQueue에서 항목 못 찾음, item_id=', data.item_id, 'assetQueue IDs=', assetQueue.map(q => q.id));
             }
             renderAssetQueueUI();
+            // 큐 모달 진행률 업데이트
+            const modalItem = queueModalData.find(q => q.id === data.item_id);
+            if (modalItem) {
+                modalItem.progress = data.progress || 0;
+                modalItem.progress_detail = data.detail || {};
+            }
+            if (queueModalOpen) renderQueueModal();
         }
 
         // 에셋 태그 분석 진행률 WebSocket 핸들러
