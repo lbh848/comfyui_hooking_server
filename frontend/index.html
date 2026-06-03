@@ -22989,19 +22989,12 @@
                     // anima/sdxl 양쪽 대표 자동 추가
                     let addedCount = 0;
                     for (const [profile, pData] of Object.entries(item.profiles)) {
-                        let pPreviewUrl = '';
-                        if (pData.preview_url && !pData.preview_url.startsWith('http') && !pData.preview_url.startsWith('/')) {
-                            const enc = encodeURIComponent;
-                            pPreviewUrl = `/api/instance_lora/image/${enc(item.lora_id)}/${enc(pData.preview_url)}`;
-                        } else {
-                            pPreviewUrl = pData.preview_url || previewUrl;
-                        }
                         assetLoraList.push({
                             name: `${item.lora_id} (${profile})`,
                             character: 'instance',
                             lora_path: pData.lora_path,
                             strength: 0.5,
-                            preview_url: pPreviewUrl,
+                            preview_url: previewUrl,
                             trigger: item.trigger || '',
                             BASE: profile,
                             source: 'instance',
@@ -28653,19 +28646,12 @@
                     if (!batchChains[batchLoraPickerTarget].lora_list) batchChains[batchLoraPickerTarget].lora_list = [];
                     let addedCount = 0;
                     for (const [profile, pData] of Object.entries(item.profiles)) {
-                        let pPreviewUrl = '';
-                        if (pData.preview_url && !pData.preview_url.startsWith('http') && !pData.preview_url.startsWith('/')) {
-                            const enc = encodeURIComponent;
-                            pPreviewUrl = `/api/instance_lora/image/${enc(item.lora_id)}/${enc(pData.preview_url)}`;
-                        } else {
-                            pPreviewUrl = pData.preview_url || previewUrl;
-                        }
                         batchChains[batchLoraPickerTarget].lora_list.push({
                             name: `${item.lora_id} (${profile})`,
                             character: 'instance',
                             lora_path: pData.lora_path,
                             strength: 0.5,
-                            preview_url: pPreviewUrl,
+                            preview_url: previewUrl,
                             trigger: item.trigger || '',
                             BASE: profile,
                             source: 'instance',
