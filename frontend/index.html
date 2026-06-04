@@ -6459,11 +6459,24 @@
                 console.log('[Frontend WS] 연결 종료, 3초 후 재연결...');
                 setTimeout(connectFrontendWs, 3000);
             };
-            
+
             frontendWs.onerror = function(error) {
                 console.error('[Frontend WS] 에러:', error);
             };
         }
+
+        // ─── 큐 상태 폴백 폴링 (WS 누락 보완) ───
+        let _queuePollTimer = null;
+        function startQueuePoll() {
+            if (_queuePollTimer) return;
+            _queuePollTimer = setInterval(() => {
+                if (document.hidden) return;
+                fetch('/api/queue/status').then(r => r.json()).then(data => {
+                    handleQueueUpdated(data);
+                }).catch(() => {});
+            }, 10000);
+        }
+        startQueuePoll();
 
         // ─── WebSocket 이벤트 핸들러 ───
         const textOutputState = {};
@@ -15529,8 +15542,8 @@
                 const uploadFiles = _instanceCreateFiles.filter(f => f.type === 'upload');
                 if (uploadFiles.length > 0) {
                     const fd = new FormData();
-                    for (const f of uploadFiles) fd.append('files', f.file);
                     fd.append('lora_id', loraId);
+                    for (const f of uploadFiles) fd.append('files', f.file);
                     await fetch('/api/instance_lora/images/upload', { method: 'POST', body: fd });
                 }
 

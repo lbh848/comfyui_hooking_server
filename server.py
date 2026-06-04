@@ -7095,9 +7095,10 @@ async def handle_api_instance_lora_images_upload(request):
                 if not lora_id:
                     results.append({"success": False, "error": "lora_id 없음"})
                     continue
-                tmp_dir = os.path.join(BASE_DIR, "instance_lora", _safe_dirname(lora_id))
+                import tempfile
+                tmp_dir = os.path.join(BASE_DIR, "instance_lora", "_tmp_upload")
                 os.makedirs(tmp_dir, exist_ok=True)
-                tmp_path = os.path.join(tmp_dir, filename)
+                tmp_path = os.path.join(tmp_dir, f"{lora_id}_{filename}")
                 with open(tmp_path, "wb") as f:
                     while True:
                         chunk = await part.read_chunk()
@@ -7105,6 +7106,10 @@ async def handle_api_instance_lora_images_upload(request):
                             break
                         f.write(chunk)
                 r = add_image(lora_id, tmp_path, filename)
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
                 results.append(r)
         return web.json_response({"success": True, "results": results})
     except Exception as e:
