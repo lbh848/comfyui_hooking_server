@@ -543,7 +543,7 @@
             border-radius: 8px;
             font-size: 0.9rem;
             font-weight: 600;
-            z-index: 2000;
+            z-index: 20000;
             opacity: 0;
             pointer-events: none;
             transition: opacity 0.3s;
@@ -5117,6 +5117,29 @@
                         </div>
                         <div id="ic-filter-body" style="display:none;margin-top:4px;max-height:120px;overflow-y:auto;">
                             <div id="ic-filter-steps"></div>
+                        </div>
+                    </div>
+                    <!-- 태그 처리 방식 -->
+                    <div style="flex-shrink:0; margin-top:6px;">
+                        <div style="font-size:0.78rem;font-weight:600;color:var(--text-secondary);margin-bottom:4px;">태그 처리</div>
+                        <label style="display:flex;align-items:center;gap:4px;font-size:0.78rem;cursor:pointer;margin-bottom:2px;">
+                            <input type="radio" name="ic-tag-mode" value="block" checked style="accent-color:var(--accent);">
+                            <span>블록 태그 제거 적용</span>
+                        </label>
+                        <label style="display:flex;align-items:center;gap:4px;font-size:0.78rem;cursor:pointer;">
+                            <input type="radio" name="ic-tag-mode" value="raw" style="accent-color:var(--accent);">
+                            <span>원본 태그 그대로 사용</span>
+                        </label>
+                    </div>
+                    <!-- 블록 태그 규칙 -->
+                    <div id="ic-block-rules-section" style="flex-shrink:0; margin-top:6px;">
+                        <div style="display:flex;align-items:center;gap:4px;cursor:pointer;" onclick="const b=document.getElementById('ic-block-rules-body');b.style.display=b.style.display==='none'?'':'none';">
+                            <span style="font-size:0.78rem;font-weight:600;color:var(--text-secondary);">블록 태그 규칙</span>
+                            <span style="font-size:0.65rem;color:var(--text-secondary);">▼</span>
+                            <span id="ic-block-rules-count" style="font-size:0.65rem;color:var(--error);margin-left:4px;"></span>
+                        </div>
+                        <div id="ic-block-rules-body" style="display:none;margin-top:4px;max-height:150px;overflow-y:auto;">
+                            <div id="ic-block-rules-panel"></div>
                         </div>
                     </div>
                     <div style="font-size:0.8rem; font-weight:600; color:var(--text-secondary);">선택된 이미지</div>
@@ -14982,8 +15005,14 @@
             _icBrowserSource = 'asset';
             _icBrowserState = { level: 'characters', character: '', outfit: '', expression: '', selected: new Set() };
             await _icLoadFilter();
+            await _loadLoraBlockRules();
+            _icRenderBlockRulesPanel();
             _icRenderFilterSteps();
             renderInstanceCreatePreview();
+            // 라디오 변경 시 프롬프트 미리보기 갱신
+            document.querySelectorAll('input[name="ic-tag-mode"]').forEach(r => {
+                r.onchange = () => _icUpdatePromptPreview();
+            });
             // 부정 프롬프트 프리셋 로드
             const negSel = document.getElementById('instance-lora-create-negative');
             negSel.innerHTML = '';
@@ -15126,15 +15155,20 @@
             const f = _instanceCreateFiles[0];
             const promptPreview = document.getElementById('instance-create-prompt-preview');
             if (!f || !f._rawPrompt) { promptPreview.textContent = '(프롬프트 없음)'; return; }
-            if (_icPromptFilterSteps.length === 0) {
-                f._existingPrompt = { positive: f._rawPrompt.positive, negative: f._rawPrompt.negative };
-                promptPreview.textContent = f._rawPrompt.positive || '(프롬프트 없음)';
-            } else {
-                const filtered = _icApplyFilterSteps(f._rawPrompt.positive, _icPromptFilterSteps);
-                const negFiltered = f._rawPrompt.negative ? _icApplyFilterSteps(f._rawPrompt.negative, _icPromptFilterSteps) : '';
-                f._existingPrompt = { positive: filtered, negative: negFiltered };
-                promptPreview.textContent = filtered || '(필터 후 빈 프롬프트)';
+            let pos = f._rawPrompt.positive;
+            let neg = f._rawPrompt.negative || '';
+            if (_icPromptFilterSteps.length > 0) {
+                pos = _icApplyFilterSteps(pos, _icPromptFilterSteps);
+                neg = neg ? _icApplyFilterSteps(neg, _icPromptFilterSteps) : '';
             }
+            const useBlock = document.querySelector('input[name="ic-tag-mode"]:checked')?.value !== 'raw';
+            if (useBlock && pos && _loraBlockRules.length > 0) {
+                const tags = pos.split(',').map(t => t.trim()).filter(t => t);
+                const kept = tags.filter(t => !_matchBlockRule(t, _loraBlockRules));
+                pos = kept.join(', ');
+            }
+            f._existingPrompt = { positive: pos, negative: neg };
+            promptPreview.textContent = pos || '(필터 후 빈 프롬프트)';
         }
 
         function _icRenderFilterSteps() {
@@ -15208,6 +15242,49 @@
                     ? resp.filter : JSON.parse(JSON.stringify(IC_DEFAULT_FILTER));
             } catch (e) {
                 _icPromptFilterSteps = JSON.parse(JSON.stringify(IC_DEFAULT_FILTER));
+            }
+        }
+
+        // ─── 인스턴스 로라 블록 태그 규칙 ──────────────────────────────
+        function _icRenderBlockRulesPanel() {
+            const panel = document.getElementById('ic-block-rules-panel');
+            if (!panel) return;
+            const countEl = document.getElementById('ic-block-rules-count');
+            if (countEl) countEl.textContent = _loraBlockRules.length > 0 ? `(${_loraBlockRules.length})` : '';
+            let html = '<div style="display:flex; flex-wrap:wrap; gap:4px; margin-bottom:6px;">';
+            if (_loraBlockRules.length === 0) {
+                html += '<span style="font-size:0.75rem; color:var(--text-secondary);">규칙 없음</span>';
+            } else {
+                _loraBlockRules.forEach((rule, i) => {
+                    html += `<span style="display:inline-flex; align-items:center; gap:2px; background:rgba(220,50,50,0.12); border:1px solid rgba(220,50,50,0.3); border-radius:4px; padding:2px 6px; font-size:0.72rem; color:var(--error);">${escapeHtml(rule)}<span style="cursor:pointer; font-weight:bold; margin-left:2px;" onclick="_icRemoveBlockRule(${i})">&times;</span></span>`;
+                });
+            }
+            html += '</div>';
+            html += '<div style="display:flex; gap:4px;">';
+            html += '<input id="ic-block-rule-input" type="text" placeholder="예: * hair, * eyes" style="flex:1; padding:3px 6px; border:1px solid var(--border); border-radius:4px; background:var(--surface1); color:var(--text); font-size:0.75rem;">';
+            html += '<button onclick="_icAddBlockRule()" style="padding:3px 8px; background:var(--accent); color:#fff; border:none; border-radius:4px; font-size:0.75rem; cursor:pointer; font-weight:600;">추가</button>';
+            html += '</div>';
+            panel.innerHTML = html;
+        }
+
+        async function _icAddBlockRule() {
+            const input = document.getElementById('ic-block-rule-input');
+            if (!input || !input.value.trim()) return;
+            const rule = input.value.trim();
+            if (_loraBlockRules.includes(rule)) { showToast('이미 존재하는 규칙입니다', 'error'); return; }
+            const newRules = [..._loraBlockRules, rule];
+            if (await _saveLoraBlockRules(newRules)) {
+                _icRenderBlockRulesPanel();
+                _icUpdatePromptPreview();
+                input.value = '';
+            }
+        }
+
+        async function _icRemoveBlockRule(index) {
+            const newRules = _loraBlockRules.filter((_, i) => i !== index);
+            if (await _saveLoraBlockRules(newRules)) {
+                _icRenderBlockRulesPanel();
+                _icUpdatePromptPreview();
             }
         }
 
@@ -15560,13 +15637,21 @@
                 const firstImg = _instanceCreateFiles[0];
                 const filename = firstImg.type === 'upload' ? firstImg.file.name : (firstImg.source?.filename || '');
                 const isAssetWithPrompt = firstImg.type === 'asset' && firstImg._existingPrompt;
+                const useBlockTags = document.querySelector('input[name="ic-tag-mode"]:checked')?.value !== 'raw';
 
                 if (isAssetWithPrompt && filename) {
                     const ep = firstImg._existingPrompt;
                     const neg = negativePrompt || ep.negative || '';
+                    let positiveFiltered = ep.positive;
+                    const originalPositive = firstImg._rawPrompt?.positive || ep.positive;
+                    if (useBlockTags && positiveFiltered && _loraBlockRules.length > 0) {
+                        const tags = positiveFiltered.split(',').map(t => t.trim()).filter(t => t);
+                        const kept = tags.filter(t => !_matchBlockRule(t, _loraBlockRules));
+                        positiveFiltered = kept.join(', ');
+                    }
                     await fetch('/api/instance_lora/prompt', {
                         method: 'POST', headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({ id: loraId, filename, prompt: { positive: ep.positive, negative: neg } })
+                        body: JSON.stringify({ id: loraId, filename, prompt: { positive: positiveFiltered, negative: neg, original_positive: originalPositive } })
                     });
                 } else {
                     // 봇/업로드: 부정 프롬프트 저장 후 분석 큐에 추가
@@ -15581,7 +15666,7 @@
                         body: JSON.stringify({
                             type: 'instance_lora_analysis',
                             label: `이미지 프롬프트 분석: ${trigger}`,
-                            params: { lora_id: loraId, negative_prompt: negativePrompt }
+                            params: { lora_id: loraId, negative_prompt: negativePrompt, use_block_tags: useBlockTags }
                         })
                     });
                     if (!queueResp.success) {

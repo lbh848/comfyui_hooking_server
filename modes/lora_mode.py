@@ -893,6 +893,32 @@ def save_block_tag_rules(rules: list) -> dict:
     return {"success": True, "rules": rules}
 
 
+def match_block_tag(tag: str, rules: list) -> bool:
+    """태그가 블록 규칙에 매칭되는지 확인. 와일드카드: '* hair'(접미사), 'hair *'(접두사), 정확매칭."""
+    if not rules or not tag:
+        return False
+    t = tag.strip().lower()
+    for rule in rules:
+        if not isinstance(rule, str):
+            continue
+        r = rule.strip().lower()
+        if r.startswith("* "):
+            if t.endswith(r[2:]):
+                return True
+        elif r.endswith(" *"):
+            if t.startswith(r[:-2]):
+                return True
+        else:
+            if t == r:
+                return True
+    return False
+
+
+def apply_block_tag_rules(tags: list, rules: list) -> list:
+    """태그 리스트에서 블록 규칙에 매칭되는 태그를 제거하여 반환."""
+    return [t for t in tags if not match_block_tag(t, rules)]
+
+
 def _get_entry(data: dict, character: str, name: str) -> dict | None:
     """중첩 구조에서 엔트리 조회"""
     return data.get("loras", {}).get(character, {}).get(name)

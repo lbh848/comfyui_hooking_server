@@ -584,6 +584,8 @@ class QueueManager:
                 raise ValueError("학습할 이미지가 없습니다")
 
             # 1-pass: 프롬프트 없는 이미지 자동 태그 분석
+            from modes.lora_mode import get_block_tag_rules, apply_block_tag_rules
+            block_rules = get_block_tag_rules()
             for filename in images_list:
                 prompt_result = get_image_prompt(lora_id, filename)
                 if not prompt_result.get("success"):
@@ -594,10 +596,12 @@ class QueueManager:
                         analysis = await self.asset_tool.analyze_image(image_data, "expressions")
                         if analysis.get("success"):
                             tags = analysis.get("tags", [])
-                            positive = ", ".join(tags)
+                            filtered_tags = apply_block_tag_rules(tags, block_rules)
+                            positive = ", ".join(filtered_tags)
+                            original_positive = ", ".join(tags)
                             save_image_prompt(lora_id, filename, {
                                 "positive": positive, "negative": "",
-                                "original_positive": positive, "original_negative": "",
+                                "original_positive": original_positive, "original_negative": "",
                             })
 
             training_images = []
@@ -719,6 +723,7 @@ class QueueManager:
         params = item.params
         lora_id = params.get("lora_id", "")
         negative_prompt = params.get("negative_prompt", "")
+        use_block_tags = params.get("use_block_tags", True)
         if not lora_id:
             raise ValueError("lora_id가 없습니다")
 
@@ -755,11 +760,18 @@ class QueueManager:
                 analysis = await self.asset_tool.analyze_image(image_data, "expressions")
                 if analysis.get("success"):
                     tags = analysis.get("tags", [])
-                    positive = ", ".join(tags)
+                    if use_block_tags:
+                        from modes.lora_mode import get_block_tag_rules, apply_block_tag_rules
+                        block_rules = get_block_tag_rules()
+                        filtered_tags = apply_block_tag_rules(tags, block_rules)
+                    else:
+                        filtered_tags = tags
+                    positive = ", ".join(filtered_tags)
+                    original_positive = ", ".join(tags)
                     prompt_data = {
                         "positive": positive,
                         "negative": negative_prompt,
-                        "original_positive": positive,
+                        "original_positive": original_positive,
                         "original_negative": negative_prompt,
                     }
                     save_image_prompt(lora_id, filename, prompt_data)
