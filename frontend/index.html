@@ -4763,7 +4763,7 @@
                 </div>
                 <!-- 인스턴스 로라 프롬프트 모달 -->
                 <div class="modal" id="instance-lora-prompt-modal" onclick="if(event.target===this)closeInstancePromptModal()">
-                    <div class="modal-content" style="max-width:600px;">
+                    <div class="modal-content" style="max-width:960px;">
                         <div class="modal-header">
                             <h2 id="instance-prompt-modal-title">프롬프트</h2>
                             <button class="modal-close" onclick="closeInstancePromptModal()">&times;</button>
@@ -4773,13 +4773,33 @@
                                 <div style="font-size:0.78rem;color:var(--text-secondary);font-weight:600;margin-bottom:4px;">트리거 워드</div>
                                 <div id="instance-prompt-modal-trigger" style="padding:8px;background:var(--surface1);border:1px solid var(--accent);border-radius:6px;font-size:0.9rem;color:var(--accent);font-weight:700;"></div>
                             </div>
-                            <div>
-                                <div style="font-size:0.78rem;color:var(--text-secondary);font-weight:600;margin-bottom:4px;">긍정</div>
-                                <div id="instance-prompt-modal-positive" style="padding:8px;background:var(--surface1);border:1px solid var(--border);border-radius:6px;font-size:0.82rem;color:var(--text);white-space:pre-wrap;max-height:300px;overflow-y:auto;"></div>
-                            </div>
-                            <div>
-                                <div style="font-size:0.78rem;color:var(--text-secondary);font-weight:600;margin-bottom:4px;">부정</div>
-                                <div id="instance-prompt-modal-negative" style="padding:8px;background:var(--surface1);border:1px solid var(--border);border-radius:6px;font-size:0.82rem;color:var(--text);white-space:pre-wrap;max-height:200px;overflow-y:auto;"></div>
+                            <div style="display:flex;gap:12px;">
+                                <div style="flex:1;min-width:0;">
+                                    <div style="font-size:0.78rem;color:var(--text-secondary);font-weight:600;margin-bottom:4px;">원본</div>
+                                    <div style="display:flex;flex-direction:column;gap:8px;">
+                                        <div>
+                                            <div style="font-size:0.72rem;color:var(--text-secondary);margin-bottom:2px;">긍정</div>
+                                            <div id="instance-prompt-modal-orig-positive" style="padding:8px;background:var(--surface1);border:1px solid var(--border);border-radius:6px;font-size:0.82rem;color:var(--text);white-space:pre-wrap;max-height:300px;overflow-y:auto;"></div>
+                                        </div>
+                                        <div>
+                                            <div style="font-size:0.72rem;color:var(--text-secondary);margin-bottom:2px;">부정</div>
+                                            <div id="instance-prompt-modal-orig-negative" style="padding:8px;background:var(--surface1);border:1px solid var(--border);border-radius:6px;font-size:0.82rem;color:var(--text);white-space:pre-wrap;max-height:200px;overflow-y:auto;"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div style="flex:1;min-width:0;">
+                                    <div style="font-size:0.78rem;color:var(--accent);font-weight:600;margin-bottom:4px;">적용 후 (학습용)</div>
+                                    <div style="display:flex;flex-direction:column;gap:8px;">
+                                        <div>
+                                            <div style="font-size:0.72rem;color:var(--text-secondary);margin-bottom:2px;">긍정</div>
+                                            <div id="instance-prompt-modal-positive" style="padding:8px;background:var(--surface1);border:1px solid var(--accent);border-radius:6px;font-size:0.82rem;color:var(--text);white-space:pre-wrap;max-height:300px;overflow-y:auto;"></div>
+                                        </div>
+                                        <div>
+                                            <div style="font-size:0.72rem;color:var(--text-secondary);margin-bottom:2px;">부정</div>
+                                            <div id="instance-prompt-modal-negative" style="padding:8px;background:var(--surface1);border:1px solid var(--border);border-radius:6px;font-size:0.82rem;color:var(--text);white-space:pre-wrap;max-height:200px;overflow-y:auto;"></div>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -14898,6 +14918,8 @@
                     const prompt = lora.prompt || {};
                     const posPrompt = (prompt.positive || '').trim();
                     const negPrompt = (prompt.negative || '').trim();
+                    const origPosPrompt = (prompt.original_positive || '').trim();
+                    const origNegPrompt = (prompt.original_negative || '').trim();
                     return `<div class="asset-card" style="position:relative;border-radius:8px;overflow:hidden;background:var(--surface);border:1px solid var(--border);">
                         <button onclick="event.stopPropagation();deleteInstanceLora('${esc(lora.id)}')" style="position:absolute;top:6px;right:6px;z-index:2;background:rgba(200,60,60,0.85);color:#fff;border:none;border-radius:6px;padding:3px 8px;cursor:pointer;font-size:0.75rem;font-weight:600;">삭제</button>
                         <div class="asset-card-img" onclick="openInstanceLightbox('${esc(imgSrc)}')" style="height:300px;background-size:contain;background-position:center;background-repeat:no-repeat;border-radius:8px 8px 0 0;cursor:zoom-in;background-color:#111;${imgSrc ? `background-image:url('${imgSrc}');` : ''}">
@@ -14913,7 +14935,7 @@
                             <div style="display:flex;align-items:center;gap:6px;">
                                 <span style="font-size:0.75rem;color:var(--text-secondary);">호출 ${lora.usage_count}회</span>
                                 <button onclick="event.stopPropagation();retrainInstanceLora('${esc(lora.id)}','${esc(lora.trigger)}')" style="padding:2px 8px;background:var(--surface2);color:var(--text-secondary);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.7rem;margin-left:auto;">재학습</button>
-                                <button onclick="event.stopPropagation();showInstancePromptModal('${esc(lora.id)}','${esc(lora.trigger)}','${esc(posPrompt)}','${esc(negPrompt)}')" style="padding:2px 8px;background:var(--surface2);color:var(--text-secondary);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.7rem;">프롬프트</button>
+                                <button onclick="event.stopPropagation();showInstancePromptModal('${esc(lora.id)}','${esc(lora.trigger)}','${esc(posPrompt)}','${esc(negPrompt)}','${esc(origPosPrompt)}','${esc(origNegPrompt)}')" style="padding:2px 8px;background:var(--surface2);color:var(--text-secondary);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.7rem;">프롬프트</button>
                             </div>
                         </div>
                     </div>`;
@@ -14936,11 +14958,13 @@
             document.getElementById('instance-lora-lightbox').style.display = 'none';
         }
 
-        function showInstancePromptModal(loraId, trigger, positive, negative) {
+        function showInstancePromptModal(loraId, trigger, positive, negative, originalPositive, originalNegative) {
             document.getElementById('instance-prompt-modal-title').textContent = `${trigger} 프롬프트`;
             document.getElementById('instance-prompt-modal-trigger').textContent = trigger || '없음';
             document.getElementById('instance-prompt-modal-positive').textContent = positive || '없음';
             document.getElementById('instance-prompt-modal-negative').textContent = negative || '없음';
+            document.getElementById('instance-prompt-modal-orig-positive').textContent = originalPositive || positive || '없음';
+            document.getElementById('instance-prompt-modal-orig-negative').textContent = originalNegative || negative || '없음';
             document.getElementById('instance-lora-prompt-modal').style.display = 'flex';
         }
 
@@ -23096,6 +23120,7 @@
                             trigger: item.trigger || '',
                             BASE: profile,
                             source: 'instance',
+                            lora_id: item.lora_id,
                         });
                         addedCount++;
                     }
@@ -25088,6 +25113,12 @@
                 anima_lora_trigger_words: animaLoraTriggerWords,
                 sdxl_lora_trigger_words: sdxlLoraTriggerWords,
             };
+
+            // 인스턴스 LoRA 사용 횟수 증가
+            const instanceLoraIds = [...new Set(assetLoraList.filter(l => l.source === 'instance' && l.lora_id).map(l => l.lora_id))];
+            for (const lid of instanceLoraIds) {
+                try { await fetchJSON('/api/instance_lora/increment_usage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: lid }) }); } catch (e) { console.warn('[INSTANCE_LORA] 호출횟수 증가 실패:', lid, e); }
+            }
 
             // 큐 항목 생성 (백엔드 통합 큐에 추가)
             for (let i = 0; i < totalCount; i++) {
@@ -28753,6 +28784,7 @@
                             trigger: item.trigger || '',
                             BASE: profile,
                             source: 'instance',
+                            lora_id: item.lora_id,
                         });
                         addedCount++;
                     }
@@ -29409,6 +29441,11 @@
                         console.error('[BATCH] 큐 추가 실패:', e);
                     }
                 }
+            }
+            // 인스턴스 LoRA 사용 횟수 증가
+            const batchInstanceLoraIds = [...new Set(batchChains.flatMap(c => (c.lora_list || [])).filter(l => l.source === 'instance' && l.lora_id).map(l => l.lora_id))];
+            for (const lid of batchInstanceLoraIds) {
+                try { await fetchJSON('/api/instance_lora/increment_usage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: lid }) }); } catch (e) { console.warn('[INSTANCE_LORA] 호출횟수 증가 실패:', lid, e); }
             }
             showToast(`큐에 ${addedCount}/${totalJobs}개 추가됨`, addedCount > 0 ? 'success' : 'error');
         }
