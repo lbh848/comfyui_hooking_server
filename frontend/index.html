@@ -3166,6 +3166,13 @@
                 </label>
                 <span style="font-size:0.85rem;">삽화 모드 활성화</span>
                 <span id="bot-mode-status" class="toggle-status off">OFF</span>
+                <span style="width:12px;"></span>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="debug-mode-toggle" onchange="onDebugModeToggle()">
+                    <span class="toggle-slider"></span>
+                </label>
+                <span style="font-size:0.85rem;">디버깅</span>
+                <span id="debug-mode-status" class="toggle-status off">OFF</span>
             </div>
             <div class="asset-container">
                 <div class="asset-main" id="bot-main">
@@ -7578,6 +7585,10 @@
             const botModeEnabled = currentConfig.bot_mode_enabled || false;
             document.getElementById('bot-mode-toggle').checked = botModeEnabled;
             updateBotModeStatus(botModeEnabled);
+            // 디버깅 모드 설정
+            const debugModeEnabled = currentConfig.debug_mode_enabled || false;
+            document.getElementById('debug-mode-toggle').checked = debugModeEnabled;
+            updateDebugModeStatus(debugModeEnabled);
             // 삽화 모드 선택 봇 복원
             const botSelected = currentConfig.bot_selected || '';
             if (botSelected) {
@@ -17660,6 +17671,33 @@
             }
         }
 
+        function updateDebugModeStatus(on) {
+            const el = document.getElementById('debug-mode-status');
+            el.textContent = on ? 'ON' : 'OFF';
+            el.className = 'toggle-status ' + (on ? 'on' : 'off');
+        }
+
+        async function onDebugModeToggle() {
+            const checked = document.getElementById('debug-mode-toggle').checked;
+            updateDebugModeStatus(checked);
+            try {
+                const resp = await fetch('/api/config', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({debug_mode_enabled: checked})
+                });
+                if (!resp.ok) {
+                    document.getElementById('debug-mode-toggle').checked = !checked;
+                    updateDebugModeStatus(!checked);
+                    showToast('디버깅 모드 설정 저장 실패');
+                }
+            } catch (e) {
+                console.error('[DEBUG] 디버깅 모드 토글 저장 실패:', e);
+                document.getElementById('debug-mode-toggle').checked = !checked;
+                updateDebugModeStatus(!checked);
+            }
+        }
+
         async function onBotModeToggle() {
             const checked = document.getElementById('bot-mode-toggle').checked;
             updateBotModeStatus(checked);
@@ -18868,7 +18906,13 @@
                     <button onclick="document.querySelectorAll('.asset-char-check').forEach(c=>c.checked=false)" style="margin-left:4px; background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:2px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">전체 해제</button>
                 </div>
                 <div id="bot-asset-char-list" style="padding:12px 20px; overflow-y:auto; flex:1; display:flex; flex-direction:column; gap:8px;">
-                    <div style="color:var(--text2); text-align:center; padding:20px;">로드 중...</div>
+                    <div id="bot-asset-char-loading" style="color:var(--text2); text-align:center; padding:20px;">
+                        <div style="margin-bottom:8px;">로드 중...</div>
+                        <div id="bot-asset-char-progress-bar" style="width:100%; height:6px; background:var(--surface2); border-radius:3px; overflow:hidden; display:none;">
+                            <div id="bot-asset-char-progress-fill" style="height:100%; background:var(--accent); border-radius:3px; width:0%; transition:width 0.2s;"></div>
+                        </div>
+                        <div id="bot-asset-char-progress-text" style="font-size:0.7rem; margin-top:4px; display:none;">0 / 0</div>
+                    </div>
                 </div>
                 <div style="padding:12px 20px; border-top:1px solid var(--border); display:flex; justify-content:flex-end; gap:8px;">
                     <button onclick="document.getElementById('bot-asset-char-modal').style.display='none'" style="padding:8px 16px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); cursor:pointer;">취소</button>
@@ -18876,37 +18920,87 @@
                 </div>
             </div>`;
 
-            // 에셋 캐릭터 목록 로드
+            // 에셋 캐릭터 목록 로드 (SSE 스트리밍)
             try {
-                const resp = await fetch('/api/bot_mode/asset_chars_with_rep');
-                const data = await resp.json();
-                if (data.error) { showToast(data.error, 'error'); modal.style.display = 'none'; return; }
+                const progressBar = document.getElementById('bot-asset-char-progress-bar');
+                const progressFill = document.getElementById('bot-asset-char-progress-fill');
+                const progressText = document.getElementById('bot-asset-char-progress-text');
                 const list = document.getElementById('bot-asset-char-list');
-                const chars = data.characters || [];
-                if (chars.length === 0) {
-                    list.innerHTML = '<div style="color:var(--text2); text-align:center; padding:20px;">대표 이미지가 있는 에셋 캐릭터가 없습니다.</div>';
-                    return;
-                }
-                // 이미 봇에 있는 캐릭터 표시
+
                 const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
                 const existingChars = new Set((bot?.characters || []).map(c => c.name));
-                list.innerHTML = chars.map(ch => {
+                const collectedChars = [];
+                let totalCount = 0;
+
+                const resp = await fetch('/api/bot_mode/asset_chars_with_rep');
+                const reader = resp.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+
+                function _renderChar(ch) {
                     const exists = existingChars.has(ch.name);
                     const labelStyle = exists ? 'opacity:0.4; text-decoration:line-through;' : '';
                     const thumbsHtml = ch.rep_images.slice(0, 4).map(ri =>
                         `<img src="${ri.url}" loading="lazy" style="width:48px; height:48px; object-fit:cover; border-radius:4px;">`
                     ).join('');
-                    return `<label style="display:flex; align-items:center; gap:10px; padding:8px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); cursor:${exists?'default':'pointer'}; ${labelStyle}">
+                    const div = document.createElement('label');
+                    div.style.cssText = `display:flex; align-items:center; gap:10px; padding:8px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); cursor:${exists?'default':'pointer'}; ${labelStyle}`;
+                    div.innerHTML = `
                         <input type="checkbox" class="asset-char-check" value="${escAttr(ch.name)}" ${exists?'disabled':''} style="width:18px; height:18px; cursor:pointer;">
                         <div style="display:flex; gap:4px; flex-shrink:0;">${thumbsHtml}</div>
                         <div style="flex:1; min-width:0;">
                             <div style="font-size:0.85rem; font-weight:600;">${escHtml(ch.name)}${exists?' (이미 존재)':''}</div>
                             <div style="font-size:0.7rem; color:var(--text2);">대표 ${ch.rep_count}장</div>
-                        </div>
-                    </label>`;
-                }).join('');
-                // rep_images 데이터를 전역에 저장
-                window._assetCharData = chars;
+                        </div>`;
+                    return div;
+                }
+
+                function _updateProgress(current, total) {
+                    progressBar.style.display = 'block';
+                    progressText.style.display = 'block';
+                    const pct = total > 0 ? Math.round((current / total) * 100) : 0;
+                    progressFill.style.width = pct + '%';
+                    progressText.textContent = `${current} / ${total} 탐색중`;
+                }
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    buffer += decoder.decode(value, { stream: true });
+
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop();
+
+                    for (const line of lines) {
+                        if (!line.startsWith('data: ')) continue;
+                        try {
+                            const evt = JSON.parse(line.slice(6));
+                            if (evt.type === 'total') {
+                                totalCount = evt.count;
+                                _updateProgress(0, totalCount);
+                            } else if (evt.type === 'character') {
+                                collectedChars.push(evt.data);
+                                _updateProgress(evt.index, totalCount);
+                                // 첫 캐릭터면 로딩 영역 지우고 목록 시작
+                                if (evt.index === 1) {
+                                    const loadingEl = document.getElementById('bot-asset-char-loading');
+                                    if (loadingEl) loadingEl.style.display = 'none';
+                                }
+                                list.appendChild(_renderChar(evt.data));
+                            } else if (evt.type === 'done') {
+                                const loadingEl = document.getElementById('bot-asset-char-loading');
+                                if (loadingEl) loadingEl.remove();
+                                if (collectedChars.length === 0) {
+                                    list.innerHTML = '<div style="color:var(--text2); text-align:center; padding:20px;">대표 이미지가 있는 에셋 캐릭터가 없습니다.</div>';
+                                } else {
+                                    progressText.textContent = `완료: ${collectedChars.length} / ${totalCount} 캐릭터`;
+                                    setTimeout(() => { const bar = document.getElementById('bot-asset-char-progress-bar'); if (bar) bar.remove(); const txt = document.getElementById('bot-asset-char-progress-text'); if (txt) txt.remove(); }, 1500);
+                                }
+                            }
+                        } catch (parseErr) { /* skip */ }
+                    }
+                }
+                window._assetCharData = collectedChars;
             } catch (e) {
                 console.error('[BOT] 에셋 캐릭터 로드 오류:', e);
                 showToast('에셋 캐릭터 목록 로드 실패', 'error');

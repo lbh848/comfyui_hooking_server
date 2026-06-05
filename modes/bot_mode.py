@@ -742,24 +742,41 @@ class BotMode:
             return _json_error(str(e))
 
     async def handle_get_asset_chars_with_rep(self, request):
-        """GET /api/bot_mode/asset_chars_with_rep - 에셋 캐릭터별 대표 이미지 목록."""
+        """GET /api/bot_mode/asset_chars_with_rep - SSE 스트리밍으로 에셋 캐릭터별 대표 이미지 목록."""
         try:
             from modes import asset_mode as _am
             chars = _am.list_characters()
-            results = []
-            for char_name in chars:
-                gallery = _am.list_character_gallery(char_name)
-                reps = [g for g in gallery if g.get("representative")]
-                if not reps:
-                    continue
-                rep_images = []
-                for g in reps:
-                    fn = g["representative"]
-                    rel = f"{char_name}/{g['outfit']}/{g['expression']}/{fn}"
-                    url = f"/api/asset_mode/characters/{char_name}/outfits/{g['outfit']}/expressions/{g['expression']}/images/{fn}"
-                    rep_images.append({"filename": fn, "outfit": g["outfit"], "expression": g["expression"], "path": rel, "url": url})
-                results.append({"name": char_name, "rep_count": len(rep_images), "rep_images": rep_images})
-            return _json_ok({"characters": results})
+
+            async def _stream():
+                yield f"data: {json.dumps({'type': 'total', 'count': len(chars)}, ensure_ascii=False)}\n\n"
+                idx = 0
+                for char_name in chars:
+                    gallery = await asyncio.get_event_loop().run_in_executor(
+                        None, _am.list_character_gallery, char_name
+                    )
+                    reps = [g for g in gallery if g.get("representative")]
+                    if not reps:
+                        continue
+                    rep_images = []
+                    for g in reps:
+                        fn = g["representative"]
+                        rel = f"{char_name}/{g['outfit']}/{g['expression']}/{fn}"
+                        url = f"/api/asset_mode/characters/{char_name}/outfits/{g['outfit']}/expressions/{g['expression']}/images/{fn}"
+                        rep_images.append({"filename": fn, "outfit": g["outfit"], "expression": g["expression"], "path": rel, "url": url})
+                    idx += 1
+                    char_data = {"name": char_name, "rep_count": len(rep_images), "rep_images": rep_images}
+                    yield f"data: {json.dumps({'type': 'character', 'index': idx, 'data': char_data}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'type': 'done', 'total': idx}, ensure_ascii=False)}\n\n"
+
+            resp = web.StreamResponse(
+                status=200,
+                headers={"Content-Type": "text/event-stream", "Cache-Control": "no-cache"},
+            )
+            await resp.prepare(request)
+            async for chunk in _stream():
+                await resp.write(chunk.encode("utf-8"))
+            await resp.write_eof()
+            return resp
         except Exception as e:
             print(f"[BOT_MODE] asset_chars_with_rep 오류: {e}")
             traceback.print_exc()

@@ -79,6 +79,7 @@ DEFAULT_CONFIG = {
     "workflow_filename": "",  # 빈 값이면 workflow 폴더의 첫 번째 json 사용
     "utility_workflow_source_path": "",  # 삽화 유틸리티 워크플로우 전체 경로
     "bot_mode_enabled": False,  # 삽화 모드 활성화 여부
+    "debug_mode_enabled": False,  # 디버깅 모드 (ComfyUI 전송만 중단)
     "bot_selected": "",  # 삽화 모드에서 선택된 봇 이름
     "batch_mode_enabled": False,  # 배치 모드 활성화 여부
     "batch_timeout_seconds": 5.0,  # 배치 모드 타임아웃 (초)
@@ -974,6 +975,24 @@ async def generate_image_with_prompt(positive: str, negative: str):
 
     risu_prompt = build_prompt(positive, negative)
     illust_port = get_illust_port()
+
+    # 디버깅 모드: ComfyUI 전송 없이 프롬프트 로그만 출력
+    if app_config.get("debug_mode_enabled", False):
+        print("[DEBUG] ══════════════════════════════════════════════════════")
+        print(f"[DEBUG] 디버깅 모드 활성화 - ComfyUI 전송 생략")
+        print(f"[DEBUG] 포트: {illust_port}")
+        print(f"[DEBUG] Positive: {positive[:500]}")
+        print(f"[DEBUG] Negative: {negative[:500]}")
+        print(f"[DEBUG] 워크플로우 노드 수: {len(risu_prompt) if risu_prompt else 0}")
+        # 주요 노드 값 로그
+        if risu_prompt:
+            for nid, node in risu_prompt.items():
+                cls = node.get("class_type", "") if isinstance(node, dict) else ""
+                if "sampler" in cls.lower() or "clip" in cls.lower() or "text" in cls.lower():
+                    inputs = node.get("inputs", {}) if isinstance(node, dict) else {}
+                    print(f"[DEBUG]   노드 {nid} ({cls}): {json.dumps(inputs, ensure_ascii=False)[:300]}")
+        print("[DEBUG] ══════════════════════════════════════════════════════")
+        return None, "디버깅 모드: ComfyUI 전송 생략됨"
 
     async def _on_gen_progress(value, max_value):
         await notify_frontend("generation_progress", {
