@@ -107,8 +107,6 @@ class BotMode:
                     return await self._add_bot(data, body)
                 elif action == "remove_bot":
                     return await self._remove_bot(data, body)
-                elif action == "rename_bot":
-                    return await self._rename_bot(data, body)
                 elif action == "add_character":
                     return await self._add_character(data, body)
                 elif action == "remove_character":
@@ -172,30 +170,6 @@ class BotMode:
         print(f"[BOT_MODE] 봇 삭제: {name}")
         return _json_ok({"bots": data["bots"]})
 
-    async def _rename_bot(self, data, body):
-        old_name = body.get("old_name", "").strip()
-        new_name = body.get("new_name", "").strip()
-        if not old_name or not new_name:
-            return _json_error("봇 이름이 비어있습니다.")
-        if any(b["name"] == new_name for b in data["bots"]):
-            return _json_error(f"이미 존재하는 봇 이름: {new_name}")
-        for b in data["bots"]:
-            if b["name"] == old_name:
-                b["name"] = new_name
-                break
-        old_path = os.path.join(BOT_DIR, old_name)
-        new_path = os.path.join(BOT_DIR, new_name)
-        if os.path.isdir(old_path):
-            os.rename(old_path, new_path)
-        _save_bot_data(data)
-        # 로라매니징 봇 이름도 동기화
-        try:
-            from modes.bot_lora_mode import rename_bot_in_manage
-            rename_bot_in_manage(old_name, new_name)
-        except Exception as e:
-            print(f"[BOT_MODE] 로라매니징 이름 동기화 실패: {e}")
-        print(f"[BOT_MODE] 봇 이름 변경: {old_name} → {new_name}")
-        return _json_ok({"bots": data["bots"]})
 
     async def _add_character(self, data, body):
         bot_name = body.get("bot_name", "").strip()

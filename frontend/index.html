@@ -3202,9 +3202,8 @@
                         <div id="bot-btn-group-list" style="display:flex; gap:6px; margin-top:4px;">
                             <button onclick="addBot()" style="flex:1; background:var(--accent); color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">추가</button>
                         </div>
-                        <div id="bot-btn-group-selected" style="display:none; gap:6px; margin-top:4px;">
-                            <button onclick="renameBot()" style="flex:1; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">이름변경</button>
-                            <button onclick="removeBot()" style="flex:1; background:var(--error); color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">삭제</button>
+                        <div id="bot-btn-group-selected" style="display:none; margin-top:4px;">
+                            <button onclick="removeBot()" style="width:100%; background:var(--error); color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">삭제</button>
                         </div>
                     </div>
 
@@ -18622,29 +18621,6 @@
             } catch (e) {
                 console.error('[BOT] 봇 삭제 실패:', e);
                 alert('봇 삭제 실패');
-            }
-        }
-
-        async function renameBot() {
-            if (!botCurrentBot) return;
-            const newName = prompt('새 봇 이름:', botCurrentBot);
-            if (!newName || !newName.trim() || newName.trim() === botCurrentBot) return;
-            try {
-                const resp = await fetch('/api/bot_mode/action', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({action: 'rename_bot', old_name: botCurrentBot, new_name: newName.trim()})
-                });
-                const data = await resp.json();
-                if (data.error) { alert(data.error); return; }
-                botData.bots = data.bots;
-                botCurrentBot = newName.trim();
-                renderBotSelect();
-                updateBotBreadcrumb();
-                showToast('봇 이름 변경됨');
-            } catch (e) {
-                console.error('[BOT] 봇 이름 변경 실패:', e);
-                alert('봇 이름 변경 실패');
             }
         }
 
