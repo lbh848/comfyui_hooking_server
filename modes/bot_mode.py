@@ -1322,6 +1322,58 @@ class BotMode:
             traceback.print_exc()
             return _json_error(str(e))
 
+    async def handle_get_lb_extra(self, request):
+        """GET /api/bot_mode/lb_extra - 저장된 분류 데이터(편집본) 로드"""
+        try:
+            bot_name = request.query.get("bot_name", "").strip()
+            if not bot_name:
+                return _json_error("봇 이름이 비어있습니다.")
+
+            saved = _load_lb_extra(bot_name)
+            if saved is None:
+                return _json_ok({"data": None})
+
+            # 구버전 호환: {original, edited} 구조면 edited만 사용
+            if isinstance(saved, dict) and "edited" in saved:
+                saved = saved["edited"]
+
+            data = _load_bot_data()
+            bot = next((b for b in data["bots"] if b["name"] == bot_name), None)
+            if not bot:
+                return _json_error(f"봇을 찾을 수 없습니다: {bot_name}")
+
+            current_names = {c["name"] for c in bot.get("characters", [])}
+            filtered = [e for e in saved if e.get("name") in current_names]
+
+            if len(filtered) != len(saved):
+                _save_lb_extra(bot_name, filtered)
+                print(f"[LB_EXTRA] 캐릭터 불일치: {len(saved)} -> {len(filtered)}개로 정리")
+
+            return _json_ok({"data": filtered})
+        except Exception as e:
+            print(f"[LB_EXTRA] 로드 실패: {e}")
+            traceback.print_exc()
+            return _json_error(str(e))
+
+    async def handle_save_lb_extra(self, request):
+        """POST /api/bot_mode/lb_extra - 분류 데이터 저장"""
+        try:
+            body = await request.json()
+            bot_name = body.get("bot_name", "").strip()
+            extra_data = body.get("data")
+            original_data = body.get("original")
+            if not bot_name:
+                return _json_error("봇 이름이 비어있습니다.")
+            if extra_data is None:
+                return _json_error("데이터가 없습니다.")
+
+            _save_lb_extra(bot_name, extra_data)
+            return _json_ok({"saved": True})
+        except Exception as e:
+            print(f"[LB_EXTRA] 저장 실패: {e}")
+            traceback.print_exc()
+            return _json_error(str(e))
+
 
 # ─── 유틸리티 ──────────────────────────────────────────
 def _json_ok(data, status=200):
@@ -1460,6 +1512,32 @@ def _load_word_replacements(bot_name: str) -> dict:
 
 def _save_word_replacements(bot_name: str, data: dict):
     path = _word_replacements_path(bot_name)
+    bot_dir = os.path.dirname(path)
+    os.makedirs(bot_dir, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+
+LB_EXTRA_FILE = "_lb_extra.json"
+
+
+def _lb_extra_path(bot_name: str) -> str:
+    return os.path.join(BOT_DIR, bot_name, LB_EXTRA_FILE)
+
+
+def _load_lb_extra(bot_name: str):
+    path = _lb_extra_path(bot_name)
+    if os.path.isfile(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"[BOT_MODE] lb_extra 로드 실패: {e}")
+    return None
+
+
+def _save_lb_extra(bot_name: str, data):
+    path = _lb_extra_path(bot_name)
     bot_dir = os.path.dirname(path)
     os.makedirs(bot_dir, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
@@ -1741,6 +1819,7 @@ class BotDataPatcher:
             print(f"[CHECK_PATCH] 확인 실패: {e}")
             traceback.print_exc()
             return _json_error(str(e))
+
 # ─── 삽화 모드 설정 (봇별) ──────────────────────────────
 
 DEFAULT_ILLUST_SETTINGS = {

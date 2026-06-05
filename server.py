@@ -4725,6 +4725,8 @@ app.router.add_post("/api/bot_mode/update_illust_settings", handle_update_illust
 app.router.add_get("/api/bot_mode/illust_logs", handle_get_illust_logs)
 app.router.add_get("/api/bot_mode/word_replacements", bot_mode.handle_get_word_replacements)
 app.router.add_post("/api/bot_mode/word_replacements", bot_mode.handle_save_word_replacements)
+app.router.add_get("/api/bot_mode/lb_extra", bot_mode.handle_get_lb_extra)
+app.router.add_post("/api/bot_mode/lb_extra", bot_mode.handle_save_lb_extra)
 app.router.add_post("/api/bot_mode/auto_group_prompt", handle_auto_group_prompt)
 # 자동완성 API
 app.router.add_get("/api/autocomplete", handle_api_autocomplete)

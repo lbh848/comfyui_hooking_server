@@ -512,7 +512,7 @@
             position: fixed;
             top: 0; left: 0; right: 0; bottom: 0;
             background: rgba(0,0,0,0.9);
-            z-index: 2000;
+            z-index: 11000;
             justify-content: center;
             align-items: center;
             cursor: pointer;
@@ -18221,11 +18221,13 @@
             const btn = document.getElementById('btn-export-lb-extra');
             const origText = btn.textContent;
             btn.disabled = true;
+            btn.textContent = '불러오는 중…';
 
-            const results = [];
             try {
+                // 1) 원본: 항상 API에서 자동 분류
+                const origResults = [];
                 for (let i = 0; i < chars.length; i++) {
-                    btn.textContent = `불러오는 중… (${i + 1}/${chars.length})`;
+                    btn.textContent = `분류 중… (${i + 1}/${chars.length})`;
                     const char = chars[i];
 
                     const imgResp = await fetch(`/api/bot_mode/images?bot=${encodeURIComponent(botCurrentBot)}&character=${encodeURIComponent(char.name)}`);
@@ -18246,16 +18248,27 @@
                         continue;
                     }
                     const groups = groupResult.data.groups;
-                    results.push({
+                    origResults.push({
                         name: char.name,
                         appearance: groups['외모/신체'] || [],
                         outfit: groups['복장'] || []
                     });
                 }
-                if (results.length === 0) { showToast('가져올 데이터가 없습니다', 'error'); return; }
+                if (origResults.length === 0) { showToast('가져올 데이터가 없습니다', 'error'); return; }
 
-                _lbExtraOriginal = JSON.parse(JSON.stringify(results));
-                _lbExtraEdited = JSON.parse(JSON.stringify(results));
+                _lbExtraOriginal = origResults;
+
+                // 2) 편집본: 저장된 데이터가 있으면 사용, 없으면 원본 복사
+                let savedEdited = null;
+                try {
+                    const savedResp = await fetch(`/api/bot_mode/lb_extra?bot_name=${encodeURIComponent(botCurrentBot)}`);
+                    const savedResult = await savedResp.json();
+                    if (savedResult.data && savedResult.data.length > 0) {
+                        savedEdited = savedResult.data;
+                    }
+                } catch (e) { console.log('[EXPORT_EXTRA] 저장 데이터 로드 스킵:', e); }
+
+                _lbExtraEdited = savedEdited || JSON.parse(JSON.stringify(origResults));
                 _openLbExtraModal();
             } catch (e) {
                 console.error('[EXPORT_EXTRA] 실패:', e);
@@ -18286,6 +18299,7 @@
                             </span>
                         </label>
                         <div style="flex:1;"></div>
+                        <button onclick="_saveLbExtra()" style="background:#1565C0; color:#fff; border:none; padding:6px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">저장</button>
                         <button onclick="_downloadLbExtra()" style="background:#00695C; color:#fff; border:none; padding:6px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">다운로드</button>
                         <button onclick="document.getElementById('lb-extra-overlay').remove()" style="background:none; border:none; color:var(--text2); font-size:1.2rem; cursor:pointer;">✕</button>
                     </div>
@@ -18324,6 +18338,7 @@
                     <div style="display:flex; align-items:center; gap:6px; margin-bottom:8px; cursor:grab;">
                         <span style="font-size:0.9rem; color:var(--text2);">⠿</span>
                         <span style="font-weight:700; font-size:0.95rem;">${escHtml(char.name)}</span>
+                        <button onclick="event.stopPropagation(); _lbExtraShowRep('${escAttr(char.name)}')" style="background:var(--surface2); color:var(--text2); border:1px solid var(--border); padding:2px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">사진보기</button>
                     </div>
                     <div style="display:flex; gap:0;">
                         <div style="flex:1; padding-right:12px;">
@@ -18476,6 +18491,34 @@
                     _renderLbExtraContent();
                 });
             });
+        }
+
+        function _lbExtraShowRep(charName) {
+            const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
+            if (!bot) return;
+            const char = (bot.characters || []).find(c => c.name === charName);
+            if (!char || !char.rep_images || char.rep_images.length === 0) { showToast('대표 이미지가 없습니다', 'error'); return; }
+            const url = `/api/bot_mode/image/${encodeURIComponent(botCurrentBot)}/${encodeURIComponent(charName)}/${encodeURIComponent(char.rep_images[0])}`;
+            openLightbox(url);
+        }
+
+        async function _saveLbExtra() {
+            try {
+                const resp = await fetch('/api/bot_mode/lb_extra', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ bot_name: botCurrentBot, data: _lbExtraEdited })
+                });
+                const result = await resp.json();
+                if (result.saved) {
+                    showToast('저장 완료', 'success');
+                } else {
+                    showToast('저장 실패: ' + (result.error || ''), 'error');
+                }
+            } catch (e) {
+                console.error('[LB_EXTRA] 저장 실패:', e);
+                showToast('저장 실패: ' + e.message, 'error');
+            }
         }
 
         function _downloadLbExtra() {
