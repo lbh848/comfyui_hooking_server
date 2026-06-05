@@ -121,6 +121,8 @@ class BotMode:
                     return await self._update_eye_prompt(data, body)
                 elif action == "update_char_loras":
                     return await self._update_char_loras(data, body)
+                elif action == "update_char_negative":
+                    return await self._update_char_negative(data, body)
                 else:
                     return _json_error(f"알 수 없는 액션: {action}")
         except Exception as e:
@@ -243,6 +245,23 @@ class BotMode:
         char["eye_prompt"] = eye_prompt
         _save_bot_data(data)
         print(f"[BOT_MODE] 눈 프롬프트 업데이트: {bot_name}/{char_name}")
+        return _json_ok({"bots": data["bots"]})
+
+    async def _update_char_negative(self, data, body):
+        bot_name = body.get("bot_name", "").strip()
+        char_name = body.get("char_name", "").strip()
+        character_negative = body.get("character_negative", "")
+        if not bot_name or not char_name:
+            return _json_error("봇 또는 캐릭터 이름이 비어있습니다.")
+        bot = next((b for b in data["bots"] if b["name"] == bot_name), None)
+        if not bot:
+            return _json_error(f"봇을 찾을 수 없음: {bot_name}")
+        char = next((c for c in bot.get("characters", []) if c["name"] == char_name), None)
+        if not char:
+            return _json_error(f"캐릭터를 찾을 수 없음: {char_name}")
+        char["character_negative"] = character_negative
+        _save_bot_data(data)
+        print(f"[BOT_MODE] 캐릭터 부정 프롬프트 업데이트: {bot_name}/{char_name}")
         return _json_ok({"bots": data["bots"]})
 
     async def _update_char_loras(self, data, body):
@@ -1528,8 +1547,6 @@ DEFAULT_ILLUST_SETTINGS = {
     "sdxl_quality_preset": "",
     "anima_negative_preset": "",
     "sdxl_negative_preset": "",
-    "anima_character_negative_preset": "",
-    "sdxl_character_negative_preset": "",
     "hrf_activate": False,
     "hrf_size": 1.5,
     "hrf_restore_size": False,

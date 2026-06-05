@@ -319,52 +319,53 @@ class IllustPromptBuilder:
         return positive
 
     @staticmethod
-    def build_negative_prompt(tags: dict, settings: dict = None) -> str:
+    def build_negative_prompt(tags: dict, settings: dict = None,
+                              detected_chars: list = None, bot: dict = None) -> str:
         """최종 부정 프롬프트 빌드.
 
-        ANIMA 부정: character_negative_preset + anima_negative_preset + anima_negative + anima_character_negative
-        SDXL 부정: character_negative_preset + negative_preset + negative + character_negative
+        ANIMA 부정: anima_negative_preset + 감지된 캐릭터 부정
+        SDXL 부정: sdxl_negative_preset + 감지된 캐릭터 부정
+        캐릭터 부정은 ANIMA/SDXL 양쪽에 모두 포함된다.
         """
         if settings is None:
             settings = {}
+        if detected_chars is None:
+            detected_chars = []
+        if bot is None:
+            bot = {}
 
-        # ─── 부정 프리셋 (선택된 프리셋 우선, 없으면 직접 태그) ───
-        char_neg_presets = tags.get("character_negative_presets", {})
         negative_presets = tags.get("negative_presets", {})
 
-        # ANIMA 부정: 캐릭터 부정 프리셋 + ANIMA 부정 프리셋 + 직접 태그
-        anima_char_neg_preset_name = settings.get("anima_character_negative_preset", "")
-        anima_neg_preset_name = settings.get("anima_negative_preset", "")
+        # ─── 감지된 캐릭터의 부정 프롬프트 수집 ───
+        char_neg_parts = []
+        characters = bot.get("characters", [])
+        for char_name in detected_chars:
+            char_data = next((c for c in characters if c["name"] == char_name), None)
+            if not char_data:
+                continue
+            char_neg = char_data.get("character_negative", "")
+            if char_neg and char_neg.strip():
+                char_neg_parts.append(char_neg.strip())
 
-        anima_cn_tags = char_neg_presets.get(anima_char_neg_preset_name, tags.get("character_negative", []))
+        # ANIMA 부정: ANIMA 부정 프리셋 + 캐릭터 부정
+        anima_neg_preset_name = settings.get("anima_negative_preset", "")
         anima_n_tags = negative_presets.get(anima_neg_preset_name, tags.get("anima_negative", []))
-        anima_char_neg_direct = tags.get("anima_character_negative", [])
 
         anima_neg_parts = []
-        for t in anima_cn_tags if isinstance(anima_cn_tags, list) else []:
-            if t.strip():
-                anima_neg_parts.append(t.strip())
         for t in anima_n_tags if isinstance(anima_n_tags, list) else []:
             if t.strip():
                 anima_neg_parts.append(t.strip())
-        for t in anima_char_neg_direct:
-            if t.strip():
-                anima_neg_parts.append(t.strip())
+        anima_neg_parts.extend(char_neg_parts)
 
-        # SDXL 부정: 캐릭터 부정 프리셋 + 부정 프리셋 + 직접 태그
-        sdxl_char_neg_preset_name = settings.get("sdxl_character_negative_preset", "")
+        # SDXL 부정: SDXL 부정 프리셋 + 캐릭터 부정
         sdxl_neg_preset_name = settings.get("sdxl_negative_preset", "")
-
-        sdxl_cn_tags = char_neg_presets.get(sdxl_char_neg_preset_name, tags.get("character_negative", []))
         sdxl_n_tags = negative_presets.get(sdxl_neg_preset_name, tags.get("negative", []))
 
         sdxl_neg_parts = []
-        for t in sdxl_cn_tags if isinstance(sdxl_cn_tags, list) else []:
-            if t.strip():
-                sdxl_neg_parts.append(t.strip())
         for t in sdxl_n_tags if isinstance(sdxl_n_tags, list) else []:
             if t.strip():
                 sdxl_neg_parts.append(t.strip())
+        sdxl_neg_parts.extend(char_neg_parts)
 
         negative = ", ".join(anima_neg_parts)
         negative += "\n[SDXL]"

@@ -3248,20 +3248,8 @@
                         <div style="background:rgba(156,39,176,0.08); border-radius:8px; padding:10px; margin-top:8px;">
                             <div class="section-title">삽화 프롬프트 설정</div>
                             <div style="margin-top:6px;">
-                                <div style="font-size:0.7rem; color:var(--text2); margin-bottom:2px;">ANIMA 아티스트 프리셋</div>
-                                <select id="illust-anima-artist-preset" onchange="saveIllustSettings()" style="width:100%; padding:3px 6px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.8rem;">
-                                    <option value="">-- 없음 --</option>
-                                </select>
-                            </div>
-                            <div style="margin-top:6px;">
                                 <div style="font-size:0.7rem; color:var(--text2); margin-bottom:2px;">SDXL 아티스트 프리셋</div>
                                 <select id="illust-sdxl-artist-preset" onchange="saveIllustSettings()" style="width:100%; padding:3px 6px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.8rem;">
-                                    <option value="">-- 없음 --</option>
-                                </select>
-                            </div>
-                            <div style="margin-top:6px;">
-                                <div style="font-size:0.7rem; color:var(--text2); margin-bottom:2px;">ANIMA 품질 프리셋</div>
-                                <select id="illust-anima-quality-preset" onchange="saveIllustSettings()" style="width:100%; padding:3px 6px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.8rem;">
                                     <option value="">-- 없음 --</option>
                                 </select>
                             </div>
@@ -3272,11 +3260,18 @@
                                 </select>
                             </div>
                             <div style="margin-top:6px;">
-                                <div style="font-size:0.7rem; color:var(--text2); margin-bottom:2px;">ANIMA 부정 프리셋</div>
-                                <select id="illust-anima-negative-preset" onchange="saveIllustSettings()" style="width:100%; padding:3px 6px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.8rem;">
+                                <div style="font-size:0.7rem; color:var(--text2); margin-bottom:2px;">ANIMA 아티스트 프리셋</div>
+                                <select id="illust-anima-artist-preset" onchange="saveIllustSettings()" style="width:100%; padding:3px 6px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.8rem;">
                                     <option value="">-- 없음 --</option>
                                 </select>
                             </div>
+                            <div style="margin-top:6px;">
+                                <div style="font-size:0.7rem; color:var(--text2); margin-bottom:2px;">ANIMA 품질 프리셋</div>
+                                <select id="illust-anima-quality-preset" onchange="saveIllustSettings()" style="width:100%; padding:3px 6px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.8rem;">
+                                    <option value="">-- 없음 --</option>
+                                </select>
+                            </div>
+                            <hr style="border:none; border-top:1px dashed var(--border); margin:8px 0;">
                             <div style="margin-top:6px;">
                                 <div style="font-size:0.7rem; color:var(--text2); margin-bottom:2px;">SDXL 부정 프리셋</div>
                                 <select id="illust-sdxl-negative-preset" onchange="saveIllustSettings()" style="width:100%; padding:3px 6px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.8rem;">
@@ -3284,14 +3279,8 @@
                                 </select>
                             </div>
                             <div style="margin-top:6px;">
-                                <div style="font-size:0.7rem; color:var(--text2); margin-bottom:2px;">ANIMA 캐릭터 부정 프리셋</div>
-                                <select id="illust-anima-char-neg-preset" onchange="saveIllustSettings()" style="width:100%; padding:3px 6px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.8rem;">
-                                    <option value="">-- 없음 --</option>
-                                </select>
-                            </div>
-                            <div style="margin-top:6px;">
-                                <div style="font-size:0.7rem; color:var(--text2); margin-bottom:2px;">SDXL 캐릭터 부정 프리셋</div>
-                                <select id="illust-sdxl-char-neg-preset" onchange="saveIllustSettings()" style="width:100%; padding:3px 6px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.8rem;">
+                                <div style="font-size:0.7rem; color:var(--text2); margin-bottom:2px;">ANIMA 부정 프리셋</div>
+                                <select id="illust-anima-negative-preset" onchange="saveIllustSettings()" style="width:100%; padding:3px 6px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.8rem;">
                                     <option value="">-- 없음 --</option>
                                 </select>
                             </div>
@@ -17913,6 +17902,14 @@
                                    onblur="saveEyePrompt(this)" onclick="event.stopPropagation()"
                                    style="border:none; background:var(--surface); color:var(--text); font-size:0.8rem; padding:5px 8px; min-width:180px;">
                         </div>
+                        <div style="display:flex; align-items:center; gap:0; border:1px solid rgba(255,87,34,0.4); border-radius:6px; overflow:hidden; flex-shrink:0;">
+                            <span style="padding:5px 8px; font-size:0.85rem; background:rgba(255,87,34,0.1); border-right:1px solid rgba(255,87,34,0.3);">➖</span>
+                            <input type="text" id="char-negative-${charIdx}" data-bot="${escAttr(botCurrentBot)}" data-char="${escAttr(char.name)}"
+                                   placeholder="캐릭터 부정 프롬프트(옵션)"
+                                   value="${escAttr(char.character_negative || '')}"
+                                   onblur="saveCharNegative(this)" onclick="event.stopPropagation()"
+                                   style="border:none; background:var(--surface); color:var(--text); font-size:0.8rem; padding:5px 8px; min-width:180px;">
+                        </div>
                         <button onclick="event.stopPropagation(); togglePromptPreviewModal('${escAttr(char.name)}', this)"
                             style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:6px 10px; border-radius:6px; cursor:pointer; font-size:0.8rem; white-space:nowrap;">패치 프롬프트 미리보기</button>
                         <span id="patch-status-${charIdx}" style="display:inline-flex; align-items:center; gap:3px; margin-left:4px; font-size:0.7rem; color:gray; flex-shrink:0;">
@@ -18584,6 +18581,24 @@
                 if (data.bots) botData.bots = data.bots;
             } catch (e) {
                 console.error('[BOT] 눈 프롬프트 저장 실패:', e);
+            }
+        }
+
+        async function saveCharNegative(inputEl) {
+            const botName = inputEl.dataset.bot;
+            const charName = inputEl.dataset.char;
+            const characterNegative = inputEl.value;
+            if (!botName || !charName) return;
+            try {
+                const resp = await fetch('/api/bot_mode/action', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'update_char_negative', bot_name: botName, char_name: charName, character_negative: characterNegative })
+                });
+                const data = await resp.json();
+                if (data.bots) botData.bots = data.bots;
+            } catch (e) {
+                console.error('[BOT] 캐릭터 부정 프롬프트 저장 실패:', e);
             }
         }
 
@@ -19670,8 +19685,6 @@
                     document.getElementById('illust-sdxl-quality-preset').value = s.sdxl_quality_preset || '';
                     document.getElementById('illust-anima-negative-preset').value = s.anima_negative_preset || '';
                     document.getElementById('illust-sdxl-negative-preset').value = s.sdxl_negative_preset || '';
-                    document.getElementById('illust-anima-char-neg-preset').value = s.anima_character_negative_preset || '';
-                    document.getElementById('illust-sdxl-char-neg-preset').value = s.sdxl_character_negative_preset || '';
                     document.getElementById('illust-hrf-toggle').checked = s.hrf_activate || false;
                     document.getElementById('illust-hrf-size').value = s.hrf_size || 1.5;
                     document.getElementById('illust-hrf-size-val').textContent = s.hrf_size || 1.5;
@@ -19701,8 +19714,6 @@
                 sdxl_quality_preset: document.getElementById('illust-sdxl-quality-preset').value,
                 anima_negative_preset: document.getElementById('illust-anima-negative-preset').value,
                 sdxl_negative_preset: document.getElementById('illust-sdxl-negative-preset').value,
-                anima_character_negative_preset: document.getElementById('illust-anima-char-neg-preset').value,
-                sdxl_character_negative_preset: document.getElementById('illust-sdxl-char-neg-preset').value,
                 hrf_activate: document.getElementById('illust-hrf-toggle').checked,
                 hrf_size: parseFloat(document.getElementById('illust-hrf-size').value) || 1.5,
                 hrf_restore_size: document.getElementById('illust-hrf-restore-size').checked,
@@ -19758,12 +19769,6 @@
                 const negativeNames = Object.keys(negativePresets);
                 fillPresetSelect('illust-anima-negative-preset', negativeNames, '부정');
                 fillPresetSelect('illust-sdxl-negative-preset', negativeNames, '부정');
-
-                // 캐릭터 부정 프리셋
-                const charNegPresets = tagsData.character_negative_presets || {};
-                const charNegNames = Object.keys(charNegPresets);
-                fillPresetSelect('illust-anima-char-neg-preset', charNegNames, '캐릭터 부정');
-                fillPresetSelect('illust-sdxl-char-neg-preset', charNegNames, '캐릭터 부정');
 
                 // 설정 로드 (선택값 복원)
                 await loadIllustSettings();
