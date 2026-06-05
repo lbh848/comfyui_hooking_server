@@ -2191,6 +2191,10 @@
             border-color: var(--accent);
             transform: translateY(-2px);
         }
+        .asset-folder-card.selected {
+            border: 2px solid var(--accent);
+            background: rgba(66,133,244,0.08);
+        }
         .asset-folder-card .folder-icon {
             font-size: 3rem;
             margin-bottom: 12px;
@@ -3089,7 +3093,7 @@
     <!-- 탭 바 -->
     <div class="tab-bar">
         <button id="tab-btn-backup" class="tab-btn active" onclick="switchTab('backup')">삽화 백업</button>
-        <button id="tab-btn-bot" class="tab-btn" onclick="switchTab('bot')">삽화 설정</button>
+        <button id="tab-btn-bot" class="tab-btn" onclick="switchTab('bot')">삽화 모드</button>
         <span class="tab-divider"></span>
         <button class="tab-btn" onclick="switchTab('asset')">에셋 생성</button>
         <button class="tab-btn" onclick="switchTab('asset-upload')">에셋 업로드</button>
@@ -3153,7 +3157,15 @@
         <!-- 삽화 설정 탭 -->
         <div id="tab-bot-content" class="tab-content">
             <div class="asset-breadcrumb" id="bot-breadcrumb">
-                <span>삽화 설정</span>
+                <span>삽화 모드</span>
+            </div>
+            <div style="display:flex; align-items:center; gap:10px; padding:8px 16px; border-bottom:1px solid var(--border);">
+                <label class="toggle-switch">
+                    <input type="checkbox" id="bot-mode-toggle" onchange="onBotModeToggle()">
+                    <span class="toggle-slider"></span>
+                </label>
+                <span style="font-size:0.85rem;">삽화 모드 활성화</span>
+                <span id="bot-mode-status" class="toggle-status off">OFF</span>
             </div>
             <div class="asset-container">
                 <div class="asset-main" id="bot-main">
@@ -7458,6 +7470,18 @@
             const outfitEnabled = currentConfig.outfit_mode_enabled || false;
             document.getElementById('setting-outfit-enabled').checked = outfitEnabled;
             updateOutfitStatus(outfitEnabled);
+
+            // 삽화 모드 활성화 설정
+            const botModeEnabled = currentConfig.bot_mode_enabled || false;
+            document.getElementById('bot-mode-toggle').checked = botModeEnabled;
+            updateBotModeStatus(botModeEnabled);
+            // 삽화 모드 선택 봇 복원
+            const botSelected = currentConfig.bot_selected || '';
+            if (botSelected) {
+                botCurrentBot = botSelected;
+                const botSelect = document.getElementById('bot-select');
+                if (botSelect) botSelect.value = botSelected;
+            }
             // 복장 워크플로우 소스 경로에서 파일명만 추출 (베이스 경로는 메인과 공유)
             const outfitSourcePath = currentConfig.outfit_workflow_source_path || '';
             const outfitParts = splitWorkflowPath(outfitSourcePath);
@@ -8099,6 +8123,8 @@
                 batch_timeout_seconds: parseFloat(document.getElementById('setting-batch-timeout').value) || 5.0,
                 notification_enabled: document.getElementById('setting-notification-enabled').checked,
                 auto_reschedule_enabled: document.getElementById('setting-auto-reschedule').checked,
+                bot_mode_enabled: document.getElementById('bot-mode-toggle').checked,
+                bot_selected: botCurrentBot || '',
                 outfit_mode_enabled: document.getElementById('setting-outfit-enabled').checked,
                 outfit_workflow_source_path: document.getElementById('setting-outfit-workflow-source-path').value,
                 utility_workflow_source_path: document.getElementById('setting-utility-workflow-source-path').value,
@@ -17523,6 +17549,47 @@
         let botCurrentBot = '';
         let botCurrentChar = '';
 
+        function updateBotModeStatus(checked) {
+            const statusEl = document.getElementById('bot-mode-status');
+            if (statusEl) {
+                statusEl.textContent = checked ? 'ON' : 'OFF';
+                statusEl.className = 'toggle-status ' + (checked ? 'on' : 'off');
+            }
+        }
+
+        async function onBotModeToggle() {
+            const checked = document.getElementById('bot-mode-toggle').checked;
+            updateBotModeStatus(checked);
+            try {
+                const resp = await fetch('/api/config', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({bot_mode_enabled: checked})
+                });
+                if (!resp.ok) {
+                    document.getElementById('bot-mode-toggle').checked = !checked;
+                    updateBotModeStatus(!checked);
+                    showToast('삽화 모드 설정 저장 실패');
+                }
+            } catch (e) {
+                console.error('[BOT] 삽화 모드 토글 저장 실패:', e);
+                document.getElementById('bot-mode-toggle').checked = !checked;
+                updateBotModeStatus(!checked);
+            }
+        }
+
+        async function saveBotSelected() {
+            try {
+                await fetch('/api/config', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({bot_selected: botCurrentBot || ''})
+                });
+            } catch (e) {
+                console.error('[BOT] 선택 봇 저장 실패:', e);
+            }
+        }
+
         async function loadBotData() {
             document.getElementById('bot-loading').style.display = 'flex';
             document.getElementById('bot-empty-state').style.display = 'none';
@@ -17532,6 +17599,22 @@
             try {
                 const resp = await fetch('/api/bot_mode/bots');
                 botData = await resp.json();
+                // config에서 토글 상태 및 선택 봇 복원
+                try {
+                    const cfgResp = await fetch('/api/config');
+                    const cfg = await cfgResp.json();
+                    // 토글 상태 복원
+                    const botModeOn = cfg.bot_mode_enabled || false;
+                    document.getElementById('bot-mode-toggle').checked = botModeOn;
+                    updateBotModeStatus(botModeOn);
+                    // 선택 봇 복원
+                    const savedBot = cfg.bot_selected || '';
+                    if (savedBot && botData.bots && botData.bots.some(b => b.name === savedBot)) {
+                        botCurrentBot = savedBot;
+                    }
+                } catch (e) {
+                    console.error('[BOT] 설정 로드 실패:', e);
+                }
                 renderBotSelect();
                 renderBotList();
             } catch (e) {
@@ -17563,6 +17646,8 @@
             botCurrentChar = '';
             const charDetailSidebar = document.getElementById('bot-char-detail-sidebar');
             if (charDetailSidebar) charDetailSidebar.style.display = 'none';
+            // 선택된 봇을 config에 저장
+            saveBotSelected();
             if (!botCurrentBot) {
                 document.getElementById('bot-char-section').style.display = 'none';
                 const countEl = document.getElementById('bot-char-count');
@@ -17612,17 +17697,48 @@
             msg.textContent = '공사중이라고 말했는데 지금 뭐하시나요?';
             grid.parentElement.insertBefore(msg, grid);
 
-            for (const bot of botData.bots) {
+            // 선택된 봇을 최상단에 배치, 구분선, 나머지 봇
+            const selected = botCurrentBot;
+            const sortedBots = botData.bots.slice();
+            if (selected) {
+                sortedBots.sort((a, b) => {
+                    if (a.name === selected) return -1;
+                    if (b.name === selected) return 1;
+                    return 0;
+                });
+            }
+
+            const hasSelected = selected && sortedBots.some(b => b.name === selected);
+            const dividerAdded = { value: false };
+
+            for (const bot of sortedBots) {
+                const isSelected = selected && bot.name === selected;
                 const charCount = (bot.characters || []).length;
                 const card = document.createElement('div');
-                card.className = 'asset-folder-card';
-                card.innerHTML = `<div class="folder-icon">🤖</div><div class="folder-name">${escHtml(bot.name)}</div><div style="font-size:0.75rem; color:var(--text2); margin-top:4px;">캐릭터 ${charCount}개</div>`;
+                card.className = 'asset-folder-card' + (isSelected ? ' selected' : '');
+                card.innerHTML = `<div class="folder-icon">🤖</div><div class="folder-name">${escHtml(bot.name)}</div><div style="font-size:0.75rem; color:var(--text2); margin-top:4px;">캐릭터 ${charCount}개</div>
+                    <button class="bot-select-btn" style="margin-top:8px; padding:3px 10px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); cursor:pointer; font-size:0.7rem; transition:background 0.2s;">${isSelected ? '선택됨' : '선택'}</button>`;
+                card.querySelector('.bot-select-btn').onclick = (e) => {
+                    e.stopPropagation();
+                    botCurrentBot = bot.name;
+                    document.getElementById('bot-select').value = bot.name;
+                    onBotChange();
+                    renderBotList();
+                };
                 card.onclick = () => {
                     botCurrentBot = bot.name;
                     document.getElementById('bot-select').value = bot.name;
                     onBotChange();
                 };
                 grid.appendChild(card);
+
+                // 선택된 봇 바로 아래에 구분선 (한 번만)
+                if (isSelected && hasSelected && !dividerAdded.value && sortedBots.length > 1) {
+                    const divider = document.createElement('div');
+                    divider.style.cssText = 'grid-column: 1 / -1; border-top:1px solid var(--border); margin:4px 0;';
+                    grid.appendChild(divider);
+                    dividerAdded.value = true;
+                }
             }
             showBotView('bots');
         }
@@ -18408,7 +18524,7 @@
 
         function updateBotBreadcrumb() {
             const bc = document.getElementById('bot-breadcrumb');
-            let html = '<span class="bc-active" style="cursor:pointer;" onclick="botNavBack()">삽화 설정</span>';
+            let html = '<span class="bc-active" style="cursor:pointer;" onclick="botNavBack()">삽화 모드</span>';
             if (botCurrentBot) {
                 html += `<span class="bc-sep">›</span>`;
                 html += `<span class="bc-active" style="cursor:pointer;" onclick="navToBotChars()">${escHtml(botCurrentBot)}</span>`;
@@ -18472,7 +18588,7 @@
 
         async function removeBot() {
             if (!botCurrentBot) return;
-            if (!confirm(`봇 "${botCurrentBot}"을(를) 삭제하시겠습니까? 모든 캐릭터와 이미지가 삭제됩니다.`)) return;
+            if (!confirm(`봇 "${botCurrentBot}"을(를) 삭제하시겠습니까? 모든 캐릭터와 이미지가 삭제됩니다.\n(LoRA 데이터는 삭제되지 않습니다)`)) return;
             try {
                 const resp = await fetch('/api/bot_mode/action', {
                     method: 'POST',

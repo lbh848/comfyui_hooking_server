@@ -151,6 +151,23 @@ class BotMode:
         if os.path.isdir(bot_path):
             shutil.rmtree(bot_path)
             print(f"[BOT_MODE] 봇 폴더 삭제: {bot_path}")
+
+        # soya_bot 폴더 정리
+        try:
+            config_path = os.path.join(BASE_DIR, "config.json")
+            if os.path.isfile(config_path):
+                with open(config_path, "r", encoding="utf-8") as f:
+                    config = json.load(f)
+                comfy_input_dir = config.get("comfy_input_dir", "").strip()
+                if comfy_input_dir:
+                    soya_bot_path = os.path.join(comfy_input_dir, "soya_bot", name)
+                    if os.path.isdir(soya_bot_path):
+                        shutil.rmtree(soya_bot_path)
+                        print(f"[BOT_MODE] soya_bot 폴더 삭제: {soya_bot_path}")
+        except Exception as e:
+            print(f"[BOT_MODE] soya_bot 정리 실패: {e}")
+            traceback.print_exc()
+
         _save_bot_data(data)
         print(f"[BOT_MODE] 봇 삭제: {name}")
         return _json_ok({"bots": data["bots"]})
