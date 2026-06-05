@@ -3060,6 +3060,26 @@
         @keyframes noti-bubble-in { from { opacity:0; transform:translateY(20px); } to { opacity:1; transform:translateY(0); } }
         .iset-input { width:100%; padding:4px; border:1px solid var(--border); border-radius:4px; background:var(--surface1); color:var(--text); font-size:0.8rem; }
         .iset-input:disabled { opacity:0.4; cursor:not-allowed; background:var(--surface2); }
+        .ag-tag[data-desc]:hover::after {
+            content: attr(data-desc);
+            position: absolute;
+            bottom: calc(100% + 4px);
+            left: 50%;
+            transform: translateX(-50%);
+            background: var(--surface);
+            color: var(--text);
+            border: 1px solid var(--border);
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 0.65rem;
+            white-space: nowrap;
+            max-width: 240px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            z-index: 10;
+            pointer-events: none;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+        }
     </style>
 </head>
 <body>
@@ -18186,6 +18206,7 @@
         // ─── 오토 그룹핑 ────────────────────────────────────
         let _autoGroupViewMode = 'chips'; // 'text' | 'chips'
         let _autoGroupLastGroups = null;
+        let _autoGroupShowDesc = false;
 
         async function autoGroupPrompt(charName) {
             const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
@@ -18214,6 +18235,21 @@
             }
 
             _showAutoGroupModal(charName, prompt);
+        }
+
+        function _toggleAutoGroupDesc(checked) {
+            _autoGroupShowDesc = checked;
+            // 스위치 시각 업데이트
+            const label = document.getElementById('auto-group-desc-toggle');
+            if (label) {
+                const track = label.querySelector('span > span');
+                const bg = label.querySelector('span');
+                if (track && bg) {
+                    track.style.left = checked ? '14px' : '2px';
+                    bg.style.background = checked ? 'var(--accent)' : 'var(--border)';
+                }
+            }
+            _renderAutoGroupContent();
         }
 
         function _setAutoGroupView(mode) {
@@ -18273,7 +18309,10 @@
                                 <span style="font-size:0.75rem; color:var(--text2); margin-left:auto;">${tags.length}개</span>
                             </div>
                             <div style="display:flex; flex-wrap:wrap; gap:4px;">
-                                ${tags.map(t => `<span style="background:${colorCfg.tag}; padding:3px 8px; border-radius:4px; font-size:0.8rem; cursor:default;" title="${escHtml(t.sub || '')}">${escHtml(t.tag)}</span>`).join('')}
+                                ${tags.map(t => {
+                                    const descAttr = (_autoGroupShowDesc && t.desc) ? `data-desc="${escAttr(t.desc)}"` : '';
+                                    return `<span class="ag-tag" ${descAttr} style="background:${colorCfg.tag}; padding:3px 8px; border-radius:4px; font-size:0.8rem; cursor:default; position:relative;">${escHtml(t.tag)}</span>`;
+                                }).join('')}
                             </div>
                         </div>
                     `;
@@ -18290,6 +18329,7 @@
 
             _autoGroupLastGroups = null;
             _autoGroupViewMode = 'chips';
+            _autoGroupShowDesc = false;
 
             const overlay = document.createElement('div');
             overlay.id = 'auto-group-overlay';
@@ -18306,6 +18346,7 @@
                         <div style="font-size:0.7rem; color:var(--text2); margin-top:2px;">첫 번째 대표 이미지 프롬프트 분석</div>
                     </div>
                     <div style="display:flex; gap:8px; align-items:center;">
+                        <label id="auto-group-desc-toggle" title="태그 설명 툴팁" style="display:flex; align-items:center; gap:4px; font-size:0.7rem; font-weight:400; color:var(--text-secondary); cursor:pointer;">설명<input type="checkbox" onchange="_toggleAutoGroupDesc(this.checked)" style="display:none;"><span style="position:relative; width:28px; height:16px; background:var(--border); border-radius:8px; transition:background 0.2s;"><span style="position:absolute; top:2px; left:2px; width:12px; height:12px; background:#fff; border-radius:50%; transition:left 0.2s;"></span></span></label>
                         <div class="mode-segment" id="auto-group-view-toggle" style="display:inline-flex; align-items:center; border:1px solid var(--border); border-radius:6px; overflow:hidden;">
                             <button class="mode-seg-btn" data-mode="text" onclick="_setAutoGroupView('text')"
                                 style="padding:2px 10px; font-size:0.75rem; font-weight:600; border:none; cursor:pointer; transition:background 0.2s, color 0.2s; background:var(--surface2); color:var(--text2);">텍스트</button>
