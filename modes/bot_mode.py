@@ -1519,5 +1519,66 @@ class BotDataPatcher:
             print(f"[CHECK_PATCH] 확인 실패: {e}")
             traceback.print_exc()
             return _json_error(str(e))
+# ─── 삽화 모드 설정 (봇별) ──────────────────────────────
+
+DEFAULT_ILLUST_SETTINGS = {
+    "anima_artist_preset": "",
+    "sdxl_artist_preset": "",
+    "hrf_activate": False,
+    "hrf_size": 1.5,
+    "hrf_restore_size": False,
+    "img_w": 756,
+    "img_h": 756,
+    "fd_activate": False,
+    "hd_activate": False,
+    "ed_activate": False,
+    "face_id_activate": False,
+    "face_id_str": 0.55,
+}
+
+
+async def handle_get_illust_settings(request):
+    """GET /api/bot_mode/illust_settings - 봇의 삽화 설정 반환"""
+    try:
+        bot_name = request.query.get("bot_name", "").strip()
+        if not bot_name:
+            return _json_error("봇 이름이 비어있습니다.")
+        data = _load_bot_data()
+        bot = next((b for b in data["bots"] if b["name"] == bot_name), None)
+        if not bot:
+            return _json_error(f"봇을 찾을 수 없습니다: {bot_name}")
+        settings = bot.get("illust_settings", DEFAULT_ILLUST_SETTINGS)
+        return _json_ok(settings)
+    except Exception as e:
+        print(f"[BOT_MODE] 삽화 설정 조회 실패: {e}")
+        traceback.print_exc()
+        return _json_error(str(e))
+
+
+async def handle_update_illust_settings(request):
+    """POST /api/bot_mode/update_illust_settings - 봇의 삽화 설정 업데이트"""
+    try:
+        body = await request.json()
+        bot_name = body.get("bot_name", "").strip()
+        if not bot_name:
+            return _json_error("봇 이름이 비어있습니다.")
+        new_settings = body.get("illust_settings", {})
+        data = _load_bot_data()
+        bot = next((b for b in data["bots"] if b["name"] == bot_name), None)
+        if not bot:
+            return _json_error(f"봇을 찾을 수 없습니다: {bot_name}")
+        # 기존 설정과 병합
+        current = bot.get("illust_settings", DEFAULT_ILLUST_SETTINGS)
+        merged = {**DEFAULT_ILLUST_SETTINGS, **current, **new_settings}
+        bot["illust_settings"] = merged
+        _save_bot_data(data)
+        print(f"[BOT_MODE] 삽화 설정 업데이트: {bot_name}")
+        return _json_ok(merged)
+    except Exception as e:
+        print(f"[BOT_MODE] 삽화 설정 업데이트 실패: {e}")
+        traceback.print_exc()
+        return _json_error(str(e))
+
+
 bot_mode = BotMode()
 data_patcher = BotDataPatcher()

@@ -43,7 +43,9 @@ from modes import autocomplete_service
 from modes import asset_tool_mode
 from modes import bot_mode
 from modes.bot_mode import data_patcher
+from modes.bot_mode import handle_get_illust_settings, handle_update_illust_settings
 from modes import embedding_service
+from modes.illust_prompt_builder import IllustPromptBuilder, log_illust_build, get_illust_logs
 import importlib.util
 
 # ─── 설정 ───────────────────────────────────────────────
@@ -1533,10 +1535,57 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict):
             if positive != original_positive or negative != original_negative:
                 print(f"[CLAMP] 가중치 클램프 적용 (clamp={clamp_val})")
 
-        # 단어 치환 규칙 적용
+        # 단어 치환 규칙 적용 / 삽화 모드 프롬프트 빌딩
         bot_name = app_config.get("bot_selected", "")
         if bot_name and app_config.get("bot_mode_enabled", False):
-            positive, negative = apply_word_replacements(positive, negative, bot_name)
+            # 삽화 모드: 프롬프트 파싱 → 치환 → 캐릭터 감지 → 빌드
+            builder = IllustPromptBuilder()
+            raw_positive = positive
+
+            # 1. 섹션 파싱
+            sections = builder.parse_sections(positive)
+
+            # 2. 각 섹션에 단어 치환 적용
+            setup_replaced = apply_word_replacements(sections["setup"], "", bot_name)[0]
+            char_replaced = apply_word_replacements(sections["char"], "", bot_name)[0]
+            supplement_replaced = apply_word_replacements(sections["supplement"], "", bot_name)[0]
+
+            # 3. 캐릭터 감지 (모든 섹션에서)
+            bot_data = bot_mode._load_bot_data()
+            bot = next((b for b in bot_data["bots"] if b["name"] == bot_name), None)
+            if bot:
+                char_names = [c["name"] for c in bot.get("characters", [])]
+                detected = builder.detect_characters(
+                    [setup_replaced, char_replaced, supplement_replaced], char_names
+                )
+                print(f"[ILLUST] 감지된 캐릭터: {detected}")
+
+                # 4. 프롬프트 빌드
+                tags = asset_mode._tags
+                settings = bot.get("illust_settings", {})
+                positive = builder.build_positive_prompt(
+                    setup_replaced, char_replaced, supplement_replaced,
+                    detected, bot, tags, settings, bot_name
+                )
+                negative = builder.build_negative_prompt(tags)
+
+                # 5. 로깅
+                word_replaced = {
+                    "setup": setup_replaced,
+                    "char": char_replaced,
+                    "supplement": supplement_replaced,
+                }
+                log_illust_build(
+                    raw_positive, sections, detected,
+                    word_replaced, positive, negative
+                )
+            else:
+                print(f"[ILLUST] 봇을 찾을 수 없음: {bot_name}, 기존 치환 로직 사용")
+                positive, negative = apply_word_replacements(positive, negative, bot_name)
+        else:
+            # 비삽화 모드: 기존 단어 치환만 적용
+            if bot_name and app_config.get("bot_mode_enabled", False):
+                positive, negative = apply_word_replacements(positive, negative, bot_name)
 
         print(f"[INFO] 긍정: {positive[:80]}...")
         print(f"[INFO] 부정: {negative[:80]}...")
@@ -1613,6 +1662,12 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict):
         log_to_file("proxy.log", f"ERROR in process_prompt: {e}\n{tb}")
         prompts[prompt_id]["status"] = "completed"
         prompts[prompt_id]["outputs"] = {"images": []}
+
+
+async def handle_get_illust_logs(request: web.Request) -> web.Response:
+    """GET /api/bot_mode/illust_logs - 삽화 모드 프롬프트 빌드 로그 반환"""
+    logs = get_illust_logs()
+    return web.json_response({"logs": logs})
 
 
 # ─── 라우트 핸들러 (ComfyUI 프록시) ─────────────────────
@@ -4640,6 +4695,9 @@ app.router.add_post("/api/bot_mode/patch_settings", bot_mode.handle_save_patch_s
 app.router.add_get("/api/bot_mode/utility_preview", bot_mode.handle_get_utility_preview)
 app.router.add_post("/api/bot_mode/batch_analyze_utility", bot_mode.handle_batch_analyze_utility)
 app.router.add_post("/api/bot_mode/batch_set_negative_utility", bot_mode.handle_batch_set_negative_utility)
+app.router.add_get("/api/bot_mode/illust_settings", handle_get_illust_settings)
+app.router.add_post("/api/bot_mode/update_illust_settings", handle_update_illust_settings)
+app.router.add_get("/api/bot_mode/illust_logs", handle_get_illust_logs)
 app.router.add_get("/api/bot_mode/word_replacements", bot_mode.handle_get_word_replacements)
 app.router.add_post("/api/bot_mode/word_replacements", bot_mode.handle_save_word_replacements)
 # 자동완성 API

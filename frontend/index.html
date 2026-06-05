@@ -3246,6 +3246,78 @@
                             <div id="bot-util-status" style="font-size:0.7rem; color:var(--text2); margin-top:4px; display:none;"></div>
                         </div>
                         <div style="background:rgba(156,39,176,0.08); border-radius:8px; padding:10px; margin-top:8px;">
+                            <div class="section-title">삽화 프롬프트 설정</div>
+                            <div style="margin-top:6px;">
+                                <div style="font-size:0.7rem; color:var(--text2); margin-bottom:2px;">ANIMA 아티스트 프리셋</div>
+                                <select id="illust-anima-artist-preset" onchange="saveIllustSettings()" style="width:100%; padding:3px 6px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.8rem;">
+                                    <option value="">-- 없음 --</option>
+                                </select>
+                            </div>
+                            <div style="margin-top:6px;">
+                                <div style="font-size:0.7rem; color:var(--text2); margin-bottom:2px;">SDXL 아티스트 프리셋</div>
+                                <select id="illust-sdxl-artist-preset" onchange="saveIllustSettings()" style="width:100%; padding:3px 6px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.8rem;">
+                                    <option value="">-- 없음 --</option>
+                                </select>
+                            </div>
+                            <div style="display:flex; align-items:center; gap:6px; margin-top:6px;">
+                                <span style="font-size:0.75rem;">HIRES FIX</span>
+                                <label class="toggle-switch" style="transform:scale(0.8);">
+                                    <input type="checkbox" id="illust-hrf-toggle" onchange="saveIllustSettings()">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                                <span id="illust-hrf-status" class="toggle-status off" style="font-size:0.7rem;">OFF</span>
+                            </div>
+                            <div id="illust-hrf-options" style="display:none; margin-top:4px; padding-left:8px;">
+                                <div style="display:flex; align-items:center; gap:4px; margin-bottom:4px;">
+                                    <span style="font-size:0.7rem; color:var(--text2);">배율</span>
+                                    <input type="range" id="illust-hrf-size" min="1" max="3" step="0.05" value="1.5" oninput="document.getElementById('illust-hrf-size-val').textContent=this.value; saveIllustSettings()">
+                                    <span id="illust-hrf-size-val" style="font-size:0.7rem;">1.5</span>
+                                </div>
+                                <div style="display:flex; align-items:center; gap:4px;">
+                                    <span style="font-size:0.7rem; color:var(--text2);">원본 크기 복원</span>
+                                    <label class="toggle-switch" style="transform:scale(0.8);">
+                                        <input type="checkbox" id="illust-hrf-restore-size" onchange="saveIllustSettings()">
+                                        <span class="toggle-slider"></span>
+                                    </label>
+                                </div>
+                            </div>
+                            <div style="display:flex; gap:6px; align-items:center; margin-top:6px;">
+                                <span style="font-size:0.75rem; color:var(--text2);">이미지 사이즈</span>
+                                <input type="number" id="illust-img-w" value="756" min="256" max="4096" step="8" onchange="saveIllustSettings()" style="width:60px; padding:2px 4px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.75rem;">
+                                <span style="font-size:0.75rem;">x</span>
+                                <input type="number" id="illust-img-h" value="756" min="256" max="4096" step="8" onchange="saveIllustSettings()" style="width:60px; padding:2px 4px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.75rem;">
+                            </div>
+                            <div style="display:flex; align-items:center; gap:6px; margin-top:6px;">
+                                <span style="font-size:0.75rem;">FACE-IPAdapter</span>
+                                <label class="toggle-switch" style="transform:scale(0.8);">
+                                    <input type="checkbox" id="illust-face-id-toggle" onchange="saveIllustSettings()">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                                <span id="illust-face-id-status" class="toggle-status off" style="font-size:0.7rem;">OFF</span>
+                            </div>
+                            <div id="illust-face-id-options" style="display:none; margin-top:4px; padding-left:8px;">
+                                <div style="display:flex; align-items:center; gap:4px;">
+                                    <span style="font-size:0.7rem; color:var(--text2);">강도</span>
+                                    <input type="range" id="illust-face-id-str" min="0" max="1" step="0.01" value="0.55" oninput="document.getElementById('illust-face-id-str-val').textContent=this.value; saveIllustSettings()">
+                                    <span id="illust-face-id-str-val" style="font-size:0.7rem;">0.55</span>
+                                </div>
+                            </div>
+                            <div style="display:flex; gap:6px; margin-top:6px;">
+                                <label style="display:flex; align-items:center; gap:3px; font-size:0.75rem; cursor:pointer;">
+                                    <input type="checkbox" id="illust-fd-toggle" onchange="saveIllustSettings()"> FD
+                                </label>
+                                <label style="display:flex; align-items:center; gap:3px; font-size:0.75rem; cursor:pointer;">
+                                    <input type="checkbox" id="illust-hd-toggle" onchange="saveIllustSettings()"> HD
+                                </label>
+                                <label style="display:flex; align-items:center; gap:3px; font-size:0.75rem; cursor:pointer;">
+                                    <input type="checkbox" id="illust-ed-toggle" onchange="saveIllustSettings()"> ED
+                                </label>
+                            </div>
+                            <div style="margin-top:8px;">
+                                <button onclick="openIllustLogModal()" style="width:100%; background:#6A1B9A; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">📋 프롬프트 빌드 로그</button>
+                            </div>
+                        </div>
+                        <div style="background:rgba(156,39,176,0.08); border-radius:8px; padding:10px; margin-top:8px;">
                             <div class="section-title">단어 치환 규칙</div>
                             <button onclick="openWordReplacementsModal()" style="width:100%; background:#6A1B9A; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">단어 치환 규칙 설정</button>
                             <div id="word-replacements-count" style="font-size:0.7rem; color:var(--text2); margin-top:4px;"></div>
@@ -17677,6 +17749,8 @@
             botRenderNegativePresetSelect();
             renderBotCharacters();
             updateWordReplacementsCount();
+            loadIllustArtistPresets();
+            loadIllustSettings();
         }
 
         function showBotView(view) {
@@ -19545,6 +19619,191 @@
                 showToast('패치 설정 저장 완료', 'success');
                 document.getElementById('patch-settings-modal').remove();
             } catch (e) { showToast('저장 실패', 'error'); }
+        }
+
+        // ─── 삽화 프롬프트 설정 ──────────────────────────────────
+        async function loadIllustSettings() {
+            if (!botCurrentBot) return;
+            try {
+                const res = await fetchJSON(`/api/bot_mode/illust_settings?bot_name=${encodeURIComponent(botCurrentBot)}`);
+                if (res && !res.error) {
+                    const s = res;
+                    document.getElementById('illust-anima-artist-preset').value = s.anima_artist_preset || '';
+                    document.getElementById('illust-sdxl-artist-preset').value = s.sdxl_artist_preset || '';
+                    document.getElementById('illust-hrf-toggle').checked = s.hrf_activate || false;
+                    document.getElementById('illust-hrf-size').value = s.hrf_size || 1.5;
+                    document.getElementById('illust-hrf-size-val').textContent = s.hrf_size || 1.5;
+                    document.getElementById('illust-hrf-restore-size').checked = s.hrf_restore_size || false;
+                    document.getElementById('illust-img-w').value = s.img_w || 756;
+                    document.getElementById('illust-img-h').value = s.img_h || 756;
+                    document.getElementById('illust-face-id-toggle').checked = s.face_id_activate || false;
+                    document.getElementById('illust-face-id-str').value = s.face_id_str || 0.55;
+                    document.getElementById('illust-face-id-str-val').textContent = s.face_id_str || 0.55;
+                    document.getElementById('illust-fd-toggle').checked = s.fd_activate || false;
+                    document.getElementById('illust-hd-toggle').checked = s.hd_activate || false;
+                    document.getElementById('illust-ed-toggle').checked = s.ed_activate || false;
+                    updateIllustToggles();
+                }
+            } catch (e) {
+                console.error('[ILLUST] 설정 로드 실패:', e);
+            }
+        }
+
+        async function saveIllustSettings() {
+            if (!botCurrentBot) return;
+            updateIllustToggles();
+            const settings = {
+                anima_artist_preset: document.getElementById('illust-anima-artist-preset').value,
+                sdxl_artist_preset: document.getElementById('illust-sdxl-artist-preset').value,
+                hrf_activate: document.getElementById('illust-hrf-toggle').checked,
+                hrf_size: parseFloat(document.getElementById('illust-hrf-size').value) || 1.5,
+                hrf_restore_size: document.getElementById('illust-hrf-restore-size').checked,
+                img_w: parseInt(document.getElementById('illust-img-w').value) || 756,
+                img_h: parseInt(document.getElementById('illust-img-h').value) || 756,
+                face_id_activate: document.getElementById('illust-face-id-toggle').checked,
+                face_id_str: parseFloat(document.getElementById('illust-face-id-str').value) || 0.55,
+                fd_activate: document.getElementById('illust-fd-toggle').checked,
+                hd_activate: document.getElementById('illust-hd-toggle').checked,
+                ed_activate: document.getElementById('illust-ed-toggle').checked,
+            };
+            try {
+                await fetchJSON('/api/bot_mode/update_illust_settings', {
+                    method: 'POST',
+                    body: JSON.stringify({ bot_name: botCurrentBot, illust_settings: settings }),
+                });
+            } catch (e) {
+                console.error('[ILLUST] 설정 저장 실패:', e);
+            }
+        }
+
+        function updateIllustToggles() {
+            const hrfOn = document.getElementById('illust-hrf-toggle').checked;
+            document.getElementById('illust-hrf-options').style.display = hrfOn ? 'block' : 'none';
+            document.getElementById('illust-hrf-status').textContent = hrfOn ? 'ON' : 'OFF';
+            document.getElementById('illust-hrf-status').className = hrfOn ? 'toggle-status on' : 'toggle-status off';
+
+            const faceIdOn = document.getElementById('illust-face-id-toggle').checked;
+            document.getElementById('illust-face-id-options').style.display = faceIdOn ? 'block' : 'none';
+            document.getElementById('illust-face-id-status').textContent = faceIdOn ? 'ON' : 'OFF';
+            document.getElementById('illust-face-id-status').className = faceIdOn ? 'toggle-status on' : 'toggle-status off';
+        }
+
+        async function loadIllustArtistPresets() {
+            try {
+                const tagsData = await fetchJSON('/api/asset_mode/tags');
+                const artistPresets = tagsData?.artist_presets || {};
+                const presetNames = Object.keys(artistPresets);
+                const animaSelect = document.getElementById('illust-anima-artist-preset');
+                const sdxlSelect = document.getElementById('illust-sdxl-artist-preset');
+                const currentAnima = animaSelect.value;
+                const currentSdxl = sdxlSelect.value;
+                animaSelect.innerHTML = '<option value="">-- 없음 --</option>';
+                sdxlSelect.innerHTML = '<option value="">-- 없음 --</option>';
+                for (const name of presetNames) {
+                    const opt1 = document.createElement('option');
+                    opt1.value = name;
+                    opt1.textContent = name;
+                    animaSelect.appendChild(opt1);
+                    const opt2 = document.createElement('option');
+                    opt2.value = name;
+                    opt2.textContent = name;
+                    sdxlSelect.appendChild(opt2);
+                }
+                animaSelect.value = currentAnima || '';
+                sdxlSelect.value = currentSdxl || '';
+            } catch (e) {
+                console.error('[ILLUST] 아티스트 프리셋 로드 실패:', e);
+            }
+        }
+
+        // ─── 삽화 로그 뷰어 ─────────────────────────────────────
+        function openIllustLogModal() {
+            let modal = document.getElementById('illust-log-modal');
+            if (modal) { modal.remove(); return; }
+            modal = document.createElement('div');
+            modal.id = 'illust-log-modal';
+            modal.className = 'modal';
+            modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+            modal.innerHTML = `
+                <div class="modal-content" style="max-width:900px;">
+                    <div class="modal-header">
+                        <h2>📋 프롬프트 빌드 로그</h2>
+                        <button class="modal-close" onclick="document.getElementById('illust-log-modal').remove()">&times;</button>
+                    </div>
+                    <div class="modal-body" id="illust-log-body" style="max-height:70vh; overflow-y:auto;">
+                        <div style="text-align:center; padding:20px; color:var(--text2);">로딩 중...</div>
+                    </div>
+                    <div class="modal-footer">
+                        <button onclick="refreshIllustLogs()" style="background:var(--accent); color:#fff; border:none; padding:6px 16px; border-radius:4px; cursor:pointer;">새로고침</button>
+                        <button onclick="document.getElementById('illust-log-modal').remove()" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:6px 16px; border-radius:4px; cursor:pointer;">닫기</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modal);
+            refreshIllustLogs();
+        }
+
+        async function refreshIllustLogs() {
+            const body = document.getElementById('illust-log-body');
+            if (!body) return;
+            try {
+                const res = await fetchJSON('/api/bot_mode/illust_logs');
+                const logs = res?.logs || [];
+                if (logs.length === 0) {
+                    body.innerHTML = '<div style="text-align:center; padding:20px; color:var(--text2);">로그가 없습니다. 삽화 모드에서 프롬프트를 전송하면 로그가 기록됩니다.</div>';
+                    return;
+                }
+                let html = '';
+                for (let i = logs.length - 1; i >= 0; i--) {
+                    const log = logs[i];
+                    const ts = log.timestamp ? new Date(log.timestamp * 1000).toLocaleString() : '';
+                    html += `
+                        <div style="background:var(--surface2); border:1px solid var(--border); border-radius:8px; margin-bottom:8px; padding:10px;">
+                            <div style="font-size:0.75rem; color:var(--text2); margin-bottom:4px;">${ts} | 감지: ${log.detected_characters?.join(', ') || '없음'}</div>
+                            <details style="margin-bottom:4px;">
+                                <summary style="cursor:pointer; font-size:0.8rem; font-weight:600;">Raw 프롬프트</summary>
+                                <pre style="font-size:0.7rem; white-space:pre-wrap; color:var(--text); max-height:200px; overflow-y:auto; background:rgba(0,0,0,0.05); padding:6px; border-radius:4px;">${escapeHtml(log.raw_positive || '')}</pre>
+                            </details>
+                            <details style="margin-bottom:4px;">
+                                <summary style="cursor:pointer; font-size:0.8rem; font-weight:600;">파싱 결과</summary>
+                                <div style="font-size:0.7rem; padding:6px;">
+                                    <div><strong>SETUP:</strong> ${escapeHtml(log.parsed_setup || '(비어있음)')}</div>
+                                    <div><strong>CHAR:</strong> ${escapeHtml(log.parsed_char || '(비어있음)')}</div>
+                                    <div><strong>SUPPLEMENT:</strong> ${escapeHtml(log.parsed_supplement || '(비어있음)')}</div>
+                                </div>
+                            </details>
+                            <details style="margin-bottom:4px;">
+                                <summary style="cursor:pointer; font-size:0.8rem; font-weight:600;">단어 치환 결과</summary>
+                                <div style="font-size:0.7rem; padding:6px;">
+                                    <div><strong>SETUP:</strong> ${escapeHtml(log.word_replaced_setup || '(비어있음)')}</div>
+                                    <div><strong>CHAR:</strong> ${escapeHtml(log.word_replaced_char || '(비어있음)')}</div>
+                                    <div><strong>SUPPLEMENT:</strong> ${escapeHtml(log.word_replaced_supplement || '(비어있음)')}</div>
+                                </div>
+                            </details>
+                            <details style="margin-bottom:4px;">
+                                <summary style="cursor:pointer; font-size:0.8rem; font-weight:600;">CHAR_LIST 획득 결과</summary>
+                                <div style="font-size:0.75rem; padding:6px; color:#4CAF50; font-weight:600;">${log.detected_characters?.join(', ') || '감지된 캐릭터 없음'}</div>
+                            </details>
+                            <details>
+                                <summary style="cursor:pointer; font-size:0.8rem; font-weight:600;">최종 프롬프트</summary>
+                                <div style="margin-bottom:4px;"><strong style="font-size:0.7rem;">긍정:</strong></div>
+                                <pre style="font-size:0.7rem; white-space:pre-wrap; color:var(--text); max-height:300px; overflow-y:auto; background:rgba(0,0,0,0.05); padding:6px; border-radius:4px;">${escapeHtml(log.final_positive || '')}</pre>
+                                <div style="margin-top:4px; margin-bottom:4px;"><strong style="font-size:0.7rem;">부정:</strong></div>
+                                <pre style="font-size:0.7rem; white-space:pre-wrap; color:var(--text); max-height:200px; overflow-y:auto; background:rgba(0,0,0,0.05); padding:6px; border-radius:4px;">${escapeHtml(log.final_negative || '')}</pre>
+                            </details>
+                        </div>
+                    `;
+                }
+                body.innerHTML = html;
+            } catch (e) {
+                body.innerHTML = `<div style="color:var(--error); padding:20px;">로그 로드 실패: ${escapeHtml(e.message)}</div>`;
+            }
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
         }
 
         // ─── 단어 치환 규칙 ────────────────────────────────────
