@@ -17952,6 +17952,9 @@
                         ${badgeHtml}
                         <button class="btn-view-all" onclick="event.stopPropagation(); openCharacterDetail('${escAttr(char.name)}')"
                             style="background:rgba(244,114,182,0.12); color:var(--text); border:1px solid rgba(244,114,182,0.3); padding:8px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600; white-space:nowrap;">전체 이미지 보기</button>
+                        <button class="btn-auto-group" data-char-name="${escAttr(char.name)}"
+                            onclick="event.stopPropagation(); autoGroupPrompt('${escAttr(char.name)}')"
+                            style="background:rgba(34,197,94,0.12); color:var(--text); border:1px solid rgba(34,197,94,0.3); padding:8px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600; white-space:nowrap;">오토 그룹핑</button>
                         <div style="margin-left:auto;"></div>
                         <div style="display:flex; align-items:center; gap:0; border:1px solid var(--border); border-radius:6px; overflow:hidden; flex-shrink:0;">
                             <span style="padding:5px 8px; font-size:0.85rem; background:var(--surface2); border-right:1px solid var(--border);">👁️</span>
@@ -18178,6 +18181,192 @@
             renderBotCharLoraList(charIdx, charName, loras);
             await saveBotCharLoras(charName);
             showToast('LoRA 삭제됨', 'info');
+        }
+
+        // ─── 오토 그룹핑 ────────────────────────────────────
+        let _autoGroupViewMode = 'block'; // 'block' | 'text'
+        let _autoGroupLastGroups = null;
+
+        async function autoGroupPrompt(charName) {
+            const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
+            if (!bot) { showToast('봇을 찾을 수 없습니다', 'error'); return; }
+            const char = (bot.characters || []).find(c => c.name === charName);
+            if (!char) { showToast('캐릭터를 찾을 수 없습니다', 'error'); return; }
+            const repImages = char.rep_images || [];
+            if (repImages.length === 0) { showToast('대표 이미지가 없습니다', 'error'); return; }
+
+            const firstRep = repImages[0];
+            let prompt = '';
+            try {
+                const resp = await fetch(`/api/bot_mode/images?bot=${encodeURIComponent(botCurrentBot)}&character=${encodeURIComponent(charName)}`);
+                const data = await resp.json();
+                const img = (data.images || []).find(i => i.filename === firstRep);
+                if (img && img.prompt) {
+                    prompt = img.prompt;
+                } else {
+                    showToast('첫 번째 대표 이미지에 프롬프트가 없습니다', 'error');
+                    return;
+                }
+            } catch (e) {
+                showToast('이미지 정보 로드 실패', 'error');
+                console.error('[AUTO_GROUP]', e);
+                return;
+            }
+
+            _showAutoGroupModal(charName, prompt);
+        }
+
+        function _toggleAutoGroupView() {
+            _autoGroupViewMode = _autoGroupViewMode === 'block' ? 'text' : 'block';
+            _renderAutoGroupContent();
+        }
+
+        function _renderAutoGroupContent() {
+            const content = document.getElementById('auto-group-content');
+            if (!content || !_autoGroupLastGroups) return;
+
+            const groups = _autoGroupLastGroups;
+            const groupColors = {
+                '외모/신체': { bg: 'rgba(59,130,246,0.1)', border: 'rgba(59,130,246,0.3)', tag: 'rgba(59,130,246,0.2)', text: '#60a5fa' },
+                '복장': { bg: 'rgba(244,114,182,0.1)', border: 'rgba(244,114,182,0.3)', tag: 'rgba(244,114,182,0.2)', text: '#f472b6' },
+                '미분류': { bg: 'rgba(156,163,175,0.1)', border: 'rgba(156,163,175,0.3)', tag: 'rgba(156,163,175,0.2)', text: '#9ca3af' },
+            };
+            const groupIcons = { '외모/신체': '👤', '복장': '👗', '미분류': '❓' };
+
+            const toggleBtn = document.getElementById('auto-group-view-toggle');
+            if (toggleBtn) {
+                toggleBtn.textContent = _autoGroupViewMode === 'block' ? '📝' : '🏷️';
+                toggleBtn.title = _autoGroupViewMode === 'block' ? '텍스트 모드로 전환' : '태그 블럭 모드로 전환';
+            }
+
+            let html = '';
+            for (const [groupName, tags] of Object.entries(groups)) {
+                const c = groupColors[groupName] || groupIcons['미분류'] ? groupColors['미분류'] : {};
+                const icon = groupIcons[groupName] || '📦';
+                const colorCfg = groupColors[groupName] || groupColors['미분류'];
+
+                if (_autoGroupViewMode === 'text') {
+                    const tagText = tags.map(t => t.tag).join(', ');
+                    html += `
+                        <div style="background:${colorCfg.bg}; border:1px solid ${colorCfg.border}; border-radius:8px; padding:12px;">
+                            <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px;">
+                                <span>${icon}</span>
+                                <span style="font-weight:600; font-size:0.95rem;">${escHtml(groupName)}</span>
+                                <span style="font-size:0.75rem; color:var(--text2); margin-left:auto;">${tags.length}개</span>
+                            </div>
+                            <div style="font-size:0.82rem; color:${colorCfg.text}; line-height:1.6; word-break:break-word; user-select:text;">${escHtml(tagText)}</div>
+                        </div>
+                    `;
+                } else {
+                    html += `
+                        <div style="background:${colorCfg.bg}; border:1px solid ${colorCfg.border}; border-radius:8px; padding:12px;">
+                            <div style="display:flex; align-items:center; gap:6px; margin-bottom:8px;">
+                                <span>${icon}</span>
+                                <span style="font-weight:600; font-size:0.95rem;">${escHtml(groupName)}</span>
+                                <span style="font-size:0.75rem; color:var(--text2); margin-left:auto;">${tags.length}개</span>
+                            </div>
+                            <div style="display:flex; flex-wrap:wrap; gap:4px;">
+                                ${tags.map(t => `<span style="background:${colorCfg.tag}; padding:3px 8px; border-radius:4px; font-size:0.8rem; cursor:default;" title="${escHtml(t.sub || '')}">${escHtml(t.tag)}</span>`).join('')}
+                            </div>
+                        </div>
+                    `;
+                }
+            }
+
+            if (!html) html = '<div style="text-align:center; padding:40px; color:var(--text2);">분류할 태그가 없습니다</div>';
+            content.innerHTML = html;
+        }
+
+        async function _showAutoGroupModal(charName, prompt) {
+            const old = document.getElementById('auto-group-overlay');
+            if (old) old.remove();
+
+            _autoGroupLastGroups = null;
+            _autoGroupViewMode = 'block';
+
+            const overlay = document.createElement('div');
+            overlay.id = 'auto-group-overlay';
+            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10010; display:flex; align-items:center; justify-content:center;';
+
+            const modal = document.createElement('div');
+            modal.style.cssText = 'background:var(--surface); border-radius:12px; padding:24px; max-width:800px; width:90%; max-height:90vh; display:flex; flex-direction:column; position:relative;';
+            modal.onclick = (e) => e.stopPropagation();
+
+            modal.innerHTML = `
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+                    <div>
+                        <h3 style="margin:0; font-size:1.1rem;">오토 그룹핑 — ${escHtml(charName)}</h3>
+                        <div style="font-size:0.7rem; color:var(--text2); margin-top:2px;">첫 번째 대표 이미지 프롬프트 분석</div>
+                    </div>
+                    <div style="display:flex; gap:8px; align-items:center;">
+                        <button id="auto-group-view-toggle" onclick="_toggleAutoGroupView()"
+                            style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:6px 10px; border-radius:6px; cursor:pointer; font-size:1rem;" title="텍스트 모드로 전환">📝</button>
+                        <button id="auto-group-refresh-btn" onclick="_refreshAutoGroup('${escAttr(charName)}')"
+                            style="background:rgba(34,197,94,0.12); color:var(--text); border:1px solid rgba(34,197,94,0.3); padding:6px 14px; border-radius:6px; cursor:pointer; font-size:0.85rem;">새로고침</button>
+                        <button onclick="document.getElementById('auto-group-overlay').remove()"
+                            style="background:var(--surface2); color:var(--text); border:1px solid var(--border); width:32px; height:32px; border-radius:6px; cursor:pointer; font-size:1.2rem; display:flex; align-items:center; justify-content:center;">✕</button>
+                    </div>
+                </div>
+                <div id="auto-group-content" style="flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:12px;">
+                    <div style="text-align:center; padding:40px; color:var(--text2);">분석 중...</div>
+                </div>
+            `;
+
+            overlay.appendChild(modal);
+            document.body.appendChild(overlay);
+
+            await _fetchAndRenderGroups(prompt);
+        }
+
+        async function _refreshAutoGroup(charName) {
+            const btn = document.getElementById('auto-group-refresh-btn');
+            if (btn) { btn.disabled = true; btn.textContent = '로딩...'; }
+
+            const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
+            if (!bot) return;
+            const char = (bot.characters || []).find(c => c.name === charName);
+            if (!char) return;
+            const repImages = char.rep_images || [];
+            if (repImages.length === 0) return;
+
+            let prompt = '';
+            try {
+                const resp = await fetch(`/api/bot_mode/images?bot=${encodeURIComponent(botCurrentBot)}&character=${encodeURIComponent(charName)}`);
+                const data = await resp.json();
+                const img = (data.images || []).find(i => i.filename === repImages[0]);
+                if (img && img.prompt) prompt = img.prompt;
+            } catch (e) {
+                console.error('[AUTO_GROUP] refresh error:', e);
+            }
+
+            if (prompt) await _fetchAndRenderGroups(prompt);
+
+            if (btn) { btn.disabled = false; btn.textContent = '새로고침'; }
+        }
+
+        async function _fetchAndRenderGroups(prompt) {
+            const content = document.getElementById('auto-group-content');
+            if (!content) return;
+
+            try {
+                const resp = await fetch('/api/bot_mode/auto_group_prompt', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ prompt })
+                });
+                const result = await resp.json();
+
+                if (!result.success) {
+                    content.innerHTML = `<div style="color:var(--error); padding:20px;">분석 실패: ${escHtml(result.error || '알 수 없는 오류')}</div>`;
+                    return;
+                }
+
+                _autoGroupLastGroups = result.data.groups || {};
+                _renderAutoGroupContent();
+            } catch (e) {
+                content.innerHTML = `<div style="color:var(--error); padding:20px;">요청 실패: ${escHtml(e.message)}</div>`;
+                console.error('[AUTO_GROUP] fetch error:', e);
+            }
         }
 
         // ─── 캐릭터 LoRA 피커 모달 ───────────────────────────────

@@ -43,7 +43,7 @@ from modes import autocomplete_service
 from modes import asset_tool_mode
 from modes import bot_mode
 from modes.bot_mode import data_patcher
-from modes.bot_mode import handle_get_illust_settings, handle_update_illust_settings
+from modes.bot_mode import handle_get_illust_settings, handle_update_illust_settings, handle_auto_group_prompt
 from modes import embedding_service
 from modes.illust_prompt_builder import IllustPromptBuilder, log_illust_build, get_illust_logs
 import importlib.util
@@ -4725,6 +4725,7 @@ app.router.add_post("/api/bot_mode/update_illust_settings", handle_update_illust
 app.router.add_get("/api/bot_mode/illust_logs", handle_get_illust_logs)
 app.router.add_get("/api/bot_mode/word_replacements", bot_mode.handle_get_word_replacements)
 app.router.add_post("/api/bot_mode/word_replacements", bot_mode.handle_save_word_replacements)
+app.router.add_post("/api/bot_mode/auto_group_prompt", handle_auto_group_prompt)
 # 자동완성 API
 app.router.add_get("/api/autocomplete", handle_api_autocomplete)
 # ─── 에셋툴 API 핸들러 ──────────────────────────────────

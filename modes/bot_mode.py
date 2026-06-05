@@ -1806,5 +1806,21 @@ async def handle_update_illust_settings(request):
         return _json_error(str(e))
 
 
+async def handle_auto_group_prompt(request):
+    """POST /api/bot_mode/auto_group_prompt - 프롬프트 태그 자동 분류"""
+    from modes.tag_classifier import classify_prompt
+    try:
+        body = await request.json()
+        prompt = body.get("prompt", "").strip()
+        if not prompt:
+            return web.json_response({"success": False, "error": "프롬프트가 비어있습니다."})
+        result = classify_prompt(prompt)
+        return web.json_response({"success": True, "data": {"groups": result}})
+    except Exception as e:
+        print(f"[BOT_MODE] 오토 그룹핑 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)})
+
+
 bot_mode = BotMode()
 data_patcher = BotDataPatcher()
