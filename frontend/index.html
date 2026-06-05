@@ -3271,6 +3271,10 @@
                             <button id="btn-bot-util-negative" onclick="botUtilityBatchNegative()" style="width:100%; margin-top:4px; background:#BF360C; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">얼굴 부정 태그 일괄 적용</button>
                             <div id="bot-util-status" style="font-size:0.7rem; color:var(--text2); margin-top:4px; display:none;"></div>
                         </div>
+                        <div style="background:rgba(0,105,92,0.08); border-radius:8px; padding:10px; margin-top:8px;">
+                            <div class="section-title">분류 데이터 내보내기</div>
+                            <button id="btn-export-lb-extra" onclick="exportLbExtraTxt()" style="width:100%; background:#00695C; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">lb-xnai.lb.extra.txt 내보내기</button>
+                        </div>
                         <div style="background:rgba(156,39,176,0.08); border-radius:8px; padding:10px; margin-top:8px;">
                             <div class="section-title">단어 치환 규칙</div>
                             <button onclick="openWordReplacementsModal()" style="width:100%; background:#6A1B9A; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">단어 치환 규칙 설정</button>
@@ -17974,7 +17978,7 @@
                             style="background:rgba(244,114,182,0.12); color:var(--text); border:1px solid rgba(244,114,182,0.3); padding:8px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600; white-space:nowrap;">전체 이미지 보기</button>
                         <button class="btn-auto-group" data-char-name="${escAttr(char.name)}"
                             onclick="event.stopPropagation(); autoGroupPrompt('${escAttr(char.name)}')"
-                            style="background:rgba(34,197,94,0.12); color:var(--text); border:1px solid rgba(34,197,94,0.3); padding:8px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600; white-space:nowrap;">오토 그룹핑</button>
+                            style="background:rgba(34,197,94,0.12); color:var(--text); border:1px solid rgba(34,197,94,0.3); padding:8px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600; white-space:nowrap;">외모/복장 분류</button>
                         <div style="margin-left:auto;"></div>
                         <div style="display:flex; align-items:center; gap:0; border:1px solid var(--border); border-radius:6px; overflow:hidden; flex-shrink:0;">
                             <span style="padding:5px 8px; font-size:0.85rem; background:var(--surface2); border-right:1px solid var(--border);">👁️</span>
@@ -18203,6 +18207,297 @@
             showToast('LoRA 삭제됨', 'info');
         }
 
+        // ─── lb-xnai.lb.extra.txt 내보내기 ─────────────────────
+        let _lbExtraOriginal = [];
+        let _lbExtraEdited = [];
+        let _lbExtraShowDesc = false;
+
+        async function exportLbExtraTxt() {
+            const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
+            if (!bot) { showToast('봇을 선택해주세요', 'error'); return; }
+            const chars = (bot.characters || []).filter(c => (c.rep_images || []).length > 0);
+            if (chars.length === 0) { showToast('대표 이미지가 있는 캐릭터가 없습니다', 'error'); return; }
+
+            const btn = document.getElementById('btn-export-lb-extra');
+            const origText = btn.textContent;
+            btn.disabled = true;
+
+            const results = [];
+            try {
+                for (let i = 0; i < chars.length; i++) {
+                    btn.textContent = `불러오는 중… (${i + 1}/${chars.length})`;
+                    const char = chars[i];
+
+                    const imgResp = await fetch(`/api/bot_mode/images?bot=${encodeURIComponent(botCurrentBot)}&character=${encodeURIComponent(char.name)}`);
+                    const imgData = await imgResp.json();
+                    const firstRep = char.rep_images[0];
+                    const img = (imgData.images || []).find(im => im.filename === firstRep);
+                    const prompt = (img && img.prompt) || '';
+                    if (!prompt) { console.log(`[EXPORT_EXTRA] ${char.name}: 프롬프트 없음`); continue; }
+
+                    const groupResp = await fetch('/api/bot_mode/auto_group_prompt', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ prompt })
+                    });
+                    const groupResult = await groupResp.json();
+                    if (!groupResult.success || !groupResult.data?.groups) {
+                        console.error(`[EXPORT_EXTRA] ${char.name}: 자동 분류 실패`, groupResult);
+                        continue;
+                    }
+                    const groups = groupResult.data.groups;
+                    results.push({
+                        name: char.name,
+                        appearance: groups['외모/신체'] || [],
+                        outfit: groups['복장'] || []
+                    });
+                }
+                if (results.length === 0) { showToast('가져올 데이터가 없습니다', 'error'); return; }
+
+                _lbExtraOriginal = JSON.parse(JSON.stringify(results));
+                _lbExtraEdited = JSON.parse(JSON.stringify(results));
+                _openLbExtraModal();
+            } catch (e) {
+                console.error('[EXPORT_EXTRA] 실패:', e);
+                showToast('데이터 로드 실패: ' + e.message, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = origText;
+            }
+        }
+
+        function _openLbExtraModal() {
+            const existing = document.getElementById('lb-extra-overlay');
+            if (existing) existing.remove();
+
+            const overlay = document.createElement('div');
+            overlay.id = 'lb-extra-overlay';
+            overlay.style.cssText = 'position:fixed; inset:0; z-index:10000; background:rgba(0,0,0,0.5); display:flex; align-items:center; justify-content:center;';
+
+            overlay.innerHTML = `
+                <div style="background:var(--surface); border:1px solid var(--border); border-radius:12px; width:95vw; max-width:1400px; height:88vh; display:flex; flex-direction:column; overflow:hidden;">
+                    <div style="display:flex; align-items:center; padding:12px 16px; border-bottom:1px solid var(--border); gap:12px; flex-shrink:0;">
+                        <span style="font-weight:700; font-size:1.05rem;">분류 데이터 편집</span>
+                        <label style="display:flex; align-items:center; gap:4px; font-size:0.8rem; color:var(--text2); cursor:pointer; user-select:none;">
+                            설명
+                            <input type="checkbox" id="lb-extra-desc-cb" style="display:none;">
+                            <span id="lb-extra-desc-track" style="display:inline-block; width:30px; height:16px; border-radius:8px; background:var(--border); position:relative; transition:background 0.2s;">
+                                <span style="display:block; width:12px; height:12px; border-radius:50%; background:#fff; position:absolute; top:2px; left:2px; transition:left 0.2s;"></span>
+                            </span>
+                        </label>
+                        <div style="flex:1;"></div>
+                        <button onclick="_downloadLbExtra()" style="background:#00695C; color:#fff; border:none; padding:6px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">다운로드</button>
+                        <button onclick="document.getElementById('lb-extra-overlay').remove()" style="background:none; border:none; color:var(--text2); font-size:1.2rem; cursor:pointer;">✕</button>
+                    </div>
+                    <div style="display:flex; flex-shrink:0; border-bottom:1px solid var(--border);">
+                        <div style="flex:1; padding:6px 12px; font-weight:600; font-size:0.85rem; color:var(--text2); text-align:center;">원본</div>
+                        <div style="width:1px; background:var(--border);"></div>
+                        <div style="flex:1; padding:6px 12px; font-weight:600; font-size:0.85rem; color:var(--text2); text-align:center;">편집본</div>
+                    </div>
+                    <div id="lb-extra-content" style="flex:1; overflow-y:auto; padding:16px;"></div>
+                </div>`;
+
+            document.body.appendChild(overlay);
+
+            overlay.querySelector('#lb-extra-desc-cb').addEventListener('change', function() {
+                _lbExtraShowDesc = this.checked;
+                const track = document.getElementById('lb-extra-desc-track');
+                const knob = track.querySelector('span');
+                track.style.background = this.checked ? 'var(--accent)' : 'var(--border)';
+                knob.style.left = this.checked ? '16px' : '2px';
+                _renderLbExtraContent();
+            });
+
+            _renderLbExtraContent();
+        }
+
+        function _renderLbExtraContent() {
+            const el = document.getElementById('lb-extra-content');
+            if (!el) return;
+            if (_lbExtraOriginal.length === 0) { el.innerHTML = '<div style="color:var(--text2); text-align:center; padding:20px;">데이터 없음</div>'; return; }
+
+            let html = '';
+            _lbExtraOriginal.forEach((char, ci) => {
+                if (ci > 0) html += '<hr style="border:none; border-top:1px solid var(--border); margin:14px 0;">';
+                html += `
+                <div class="lb-extra-char" data-idx="${ci}" draggable="true" style="margin-bottom:0;">
+                    <div style="display:flex; align-items:center; gap:6px; margin-bottom:8px; cursor:grab;">
+                        <span style="font-size:0.9rem; color:var(--text2);">⠿</span>
+                        <span style="font-weight:700; font-size:0.95rem;">${escHtml(char.name)}</span>
+                    </div>
+                    <div style="display:flex; gap:0;">
+                        <div style="flex:1; padding-right:12px;">
+                            <div style="font-size:0.75rem; color:var(--text2); margin-bottom:4px; font-weight:600;">-Appearance</div>
+                            <div class="lb-extra-orig-zone" data-oci="${ci}" data-ogrp="appearance" style="display:flex; flex-wrap:wrap; gap:4px; margin-bottom:8px;">${_buildOrigTags(ci, 'appearance')}</div>
+                            <div style="font-size:0.75rem; color:var(--text2); margin-bottom:4px; font-weight:600;">-normal outfit</div>
+                            <div class="lb-extra-orig-zone" data-oci="${ci}" data-ogrp="outfit" style="display:flex; flex-wrap:wrap; gap:4px;">${_buildOrigTags(ci, 'outfit')}</div>
+                        </div>
+                        <div style="width:1px; background:var(--border); margin:0 12px;"></div>
+                        <div style="flex:1; padding-left:12px;">
+                            <div style="font-size:0.75rem; color:var(--text2); margin-bottom:4px; font-weight:600;">-Appearance</div>
+                            <div class="lb-extra-drop" data-dci="${ci}" data-dgrp="appearance" style="display:flex; flex-wrap:wrap; gap:4px; margin-bottom:8px; min-height:24px; border-radius:4px; padding:2px; transition:background 0.15s;">${_buildEditTags(ci, 'appearance')}</div>
+                            <div style="font-size:0.75rem; color:var(--text2); margin-bottom:4px; font-weight:600;">-normal outfit</div>
+                            <div class="lb-extra-drop" data-dci="${ci}" data-dgrp="outfit" style="display:flex; flex-wrap:wrap; gap:4px; min-height:24px; border-radius:4px; padding:2px; transition:background 0.15s;">${_buildEditTags(ci, 'outfit')}</div>
+                        </div>
+                    </div>
+                </div>`;
+            });
+            el.innerHTML = html;
+            _attachLbExtraDnD(el);
+            _attachLbExtraTagDnD(el);
+        }
+
+        function _buildOrigTags(ci, group) {
+            const orig = _lbExtraOriginal[ci][group];
+            const edited = _lbExtraEdited[ci][group];
+            const isBlue = group === 'appearance';
+            const activeBg = isBlue ? 'rgba(59,130,246,0.15)' : 'rgba(244,114,182,0.15)';
+            const activeBorder = isBlue ? 'rgba(59,130,246,0.3)' : 'rgba(244,114,182,0.3)';
+
+            if (orig.length === 0) return '<span style="font-size:0.75rem; color:var(--text2);">없음</span>';
+            return orig.map((t, ti) => {
+                const inEdited = edited.some(et => et.tag === t.tag);
+                if (inEdited) {
+                    return `<span style="background:var(--surface2); border:1px solid var(--border); padding:2px 6px; border-radius:4px; font-size:0.75rem; color:var(--text2); opacity:0.45; display:inline-flex; align-items:center; gap:3px; cursor:default;"${_lbExtraShowDesc && t.desc ? ` title="${escAttr(t.desc)}"` : ''}>${escHtml(t.tag)}</span>`;
+                }
+                return `<span style="background:${activeBg}; border:1px solid ${activeBorder}; padding:2px 6px; border-radius:4px; font-size:0.75rem; display:inline-flex; align-items:center; gap:3px; cursor:default;"${_lbExtraShowDesc && t.desc ? ` title="${escAttr(t.desc)}"` : ''}>${escHtml(t.tag)}<span style="cursor:pointer; color:var(--accent); font-weight:bold; font-size:0.8rem; margin-left:2px;" onclick="event.stopPropagation(); _addLbExtraTag(${ci},'${group}',${ti})">→</span></span>`;
+            }).join('');
+        }
+
+        function _buildEditTags(ci, group) {
+            const tags = _lbExtraEdited[ci][group];
+            const isBlue = group === 'appearance';
+            const bg = isBlue ? 'rgba(59,130,246,0.15)' : 'rgba(244,114,182,0.15)';
+            const border = isBlue ? 'rgba(59,130,246,0.3)' : 'rgba(244,114,182,0.3)';
+
+            if (tags.length === 0) return '<span style="font-size:0.75rem; color:var(--text2);">없음</span>';
+            return tags.map((t, ti) => {
+                return `<span class="lb-extra-tag" draggable="true" data-tci="${ci}" data-tgrp="${group}" data-tti="${ti}" style="background:${bg}; border:1px solid ${border}; padding:2px 6px; border-radius:4px; font-size:0.75rem; display:inline-flex; align-items:center; gap:3px; cursor:grab;"${_lbExtraShowDesc && t.desc ? ` title="${escAttr(t.desc)}"` : ''}>${escHtml(t.tag)}<span style="cursor:pointer; color:var(--error); font-weight:bold; font-size:0.75rem; margin-left:2px;" onclick="event.stopPropagation(); _removeLbExtraTag(${ci},'${group}',${ti})">×</span></span>`;
+            }).join('');
+        }
+
+        function _addLbExtraTag(ci, group, ti) {
+            const tag = _lbExtraOriginal[ci][group][ti];
+            if (!_lbExtraEdited[ci][group].some(t => t.tag === tag.tag)) {
+                _lbExtraEdited[ci][group].push(JSON.parse(JSON.stringify(tag)));
+            }
+            _renderLbExtraContent();
+        }
+
+        function _removeLbExtraTag(ci, group, ti) {
+            _lbExtraEdited[ci][group].splice(ti, 1);
+            _renderLbExtraContent();
+        }
+
+        function _attachLbExtraDnD(container) {
+            let dragIdx = null;
+            container.querySelectorAll('.lb-extra-char').forEach(el => {
+                el.addEventListener('dragstart', (e) => {
+                    if (e.target.classList.contains('lb-extra-tag')) return;
+                    dragIdx = parseInt(el.dataset.idx);
+                    el.style.opacity = '0.4';
+                    e.dataTransfer.effectAllowed = 'move';
+                });
+                el.addEventListener('dragend', () => {
+                    el.style.opacity = '';
+                    container.querySelectorAll('.lb-extra-char').forEach(i => i.style.outline = '');
+                });
+                el.addEventListener('dragover', (e) => {
+                    if (e.dataTransfer.types.includes('text/lbextra-tag')) return;
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'move';
+                    el.style.outline = '2px solid var(--accent)';
+                });
+                el.addEventListener('dragleave', () => { el.style.outline = ''; });
+                el.addEventListener('drop', (e) => {
+                    if (e.dataTransfer.types.includes('text/lbextra-tag')) return;
+                    e.preventDefault();
+                    el.style.outline = '';
+                    const dropIdx = parseInt(el.dataset.idx);
+                    if (dragIdx === null || dragIdx === dropIdx) return;
+                    const [movedO] = _lbExtraOriginal.splice(dragIdx, 1);
+                    _lbExtraOriginal.splice(dropIdx, 0, movedO);
+                    const [movedE] = _lbExtraEdited.splice(dragIdx, 1);
+                    _lbExtraEdited.splice(dropIdx, 0, movedE);
+                    dragIdx = null;
+                    _renderLbExtraContent();
+                });
+            });
+        }
+
+        function _attachLbExtraTagDnD(container) {
+            container.querySelectorAll('.lb-extra-tag').forEach(tag => {
+                tag.addEventListener('dragstart', (e) => {
+                    e.stopPropagation();
+                    e.dataTransfer.setData('text/lbextra-tag', JSON.stringify({
+                        ci: parseInt(tag.dataset.tci),
+                        group: tag.dataset.tgrp,
+                        ti: parseInt(tag.dataset.tti)
+                    }));
+                    e.dataTransfer.effectAllowed = 'move';
+                    tag.style.opacity = '0.4';
+                });
+                tag.addEventListener('dragend', () => {
+                    tag.style.opacity = '';
+                    container.querySelectorAll('.lb-extra-drop').forEach(z => z.style.background = '');
+                });
+            });
+
+            container.querySelectorAll('.lb-extra-drop').forEach(zone => {
+                zone.addEventListener('dragover', (e) => {
+                    if (!e.dataTransfer.types.includes('text/lbextra-tag')) return;
+                    e.preventDefault();
+                    e.stopPropagation();
+                    e.dataTransfer.dropEffect = 'move';
+                    zone.style.background = 'rgba(0,105,92,0.12)';
+                });
+                zone.addEventListener('dragleave', (e) => {
+                    if (!e.dataTransfer.types.includes('text/lbextra-tag')) return;
+                    zone.style.background = '';
+                });
+                zone.addEventListener('drop', (e) => {
+                    if (!e.dataTransfer.types.includes('text/lbextra-tag')) return;
+                    e.preventDefault();
+                    e.stopPropagation();
+                    zone.style.background = '';
+
+                    const src = JSON.parse(e.dataTransfer.getData('text/lbextra-tag'));
+                    const dstCi = parseInt(zone.dataset.dci);
+                    const dstGrp = zone.dataset.dgrp;
+
+                    if (src.ci !== dstCi) return;
+                    if (src.group === dstGrp) return;
+
+                    const arr = _lbExtraEdited[src.ci][src.group];
+                    const [moved] = arr.splice(src.ti, 1);
+                    if (!_lbExtraEdited[dstCi][dstGrp].some(t => t.tag === moved.tag)) {
+                        _lbExtraEdited[dstCi][dstGrp].push(moved);
+                    }
+                    _renderLbExtraContent();
+                });
+            });
+        }
+
+        function _downloadLbExtra() {
+            let output = '';
+            for (const char of _lbExtraEdited) {
+                output += `### ${char.name}\n`;
+                output += `-Appearance\n${char.appearance.map(t => t.tag).join(', ')}\n`;
+                output += `-normal outfit\n${char.outfit.map(t => t.tag).join(', ')}\n\n`;
+            }
+            if (!output.trim()) { showToast('내보낼 데이터가 없습니다', 'error'); return; }
+            const blob = new Blob([output.trimEnd() + '\n'], { type: 'text/plain;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'lb-xnai.lb.extra.txt';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            showToast('다운로드 완료', 'success');
+        }
+
         // ─── 오토 그룹핑 ────────────────────────────────────
         let _autoGroupViewMode = 'chips'; // 'text' | 'chips'
         let _autoGroupLastGroups = null;
@@ -18342,7 +18637,7 @@
             modal.innerHTML = `
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
                     <div>
-                        <h3 style="margin:0; font-size:1.1rem;">오토 그룹핑 — ${escHtml(charName)}</h3>
+                        <h3 style="margin:0; font-size:1.1rem;">외모/복장 분류 — ${escHtml(charName)}</h3>
                         <div style="font-size:0.7rem; color:var(--text2); margin-top:2px;">첫 번째 대표 이미지 프롬프트 분석</div>
                     </div>
                     <div style="display:flex; gap:8px; align-items:center;">
@@ -20949,11 +21244,11 @@
                 if (_dataPatchQueueDone >= _dataPatchQueueTotal) {
                     const btn = document.getElementById('btn-data-patch');
                     if (btn) { btn.disabled = false; btn.textContent = '데이터 패치 시작'; }
-                    const failCount = _dataPatchQueueTotal - _dataPatchQueueDone;
                     const msg = `얼굴 완료: 성공 ${_dataPatchQueueDone}/${_dataPatchQueueTotal}`;
                     showToast(msg, 'success');
                     _dataPatchQueueTotal = 0;
                     _dataPatchQueueDone = 0;
+                    if (typeof checkPatchFiles === 'function') checkPatchFiles();
                 }
             } else if (phase === 'failed') {
                 _dataPatchQueueDone++;
@@ -20967,6 +21262,7 @@
                     if (btn) { btn.disabled = false; btn.textContent = '데이터 패치 시작'; }
                     _dataPatchQueueTotal = 0;
                     _dataPatchQueueDone = 0;
+                    if (typeof checkPatchFiles === 'function') checkPatchFiles();
                 }
             }
         }
