@@ -1133,6 +1133,35 @@ class BotMode:
             traceback.print_exc()
             return _json_error(str(e))
 
+    async def handle_get_word_replacements(self, request):
+        """GET /api/bot_mode/word_replacements?bot=X"""
+        try:
+            bot_name = request.query.get("bot", "").strip()
+            if not bot_name:
+                return _json_error("봇 이름이 필요합니다.")
+            data = _load_word_replacements(bot_name)
+            return _json_ok(data)
+        except Exception as e:
+            print(f"[BOT_MODE] word_replacements 로드 실패: {e}")
+            traceback.print_exc()
+            return _json_error(str(e))
+
+    async def handle_save_word_replacements(self, request):
+        """POST /api/bot_mode/word_replacements"""
+        try:
+            body = await request.json()
+            bot_name = body.get("bot", "").strip()
+            rules = body.get("rules", [])
+            if not bot_name:
+                return _json_error("봇 이름이 필요합니다.")
+            _save_word_replacements(bot_name, {"rules": rules})
+            print(f"[BOT_MODE] 단어 치환 규칙 저장: bot={bot_name}, {len(rules)}개 규칙")
+            return _json_ok({"saved": True})
+        except Exception as e:
+            print(f"[BOT_MODE] word_replacements 저장 실패: {e}")
+            traceback.print_exc()
+            return _json_error(str(e))
+
     async def handle_save_utility_settings(self, request):
         """POST /api/bot_mode/utility_settings"""
         try:
@@ -1187,6 +1216,32 @@ def _save_patch_settings(bot_name: str, settings: dict):
     os.makedirs(bot_dir, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(settings, f, indent=2, ensure_ascii=False)
+
+
+WORD_REPLACEMENTS_FILE = "_word_replacements.json"
+
+
+def _word_replacements_path(bot_name: str) -> str:
+    return os.path.join(BOT_DIR, bot_name, WORD_REPLACEMENTS_FILE)
+
+
+def _load_word_replacements(bot_name: str) -> dict:
+    path = _word_replacements_path(bot_name)
+    if os.path.isfile(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"[BOT_MODE] word_replacements 로드 실패: {e}")
+    return {"rules": []}
+
+
+def _save_word_replacements(bot_name: str, data: dict):
+    path = _word_replacements_path(bot_name)
+    bot_dir = os.path.dirname(path)
+    os.makedirs(bot_dir, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
 
 
 def _utility_settings_path(bot_name: str, char_name: str) -> str:

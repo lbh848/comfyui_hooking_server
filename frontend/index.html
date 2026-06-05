@@ -3245,6 +3245,11 @@
                             <button id="btn-bot-util-negative" onclick="botUtilityBatchNegative()" style="width:100%; margin-top:4px; background:#BF360C; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">얼굴 부정 태그 일괄 적용</button>
                             <div id="bot-util-status" style="font-size:0.7rem; color:var(--text2); margin-top:4px; display:none;"></div>
                         </div>
+                        <div style="background:rgba(156,39,176,0.08); border-radius:8px; padding:10px; margin-top:8px;">
+                            <div class="section-title">단어 치환 규칙</div>
+                            <button onclick="openWordReplacementsModal()" style="width:100%; background:#6A1B9A; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">단어 치환 규칙 설정</button>
+                            <div id="word-replacements-count" style="font-size:0.7rem; color:var(--text2); margin-top:4px;"></div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -17671,6 +17676,7 @@
             document.getElementById('bot-char-section').style.display = 'block';
             botRenderNegativePresetSelect();
             renderBotCharacters();
+            updateWordReplacementsCount();
         }
 
         function showBotView(view) {
@@ -19464,6 +19470,134 @@
                 showToast('패치 설정 저장 완료', 'success');
                 document.getElementById('patch-settings-modal').remove();
             } catch (e) { showToast('저장 실패', 'error'); }
+        }
+
+        // ─── 단어 치환 규칙 ────────────────────────────────────
+        let _wrRules = [];
+
+        async function openWordReplacementsModal() {
+            if (!botCurrentBot) { showToast('봇을 먼저 선택하세요.', 'error'); return; }
+            const existing = document.getElementById('word-replacements-modal');
+            if (existing) { existing.remove(); return; }
+
+            let rules = [];
+            try {
+                const resp = await fetch(`/api/bot_mode/word_replacements?bot=${encodeURIComponent(botCurrentBot)}`);
+                const data = await resp.json();
+                rules = data.rules || [];
+            } catch (e) { console.error('[WORD_REPL] 로드 실패:', e); }
+            _wrRules = rules;
+
+            const modal = document.createElement('div');
+            modal.id = 'word-replacements-modal';
+            modal.style.cssText = 'position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:10000; background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:20px; min-width:460px; max-width:560px; max-height:80vh; box-shadow:0 8px 32px rgba(0,0,0,0.4); display:flex; flex-direction:column;';
+            modal.innerHTML = `
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+                    <div style="font-weight:700; font-size:1rem;">단어 치환 규칙 - ${escHtml(botCurrentBot)}</div>
+                    <button onclick="document.getElementById('word-replacements-modal').remove()"
+                        style="background:none; border:none; color:var(--text2); font-size:1.2rem; cursor:pointer;">✕</button>
+                </div>
+                <div style="font-size:0.75rem; color:var(--text2); margin-bottom:10px; padding:6px 8px; background:rgba(106,27,154,0.08); border-radius:4px;">
+                    삽화 모드 프롬프트에서 지정한 단어를 다른 단어로 치환합니다. 대소문자 구분 없이 부분 매칭됩니다.
+                </div>
+                <button onclick="addWordReplacementRule()" style="width:100%; background:#6A1B9A; color:#fff; border:none; padding:6px 10px; border-radius:4px; cursor:pointer; font-size:0.8rem; font-weight:600; margin-bottom:10px;">+ 규칙 추가</button>
+                <div id="wr-rules-list" style="overflow-y:auto; flex:1; min-height:60px;"></div>
+                <div style="display:flex; gap:8px; margin-top:14px; justify-content:flex-end;">
+                    <button onclick="document.getElementById('word-replacements-modal').remove()"
+                        style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:6px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem;">닫기</button>
+                    <button onclick="saveWordReplacements()"
+                        style="background:var(--accent); color:#fff; border:none; padding:6px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem;">저장</button>
+                </div>
+            `;
+            document.body.appendChild(modal);
+            renderWordReplacementList();
+        }
+
+        function addWordReplacementRule() {
+            _wrRules.push({ id: Math.random().toString(36).substr(2, 8), source: '', target: '', enabled: true });
+            renderWordReplacementList();
+        }
+
+        function removeWordReplacementRule(id) {
+            _wrRules = _wrRules.filter(r => r.id !== id);
+            renderWordReplacementList();
+        }
+
+        function toggleWordReplacementRule(id) {
+            const rule = _wrRules.find(r => r.id === id);
+            if (rule) rule.enabled = !rule.enabled;
+            renderWordReplacementList();
+        }
+
+        function renderWordReplacementList() {
+            const container = document.getElementById('wr-rules-list');
+            if (!container) return;
+            if (_wrRules.length === 0) {
+                container.innerHTML = '<div style="text-align:center; color:var(--text2); font-size:0.8rem; padding:20px;">규칙이 없습니다. + 버튼으로 추가하세요.</div>';
+                return;
+            }
+            container.innerHTML = _wrRules.map((rule, i) => `
+                <div style="display:flex; align-items:center; gap:6px; padding:6px 0; border-bottom:1px solid var(--border); ${rule.enabled ? '' : 'opacity:0.45;'}">
+                    <input type="text" value="${escHtml(rule.source)}" data-wr-source="${rule.id}" placeholder="찾을 단어"
+                        style="flex:1; padding:4px 6px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.8rem; min-width:0;">
+                    <span style="color:var(--text2); font-size:0.85rem;">→</span>
+                    <input type="text" value="${escHtml(rule.target)}" data-wr-target="${rule.id}" placeholder="바꿀 단어"
+                        style="flex:1; padding:4px 6px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.8rem; min-width:0;">
+                    <button onclick="toggleWordReplacementRule('${rule.id}')" title="${rule.enabled ? '비활성화' : '활성화'}"
+                        style="background:none; border:1px solid var(--border); border-radius:4px; color:${rule.enabled ? 'var(--success)' : 'var(--text2)'}; padding:2px 6px; cursor:pointer; font-size:0.7rem; white-space:nowrap;">
+                        ${rule.enabled ? 'ON' : 'OFF'}
+                    </button>
+                    <button onclick="removeWordReplacementRule('${rule.id}')" title="삭제"
+                        style="background:none; border:none; color:var(--error); cursor:pointer; font-size:0.9rem; padding:2px 4px;">✕</button>
+                </div>
+            `).join('');
+
+            // 입력값 변경 시 _wrRules에 반영
+            container.querySelectorAll('[data-wr-source]').forEach(el => {
+                el.addEventListener('input', () => {
+                    const rule = _wrRules.find(r => r.id === el.dataset.wrSource);
+                    if (rule) rule.source = el.value;
+                });
+            });
+            container.querySelectorAll('[data-wr-target]').forEach(el => {
+                el.addEventListener('input', () => {
+                    const rule = _wrRules.find(r => r.id === el.dataset.wrTarget);
+                    if (rule) rule.target = el.value;
+                });
+            });
+        }
+
+        async function saveWordReplacements() {
+            // DOM에서 최신값 동기화
+            document.querySelectorAll('[data-wr-source]').forEach(el => {
+                const rule = _wrRules.find(r => r.id === el.dataset.wrSource);
+                if (rule) rule.source = el.value;
+            });
+            document.querySelectorAll('[data-wr-target]').forEach(el => {
+                const rule = _wrRules.find(r => r.id === el.dataset.wrTarget);
+                if (rule) rule.target = el.value;
+            });
+            try {
+                await fetch('/api/bot_mode/word_replacements', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ bot: botCurrentBot, rules: _wrRules })
+                });
+                showToast('단어 치환 규칙 저장 완료', 'success');
+                updateWordReplacementsCount();
+                document.getElementById('word-replacements-modal').remove();
+            } catch (e) { showToast('저장 실패', 'error'); }
+        }
+
+        async function updateWordReplacementsCount() {
+            const el = document.getElementById('word-replacements-count');
+            if (!el || !botCurrentBot) return;
+            try {
+                const resp = await fetch(`/api/bot_mode/word_replacements?bot=${encodeURIComponent(botCurrentBot)}`);
+                const data = await resp.json();
+                const rules = (data.rules || []).filter(r => r.enabled);
+                el.textContent = rules.length > 0 ? `활성 규칙 ${rules.length}개` : '';
+            } catch (e) { el.textContent = ''; }
         }
 
         async function dataPatchStart() {

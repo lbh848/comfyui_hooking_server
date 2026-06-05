@@ -528,6 +528,32 @@ def clamp_weights(prompt: str, clamp_value: float) -> str:
     return re.sub(r':(-?\d+(?:\.\d+)?)\)', replacer, prompt)
 
 
+def apply_word_replacements(positive: str, negative: str, bot_name: str) -> tuple:
+    """봇의 단어 치환 규칙을 프롬프트에 적용한다."""
+    if not bot_name:
+        return positive, negative
+    from modes.bot_mode import _load_word_replacements
+    data = _load_word_replacements(bot_name)
+    rules = data.get("rules", [])
+    if not rules:
+        return positive, negative
+    applied = 0
+    for rule in rules:
+        if not rule.get("enabled", True):
+            continue
+        source = rule.get("source", "").strip()
+        target = rule.get("target", "").strip()
+        if not source:
+            continue
+        pattern = re.escape(source)
+        positive = re.sub(pattern, target, positive, flags=re.IGNORECASE)
+        negative = re.sub(pattern, target, negative, flags=re.IGNORECASE)
+        applied += 1
+    if applied > 0:
+        print(f"[WORD_REPL] 단어 치환 적용: bot={bot_name}, {applied}개 규칙")
+    return positive, negative
+
+
 def split_prompt_chat(text: str) -> tuple[str, str]:
     """프롬프트에서 [CHAT] 섹션을 분리한다 (대소문자 무관).
     반환: (prompt_without_chat, chat_content)
@@ -1506,6 +1532,11 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict):
             negative = clamp_weights(negative, clamp_val)
             if positive != original_positive or negative != original_negative:
                 print(f"[CLAMP] 가중치 클램프 적용 (clamp={clamp_val})")
+
+        # 단어 치환 규칙 적용
+        bot_name = app_config.get("bot_selected", "")
+        if bot_name and app_config.get("bot_mode_enabled", False):
+            positive, negative = apply_word_replacements(positive, negative, bot_name)
 
         print(f"[INFO] 긍정: {positive[:80]}...")
         print(f"[INFO] 부정: {negative[:80]}...")
@@ -4609,6 +4640,8 @@ app.router.add_post("/api/bot_mode/patch_settings", bot_mode.handle_save_patch_s
 app.router.add_get("/api/bot_mode/utility_preview", bot_mode.handle_get_utility_preview)
 app.router.add_post("/api/bot_mode/batch_analyze_utility", bot_mode.handle_batch_analyze_utility)
 app.router.add_post("/api/bot_mode/batch_set_negative_utility", bot_mode.handle_batch_set_negative_utility)
+app.router.add_get("/api/bot_mode/word_replacements", bot_mode.handle_get_word_replacements)
+app.router.add_post("/api/bot_mode/word_replacements", bot_mode.handle_save_word_replacements)
 # 자동완성 API
 app.router.add_get("/api/autocomplete", handle_api_autocomplete)
 # ─── 에셋툴 API 핸들러 ──────────────────────────────────
