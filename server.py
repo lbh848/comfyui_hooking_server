@@ -1570,7 +1570,8 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict):
             supplement_replaced = apply_word_replacements(sections["supplement"], "", bot_name)[0]
 
             # 3. 캐릭터 감지 (모든 섹션에서)
-            bot_data = bot_mode._load_bot_data()
+            from modes.bot_mode import _load_bot_data as _load_bot_data_local
+            bot_data = _load_bot_data_local()
             bot = next((b for b in bot_data["bots"] if b["name"] == bot_name), None)
             if bot:
                 char_names = [c["name"] for c in bot.get("characters", [])]
@@ -4697,6 +4698,11 @@ app.router.add_post("/api/bot_mode/prompt", bot_mode.handle_update_prompt)
 app.router.add_post("/api/bot_mode/delete_image", bot_mode.handle_delete_image)
 app.router.add_post("/api/bot_mode/batch_analyze_rep", bot_mode.handle_batch_analyze_rep)
 app.router.add_get("/api/bot_mode/rep_preview", bot_mode.handle_get_rep_preview)
+app.router.add_get("/api/bot_mode/tag_filter_profiles", bot_mode.handle_get_tag_filter_profiles)
+app.router.add_post("/api/bot_mode/tag_filter_profile_save", bot_mode.handle_save_tag_filter_profile)
+app.router.add_post("/api/bot_mode/tag_filter_profile_delete", bot_mode.handle_delete_tag_filter_profile)
+app.router.add_post("/api/bot_mode/tag_filter_preview", bot_mode.handle_tag_filter_preview)
+app.router.add_post("/api/bot_mode/tag_filter_apply", bot_mode.handle_tag_filter_apply)
 app.router.add_get("/api/bot_mode/asset_chars_with_rep", bot_mode.handle_get_asset_chars_with_rep)
 app.router.add_post("/api/bot_mode/import_asset_chars", bot_mode.handle_import_asset_chars)
 app.router.add_post("/api/bot_mode/batch_set_negative", bot_mode.handle_batch_set_negative)

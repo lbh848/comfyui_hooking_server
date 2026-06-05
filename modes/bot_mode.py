@@ -29,6 +29,8 @@ DEFAULT_BOT_DATA = {
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 
+TAG_FILTER_PROFILES_FILE = os.path.join(ASSET_DATA_DIR, "tag_filter_profiles.json")
+
 
 def _load_bot_data() -> dict:
     """bot.json 로드. 없으면 기본값 생성."""
@@ -936,6 +938,111 @@ class BotMode:
             traceback.print_exc()
             return _json_error(str(e))
 
+    # ─── 태그 필터링 ─────────────────────────────────────────
+    async def handle_get_tag_filter_profiles(self, request):
+        """GET /api/bot_mode/tag_filter_profiles"""
+        data = _load_tag_filter_profiles()
+        return _json_ok({
+            "profiles": data.get("profiles", {}),
+            "active_profile": data.get("active_profile", ""),
+        })
+
+    async def handle_save_tag_filter_profile(self, request):
+        """POST /api/bot_mode/tag_filter_profile_save"""
+        body = await request.json()
+        name = body.get("name", "").strip()
+        steps = body.get("steps", [])
+        if not name:
+            return _json_error("프로필 이름이 필요합니다.")
+        data = _load_tag_filter_profiles()
+        data.setdefault("profiles", {})[name] = steps
+        data["active_profile"] = name
+        _save_tag_filter_profiles(data)
+        return _json_ok({"success": True, "name": name})
+
+    async def handle_delete_tag_filter_profile(self, request):
+        """POST /api/bot_mode/tag_filter_profile_delete"""
+        body = await request.json()
+        name = body.get("name", "")
+        data = _load_tag_filter_profiles()
+        profiles = data.get("profiles", {})
+        if name not in profiles:
+            return _json_error(f"프로필 '{name}'을 찾을 수 없습니다")
+        if len(profiles) <= 1:
+            return _json_error("마지막 프로필은 삭제할 수 없습니다")
+        del profiles[name]
+        if data.get("active_profile") == name:
+            data["active_profile"] = next(iter(profiles))
+        _save_tag_filter_profiles(data)
+        return _json_ok({"success": True, "deleted": name})
+
+    async def handle_tag_filter_preview(self, request):
+        """POST /api/bot_mode/tag_filter_preview"""
+        body = await request.json()
+        bot_name = body.get("bot", "").strip()
+        items = body.get("items", [])
+        steps = body.get("steps", [])
+        if not bot_name:
+            return _json_error("봇 이름이 필요합니다.")
+        preview = []
+        for item in items:
+            char_name = item.get("character", "")
+            filename = item.get("filename", "")
+            base = os.path.splitext(filename)[0]
+            char_dir = os.path.join(BOT_DIR, bot_name, char_name)
+            prompt_path = os.path.join(char_dir, f"{base}_prompt.json")
+            original = ""
+            if os.path.isfile(prompt_path):
+                try:
+                    with open(prompt_path, "r", encoding="utf-8") as f:
+                        original = json.load(f).get("prompt", "")
+                except Exception:
+                    pass
+            filtered = _apply_tag_filter_steps(original, steps) if original else ""
+            preview.append({
+                "character": char_name,
+                "filename": filename,
+                "original": original,
+                "filtered": filtered,
+            })
+        return _json_ok({"preview": preview})
+
+    async def handle_tag_filter_apply(self, request):
+        """POST /api/bot_mode/tag_filter_apply"""
+        body = await request.json()
+        bot_name = body.get("bot", "").strip()
+        items = body.get("items", [])
+        steps = body.get("steps", [])
+        if not bot_name:
+            return _json_error("봇 이름이 필요합니다.")
+        success_count = 0
+        fail_count = 0
+        for item in items:
+            try:
+                char_name = item.get("character", "")
+                filename = item.get("filename", "")
+                base = os.path.splitext(filename)[0]
+                char_dir = os.path.join(BOT_DIR, bot_name, char_name)
+                prompt_path = os.path.join(char_dir, f"{base}_prompt.json")
+                existing = {}
+                if os.path.isfile(prompt_path):
+                    with open(prompt_path, "r", encoding="utf-8") as f:
+                        existing = json.load(f)
+                original = existing.get("prompt", "")
+                filtered = _apply_tag_filter_steps(original, steps) if original else ""
+                existing["prompt"] = filtered
+                with open(prompt_path, "w", encoding="utf-8") as f:
+                    json.dump(existing, f, ensure_ascii=False, indent=2)
+                success_count += 1
+            except Exception as e:
+                fail_count += 1
+                print(f"[BOT_MODE] 태그 필터 적용 실패: {item} - {e}")
+        return _json_ok({
+            "total": len(items),
+            "success_count": success_count,
+            "fail_count": fail_count,
+        })
+
     async def handle_batch_set_negative(self, request):
         """POST /api/bot_mode/batch_set_negative - 대표이미지에 부정프롬프트 일괄 적용."""
         try:
@@ -1224,6 +1331,85 @@ def _json_ok(data, status=200):
 def _json_error(msg, status=400):
     print(f"[BOT_MODE] 에러: {msg}")
     return web.json_response({"error": msg}, status=status)
+
+
+# ─── 태그 필터 프로필 관리 ─────────────────────────────────
+def _load_tag_filter_profiles() -> dict:
+    default = {"profiles": {"기본": []}, "active_profile": "기본"}
+    if os.path.isfile(TAG_FILTER_PROFILES_FILE):
+        try:
+            with open(TAG_FILTER_PROFILES_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if "profiles" not in data:
+                    data["profiles"] = default["profiles"]
+                return data
+        except Exception as e:
+            print(f"[BOT_MODE] tag_filter_profiles 로드 실패: {e}")
+    return default
+
+
+def _save_tag_filter_profiles(data: dict):
+    try:
+        os.makedirs(ASSET_DATA_DIR, exist_ok=True)
+        with open(TAG_FILTER_PROFILES_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        print(f"[BOT_MODE] tag_filter_profiles 저장 실패: {e}")
+        traceback.print_exc()
+
+
+import re as _re
+
+def _apply_tag_filter_steps(tags_string: str, steps: list[dict]) -> str:
+    """쉼표로 구분된 태그 문자열에 필터 단계를 적용.
+    split_by는 쉼표 분리 전 전체 문자열에 먼저 적용.
+    나머지 액션은 쉼표 분리 후 개별 태그에 적용.
+    """
+    from modes.embedding_service import _parse_take, _apply_take
+
+    # 1단계: split_by는 전체 문자열에 순차 적용
+    current_str = tags_string
+    per_tag_steps = []
+    for step in steps:
+        if step.get("action") == "split_by":
+            sep = step.get("separator", "_")
+            take = step.get("take", 0)
+            parts = current_str.split(sep)
+            take_parsed = _parse_take(take)
+            current_str = _apply_take(parts, take_parsed, join_sep=sep)
+        else:
+            per_tag_steps.append(step)
+
+    # 2단계: 쉼표 분리 후 개별 태그에 나머지 액션 적용
+    tags = [t.strip() for t in current_str.split(",") if t.strip()]
+    result_tags = []
+    for tag in tags:
+        keep = True
+        current = tag
+        for step in per_tag_steps:
+            action = step.get("action", "")
+            if action == "remove_match":
+                pattern = step.get("pattern", "")
+                if pattern and _re.search(pattern, current):
+                    keep = False
+                    break
+            elif action == "replace":
+                current = current.replace(step.get("from", ""), step.get("to", ""))
+            elif action == "strip_prefix":
+                pattern = step.get("pattern", "")
+                if pattern:
+                    current = _re.sub(f"^{pattern}", "", current)
+            elif action == "strip_suffix":
+                pattern = step.get("pattern", "")
+                if pattern:
+                    current = _re.sub(f"{pattern}$", "", current)
+            elif action == "strip":
+                current = current.strip()
+            elif action == "lower":
+                current = current.lower()
+        if keep and current.strip():
+            result_tags.append(current.strip())
+    return ", ".join(result_tags)
 
 
 # ─── 유틸리티 설정 (캐릭터별) ─────────────────────────────

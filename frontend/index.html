@@ -3230,15 +3230,14 @@
                         </div>
                         <div style="background:rgba(76,175,80,0.08); border-radius:8px; padding:10px; margin-top:8px;">
                             <div class="section-title">태그 분석</div>
-                            <button id="btn-bot-batch-analyze" onclick="botBatchAnalyzeRep()" style="width:100%; background:#2E7D32; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">선택 캐릭터 태그 분석</button>
-                            <button id="btn-bot-analyze-all" onclick="botAnalyzeAllChars()" style="width:100%; margin-top:4px; background:#1B5E20; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">전체 캐릭터 일괄 태그 분석</button>
+                            <button id="btn-bot-analyze-all" onclick="botAnalyzeAllChars()" style="width:100%; background:#1B5E20; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">선택 캐릭터 일괄 태그 분석</button>
+                            <button onclick="openTagFilterModal()" style="width:100%; margin-top:4px; background:#2E7D32; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">선택 캐릭터 태그 필터링 적용</button>
                             <div id="bot-analyze-status" style="font-size:0.7rem; color:var(--text2); margin-top:4px; display:none;"></div>
                         </div>
                         <div style="background:rgba(156,39,176,0.08); border-radius:8px; padding:10px; margin-top:8px;">
                             <div class="section-title">부정 프롬프트 일괄 적용</div>
                             <div id="bot-negative-preset-select" style="margin-bottom:6px;"></div>
-                            <button id="btn-bot-batch-negative" onclick="botBatchSetNegative()" style="width:100%; background:#9C27B0; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">선택 캐릭터 부정 프롬프트 적용</button>
-                            <button id="btn-bot-negative-all" onclick="botSetNegativeAllChars()" style="width:100%; margin-top:4px; background:#6A1B9A; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">전체 캐릭터 일괄 부정 프롬프트 적용</button>
+                            <button id="btn-bot-negative-all" onclick="botSetNegativeAllChars()" style="width:100%; background:#6A1B9A; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">선택 캐릭터 일괄 부정 프롬프트 적용</button>
                         </div>
                         <div style="background:rgba(33,150,243,0.08); border-radius:8px; padding:10px; margin-top:8px;">
                             <div class="section-title">데이터 패치</div>
@@ -3253,43 +3252,54 @@
                             <div id="bot-util-status" style="font-size:0.7rem; color:var(--text2); margin-top:4px; display:none;"></div>
                         </div>
                         <div style="background:rgba(156,39,176,0.08); border-radius:8px; padding:10px; margin-top:8px;">
+                            <div class="section-title">단어 치환 규칙</div>
+                            <button onclick="openWordReplacementsModal()" style="width:100%; background:#6A1B9A; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">단어 치환 규칙 설정</button>
+                            <div id="word-replacements-count" style="font-size:0.7rem; color:var(--text2); margin-top:4px;"></div>
+                        </div>
+                        <div style="background:rgba(156,39,176,0.08); border-radius:8px; padding:10px; margin-top:8px;">
                             <div class="section-title">삽화 프롬프트 설정</div>
                             <div style="margin-top:6px;">
                                 <div style="font-size:0.7rem; color:var(--text2); margin-bottom:2px;">SDXL 아티스트 프리셋</div>
-                                <select id="illust-sdxl-artist-preset" onchange="saveIllustSettings()" style="width:100%; padding:3px 6px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.8rem;">
+                                <select id="illust-sdxl-artist-preset" onchange="saveIllustSettings(); renderIllustPresetTags('illust-sdxl-artist-preset','illust-sdxl-artist-tags','artist_presets')" style="width:100%; padding:3px 6px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.8rem;">
                                     <option value="">-- 없음 --</option>
                                 </select>
+                                <div id="illust-sdxl-artist-tags" style="display:flex; flex-wrap:wrap; gap:3px; margin-top:4px;"></div>
                             </div>
                             <div style="margin-top:6px;">
                                 <div style="font-size:0.7rem; color:var(--text2); margin-bottom:2px;">SDXL 품질 프리셋</div>
-                                <select id="illust-sdxl-quality-preset" onchange="saveIllustSettings()" style="width:100%; padding:3px 6px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.8rem;">
+                                <select id="illust-sdxl-quality-preset" onchange="saveIllustSettings(); renderIllustPresetTags('illust-sdxl-quality-preset','illust-sdxl-quality-tags','quality_presets')" style="width:100%; padding:3px 6px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.8rem;">
                                     <option value="">-- 없음 --</option>
                                 </select>
+                                <div id="illust-sdxl-quality-tags" style="display:flex; flex-wrap:wrap; gap:3px; margin-top:4px;"></div>
                             </div>
                             <div style="margin-top:6px;">
                                 <div style="font-size:0.7rem; color:var(--text2); margin-bottom:2px;">ANIMA 아티스트 프리셋</div>
-                                <select id="illust-anima-artist-preset" onchange="saveIllustSettings()" style="width:100%; padding:3px 6px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.8rem;">
+                                <select id="illust-anima-artist-preset" onchange="saveIllustSettings(); renderIllustPresetTags('illust-anima-artist-preset','illust-anima-artist-tags','artist_presets')" style="width:100%; padding:3px 6px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.8rem;">
                                     <option value="">-- 없음 --</option>
                                 </select>
+                                <div id="illust-anima-artist-tags" style="display:flex; flex-wrap:wrap; gap:3px; margin-top:4px;"></div>
                             </div>
                             <div style="margin-top:6px;">
                                 <div style="font-size:0.7rem; color:var(--text2); margin-bottom:2px;">ANIMA 품질 프리셋</div>
-                                <select id="illust-anima-quality-preset" onchange="saveIllustSettings()" style="width:100%; padding:3px 6px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.8rem;">
+                                <select id="illust-anima-quality-preset" onchange="saveIllustSettings(); renderIllustPresetTags('illust-anima-quality-preset','illust-anima-quality-tags','quality_presets')" style="width:100%; padding:3px 6px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.8rem;">
                                     <option value="">-- 없음 --</option>
                                 </select>
+                                <div id="illust-anima-quality-tags" style="display:flex; flex-wrap:wrap; gap:3px; margin-top:4px;"></div>
                             </div>
                             <hr style="border:none; border-top:1px dashed var(--border); margin:8px 0;">
                             <div style="margin-top:6px;">
                                 <div style="font-size:0.7rem; color:var(--text2); margin-bottom:2px;">SDXL 부정 프리셋</div>
-                                <select id="illust-sdxl-negative-preset" onchange="saveIllustSettings()" style="width:100%; padding:3px 6px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.8rem;">
+                                <select id="illust-sdxl-negative-preset" onchange="saveIllustSettings(); renderIllustPresetTags('illust-sdxl-negative-preset','illust-sdxl-negative-tags','negative_presets')" style="width:100%; padding:3px 6px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.8rem;">
                                     <option value="">-- 없음 --</option>
                                 </select>
+                                <div id="illust-sdxl-negative-tags" style="display:flex; flex-wrap:wrap; gap:3px; margin-top:4px;"></div>
                             </div>
                             <div style="margin-top:6px;">
                                 <div style="font-size:0.7rem; color:var(--text2); margin-bottom:2px;">ANIMA 부정 프리셋</div>
-                                <select id="illust-anima-negative-preset" onchange="saveIllustSettings()" style="width:100%; padding:3px 6px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.8rem;">
+                                <select id="illust-anima-negative-preset" onchange="saveIllustSettings(); renderIllustPresetTags('illust-anima-negative-preset','illust-anima-negative-tags','negative_presets')" style="width:100%; padding:3px 6px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.8rem;">
                                     <option value="">-- 없음 --</option>
                                 </select>
+                                <div id="illust-anima-negative-tags" style="display:flex; flex-wrap:wrap; gap:3px; margin-top:4px;"></div>
                             </div>
                             <div style="display:flex; align-items:center; gap:6px; margin-top:6px;">
                                 <span style="font-size:0.75rem;">HIRES FIX</span>
@@ -3348,11 +3358,6 @@
                             <div style="margin-top:8px;">
                                 <button onclick="openIllustLogModal()" style="width:100%; background:#6A1B9A; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">📋 프롬프트 빌드 로그</button>
                             </div>
-                        </div>
-                        <div style="background:rgba(156,39,176,0.08); border-radius:8px; padding:10px; margin-top:8px;">
-                            <div class="section-title">단어 치환 규칙</div>
-                            <button onclick="openWordReplacementsModal()" style="width:100%; background:#6A1B9A; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">단어 치환 규칙 설정</button>
-                            <div id="word-replacements-count" style="font-size:0.7rem; color:var(--text2); margin-top:4px;"></div>
                         </div>
                     </div>
                 </div>
@@ -12078,6 +12083,21 @@
         let atEmbedCurrentSource = 'preset';
         let atEmbedActiveSteps = { preset: [], tag: [] };
 
+        // 태그 필터링 액션
+        const TAG_FILTER_ACTIONS = [
+            { value: 'remove_match', label: '패턴 일치 제거', params: ['pattern'] },
+            { value: 'split_by', label: '구분자로 분리', params: ['separator', 'take'] },
+            { value: 'replace', label: '치환', params: ['from', 'to'] },
+            { value: 'strip_prefix', label: '접두사 제거', params: ['pattern'] },
+            { value: 'strip_suffix', label: '접미사 제거', params: ['pattern'] },
+            { value: 'strip', label: '공백 제거', params: [] },
+            { value: 'lower', label: '소문자화', params: [] },
+        ];
+        let tagFilterProfiles = {};
+        let tagFilterActiveProfile = '';
+        let tagFilterSteps = [];
+        let tagFilterSelectedItems = [];
+
         function atGetCurrentProfileType(source) {
             return source || 'preset';
         }
@@ -14938,6 +14958,7 @@
                 document.getElementById('tab-bot-content').classList.add('active');
                 if (!botData) await loadBotData();
                 else if (botCurrentBot) checkPatchFiles();
+                loadIllustArtistPresets();
             } else if (name === 'asset') {
                 document.querySelectorAll('.tab-btn')[2].classList.add('active');
                 document.getElementById('tab-asset-content').classList.add('active');
@@ -19627,9 +19648,9 @@
             try {
                 const prevResp = await fetch(`/api/bot_mode/rep_preview?bot=${encodeURIComponent(botCurrentBot)}&character=`);
                 const prevData = await prevResp.json();
-                if (prevData.error) { showToast(prevData.error, 'error'); btn.disabled = false; btn.textContent = '전체 캐릭터 일괄 태그 분석'; status.style.display = 'none'; return; }
+                if (prevData.error) { showToast(prevData.error, 'error'); btn.disabled = false; btn.textContent = '선택 캐릭터 일괄 태그 분석'; status.style.display = 'none'; return; }
                 const images = prevData.images || [];
-                if (images.length === 0) { showToast('대표 이미지가 있는 캐릭터가 없습니다', 'error'); btn.disabled = false; btn.textContent = '전체 캐릭터 일괄 태그 분석'; status.style.display = 'none'; return; }
+                if (images.length === 0) { showToast('대표 이미지가 있는 캐릭터가 없습니다', 'error'); btn.disabled = false; btn.textContent = '선택 캐릭터 일괄 태그 분석'; status.style.display = 'none'; return; }
                 botShowAnalyzeModal(images, '', status);
             } catch (e) {
                 console.error('[BOT] 전체 분석 프리뷰 오류:', e);
@@ -19637,7 +19658,415 @@
                 status.style.display = 'none';
             } finally {
                 btn.disabled = false;
-                btn.textContent = '전체 캐릭터 일괄 태그 분석';
+                btn.textContent = '선택 캐릭터 일괄 태그 분석';
+            }
+        }
+
+        // ─── 태그 필터링 모달 ─────────────────────────────────
+        async function openTagFilterModal() {
+            if (!botCurrentBot) { showToast('봇을 먼저 선택하세요', 'error'); return; }
+
+            let modal = document.getElementById('tag-filter-modal');
+            if (!modal) {
+                modal = document.createElement('div');
+                modal.id = 'tag-filter-modal';
+                document.body.appendChild(modal);
+            }
+            modal.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:10000; display:flex; align-items:center; justify-content:center;';
+
+            // 기본 구조: 탭 2개
+            modal.innerHTML = `<div style="background:var(--surface); border-radius:12px; width:92vw; max-width:900px; max-height:85vh; display:flex; flex-direction:column; overflow:hidden;">
+                <div style="padding:16px 20px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
+                    <h3 style="margin:0;">태그 필터링 적용</h3>
+                    <button onclick="document.getElementById('tag-filter-modal').style.display='none'" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer;">&times;</button>
+                </div>
+                <div style="display:flex; border-bottom:1px solid var(--border);">
+                    <button id="tf-tab-btn-0" onclick="tfSwitchTab(0)" style="flex:1; padding:10px; border:none; background:var(--accent); color:#fff; cursor:pointer; font-size:0.85rem; font-weight:600;">캐릭터 선택</button>
+                    <button id="tf-tab-btn-1" onclick="tfSwitchTab(1)" style="flex:1; padding:10px; border:none; background:var(--surface2); color:var(--text); cursor:pointer; font-size:0.85rem;">규칙 설정 및 미리보기</button>
+                </div>
+                <div id="tf-tab-0" style="padding:12px 20px; overflow-y:auto; flex:1; display:flex; flex-direction:column; gap:6px;">
+                    <div style="color:var(--text2); text-align:center; padding:20px;">로드 중...</div>
+                </div>
+                <div id="tf-tab-1" style="padding:12px 20px; overflow-y:auto; flex:1; display:none; flex-direction:column; gap:10px;">
+                    <!-- 프로필 관리 -->
+                    <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                        <span style="font-size:0.85rem; font-weight:700;">프로필:</span>
+                        <select id="tf-profile-select" onchange="tfOnProfileSelect()" style="padding:3px 6px; border-radius:5px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-size:0.78rem; min-width:140px;"></select>
+                        <button onclick="tfSaveProfile()" style="font-size:0.72rem; padding:3px 8px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); cursor:pointer;">저장</button>
+                        <button onclick="tfNewProfile()" style="font-size:0.72rem; padding:3px 8px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); cursor:pointer;">＋ 새 프로필</button>
+                        <button onclick="tfDeleteProfile()" style="font-size:0.72rem; padding:3px 8px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:#e55; cursor:pointer;">🗑 삭제</button>
+                    </div>
+                    <!-- 단계 편집기 -->
+                    <div id="tf-steps-container"></div>
+                    <div style="display:flex; gap:8px;">
+                        <button onclick="tfAddStep()" style="font-size:0.78rem; padding:4px 10px; border-radius:5px; border:1px solid var(--border); background:var(--surface2); color:var(--text); cursor:pointer;">＋ 단계 추가</button>
+                        <button onclick="tfTogglePreview()" style="font-size:0.78rem; padding:4px 10px; border-radius:5px; border:none; background:var(--accent); color:#fff; cursor:pointer; font-weight:600;">미리보기</button>
+                        <button onclick="tfUpdatePreview()" style="font-size:0.78rem; padding:4px 10px; border-radius:5px; border:1px solid var(--border); background:var(--surface2); color:var(--text); cursor:pointer;">미리보기 업데이트</button>
+                    </div>
+                    <!-- 미리보기 결과 -->
+                    <div id="tf-preview-container" style="max-height:300px; overflow-y:auto; background:var(--surface2); border-radius:6px; padding:10px; display:none;"></div>
+                </div>
+                <div style="padding:12px 20px; border-top:1px solid var(--border); display:flex; justify-content:flex-end; gap:8px;">
+                    <button onclick="document.getElementById('tag-filter-modal').style.display='none'" style="padding:8px 16px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); cursor:pointer;">취소</button>
+                    <button onclick="tfApply()" style="padding:8px 16px; border-radius:6px; border:none; background:#2E7D32; color:#fff; cursor:pointer; font-weight:600;">적용</button>
+                </div>
+            </div>`;
+
+            // 탭 1: 캐릭터/이미지 목록 로드
+            try {
+                const resp = await fetch(`/api/bot_mode/rep_preview?bot=${encodeURIComponent(botCurrentBot)}`);
+                const data = await resp.json();
+                if (data.error) { showToast(data.error, 'error'); modal.style.display = 'none'; return; }
+                const images = data.images || [];
+                const tab0 = document.getElementById('tf-tab-0');
+                if (images.length === 0) {
+                    tab0.innerHTML = '<div style="color:var(--text2); text-align:center; padding:20px;">대표 이미지가 없습니다.</div>';
+                } else {
+                    tab0.innerHTML = `
+                        <div style="font-size:0.75rem; color:var(--text2); margin-bottom:4px; display:flex; gap:8px; align-items:center;">
+                            <span>총 ${images.length}장</span>
+                            <button onclick="document.querySelectorAll('.tf-check').forEach(c=>c.checked=true)" style="background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:2px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">전체 선택</button>
+                            <button onclick="document.querySelectorAll('.tf-check').forEach(c=>c.checked=false)" style="background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:2px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">전체 해제</button>
+                        </div>` +
+                        images.map((img, i) => {
+                            const preview = img.prompt ? escHtml(img.prompt.substring(0, 80)) + (img.prompt.length > 80 ? '...' : '') : '<span style="color:var(--text2);">프롬프트 없음</span>';
+                            return `<label style="display:flex; align-items:center; gap:10px; padding:8px; border-radius:6px; cursor:pointer; border:1px solid var(--border); background:var(--surface2);">
+                                <input type="checkbox" checked class="tf-check" data-character="${escAttr(img.character)}" data-filename="${escAttr(img.filename)}" style="width:18px; height:18px; cursor:pointer;">
+                                <img src="${img.url}" loading="lazy" style="width:60px; height:60px; object-fit:cover; border-radius:4px; flex-shrink:0;">
+                                <div style="flex:1; min-width:0;">
+                                    <div style="font-size:0.8rem; font-weight:600;">${escHtml(img.character)} / ${escHtml(img.filename)}</div>
+                                    <div style="font-size:0.7rem; color:var(--text2); margin-top:2px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${preview}</div>
+                                </div>
+                            </label>`;
+                        }).join('');
+                }
+            } catch (e) {
+                console.error('[TF] 이미지 로드 오류:', e);
+                showToast('이미지 목록 로드 실패', 'error');
+            }
+
+            // 프로필 로드
+            await tfLoadProfiles();
+        }
+
+        function tfSwitchTab(idx) {
+            for (let i = 0; i < 2; i++) {
+                const tab = document.getElementById(`tf-tab-${i}`);
+                const btn = document.getElementById(`tf-tab-btn-${i}`);
+                if (i === idx) {
+                    tab.style.display = 'flex';
+                    btn.style.background = 'var(--accent)';
+                    btn.style.color = '#fff';
+                    btn.style.fontWeight = '600';
+                } else {
+                    tab.style.display = 'none';
+                    btn.style.background = 'var(--surface2)';
+                    btn.style.color = 'var(--text)';
+                    btn.style.fontWeight = '400';
+                }
+            }
+        }
+
+        async function tfLoadProfiles() {
+            try {
+                const resp = await fetch('/api/bot_mode/tag_filter_profiles');
+                const data = await resp.json();
+                tagFilterProfiles = data.profiles || {};
+                tagFilterActiveProfile = data.active_profile || '';
+                const sel = document.getElementById('tf-profile-select');
+                if (!sel) return;
+                sel.innerHTML = '';
+                Object.keys(tagFilterProfiles).forEach(name => {
+                    const opt = document.createElement('option');
+                    opt.value = name;
+                    opt.textContent = name;
+                    if (name === tagFilterActiveProfile) opt.selected = true;
+                    sel.appendChild(opt);
+                });
+                // 활성 프로필의 스텝 로드
+                const steps = tagFilterProfiles[tagFilterActiveProfile] || [];
+                tagFilterSteps = JSON.parse(JSON.stringify(steps));
+                tfRenderSteps(tagFilterSteps);
+            } catch (e) {
+                console.error('[TF] 프로필 로드 오류:', e);
+            }
+        }
+
+        function tfRenderSteps(steps) {
+            const container = document.getElementById('tf-steps-container');
+            if (!container) return;
+            container.innerHTML = '';
+            const maxSteps = Math.max(steps.length, 1);
+            for (let i = 0; i < maxSteps; i++) {
+                const step = steps[i] || {};
+                const stepDiv = document.createElement('div');
+                stepDiv.style.cssText = 'display:flex; gap:8px; align-items:center; margin-bottom:8px; flex-wrap:wrap;';
+                const stepNum = document.createElement('span');
+                stepNum.textContent = `${i + 1}단계:`;
+                stepNum.style.cssText = 'font-weight:600; font-size:0.82rem; min-width:42px;';
+                stepDiv.appendChild(stepNum);
+
+                const actionSelect = document.createElement('select');
+                actionSelect.style.cssText = 'padding:4px 8px; border-radius:5px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-size:0.82rem; min-width:140px;';
+                actionSelect.innerHTML = '<option value="">(없음)</option>' + TAG_FILTER_ACTIONS.map(a => `<option value="${a.value}" ${step.action === a.value ? 'selected' : ''}>${a.label}</option>`).join('');
+                actionSelect.onchange = () => { tfOnStepChange(i); };
+                stepDiv.appendChild(actionSelect);
+
+                if (step.action === 'remove_match') {
+                    const inp = document.createElement('input');
+                    inp.type = 'text'; inp.value = step.pattern || '';
+                    inp.placeholder = '정규식 패턴';
+                    inp.style.cssText = 'width:200px; padding:4px 6px; border-radius:5px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-size:0.82rem;';
+                    inp.id = `tf-step-${i}-pattern`;
+                    stepDiv.appendChild(inp);
+                } else if (step.action === 'split_by') {
+                    const sepLabel = document.createElement('span');
+                    sepLabel.textContent = '구분자';
+                    sepLabel.style.cssText = 'font-size:0.75rem; color:var(--text2);';
+                    stepDiv.appendChild(sepLabel);
+                    const sepInput = document.createElement('input');
+                    sepInput.type = 'text'; sepInput.value = step.separator || '_';
+                    sepInput.placeholder = '구분자';
+                    sepInput.style.cssText = 'width:200px; padding:4px 6px; border-radius:5px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-size:0.82rem;';
+                    sepInput.id = `tf-step-${i}-separator`;
+                    stepDiv.appendChild(sepInput);
+                    const takeInput = document.createElement('input');
+                    takeInput.type = 'text'; takeInput.value = step.take !== undefined ? String(step.take) : '0';
+                    takeInput.placeholder = '0=앞, -1=끝';
+                    takeInput.style.cssText = 'width:100px; padding:4px 6px; border-radius:5px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-size:0.82rem; text-align:center;';
+                    takeInput.id = `tf-step-${i}-take`;
+                    stepDiv.appendChild(takeInput);
+                } else if (step.action === 'strip_suffix' || step.action === 'strip_prefix') {
+                    const inp = document.createElement('input');
+                    inp.type = 'text'; inp.value = step.pattern || '';
+                    inp.placeholder = '정규식 패턴';
+                    inp.style.cssText = 'width:200px; padding:4px 6px; border-radius:5px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-size:0.82rem;';
+                    inp.id = `tf-step-${i}-pattern`;
+                    stepDiv.appendChild(inp);
+                } else if (step.action === 'replace') {
+                    const fromInput = document.createElement('input');
+                    fromInput.type = 'text'; fromInput.value = step.from || '';
+                    fromInput.placeholder = '찾을 문자';
+                    fromInput.style.cssText = 'width:80px; padding:4px 6px; border-radius:5px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-size:0.82rem; text-align:center;';
+                    fromInput.id = `tf-step-${i}-from`;
+                    stepDiv.appendChild(fromInput);
+                    const arrow = document.createElement('span');
+                    arrow.textContent = '→';
+                    arrow.style.cssText = 'font-size:0.82rem;';
+                    stepDiv.appendChild(arrow);
+                    const toInput = document.createElement('input');
+                    toInput.type = 'text'; toInput.value = step.to !== undefined ? step.to : '';
+                    toInput.placeholder = '바꿀 문자';
+                    toInput.style.cssText = 'width:80px; padding:4px 6px; border-radius:5px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-size:0.82rem; text-align:center;';
+                    toInput.id = `tf-step-${i}-to`;
+                    stepDiv.appendChild(toInput);
+                }
+
+                const removeBtn = document.createElement('button');
+                removeBtn.textContent = '✕';
+                removeBtn.style.cssText = 'border:none; background:transparent; color:var(--error); cursor:pointer; font-size:0.9rem; padding:2px 6px;';
+                removeBtn.onclick = () => { tfRemoveStep(i); };
+                stepDiv.appendChild(removeBtn);
+
+                container.appendChild(stepDiv);
+            }
+        }
+
+        function tfReadStepsFromUI() {
+            const steps = [];
+            const container = document.getElementById('tf-steps-container');
+            if (!container) return steps;
+            const rows = container.querySelectorAll(':scope > div');
+            rows.forEach((row, i) => {
+                const actionSelect = row.querySelector('select');
+                if (!actionSelect || !actionSelect.value) return;
+                const step = { action: actionSelect.value };
+                if (step.action === 'remove_match' || step.action === 'strip_suffix' || step.action === 'strip_prefix') {
+                    const patEl = document.getElementById(`tf-step-${i}-pattern`);
+                    step.pattern = patEl ? patEl.value : '';
+                } else if (step.action === 'split_by') {
+                    const sepEl = document.getElementById(`tf-step-${i}-separator`);
+                    const takeEl = document.getElementById(`tf-step-${i}-take`);
+                    step.separator = sepEl ? sepEl.value : '_';
+                    const takeVal = takeEl ? takeEl.value.trim() : '-1';
+                    step.take = takeVal.match(/^-?\d+$/) ? parseInt(takeVal) : takeVal;
+                } else if (step.action === 'replace') {
+                    const fromEl = document.getElementById(`tf-step-${i}-from`);
+                    const toEl = document.getElementById(`tf-step-${i}-to`);
+                    step.from = fromEl ? fromEl.value : '';
+                    step.to = toEl ? toEl.value : '';
+                }
+                steps.push(step);
+            });
+            tagFilterSteps = steps;
+            return steps;
+        }
+
+        function tfOnStepChange(stepIndex) {
+            tfReadStepsFromUI();
+            tfRenderSteps(tagFilterSteps);
+            const container = document.getElementById('tf-steps-container');
+            const rows = container.querySelectorAll(':scope > div');
+            if (rows[stepIndex]) {
+                const sel = rows[stepIndex].querySelector('select');
+                if (sel) sel.focus();
+            }
+        }
+
+        function tfAddStep() {
+            tfReadStepsFromUI();
+            tagFilterSteps.push({ action: 'remove_match', pattern: '' });
+            tfRenderSteps(tagFilterSteps);
+        }
+
+        function tfRemoveStep(index) {
+            tfReadStepsFromUI();
+            tagFilterSteps.splice(index, 1);
+            tfRenderSteps(tagFilterSteps);
+        }
+
+        function tfOnProfileSelect() {
+            const sel = document.getElementById('tf-profile-select');
+            const name = sel ? sel.value : '';
+            const steps = tagFilterProfiles[name] || [];
+            tagFilterSteps = JSON.parse(JSON.stringify(steps));
+            tfRenderSteps(tagFilterSteps);
+        }
+
+        async function tfSaveProfile() {
+            const steps = tfReadStepsFromUI();
+            const sel = document.getElementById('tf-profile-select');
+            const name = sel ? sel.value : '';
+            if (!name) { showToast('프로필을 먼저 선택하거나 새로 만드세요', 'warning'); return; }
+            try {
+                const resp = await fetch('/api/bot_mode/tag_filter_profile_save', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name, steps })
+                });
+                const result = await resp.json();
+                if (result.error) { showToast(result.error, 'error'); return; }
+                showToast(`프로필 '${name}' 저장됨`, 'success');
+                await tfLoadProfiles();
+            } catch (e) {
+                showToast('저장 오류: ' + e.message, 'error');
+            }
+        }
+
+        async function tfNewProfile() {
+            const name = prompt('새 프로필 이름을 입력하세요:');
+            if (!name || !name.trim()) return;
+            tfReadStepsFromUI();
+            try {
+                const resp = await fetch('/api/bot_mode/tag_filter_profile_save', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: name.trim(), steps: tagFilterSteps })
+                });
+                const result = await resp.json();
+                if (result.error) { showToast(result.error, 'error'); return; }
+                showToast(`프로필 '${name.trim()}' 생성됨`, 'success');
+                await tfLoadProfiles();
+            } catch (e) {
+                showToast('생성 오류: ' + e.message, 'error');
+            }
+        }
+
+        async function tfDeleteProfile() {
+            const sel = document.getElementById('tf-profile-select');
+            const name = sel ? sel.value : '';
+            if (!name) return;
+            if (!confirm(`프로필 '${name}'을 삭제하시겠습니까?`)) return;
+            try {
+                const resp = await fetch('/api/bot_mode/tag_filter_profile_delete', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name })
+                });
+                const result = await resp.json();
+                if (result.error) { showToast(result.error, 'error'); return; }
+                showToast(`프로필 '${name}' 삭제됨`, 'success');
+                await tfLoadProfiles();
+            } catch (e) {
+                showToast('삭제 오류: ' + e.message, 'error');
+            }
+        }
+
+        function tfTogglePreview() {
+            const container = document.getElementById('tf-preview-container');
+            if (!container) return;
+            if (container.style.display !== 'none' && container.innerHTML) {
+                container.style.display = 'none';
+                return;
+            }
+            tfUpdatePreview();
+        }
+
+        async function tfUpdatePreview() {
+            const items = _tfGetSelectedItems();
+            if (items.length === 0) { showToast('캐릭터 탭에서 이미지를 먼저 선택하세요', 'warning'); return; }
+            const steps = tfReadStepsFromUI();
+            if (steps.length === 0) { showToast('필터 규칙을 추가하세요', 'warning'); return; }
+            try {
+                const resp = await fetch('/api/bot_mode/tag_filter_preview', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ bot: botCurrentBot, items, steps })
+                });
+                const data = await resp.json();
+                if (data.error) { showToast(data.error, 'error'); return; }
+                const container = document.getElementById('tf-preview-container');
+                container.style.display = 'block';
+                const preview = data.preview || [];
+                if (preview.length === 0) {
+                    container.innerHTML = '<div style="color:var(--text2); font-size:0.85rem;">미리보기 결과가 없습니다.</div>';
+                    return;
+                }
+                let html = '<table style="width:100%; border-collapse:collapse; font-size:0.78rem;">';
+                html += '<tr style="border-bottom:1px solid var(--border);"><th style="text-align:left; padding:4px 6px;">원본</th><th style="text-align:left; padding:4px 6px;">필터링</th></tr>';
+                preview.forEach(p => {
+                    const origTags = p.original.split(',').map(t => t.trim()).filter(Boolean);
+                    const filtTags = p.filtered.split(',').map(t => t.trim()).filter(Boolean);
+                    const removed = origTags.filter(t => !filtTags.includes(t));
+                    const added = filtTags.filter(t => !origTags.includes(t));
+                    let origHtml = origTags.map(t => removed.includes(t) ? `<span style="text-decoration:line-through; color:var(--error);">${escHtml(t)}</span>` : escHtml(t)).join(', ');
+                    let filtHtml = filtTags.map(t => added.includes(t) ? `<span style="color:var(--accent);">${escHtml(t)}</span>` : escHtml(t)).join(', ');
+                    html += `<tr style="border-bottom:1px solid var(--border);">
+                        <td style="padding:4px 6px; max-width:300px; overflow:hidden; text-overflow:ellipsis;">${origHtml || '<span style="color:var(--text2);">(없음)</span>'}</td>
+                        <td style="padding:4px 6px; max-width:300px; overflow:hidden; text-overflow:ellipsis;">${filtHtml || '<span style="color:var(--text2);">(없음)</span>'}</td>
+                    </tr>`;
+                });
+                html += '</table>';
+                container.innerHTML = html;
+            } catch (e) {
+                showToast('미리보기 오류: ' + e.message, 'error');
+            }
+        }
+
+        function _tfGetSelectedItems() {
+            const checks = document.querySelectorAll('.tf-check:checked');
+            return [...checks].map(c => ({ character: c.dataset.character, filename: c.dataset.filename }));
+        }
+
+        async function tfApply() {
+            const items = _tfGetSelectedItems();
+            if (items.length === 0) { showToast('캐릭터 탭에서 이미지를 먼저 선택하세요', 'warning'); return; }
+            const steps = tfReadStepsFromUI();
+            if (steps.length === 0) { showToast('필터 규칙을 추가하세요', 'warning'); return; }
+            if (!confirm(`${items.length}개 이미지에 필터링 규칙을 적용하시겠습니까?`)) return;
+            try {
+                const resp = await fetch('/api/bot_mode/tag_filter_apply', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ bot: botCurrentBot, items, steps })
+                });
+                const data = await resp.json();
+                if (data.error) { showToast(data.error, 'error'); return; }
+                showToast(`${data.success_count}개 적용 완료${data.fail_count > 0 ? ` (${data.fail_count}개 실패)` : ''}`, 'success');
+                document.getElementById('tag-filter-modal').style.display = 'none';
+                renderBotCharacters();
+            } catch (e) {
+                showToast('적용 오류: ' + e.message, 'error');
             }
         }
 
@@ -19841,10 +20270,13 @@
             document.getElementById('illust-face-id-status').className = faceIdOn ? 'toggle-status on' : 'toggle-status off';
         }
 
+        let _illustPresetsCache = null;
+
         async function loadIllustArtistPresets() {
             try {
                 const tagsData = await fetchJSON('/api/asset_mode/tags');
                 if (!tagsData) return;
+                _illustPresetsCache = tagsData;
 
                 // 아티스트 프리셋
                 const artistPresets = tagsData.artist_presets || {};
@@ -19866,9 +20298,35 @@
 
                 // 설정 로드 (선택값 복원)
                 await loadIllustSettings();
+
+                // 태그 박스 렌더
+                renderIllustPresetTags('illust-sdxl-artist-preset','illust-sdxl-artist-tags','artist_presets');
+                renderIllustPresetTags('illust-sdxl-quality-preset','illust-sdxl-quality-tags','quality_presets');
+                renderIllustPresetTags('illust-anima-artist-preset','illust-anima-artist-tags','artist_presets');
+                renderIllustPresetTags('illust-anima-quality-preset','illust-anima-quality-tags','quality_presets');
+                renderIllustPresetTags('illust-sdxl-negative-preset','illust-sdxl-negative-tags','negative_presets');
+                renderIllustPresetTags('illust-anima-negative-preset','illust-anima-negative-tags','negative_presets');
             } catch (e) {
                 console.error('[ILLUST] 프리셋 로드 실패:', e);
             }
+        }
+
+        function renderIllustPresetTags(selectId, containerId, presetType) {
+            const select = document.getElementById(selectId);
+            const container = document.getElementById(containerId);
+            if (!select || !container) return;
+            container.innerHTML = '';
+            const name = select.value;
+            if (!name || !_illustPresetsCache) return;
+            const presets = _illustPresetsCache[presetType] || {};
+            const tags = presets[name];
+            if (!tags || !tags.length) return;
+            tags.forEach(tag => {
+                const span = document.createElement('span');
+                span.textContent = tag;
+                span.style.cssText = 'display:inline-block; padding:2px 6px; border-radius:3px; font-size:0.7rem; background:var(--surface2); border:1px solid var(--border); color:var(--text);';
+                container.appendChild(span);
+            });
         }
 
         function fillPresetSelect(elementId, names, label) {
@@ -19888,27 +20346,28 @@
         // ─── 삽화 로그 뷰어 ─────────────────────────────────────
         function openIllustLogModal() {
             let modal = document.getElementById('illust-log-modal');
-            if (modal) { modal.remove(); return; }
+            if (modal) { modal.classList.toggle('visible'); return; }
             modal = document.createElement('div');
             modal.id = 'illust-log-modal';
             modal.className = 'modal';
-            modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+            modal.onclick = (e) => { if (e.target === modal) modal.classList.remove('visible'); };
             modal.innerHTML = `
                 <div class="modal-content" style="max-width:900px;">
                     <div class="modal-header">
                         <h2>📋 프롬프트 빌드 로그</h2>
-                        <button class="modal-close" onclick="document.getElementById('illust-log-modal').remove()">&times;</button>
+                        <button class="modal-close" onclick="document.getElementById('illust-log-modal').classList.remove('visible')">&times;</button>
                     </div>
                     <div class="modal-body" id="illust-log-body" style="max-height:70vh; overflow-y:auto;">
                         <div style="text-align:center; padding:20px; color:var(--text2);">로딩 중...</div>
                     </div>
                     <div class="modal-footer">
                         <button onclick="refreshIllustLogs()" style="background:var(--accent); color:#fff; border:none; padding:6px 16px; border-radius:4px; cursor:pointer;">새로고침</button>
-                        <button onclick="document.getElementById('illust-log-modal').remove()" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:6px 16px; border-radius:4px; cursor:pointer;">닫기</button>
+                        <button onclick="document.getElementById('illust-log-modal').classList.remove('visible')" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:6px 16px; border-radius:4px; cursor:pointer;">닫기</button>
                     </div>
                 </div>
             `;
             document.body.appendChild(modal);
+            modal.classList.add('visible');
             refreshIllustLogs();
         }
 
@@ -20638,7 +21097,7 @@
                 showToast('부정 프롬프트 적용 오류', 'error');
             } finally {
                 btn.disabled = false;
-                btn.textContent = charName ? '선택 캐릭터 부정 프롬프트 적용' : '전체 캐릭터 일괄 부정 프롬프트 적용';
+                btn.textContent = charName ? '선택 캐릭터 부정 프롬프트 적용' : '선택 캐릭터 일괄 부정 프롬프트 적용';
             }
         }
 
