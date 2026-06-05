@@ -1567,7 +1567,7 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict):
                     setup_replaced, char_replaced, supplement_replaced,
                     detected, bot, tags, settings, bot_name
                 )
-                negative = builder.build_negative_prompt(tags)
+                negative = builder.build_negative_prompt(tags, settings)
 
                 # 5. 로깅
                 word_replaced = {

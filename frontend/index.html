@@ -3259,6 +3259,42 @@
                                     <option value="">-- 없음 --</option>
                                 </select>
                             </div>
+                            <div style="margin-top:6px;">
+                                <div style="font-size:0.7rem; color:var(--text2); margin-bottom:2px;">ANIMA 품질 프리셋</div>
+                                <select id="illust-anima-quality-preset" onchange="saveIllustSettings()" style="width:100%; padding:3px 6px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.8rem;">
+                                    <option value="">-- 없음 --</option>
+                                </select>
+                            </div>
+                            <div style="margin-top:6px;">
+                                <div style="font-size:0.7rem; color:var(--text2); margin-bottom:2px;">SDXL 품질 프리셋</div>
+                                <select id="illust-sdxl-quality-preset" onchange="saveIllustSettings()" style="width:100%; padding:3px 6px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.8rem;">
+                                    <option value="">-- 없음 --</option>
+                                </select>
+                            </div>
+                            <div style="margin-top:6px;">
+                                <div style="font-size:0.7rem; color:var(--text2); margin-bottom:2px;">ANIMA 부정 프리셋</div>
+                                <select id="illust-anima-negative-preset" onchange="saveIllustSettings()" style="width:100%; padding:3px 6px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.8rem;">
+                                    <option value="">-- 없음 --</option>
+                                </select>
+                            </div>
+                            <div style="margin-top:6px;">
+                                <div style="font-size:0.7rem; color:var(--text2); margin-bottom:2px;">SDXL 부정 프리셋</div>
+                                <select id="illust-sdxl-negative-preset" onchange="saveIllustSettings()" style="width:100%; padding:3px 6px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.8rem;">
+                                    <option value="">-- 없음 --</option>
+                                </select>
+                            </div>
+                            <div style="margin-top:6px;">
+                                <div style="font-size:0.7rem; color:var(--text2); margin-bottom:2px;">ANIMA 캐릭터 부정 프리셋</div>
+                                <select id="illust-anima-char-neg-preset" onchange="saveIllustSettings()" style="width:100%; padding:3px 6px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.8rem;">
+                                    <option value="">-- 없음 --</option>
+                                </select>
+                            </div>
+                            <div style="margin-top:6px;">
+                                <div style="font-size:0.7rem; color:var(--text2); margin-bottom:2px;">SDXL 캐릭터 부정 프리셋</div>
+                                <select id="illust-sdxl-char-neg-preset" onchange="saveIllustSettings()" style="width:100%; padding:3px 6px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.8rem;">
+                                    <option value="">-- 없음 --</option>
+                                </select>
+                            </div>
                             <div style="display:flex; align-items:center; gap:6px; margin-top:6px;">
                                 <span style="font-size:0.75rem;">HIRES FIX</span>
                                 <label class="toggle-switch" style="transform:scale(0.8);">
@@ -19630,6 +19666,12 @@
                     const s = res;
                     document.getElementById('illust-anima-artist-preset').value = s.anima_artist_preset || '';
                     document.getElementById('illust-sdxl-artist-preset').value = s.sdxl_artist_preset || '';
+                    document.getElementById('illust-anima-quality-preset').value = s.anima_quality_preset || '';
+                    document.getElementById('illust-sdxl-quality-preset').value = s.sdxl_quality_preset || '';
+                    document.getElementById('illust-anima-negative-preset').value = s.anima_negative_preset || '';
+                    document.getElementById('illust-sdxl-negative-preset').value = s.sdxl_negative_preset || '';
+                    document.getElementById('illust-anima-char-neg-preset').value = s.anima_character_negative_preset || '';
+                    document.getElementById('illust-sdxl-char-neg-preset').value = s.sdxl_character_negative_preset || '';
                     document.getElementById('illust-hrf-toggle').checked = s.hrf_activate || false;
                     document.getElementById('illust-hrf-size').value = s.hrf_size || 1.5;
                     document.getElementById('illust-hrf-size-val').textContent = s.hrf_size || 1.5;
@@ -19655,6 +19697,12 @@
             const settings = {
                 anima_artist_preset: document.getElementById('illust-anima-artist-preset').value,
                 sdxl_artist_preset: document.getElementById('illust-sdxl-artist-preset').value,
+                anima_quality_preset: document.getElementById('illust-anima-quality-preset').value,
+                sdxl_quality_preset: document.getElementById('illust-sdxl-quality-preset').value,
+                anima_negative_preset: document.getElementById('illust-anima-negative-preset').value,
+                sdxl_negative_preset: document.getElementById('illust-sdxl-negative-preset').value,
+                anima_character_negative_preset: document.getElementById('illust-anima-char-neg-preset').value,
+                sdxl_character_negative_preset: document.getElementById('illust-sdxl-char-neg-preset').value,
                 hrf_activate: document.getElementById('illust-hrf-toggle').checked,
                 hrf_size: parseFloat(document.getElementById('illust-hrf-size').value) || 1.5,
                 hrf_restore_size: document.getElementById('illust-hrf-restore-size').checked,
@@ -19691,29 +19739,51 @@
         async function loadIllustArtistPresets() {
             try {
                 const tagsData = await fetchJSON('/api/asset_mode/tags');
-                const artistPresets = tagsData?.artist_presets || {};
-                const presetNames = Object.keys(artistPresets);
-                const animaSelect = document.getElementById('illust-anima-artist-preset');
-                const sdxlSelect = document.getElementById('illust-sdxl-artist-preset');
-                const currentAnima = animaSelect.value;
-                const currentSdxl = sdxlSelect.value;
-                animaSelect.innerHTML = '<option value="">-- 없음 --</option>';
-                sdxlSelect.innerHTML = '<option value="">-- 없음 --</option>';
-                for (const name of presetNames) {
-                    const opt1 = document.createElement('option');
-                    opt1.value = name;
-                    opt1.textContent = name;
-                    animaSelect.appendChild(opt1);
-                    const opt2 = document.createElement('option');
-                    opt2.value = name;
-                    opt2.textContent = name;
-                    sdxlSelect.appendChild(opt2);
-                }
-                animaSelect.value = currentAnima || '';
-                sdxlSelect.value = currentSdxl || '';
+                if (!tagsData) return;
+
+                // 아티스트 프리셋
+                const artistPresets = tagsData.artist_presets || {};
+                const artistNames = Object.keys(artistPresets);
+                fillPresetSelect('illust-anima-artist-preset', artistNames, '아티스트');
+                fillPresetSelect('illust-sdxl-artist-preset', artistNames, '아티스트');
+
+                // 품질 프리셋
+                const qualityPresets = tagsData.quality_presets || {};
+                const qualityNames = Object.keys(qualityPresets);
+                fillPresetSelect('illust-anima-quality-preset', qualityNames, '품질');
+                fillPresetSelect('illust-sdxl-quality-preset', qualityNames, '품질');
+
+                // 부정 프리셋
+                const negativePresets = tagsData.negative_presets || {};
+                const negativeNames = Object.keys(negativePresets);
+                fillPresetSelect('illust-anima-negative-preset', negativeNames, '부정');
+                fillPresetSelect('illust-sdxl-negative-preset', negativeNames, '부정');
+
+                // 캐릭터 부정 프리셋
+                const charNegPresets = tagsData.character_negative_presets || {};
+                const charNegNames = Object.keys(charNegPresets);
+                fillPresetSelect('illust-anima-char-neg-preset', charNegNames, '캐릭터 부정');
+                fillPresetSelect('illust-sdxl-char-neg-preset', charNegNames, '캐릭터 부정');
+
+                // 설정 로드 (선택값 복원)
+                await loadIllustSettings();
             } catch (e) {
-                console.error('[ILLUST] 아티스트 프리셋 로드 실패:', e);
+                console.error('[ILLUST] 프리셋 로드 실패:', e);
             }
+        }
+
+        function fillPresetSelect(elementId, names, label) {
+            const select = document.getElementById(elementId);
+            if (!select) return;
+            const currentValue = select.value;
+            select.innerHTML = '<option value="">-- 없음 --</option>';
+            for (const name of names) {
+                const opt = document.createElement('option');
+                opt.value = name;
+                opt.textContent = name;
+                select.appendChild(opt);
+            }
+            select.value = currentValue || '';
         }
 
         // ─── 삽화 로그 뷰어 ─────────────────────────────────────

@@ -187,9 +187,20 @@ class IllustPromptBuilder:
         anima_artist_tags = artist_presets.get(anima_artist_preset_name, [])
         sdxl_artist_tags = artist_presets.get(sdxl_artist_preset_name, [])
 
-        # ─── 품질 태그 ───
-        anima_quality_tags = tags.get("anima_quality", [])
-        quality_tags = tags.get("quality", [])
+        # ─── 품질 태그 (프리셋 우선, 없으면 직접 태그) ───
+        quality_presets = tags.get("quality_presets", {})
+        anima_quality_preset_name = settings.get("anima_quality_preset", "")
+        sdxl_quality_preset_name = settings.get("sdxl_quality_preset", "")
+
+        if anima_quality_preset_name and anima_quality_preset_name in quality_presets:
+            anima_quality_tags = quality_presets[anima_quality_preset_name]
+        else:
+            anima_quality_tags = tags.get("anima_quality", [])
+
+        if sdxl_quality_preset_name and sdxl_quality_preset_name in quality_presets:
+            quality_tags = quality_presets[sdxl_quality_preset_name]
+        else:
+            quality_tags = tags.get("quality", [])
 
         # ─── ANIMA 섹션 조립 ───
         anima_parts = []
@@ -308,29 +319,50 @@ class IllustPromptBuilder:
         return positive
 
     @staticmethod
-    def build_negative_prompt(tags: dict) -> str:
+    def build_negative_prompt(tags: dict, settings: dict = None) -> str:
         """최종 부정 프롬프트 빌드.
 
-        ANIMA 부정: character_negative + anima_negative
-        SDXL 부정: character_negative + negative
+        ANIMA 부정: character_negative_preset + anima_negative_preset + anima_negative + anima_character_negative
+        SDXL 부정: character_negative_preset + negative_preset + negative + character_negative
         """
-        cn_tags = tags.get("character_negative", [])
-        anima_n_tags = tags.get("anima_negative", [])
-        n_tags = tags.get("negative", [])
+        if settings is None:
+            settings = {}
+
+        # ─── 부정 프리셋 (선택된 프리셋 우선, 없으면 직접 태그) ───
+        char_neg_presets = tags.get("character_negative_presets", {})
+        negative_presets = tags.get("negative_presets", {})
+
+        # ANIMA 부정: 캐릭터 부정 프리셋 + ANIMA 부정 프리셋 + 직접 태그
+        anima_char_neg_preset_name = settings.get("anima_character_negative_preset", "")
+        anima_neg_preset_name = settings.get("anima_negative_preset", "")
+
+        anima_cn_tags = char_neg_presets.get(anima_char_neg_preset_name, tags.get("character_negative", []))
+        anima_n_tags = negative_presets.get(anima_neg_preset_name, tags.get("anima_negative", []))
+        anima_char_neg_direct = tags.get("anima_character_negative", [])
 
         anima_neg_parts = []
-        for t in cn_tags:
+        for t in anima_cn_tags if isinstance(anima_cn_tags, list) else []:
             if t.strip():
                 anima_neg_parts.append(t.strip())
-        for t in anima_n_tags:
+        for t in anima_n_tags if isinstance(anima_n_tags, list) else []:
+            if t.strip():
+                anima_neg_parts.append(t.strip())
+        for t in anima_char_neg_direct:
             if t.strip():
                 anima_neg_parts.append(t.strip())
 
+        # SDXL 부정: 캐릭터 부정 프리셋 + 부정 프리셋 + 직접 태그
+        sdxl_char_neg_preset_name = settings.get("sdxl_character_negative_preset", "")
+        sdxl_neg_preset_name = settings.get("sdxl_negative_preset", "")
+
+        sdxl_cn_tags = char_neg_presets.get(sdxl_char_neg_preset_name, tags.get("character_negative", []))
+        sdxl_n_tags = negative_presets.get(sdxl_neg_preset_name, tags.get("negative", []))
+
         sdxl_neg_parts = []
-        for t in cn_tags:
+        for t in sdxl_cn_tags if isinstance(sdxl_cn_tags, list) else []:
             if t.strip():
                 sdxl_neg_parts.append(t.strip())
-        for t in n_tags:
+        for t in sdxl_n_tags if isinstance(sdxl_n_tags, list) else []:
             if t.strip():
                 sdxl_neg_parts.append(t.strip())
 

@@ -1524,6 +1524,12 @@ class BotDataPatcher:
 DEFAULT_ILLUST_SETTINGS = {
     "anima_artist_preset": "",
     "sdxl_artist_preset": "",
+    "anima_quality_preset": "",
+    "sdxl_quality_preset": "",
+    "anima_negative_preset": "",
+    "sdxl_negative_preset": "",
+    "anima_character_negative_preset": "",
+    "sdxl_character_negative_preset": "",
     "hrf_activate": False,
     "hrf_size": 1.5,
     "hrf_restore_size": False,
