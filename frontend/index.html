@@ -17930,7 +17930,7 @@
             if (!container) return;
             if (!loras || loras.length === 0) { container.innerHTML = ''; return; }
             container.innerHTML = loras.map((lora, i) => {
-                const source = lora.source === 'bot' ? `${escHtml(lora.bot_name || '')}/${escHtml(lora.project_name || '')}` : `${escHtml(lora.character || '')}`;
+                const source = lora.source === 'bot' ? `${escHtml(lora.bot_name || '')}/${escHtml(lora.project_name || '')}` : lora.source === 'instance' ? '인스턴스' : `${escHtml(lora.character || '')}`;
                 return `<div style="padding:8px; background:var(--surface2); border-radius:6px; border:1px solid var(--border); position:relative; width:180px;">
                     <button onclick="event.stopPropagation(); removeBotCharLora(${charIdx},'${escAttr(charName)}',${i})"
                         style="position:absolute; top:2px; right:4px; background:none; border:none; color:var(--error); cursor:pointer; font-size:1.2rem; padding:2px 4px;">x</button>
@@ -18015,10 +18015,10 @@
         }
 
         // ─── 캐릭터 LoRA 피커 모달 ───────────────────────────────
-        let _botCharLoraPickerState = { charName: '', charIdx: -1, tab: 'asset', assetData: null, botStep: 'bots', botBots: null, botProjects: null, botSelectedBot: '', botSelectedProject: '', botSelectedChar: '' };
+        let _botCharLoraPickerState = { charName: '', charIdx: -1, tab: 'asset', assetData: null, instanceData: null, botStep: 'bots', botBots: null, botProjects: null, botSelectedBot: '', botSelectedProject: '', botSelectedChar: '' };
 
         async function openBotCharLoraPicker(charName, charIdx) {
-            _botCharLoraPickerState = { charName, charIdx, tab: 'asset', assetData: null, botStep: 'bots', botBots: null, botProjects: null, botSelectedBot: '', botSelectedProject: '', botSelectedChar: '' };
+            _botCharLoraPickerState = { charName, charIdx, tab: 'asset', assetData: null, instanceData: null, botStep: 'bots', botBots: null, botProjects: null, botSelectedBot: '', botSelectedProject: '', botSelectedChar: '' };
             const overlay = document.createElement('div');
             overlay.id = 'bot-char-lora-picker-overlay';
             overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10010; display:flex; align-items:center; justify-content:center;';
@@ -18031,6 +18031,7 @@
                     <div style="display:flex; gap:0; margin-bottom:12px; border:1px solid var(--border); border-radius:8px; overflow:hidden;">
                         <button id="bclp-tab-asset" onclick="switchBotCharLoraPickerTab('asset')" style="flex:1; padding:8px; border:none; background:var(--accent); color:#fff; cursor:pointer; font-size:0.85rem; font-weight:600;">에셋에서 탐색</button>
                         <button id="bclp-tab-bot" onclick="switchBotCharLoraPickerTab('bot')" style="flex:1; padding:8px; border:none; background:var(--surface2); color:var(--text); cursor:pointer; font-size:0.85rem; font-weight:600;">봇에서 탐색</button>
+                        <button id="bclp-tab-instance" onclick="switchBotCharLoraPickerTab('instance')" style="flex:1; padding:8px; border:none; background:var(--surface2); color:var(--text); cursor:pointer; font-size:0.85rem; font-weight:600;">인스턴스에서 탐색</button>
                     </div>
                     <div id="bclp-breadcrumb" style="margin-bottom:10px; font-size:0.8rem; color:var(--text2); display:flex; align-items:center; gap:4px; flex-wrap:wrap;"></div>
                     <div id="bclp-grid" style="display:grid; grid-template-columns:repeat(3,1fr); gap:12px; overflow-y:auto; max-height:calc(95vh - 160px);"></div>
@@ -18042,14 +18043,19 @@
         function switchBotCharLoraPickerTab(tab) {
             _botCharLoraPickerState.tab = tab;
             const assetBtn = document.getElementById('bclp-tab-asset');
+            const instanceBtn = document.getElementById('bclp-tab-instance');
             const botBtn = document.getElementById('bclp-tab-bot');
+            [assetBtn, instanceBtn, botBtn].forEach(btn => {
+                btn.style.background = 'var(--surface2)'; btn.style.color = 'var(--text)';
+            });
             if (tab === 'asset') {
                 assetBtn.style.background = 'var(--accent)'; assetBtn.style.color = '#fff';
-                botBtn.style.background = 'var(--surface2)'; botBtn.style.color = 'var(--text)';
                 loadBclpAssetCharacters();
+            } else if (tab === 'instance') {
+                instanceBtn.style.background = 'var(--accent)'; instanceBtn.style.color = '#fff';
+                loadBclpInstanceLoras();
             } else {
                 botBtn.style.background = 'var(--accent)'; botBtn.style.color = '#fff';
-                assetBtn.style.background = 'var(--surface2)'; assetBtn.style.color = 'var(--text)';
                 loadBclpBotGrid();
             }
         }
@@ -18196,6 +18202,75 @@
                         showToast(`LoRA "${entry.name}" (${sessionName}) 추가됨`, 'success');
                     };
                 }
+                grid.appendChild(card);
+            });
+        }
+
+        // ─── 인스턴스 탭 ───
+        async function loadBclpInstanceLoras() {
+            const grid = document.getElementById('bclp-grid');
+            if (!grid) return;
+            grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--text-secondary);">로딩중...</div>';
+            _bclpBreadcrumb([{ label: '인스턴스 LoRA' }]);
+            try {
+                const resp = await fetch('/api/instance_lora/for_picker');
+                const data = await resp.json();
+                if (!data.success) { grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--error);">로드 실패</div>'; return; }
+                _botCharLoraPickerState.instanceData = data.items || [];
+                renderBclpInstanceLoras();
+            } catch (e) {
+                grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--error);">로드 실패: ' + e.message + '</div>';
+            }
+        }
+
+        function renderBclpInstanceLoras() {
+            const grid = document.getElementById('bclp-grid');
+            if (!grid) return;
+            _bclpBreadcrumb([{ label: '인스턴스 LoRA' }]);
+            const items = _botCharLoraPickerState.instanceData || [];
+            grid.innerHTML = '';
+            if (items.length === 0) { grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--text-secondary);">인스턴스 LoRA 항목이 없습니다</div>'; return; }
+            const enc = encodeURIComponent;
+            items.forEach(item => {
+                const profileNames = Object.keys(item.profiles);
+                let previewUrl = '';
+                if (item.first_image) {
+                    previewUrl = `/api/instance_lora/image/${enc(item.lora_id)}/${enc(item.first_image)}`;
+                }
+                const card = document.createElement('div');
+                card.style.cssText = 'cursor:pointer; border-radius:8px; overflow:hidden; border:2px solid var(--border); transition:border-color 0.2s;';
+                const badges = profileNames.map(p =>
+                    `<span style="font-size:0.55rem; background:${p === 'anima' ? 'rgba(100,180,255,0.3)' : 'rgba(255,180,100,0.3)'}; padding:1px 4px; border-radius:3px; margin:0 1px;">${p}</span>`
+                ).join('');
+                card.innerHTML = previewUrl
+                    ? `<img src="${escapeHtml(previewUrl)}" style="width:100%; display:block; aspect-ratio:1; object-fit:contain;" loading="lazy">`
+                    : `<div style="width:100%; aspect-ratio:1; background:var(--surface2); display:flex; align-items:center; justify-content:center;">⚡</div>`;
+                card.innerHTML += `<div style="font-size:0.7rem; padding:4px; text-align:center; background:var(--surface2);">${escapeHtml(item.lora_id)}<br>${badges}</div>`;
+                card.onmouseenter = () => { card.style.borderColor = 'var(--accent)'; };
+                card.onmouseleave = () => { card.style.borderColor = 'var(--border)'; };
+                card.onclick = () => {
+                    const loras = getBotCharLoras(_botCharLoraPickerState.charName);
+                    let addedCount = 0;
+                    for (const [profile, pData] of Object.entries(item.profiles)) {
+                        loras.push({
+                            source: 'instance',
+                            name: `${item.lora_id} (${profile})`,
+                            character: 'instance',
+                            lora_path: pData.lora_path,
+                            strength: 0.5,
+                            preview_url: previewUrl,
+                            trigger: item.trigger || '',
+                            BASE: profile,
+                            lora_id: item.lora_id,
+                        });
+                        addedCount++;
+                    }
+                    setBotCharLoras(_botCharLoraPickerState.charName, loras);
+                    renderBotCharLoraList(_botCharLoraPickerState.charIdx, _botCharLoraPickerState.charName, loras);
+                    saveBotCharLoras(_botCharLoraPickerState.charName);
+                    document.getElementById('bot-char-lora-picker-overlay').remove();
+                    showToast(`인스턴스 LoRA "${item.lora_id}" ${addedCount}개 추가됨`, 'success');
+                };
                 grid.appendChild(card);
             });
         }
