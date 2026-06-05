@@ -188,6 +188,12 @@ class BotMode:
         if os.path.isdir(old_path):
             os.rename(old_path, new_path)
         _save_bot_data(data)
+        # 로라매니징 봇 이름도 동기화
+        try:
+            from modes.bot_lora_mode import rename_bot_in_manage
+            rename_bot_in_manage(old_name, new_name)
+        except Exception as e:
+            print(f"[BOT_MODE] 로라매니징 이름 동기화 실패: {e}")
         print(f"[BOT_MODE] 봇 이름 변경: {old_name} → {new_name}")
         return _json_ok({"bots": data["bots"]})
 

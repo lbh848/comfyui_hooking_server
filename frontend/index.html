@@ -3199,8 +3199,10 @@
                         <select id="bot-select" onchange="onBotChange()">
                             <option value="">-- 봇 선택 --</option>
                         </select>
-                        <div style="display:flex; gap:6px; margin-top:4px;">
+                        <div id="bot-btn-group-list" style="display:flex; gap:6px; margin-top:4px;">
                             <button onclick="addBot()" style="flex:1; background:var(--accent); color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">추가</button>
+                        </div>
+                        <div id="bot-btn-group-selected" style="display:none; gap:6px; margin-top:4px;">
                             <button onclick="renameBot()" style="flex:1; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">이름변경</button>
                             <button onclick="removeBot()" style="flex:1; background:var(--error); color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">삭제</button>
                         </div>
@@ -17648,10 +17650,14 @@
             if (charDetailSidebar) charDetailSidebar.style.display = 'none';
             // 선택된 봇을 config에 저장
             saveBotSelected();
+            const btnList = document.getElementById('bot-btn-group-list');
+            const btnSelected = document.getElementById('bot-btn-group-selected');
             if (!botCurrentBot) {
                 document.getElementById('bot-char-section').style.display = 'none';
                 const countEl = document.getElementById('bot-char-count');
                 if (countEl) countEl.textContent = '';
+                if (btnList) btnList.style.display = 'flex';
+                if (btnSelected) btnSelected.style.display = 'none';
                 showBotView('empty');
                 const botEmptyState = document.getElementById('bot-empty-state');
                 botEmptyState.querySelector('h3').textContent = '현재 공사중..';
@@ -17661,6 +17667,8 @@
                 updateBotBreadcrumb();
                 return;
             }
+            if (btnList) btnList.style.display = 'none';
+            if (btnSelected) btnSelected.style.display = 'flex';
             document.getElementById('bot-char-section').style.display = 'block';
             botRenderNegativePresetSelect();
             renderBotCharacters();
@@ -18545,6 +18553,11 @@
             const sidebar = document.getElementById('bot-sidebar');
             const botSelectSection = document.getElementById('bot-select-section');
             if (botSelectSection) botSelectSection.style.display = 'block';
+            // 봇 선택 상태: 추가 버튼 숨기고 이름변경/삭제 버튼 표시
+            const btnList = document.getElementById('bot-btn-group-list');
+            const btnSelected = document.getElementById('bot-btn-group-selected');
+            if (btnList) btnList.style.display = 'none';
+            if (btnSelected) btnSelected.style.display = 'flex';
             renderBotCharacters();
         }
 
@@ -18558,6 +18571,11 @@
             const sidebar = document.getElementById('bot-sidebar');
             const botSelectSection = document.getElementById('bot-select-section');
             if (botSelectSection) botSelectSection.style.display = 'block';
+            // 봇 목록 상태: 추가 버튼 표시하고 이름변경/삭제 버튼 숨김
+            const btnList = document.getElementById('bot-btn-group-list');
+            const btnSelected = document.getElementById('bot-btn-group-selected');
+            if (btnList) btnList.style.display = 'flex';
+            if (btnSelected) btnSelected.style.display = 'none';
             renderBotList();
             updateBotBreadcrumb();
         }
@@ -18598,10 +18616,8 @@
                 const data = await resp.json();
                 if (data.error) { alert(data.error); return; }
                 botData.bots = data.bots;
-                botCurrentBot = '';
                 renderBotSelect();
-                renderBotList();
-                onBotChange();
+                botNavBack();
                 showToast('봇 삭제됨');
             } catch (e) {
                 console.error('[BOT] 봇 삭제 실패:', e);

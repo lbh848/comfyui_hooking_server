@@ -305,6 +305,18 @@ def list_bots() -> list:
     return result
 
 
+def rename_bot_in_manage(old_name: str, new_name: str):
+    """삽화 모드에서 봇 이름 변경 시 로라매니징의 키도 같이 변경"""
+    data = _load_bot_lora_manage()
+    bot_loras = data.get("bot_loras", {})
+    if old_name in bot_loras:
+        bot_loras[new_name] = bot_loras.pop(old_name)
+        _save_bot_lora_manage(data)
+        print(f"[BOT_LORA] 봇 이름 동기화: {old_name} -> {new_name}")
+    else:
+        print(f"[BOT_LORA] 봇 '{old_name}' 로라매니징에 없음, 스킵")
+
+
 # ─── 프로젝트 관리 ────────────────────────────────────────────
 
 def list_projects(bot_name: str) -> list:
