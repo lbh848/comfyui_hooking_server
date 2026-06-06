@@ -6389,6 +6389,23 @@
         let tunnelActive = false;
         let tunnelUrl = null;
 
+        // 페이지 로드 시 터널 상태 복원 (1회성)
+        (async () => {
+            try {
+                const res = await fetchJSON('/api/tunnel/status');
+                if (res.status === 'running' && res.url) {
+                    tunnelActive = true;
+                    tunnelUrl = res.url;
+                    const btn = document.getElementById('tunnel-btn');
+                    if (btn) {
+                        btn.textContent = '🔗 공유 중';
+                        btn.classList.add('tunnel-active');
+                    }
+                    _tunnelBtns(true);
+                }
+            } catch (e) {}
+        })();
+
         function _tunnelBtns(show) {
             document.getElementById('tunnel-copy-btn').classList.toggle('visible', show);
             document.getElementById('tunnel-regen-btn').classList.toggle('visible', show);
@@ -21093,6 +21110,10 @@
         }
 
         // ─── 삽화 로그 뷰어 ─────────────────────────────────────
+        let _illustLogAllLogs = [];
+        let _illustLogPage = 0;
+        const ILLUST_LOG_PER_PAGE = 20;
+
         function openIllustLogModal() {
             let modal = document.getElementById('illust-log-modal');
             if (modal) { modal.classList.toggle('visible'); return; }
@@ -21109,7 +21130,11 @@
                     <div class="modal-body" id="illust-log-body" style="max-height:70vh; overflow-y:auto;">
                         <div style="text-align:center; padding:20px; color:var(--text2);">로딩 중...</div>
                     </div>
-                    <div class="modal-footer">
+                    <div class="modal-footer" style="display:flex; align-items:center; gap:8px;">
+                        <button id="illust-log-prev" onclick="illustLogPage(-1)" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:6px 12px; border-radius:4px; cursor:pointer;">◀ 이전</button>
+                        <span id="illust-log-page-info" style="font-size:0.8rem; color:var(--text2);"></span>
+                        <button id="illust-log-next" onclick="illustLogPage(1)" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:6px 12px; border-radius:4px; cursor:pointer;">다음 ▶</button>
+                        <span style="flex:1;"></span>
                         <button onclick="refreshIllustLogs()" style="background:var(--accent); color:#fff; border:none; padding:6px 16px; border-radius:4px; cursor:pointer;">새로고침</button>
                         <button onclick="document.getElementById('illust-log-modal').classList.remove('visible')" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:6px 16px; border-radius:4px; cursor:pointer;">닫기</button>
                     </div>
@@ -21120,58 +21145,94 @@
             refreshIllustLogs();
         }
 
+        function illustLogPage(delta) {
+            _illustLogPage += delta;
+            _renderIllustLogPage();
+        }
+
+        function _renderIllustLogPage() {
+            const body = document.getElementById('illust-log-body');
+            if (!body) return;
+            const logs = _illustLogAllLogs;
+            const totalPages = Math.max(1, Math.ceil(logs.length / ILLUST_LOG_PER_PAGE));
+            _illustLogPage = Math.max(0, Math.min(_illustLogPage, totalPages - 1));
+
+            const start = logs.length - (_illustLogPage + 1) * ILLUST_LOG_PER_PAGE;
+            const end = logs.length - _illustLogPage * ILLUST_LOG_PER_PAGE;
+            const pageLogs = logs.slice(Math.max(0, start), end);
+
+            document.getElementById('illust-log-page-info').textContent =
+                `${_illustLogPage + 1} / ${totalPages} 페이지 (총 ${logs.length}개)`;
+            document.getElementById('illust-log-prev').disabled = (_illustLogPage === 0);
+            document.getElementById('illust-log-next').disabled = (_illustLogPage >= totalPages - 1);
+            document.getElementById('illust-log-prev').style.opacity = (_illustLogPage === 0) ? '0.4' : '1';
+            document.getElementById('illust-log-next').style.opacity = (_illustLogPage >= totalPages - 1) ? '0.4' : '1';
+
+            if (pageLogs.length === 0) {
+                body.innerHTML = '<div style="text-align:center; padding:20px; color:var(--text2);">이 페이지에 로그가 없습니다.</div>';
+                return;
+            }
+            let html = '';
+            for (const log of pageLogs) {
+                const ts = log.timestamp ? new Date(log.timestamp * 1000).toLocaleString() : '';
+                html += `
+                    <div style="background:var(--surface2); border:1px solid var(--border); border-radius:8px; margin-bottom:8px; padding:10px;">
+                        <div style="font-size:0.75rem; color:var(--text2); margin-bottom:4px;">${ts} | 감지: ${log.detected_characters?.join(', ') || '없음'}</div>
+                        <details style="margin-bottom:4px;">
+                            <summary style="cursor:pointer; font-size:0.8rem; font-weight:600;">Raw 프롬프트</summary>
+                            <pre style="font-size:0.7rem; white-space:pre-wrap; color:var(--text); max-height:200px; overflow-y:auto; background:rgba(0,0,0,0.05); padding:6px; border-radius:4px;">${escapeHtml(log.raw_positive || '')}</pre>
+                        </details>
+                        <details style="margin-bottom:4px;">
+                            <summary style="cursor:pointer; font-size:0.8rem; font-weight:600;">파싱 결과</summary>
+                            <div style="font-size:0.7rem; padding:6px;">
+                                <div><strong>SETUP:</strong> ${escapeHtml(log.parsed_setup || '(비어있음)')}</div>
+                                <div><strong>CHAR:</strong> ${escapeHtml(log.parsed_char || '(비어있음)')}</div>
+                                <div><strong>SUPPLEMENT:</strong> ${escapeHtml(log.parsed_supplement || '(비어있음)')}</div>
+                            </div>
+                        </details>
+                        <details style="margin-bottom:4px;">
+                            <summary style="cursor:pointer; font-size:0.8rem; font-weight:600;">단어 치환 결과</summary>
+                            <div style="font-size:0.7rem; padding:6px;">
+                                <div><strong>SETUP:</strong> ${escapeHtml(log.word_replaced_setup || '(비어있음)')}</div>
+                                <div><strong>CHAR:</strong> ${escapeHtml(log.word_replaced_char || '(비어있음)')}</div>
+                                <div><strong>SUPPLEMENT:</strong> ${escapeHtml(log.word_replaced_supplement || '(비어있음)')}</div>
+                            </div>
+                        </details>
+                        <details style="margin-bottom:4px;">
+                            <summary style="cursor:pointer; font-size:0.8rem; font-weight:600;">CHAR_LIST 획득 결과</summary>
+                            <div style="font-size:0.75rem; padding:6px; color:#4CAF50; font-weight:600;">${log.detected_characters?.join(', ') || '감지된 캐릭터 없음'}</div>
+                        </details>
+                        <details>
+                            <summary style="cursor:pointer; font-size:0.8rem; font-weight:600;">최종 프롬프트</summary>
+                            <div style="margin-bottom:4px;"><strong style="font-size:0.7rem;">긍정:</strong></div>
+                            <pre style="font-size:0.7rem; white-space:pre-wrap; color:var(--text); max-height:300px; overflow-y:auto; background:rgba(0,0,0,0.05); padding:6px; border-radius:4px;">${escapeHtml(log.final_positive || '')}</pre>
+                            <div style="margin-top:4px; margin-bottom:4px;"><strong style="font-size:0.7rem;">부정:</strong></div>
+                            <pre style="font-size:0.7rem; white-space:pre-wrap; color:var(--text); max-height:200px; overflow-y:auto; background:rgba(0,0,0,0.05); padding:6px; border-radius:4px;">${escapeHtml(log.final_negative || '')}</pre>
+                        </details>
+                    </div>
+                `;
+            }
+            body.innerHTML = html;
+            body.scrollTop = 0;
+        }
+
         async function refreshIllustLogs() {
             const body = document.getElementById('illust-log-body');
             if (!body) return;
             try {
                 const res = await fetchJSON('/api/bot_mode/illust_logs');
-                const logs = res?.logs || [];
-                if (logs.length === 0) {
+                _illustLogAllLogs = res?.logs || [];
+                _illustLogPage = 0;
+                if (_illustLogAllLogs.length === 0) {
                     body.innerHTML = '<div style="text-align:center; padding:20px; color:var(--text2);">로그가 없습니다. 삽화 모드에서 프롬프트를 전송하면 로그가 기록됩니다.</div>';
+                    document.getElementById('illust-log-page-info').textContent = '';
+                    document.getElementById('illust-log-prev').disabled = true;
+                    document.getElementById('illust-log-next').disabled = true;
+                    document.getElementById('illust-log-prev').style.opacity = '0.4';
+                    document.getElementById('illust-log-next').style.opacity = '0.4';
                     return;
                 }
-                let html = '';
-                for (let i = logs.length - 1; i >= 0; i--) {
-                    const log = logs[i];
-                    const ts = log.timestamp ? new Date(log.timestamp * 1000).toLocaleString() : '';
-                    html += `
-                        <div style="background:var(--surface2); border:1px solid var(--border); border-radius:8px; margin-bottom:8px; padding:10px;">
-                            <div style="font-size:0.75rem; color:var(--text2); margin-bottom:4px;">${ts} | 감지: ${log.detected_characters?.join(', ') || '없음'}</div>
-                            <details style="margin-bottom:4px;">
-                                <summary style="cursor:pointer; font-size:0.8rem; font-weight:600;">Raw 프롬프트</summary>
-                                <pre style="font-size:0.7rem; white-space:pre-wrap; color:var(--text); max-height:200px; overflow-y:auto; background:rgba(0,0,0,0.05); padding:6px; border-radius:4px;">${escapeHtml(log.raw_positive || '')}</pre>
-                            </details>
-                            <details style="margin-bottom:4px;">
-                                <summary style="cursor:pointer; font-size:0.8rem; font-weight:600;">파싱 결과</summary>
-                                <div style="font-size:0.7rem; padding:6px;">
-                                    <div><strong>SETUP:</strong> ${escapeHtml(log.parsed_setup || '(비어있음)')}</div>
-                                    <div><strong>CHAR:</strong> ${escapeHtml(log.parsed_char || '(비어있음)')}</div>
-                                    <div><strong>SUPPLEMENT:</strong> ${escapeHtml(log.parsed_supplement || '(비어있음)')}</div>
-                                </div>
-                            </details>
-                            <details style="margin-bottom:4px;">
-                                <summary style="cursor:pointer; font-size:0.8rem; font-weight:600;">단어 치환 결과</summary>
-                                <div style="font-size:0.7rem; padding:6px;">
-                                    <div><strong>SETUP:</strong> ${escapeHtml(log.word_replaced_setup || '(비어있음)')}</div>
-                                    <div><strong>CHAR:</strong> ${escapeHtml(log.word_replaced_char || '(비어있음)')}</div>
-                                    <div><strong>SUPPLEMENT:</strong> ${escapeHtml(log.word_replaced_supplement || '(비어있음)')}</div>
-                                </div>
-                            </details>
-                            <details style="margin-bottom:4px;">
-                                <summary style="cursor:pointer; font-size:0.8rem; font-weight:600;">CHAR_LIST 획득 결과</summary>
-                                <div style="font-size:0.75rem; padding:6px; color:#4CAF50; font-weight:600;">${log.detected_characters?.join(', ') || '감지된 캐릭터 없음'}</div>
-                            </details>
-                            <details>
-                                <summary style="cursor:pointer; font-size:0.8rem; font-weight:600;">최종 프롬프트</summary>
-                                <div style="margin-bottom:4px;"><strong style="font-size:0.7rem;">긍정:</strong></div>
-                                <pre style="font-size:0.7rem; white-space:pre-wrap; color:var(--text); max-height:300px; overflow-y:auto; background:rgba(0,0,0,0.05); padding:6px; border-radius:4px;">${escapeHtml(log.final_positive || '')}</pre>
-                                <div style="margin-top:4px; margin-bottom:4px;"><strong style="font-size:0.7rem;">부정:</strong></div>
-                                <pre style="font-size:0.7rem; white-space:pre-wrap; color:var(--text); max-height:200px; overflow-y:auto; background:rgba(0,0,0,0.05); padding:6px; border-radius:4px;">${escapeHtml(log.final_negative || '')}</pre>
-                            </details>
-                        </div>
-                    `;
-                }
-                body.innerHTML = html;
+                _renderIllustLogPage();
             } catch (e) {
                 body.innerHTML = `<div style="color:var(--error); padding:20px;">로그 로드 실패: ${escapeHtml(e.message)}</div>`;
             }
