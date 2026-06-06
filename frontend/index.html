@@ -8793,14 +8793,16 @@
         async function manualRestoreDraw() {
             const btn = document.getElementById('restore-manual-btn');
             btn.disabled = true;
-            btn.textContent = '🖌️ 그리는 중...';
+            btn.textContent = '🖌️ 큐 등록 중...';
             try {
                 const resp = await fetch('/api/restore_manual_draw', { method: 'POST' });
                 const data = await resp.json();
-                if (data.success) {
+                if (data.success && data.queued) {
+                    showToast('수동 그리기가 큐에 등록되었습니다', 'success');
+                    loadBackups(true);
+                } else if (data.success) {
                     showToast('수동 그리기 완료', 'success');
                     loadBackups(true);
-                    // 생성된 이미지를 라이트박스로 보여주기
                     if (data.image) {
                         openLightbox(data.image);
                     }
@@ -9524,6 +9526,9 @@
                 const restoreManualOn = cfg.restore_manual_enabled || false;
                 document.getElementById('setting-restore-manual-enabled').checked = restoreManualOn;
                 updateRestoreManualStatus(restoreManualOn);
+                const debugModeOn = cfg.debug_mode_enabled || false;
+                document.getElementById('debug-mode-toggle').checked = debugModeOn;
+                updateDebugModeStatus(debugModeOn);
                 updateHeaderButtonsVisibility();
             } catch (e) { /* 무시 */ }
         })();
@@ -18251,6 +18256,7 @@
                     origResults.push({
                         name: char.name,
                         appearance: groups['외모/신체'] || [],
+                        uncategorized: groups['미분류'] || [],
                         outfit: groups['복장'] || []
                     });
                 }
@@ -18345,7 +18351,9 @@
                             <div style="font-size:0.75rem; color:var(--text2); margin-bottom:4px; font-weight:600;">-Appearance</div>
                             <div class="lb-extra-orig-zone" data-oci="${ci}" data-ogrp="appearance" style="display:flex; flex-wrap:wrap; gap:4px; margin-bottom:8px;">${_buildOrigTags(ci, 'appearance')}</div>
                             <div style="font-size:0.75rem; color:var(--text2); margin-bottom:4px; font-weight:600;">-normal outfit</div>
-                            <div class="lb-extra-orig-zone" data-oci="${ci}" data-ogrp="outfit" style="display:flex; flex-wrap:wrap; gap:4px;">${_buildOrigTags(ci, 'outfit')}</div>
+                            <div class="lb-extra-orig-zone" data-oci="${ci}" data-ogrp="outfit" style="display:flex; flex-wrap:wrap; gap:4px; margin-bottom:8px;">${_buildOrigTags(ci, 'outfit')}</div>
+                            <div style="font-size:0.75rem; color:var(--text2); margin-bottom:4px; font-weight:600; opacity:0.6;">-미분류</div>
+                            <div class="lb-extra-orig-zone" data-oci="${ci}" data-ogrp="uncategorized" style="display:flex; flex-wrap:wrap; gap:4px;">${_buildUncategorizedTags(ci)}</div>
                         </div>
                         <div style="width:1px; background:var(--border); margin:0 12px;"></div>
                         <div style="flex:1; padding-left:12px;">
@@ -18376,6 +18384,20 @@
                     return `<span style="background:var(--surface2); border:1px solid var(--border); padding:2px 6px; border-radius:4px; font-size:0.75rem; color:var(--text2); opacity:0.45; display:inline-flex; align-items:center; gap:3px; cursor:default;"${_lbExtraShowDesc && t.desc ? ` title="${escAttr(t.desc)}"` : ''}>${escHtml(t.tag)}</span>`;
                 }
                 return `<span style="background:${activeBg}; border:1px solid ${activeBorder}; padding:2px 6px; border-radius:4px; font-size:0.75rem; display:inline-flex; align-items:center; gap:3px; cursor:default;"${_lbExtraShowDesc && t.desc ? ` title="${escAttr(t.desc)}"` : ''}>${escHtml(t.tag)}<span style="cursor:pointer; color:var(--accent); font-weight:bold; font-size:0.8rem; margin-left:2px;" onclick="event.stopPropagation(); _addLbExtraTag(${ci},'${group}',${ti})">→</span></span>`;
+            }).join('');
+        }
+
+        function _buildUncategorizedTags(ci) {
+            const orig = _lbExtraOriginal[ci].uncategorized || [];
+            const editedApp = _lbExtraEdited[ci].appearance;
+            const editedOut = _lbExtraEdited[ci].outfit;
+            if (orig.length === 0) return '<span style="font-size:0.75rem; color:var(--text2);">없음</span>';
+            return orig.map((t, ti) => {
+                const inEdited = editedApp.some(et => et.tag === t.tag) || editedOut.some(et => et.tag === t.tag);
+                if (inEdited) {
+                    return `<span style="background:var(--surface2); border:1px solid var(--border); padding:2px 6px; border-radius:4px; font-size:0.75rem; color:var(--text2); opacity:0.45; display:inline-flex; align-items:center; gap:3px; cursor:default;"${_lbExtraShowDesc && t.desc ? ` title="${escAttr(t.desc)}"` : ''}>${escHtml(t.tag)}</span>`;
+                }
+                return `<span class="lb-extra-uncat" draggable="true" data-uci="${ci}" data-uti="${ti}" style="background:rgba(156,163,175,0.12); border:1px solid rgba(156,163,175,0.3); padding:2px 6px; border-radius:4px; font-size:0.75rem; display:inline-flex; align-items:center; gap:3px; cursor:grab;"${_lbExtraShowDesc && t.desc ? ` title="${escAttr(t.desc)}"` : ''}>${escHtml(t.tag)}</span>`;
             }).join('');
         }
 
@@ -18441,6 +18463,7 @@
         }
 
         function _attachLbExtraTagDnD(container) {
+            // 편집본 태그 드래그 (appearance <-> outfit)
             container.querySelectorAll('.lb-extra-tag').forEach(tag => {
                 tag.addEventListener('dragstart', (e) => {
                     e.stopPropagation();
@@ -18458,35 +18481,63 @@
                 });
             });
 
+            // 미분류 태그 드래그 (-> appearance 또는 outfit)
+            container.querySelectorAll('.lb-extra-uncat').forEach(tag => {
+                tag.addEventListener('dragstart', (e) => {
+                    e.stopPropagation();
+                    e.dataTransfer.setData('text/lbextra-uncat', JSON.stringify({
+                        ci: parseInt(tag.dataset.uci),
+                        ti: parseInt(tag.dataset.uti)
+                    }));
+                    e.dataTransfer.effectAllowed = 'move';
+                    tag.style.opacity = '0.4';
+                });
+                tag.addEventListener('dragend', () => {
+                    tag.style.opacity = '';
+                    container.querySelectorAll('.lb-extra-drop').forEach(z => z.style.background = '');
+                });
+            });
+
+            // 드롭존
             container.querySelectorAll('.lb-extra-drop').forEach(zone => {
                 zone.addEventListener('dragover', (e) => {
-                    if (!e.dataTransfer.types.includes('text/lbextra-tag')) return;
+                    if (!e.dataTransfer.types.includes('text/lbextra-tag') && !e.dataTransfer.types.includes('text/lbextra-uncat')) return;
                     e.preventDefault();
                     e.stopPropagation();
                     e.dataTransfer.dropEffect = 'move';
                     zone.style.background = 'rgba(0,105,92,0.12)';
                 });
                 zone.addEventListener('dragleave', (e) => {
-                    if (!e.dataTransfer.types.includes('text/lbextra-tag')) return;
+                    if (!e.dataTransfer.types.includes('text/lbextra-tag') && !e.dataTransfer.types.includes('text/lbextra-uncat')) return;
                     zone.style.background = '';
                 });
                 zone.addEventListener('drop', (e) => {
-                    if (!e.dataTransfer.types.includes('text/lbextra-tag')) return;
+                    if (!e.dataTransfer.types.includes('text/lbextra-tag') && !e.dataTransfer.types.includes('text/lbextra-uncat')) return;
                     e.preventDefault();
                     e.stopPropagation();
                     zone.style.background = '';
 
-                    const src = JSON.parse(e.dataTransfer.getData('text/lbextra-tag'));
                     const dstCi = parseInt(zone.dataset.dci);
                     const dstGrp = zone.dataset.dgrp;
 
-                    if (src.ci !== dstCi) return;
-                    if (src.group === dstGrp) return;
-
-                    const arr = _lbExtraEdited[src.ci][src.group];
-                    const [moved] = arr.splice(src.ti, 1);
-                    if (!_lbExtraEdited[dstCi][dstGrp].some(t => t.tag === moved.tag)) {
-                        _lbExtraEdited[dstCi][dstGrp].push(moved);
+                    if (e.dataTransfer.types.includes('text/lbextra-uncat')) {
+                        // 미분류 -> appearance/outfit (복사, 원본 유지)
+                        const src = JSON.parse(e.dataTransfer.getData('text/lbextra-uncat'));
+                        if (src.ci !== dstCi) return;
+                        const tag = _lbExtraOriginal[src.ci].uncategorized[src.ti];
+                        if (!_lbExtraEdited[dstCi][dstGrp].some(t => t.tag === tag.tag)) {
+                            _lbExtraEdited[dstCi][dstGrp].push(JSON.parse(JSON.stringify(tag)));
+                        }
+                    } else {
+                        // 편집본 내 이동 (appearance <-> outfit)
+                        const src = JSON.parse(e.dataTransfer.getData('text/lbextra-tag'));
+                        if (src.ci !== dstCi) return;
+                        if (src.group === dstGrp) return;
+                        const arr = _lbExtraEdited[src.ci][src.group];
+                        const [moved] = arr.splice(src.ti, 1);
+                        if (!_lbExtraEdited[dstCi][dstGrp].some(t => t.tag === moved.tag)) {
+                            _lbExtraEdited[dstCi][dstGrp].push(moved);
+                        }
                     }
                     _renderLbExtraContent();
                 });

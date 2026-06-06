@@ -1300,6 +1300,7 @@ def init_queue_manager():
     queue_manager.get_real_comfy_host = lambda: REAL_COMFY_HOST
     queue_manager.get_real_comfy_port = lambda: REAL_COMFY_PORT
     queue_manager.process_prompt_full = process_prompt
+    queue_manager.save_backup = save_backup
     queue_manager.run_data_patch_utility = _run_data_patch_utility
     print("[QUEUE] 통합 큐 매니저 초기화 완료")
 
@@ -2969,21 +2970,14 @@ async def handle_api_restore_manual_draw(request: web.Request) -> web.Response:
         if not positive:
             return web.json_response({"error": "빈 프롬프트 - 실행 불가"}, status=400)
 
-        print(f"[RESTORE_MANUAL] 수동 그리기 실행: positive='{positive[:50]}...'")
-        img_bytes, error = await generate_image_with_prompt(positive, negative)
-        if img_bytes:
-            await save_backup(img_bytes, "restore_manual", positive, negative)
-            print(f"[RESTORE_MANUAL] 완료 (이미지 {len(img_bytes):,}B)")
-
-            # base64로 프론트엔드에 전달
-            b64 = base64.b64encode(img_bytes).decode("ascii")
-            return web.json_response({
-                "success": True,
-                "image": f"data:image/png;base64,{b64}",
-                "positive": positive[:200],
-            })
-        else:
-            return web.json_response({"error": f"이미지 생성 실패: {error}"}, status=500)
+        print(f"[RESTORE_MANUAL] 수동 그리기 큐 등록: positive='{positive[:50]}...'")
+        _label = f"수동그리기: {positive[:40]}..."
+        asyncio.create_task(queue_manager.add_item(
+            "restore_manual", _label,
+            {"positive": positive, "negative": negative},
+            priority=0,
+        ))
+        return web.json_response({"success": True, "queued": True})
     except Exception as e:
         print(f"[RESTORE_MANUAL] 오류: {e}")
         traceback.print_exc()

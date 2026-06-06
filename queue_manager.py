@@ -59,8 +59,9 @@ class QueueManager:
         self.get_real_comfy_host = None        # def() -> str
         self.get_real_comfy_port = None        # def() -> int
         # 삽화 생성 콜백 (server.py에서 주입)
-        self.generate_image_with_prompt = None  # async def(positive, negative) -> bytes
+        self.generate_image_with_prompt = None  # async def(positive, negative) -> (bytes, errors)
         self.process_prompt_full = None         # async def(prompt_id, prompt_data, positive, negative) -> None
+        self.save_backup = None                 # async def(img_bytes, mode, positive, negative) -> None
 
     async def add_item(self, item_type: str, label: str, params: dict, priority: int = 10) -> QueueItem:
         item = QueueItem(
@@ -236,6 +237,7 @@ class QueueManager:
             "tag_analysis": self._handle_tag_analysis,
             "auto_match_batch": self._handle_auto_match_batch,
             "data_patch_utility": self._handle_data_patch_utility,
+            "restore_manual": self._handle_restore_manual,
         }
         handler = dispatch.get(item.type)
         if not handler:
@@ -257,6 +259,24 @@ class QueueManager:
             raise RuntimeError("process_prompt_full 콜백이 설정되지 않았습니다")
 
         return {"success": True, "prompt_id": prompt_id}
+
+    async def _handle_restore_manual(self, item: QueueItem) -> dict:
+        """수동 그리기 (복원 프롬프트 파일로 이미지 생성)."""
+        params = item.params
+        positive = params.get("positive", "")
+        negative = params.get("negative", "")
+
+        if not self.generate_image_with_prompt:
+            raise RuntimeError("generate_image_with_prompt 콜백이 설정되지 않았습니다")
+
+        img_bytes, error = await self.generate_image_with_prompt(positive, negative)
+        if img_bytes and self.save_backup:
+            await self.save_backup(img_bytes, "restore_manual", positive, negative)
+            print(f"[QUEUE:restore_manual] 완료 (이미지 {len(img_bytes):,}B)")
+            return {"success": True, "image_size": len(img_bytes)}
+        elif not img_bytes:
+            raise RuntimeError(f"이미지 생성 실패: {error}")
+        return {"success": True}
 
     async def _handle_asset_generation(self, item: QueueItem) -> dict:
         """에셋 이미지 생성 (기존 handle_api_asset_mode_generate 로직)."""
