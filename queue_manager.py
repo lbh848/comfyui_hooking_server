@@ -437,11 +437,9 @@ class QueueManager:
             elif title == "부정프롬프트":
                 ninfo["inputs"]["value"] = negative_text
 
-        prompt_id, submit_result = await self.submit_to_real_comfy(wf)
-        print(f"[QUEUE-ASSET_LORA] 워크플로우 제출: prompt_id={prompt_id}")
-
-        # 진행률 모니터링 (WebSocket)
-        await self._monitor_training_ws(item, prompt_id, "lora_training_progress")
+        # 진행률 모니터링 (WebSocket 연결 후 제출하여 경쟁 조건 방지)
+        prompt_id, submit_result = await self._monitor_training_ws(item, wf, "lora_training_progress")
+        print(f"[QUEUE-ASSET_LORA] 완료: prompt_id={prompt_id}")
 
         return {
             "success": True,
@@ -548,8 +546,6 @@ class QueueManager:
             elif title == "부정프롬프트":
                 ninfo["inputs"]["value"] = negative_text
 
-        prompt_id, submit_result = await self.submit_to_real_comfy(wf)
-
         # 진행률 알림
         if self.notify_frontend:
             await self.notify_frontend("bot_lora_training_progress", {
@@ -561,9 +557,9 @@ class QueueManager:
                 "message": f"'{char_name}' 학습 시작",
             })
 
-        # 모니터링 대기
-        await self._monitor_training_ws(
-            item, prompt_id,
+        # 모니터링 (WebSocket 연결 후 제출하여 경쟁 조건 방지)
+        prompt_id, submit_result = await self._monitor_training_ws(
+            item, wf,
             event_type="bot_lora_training_progress",
             extra_data={
                 "bot_name": bot_name, "project_name": project_name, "character": char_name,
@@ -707,8 +703,7 @@ class QueueManager:
                 elif title == "부정프롬프트":
                     ninfo["inputs"]["value"] = negative_text
 
-            prompt_id, submit_result = await self.submit_to_real_comfy(wf)
-
+            # 진행률 알림
             profile_label = f" ({profile})" if len(profiles_to_train) > 1 else ""
             await self._notify_progress(item, {
                 "phase": "preparing",
@@ -722,12 +717,12 @@ class QueueManager:
                     "message": f"'{trigger}' 인스턴스 로라 학습 시작{profile_label}",
                 })
 
-            # 모니터링 대기
-            await self._monitor_training_ws(
-                item, prompt_id,
+            # 모니터링 (WebSocket 연결 후 제출하여 경쟁 조건 방지)
+            prompt_id, submit_result = await self._monitor_training_ws(
+                item, wf,
                 event_type="instance_lora_training_progress",
                 extra_data={"lora_id": lora_id, "profile": profile},
-                on_complete=lambda pid=prompt_id, lid=lora_id, prof=profile:
+                on_complete=lambda lid=lora_id, prof=profile:
                     add_session(lid, datetime.datetime.now().strftime("%Y%m%d-%H%M%S"), prof),
             )
 
@@ -814,24 +809,59 @@ class QueueManager:
 
     # ─── WebSocket 모니터링 공통 ────────────────────────────
 
+    async def _check_prompt_result(self, prompt_id: str, host: str, port: int) -> str:
+        """ComfyUI /history/{prompt_id} 로 프롬프트 결과를 확인한다 (WS 누락 시 폴백)."""
+        import aiohttp
+        url = f"http://{host}:{port}/history/{prompt_id}"
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url) as resp:
+                    if resp.status == 200:
+                        history = await resp.json()
+                        ph = history.get(prompt_id, {})
+                        status = ph.get("status", {})
+                        if status.get("status_str") == "error":
+                            msgs = status.get("messages", [])
+                            err_msg = str(msgs[-1][-1]) if msgs and msgs[-1] else "Unknown error"
+                            return "error"
+                        elif status.get("completed", False) or ph.get("outputs"):
+                            return "success"
+        except Exception as e:
+            print(f"[QUEUE-MONITOR] history 확인 실패: {e}")
+        return "unknown"
+
     async def _monitor_training_ws(
         self,
         item: QueueItem,
-        prompt_id: str,
+        workflow: dict,
         event_type: str = "lora_training_progress",
         extra_data: dict = None,
         on_complete=None,
-    ):
-        """ComfyUI WebSocket에 연결하여 학습 진행률을 모니터링하고 완료를 대기한다."""
+    ) -> tuple[str, dict]:
+        """ComfyUI WebSocket에 먼저 연결한 후 워크플로우를 제출하고 학습 진행률을 모니터링한다.
+
+        경쟁 조건 방지: WS 연결 후 제출하므로 execution_error 메시지를 누락하지 않는다.
+        반환값: (prompt_id, submit_result)
+        """
         import aiohttp as _aiohttp
         host = self.get_real_comfy_host()
         port = self.get_real_comfy_port()
-        ws_url = f"ws://{host}:{port}/ws?clientId=queue_{uuid.uuid4().hex[:8]}"
-        print(f"[QUEUE-MONITOR] 시작: prompt_id={prompt_id}, type={event_type}")
+        client_id = f"queue_{uuid.uuid4().hex[:8]}"
+        ws_url = f"ws://{host}:{port}/ws?clientId={client_id}"
+
+        prompt_id = None
+        submit_result = None
+        completed = False
 
         try:
             async with _aiohttp.ClientSession() as ws_session:
                 async with ws_session.ws_connect(ws_url) as ws:
+                    # WS 연결 후 제출 (경쟁 조건 해결)
+                    prompt_id, submit_result = await self.submit_to_real_comfy(
+                        workflow, client_id=client_id
+                    )
+                    print(f"[QUEUE-MONITOR] 시작: prompt_id={prompt_id}, type={event_type}")
+
                     async for msg in ws:
                         if msg.type == _aiohttp.WSMsgType.TEXT:
                             data = json.loads(msg.data)
@@ -850,14 +880,16 @@ class QueueManager:
                                     fwd_data = {**msg_data, **(extra_data or {})}
                                     await self.notify_frontend(event_type, fwd_data)
                                 if phase == "all_complete":
+                                    completed = True
                                     if on_complete:
                                         on_complete()
-                                    return
+                                    return prompt_id, submit_result
 
                             if msg_type == "executing":
                                 exec_prompt = msg_data.get("prompt_id", "")
                                 exec_node = msg_data.get("node")
                                 if exec_prompt == prompt_id and exec_node is None:
+                                    completed = True
                                     if self.notify_frontend:
                                         await self.notify_frontend(event_type, {
                                             "phase": "all_complete",
@@ -865,12 +897,13 @@ class QueueManager:
                                         })
                                     if on_complete:
                                         on_complete()
-                                    return
+                                    return prompt_id, submit_result
 
                             if msg_type == "execution_error":
-                                err_prompt = msg_data.get("data", {}).get("prompt_id", "")
+                                err_prompt = msg_data.get("prompt_id", "")
                                 if err_prompt == prompt_id:
-                                    err_msg = msg_data.get("data", {}).get("exception_message", "Unknown error")
+                                    completed = True
+                                    err_msg = msg_data.get("exception_message", "Unknown error")
                                     if self.notify_frontend:
                                         await self.notify_frontend(event_type, {
                                             "phase": "error",
@@ -881,6 +914,27 @@ class QueueManager:
 
                         elif msg.type in (_aiohttp.WSMsgType.ERROR, _aiohttp.WSMsgType.CLOSED):
                             break
+
+            # 폴백: WS 루프가 완료/에러 미수신 상태로 종료된 경우
+            if not completed and prompt_id:
+                print(f"[QUEUE-MONITOR] WS 종료 후 history 확인: prompt_id={prompt_id}")
+                result = await self._check_prompt_result(prompt_id, host, port)
+                if result == "error":
+                    err_msg = "알 수 없는 실행 에러 (history 확인)"
+                    if self.notify_frontend:
+                        await self.notify_frontend(event_type, {
+                            "phase": "error",
+                            "message": err_msg,
+                            **(extra_data or {}),
+                        })
+                    raise RuntimeError(f"학습 실행 에러 (history): {err_msg}")
+                elif result == "success":
+                    if on_complete:
+                        on_complete()
+                    return prompt_id, submit_result
+                else:
+                    raise RuntimeError(f"모니터링 실패: WS 종료 및 history 확인 불가 (prompt_id={prompt_id})")
+
         except Exception as e:
             if not isinstance(e, RuntimeError) or "학습 실행 에러" not in str(e):
                 print(f"[QUEUE-MONITOR] 예외: {e}")

@@ -798,10 +798,12 @@ def get_illust_port():
     return REAL_COMFY_PORT
 
 
-async def submit_to_real_comfy(prompt_data: dict, port: int | None = None) -> tuple[str, dict]:
+async def submit_to_real_comfy(prompt_data: dict, port: int | None = None, client_id: str | None = None) -> tuple[str, dict]:
     target_port = port if port is not None else REAL_COMFY_PORT
     url = f"http://{REAL_COMFY_HOST}:{target_port}/prompt"
     payload = {"prompt": prompt_data}
+    if client_id is not None:
+        payload["client_id"] = client_id
     print(f"[PROXY] → POST {url}")
     async with aiohttp.ClientSession() as session:
         async with session.post(url, json=payload) as resp:
@@ -5788,9 +5790,9 @@ async def _monitor_lora_training(prompt_id: str):
 
                         # 실행 에러
                         if msg_type == "execution_error":
-                            err_prompt = msg_data.get("data", {}).get("prompt_id", "")
+                            err_prompt = msg_data.get("prompt_id", "")
                             if err_prompt == prompt_id:
-                                err_msg = msg_data.get("data", {}).get("exception_message", "Unknown error")
+                                err_msg = msg_data.get("exception_message", "Unknown error")
                                 print(f"[LORA_MONITOR] 실행 에러: {err_msg}")
                                 await notify_frontend("lora_training_progress", {
                                     "phase": "error",
@@ -6644,9 +6646,9 @@ async def _monitor_bot_lora_training(prompt_id, bot_name, project_name, current_
                                     await notify_frontend("bot_lora_training_progress", {"phase": "all_chars_complete", "bot_name": bot_name, "project_name": project_name, "message": f"모든 캐릭터 학습 완료"})
                                 return
                         if msg_type == "execution_error":
-                            err_prompt = msg_data.get("data", {}).get("prompt_id", "")
+                            err_prompt = msg_data.get("prompt_id", "")
                             if err_prompt == prompt_id:
-                                err_msg = msg_data.get("data", {}).get("exception_message", "Unknown error")
+                                err_msg = msg_data.get("exception_message", "Unknown error")
                                 print(f"[BOT_LORA_MONITOR] {current_char} 에러: {err_msg}")
                                 await notify_frontend("bot_lora_training_progress", {"phase": "error", "bot_name": bot_name, "project_name": project_name, "character": current_char, "char_index": current_idx, "message": err_msg})
                                 return
@@ -7169,9 +7171,9 @@ async def _monitor_instance_lora_training(prompt_id: str, lora_id: str, profile:
                                 return
 
                         if msg_type == "execution_error":
-                            err_prompt = msg_data.get("data", {}).get("prompt_id", "")
+                            err_prompt = msg_data.get("prompt_id", "")
                             if err_prompt == prompt_id:
-                                err_msg = msg_data.get("data", {}).get("exception_message", "Unknown error")
+                                err_msg = msg_data.get("exception_message", "Unknown error")
                                 print(f"[INSTANCE_LORA_MONITOR] 에러: {err_msg}")
                                 await notify_frontend("instance_lora_training_progress", {
                                     "phase": "error", "message": err_msg, "lora_id": lora_id,
