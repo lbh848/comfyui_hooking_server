@@ -526,6 +526,9 @@
             max-width: 95vw;
             max-height: 95vh;
             object-fit: contain;
+            user-select: none;
+            -webkit-user-drag: none;
+            pointer-events: none;
         }
 
         /* 학습된 LoRA 카드 삭제 버튼 호버 표시 */
@@ -4389,7 +4392,7 @@
 
     <!-- 라이트박스 -->
     <div class="lightbox" id="lightbox" onclick="closeLightbox()">
-        <img id="lightbox-img" src="" alt="">
+        <img id="lightbox-img" src="" alt="" draggable="false">
     </div>
 
     <!-- 프롬프트 수정 모달 -->
@@ -4910,7 +4913,7 @@
                 <!-- 인스턴스 로라 이미지 상세 모달 -->
                 <!-- 인스턴스 로라 라이트박스 -->
                 <div id="instance-lora-lightbox" onclick="closeInstanceLightbox()" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.85);z-index:10000;cursor:zoom-out;display:flex;align-items:center;justify-content:center;">
-                    <img id="instance-lightbox-img" src="" style="max-width:90vw;max-height:90vh;object-fit:contain;border-radius:4px;">
+                    <img id="instance-lightbox-img" src="" draggable="false" style="max-width:90vw;max-height:90vh;object-fit:contain;border-radius:4px;user-select:none;-webkit-user-drag:none;pointer-events:none;">
                 </div>
                 <!-- 인스턴스 로라 프롬프트 모달 -->
                 <div class="modal" id="instance-lora-prompt-modal" onclick="if(event.target===this)closeInstancePromptModal()">
