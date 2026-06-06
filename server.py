@@ -3415,6 +3415,46 @@ app.router.add_get("/api/workflow_test/list", handle_api_workflow_test_list)
 app.router.add_post("/api/workflow_test/start", handle_api_workflow_test_start)
 app.router.add_post("/api/workflow_test/stop", handle_api_workflow_test_stop)
 app.router.add_get("/api/workflow_test/status", handle_api_workflow_test_status)
+# ─── 디버그 워크플로우 실행 API ──────────────────────────────
+async def handle_api_debug_workflow(request: web.Request) -> web.Response:
+    """설정에서 선택한 워크플로우 파일을 ComfyUI로 직접 전송"""
+    try:
+        body = await request.json()
+        workflow_path = body.get("workflow_path", "")
+        if not workflow_path or not workflow_path.strip():
+            return web.json_response({"success": False, "error": "워크플로우 파일 경로가 비어 있습니다."}, status=400)
+
+        workflow_path = workflow_path.strip()
+        if not os.path.isfile(workflow_path):
+            return web.json_response({"success": False, "error": f"파일을 찾을 수 없습니다: {workflow_path}"}, status=400)
+
+        try:
+            with open(workflow_path, "r", encoding="utf-8") as f:
+                prompt_data = json.load(f)
+        except json.JSONDecodeError as e:
+            return web.json_response({"success": False, "error": f"JSON 파싱 오류: {e}"}, status=400)
+        except Exception as e:
+            return web.json_response({"success": False, "error": f"파일 읽기 실패: {e}"}, status=400)
+
+        if not isinstance(prompt_data, dict):
+            return web.json_response({"success": False, "error": "워크플로우는 JSON 객체여야 합니다."}, status=400)
+
+        try:
+            prompt_id, result = await submit_to_real_comfy(prompt_data)
+            return web.json_response({"success": True, "prompt_id": prompt_id, "result": result})
+        except RuntimeError as e:
+            print(f"[DEBUG_WORKFLOW] ComfyUI 전송 실패: {e}")
+            return web.json_response({"success": False, "error": str(e)}, status=500)
+        except Exception as e:
+            print(f"[DEBUG_WORKFLOW] 예외 발생: {e}")
+            traceback.print_exc()
+            return web.json_response({"success": False, "error": str(e)}, status=500)
+    except Exception as e:
+        print(f"[DEBUG_WORKFLOW] 요청 처리 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+app.router.add_post("/api/debug_workflow", handle_api_debug_workflow)
 # ─── 텍스트 출력 API 핸들러 ────────────────────────────────
 async def handle_api_text_output_post(request: web.Request) -> web.Response:
     try:
