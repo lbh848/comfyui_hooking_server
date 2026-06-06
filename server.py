@@ -1301,6 +1301,7 @@ def init_queue_manager():
     queue_manager.get_real_comfy_port = lambda: REAL_COMFY_PORT
     queue_manager.process_prompt_full = process_prompt
     queue_manager.save_backup = save_backup
+    queue_manager.generate_image_with_prompt = generate_image_with_prompt
     queue_manager.run_data_patch_utility = _run_data_patch_utility
     print("[QUEUE] 통합 큐 매니저 초기화 완료")
 
