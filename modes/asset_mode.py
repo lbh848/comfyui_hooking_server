@@ -1308,6 +1308,9 @@ class AssetMode:
                 elif title == "부정프롬프트":
                     final_negative = ninfo.get("inputs", {}).get("value", negative)
 
+            # 프롬프트 주입된 workflow를 asset_api.json에도 저장
+            self._save_cached_api(workflow)
+
             if self.submit_workflow_func:
                 async def _on_progress(value, max_value):
                     if self.notify_frontend_func:
