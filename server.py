@@ -117,6 +117,7 @@ DEFAULT_CONFIG = {
     "dwpose_det_model": "",  # DWPose 탐지 모델 경로 (빈값=자동 다운로드)
     "dwpose_pose_model": "",  # DWPose 포즈 모델 경로 (빈값=자동 다운로드)
     "dwpose_model_cache_dir": "",  # 모델 캐시 디렉토리 (빈값=기본경로)
+    "debug_workflow_source_path": "",  # 디버그 탭 워크플로우 원본 소스 전체 경로
     "backup_max_count": 500,  # 워크플로우 백업 최대 보관 수
     "webp_lossless": False,
     "queue_type_order": {
@@ -807,7 +808,15 @@ async def submit_to_real_comfy(prompt_data: dict, port: int | None = None, clien
     print(f"[PROXY] → POST {url}")
     async with aiohttp.ClientSession() as session:
         async with session.post(url, json=payload) as resp:
-            result = await resp.json()
+            raw = await resp.text()
+            try:
+                result = json.loads(raw)
+            except json.JSONDecodeError:
+                print(f"[PROXY] ← status={resp.status}, non-JSON response: {raw[:500]}")
+                raise RuntimeError(
+                    f"ComfyUI returned non-JSON (status={resp.status}, "
+                    f"content-type={resp.content_type}): {raw[:300]}"
+                )
             pid = result.get("prompt_id", "?")
             print(f"[PROXY] ← status={resp.status}, prompt_id={pid}")
             if result.get("node_errors"):
@@ -3439,9 +3448,68 @@ async def handle_api_debug_workflow(request: web.Request) -> web.Response:
         if not isinstance(prompt_data, dict):
             return web.json_response({"success": False, "error": "워크플로우는 JSON 객체여야 합니다."}, status=400)
 
+        # API 형식이 아니면 ComfyUI /workflow/convert로 변환
+        if not is_api_format(prompt_data):
+            print(f"[DEBUG_WORKFLOW] 워크플로우를 API 형식으로 변환 중...")
+            converted, conv_error = await convert_workflow_via_endpoint(prompt_data)
+            if converted is None:
+                return web.json_response(
+                    {"success": False, "error": f"워크플로우 변환 실패: {conv_error}"},
+                    status=400,
+                )
+            prompt_data = converted
+            print(f"[DEBUG_WORKFLOW] 변환 완료: {len(prompt_data)} 노드")
+
         try:
-            prompt_id, result = await submit_to_real_comfy(prompt_data)
-            return web.json_response({"success": True, "prompt_id": prompt_id, "result": result})
+            # text_outputs 스냅샷 저장 (실행 전)
+            existing_snapshot = {k: v.get("timestamp", "") for k, v in text_outputs.items()}
+
+            # WebSocket 연결 + 워크플로우 제출
+            ws_url = (
+                f"ws://{REAL_COMFY_HOST}:{REAL_COMFY_PORT}/ws"
+                f"?clientId=dbg_{uuid.uuid4().hex[:8]}"
+            )
+            async with aiohttp.ClientSession() as ws_session:
+                async with ws_session.ws_connect(ws_url) as ws:
+                    prompt_id, result = await submit_to_real_comfy(prompt_data)
+                    total_steps = count_ksampler_total_steps(prompt_data)
+                    ws_result = await wait_for_real_comfy(ws, prompt_id, total_steps=total_steps)
+                    if ws_result is None:
+                        return web.json_response(
+                            {"success": False, "error": "워크플로우 실행 실패 또는 타임아웃"},
+                            status=500,
+                        )
+
+            # text_outputs에서 WD_TAG_TEXT 폴링
+            tag_text = ""
+            target_key = "WD_TAG_TEXT"
+            poll_timeout = 30.0
+            poll_interval = 0.5
+            elapsed = 0.0
+            while elapsed < poll_timeout:
+                entry = text_outputs.get(target_key)
+                if entry:
+                    ts = entry.get("timestamp", "")
+                    if target_key not in existing_snapshot or ts != existing_snapshot.get(target_key, ""):
+                        tag_text = entry.get("text", "")
+                        if tag_text:
+                            break
+                await asyncio.sleep(poll_interval)
+                elapsed += poll_interval
+
+            response = {
+                "success": True,
+                "prompt_id": prompt_id,
+                "node_count": len(prompt_data),
+                "result": result,
+            }
+            if tag_text:
+                response["tag_text"] = tag_text
+            else:
+                response["tag_text"] = None
+                response["warning"] = f"WD_TAG_TEXT 결과를 받지 못했습니다 ({poll_timeout:.0f}초 대기)"
+
+            return web.json_response(response)
         except RuntimeError as e:
             print(f"[DEBUG_WORKFLOW] ComfyUI 전송 실패: {e}")
             return web.json_response({"success": False, "error": str(e)}, status=500)

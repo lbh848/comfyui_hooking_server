@@ -5997,7 +5997,7 @@
                     <div class="setting-row">
                         <div class="setting-label">
                             <div class="title">디버그 워크플로우</div>
-                            <div class="desc">워크플로우 파일을 선택하고 바로 실행합니다. (공통설정 탭의 베이스 경로에서 검색)</div>
+                            <div class="desc">설정에 필요한 정보를 가져옵니다. (공통설정 탭의 베이스 경로에서 검색)</div>
                         </div>
                     </div>
                     <div class="form-group" style="margin-top: -8px;">
@@ -7715,6 +7715,12 @@
             document.getElementById('setting-asset-tag-analysis-workflow-filename').value = assetTagAnalysisSplit.filename;
             document.getElementById('setting-asset-tag-analysis-workflow-source-path').value = assetTagAnalysisPath;
 
+            // 디버그 워크플로우
+            const debugWfPath = currentConfig.debug_workflow_source_path || '';
+            const debugWfSplit = splitWorkflowPath(debugWfPath);
+            document.getElementById('setting-debug-workflow-filename').value = debugWfSplit.filename;
+            document.getElementById('setting-debug-workflow-source-path').value = debugWfPath;
+
             // 로라 학습 워크플로우 (profile별)
             const loraPaths = currentConfig.lora_training_workflow_source_paths || {};
             // Anima
@@ -8323,6 +8329,7 @@
                 batch_mode_enabled: currentConfig.batch_mode_enabled || false,
                 webp_lossless: currentConfig.webp_lossless || false,
                 workflow_filename: currentConfig.workflow_filename || '',
+                debug_workflow_source_path: document.getElementById('setting-debug-workflow-source-path').value,
                 queue_type_order: currentConfig.queue_type_order || {}
             };
 
@@ -17811,7 +17818,14 @@
                 if (data.success) {
                     statusEl.textContent = `실행 완료 (prompt_id: ${data.prompt_id})`;
                     statusEl.style.color = '#4caf50';
-                    resultContent.textContent = JSON.stringify(data.result, null, 2);
+                    const nodeCount = data.node_count || '?';
+                    let text = `✓ prompt_id: ${data.prompt_id}\n  노드 수: ${nodeCount}`;
+                    if (data.tag_text) {
+                        text += `\n\n[WD_TAG_TEXT 결과]\n${data.tag_text}`;
+                    } else if (data.warning) {
+                        text += `\n\n⚠ ${data.warning}`;
+                    }
+                    resultContent.textContent = text;
                 } else {
                     statusEl.textContent = '실행 실패';
                     statusEl.style.color = 'var(--error, #e74c3c)';
