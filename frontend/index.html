@@ -21112,7 +21112,7 @@
         // ─── 삽화 로그 뷰어 ─────────────────────────────────────
         let _illustLogAllLogs = [];
         let _illustLogPage = 0;
-        const ILLUST_LOG_PER_PAGE = 20;
+        const ILLUST_LOG_PER_PAGE = 1;
 
         function openIllustLogModal() {
             let modal = document.getElementById('illust-log-modal');
@@ -21176,39 +21176,39 @@
             for (const log of pageLogs) {
                 const ts = log.timestamp ? new Date(log.timestamp * 1000).toLocaleString() : '';
                 html += `
-                    <div style="background:var(--surface2); border:1px solid var(--border); border-radius:8px; margin-bottom:8px; padding:10px;">
-                        <div style="font-size:0.75rem; color:var(--text2); margin-bottom:4px;">${ts} | 감지: ${log.detected_characters?.join(', ') || '없음'}</div>
-                        <details style="margin-bottom:4px;">
-                            <summary style="cursor:pointer; font-size:0.8rem; font-weight:600;">Raw 프롬프트</summary>
-                            <pre style="font-size:0.7rem; white-space:pre-wrap; color:var(--text); max-height:200px; overflow-y:auto; background:rgba(0,0,0,0.05); padding:6px; border-radius:4px;">${escapeHtml(log.raw_positive || '')}</pre>
-                        </details>
-                        <details style="margin-bottom:4px;">
-                            <summary style="cursor:pointer; font-size:0.8rem; font-weight:600;">파싱 결과</summary>
-                            <div style="font-size:0.7rem; padding:6px;">
+                    <div style="background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:12px;">
+                        <div style="font-size:0.75rem; color:var(--text2); margin-bottom:10px; padding-bottom:8px; border-bottom:1px solid var(--border);">${ts} | 감지: ${log.detected_characters?.join(', ') || '없음'}</div>
+                        <div style="margin-bottom:10px; padding:8px; background:rgba(0,0,0,0.08); border-radius:6px;">
+                            <div style="font-size:0.8rem; font-weight:700; margin-bottom:6px; color:var(--accent);">Raw 프롬프트</div>
+                            <pre style="font-size:0.7rem; white-space:pre-wrap; color:var(--text); max-height:200px; overflow-y:auto; background:rgba(0,0,0,0.04); padding:6px; border-radius:4px; margin:0;">${escapeHtml(log.raw_positive || '')}</pre>
+                        </div>
+                        <div style="margin-bottom:10px; padding:8px; background:rgba(33,150,243,0.08); border-radius:6px; border-left:3px solid #2196F3;">
+                            <div style="font-size:0.8rem; font-weight:700; margin-bottom:6px; color:#2196F3;">파싱 결과</div>
+                            <div style="font-size:0.7rem; padding:4px;">
                                 <div><strong>SETUP:</strong> ${escapeHtml(log.parsed_setup || '(비어있음)')}</div>
                                 <div><strong>CHAR:</strong> ${escapeHtml(log.parsed_char || '(비어있음)')}</div>
                                 <div><strong>SUPPLEMENT:</strong> ${escapeHtml(log.parsed_supplement || '(비어있음)')}</div>
                             </div>
-                        </details>
-                        <details style="margin-bottom:4px;">
-                            <summary style="cursor:pointer; font-size:0.8rem; font-weight:600;">단어 치환 결과</summary>
-                            <div style="font-size:0.7rem; padding:6px;">
+                        </div>
+                        <div style="margin-bottom:10px; padding:8px; background:rgba(156,39,176,0.08); border-radius:6px; border-left:3px solid #9C27B0;">
+                            <div style="font-size:0.8rem; font-weight:700; margin-bottom:6px; color:#9C27B0;">단어 치환 결과</div>
+                            <div style="font-size:0.7rem; padding:4px;">
                                 <div><strong>SETUP:</strong> ${escapeHtml(log.word_replaced_setup || '(비어있음)')}</div>
                                 <div><strong>CHAR:</strong> ${escapeHtml(log.word_replaced_char || '(비어있음)')}</div>
                                 <div><strong>SUPPLEMENT:</strong> ${escapeHtml(log.word_replaced_supplement || '(비어있음)')}</div>
                             </div>
-                        </details>
-                        <details style="margin-bottom:4px;">
-                            <summary style="cursor:pointer; font-size:0.8rem; font-weight:600;">CHAR_LIST 획득 결과</summary>
-                            <div style="font-size:0.75rem; padding:6px; color:#4CAF50; font-weight:600;">${log.detected_characters?.join(', ') || '감지된 캐릭터 없음'}</div>
-                        </details>
-                        <details>
-                            <summary style="cursor:pointer; font-size:0.8rem; font-weight:600;">최종 프롬프트</summary>
-                            <div style="margin-bottom:4px;"><strong style="font-size:0.7rem;">긍정:</strong></div>
-                            <pre style="font-size:0.7rem; white-space:pre-wrap; color:var(--text); max-height:300px; overflow-y:auto; background:rgba(0,0,0,0.05); padding:6px; border-radius:4px;">${escapeHtml(log.final_positive || '')}</pre>
-                            <div style="margin-top:4px; margin-bottom:4px;"><strong style="font-size:0.7rem;">부정:</strong></div>
-                            <pre style="font-size:0.7rem; white-space:pre-wrap; color:var(--text); max-height:200px; overflow-y:auto; background:rgba(0,0,0,0.05); padding:6px; border-radius:4px;">${escapeHtml(log.final_negative || '')}</pre>
-                        </details>
+                        </div>
+                        <div style="margin-bottom:10px; padding:8px; background:rgba(76,175,80,0.08); border-radius:6px; border-left:3px solid #4CAF50;">
+                            <div style="font-size:0.8rem; font-weight:700; margin-bottom:6px; color:#4CAF50;">CHAR_LIST 획득 결과</div>
+                            <div style="font-size:0.75rem; padding:4px; color:#4CAF50; font-weight:600;">${log.detected_characters?.join(', ') || '감지된 캐릭터 없음'}</div>
+                        </div>
+                        <div style="padding:8px; background:rgba(255,152,0,0.08); border-radius:6px; border-left:3px solid #FF9800;">
+                            <div style="font-size:0.8rem; font-weight:700; margin-bottom:6px; color:#FF9800;">최종 프롬프트</div>
+                            <div style="margin-bottom:6px;"><strong style="font-size:0.7rem;">긍정:</strong></div>
+                            <pre style="font-size:0.7rem; white-space:pre-wrap; color:var(--text); max-height:300px; overflow-y:auto; background:rgba(0,0,0,0.04); padding:6px; border-radius:4px; margin:0 0 8px 0;">${escapeHtml(log.final_positive || '')}</pre>
+                            <div style="margin-bottom:6px;"><strong style="font-size:0.7rem;">부정:</strong></div>
+                            <pre style="font-size:0.7rem; white-space:pre-wrap; color:var(--text); max-height:200px; overflow-y:auto; background:rgba(0,0,0,0.04); padding:6px; border-radius:4px; margin:0;">${escapeHtml(log.final_negative || '')}</pre>
+                        </div>
                     </div>
                 `;
             }
