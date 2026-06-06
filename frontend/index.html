@@ -18410,7 +18410,15 @@
                     }
                 } catch (e) { console.log('[EXPORT_EXTRA] 저장 데이터 로드 스킵:', e); }
 
-                _lbExtraEdited = savedEdited || JSON.parse(JSON.stringify(origResults));
+                if (savedEdited) {
+                    _lbExtraEdited = origResults.map(orig => {
+                        const saved = savedEdited.find(s => s.name === orig.name);
+                        if (saved && Array.isArray(saved.appearance) && Array.isArray(saved.outfit)) return saved;
+                        return JSON.parse(JSON.stringify(orig));
+                    });
+                } else {
+                    _lbExtraEdited = JSON.parse(JSON.stringify(origResults));
+                }
                 _openLbExtraModal();
             } catch (e) {
                 console.error('[EXPORT_EXTRA] 실패:', e);
@@ -18712,6 +18720,7 @@
             let output = '';
             for (const char of _lbExtraEdited) {
                 output += `### ${char.name}\n`;
+                output += `-Name\n${char.name}\n`;
                 output += `-Appearance\n${char.appearance.map(t => t.tag).join(', ')}\n`;
                 output += `-normal outfit\n${char.outfit.map(t => t.tag).join(', ')}\n\n`;
             }
@@ -19800,28 +19809,69 @@
             if (checks.length === 0) { showToast('가져올 캐릭터를 선택하세요', 'error'); return; }
             const selectedNames = [...checks].map(c => c.value);
             const charsData = (window._assetCharData || []).filter(ch => selectedNames.includes(ch.name));
-            if (!confirm(`${charsData.length}개 캐릭터의 대표 이미지를 가져옵니다. 진행하시겠습니까?`)) return;
-            document.getElementById('bot-asset-char-modal').style.display = 'none';
-            try {
-                const resp = await fetch('/api/bot_mode/import_asset_chars', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({bot: botCurrentBot, characters: charsData})
-                });
-                const data = await resp.json();
-                if (data.error) { showToast(data.error, 'error'); return; }
-                const total = (data.imported || []).reduce((s, c) => s + c.files.length, 0);
-                showToast(`${charsData.length}개 캐릭터, ${total}장 가져오기 완료`, 'success');
-                // 봇 데이터 새로고침
-                const botResp = await fetch('/api/bot_mode/bots');
-                const botDataResp = await botResp.json();
-                if (botDataResp.bots) { botData.bots = botDataResp.bots; }
-                updateBotCharSelect();
-                renderBotCharacters();
-            } catch (e) {
-                console.error('[BOT] 에셋 캐릭터 가져오기 오류:', e);
-                showToast('가져오기 실패', 'error');
+
+            // 확인 + 이름 편집 모달
+            let confirmModal = document.getElementById('bot-asset-char-confirm');
+            if (!confirmModal) {
+                confirmModal = document.createElement('div');
+                confirmModal.id = 'bot-asset-char-confirm';
+                document.body.appendChild(confirmModal);
             }
+            confirmModal.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:10001; display:flex; align-items:center; justify-content:center;';
+
+            const rowsHtml = charsData.map(ch => `
+                <div style="display:flex; align-items:center; gap:8px; padding:6px 0; border-bottom:1px solid var(--border);">
+                    <span style="font-size:0.8rem; color:var(--text2); min-width:20px;">${charsData.indexOf(ch)+1}.</span>
+                    <input type="text" class="import-name-input" data-original="${escAttr(ch.name)}" value="${escAttr(ch.name)}" style="flex:1; font-size:0.85rem; background:var(--surface); border:1px solid var(--border); border-radius:4px; padding:4px 8px; color:var(--text);">
+                </div>
+            `).join('');
+
+            confirmModal.innerHTML = `<div style="background:var(--surface); border-radius:12px; width:90vw; max-width:500px; max-height:80vh; display:flex; flex-direction:column; overflow:hidden;">
+                <div style="padding:16px 20px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
+                    <h3 style="margin:0;">캐릭터 가져오기</h3>
+                    <button onclick="document.getElementById('bot-asset-char-confirm').style.display='none'" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer;">&times;</button>
+                </div>
+                <div style="padding:12px 20px; font-size:0.75rem; color:var(--text2);">가져올 캐릭터의 이름을 확인하고 필요하면 수정하세요.</div>
+                <div style="padding:8px 20px; overflow-y:auto; flex:1;">${rowsHtml}</div>
+                <div style="padding:12px 20px; border-top:1px solid var(--border); display:flex; justify-content:flex-end; gap:8px;">
+                    <button onclick="document.getElementById('bot-asset-char-confirm').style.display='none'" style="padding:8px 16px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); cursor:pointer;">취소</button>
+                    <button id="btn-do-import" style="padding:8px 16px; border-radius:6px; border:none; background:var(--accent); color:#fff; cursor:pointer; font-weight:600;">가져오기 (${charsData.length}개)</button>
+                </div>
+            </div>`;
+
+            document.getElementById('btn-do-import').onclick = async () => {
+                // 이름 편집 적용
+                document.querySelectorAll('#bot-asset-char-confirm .import-name-input').forEach(inp => {
+                    const orig = inp.dataset.original;
+                    const renamed = inp.value.trim();
+                    if (renamed && renamed !== orig) {
+                        const charInfo = charsData.find(ch => ch.name === orig);
+                        if (charInfo) charInfo.import_name = renamed;
+                    }
+                });
+
+                confirmModal.style.display = 'none';
+                document.getElementById('bot-asset-char-modal').style.display = 'none';
+                try {
+                    const resp = await fetch('/api/bot_mode/import_asset_chars', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({bot: botCurrentBot, characters: charsData})
+                    });
+                    const data = await resp.json();
+                    if (data.error) { showToast(data.error, 'error'); return; }
+                    const total = (data.imported || []).reduce((s, c) => s + c.files.length, 0);
+                    showToast(`${charsData.length}개 캐릭터, ${total}장 가져오기 완료`, 'success');
+                    const botResp = await fetch('/api/bot_mode/bots');
+                    const botDataResp = await botResp.json();
+                    if (botDataResp.bots) { botData.bots = botDataResp.bots; }
+                    updateBotCharSelect();
+                    renderBotCharacters();
+                } catch (e) {
+                    console.error('[BOT] 에셋 캐릭터 가져오기 오류:', e);
+                    showToast('가져오기 실패', 'error');
+                }
+            };
         }
 
         function removeSelectedBotCharacter() {

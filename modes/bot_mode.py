@@ -795,7 +795,8 @@ class BotMode:
 
             imported = []
             for char_info in characters:
-                char_name = char_info.get("name", "").strip()
+                original_name = char_info.get("name", "").strip()
+                char_name = char_info.get("import_name", "").strip() or original_name
                 rep_images = char_info.get("rep_images", [])
                 if not char_name or not rep_images:
                     continue
@@ -858,7 +859,8 @@ class BotMode:
                     imported_files.append(new_name)
 
                 imported.append({"character": char_name, "files": imported_files})
-                print(f"[BOT_MODE] 에셋 캐릭터 가져오기: {char_name} ({len(imported_files)}장)")
+                rename_info = f" ({original_name} -> {char_name})" if original_name != char_name else ""
+                print(f"[BOT_MODE] 에셋 캐릭터 가져오기: {char_name}{rename_info} ({len(imported_files)}장)")
 
             return _json_ok({"imported": imported})
         except Exception as e:
