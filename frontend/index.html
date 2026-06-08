@@ -3394,6 +3394,25 @@
                             <div style="margin-top:8px;">
                                 <button onclick="openIllustLogModal()" style="width:100%; background:#6A1B9A; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">📋 프롬프트 빌드 로그</button>
                             </div>
+                            <details style="margin-top:8px; border:1px solid var(--border); border-radius:6px; padding:6px 10px; background:var(--surface2);">
+                                <summary style="cursor:pointer; font-size:0.85rem; font-weight:600; color:var(--accent);">POSITIVE 태그 규칙</summary>
+                                <div style="margin-top:8px;">
+                                    <div style="font-size:0.75rem; color:var(--text2); margin-bottom:4px;">화이트리스트 (매칭된 태그만 POSITIVE에 포함)</div>
+                                    <div id="positive-whitelist-panel" style="min-height:20px;"></div>
+                                    <div style="display:flex; gap:4px; margin-top:4px;">
+                                        <input id="positive-whitelist-input" type="text" placeholder="예: * expressions, smile" style="flex:1; padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); font-size:0.8rem;">
+                                        <button onclick="addPositiveRule('whitelist')" style="padding:4px 10px; background:var(--accent); color:#fff; border:none; border-radius:4px; font-size:0.8rem; cursor:pointer; font-weight:600;">추가</button>
+                                    </div>
+                                </div>
+                                <div style="margin-top:10px;">
+                                    <div style="font-size:0.75rem; color:var(--text2); margin-bottom:4px;">블랙리스트 (화이트리스트 통과 후 제외 + FACE/EYE_TAGS 자동 제외)</div>
+                                    <div id="positive-blacklist-panel" style="min-height:20px;"></div>
+                                    <div style="display:flex; gap:4px; margin-top:4px;">
+                                        <input id="positive-blacklist-input" type="text" placeholder="예: open mouth, tears" style="flex:1; padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); font-size:0.8rem;">
+                                        <button onclick="addPositiveRule('blacklist')" style="padding:4px 10px; background:rgba(220,50,50,0.85); color:#fff; border:none; border-radius:4px; font-size:0.8rem; cursor:pointer; font-weight:600;">추가</button>
+                                    </div>
+                                </div>
+                            </details>
                         </div>
                     </div>
                 </div>
@@ -18009,6 +18028,7 @@
             updateWordReplacementsCount();
             loadIllustArtistPresets();
             loadIllustSettings();
+            loadPositiveRules();
         }
 
         function showBotView(view) {
@@ -21386,6 +21406,127 @@
             document.getElementById('illust-face-id-status').textContent = faceIdOn ? 'ON' : 'OFF';
             document.getElementById('illust-face-id-status').className = faceIdOn ? 'toggle-status on' : 'toggle-status off';
         }
+
+        // ─── POSITIVE 화이트리스트/블랙리스트 규칙 ────────────────────
+        let _positiveWhitelist = [];
+        let _positiveBlacklist = [];
+
+        async function loadPositiveRules() {
+            try {
+                const res = await fetchJSON('/api/bot_mode/positive_rules');
+                if (res && !res.error) {
+                    _positiveWhitelist = res.positive_whitelist || [];
+                    _positiveBlacklist = res.positive_blacklist || [];
+                } else {
+                    _positiveWhitelist = [];
+                    _positiveBlacklist = [];
+                }
+            } catch (e) {
+                console.error('[POSITIVE_RULES] 로드 실패:', e);
+                _positiveWhitelist = [];
+                _positiveBlacklist = [];
+            }
+            renderPositiveRulesPanel('whitelist');
+            renderPositiveRulesPanel('blacklist');
+        }
+
+        async function savePositiveRules() {
+            try {
+                const res = await fetchJSON('/api/bot_mode/positive_rules', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        positive_whitelist: _positiveWhitelist,
+                        positive_blacklist: _positiveBlacklist,
+                    }),
+                });
+                if (res && res.success) {
+                    _positiveWhitelist = res.positive_whitelist || [];
+                    _positiveBlacklist = res.positive_blacklist || [];
+                    renderPositiveRulesPanel('whitelist');
+                    renderPositiveRulesPanel('blacklist');
+                    return true;
+                } else {
+                    showToast(res.error || 'POSITIVE 규칙 저장 실패', 'error');
+                    return false;
+                }
+            } catch (e) {
+                console.error('[POSITIVE_RULES] 저장 실패:', e);
+                showToast('POSITIVE 규칙 저장 실패', 'error');
+                return false;
+            }
+        }
+
+        function renderPositiveRulesPanel(type) {
+            const panel = document.getElementById(`positive-${type}-panel`);
+            if (!panel) return;
+            const rules = type === 'whitelist' ? _positiveWhitelist : _positiveBlacklist;
+            const chipColor = type === 'whitelist'
+                ? 'rgba(76,175,80,0.15)' : 'rgba(220,50,50,0.12)';
+            const chipBorder = type === 'whitelist'
+                ? 'rgba(76,175,80,0.4)' : 'rgba(220,50,50,0.3)';
+            const chipText = type === 'whitelist'
+                ? 'var(--success, #4CAF50)' : 'var(--error)';
+
+            let html = '<div style="display:flex; flex-wrap:wrap; gap:4px;">';
+            if (rules.length === 0) {
+                html += `<span style="font-size:0.75rem; color:var(--text2);">${type === 'whitelist' ? '화이트리스트 없음 (모든 태그 포함)' : '블랙리스트 없음'}</span>`;
+            } else {
+                rules.forEach((rule, i) => {
+                    html += `<span style="display:inline-flex; align-items:center; gap:2px; background:${chipColor}; border:1px solid ${chipBorder}; border-radius:4px; padding:2px 6px; font-size:0.75rem; color:${chipText};">${escapeHtml(rule)}<span style="cursor:pointer; font-weight:bold; margin-left:2px;" onclick="removePositiveRule('${type}', ${i})">&times;</span></span>`;
+                });
+            }
+            html += '</div>';
+            panel.innerHTML = html;
+        }
+
+        async function addPositiveRule(type) {
+            const inputId = `positive-${type}-input`;
+            const input = document.getElementById(inputId);
+            if (!input || !input.value.trim()) return;
+
+            const rule = input.value.trim();
+            const rules = type === 'whitelist' ? _positiveWhitelist : _positiveBlacklist;
+            if (rules.includes(rule)) {
+                showToast('이미 존재하는 규칙입니다', 'error');
+                return;
+            }
+
+            if (type === 'whitelist') {
+                _positiveWhitelist = [..._positiveWhitelist, rule];
+            } else {
+                _positiveBlacklist = [..._positiveBlacklist, rule];
+            }
+
+            if (await savePositiveRules()) {
+                input.value = '';
+            }
+        }
+
+        async function removePositiveRule(type, index) {
+            if (type === 'whitelist') {
+                _positiveWhitelist = _positiveWhitelist.filter((_, i) => i !== index);
+            } else {
+                _positiveBlacklist = _positiveBlacklist.filter((_, i) => i !== index);
+            }
+            await savePositiveRules();
+        }
+
+        // Enter 키로도 규칙 추가 가능
+        document.addEventListener('DOMContentLoaded', () => {
+            const wlInput = document.getElementById('positive-whitelist-input');
+            const blInput = document.getElementById('positive-blacklist-input');
+            if (wlInput) {
+                wlInput.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter') { e.preventDefault(); addPositiveRule('whitelist'); }
+                });
+            }
+            if (blInput) {
+                blInput.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter') { e.preventDefault(); addPositiveRule('blacklist'); }
+                });
+            }
+        });
 
         let _illustPresetsCache = null;
 

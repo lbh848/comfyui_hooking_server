@@ -24,7 +24,9 @@ BOT_DATA_FILE = os.path.join(ASSET_DATA_DIR, "bot.json")
 ASSET_DIR = os.path.join(BASE_DIR, "asset")
 
 DEFAULT_BOT_DATA = {
-    "bots": []
+    "bots": [],
+    "positive_whitelist": [],
+    "positive_blacklist": [],
 }
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
@@ -40,6 +42,11 @@ def _load_bot_data() -> dict:
                 data = json.load(f)
                 if "bots" not in data:
                     data["bots"] = []
+                # 새 필드 자동 마이그레이션
+                if "positive_whitelist" not in data:
+                    data["positive_whitelist"] = []
+                if "positive_blacklist" not in data:
+                    data["positive_blacklist"] = []
                 return data
         except Exception as e:
             print(f"[BOT_MODE] bot.json 로드 실패: {e}")
@@ -1924,6 +1931,57 @@ async def handle_update_illust_settings(request):
         return _json_ok(merged)
     except Exception as e:
         print(f"[BOT_MODE] 삽화 설정 업데이트 실패: {e}")
+        traceback.print_exc()
+        return _json_error(str(e))
+
+
+async def handle_get_positive_rules(request):
+    """GET /api/bot_mode/positive_rules - POSITIVE 화이트리스트/블랙리스트 규칙 반환"""
+    try:
+        data = _load_bot_data()
+        return _json_ok({
+            "positive_whitelist": data.get("positive_whitelist", []),
+            "positive_blacklist": data.get("positive_blacklist", []),
+        })
+    except Exception as e:
+        print(f"[BOT_MODE] POSITIVE 규칙 조회 실패: {e}")
+        traceback.print_exc()
+        return _json_error(str(e))
+
+
+async def handle_save_positive_rules(request):
+    """POST /api/bot_mode/positive_rules - POSITIVE 화이트리스트/블랙리스트 규칙 저장"""
+    try:
+        body = await request.json()
+        whitelist = body.get("positive_whitelist", None)
+        blacklist = body.get("positive_blacklist", None)
+
+        data = _load_bot_data()
+
+        if whitelist is not None:
+            if not isinstance(whitelist, list):
+                return _json_error("positive_whitelist must be a list")
+            for item in whitelist:
+                if not isinstance(item, str):
+                    return _json_error("each whitelist item must be a string")
+            data["positive_whitelist"] = whitelist
+
+        if blacklist is not None:
+            if not isinstance(blacklist, list):
+                return _json_error("positive_blacklist must be a list")
+            for item in blacklist:
+                if not isinstance(item, str):
+                    return _json_error("each blacklist item must be a string")
+            data["positive_blacklist"] = blacklist
+
+        _save_bot_data(data)
+        print(f"[BOT_MODE] POSITIVE 규칙 저장: whitelist={len(data.get('positive_whitelist', []))}, blacklist={len(data.get('positive_blacklist', []))}")
+        return _json_ok({
+            "positive_whitelist": data.get("positive_whitelist", []),
+            "positive_blacklist": data.get("positive_blacklist", []),
+        })
+    except Exception as e:
+        print(f"[BOT_MODE] POSITIVE 규칙 저장 실패: {e}")
         traceback.print_exc()
         return _json_error(str(e))
 

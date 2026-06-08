@@ -310,6 +310,9 @@ class IllustPromptBuilder:
 
         # ─── 긍정 프롬프트 조합 ───
         positive = "[ANIMA_QUALITY]\n" + ", ".join(anima_quality_parts)
+        # ANIMA_ARTIST: 아티스트 프리셋 태그만 별도 블럭으로 출력
+        anima_artist_parts = [t.strip() for t in anima_artist_tags if t.strip()]
+        positive += "\n[ANIMA_ARTIST]\n" + ", ".join(anima_artist_parts)
         positive += "\n[ANIMA_CONTENT]\n" + ", ".join(anima_content_parts)
         positive += "\n[ANIMA_ALL]\n" + ", ".join(anima_all_parts)
         positive += "\n[SDXL]"
@@ -364,7 +367,10 @@ class IllustPromptBuilder:
         positive += "\n" + json.dumps(face_lora_data, ensure_ascii=False)
 
         # CHAR FACE TAG INFORM
-        face_tag_data = self.build_char_face_tag_inform(detected_chars, characters)
+        whitelist = settings.get("positive_whitelist", [])
+        blacklist = settings.get("positive_blacklist", [])
+        face_tag_data = self.build_char_face_tag_inform(detected_chars, characters, char,
+                                                         whitelist=whitelist, blacklist=blacklist)
         positive += "\n[CHAR_FACE_TAG_INFORM]"
         positive += "\n" + json.dumps(face_tag_data, ensure_ascii=False)
 
@@ -480,19 +486,99 @@ class IllustPromptBuilder:
         return {"list": items}
 
     @staticmethod
-    def build_char_face_tag_inform(detected_chars: list, characters: list) -> dict:
-        """감지된 캐릭터의 얼굴/눈 태그 JSON 빌드."""
+    def _match_tag_pattern(tag: str, patterns: list) -> bool:
+        """태그가 패턴 리스트 중 하나와 매칭되는지 확인.
+
+        와일드카드 지원: '* expressions' (접미사), 'expressions *' (접두사), 정확매칭.
+        """
+        if not patterns or not tag:
+            return False
+        t = tag.strip().lower()
+        for pattern in patterns:
+            if not isinstance(pattern, str):
+                continue
+            p = pattern.strip().lower()
+            if p.startswith("* "):
+                if t.endswith(p[2:]):
+                    return True
+            elif p.endswith(" *"):
+                if t.startswith(p[:-2]):
+                    return True
+            else:
+                if t == p:
+                    return True
+        return False
+
+    @staticmethod
+    def build_char_face_tag_inform(detected_chars: list, characters: list,
+                                    char_section: str = "",
+                                    whitelist: list = None,
+                                    blacklist: list = None) -> dict:
+        """감지된 캐릭터의 얼굴/눈 태그 JSON 빌드 + CHAR 섹션에서 캐릭터별 POSITIVE 추출.
+
+        CHAR 섹션은 | 로 구분되며, 각 세그먼트에 캐릭터 이름이 포함되어 있어
+        어느 캐릭터의 프롬프트인지 식별할 수 있다.
+        POSITIVE 추출 시 화이트리스트/블랙리스트 필터링을 적용한다.
+        """
+        if whitelist is None:
+            whitelist = []
+        if blacklist is None:
+            blacklist = []
+
+        # CHAR 섹션을 | 로 분리하여 캐릭터 이름으로 매핑
+        char_positive_map: dict[str, str] = {}
+        if char_section:
+            segments = [s.strip() for s in char_section.split("|")]
+            for segment in segments:
+                if not segment:
+                    continue
+                for char_name in detected_chars:
+                    if char_name.lower() in segment.lower():
+                        if char_name not in char_positive_map:
+                            # 캐릭터 매핑은 원문(세그먼트 전체) 보존
+                            char_positive_map[char_name] = segment
+                        break
+
         items = []
         for char_name in detected_chars:
             char_data = next((c for c in characters if c["name"] == char_name), None)
             if not char_data:
-                items.append({"FACE_TAGS": "", "EYE_TAGS": "", "CHAR": char_name})
+                items.append({
+                    "FACE_TAGS": "",
+                    "EYE_TAGS": "",
+                    "POSITIVE": "",
+                    "CHAR": char_name
+                })
                 continue
             face_tags = char_data.get("face_tags", "")
             eye_tags = char_data.get("eye_tags", "")
+
+            # POSITIVE: 화이트리스트/블랙리스트 필터링 적용
+            raw_segment = char_positive_map.get(char_name, "")
+            filtered_positive = ""
+            if raw_segment:
+                # 세그먼트를 개별 태그로 분리
+                raw_tags = [t.strip() for t in raw_segment.split(",") if t.strip()]
+                # 화이트리스트가 비어있으면 전체 태그 사용, 있으면 매칭된 태그만 사용
+                if whitelist:
+                    whitelisted = [t for t in raw_tags
+                                   if IllustPromptBuilder._match_tag_pattern(t, whitelist)]
+                else:
+                    whitelisted = raw_tags
+
+                # 블랙리스트: 사용자 설정 + FACE_TAGS + EYE_TAGS
+                face_tag_list = [t.strip() for t in face_tags.split(",") if t.strip()]
+                eye_tag_list = [t.strip() for t in eye_tags.split(",") if t.strip()]
+                auto_blacklist = blacklist + face_tag_list + eye_tag_list
+
+                filtered_tags = [t for t in whitelisted
+                                 if not IllustPromptBuilder._match_tag_pattern(t, auto_blacklist)]
+                filtered_positive = ", ".join(filtered_tags)
+
             items.append({
                 "FACE_TAGS": face_tags,
                 "EYE_TAGS": eye_tags,
+                "POSITIVE": filtered_positive,
                 "CHAR": char_name
             })
         return {"list": items}

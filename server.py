@@ -43,7 +43,7 @@ from modes import autocomplete_service
 from modes import asset_tool_mode
 from modes import bot_mode
 from modes.bot_mode import data_patcher
-from modes.bot_mode import handle_get_illust_settings, handle_update_illust_settings, handle_auto_group_prompt
+from modes.bot_mode import handle_get_illust_settings, handle_update_illust_settings, handle_auto_group_prompt, handle_get_positive_rules, handle_save_positive_rules
 from modes import embedding_service
 from modes.illust_prompt_builder import IllustPromptBuilder, log_illust_build, get_illust_logs
 import importlib.util
@@ -1596,10 +1596,14 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict):
                 # 4. 프롬프트 빌드
                 tags = asset_mode._tags
                 settings = bot.get("illust_settings", {})
-                from modes.bot_mode import _load_patch_settings
+                from modes.bot_mode import _load_patch_settings, _load_bot_data
                 patch = _load_patch_settings(bot_name)
                 settings["face_crop_top"] = patch.get("face_crop_top", 1.0)
                 settings["face_crop_bottom"] = patch.get("face_crop_bottom", 1.0)
+                # POSITIVE 규칙 (bot.json 최상위에서 로드)
+                bot_data = _load_bot_data()
+                settings["positive_whitelist"] = bot_data.get("positive_whitelist", [])
+                settings["positive_blacklist"] = bot_data.get("positive_blacklist", [])
                 positive = builder.build_positive_prompt(
                     setup_replaced, char_replaced, supplement_replaced,
                     detected, bot, tags, settings, bot_name
@@ -4831,6 +4835,8 @@ app.router.add_post("/api/bot_mode/batch_analyze_utility", bot_mode.handle_batch
 app.router.add_post("/api/bot_mode/batch_set_negative_utility", bot_mode.handle_batch_set_negative_utility)
 app.router.add_get("/api/bot_mode/illust_settings", handle_get_illust_settings)
 app.router.add_post("/api/bot_mode/update_illust_settings", handle_update_illust_settings)
+app.router.add_get("/api/bot_mode/positive_rules", handle_get_positive_rules)
+app.router.add_post("/api/bot_mode/positive_rules", handle_save_positive_rules)
 app.router.add_get("/api/bot_mode/illust_logs", handle_get_illust_logs)
 app.router.add_get("/api/bot_mode/word_replacements", bot_mode.handle_get_word_replacements)
 app.router.add_post("/api/bot_mode/word_replacements", bot_mode.handle_save_word_replacements)
