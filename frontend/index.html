@@ -19100,6 +19100,15 @@
         function _agDragStart(e, tag) {
             _agDragTag = tag;
             e.dataTransfer.effectAllowed = 'copy';
+            // 툴팁이 drag ghost에 포함되지 않도록 깨끗한 복제본 사용
+            const ghost = document.createElement('span');
+            ghost.textContent = tag;
+            ghost.className = 'ag-tag';
+            ghost.style.position = 'absolute';
+            ghost.style.top = '-9999px';
+            document.body.appendChild(ghost);
+            e.dataTransfer.setDragImage(ghost, ghost.offsetWidth / 2, ghost.offsetHeight / 2);
+            setTimeout(() => ghost.remove(), 0);
         }
 
         function _agAllowDrop(e) {
