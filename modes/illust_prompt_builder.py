@@ -127,6 +127,52 @@ class IllustPromptBuilder:
 
         return detected
 
+    @staticmethod
+    def _resolve_lora_path(lora: dict) -> str:
+        """source에 따라 lora_path에 올바른 접두사를 적용한다.
+
+        - asset: SOYA_CHAR_LORA\\<lora_path>
+        - bot:    SOYA_CHAR_LORA\\SOYA_BOT_LORA\\<lora_path>
+        - instance: SOYA_CHAR_LORA\\SOYA_INSTANCE_LORA\\<lora_path>
+
+        기존 bot.json에 파일명만 저장된 봇 LoRA의 경우,
+        bot_name/project_name/character/preview_url 메타데이터로
+        전체 상대경로를 복원한다.
+        """
+        source = lora.get("source", "asset")
+        raw = lora.get("lora_path", "")
+
+        # 봇 LoRA: 파일명만 저장된 구버전 호환
+        if source == "bot":
+            # 이미 디렉토리 구분자가 있으면 전체 경로로 간주
+            if "\\" in raw or "/" in raw:
+                resolved = raw
+            else:
+                # 파일명만 있으므로 메타데이터로 복원
+                bot_name = lora.get("bot_name", "")
+                project_name = lora.get("project_name", "")
+                character = lora.get("character", "")
+                session = ""
+                preview_url = lora.get("preview_url", "")
+                # preview_url: /api/bot_lora/trained/preview/<bot>/<proj>/<char>/<session>/<file>
+                parts = preview_url.strip("/").split("/")
+                # 인덱스: api / bot_lora / trained / preview / bot / proj / char / session / file
+                if len(parts) >= 9 and parts[0] == "api":
+                    session = parts[7]
+                if bot_name and project_name and character and session and raw:
+                    resolved = f"{bot_name}\\Lora\\{project_name}\\{character}\\{session}\\{raw}"
+                    print(f"[ILLUST_LORA_PATH] 봇 LoRA 경로 복원: {raw} -> {resolved}")
+                else:
+                    print(f"[ILLUST_LORA_PATH] 봇 LoRA 경로 복원 실패 (메타데이터 부족): bot={bot_name}, proj={project_name}, char={character}, session={session}, file={raw}")
+                    resolved = raw
+            return f"SOYA_CHAR_LORA\\SOYA_BOT_LORA\\{resolved}"
+
+        if source == "instance":
+            return f"SOYA_CHAR_LORA\\SOYA_INSTANCE_LORA\\{raw}"
+
+        # asset
+        return f"SOYA_CHAR_LORA\\{raw}"
+
     def build_positive_prompt(
         self,
         setup: str,
@@ -159,7 +205,7 @@ class IllustPromptBuilder:
             for lora in char_data.get("loras", []):
                 trigger = lora.get("trigger", char_name)
                 base = lora.get("BASE", "anima")
-                lora_path = lora.get("lora_path", "")
+                lora_path = self._resolve_lora_path(lora)
                 strength = lora.get("strength", 0.8)
 
                 if base == "anima":
@@ -284,6 +330,11 @@ class IllustPromptBuilder:
         positive += "\n[LORA_DATA]"
         positive += "\n" + json.dumps(lora_data, ensure_ascii=False)
 
+        # CHAR FACE TAG INFORM
+        face_tag_data = self.build_char_face_tag_inform(detected_chars, characters)
+        positive += "\n[CHAR_FACE_TAG_INFORM]"
+        positive += "\n" + json.dumps(face_tag_data, ensure_ascii=False)
+
         # HRF
         hrf_activate = settings.get("hrf_activate", False)
         hrf_size = settings.get("hrf_size", 1.5)
@@ -388,11 +439,28 @@ class IllustPromptBuilder:
         return {"list": items}
 
     @staticmethod
+    def build_char_face_tag_inform(detected_chars: list, characters: list) -> dict:
+        """감지된 캐릭터의 얼굴/눈 태그 JSON 빌드."""
+        items = []
+        for char_name in detected_chars:
+            char_data = next((c for c in characters if c["name"] == char_name), None)
+            if not char_data:
+                items.append({"FACE_TAGS": "", "EYE_TAGS": "", "CHAR": char_name})
+                continue
+            face_tags = char_data.get("face_tags", "")
+            eye_tags = char_data.get("eye_tags", "")
+            items.append({
+                "FACE_TAGS": face_tags,
+                "EYE_TAGS": eye_tags,
+                "CHAR": char_name
+            })
+        return {"list": items}
+
+    @staticmethod
     def build_face_id_dir(detected_chars: list, bot_name: str, settings: dict) -> dict:
         """감지된 캐릭터의 Face ID 디렉토리 JSON 빌드.
 
         soya_bot/{bot_name}/{char_name}/cache.ipadpt 형식
-        extra_tag는 빈 문자열로 시작 (향후 확장)
         """
         face_id_str = settings.get("face_id_str", 0.55)
         items = []
@@ -400,7 +468,6 @@ class IllustPromptBuilder:
             items.append({
                 "ipa_path": f"soya_bot/{bot_name}/{char_name}/cache.ipadpt",
                 "str": face_id_str,
-                "CHAR": char_name,
-                "extra_tag": ""
+                "CHAR": char_name
             })
         return {"list": items}

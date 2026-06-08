@@ -18119,24 +18119,8 @@
                             style="background:rgba(244,114,182,0.12); color:var(--text); border:1px solid rgba(244,114,182,0.3); padding:8px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600; white-space:nowrap;">전체 이미지 보기</button>
                         <button class="btn-auto-group" data-char-name="${escAttr(char.name)}"
                             onclick="event.stopPropagation(); autoGroupPrompt('${escAttr(char.name)}')"
-                            style="background:rgba(34,197,94,0.12); color:var(--text); border:1px solid rgba(34,197,94,0.3); padding:8px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600; white-space:nowrap;">외모/복장 분류</button>
+                            style="background:rgba(34,197,94,0.12); color:var(--text); border:1px solid rgba(34,197,94,0.3); padding:8px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600; white-space:nowrap;">캐릭터 얼굴 태그 설정</button>
                         <div style="margin-left:auto;"></div>
-                        <div style="display:flex; align-items:center; gap:0; border:1px solid var(--border); border-radius:6px; overflow:hidden; flex-shrink:0;">
-                            <span style="padding:5px 8px; font-size:0.85rem; background:var(--surface2); border-right:1px solid var(--border);">👁️</span>
-                            <input type="text" id="eye-prompt-${charIdx}" data-bot="${escAttr(botCurrentBot)}" data-char="${escAttr(char.name)}"
-                                   placeholder="눈 관련 추가 프롬프트(옵션)"
-                                   value="${escAttr(char.eye_prompt || '')}"
-                                   onblur="saveEyePrompt(this)" onclick="event.stopPropagation()"
-                                   style="border:none; background:var(--surface); color:var(--text); font-size:0.8rem; padding:5px 8px; min-width:180px;">
-                        </div>
-                        <div style="display:flex; align-items:center; gap:0; border:1px solid rgba(255,87,34,0.4); border-radius:6px; overflow:hidden; flex-shrink:0;">
-                            <span style="padding:5px 8px; font-size:0.85rem; background:rgba(255,87,34,0.1); border-right:1px solid rgba(255,87,34,0.3);">➖</span>
-                            <input type="text" id="char-negative-${charIdx}" data-bot="${escAttr(botCurrentBot)}" data-char="${escAttr(char.name)}"
-                                   placeholder="캐릭터 부정 프롬프트(옵션)"
-                                   value="${escAttr(char.character_negative || '')}"
-                                   onblur="saveCharNegative(this)" onclick="event.stopPropagation()"
-                                   style="border:none; background:var(--surface); color:var(--text); font-size:0.8rem; padding:5px 8px; min-width:180px;">
-                        </div>
                         <button onclick="event.stopPropagation(); togglePromptPreviewModal('${escAttr(char.name)}', this)"
                             style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:6px 10px; border-radius:6px; cursor:pointer; font-size:0.8rem; white-space:nowrap;">패치 프롬프트 미리보기</button>
                         <span id="patch-status-${charIdx}" style="display:inline-flex; align-items:center; gap:3px; margin-left:4px; font-size:0.7rem; color:gray; flex-shrink:0;">
@@ -18741,6 +18725,11 @@
         let _autoGroupViewMode = 'chips'; // 'text' | 'chips'
         let _autoGroupLastGroups = null;
         let _autoGroupShowDesc = false;
+        let _autoGroupCharName = '';
+        let _autoGroupFaceTags = []; // tags mode face tag chips
+        let _autoGroupEyeTags = [];  // tags mode eye tag chips
+        let _autoGroupFaceText = '';  // text mode face tags
+        let _autoGroupEyeText = '';   // text mode eye tags
 
         async function autoGroupPrompt(charName) {
             const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
@@ -18788,6 +18777,14 @@
 
         function _setAutoGroupView(mode) {
             _autoGroupViewMode = mode;
+            // 모드 전환 시 칩/텍스트 동기화
+            if (mode === 'chips') {
+                _autoGroupFaceTags = _autoGroupFaceText ? _autoGroupFaceText.split(',').map(t => t.trim()).filter(Boolean) : [];
+                _autoGroupEyeTags = _autoGroupEyeText ? _autoGroupEyeText.split(',').map(t => t.trim()).filter(Boolean) : [];
+            } else {
+                _autoGroupFaceText = _autoGroupFaceTags.join(', ');
+                _autoGroupEyeText = _autoGroupEyeTags.join(', ');
+            }
             // 세그먼트 버튼 active 상태 업데이트
             const seg = document.getElementById('auto-group-view-toggle');
             if (seg) {
@@ -18802,6 +18799,7 @@
                 });
             }
             _renderAutoGroupContent();
+            _renderFaceTagEditors();
         }
 
         function _renderAutoGroupContent() {
@@ -18845,7 +18843,7 @@
                             <div style="display:flex; flex-wrap:wrap; gap:4px;">
                                 ${tags.map(t => {
                                     const descAttr = (_autoGroupShowDesc && t.desc) ? `data-desc="${escAttr(t.desc)}"` : '';
-                                    return `<span class="ag-tag" ${descAttr} style="background:${colorCfg.tag}; padding:3px 8px; border-radius:4px; font-size:0.8rem; cursor:default; position:relative;">${escHtml(t.tag)}</span>`;
+                                    return `<span class="ag-tag" ${descAttr} draggable="true" data-tag="${escAttr(t.tag)}" ondragstart="_agDragStart(event,'${escAttr(t.tag)}')" style="background:${colorCfg.tag}; padding:3px 8px; border-radius:4px; font-size:0.8rem; cursor:grab; position:relative;">${escHtml(t.tag)}</span>`;
                                 }).join('')}
                             </div>
                         </div>
@@ -18864,6 +18862,17 @@
             _autoGroupLastGroups = null;
             _autoGroupViewMode = 'chips';
             _autoGroupShowDesc = false;
+            _autoGroupCharName = charName;
+
+            // 캐릭터에서 기존 face_tags/eye_tags 로드
+            const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
+            const char = bot ? (bot.characters || []).find(c => c.name === charName) : null;
+            const existingFaceTags = (char && char.face_tags) || '';
+            const existingEyeTags = (char && char.eye_tags) || '';
+            _autoGroupFaceTags = existingFaceTags ? existingFaceTags.split(',').map(t => t.trim()).filter(Boolean) : [];
+            _autoGroupEyeTags = existingEyeTags ? existingEyeTags.split(',').map(t => t.trim()).filter(Boolean) : [];
+            _autoGroupFaceText = existingFaceTags;
+            _autoGroupEyeText = existingEyeTags;
 
             const overlay = document.createElement('div');
             overlay.id = 'auto-group-overlay';
@@ -18876,7 +18885,7 @@
             modal.innerHTML = `
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
                     <div>
-                        <h3 style="margin:0; font-size:1.1rem;">외모/복장 분류 — ${escHtml(charName)}</h3>
+                        <h3 style="margin:0; font-size:1.1rem;">캐릭터 얼굴 태그 설정 — ${escHtml(charName)}</h3>
                         <div style="font-size:0.7rem; color:var(--text2); margin-top:2px;">첫 번째 대표 이미지 프롬프트 분석</div>
                     </div>
                     <div style="display:flex; gap:8px; align-items:center;">
@@ -18889,12 +18898,23 @@
                         </div>
                         <button id="auto-group-refresh-btn" onclick="_refreshAutoGroup('${escAttr(charName)}')"
                             style="background:rgba(34,197,94,0.12); color:var(--text); border:1px solid rgba(34,197,94,0.3); padding:6px 14px; border-radius:6px; cursor:pointer; font-size:0.85rem;">새로고침</button>
-                        <button onclick="document.getElementById('auto-group-overlay').remove()"
+                        <button onclick="_closeAutoGroupModal()"
                             style="background:var(--surface2); color:var(--text); border:1px solid var(--border); width:32px; height:32px; border-radius:6px; cursor:pointer; font-size:1.2rem; display:flex; align-items:center; justify-content:center;">✕</button>
                     </div>
                 </div>
                 <div id="auto-group-content" style="flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:12px;">
                     <div style="text-align:center; padding:40px; color:var(--text2);">분석 중...</div>
+                </div>
+                <div style="border-top:2px solid var(--border); margin-top:12px; padding-top:12px;">
+                    <div style="font-weight:600; font-size:0.9rem; margin-bottom:8px;">얼굴 태그 편집</div>
+                    <div id="auto-group-face-edit" style="min-height:40px; border:1px dashed var(--border); border-radius:6px; padding:8px; display:flex; flex-wrap:wrap; gap:4px; align-items:center;">
+                    </div>
+                    <div style="font-weight:600; font-size:0.9rem; margin-top:12px; margin-bottom:8px;">눈 태그 편집</div>
+                    <div id="auto-group-eye-edit" style="min-height:40px; border:1px dashed var(--border); border-radius:6px; padding:8px; display:flex; flex-wrap:wrap; gap:4px; align-items:center;">
+                    </div>
+                    <div style="display:flex; justify-content:flex-end; margin-top:10px;">
+                        <button onclick="_saveCharFaceTags()" style="background:var(--accent); color:#fff; border:none; padding:8px 20px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">저장</button>
+                    </div>
                 </div>
             `;
 
@@ -18902,6 +18922,7 @@
             document.body.appendChild(overlay);
 
             await _fetchAndRenderGroups(prompt);
+            _renderFaceTagEditors();
         }
 
         async function _refreshAutoGroup(charName) {
@@ -18953,6 +18974,141 @@
                 content.innerHTML = `<div style="color:var(--error); padding:20px;">요청 실패: ${escHtml(e.message)}</div>`;
                 console.error('[AUTO_GROUP] fetch error:', e);
             }
+        }
+
+        // ─── 얼굴/눈 태그 편집 드래그 앤 드롭 ─────────────────────
+        let _agDragTag = '';
+
+        function _agDragStart(e, tag) {
+            _agDragTag = tag;
+            e.dataTransfer.effectAllowed = 'copy';
+        }
+
+        function _agAllowDrop(e) {
+            e.preventDefault();
+            e.currentTarget.style.borderColor = 'var(--accent)';
+        }
+
+        function _agDragLeave(e) {
+            e.currentTarget.style.borderColor = 'var(--border)';
+        }
+
+        function _agFaceDrop(e) {
+            e.preventDefault();
+            e.currentTarget.style.borderColor = 'var(--border)';
+            if (_agDragTag && !_autoGroupFaceTags.includes(_agDragTag)) {
+                _autoGroupFaceTags.push(_agDragTag);
+                _renderFaceTagEditors();
+            }
+        }
+
+        function _agEyeDrop(e) {
+            e.preventDefault();
+            e.currentTarget.style.borderColor = 'var(--border)';
+            if (_agDragTag && !_autoGroupEyeTags.includes(_agDragTag)) {
+                _autoGroupEyeTags.push(_agDragTag);
+                _renderFaceTagEditors();
+            }
+        }
+
+        function _agRemoveFaceTag(idx) {
+            _autoGroupFaceTags.splice(idx, 1);
+            _renderFaceTagEditors();
+        }
+
+        function _agRemoveEyeTag(idx) {
+            _autoGroupEyeTags.splice(idx, 1);
+            _renderFaceTagEditors();
+        }
+
+        function _agFaceTextChanged(input) {
+            _autoGroupFaceText = input.value;
+        }
+
+        function _agEyeTextChanged(input) {
+            _autoGroupEyeText = input.value;
+        }
+
+        function _renderFaceTagEditors() {
+            const faceEl = document.getElementById('auto-group-face-edit');
+            const eyeEl = document.getElementById('auto-group-eye-edit');
+            if (!faceEl || !eyeEl) return;
+
+            if (_autoGroupViewMode === 'chips') {
+                // 태그 모드: 드롭존 + 칩 렌더링
+                faceEl.ondragover = _agAllowDrop;
+                faceEl.ondragleave = _agDragLeave;
+                faceEl.ondrop = _agFaceDrop;
+                eyeEl.ondragover = _agAllowDrop;
+                eyeEl.ondragleave = _agDragLeave;
+                eyeEl.ondrop = _agEyeDrop;
+
+                faceEl.innerHTML = _autoGroupFaceTags.length === 0
+                    ? '<span style="color:var(--text2); font-size:0.8rem;">위 태그를 드래그하세요</span>'
+                    : _autoGroupFaceTags.map((t, i) =>
+                        `<span style="background:rgba(59,130,246,0.2); padding:3px 8px; border-radius:4px; font-size:0.8rem; display:inline-flex; align-items:center; gap:4px;">${escHtml(t)}<span onclick="_agRemoveFaceTag(${i})" style="cursor:pointer; font-size:0.7rem; opacity:0.6;">✕</span></span>`
+                    ).join('');
+
+                eyeEl.innerHTML = _autoGroupEyeTags.length === 0
+                    ? '<span style="color:var(--text2); font-size:0.8rem;">위 태그를 드래그하세요</span>'
+                    : _autoGroupEyeTags.map((t, i) =>
+                        `<span style="background:rgba(168,85,247,0.2); padding:3px 8px; border-radius:4px; font-size:0.8rem; display:inline-flex; align-items:center; gap:4px;">${escHtml(t)}<span onclick="_agRemoveEyeTag(${i})" style="cursor:pointer; font-size:0.7rem; opacity:0.6;">✕</span></span>`
+                    ).join('');
+            } else {
+                // 텍스트 모드: 텍스트 입력
+                faceEl.ondragover = null;
+                faceEl.ondragleave = null;
+                faceEl.ondrop = null;
+                eyeEl.ondragover = null;
+                eyeEl.ondragleave = null;
+                eyeEl.ondrop = null;
+
+                faceEl.innerHTML = `<input type="text" value="${escAttr(_autoGroupFaceText)}" oninput="_agFaceTextChanged(this)" placeholder="얼굴 태그를 쉼표로 입력" style="width:100%; border:none; background:transparent; color:var(--text); font-size:0.85rem; outline:none;">`;
+                eyeEl.innerHTML = `<input type="text" value="${escAttr(_autoGroupEyeText)}" oninput="_agEyeTextChanged(this)" placeholder="눈 태그를 쉼표로 입력" style="width:100%; border:none; background:transparent; color:var(--text); font-size:0.85rem; outline:none;">`;
+            }
+        }
+
+        async function _saveCharFaceTags() {
+            const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
+            if (!bot) { showToast('봇을 찾을 수 없습니다', 'error'); return; }
+            const char = (bot.characters || []).find(c => c.name === _autoGroupCharName);
+            if (!char) { showToast('캐릭터를 찾을 수 없습니다', 'error'); return; }
+
+            let faceTags = '';
+            let eyeTags = '';
+
+            if (_autoGroupViewMode === 'chips') {
+                faceTags = _autoGroupFaceTags.join(', ');
+                eyeTags = _autoGroupEyeTags.join(', ');
+            } else {
+                faceTags = _autoGroupFaceText;
+                eyeTags = _autoGroupEyeText;
+            }
+
+            try {
+                const resp = await fetch('/api/bot_mode/action', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        action: 'update_char_face_tags',
+                        bot_name: botCurrentBot,
+                        char_name: _autoGroupCharName,
+                        face_tags: faceTags,
+                        eye_tags: eyeTags
+                    })
+                });
+                const data = await resp.json();
+                if (data.bots) botData.bots = data.bots;
+                showToast('얼굴 태그 저장 완료', 'success');
+            } catch (e) {
+                console.error('[AUTO_GROUP] 얼굴 태그 저장 실패:', e);
+                showToast('저장 실패', 'error');
+            }
+        }
+
+        function _closeAutoGroupModal() {
+            const overlay = document.getElementById('auto-group-overlay');
+            if (overlay) overlay.remove();
         }
 
         // ─── 캐릭터 LoRA 피커 모달 ───────────────────────────────
@@ -19339,13 +19495,21 @@
                         card.onmouseleave = () => { card.style.borderColor = 'var(--border)'; card.style.background = 'transparent'; };
                         card.onclick = () => {
                             const loras = getBotCharLoras(_botCharLoraPickerState.charName);
+                            const botLoraPath = [
+                                _botCharLoraPickerState.botSelectedBot,
+                                'Lora',
+                                projectName,
+                                ch.name,
+                                repSession.name,
+                                repData.safetensors || ''
+                            ].join('\\');
                             loras.push({
                                 source: 'bot',
                                 name: ch.name,
                                 bot_name: _botCharLoraPickerState.botSelectedBot,
                                 project_name: projectName,
                                 character: ch.name,
-                                lora_path: repData.safetensors || '',
+                                lora_path: botLoraPath,
                                 strength: 0.5,
                                 preview_url: previewUrl,
                                 trigger: ch.trigger || ch.name,
@@ -19397,42 +19561,6 @@
                 });
             } catch (e) {
                 console.error('[BOT] 패치 파일 확인 실패:', e);
-            }
-        }
-
-        async function saveEyePrompt(inputEl) {
-            const botName = inputEl.dataset.bot;
-            const charName = inputEl.dataset.char;
-            const eyePrompt = inputEl.value;
-            if (!botName || !charName) return;
-            try {
-                const resp = await fetch('/api/bot_mode/action', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ action: 'update_eye_prompt', bot_name: botName, char_name: charName, eye_prompt: eyePrompt })
-                });
-                const data = await resp.json();
-                if (data.bots) botData.bots = data.bots;
-            } catch (e) {
-                console.error('[BOT] 눈 프롬프트 저장 실패:', e);
-            }
-        }
-
-        async function saveCharNegative(inputEl) {
-            const botName = inputEl.dataset.bot;
-            const charName = inputEl.dataset.char;
-            const characterNegative = inputEl.value;
-            if (!botName || !charName) return;
-            try {
-                const resp = await fetch('/api/bot_mode/action', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ action: 'update_char_negative', bot_name: botName, char_name: charName, character_negative: characterNegative })
-                });
-                const data = await resp.json();
-                if (data.bots) botData.bots = data.bots;
-            } catch (e) {
-                console.error('[BOT] 캐릭터 부정 프롬프트 저장 실패:', e);
             }
         }
 
