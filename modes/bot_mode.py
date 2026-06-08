@@ -1977,6 +1977,7 @@ async def handle_save_positive_rules(request):
         _save_bot_data(data)
         print(f"[BOT_MODE] POSITIVE 규칙 저장: whitelist={len(data.get('positive_whitelist', []))}, blacklist={len(data.get('positive_blacklist', []))}")
         return _json_ok({
+            "success": True,
             "positive_whitelist": data.get("positive_whitelist", []),
             "positive_blacklist": data.get("positive_blacklist", []),
         })

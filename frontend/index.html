@@ -3283,6 +3283,11 @@
                             <button onclick="openWordReplacementsModal()" style="width:100%; background:#6A1B9A; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">단어 치환 규칙 설정</button>
                             <div id="word-replacements-count" style="font-size:0.7rem; color:var(--text2); margin-top:4px;"></div>
                         </div>
+                        <div style="background:rgba(0,105,92,0.08); border-radius:8px; padding:10px; margin-top:8px;">
+                            <div class="section-title">POSITIVE 태그 규칙</div>
+                            <button onclick="openPositiveRulesModal()" style="width:100%; background:#00695C; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">POSITIVE 태그 규칙 설정</button>
+                            <div id="positive-rules-count" style="font-size:0.7rem; color:var(--text2); margin-top:4px;"></div>
+                        </div>
                         <div style="background:rgba(156,39,176,0.08); border-radius:8px; padding:10px; margin-top:8px;">
                             <div class="section-title">삽화 프롬프트 설정</div>
                             <div style="margin-top:6px;">
@@ -3394,25 +3399,6 @@
                             <div style="margin-top:8px;">
                                 <button onclick="openIllustLogModal()" style="width:100%; background:#6A1B9A; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">📋 프롬프트 빌드 로그</button>
                             </div>
-                            <details style="margin-top:8px; border:1px solid var(--border); border-radius:6px; padding:6px 10px; background:var(--surface2);">
-                                <summary style="cursor:pointer; font-size:0.85rem; font-weight:600; color:var(--accent);">POSITIVE 태그 규칙</summary>
-                                <div style="margin-top:8px;">
-                                    <div style="font-size:0.75rem; color:var(--text2); margin-bottom:4px;">화이트리스트 (매칭된 태그만 POSITIVE에 포함)</div>
-                                    <div id="positive-whitelist-panel" style="min-height:20px;"></div>
-                                    <div style="display:flex; gap:4px; margin-top:4px;">
-                                        <input id="positive-whitelist-input" type="text" placeholder="예: * expressions, smile" style="flex:1; padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); font-size:0.8rem;">
-                                        <button onclick="addPositiveRule('whitelist')" style="padding:4px 10px; background:var(--accent); color:#fff; border:none; border-radius:4px; font-size:0.8rem; cursor:pointer; font-weight:600;">추가</button>
-                                    </div>
-                                </div>
-                                <div style="margin-top:10px;">
-                                    <div style="font-size:0.75rem; color:var(--text2); margin-bottom:4px;">블랙리스트 (화이트리스트 통과 후 제외 + FACE/EYE_TAGS 자동 제외)</div>
-                                    <div id="positive-blacklist-panel" style="min-height:20px;"></div>
-                                    <div style="display:flex; gap:4px; margin-top:4px;">
-                                        <input id="positive-blacklist-input" type="text" placeholder="예: open mouth, tears" style="flex:1; padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); font-size:0.8rem;">
-                                        <button onclick="addPositiveRule('blacklist')" style="padding:4px 10px; background:rgba(220,50,50,0.85); color:#fff; border:none; border-radius:4px; font-size:0.8rem; cursor:pointer; font-weight:600;">추가</button>
-                                    </div>
-                                </div>
-                            </details>
                         </div>
                     </div>
                 </div>
@@ -21411,6 +21397,18 @@
         let _positiveWhitelist = [];
         let _positiveBlacklist = [];
 
+        function _updatePositiveRulesCount() {
+            const el = document.getElementById('positive-rules-count');
+            if (!el) return;
+            const wl = _positiveWhitelist.length;
+            const bl = _positiveBlacklist.length;
+            if (wl === 0 && bl === 0) {
+                el.textContent = '규칙 없음 (모든 태그 포함)';
+            } else {
+                el.textContent = `화이트리스트 ${wl}개 / 블랙리스트 ${bl}개`;
+            }
+        }
+
         async function loadPositiveRules() {
             try {
                 const res = await fetchJSON('/api/bot_mode/positive_rules');
@@ -21426,11 +21424,110 @@
                 _positiveWhitelist = [];
                 _positiveBlacklist = [];
             }
-            renderPositiveRulesPanel('whitelist');
-            renderPositiveRulesPanel('blacklist');
+            _updatePositiveRulesCount();
         }
 
-        async function savePositiveRules() {
+        async function openPositiveRulesModal() {
+            const existing = document.getElementById('positive-rules-modal');
+            if (existing) { existing.remove(); return; }
+
+            await loadPositiveRules();
+
+            const modal = document.createElement('div');
+            modal.id = 'positive-rules-modal';
+            modal.style.cssText = 'position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:10000; background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:20px; min-width:480px; max-width:600px; max-height:80vh; box-shadow:0 8px 32px rgba(0,0,0,0.4); display:flex; flex-direction:column;';
+            modal.innerHTML = `
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+                    <div style="font-weight:700; font-size:1rem;">POSITIVE 태그 규칙</div>
+                    <button onclick="document.getElementById('positive-rules-modal').remove()"
+                        style="background:none; border:none; color:var(--text2); font-size:1.2rem; cursor:pointer;">✕</button>
+                </div>
+                <div style="font-size:0.75rem; color:var(--text2); margin-bottom:12px; padding:6px 8px; background:rgba(0,105,92,0.08); border-radius:4px;">
+                    CHAR 섹션에서 캐릭터별로 POSITIVE 태그를 추출할 때 필터링 규칙을 설정합니다.<br>
+                    화이트리스트가 있으면 매칭된 태그만 포함, 블랙리스트 + FACE/EYE_TAGS는 자동 제외됩니다.<br>
+                    <code style="font-size:0.7rem;">* expressions</code> (접미사), <code style="font-size:0.7rem;">smile *</code> (접두사), <code style="font-size:0.7rem;">smile</code> (정확매칭)
+                </div>
+                <div style="margin-bottom:12px;">
+                    <div style="font-size:0.8rem; font-weight:600; color:rgba(76,175,80,0.9); margin-bottom:6px;">화이트리스트 (매칭된 태그만 POSITIVE에 포함)</div>
+                    <div id="pr-whitelist-chips" style="display:flex; flex-wrap:wrap; gap:4px; min-height:24px; margin-bottom:6px;"></div>
+                    <div style="display:flex; gap:6px;">
+                        <input id="pr-whitelist-input" type="text" placeholder="예: * expressions, smile" style="flex:1; padding:6px 10px; border:1px solid var(--border); border-radius:4px; background:var(--surface2); color:var(--text); font-size:0.85rem;">
+                        <button onclick="addPositiveRule('whitelist')" style="padding:6px 14px; background:rgba(76,175,80,0.85); color:#fff; border:none; border-radius:4px; font-size:0.85rem; cursor:pointer; font-weight:600;">추가</button>
+                    </div>
+                </div>
+                <div style="margin-bottom:12px;">
+                    <div style="font-size:0.8rem; font-weight:600; color:rgba(220,50,50,0.85); margin-bottom:6px;">블랙리스트 (화이트리스트 통과 후 제외)</div>
+                    <div style="font-size:0.7rem; color:var(--text2); margin-bottom:4px;">FACE_TAGS, EYE_TAGS는 자동으로 제외됩니다</div>
+                    <div id="pr-blacklist-chips" style="display:flex; flex-wrap:wrap; gap:4px; min-height:24px; margin-bottom:6px;"></div>
+                    <div style="display:flex; gap:6px;">
+                        <input id="pr-blacklist-input" type="text" placeholder="예: open mouth, tears" style="flex:1; padding:6px 10px; border:1px solid var(--border); border-radius:4px; background:var(--surface2); color:var(--text); font-size:0.85rem;">
+                        <button onclick="addPositiveRule('blacklist')" style="padding:6px 14px; background:rgba(220,50,50,0.85); color:#fff; border:none; border-radius:4px; font-size:0.85rem; cursor:pointer; font-weight:600;">추가</button>
+                    </div>
+                </div>
+                <div style="display:flex; gap:8px; margin-top:auto; justify-content:flex-end;">
+                    <button onclick="document.getElementById('positive-rules-modal').remove()"
+                        style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:6px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem;">닫기</button>
+                    <button onclick="savePositiveRulesFromModal()"
+                        style="background:var(--accent); color:#fff; border:none; padding:6px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem;">저장</button>
+                </div>
+            `;
+            document.body.appendChild(modal);
+            _renderPositiveChips('whitelist');
+            _renderPositiveChips('blacklist');
+
+            // Enter 키 입력
+            const wlInput = document.getElementById('pr-whitelist-input');
+            const blInput = document.getElementById('pr-blacklist-input');
+            if (wlInput) wlInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addPositiveRule('whitelist'); } });
+            if (blInput) blInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addPositiveRule('blacklist'); } });
+        }
+
+        function _renderPositiveChips(type) {
+            const container = document.getElementById(`pr-${type}-chips`);
+            if (!container) return;
+            const rules = type === 'whitelist' ? _positiveWhitelist : _positiveBlacklist;
+            const bg = type === 'whitelist' ? 'rgba(76,175,80,0.12)' : 'rgba(220,50,50,0.10)';
+            const border = type === 'whitelist' ? 'rgba(76,175,80,0.35)' : 'rgba(220,50,50,0.25)';
+            const text = type === 'whitelist' ? 'rgba(76,175,80,0.95)' : 'rgba(220,50,50,0.9)';
+
+            if (rules.length === 0) {
+                container.innerHTML = `<span style="font-size:0.75rem; color:var(--text2);">${type === 'whitelist' ? '없음 (모든 태그 포함)' : '없음'}</span>`;
+                return;
+            }
+            container.innerHTML = rules.map((rule, i) =>
+                `<span style="display:inline-flex; align-items:center; gap:3px; background:${bg}; border:1px solid ${border}; border-radius:4px; padding:3px 8px; font-size:0.8rem; color:${text};">${escHtml(rule)}<span style="cursor:pointer; font-weight:bold; margin-left:2px; opacity:0.7;" onclick="removePositiveRule('${type}', ${i})">&times;</span></span>`
+            ).join('');
+        }
+
+        async function addPositiveRule(type) {
+            const input = document.getElementById(`pr-${type}-input`);
+            if (!input || !input.value.trim()) return;
+            const rule = input.value.trim();
+            const rules = type === 'whitelist' ? _positiveWhitelist : _positiveBlacklist;
+            if (rules.includes(rule)) {
+                showToast('이미 존재하는 규칙입니다', 'error');
+                return;
+            }
+            if (type === 'whitelist') {
+                _positiveWhitelist = [..._positiveWhitelist, rule];
+            } else {
+                _positiveBlacklist = [..._positiveBlacklist, rule];
+            }
+            _renderPositiveChips(type);
+            input.value = '';
+            input.focus();
+        }
+
+        function removePositiveRule(type, index) {
+            if (type === 'whitelist') {
+                _positiveWhitelist = _positiveWhitelist.filter((_, i) => i !== index);
+            } else {
+                _positiveBlacklist = _positiveBlacklist.filter((_, i) => i !== index);
+            }
+            _renderPositiveChips(type);
+        }
+
+        async function savePositiveRulesFromModal() {
             try {
                 const res = await fetchJSON('/api/bot_mode/positive_rules', {
                     method: 'POST',
@@ -21443,90 +21540,17 @@
                 if (res && res.success) {
                     _positiveWhitelist = res.positive_whitelist || [];
                     _positiveBlacklist = res.positive_blacklist || [];
-                    renderPositiveRulesPanel('whitelist');
-                    renderPositiveRulesPanel('blacklist');
-                    return true;
+                    _updatePositiveRulesCount();
+                    showToast('POSITIVE 태그 규칙 저장 완료', 'success');
+                    document.getElementById('positive-rules-modal').remove();
                 } else {
-                    showToast(res.error || 'POSITIVE 규칙 저장 실패', 'error');
-                    return false;
+                    showToast(res.error || '저장 실패', 'error');
                 }
             } catch (e) {
                 console.error('[POSITIVE_RULES] 저장 실패:', e);
-                showToast('POSITIVE 규칙 저장 실패', 'error');
-                return false;
+                showToast('POSITIVE 태그 규칙 저장 실패', 'error');
             }
         }
-
-        function renderPositiveRulesPanel(type) {
-            const panel = document.getElementById(`positive-${type}-panel`);
-            if (!panel) return;
-            const rules = type === 'whitelist' ? _positiveWhitelist : _positiveBlacklist;
-            const chipColor = type === 'whitelist'
-                ? 'rgba(76,175,80,0.15)' : 'rgba(220,50,50,0.12)';
-            const chipBorder = type === 'whitelist'
-                ? 'rgba(76,175,80,0.4)' : 'rgba(220,50,50,0.3)';
-            const chipText = type === 'whitelist'
-                ? 'var(--success, #4CAF50)' : 'var(--error)';
-
-            let html = '<div style="display:flex; flex-wrap:wrap; gap:4px;">';
-            if (rules.length === 0) {
-                html += `<span style="font-size:0.75rem; color:var(--text2);">${type === 'whitelist' ? '화이트리스트 없음 (모든 태그 포함)' : '블랙리스트 없음'}</span>`;
-            } else {
-                rules.forEach((rule, i) => {
-                    html += `<span style="display:inline-flex; align-items:center; gap:2px; background:${chipColor}; border:1px solid ${chipBorder}; border-radius:4px; padding:2px 6px; font-size:0.75rem; color:${chipText};">${escapeHtml(rule)}<span style="cursor:pointer; font-weight:bold; margin-left:2px;" onclick="removePositiveRule('${type}', ${i})">&times;</span></span>`;
-                });
-            }
-            html += '</div>';
-            panel.innerHTML = html;
-        }
-
-        async function addPositiveRule(type) {
-            const inputId = `positive-${type}-input`;
-            const input = document.getElementById(inputId);
-            if (!input || !input.value.trim()) return;
-
-            const rule = input.value.trim();
-            const rules = type === 'whitelist' ? _positiveWhitelist : _positiveBlacklist;
-            if (rules.includes(rule)) {
-                showToast('이미 존재하는 규칙입니다', 'error');
-                return;
-            }
-
-            if (type === 'whitelist') {
-                _positiveWhitelist = [..._positiveWhitelist, rule];
-            } else {
-                _positiveBlacklist = [..._positiveBlacklist, rule];
-            }
-
-            if (await savePositiveRules()) {
-                input.value = '';
-            }
-        }
-
-        async function removePositiveRule(type, index) {
-            if (type === 'whitelist') {
-                _positiveWhitelist = _positiveWhitelist.filter((_, i) => i !== index);
-            } else {
-                _positiveBlacklist = _positiveBlacklist.filter((_, i) => i !== index);
-            }
-            await savePositiveRules();
-        }
-
-        // Enter 키로도 규칙 추가 가능
-        document.addEventListener('DOMContentLoaded', () => {
-            const wlInput = document.getElementById('positive-whitelist-input');
-            const blInput = document.getElementById('positive-blacklist-input');
-            if (wlInput) {
-                wlInput.addEventListener('keydown', (e) => {
-                    if (e.key === 'Enter') { e.preventDefault(); addPositiveRule('whitelist'); }
-                });
-            }
-            if (blInput) {
-                blInput.addEventListener('keydown', (e) => {
-                    if (e.key === 'Enter') { e.preventDefault(); addPositiveRule('blacklist'); }
-                });
-            }
-        });
 
         let _illustPresetsCache = null;
 
