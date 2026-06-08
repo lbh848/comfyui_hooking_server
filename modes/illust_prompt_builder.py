@@ -337,6 +337,13 @@ class IllustPromptBuilder:
         positive += "\n[FACE_ID_DIR]"
         positive += "\n" + json.dumps(face_id_data, ensure_ascii=False)
 
+        face_crop_top = settings.get("face_crop_top", 1.0)
+        face_crop_bottom = settings.get("face_crop_bottom", 1.0)
+        positive += f"\n[FACE_CROP_TOP]"
+        positive += f"\n{face_crop_top}"
+        positive += f"\n[FACE_CROP_BOTTOM]"
+        positive += f"\n{face_crop_bottom}"
+
         # LORA
         has_lora = len(anima_loras) > 0 or len(sdxl_loras) > 0
         positive += f"\n[LORA_ACTIVATE]"
