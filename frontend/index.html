@@ -3382,6 +3382,15 @@
                                     <input type="checkbox" id="illust-ed-toggle" onchange="saveIllustSettings()"> ED
                                 </label>
                             </div>
+                            <div style="margin-top:6px;">
+                                <div style="font-size:0.75rem; color:var(--text-muted); margin-bottom:3px;">Seed</div>
+                                <div style="display:flex; gap:4px; align-items:center;">
+                                    <input type="number" id="illust-seed-input" value="-1" style="flex:1; padding:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:4px; font-size:0.8rem;" title="-1: 랜덤, 0 이상: 고정" onchange="saveIllustSettings()">
+                                    <button onclick="document.getElementById('illust-seed-input').value=Math.floor(Math.random()*4294967295); saveIllustSettings()" style="padding:4px 8px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:4px; cursor:pointer; font-size:0.7rem;" title="랜덤 Seed 생성">🎲</button>
+                                    <button onclick="document.getElementById('illust-seed-input').value=-1; saveIllustSettings()" style="padding:4px 8px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:4px; cursor:pointer; font-size:0.7rem;" title="랜덤으로 초기화">🔄</button>
+                                </div>
+                                <div style="font-size:0.65rem; color:var(--text-muted); margin-top:1px;">-1 = 랜덤</div>
+                            </div>
                             <div style="margin-top:8px;">
                                 <button onclick="openIllustLogModal()" style="width:100%; background:#6A1B9A; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">📋 프롬프트 빌드 로그</button>
                             </div>
@@ -18137,12 +18146,25 @@
                         </div>
                     </div>
                     <div class="card-section" id="char-lora-section-${charIdx}">
-                        <div class="card-section-title" style="display:inline-flex; align-items:center; gap:10px; margin-bottom:0;">
-                            <span>로라 설정</span>
-                            <button class="lora-add-btn" onclick="event.stopPropagation(); openBotCharLoraPicker('${escAttr(char.name)}', ${charIdx})"
-                                style="font-size:0.75rem; padding:4px 10px; border:1px dashed var(--border); background:var(--surface2); border-radius:6px; cursor:pointer; color:var(--text2); transition:border-color 0.15s;">+ LoRA 추가</button>
+                        <div class="char-data-row" style="gap:0;">
+                            <div style="flex:1; min-width:0;">
+                                <div class="card-section-title" style="display:inline-flex; align-items:center; gap:10px; margin-bottom:0;">
+                                    <span>얼굴 로라 설정</span>
+                                    <button class="lora-add-btn" onclick="event.stopPropagation(); openBotCharFaceLoraPicker('${escAttr(char.name)}', ${charIdx})"
+                                        style="font-size:0.75rem; padding:4px 10px; border:1px dashed var(--border); background:var(--surface2); border-radius:6px; cursor:pointer; color:var(--text2); transition:border-color 0.15s;">+ 얼굴 LoRA 추가</button>
+                                </div>
+                                <div id="char-face-lora-list-${charIdx}" class="lora-cards-row" style="margin-top:8px;"></div>
+                            </div>
+                            <div class="divider-v"></div>
+                            <div style="flex:1; min-width:0;">
+                                <div class="card-section-title" style="display:inline-flex; align-items:center; gap:10px; margin-bottom:0;">
+                                    <span>로라 설정</span>
+                                    <button class="lora-add-btn" onclick="event.stopPropagation(); openBotCharLoraPicker('${escAttr(char.name)}', ${charIdx})"
+                                        style="font-size:0.75rem; padding:4px 10px; border:1px dashed var(--border); background:var(--surface2); border-radius:6px; cursor:pointer; color:var(--text2); transition:border-color 0.15s;">+ LoRA 추가</button>
+                                </div>
+                                <div id="char-lora-list-${charIdx}" class="lora-cards-row" style="margin-top:8px;"></div>
+                            </div>
                         </div>
-                        <div id="char-lora-list-${charIdx}" class="lora-cards-row" style="margin-top:8px;"></div>
                     </div>
                 `;
                 grid.appendChild(card);
@@ -18237,6 +18259,11 @@
                 if (charLoras.length > 0) {
                     renderBotCharLoraList(charIdx, char.name, charLoras);
                 }
+                // 얼굴 LoRA 목록 렌더링
+                const charFaceLoras = char.face_loras || [];
+                if (charFaceLoras.length > 0) {
+                    renderBotCharFaceLoraList(charIdx, char.name, charFaceLoras);
+                }
             }
             showBotView('chars');
             checkPatchFiles();
@@ -18273,6 +18300,45 @@
                     <div style="display:flex; align-items:center; gap:6px; margin-top:6px;">
                         <input type="range" min="0" max="1" step="0.01" value="${lora.strength ?? 0.5}"
                             oninput="updateBotCharLoraField(${charIdx},'${escAttr(charName)}',${i},'strength',parseFloat(this.value)); this.nextElementSibling.textContent=parseFloat(this.value).toFixed(2)"
+                            onclick="event.stopPropagation()"
+                            style="flex:1; cursor:pointer;">
+                        <span style="font-size:0.7rem; min-width:28px; text-align:right;">${(lora.strength ?? 0.5).toFixed(2)}</span>
+                    </div>
+                </div>`;
+            }).join('');
+        }
+
+        // ─── 캐릭터 얼굴 LoRA 카드 렌더링 ─────────────────────────
+        function renderBotCharFaceLoraList(charIdx, charName, faceLoras) {
+            const container = document.getElementById(`char-face-lora-list-${charIdx}`);
+            if (!container) return;
+            if (!faceLoras || faceLoras.length === 0) { container.innerHTML = ''; return; }
+            container.innerHTML = faceLoras.map((lora, i) => {
+                const source = lora.source === 'bot' ? `${escHtml(lora.bot_name || '')}/${escHtml(lora.project_name || '')}` : lora.source === 'instance' ? '인스턴스' : `${escHtml(lora.character || '')}`;
+                return `<div style="padding:8px; background:var(--surface2); border-radius:6px; border:1px solid var(--border); position:relative; width:180px;">
+                    <button onclick="event.stopPropagation(); removeBotCharFaceLora(${charIdx},'${escAttr(charName)}',${i})"
+                        style="position:absolute; top:2px; right:4px; background:none; border:none; color:var(--error); cursor:pointer; font-size:1.2rem; padding:2px 4px;">x</button>
+                    ${lora.preview_url ? `<img src="${escHtml(lora.preview_url)}" style="width:70%; aspect-ratio:1; object-fit:cover; border-radius:6px; display:block; margin:0 auto; cursor:zoom-in;" loading="lazy" onerror="this.style.display='none'" onclick="event.stopPropagation(); openLightbox(this.src)">` : '<div style="width:70%; aspect-ratio:1; background:var(--surface); border-radius:6px; display:flex; align-items:center; justify-content:center; font-size:2rem; margin:0 auto;">📦</div>'}
+                    <div style="margin-top:6px;">
+                        <div style="font-size:0.8rem; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escHtml(lora.name || '')}</div>
+                        <div style="font-size:0.65rem; color:var(--text-secondary);">${escHtml(source)}</div>
+                    </div>
+                    <div style="margin-top:4px;">
+                        <div style="font-size:0.65rem; color:var(--text-secondary); margin-bottom:2px;">트리거 워드</div>
+                        <input type="text" value="${escAttr(lora.trigger || '')}" onchange="updateBotCharFaceLoraField(${charIdx},'${escAttr(charName)}',${i},'trigger',this.value)"
+                            onclick="event.stopPropagation()"
+                            style="width:100%; padding:3px 6px; border:1px solid var(--border); background:var(--surface); color:var(--text); border-radius:4px; font-size:0.75rem;"
+                            placeholder="트리거 워드 입력">
+                    </div>
+                    <select onchange="updateBotCharFaceLoraField(${charIdx},'${escAttr(charName)}',${i},'BASE',this.value)"
+                        onclick="event.stopPropagation()"
+                        style="width:100%; margin-top:6px; background:var(--surface); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:3px 4px; font-size:0.75rem; cursor:pointer;">
+                        <option value="anima" ${(lora.BASE || 'anima') === 'anima' ? 'selected' : ''}>anima</option>
+                        <option value="sdxl" ${lora.BASE === 'sdxl' ? 'selected' : ''}>sdxl</option>
+                    </select>
+                    <div style="display:flex; align-items:center; gap:6px; margin-top:6px;">
+                        <input type="range" min="0" max="1" step="0.01" value="${lora.strength ?? 0.5}"
+                            oninput="updateBotCharFaceLoraField(${charIdx},'${escAttr(charName)}',${i},'strength',parseFloat(this.value)); this.nextElementSibling.textContent=parseFloat(this.value).toFixed(2)"
                             onclick="event.stopPropagation()"
                             style="flex:1; cursor:pointer;">
                         <span style="font-size:0.7rem; min-width:28px; text-align:right;">${(lora.strength ?? 0.5).toFixed(2)}</span>
@@ -18330,6 +18396,58 @@
             renderBotCharLoraList(charIdx, charName, loras);
             await saveBotCharLoras(charName);
             showToast('LoRA 삭제됨', 'info');
+        }
+
+        // ─── 얼굴 LoRA getter/setter/save ─────────────────────────
+        function getBotCharFaceLoras(charName) {
+            const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
+            if (!bot) return [];
+            const char = (bot.characters || []).find(c => c.name === charName);
+            return char ? (char.face_loras || []) : [];
+        }
+
+        function setBotCharFaceLoras(charName, faceLoras) {
+            const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
+            if (!bot) return;
+            const char = (bot.characters || []).find(c => c.name === charName);
+            if (!char) return;
+            char.face_loras = faceLoras;
+        }
+
+        async function saveBotCharFaceLoras(charName) {
+            const faceLoras = getBotCharFaceLoras(charName);
+            try {
+                const resp = await fetch('/api/bot_mode/action', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'update_char_face_loras', bot_name: botCurrentBot, char_name: charName, face_loras: faceLoras })
+                });
+                const result = await resp.json();
+                if (result.success) {
+                    botData.bots = result.bots;
+                } else {
+                    console.error('[BOT] 얼굴 LoRA 저장 실패:', result.error);
+                }
+            } catch (e) {
+                console.error('[BOT] 얼굴 LoRA 저장 실패:', e);
+            }
+        }
+
+        async function updateBotCharFaceLoraField(charIdx, charName, loraIdx, field, value) {
+            const faceLoras = getBotCharFaceLoras(charName);
+            if (faceLoras[loraIdx]) {
+                faceLoras[loraIdx][field] = value;
+                await saveBotCharFaceLoras(charName);
+            }
+        }
+
+        async function removeBotCharFaceLora(charIdx, charName, loraIdx) {
+            const faceLoras = getBotCharFaceLoras(charName);
+            faceLoras.splice(loraIdx, 1);
+            setBotCharFaceLoras(charName, faceLoras);
+            renderBotCharFaceLoraList(charIdx, charName, faceLoras);
+            await saveBotCharFaceLoras(charName);
+            showToast('얼굴 LoRA 삭제됨', 'info');
         }
 
         // ─── lb-xnai.lb.extra.txt 내보내기 ─────────────────────
@@ -19115,7 +19233,7 @@
         let _botCharLoraPickerState = { charName: '', charIdx: -1, tab: 'asset', assetData: null, instanceData: null, botStep: 'bots', botBots: null, botProjects: null, botSelectedBot: '', botSelectedProject: '', botSelectedChar: '' };
 
         async function openBotCharLoraPicker(charName, charIdx) {
-            _botCharLoraPickerState = { charName, charIdx, tab: 'asset', assetData: null, instanceData: null, botStep: 'bots', botBots: null, botProjects: null, botSelectedBot: '', botSelectedProject: '', botSelectedChar: '' };
+            _botCharLoraPickerState = { charName, charIdx, tab: 'asset', assetData: null, instanceData: null, botStep: 'bots', botBots: null, botProjects: null, botSelectedBot: '', botSelectedProject: '', botSelectedChar: '', isFaceLora: false };
             const overlay = document.createElement('div');
             overlay.id = 'bot-char-lora-picker-overlay';
             overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10010; display:flex; align-items:center; justify-content:center;';
@@ -19123,6 +19241,29 @@
                 <div style="background:var(--surface); border-radius:12px; padding:24px; max-width:1100px; width:95%; max-height:95vh; display:flex; flex-direction:column;">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
                         <h3 style="margin:0;">LoRA 선택</h3>
+                        <button onclick="document.getElementById('bot-char-lora-picker-overlay').remove()" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer;">x</button>
+                    </div>
+                    <div style="display:flex; gap:0; margin-bottom:12px; border:1px solid var(--border); border-radius:8px; overflow:hidden;">
+                        <button id="bclp-tab-asset" onclick="switchBotCharLoraPickerTab('asset')" style="flex:1; padding:8px; border:none; background:var(--accent); color:#fff; cursor:pointer; font-size:0.85rem; font-weight:600;">에셋에서 탐색</button>
+                        <button id="bclp-tab-bot" onclick="switchBotCharLoraPickerTab('bot')" style="flex:1; padding:8px; border:none; background:var(--surface2); color:var(--text); cursor:pointer; font-size:0.85rem; font-weight:600;">봇에서 탐색</button>
+                        <button id="bclp-tab-instance" onclick="switchBotCharLoraPickerTab('instance')" style="flex:1; padding:8px; border:none; background:var(--surface2); color:var(--text); cursor:pointer; font-size:0.85rem; font-weight:600;">인스턴스에서 탐색</button>
+                    </div>
+                    <div id="bclp-breadcrumb" style="margin-bottom:10px; font-size:0.8rem; color:var(--text2); display:flex; align-items:center; gap:4px; flex-wrap:wrap;"></div>
+                    <div id="bclp-grid" style="display:grid; grid-template-columns:repeat(3,1fr); gap:12px; overflow-y:auto; max-height:calc(95vh - 160px);"></div>
+                </div>`;
+            document.body.appendChild(overlay);
+            await loadBclpAssetCharacters();
+        }
+
+        async function openBotCharFaceLoraPicker(charName, charIdx) {
+            _botCharLoraPickerState = { charName, charIdx, tab: 'asset', assetData: null, instanceData: null, botStep: 'bots', botBots: null, botProjects: null, botSelectedBot: '', botSelectedProject: '', botSelectedChar: '', isFaceLora: true };
+            const overlay = document.createElement('div');
+            overlay.id = 'bot-char-lora-picker-overlay';
+            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10010; display:flex; align-items:center; justify-content:center;';
+            overlay.innerHTML = `
+                <div style="background:var(--surface); border-radius:12px; padding:24px; max-width:1100px; width:95%; max-height:95vh; display:flex; flex-direction:column;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                        <h3 style="margin:0;">얼굴 LoRA 선택</h3>
                         <button onclick="document.getElementById('bot-char-lora-picker-overlay').remove()" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer;">x</button>
                     </div>
                     <div style="display:flex; gap:0; margin-bottom:12px; border:1px solid var(--border); border-radius:8px; overflow:hidden;">
@@ -19281,7 +19422,8 @@
                     card.onclick = () => {
                         const repSafetensors = repData.safetensors || '';
                         const matchedFile = files.find(f => f.safetensors === repSafetensors) || files[files.length - 1];
-                        const loras = getBotCharLoras(_botCharLoraPickerState.charName);
+                        const isFace = _botCharLoraPickerState.isFaceLora;
+                        const loras = isFace ? getBotCharFaceLoras(_botCharLoraPickerState.charName) : getBotCharLoras(_botCharLoraPickerState.charName);
                         loras.push({
                             source: 'asset',
                             name: entry.name,
@@ -19292,11 +19434,17 @@
                             trigger: entry.trigger || '',
                             BASE: BASE,
                         });
-                        setBotCharLoras(_botCharLoraPickerState.charName, loras);
-                        renderBotCharLoraList(_botCharLoraPickerState.charIdx, _botCharLoraPickerState.charName, loras);
-                        saveBotCharLoras(_botCharLoraPickerState.charName);
+                        if (isFace) {
+                            setBotCharFaceLoras(_botCharLoraPickerState.charName, loras);
+                            renderBotCharFaceLoraList(_botCharLoraPickerState.charIdx, _botCharLoraPickerState.charName, loras);
+                            saveBotCharFaceLoras(_botCharLoraPickerState.charName);
+                        } else {
+                            setBotCharLoras(_botCharLoraPickerState.charName, loras);
+                            renderBotCharLoraList(_botCharLoraPickerState.charIdx, _botCharLoraPickerState.charName, loras);
+                            saveBotCharLoras(_botCharLoraPickerState.charName);
+                        }
                         document.getElementById('bot-char-lora-picker-overlay').remove();
-                        showToast(`LoRA "${entry.name}" (${sessionName}) 추가됨`, 'success');
+                        showToast(`${isFace ? '얼굴 ' : ''}LoRA "${entry.name}" (${sessionName}) 추가됨`, 'success');
                     };
                 }
                 grid.appendChild(card);
@@ -19346,7 +19494,8 @@
                 card.onmouseenter = () => { card.style.borderColor = 'var(--accent)'; };
                 card.onmouseleave = () => { card.style.borderColor = 'var(--border)'; };
                 card.onclick = () => {
-                    const loras = getBotCharLoras(_botCharLoraPickerState.charName);
+                    const isFace = _botCharLoraPickerState.isFaceLora;
+                    const loras = isFace ? getBotCharFaceLoras(_botCharLoraPickerState.charName) : getBotCharLoras(_botCharLoraPickerState.charName);
                     let addedCount = 0;
                     for (const [profile, pData] of Object.entries(item.profiles)) {
                         loras.push({
@@ -19362,11 +19511,17 @@
                         });
                         addedCount++;
                     }
-                    setBotCharLoras(_botCharLoraPickerState.charName, loras);
-                    renderBotCharLoraList(_botCharLoraPickerState.charIdx, _botCharLoraPickerState.charName, loras);
-                    saveBotCharLoras(_botCharLoraPickerState.charName);
+                    if (isFace) {
+                        setBotCharFaceLoras(_botCharLoraPickerState.charName, loras);
+                        renderBotCharFaceLoraList(_botCharLoraPickerState.charIdx, _botCharLoraPickerState.charName, loras);
+                        saveBotCharFaceLoras(_botCharLoraPickerState.charName);
+                    } else {
+                        setBotCharLoras(_botCharLoraPickerState.charName, loras);
+                        renderBotCharLoraList(_botCharLoraPickerState.charIdx, _botCharLoraPickerState.charName, loras);
+                        saveBotCharLoras(_botCharLoraPickerState.charName);
+                    }
                     document.getElementById('bot-char-lora-picker-overlay').remove();
-                    showToast(`인스턴스 LoRA "${item.lora_id}" ${addedCount}개 추가됨`, 'success');
+                    showToast(`인스턴스 ${isFace ? '얼굴 ' : ''}LoRA "${item.lora_id}" ${addedCount}개 추가됨`, 'success');
                 };
                 grid.appendChild(card);
             });
@@ -19494,7 +19649,8 @@
                         card.onmouseenter = () => { card.style.borderColor = 'var(--accent)'; card.style.background = 'var(--surface2)'; };
                         card.onmouseleave = () => { card.style.borderColor = 'var(--border)'; card.style.background = 'transparent'; };
                         card.onclick = () => {
-                            const loras = getBotCharLoras(_botCharLoraPickerState.charName);
+                            const isFace = _botCharLoraPickerState.isFaceLora;
+                            const loras = isFace ? getBotCharFaceLoras(_botCharLoraPickerState.charName) : getBotCharLoras(_botCharLoraPickerState.charName);
                             const botLoraPath = [
                                 _botCharLoraPickerState.botSelectedBot,
                                 'Lora',
@@ -19515,11 +19671,17 @@
                                 trigger: ch.trigger || ch.name,
                                 BASE: profile,
                             });
-                            setBotCharLoras(_botCharLoraPickerState.charName, loras);
-                            renderBotCharLoraList(_botCharLoraPickerState.charIdx, _botCharLoraPickerState.charName, loras);
-                            saveBotCharLoras(_botCharLoraPickerState.charName);
+                            if (isFace) {
+                                setBotCharFaceLoras(_botCharLoraPickerState.charName, loras);
+                                renderBotCharFaceLoraList(_botCharLoraPickerState.charIdx, _botCharLoraPickerState.charName, loras);
+                                saveBotCharFaceLoras(_botCharLoraPickerState.charName);
+                            } else {
+                                setBotCharLoras(_botCharLoraPickerState.charName, loras);
+                                renderBotCharLoraList(_botCharLoraPickerState.charIdx, _botCharLoraPickerState.charName, loras);
+                                saveBotCharLoras(_botCharLoraPickerState.charName);
+                            }
                             document.getElementById('bot-char-lora-picker-overlay').remove();
-                            showToast(`LoRA "${ch.name}" (${repSession.name}) 추가됨`, 'success');
+                            showToast(`${isFace ? '얼굴 ' : ''}LoRA "${ch.name}" (${repSession.name}) 추가됨`, 'success');
                         };
                     }
                     grid.appendChild(card);
@@ -21164,6 +21326,7 @@
                     document.getElementById('illust-fd-toggle').checked = s.fd_activate || false;
                     document.getElementById('illust-hd-toggle').checked = s.hd_activate || false;
                     document.getElementById('illust-ed-toggle').checked = s.ed_activate || false;
+                    document.getElementById('illust-seed-input').value = s.seed ?? -1;
                     updateIllustToggles();
                 }
             } catch (e) {
@@ -21191,6 +21354,7 @@
                 fd_activate: document.getElementById('illust-fd-toggle').checked,
                 hd_activate: document.getElementById('illust-hd-toggle').checked,
                 ed_activate: document.getElementById('illust-ed-toggle').checked,
+                seed: parseInt(document.getElementById('illust-seed-input').value) || -1,
             };
             try {
                 await fetchJSON('/api/bot_mode/update_illust_settings', {

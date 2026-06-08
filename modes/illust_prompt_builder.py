@@ -197,6 +197,7 @@ class IllustPromptBuilder:
         sdxl_triggers = []
         anima_loras = []
         sdxl_loras = []
+        all_face_loras = []
 
         for char_name in detected_chars:
             char_data = next((c for c in characters if c["name"] == char_name), None)
@@ -225,6 +226,15 @@ class IllustPromptBuilder:
                         "BASE": "sdxl"
                     })
 
+            # face_loras 수집
+            for flora in char_data.get("face_loras", []):
+                flora_path = self._resolve_lora_path(flora)
+                all_face_loras.append({
+                    "lora_path": flora_path,
+                    "str": flora.get("strength", 0.8),
+                    "BASE": flora.get("BASE", "anima")
+                })
+
         # ─── 아티스트 프리셋 태그 ───
         artist_presets = tags.get("artist_presets", {})
         anima_artist_preset_name = settings.get("anima_artist_preset", "")
@@ -248,29 +258,34 @@ class IllustPromptBuilder:
         else:
             quality_tags = tags.get("quality", [])
 
-        # ─── ANIMA 섹션 조립 ───
-        anima_parts = []
+        # ─── ANIMA 품질 파트 (품질 태그만) ───
+        anima_quality_parts = []
+        for t in anima_quality_tags:
+            if t.strip():
+                anima_quality_parts.append(t.strip())
+
+        # ─── ANIMA 콘텐츠 파트 (품질 제외한 나머지) ───
+        anima_content_parts = []
         # 1. 캐릭터 트리거워드
         for t in anima_triggers:
             if t.strip():
-                anima_parts.append(t.strip())
+                anima_content_parts.append(t.strip())
         # 2. ANIMA 아티스트 프리셋
         for t in anima_artist_tags:
             if t.strip():
-                anima_parts.append(t.strip())
-        # 3. ANIMA 품질
-        for t in anima_quality_tags:
-            if t.strip():
-                anima_parts.append(t.strip())
-        # 4. setup
+                anima_content_parts.append(t.strip())
+        # 3. setup
         if setup.strip():
-            anima_parts.append(setup.strip())
-        # 5. char
+            anima_content_parts.append(setup.strip())
+        # 4. char
         if char.strip():
-            anima_parts.append(char.strip())
-        # 6. supplement
+            anima_content_parts.append(char.strip())
+        # 5. supplement
         if supplement.strip():
-            anima_parts.append(supplement.strip())
+            anima_content_parts.append(supplement.strip())
+
+        # ─── ANIMA 전체 (품질 + 콘텐츠) ───
+        anima_all_parts = anima_quality_parts + anima_content_parts
 
         # ─── SDXL 섹션 조립 ───
         sdxl_parts = []
@@ -294,7 +309,9 @@ class IllustPromptBuilder:
             sdxl_parts.append(char.strip())
 
         # ─── 긍정 프롬프트 조합 ───
-        positive = ", ".join(anima_parts)
+        positive = "[ANIMA_QUALITY]\n" + ", ".join(anima_quality_parts)
+        positive += "\n[ANIMA_CONTENT]\n" + ", ".join(anima_content_parts)
+        positive += "\n[ANIMA_ALL]\n" + ", ".join(anima_all_parts)
         positive += "\n[SDXL]"
         positive += "\n" + ", ".join(sdxl_parts)
 
@@ -330,6 +347,15 @@ class IllustPromptBuilder:
         positive += "\n[LORA_DATA]"
         positive += "\n" + json.dumps(lora_data, ensure_ascii=False)
 
+        # FACE LORA
+        has_face_lora = len(all_face_loras) > 0
+        positive += f"\n[FACE_LORA_ACTIVATE]"
+        positive += f"\n{'true' if has_face_lora else 'false'}"
+
+        face_lora_data = {"list": all_face_loras}
+        positive += "\n[FACE_LORA_DATA]"
+        positive += "\n" + json.dumps(face_lora_data, ensure_ascii=False)
+
         # CHAR FACE TAG INFORM
         face_tag_data = self.build_char_face_tag_inform(detected_chars, characters)
         positive += "\n[CHAR_FACE_TAG_INFORM]"
@@ -364,6 +390,14 @@ class IllustPromptBuilder:
         positive += f"\n{'true' if hd_activate else 'false'}"
         positive += f"\n[ED_ACTIVATE]"
         positive += f"\n{'true' if ed_activate else 'false'}"
+
+        # Seed
+        seed = settings.get("seed", -1)
+        if seed == -1:
+            import random
+            seed = random.randint(0, 2**32 - 1)
+        positive += f"\n[SEED]"
+        positive += f"\n{seed}"
 
         positive += "\n[END]"
 

@@ -127,6 +127,8 @@ class BotMode:
                     return await self._update_char_negative(data, body)
                 elif action == "update_char_face_tags":
                     return await self._update_char_face_tags(data, body)
+                elif action == "update_char_face_loras":
+                    return await self._update_char_face_loras(data, body)
                 else:
                     return _json_error(f"알 수 없는 액션: {action}")
         except Exception as e:
@@ -302,6 +304,23 @@ class BotMode:
         char["loras"] = loras
         _save_bot_data(data)
         print(f"[BOT_MODE] 캐릭터 LoRA 업데이트: {bot_name}/{char_name} ({len(loras)}개)")
+        return _json_ok({"bots": data["bots"]})
+
+    async def _update_char_face_loras(self, data, body):
+        bot_name = body.get("bot_name", "").strip()
+        char_name = body.get("char_name", "").strip()
+        face_loras = body.get("face_loras", [])
+        if not bot_name or not char_name:
+            return _json_error("봇 또는 캐릭터 이름이 비어있습니다.")
+        bot = next((b for b in data["bots"] if b["name"] == bot_name), None)
+        if not bot:
+            return _json_error(f"봇을 찾을 수 없음: {bot_name}")
+        char = next((c for c in bot.get("characters", []) if c["name"] == char_name), None)
+        if not char:
+            return _json_error(f"캐릭터를 찾을 수 없음: {char_name}")
+        char["face_loras"] = face_loras
+        _save_bot_data(data)
+        print(f"[BOT_MODE] 캐릭터 얼굴 LoRA 업데이트: {bot_name}/{char_name} ({len(face_loras)}개)")
         return _json_ok({"bots": data["bots"]})
 
     async def _toggle_rep_image(self, data, body):
@@ -1862,6 +1881,7 @@ DEFAULT_ILLUST_SETTINGS = {
     "ed_activate": False,
     "face_id_activate": False,
     "face_id_str": 0.55,
+    "seed": -1,
 }
 
 
