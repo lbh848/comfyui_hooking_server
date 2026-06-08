@@ -1596,6 +1596,10 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict):
                 # 4. 프롬프트 빌드
                 tags = asset_mode._tags
                 settings = bot.get("illust_settings", {})
+                from modes.bot_mode import _load_patch_settings
+                patch = _load_patch_settings(bot_name)
+                settings["face_crop_top"] = patch.get("face_crop_top", 1.0)
+                settings["face_crop_bottom"] = patch.get("face_crop_bottom", 1.0)
                 positive = builder.build_positive_prompt(
                     setup_replaced, char_replaced, supplement_replaced,
                     detected, bot, tags, settings, bot_name
