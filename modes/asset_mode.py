@@ -800,6 +800,65 @@ class AssetMode:
     def get_natural_language_presets(self) -> dict:
         return self._tags.get("natural_language_presets", {})
 
+    # ─── 범용 프리셋 태그 편집 ──────────────────────────────
+    VALID_PRESET_TYPES = (
+        "artist_presets", "quality_presets", "negative_presets",
+        "composition_presets", "character_negative_presets",
+    )
+
+    def add_preset_tag(self, preset_type: str, preset_name: str, value: str) -> dict:
+        if preset_type not in self.VALID_PRESET_TYPES:
+            return {"success": False, "error": f"지원하지 않는 프리셋 타입: {preset_type}"}
+        if not preset_name or not value.strip():
+            return {"success": False, "error": "프리셋명과 태그값 필요"}
+        presets = self._tags.get(preset_type, {})
+        if preset_name not in presets:
+            return {"success": False, "error": f"프리셋 '{preset_name}' 없음"}
+        tags = presets[preset_name]
+        if not isinstance(tags, list):
+            return {"success": False, "error": "리스트 형태 프리셋만 지원"}
+        tags.append(value.strip())
+        self.save_tags()
+        return {"success": True, "tags": list(tags)}
+
+    def remove_preset_tag(self, preset_type: str, preset_name: str, index: int) -> dict:
+        if preset_type not in self.VALID_PRESET_TYPES:
+            return {"success": False, "error": f"지원하지 않는 프리셋 타입: {preset_type}"}
+        if not preset_name:
+            return {"success": False, "error": "프리셋명 필요"}
+        presets = self._tags.get(preset_type, {})
+        if preset_name not in presets:
+            return {"success": False, "error": f"프리셋 '{preset_name}' 없음"}
+        tags = presets[preset_name]
+        if not isinstance(tags, list):
+            return {"success": False, "error": "리스트 형태 프리셋만 지원"}
+        if index < 0 or index >= len(tags):
+            return {"success": False, "error": "잘못된 인덱스"}
+        tags.pop(index)
+        self.save_tags()
+        return {"success": True, "tags": list(tags)}
+
+    def reorder_preset_tags(self, preset_type: str, preset_name: str, order: list) -> dict:
+        if preset_type not in self.VALID_PRESET_TYPES:
+            return {"success": False, "error": f"지원하지 않는 프리셋 타입: {preset_type}"}
+        if not preset_name:
+            return {"success": False, "error": "프리셋명 필요"}
+        presets = self._tags.get(preset_type, {})
+        if preset_name not in presets:
+            return {"success": False, "error": f"프리셋 '{preset_name}' 없음"}
+        tags = presets[preset_name]
+        if not isinstance(tags, list):
+            return {"success": False, "error": "리스트 형태 프리셋만 지원"}
+        if len(order) != len(tags):
+            return {"success": False, "error": "순서 길이 불일치"}
+        try:
+            reordered = [tags[i] for i in order]
+        except (IndexError, TypeError):
+            return {"success": False, "error": "잘못된 순서"}
+        presets[preset_name] = reordered
+        self.save_tags()
+        return {"success": True, "tags": list(reordered)}
+
     # ─── 프롬프트 빌드 ────────────────────────────────────
     def build_prompts(
         self,
@@ -2124,6 +2183,31 @@ class AssetMode:
             results.append({"name": name, **r})
         return {"success": True, "results": results}
 
+    @staticmethod
+    def _split_tags_preserving_parens(text: str) -> list:
+        """쉼표로 분리하되 괄호 () [] {} 내부의 쉼표는 무시."""
+        tags = []
+        depth = 0
+        buf = []
+        for ch in text:
+            if ch in '({[':
+                depth += 1
+                buf.append(ch)
+            elif ch in ')}]':
+                depth = max(0, depth - 1)
+                buf.append(ch)
+            elif ch == ',' and depth == 0:
+                tag = ''.join(buf).strip()
+                if tag:
+                    tags.append(tag)
+                buf = []
+            else:
+                buf.append(ch)
+        tag = ''.join(buf).strip()
+        if tag:
+            tags.append(tag)
+        return tags
+
     # ─── 프리셋매니징: 일괄 삽입 ────────────────────────────
     def batch_insert_preset(self, category: str, name: str, tags_text: str) -> dict:
         """쉼표 구분 태그 문자열을 리스트로 파싱하여 tags.json에 저장. natural_language_presets는 단일 텍스트로 저장."""
@@ -2153,8 +2237,8 @@ class AssetMode:
             self._log("preset_batch_inserted", {"category": category, "name": name, "count": len(text)})
             return {"success": True, "name": name, "count": len(text)}
 
-        # 기타 카테고리: 쉼표 구분 파싱
-        tags = [t.strip() for t in tags_text.split(",") if t.strip()]
+        # 기타 카테고리: 괄호 내부 쉼표를 보존하며 파싱
+        tags = self._split_tags_preserving_parens(tags_text)
         if not tags:
             print("[ASSET_MODE] batch_insert_preset: 태그가 비어있음")
             return {"success": False, "error": "태그를 입력해주세요."}

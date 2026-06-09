@@ -4003,6 +4003,16 @@ async def handle_api_asset_mode_tags_post(request: web.Request) -> web.Response:
                 body.get("category", ""), body.get("name", ""), body.get("tags_text", ""))
         elif action == "trace_preset_assets":
             result = asset_mode.trace_preset_assets(body.get("category", ""), body.get("name", ""))
+        # ─── 범용 프리셋 태그 편집 (삽화 모드 태그 편집 모달용) ───
+        elif action == "add_preset_tag":
+            result = asset_mode.add_preset_tag(
+                body.get("preset_type", ""), body.get("preset_name", ""), body.get("value", ""))
+        elif action == "remove_preset_tag":
+            result = asset_mode.remove_preset_tag(
+                body.get("preset_type", ""), body.get("preset_name", ""), body.get("index", -1))
+        elif action == "reorder_preset_tags":
+            result = asset_mode.reorder_preset_tags(
+                body.get("preset_type", ""), body.get("preset_name", ""), body.get("order", []))
 
         return web.json_response(result)
     except Exception as e:

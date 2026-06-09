@@ -3289,7 +3289,10 @@
                             <div id="positive-rules-count" style="font-size:0.7rem; color:var(--text2); margin-top:4px;"></div>
                         </div>
                         <div style="background:rgba(156,39,176,0.08); border-radius:8px; padding:10px; margin-top:8px;">
-                            <div class="section-title">삽화 프롬프트 설정</div>
+                            <div style="display:flex; align-items:center; justify-content:space-between;">
+                                <div class="section-title">삽화 프롬프트 설정</div>
+                                <button onclick="openIllustTagEditorModal()" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:3px 10px; border-radius:4px; cursor:pointer; font-size:0.7rem;">태그 편집</button>
+                            </div>
                             <div style="margin-top:6px;">
                                 <div style="font-size:0.7rem; color:var(--text2); margin-bottom:2px;">SDXL 아티스트 프리셋</div>
                                 <select id="illust-sdxl-artist-preset" onchange="saveIllustSettings(); renderIllustPresetTags('illust-sdxl-artist-preset','illust-sdxl-artist-tags','artist_presets')" style="width:100%; padding:3px 6px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.8rem;">
@@ -8554,6 +8557,24 @@
         }
         document.querySelector('.modal-body').addEventListener('scroll', repositionAllAutocompleteLists);
         window.addEventListener('resize', repositionAllAutocompleteLists);
+
+        // ─── 괄호 내부 쉼표 보존 태그 분리 ───
+        function splitTagsPreservingParens(text) {
+            const tags = [];
+            let depth = 0, buf = '';
+            for (const ch of text) {
+                if (ch === '(' || ch === '{' || ch === '[') { depth++; buf += ch; }
+                else if (ch === ')' || ch === '}' || ch === ']') { depth = Math.max(0, depth - 1); buf += ch; }
+                else if (ch === ',' && depth === 0) {
+                    const t = buf.trim();
+                    if (t) tags.push(t);
+                    buf = '';
+                } else { buf += ch; }
+            }
+            const t = buf.trim();
+            if (t) tags.push(t);
+            return tags;
+        }
 
         // ─── 토스트 알림 ───
         function showToast(message, type) {
@@ -21643,6 +21664,307 @@
             });
         }
 
+        // ─── 삽화 통합 태그 편집 모달 ─────────────────────────
+        const ILLUST_TAG_EDITOR_SECTIONS = [
+            { id: 'sdxl-artist',  label: 'SDXL 아티스트', selectId: 'illust-sdxl-artist-preset',  presetType: 'artist_presets' },
+            { id: 'sdxl-quality', label: 'SDXL 품질',     selectId: 'illust-sdxl-quality-preset', presetType: 'quality_presets' },
+            { id: 'anima-artist', label: 'ANIMA 아티스트', selectId: 'illust-anima-artist-preset', presetType: 'artist_presets' },
+            { id: 'anima-quality',label: 'ANIMA 품질',    selectId: 'illust-anima-quality-preset',presetType: 'quality_presets' },
+            { id: 'sdxl-negative',label: 'SDXL 부정',     selectId: 'illust-sdxl-negative-preset',presetType: 'negative_presets' },
+            { id: 'anima-negative',label:'ANIMA 부정',     selectId: 'illust-anima-negative-preset',presetType:'negative_presets' },
+        ];
+
+        function openIllustTagEditorModal() {
+            let modal = document.getElementById('illust-tag-editor-modal');
+            if (modal) { modal.classList.toggle('visible'); _refreshIllustTagEditor(); return; }
+
+            let sectionsHtml = '';
+            const colors = ['#9C27B0','#4CAF50','#E91E63','#FF9800','#F44336','#795548'];
+            ILLUST_TAG_EDITOR_SECTIONS.forEach((sec, i) => {
+                sectionsHtml += `
+                    <div style="background:rgba(${i%2===0?'156,39,176':'33,150,243'},0.06); border-radius:8px; padding:10px; margin-bottom:8px; border-left:3px solid ${colors[i]};">
+                        <div style="font-size:0.8rem; font-weight:700; color:${colors[i]}; margin-bottom:6px;">
+                            <span>${sec.label}</span>
+                        </div>
+                        <div style="display:flex; gap:4px; align-items:center; margin-bottom:6px;">
+                            <select id="illust-te-select-${sec.id}" onchange="illustTeSelectPreset('${sec.id}')" style="flex:1; padding:3px 6px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.75rem;">
+                                <option value="">-- 없음 --</option>
+                            </select>
+                            <button onclick="illustTeAddPreset('${sec.id}')" style="background:var(--accent); color:#fff; border:none; padding:2px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">추가</button>
+                            <button onclick="illustTeDuplicatePreset('${sec.id}')" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:2px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">복제</button>
+                            <button onclick="illustTeDeletePreset('${sec.id}')" style="background:var(--error); color:#fff; border:none; padding:2px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">삭제</button>
+                        </div>
+                        <div id="illust-te-tags-${sec.id}" style="min-height:24px;"></div>
+                        <div class="inline-add" style="margin-top:4px; position:relative;">
+                            <input type="text" id="illust-te-input-${sec.id}" placeholder="태그 추가"
+                                onkeydown="if(event.key==='Enter'){event.preventDefault();illustTeAddTag('${sec.id}');}">
+                            <button onclick="illustTeAddTag('${sec.id}')">+</button>
+                        </div>
+                    </div>`;
+            });
+
+            modal = document.createElement('div');
+            modal.id = 'illust-tag-editor-modal';
+            modal.className = 'modal';
+            modal.onclick = (e) => { if (e.target === modal) modal.classList.remove('visible'); };
+            modal.innerHTML = `
+                <div class="modal-content" style="max-width:700px;">
+                    <div class="modal-header">
+                        <h2>태그 편집</h2>
+                        <button class="modal-close" onclick="document.getElementById('illust-tag-editor-modal').classList.remove('visible')">&times;</button>
+                    </div>
+                    <div class="modal-body" style="max-height:70vh; overflow-y:auto;">
+                        <div style="font-size:0.75rem; color:var(--text2); margin-bottom:8px;">
+                            현재 선택된 프리셋의 태그를 직접 편집합니다. 변경은 즉시 저장됩니다.
+                        </div>
+                        ${sectionsHtml}
+                    </div>
+                    <div class="modal-footer" style="display:flex; justify-content:flex-end;">
+                        <button onclick="document.getElementById('illust-tag-editor-modal').classList.remove('visible')" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:6px 16px; border-radius:4px; cursor:pointer;">닫기</button>
+                    </div>
+                </div>`;
+            document.body.appendChild(modal);
+            modal.classList.add('visible');
+            _refreshIllustTagEditor();
+        }
+
+        async function _refreshIllustTagEditor() {
+            try {
+                const tagsData = await fetchJSON('/api/asset_mode/tags');
+                if (!tagsData) return;
+                _illustPresetsCache = tagsData;
+                ILLUST_TAG_EDITOR_SECTIONS.forEach(sec => {
+                    const sidebarSelect = document.getElementById(sec.selectId);
+                    const modalSelect = document.getElementById(`illust-te-select-${sec.id}`);
+                    const tagsEl = document.getElementById(`illust-te-tags-${sec.id}`);
+                    if (!tagsEl) return;
+                    // 모달 드롭다운 채우기
+                    if (modalSelect) {
+                        const prevVal = modalSelect.value;
+                        const presets = tagsData[sec.presetType] || {};
+                        const names = Object.keys(presets);
+                        modalSelect.innerHTML = '<option value="">-- 없음 --</option>';
+                        names.forEach(n => { const o = document.createElement('option'); o.value = n; o.textContent = n; modalSelect.appendChild(o); });
+                        // 사이드바 선택값과 동기화
+                        const syncVal = sidebarSelect?.value || prevVal;
+                        modalSelect.value = syncVal;
+                    }
+                    const name = modalSelect?.value || sidebarSelect?.value;
+                    if (!name) { tagsEl.innerHTML = '<span style="font-size:0.7rem;color:var(--text-muted);">프리셋을 먼저 선택하세요</span>'; return; }
+                    const presets = tagsData[sec.presetType] || {};
+                    const tags = presets[name] || [];
+                    _renderIllustTeChips(tagsEl, tags, sec.presetType, name);
+                });
+            } catch (e) { console.error('[ILLUST-TE] 새로고침 실패:', e); }
+        }
+
+        function _renderIllustTeChips(container, tags, presetType, presetName) {
+            container.innerHTML = '';
+            if (!tags.length) {
+                container.innerHTML = '<span style="font-size:0.7rem;color:var(--text-muted);">태그 없음</span>';
+                return;
+            }
+            const secId = ILLUST_TAG_EDITOR_SECTIONS.find(s => s.presetType === presetType && document.getElementById(s.selectId)?.value === presetName)?.id;
+            const block = document.createElement('div');
+            block.style.cssText = 'display:flex; flex-wrap:wrap; gap:4px; padding:8px; background:var(--surface); border:1px solid var(--border); border-radius:6px; min-height:28px;';
+            tags.forEach((tag, idx) => {
+                if (!tag) return;
+                const chip = document.createElement('span');
+                chip.className = 'tag-chip';
+                chip.draggable = true;
+                chip.dataset.idx = idx;
+                chip.style.cssText = 'display:inline-flex; align-items:center; gap:4px; background:var(--surface2); border:1px solid var(--border); border-radius:4px; padding:2px 8px; font-size:0.75rem; color:var(--text); cursor:grab;';
+                const label = document.createElement('span');
+                label.textContent = tag;
+                chip.appendChild(label);
+                const x = document.createElement('span');
+                x.style.cssText = 'cursor:pointer; color:var(--text-muted); margin-left:4px; font-size:0.85rem;';
+                x.textContent = '×';
+                x.addEventListener('click', () => illustTeRemoveTag(secId, idx));
+                chip.appendChild(x);
+                block.appendChild(chip);
+            });
+            container.appendChild(block);
+            if (secId) _attachIllustTeDrag(block, tags, secId);
+        }
+
+        function _attachIllustTeDrag(container, tags, secId) {
+            let dragIdx = null;
+            container.querySelectorAll('.tag-chip[draggable]').forEach(chip => {
+                chip.addEventListener('dragstart', (e) => {
+                    dragIdx = parseInt(chip.dataset.idx);
+                    chip.style.opacity = '0.4';
+                    e.dataTransfer.effectAllowed = 'move';
+                });
+                chip.addEventListener('dragend', () => {
+                    chip.style.opacity = '';
+                    container.querySelectorAll('.tag-chip').forEach(c => c.style.outline = '');
+                });
+                chip.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'move';
+                    chip.style.outline = '2px solid var(--accent)';
+                });
+                chip.addEventListener('dragleave', () => { chip.style.outline = ''; });
+                chip.addEventListener('drop', async (e) => {
+                    e.preventDefault();
+                    chip.style.outline = '';
+                    const dropIdx = parseInt(chip.dataset.idx);
+                    if (dragIdx === null || dragIdx === dropIdx) return;
+                    const order = tags.map((_, i) => i);
+                    const [moved] = order.splice(dragIdx, 1);
+                    order.splice(dropIdx, 0, moved);
+                    const sec = ILLUST_TAG_EDITOR_SECTIONS.find(s => s.id === secId);
+                    if (!sec) return;
+                    try {
+                        const resp = await fetch('/api/asset_mode/tags', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ action: 'reorder_preset_tags', preset_type: sec.presetType, preset_name: document.getElementById(sec.selectId)?.value, order })
+                        });
+                        const result = await resp.json();
+                        if (result.success) await _refreshIllustTagEditor();
+                        else showToast(result.error || '순서 변경 실패', 'error');
+                    } catch (err) { showToast('요청 실패: ' + err.message, 'error'); }
+                });
+            });
+        }
+
+        // ─── 모달 프리셋 CRUD ─────────────────────────────────
+        async function illustTeSelectPreset(secId) {
+            const sec = ILLUST_TAG_EDITOR_SECTIONS.find(s => s.id === secId);
+            if (!sec) return;
+            const modalSelect = document.getElementById(`illust-te-select-${secId}`);
+            const sidebarSelect = document.getElementById(sec.selectId);
+            const val = modalSelect?.value || '';
+            // 사이드바 동기화
+            if (sidebarSelect) { sidebarSelect.value = val; saveIllustSettings(); renderIllustPresetTags(sec.selectId, sec.selectId.replace('-preset','-tags'), sec.presetType); }
+            await _refreshIllustTagEditor();
+        }
+
+        async function illustTeAddPreset(secId) {
+            const sec = ILLUST_TAG_EDITOR_SECTIONS.find(s => s.id === secId);
+            if (!sec) return;
+            const name = prompt('새 프리셋명');
+            if (!name?.trim()) return;
+            try {
+                const resp = await fetch('/api/asset_mode/tags', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: `save_${sec.presetType.replace('_presets','')}_preset`, name: name.trim(), tags: [] })
+                });
+                const result = await resp.json();
+                if (result.success) {
+                    await loadIllustArtistPresets();
+                    const modalSelect = document.getElementById(`illust-te-select-${secId}`);
+                    const sidebarSelect = document.getElementById(sec.selectId);
+                    if (sidebarSelect) sidebarSelect.value = name.trim();
+                    if (modalSelect) modalSelect.value = name.trim();
+                    saveIllustSettings();
+                    await _refreshIllustTagEditor();
+                } else { showToast(result.error || '추가 실패', 'error'); }
+            } catch (e) { showToast('요청 실패: ' + e.message, 'error'); }
+        }
+
+        async function illustTeDuplicatePreset(secId) {
+            const sec = ILLUST_TAG_EDITOR_SECTIONS.find(s => s.id === secId);
+            if (!sec) return;
+            const modalSelect = document.getElementById(`illust-te-select-${secId}`);
+            const src = modalSelect?.value;
+            if (!src) { showToast('복제할 프리셋을 선택하세요', 'error'); return; }
+            const newName = prompt('새 프리셋명', src + ' 복사본');
+            if (!newName?.trim()) return;
+            try {
+                const resp = await fetch('/api/asset_mode/tags', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: `duplicate_${sec.presetType.replace('_presets','')}_preset`, source: src, name: newName.trim() })
+                });
+                const result = await resp.json();
+                if (result.success) {
+                    await loadIllustArtistPresets();
+                    const modalSelect2 = document.getElementById(`illust-te-select-${secId}`);
+                    if (modalSelect2) modalSelect2.value = newName.trim();
+                    await _refreshIllustTagEditor();
+                } else { showToast(result.error || '복제 실패', 'error'); }
+            } catch (e) { showToast('요청 실패: ' + e.message, 'error'); }
+        }
+
+        async function illustTeDeletePreset(secId) {
+            const sec = ILLUST_TAG_EDITOR_SECTIONS.find(s => s.id === secId);
+            if (!sec) return;
+            const modalSelect = document.getElementById(`illust-te-select-${secId}`);
+            const name = modalSelect?.value;
+            if (!name) { showToast('삭제할 프리셋을 선택하세요', 'error'); return; }
+            if (!confirm(`프리셋 "${name}" 삭제?`)) return;
+            try {
+                const resp = await fetch('/api/asset_mode/tags', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: `delete_${sec.presetType.replace('_presets','')}_preset`, name })
+                });
+                const result = await resp.json();
+                if (result.success) {
+                    await loadIllustArtistPresets();
+                    await _refreshIllustTagEditor();
+                } else { showToast(result.error || '삭제 실패', 'error'); }
+            } catch (e) { showToast('요청 실패: ' + e.message, 'error'); }
+        }
+
+        function _illustTePresetName(secId) {
+            const sec = ILLUST_TAG_EDITOR_SECTIONS.find(s => s.id === secId);
+            if (!sec) return null;
+            return document.getElementById(`illust-te-select-${secId}`)?.value || document.getElementById(sec.selectId)?.value || null;
+        }
+
+        async function illustTeAddTag(secId) {
+            const sec = ILLUST_TAG_EDITOR_SECTIONS.find(s => s.id === secId);
+            if (!sec) return;
+            const input = document.getElementById(`illust-te-input-${secId}`);
+            const val = input?.value?.trim();
+            if (!val) return;
+            const presetName = _illustTePresetName(secId);
+            if (!presetName) { showToast('프리셋을 먼저 선택하세요', 'error'); return; }
+            try {
+                const resp = await fetch('/api/asset_mode/tags', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'add_preset_tag', preset_type: sec.presetType, preset_name: presetName, value: val })
+                });
+                const result = await resp.json();
+                if (result.success) {
+                    input.value = '';
+                    await _refreshIllustTagEditor();
+                    const sidebarContainerId = sec.selectId.replace('-preset', '-tags');
+                    renderIllustPresetTags(sec.selectId, sidebarContainerId, sec.presetType);
+                } else {
+                    showToast(result.error || '추가 실패', 'error');
+                }
+            } catch (err) { showToast('요청 실패: ' + err.message, 'error'); }
+        }
+
+        async function illustTeRemoveTag(secId, idx) {
+            const sec = ILLUST_TAG_EDITOR_SECTIONS.find(s => s.id === secId);
+            if (!sec) return;
+            const presetName = _illustTePresetName(secId);
+            if (!presetName) return;
+            try {
+                const resp = await fetch('/api/asset_mode/tags', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'remove_preset_tag', preset_type: sec.presetType, preset_name: presetName, index: idx })
+                });
+                const result = await resp.json();
+                if (result.success) {
+                    await _refreshIllustTagEditor();
+                    const sidebarContainerId = sec.selectId.replace('-preset', '-tags');
+                    renderIllustPresetTags(sec.selectId, sidebarContainerId, sec.presetType);
+                } else {
+                    showToast(result.error || '삭제 실패', 'error');
+                }
+            } catch (err) { showToast('요청 실패: ' + err.message, 'error'); }
+        }
+
         function fillPresetSelect(elementId, names, label) {
             const select = document.getElementById(elementId);
             if (!select) return;
@@ -33083,7 +33405,7 @@
             if (cat === 'natural_language_presets') {
                 preview.innerHTML = this.value.trim() ? `<span class="pm-tag-chip" style="white-space:normal;">${this.value.trim()}</span>` : '';
             } else {
-                const tags = this.value.split(',').map(t => t.trim()).filter(t => t);
+                const tags = splitTagsPreservingParens(this.value);
                 preview.innerHTML = tags.map(t => `<span class="pm-tag-chip">${t}</span>`).join('');
             }
         });
