@@ -6990,17 +6990,21 @@
         }
 
         // ─── 백업 목록 로드 (페이지네이션) ───
+        let _pendingBackupReload = false;
         async function loadBackups(reset = false) {
-            if (paginationState.isLoading) return;
-            
+            if (paginationState.isLoading) {
+                if (reset) _pendingBackupReload = true;
+                return;
+            }
+
             if (reset) {
                 paginationState.offset = 0;
                 paginationState.hasMore = true;
                 backupsData = [];
             }
-            
+
             paginationState.isLoading = true;
-            
+
             try {
                 // 배치 모드 상태 갱신 (초록색 표시를 위해)
                 await loadBatchModeStatus();
@@ -7011,17 +7015,17 @@
                 });
 
                 const data = await fetchJSON(`/api/backups?${params}`);
-                
+
                 if (reset) {
                     backupsData = data.backups;
                 } else {
                     backupsData = backupsData.concat(data.backups);
                 }
-                
+
                 paginationState.total = data.total;
                 paginationState.offset = data.offset + data.limit;
                 paginationState.hasMore = data.has_more;
-                
+
                 renderBackups(backupsData);
                 updateStatsBar();
                 await loadConversionInfo();
@@ -7031,6 +7035,10 @@
                     `<div class="empty-state"><h2>서버 연결 실패</h2><p>${escapeHtml(e.message)}</p></div>`;
             } finally {
                 paginationState.isLoading = false;
+                if (_pendingBackupReload) {
+                    _pendingBackupReload = false;
+                    loadBackups(true);
+                }
             }
         }
 
