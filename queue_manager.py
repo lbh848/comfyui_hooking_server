@@ -340,6 +340,8 @@ class QueueManager:
             asset_workflow_type=body.get("asset_workflow_type", "regular"),
             anima_lora_trigger_words=body.get("anima_lora_trigger_words", ""),
             sdxl_lora_trigger_words=body.get("sdxl_lora_trigger_words", ""),
+            positive_prompt=body.get("positive_prompt"),
+            negative_prompt=body.get("negative_prompt"),
         )
 
         # 완료 알림 (기존 에셋 탭 UI 갱신용)

@@ -3356,7 +3356,7 @@
                                 <span id="illust-hrf-status" class="toggle-status off" style="font-size:0.7rem;">OFF</span>
                             </div>
                             <div style="display:flex; align-items:center; gap:6px; margin-top:4px;">
-                                <span style="font-size:0.75rem;">ANIMA HIRES</span>
+                                <span style="font-size:0.75rem;">ANIMA HIRES FIX</span>
                                 <label class="toggle-switch" style="transform:scale(0.8);">
                                     <input type="checkbox" id="illust-anima-hrf-toggle" onchange="saveIllustSettings()">
                                     <span class="toggle-slider"></span>
@@ -23607,10 +23607,9 @@
             return parts.join(', ');
         }
 
-        // ─── 프롬프트 미리보기 ───────────────────────────────
-        async function previewAssetPrompt() {
-            if (!assetTags) return;
-            const char = document.getElementById('asset-character-select').value;
+        // ─── 프롬프트 빌드 (미리보기 + 전송 공통) ───────────────
+        async function buildAssetPromptFromUI() {
+            if (!assetTags) return null;
             const app = getAssetSelectValue('asset-appearance-select');
             const outfit = getAssetSelectValue('asset-outfit-select');
             const expr = getAssetSelectValue('asset-expression-select');
@@ -23625,42 +23624,28 @@
             const hdActivate = document.getElementById('asset-hd-toggle').checked;
             const edActivate = document.getElementById('asset-ed-toggle').checked;
 
-            // HRF 하위 옵션
             const hrfSize = parseFloat(document.getElementById('asset-hrf-size').value) || 2.0;
             const hrfRestoreSize = document.getElementById('asset-hrf-restore-size').checked;
             const hrfControlNet = document.getElementById('asset-hrf-control-net').checked;
             const imgW = parseInt(document.getElementById('asset-img-w').value) || 700;
             const imgH = parseInt(document.getElementById('asset-img-h').value) || 1024;
 
-            // 품질
             const qTags = (assetTags.quality || []).filter(t => t.trim());
-            // 구도/기타
             const cTags = (assetTags.composition || []).filter(t => t.trim());
-            // 아티스트
             const artistName = getAssetSelectValue('asset-artist-preset-select') || '';
             const artistTags = artistName ? (assetTags.artist_presets?.[artistName] || []).filter(t => t.trim()) : [];
-            // 외모 (전역)
             const appTags = app ? (assetTags.appearances?.[app] || []).filter(t => t.trim()) : [];
-            // 표정 (전역)
             const exprTags = expr ? (assetTags.expressions?.[expr] || []).filter(t => t.trim()) : [];
-            // 복장 (전역)
             const outfitTags = outfit ? (assetTags.outfits?.[outfit] || []).filter(t => t.trim()) : [];
-            // 자연어
             const naturalLanguage = document.getElementById('asset-natural-language-text')?.value?.trim() || '';
-            // LoRA 트리거
             const loraTriggerWords = loraEnabled ? assetLoraList.map(l => l.trigger).filter(t => t && t.trim()).join(', ') : '';
-            // ANIMA/SDXL LoRA 트리거 분리
             const animaLoraTriggerWords = loraEnabled ? assetLoraList.filter(l => (l.BASE || 'anima') === 'anima').map(l => l.trigger).filter(t => t && t.trim()).join(', ') : '';
             const sdxlLoraTriggerWords = loraEnabled ? assetLoraList.filter(l => l.BASE === 'sdxl').map(l => l.trigger).filter(t => t && t.trim()).join(', ') : '';
-            // ANIMA 아티스트 프리셋
             const animaArtistName = getAssetSelectValue('anima-artist-preset-select') || '';
             const animaArtistTags = animaArtistName ? (assetTags.artist_presets?.[animaArtistName] || []).filter(t => t.trim()) : [];
-            // ANIMA 품질/부정 태그
             const animaQTags = (assetTags.anima_quality || []).filter(t => t.trim());
             const animaNTags = (assetTags.anima_negative || []).filter(t => t.trim());
-            // 캐릭터 부정
             const cnTags = (assetTags.character_negative || []).filter(t => t.trim());
-            // 부정
             const nTags = (assetTags.negative || []).filter(t => t.trim());
 
             const isAnima = currentConfig?.asset_workflow_type === 'anima';
@@ -23669,7 +23654,6 @@
             let positiveColored = '';
 
             if (isAnima) {
-                // ANIMA 모드: 2섹션 프롬프트
                 const section1 = [
                     ...(animaLoraTriggerWords ? [animaLoraTriggerWords] : []),
                     ...animaArtistTags, ...animaQTags, ...cTags, ...appTags, ...exprTags, ...outfitTags,
@@ -23681,7 +23665,6 @@
                 ].join(', ');
                 positive = section1 + '\n[SDXL]\n' + section2;
 
-                // 컬러 렌더링
                 const section1Data = [
                     { key: 'anima_lora',    tags: animaLoraTriggerWords ? [animaLoraTriggerWords] : [] },
                     { key: 'anima_artist',  tags: animaArtistTags },
@@ -23705,7 +23688,6 @@
                     '\n<span style="color:#ff0;font-weight:bold;">[SDXL]</span>\n' +
                     renderColoredPrompt(section2Data);
             } else {
-                // 일반 모드: 기존 로직
                 positive = [
                     ...(loraTriggerWords ? [loraTriggerWords] : []),
                     ...artistTags, ...qTags, ...cTags, ...appTags, ...exprTags, ...outfitTags,
@@ -23724,6 +23706,8 @@
                 ];
                 positiveColored = renderColoredPrompt(categoryData);
             }
+
+            const positiveLength = positive.length;
 
             let positiveFull = positive;
             positiveFull += `\n[FACE_ID_ACTIVATE]\n${refEnabled ? 'true' : 'false'}`;
@@ -23791,7 +23775,14 @@
                 negativeColored = null;
             }
 
-            // 모달 표시
+            return { positive: positiveFull, negative, positiveLength, positiveColored, negativeColored };
+        }
+
+        // ─── 프롬프트 미리보기 ───────────────────────────────
+        async function previewAssetPrompt() {
+            const data = await buildAssetPromptFromUI();
+            if (!data) return;
+
             const overlay = document.createElement('div');
             overlay.id = 'prompt-preview-overlay';
             overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10000; display:flex; align-items:center; justify-content:center;';
@@ -23803,11 +23794,11 @@
                     </div>
                     <div style="margin-bottom:12px;">
                         <div style="font-size:0.8rem; font-weight:600; color:var(--success); margin-bottom:4px;">긍정 프롬프트</div>
-                        <div style="background:var(--surface2); padding:10px; border-radius:6px; font-size:0.75rem; white-space:pre-wrap; word-break:break-all; max-height:300px; overflow-y:auto; margin:0; font-family:'Consolas',monospace;">${positiveColored}${escapeHtml(positiveFull.substring(positive.length))}</div>
+                        <div style="background:var(--surface2); padding:10px; border-radius:6px; font-size:0.75rem; white-space:pre-wrap; word-break:break-all; max-height:300px; overflow-y:auto; margin:0; font-family:'Consolas',monospace;">${data.positiveColored}${escapeHtml(data.positive.substring(data.positiveLength))}</div>
                     </div>
                     <div>
                         <div style="font-size:0.8rem; font-weight:600; color:var(--error); margin-bottom:4px;">부정 프롬프트</div>
-                        <div style="background:var(--surface2); padding:10px; border-radius:6px; font-size:0.75rem; white-space:pre-wrap; word-break:break-all; max-height:150px; overflow-y:auto; margin:0; font-family:'Consolas',monospace;">${negativeColored ? negativeColored : escapeHtml(negative || '(없음)')}</div>
+                        <div style="background:var(--surface2); padding:10px; border-radius:6px; font-size:0.75rem; white-space:pre-wrap; word-break:break-all; max-height:150px; overflow-y:auto; margin:0; font-family:'Consolas',monospace;">${data.negativeColored ? data.negativeColored : escapeHtml(data.negative || '(없음)')}</div>
                     </div>
                 </div>`;
             document.body.appendChild(overlay);
@@ -27601,80 +27592,26 @@
 
             const totalCount = Math.max(1, parseInt(document.getElementById('asset-generate-count').value) || 1);
 
-            const refEnabled = document.getElementById('asset-ref-toggle').checked;
-            const refStrength = parseFloat(document.getElementById('asset-ref-strength').value) || 0.55;
-            const styleRefEnabled = document.getElementById('asset-style-ref-toggle').checked;
-            const styleRefStrength = parseFloat(document.getElementById('asset-style-ref-strength').value) || 0.55;
-            const loraEnabled = document.getElementById('asset-lora-toggle').checked;
-            const poseEnabled = document.getElementById('asset-pose-toggle').checked;
-            const fdActivate = document.getElementById('asset-fd-toggle').checked;
-            const isAnima = currentConfig?.asset_workflow_type === 'anima';
-            const hrfActivate = document.getElementById('asset-hrf-toggle').checked;
-            const hrfMode = document.getElementById('asset-anima-hrf-select')?.value || 'both';
-            const animaHrfActivate = isAnima && hrfActivate ? (hrfMode === 'sdxl' ? false : true) : false;
-            const effectiveHrfActivate = isAnima && hrfActivate ? (hrfMode === 'anima' ? false : true) : hrfActivate;
-            const hdActivate = document.getElementById('asset-hd-toggle').checked;
-            const edActivate = document.getElementById('asset-ed-toggle').checked;
-            const hrfSize = parseFloat(document.getElementById('asset-hrf-size').value) || 2.0;
-            const hrfRestoreSize = document.getElementById('asset-hrf-restore-size').checked;
-            const hrfControlNet = document.getElementById('asset-hrf-control-net').checked;
-            const imgW = parseInt(document.getElementById('asset-img-w').value) || 700;
-            const imgH = parseInt(document.getElementById('asset-img-h').value) || 1024;
-
-            let loraData = '';
-            if (loraEnabled && assetLoraList.length > 0) {
-                loraData = JSON.stringify({
-                    list: assetLoraList.map(l => ({
-                        lora_path: resolveLoraPath(l),
-                        str: l.strength,
-                        BASE: l.BASE || 'anima',
-                    }))
-                });
+            // 프롬프트 미리보기 빌더로 프롬프트 생성 (단일 소스)
+            const promptData = await buildAssetPromptFromUI();
+            if (!promptData) {
+                showToast('프롬프트 빌드 실패', 'error');
+                return;
             }
 
-            const artistPreset = getAssetSelectValue('asset-artist-preset-select') || '';
-            const naturalLanguage = document.getElementById('asset-natural-language-text')?.value || '';
-            const loraTriggerWords = loraEnabled ? assetLoraList.map(l => l.trigger).filter(t => t && t.trim()).join(', ') : '';
-
-            // ANIMA 모드 관련 필드
-            const animaArtistPreset = isAnima ? (getAssetSelectValue('anima-artist-preset-select') || '') : '';
-            const animaLoraTriggerWords = loraEnabled ? assetLoraList.filter(l => (l.BASE || 'anima') === 'anima').map(l => l.trigger).filter(t => t && t.trim()).join(', ') : '';
-            const sdxlLoraTriggerWords = loraEnabled ? assetLoraList.filter(l => l.BASE === 'sdxl').map(l => l.trigger).filter(t => t && t.trim()).join(', ') : '';
+            const refEnabled = document.getElementById('asset-ref-toggle').checked;
+            const styleRefEnabled = document.getElementById('asset-style-ref-toggle').checked;
+            const isAnima = currentConfig?.asset_workflow_type === 'anima';
 
             const requestBody = {
                 character: char,
-                outfit: outfit,
-                expression: expr,
-                appearance: app,
+                asset_workflow_type: isAnima ? 'anima' : 'regular',
                 face_id_enabled: refEnabled,
-                face_id_strength: refStrength,
                 reference_images: refEnabled ? assetRefImages.map(img => ({filename: img.name, local_path: img.local_path})) : [],
                 style_ref_enabled: styleRefEnabled,
-                style_ref_strength: styleRefStrength,
                 style_ref_images: styleRefEnabled ? assetStyleRefImages.map(img => ({filename: img.name, local_path: img.local_path})) : [],
-                lora_activate: loraEnabled,
-                lora_data: loraData,
-                pose_enabled: isAnima ? false : poseEnabled,
-                pose_id: (isAnima ? false : poseEnabled) ? assetSelectedPoseId : '',
-                hrf_activate: effectiveHrfActivate,
-                anima_hrf_activate: animaHrfActivate,
-                hrf_size: hrfSize,
-                hrf_restore_size: hrfRestoreSize,
-                hrf_control_net: hrfControlNet,
-                img_w: imgW,
-                img_h: imgH,
-                fd_activate: fdActivate,
-                hd_activate: hdActivate,
-                ed_activate: edActivate,
-                artist_preset: artistPreset,
-                natural_language: naturalLanguage,
-                lora_trigger_words: loraTriggerWords,
-                anima_artist_preset: animaArtistPreset,
-                anima_quality_preset: isAnima ? (getAssetSelectValue('anima-quality-preset-select') || '') : '',
-                anima_negative_preset: isAnima ? (getAssetSelectValue('anima-negative-preset-select') || '') : '',
-                asset_workflow_type: isAnima ? 'anima' : 'regular',
-                anima_lora_trigger_words: animaLoraTriggerWords,
-                sdxl_lora_trigger_words: sdxlLoraTriggerWords,
+                positive_prompt: promptData.positive,
+                negative_prompt: promptData.negative,
             };
 
             // 인스턴스 LoRA 사용 횟수 증가
@@ -31725,8 +31662,8 @@
             if (negPreview) negPreview.textContent = previewBatchSlotNegativePrompt(batchChains[idx]);
         }
 
-        function previewBatchSlotPrompt(slot) {
-            if (!assetTags) return '(태그 데이터 로딩중)';
+        // ─── 배치 프롬프트 빌드 (미리보기 + 전송 공통) ──────────
+        function _resolveBatchSlotTags(slot) {
             const loraTriggerWords = (slot.lora_list || []).map(l => l.trigger).filter(t => t && t.trim()).join(', ');
             const animaLoraTriggerWords = (slot.lora_list || []).filter(l => (l.BASE || 'anima') === 'anima').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
             const sdxlLoraTriggerWords = (slot.lora_list || []).filter(l => l.BASE === 'sdxl').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
@@ -31744,108 +31681,38 @@
             const nTags = (slot.negative_preset && assetTags.negative_presets?.[slot.negative_preset]) || [];
             const animaQTags = (slot.anima_quality_preset && assetTags.quality_presets?.[slot.anima_quality_preset]) || [];
             const animaNTags = (slot.anima_negative_preset && assetTags.negative_presets?.[slot.anima_negative_preset]) || [];
+            return { loraTriggerWords, animaLoraTriggerWords, sdxlLoraTriggerWords, artistTags, animaArtistTags, qTags, cTags, appTags, exprTags, outfitTags, naturalLanguage, cnTags, nTags, animaQTags, animaNTags };
+        }
 
+        async function buildBatchSlotPromptData(slot) {
+            if (!assetTags) return null;
+            const t = _resolveBatchSlotTags(slot);
             const isAnima = currentConfig?.asset_workflow_type === 'anima';
+            const poseEnabled = isAnima ? false : (slot.pose_enabled || false);
 
-            let positive = [];
-            let positiveColored = '';
-
+            let positiveTags = '';
             if (isAnima) {
-                // ANIMA 모드: 2섹션 프롬프트
                 const section1 = [
-                    ...(animaLoraTriggerWords ? [animaLoraTriggerWords] : []),
-                    ...animaArtistTags, ...animaQTags, ...cTags, ...appTags, ...exprTags, ...outfitTags,
-                    ...(naturalLanguage ? [naturalLanguage] : []),
-                ].filter(t => t.trim());
+                    ...(t.animaLoraTriggerWords ? [t.animaLoraTriggerWords] : []),
+                    ...t.animaArtistTags, ...t.animaQTags, ...t.cTags, ...t.appTags, ...t.exprTags, ...t.outfitTags,
+                    ...(t.naturalLanguage ? [t.naturalLanguage] : []),
+                ].filter(v => typeof v === 'string' && v.trim());
                 const section2 = [
-                    ...(sdxlLoraTriggerWords ? [sdxlLoraTriggerWords] : []),
-                    ...artistTags, ...qTags, ...cTags, ...appTags, ...exprTags, ...outfitTags,
-                ].filter(t => t.trim());
-
-                const section1Data = [
-                    { key: 'anima_lora',    tags: animaLoraTriggerWords ? [animaLoraTriggerWords] : [] },
-                    { key: 'anima_artist',  tags: animaArtistTags },
-                    { key: 'anima_quality', tags: animaQTags },
-                    { key: 'composition',  tags: cTags },
-                    { key: 'appearance',   tags: appTags },
-                    { key: 'expression',   tags: exprTags },
-                    { key: 'outfit',       tags: outfitTags },
-                    { key: 'nl',           tags: naturalLanguage ? [naturalLanguage] : [] },
-                ];
-                const section2Data = [
-                    { key: 'sdxl_lora',     tags: sdxlLoraTriggerWords ? [sdxlLoraTriggerWords] : [] },
-                    { key: 'artist',       tags: artistTags },
-                    { key: 'sdxl_quality', tags: qTags },
-                    { key: 'composition',  tags: cTags },
-                    { key: 'appearance',   tags: appTags },
-                    { key: 'expression',   tags: exprTags },
-                    { key: 'outfit',       tags: outfitTags },
-                ];
-                positiveColored = renderColoredPrompt(section1Data) +
-                    '\n<span style="color:#ff0;font-weight:bold;">[SDXL]</span>\n' +
-                    renderColoredPrompt(section2Data);
-
-                let positiveFull = section1.join(', ') + '\n[SDXL]\n' + section2.join(', ');
-                positiveFull += `\n[FACE_ID_ACTIVATE]\n${slot.ref_enabled ? 'true' : 'false'}`;
-                positiveFull += `\n[FACE_ID_STR]\n${slot.ref_strength}`;
-                positiveFull += `\n[FACE_ID_DIR]\n${slot.ref_dir || 'soya_char_ref/fallback'}`;
-                positiveFull += `\n[STYLE_ACTIVATE]\n${slot.style_ref_enabled ? 'true' : 'false'}`;
-                positiveFull += `\n[STYLE_STR]\n${slot.style_ref_strength || 0.55}`;
-                positiveFull += `\n[STYLE_DIR]\n${slot.style_ref_dir || 'soya_style_ref/fallback'}`;
-                const loraActive = slot.lora_enabled && (slot.lora_list || []).length > 0;
-                positiveFull += `\n[LORA_ACTIVATE]\n${loraActive ? 'true' : 'false'}`;
-                if (loraActive) {
-                    positiveFull += `\n[LORA_DATA]\n${JSON.stringify({list: slot.lora_list.map(l => ({lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima'}))})}`;
-                } else {
-                    positiveFull += `\n[LORA_DATA]\n{"list":[]}`;
-                }
-                positiveFull += `\n[POSE_ACTIVATE]\nfalse`;
-                positiveFull += `\n[POSE_DATA]\n{"people":[{"pose_keypoints_2d":[509.59,522.31,1,...]}],"canvas_height":1024,"canvas_width":700}`;
-                const batchHrfMode = slot.hrf_mode || 'both';
-                const _batchAnimaHrf = slot.hrf_enabled ? (batchHrfMode === 'sdxl' ? false : true) : false;
-                const _batchHrf = slot.hrf_enabled ? (batchHrfMode === 'anima' ? false : true) : false;
-                positiveFull += `\n[HRF_ACTIVATE]\n${_batchHrf ? 'true' : 'false'}`;
-                positiveFull += `\n[ANIMA_HRF_ACTIVATE]\n${_batchAnimaHrf ? 'true' : 'false'}`;
-                positiveFull += `\n[HRF_SIZE]\n${slot.hrf_size || 2.0}`;
-                positiveFull += `\n[HRF_RESTORE_SIZE]\n${slot.hrf_restore_size !== false ? 'true' : 'false'}`;
-                positiveFull += `\n[HRF_CONTROL_NET]\n${slot.hrf_control_net ? 'true' : 'false'}`;
-                positiveFull += `\n[IMG_W]\n${slot.img_w || 700}`;
-                positiveFull += `\n[IMG_H]\n${slot.img_h || 1024}`;
-                positiveFull += `\n[FD_ACTIVATE]\n${slot.fd_enabled ? 'true' : 'false'}`;
-                positiveFull += `\n[HD_ACTIVATE]\n${slot.hd_enabled ? 'true' : 'false'}`;
-                positiveFull += `\n[ED_ACTIVATE]\n${slot.ed_enabled ? 'true' : 'false'}`;
-                positiveFull += '\n[END]';
-
-                const animaNegParts = [...cnTags, ...animaNTags].filter(t => t.trim());
-                const sdxlNegParts = [...cnTags, ...nTags].filter(t => t.trim());
-                const negative = animaNegParts.join(', ') + '\n[SDXL]\n' + sdxlNegParts.join(', ');
-                const tagsPart = section1.join(', ') + '\n[SDXL]\n' + section2.join(', ');
-                const controlPart = positiveFull.substring(tagsPart.length);
-                return positiveColored + escapeHtml(controlPart);
+                    ...(t.sdxlLoraTriggerWords ? [t.sdxlLoraTriggerWords] : []),
+                    ...t.artistTags, ...t.qTags, ...t.cTags, ...t.appTags, ...t.exprTags, ...t.outfitTags,
+                ].filter(v => typeof v === 'string' && v.trim());
+                positiveTags = section1.join(', ') + '\n[SDXL]\n' + section2.join(', ');
+            } else {
+                positiveTags = [
+                    ...(t.loraTriggerWords ? [t.loraTriggerWords] : []),
+                    ...t.artistTags, ...t.qTags, ...t.cTags, ...t.appTags, ...t.exprTags, ...t.outfitTags,
+                    ...(t.naturalLanguage ? [t.naturalLanguage] : []),
+                ].filter(v => typeof v === 'string' && v.trim()).join(', ');
             }
 
-            // 일반 모드: 기존 로직
-            positive = [
-                ...(loraTriggerWords ? [loraTriggerWords] : []),
-                ...artistTags, ...qTags, ...cTags, ...appTags, ...exprTags, ...outfitTags,
-                ...(naturalLanguage ? [naturalLanguage] : []),
-            ].filter(t => t.trim());
-
-            const categoryData = [
-                { key: 'lora',        tags: loraTriggerWords ? [loraTriggerWords] : [] },
-                { key: 'artist',      tags: artistTags },
-                { key: 'quality',     tags: qTags },
-                { key: 'composition', tags: cTags },
-                { key: 'appearance',  tags: appTags },
-                { key: 'expression',  tags: exprTags },
-                { key: 'outfit',      tags: outfitTags },
-                { key: 'nl',          tags: naturalLanguage ? [naturalLanguage] : [] },
-            ];
-            positiveColored = renderColoredPrompt(categoryData);
-
-            let positiveFull = positive.join(', ');
+            let positiveFull = positiveTags;
             positiveFull += `\n[FACE_ID_ACTIVATE]\n${slot.ref_enabled ? 'true' : 'false'}`;
-            positiveFull += `\n[FACE_ID_STR]\n${slot.ref_strength}`;
+            positiveFull += `\n[FACE_ID_STR]\n${slot.ref_strength || 0.55}`;
             positiveFull += `\n[FACE_ID_DIR]\n${slot.ref_dir || 'soya_char_ref/fallback'}`;
             positiveFull += `\n[STYLE_ACTIVATE]\n${slot.style_ref_enabled ? 'true' : 'false'}`;
             positiveFull += `\n[STYLE_STR]\n${slot.style_ref_strength || 0.55}`;
@@ -31853,18 +31720,28 @@
             const loraActive = slot.lora_enabled && (slot.lora_list || []).length > 0;
             positiveFull += `\n[LORA_ACTIVATE]\n${loraActive ? 'true' : 'false'}`;
             if (loraActive) {
-                const config = window.serverConfig || {};
                 positiveFull += `\n[LORA_DATA]\n${JSON.stringify({list: slot.lora_list.map(l => ({lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima'}))})}`;
             } else {
                 positiveFull += `\n[LORA_DATA]\n{"list":[]}`;
             }
-            positiveFull += `\n[POSE_ACTIVATE]\n${slot.pose_enabled ? 'true' : 'false'}`;
-            if (slot.pose_enabled && slot.pose_id) {
-                positiveFull += `\n[POSE_DATA]\n(포즈 데이터: ${slot.pose_id})`;
+            positiveFull += `\n[POSE_ACTIVATE]\n${poseEnabled ? 'true' : 'false'}`;
+            if (poseEnabled && slot.pose_id) {
+                try {
+                    const resp = await fetch(`/api/pose_mode/poses/${encodeURIComponent(slot.pose_id)}`);
+                    const poseResult = await resp.json();
+                    const poseJson = poseResult.keypoints || poseResult;
+                    positiveFull += `\n[POSE_DATA]\n${JSON.stringify(poseJson)}`;
+                } catch (e) {
+                    positiveFull += `\n[POSE_DATA]\n(포즈 데이터 로드 실패: ${slot.pose_id})`;
+                }
             } else {
-                positiveFull += `\n[POSE_DATA]\n{"people":[{"pose_keypoints_2d":[509.59,522.31,1,...]}],"canvas_height":1024,"canvas_width":700}`;
+                positiveFull += `\n[POSE_DATA]\n{"people":[{"pose_keypoints_2d":[381.10,379.86,1,413.21,506.58,1,223.64,436.41,1,55.33,624.12,1,64.77,454.24,1,579.09,575.30,1,362.22,935.42,1,331.06,972.15,1,196.97,797.67,1,264.96,1013.47,1,257.41,1024.49,1,350.89,820.63,1,419.82,1011.63,1,419.82,1024.49,1,315.95,343.13,1,462.31,294.46,1,263.07,365.17,1,546.35,301.80,1]}],"canvas_height":1024,"canvas_width":700}`;
             }
-            positiveFull += `\n[HRF_ACTIVATE]\n${slot.hrf_enabled ? 'true' : 'false'}`;
+            const batchHrfMode = slot.hrf_mode || 'both';
+            const _batchAnimaHrf = slot.hrf_enabled ? (batchHrfMode === 'sdxl' ? false : true) : false;
+            const _batchHrf = slot.hrf_enabled ? (batchHrfMode === 'anima' ? false : true) : false;
+            positiveFull += `\n[HRF_ACTIVATE]\n${_batchHrf ? 'true' : 'false'}`;
+            if (isAnima) positiveFull += `\n[ANIMA_HRF_ACTIVATE]\n${_batchAnimaHrf ? 'true' : 'false'}`;
             positiveFull += `\n[HRF_SIZE]\n${slot.hrf_size || 2.0}`;
             positiveFull += `\n[HRF_RESTORE_SIZE]\n${slot.hrf_restore_size !== false ? 'true' : 'false'}`;
             positiveFull += `\n[HRF_CONTROL_NET]\n${slot.hrf_control_net ? 'true' : 'false'}`;
@@ -31875,11 +31752,91 @@
             positiveFull += `\n[ED_ACTIVATE]\n${slot.ed_enabled ? 'true' : 'false'}`;
             positiveFull += '\n[END]';
 
-            const negative = [...cnTags, ...nTags].filter(t => t.trim()).join(', ');
+            let negative;
+            if (isAnima) {
+                const animaNegParts = [...t.cnTags, ...t.animaNTags].filter(v => v.trim());
+                const sdxlNegParts = [...t.cnTags, ...t.nTags].filter(v => v.trim());
+                negative = animaNegParts.join(', ') + '\n[SDXL]\n' + sdxlNegParts.join(', ');
+            } else {
+                negative = [...t.cnTags, ...t.nTags].filter(v => v.trim()).join(', ');
+            }
 
-            // 컬러 스팬 + 컨트롤 토큰 (이스케이프) 조합
-            const tagsPart = positive.join(', ');
-            const controlPart = positiveFull.substring(tagsPart.length);
+            return { positive: positiveFull, negative, positiveLength: positiveTags.length };
+        }
+
+        function previewBatchSlotPrompt(slot) {
+            if (!assetTags) return '(태그 데이터 로딩중)';
+            const t = _resolveBatchSlotTags(slot);
+            const isAnima = currentConfig?.asset_workflow_type === 'anima';
+            const poseEnabled = isAnima ? false : (slot.pose_enabled || false);
+
+            let positiveColored = '';
+
+            if (isAnima) {
+                const section1Data = [
+                    { key: 'anima_lora',    tags: t.animaLoraTriggerWords ? [t.animaLoraTriggerWords] : [] },
+                    { key: 'anima_artist',  tags: t.animaArtistTags },
+                    { key: 'anima_quality', tags: t.animaQTags },
+                    { key: 'composition',  tags: t.cTags },
+                    { key: 'appearance',   tags: t.appTags },
+                    { key: 'expression',   tags: t.exprTags },
+                    { key: 'outfit',       tags: t.outfitTags },
+                    { key: 'nl',           tags: t.naturalLanguage ? [t.naturalLanguage] : [] },
+                ];
+                const section2Data = [
+                    { key: 'sdxl_lora',     tags: t.sdxlLoraTriggerWords ? [t.sdxlLoraTriggerWords] : [] },
+                    { key: 'artist',       tags: t.artistTags },
+                    { key: 'sdxl_quality', tags: t.qTags },
+                    { key: 'composition',  tags: t.cTags },
+                    { key: 'appearance',   tags: t.appTags },
+                    { key: 'expression',   tags: t.exprTags },
+                    { key: 'outfit',       tags: t.outfitTags },
+                ];
+                positiveColored = renderColoredPrompt(section1Data) +
+                    '\n<span style="color:#ff0;font-weight:bold;">[SDXL]</span>\n' +
+                    renderColoredPrompt(section2Data);
+            } else {
+                const categoryData = [
+                    { key: 'lora',        tags: t.loraTriggerWords ? [t.loraTriggerWords] : [] },
+                    { key: 'artist',      tags: t.artistTags },
+                    { key: 'quality',     tags: t.qTags },
+                    { key: 'composition', tags: t.cTags },
+                    { key: 'appearance',  tags: t.appTags },
+                    { key: 'expression',  tags: t.exprTags },
+                    { key: 'outfit',      tags: t.outfitTags },
+                    { key: 'nl',          tags: t.naturalLanguage ? [t.naturalLanguage] : [] },
+                ];
+                positiveColored = renderColoredPrompt(categoryData);
+            }
+
+            // 컨트롤 섹션 (포즈는 placeholder)
+            let controlPart = '';
+            controlPart += `\n[FACE_ID_ACTIVATE]\n${slot.ref_enabled ? 'true' : 'false'}`;
+            controlPart += `\n[FACE_ID_STR]\n${slot.ref_strength}`;
+            controlPart += `\n[FACE_ID_DIR]\n${slot.ref_dir || 'soya_char_ref/fallback'}`;
+            controlPart += `\n[STYLE_ACTIVATE]\n${slot.style_ref_enabled ? 'true' : 'false'}`;
+            controlPart += `\n[STYLE_STR]\n${slot.style_ref_strength || 0.55}`;
+            controlPart += `\n[STYLE_DIR]\n${slot.style_ref_dir || 'soya_style_ref/fallback'}`;
+            const loraActive = slot.lora_enabled && (slot.lora_list || []).length > 0;
+            controlPart += `\n[LORA_ACTIVATE]\n${loraActive ? 'true' : 'false'}`;
+            controlPart += `\n[LORA_DATA]\n${loraActive ? JSON.stringify({list: slot.lora_list.map(l => ({lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima'}))}) : '{"list":[]}'}`;
+            controlPart += `\n[POSE_ACTIVATE]\n${poseEnabled ? 'true' : 'false'}`;
+            controlPart += `\n[POSE_DATA]\n${poseEnabled && slot.pose_id ? '(포즈: ' + slot.pose_id + ')' : '{"people":[{"pose_keypoints_2d":[...]}],"canvas_height":1024,"canvas_width":700}'}`;
+            const batchHrfMode = slot.hrf_mode || 'both';
+            const _batchAnimaHrf = slot.hrf_enabled ? (batchHrfMode === 'sdxl' ? false : true) : false;
+            const _batchHrf = slot.hrf_enabled ? (batchHrfMode === 'anima' ? false : true) : false;
+            controlPart += `\n[HRF_ACTIVATE]\n${_batchHrf ? 'true' : 'false'}`;
+            if (isAnima) controlPart += `\n[ANIMA_HRF_ACTIVATE]\n${_batchAnimaHrf ? 'true' : 'false'}`;
+            controlPart += `\n[HRF_SIZE]\n${slot.hrf_size || 2.0}`;
+            controlPart += `\n[HRF_RESTORE_SIZE]\n${slot.hrf_restore_size !== false ? 'true' : 'false'}`;
+            controlPart += `\n[HRF_CONTROL_NET]\n${slot.hrf_control_net ? 'true' : 'false'}`;
+            controlPart += `\n[IMG_W]\n${slot.img_w || 700}`;
+            controlPart += `\n[IMG_H]\n${slot.img_h || 1024}`;
+            controlPart += `\n[FD_ACTIVATE]\n${slot.fd_enabled ? 'true' : 'false'}`;
+            controlPart += `\n[HD_ACTIVATE]\n${slot.hd_enabled ? 'true' : 'false'}`;
+            controlPart += `\n[ED_ACTIVATE]\n${slot.ed_enabled ? 'true' : 'false'}`;
+            controlPart += '\n[END]';
+
             return positiveColored + escapeHtml(controlPart);
         }
 
@@ -31932,72 +31889,29 @@
                 for (let ci = 0; ci < batchChains.length; ci++) {
                     const slot = batchChains[ci];
                     const label = `일괄 [${round + 1}/${repeatCount}] ${slot.character}/${slot.outfit}/${slot.expression}`;
+
+                    // 프롬프트 빌드 (단일 소스)
+                    const promptData = await buildBatchSlotPromptData(slot);
+                    if (!promptData) {
+                        console.error('[BATCH] 프롬프트 빌드 실패:', slot);
+                        continue;
+                    }
+
                     const genPayload = {
                         character: slot.character,
-                        outfit: slot.outfit,
-                        expression: slot.expression,
-                        appearance: slot.appearance,
+                        asset_workflow_type: isAnima ? 'anima' : 'regular',
                         face_id_enabled: slot.ref_enabled,
-                        face_id_strength: slot.ref_strength,
                         reference_images: (slot.ref_images || []).map(img => ({filename: img.name, local_path: img.local_path})),
                         style_ref_enabled: slot.style_ref_enabled,
-                        style_ref_strength: slot.style_ref_strength || 0.55,
                         style_ref_images: (slot.style_ref_images || []).map(img => ({filename: img.name, local_path: img.local_path})),
-                        lora_activate: slot.lora_enabled && (slot.lora_list || []).length > 0,
-                        lora_data: (() => {
-                            if (!slot.lora_enabled || !(slot.lora_list || []).length) return '';
-                            return JSON.stringify({
-                                list: slot.lora_list.map(l => ({
-                                    lora_path: resolveLoraPath(l),
-                                    str: l.strength,
-                                    BASE: l.BASE || 'anima',
-                                }))
-                            });
-                        })(),
-                        pose_enabled: isAnima ? false : slot.pose_enabled,
-                        pose_id: (isAnima ? false : slot.pose_enabled) ? slot.pose_id : '',
-                        fd_activate: slot.fd_enabled,
-                        hrf_activate: (function() {
-                            if (!isAnima) return slot.hrf_enabled;
-                            const mode = slot.hrf_mode || 'both';
-                            return slot.hrf_enabled ? (mode === 'anima' ? false : true) : false;
-                        })(),
-                        anima_hrf_activate: (function() {
-                            if (!isAnima) return false;
-                            const mode = slot.hrf_mode || 'both';
-                            return slot.hrf_enabled ? (mode === 'sdxl' ? false : true) : false;
-                        })(),
-                        hrf_size: slot.hrf_size || 2.0,
-                        hrf_restore_size: slot.hrf_restore_size !== false,
-                        hrf_control_net: !!slot.hrf_control_net,
-                        img_w: slot.img_w || 700,
-                        img_h: slot.img_h || 1024,
-                        hd_activate: slot.hd_enabled,
-                        ed_activate: slot.ed_enabled,
-                        artist_preset: slot.artist_preset || '',
-                        natural_language: slot.natural_language_preset
-                            ? (assetTags?.natural_language_presets?.[slot.natural_language_preset] || slot.natural_language || '')
-                            : (slot.natural_language || ''),
-                        lora_trigger_words: slot.lora_enabled ? (slot.lora_list || []).map(l => l.trigger).filter(t => t && t.trim()).join(', ') : '',
-                        anima_artist_preset: isAnima ? (slot.anima_artist_preset || '') : '',
-                        anima_quality_preset: isAnima ? (slot.anima_quality_preset || '') : '',
-                        anima_negative_preset: isAnima ? (slot.anima_negative_preset || '') : '',
-                        asset_workflow_type: isAnima ? 'anima' : 'regular',
-                        anima_lora_trigger_words: slot.lora_enabled ? (slot.lora_list || []).filter(l => (l.BASE || 'anima') === 'anima').map(l => l.trigger).filter(t => t && t.trim()).join(', ') : '',
-                        sdxl_lora_trigger_words: slot.lora_enabled ? (slot.lora_list || []).filter(l => l.BASE === 'sdxl').map(l => l.trigger).filter(t => t && t.trim()).join(', ') : '',
+                        positive_prompt: promptData.positive,
+                        negative_prompt: promptData.negative,
                     };
-                    const presets = {};
-                    if (slot.quality_preset) presets.quality_preset = slot.quality_preset;
-                    if (slot.composition_preset) presets.composition_preset = slot.composition_preset;
-                    if (slot.negative_preset) presets.negative_preset = slot.negative_preset;
-                    if (slot.character_negative_preset) presets.character_negative_preset = slot.character_negative_preset;
-                    if (isAnima && slot.anima_quality_preset) presets.anima_quality_preset = slot.anima_quality_preset;
-                    if (isAnima && slot.anima_negative_preset) presets.anima_negative_preset = slot.anima_negative_preset;
 
                     try {
                         await fetchJSON('/api/queue/add', {
                             method: 'POST', headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ type: 'asset_generation', label: label, params: { body: genPayload, presets: presets } }),
+                            body: JSON.stringify({ type: 'asset_generation', label: label, params: { body: genPayload } }),
                         });
                         addedCount++;
                     } catch (e) {

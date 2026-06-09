@@ -1169,6 +1169,8 @@ class AssetMode:
         asset_workflow_type: str = "regular",
         anima_lora_trigger_words: str = "",
         sdxl_lora_trigger_words: str = "",
+        positive_prompt: str = None,
+        negative_prompt: str = None,
     ) -> dict:
         async with self._lock:
             self._is_generating = True
@@ -1184,6 +1186,7 @@ class AssetMode:
                     artist_preset, natural_language, lora_trigger_words,
                     anima_artist_preset, asset_workflow_type,
                     anima_lora_trigger_words, sdxl_lora_trigger_words,
+                    positive_prompt, negative_prompt,
                 )
             finally:
                 self._is_generating = False
@@ -1221,6 +1224,8 @@ class AssetMode:
         asset_workflow_type: str = "regular",
         anima_lora_trigger_words: str = "",
         sdxl_lora_trigger_words: str = "",
+        positive_prompt: str = None,
+        negative_prompt: str = None,
     ) -> dict:
         # ANIMA 모드 시 워크플로우 경로 교체
         saved_workflow_path = self.workflow_source_path
@@ -1239,36 +1244,40 @@ class AssetMode:
             if pose_enabled and pose_id:
                 pose_data = self._load_pose_data(pose_id)
 
-            positive, negative = self.build_prompts(
-                appearance, outfit, expression,
-                face_id_enabled=face_id_enabled,
-                face_id_strength=face_id_strength,
-                face_id_dir=reference_subfolder,
-                style_ref_enabled=style_ref_enabled,
-                style_ref_strength=style_ref_strength,
-                style_ref_dir=style_ref_subfolder,
-                lora_activate=lora_activate,
-                lora_data=lora_data,
-                pose_enabled=pose_enabled,
-                pose_data=pose_data,
-                hrf_activate=hrf_activate,
-                anima_hrf_activate=anima_hrf_activate,
-                hrf_size=hrf_size,
-                hrf_restore_size=hrf_restore_size,
-                hrf_control_net=hrf_control_net,
-                img_w=img_w,
-                img_h=img_h,
-                fd_activate=fd_activate,
-                hd_activate=hd_activate,
-                ed_activate=ed_activate,
-                artist_preset=artist_preset,
-                natural_language=natural_language,
-                lora_trigger_words=lora_trigger_words,
-                anima_artist_preset=anima_artist_preset,
-                asset_workflow_type=asset_workflow_type,
-                anima_lora_trigger_words=anima_lora_trigger_words,
-                sdxl_lora_trigger_words=sdxl_lora_trigger_words,
-            )
+            if positive_prompt is not None and negative_prompt is not None:
+                positive, negative = positive_prompt, negative_prompt
+                print(f"[ASSET] 프론트엔드 pre-built 프롬프트 사용 (길이: {len(positive)})")
+            else:
+                positive, negative = self.build_prompts(
+                    appearance, outfit, expression,
+                    face_id_enabled=face_id_enabled,
+                    face_id_strength=face_id_strength,
+                    face_id_dir=reference_subfolder,
+                    style_ref_enabled=style_ref_enabled,
+                    style_ref_strength=style_ref_strength,
+                    style_ref_dir=style_ref_subfolder,
+                    lora_activate=lora_activate,
+                    lora_data=lora_data,
+                    pose_enabled=pose_enabled,
+                    pose_data=pose_data,
+                    hrf_activate=hrf_activate,
+                    anima_hrf_activate=anima_hrf_activate,
+                    hrf_size=hrf_size,
+                    hrf_restore_size=hrf_restore_size,
+                    hrf_control_net=hrf_control_net,
+                    img_w=img_w,
+                    img_h=img_h,
+                    fd_activate=fd_activate,
+                    hd_activate=hd_activate,
+                    ed_activate=ed_activate,
+                    artist_preset=artist_preset,
+                    natural_language=natural_language,
+                    lora_trigger_words=lora_trigger_words,
+                    anima_artist_preset=anima_artist_preset,
+                    asset_workflow_type=asset_workflow_type,
+                    anima_lora_trigger_words=anima_lora_trigger_words,
+                    sdxl_lora_trigger_words=sdxl_lora_trigger_words,
+                )
             if not positive:
                 return {"success": False, "error": "프롬프트가 비어있음"}
 
