@@ -2011,7 +2011,12 @@ async def _ws_heartbeat():
             except Exception:
                 stale.append(cid)
         for cid in stale:
-            frontend_ws_connections.pop(cid, None)
+            entry = frontend_ws_connections.pop(cid, None)
+            if entry:
+                try:
+                    await entry["ws"].close()
+                except Exception:
+                    pass
             print(f"[FRONTEND WS] 하트비트 응답 없음, 제거: {cid}")
 
 
