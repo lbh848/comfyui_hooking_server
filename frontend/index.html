@@ -18275,6 +18275,12 @@
                         <button class="btn-auto-group" data-char-name="${escAttr(char.name)}"
                             onclick="event.stopPropagation(); autoGroupPrompt('${escAttr(char.name)}')"
                             style="background:rgba(34,197,94,0.12); color:var(--text); border:1px solid rgba(34,197,94,0.3); padding:8px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600; white-space:nowrap;">캐릭터 얼굴 태그 설정</button>
+                        <select onchange="saveCharGenderTag('${escAttr(char.name)}', this.value)"
+                            style="padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface2); color:var(--text); font-size:0.8rem; cursor:pointer;">
+                            ${['1girl','1boy','1male'].map(g =>
+                                `<option value="${g}" ${char.gender_tag === g ? 'selected' : ''}>${g}</option>`
+                            ).join('')}
+                        </select>
                         <div style="margin-left:auto;"></div>
                         <button onclick="event.stopPropagation(); togglePromptPreviewModal('${escAttr(char.name)}', this)"
                             style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:6px 10px; border-radius:6px; cursor:pointer; font-size:0.8rem; white-space:nowrap;">패치 프롬프트 미리보기</button>
@@ -18636,6 +18642,24 @@
                 }
             } catch (e) {
                 console.error('[BOT] 얼굴 LoRA 저장 실패:', e);
+            }
+        }
+
+        async function saveCharGenderTag(charName, value) {
+            try {
+                const resp = await fetch('/api/bot_mode/action', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'update_char_gender_tag', bot_name: botCurrentBot, char_name: charName, gender_tag: value })
+                });
+                const result = await resp.json();
+                if (result.success) {
+                    botData.bots = result.bots;
+                } else {
+                    showToast('성별 태그 저장 실패: ' + result.error, 'error');
+                }
+            } catch (e) {
+                console.error('[BOT] 성별 태그 저장 실패:', e);
             }
         }
 

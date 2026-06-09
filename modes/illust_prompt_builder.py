@@ -273,42 +273,54 @@ class IllustPromptBuilder:
         anima_trigger_clean = [t.strip() for t in anima_triggers if t.strip()]
         sdxl_trigger_clean = [t.strip() for t in sdxl_triggers if t.strip()]
 
-        # ─── ANIMA 콘텐츠 파트 (품질/트리거 제외) ───
-        anima_content_no_triggers = []
-        # 1. ANIMA 아티스트 프리셋
-        for t in anima_artist_tags:
-            if t.strip():
-                anima_content_no_triggers.append(t.strip())
-        # 2. setup
+        # ─── 성별 태그 (캐릭터 gender_tag 수집, " and "로 결합) ───
+        gender_tags = []
+        for char_name in detected_chars:
+            char_data = next((c for c in characters if c["name"] == char_name), None)
+            if char_data:
+                gt = char_data.get("gender_tag", "1girl")
+                if gt and gt not in gender_tags:
+                    gender_tags.append(gt)
+        gender_str = " and ".join(gender_tags) if gender_tags else ""
+
+        # ─── ANIMA 아티스트 파트 ───
+        anima_artist_parts = [t.strip() for t in anima_artist_tags if t.strip()]
+
+        # ─── ANIMA 콘텐츠 파트 (품질/트리거/성별/아티스트 제외) ───
+        anima_content_core = []
+        # 1. setup
         if setup.strip():
-            anima_content_no_triggers.append(setup.strip())
-        # 3. char
+            anima_content_core.append(setup.strip())
+        # 2. char
         if char.strip():
-            anima_content_no_triggers.append(char.strip())
-        # 4. supplement
+            anima_content_core.append(char.strip())
+        # 3. supplement
         if supplement.strip():
-            anima_content_no_triggers.append(supplement.strip())
+            anima_content_core.append(supplement.strip())
 
         # ANIMA_CONTENT: 트리거 + 아티스트 + setup + char + supplement
-        anima_content_parts = anima_trigger_clean + anima_content_no_triggers
+        anima_content_parts = anima_trigger_clean + anima_artist_parts + anima_content_core
 
-        # ANIMA_ALL: 트리거 → 품질 → 아티스트 → 나머지 콘텐츠
-        anima_all_parts = anima_trigger_clean + anima_quality_parts + anima_content_no_triggers
+        # ANIMA_ALL: 트리거 → 성별 → 아티스트 → 품질 → 콘텐츠
+        anima_all_parts = anima_trigger_clean
+        if gender_str:
+            anima_all_parts.append(gender_str)
+        anima_all_parts += anima_artist_parts + anima_quality_parts + anima_content_core
 
         # ─── SDXL 섹션 조립 ───
         sdxl_quality_parts = [t.strip() for t in quality_tags if t.strip()]
         sdxl_artist_parts = [t.strip() for t in sdxl_artist_tags if t.strip()]
 
-        sdxl_content_no_triggers = []
+        sdxl_content_core = []
         # 1. setup
         if setup.strip():
-            sdxl_content_no_triggers.append(setup.strip())
+            sdxl_content_core.append(setup.strip())
         # 2. char (supplement 없음)
         if char.strip():
-            sdxl_content_no_triggers.append(char.strip())
+            sdxl_content_core.append(char.strip())
 
-        # SDXL: 트리거 → 품질 → 아티스트 → 나머지 콘텐츠
-        sdxl_parts = sdxl_trigger_clean + sdxl_quality_parts + sdxl_artist_parts + sdxl_content_no_triggers
+        # SDXL: 트리거 → 아티스트 → 품질 → 콘텐츠
+        sdxl_parts = sdxl_trigger_clean + sdxl_artist_parts + sdxl_quality_parts + sdxl_content_core
 
         # ─── 긍정 프롬프트 조합 ───
         positive = "[ANIMA_QUALITY]\n" + ", ".join(anima_quality_parts)
@@ -592,6 +604,13 @@ class IllustPromptBuilder:
                 filtered_tags = [t for t in whitelisted
                                  if not IllustPromptBuilder._match_tag_pattern(t, auto_blacklist)]
                 filtered_positive = ", ".join(filtered_tags)
+
+            # FACE_TAGS 맨 앞에 gender_tag 보장
+            gender_tag = char_data.get("gender_tag", "")
+            if gender_tag:
+                face_tag_list = [t.strip() for t in face_tags.split(",") if t.strip()]
+                face_tag_list = [t for t in face_tag_list if t != gender_tag]
+                face_tags = gender_tag + ", " + ", ".join(face_tag_list) if face_tag_list else gender_tag
 
             items.append({
                 "FACE_TAGS": face_tags,
