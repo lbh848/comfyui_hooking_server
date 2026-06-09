@@ -1626,13 +1626,13 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict):
                         continue
                     for _lora in _cd.get(_lora_key, _cd.get("loras", [])):
                         if _lora.get("source") == "instance":
-                            _lid = _lora.get("lora_path", "")
+                            _lid = _lora.get("lora_id") or _lora.get("lora_path", "")
                             if _lid and _lid not in _incremented:
                                 _increment_instance_lora_usage(_lid)
                                 _incremented.add(_lid)
                     for _flora in _cd.get("face_loras", []):
                         if _flora.get("source") == "instance":
-                            _lid = _flora.get("lora_path", "")
+                            _lid = _flora.get("lora_id") or _flora.get("lora_path", "")
                             if _lid and _lid not in _incremented:
                                 _increment_instance_lora_usage(_lid)
                                 _incremented.add(_lid)
