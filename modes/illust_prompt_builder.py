@@ -288,25 +288,22 @@ class IllustPromptBuilder:
         anima_all_parts = anima_quality_parts + anima_content_parts
 
         # ─── SDXL 섹션 조립 ───
-        sdxl_parts = []
+        sdxl_quality_parts = [t.strip() for t in quality_tags if t.strip()]
+        sdxl_artist_parts = [t.strip() for t in sdxl_artist_tags if t.strip()]
+
+        sdxl_content_parts = []
         # 1. 캐릭터 트리거워드
         for t in sdxl_triggers:
             if t.strip():
-                sdxl_parts.append(t.strip())
-        # 2. SDXL 아티스트 프리셋
-        for t in sdxl_artist_tags:
-            if t.strip():
-                sdxl_parts.append(t.strip())
-        # 3. SDXL 품질
-        for t in quality_tags:
-            if t.strip():
-                sdxl_parts.append(t.strip())
-        # 4. setup
+                sdxl_content_parts.append(t.strip())
+        # 2. setup
         if setup.strip():
-            sdxl_parts.append(setup.strip())
-        # 5. char (supplement 없음)
+            sdxl_content_parts.append(setup.strip())
+        # 3. char (supplement 없음)
         if char.strip():
-            sdxl_parts.append(char.strip())
+            sdxl_content_parts.append(char.strip())
+
+        sdxl_parts = sdxl_quality_parts + sdxl_artist_parts + sdxl_content_parts
 
         # ─── 긍정 프롬프트 조합 ───
         positive = "[ANIMA_QUALITY]\n" + ", ".join(anima_quality_parts)
@@ -315,6 +312,8 @@ class IllustPromptBuilder:
         positive += "\n[ANIMA_ARTIST]\n" + ", ".join(anima_artist_parts)
         positive += "\n[ANIMA_CONTENT]\n" + ", ".join(anima_content_parts)
         positive += "\n[ANIMA_ALL]\n" + ", ".join(anima_all_parts)
+        positive += "\n[SDXL_QUALITY]\n" + ", ".join(sdxl_quality_parts)
+        positive += "\n[SDXL_ARTIST]\n" + ", ".join(sdxl_artist_parts)
         positive += "\n[SDXL]"
         positive += "\n" + ", ".join(sdxl_parts)
 
@@ -378,8 +377,11 @@ class IllustPromptBuilder:
         hrf_activate = settings.get("hrf_activate", False)
         hrf_size = settings.get("hrf_size", 1.5)
         hrf_restore_size = settings.get("hrf_restore_size", False)
+        anima_hrf_activate = settings.get("anima_hrf_activate", False)
         positive += f"\n[HRF_ACTIVATE]"
         positive += f"\n{'true' if hrf_activate else 'false'}"
+        positive += f"\n[ANIMA_HRF_ACTIVATE]"
+        positive += f"\n{'true' if anima_hrf_activate else 'false'}"
         positive += f"\n[HRF_SIZE]"
         positive += f"\n{hrf_size}"
         positive += f"\n[HRF_RESTORE_SIZE]"
@@ -393,7 +395,18 @@ class IllustPromptBuilder:
         positive += f"\n[IMG_H]"
         positive += f"\n{img_h}"
 
-        # Detailers
+        # Detailers (ANIMA)
+        anima_fd_activate = settings.get("anima_fd_activate", False)
+        anima_hd_activate = settings.get("anima_hd_activate", False)
+        anima_ed_activate = settings.get("anima_ed_activate", False)
+        positive += f"\n[ANIMA_FD_ACTIVATE]"
+        positive += f"\n{'true' if anima_fd_activate else 'false'}"
+        positive += f"\n[ANIMA_HD_ACTIVATE]"
+        positive += f"\n{'true' if anima_hd_activate else 'false'}"
+        positive += f"\n[ANIMA_ED_ACTIVATE]"
+        positive += f"\n{'true' if anima_ed_activate else 'false'}"
+
+        # Detailers (SDXL)
         fd_activate = settings.get("fd_activate", False)
         hd_activate = settings.get("hd_activate", False)
         ed_activate = settings.get("ed_activate", False)

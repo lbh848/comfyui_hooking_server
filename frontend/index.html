@@ -3333,7 +3333,21 @@
                                 </select>
                                 <div id="illust-anima-negative-tags" style="display:flex; flex-wrap:wrap; gap:3px; margin-top:4px;"></div>
                             </div>
-                            <div style="display:flex; align-items:center; gap:6px; margin-top:6px;">
+                            <div style="margin-top:6px;">
+                                <span style="font-size:0.7rem; color:var(--text2);">HIRESFIX 및 디테일러 적용 전 이미지 확대 배율</span>
+                                <div style="display:flex; align-items:center; gap:4px; margin-top:2px;">
+                                    <input type="range" id="illust-hrf-size" min="1" max="3" step="0.05" value="1.5" oninput="document.getElementById('illust-hrf-size-val').textContent=this.value; saveIllustSettings()">
+                                    <span id="illust-hrf-size-val" style="font-size:0.7rem;">1.5</span>
+                                </div>
+                            </div>
+                            <div style="display:flex; align-items:center; gap:4px; margin-top:4px;">
+                                <span style="font-size:0.75rem; color:var(--text2);">원본 크기 복원</span>
+                                <label class="toggle-switch" style="transform:scale(0.8);">
+                                    <input type="checkbox" id="illust-hrf-restore-size" onchange="saveIllustSettings()">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                            <div style="display:flex; align-items:center; gap:6px; margin-top:4px;">
                                 <span style="font-size:0.75rem;">HIRES FIX</span>
                                 <label class="toggle-switch" style="transform:scale(0.8);">
                                     <input type="checkbox" id="illust-hrf-toggle" onchange="saveIllustSettings()">
@@ -3341,19 +3355,13 @@
                                 </label>
                                 <span id="illust-hrf-status" class="toggle-status off" style="font-size:0.7rem;">OFF</span>
                             </div>
-                            <div id="illust-hrf-options" style="display:none; margin-top:4px; padding-left:8px;">
-                                <div style="display:flex; align-items:center; gap:4px; margin-bottom:4px;">
-                                    <span style="font-size:0.7rem; color:var(--text2);">배율</span>
-                                    <input type="range" id="illust-hrf-size" min="1" max="3" step="0.05" value="1.5" oninput="document.getElementById('illust-hrf-size-val').textContent=this.value; saveIllustSettings()">
-                                    <span id="illust-hrf-size-val" style="font-size:0.7rem;">1.5</span>
-                                </div>
-                                <div style="display:flex; align-items:center; gap:4px;">
-                                    <span style="font-size:0.7rem; color:var(--text2);">원본 크기 복원</span>
-                                    <label class="toggle-switch" style="transform:scale(0.8);">
-                                        <input type="checkbox" id="illust-hrf-restore-size" onchange="saveIllustSettings()">
-                                        <span class="toggle-slider"></span>
-                                    </label>
-                                </div>
+                            <div style="display:flex; align-items:center; gap:6px; margin-top:4px;">
+                                <span style="font-size:0.75rem;">ANIMA HIRES</span>
+                                <label class="toggle-switch" style="transform:scale(0.8);">
+                                    <input type="checkbox" id="illust-anima-hrf-toggle" onchange="saveIllustSettings()">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                                <span id="illust-anima-hrf-status" class="toggle-status off" style="font-size:0.7rem;">OFF</span>
                             </div>
                             <div style="display:flex; gap:6px; align-items:center; margin-top:6px;">
                                 <span style="font-size:0.75rem; color:var(--text2);">이미지 사이즈</span>
@@ -3386,6 +3394,19 @@
                                 <label style="display:flex; align-items:center; gap:3px; font-size:0.75rem; cursor:pointer;">
                                     <input type="checkbox" id="illust-ed-toggle" onchange="saveIllustSettings()"> ED
                                 </label>
+                                <span style="font-size:0.65rem; color:var(--text-muted); margin-left:2px;">SDXL</span>
+                            </div>
+                            <div style="display:flex; gap:6px; margin-top:3px;">
+                                <label style="display:flex; align-items:center; gap:3px; font-size:0.75rem; cursor:pointer;">
+                                    <input type="checkbox" id="illust-anima-fd-toggle" onchange="saveIllustSettings()"> FD
+                                </label>
+                                <label style="display:flex; align-items:center; gap:3px; font-size:0.75rem; cursor:pointer;">
+                                    <input type="checkbox" id="illust-anima-hd-toggle" onchange="saveIllustSettings()"> HD
+                                </label>
+                                <label style="display:flex; align-items:center; gap:3px; font-size:0.75rem; cursor:pointer;">
+                                    <input type="checkbox" id="illust-anima-ed-toggle" onchange="saveIllustSettings()"> ED
+                                </label>
+                                <span style="font-size:0.65rem; color:var(--text-muted); margin-left:2px;">ANIMA</span>
                             </div>
                             <div style="margin-top:6px;">
                                 <div style="font-size:0.75rem; color:var(--text-muted); margin-bottom:3px;">Seed</div>
@@ -21333,6 +21354,7 @@
                     document.getElementById('illust-hrf-size').value = s.hrf_size || 1.5;
                     document.getElementById('illust-hrf-size-val').textContent = s.hrf_size || 1.5;
                     document.getElementById('illust-hrf-restore-size').checked = s.hrf_restore_size || false;
+                    document.getElementById('illust-anima-hrf-toggle').checked = s.anima_hrf_activate || false;
                     document.getElementById('illust-img-w').value = s.img_w || 756;
                     document.getElementById('illust-img-h').value = s.img_h || 756;
                     document.getElementById('illust-face-id-toggle').checked = s.face_id_activate || false;
@@ -21341,6 +21363,9 @@
                     document.getElementById('illust-fd-toggle').checked = s.fd_activate || false;
                     document.getElementById('illust-hd-toggle').checked = s.hd_activate || false;
                     document.getElementById('illust-ed-toggle').checked = s.ed_activate || false;
+                    document.getElementById('illust-anima-fd-toggle').checked = s.anima_fd_activate || false;
+                    document.getElementById('illust-anima-hd-toggle').checked = s.anima_hd_activate || false;
+                    document.getElementById('illust-anima-ed-toggle').checked = s.anima_ed_activate || false;
                     document.getElementById('illust-seed-input').value = s.seed ?? -1;
                     updateIllustToggles();
                 }
@@ -21362,10 +21387,14 @@
                 hrf_activate: document.getElementById('illust-hrf-toggle').checked,
                 hrf_size: parseFloat(document.getElementById('illust-hrf-size').value) || 1.5,
                 hrf_restore_size: document.getElementById('illust-hrf-restore-size').checked,
+                anima_hrf_activate: document.getElementById('illust-anima-hrf-toggle').checked,
                 img_w: parseInt(document.getElementById('illust-img-w').value) || 756,
                 img_h: parseInt(document.getElementById('illust-img-h').value) || 756,
                 face_id_activate: document.getElementById('illust-face-id-toggle').checked,
                 face_id_str: parseFloat(document.getElementById('illust-face-id-str').value) || 0.55,
+                anima_fd_activate: document.getElementById('illust-anima-fd-toggle').checked,
+                anima_hd_activate: document.getElementById('illust-anima-hd-toggle').checked,
+                anima_ed_activate: document.getElementById('illust-anima-ed-toggle').checked,
                 fd_activate: document.getElementById('illust-fd-toggle').checked,
                 hd_activate: document.getElementById('illust-hd-toggle').checked,
                 ed_activate: document.getElementById('illust-ed-toggle').checked,
@@ -21383,9 +21412,12 @@
 
         function updateIllustToggles() {
             const hrfOn = document.getElementById('illust-hrf-toggle').checked;
-            document.getElementById('illust-hrf-options').style.display = hrfOn ? 'block' : 'none';
             document.getElementById('illust-hrf-status').textContent = hrfOn ? 'ON' : 'OFF';
             document.getElementById('illust-hrf-status').className = hrfOn ? 'toggle-status on' : 'toggle-status off';
+
+            const animaHrfOn = document.getElementById('illust-anima-hrf-toggle').checked;
+            document.getElementById('illust-anima-hrf-status').textContent = animaHrfOn ? 'ON' : 'OFF';
+            document.getElementById('illust-anima-hrf-status').className = animaHrfOn ? 'toggle-status on' : 'toggle-status off';
 
             const faceIdOn = document.getElementById('illust-face-id-toggle').checked;
             document.getElementById('illust-face-id-options').style.display = faceIdOn ? 'block' : 'none';
