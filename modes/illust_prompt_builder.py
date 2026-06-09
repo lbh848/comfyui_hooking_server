@@ -301,11 +301,8 @@ class IllustPromptBuilder:
         # ANIMA_CONTENT: 트리거 + 아티스트 + setup + char + supplement
         anima_content_parts = anima_trigger_clean + anima_artist_parts + anima_content_core
 
-        # ANIMA_ALL: 트리거 → 성별 → 아티스트 → 품질 → 콘텐츠
-        anima_all_parts = anima_trigger_clean
-        if gender_str:
-            anima_all_parts.append(gender_str)
-        anima_all_parts += anima_artist_parts + anima_quality_parts + anima_content_core
+        # ANIMA_ALL: 트리거 → 아티스트 → 품질 → 콘텐츠
+        anima_all_parts = anima_trigger_clean + anima_artist_parts + anima_quality_parts + anima_content_core
 
         # ─── SDXL 섹션 조립 ───
         sdxl_quality_parts = [t.strip() for t in quality_tags if t.strip()]
