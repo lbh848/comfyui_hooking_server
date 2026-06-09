@@ -117,11 +117,12 @@ class IllustPromptBuilder:
             감지된 캐릭터 이름 리스트 (원래 대소문자)
         """
         detected = []
-        # 대소문자 무관 매칭을 위해 소문자로 변환한 텍스트 합치기
-        combined_lower = " ".join(s.lower() for s in text_sections if s)
+        # 띄어쓰기와 콤마 단위로 토큰 분리 후 대소문자 무관 정확일치 검사
+        combined = " ".join(s for s in text_sections if s)
+        tokens = set(t.lower() for t in re.split(r'[\s,]+', combined) if t)
 
         for name in char_names:
-            if name.lower() in combined_lower:
+            if name.lower() in tokens:
                 if name not in detected:
                     detected.append(name)
 
