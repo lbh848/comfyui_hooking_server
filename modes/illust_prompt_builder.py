@@ -192,6 +192,10 @@ class IllustPromptBuilder:
         """
         characters = bot.get("characters", [])
 
+        # ─── 캐릭터 수에 따른 LoRA 프로필 선택 ───
+        is_multi = len(detected_chars) >= 2
+        lora_key = "loras_group" if is_multi else "loras_solo"
+
         # ─── 감지된 캐릭터의 LoRA/트리거워드 정보 수집 ───
         anima_triggers = []
         sdxl_triggers = []
@@ -203,7 +207,7 @@ class IllustPromptBuilder:
             char_data = next((c for c in characters if c["name"] == char_name), None)
             if not char_data:
                 continue
-            for lora in char_data.get("loras", []):
+            for lora in char_data.get(lora_key, char_data.get("loras", [])):
                 trigger = lora.get("trigger", char_name)
                 base = lora.get("BASE", "anima")
                 lora_path = self._resolve_lora_path(lora)

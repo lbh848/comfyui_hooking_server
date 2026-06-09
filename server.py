@@ -1593,9 +1593,12 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict):
                 )
                 print(f"[ILLUST] 감지된 캐릭터: {detected}")
 
-                # 4. 프롬프트 빌드
+                # 4. 캐릭터 수에 따라 solo/group 프로필 선택
                 tags = asset_mode._tags
-                settings = bot.get("illust_settings", {})
+                is_multi = len(detected) >= 2
+                settings_key = "illust_settings_group" if is_multi else "illust_settings_solo"
+                settings = bot.get(settings_key, bot.get("illust_settings", {}))
+                print(f"[ILLUST] 프로필 선택: {'group' if is_multi else 'solo'} ({len(detected)}명)")
                 from modes.bot_mode import _load_patch_settings, _load_bot_data
                 patch = _load_patch_settings(bot_name)
                 settings["face_crop_top"] = patch.get("face_crop_top", 1.0)

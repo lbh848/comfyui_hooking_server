@@ -34,6 +34,31 @@ IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 TAG_FILTER_PROFILES_FILE = os.path.join(ASSET_DATA_DIR, "tag_filter_profiles.json")
 
 
+def _migrate_solo_group(data: dict):
+    """기존 loras/illust_settings를 loras_solo/illust_settings_solo로 마이그레이션."""
+    changed = False
+    for bot in data.get("bots", []):
+        # illust_settings → illust_settings_solo
+        if "illust_settings" in bot and "illust_settings_solo" not in bot:
+            bot["illust_settings_solo"] = bot["illust_settings"]
+            changed = True
+            print(f"[BOT_MODE] 마이그레이션: illust_settings → illust_settings_solo ({bot['name']})")
+        if "illust_settings_group" not in bot:
+            bot["illust_settings_group"] = dict(DEFAULT_ILLUST_SETTINGS)
+            changed = True
+        for char in bot.get("characters", []):
+            # loras → loras_solo
+            if "loras" in char and "loras_solo" not in char:
+                char["loras_solo"] = char["loras"]
+                changed = True
+                print(f"[BOT_MODE] 마이그레이션: loras → loras_solo ({bot['name']}/{char['name']})")
+            if "loras_group" not in char:
+                char["loras_group"] = []
+                changed = True
+    if changed:
+        _save_bot_data(data)
+
+
 def _load_bot_data() -> dict:
     """bot.json 로드. 없으면 기본값 생성."""
     if os.path.isfile(BOT_DATA_FILE):
@@ -47,6 +72,8 @@ def _load_bot_data() -> dict:
                     data["positive_whitelist"] = []
                 if "positive_blacklist" not in data:
                     data["positive_blacklist"] = []
+                # solo/group 프로필 마이그레이션
+                _migrate_solo_group(data)
                 return data
         except Exception as e:
             print(f"[BOT_MODE] bot.json 로드 실패: {e}")
@@ -300,6 +327,9 @@ class BotMode:
         bot_name = body.get("bot_name", "").strip()
         char_name = body.get("char_name", "").strip()
         loras = body.get("loras", [])
+        profile = body.get("profile", "solo")
+        if profile not in ("solo", "group"):
+            profile = "solo"
         if not bot_name or not char_name:
             return _json_error("봇 또는 캐릭터 이름이 비어있습니다.")
         bot = next((b for b in data["bots"] if b["name"] == bot_name), None)
@@ -308,9 +338,10 @@ class BotMode:
         char = next((c for c in bot.get("characters", []) if c["name"] == char_name), None)
         if not char:
             return _json_error(f"캐릭터를 찾을 수 없음: {char_name}")
-        char["loras"] = loras
+        key = f"loras_{profile}"
+        char[key] = loras
         _save_bot_data(data)
-        print(f"[BOT_MODE] 캐릭터 LoRA 업데이트: {bot_name}/{char_name} ({len(loras)}개)")
+        print(f"[BOT_MODE] 캐릭터 LoRA 업데이트: {bot_name}/{char_name} [{profile}] ({len(loras)}개)")
         return _json_ok({"bots": data["bots"]})
 
     async def _update_char_face_loras(self, data, body):
@@ -1900,13 +1931,17 @@ async def handle_get_illust_settings(request):
     """GET /api/bot_mode/illust_settings - 봇의 삽화 설정 반환"""
     try:
         bot_name = request.query.get("bot_name", "").strip()
+        profile = request.query.get("profile", "solo").strip()
+        if profile not in ("solo", "group"):
+            profile = "solo"
         if not bot_name:
             return _json_error("봇 이름이 비어있습니다.")
         data = _load_bot_data()
         bot = next((b for b in data["bots"] if b["name"] == bot_name), None)
         if not bot:
             return _json_error(f"봇을 찾을 수 없습니다: {bot_name}")
-        settings = bot.get("illust_settings", DEFAULT_ILLUST_SETTINGS)
+        key = f"illust_settings_{profile}"
+        settings = bot.get(key, bot.get("illust_settings", DEFAULT_ILLUST_SETTINGS))
         return _json_ok(settings)
     except Exception as e:
         print(f"[BOT_MODE] 삽화 설정 조회 실패: {e}")
@@ -1919,6 +1954,9 @@ async def handle_update_illust_settings(request):
     try:
         body = await request.json()
         bot_name = body.get("bot_name", "").strip()
+        profile = body.get("profile", "solo")
+        if profile not in ("solo", "group"):
+            profile = "solo"
         if not bot_name:
             return _json_error("봇 이름이 비어있습니다.")
         new_settings = body.get("illust_settings", {})
@@ -1927,11 +1965,12 @@ async def handle_update_illust_settings(request):
         if not bot:
             return _json_error(f"봇을 찾을 수 없습니다: {bot_name}")
         # 기존 설정과 병합
-        current = bot.get("illust_settings", DEFAULT_ILLUST_SETTINGS)
+        key = f"illust_settings_{profile}"
+        current = bot.get(key, bot.get("illust_settings", DEFAULT_ILLUST_SETTINGS))
         merged = {**DEFAULT_ILLUST_SETTINGS, **current, **new_settings}
-        bot["illust_settings"] = merged
+        bot[key] = merged
         _save_bot_data(data)
-        print(f"[BOT_MODE] 삽화 설정 업데이트: {bot_name}")
+        print(f"[BOT_MODE] 삽화 설정 업데이트: {bot_name} [{profile}]")
         return _json_ok(merged)
     except Exception as e:
         print(f"[BOT_MODE] 삽화 설정 업데이트 실패: {e}")

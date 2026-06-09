@@ -3357,7 +3357,17 @@
                         </div>
                         <div style="background:rgba(156,39,176,0.08); border-radius:8px; padding:10px; margin-top:8px;">
                             <div style="display:flex; align-items:center; justify-content:space-between;">
-                                <div class="section-title">삽화 프롬프트 설정</div>
+                                <div style="display:flex; align-items:center; gap:8px;">
+                                    <div class="section-title" style="margin-bottom:0;">삽화 프롬프트 설정</div>
+                                    <div style="display:inline-flex; gap:0; border:1px solid var(--border); border-radius:4px; overflow:hidden;">
+                                        <button id="illust-profile-tab-solo" onclick="switchIllustSettingsProfile('solo')"
+                                            style="padding:2px 8px; border:none; background:var(--accent); color:#fff; cursor:pointer; font-size:0.7rem; font-weight:600;">1인</button>
+                                        <button id="illust-profile-tab-group" onclick="switchIllustSettingsProfile('group')"
+                                            style="padding:2px 8px; border:none; background:transparent; color:var(--text2); cursor:pointer; font-size:0.7rem; font-weight:600;">다인</button>
+                                    </div>
+                                    <button id="illust-profile-copy-btn" onclick="copyIllustSettingsToOtherProfile()"
+                                        style="font-size:0.65rem; padding:2px 6px; border:1px solid var(--border); background:var(--surface2); border-radius:4px; cursor:pointer; color:var(--text2); margin-left:4px;">다인으로 복사</button>
+                                </div>
                                 <button onclick="openIllustTagEditorModal()" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:3px 10px; border-radius:4px; cursor:pointer; font-size:0.7rem;">태그 편집</button>
                             </div>
                             <div style="margin-top:6px;">
@@ -18276,6 +18286,14 @@
                             <div style="flex:1; min-width:0;">
                                 <div class="card-section-title" style="display:inline-flex; align-items:center; gap:10px; margin-bottom:0;">
                                     <span>로라 설정</span>
+                                    <div style="display:inline-flex; gap:0; border:1px solid var(--border); border-radius:4px; overflow:hidden; margin-left:4px;">
+                                        <button id="char-lora-tab-solo-${charIdx}" onclick="event.stopPropagation(); switchCharLoraProfile(${charIdx}, 'solo')"
+                                            style="padding:2px 8px; border:none; background:var(--accent); color:#fff; cursor:pointer; font-size:0.7rem; font-weight:600;">1인</button>
+                                        <button id="char-lora-tab-group-${charIdx}" onclick="event.stopPropagation(); switchCharLoraProfile(${charIdx}, 'group')"
+                                            style="padding:2px 8px; border:none; background:transparent; color:var(--text2); cursor:pointer; font-size:0.7rem; font-weight:600;">다인</button>
+                                    </div>
+                                    <button id="char-lora-copy-btn-${charIdx}" onclick="event.stopPropagation(); copyCharLoraToOtherProfile(${charIdx})"
+                                        style="font-size:0.65rem; padding:2px 6px; border:1px solid var(--border); background:var(--surface2); border-radius:4px; cursor:pointer; color:var(--text2); margin-left:4px;">다인으로 복사</button>
                                     <button class="lora-add-btn" onclick="event.stopPropagation(); openBotCharLoraPicker('${escAttr(char.name)}', ${charIdx})"
                                         style="font-size:0.75rem; padding:4px 10px; border:1px dashed var(--border); background:var(--surface2); border-radius:6px; cursor:pointer; color:var(--text2); transition:border-color 0.15s;">+ LoRA 추가</button>
                                 </div>
@@ -18371,11 +18389,14 @@
                     }
                 })(card, char.name);
 
-                // 기존 LoRA 목록 렌더링
-                const charLoras = char.loras || [];
+                // 기존 LoRA 목록 렌더링 (solo/group 프로필)
+                _charLoraProfiles[charIdx] = _charLoraProfiles[charIdx] || 'solo';
+                const loraKey = _charLoraProfiles[charIdx] === 'group' ? 'loras_group' : 'loras_solo';
+                const charLoras = char[loraKey] || char.loras || [];
                 if (charLoras.length > 0) {
                     renderBotCharLoraList(charIdx, char.name, charLoras);
                 }
+                switchCharLoraProfile(charIdx, _charLoraProfiles[charIdx]);
                 // 얼굴 LoRA 목록 렌더링
                 const charFaceLoras = char.face_loras || [];
                 if (charFaceLoras.length > 0) {
@@ -18464,28 +18485,75 @@
             }).join('');
         }
 
-        function getBotCharLoras(charName) {
+        // ─── 캐릭터 일반 LoRA 프로필 (solo/group) ─────────────────
+        let _charLoraProfiles = {}; // charIdx -> 'solo' | 'group'
+
+        function switchCharLoraProfile(charIdx, profile) {
+            _charLoraProfiles[charIdx] = profile;
+            const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
+            if (!bot) return;
+            const char = bot.characters[charIdx];
+            if (!char) return;
+            const key = profile === 'group' ? 'loras_group' : 'loras_solo';
+            const loras = char[key] || char.loras || [];
+            renderBotCharLoraList(charIdx, char.name, loras);
+            // 탭 UI 갱신
+            const tabSolo = document.getElementById(`char-lora-tab-solo-${charIdx}`);
+            const tabGroup = document.getElementById(`char-lora-tab-group-${charIdx}`);
+            if (tabSolo) {
+                tabSolo.style.background = profile === 'solo' ? 'var(--accent)' : 'transparent';
+                tabSolo.style.color = profile === 'solo' ? '#fff' : 'var(--text2)';
+            }
+            if (tabGroup) {
+                tabGroup.style.background = profile === 'group' ? 'var(--accent)' : 'transparent';
+                tabGroup.style.color = profile === 'group' ? '#fff' : 'var(--text2)';
+            }
+            // 복사 버튼 갱신
+            const copyBtn = document.getElementById(`char-lora-copy-btn-${charIdx}`);
+            if (copyBtn) copyBtn.textContent = profile === 'solo' ? '다인으로 복사' : '1인으로 복사';
+        }
+
+        async function copyCharLoraToOtherProfile(charIdx) {
+            const profile = _charLoraProfiles[charIdx] || 'solo';
+            const targetProfile = profile === 'solo' ? 'group' : 'solo';
+            const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
+            if (!bot) return;
+            const char = bot.characters[charIdx];
+            if (!char) return;
+            const srcKey = profile === 'group' ? 'loras_group' : 'loras_solo';
+            const srcLoras = JSON.parse(JSON.stringify(char[srcKey] || char.loras || []));
+            const targetLabel = targetProfile === 'group' ? '다인' : '1인';
+            if (!confirm(`현재 설정을 ${targetLabel}으로 복사하시겠습니까? (${srcLoras.length}개 LoRA)`)) return;
+            setBotCharLoras(char.name, srcLoras, targetProfile);
+            await saveBotCharLoras(char.name, targetProfile);
+            showToast(`${targetLabel}으로 LoRA 복사 완료`, 'success');
+        }
+
+        function getBotCharLoras(charName, profile) {
             const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
             if (!bot) return [];
             const char = (bot.characters || []).find(c => c.name === charName);
-            return char ? (char.loras || []) : [];
+            if (!char) return [];
+            const key = profile === 'group' ? 'loras_group' : 'loras_solo';
+            return char[key] || char.loras || [];
         }
 
-        function setBotCharLoras(charName, loras) {
+        function setBotCharLoras(charName, loras, profile) {
             const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
             if (!bot) return;
             const char = (bot.characters || []).find(c => c.name === charName);
             if (!char) return;
-            char.loras = loras;
+            const key = profile === 'group' ? 'loras_group' : 'loras_solo';
+            char[key] = loras;
         }
 
-        async function saveBotCharLoras(charName) {
-            const loras = getBotCharLoras(charName);
+        async function saveBotCharLoras(charName, profile) {
+            const loras = getBotCharLoras(charName, profile);
             try {
                 const resp = await fetch('/api/bot_mode/action', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ action: 'update_char_loras', bot_name: botCurrentBot, char_name: charName, loras })
+                    body: JSON.stringify({ action: 'update_char_loras', bot_name: botCurrentBot, char_name: charName, loras, profile: profile || 'solo' })
                 });
                 const result = await resp.json();
                 if (result.success) {
@@ -18499,19 +18567,21 @@
         }
 
         async function updateBotCharLoraField(charIdx, charName, loraIdx, field, value) {
-            const loras = getBotCharLoras(charName);
+            const profile = _charLoraProfiles[charIdx] || 'solo';
+            const loras = getBotCharLoras(charName, profile);
             if (loras[loraIdx]) {
                 loras[loraIdx][field] = value;
-                await saveBotCharLoras(charName);
+                await saveBotCharLoras(charName, profile);
             }
         }
 
         async function removeBotCharLora(charIdx, charName, loraIdx) {
-            const loras = getBotCharLoras(charName);
+            const profile = _charLoraProfiles[charIdx] || 'solo';
+            const loras = getBotCharLoras(charName, profile);
             loras.splice(loraIdx, 1);
-            setBotCharLoras(charName, loras);
+            setBotCharLoras(charName, loras, profile);
             renderBotCharLoraList(charIdx, charName, loras);
-            await saveBotCharLoras(charName);
+            await saveBotCharLoras(charName, profile);
             showToast('LoRA 삭제됨', 'info');
         }
 
@@ -19359,7 +19429,8 @@
         let _botCharLoraPickerState = { charName: '', charIdx: -1, tab: 'asset', assetData: null, instanceData: null, botStep: 'bots', botBots: null, botProjects: null, botSelectedBot: '', botSelectedProject: '', botSelectedChar: '' };
 
         async function openBotCharLoraPicker(charName, charIdx) {
-            _botCharLoraPickerState = { charName, charIdx, tab: 'asset', assetData: null, instanceData: null, botStep: 'bots', botBots: null, botProjects: null, botSelectedBot: '', botSelectedProject: '', botSelectedChar: '', isFaceLora: false };
+            const profile = _charLoraProfiles[charIdx] || 'solo';
+            _botCharLoraPickerState = { charName, charIdx, tab: 'asset', assetData: null, instanceData: null, botStep: 'bots', botBots: null, botProjects: null, botSelectedBot: '', botSelectedProject: '', botSelectedChar: '', isFaceLora: false, profile };
             const overlay = document.createElement('div');
             overlay.id = 'bot-char-lora-picker-overlay';
             overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10010; display:flex; align-items:center; justify-content:center;';
@@ -19549,7 +19620,8 @@
                         const repSafetensors = repData.safetensors || '';
                         const matchedFile = files.find(f => f.safetensors === repSafetensors) || files[files.length - 1];
                         const isFace = _botCharLoraPickerState.isFaceLora;
-                        const loras = isFace ? getBotCharFaceLoras(_botCharLoraPickerState.charName) : getBotCharLoras(_botCharLoraPickerState.charName);
+                        const profile = _botCharLoraPickerState.profile || 'solo';
+                        const loras = isFace ? getBotCharFaceLoras(_botCharLoraPickerState.charName) : getBotCharLoras(_botCharLoraPickerState.charName, profile);
                         loras.push({
                             source: 'asset',
                             name: entry.name,
@@ -19565,9 +19637,9 @@
                             renderBotCharFaceLoraList(_botCharLoraPickerState.charIdx, _botCharLoraPickerState.charName, loras);
                             saveBotCharFaceLoras(_botCharLoraPickerState.charName);
                         } else {
-                            setBotCharLoras(_botCharLoraPickerState.charName, loras);
+                            setBotCharLoras(_botCharLoraPickerState.charName, loras, profile);
                             renderBotCharLoraList(_botCharLoraPickerState.charIdx, _botCharLoraPickerState.charName, loras);
-                            saveBotCharLoras(_botCharLoraPickerState.charName);
+                            saveBotCharLoras(_botCharLoraPickerState.charName, profile);
                         }
                         document.getElementById('bot-char-lora-picker-overlay').remove();
                         showToast(`${isFace ? '얼굴 ' : ''}LoRA "${entry.name}" (${sessionName}) 추가됨`, 'success');
@@ -19621,7 +19693,8 @@
                 card.onmouseleave = () => { card.style.borderColor = 'var(--border)'; };
                 card.onclick = () => {
                     const isFace = _botCharLoraPickerState.isFaceLora;
-                    const loras = isFace ? getBotCharFaceLoras(_botCharLoraPickerState.charName) : getBotCharLoras(_botCharLoraPickerState.charName);
+                    const loraProfile = _botCharLoraPickerState.profile || 'solo';
+                    const loras = isFace ? getBotCharFaceLoras(_botCharLoraPickerState.charName) : getBotCharLoras(_botCharLoraPickerState.charName, loraProfile);
                     let addedCount = 0;
                     for (const [profile, pData] of Object.entries(item.profiles)) {
                         loras.push({
@@ -19642,9 +19715,9 @@
                         renderBotCharFaceLoraList(_botCharLoraPickerState.charIdx, _botCharLoraPickerState.charName, loras);
                         saveBotCharFaceLoras(_botCharLoraPickerState.charName);
                     } else {
-                        setBotCharLoras(_botCharLoraPickerState.charName, loras);
+                        setBotCharLoras(_botCharLoraPickerState.charName, loras, loraProfile);
                         renderBotCharLoraList(_botCharLoraPickerState.charIdx, _botCharLoraPickerState.charName, loras);
-                        saveBotCharLoras(_botCharLoraPickerState.charName);
+                        saveBotCharLoras(_botCharLoraPickerState.charName, loraProfile);
                     }
                     document.getElementById('bot-char-lora-picker-overlay').remove();
                     showToast(`인스턴스 ${isFace ? '얼굴 ' : ''}LoRA "${item.lora_id}" ${addedCount}개 추가됨`, 'success');
@@ -19776,7 +19849,8 @@
                         card.onmouseleave = () => { card.style.borderColor = 'var(--border)'; card.style.background = 'transparent'; };
                         card.onclick = () => {
                             const isFace = _botCharLoraPickerState.isFaceLora;
-                            const loras = isFace ? getBotCharFaceLoras(_botCharLoraPickerState.charName) : getBotCharLoras(_botCharLoraPickerState.charName);
+                            const loraProfile = _botCharLoraPickerState.profile || 'solo';
+                            const loras = isFace ? getBotCharFaceLoras(_botCharLoraPickerState.charName) : getBotCharLoras(_botCharLoraPickerState.charName, loraProfile);
                             const botLoraPath = [
                                 _botCharLoraPickerState.botSelectedBot,
                                 'Lora',
@@ -19802,9 +19876,9 @@
                                 renderBotCharFaceLoraList(_botCharLoraPickerState.charIdx, _botCharLoraPickerState.charName, loras);
                                 saveBotCharFaceLoras(_botCharLoraPickerState.charName);
                             } else {
-                                setBotCharLoras(_botCharLoraPickerState.charName, loras);
+                                setBotCharLoras(_botCharLoraPickerState.charName, loras, loraProfile);
                                 renderBotCharLoraList(_botCharLoraPickerState.charIdx, _botCharLoraPickerState.charName, loras);
-                                saveBotCharLoras(_botCharLoraPickerState.charName);
+                                saveBotCharLoras(_botCharLoraPickerState.charName, loraProfile);
                             }
                             document.getElementById('bot-char-lora-picker-overlay').remove();
                             showToast(`${isFace ? '얼굴 ' : ''}LoRA "${ch.name}" (${repSession.name}) 추가됨`, 'success');
@@ -21428,10 +21502,71 @@
         }
 
         // ─── 삽화 프롬프트 설정 ──────────────────────────────────
+        let _illustSettingsProfile = 'solo';
+
+        function switchIllustSettingsProfile(profile) {
+            _illustSettingsProfile = profile;
+            // 탭 UI 갱신
+            const tabSolo = document.getElementById('illust-profile-tab-solo');
+            const tabGroup = document.getElementById('illust-profile-tab-group');
+            if (tabSolo) {
+                tabSolo.style.background = profile === 'solo' ? 'var(--accent)' : 'transparent';
+                tabSolo.style.color = profile === 'solo' ? '#fff' : 'var(--text2)';
+            }
+            if (tabGroup) {
+                tabGroup.style.background = profile === 'group' ? 'var(--accent)' : 'transparent';
+                tabGroup.style.color = profile === 'group' ? '#fff' : 'var(--text2)';
+            }
+            // 복사 버튼 갱신
+            const copyBtn = document.getElementById('illust-profile-copy-btn');
+            if (copyBtn) copyBtn.textContent = profile === 'solo' ? '다인으로 복사' : '1인으로 복사';
+            loadIllustSettings();
+        }
+
+        async function copyIllustSettingsToOtherProfile() {
+            const targetProfile = _illustSettingsProfile === 'solo' ? 'group' : 'solo';
+            const targetLabel = targetProfile === 'group' ? '다인' : '1인';
+            if (!confirm(`현재 삽화 설정을 ${targetLabel}으로 복사하시겠습니까?`)) return;
+            // 현재 폼 값 수집
+            const settings = {
+                anima_artist_preset: document.getElementById('illust-anima-artist-preset').value,
+                sdxl_artist_preset: document.getElementById('illust-sdxl-artist-preset').value,
+                anima_quality_preset: document.getElementById('illust-anima-quality-preset').value,
+                sdxl_quality_preset: document.getElementById('illust-sdxl-quality-preset').value,
+                anima_negative_preset: document.getElementById('illust-anima-negative-preset').value,
+                sdxl_negative_preset: document.getElementById('illust-sdxl-negative-preset').value,
+                hrf_activate: document.getElementById('illust-hrf-toggle').checked,
+                hrf_size: parseFloat(document.getElementById('illust-hrf-size').value) || 1.5,
+                hrf_restore_size: document.getElementById('illust-hrf-restore-size').checked,
+                anima_hrf_activate: document.getElementById('illust-anima-hrf-toggle').checked,
+                img_w: parseInt(document.getElementById('illust-img-w').value) || 756,
+                img_h: parseInt(document.getElementById('illust-img-h').value) || 756,
+                face_id_activate: document.getElementById('illust-face-id-toggle').checked,
+                face_id_str: parseFloat(document.getElementById('illust-face-id-str').value) || 0.55,
+                anima_fd_activate: document.getElementById('illust-anima-fd-toggle').checked,
+                anima_hd_activate: document.getElementById('illust-anima-hd-toggle').checked,
+                anima_ed_activate: document.getElementById('illust-anima-ed-toggle').checked,
+                fd_activate: document.getElementById('illust-fd-toggle').checked,
+                hd_activate: document.getElementById('illust-hd-toggle').checked,
+                ed_activate: document.getElementById('illust-ed-toggle').checked,
+                seed: parseInt(document.getElementById('illust-seed-input').value) || -1,
+            };
+            try {
+                await fetchJSON('/api/bot_mode/update_illust_settings', {
+                    method: 'POST',
+                    body: JSON.stringify({ bot_name: botCurrentBot, illust_settings: settings, profile: targetProfile }),
+                });
+                showToast(`${targetLabel}으로 삽화 설정 복사 완료`, 'success');
+            } catch (e) {
+                console.error('[ILLUST] 설정 복사 실패:', e);
+                showToast('복사 실패', 'error');
+            }
+        }
+
         async function loadIllustSettings() {
             if (!botCurrentBot) return;
             try {
-                const res = await fetchJSON(`/api/bot_mode/illust_settings?bot_name=${encodeURIComponent(botCurrentBot)}`);
+                const res = await fetchJSON(`/api/bot_mode/illust_settings?bot_name=${encodeURIComponent(botCurrentBot)}&profile=${_illustSettingsProfile}`);
                 if (res && !res.error) {
                     const s = res;
                     document.getElementById('illust-anima-artist-preset').value = s.anima_artist_preset || '';
@@ -21458,6 +21593,13 @@
                     document.getElementById('illust-anima-ed-toggle').checked = s.anima_ed_activate || false;
                     document.getElementById('illust-seed-input').value = s.seed ?? -1;
                     updateIllustToggles();
+                    // 프리셋 태그 렌더링
+                    renderIllustPresetTags('illust-sdxl-artist-preset','illust-sdxl-artist-tags','artist_presets');
+                    renderIllustPresetTags('illust-sdxl-quality-preset','illust-sdxl-quality-tags','quality_presets');
+                    renderIllustPresetTags('illust-anima-artist-preset','illust-anima-artist-tags','artist_presets');
+                    renderIllustPresetTags('illust-anima-quality-preset','illust-anima-quality-tags','quality_presets');
+                    renderIllustPresetTags('illust-sdxl-negative-preset','illust-sdxl-negative-tags','negative_presets');
+                    renderIllustPresetTags('illust-anima-negative-preset','illust-anima-negative-tags','negative_presets');
                 }
             } catch (e) {
                 console.error('[ILLUST] 설정 로드 실패:', e);
@@ -21493,7 +21635,7 @@
             try {
                 await fetchJSON('/api/bot_mode/update_illust_settings', {
                     method: 'POST',
-                    body: JSON.stringify({ bot_name: botCurrentBot, illust_settings: settings }),
+                    body: JSON.stringify({ bot_name: botCurrentBot, illust_settings: settings, profile: _illustSettingsProfile }),
                 });
             } catch (e) {
                 console.error('[ILLUST] 설정 저장 실패:', e);
