@@ -675,7 +675,7 @@ def create_placeholder_png() -> bytes:
 
 
 # ─── 백업 관리 ────────────────────────────────────────────
-async def save_backup(image_bytes: bytes, prompt_id: str, positive: str, negative: str, generation_time: float = None, chat_content: str = "", enhanced_positive: str = "", wildcard_info: dict = None):
+async def save_backup(image_bytes: bytes, prompt_id: str, positive: str, negative: str, generation_time: float = None, chat_content: str = "", enhanced_positive: str = "", wildcard_info: dict = None, bot_name: str = ""):
     """이미지(WebP q80 + 원본 워크플로우 메타데이터)와 원본 워크플로우를 백업한다."""
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     base_name = f"{ts}_{prompt_id[:8]}"
@@ -763,7 +763,9 @@ async def save_backup(image_bytes: bytes, prompt_id: str, positive: str, negativ
     info_to_save = copy.deepcopy(current_conversion_info)
     if generation_time is not None:
         info_to_save["generation_time"] = generation_time
-    
+    if bot_name:
+        info_to_save["bot_name"] = bot_name
+
     info_path = os.path.join(WORKFLOW_BACKUP_DIR, f"{base_name}_info.json")
     with open(info_path, "w", encoding="utf-8") as f:
         json.dump(info_to_save, f, indent=2, ensure_ascii=False)
@@ -1663,7 +1665,8 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict):
         print(f"[INFO] 이미지 수신 완료: {len(img_bytes):,} bytes ({elapsed_time:.1f}s)")
 
         # 백업 저장 (WebP + 원본 워크플로우 JSON + 변환정보)
-        await save_backup(img_bytes, prompt_id, positive, negative, generation_time=elapsed_time)
+        _backup_bot_name = bot_name if (bot_name and app_config.get("bot_mode_enabled", False)) else ""
+        await save_backup(img_bytes, prompt_id, positive, negative, generation_time=elapsed_time, bot_name=_backup_bot_name)
 
         # 프록시 응답 설정
         our_filename = f"ComfyUI_{prompt_id[:8]}.png"

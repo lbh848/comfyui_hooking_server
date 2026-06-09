@@ -209,6 +209,18 @@
             margin-bottom: 8px;
         }
 
+        .bot-badge {
+            display: inline-block;
+            background: var(--accent);
+            color: #fff;
+            font-size: 0.7rem;
+            font-weight: 600;
+            padding: 1px 7px;
+            border-radius: 10px;
+            margin-right: 4px;
+            vertical-align: middle;
+        }
+
         .card-actions {
             display: flex;
             gap: 8px;
@@ -7093,7 +7105,7 @@
                         </div>
                     </div>
                     <div class="card-body">
-                        <div class="card-meta">${escapeHtml(dateStr)} &mdash; ${escapeHtml(b.name)}${info.generation_time ? ` · ⏱️ ${info.generation_time.toFixed(1)}초` : ''}</div>
+                        <div class="card-meta">${info.bot_name ? `<span class="bot-badge">${escapeHtml(info.bot_name)}</span> ` : ''}${escapeHtml(dateStr)} &mdash; ${escapeHtml(b.name)}${info.generation_time ? ` · ⏱️ ${info.generation_time.toFixed(1)}초` : ''}</div>
                         <div class="card-actions">
                             <button class="regen-btn" onclick="regenerate('${escapeAttr(b.name)}', this)"
                                     ${b.has_prompt ? '' : 'disabled title="프롬프트 없음"'}>
@@ -8712,12 +8724,11 @@
                 span.textContent = 'OFF';
                 showToast('자동 새로고침 비활성화', 'success');
             } else {
-                // WebSocket이 연결되어 있으면 주기적 폴링을 사용하지 않음
+                // WebSocket이 연결되어 있으면 폴링 간격을 길게 설정
                 if (frontendWs && frontendWs.readyState === WebSocket.OPEN) {
-                    span.textContent = 'ON (WS)';
-                    showToast('WebSocket 실시간 업데이트 활성화', 'success');
-                    // WebSocket 모드에서도 타이머를 설정하여 토글 가능하게 함
-                    autoRefreshTimer = setInterval(() => {}, 10000);
+                    span.textContent = 'ON (WS+30s)';
+                    showToast('WebSocket 실시간 + 30초 폴링 활성화', 'success');
+                    autoRefreshTimer = setInterval(() => loadBackups(true), 30000);
                 } else {
                     autoRefreshTimer = setInterval(() => loadBackups(true), 10000);
                     span.textContent = 'ON (10s)';
