@@ -18653,10 +18653,10 @@
                     body: JSON.stringify({ action: 'update_char_gender_tag', bot_name: botCurrentBot, char_name: charName, gender_tag: value })
                 });
                 const result = await resp.json();
-                if (result.success) {
+                if (result.bots) {
                     botData.bots = result.bots;
                 } else {
-                    showToast('성별 태그 저장 실패: ' + result.error, 'error');
+                    showToast('성별 태그 저장 실패: ' + (result.error || resp.statusText), 'error');
                 }
             } catch (e) {
                 console.error('[BOT] 성별 태그 저장 실패:', e);
