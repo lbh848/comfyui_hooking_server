@@ -269,46 +269,46 @@ class IllustPromptBuilder:
             if t.strip():
                 anima_quality_parts.append(t.strip())
 
-        # ─── ANIMA 콘텐츠 파트 (품질 제외한 나머지) ───
-        anima_content_parts = []
-        # 1. 캐릭터 트리거워드
-        for t in anima_triggers:
-            if t.strip():
-                anima_content_parts.append(t.strip())
-        # 2. ANIMA 아티스트 프리셋
+        # ─── ANIMA 트리거 (맨 앞 보장) ───
+        anima_trigger_clean = [t.strip() for t in anima_triggers if t.strip()]
+        sdxl_trigger_clean = [t.strip() for t in sdxl_triggers if t.strip()]
+
+        # ─── ANIMA 콘텐츠 파트 (품질/트리거 제외) ───
+        anima_content_no_triggers = []
+        # 1. ANIMA 아티스트 프리셋
         for t in anima_artist_tags:
             if t.strip():
-                anima_content_parts.append(t.strip())
-        # 3. setup
+                anima_content_no_triggers.append(t.strip())
+        # 2. setup
         if setup.strip():
-            anima_content_parts.append(setup.strip())
-        # 4. char
+            anima_content_no_triggers.append(setup.strip())
+        # 3. char
         if char.strip():
-            anima_content_parts.append(char.strip())
-        # 5. supplement
+            anima_content_no_triggers.append(char.strip())
+        # 4. supplement
         if supplement.strip():
-            anima_content_parts.append(supplement.strip())
+            anima_content_no_triggers.append(supplement.strip())
 
-        # ─── ANIMA 전체 (품질 + 콘텐츠) ───
-        anima_all_parts = anima_quality_parts + anima_content_parts
+        # ANIMA_CONTENT: 트리거 + 아티스트 + setup + char + supplement
+        anima_content_parts = anima_trigger_clean + anima_content_no_triggers
+
+        # ANIMA_ALL: 트리거 → 품질 → 아티스트 → 나머지 콘텐츠
+        anima_all_parts = anima_trigger_clean + anima_quality_parts + anima_content_no_triggers
 
         # ─── SDXL 섹션 조립 ───
         sdxl_quality_parts = [t.strip() for t in quality_tags if t.strip()]
         sdxl_artist_parts = [t.strip() for t in sdxl_artist_tags if t.strip()]
 
-        sdxl_content_parts = []
-        # 1. 캐릭터 트리거워드
-        for t in sdxl_triggers:
-            if t.strip():
-                sdxl_content_parts.append(t.strip())
-        # 2. setup
+        sdxl_content_no_triggers = []
+        # 1. setup
         if setup.strip():
-            sdxl_content_parts.append(setup.strip())
-        # 3. char (supplement 없음)
+            sdxl_content_no_triggers.append(setup.strip())
+        # 2. char (supplement 없음)
         if char.strip():
-            sdxl_content_parts.append(char.strip())
+            sdxl_content_no_triggers.append(char.strip())
 
-        sdxl_parts = sdxl_quality_parts + sdxl_artist_parts + sdxl_content_parts
+        # SDXL: 트리거 → 품질 → 아티스트 → 나머지 콘텐츠
+        sdxl_parts = sdxl_trigger_clean + sdxl_quality_parts + sdxl_artist_parts + sdxl_content_no_triggers
 
         # ─── 긍정 프롬프트 조합 ───
         positive = "[ANIMA_QUALITY]\n" + ", ".join(anima_quality_parts)
