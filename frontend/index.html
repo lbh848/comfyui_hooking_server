@@ -27605,6 +27605,9 @@
 
             const requestBody = {
                 character: char,
+                outfit: outfit,
+                expression: expr,
+                appearance: app,
                 asset_workflow_type: isAnima ? 'anima' : 'regular',
                 face_id_enabled: refEnabled,
                 reference_images: refEnabled ? assetRefImages.map(img => ({filename: img.name, local_path: img.local_path})) : [],
@@ -31899,6 +31902,9 @@
 
                     const genPayload = {
                         character: slot.character,
+                        outfit: slot.outfit,
+                        expression: slot.expression,
+                        appearance: slot.appearance,
                         asset_workflow_type: isAnima ? 'anima' : 'regular',
                         face_id_enabled: slot.ref_enabled,
                         reference_images: (slot.ref_images || []).map(img => ({filename: img.name, local_path: img.local_path})),
