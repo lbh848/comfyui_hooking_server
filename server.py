@@ -1615,6 +1615,30 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict):
                 )
                 negative = builder.build_negative_prompt(tags, settings, detected, bot)
 
+                # 4-1. 인스턴스 LoRA 사용 횟수 증가
+                from modes.instance_lora_mode import increment_usage as _increment_instance_lora_usage
+                characters_list = bot.get("characters", [])
+                _lora_key = "loras_group" if is_multi else "loras_solo"
+                _incremented = set()
+                for _cn in detected:
+                    _cd = next((c for c in characters_list if c["name"] == _cn), None)
+                    if not _cd:
+                        continue
+                    for _lora in _cd.get(_lora_key, _cd.get("loras", [])):
+                        if _lora.get("source") == "instance":
+                            _lid = _lora.get("lora_path", "")
+                            if _lid and _lid not in _incremented:
+                                _increment_instance_lora_usage(_lid)
+                                _incremented.add(_lid)
+                    for _flora in _cd.get("face_loras", []):
+                        if _flora.get("source") == "instance":
+                            _lid = _flora.get("lora_path", "")
+                            if _lid and _lid not in _incremented:
+                                _increment_instance_lora_usage(_lid)
+                                _incremented.add(_lid)
+                if _incremented:
+                    print(f"[ILLUST] 인스턴스 LoRA 사용 횟수 증가: {_incremented}")
+
                 # 5. 로깅
                 word_replaced = {
                     "setup": setup_replaced,

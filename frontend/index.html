@@ -5384,6 +5384,33 @@
     </div>
 
     <!-- 인스턴스 로라 생성 모달 -->
+    <!-- 인스턴스 로라 프롬프트 편집 모달 -->
+    <div style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:2500;align-items:center;justify-content:center;padding:20px;" id="ic-prompt-editor-overlay">
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;width:700px;max-width:90vw;max-height:85vh;display:flex;flex-direction:column;">
+            <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0;">
+                <span style="font-size:0.9rem;font-weight:600;">프롬프트 편집</span>
+                <div style="display:flex;gap:6px;align-items:center;">
+                    <span id="ic-editor-badge" style="display:none;font-size:0.62rem;background:var(--accent);color:#fff;padding:1px 5px;border-radius:3px;">수동 편집됨</span>
+                    <button class="modal-close" onclick="_icClosePromptEditor()" style="background:none;border:none;cursor:pointer;font-size:1.2rem;color:var(--text);">&times;</button>
+                </div>
+            </div>
+            <div style="padding:12px 16px;flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:10px;">
+                <div>
+                    <div style="font-size:0.78rem;font-weight:600;color:var(--text-secondary);margin-bottom:4px;">긍정 프롬프트</div>
+                    <textarea id="ic-editor-positive" rows="12" style="width:100%;box-sizing:border-box;padding:8px;background:var(--surface1);border:1px solid var(--border);border-radius:6px;font-size:0.78rem;color:var(--text);resize:vertical;font-family:inherit;line-height:1.4;"></textarea>
+                </div>
+                <div>
+                    <div style="font-size:0.78rem;font-weight:600;color:var(--text-secondary);margin-bottom:4px;">부정 프롬프트</div>
+                    <textarea id="ic-editor-negative" rows="4" style="width:100%;box-sizing:border-box;padding:8px;background:var(--surface1);border:1px solid var(--border);border-radius:6px;font-size:0.78rem;color:var(--text);resize:vertical;font-family:inherit;line-height:1.4;"></textarea>
+                </div>
+            </div>
+            <div style="padding:10px 16px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px;flex-shrink:0;">
+                <button onclick="_icClosePromptEditor()" style="padding:6px 14px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:0.8rem;">취소</button>
+                <button onclick="_icApplyPromptEditor()" style="padding:6px 16px;background:var(--accent);color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:0.8rem;font-weight:600;">적용</button>
+            </div>
+        </div>
+    </div>
+
     <div class="modal" id="instance-lora-create-modal">
         <div class="modal-content" style="width:900px; max-width:900px; height:80vh; max-height:80vh; overflow:hidden;">
             <div class="modal-header">
@@ -5407,8 +5434,14 @@
                     </div>
                     <!-- 프롬프트 필터/미리보기 (에셋 소스일 때만 표시) -->
                     <div id="instance-create-prompt-section" style="display:none; flex-shrink:0;">
-                        <div style="font-size:0.8rem; font-weight:600; color:var(--text-secondary); margin-bottom:4px;">가져올 프롬프트</div>
-                        <div id="instance-create-prompt-preview" style="padding:6px 8px; background:var(--surface1); border:1px solid var(--border); border-radius:6px; font-size:0.72rem; color:var(--text); white-space:pre-wrap; min-height:40px; max-height:200px; overflow-y:auto; line-height:1.4; resize:vertical;"></div>
+                        <div style="display:flex;align-items:center;gap:4px;margin-bottom:4px;">
+                            <div style="font-size:0.8rem; font-weight:600; color:var(--text-secondary);">가져올 프롬프트</div>
+                            <span id="ic-manual-edit-badge" style="display:none;font-size:0.62rem;background:var(--accent);color:#fff;padding:1px 5px;border-radius:3px;">수동 편집됨</span>
+                        </div>
+                        <div style="position:relative;">
+                            <textarea id="instance-create-prompt-preview" rows="5" oninput="_icOnManualEdit(this)" style="padding:6px 8px 6px 6px; background:var(--surface1); border:1px solid var(--border); border-radius:6px; font-size:0.72rem; color:var(--text); white-space:pre-wrap; min-height:40px; max-height:300px; overflow-y:auto; line-height:1.4; resize:vertical; width:100%; box-sizing:border-box; font-family:inherit;"></textarea>
+                            <button onclick="_icOpenPromptEditor()" title="프롬프트 편집창 열기" style="position:absolute;top:3px;right:3px;background:var(--accent);color:#fff;border:none;border-radius:5px;cursor:pointer;font-size:0.78rem;padding:3px 8px;line-height:1.2;font-weight:600;">✎ 편집</button>
+                        </div>
                         <div style="display:flex;align-items:center;gap:4px;margin-top:6px;cursor:pointer;" onclick="const b=document.getElementById('ic-filter-body');b.style.display=b.style.display==='none'?'':'none';">
                             <span style="font-size:0.78rem;font-weight:600;color:var(--text-secondary);">프롬프트 필터</span>
                             <span style="font-size:0.65rem;color:var(--text-secondary);">▼</span>
@@ -15336,7 +15369,7 @@
                             <div style="display:flex;align-items:center;gap:6px;">
                                 <span style="font-size:0.75rem;color:var(--text-secondary);">호출 ${lora.usage_count}회</span>
                                 <button onclick="event.stopPropagation();retrainInstanceLora('${esc(lora.id)}','${esc(lora.trigger)}')" style="padding:2px 8px;background:var(--surface2);color:var(--text-secondary);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.7rem;margin-left:auto;">재학습</button>
-                                <button onclick="event.stopPropagation();showInstancePromptModal('${esc(lora.id)}','${esc(lora.trigger)}','${esc(posPrompt)}','${esc(negPrompt)}','${esc(origPosPrompt)}','${esc(origNegPrompt)}')" style="padding:2px 8px;background:var(--surface2);color:var(--text-secondary);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.7rem;">프롬프트</button>
+                                <button onclick="event.stopPropagation();loadAndShowInstancePrompt('${esc(lora.id)}','${esc(lora.trigger)}')" style="padding:2px 8px;background:var(--surface2);color:var(--text-secondary);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.7rem;">프롬프트</button>
                             </div>
                         </div>
                     </div>`;
@@ -15367,6 +15400,20 @@
             document.getElementById('instance-prompt-modal-orig-positive').textContent = originalPositive || positive || '없음';
             document.getElementById('instance-prompt-modal-orig-negative').textContent = originalNegative || negative || '없음';
             document.getElementById('instance-lora-prompt-modal').style.display = 'flex';
+        }
+
+        async function loadAndShowInstancePrompt(loraId, trigger) {
+            try {
+                const resp = await fetchJSON(`/api/instance_lora/list`);
+                if (!resp.success) { showToast('로라 목록 로드 실패', 'error'); return; }
+                const lora = (resp.data || []).find(l => l.id === loraId);
+                if (!lora) { showToast('로라를 찾을 수 없습니다', 'error'); return; }
+                const p = lora.prompt || {};
+                showInstancePromptModal(loraId, trigger, p.positive || '', p.negative || '', p.original_positive || '', p.original_negative || '');
+            } catch (e) {
+                console.error('[INSTANCE_LORA] 프롬프트 로드 실패:', e);
+                showToast('프롬프트 로드 실패', 'error');
+            }
         }
 
         function closeInstancePromptModal() {
@@ -15427,6 +15474,9 @@
         async function showInstanceLoraCreateModal() {
             document.getElementById('instance-lora-create-trigger').value = '';
             _instanceCreateFiles = [];
+            _icManualEdited = false;
+            const _icBadge = document.getElementById('ic-manual-edit-badge');
+            if (_icBadge) _icBadge.style.display = 'none';
             _icBrowserSource = 'asset';
             _icBrowserState = { level: 'characters', character: '', outfit: '', expression: '', selected: new Set() };
             await _icLoadFilter();
@@ -15576,10 +15626,53 @@
             return result.trim();
         }
 
+        let _icManualEdited = false;
+
+        function _icOnManualEdit(el) {
+            const f = _instanceCreateFiles[0];
+            if (!f) return;
+            const badge = document.getElementById('ic-manual-edit-badge');
+            if (!el.dataset.filterApplied) {
+                _icManualEdited = true;
+                badge.style.display = '';
+            } else {
+                delete el.dataset.filterApplied;
+            }
+            f._existingPrompt = f._existingPrompt || {};
+            f._existingPrompt.positive = el.value;
+        }
+
+        function _icOpenPromptEditor() {
+            const f = _instanceCreateFiles[0];
+            if (!f || !f._existingPrompt) return;
+            const overlay = document.getElementById('ic-prompt-editor-overlay');
+            document.getElementById('ic-editor-positive').value = f._existingPrompt.positive || '';
+            document.getElementById('ic-editor-negative').value = f._existingPrompt.negative || '';
+            const badge = document.getElementById('ic-editor-badge');
+            badge.style.display = _icManualEdited ? '' : 'none';
+            overlay.style.display = 'flex';
+        }
+        function _icClosePromptEditor() {
+            document.getElementById('ic-prompt-editor-overlay').style.display = 'none';
+        }
+        function _icApplyPromptEditor() {
+            const f = _instanceCreateFiles[0];
+            if (!f) return;
+            const pos = document.getElementById('ic-editor-positive').value;
+            const neg = document.getElementById('ic-editor-negative').value;
+            f._existingPrompt = { positive: pos, negative: neg };
+            const preview = document.getElementById('instance-create-prompt-preview');
+            preview.value = pos || '(빈 프롬프트)';
+            _icManualEdited = true;
+            const badge = document.getElementById('ic-manual-edit-badge');
+            if (badge) badge.style.display = '';
+            _icClosePromptEditor();
+        }
+
         function _icUpdatePromptPreview() {
             const f = _instanceCreateFiles[0];
             const promptPreview = document.getElementById('instance-create-prompt-preview');
-            if (!f || !f._rawPrompt) { promptPreview.textContent = '(프롬프트 없음)'; return; }
+            if (!f || !f._rawPrompt) { promptPreview.value = '(프롬프트 없음)'; return; }
             let pos = f._rawPrompt.positive;
             let neg = f._rawPrompt.negative || '';
             if (_icPromptFilterSteps.length > 0) {
@@ -15593,7 +15686,11 @@
                 pos = kept.join(', ');
             }
             f._existingPrompt = { positive: pos, negative: neg };
-            promptPreview.textContent = pos || '(필터 후 빈 프롬프트)';
+            promptPreview.dataset.filterApplied = '1';
+            promptPreview.value = pos || '(필터 후 빈 프롬프트)';
+            _icManualEdited = false;
+            const badge = document.getElementById('ic-manual-edit-badge');
+            if (badge) badge.style.display = 'none';
         }
 
         function _icRenderFilterSteps() {
@@ -28673,6 +28770,15 @@
             queueModalAutoRemoveCompleted();
             updateQueueBadge();
             if (queueModalOpen) renderQueueModal();
+
+            // 인스턴스 LoRA 관련 큐 완료 시 그리드 자동 갱신
+            const instanceTypes = ['instance_lora_training', 'instance_lora_analysis'];
+            const instanceCompleted = data.items.some(i =>
+                instanceTypes.includes(i.type) && (i.status === 'completed' || i.status === 'failed')
+            );
+            if (instanceCompleted && typeof loadInstanceLoraGrid === 'function') {
+                loadInstanceLoraGrid();
+            }
         }
 
         function handleQueueProgress(data) {

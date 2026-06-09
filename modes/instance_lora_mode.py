@@ -71,6 +71,8 @@ def list_loras() -> list:
             prompt_result = get_image_prompt(lora_id, images[0])
             if prompt_result.get("success") and prompt_result.get("data"):
                 entry["prompt"] = prompt_result["data"]
+            else:
+                print(f"[INSTANCE_LORA] 프롬프트 없음: {lora_id}/{images[0]} - {prompt_result.get('error', '알 수 없음')}")
         result.append(entry)
     return result
 
