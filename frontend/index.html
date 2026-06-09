@@ -1014,6 +1014,73 @@
             background: rgba(170, 170, 170, 0.1);
         }
 
+        /* 삽화모드 칩 스타일 */
+        .illust-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 3px 10px;
+            border-radius: 12px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            transition: all 0.2s;
+            cursor: default;
+            user-select: none;
+        }
+        .illust-chip.value-chip {
+            background: rgba(100, 150, 255, 0.12);
+            color: var(--accent);
+            border: 1px solid rgba(100, 150, 255, 0.25);
+            min-width: 36px;
+            justify-content: center;
+        }
+        .illust-chip.label-chip {
+            background: var(--surface2);
+            color: var(--text);
+            border: 1px solid var(--border);
+            font-weight: 500;
+        }
+        .illust-detailer-chip {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 3px 10px;
+            border-radius: 12px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            user-select: none;
+            border: 1px solid var(--border);
+            background: var(--surface2);
+            color: var(--text2);
+        }
+        .illust-detailer-chip.active {
+            background: rgba(76, 175, 80, 0.15);
+            color: var(--success);
+            border-color: rgba(76, 175, 80, 0.35);
+        }
+        .illust-section-chip {
+            display: inline-flex;
+            align-items: center;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 0.6rem;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+        }
+        .illust-section-chip.sdxl {
+            background: rgba(156, 39, 176, 0.12);
+            color: #ba68c8;
+            border: 1px solid rgba(156, 39, 176, 0.25);
+        }
+        .illust-section-chip.anima {
+            background: rgba(255, 152, 0, 0.12);
+            color: #ffb74d;
+            border: 1px solid rgba(255, 152, 0, 0.25);
+        }
+
         /* Beta 뱃지 */
         .beta-badge {
             display: inline-block;
@@ -3336,22 +3403,24 @@
                                 </select>
                                 <div id="illust-anima-negative-tags" style="display:flex; flex-wrap:wrap; gap:3px; margin-top:4px;"></div>
                             </div>
+                            <hr style="border:none; border-top:1px solid var(--border); margin:8px 0 4px 0;">
+                            <div style="font-size:0.65rem; color:var(--text-muted); font-weight:600; letter-spacing:0.5px; margin-bottom:4px;">고급 옵션</div>
                             <div style="margin-top:6px;">
                                 <span style="font-size:0.7rem; color:var(--text2);">HIRESFIX 및 디테일러 적용 전 이미지 확대 배율</span>
-                                <div style="display:flex; align-items:center; gap:4px; margin-top:2px;">
-                                    <input type="range" id="illust-hrf-size" min="1" max="3" step="0.05" value="1.5" oninput="document.getElementById('illust-hrf-size-val').textContent=this.value; saveIllustSettings()">
-                                    <span id="illust-hrf-size-val" style="font-size:0.7rem;">1.5</span>
+                                <div style="display:flex; align-items:center; gap:6px; margin-top:2px;">
+                                    <input type="range" id="illust-hrf-size" min="1" max="3" step="0.05" value="1.5" oninput="document.getElementById('illust-hrf-size-val').textContent=this.value; saveIllustSettings()" style="flex:1;">
+                                    <span id="illust-hrf-size-val" class="illust-chip value-chip">1.5</span>
                                 </div>
                             </div>
-                            <div style="display:flex; align-items:center; gap:4px; margin-top:4px;">
-                                <span style="font-size:0.75rem; color:var(--text2);">원본 크기 복원</span>
+                            <div style="display:flex; align-items:center; gap:6px; margin-top:6px;">
+                                <span class="illust-chip label-chip">원본 크기 복원</span>
                                 <label class="toggle-switch" style="transform:scale(0.8);">
                                     <input type="checkbox" id="illust-hrf-restore-size" onchange="saveIllustSettings()">
                                     <span class="toggle-slider"></span>
                                 </label>
                             </div>
-                            <div style="display:flex; align-items:center; gap:6px; margin-top:4px;">
-                                <span style="font-size:0.75rem;">HIRES FIX</span>
+                            <div style="display:flex; align-items:center; gap:6px; margin-top:6px;">
+                                <span class="illust-chip label-chip">HIRES FIX</span>
                                 <label class="toggle-switch" style="transform:scale(0.8);">
                                     <input type="checkbox" id="illust-hrf-toggle" onchange="saveIllustSettings()">
                                     <span class="toggle-slider"></span>
@@ -3359,7 +3428,7 @@
                                 <span id="illust-hrf-status" class="toggle-status off" style="font-size:0.7rem;">OFF</span>
                             </div>
                             <div style="display:flex; align-items:center; gap:6px; margin-top:4px;">
-                                <span style="font-size:0.75rem;">ANIMA HIRES FIX</span>
+                                <span class="illust-chip label-chip">ANIMA HIRES FIX</span>
                                 <label class="toggle-switch" style="transform:scale(0.8);">
                                     <input type="checkbox" id="illust-anima-hrf-toggle" onchange="saveIllustSettings()">
                                     <span class="toggle-slider"></span>
@@ -3367,13 +3436,13 @@
                                 <span id="illust-anima-hrf-status" class="toggle-status off" style="font-size:0.7rem;">OFF</span>
                             </div>
                             <div style="display:flex; gap:6px; align-items:center; margin-top:6px;">
-                                <span style="font-size:0.75rem; color:var(--text2);">이미지 사이즈</span>
-                                <input type="number" id="illust-img-w" value="756" min="256" max="4096" step="8" onchange="saveIllustSettings()" style="width:60px; padding:2px 4px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.75rem;">
-                                <span style="font-size:0.75rem;">x</span>
-                                <input type="number" id="illust-img-h" value="756" min="256" max="4096" step="8" onchange="saveIllustSettings()" style="width:60px; padding:2px 4px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.75rem;">
+                                <span class="illust-chip label-chip">이미지 사이즈</span>
+                                <input type="number" id="illust-img-w" value="756" min="256" max="4096" step="8" onchange="saveIllustSettings()" style="width:58px; padding:2px 4px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.7rem; text-align:center;">
+                                <span style="font-size:0.7rem; color:var(--text2);">x</span>
+                                <input type="number" id="illust-img-h" value="756" min="256" max="4096" step="8" onchange="saveIllustSettings()" style="width:58px; padding:2px 4px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.7rem; text-align:center;">
                             </div>
                             <div style="display:flex; align-items:center; gap:6px; margin-top:6px;">
-                                <span style="font-size:0.75rem;">FACE-IPAdapter</span>
+                                <span class="illust-chip label-chip">FACE-IPAdapter</span>
                                 <label class="toggle-switch" style="transform:scale(0.8);">
                                     <input type="checkbox" id="illust-face-id-toggle" onchange="saveIllustSettings()">
                                     <span class="toggle-slider"></span>
@@ -3381,13 +3450,14 @@
                                 <span id="illust-face-id-status" class="toggle-status off" style="font-size:0.7rem;">OFF</span>
                             </div>
                             <div id="illust-face-id-options" style="display:none; margin-top:4px; padding-left:8px;">
-                                <div style="display:flex; align-items:center; gap:4px;">
-                                    <span style="font-size:0.7rem; color:var(--text2);">강도</span>
-                                    <input type="range" id="illust-face-id-str" min="0" max="1" step="0.01" value="0.55" oninput="document.getElementById('illust-face-id-str-val').textContent=this.value; saveIllustSettings()">
-                                    <span id="illust-face-id-str-val" style="font-size:0.7rem;">0.55</span>
+                                <div style="display:flex; align-items:center; gap:6px;">
+                                    <span class="illust-chip label-chip">강도</span>
+                                    <input type="range" id="illust-face-id-str" min="0" max="1" step="0.01" value="0.55" oninput="document.getElementById('illust-face-id-str-val').textContent=this.value; saveIllustSettings()" style="flex:1;">
+                                    <span id="illust-face-id-str-val" class="illust-chip value-chip">0.55</span>
                                 </div>
                             </div>
                             <div style="display:flex; gap:6px; margin-top:6px;">
+                                <span class="illust-section-chip sdxl">SDXL</span>
                                 <label style="display:flex; align-items:center; gap:3px; font-size:0.75rem; cursor:pointer;">
                                     <input type="checkbox" id="illust-fd-toggle" onchange="saveIllustSettings()"> FD
                                 </label>
@@ -3397,9 +3467,9 @@
                                 <label style="display:flex; align-items:center; gap:3px; font-size:0.75rem; cursor:pointer;">
                                     <input type="checkbox" id="illust-ed-toggle" onchange="saveIllustSettings()"> ED
                                 </label>
-                                <span style="font-size:0.65rem; color:var(--text-muted); margin-left:2px;">SDXL</span>
                             </div>
                             <div style="display:flex; gap:6px; margin-top:3px;">
+                                <span class="illust-section-chip anima">ANIMA</span>
                                 <label style="display:flex; align-items:center; gap:3px; font-size:0.75rem; cursor:pointer;">
                                     <input type="checkbox" id="illust-anima-fd-toggle" onchange="saveIllustSettings()"> FD
                                 </label>
@@ -3409,7 +3479,6 @@
                                 <label style="display:flex; align-items:center; gap:3px; font-size:0.75rem; cursor:pointer;">
                                     <input type="checkbox" id="illust-anima-ed-toggle" onchange="saveIllustSettings()"> ED
                                 </label>
-                                <span style="font-size:0.65rem; color:var(--text-muted); margin-left:2px;">ANIMA</span>
                             </div>
                             <div style="margin-top:6px;">
                                 <div style="font-size:0.75rem; color:var(--text-muted); margin-bottom:3px;">Seed</div>
@@ -21444,6 +21513,24 @@
             document.getElementById('illust-face-id-options').style.display = faceIdOn ? 'block' : 'none';
             document.getElementById('illust-face-id-status').textContent = faceIdOn ? 'ON' : 'OFF';
             document.getElementById('illust-face-id-status').className = faceIdOn ? 'toggle-status on' : 'toggle-status off';
+        }
+
+        function toggleIllustDetailerChip(checkboxId, chipEl) {
+            const cb = document.getElementById(checkboxId);
+            if (!cb) return;
+            cb.checked = !cb.checked;
+            syncIllustDetailerChip(cb, chipEl.id || chipEl);
+            saveIllustSettings();
+        }
+
+        function syncIllustDetailerChip(checkbox, chipId) {
+            const chip = typeof chipId === 'string' ? document.getElementById(chipId) : chipId;
+            if (!chip) return;
+            if (checkbox.checked) {
+                chip.classList.add('active');
+            } else {
+                chip.classList.remove('active');
+            }
         }
 
         // ─── POSITIVE 화이트리스트/블랙리스트 규칙 ────────────────────
