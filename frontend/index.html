@@ -18954,6 +18954,11 @@
         }
 
         function _switchLbExtraTab(tab) {
+            // 시스템 프롬프트 탭에서 나갈 때 textarea 내용 저장
+            if (_lbExtraTab === 'systemPrompt') {
+                const editor = document.getElementById('sp-editor');
+                if (editor) _systemPromptText = editor.value;
+            }
             _lbExtraTab = tab;
             const clsBtn = document.getElementById('lb-extra-tab-classification');
             const spBtn = document.getElementById('lb-extra-tab-systemPrompt');
@@ -19166,8 +19171,18 @@
                         <div style="width:1px; background:var(--border); margin:0 12px;"></div>
                         <div style="flex:1; padding-left:12px;">
                             <div style="font-size:0.75rem; color:var(--text2); margin-bottom:4px; font-weight:600;">-Appearance</div>
+                            <div style="position:relative; margin-bottom:4px;">
+                                <input type="text" id="lb-extra-add-app-${ci}" placeholder="태그 추가..." style="width:calc(100% - 32px); padding:3px 8px; border:1px solid var(--border); border-radius:4px; font-size:0.75rem; background:var(--surface); color:var(--text);" onkeydown="if(event.key==='Enter'){event.preventDefault();_addLbExtraTagFromInput(${ci},'appearance',this);}">
+                                <button onclick="_addLbExtraTagFromInput(${ci},'appearance',document.getElementById('lb-extra-add-app-${ci}'))" style="margin-left:4px; padding:3px 8px; border-radius:4px; border:none; background:var(--accent); color:#fff; cursor:pointer; font-size:0.8rem; font-weight:600;">+</button>
+                                <div class="tag-autocomplete-dropdown" id="lb-extra-ac-app-${ci}"></div>
+                            </div>
                             <div class="lb-extra-drop" data-dci="${ci}" data-dgrp="appearance" style="display:flex; flex-wrap:wrap; gap:4px; margin-bottom:8px; min-height:24px; border-radius:4px; padding:2px; transition:background 0.15s;">${_buildEditTags(ci, 'appearance')}</div>
                             <div style="font-size:0.75rem; color:var(--text2); margin-bottom:4px; font-weight:600;">-normal outfit</div>
+                            <div style="position:relative; margin-bottom:4px;">
+                                <input type="text" id="lb-extra-add-out-${ci}" placeholder="태그 추가..." style="width:calc(100% - 32px); padding:3px 8px; border:1px solid var(--border); border-radius:4px; font-size:0.75rem; background:var(--surface); color:var(--text);" onkeydown="if(event.key==='Enter'){event.preventDefault();_addLbExtraTagFromInput(${ci},'outfit',this);}">
+                                <button onclick="_addLbExtraTagFromInput(${ci},'outfit',document.getElementById('lb-extra-add-out-${ci}'))" style="margin-left:4px; padding:3px 8px; border-radius:4px; border:none; background:var(--accent); color:#fff; cursor:pointer; font-size:0.8rem; font-weight:600;">+</button>
+                                <div class="tag-autocomplete-dropdown" id="lb-extra-ac-out-${ci}"></div>
+                            </div>
                             <div class="lb-extra-drop" data-dci="${ci}" data-dgrp="outfit" style="display:flex; flex-wrap:wrap; gap:4px; min-height:24px; border-radius:4px; padding:2px; transition:background 0.15s;">${_buildEditTags(ci, 'outfit')}</div>
                         </div>
                     </div>
@@ -19176,6 +19191,7 @@
             el.innerHTML = html;
             _attachLbExtraDnD(el);
             _attachLbExtraTagDnD(el);
+            _attachLbExtraAutoComplete();
         }
 
         function _buildOrigTags(ci, group) {
@@ -19232,6 +19248,35 @@
         function _removeLbExtraTag(ci, group, ti) {
             _lbExtraEdited[ci][group].splice(ti, 1);
             _renderLbExtraContent();
+        }
+
+        function _addLbExtraTagFromInput(ci, group, inputEl) {
+            const val = (inputEl.value || '').trim();
+            if (!val) return;
+            if (_lbExtraEdited[ci][group].some(t => t.tag.toLowerCase() === val.toLowerCase())) {
+                showToast('이미 있는 태그입니다', 'error');
+                inputEl.value = '';
+                return;
+            }
+            _lbExtraEdited[ci][group].push({tag: val, desc: ''});
+            inputEl.value = '';
+            _renderLbExtraContent();
+        }
+
+        function _attachLbExtraAutoComplete() {
+            if (_lbExtraTab !== 'classification') return;
+            _lbExtraEdited.forEach((_, ci) => {
+                const appInput = document.getElementById(`lb-extra-add-app-${ci}`);
+                const appDropdown = document.getElementById(`lb-extra-ac-app-${ci}`);
+                if (appInput && appDropdown) {
+                    TagAutocomplete.attach(`lb-extra-add-app-${ci}`, `lb-extra-ac-app-${ci}`, 'input');
+                }
+                const outInput = document.getElementById(`lb-extra-add-out-${ci}`);
+                const outDropdown = document.getElementById(`lb-extra-ac-out-${ci}`);
+                if (outInput && outDropdown) {
+                    TagAutocomplete.attach(`lb-extra-add-out-${ci}`, `lb-extra-ac-out-${ci}`, 'input');
+                }
+            });
         }
 
         function _attachLbExtraDnD(container) {
@@ -19363,9 +19408,25 @@
 
         async function _saveLbExtra() {
             try {
-                if (_lbExtraTab === 'systemPrompt') {
+                let savedCount = 0;
+                // 캐릭터 분류 데이터 저장
+                if (_lbExtraEdited.length > 0) {
+                    const resp = await fetch('/api/bot_mode/lb_extra', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ bot_name: botCurrentBot, data: _lbExtraEdited })
+                    });
+                    const result = await resp.json();
+                    if (result.saved) {
+                        savedCount++;
+                    } else {
+                        showToast('분류 데이터 저장 실패: ' + (result.error || ''), 'error');
+                    }
+                }
+                // 시스템 프롬프트 저장
+                if (botCurrentBot) {
                     const editor = document.getElementById('sp-editor');
-                    const text = editor ? editor.value : '';
+                    const text = editor ? editor.value : _systemPromptText;
                     const resp = await fetch('/api/bot_mode/system_prompt', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
@@ -19374,22 +19435,13 @@
                     const result = await resp.json();
                     if (result.saved) {
                         _systemPromptText = text;
-                        showToast('시스템 프롬프트 저장 완료', 'success');
+                        savedCount++;
                     } else {
-                        showToast('저장 실패: ' + (result.error || ''), 'error');
+                        showToast('시스템 프롬프트 저장 실패: ' + (result.error || ''), 'error');
                     }
-                } else {
-                    const resp = await fetch('/api/bot_mode/lb_extra', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ bot_name: botCurrentBot, data: _lbExtraEdited })
-                    });
-                    const result = await resp.json();
-                    if (result.saved) {
-                        showToast('저장 완료', 'success');
-                    } else {
-                        showToast('저장 실패: ' + (result.error || ''), 'error');
-                    }
+                }
+                if (savedCount > 0) {
+                    showToast('저장 완료', 'success');
                 }
             } catch (e) {
                 console.error('[LB_EXTRA] 저장 실패:', e);
@@ -19398,10 +19450,13 @@
         }
 
         function _downloadLbExtra() {
+            // 현재 textarea 내용을 반영
+            const editor = document.getElementById('sp-editor');
+            const spText = editor ? editor.value : _systemPromptText;
             let output = '';
             // 시스템 프롬프트가 있으면 상단에 추가
-            if (_systemPromptText && _systemPromptText.trim()) {
-                output += _systemPromptText.trim() + '\n\n';
+            if (spText && spText.trim()) {
+                output += spText.trim() + '\n\n';
             }
             for (const char of _lbExtraEdited) {
                 output += `### ${char.name}\n`;
