@@ -972,7 +972,9 @@ class BotMode:
         try:
             bot_name = request.query.get("bot", "").strip()
             char_name = request.query.get("character", "").strip()
+            print(f"[BOT_MODE] rep_preview 요청: bot={bot_name!r}, character={char_name!r}")
             if not bot_name:
+                print("[BOT_MODE] rep_preview 오류: 봇 이름 없음")
                 return _json_error("봇 이름이 필요합니다.")
 
             if char_name:
@@ -982,10 +984,15 @@ class BotMode:
                 data = _load_bot_data()
                 bot = next((b for b in data.get("bots", []) if b["name"] == bot_name), None)
                 if bot:
+                    chars_with_rep = [ch["name"] for ch in bot.get("characters", []) if ch.get("rep_images")]
+                    print(f"[BOT_MODE] rep_preview: 봇 '{bot_name}' 캐릭터 수={len(bot.get('characters', []))}, 대표이미지 있는 캐릭터={chars_with_rep}")
                     for ch in bot.get("characters", []):
-                        if (ch.get("rep_images") or []):
+                        if ch.get("rep_images"):
                             reps.extend(self._get_rep_image_paths(bot_name, ch["name"]))
+                else:
+                    print(f"[BOT_MODE] rep_preview: 봇 '{bot_name}'을(를) 찾을 수 없음")
 
+            print(f"[BOT_MODE] rep_preview: 총 대표이미지 {len(reps)}장")
             results = []
             for rep in reps:
                 base = os.path.splitext(rep["filename"])[0]

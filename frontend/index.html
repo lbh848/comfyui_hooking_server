@@ -21123,7 +21123,7 @@
         }
 
         async function botAnalyzeAllChars() {
-            if (!botCurrentBot) return;
+            if (!botCurrentBot) { showToast('봇을 먼저 선택하세요', 'error'); return; }
             const status = document.getElementById('bot-analyze-status');
             const btn = document.getElementById('btn-bot-analyze-all');
             btn.disabled = true;
@@ -21132,13 +21132,17 @@
             status.textContent = '대표 이미지 목록 로드 중...';
             try {
                 const prevResp = await fetch(`/api/bot_mode/rep_preview?bot=${encodeURIComponent(botCurrentBot)}&character=`);
+                if (!prevResp.ok) {
+                    const errText = await prevResp.text().catch(() => '');
+                    showToast(`이미지 목록 로드 실패 (HTTP ${prevResp.status})`, 'error');
+                    status.style.display = 'none'; return;
+                }
                 const prevData = await prevResp.json();
                 if (prevData.error) { showToast(prevData.error, 'error'); btn.disabled = false; btn.textContent = '선택 캐릭터 일괄 태그 분석'; status.style.display = 'none'; return; }
                 const images = prevData.images || [];
                 if (images.length === 0) { showToast('대표 이미지가 있는 캐릭터가 없습니다', 'error'); btn.disabled = false; btn.textContent = '선택 캐릭터 일괄 태그 분석'; status.style.display = 'none'; return; }
                 botShowAnalyzeModal(images, '', status);
             } catch (e) {
-                console.error('[BOT] 전체 분석 프리뷰 오류:', e);
                 showToast('이미지 목록 로드 실패', 'error');
                 status.style.display = 'none';
             } finally {
