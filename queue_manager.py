@@ -261,7 +261,7 @@ class QueueManager:
         return {"success": True, "prompt_id": prompt_id}
 
     async def _handle_restore_manual(self, item: QueueItem) -> dict:
-        """수동 그리기 (복원 프롬프트 파일로 이미지 생성)."""
+        """수동 그리기 (복원 프롬프트 파일로 이미지 생성). 비삽화 모드 전용."""
         params = item.params
         positive = params.get("positive", "")
         negative = params.get("negative", "")
@@ -269,7 +269,16 @@ class QueueManager:
         if not self.generate_image_with_prompt:
             raise RuntimeError("generate_image_with_prompt 콜백이 설정되지 않았습니다")
 
-        img_bytes, error = await self.generate_image_with_prompt(positive, negative)
+        async def _on_restore_progress(value, max_value):
+            await self._notify_progress(item, {
+                "phase": "generating",
+                "value": value,
+                "max": max_value,
+                "current": value,
+                "total": max_value,
+            })
+
+        img_bytes, error = await self.generate_image_with_prompt(positive, negative, progress_callback=_on_restore_progress)
         if img_bytes and self.save_backup:
             await self.save_backup(img_bytes, "restore_manual", positive, negative)
             print(f"[QUEUE:restore_manual] 완료 (이미지 {len(img_bytes):,}B)")

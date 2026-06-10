@@ -24,17 +24,17 @@ _QUALITY = "newest, year2024, (masterpiece, best quality, score_7), highres, abs
 
 # 캐릭터 목록
 _CHARACTER_POOL = [
-    "alice \\(nikke\\), pink bodysuit",
-    "anis \\(nikke\\)",
-    "rapi \\(nikke\\)",
-    "dorothy \\(nikke\\), white dress, frilled dress, halterneck, center frills, detached sleeves, see-through sleeves, bare shoulders, sleeves past wrists, frilled choker, neck ribbon, white thighhighs",
-    "cinderella \\(nikke\\), white bodysuit, red eyes",
-    "red hood \\(nikke\\)",
+    #"alice \\(nikke\\), pink bodysuit",
+    #"anis \\(nikke\\)",
+    #"rapi \\(nikke\\)",
+    #"dorothy \\(nikke\\), white dress, frilled dress, halterneck, center frills, detached sleeves, see-through sleeves, bare shoulders, sleeves past wrists, frilled choker, neck ribbon, white thighhighs",
+    #"cinderella \\(nikke\\), white bodysuit, red eyes",
+    # "red hood \\(nikke\\)",
     "privaty \\(nikke\\), maid dress",
-    "anis \\(sparkling summer\\) \\(nikke\\), swimsuit",
-    "modernia \\(nikke\\), bodysuit",
-    "liliweiss \\(nikke\\), sparkling eyes,blue eyes", 
-    "shifty \\(nikke\\), blue eyes, blue hair, two side up, long hair, hair ornament, animal ear headphones, headset, sailor collar, button badge, grey serafuku, blue neckerchief, short sleeves, wrist cuffs, breast pockets, impossible clothes, breasts, pouch, white dress, covered navel, bare legs, white footwear, sneakers, socks",
+    #"anis \\(sparkling summer\\) \\(nikke\\), swimsuit",
+    #"modernia \\(nikke\\), bodysuit",
+    #"liliweiss \\(nikke\\), sparkling eyes,blue eyes", 
+    #"shifty \\(nikke\\), blue eyes, blue hair, two side up, long hair, hair ornament, animal ear headphones, headset, sailor collar, button badge, grey serafuku, blue neckerchief, short sleeves, wrist cuffs, breast pockets, impossible clothes, breasts, pouch, white dress, covered navel, bare legs, white footwear, sneakers, socks",
 ]
 
 # 손모양

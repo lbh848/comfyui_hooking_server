@@ -281,8 +281,7 @@ async def notify_frontend(event_type: str, data: dict = None):
     """프론트엔드 대시보드에 이벤트를 전송한다."""
     message = {"type": event_type, "data": data or {}}
     client_count = len(frontend_ws_connections)
-    if event_type.startswith("asset_"):
-        print(f"[WS] → 프론트엔드 전송: {event_type} (클라이언트 {client_count}명)")
+    print(f"[WS] → 프론트엔드 전송: {event_type} (클라이언트 {client_count}명)")
     for client_id, entry in list(frontend_ws_connections.items()):
         try:
             await entry["ws"].send_json(message)
@@ -977,7 +976,7 @@ async def fetch_real_image(
 
 
 # ─── 이미지 생성 공통 로직 ────────────────────────────────
-async def generate_image_with_prompt(positive: str, negative: str):
+async def generate_image_with_prompt(positive: str, negative: str, progress_callback=None):
     """현재 워크플로우에 프롬프트를 주입하고 삽화 포트에서 이미지를 생성한다.
     삽화 포트가 설정되어 있으면 해당 포트를, 아니면 메인 포트를 사용한다.
     반환: (image_bytes, node_errors_or_error_msg)
@@ -1008,9 +1007,12 @@ async def generate_image_with_prompt(positive: str, negative: str):
         return None, "디버깅 모드: ComfyUI 전송 생략됨"
 
     async def _on_gen_progress(value, max_value):
+        print(f"[GEN_PROGRESS] {value}/{max_value}")
         await notify_frontend("generation_progress", {
             "value": value, "max": max_value,
         })
+        if progress_callback:
+            await progress_callback(value, max_value)
 
     ws_url = (
         f"ws://{REAL_COMFY_HOST}:{illust_port}/ws"
@@ -3001,7 +3003,8 @@ async def handle_api_config(request: web.Request) -> web.Response:
 
 # ─── 워크플로우 복원 수동 그리기 ─────────────────────────────
 async def handle_api_restore_manual_draw(request: web.Request) -> web.Response:
-    """수동 그리기: 복원 프롬프트 파일로 프롬프트를 만들어 그림을 그린다."""
+    """수동 그리기: 복원 프롬프트 파일로 프롬프트를 만들어 그림을 그린다.
+    삽화 모드가 활성화되어 있으면 illustration 큐로 들어가 동일한 파이프라인을 탄다."""
     prompt_file = app_config.get("restore_prompt_file", "")
     if not prompt_file:
         return web.json_response({"error": "복원 프롬프트 파일이 지정되지 않았습니다"}, status=400)
@@ -3025,13 +3028,51 @@ async def handle_api_restore_manual_draw(request: web.Request) -> web.Response:
         if not positive:
             return web.json_response({"error": "빈 프롬프트 - 실행 불가"}, status=400)
 
-        print(f"[RESTORE_MANUAL] 수동 그리기 큐 등록: positive='{positive[:50]}...'")
-        _label = f"수동그리기: {positive[:40]}..."
-        asyncio.create_task(queue_manager.add_item(
-            "restore_manual", _label,
-            {"positive": positive, "negative": negative},
-            priority=0,
-        ))
+        bot_name = app_config.get("bot_selected", "")
+        bot_mode_enabled = app_config.get("bot_mode_enabled", False)
+
+        # 삽화 모드: illustration 큐로 동일 파이프라인 타기
+        if bot_name and bot_mode_enabled:
+            prompt_id = f"manual-{uuid.uuid4().hex[:8]}"
+            prompt_data = {
+                "manual_pos": {
+                    "_meta": {"title": "긍정프롬프트"},
+                    "inputs": {"value": positive},
+                    "class_type": "STRING",
+                },
+                "manual_neg": {
+                    "_meta": {"title": "부정프롬프트"},
+                    "inputs": {"value": negative},
+                    "class_type": "STRING",
+                },
+            }
+            prompts[prompt_id] = {
+                "status": "running",
+                "prompt": prompt_data,
+                "client_id": "",
+                "extra_data": {},
+                "outputs": {},
+                "filename": None,
+                "save_node_id": None,
+                "image_bytes": None,
+                "timestamp": time.time(),
+            }
+            _label = f"수동그리기(삽화): {positive[:40]}..."
+            print(f"[RESTORE_MANUAL] 삽화 모드 큐 등록: {_label}")
+            asyncio.create_task(queue_manager.add_item(
+                "illustration", _label,
+                {"prompt_id": prompt_id, "prompt_data": prompt_data, "raw_body": {}},
+                priority=0,
+            ))
+        else:
+            # 비삽화 모드: 기존 restore_manual 큐
+            print(f"[RESTORE_MANUAL] 수동 그리기 큐 등록: positive='{positive[:50]}...'")
+            _label = f"수동그리기: {positive[:40]}..."
+            asyncio.create_task(queue_manager.add_item(
+                "restore_manual", _label,
+                {"positive": positive, "negative": negative},
+                priority=0,
+            ))
         return web.json_response({"success": True, "queued": True})
     except Exception as e:
         print(f"[RESTORE_MANUAL] 오류: {e}")

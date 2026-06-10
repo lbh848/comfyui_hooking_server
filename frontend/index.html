@@ -3187,6 +3187,7 @@
             <button onclick="reloadWorkflow()">📂 삽화 워크플로우 가져오기</button>
             <button onclick="toggleBatchMode()" id="batch-mode-btn">🔄 삽화 배치모드: <span id="batch-mode-status">OFF</span></button>
             <button onclick="manualRestoreDraw()" id="restore-manual-btn" style="display:none;">🖌️ 삽화 수동 그리기</button>
+            <button onclick="reconnectFrontendWs()" id="ws-reconnect-btn" title="WS 재연결">🔌 WS 재연결</button>
             <button onclick="openModeLogModal()">📋 모드 로그</button>
 
         </div>
@@ -6631,9 +6632,13 @@
         function connectFrontendWs() {
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
             const wsUrl = `${protocol}//${window.location.host}/api/frontend_ws`;
-            
+
+            if (frontendWs) {
+                try { frontendWs.close(); } catch(e) {}
+            }
+
             frontendWs = new WebSocket(wsUrl);
-            
+
             frontendWs.onopen = function() {
                 console.log('[Frontend WS] 연결됨');
                 // 연결 시 큐 상태 동기화
@@ -6928,9 +6933,11 @@
         }
 
         async function handleBackupCreated(data) {
-            // 새 백업이 생성되었을 때 목록 갱신
             console.log('[Backup] 새 백업 생성:', data.name);
-            await loadBackups(true);
+            if (typeof loadBackups === 'function') {
+                await loadBackups(true);
+                console.log('[Backup] 목록 갱신 완료');
+            }
         }
 
         // ─── API 호출 ───
@@ -9033,8 +9040,37 @@
             if (restoreManualBtn) restoreManualBtn.style.display = restoreManualOn ? '' : 'none';
         }
 
+        async function reconnectFrontendWs() {
+            const btn = document.getElementById('ws-reconnect-btn');
+            btn.disabled = true;
+            btn.textContent = '🔌 연결 중...';
+            try {
+                if (frontendWs) {
+                    try { frontendWs.onclose = null; frontendWs.close(); } catch(e) {}
+                }
+                connectFrontendWs();
+                await new Promise(r => setTimeout(r, 1000));
+                if (frontendWs && frontendWs.readyState === WebSocket.OPEN) {
+                    showToast('WS 연결 성공', 'success');
+                } else {
+                    showToast('WS 연결 실패 (다시 시도하세요)', 'error');
+                }
+            } catch (e) {
+                showToast(`WS 재연결 오류: ${e.message}`, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '🔌 WS 재연결';
+            }
+        }
+
         // ─── 수동 그리기 ───
         async function manualRestoreDraw() {
+            // WS 연결 확인 및 재연결
+            if (!frontendWs || frontendWs.readyState !== WebSocket.OPEN) {
+                console.log('[수동 그리기] WS 재연결...');
+                connectFrontendWs();
+                await new Promise(r => setTimeout(r, 500));
+            }
             const btn = document.getElementById('restore-manual-btn');
             btn.disabled = true;
             btn.textContent = '🖌️ 큐 등록 중...';
@@ -9057,7 +9093,7 @@
                 showToast(`수동 그리기 오류: ${e.message}`, 'error');
             } finally {
                 btn.disabled = false;
-                btn.textContent = '🖌️ 수동 그리기';
+                btn.textContent = '🖌️ 삽화 수동 그리기';
             }
         }
 
@@ -15204,6 +15240,9 @@
             document.getElementById('top-progress-label').textContent = '';
         }
         function updateTopProgress(value, max) {
+            const bar = document.getElementById('top-progress-bar');
+            if (!bar) return;
+            bar.style.display = 'block';
             const pct = max > 0 ? Math.round(value / max * 100) : 0;
             document.getElementById('top-progress-inner').style.width = pct + '%';
             document.getElementById('top-progress-label').textContent = pct + '%';
@@ -28778,6 +28817,17 @@
             );
             if (instanceCompleted && typeof loadInstanceLoraGrid === 'function') {
                 loadInstanceLoraGrid();
+            }
+
+            // 이미지 생성 계열 큐 완료 시 백업 탭 자동 갱신 (WS 불안정 폴백)
+            const genTypes = ['restore_manual', 'illustration', 'asset_generation', 'data_patch'];
+            const genJustCompleted = data.items.some(i =>
+                genTypes.includes(i.type) &&
+                (i.status === 'completed' || i.status === 'failed') &&
+                prevStatus[i.id] && prevStatus[i.id] !== i.status
+            );
+            if (genJustCompleted && typeof loadBackups === 'function') {
+                loadBackups(true);
             }
         }
 
