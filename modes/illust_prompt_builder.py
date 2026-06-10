@@ -117,14 +117,22 @@ class IllustPromptBuilder:
             감지된 캐릭터 이름 리스트 (원래 대소문자)
         """
         detected = []
-        # 띄어쓰기와 콤마 단위로 토큰 분리 후 대소문자 무관 정확일치 검사
         combined = " ".join(s for s in text_sections if s)
         tokens = set(t.lower() for t in re.split(r'[\s,]+', combined) if t)
 
         for name in char_names:
-            if name.lower() in tokens:
-                if name not in detected:
-                    detected.append(name)
+            name_lower = name.lower()
+            if " " in name:
+                # 공백 포함 이름: 전체 구문이 단어 경계 안에 있는지 확인
+                pattern = r'(?<![a-zA-Z0-9])' + re.escape(name_lower) + r'(?![a-zA-Z0-9])'
+                if re.search(pattern, combined.lower()):
+                    if name not in detected:
+                        detected.append(name)
+            else:
+                # 단일 단어 이름: 기존 토큰 정확일치
+                if name_lower in tokens:
+                    if name not in detected:
+                        detected.append(name)
 
         return detected
 
