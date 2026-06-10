@@ -18823,6 +18823,9 @@
         let _lbExtraOriginal = [];
         let _lbExtraEdited = [];
         let _lbExtraShowDesc = false;
+        let _lbExtraTab = 'classification'; // 'classification' | 'systemPrompt'
+        let _systemPromptPresets = {};
+        let _systemPromptText = '';
 
         async function exportLbExtraTxt() {
             const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
@@ -18912,7 +18915,11 @@
                 <div style="background:var(--surface); border:1px solid var(--border); border-radius:12px; width:95vw; max-width:1400px; height:88vh; display:flex; flex-direction:column; overflow:hidden;">
                     <div style="display:flex; align-items:center; padding:12px 16px; border-bottom:1px solid var(--border); gap:12px; flex-shrink:0;">
                         <span style="font-weight:700; font-size:1.05rem;">분류 데이터 편집</span>
-                        <label style="display:flex; align-items:center; gap:4px; font-size:0.8rem; color:var(--text2); cursor:pointer; user-select:none;">
+                        <div style="display:flex; gap:4px; margin-left:8px;">
+                            <button id="lb-extra-tab-classification" onclick="_switchLbExtraTab('classification')" style="padding:3px 10px; border-radius:4px; border:1px solid var(--border); background:var(--accent); color:#fff; cursor:pointer; font-size:0.8rem; font-weight:600;">캐릭터 분류</button>
+                            <button id="lb-extra-tab-systemPrompt" onclick="_switchLbExtraTab('systemPrompt')" style="padding:3px 10px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); cursor:pointer; font-size:0.8rem; font-weight:600;">시스템 프롬프트</button>
+                        </div>
+                        <label id="lb-extra-desc-label" style="display:flex; align-items:center; gap:4px; font-size:0.8rem; color:var(--text2); cursor:pointer; user-select:none;">
                             설명
                             <input type="checkbox" id="lb-extra-desc-cb" style="display:none;">
                             <span id="lb-extra-desc-track" style="display:inline-block; width:30px; height:16px; border-radius:8px; background:var(--border); position:relative; transition:background 0.2s;">
@@ -18924,7 +18931,7 @@
                         <button onclick="_downloadLbExtra()" style="background:#00695C; color:#fff; border:none; padding:6px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">다운로드</button>
                         <button onclick="document.getElementById('lb-extra-overlay').remove()" style="background:none; border:none; color:var(--text2); font-size:1.2rem; cursor:pointer;">✕</button>
                     </div>
-                    <div style="display:flex; flex-shrink:0; border-bottom:1px solid var(--border);">
+                    <div id="lb-extra-column-header" style="display:flex; flex-shrink:0; border-bottom:1px solid var(--border);">
                         <div style="flex:1; padding:6px 12px; font-weight:600; font-size:0.85rem; color:var(--text2); text-align:center;">원본</div>
                         <div style="width:1px; background:var(--border);"></div>
                         <div style="flex:1; padding:6px 12px; font-weight:600; font-size:0.85rem; color:var(--text2); text-align:center;">편집본</div>
@@ -18943,12 +18950,198 @@
                 _renderLbExtraContent();
             });
 
+            _switchLbExtraTab('classification');
+        }
+
+        function _switchLbExtraTab(tab) {
+            _lbExtraTab = tab;
+            const clsBtn = document.getElementById('lb-extra-tab-classification');
+            const spBtn = document.getElementById('lb-extra-tab-systemPrompt');
+            const colHeader = document.getElementById('lb-extra-column-header');
+            const descLabel = document.getElementById('lb-extra-desc-label');
+            if (tab === 'classification') {
+                if (clsBtn) { clsBtn.style.background = 'var(--accent)'; clsBtn.style.color = '#fff'; }
+                if (spBtn) { spBtn.style.background = 'var(--surface2)'; spBtn.style.color = 'var(--text)'; }
+                if (colHeader) colHeader.style.display = 'flex';
+                if (descLabel) descLabel.style.display = 'flex';
+            } else {
+                if (clsBtn) { clsBtn.style.background = 'var(--surface2)'; clsBtn.style.color = 'var(--text)'; }
+                if (spBtn) { spBtn.style.background = 'var(--accent)'; spBtn.style.color = '#fff'; }
+                if (colHeader) colHeader.style.display = 'none';
+                if (descLabel) descLabel.style.display = 'none';
+                // 시스템 프롬프트 탭 진입 시 데이터 로드
+                (async () => {
+                    await Promise.all([_loadSystemPrompt(), _loadSystemPromptPresets()]);
+                    _renderLbExtraContent();
+                })();
+                return;
+            }
             _renderLbExtraContent();
+        }
+
+        async function _loadSystemPromptPresets() {
+            try {
+                const resp = await fetch('/api/bot_mode/system_prompt_presets');
+                const result = await resp.json();
+                _systemPromptPresets = result.presets || {};
+            } catch (e) {
+                console.error('[LB_EXTRA] 프리셋 로드 실패:', e);
+                _systemPromptPresets = {};
+            }
+        }
+
+        async function _loadSystemPrompt() {
+            if (!botCurrentBot) { _systemPromptText = ''; return; }
+            try {
+                const resp = await fetch(`/api/bot_mode/system_prompt?bot_name=${encodeURIComponent(botCurrentBot)}`);
+                const result = await resp.json();
+                _systemPromptText = result.text || '';
+            } catch (e) {
+                console.error('[LB_EXTRA] 시스템 프롬프트 로드 실패:', e);
+                _systemPromptText = '';
+            }
+        }
+
+        function _renderSystemPromptTab() {
+            const el = document.getElementById('lb-extra-content');
+            if (!el) return;
+            const presetNames = Object.keys(_systemPromptPresets);
+            const presetOptions = presetNames.length === 0
+                ? '<option value="">(프리셋 없음)</option>'
+                : '<option value="">-- 프리셋 선택 --</option>' + presetNames.map(n => `<option value="${escHtml(n)}">${escHtml(n)}</option>`).join('');
+            el.innerHTML = `
+                <div style="max-width:900px; margin:0 auto;">
+                    <div style="display:flex; align-items:center; gap:6px; margin-bottom:12px; flex-wrap:wrap;">
+                        <select id="sp-preset-select" onchange="_onSystemPromptPresetChange()" style="padding:4px 8px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.85rem; max-width:200px;">${presetOptions}</select>
+                        <button onclick="_onSystemPromptPresetSave()" style="padding:4px 10px; border-radius:4px; border:none; background:var(--accent); color:#fff; cursor:pointer; font-size:0.8rem; font-weight:600;">추가</button>
+                        <button onclick="_onSystemPromptPresetDuplicate()" style="padding:4px 10px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); cursor:pointer; font-size:0.8rem;">복제</button>
+                        <button onclick="_onSystemPromptPresetOverwrite()" style="padding:4px 10px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); cursor:pointer; font-size:0.8rem;">저장</button>
+                        <button onclick="_onSystemPromptPresetDelete()" style="padding:4px 10px; border-radius:4px; border:1px solid #c62828; background:var(--surface2); color:#c62828; cursor:pointer; font-size:0.8rem;">삭제</button>
+                    </div>
+                    <textarea id="sp-editor" style="width:100%; height:calc(100vh - 240px); min-height:300px; resize:vertical; padding:12px; border:1px solid var(--border); border-radius:6px; background:var(--surface2); color:var(--text); font-family:monospace; font-size:0.85rem; line-height:1.5; box-sizing:border-box;" placeholder="시스템 프롬프트를 입력하세요...">${escHtml(_systemPromptText)}</textarea>
+                </div>`;
+        }
+
+        function _onSystemPromptPresetChange() {
+            const sel = document.getElementById('sp-preset-select');
+            if (!sel || !sel.value) return;
+            const text = _systemPromptPresets[sel.value];
+            if (text === undefined) { showToast('프리셋을 찾을 수 없습니다', 'error'); return; }
+            const editor = document.getElementById('sp-editor');
+            if (editor) editor.value = text;
+            _systemPromptText = text;
+            showToast(`프리셋 "${sel.value}" 로드 완료`, 'success');
+        }
+
+        async function _onSystemPromptPresetSave() {
+            const editor = document.getElementById('sp-editor');
+            const text = editor ? editor.value : '';
+            const name = prompt('새 프리셋 이름을 입력하세요:');
+            if (!name || !name.trim()) return;
+            if (_systemPromptPresets[name.trim()]) {
+                if (!confirm(`"${name.trim()}" 프리셋이 이미 존재합니다. 덮어쓰시겠습니까?`)) return;
+            }
+            try {
+                const resp = await fetch('/api/bot_mode/system_prompt_presets', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: name.trim(), text })
+                });
+                const result = await resp.json();
+                if (result.presets) {
+                    _systemPromptPresets = result.presets;
+                }
+                showToast(`프리셋 "${name.trim()}" 추가 완료`, 'success');
+                _renderSystemPromptTab();
+            } catch (e) {
+                console.error('[LB_EXTRA] 프리셋 추가 실패:', e);
+                showToast('프리셋 추가 실패', 'error');
+            }
+        }
+
+        async function _onSystemPromptPresetOverwrite() {
+            const sel = document.getElementById('sp-preset-select');
+            if (!sel || !sel.value) { showToast('덮어쓸 프리셋을 선택하세요', 'error'); return; }
+            const editor = document.getElementById('sp-editor');
+            const text = editor ? editor.value : '';
+            if (!confirm(`"${sel.value}" 프리셋을 현재 내용으로 덮어쓰시겠습니까?`)) return;
+            try {
+                const resp = await fetch('/api/bot_mode/system_prompt_presets', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: sel.value, text })
+                });
+                const result = await resp.json();
+                if (result.presets) {
+                    _systemPromptPresets = result.presets;
+                }
+                _systemPromptPresets[sel.value] = text;
+                showToast(`프리셋 "${sel.value}" 저장 완료`, 'success');
+                _renderSystemPromptTab();
+            } catch (e) {
+                console.error('[LB_EXTRA] 프리셋 저장 실패:', e);
+                showToast('프리셋 저장 실패', 'error');
+            }
+        }
+
+        async function _onSystemPromptPresetDuplicate() {
+            const sel = document.getElementById('sp-preset-select');
+            const editor = document.getElementById('sp-editor');
+            const text = editor ? editor.value : '';
+            if (!sel || !sel.value) {
+                // 프리셋 미선택 시 현재 텍스트로 복제
+                if (!text.trim()) { showToast('복제할 내용이 없습니다', 'error'); return; }
+            }
+            const srcName = sel ? sel.value : '(새 프리셋)';
+            const name = prompt(`"${srcName}"을(를) 복제합니다. 새 프리셋 이름:`, sel ? sel.value + ' 복사' : '');
+            if (!name || !name.trim()) return;
+            try {
+                const resp = await fetch('/api/bot_mode/system_prompt_presets', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: name.trim(), text })
+                });
+                const result = await resp.json();
+                if (result.presets) {
+                    _systemPromptPresets = result.presets;
+                }
+                showToast(`프리셋 "${name.trim()}" 복제 완료`, 'success');
+                _renderSystemPromptTab();
+            } catch (e) {
+                console.error('[LB_EXTRA] 프리셋 복제 실패:', e);
+                showToast('프리셋 복제 실패', 'error');
+            }
+        }
+
+        async function _onSystemPromptPresetDelete() {
+            const sel = document.getElementById('sp-preset-select');
+            if (!sel || !sel.value) { showToast('삭제할 프리셋을 선택하세요', 'error'); return; }
+            if (!confirm(`프리셋 "${sel.value}"을(를) 삭제하시겠습니까?`)) return;
+            try {
+                const resp = await fetch('/api/bot_mode/system_prompt_presets', {
+                    method: 'DELETE',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: sel.value })
+                });
+                const result = await resp.json();
+                if (result.presets) {
+                    _systemPromptPresets = result.presets;
+                }
+                showToast(`프리셋 "${sel.value}" 삭제 완료`, 'success');
+                _renderSystemPromptTab();
+            } catch (e) {
+                console.error('[LB_EXTRA] 프리셋 삭제 실패:', e);
+                showToast('프리셋 삭제 실패', 'error');
+            }
         }
 
         function _renderLbExtraContent() {
             const el = document.getElementById('lb-extra-content');
             if (!el) return;
+            if (_lbExtraTab === 'systemPrompt') {
+                _renderSystemPromptTab();
+                return;
+            }
             if (_lbExtraOriginal.length === 0) { el.innerHTML = '<div style="color:var(--text2); text-align:center; padding:20px;">데이터 없음</div>'; return; }
 
             let html = '';
@@ -19170,16 +19363,33 @@
 
         async function _saveLbExtra() {
             try {
-                const resp = await fetch('/api/bot_mode/lb_extra', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ bot_name: botCurrentBot, data: _lbExtraEdited })
-                });
-                const result = await resp.json();
-                if (result.saved) {
-                    showToast('저장 완료', 'success');
+                if (_lbExtraTab === 'systemPrompt') {
+                    const editor = document.getElementById('sp-editor');
+                    const text = editor ? editor.value : '';
+                    const resp = await fetch('/api/bot_mode/system_prompt', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ bot_name: botCurrentBot, text })
+                    });
+                    const result = await resp.json();
+                    if (result.saved) {
+                        _systemPromptText = text;
+                        showToast('시스템 프롬프트 저장 완료', 'success');
+                    } else {
+                        showToast('저장 실패: ' + (result.error || ''), 'error');
+                    }
                 } else {
-                    showToast('저장 실패: ' + (result.error || ''), 'error');
+                    const resp = await fetch('/api/bot_mode/lb_extra', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ bot_name: botCurrentBot, data: _lbExtraEdited })
+                    });
+                    const result = await resp.json();
+                    if (result.saved) {
+                        showToast('저장 완료', 'success');
+                    } else {
+                        showToast('저장 실패: ' + (result.error || ''), 'error');
+                    }
                 }
             } catch (e) {
                 console.error('[LB_EXTRA] 저장 실패:', e);
@@ -19189,6 +19399,10 @@
 
         function _downloadLbExtra() {
             let output = '';
+            // 시스템 프롬프트가 있으면 상단에 추가
+            if (_systemPromptText && _systemPromptText.trim()) {
+                output += _systemPromptText.trim() + '\n\n';
+            }
             for (const char of _lbExtraEdited) {
                 output += `### ${char.name}\n`;
                 output += `-Name\n${char.name}\n`;

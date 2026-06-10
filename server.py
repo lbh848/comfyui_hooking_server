@@ -4928,6 +4928,11 @@ app.router.add_get("/api/bot_mode/word_replacements", bot_mode.handle_get_word_r
 app.router.add_post("/api/bot_mode/word_replacements", bot_mode.handle_save_word_replacements)
 app.router.add_get("/api/bot_mode/lb_extra", bot_mode.handle_get_lb_extra)
 app.router.add_post("/api/bot_mode/lb_extra", bot_mode.handle_save_lb_extra)
+app.router.add_get("/api/bot_mode/system_prompt", bot_mode.handle_get_system_prompt)
+app.router.add_post("/api/bot_mode/system_prompt", bot_mode.handle_save_system_prompt)
+app.router.add_get("/api/bot_mode/system_prompt_presets", bot_mode.handle_get_system_prompt_presets)
+app.router.add_post("/api/bot_mode/system_prompt_presets", bot_mode.handle_save_system_prompt_preset)
+app.router.add_delete("/api/bot_mode/system_prompt_presets", bot_mode.handle_delete_system_prompt_preset)
 app.router.add_post("/api/bot_mode/auto_group_prompt", handle_auto_group_prompt)
 # 자동완성 API
 app.router.add_get("/api/autocomplete", handle_api_autocomplete)

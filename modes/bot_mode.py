@@ -27,6 +27,7 @@ DEFAULT_BOT_DATA = {
     "bots": [],
     "positive_whitelist": [],
     "positive_blacklist": [],
+    "system_prompt_presets": {},
 }
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
@@ -65,6 +66,7 @@ def _load_bot_data() -> dict:
         try:
             with open(BOT_DATA_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
+                print(f"[BOT_MODE] bot.json 로드 완료")
                 if "bots" not in data:
                     data["bots"] = []
                 # 새 필드 자동 마이그레이션
@@ -72,6 +74,11 @@ def _load_bot_data() -> dict:
                     data["positive_whitelist"] = []
                 if "positive_blacklist" not in data:
                     data["positive_blacklist"] = []
+                if "system_prompt_presets" not in data:
+                    data["system_prompt_presets"] = {}
+                for bot in data.get("bots", []):
+                    if "system_prompt" not in bot:
+                        bot["system_prompt"] = ""
                 # solo/group 프로필 마이그레이션
                 _migrate_solo_group(data)
                 return data
@@ -1482,6 +1489,95 @@ class BotMode:
             traceback.print_exc()
             return _json_error(str(e))
 
+    # ─── 시스템 프롬프트 ────────────────────────────────────
+    async def handle_get_system_prompt(self, request):
+        """GET /api/bot_mode/system_prompt - 봇의 시스템 프롬프트 반환"""
+        try:
+            bot_name = request.query.get("bot_name", "").strip()
+            if not bot_name:
+                return _json_error("봇 이름이 비어있습니다.")
+            data = _load_bot_data()
+            bot = next((b for b in data["bots"] if b["name"] == bot_name), None)
+            if not bot:
+                return _json_error(f"봇을 찾을 수 없습니다: {bot_name}")
+            return _json_ok({"text": bot.get("system_prompt", "")})
+        except Exception as e:
+            print(f"[BOT_MODE] 시스템 프롬프트 로드 실패: {e}")
+            traceback.print_exc()
+            return _json_error(str(e))
+
+    async def handle_save_system_prompt(self, request):
+        """POST /api/bot_mode/system_prompt - 봇의 시스템 프롬프트 저장"""
+        try:
+            body = await request.json()
+            bot_name = body.get("bot_name", "").strip()
+            text = body.get("text", "")
+            if not bot_name:
+                return _json_error("봇 이름이 비어있습니다.")
+            data = _load_bot_data()
+            bot = next((b for b in data["bots"] if b["name"] == bot_name), None)
+            if not bot:
+                return _json_error(f"봇을 찾을 수 없습니다: {bot_name}")
+            bot["system_prompt"] = text
+            _save_bot_data(data)
+            print(f"[BOT_MODE] 시스템 프롬프트 저장: {bot_name} ({len(text)}자)")
+            return _json_ok({"saved": True})
+        except Exception as e:
+            print(f"[BOT_MODE] 시스템 프롬프트 저장 실패: {e}")
+            traceback.print_exc()
+            return _json_error(str(e))
+
+    async def handle_get_system_prompt_presets(self, request):
+        """GET /api/bot_mode/system_prompt_presets - 전역 프리셋 목록 반환"""
+        try:
+            data = _load_bot_data()
+            return _json_ok({"presets": data.get("system_prompt_presets", {})})
+        except Exception as e:
+            print(f"[BOT_MODE] 시스템 프롬프트 프리셋 로드 실패: {e}")
+            traceback.print_exc()
+            return _json_error(str(e))
+
+    async def handle_save_system_prompt_preset(self, request):
+        """POST /api/bot_mode/system_prompt_presets - 프리셋 저장/업데이트"""
+        try:
+            body = await request.json()
+            name = body.get("name", "").strip()
+            text = body.get("text", "")
+            if not name:
+                return _json_error("프리셋 이름이 비어있습니다.")
+            data = _load_bot_data()
+            if "system_prompt_presets" not in data:
+                data["system_prompt_presets"] = {}
+            data["system_prompt_presets"][name] = text
+            _save_bot_data(data)
+            print(f"[BOT_MODE] 시스템 프롬프트 프리셋 저장: {name} ({len(text)}자)")
+            return _json_ok({"saved": True, "presets": data["system_prompt_presets"]})
+        except Exception as e:
+            print(f"[BOT_MODE] 시스템 프롬프트 프리셋 저장 실패: {e}")
+            traceback.print_exc()
+            return _json_error(str(e))
+
+    async def handle_delete_system_prompt_preset(self, request):
+        """DELETE /api/bot_mode/system_prompt_presets - 프리셋 삭제"""
+        try:
+            body = await request.json()
+            name = body.get("name", "").strip()
+            if not name:
+                return _json_error("프리셋 이름이 비어있습니다.")
+            data = _load_bot_data()
+            presets = data.get("system_prompt_presets", {})
+            if name not in presets:
+                return _json_error(f"프리셋을 찾을 수 없습니다: {name}")
+            del presets[name]
+            data["system_prompt_presets"] = presets
+            _save_bot_data(data)
+            print(f"[BOT_MODE] 시스템 프롬프트 프리셋 삭제: {name}")
+            return _json_ok({"deleted": True, "presets": presets})
+        except Exception as e:
+            print(f"[BOT_MODE] 시스템 프롬프트 프리셋 삭제 실패: {e}")
+            traceback.print_exc()
+            return _json_error(str(e))
+
 
 # ─── 유틸리티 ──────────────────────────────────────────
 def _json_ok(data, status=200):
@@ -1586,7 +1682,9 @@ def _load_patch_settings(bot_name: str) -> dict:
     if os.path.isfile(path):
         try:
             with open(path, "r", encoding="utf-8") as f:
-                return json.load(f)
+                data = json.load(f)
+                print(f"[BOT_MODE] 패치 설정 로드: {bot_name}")
+                return data
         except Exception as e:
             print(f"[BOT_MODE] patch_settings 로드 실패: {e}")
     return {"face_crop_top": 1.0, "face_crop_bottom": 1.0, "emb_target": "대표만"}
@@ -1612,7 +1710,9 @@ def _load_word_replacements(bot_name: str) -> dict:
     if os.path.isfile(path):
         try:
             with open(path, "r", encoding="utf-8") as f:
-                return json.load(f)
+                data = json.load(f)
+                print(f"[BOT_MODE] 단어 치환 로드: {bot_name} ({len(data.get('rules', []))}개 규칙)")
+                return data
         except Exception as e:
             print(f"[BOT_MODE] word_replacements 로드 실패: {e}")
     return {"rules": []}
