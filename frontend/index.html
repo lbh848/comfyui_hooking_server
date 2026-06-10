@@ -8117,9 +8117,10 @@
                 } else if (source === 'bot_rep') {
                     const statusEl = document.getElementById('bot-analyze-status');
                     if (statusEl) statusEl.textContent = `완료: 성공 ${data.success_count}건, 실패 ${data.fail_count}건`;
-                    const btn = document.getElementById('btn-bot-batch-analyze');
+                    const btn = document.getElementById('bot-analyze-confirm-btn');
                     if (btn) { btn.disabled = false; btn.textContent = '선택 분석 실행'; }
                     if (typeof renderBotCharacters === 'function') renderBotCharacters();
+                    if (botCurrentChar && typeof loadBotCharDetailImages === 'function') loadBotCharDetailImages(botCurrentChar);
                 } else if (source === 'bot_utility') {
                     const statusEl = document.getElementById('bot-util-status');
                     if (statusEl) statusEl.textContent = `완료: 성공 ${data.success_count}건, 실패 ${data.fail_count}건`;
@@ -21099,10 +21100,9 @@
             if (checks.length === 0) { showToast('선택된 이미지가 없습니다', 'error'); return; }
             const filenames = [...checks].map(c => c.dataset.filename);
             document.getElementById('bot-analyze-modal').style.display = 'none';
-            const btn = document.getElementById('btn-bot-batch-analyze');
+            const btn = document.getElementById('bot-analyze-confirm-btn');
             const status = document.getElementById('bot-analyze-status');
-            btn.disabled = true;
-            btn.textContent = '큐에 추가 중...';
+            if (btn) { btn.disabled = true; btn.textContent = '큐에 추가 중...'; }
             status.style.display = 'block';
             status.textContent = `큐에 추가 중... (${filenames.length}장)`;
             try {
@@ -21111,14 +21111,13 @@
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({bot: botCurrentBot, character: charName, filenames})
                 });
-                if (data.error) { showToast(data.error, 'error'); btn.disabled = false; btn.textContent = '선택 캐릭터 태그 분석'; return; }
+                if (data.error) { showToast(data.error, 'error'); if (btn) { btn.disabled = false; btn.textContent = '선택 분석 실행'; } return; }
                 status.textContent = `큐에 추가됨 (${filenames.length}장) - 대기 중...`;
                 showToast('큐에 추가되었습니다', 'info');
             } catch (e) {
                 console.error('[BOT] 일괄 분석 큐 추가 오류:', e);
                 showToast('큐 추가 오류', 'error');
-                btn.disabled = false;
-                btn.textContent = '선택 캐릭터 태그 분석';
+                if (btn) { btn.disabled = false; btn.textContent = '선택 분석 실행'; }
             }
         }
 
