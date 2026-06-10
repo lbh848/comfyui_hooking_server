@@ -749,9 +749,16 @@ class QueueManager:
                 f"(prompt_id={extract_prompt_id}, outputs_keys={list(real_outputs.keys())})"
             )
 
-        # 추출된 얼굴을 인스턴스 로라에 저장 (add_image 사용)
+        # 추출된 얼굴을 인스턴스 로라에 저장
         import tempfile
-        from modes.instance_lora_mode import add_image
+        from modes.instance_lora_mode import add_image, delete_image
+
+        # 업로드 이미지인 경우 원본 전신을 먼저 삭제
+        upload_filename = params.get("upload_filename")
+        if upload_filename:
+            delete_image(lora_id, upload_filename)
+            print(f"[FACE_EXTRACT] 원본 업로드 이미지 삭제: {upload_filename}")
+
         tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
         tmp.write(face_cropped_bytes)
         tmp.close()

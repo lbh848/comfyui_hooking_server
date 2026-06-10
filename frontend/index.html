@@ -6764,6 +6764,11 @@
                                 handleInstanceLoraTrainingProgress(msg.data);
                             }
                             break;
+                        case 'instance_lora_face_extract_progress':
+                            if (msg.data && msg.data.phase === 'complete') {
+                                loadInstanceLoraGrid();
+                            }
+                            break;
                         case 'instance_lora_analyze_progress':
                             if (msg.data && msg.data.phase === 'completed') {
                                 loadInstanceLoraGrid();
