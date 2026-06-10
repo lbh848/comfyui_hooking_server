@@ -1549,7 +1549,7 @@ async def complete_prompt_from_reschedule(prompt_id: str, save_node_id: str, fil
         prompts[prompt_id]["outputs"] = {"images": []}
 
 
-async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict):
+async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, queue_progress_callback=None):
     save_node_id = find_save_image_node(incoming_prompt)
     if not save_node_id:
         all_nodes = list(incoming_prompt.keys())
@@ -1675,7 +1675,7 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict):
 
         # 이미지 생성
         start_time = time.time()
-        img_bytes, node_errors = await generate_image_with_prompt(positive, negative)
+        img_bytes, node_errors = await generate_image_with_prompt(positive, negative, progress_callback=queue_progress_callback)
         elapsed_time = time.time() - start_time
 
         if img_bytes is None:

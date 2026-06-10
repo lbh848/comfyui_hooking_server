@@ -253,8 +253,17 @@ class QueueManager:
         prompt_data = params.get("prompt_data", {})
         raw_body = params.get("raw_body", {})
 
+        async def _on_illust_progress(value, max_value):
+            await self._notify_progress(item, {
+                "phase": "generating",
+                "value": value,
+                "max": max_value,
+                "current": value,
+                "total": max_value,
+            })
+
         if self.process_prompt_full:
-            await self.process_prompt_full(prompt_id, prompt_data, raw_body)
+            await self.process_prompt_full(prompt_id, prompt_data, raw_body, queue_progress_callback=_on_illust_progress)
         else:
             raise RuntimeError("process_prompt_full 콜백이 설정되지 않았습니다")
 

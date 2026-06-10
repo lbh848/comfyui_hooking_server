@@ -18235,6 +18235,8 @@
                 }
                 renderBotSelect();
                 renderBotList();
+                // 선택 봇이 있으면 캐릭터/설정 UI도 복원
+                if (botCurrentBot) onBotChange();
             } catch (e) {
                 console.error('[BOT] 데이터 로드 실패:', e);
                 showBotView('empty');
@@ -20271,11 +20273,13 @@
         }
 
         function botNavBack() {
-            botCurrentBot = '';
             botCurrentChar = '';
             const charDetailSidebar = document.getElementById('bot-char-detail-sidebar');
             if (charDetailSidebar) charDetailSidebar.style.display = 'none';
-            document.getElementById('bot-select').value = '';
+            // 봇 목록 표시
+            document.getElementById('bot-character-grid').style.display = 'none';
+            document.getElementById('bot-char-detail').style.display = 'none';
+            document.getElementById('bot-folder-grid').style.display = 'grid';
             document.getElementById('bot-char-section').style.display = 'none';
             const sidebar = document.getElementById('bot-sidebar');
             const botSelectSection = document.getElementById('bot-select-section');
