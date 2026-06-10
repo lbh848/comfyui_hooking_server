@@ -5479,6 +5479,28 @@
                             <div id="ic-block-rules-panel"></div>
                         </div>
                     </div>
+                    <!-- 얼굴 추출 옵션 -->
+                    <div id="ic-face-extract-section" style="flex-shrink:0; margin-top:6px;">
+                        <div style="display:flex;align-items:center;gap:6px;">
+                            <label style="display:flex;align-items:center;gap:4px;font-size:0.78rem;cursor:pointer;">
+                                <input type="checkbox" id="ic-face-extract-toggle" onchange="toggleIcFaceExtract(this.checked)" style="accent-color:var(--accent);">
+                                <span style="font-weight:600;color:var(--text-secondary);">얼굴 추출</span>
+                            </label>
+                            <span id="ic-face-extract-warn" style="display:none;font-size:0.62rem;color:var(--error);">워크플로우 미설정</span>
+                        </div>
+                        <div id="ic-face-extract-body" style="display:none;margin-top:4px;">
+                            <div style="display:flex;gap:6px;align-items:center;">
+                                <div style="flex:1;">
+                                    <label style="font-size:0.68rem;color:var(--text-secondary);display:block;margin-bottom:2px;">FACE_CROP_TOP</label>
+                                    <input type="number" id="ic-face-crop-top" value="1.8" step="0.1" min="0.1" style="width:100%;padding:4px 6px;border-radius:4px;border:1px solid var(--border);background:var(--surface1);color:var(--text);font-size:0.78rem;">
+                                </div>
+                                <div style="flex:1;">
+                                    <label style="font-size:0.68rem;color:var(--text-secondary);display:block;margin-bottom:2px;">FACE_CROP_BOTTOM</label>
+                                    <input type="number" id="ic-face-crop-bottom" value="1.0" step="0.1" min="0.1" style="width:100%;padding:4px 6px;border-radius:4px;border:1px solid var(--border);background:var(--surface1);color:var(--text);font-size:0.78rem;">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                     <div style="font-size:0.8rem; font-weight:600; color:var(--text-secondary);">선택된 이미지</div>
                     <div id="instance-create-preview" style="overflow-y:auto; flex:1; min-height:0;"></div>
                 </div>
@@ -6102,6 +6124,23 @@
                         <div class="hint">공통설정 탭의 '베이스 경로'에서 검색됩니다</div>
                     </div>
                     <input type="hidden" id="setting-lora-workflow-sdxl-source-path">
+
+                    <!-- 얼굴 이미지 추출 워크플로우 -->
+                    <div class="setting-row" style="margin-top: 16px;">
+                        <div class="setting-label">
+                            <div class="title">face_extract 워크플로우</div>
+                            <div class="desc">인스턴스 LoRA 생성 시 얼굴 추출에 사용할 워크플로우 파일 (미설정 시 얼굴 추출 비활성화)</div>
+                        </div>
+                    </div>
+                    <div class="form-group" style="margin-top: -8px;">
+                        <div class="autocomplete-wrapper">
+                            <input type="text" id="setting-face-extract-workflow-filename" placeholder="예: 얼굴추출.json"
+                                   oninput="onFaceExtractFilenameInput(this.value)" onfocus="onFaceExtractFilenameInput(this.value)">
+                            <div class="autocomplete-list" id="face-extract-workflow-autocomplete"></div>
+                        </div>
+                        <div class="hint">공통설정 탭의 '베이스 경로'에서 검색됩니다</div>
+                    </div>
+                    <input type="hidden" id="setting-face-extract-workflow-source-path">
 
                     <!-- 로라 로드 경로 -->
                     <div class="setting-row" style="margin-top: 16px;">
@@ -7928,6 +7967,12 @@
             document.getElementById('setting-lora-workflow-sdxl-filename').value = loraSdxlSplit.filename;
             document.getElementById('setting-lora-workflow-sdxl-source-path').value = loraSdxlPath;
 
+            // 얼굴 추출 워크플로우
+            const faceExtractPath = currentConfig.face_extract_workflow_source_path || '';
+            const faceExtractSplit = splitWorkflowPath(faceExtractPath);
+            document.getElementById('setting-face-extract-workflow-filename').value = faceExtractSplit.filename;
+            document.getElementById('setting-face-extract-workflow-source-path').value = faceExtractPath;
+
             // 로라 로드 경로 (SOYA_CHAR_LORA, SOYA_CHAR_LORA\SOYA_BOT_LORA, SOYA_CHAR_LORA\SOYA_INSTANCE_LORA 접미사 제거 후 표시)
             const loraLoadPath = currentConfig.lora_load_path || '';
             const botLoraLoadPath = currentConfig.bot_lora_load_path || '';
@@ -7975,6 +8020,7 @@
             updateTagAnalysisWorkflowPath();
             updateLoraAnimaWorkflowPath();
             updateLoraSdxlWorkflowPath();
+            updateFaceExtractWorkflowPath();
         }
 
         // 베이스 경로와 파일명을 결합
@@ -8518,6 +8564,7 @@
                     anima: document.getElementById('setting-lora-workflow-anima-source-path').value,
                     sdxl: document.getElementById('setting-lora-workflow-sdxl-source-path').value
                 },
+                face_extract_workflow_source_path: document.getElementById('setting-face-extract-workflow-source-path').value,
                 lora_load_path: document.getElementById('setting-lora-load-path').value.trim().replace(/\\?$/, '\\SOYA_CHAR_LORA'),
                 bot_lora_load_path: document.getElementById('setting-lora-load-path').value.trim().replace(/\\?$/, '\\SOYA_CHAR_LORA\\SOYA_BOT_LORA'),
                 instance_lora_load_path: document.getElementById('setting-lora-load-path').value.trim().replace(/\\?$/, '\\SOYA_CHAR_LORA\\SOYA_INSTANCE_LORA'),
@@ -8670,6 +8717,8 @@
                         selectLoraAnimaWorkflowFile(path, filename);
                     } else if (list.id === 'lora-workflow-sdxl-autocomplete') {
                         selectLoraSdxlWorkflowFile(path, filename);
+                    } else if (list.id === 'face-extract-workflow-autocomplete') {
+                        selectFaceExtractWorkflowFile(path, filename);
                     } else if (list.id === 'anima-asset-workflow-autocomplete') {
                         selectAnimaAssetWorkflowFile(path, filename);
                     } else if (list.id === 'asset-tag-analysis-workflow-autocomplete') {
@@ -9498,6 +9547,36 @@
             const baseDir = document.getElementById('setting-workflow-base-dir').value;
             const filename = document.getElementById('setting-lora-workflow-sdxl-filename').value;
             document.getElementById('setting-lora-workflow-sdxl-source-path').value = combineWorkflowPath(baseDir, filename);
+        }
+
+        // 얼굴 추출 워크플로우 자동완성
+        let faceExtractAutocompleteTimeout;
+        async function onFaceExtractFilenameInput(value) {
+            updateFaceExtractWorkflowPath();
+            const list = document.getElementById('face-extract-workflow-autocomplete');
+            const baseDir = document.getElementById('setting-workflow-base-dir').value.trim();
+            clearTimeout(faceExtractAutocompleteTimeout);
+            faceExtractAutocompleteTimeout = setTimeout(async () => {
+                try {
+                    const params = new URLSearchParams({ search: value, base_dir: baseDir });
+                    const data = await fetchJSON(`/api/workflow_files?${params}`);
+                    renderAutocompleteItems(data.files, list);
+                } catch (e) {
+                    list.classList.remove('visible');
+                }
+            }, 300);
+        }
+
+        function selectFaceExtractWorkflowFile(fullPath, filename) {
+            document.getElementById('setting-face-extract-workflow-filename').value = filename;
+            document.getElementById('setting-face-extract-workflow-source-path').value = fullPath;
+            document.getElementById('face-extract-workflow-autocomplete').classList.remove('visible');
+        }
+
+        function updateFaceExtractWorkflowPath() {
+            const baseDir = document.getElementById('setting-workflow-base-dir').value;
+            const filename = document.getElementById('setting-face-extract-workflow-filename').value;
+            document.getElementById('setting-face-extract-workflow-source-path').value = combineWorkflowPath(baseDir, filename);
         }
 
         // ─── 복장 추출 결과 모달 ───
@@ -15551,6 +15630,19 @@
             document.getElementById('instance-lora-create-modal').style.display = 'none';
             _instanceCreateFiles.forEach(f => { if (f.previewUrl && f.previewUrl.startsWith('blob:')) URL.revokeObjectURL(f.previewUrl); });
             _instanceCreateFiles = [];
+            // 얼굴 추출 옵션 초기화
+            document.getElementById('ic-face-extract-toggle').checked = false;
+            document.getElementById('ic-face-extract-body').style.display = 'none';
+        }
+        function toggleIcFaceExtract(checked) {
+            const body = document.getElementById('ic-face-extract-body');
+            const warn = document.getElementById('ic-face-extract-warn');
+            body.style.display = checked ? '' : 'none';
+            if (checked && !(currentConfig.face_extract_workflow_source_path)) {
+                warn.style.display = '';
+            } else {
+                warn.style.display = 'none';
+            }
         }
         function handleInstanceCreateFileSelect(inputEl) {
             const files = inputEl.files;
@@ -16177,81 +16269,125 @@
                 if (!createResp.success) { showToast(createResp.error || '생성 실패', 'error'); return; }
                 const loraId = createResp.id;
 
-                // 업로드 파일 전송
-                const uploadFiles = _instanceCreateFiles.filter(f => f.type === 'upload');
-                if (uploadFiles.length > 0) {
-                    const fd = new FormData();
-                    fd.append('lora_id', loraId);
-                    for (const f of uploadFiles) fd.append('files', f.file);
-                    await fetch('/api/instance_lora/images/upload', { method: 'POST', body: fd });
-                }
-
-                // 에셋/봇 소스 이미지 전송
-                const sourceFiles = _instanceCreateFiles.filter(f => f.type === 'asset' || f.type === 'bot');
-                if (sourceFiles.length > 0) {
-                    await fetch('/api/instance_lora/images/add', {
-                        method: 'POST', headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({ id: loraId, images: sourceFiles.map(f => f.source) })
-                    });
-                }
-
-                // 에셋 소스: 기존 프롬프트 필터링해서 바로 저장 (분석 생략)
                 const firstImg = _instanceCreateFiles[0];
-                const filename = firstImg.type === 'upload' ? firstImg.file.name : (firstImg.source?.filename || '');
-                const isAssetWithPrompt = firstImg.type === 'asset' && firstImg._existingPrompt;
-                const useBlockTags = document.querySelector('input[name="ic-tag-mode"]:checked')?.value !== 'raw';
+                const faceExtractEnabled = document.getElementById('ic-face-extract-toggle').checked;
 
-                if (isAssetWithPrompt && filename) {
-                    const ep = firstImg._existingPrompt;
-                    const neg = negativePrompt || ep.negative || '';
-                    let positiveFiltered = ep.positive;
-                    const originalPositive = firstImg._rawPrompt?.positive || ep.positive;
-                    if (useBlockTags && positiveFiltered && _loraBlockRules.length > 0) {
-                        const tags = positiveFiltered.split(',').map(t => t.trim()).filter(t => t);
-                        const kept = tags.filter(t => !_matchBlockRule(t, _loraBlockRules));
-                        positiveFiltered = kept.join(', ');
+                if (faceExtractEnabled) {
+                    // 얼굴 추출: 큐에서 전부 처리 (이미지 등록 → 추출 → 분석 → 학습)
+                    const faceCropTop = parseFloat(document.getElementById('ic-face-crop-top').value) || 1.8;
+                    const faceCropBottom = parseFloat(document.getElementById('ic-face-crop-bottom').value) || 1.0;
+                    const trainProfile = document.getElementById('instance-lora-train-profile').value;
+                    const useBlockTags = document.querySelector('input[name="ic-tag-mode"]:checked')?.value !== 'raw';
+
+                    // 업로드 파일은 먼저 서버에 올려둠
+                    let uploadPath = null;
+                    if (firstImg.type === 'upload') {
+                        const fd = new FormData();
+                        fd.append('lora_id', loraId);
+                        fd.append('files', firstImg.file);
+                        const upResp = await (await fetch('/api/instance_lora/images/upload', { method: 'POST', body: fd })).json();
+                        if (upResp.success && upResp.results?.length > 0 && upResp.results[0].success) {
+                            uploadPath = upResp.results[0].filename;
+                        }
                     }
-                    await fetch('/api/instance_lora/prompt', {
-                        method: 'POST', headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({ id: loraId, filename, prompt: { positive: positiveFiltered, negative: neg, original_positive: originalPositive } })
-                    });
-                } else {
-                    // 봇/업로드: 부정 프롬프트 저장 후 분석 큐에 추가
-                    if (negativePrompt && filename) {
-                        await fetch('/api/instance_lora/prompt', {
-                            method: 'POST', headers: {'Content-Type': 'application/json'},
-                            body: JSON.stringify({ id: loraId, filename, prompt: { positive: '', negative: negativePrompt } })
-                        });
-                    }
-                    const queueResp = await fetchJSON('/api/queue/add', {
+
+                    const extractResp = await fetchJSON('/api/instance_lora/face_extract', {
                         method: 'POST', headers: {'Content-Type': 'application/json'},
                         body: JSON.stringify({
-                            type: 'instance_lora_analysis',
-                            label: `이미지 프롬프트 분석: ${trigger}`,
-                            params: { lora_id: loraId, negative_prompt: negativePrompt, use_block_tags: useBlockTags }
+                            id: loraId,
+                            face_crop_top: faceCropTop,
+                            face_crop_bottom: faceCropBottom,
+                            image_type: firstImg.type,
+                            image_source: firstImg.source || null,
+                            upload_filename: uploadPath,
+                            negative_prompt: negativePrompt,
+                            trigger: trigger,
+                            profile: trainProfile,
+                            is_asset_with_prompt: firstImg.type === 'asset' && !!firstImg._existingPrompt,
+                            existing_prompt: firstImg._existingPrompt || null,
+                            use_block_tags: useBlockTags,
                         })
                     });
-                    if (!queueResp.success) {
-                        console.error('[INSTANCE_LORA] 분석 큐 추가 실패:', queueResp.error);
+                    if (!extractResp.success) {
+                        showToast('얼굴 추출 큐 추가 실패: ' + (extractResp.error || ''), 'error');
+                    } else {
+                        showToast('인스턴스 로라 생성됨 (얼굴 추출 + 학습 큐에 추가)', 'success');
                     }
+                } else {
+                    // 일반: 이미지 바로 등록 후 분석/학습 큐
+                    const uploadFiles = _instanceCreateFiles.filter(f => f.type === 'upload');
+                    if (uploadFiles.length > 0) {
+                        const fd = new FormData();
+                        fd.append('lora_id', loraId);
+                        for (const f of uploadFiles) fd.append('files', f.file);
+                        await fetch('/api/instance_lora/images/upload', { method: 'POST', body: fd });
+                    }
+
+                    const sourceFiles = _instanceCreateFiles.filter(f => f.type === 'asset' || f.type === 'bot');
+                    if (sourceFiles.length > 0) {
+                        await fetch('/api/instance_lora/images/add', {
+                            method: 'POST', headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({ id: loraId, images: sourceFiles.map(f => f.source) })
+                        });
+                    }
+
+                    const filename = firstImg.type === 'upload' ? firstImg.file.name : (firstImg.source?.filename || '');
+                    const isAssetWithPrompt = firstImg.type === 'asset' && firstImg._existingPrompt;
+                    const useBlockTags = document.querySelector('input[name="ic-tag-mode"]:checked')?.value !== 'raw';
+
+                    if (isAssetWithPrompt && filename) {
+                        const ep = firstImg._existingPrompt;
+                        const neg = negativePrompt || ep.negative || '';
+                        let positiveFiltered = ep.positive;
+                        const originalPositive = firstImg._rawPrompt?.positive || ep.positive;
+                        if (useBlockTags && positiveFiltered && _loraBlockRules.length > 0) {
+                            const tags = positiveFiltered.split(',').map(t => t.trim()).filter(t => t);
+                            const kept = tags.filter(t => !_matchBlockRule(t, _loraBlockRules));
+                            positiveFiltered = kept.join(', ');
+                        }
+                        await fetch('/api/instance_lora/prompt', {
+                            method: 'POST', headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({ id: loraId, filename, prompt: { positive: positiveFiltered, negative: neg, original_positive: originalPositive } })
+                        });
+                    } else {
+                        if (negativePrompt && filename) {
+                            await fetch('/api/instance_lora/prompt', {
+                                method: 'POST', headers: {'Content-Type': 'application/json'},
+                                body: JSON.stringify({ id: loraId, filename, prompt: { positive: '', negative: negativePrompt } })
+                            });
+                        }
+                        const queueResp = await fetchJSON('/api/queue/add', {
+                            method: 'POST', headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({
+                                type: 'instance_lora_analysis',
+                                label: `이미지 프롬프트 분석: ${trigger}`,
+                                params: { lora_id: loraId, negative_prompt: negativePrompt, use_block_tags: useBlockTags }
+                            })
+                        });
+                        if (!queueResp.success) {
+                            console.error('[INSTANCE_LORA] 분석 큐 추가 실패:', queueResp.error);
+                        }
+                    }
+
+                    // 학습 큐 추가
+                    const trainProfile = document.getElementById('instance-lora-train-profile').value;
+                    const trainResp = await fetchJSON('/api/instance_lora/training/start', {
+                        method: 'POST', headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({id: loraId, profile: trainProfile})
+                    });
+                    if (!trainResp.success) {
+                        console.error('[INSTANCE_LORA] 학습 큐 추가 실패:', trainResp.error);
+                    }
+
+                    const isAssetWithPromptFinal = firstImg.type === 'asset' && firstImg._existingPrompt;
+                    showToast(isAssetWithPromptFinal ? '인스턴스 로라 생성됨 (학습 큐에 추가)' : '인스턴스 로라 생성됨 (분석 + 학습 큐에 추가)', 'success');
                 }
 
-                // 학습도 자동 큐에 추가
-                const trainProfile = document.getElementById('instance-lora-train-profile').value;
-                const trainResp = await fetchJSON('/api/instance_lora/training/start', {
-                    method: 'POST', headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({id: loraId, profile: trainProfile})
-                });
-                if (!trainResp.success) {
-                    console.error('[INSTANCE_LORA] 학습 큐 추가 실패:', trainResp.error);
-                }
-
-                showToast(isAssetWithPrompt ? '인스턴스 로라 생성됨 (학습 큐에 추가)' : '인스턴스 로라 생성됨 (분석 + 학습 큐에 추가)', 'success');
                 closeInstanceLoraCreateModal();
                 loadInstanceLoraGrid();
             } catch (e) {
                 console.error('[INSTANCE_LORA] 생성 실패:', e);
-                showToast('생성 실패', 'error');
+                showToast('생성 실패: ' + (e.message || e), 'error');
             }
         }
 

@@ -111,6 +111,7 @@ DEFAULT_CONFIG = {
     "tag_analysis_workflow_source_path": "",  # 태그 분석 워크플로우 원본 소스 전체 경로
     "asset_tag_analysis_workflow_source_path": "",  # 에셋용 태그 분석 워크플로우 원본 소스 전체 경로
     "lora_training_workflow_source_paths": {"anima": "", "sdxl": ""},  # 로라 학습 워크플로우 원본 소스 경로 (profile별)
+    "face_extract_workflow_source_path": "",  # 얼굴 이미지 추출 워크플로우 원본 소스 전체 경로
     "lora_load_path": "",  # 로라 모델 로드 폴더 절대 경로 (에셋, SOYA_CHAR_LORA 자동 추가)
     "bot_lora_load_path": "",  # 봇 LoRA 모델 로드 폴더 절대 경로 (SOYA_BOT_LORA 자동 추가)
     "instance_lora_load_path": "",  # 인스턴스 LoRA 모델 로드 폴더 절대 경로 (SOYA_INSTANCE_LORA 자동 추가)
@@ -123,10 +124,11 @@ DEFAULT_CONFIG = {
     "queue_type_order": {
         "asset_lora_training": 1,
         "bot_lora_training": 2,
-        "instance_lora_analysis": 3,
-        "instance_lora_training": 4,
-        "tag_analysis": 5,
-        "asset_generation": 6,
+        "instance_lora_face_extract": 3,
+        "instance_lora_analysis": 4,
+        "instance_lora_training": 5,
+        "tag_analysis": 6,
+        "asset_generation": 7,
     },
 }
 
@@ -1314,6 +1316,8 @@ def init_queue_manager():
     queue_manager.prepare_style_ref_folder = _prepare_style_ref_folder
     queue_manager.get_real_comfy_host = lambda: REAL_COMFY_HOST
     queue_manager.get_real_comfy_port = lambda: REAL_COMFY_PORT
+    queue_manager.fetch_real_history = fetch_real_history
+    queue_manager.fetch_real_image = fetch_real_image
     queue_manager.process_prompt_full = process_prompt
     queue_manager.save_backup = save_backup
     queue_manager.generate_image_with_prompt = generate_image_with_prompt
@@ -7445,6 +7449,41 @@ async def handle_api_instance_lora_images_upload(request):
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 
+async def handle_api_instance_lora_face_extract(request):
+    """인스턴스 LoRA 얼굴 추출 - 큐에 추가"""
+    try:
+        body = await request.json()
+        lora_id = body.get("id", "").strip()
+        face_crop_top = body.get("face_crop_top", 1.8)
+        face_crop_bottom = body.get("face_crop_bottom", 1.0)
+        if not lora_id:
+            return web.json_response({"success": False, "error": "id 필수"}, status=400)
+
+        config = load_config()
+        face_extract_wf_path = config.get("face_extract_workflow_source_path", "")
+        if not face_extract_wf_path or not os.path.isfile(face_extract_wf_path):
+            return web.json_response({"success": False, "error": "얼굴 추출 워크플로우가 설정되지 않음"}, status=400)
+
+        label = f"[인스턴스:얼굴추출] {lora_id}"
+        item = await queue_manager.add_item("instance_lora_face_extract", label, {
+            "id": lora_id, "face_crop_top": face_crop_top, "face_crop_bottom": face_crop_bottom,
+            "image_type": body.get("image_type", "asset"),
+            "image_source": body.get("image_source"),
+            "upload_filename": body.get("upload_filename"),
+            "negative_prompt": body.get("negative_prompt", ""),
+            "trigger": body.get("trigger", ""),
+            "profile": body.get("profile", "anima"),
+            "is_asset_with_prompt": body.get("is_asset_with_prompt", False),
+            "existing_prompt": body.get("existing_prompt"),
+            "use_block_tags": body.get("use_block_tags", True),
+        })
+        return web.json_response({"success": True, "queue_item_id": item.id, "label": item.label})
+    except Exception as e:
+        print(f"[INSTANCE_LORA_API] 얼굴 추출 큐 추가 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
 async def handle_api_instance_lora_training_start(request):
     """인스턴스 LoRA 학습 - 통합 큐에 추가"""
     try:
@@ -7588,6 +7627,7 @@ app.router.add_post("/api/instance_lora/config", handle_api_instance_lora_config
 app.router.add_post("/api/instance_lora/increment_usage", handle_api_instance_lora_increment_usage)
 app.router.add_post("/api/instance_lora/prompt", handle_api_instance_lora_prompt_save)
 app.router.add_get("/api/instance_lora/prompt", handle_api_instance_lora_prompt_get)
+app.router.add_post("/api/instance_lora/face_extract", handle_api_instance_lora_face_extract)
 app.router.add_post("/api/instance_lora/training/start", handle_api_instance_lora_training_start)
 app.router.add_post("/api/instance_lora/retrain", handle_api_instance_lora_retrain)
 app.router.add_get("/api/instance_lora/prompt_filter", handle_api_instance_lora_prompt_filter_get)

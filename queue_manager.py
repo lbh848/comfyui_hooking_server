@@ -58,6 +58,8 @@ class QueueManager:
         self.prepare_style_ref_folder = None   # def(images, comfy_input_dir) -> str
         self.get_real_comfy_host = None        # def() -> str
         self.get_real_comfy_port = None        # def() -> int
+        self.fetch_real_history = None         # async def(prompt_id) -> dict
+        self.fetch_real_image = None           # async def(filename, subfolder, img_type) -> bytes
         # 삽화 생성 콜백 (server.py에서 주입)
         self.generate_image_with_prompt = None  # async def(positive, negative) -> (bytes, errors)
         self.process_prompt_full = None         # async def(prompt_id, prompt_data, positive, negative) -> None
@@ -233,6 +235,7 @@ class QueueManager:
             "asset_lora_training": self._handle_asset_lora_training,
             "bot_lora_training": self._handle_bot_lora_training,
             "instance_lora_training": self._handle_instance_lora_training,
+            "instance_lora_face_extract": self._handle_instance_lora_face_extract,
             "instance_lora_analysis": self._handle_instance_lora_analysis,
             "tag_analysis": self._handle_tag_analysis,
             "auto_match_batch": self._handle_auto_match_batch,
@@ -589,6 +592,227 @@ class QueueManager:
         )
 
         return {"success": True, "character": char_name}
+
+    async def _handle_instance_lora_face_extract(self, item: QueueItem) -> dict:
+        """인스턴스 LoRA 얼굴 추출 - 원본 이미지에서 얼굴을 잘라 인스턴스에 저장."""
+        import aiohttp
+        import shutil
+        params = item.params
+        lora_id = params.get("id", "")
+        face_crop_top = params.get("face_crop_top", 1.8)
+        face_crop_bottom = params.get("face_crop_bottom", 1.0)
+        image_type = params.get("image_type", "upload")
+        image_source = params.get("image_source")
+        upload_filename = params.get("upload_filename")
+
+        config = self.get_config()
+        comfy_input_dir = config.get("comfy_input_dir", "")
+        if not comfy_input_dir or not os.path.isdir(comfy_input_dir):
+            raise ValueError(f"ComfyUI input 폴더가 유효하지 않음: {comfy_input_dir}")
+
+        face_extract_wf_path = config.get("face_extract_workflow_source_path", "")
+        if not face_extract_wf_path or not os.path.isfile(face_extract_wf_path):
+            raise ValueError(f"얼굴 추출 워크플로우 파일 없음: {face_extract_wf_path}")
+
+        # 원본 이미지 경로 확보
+        from modes.instance_lora_mode import get_image_path, list_images, save_image_prompt, _safe_dirname
+        from modes.instance_lora_mode import add_image as instance_add_image
+
+        original_image_path = None
+        if upload_filename:
+            # 업로드된 이미지가 이미 인스턴스에 있음
+            original_image_path = get_image_path(lora_id, upload_filename)
+            print(f"[FACE_EXTRACT] 업로드 이미지: {original_image_path}")
+
+        # soya_lora에 원본 복사
+        folder = "soya_lora"
+        export_dir = os.path.join(comfy_input_dir, folder)
+        if os.path.isdir(export_dir):
+            for f in os.listdir(export_dir):
+                fp = os.path.join(export_dir, f)
+                if os.path.isfile(fp):
+                    os.remove(fp)
+        os.makedirs(export_dir, exist_ok=True)
+
+        if original_image_path and os.path.isfile(original_image_path):
+            ext = os.path.splitext(original_image_path)[1]
+            shutil.copy2(original_image_path, os.path.join(export_dir, f"[1]{ext}"))
+        elif image_source:
+            # 에셋/봇 소스 경로 해석 (handle_api_instance_lora_images_add와 동일)
+            filename = image_source.get("filename", "")
+            src_path = ""
+            if image_type == "asset":
+                from modes.asset_mode import ASSET_DIR
+                char = image_source.get("character", "")
+                outfit = image_source.get("outfit", "")
+                expression = image_source.get("expression", "")
+                if char and outfit and expression:
+                    src_path = os.path.join(ASSET_DIR, char, outfit, expression, filename)
+                else:
+                    src_path = image_source.get("path", "")
+            elif image_type == "bot":
+                from modes.bot_lora_mode import _bot_char_dir as bot_char_dir_fn
+                bot_name = image_source.get("bot", "")
+                char_name = image_source.get("character", "")
+                if bot_name and char_name:
+                    src_path = os.path.join(bot_char_dir_fn(bot_name, char_name), filename)
+                else:
+                    src_path = image_source.get("path", "")
+            else:
+                src_path = image_source.get("path", "")
+
+            if not src_path or not os.path.isfile(src_path):
+                raise ValueError(f"원본 이미지를 찾을 수 없음: src_path={src_path}, source={image_source}")
+            ext = os.path.splitext(src_path)[1]
+            shutil.copy2(src_path, os.path.join(export_dir, f"[1]{ext}"))
+            print(f"[FACE_EXTRACT] 에셋/봇 이미지: {src_path}")
+        else:
+            raise ValueError(f"원본 이미지 경로를 알 수 없음 (upload_filename={upload_filename}, image_source={image_source})")
+
+        print(f"[INSTANCE_LORA:FACE_EXTRACT] 원본 복사 완료 → {export_dir}")
+
+        # 추출 프롬프트 생성
+        extract_prompt = "\n".join([
+            "[PATH]", folder,
+            "[FACE_CROP_TOP]", str(face_crop_top),
+            "[FACE_CROP_BOTTOM]", str(face_crop_bottom),
+            "[EMB_TARGET]", "[1]",
+            "[END]",
+        ])
+        print(f"[INSTANCE_LORA:FACE_EXTRACT] 프롬프트:\n{extract_prompt}")
+
+        if self.notify_frontend:
+            await self.notify_frontend("instance_lora_face_extract_progress", {
+                "lora_id": lora_id, "phase": "extracting",
+                "message": "얼굴 추출 워크플로우 실행 중...",
+            })
+
+        # 워크플로우 로드 & 변환 → mode_workflow에 저장
+        with open(face_extract_wf_path, "r", encoding="utf-8") as f:
+            wf_raw = json.load(f)
+        api_wf, conv_err = await self.convert_workflow_via_endpoint(wf_raw)
+        if conv_err or api_wf is None:
+            raise ValueError(f"워크플로우 변환 실패: {conv_err}")
+
+        # mode_workflow에 변환 결과 저장
+        _mode_wf_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mode_workflow")
+        os.makedirs(_mode_wf_dir, exist_ok=True)
+        converted_path = os.path.join(_mode_wf_dir, "face_extract_api.json")
+        with open(converted_path, "w", encoding="utf-8") as f:
+            json.dump(api_wf, f, indent=2, ensure_ascii=False)
+        print(f"[FACE_EXTRACT] 변환된 워크플로우 저장: {converted_path}")
+
+        wf = copy.deepcopy(api_wf)
+        for nid, ninfo in wf.items():
+            if not isinstance(ninfo, dict):
+                continue
+            title = ninfo.get("_meta", {}).get("title", "")
+            if title == "긍정프롬프트":
+                ninfo["inputs"]["value"] = extract_prompt
+            elif title == "부정프롬프트":
+                ninfo["inputs"]["value"] = ""
+
+        # 실행 & 대기 (server.py generate_image_with_prompt 패턴 참조)
+        extract_prompt_id, _ = await self._monitor_training_ws(
+            item, wf,
+            event_type="instance_lora_face_extract_progress",
+            extra_data={"lora_id": lora_id},
+        )
+        print(f"[INSTANCE_LORA:FACE_EXTRACT] 워크플로우 완료: prompt_id={extract_prompt_id}")
+
+        # history에서 출력 이미지 가져오기 (server.py 라인 1033-1052 패턴)
+        history = await self.fetch_real_history(extract_prompt_id)
+        real_entry = history.get(extract_prompt_id, {})
+        real_outputs = real_entry.get("outputs", {})
+
+        print(f"[INSTANCE_LORA:FACE_EXTRACT] history keys={list(real_outputs.keys())}")
+        for nid_key, nout_val in real_outputs.items():
+            print(f"[INSTANCE_LORA:FACE_EXTRACT]   node {nid_key}: {list(nout_val.keys())}")
+
+        face_cropped_bytes = None
+        for nid_key, nout_val in real_outputs.items():
+            if "images" in nout_val:
+                imgs = nout_val["images"]
+                if imgs:
+                    first = imgs[0]
+                    print(f"[INSTANCE_LORA:FACE_EXTRACT] 출력 이미지: {first}")
+                    face_cropped_bytes = await self.fetch_real_image(
+                        first["filename"],
+                        first.get("subfolder", ""),
+                        first.get("type", "output"),
+                    )
+                    break
+
+        if not face_cropped_bytes:
+            raise ValueError(
+                f"추출 결과 이미지를 찾을 수 없음 "
+                f"(prompt_id={extract_prompt_id}, outputs_keys={list(real_outputs.keys())})"
+            )
+
+        # 추출된 얼굴을 인스턴스 로라에 저장 (add_image 사용)
+        import tempfile
+        from modes.instance_lora_mode import add_image
+        tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+        tmp.write(face_cropped_bytes)
+        tmp.close()
+        face_filename = f"face_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}.png"
+        r = add_image(lora_id, tmp.name, face_filename)
+        os.unlink(tmp.name)
+        if not r.get("success"):
+            raise ValueError(f"얼굴 이미지 등록 실패: {r.get('error')}")
+        print(f"[FACE_EXTRACT] 4. 얼굴 이미지 등록 완료: {face_filename}")
+
+        # 이후 처리 (분석 + 학습) 큐에 추가
+        negative_prompt = params.get("negative_prompt", "")
+        trigger = params.get("trigger", "")
+        is_asset_with_prompt = params.get("is_asset_with_prompt", False)
+        use_block_tags = params.get("use_block_tags", True)
+
+        if is_asset_with_prompt:
+            existing_prompt = params.get("existing_prompt") or {}
+            pos = existing_prompt.get("positive", "")
+            neg = negative_prompt or existing_prompt.get("negative", "")
+            if use_block_tags and pos:
+                from modes.lora_mode import get_block_tag_rules, apply_block_tag_rules
+                block_rules = get_block_tag_rules()
+                tags = pos.split(",")
+                tags = [apply_block_tag_rules([t.strip()], block_rules) for t in tags if t.strip()]
+                tags = [t for group in tags for t in group]
+                pos = ", ".join(tags)
+            # 프롬프트 저장은 이미지 파일명 필요 - list_images로 확인
+            images_now = list_images(lora_id)
+            if images_now:
+                save_image_prompt(lora_id, images_now[0], {
+                    "positive": pos, "negative": neg,
+                    "original_positive": existing_prompt.get("positive", pos),
+                })
+        else:
+            images_now = list_images(lora_id)
+            if images_now and negative_prompt:
+                save_image_prompt(lora_id, images_now[0], {
+                    "positive": "", "negative": negative_prompt,
+                })
+            if images_now:
+                await self.add_item("instance_lora_analysis", f"프롬프트 분석: {trigger}", {
+                    "lora_id": lora_id, "negative_prompt": negative_prompt,
+                    "use_block_tags": use_block_tags,
+                })
+
+        # 학습 큐 추가 (both → anima, sdxl 분리)
+        profile = params.get("profile", "anima")
+        train_profiles = ["anima", "sdxl"] if profile == "both" else [profile]
+        for p in train_profiles:
+            await self.add_item("instance_lora_training", f"[인스턴스] {lora_id} ({p})", {
+                "id": lora_id, "profiles": [p],
+            })
+
+        if self.notify_frontend:
+            await self.notify_frontend("instance_lora_face_extract_progress", {
+                "lora_id": lora_id, "phase": "complete",
+                "message": "얼굴 추출 완료",
+            })
+
+        return {"success": True, "lora_id": lora_id, "image_size": len(face_cropped_bytes)}
 
     async def _handle_instance_lora_training(self, item: QueueItem) -> dict:
         """인스턴스 LoRA 학습 (기존 handle_api_instance_lora_training_start 로직, both 모드 포함)."""
