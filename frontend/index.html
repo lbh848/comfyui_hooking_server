@@ -25701,6 +25701,11 @@
             const status = document.getElementById('asset-ref-status');
             status.textContent = on ? 'ON' : 'OFF';
             status.className = 'toggle-status ' + (on ? 'on' : 'off');
+            if (!on) {
+                assetRefImages = [];
+                document.getElementById('asset-ref-folder-hash-text').textContent = '';
+                document.getElementById('asset-ref-preview').style.display = 'none';
+            }
         }
 
         async function uploadAssetRefImage(input) {
@@ -25769,6 +25774,11 @@
             const status = document.getElementById('asset-style-ref-status');
             status.textContent = on ? 'ON' : 'OFF';
             status.className = 'toggle-status ' + (on ? 'on' : 'off');
+            if (!on) {
+                assetStyleRefImages = [];
+                document.getElementById('asset-style-ref-folder-hash-text').textContent = '';
+                document.getElementById('asset-style-ref-preview').style.display = 'none';
+            }
         }
 
         async function uploadAssetStyleRefImage(input) {
@@ -31925,7 +31935,7 @@
                 if (fields.natural_language_preset) slot.natural_language_preset = fields.natural_language_preset;
                 if (isAnima) slot.pose_enabled = false;
                 if (refAction === 'on') slot.ref_enabled = true;
-                if (refAction === 'off') slot.ref_enabled = false;
+                if (refAction === 'off') { slot.ref_enabled = false; slot.ref_images = []; slot.ref_preview_url = ''; slot.ref_dir = ''; }
                 if (refStrengthCheck) slot.ref_strength = refStrength;
                 if (window._bulkRefImages && window._bulkRefImages.length) {
                     slot.ref_images = window._bulkRefImages.map(img => ({name: img.name, local_path: img.local_path, orig_filename: img.orig_filename}));
@@ -31933,7 +31943,7 @@
                     slot.ref_enabled = true;
                 }
                 if (styleRefAction === 'on') slot.style_ref_enabled = true;
-                if (styleRefAction === 'off') slot.style_ref_enabled = false;
+                if (styleRefAction === 'off') { slot.style_ref_enabled = false; slot.style_ref_images = []; slot.style_ref_preview_url = ''; slot.style_ref_dir = ''; }
                 if (styleRefStrengthCheck) slot.style_ref_strength = styleRefStrength;
                 if (window._bulkStyleRefImages && window._bulkStyleRefImages.length) {
                     slot.style_ref_images = window._bulkStyleRefImages.map(img => ({name: img.name, local_path: img.local_path, orig_filename: img.orig_filename}));
@@ -32403,9 +32413,27 @@
                     batchChains[idx][cb.dataset.field] = cb.checked;
                     if (cb.dataset.field === 'ref_enabled') {
                         slotEl.querySelector('.batch-ref-section').style.display = cb.checked ? 'block' : 'none';
+                        if (!cb.checked) {
+                            batchChains[idx].ref_images = [];
+                            batchChains[idx].ref_preview_url = '';
+                            batchChains[idx].ref_dir = '';
+                            const hashEl = slotEl.querySelector('.batch-ref-folder-hash-text');
+                            if (hashEl) hashEl.textContent = '';
+                            const previewEl = slotEl.querySelector('.batch-ref-preview');
+                            if (previewEl) previewEl.style.display = 'none';
+                        }
                     }
                     if (cb.dataset.field === 'style_ref_enabled') {
                         slotEl.querySelector('.batch-style-ref-section').style.display = cb.checked ? 'block' : 'none';
+                        if (!cb.checked) {
+                            batchChains[idx].style_ref_images = [];
+                            batchChains[idx].style_ref_preview_url = '';
+                            batchChains[idx].style_ref_dir = '';
+                            const hashEl = slotEl.querySelector('.batch-style-ref-folder-hash-text');
+                            if (hashEl) hashEl.textContent = '';
+                            const previewEl = slotEl.querySelector('.batch-style-ref-preview');
+                            if (previewEl) previewEl.style.display = 'none';
+                        }
                     }
                     if (cb.dataset.field === 'lora_enabled') {
                         slotEl.querySelector('.batch-lora-section').style.display = cb.checked ? 'block' : 'none';
