@@ -1933,6 +1933,54 @@
             font-weight: bold;
             font-size: 0.8rem;
         }
+        #batch-bulk-overlay .tag-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+        #batch-bulk-overlay .tag-chip {
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 2px 8px;
+            font-size: 0.75rem;
+            color: var(--text);
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        #batch-bulk-overlay .tag-chip .remove-tag {
+            cursor: pointer;
+            color: var(--error);
+            font-weight: bold;
+            font-size: 0.8rem;
+        }
+        .face-tag-chip {
+            background: rgba(76, 175, 80, 0.18) !important;
+            border: 1px solid rgba(76, 175, 80, 0.35) !important;
+        }
+        .batch-slot .tag-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+        }
+        .batch-slot .tag-chip {
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 1px 6px;
+            font-size: 0.65rem;
+            color: var(--text);
+            display: flex;
+            align-items: center;
+            gap: 3px;
+        }
+        .batch-slot .tag-chip .remove-tag {
+            cursor: pointer;
+            color: var(--error);
+            font-weight: bold;
+            font-size: 0.7rem;
+        }
         .lora-prompt-chips-container {
             display: flex;
             flex-wrap: wrap;
@@ -4038,9 +4086,17 @@
                                 <span style="font-size:0.7rem; color:var(--text-muted);">BOTTOM</span>
                                 <input type="number" id="asset-face-crop-bottom" value="1" step="0.1" style="width:60px; padding:3px 5px; border:1px solid var(--border); background:var(--surface); color:var(--text); border-radius:4px; font-size:0.8rem; text-align:center;">
                             </div>
-                            <div style="display:flex; gap:6px; align-items:center; margin-bottom:4px;">
-                                <span style="font-size:0.7rem; color:var(--text-muted); min-width:fit-content;">FACE_TAGS</span>
-                                <input type="text" id="asset-face-tags" placeholder="예: blonde hair, leaf hair ornament" style="flex:1; padding:3px 6px; border:1px solid var(--border); background:var(--surface); color:var(--text); border-radius:4px; font-size:0.75rem;">
+                            <div style="margin-bottom:4px;">
+                                <div style="display:flex; gap:4px; align-items:center; margin-bottom:4px;">
+                                    <span style="font-size:0.7rem; color:var(--text-muted); min-width:fit-content;">FACE_TAGS</span>
+                                    <button onclick="importFaceTagsFromAppearance()" style="font-size:0.65rem; padding:2px 8px; border:none; background:var(--accent); color:#fff; border-radius:4px; cursor:pointer; font-weight:500;">외모+표정 가져오기</button>
+                                </div>
+                                <div id="asset-face-tags-chips" class="tag-list" style="margin-bottom:3px; min-height:20px;"></div>
+                                <div style="display:flex; gap:4px;">
+                                    <input type="text" id="asset-face-tags-input" placeholder="태그 추가 (쉼표로 구분)" style="flex:1; padding:2px 6px; border:1px solid var(--border); background:var(--surface); color:var(--text); border-radius:4px; font-size:0.7rem;" onkeydown="if(event.key==='Enter'){event.preventDefault();addFaceTag();}">
+                                    <button onclick="addFaceTag()" style="padding:2px 8px; border:none; background:var(--error); color:#fff; border-radius:4px; cursor:pointer; font-size:0.7rem;">+</button>
+                                </div>
+                                <input type="hidden" id="asset-face-tags" value="">
                             </div>
                             <div style="display:flex; gap:6px; align-items:center; margin-bottom:4px;">
                                 <span style="font-size:0.7rem; color:var(--text-muted); min-width:fit-content;">EYE_TAGS</span>
@@ -25258,6 +25314,7 @@
                 if (faceCropBottom) faceCropBottom.value = s.face_crop_bottom ?? 1;
                 const faceTags = document.getElementById('asset-face-tags');
                 if (faceTags) faceTags.value = s.face_tags || '';
+                if (typeof initFaceTagsFromArray === 'function') initFaceTagsFromArray(s.face_tags || '');
                 const eyeTags = document.getElementById('asset-eye-tags');
                 if (eyeTags) eyeTags.value = s.eye_tags || '';
                 const hrfSdxl = document.getElementById('asset-hrf-sdxl');
@@ -27426,6 +27483,288 @@
                 container.appendChild(chip);
             });
             attachDragReorder(container, tags, container.id, null, removeFn);
+        }
+
+        // ─── FACE_TAGS 칩 관리 (에셋 단일 생성) ─────────────────────
+        let assetFaceTagsArray = [];
+
+        function importFaceTagsFromAppearance() {
+            if (!assetTags) { showToast('태그 데이터가 없습니다', 'error'); return; }
+            const app = getAssetSelectValue('asset-appearance-select');
+            const expr = getAssetSelectValue('asset-expression-select');
+            const appTags = app ? (assetTags.appearances?.[app] || []) : [];
+            const exprTags = expr ? (assetTags.expressions?.[expr] || []) : [];
+            const allTags = [...appTags, ...exprTags];
+            if (allTags.length === 0) { showToast('가져올 외모/표정 태그가 없습니다', 'error'); return; }
+            let added = 0;
+            allTags.forEach(tag => {
+                if (tag && !assetFaceTagsArray.includes(tag)) {
+                    assetFaceTagsArray.push(tag);
+                    added++;
+                }
+            });
+            if (added === 0) { showToast('모든 태그가 이미 존재합니다', 'error'); return; }
+            renderFaceTagChips();
+            syncFaceTagsInput();
+            showToast(`외모(${appTags.length}) + 표정(${exprTags.length}) 태그 ${added}개 추가`, 'success');
+        }
+
+        function renderFaceTagChips() {
+            const container = document.getElementById('asset-face-tags-chips');
+            if (!container) return;
+            container.innerHTML = '';
+            assetFaceTagsArray.forEach((tag, idx) => {
+                const chip = document.createElement('span');
+                chip.className = 'tag-chip face-tag-chip';
+                chip.dataset.idx = idx;
+                const label = document.createElement('span');
+                label.textContent = tag;
+                chip.appendChild(label);
+                const x = document.createElement('span');
+                x.className = 'remove-tag';
+                x.textContent = '×';
+                x.addEventListener('click', () => removeFaceTag(idx));
+                chip.appendChild(x);
+                container.appendChild(chip);
+            });
+        }
+
+        function removeFaceTag(idx) {
+            assetFaceTagsArray.splice(idx, 1);
+            renderFaceTagChips();
+            syncFaceTagsInput();
+        }
+
+        function addFaceTag() {
+            const input = document.getElementById('asset-face-tags-input');
+            const val = input.value.trim();
+            if (!val) return;
+            input.value = '';
+            val.split(',').map(t => t.trim()).filter(t => t).forEach(tag => {
+                if (!assetFaceTagsArray.includes(tag)) {
+                    assetFaceTagsArray.push(tag);
+                }
+            });
+            renderFaceTagChips();
+            syncFaceTagsInput();
+        }
+
+        function syncFaceTagsInput() {
+            const el = document.getElementById('asset-face-tags');
+            if (el) el.value = assetFaceTagsArray.join(', ');
+        }
+
+        function initFaceTagsFromArray(tagsStr) {
+            assetFaceTagsArray = tagsStr ? tagsStr.split(',').map(t => t.trim()).filter(t => t) : [];
+            renderFaceTagChips();
+            syncFaceTagsInput();
+        }
+
+        // ─── FACE_TAGS 칩 관리 (일괄 생성) ─────────────────────
+        let bulkFaceTagsArray = [];
+
+        function importBulkFaceTags() {
+            if (!assetTags) { showToast('태그 데이터가 없습니다', 'error'); return; }
+            const app = document.getElementById('bulk-appearance')?.value || '';
+            const expr = document.getElementById('bulk-expression')?.value || '';
+            const appTags = app ? (assetTags.appearances?.[app] || []) : [];
+            const exprTags = expr ? (assetTags.expressions?.[expr] || []) : [];
+            const allTags = [...appTags, ...exprTags];
+            if (allTags.length === 0) { showToast('가져올 외모/표정 태그가 없습니다', 'error'); return; }
+            let added = 0;
+            allTags.forEach(tag => {
+                if (tag && !bulkFaceTagsArray.includes(tag)) {
+                    bulkFaceTagsArray.push(tag);
+                    added++;
+                }
+            });
+            if (added === 0) { showToast('모든 태그가 이미 존재합니다', 'error'); return; }
+            renderBulkFaceTagChips();
+            syncBulkFaceTagsInput();
+            showToast(`외모(${appTags.length}) + 표정(${exprTags.length}) 태그 ${added}개 추가`, 'success');
+        }
+
+        function renderBulkFaceTagChips() {
+            const container = document.getElementById('bulk-face-tags-chips');
+            if (!container) return;
+            container.innerHTML = '';
+            bulkFaceTagsArray.forEach((tag, idx) => {
+                const chip = document.createElement('span');
+                chip.className = 'tag-chip face-tag-chip';
+                chip.dataset.idx = idx;
+                const label = document.createElement('span');
+                label.textContent = tag;
+                chip.appendChild(label);
+                const x = document.createElement('span');
+                x.className = 'remove-tag';
+                x.textContent = '×';
+                x.addEventListener('click', () => {
+                    bulkFaceTagsArray.splice(idx, 1);
+                    renderBulkFaceTagChips();
+                    syncBulkFaceTagsInput();
+                });
+                chip.appendChild(x);
+                container.appendChild(chip);
+            });
+        }
+
+        function addBulkFaceTag() {
+            const input = document.getElementById('bulk-face-tags-input');
+            const val = input.value.trim();
+            if (!val) return;
+            input.value = '';
+            val.split(',').map(t => t.trim()).filter(t => t).forEach(tag => {
+                if (!bulkFaceTagsArray.includes(tag)) {
+                    bulkFaceTagsArray.push(tag);
+                }
+            });
+            renderBulkFaceTagChips();
+            syncBulkFaceTagsInput();
+        }
+
+        function syncBulkFaceTagsInput() {
+            const el = document.getElementById('bulk-face-tags');
+            if (el) el.value = bulkFaceTagsArray.join(', ');
+        }
+
+        // ─── FACE_TAGS 칩 관리 (일괄 생성 개별 슬롯) ─────────────────────
+        function getSlotFaceTagsArray(idx) {
+            const val = (batchChains[idx]?.face_tags || '').trim();
+            return val ? val.split(',').map(t => t.trim()).filter(t => t) : [];
+        }
+
+        function syncSlotFaceTagsField(idx, arr) {
+            if (!batchChains[idx]) return;
+            batchChains[idx].face_tags = arr.join(', ');
+            const hidden = document.querySelector(`.batch-slot-face-tags-chips[data-slot-idx="${idx}"]`)?.parentElement?.querySelector('input[type="hidden"][data-field="face_tags"]');
+            if (hidden) hidden.value = arr.join(', ');
+        }
+
+        function renderSlotFaceTagChips(idx) {
+            const container = document.querySelector(`.batch-slot-face-tags-chips[data-slot-idx="${idx}"]`);
+            if (!container) return;
+            const arr = getSlotFaceTagsArray(idx);
+            container.innerHTML = '';
+            arr.forEach((tag, tagIdx) => {
+                const chip = document.createElement('span');
+                chip.className = 'tag-chip face-tag-chip';
+                chip.dataset.idx = tagIdx;
+                const label = document.createElement('span');
+                label.textContent = tag;
+                chip.appendChild(label);
+                const x = document.createElement('span');
+                x.className = 'remove-tag';
+                x.textContent = '×';
+                x.addEventListener('click', () => {
+                    const current = getSlotFaceTagsArray(idx);
+                    current.splice(tagIdx, 1);
+                    syncSlotFaceTagsField(idx, current);
+                    renderSlotFaceTagChips(idx);
+                    const slotEl = document.querySelectorAll('#batch-chain-container .batch-slot')[idx];
+                    if (slotEl) updateBatchPreview(slotEl, idx);
+                });
+                chip.appendChild(x);
+                container.appendChild(chip);
+            });
+        }
+
+        function importSlotFaceTags(idx) {
+            if (!assetTags || !batchChains[idx]) { showToast('태그 데이터가 없습니다', 'error'); return; }
+            const slot = batchChains[idx];
+            const app = slot.appearance || '';
+            const expr = slot.expression || '';
+            const appTags = app ? (assetTags.appearances?.[app] || []) : [];
+            const exprTags = expr ? (assetTags.expressions?.[expr] || []) : [];
+            const allTags = [...appTags, ...exprTags];
+            if (allTags.length === 0) { showToast('가져올 외모/표정 태그가 없습니다 (외모/표정 선택 확인)', 'error'); return; }
+            const current = getSlotFaceTagsArray(idx);
+            let added = 0;
+            allTags.forEach(tag => {
+                if (tag && !current.includes(tag)) {
+                    current.push(tag);
+                    added++;
+                }
+            });
+            if (added === 0) { showToast('모든 태그가 이미 존재합니다', 'error'); return; }
+            syncSlotFaceTagsField(idx, current);
+            renderSlotFaceTagChips(idx);
+            const slotEl = document.querySelectorAll('#batch-chain-container .batch-slot')[idx];
+            if (slotEl) updateBatchPreview(slotEl, idx);
+            showToast(`외모(${appTags.length}) + 표정(${exprTags.length}) 태그 ${added}개 추가`, 'success');
+        }
+
+        function addSlotFaceTag(idx) {
+            const input = document.querySelector(`.batch-slot-face-tags-input[data-slot-idx="${idx}"]`);
+            if (!input) return;
+            const val = input.value.trim();
+            if (!val) return;
+            input.value = '';
+            const current = getSlotFaceTagsArray(idx);
+            val.split(',').map(t => t.trim()).filter(t => t).forEach(tag => {
+                if (!current.includes(tag)) {
+                    current.push(tag);
+                }
+            });
+            syncSlotFaceTagsField(idx, current);
+            renderSlotFaceTagChips(idx);
+            const slotEl = document.querySelectorAll('#batch-chain-container .batch-slot')[idx];
+            if (slotEl) updateBatchPreview(slotEl, idx);
+        }
+
+        function loadCachedSettingsToSlot(idx) {
+            const raw = localStorage.getItem('assetModeSettings');
+            if (!raw) { showToast('저장된 에셋 설정 캐시가 없습니다', 'error'); return; }
+            let s;
+            try { s = JSON.parse(raw); } catch(e) { showToast('캐시 파싱 실패', 'error'); return; }
+            const slot = batchChains[idx];
+            if (!slot) return;
+
+            if (s.character) slot.character = s.character;
+            if (s.appearance) slot.appearance = s.appearance;
+            if (s.outfit) slot.outfit = s.outfit;
+            if (s.expression) slot.expression = s.expression;
+            if (s.composition_preset) slot.composition_preset = s.composition_preset;
+            if (s.quality_preset) slot.quality_preset = s.quality_preset;
+            if (s.character_negative_preset) slot.character_negative_preset = s.character_negative_preset;
+            if (s.negative_preset) slot.negative_preset = s.negative_preset;
+            if (s.artist_preset) slot.artist_preset = s.artist_preset;
+            if (s.natural_language_preset) slot.natural_language_preset = s.natural_language_preset;
+            slot.ref_enabled = s.ref_enabled || false;
+            if (s.ref_strength !== undefined) slot.ref_strength = s.ref_strength;
+            slot.style_ref_enabled = s.style_ref_enabled || false;
+            if (s.style_ref_strength !== undefined) slot.style_ref_strength = s.style_ref_strength;
+            slot.lora_enabled = s.lora_enabled || false;
+            if (s.lora_list) slot.lora_list = s.lora_list.map(l => ({...l}));
+            slot.pose_enabled = s.pose_enabled || false;
+            if (s.pose_id) slot.pose_id = s.pose_id;
+            if (s.img_w) slot.img_w = s.img_w;
+            if (s.img_h) slot.img_h = s.img_h;
+
+            const isAnima = currentConfig?.asset_workflow_type === 'anima';
+            if (isAnima && s.anima_artist_preset !== undefined) slot.anima_artist_preset = s.anima_artist_preset;
+            if (isAnima && s.anima_quality_preset !== undefined) slot.anima_quality_preset = s.anima_quality_preset;
+            if (isAnima && s.anima_negative_preset !== undefined) slot.anima_negative_preset = s.anima_negative_preset;
+            if (s.face_lora_enabled !== undefined) slot.face_lora_enabled = s.face_lora_enabled;
+            if (s.face_lora_list) slot.face_lora_list = s.face_lora_list.map(l => ({...l}));
+            if (s.face_crop_top !== undefined) slot.face_crop_top = s.face_crop_top;
+            if (s.face_crop_bottom !== undefined) slot.face_crop_bottom = s.face_crop_bottom;
+            if (s.face_tags !== undefined) slot.face_tags = s.face_tags;
+            if (s.eye_tags !== undefined) slot.eye_tags = s.eye_tags;
+            if (s.hrf_sdxl !== undefined) slot.hrf_sdxl = s.hrf_sdxl;
+            if (s.hrf_anima !== undefined) slot.hrf_anima = s.hrf_anima;
+            if (s.hrf_size !== undefined) slot.hrf_size = s.hrf_size;
+            if (s.hrf_restore_size !== undefined) slot.hrf_restore_size = s.hrf_restore_size;
+            if (s.hrf_control_net !== undefined) slot.hrf_control_net = s.hrf_control_net;
+            if (s.sdxl_fd !== undefined) slot.sdxl_fd_enabled = s.sdxl_fd;
+            if (s.sdxl_hd !== undefined) slot.sdxl_hd_enabled = s.sdxl_hd;
+            if (s.sdxl_ed !== undefined) slot.sdxl_ed_enabled = s.sdxl_ed;
+            if (s.anima_fd !== undefined) slot.anima_fd_enabled = s.anima_fd;
+            if (s.anima_hd !== undefined) slot.anima_hd_enabled = s.anima_hd;
+            if (s.anima_ed !== undefined) slot.anima_ed_enabled = s.anima_ed;
+            if (s.seed !== undefined) slot.seed = s.seed;
+
+            renderBatchChain();
+            showToast(`슬롯 #${idx + 1}에 에셋 설정 캐시 적용 완료`, 'success');
         }
 
         // ─── 태그 드래그 앤 드롭 순서 변경 ─────────────────────
@@ -31309,6 +31648,7 @@
             if (batchChains.length === 0) { showToast('슬롯이 없습니다', 'error'); return; }
             if (!assetTags) { showToast('태그 데이터를 먼저 로드하세요', 'error'); return; }
             bulkLoraList = [];
+            bulkFaceTagsArray = [];
 
             const charOptions = buildOptions(assetTags?.characters || {}, '', '-- 변경 안함 --');
             const appOptions = buildOptions(assetTags?.appearances || {}, '', '-- 변경 안함 --');
@@ -31551,9 +31891,17 @@
                             <input type="number" id="bulk-face-crop-bottom" value="1" step="0.1" style="width:60px; padding:3px 4px; border:1px solid var(--border); background:var(--surface); color:var(--text); border-radius:4px; font-size:0.8rem; text-align:center;">
                             <label style="font-size:0.75rem; display:flex; align-items:center; gap:4px; cursor:pointer;"><input type="checkbox" id="bulk-face-crop-check"> 적용</label>
                         </div>
-                        <div style="display:flex; gap:8px; align-items:center; margin-bottom:6px;">
-                            <label style="font-size:0.8rem;">FACE_TAGS:</label>
-                            <input type="text" id="bulk-face-tags" placeholder="예: blonde hair" style="flex:1; padding:3px 6px; border:1px solid var(--border); background:var(--surface); color:var(--text); border-radius:4px; font-size:0.8rem;">
+                        <div style="margin-bottom:6px;">
+                            <div style="display:flex; gap:4px; align-items:center; margin-bottom:4px;">
+                                <label style="font-size:0.8rem;">FACE_TAGS:</label>
+                                <button onclick="importBulkFaceTags()" style="font-size:0.7rem; padding:2px 8px; border:none; background:var(--accent); color:#fff; border-radius:4px; cursor:pointer; font-weight:500;">외모+표정 가져오기</button>
+                            </div>
+                            <div id="bulk-face-tags-chips" class="tag-list" style="margin-bottom:3px; min-height:20px;"></div>
+                            <div style="display:flex; gap:4px;">
+                                <input type="text" id="bulk-face-tags-input" placeholder="태그 추가 (쉼표로 구분)" style="flex:1; padding:2px 6px; border:1px solid var(--border); background:var(--surface); color:var(--text); border-radius:4px; font-size:0.75rem;" onkeydown="if(event.key==='Enter'){event.preventDefault();addBulkFaceTag();}">
+                                <button onclick="addBulkFaceTag()" style="padding:2px 8px; border:none; background:var(--error); color:#fff; border-radius:4px; cursor:pointer; font-size:0.7rem;">+</button>
+                            </div>
+                            <input type="hidden" id="bulk-face-tags" value="">
                         </div>
                         <div style="display:flex; gap:8px; align-items:center; margin-bottom:6px;">
                             <label style="font-size:0.8rem;">EYE_TAGS:</label>
@@ -32308,6 +32656,11 @@
             requestAnimationFrame(() => {
                 container.scrollLeft = prevScroll;
             });
+
+            // 각 슬롯의 FACE_TAGS 칩 렌더링
+            batchChains.forEach((slot, i) => {
+                renderSlotFaceTagChips(i);
+            });
         }
 
         function buildBatchSlotHTML(slot, idx) {
@@ -32523,9 +32876,17 @@
                         <span style="font-size:0.6rem; color:var(--text-muted);">BTM</span>
                         <input type="number" data-field="face_crop_bottom" value="${slot.face_crop_bottom ?? 1}" step="0.1" style="width:50px; padding:2px 3px; border:1px solid var(--border); background:var(--surface); color:var(--text); border-radius:3px; font-size:0.7rem; text-align:center;">
                     </div>
-                    <div style="display:flex; gap:4px; align-items:center; margin-bottom:3px;">
-                        <span style="font-size:0.6rem; color:var(--text-muted); min-width:fit-content;">FACE</span>
-                        <input type="text" data-field="face_tags" value="${escapeHtml(slot.face_tags || '')}" placeholder="face tags" style="flex:1; padding:2px 4px; border:1px solid var(--border); background:var(--surface); color:var(--text); border-radius:3px; font-size:0.7rem;">
+                    <div style="margin-bottom:3px;">
+                        <div style="display:flex; gap:4px; align-items:center; margin-bottom:3px;">
+                            <span style="font-size:0.6rem; color:var(--text-muted); min-width:fit-content;">FACE</span>
+                            <button onclick="importSlotFaceTags(${idx})" style="font-size:0.6rem; padding:1px 5px; border:none; background:var(--accent); color:#fff; border-radius:3px; cursor:pointer; font-weight:500;">외모+표정 가져오기</button>
+                        </div>
+                        <div class="batch-slot-face-tags-chips tag-list" data-slot-idx="${idx}" style="display:flex; flex-wrap:wrap; gap:4px; margin-bottom:3px;"></div>
+                        <div style="display:flex; gap:3px;">
+                            <input type="text" class="batch-slot-face-tags-input" data-slot-idx="${idx}" placeholder="태그 추가" style="flex:1; padding:1px 4px; border:1px solid var(--border); background:var(--surface); color:var(--text); border-radius:3px; font-size:0.65rem;" onkeydown="if(event.key==='Enter'){event.preventDefault();addSlotFaceTag(${idx});}">
+                            <button onclick="addSlotFaceTag(${idx})" style="padding:1px 6px; border:none; background:var(--error); color:#fff; border-radius:3px; cursor:pointer; font-size:0.65rem;">+</button>
+                        </div>
+                        <input type="hidden" data-field="face_tags" value="${escapeHtml(slot.face_tags || '')}">
                     </div>
                     <div style="display:flex; gap:4px; align-items:center; margin-bottom:3px;">
                         <span style="font-size:0.6rem; color:var(--text-muted); min-width:fit-content;">EYE</span>
@@ -32571,6 +32932,8 @@
                     <label class="toggle-switch"><input type="checkbox" data-field="sdxl_ed_enabled" ${slot.sdxl_ed_enabled ? 'checked' : ''}><span class="toggle-slider"></span></label>
                 </div>
                 `}
+
+                <button onclick="loadCachedSettingsToSlot(${idx})" style="width:100%; padding:5px; border:none; background:var(--error); color:#fff; border-radius:4px; cursor:pointer; font-size:0.75rem; font-weight:600; margin-top:6px;">에셋 생성에 저장된 캐시 가져오기</button>
 
                 <div class="batch-prompt-preview-wrap">
                     <div class="batch-field-label" style="cursor:pointer; user-select:none; margin-bottom:4px;" onclick="toggleBatchPreview(this)">프롬프트 미리보기 ▼</div>
@@ -32730,6 +33093,13 @@
             slotEl.querySelectorAll('textarea[data-field]').forEach(ta => {
                 ta.addEventListener('input', () => {
                     batchChains[idx][ta.dataset.field] = ta.value;
+                    updateBatchPreview(slotEl, idx);
+                });
+            });
+            // text 변경 (face_tags, eye_tags 등)
+            slotEl.querySelectorAll('input[type="text"][data-field]').forEach(inp => {
+                inp.addEventListener('input', () => {
+                    batchChains[idx][inp.dataset.field] = inp.value;
                     updateBatchPreview(slotEl, idx);
                 });
             });
