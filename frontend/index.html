@@ -3897,6 +3897,22 @@
                         </div>
                     </div>
 
+                    <!-- Face LoRA 섹션 -->
+                    <div style="background:rgba(76,175,80,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <div class="section-title" style="margin-bottom:0;">Face LoRA</div>
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="asset-face-lora-toggle" onchange="onAssetFaceLoraToggle()">
+                                <span class="toggle-slider"></span>
+                            </label>
+                            <span id="asset-face-lora-status" class="toggle-status off">OFF</span>
+                        </div>
+                        <div id="asset-face-lora-section" style="display:none; margin-top:8px;">
+                            <button onclick="openAssetFaceLoraPicker()" style="width:100%; font-size:0.8rem; padding:6px; border:1px dashed var(--border); background:var(--surface2); border-radius:6px; cursor:pointer; color:var(--text-secondary); transition:border-color 0.15s;">+ Face LoRA 추가</button>
+                            <div id="asset-face-lora-list" style="margin-top:6px; display:flex; flex-direction:column; gap:6px;"></div>
+                        </div>
+                    </div>
+
                     <!-- 포즈 섹션 -->
                     <div id="asset-pose-container" style="background:rgba(0,188,212,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
                         <div style="display:flex; align-items:center; gap:8px;">
@@ -3922,71 +3938,76 @@
                         <input type="number" id="asset-img-h" value="1024" min="256" max="4096" step="8" style="width:70px; padding:4px 6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:4px; font-size:0.8rem; text-align:center;" title="이미지 높이">
                     </div>
 
-                    <!-- HIRES FIX / 페이스/핸드/눈 디테일러 토글 -->
-                    <div style="display:flex; flex-direction:column; gap:6px; margin-bottom:8px;">
-                        <div style="display:flex; align-items:center; gap:6px; padding:6px 8px; background:var(--surface2); border-radius:6px; border:1px solid var(--border);">
-                            <span style="font-size:0.8rem;">HIRES FIX</span>
-                            <label class="toggle-switch">
-                                <input type="checkbox" id="asset-hrf-toggle">
-                                <span class="toggle-slider"></span>
-                            </label>
-                            <span id="asset-hrf-status" class="toggle-status off">OFF</span>
+                    <!-- HIRES FIX -->
+                    <div style="background:var(--surface2); border-radius:8px; padding:10px; margin-bottom:8px; border:1px solid var(--border);">
+                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+                            <span style="font-size:0.8rem; font-weight:600;">HIRES FIX</span>
+                            <label style="display:flex; align-items:center; gap:3px; font-size:0.75rem; cursor:pointer;"><input type="checkbox" id="asset-hrf-sdxl"> SDXL</label>
+                            <label style="display:flex; align-items:center; gap:3px; font-size:0.75rem; cursor:pointer;"><input type="checkbox" id="asset-hrf-anima"> ANIMA</label>
                         </div>
-                        <div id="asset-hrf-options" style="display:none; padding:6px 8px; background:var(--surface2); border-radius:6px; border:1px solid var(--border); gap:6px; flex-direction:column;">
-                            <div id="asset-anima-hrf-row" style="display:none; align-items:center; gap:6px; margin-bottom:4px;">
-                                <span style="font-size:0.75rem; color:var(--text-secondary); min-width:fit-content;">HRF 적용 대상</span>
-                                <select id="asset-anima-hrf-select" style="padding:2px 6px; border:1px solid var(--border); background:var(--surface); color:var(--text); border-radius:4px; font-size:0.75rem;">
-                                    <option value="anima">ANIMA만</option>
-                                    <option value="sdxl">SDXL만</option>
-                                    <option value="both" selected>둘다</option>
-                                </select>
-                            </div>
+                        <div style="display:flex; flex-direction:column; gap:4px;">
                             <div style="display:flex; align-items:center; gap:6px;">
-                                <span style="font-size:0.75rem; color:var(--text-secondary); min-width:fit-content;">업스케일링 비율</span>
+                                <span style="font-size:0.75rem; color:var(--text-secondary); min-width:fit-content;">업스케일 비율</span>
                                 <input type="range" id="asset-hrf-size" min="1" max="3" step="0.05" value="2.0" style="flex:1; cursor:pointer;">
                                 <span id="asset-hrf-size-val" style="font-size:0.75rem; min-width:28px; text-align:right;">2.0</span>
                             </div>
                             <div style="display:flex; align-items:center; gap:6px;">
                                 <span style="font-size:0.75rem;">RESTORE SIZE</span>
-                                <label class="toggle-switch">
-                                    <input type="checkbox" id="asset-hrf-restore-size" checked>
-                                    <span class="toggle-slider"></span>
-                                </label>
+                                <label class="toggle-switch"><input type="checkbox" id="asset-hrf-restore-size" checked><span class="toggle-slider"></span></label>
                                 <span id="asset-hrf-restore-size-status" class="toggle-status on">ON</span>
                             </div>
                             <div style="display:flex; align-items:center; gap:6px;">
                                 <span style="font-size:0.75rem;">CONTROL NET</span>
-                                <label class="toggle-switch">
-                                    <input type="checkbox" id="asset-hrf-control-net">
-                                    <span class="toggle-slider"></span>
-                                </label>
+                                <label class="toggle-switch"><input type="checkbox" id="asset-hrf-control-net"><span class="toggle-slider"></span></label>
                                 <span id="asset-hrf-control-net-status" class="toggle-status off">OFF</span>
                             </div>
                         </div>
-                        <div style="display:flex; align-items:center; gap:6px; padding:6px 8px; background:var(--surface2); border-radius:6px; border:1px solid var(--border);">
-                            <span style="font-size:0.8rem;">페이스 디테일러</span>
-                            <label class="toggle-switch">
-                                <input type="checkbox" id="asset-fd-toggle">
-                                <span class="toggle-slider"></span>
-                            </label>
-                            <span id="asset-fd-status" class="toggle-status off">OFF</span>
+                    </div>
+
+                    <!-- 디테일러 -->
+                    <div style="background:var(--surface2); border-radius:8px; padding:10px; margin-bottom:8px; border:1px solid var(--border);">
+                        <div style="font-size:0.8rem; font-weight:600; margin-bottom:6px;">디테일러</div>
+                        <div style="display:flex; gap:6px;">
+                            <span class="illust-section-chip sdxl">SDXL</span>
+                            <label style="display:flex; align-items:center; gap:3px; font-size:0.75rem; cursor:pointer;"><input type="checkbox" id="asset-sdxl-fd"> FD</label>
+                            <label style="display:flex; align-items:center; gap:3px; font-size:0.75rem; cursor:pointer;"><input type="checkbox" id="asset-sdxl-hd"> HD</label>
+                            <label style="display:flex; align-items:center; gap:3px; font-size:0.75rem; cursor:pointer;"><input type="checkbox" id="asset-sdxl-ed"> ED</label>
                         </div>
-                        <div style="display:flex; align-items:center; gap:6px; padding:6px 8px; background:var(--surface2); border-radius:6px; border:1px solid var(--border);">
-                            <span style="font-size:0.8rem;">핸드 디테일러</span>
-                            <label class="toggle-switch">
-                                <input type="checkbox" id="asset-hd-toggle">
-                                <span class="toggle-slider"></span>
-                            </label>
-                            <span id="asset-hd-status" class="toggle-status off">OFF</span>
+                        <div style="display:flex; gap:6px; margin-top:3px;">
+                            <span class="illust-section-chip anima">ANIMA</span>
+                            <label style="display:flex; align-items:center; gap:3px; font-size:0.75rem; cursor:pointer;"><input type="checkbox" id="asset-anima-fd"> FD</label>
+                            <label style="display:flex; align-items:center; gap:3px; font-size:0.75rem; cursor:pointer;"><input type="checkbox" id="asset-anima-hd"> HD</label>
+                            <label style="display:flex; align-items:center; gap:3px; font-size:0.75rem; cursor:pointer;"><input type="checkbox" id="asset-anima-ed"> ED</label>
                         </div>
-                        <div style="display:flex; align-items:center; gap:6px; padding:6px 8px; background:var(--surface2); border-radius:6px; border:1px solid var(--border);">
-                            <span style="font-size:0.8rem;">눈 디테일러</span>
-                            <label class="toggle-switch">
-                                <input type="checkbox" id="asset-ed-toggle">
-                                <span class="toggle-slider"></span>
-                            </label>
-                            <span id="asset-ed-status" class="toggle-status off">OFF</span>
+                        <!-- 디테일러 옵션 -->
+                        <div style="margin-top:8px; border-top:1px solid var(--border); padding-top:8px;">
+                            <div style="font-size:0.75rem; color:var(--text-secondary); margin-bottom:4px;">FACE CROP OPTION</div>
+                            <div style="display:flex; gap:8px; align-items:center; margin-bottom:6px;">
+                                <span style="font-size:0.7rem; color:var(--text-muted);">TOP</span>
+                                <input type="number" id="asset-face-crop-top" value="2.5" step="0.1" style="width:60px; padding:3px 5px; border:1px solid var(--border); background:var(--surface); color:var(--text); border-radius:4px; font-size:0.8rem; text-align:center;">
+                                <span style="font-size:0.7rem; color:var(--text-muted);">BOTTOM</span>
+                                <input type="number" id="asset-face-crop-bottom" value="1" step="0.1" style="width:60px; padding:3px 5px; border:1px solid var(--border); background:var(--surface); color:var(--text); border-radius:4px; font-size:0.8rem; text-align:center;">
+                            </div>
+                            <div style="display:flex; gap:6px; align-items:center; margin-bottom:4px;">
+                                <span style="font-size:0.7rem; color:var(--text-muted); min-width:fit-content;">FACE_TAGS</span>
+                                <input type="text" id="asset-face-tags" placeholder="예: blonde hair, leaf hair ornament" style="flex:1; padding:3px 6px; border:1px solid var(--border); background:var(--surface); color:var(--text); border-radius:4px; font-size:0.75rem;">
+                            </div>
+                            <div style="display:flex; gap:6px; align-items:center; margin-bottom:4px;">
+                                <span style="font-size:0.7rem; color:var(--text-muted); min-width:fit-content;">EYE_TAGS</span>
+                                <input type="text" id="asset-eye-tags" placeholder="예: blue eyes" style="flex:1; padding:3px 6px; border:1px solid var(--border); background:var(--surface); color:var(--text); border-radius:4px; font-size:0.75rem;">
+                            </div>
                         </div>
+                    </div>
+
+                    <!-- Seed -->
+                    <div style="margin-bottom:8px;">
+                        <div style="font-size:0.75rem; color:var(--text-muted); margin-bottom:3px;">Seed</div>
+                        <div style="display:flex; gap:4px; align-items:center;">
+                            <input type="number" id="asset-seed-input" value="-1" style="flex:1; padding:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:4px; font-size:0.8rem;" title="-1: 랜덤, 0 이상: 고정">
+                            <button onclick="document.getElementById('asset-seed-input').value=Math.floor(Math.random()*4294967295)" style="padding:4px 8px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:4px; cursor:pointer; font-size:0.7rem;" title="랜덤 Seed 생성">&#127922;</button>
+                            <button onclick="document.getElementById('asset-seed-input').value=-1" style="padding:4px 8px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:4px; cursor:pointer; font-size:0.7rem;" title="랜덤으로 초기화">&#128260;</button>
+                        </div>
+                        <div style="font-size:0.65rem; color:var(--text-muted); margin-top:1px;">-1 = 랜덤</div>
                     </div>
 
                     <button style="width:100%; padding:6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:6px; cursor:pointer; font-size:0.8rem; margin-bottom:4px;" onclick="previewAssetPrompt()">프롬프트 미리보기</button>
@@ -24766,10 +24787,14 @@
             const styleRefStrength = parseFloat(document.getElementById('asset-style-ref-strength').value) || 0.55;
             const loraEnabled = document.getElementById('asset-lora-toggle').checked;
             const poseEnabled = document.getElementById('asset-pose-toggle').checked;
-            const fdActivate = document.getElementById('asset-fd-toggle').checked;
-            const hrfActivate = document.getElementById('asset-hrf-toggle').checked;
-            const hdActivate = document.getElementById('asset-hd-toggle').checked;
-            const edActivate = document.getElementById('asset-ed-toggle').checked;
+            const sdxlFdActivate = document.getElementById('asset-sdxl-fd').checked;
+            const sdxlHdActivate = document.getElementById('asset-sdxl-hd').checked;
+            const sdxlEdActivate = document.getElementById('asset-sdxl-ed').checked;
+            const animaFdActivate = document.getElementById('asset-anima-fd').checked;
+            const animaHdActivate = document.getElementById('asset-anima-hd').checked;
+            const animaEdActivate = document.getElementById('asset-anima-ed').checked;
+            const hrfSdxl = document.getElementById('asset-hrf-sdxl').checked;
+            const hrfAnima = document.getElementById('asset-hrf-anima').checked;
 
             const hrfSize = parseFloat(document.getElementById('asset-hrf-size').value) || 2.0;
             const hrfRestoreSize = document.getElementById('asset-hrf-restore-size').checked;
@@ -24872,6 +24897,11 @@
             } else {
                 positiveFull += `\n[LORA_DATA]\n{"list":[]}`;
             }
+            // FACE_CROP
+            const faceCropTop = parseFloat(document.getElementById('asset-face-crop-top').value) || 2.5;
+            const faceCropBottom = parseFloat(document.getElementById('asset-face-crop-bottom').value) || 1;
+            positiveFull += `\n[FACE_CROP_TOP]\n${faceCropTop}`;
+            positiveFull += `\n[FACE_CROP_BOTTOM]\n${faceCropBottom}`;
             positiveFull += `\n[POSE_ACTIVATE]\n${(isAnima ? false : poseEnabled) ? 'true' : 'false'}`;
             if (poseEnabled && assetSelectedPoseId) {
                 try {
@@ -24885,19 +24915,36 @@
             } else {
                 positiveFull += `\n[POSE_DATA]\n{"people":[{"pose_keypoints_2d":[381.10,379.86,1,413.21,506.58,1,223.64,436.41,1,55.33,624.12,1,64.77,454.24,1,579.09,575.30,1,362.22,935.42,1,331.06,972.15,1,196.97,797.67,1,264.96,1013.47,1,257.41,1024.49,1,350.89,820.63,1,419.82,1011.63,1,419.82,1024.49,1,315.95,343.13,1,462.31,294.46,1,263.07,365.17,1,546.35,301.80,1]}],"canvas_height":1024,"canvas_width":700}`;
             }
-            const hrfModeVal = document.getElementById('asset-anima-hrf-select')?.value || 'both';
-            const _animaHrfOn = isAnima && hrfActivate ? (hrfModeVal === 'sdxl' ? false : true) : false;
-            const _hrfOn = isAnima && hrfActivate ? (hrfModeVal === 'anima' ? false : true) : hrfActivate;
-            positiveFull += `\n[HRF_ACTIVATE]\n${_hrfOn ? 'true' : 'false'}`;
-            if (isAnima) positiveFull += `\n[ANIMA_HRF_ACTIVATE]\n${_animaHrfOn ? 'true' : 'false'}`;
+            // Face LoRA
+            const faceLoraEnabled = document.getElementById('asset-face-lora-toggle').checked;
+            const faceLoraActive = faceLoraEnabled && faceLoraList.length > 0;
+            positiveFull += `\n[FACE_LORA_ACTIVATE]\n${faceLoraActive ? 'true' : 'false'}`;
+            if (faceLoraActive) {
+                positiveFull += `\n[FACE_LORA_DATA]\n${JSON.stringify({list: faceLoraList.map(l => ({lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima'}))})}`;
+            } else {
+                positiveFull += `\n[FACE_LORA_DATA]\n{"list":[]}`;
+            }
+            // CHAR_FACE_TAG_INFORM
+            const faceTags = document.getElementById('asset-face-tags').value.trim();
+            const eyeTags = document.getElementById('asset-eye-tags').value.trim();
+            positiveFull += `\n[CHAR_FACE_TAG_INFORM]\n${JSON.stringify({list: [{FACE_TAGS: faceTags, EYE_TAGS: eyeTags, POSITIVE: "", CHAR: "ASSET_MODE"}]})}`;
+            // HRF
+            positiveFull += `\n[HRF_ACTIVATE]\n${hrfSdxl ? 'true' : 'false'}`;
+            if (isAnima) positiveFull += `\n[ANIMA_HRF_ACTIVATE]\n${hrfAnima ? 'true' : 'false'}`;
             positiveFull += `\n[HRF_SIZE]\n${hrfSize}`;
             positiveFull += `\n[HRF_RESTORE_SIZE]\n${hrfRestoreSize ? 'true' : 'false'}`;
             positiveFull += `\n[HRF_CONTROL_NET]\n${hrfControlNet ? 'true' : 'false'}`;
             positiveFull += `\n[IMG_W]\n${imgW}`;
             positiveFull += `\n[IMG_H]\n${imgH}`;
-            positiveFull += `\n[FD_ACTIVATE]\n${fdActivate ? 'true' : 'false'}`;
-            positiveFull += `\n[HD_ACTIVATE]\n${hdActivate ? 'true' : 'false'}`;
-            positiveFull += `\n[ED_ACTIVATE]\n${edActivate ? 'true' : 'false'}`;
+            positiveFull += `\n[ANIMA_FD_ACTIVATE]\n${animaFdActivate ? 'true' : 'false'}`;
+            positiveFull += `\n[ANIMA_HD_ACTIVATE]\n${animaHdActivate ? 'true' : 'false'}`;
+            positiveFull += `\n[ANIMA_ED_ACTIVATE]\n${animaEdActivate ? 'true' : 'false'}`;
+            positiveFull += `\n[FD_ACTIVATE]\n${sdxlFdActivate ? 'true' : 'false'}`;
+            positiveFull += `\n[HD_ACTIVATE]\n${sdxlHdActivate ? 'true' : 'false'}`;
+            positiveFull += `\n[ED_ACTIVATE]\n${sdxlEdActivate ? 'true' : 'false'}`;
+            // Seed
+            const seed = parseInt(document.getElementById('asset-seed-input').value) || -1;
+            positiveFull += `\n[SEED]\n${seed}`;
             positiveFull += '\n[END]';
 
             let negative;
@@ -25258,12 +25305,6 @@
                 if (title) title.textContent = isAnima ? 'SDXL 부정 태그' : '부정 태그';
             }
             updatePoseForWorkflowType();
-            // ANIMA HRF 드롭다운 표시 동기화
-            const animaHrfRow = document.getElementById('asset-anima-hrf-row');
-            if (animaHrfRow) {
-                const hrfOn = document.getElementById('asset-hrf-toggle')?.checked;
-                animaHrfRow.style.display = (isAnima && hrfOn) ? 'flex' : 'none';
-            }
             // EP HRF 모드 드롭다운 표시 동기화
             const epHrfMode = document.getElementById('ep-hrf-mode');
             if (epHrfMode) {
@@ -26395,6 +26436,8 @@
         // ─── 포즈 선택 ───────────────────────────────────────
         // ─── LoRA 블록 (개별 에셋) ──
         let assetLoraList = []; // [{name, character, lora_path, strength, preview_url, trigger, BASE}]
+        let faceLoraList = []; // Face LoRA (동일 구조)
+        let _loraPickerCfg = { list: assetLoraList, render: null, overlayId: 'asset-lora-picker-overlay' };
 
         function onAssetLoraToggle() {
             const on = document.getElementById('asset-lora-toggle').checked;
@@ -26451,6 +26494,49 @@
             `).join('');
         }
 
+        // ─── Face LoRA 블록 (개별 에셋) ──
+        function onAssetFaceLoraToggle() {
+            const on = document.getElementById('asset-face-lora-toggle').checked;
+            document.getElementById('asset-face-lora-section').style.display = on ? 'block' : 'none';
+            const status = document.getElementById('asset-face-lora-status');
+            status.textContent = on ? 'ON' : 'OFF';
+            status.className = 'toggle-status ' + (on ? 'on' : 'off');
+        }
+
+        function renderAssetFaceLoraList() {
+            const container = document.getElementById('asset-face-lora-list');
+            if (!container) return;
+            if (faceLoraList.length === 0) {
+                container.innerHTML = '<div style="font-size:0.75rem; color:var(--text-secondary); text-align:center; padding:4px;">선택된 Face LoRA가 없습니다</div>';
+                return;
+            }
+            container.innerHTML = faceLoraList.map((lora, i) => `
+                <div style="padding:8px; background:var(--surface2); border-radius:6px; border:1px solid var(--border); position:relative;">
+                    <button onclick="faceLoraList.splice(${i},1); renderAssetFaceLoraList();"
+                        style="position:absolute; top:2px; right:4px; background:none; border:none; color:var(--error); cursor:pointer; font-size:1.8rem; padding:2px 4px;">x</button>
+                    ${lora.preview_url ? `<img src="${escapeHtml(lora.preview_url)}" style="width:70%; aspect-ratio:1; object-fit:cover; border-radius:6px; display:block; margin:0 auto;">` : '<div style="width:70%; aspect-ratio:1; background:var(--surface); border-radius:6px; display:flex; align-items:center; justify-content:center; font-size:2rem; margin:0 auto;">📦</div>'}
+                    <div style="margin-top:6px;">
+                        <div style="display:flex; align-items:center; gap:4px;">
+                            <span style="font-size:0.6rem; background:${lora.source === 'bot' ? 'rgba(76,175,80,0.3)' : lora.source === 'instance' ? 'rgba(255,152,0,0.3)' : 'rgba(180,140,255,0.3)'}; padding:1px 4px; border-radius:3px; color:var(--text);">${lora.source === 'bot' ? '봇' : lora.source === 'instance' ? '인스턴스' : '에셋'}</span>
+                            <div style="font-size:0.8rem; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:1;">${escapeHtml(lora.name)}</div>
+                        </div>
+                        <div style="font-size:0.65rem; color:var(--text-secondary);">${escapeHtml(lora.character)}</div>
+                    </div>
+                    <select onchange="faceLoraList[${i}].BASE=this.value"
+                        style="width:100%; margin-top:6px; background:var(--surface); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:3px 4px; font-size:0.75rem; cursor:pointer;">
+                        <option value="anima" ${lora.BASE === 'anima' ? 'selected' : ''}>anima</option>
+                        <option value="sdxl" ${(lora.BASE === 'sdxl' || lora.BASE === 'ilxl') ? 'selected' : ''}>sdxl</option>
+                    </select>
+                    <div style="display:flex; align-items:center; gap:6px; margin-top:6px;">
+                        <input type="range" min="0" max="1" step="0.01" value="${lora.strength}"
+                            oninput="faceLoraList[${i}].strength=parseFloat(this.value); this.nextElementSibling.textContent=parseFloat(this.value).toFixed(2)"
+                            style="flex:1; cursor:pointer;">
+                        <span style="font-size:0.7rem; min-width:28px; text-align:right;">${lora.strength.toFixed(2)}</span>
+                    </div>
+                </div>
+            `).join('');
+        }
+
         let loraPickerData = null;
 
         let loraPickerCurrentTab = 'asset';
@@ -26463,14 +26549,24 @@
         }
 
         async function openAssetLoraPicker() {
+            _loraPickerCfg = { list: assetLoraList, render: renderAssetLoraList, overlayId: 'asset-lora-picker-overlay' };
+            _openLoraPickerModal('LoRA 선택', 'asset-lora-picker-overlay');
+        }
+
+        async function openAssetFaceLoraPicker() {
+            _loraPickerCfg = { list: faceLoraList, render: renderAssetFaceLoraList, overlayId: 'asset-face-lora-picker-overlay' };
+            _openLoraPickerModal('Face LoRA 선택', 'asset-face-lora-picker-overlay');
+        }
+
+        async function _openLoraPickerModal(title, overlayId) {
             const overlay = document.createElement('div');
-            overlay.id = 'asset-lora-picker-overlay';
+            overlay.id = overlayId;
             overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10010; display:flex; align-items:center; justify-content:center;';
             overlay.innerHTML = `
                 <div style="background:var(--surface); border-radius:12px; padding:20px; max-width:700px; width:90%; max-height:80vh; display:flex; flex-direction:column;">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-                        <h3 style="margin:0;">LoRA 선택</h3>
-                        <button onclick="document.getElementById('asset-lora-picker-overlay').remove()" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer;">x</button>
+                        <h3 style="margin:0;">${title}</h3>
+                        <button onclick="document.getElementById('${overlayId}').remove()" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer;">x</button>
                     </div>
                     <div id="lora-picker-tabs" style="display:flex; gap:4px; margin-bottom:8px;">
                         <button id="lora-picker-tab-asset" onclick="switchLoraPickerTab('asset')" style="padding:4px 14px; font-size:0.8rem; font-weight:600; cursor:pointer; border:none; background:var(--accent); color:#fff; border-radius:4px;">에셋</button>
@@ -26634,7 +26730,7 @@
                     card.onclick = () => {
                         const repSafetensors = repData.safetensors || '';
                         const matchedFile = files.find(f => f.safetensors === repSafetensors) || files[files.length - 1];
-                        assetLoraList.push({
+                        _loraPickerCfg.list.push({
                             name: entry.name,
                             character: group.character,
                             lora_path: matchedFile.path,
@@ -26644,8 +26740,8 @@
                             BASE: BASE,
                             source: 'asset',
                         });
-                        renderAssetLoraList();
-                        document.getElementById('asset-lora-picker-overlay').remove();
+                        _loraPickerCfg.render();
+                        document.getElementById(_loraPickerCfg.overlayId).remove();
                         showToast(`LoRA "${entry.name}" (${sessionName}) 추가됨`, 'success');
                     };
                 }
@@ -26744,7 +26840,7 @@
                 card.onmouseenter = () => { card.style.borderColor = 'var(--accent)'; };
                 card.onmouseleave = () => { card.style.borderColor = 'var(--border)'; };
                 card.onclick = () => {
-                    assetLoraList.push({
+                    _loraPickerCfg.list.push({
                         name: char.char_name,
                         character: `${bot.bot_name} / ${proj.project_name}`,
                         lora_path: char.lora_path,
@@ -26754,8 +26850,8 @@
                         BASE: char.BASE || 'anima',
                         source: 'bot',
                     });
-                    renderAssetLoraList();
-                    document.getElementById('asset-lora-picker-overlay').remove();
+                    _loraPickerCfg.render();
+                    document.getElementById(_loraPickerCfg.overlayId).remove();
                     showToast(`봇 LoRA "${char.char_name}" 추가됨`, 'success');
                 };
                 grid.appendChild(card);
@@ -26812,7 +26908,7 @@
                     // anima/sdxl 양쪽 대표 자동 추가
                     let addedCount = 0;
                     for (const [profile, pData] of Object.entries(item.profiles)) {
-                        assetLoraList.push({
+                        _loraPickerCfg.list.push({
                             name: `${item.lora_id} (${profile})`,
                             character: 'instance',
                             lora_path: pData.lora_path,
@@ -26825,8 +26921,8 @@
                         });
                         addedCount++;
                     }
-                    renderAssetLoraList();
-                    document.getElementById('asset-lora-picker-overlay').remove();
+                    _loraPickerCfg.render();
+                    document.getElementById(_loraPickerCfg.overlayId).remove();
                     showToast(`인스턴스 LoRA "${item.lora_id}" ${addedCount}개 추가됨`, 'success');
                 };
                 grid.appendChild(card);
@@ -26844,18 +26940,6 @@
             if (on) loadAssetPoseGrid();
         }
 
-        document.getElementById('asset-hrf-toggle').addEventListener('change', function() {
-            const status = document.getElementById('asset-hrf-status');
-            status.textContent = this.checked ? 'ON' : 'OFF';
-            status.className = 'toggle-status ' + (this.checked ? 'on' : 'off');
-            document.getElementById('asset-hrf-options').style.display = this.checked ? 'flex' : 'none';
-            // ANIMA HRF 드롭다운 표시 동기화
-            const animaHrfRow = document.getElementById('asset-anima-hrf-row');
-            if (animaHrfRow) {
-                const isAnima = currentConfig?.asset_workflow_type === 'anima';
-                animaHrfRow.style.display = (this.checked && isAnima) ? 'flex' : 'none';
-            }
-        });
         document.getElementById('asset-hrf-size').addEventListener('input', function() {
             document.getElementById('asset-hrf-size-val').textContent = parseFloat(this.value).toFixed(2);
         });
@@ -26866,21 +26950,6 @@
         });
         document.getElementById('asset-hrf-control-net').addEventListener('change', function() {
             const status = document.getElementById('asset-hrf-control-net-status');
-            status.textContent = this.checked ? 'ON' : 'OFF';
-            status.className = 'toggle-status ' + (this.checked ? 'on' : 'off');
-        });
-        document.getElementById('asset-fd-toggle').addEventListener('change', function() {
-            const status = document.getElementById('asset-fd-status');
-            status.textContent = this.checked ? 'ON' : 'OFF';
-            status.className = 'toggle-status ' + (this.checked ? 'on' : 'off');
-        });
-        document.getElementById('asset-hd-toggle').addEventListener('change', function() {
-            const status = document.getElementById('asset-hd-status');
-            status.textContent = this.checked ? 'ON' : 'OFF';
-            status.className = 'toggle-status ' + (this.checked ? 'on' : 'off');
-        });
-        document.getElementById('asset-ed-toggle').addEventListener('change', function() {
-            const status = document.getElementById('asset-ed-status');
             status.textContent = this.checked ? 'ON' : 'OFF';
             status.className = 'toggle-status ' + (this.checked ? 'on' : 'off');
         });
@@ -30775,7 +30844,7 @@
         // ═══════════════════════════════════════════════════════
         // ─── 그림 일괄생성 (Batch Chain) ──────────────────────
         // ═══════════════════════════════════════════════════════
-        let batchChains = [];   // [{character, appearance, outfit, expression, composition_preset, quality_preset, negative_preset, ref_enabled, ref_strength, ref_images, pose_enabled, pose_id, hrf_enabled, fd_enabled, hd_enabled, ed_enabled}, ...]
+        let batchChains = [];   // [{character, appearance, outfit, expression, composition_preset, quality_preset, negative_preset, ref_enabled, ref_strength, ref_images, pose_enabled, pose_id, hrf_sdxl, hrf_anima, sdxl_fd_enabled, sdxl_hd_enabled, sdxl_ed_enabled, anima_fd_enabled, anima_hd_enabled, anima_ed_enabled, face_lora_enabled, face_lora_list, face_crop_top, face_crop_bottom, face_tags, eye_tags, face_positive, seed}, ...]
         let batchRunning = false;
         let batchActuallyRunning = false;
         let batchSlotIdCounter = 0;
@@ -30808,16 +30877,27 @@
                 lora_list: [],
                 pose_enabled: false,
                 pose_id: '',
-                hrf_enabled: false,
-                hrf_mode: 'both',
+                hrf_sdxl: false,
+                hrf_anima: false,
                 hrf_size: 2.0,
                 hrf_restore_size: true,
                 hrf_control_net: false,
                 img_w: 700,
                 img_h: 1024,
-                fd_enabled: false,
-                hd_enabled: false,
-                ed_enabled: false,
+                sdxl_fd_enabled: false,
+                sdxl_hd_enabled: false,
+                sdxl_ed_enabled: false,
+                anima_fd_enabled: false,
+                anima_hd_enabled: false,
+                anima_ed_enabled: false,
+                face_lora_enabled: false,
+                face_lora_list: [],
+                face_crop_top: 2.5,
+                face_crop_bottom: 1,
+                face_tags: '',
+                eye_tags: '',
+                face_positive: '',
+                seed: -1,
                 artist_preset: '',
                 anima_artist_preset: '',
                 anima_quality_preset: '',
@@ -30973,20 +31053,19 @@
                     <div style="border-top:1px solid var(--border); padding-top:10px;">
                         <div class="batch-field-label" style="margin-bottom:6px;">디테일러 일괄 설정</div>
                         <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
-                            <label style="font-size:0.8rem;">HRF:</label>
-                            <select id="bulk-hrf-action" class="batch-select" style="width:auto; min-width:120px;">
+                            <label style="font-size:0.8rem;">HRF SDXL:</label>
+                            <select id="bulk-hrf-sdxl-action" class="batch-select" style="width:auto; min-width:120px;">
                                 <option value="">변경 안함</option>
                                 <option value="on">모두 ON</option>
                                 <option value="off">모두 OFF</option>
                             </select>
                         </div>
-                        <div id="bulk-anima-hrf-row" style="display:${isAnima ? 'flex' : 'none'}; align-items:center; gap:8px; margin-bottom:6px;">
-                            <label style="font-size:0.8rem;">HRF 적용 대상:</label>
-                            <select id="bulk-anima-hrf-action" class="batch-select" style="width:auto; min-width:120px;">
+                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+                            <label style="font-size:0.8rem;">HRF ANIMA:</label>
+                            <select id="bulk-hrf-anima-action" class="batch-select" style="width:auto; min-width:120px;">
                                 <option value="">변경 안함</option>
-                                <option value="anima">ANIMA만</option>
-                                <option value="sdxl">SDXL만</option>
-                                <option value="both">둘다</option>
+                                <option value="on">모두 ON</option>
+                                <option value="off">모두 OFF</option>
                             </select>
                         </div>
                         <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
@@ -31014,28 +31093,94 @@
                             </select>
                         </div>
                         <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
-                            <label style="font-size:0.8rem;">FD 디테일러:</label>
-                            <select id="bulk-fd-action" class="batch-select" style="width:auto; min-width:120px;">
+                            <label style="font-size:0.8rem;">SDXL FD:</label>
+                            <select id="bulk-sdxl-fd-action" class="batch-select" style="width:auto; min-width:120px;">
                                 <option value="">변경 안함</option>
                                 <option value="on">모두 ON</option>
                                 <option value="off">모두 OFF</option>
                             </select>
                         </div>
                         <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
-                            <label style="font-size:0.8rem;">HD 디테일러:</label>
-                            <select id="bulk-hd-action" class="batch-select" style="width:auto; min-width:120px;">
+                            <label style="font-size:0.8rem;">SDXL HD:</label>
+                            <select id="bulk-sdxl-hd-action" class="batch-select" style="width:auto; min-width:120px;">
                                 <option value="">변경 안함</option>
                                 <option value="on">모두 ON</option>
                                 <option value="off">모두 OFF</option>
                             </select>
                         </div>
-                        <div style="display:flex; align-items:center; gap:8px;">
-                            <label style="font-size:0.8rem;">ED 디테일러:</label>
-                            <select id="bulk-ed-action" class="batch-select" style="width:auto; min-width:120px;">
+                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+                            <label style="font-size:0.8rem;">SDXL ED:</label>
+                            <select id="bulk-sdxl-ed-action" class="batch-select" style="width:auto; min-width:120px;">
                                 <option value="">변경 안함</option>
                                 <option value="on">모두 ON</option>
                                 <option value="off">모두 OFF</option>
                             </select>
+                        </div>
+                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+                            <label style="font-size:0.8rem;">ANIMA FD:</label>
+                            <select id="bulk-anima-fd-action" class="batch-select" style="width:auto; min-width:120px;">
+                                <option value="">변경 안함</option>
+                                <option value="on">모두 ON</option>
+                                <option value="off">모두 OFF</option>
+                            </select>
+                        </div>
+                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+                            <label style="font-size:0.8rem;">ANIMA HD:</label>
+                            <select id="bulk-anima-hd-action" class="batch-select" style="width:auto; min-width:120px;">
+                                <option value="">변경 안함</option>
+                                <option value="on">모두 ON</option>
+                                <option value="off">모두 OFF</option>
+                            </select>
+                        </div>
+                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+                            <label style="font-size:0.8rem;">ANIMA ED:</label>
+                            <select id="bulk-anima-ed-action" class="batch-select" style="width:auto; min-width:120px;">
+                                <option value="">변경 안함</option>
+                                <option value="on">모두 ON</option>
+                                <option value="off">모두 OFF</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div style="border-top:1px solid var(--border); padding-top:10px;">
+                        <div class="batch-field-label" style="margin-bottom:6px;">Face LoRA 일괄 설정</div>
+                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+                            <label style="font-size:0.8rem;">적용 여부:</label>
+                            <select id="bulk-face-lora-action" class="batch-select" style="width:auto; min-width:120px;">
+                                <option value="">변경 안함</option>
+                                <option value="on">모두 ON</option>
+                                <option value="off">모두 OFF</option>
+                            </select>
+                        </div>
+                        <div id="bulk-face-lora-list" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(120px, 1fr)); gap:6px; margin-bottom:6px;"></div>
+                        <button onclick="openBulkFaceLoraPicker()" style="font-size:0.75rem; padding:4px 10px; border:1px dashed var(--border); background:var(--surface2); color:var(--text-secondary); border-radius:4px; cursor:pointer; width:100%;">+ Face LoRA 추가</button>
+                    </div>
+
+                    <div style="border-top:1px solid var(--border); padding-top:10px;">
+                        <div class="batch-field-label" style="margin-bottom:6px;">디테일러 옵션 일괄 설정</div>
+                        <div style="display:flex; gap:8px; align-items:center; margin-bottom:6px;">
+                            <label style="font-size:0.8rem;">FACE_CROP TOP:</label>
+                            <input type="number" id="bulk-face-crop-top" value="2.5" step="0.1" style="width:60px; padding:3px 4px; border:1px solid var(--border); background:var(--surface); color:var(--text); border-radius:4px; font-size:0.8rem; text-align:center;">
+                            <label style="font-size:0.8rem;">BOTTOM:</label>
+                            <input type="number" id="bulk-face-crop-bottom" value="1" step="0.1" style="width:60px; padding:3px 4px; border:1px solid var(--border); background:var(--surface); color:var(--text); border-radius:4px; font-size:0.8rem; text-align:center;">
+                            <label style="font-size:0.75rem; display:flex; align-items:center; gap:4px; cursor:pointer;"><input type="checkbox" id="bulk-face-crop-check"> 적용</label>
+                        </div>
+                        <div style="display:flex; gap:8px; align-items:center; margin-bottom:6px;">
+                            <label style="font-size:0.8rem;">FACE_TAGS:</label>
+                            <input type="text" id="bulk-face-tags" placeholder="예: blonde hair" style="flex:1; padding:3px 6px; border:1px solid var(--border); background:var(--surface); color:var(--text); border-radius:4px; font-size:0.8rem;">
+                        </div>
+                        <div style="display:flex; gap:8px; align-items:center; margin-bottom:6px;">
+                            <label style="font-size:0.8rem;">EYE_TAGS:</label>
+                            <input type="text" id="bulk-eye-tags" placeholder="예: blue eyes" style="flex:1; padding:3px 6px; border:1px solid var(--border); background:var(--surface); color:var(--text); border-radius:4px; font-size:0.8rem;">
+                        </div>
+                    </div>
+
+                    <div style="border-top:1px solid var(--border); padding-top:10px;">
+                        <div class="batch-field-label" style="margin-bottom:6px;">Seed 일괄 설정</div>
+                        <div style="display:flex; gap:8px; align-items:center;">
+                            <label style="font-size:0.8rem;">Seed:</label>
+                            <input type="number" id="bulk-seed" value="-1" style="width:100px; padding:3px 4px; border:1px solid var(--border); background:var(--surface); color:var(--text); border-radius:4px; font-size:0.8rem; text-align:center;">
+                            <label style="font-size:0.75rem; display:flex; align-items:center; gap:4px; cursor:pointer;"><input type="checkbox" id="bulk-seed-check"> 적용</label>
                         </div>
                     </div>
                     </div>
@@ -31306,6 +31451,20 @@
         }
 
         let bulkLoraList = [];
+        let bulkFaceLoraList = [];
+
+        function renderBulkFaceLoraList() {
+            const container = document.getElementById('bulk-face-lora-list');
+            if (!container) return;
+            if (bulkFaceLoraList.length === 0) { container.innerHTML = ''; return; }
+            container.innerHTML = bulkFaceLoraList.map((l, i) => `
+                <div style="padding:6px; background:var(--surface2); border-radius:6px; border:1px solid var(--border); position:relative; text-align:center;">
+                    <button onclick="bulkFaceLoraList.splice(${i},1); renderBulkFaceLoraList();" style="position:absolute; top:1px; right:3px; background:none; border:none; color:var(--error); cursor:pointer; font-size:1rem;">x</button>
+                    ${l.preview_url ? `<img src="${escapeHtml(l.preview_url)}" style="width:80%; aspect-ratio:1; object-fit:cover; border-radius:6px; display:block; margin:0 auto;">` : '<div style="width:80%; aspect-ratio:1; background:var(--surface); border-radius:6px; display:flex; align-items:center; justify-content:center; font-size:1.2rem; margin:0 auto;">📦</div>'}
+                    <div style="font-size:0.7rem; margin-top:4px;">${escapeHtml(l.name)}</div>
+                </div>
+            `).join('');
+        }
 
         function renderBulkLoraList() {
             const container = document.getElementById('bulk-lora-list');
@@ -31335,6 +31494,65 @@
                     </div>
                 </div>
             `).join('');
+        }
+
+        async function openBulkFaceLoraPicker() {
+            const overlay = document.createElement('div');
+            overlay.id = 'bulk-face-lora-picker-overlay';
+            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10020; display:flex; align-items:center; justify-content:center;';
+            overlay.innerHTML = `
+                <div style="background:var(--surface); border-radius:12px; padding:20px; max-width:700px; width:90%; max-height:80vh; display:flex; flex-direction:column;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                        <h3 style="margin:0;">Face LoRA 선택</h3>
+                        <button onclick="document.getElementById('bulk-face-lora-picker-overlay').remove()" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer;">x</button>
+                    </div>
+                    <div id="bulk-face-lora-picker-grid" style="display:grid; grid-template-columns:repeat(4,1fr); gap:8px; overflow-y:auto; max-height:calc(80vh - 80px);"></div>
+                </div>`;
+            document.body.appendChild(overlay);
+            overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+            const grid = document.getElementById('bulk-face-lora-picker-grid');
+            grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--text-secondary);">로딩중...</div>';
+            try {
+                const resp = await fetch('/api/lora/for_picker');
+                const data = await resp.json();
+                if (!data.success) { grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--error);">로드 실패</div>'; return; }
+                const groups = data.groups || [];
+                grid.innerHTML = '';
+                groups.forEach(group => {
+                    const card = document.createElement('div');
+                    card.style.cssText = 'cursor:pointer; border-radius:8px; border:2px solid var(--border); padding:16px 8px; text-align:center;';
+                    card.innerHTML = `<div style="font-size:1.2rem; margin-bottom:4px;">📁</div><div style="font-size:0.85rem;">${escapeHtml(group.character)}</div>`;
+                    card.onclick = () => {
+                        grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--text-secondary);">로딩중...</div>';
+                        const entries = group.entries || [];
+                        grid.innerHTML = '';
+                        entries.forEach(entry => {
+                            const hasFile = entry.lora_files && entry.lora_files.length > 0;
+                            const ec = document.createElement('div');
+                            ec.style.cssText = `cursor:${hasFile ? 'pointer' : 'default'}; border-radius:8px; overflow:hidden; border:2px solid var(--border); ${hasFile ? '' : 'opacity:0.5;'}`;
+                            ec.innerHTML = `<div style="padding:8px; text-align:center;">${escapeHtml(entry.name)}</div>`;
+                            if (hasFile) {
+                                ec.onclick = () => {
+                                    const lastFile = entry.lora_files[entry.lora_files.length - 1];
+                                    const BASE = (entry.training_config && entry.training_config.profile) || 'anima';
+                                    bulkFaceLoraList.push({
+                                        name: entry.name, character: group.character,
+                                        lora_path: lastFile.path, strength: 0.5,
+                                        preview_url: '', trigger: entry.trigger || '', BASE,
+                                    });
+                                    renderBulkFaceLoraList();
+                                    document.getElementById('bulk-face-lora-picker-overlay').remove();
+                                    showToast(`Face LoRA "${entry.name}" 추가됨`, 'success');
+                                };
+                            }
+                            grid.appendChild(ec);
+                        });
+                    };
+                    grid.appendChild(card);
+                });
+            } catch (e) {
+                grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--error);">로드 실패</div>';
+            }
         }
 
         async function openBulkLoraPicker() {
@@ -31485,8 +31703,8 @@
             const styleRefAction = document.getElementById('bulk-style-ref-action').value;
             const styleRefStrengthCheck = document.getElementById('bulk-style-ref-strength-check').checked;
             const styleRefStrength = parseFloat(document.getElementById('bulk-style-ref-strength').value);
-            const hrfAction = document.getElementById('bulk-hrf-action').value;
-            const animaHrfAction = document.getElementById('bulk-anima-hrf-action')?.value || '';
+            const hrfSdxlAction = document.getElementById('bulk-hrf-sdxl-action').value;
+            const hrfAnimaAction = document.getElementById('bulk-hrf-anima-action').value;
             const hrfSizeCheck = document.getElementById('bulk-hrf-size-check').checked;
             const hrfSize = parseFloat(document.getElementById('bulk-hrf-size').value);
             const hrfRestoreSizeAction = document.getElementById('bulk-hrf-restore-size-action').value;
@@ -31494,10 +31712,21 @@
             const imgSizeCheck = document.getElementById('bulk-img-size-check').checked;
             const imgW = parseInt(document.getElementById('bulk-img-w').value) || 700;
             const imgH = parseInt(document.getElementById('bulk-img-h').value) || 1024;
-            const fdAction = document.getElementById('bulk-fd-action').value;
-            const hdAction = document.getElementById('bulk-hd-action').value;
-            const edAction = document.getElementById('bulk-ed-action').value;
+            const sdxlFdAction = document.getElementById('bulk-sdxl-fd-action').value;
+            const sdxlHdAction = document.getElementById('bulk-sdxl-hd-action').value;
+            const sdxlEdAction = document.getElementById('bulk-sdxl-ed-action').value;
+            const animaFdAction = document.getElementById('bulk-anima-fd-action').value;
+            const animaHdAction = document.getElementById('bulk-anima-hd-action').value;
+            const animaEdAction = document.getElementById('bulk-anima-ed-action').value;
             const loraAction = document.getElementById('bulk-lora-action').value;
+            const faceLoraAction = document.getElementById('bulk-face-lora-action').value;
+            const faceCropCheck = document.getElementById('bulk-face-crop-check').checked;
+            const faceCropTop = parseFloat(document.getElementById('bulk-face-crop-top').value) || 2.5;
+            const faceCropBottom = parseFloat(document.getElementById('bulk-face-crop-bottom').value) || 1;
+            const bulkFaceTags = document.getElementById('bulk-face-tags').value;
+            const bulkEyeTags = document.getElementById('bulk-eye-tags').value;
+            const seedCheck = document.getElementById('bulk-seed-check').checked;
+            const bulkSeed = parseInt(document.getElementById('bulk-seed').value) || -1;
 
             batchChains.forEach(slot => {
                 if (fields.character) slot.character = fields.character;
@@ -31537,23 +31766,38 @@
                     slot.lora_enabled = true;
                 }
                 if (loraAction === 'off') slot.lora_enabled = false;
-                if (fdAction === 'on') slot.fd_enabled = true;
-                if (fdAction === 'off') slot.fd_enabled = false;
-                if (hrfAction === 'on') slot.hrf_enabled = true;
-                if (hrfAction === 'off') slot.hrf_enabled = false;
-                if (animaHrfAction === 'anima') slot.hrf_mode = 'anima';
-                if (animaHrfAction === 'sdxl') slot.hrf_mode = 'sdxl';
-                if (animaHrfAction === 'both') slot.hrf_mode = 'both';
+                if (sdxlFdAction === 'on') slot.sdxl_fd_enabled = true;
+                if (sdxlFdAction === 'off') slot.sdxl_fd_enabled = false;
+                if (sdxlHdAction === 'on') slot.sdxl_hd_enabled = true;
+                if (sdxlHdAction === 'off') slot.sdxl_hd_enabled = false;
+                if (sdxlEdAction === 'on') slot.sdxl_ed_enabled = true;
+                if (sdxlEdAction === 'off') slot.sdxl_ed_enabled = false;
+                if (animaFdAction === 'on') slot.anima_fd_enabled = true;
+                if (animaFdAction === 'off') slot.anima_fd_enabled = false;
+                if (animaHdAction === 'on') slot.anima_hd_enabled = true;
+                if (animaHdAction === 'off') slot.anima_hd_enabled = false;
+                if (animaEdAction === 'on') slot.anima_ed_enabled = true;
+                if (animaEdAction === 'off') slot.anima_ed_enabled = false;
+                if (hrfSdxlAction === 'on') slot.hrf_sdxl = true;
+                if (hrfSdxlAction === 'off') slot.hrf_sdxl = false;
+                if (hrfAnimaAction === 'on') slot.hrf_anima = true;
+                if (hrfAnimaAction === 'off') slot.hrf_anima = false;
                 if (hrfSizeCheck) slot.hrf_size = hrfSize;
                 if (hrfRestoreSizeAction === 'on') slot.hrf_restore_size = true;
                 if (hrfRestoreSizeAction === 'off') slot.hrf_restore_size = false;
                 if (hrfControlNetAction === 'on') slot.hrf_control_net = true;
                 if (hrfControlNetAction === 'off') slot.hrf_control_net = false;
                 if (imgSizeCheck) { slot.img_w = imgW; slot.img_h = imgH; }
-                if (hdAction === 'on') slot.hd_enabled = true;
-                if (hdAction === 'off') slot.hd_enabled = false;
-                if (edAction === 'on') slot.ed_enabled = true;
-                if (edAction === 'off') slot.ed_enabled = false;
+                if (faceLoraAction === 'on') slot.face_lora_enabled = true;
+                if (faceLoraAction === 'off') slot.face_lora_enabled = false;
+                if (bulkFaceLoraList.length > 0) {
+                    slot.face_lora_list = bulkFaceLoraList.map(l => ({...l}));
+                    slot.face_lora_enabled = true;
+                }
+                if (faceCropCheck) { slot.face_crop_top = faceCropTop; slot.face_crop_bottom = faceCropBottom; }
+                if (bulkFaceTags) slot.face_tags = bulkFaceTags;
+                if (bulkEyeTags) slot.eye_tags = bulkEyeTags;
+                if (seedCheck) slot.seed = bulkSeed;
             });
 
             document.getElementById('batch-bulk-overlay').remove();
@@ -31739,6 +31983,39 @@
                     </div>
                 </div>
 
+                <div class="batch-toggle-row" style="background:rgba(76,175,80,0.08); border-radius:4px; padding:2px 6px;">
+                    <label>Face LoRA</label>
+                    <label class="toggle-switch"><input type="checkbox" data-field="face_lora_enabled" ${slot.face_lora_enabled ? 'checked' : ''}><span class="toggle-slider"></span></label>
+                </div>
+                <div class="batch-face-lora-section" style="display:${slot.face_lora_enabled ? 'block' : 'none'}; margin-bottom:4px;">
+                    <button class="batch-face-lora-add-btn" style="width:100%; font-size:0.7rem; padding:3px; border:1px dashed var(--border); background:var(--surface2); border-radius:4px; cursor:pointer; color:var(--text-secondary);" onclick="openBatchSlotFaceLoraPicker(${idx})">+ Face LoRA 추가</button>
+                    <div class="batch-face-lora-items">
+                        ${(slot.face_lora_list || []).map((l, li) => `
+                            <div style="padding:6px; background:var(--surface2); border-radius:6px; border:1px solid var(--border); margin-top:4px; position:relative;">
+                                <button onclick="batchChains[${idx}].face_lora_list.splice(${li},1); renderBatchChain();"
+                                    style="position:absolute; top:2px; right:4px; background:none; border:none; color:var(--error); cursor:pointer; font-size:1.4rem; padding:2px 4px;">x</button>
+                                ${l.preview_url ? `<img src="${escapeHtml(l.preview_url)}" style="width:70%; aspect-ratio:1; object-fit:cover; border-radius:6px; display:block; margin:0 auto;">` : '<div style="width:70%; aspect-ratio:1; background:var(--surface); border-radius:6px; display:flex; align-items:center; justify-content:center; font-size:1.5rem; margin:0 auto;">📦</div>'}
+                                <div style="margin-top:4px;">
+                                    <div style="display:flex; align-items:center; gap:3px;">
+                                        <span style="font-size:0.55rem; background:${l.source === 'bot' ? 'rgba(76,175,80,0.3)' : l.source === 'instance' ? 'rgba(255,152,0,0.3)' : 'rgba(180,140,255,0.3)'}; padding:1px 3px; border-radius:3px; color:var(--text);">${l.source === 'bot' ? '봇' : l.source === 'instance' ? '인스턴스' : '에셋'}</span>
+                                        <div style="font-size:0.75rem; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:1;">${escapeHtml(l.name)}</div>
+                                    </div>
+                                </div>
+                                <select onchange="batchChains[${idx}].face_lora_list[${li}].BASE=this.value"
+                                    style="width:100%; margin-top:4px; background:var(--surface); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:2px 4px; font-size:0.7rem; cursor:pointer;">
+                                    <option value="anima" ${l.BASE === 'anima' ? 'selected' : ''}>anima</option>
+                                    <option value="sdxl" ${(l.BASE === 'sdxl' || l.BASE === 'ilxl') ? 'selected' : ''}>sdxl</option>
+                                </select>
+                                <div style="display:flex; align-items:center; gap:4px; margin-top:4px;">
+                                    <input type="range" min="0" max="1" step="0.01" value="${l.strength}" style="flex:1; cursor:pointer;"
+                                        oninput="batchChains[${idx}].face_lora_list[${li}].strength=parseFloat(this.value); this.nextElementSibling.textContent=parseFloat(this.value).toFixed(2); updateBatchPreview(this.closest('.batch-slot'), ${idx})">
+                                    <span style="font-size:0.7rem; min-width:28px; text-align:right;">${l.strength.toFixed(2)}</span>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+
                 <div class="batch-toggle-row" ${isAnima ? 'style="opacity:0.4; pointer-events:none;"' : ''}>
                     <label>포즈</label>
                     <label class="toggle-switch"><input type="checkbox" data-field="pose_enabled" ${isAnima ? 'disabled' : ''} ${slot.pose_enabled ? 'checked' : ''}><span class="toggle-slider"></span></label>
@@ -31758,19 +32035,12 @@
 
                 <div class="batch-toggle-row">
                     <label>HIRES FIX</label>
-                    <label class="toggle-switch"><input type="checkbox" data-field="hrf_enabled" ${slot.hrf_enabled ? 'checked' : ''}><span class="toggle-slider"></span></label>
+                    <label style="display:flex; align-items:center; gap:3px; font-size:0.7rem; cursor:pointer;"><input type="checkbox" data-field="hrf_sdxl" ${slot.hrf_sdxl ? 'checked' : ''}> SDXL</label>
+                    <label style="display:flex; align-items:center; gap:3px; font-size:0.7rem; cursor:pointer;"><input type="checkbox" data-field="hrf_anima" ${slot.hrf_anima ? 'checked' : ''}> ANIMA</label>
                 </div>
-                <div class="batch-hrf-options" style="display:${slot.hrf_enabled ? 'flex' : 'none'}; flex-direction:column; gap:4px; padding:4px 6px; background:var(--surface2); border-radius:4px; border:1px solid var(--border);">
-                    <div class="batch-anima-hrf-row" style="display:${isAnima && slot.hrf_enabled ? 'flex' : 'none'}; align-items:center; gap:6px;">
-                        <span style="font-size:0.7rem; color:var(--text-secondary); min-width:fit-content;">HRF 적용 대상</span>
-                        <select data-field="hrf_mode" style="padding:2px 4px; border:1px solid var(--border); background:var(--surface); color:var(--text); border-radius:3px; font-size:0.7rem;">
-                            <option value="anima" ${slot.hrf_mode === 'anima' ? 'selected' : ''}>ANIMA만</option>
-                            <option value="sdxl" ${slot.hrf_mode === 'sdxl' ? 'selected' : ''}>SDXL만</option>
-                            <option value="both" ${(!slot.hrf_mode || slot.hrf_mode === 'both') ? 'selected' : ''}>둘다</option>
-                        </select>
-                    </div>
+                <div style="display:flex; flex-direction:column; gap:4px; padding:4px 6px; background:var(--surface2); border-radius:4px; border:1px solid var(--border);">
                     <div style="display:flex; align-items:center; gap:6px;">
-                        <span style="font-size:0.7rem; color:var(--text-secondary); min-width:fit-content;">업스케일링 비율</span>
+                        <span style="font-size:0.7rem; color:var(--text-secondary); min-width:fit-content;">업스케일 비율</span>
                         <input type="range" data-field="hrf_size" min="1" max="3" step="0.05" value="${slot.hrf_size || 2.0}" style="flex:1; cursor:pointer;">
                         <span class="batch-hrf-size-val" style="font-size:0.7rem; min-width:24px; text-align:right;">${slot.hrf_size || 2.0}</span>
                     </div>
@@ -31783,17 +32053,41 @@
                         <label class="toggle-switch"><input type="checkbox" data-field="hrf_control_net" ${slot.hrf_control_net ? 'checked' : ''}><span class="toggle-slider"></span></label>
                     </div>
                 </div>
-                <div class="batch-toggle-row">
-                    <label>페이스 디테일러</label>
-                    <label class="toggle-switch"><input type="checkbox" data-field="fd_enabled" ${slot.fd_enabled ? 'checked' : ''}><span class="toggle-slider"></span></label>
+                <div style="display:flex; gap:6px;">
+                    <span class="illust-section-chip sdxl">SDXL</span>
+                    <label style="display:flex; align-items:center; gap:3px; font-size:0.7rem; cursor:pointer;"><input type="checkbox" data-field="sdxl_fd_enabled" ${slot.sdxl_fd_enabled ? 'checked' : ''}> FD</label>
+                    <label style="display:flex; align-items:center; gap:3px; font-size:0.7rem; cursor:pointer;"><input type="checkbox" data-field="sdxl_hd_enabled" ${slot.sdxl_hd_enabled ? 'checked' : ''}> HD</label>
+                    <label style="display:flex; align-items:center; gap:3px; font-size:0.7rem; cursor:pointer;"><input type="checkbox" data-field="sdxl_ed_enabled" ${slot.sdxl_ed_enabled ? 'checked' : ''}> ED</label>
                 </div>
-                <div class="batch-toggle-row">
-                    <label>핸드 디테일러</label>
-                    <label class="toggle-switch"><input type="checkbox" data-field="hd_enabled" ${slot.hd_enabled ? 'checked' : ''}><span class="toggle-slider"></span></label>
+                <div style="display:flex; gap:6px;">
+                    <span class="illust-section-chip anima">ANIMA</span>
+                    <label style="display:flex; align-items:center; gap:3px; font-size:0.7rem; cursor:pointer;"><input type="checkbox" data-field="anima_fd_enabled" ${slot.anima_fd_enabled ? 'checked' : ''}> FD</label>
+                    <label style="display:flex; align-items:center; gap:3px; font-size:0.7rem; cursor:pointer;"><input type="checkbox" data-field="anima_hd_enabled" ${slot.anima_hd_enabled ? 'checked' : ''}> HD</label>
+                    <label style="display:flex; align-items:center; gap:3px; font-size:0.7rem; cursor:pointer;"><input type="checkbox" data-field="anima_ed_enabled" ${slot.anima_ed_enabled ? 'checked' : ''}> ED</label>
                 </div>
-                <div class="batch-toggle-row">
-                    <label>눈 디테일러</label>
-                    <label class="toggle-switch"><input type="checkbox" data-field="ed_enabled" ${slot.ed_enabled ? 'checked' : ''}><span class="toggle-slider"></span></label>
+                <div style="padding:4px 6px; background:var(--surface2); border-radius:4px; border:1px solid var(--border);">
+                    <div style="font-size:0.65rem; color:var(--text-secondary); margin-bottom:3px;">FACE CROP</div>
+                    <div style="display:flex; gap:6px; align-items:center; margin-bottom:4px;">
+                        <span style="font-size:0.6rem; color:var(--text-muted);">TOP</span>
+                        <input type="number" data-field="face_crop_top" value="${slot.face_crop_top ?? 2.5}" step="0.1" style="width:50px; padding:2px 3px; border:1px solid var(--border); background:var(--surface); color:var(--text); border-radius:3px; font-size:0.7rem; text-align:center;">
+                        <span style="font-size:0.6rem; color:var(--text-muted);">BTM</span>
+                        <input type="number" data-field="face_crop_bottom" value="${slot.face_crop_bottom ?? 1}" step="0.1" style="width:50px; padding:2px 3px; border:1px solid var(--border); background:var(--surface); color:var(--text); border-radius:3px; font-size:0.7rem; text-align:center;">
+                    </div>
+                    <div style="display:flex; gap:4px; align-items:center; margin-bottom:3px;">
+                        <span style="font-size:0.6rem; color:var(--text-muted); min-width:fit-content;">FACE</span>
+                        <input type="text" data-field="face_tags" value="${escapeHtml(slot.face_tags || '')}" placeholder="face tags" style="flex:1; padding:2px 4px; border:1px solid var(--border); background:var(--surface); color:var(--text); border-radius:3px; font-size:0.7rem;">
+                    </div>
+                    <div style="display:flex; gap:4px; align-items:center; margin-bottom:3px;">
+                        <span style="font-size:0.6rem; color:var(--text-muted); min-width:fit-content;">EYE</span>
+                        <input type="text" data-field="eye_tags" value="${escapeHtml(slot.eye_tags || '')}" placeholder="eye tags" style="flex:1; padding:2px 4px; border:1px solid var(--border); background:var(--surface); color:var(--text); border-radius:3px; font-size:0.7rem;">
+                    </div>
+                </div>
+
+                <div style="display:flex; gap:4px; align-items:center;">
+                    <span style="font-size:0.7rem; color:var(--text-muted);">Seed</span>
+                    <input type="number" data-field="seed" value="${slot.seed ?? -1}" style="flex:1; padding:3px 4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:4px; font-size:0.75rem;">
+                    <button onclick="const f=this.parentElement.querySelector('[data-field=seed]'); f.value=Math.floor(Math.random()*4294967295);" style="padding:2px 6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:3px; cursor:pointer; font-size:0.65rem;" title="랜덤">&#127922;</button>
+                    <button onclick="this.parentElement.querySelector('[data-field=seed]').value=-1;" style="padding:2px 6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:3px; cursor:pointer; font-size:0.65rem;" title="랜덤 초기화">&#128260;</button>
                 </div>
 
                 <div class="batch-prompt-preview-wrap">
@@ -31903,13 +32197,8 @@
                     if (cb.dataset.field === 'pose_enabled') {
                         slotEl.querySelector('.batch-pose-select-row').style.display = cb.checked ? 'block' : 'none';
                     }
-                    if (cb.dataset.field === 'hrf_enabled') {
-                        slotEl.querySelector('.batch-hrf-options').style.display = cb.checked ? 'flex' : 'none';
-                        const animaHrfRow = slotEl.querySelector('.batch-anima-hrf-row');
-                        if (animaHrfRow) {
-                            const isAnima = currentConfig?.asset_workflow_type === 'anima';
-                            animaHrfRow.style.display = (cb.checked && isAnima) ? 'flex' : 'none';
-                        }
+                    if (cb.dataset.field === 'face_lora_enabled') {
+                        slotEl.querySelector('.batch-face-lora-section').style.display = cb.checked ? 'block' : 'none';
                     }
                     updateBatchPreview(slotEl, idx);
                 });
@@ -32084,20 +32373,31 @@
         let batchLoraPickerInstanceData = [];
         let batchLoraPickerData = null;
         let batchLoraPickerTarget = -1;
+        let _batchLoraPickerCfg = { listField: 'lora_list', enabledField: 'lora_enabled', overlayId: 'batch-lora-picker-overlay' };
 
         function batchLoraPickerBackAction() {
             if (batchLoraPickerBackFn) batchLoraPickerBackFn();
         }
 
         function openBatchSlotLoraPicker(slotIdx) {
+            _batchLoraPickerCfg = { listField: 'lora_list', enabledField: 'lora_enabled', overlayId: 'batch-lora-picker-overlay' };
+            _openBatchLoraPickerModal(slotIdx, 'LoRA 선택', 'batch-lora-picker-overlay');
+        }
+
+        function openBatchSlotFaceLoraPicker(slotIdx) {
+            _batchLoraPickerCfg = { listField: 'face_lora_list', enabledField: 'face_lora_enabled', overlayId: 'batch-face-lora-picker-overlay' };
+            _openBatchLoraPickerModal(slotIdx, 'Face LoRA 선택', 'batch-face-lora-picker-overlay');
+        }
+
+        function _openBatchLoraPickerModal(slotIdx, title, overlayId) {
             const overlay = document.createElement('div');
-            overlay.id = 'batch-lora-picker-overlay';
+            overlay.id = overlayId;
             overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10010; display:flex; align-items:center; justify-content:center;';
             overlay.innerHTML = `
                 <div style="background:var(--surface); border-radius:12px; padding:20px; max-width:700px; width:90%; max-height:80vh; display:flex; flex-direction:column;">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-                        <h3 style="margin:0;">LoRA 선택</h3>
-                        <button onclick="document.getElementById('batch-lora-picker-overlay').remove()" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer;">x</button>
+                        <h3 style="margin:0;">${title}</h3>
+                        <button onclick="document.getElementById('${overlayId}').remove()" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer;">x</button>
                     </div>
                     <div id="batch-lora-picker-tabs" style="display:flex; gap:4px; margin-bottom:8px;">
                         <button id="batch-lora-picker-tab-asset" onclick="switchBatchLoraPickerTab('asset')" style="padding:4px 14px; font-size:0.8rem; font-weight:600; cursor:pointer; border:none; background:var(--accent); color:#fff; border-radius:4px;">에셋</button>
@@ -32263,8 +32563,8 @@
                     card.onclick = () => {
                         const repSafetensors = repData.safetensors || '';
                         const matchedFile = files.find(f => f.safetensors === repSafetensors) || files[files.length - 1];
-                        if (!batchChains[batchLoraPickerTarget].lora_list) batchChains[batchLoraPickerTarget].lora_list = [];
-                        batchChains[batchLoraPickerTarget].lora_list.push({
+                        if (!batchChains[batchLoraPickerTarget][_batchLoraPickerCfg.listField]) batchChains[batchLoraPickerTarget][_batchLoraPickerCfg.listField] = [];
+                        batchChains[batchLoraPickerTarget][_batchLoraPickerCfg.listField].push({
                             name: entry.name,
                             character: group.character,
                             lora_path: matchedFile.path,
@@ -32274,9 +32574,9 @@
                             BASE: BASE,
                             source: 'asset',
                         });
-                        batchChains[batchLoraPickerTarget].lora_enabled = true;
+                        batchChains[batchLoraPickerTarget][_batchLoraPickerCfg.enabledField] = true;
                         renderBatchChain();
-                        document.getElementById('batch-lora-picker-overlay').remove();
+                        document.getElementById(_batchLoraPickerCfg.overlayId).remove();
                         showToast(`LoRA "${entry.name}" (${sessionName}) 추가됨`, 'success');
                     };
                 }
@@ -32375,8 +32675,8 @@
                 card.onmouseenter = () => { card.style.borderColor = 'var(--accent)'; };
                 card.onmouseleave = () => { card.style.borderColor = 'var(--border)'; };
                 card.onclick = () => {
-                    if (!batchChains[batchLoraPickerTarget].lora_list) batchChains[batchLoraPickerTarget].lora_list = [];
-                    batchChains[batchLoraPickerTarget].lora_list.push({
+                    if (!batchChains[batchLoraPickerTarget][_batchLoraPickerCfg.listField]) batchChains[batchLoraPickerTarget][_batchLoraPickerCfg.listField] = [];
+                    batchChains[batchLoraPickerTarget][_batchLoraPickerCfg.listField].push({
                         name: char.char_name,
                         character: `${bot.bot_name} / ${proj.project_name}`,
                         lora_path: char.lora_path,
@@ -32386,9 +32686,9 @@
                         BASE: char.BASE || 'anima',
                         source: 'bot',
                     });
-                    batchChains[batchLoraPickerTarget].lora_enabled = true;
+                    batchChains[batchLoraPickerTarget][_batchLoraPickerCfg.enabledField] = true;
                     renderBatchChain();
-                    document.getElementById('batch-lora-picker-overlay').remove();
+                    document.getElementById(_batchLoraPickerCfg.overlayId).remove();
                     showToast(`봇 LoRA "${char.char_name}" 추가됨`, 'success');
                 };
                 grid.appendChild(card);
@@ -32442,10 +32742,10 @@
                 card.onmouseenter = () => { card.style.borderColor = 'var(--accent)'; };
                 card.onmouseleave = () => { card.style.borderColor = 'var(--border)'; };
                 card.onclick = () => {
-                    if (!batchChains[batchLoraPickerTarget].lora_list) batchChains[batchLoraPickerTarget].lora_list = [];
+                    if (!batchChains[batchLoraPickerTarget][_batchLoraPickerCfg.listField]) batchChains[batchLoraPickerTarget][_batchLoraPickerCfg.listField] = [];
                     let addedCount = 0;
                     for (const [profile, pData] of Object.entries(item.profiles)) {
-                        batchChains[batchLoraPickerTarget].lora_list.push({
+                        batchChains[batchLoraPickerTarget][_batchLoraPickerCfg.listField].push({
                             name: `${item.lora_id} (${profile})`,
                             character: 'instance',
                             lora_path: pData.lora_path,
@@ -32458,9 +32758,9 @@
                         });
                         addedCount++;
                     }
-                    batchChains[batchLoraPickerTarget].lora_enabled = true;
+                    batchChains[batchLoraPickerTarget][_batchLoraPickerCfg.enabledField] = true;
                     renderBatchChain();
-                    document.getElementById('batch-lora-picker-overlay').remove();
+                    document.getElementById(_batchLoraPickerCfg.overlayId).remove();
                     showToast(`인스턴스 LoRA "${item.lora_id}" ${addedCount}개 추가됨`, 'success');
                 };
                 grid.appendChild(card);
@@ -32887,6 +33187,9 @@
             positiveFull += `\n[STYLE_ACTIVATE]\n${slot.style_ref_enabled ? 'true' : 'false'}`;
             positiveFull += `\n[STYLE_STR]\n${slot.style_ref_strength || 0.55}`;
             positiveFull += `\n[STYLE_DIR]\n${slot.style_ref_dir || 'soya_style_ref/fallback'}`;
+            // FACE_CROP
+            positiveFull += `\n[FACE_CROP_TOP]\n${slot.face_crop_top ?? 2.5}`;
+            positiveFull += `\n[FACE_CROP_BOTTOM]\n${slot.face_crop_bottom ?? 1}`;
             const loraActive = slot.lora_enabled && (slot.lora_list || []).length > 0;
             positiveFull += `\n[LORA_ACTIVATE]\n${loraActive ? 'true' : 'false'}`;
             if (loraActive) {
@@ -32894,6 +33197,16 @@
             } else {
                 positiveFull += `\n[LORA_DATA]\n{"list":[]}`;
             }
+            // Face LoRA
+            const faceLoraActive = slot.face_lora_enabled && (slot.face_lora_list || []).length > 0;
+            positiveFull += `\n[FACE_LORA_ACTIVATE]\n${faceLoraActive ? 'true' : 'false'}`;
+            if (faceLoraActive) {
+                positiveFull += `\n[FACE_LORA_DATA]\n${JSON.stringify({list: slot.face_lora_list.map(l => ({lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima'}))})}`;
+            } else {
+                positiveFull += `\n[FACE_LORA_DATA]\n{"list":[]}`;
+            }
+            // CHAR_FACE_TAG_INFORM
+            positiveFull += `\n[CHAR_FACE_TAG_INFORM]\n${JSON.stringify({list: [{FACE_TAGS: slot.face_tags || '', EYE_TAGS: slot.eye_tags || '', POSITIVE: "", CHAR: "ASSET_MODE"}]})}`;
             positiveFull += `\n[POSE_ACTIVATE]\n${poseEnabled ? 'true' : 'false'}`;
             if (poseEnabled && slot.pose_id) {
                 try {
@@ -32907,19 +33220,20 @@
             } else {
                 positiveFull += `\n[POSE_DATA]\n{"people":[{"pose_keypoints_2d":[381.10,379.86,1,413.21,506.58,1,223.64,436.41,1,55.33,624.12,1,64.77,454.24,1,579.09,575.30,1,362.22,935.42,1,331.06,972.15,1,196.97,797.67,1,264.96,1013.47,1,257.41,1024.49,1,350.89,820.63,1,419.82,1011.63,1,419.82,1024.49,1,315.95,343.13,1,462.31,294.46,1,263.07,365.17,1,546.35,301.80,1]}],"canvas_height":1024,"canvas_width":700}`;
             }
-            const batchHrfMode = slot.hrf_mode || 'both';
-            const _batchAnimaHrf = slot.hrf_enabled ? (batchHrfMode === 'sdxl' ? false : true) : false;
-            const _batchHrf = slot.hrf_enabled ? (batchHrfMode === 'anima' ? false : true) : false;
-            positiveFull += `\n[HRF_ACTIVATE]\n${_batchHrf ? 'true' : 'false'}`;
-            if (isAnima) positiveFull += `\n[ANIMA_HRF_ACTIVATE]\n${_batchAnimaHrf ? 'true' : 'false'}`;
+            positiveFull += `\n[HRF_ACTIVATE]\n${slot.hrf_sdxl ? 'true' : 'false'}`;
+            if (isAnima) positiveFull += `\n[ANIMA_HRF_ACTIVATE]\n${slot.hrf_anima ? 'true' : 'false'}`;
             positiveFull += `\n[HRF_SIZE]\n${slot.hrf_size || 2.0}`;
             positiveFull += `\n[HRF_RESTORE_SIZE]\n${slot.hrf_restore_size !== false ? 'true' : 'false'}`;
             positiveFull += `\n[HRF_CONTROL_NET]\n${slot.hrf_control_net ? 'true' : 'false'}`;
             positiveFull += `\n[IMG_W]\n${slot.img_w || 700}`;
             positiveFull += `\n[IMG_H]\n${slot.img_h || 1024}`;
-            positiveFull += `\n[FD_ACTIVATE]\n${slot.fd_enabled ? 'true' : 'false'}`;
-            positiveFull += `\n[HD_ACTIVATE]\n${slot.hd_enabled ? 'true' : 'false'}`;
-            positiveFull += `\n[ED_ACTIVATE]\n${slot.ed_enabled ? 'true' : 'false'}`;
+            positiveFull += `\n[ANIMA_FD_ACTIVATE]\n${slot.anima_fd_enabled ? 'true' : 'false'}`;
+            positiveFull += `\n[ANIMA_HD_ACTIVATE]\n${slot.anima_hd_enabled ? 'true' : 'false'}`;
+            positiveFull += `\n[ANIMA_ED_ACTIVATE]\n${slot.anima_ed_enabled ? 'true' : 'false'}`;
+            positiveFull += `\n[FD_ACTIVATE]\n${slot.sdxl_fd_enabled ? 'true' : 'false'}`;
+            positiveFull += `\n[HD_ACTIVATE]\n${slot.sdxl_hd_enabled ? 'true' : 'false'}`;
+            positiveFull += `\n[ED_ACTIVATE]\n${slot.sdxl_ed_enabled ? 'true' : 'false'}`;
+            positiveFull += `\n[SEED]\n${slot.seed ?? -1}`;
             positiveFull += '\n[END]';
 
             let negative;
@@ -32987,24 +33301,31 @@
             controlPart += `\n[STYLE_ACTIVATE]\n${slot.style_ref_enabled ? 'true' : 'false'}`;
             controlPart += `\n[STYLE_STR]\n${slot.style_ref_strength || 0.55}`;
             controlPart += `\n[STYLE_DIR]\n${slot.style_ref_dir || 'soya_style_ref/fallback'}`;
+            controlPart += `\n[FACE_CROP_TOP]\n${slot.face_crop_top ?? 2.5}`;
+            controlPart += `\n[FACE_CROP_BOTTOM]\n${slot.face_crop_bottom ?? 1}`;
             const loraActive = slot.lora_enabled && (slot.lora_list || []).length > 0;
             controlPart += `\n[LORA_ACTIVATE]\n${loraActive ? 'true' : 'false'}`;
             controlPart += `\n[LORA_DATA]\n${loraActive ? JSON.stringify({list: slot.lora_list.map(l => ({lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima'}))}) : '{"list":[]}'}`;
+            const faceLoraActive = slot.face_lora_enabled && (slot.face_lora_list || []).length > 0;
+            controlPart += `\n[FACE_LORA_ACTIVATE]\n${faceLoraActive ? 'true' : 'false'}`;
+            controlPart += `\n[FACE_LORA_DATA]\n${faceLoraActive ? JSON.stringify({list: slot.face_lora_list.map(l => ({lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima'}))}) : '{"list":[]}'}`;
+            controlPart += `\n[CHAR_FACE_TAG_INFORM]\n${JSON.stringify({list: [{FACE_TAGS: slot.face_tags || '', EYE_TAGS: slot.eye_tags || '', POSITIVE: "", CHAR: "ASSET_MODE"}]})}`;
             controlPart += `\n[POSE_ACTIVATE]\n${poseEnabled ? 'true' : 'false'}`;
             controlPart += `\n[POSE_DATA]\n${poseEnabled && slot.pose_id ? '(포즈: ' + slot.pose_id + ')' : '{"people":[{"pose_keypoints_2d":[...]}],"canvas_height":1024,"canvas_width":700}'}`;
-            const batchHrfMode = slot.hrf_mode || 'both';
-            const _batchAnimaHrf = slot.hrf_enabled ? (batchHrfMode === 'sdxl' ? false : true) : false;
-            const _batchHrf = slot.hrf_enabled ? (batchHrfMode === 'anima' ? false : true) : false;
-            controlPart += `\n[HRF_ACTIVATE]\n${_batchHrf ? 'true' : 'false'}`;
-            if (isAnima) controlPart += `\n[ANIMA_HRF_ACTIVATE]\n${_batchAnimaHrf ? 'true' : 'false'}`;
+            controlPart += `\n[HRF_ACTIVATE]\n${slot.hrf_sdxl ? 'true' : 'false'}`;
+            if (isAnima) controlPart += `\n[ANIMA_HRF_ACTIVATE]\n${slot.hrf_anima ? 'true' : 'false'}`;
             controlPart += `\n[HRF_SIZE]\n${slot.hrf_size || 2.0}`;
             controlPart += `\n[HRF_RESTORE_SIZE]\n${slot.hrf_restore_size !== false ? 'true' : 'false'}`;
             controlPart += `\n[HRF_CONTROL_NET]\n${slot.hrf_control_net ? 'true' : 'false'}`;
             controlPart += `\n[IMG_W]\n${slot.img_w || 700}`;
             controlPart += `\n[IMG_H]\n${slot.img_h || 1024}`;
-            controlPart += `\n[FD_ACTIVATE]\n${slot.fd_enabled ? 'true' : 'false'}`;
-            controlPart += `\n[HD_ACTIVATE]\n${slot.hd_enabled ? 'true' : 'false'}`;
-            controlPart += `\n[ED_ACTIVATE]\n${slot.ed_enabled ? 'true' : 'false'}`;
+            controlPart += `\n[ANIMA_FD_ACTIVATE]\n${slot.anima_fd_enabled ? 'true' : 'false'}`;
+            controlPart += `\n[ANIMA_HD_ACTIVATE]\n${slot.anima_hd_enabled ? 'true' : 'false'}`;
+            controlPart += `\n[ANIMA_ED_ACTIVATE]\n${slot.anima_ed_enabled ? 'true' : 'false'}`;
+            controlPart += `\n[FD_ACTIVATE]\n${slot.sdxl_fd_enabled ? 'true' : 'false'}`;
+            controlPart += `\n[HD_ACTIVATE]\n${slot.sdxl_hd_enabled ? 'true' : 'false'}`;
+            controlPart += `\n[ED_ACTIVATE]\n${slot.sdxl_ed_enabled ? 'true' : 'false'}`;
+            controlPart += `\n[SEED]\n${slot.seed ?? -1}`;
             controlPart += '\n[END]';
 
             return positiveColored + escapeHtml(controlPart);
@@ -33229,7 +33550,6 @@
                 batchChains = (preset.chains || []).map(c => ({
                     ...c,
                     _id: ++batchSlotIdCounter,
-                    hrf_enabled: !!c.hrf_enabled,
                     artist_preset: c.artist_preset || '',
                     natural_language_preset: c.natural_language_preset || '',
                     natural_language: c.natural_language || '',
@@ -33237,8 +33557,28 @@
                 }));
                 document.getElementById('batch-repeat-count').value = preset.repeat || 1;
 
-                // 마이그레이션: hrf_enabled/artist_preset/natural_language/natural_language_preset가 없던旧프리셋이면 기본값으로 채우고 자동 저장
-                const needsMigration = (preset.chains || []).some(c => c.hrf_enabled === undefined || c.artist_preset === undefined || c.natural_language === undefined || c.natural_language_preset === undefined);
+                // 마이그레이션: 구 필드명 → 신 필드명 변환
+                batchChains.forEach(c => {
+                    if (c.hrf_enabled !== undefined && c.hrf_sdxl === undefined) {
+                        c.hrf_sdxl = !!c.hrf_enabled;
+                        c.hrf_anima = !!c.hrf_enabled;
+                        delete c.hrf_enabled;
+                        if (c.hrf_mode === 'anima') { c.hrf_sdxl = false; c.hrf_anima = true; }
+                        else if (c.hrf_mode === 'sdxl') { c.hrf_sdxl = true; c.hrf_anima = false; }
+                        delete c.hrf_mode;
+                    }
+                    if (c.fd_enabled !== undefined && c.sdxl_fd_enabled === undefined) {
+                        c.sdxl_fd_enabled = !!c.fd_enabled;
+                        c.sdxl_hd_enabled = !!c.hd_enabled;
+                        c.sdxl_ed_enabled = !!c.ed_enabled;
+                        c.anima_fd_enabled = false;
+                        c.anima_hd_enabled = false;
+                        c.anima_ed_enabled = false;
+                        delete c.fd_enabled; delete c.hd_enabled; delete c.ed_enabled;
+                    }
+                });
+                // 마이그레이션: 구 프리셋 필드 유무 확인
+                const needsMigration = (preset.chains || []).some(c => c.hrf_enabled !== undefined || c.fd_enabled !== undefined);
                 if (needsMigration) {
                     const chainsData = batchChains.map(c => {
                         const copy = { ...c };
@@ -33375,7 +33715,13 @@
                     style_ref_enabled: !!c.style_ref_enabled, style_ref_strength: c.style_ref_strength || 0.55,
                     style_ref_images: c.style_ref_images || [],
                     pose_enabled: !!c.pose_enabled, pose_id: c.pose_id || '',
-                    fd_enabled: !!c.fd_enabled, hrf_enabled: !!c.hrf_enabled, hd_enabled: !!c.hd_enabled, ed_enabled: !!c.ed_enabled,
+                    hrf_sdxl: !!c.hrf_sdxl, hrf_anima: !!c.hrf_anima,
+                    sdxl_fd_enabled: !!c.sdxl_fd_enabled, sdxl_hd_enabled: !!c.sdxl_hd_enabled, sdxl_ed_enabled: !!c.sdxl_ed_enabled,
+                    anima_fd_enabled: !!c.anima_fd_enabled, anima_hd_enabled: !!c.anima_hd_enabled, anima_ed_enabled: !!c.anima_ed_enabled,
+                    face_lora_enabled: !!c.face_lora_enabled, face_lora_list: c.face_lora_list || [],
+                    face_crop_top: c.face_crop_top ?? 2.5, face_crop_bottom: c.face_crop_bottom ?? 1,
+                    face_tags: c.face_tags || '', eye_tags: c.eye_tags || '', face_positive: c.face_positive || '',
+                    seed: c.seed ?? -1,
                 };
                 delete c._ref_image_data;
                 delete c._ref_image_datas;
@@ -33728,10 +34074,13 @@
                 style_ref_preview_url: c.style_ref_preview_url || '',
                 pose_enabled: !!c.pose_enabled,
                 pose_id: poseIdMap[c.pose_id] || c.pose_id || '',
-                fd_enabled: !!c.fd_enabled,
-                hrf_enabled: !!c.hrf_enabled,
-                hd_enabled: !!c.hd_enabled,
-                ed_enabled: !!c.ed_enabled,
+                hrf_sdxl: !!c.hrf_sdxl, hrf_anima: !!c.hrf_anima,
+                sdxl_fd_enabled: !!c.sdxl_fd_enabled, sdxl_hd_enabled: !!c.sdxl_hd_enabled, sdxl_ed_enabled: !!c.sdxl_ed_enabled,
+                anima_fd_enabled: !!c.anima_fd_enabled, anima_hd_enabled: !!c.anima_hd_enabled, anima_ed_enabled: !!c.anima_ed_enabled,
+                face_lora_enabled: !!c.face_lora_enabled, face_lora_list: c.face_lora_list || [],
+                face_crop_top: c.face_crop_top ?? 2.5, face_crop_bottom: c.face_crop_bottom ?? 1,
+                face_tags: c.face_tags || '', eye_tags: c.eye_tags || '', face_positive: c.face_positive || '',
+                seed: c.seed ?? -1,
                 _id: ++batchSlotIdCounter,
             }));
             document.getElementById('batch-repeat-count').value = data.repeat || 1;

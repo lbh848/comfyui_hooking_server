@@ -882,9 +882,18 @@ class AssetMode:
         hrf_control_net: bool = False,
         img_w: int = 700,
         img_h: int = 1024,
+        anima_fd_activate: bool = False,
+        anima_hd_activate: bool = False,
+        anima_ed_activate: bool = False,
         fd_activate: bool = False,
         hd_activate: bool = False,
         ed_activate: bool = False,
+        face_lora_activate: bool = False,
+        face_lora_data: str = "",
+        face_crop_top: float = 2.5,
+        face_crop_bottom: float = 1.0,
+        char_face_tag_inform: str = "",
+        seed: int = -1,
         artist_preset: str = "",
         natural_language: str = "",
         lora_trigger_words: str = "",
@@ -1008,8 +1017,13 @@ class AssetMode:
         positive += f"\n[STYLE_ACTIVATE]\n{'true' if style_ref_enabled else 'false'}"
         positive += f"\n[STYLE_STR]\n{style_ref_strength}"
         positive += f"\n[STYLE_DIR]\n{style_ref_dir or 'soya_style_ref/fallback'}"
+        positive += f"\n[FACE_CROP_TOP]\n{face_crop_top}"
+        positive += f"\n[FACE_CROP_BOTTOM]\n{face_crop_bottom}"
         positive += f"\n[LORA_ACTIVATE]\n{'true' if lora_activate else 'false'}"
         positive += f"\n[LORA_DATA]\n{lora_data or '{"list":[]}'}"
+        positive += f"\n[FACE_LORA_ACTIVATE]\n{'true' if face_lora_activate else 'false'}"
+        positive += f"\n[FACE_LORA_DATA]\n{face_lora_data or '{"list":[]}'}"
+        positive += f"\n[CHAR_FACE_TAG_INFORM]\n{char_face_tag_inform or '{"list":[]}'}"
         positive += f"\n[POSE_ACTIVATE]\n{'true' if pose_enabled else 'false'}"
         if pose_enabled and pose_data:
             positive += f"\n[POSE_DATA]\n{json.dumps(pose_data, ensure_ascii=False)}"
@@ -1023,9 +1037,13 @@ class AssetMode:
         positive += f"\n[HRF_CONTROL_NET]\n{'true' if hrf_control_net else 'false'}"
         positive += f"\n[IMG_W]\n{img_w}"
         positive += f"\n[IMG_H]\n{img_h}"
+        positive += f"\n[ANIMA_FD_ACTIVATE]\n{'true' if anima_fd_activate else 'false'}"
+        positive += f"\n[ANIMA_HD_ACTIVATE]\n{'true' if anima_hd_activate else 'false'}"
+        positive += f"\n[ANIMA_ED_ACTIVATE]\n{'true' if anima_ed_activate else 'false'}"
         positive += f"\n[FD_ACTIVATE]\n{'true' if fd_activate else 'false'}"
         positive += f"\n[HD_ACTIVATE]\n{'true' if hd_activate else 'false'}"
         positive += f"\n[ED_ACTIVATE]\n{'true' if ed_activate else 'false'}"
+        positive += f"\n[SEED]\n{seed}"
         positive += "\n[END]"
 
         if asset_workflow_type == "anima":
