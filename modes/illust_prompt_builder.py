@@ -391,7 +391,8 @@ class IllustPromptBuilder:
         whitelist = settings.get("positive_whitelist", [])
         blacklist = settings.get("positive_blacklist", [])
         face_tag_data = self.build_char_face_tag_inform(detected_chars, characters, char,
-                                                         whitelist=whitelist, blacklist=blacklist)
+                                                         whitelist=whitelist, blacklist=blacklist,
+                                                         lora_key=lora_key)
         positive += "\n[CHAR_FACE_TAG_INFORM]"
         positive += "\n" + json.dumps(face_tag_data, ensure_ascii=False)
 
@@ -548,7 +549,8 @@ class IllustPromptBuilder:
     def build_char_face_tag_inform(detected_chars: list, characters: list,
                                     char_section: str = "",
                                     whitelist: list = None,
-                                    blacklist: list = None) -> dict:
+                                    blacklist: list = None,
+                                    lora_key: str = "loras_solo") -> dict:
         """감지된 캐릭터의 얼굴/눈 태그 JSON 빌드 + CHAR 섹션에서 캐릭터별 POSITIVE 추출.
 
         CHAR 섹션은 | 로 구분되며, 각 세그먼트에 캐릭터 이름이 포함되어 있어
@@ -582,11 +584,24 @@ class IllustPromptBuilder:
                     "FACE_TAGS": "",
                     "EYE_TAGS": "",
                     "POSITIVE": "",
+                    "TRIGGER_ANIMA": "",
+                    "TRIGGER_SDXL": "",
                     "CHAR": char_name
                 })
                 continue
             face_tags = char_data.get("face_tags", "")
             eye_tags = char_data.get("eye_tags", "")
+
+            # 트리거 워드 수집 (BASE별)
+            anima_triggers = []
+            sdxl_triggers = []
+            for lora in char_data.get(lora_key, char_data.get("loras", [])):
+                trigger = lora.get("trigger", char_name)
+                base = lora.get("BASE", "anima")
+                if base == "anima" and trigger not in anima_triggers:
+                    anima_triggers.append(trigger)
+                elif base == "sdxl" and trigger not in sdxl_triggers:
+                    sdxl_triggers.append(trigger)
 
             # POSITIVE: 화이트리스트/블랙리스트 필터링 적용
             raw_segment = char_positive_map.get(char_name, "")
@@ -621,6 +636,8 @@ class IllustPromptBuilder:
                 "FACE_TAGS": face_tags,
                 "EYE_TAGS": eye_tags,
                 "POSITIVE": filtered_positive,
+                "TRIGGER_ANIMA": ", ".join(anima_triggers),
+                "TRIGGER_SDXL": ", ".join(sdxl_triggers),
                 "CHAR": char_name
             })
         return {"list": items}
