@@ -4070,6 +4070,10 @@
                             이미지 생성
                         </button>
                     </div>
+                    <div style="display:flex; gap:6px; margin-top:6px;">
+                        <button onclick="saveAssetSettings()" style="flex:1; padding:5px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:6px; cursor:pointer; font-size:0.75rem;">현재 설정 캐시에 저장</button>
+                        <button onclick="loadAssetSettings()" style="flex:1; padding:5px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:6px; cursor:pointer; font-size:0.75rem;">현재 설정 불러오기</button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -24816,6 +24820,55 @@
             { key: 'sdxl_negative',  label: 'SDXL 부정',  cls: 'prompt-cat-sdxl-negative' },
         ];
 
+        // 컨트롤 블럭 타이틀 색상 맵
+        const BLOCK_COLORS = {
+            'ANIMA_QUALITY': '#ff9800',
+            'ANIMA_ARTIST': '#e91e63',
+            'ANIMA': '#00e5ff',
+            'SDXL_QUALITY': '#2196f3',
+            'SDXL_ARTIST': '#9c27b0',
+            'SDXL': '#ff0',
+            'CHAR_LIST': '#4caf50',
+            'FACE_ID_ACTIVATE': '#8bc34a',
+            'FACE_ID_STR': '#8bc34a',
+            'FACE_ID_DIR': '#8bc34a',
+            'STYLE_ACTIVATE': '#8bc34a',
+            'STYLE_STR': '#8bc34a',
+            'STYLE_DIR': '#8bc34a',
+            'FACE_CROP_TOP': '#8bc34a',
+            'FACE_CROP_BOTTOM': '#8bc34a',
+            'LORA_ACTIVATE': '#b388ff',
+            'LORA_DATA': '#b388ff',
+            'FACE_LORA_ACTIVATE': '#b388ff',
+            'FACE_LORA_DATA': '#b388ff',
+            'CHAR_FACE_TAG_INFORM': '#b388ff',
+            'POSE_ACTIVATE': '#ffab40',
+            'POSE_DATA': '#ffab40',
+            'HRF_ACTIVATE': '#80deea',
+            'ANIMA_HRF_ACTIVATE': '#80deea',
+            'HRF_SIZE': '#80deea',
+            'HRF_RESTORE_SIZE': '#80deea',
+            'HRF_CONTROL_NET': '#80deea',
+            'IMG_W': '#90a4ae',
+            'IMG_H': '#90a4ae',
+            'ANIMA_FD_ACTIVATE': '#ef5350',
+            'ANIMA_HD_ACTIVATE': '#ef5350',
+            'ANIMA_ED_ACTIVATE': '#ef5350',
+            'FD_ACTIVATE': '#ef5350',
+            'HD_ACTIVATE': '#ef5350',
+            'ED_ACTIVATE': '#ef5350',
+            'SEED': '#ffd54f',
+            'END': '#9e9e9e',
+        };
+
+        function colorBlockHeaders(text) {
+            // [BLOCK_NAME] 타이틀에 색상 적용
+            return escapeHtml(text).replace(/\[([A-Z_]+)\]/g, (match, name) => {
+                const color = BLOCK_COLORS[name] || '#aaa';
+                return `<span style="color:${color};font-weight:bold;">[${name}]</span>`;
+            });
+        }
+
         function renderColoredPrompt(categoryData) {
             // categoryData: [{key, tags: [string]}, ...]
             const parts = [];
@@ -25018,7 +25071,9 @@
                 // CHAR_FACE_TAG_INFORM
                 const faceTags = document.getElementById('asset-face-tags')?.value.trim() || '';
                 const eyeTags = document.getElementById('asset-eye-tags')?.value.trim() || '';
-                positiveFull += `\n[CHAR_FACE_TAG_INFORM]\n${JSON.stringify({list: [{FACE_TAGS: faceTags, EYE_TAGS: eyeTags, POSITIVE: "", CHAR: "ASSET_MODE"}]})}`;
+                const faceAnimaTriggers = faceLoraList.filter(l => (l.BASE || 'anima') === 'anima').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
+                const faceSdxlTriggers = faceLoraList.filter(l => l.BASE === 'sdxl').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
+                positiveFull += `\n[CHAR_FACE_TAG_INFORM]\n${JSON.stringify({list: [{FACE_TAGS: faceTags, EYE_TAGS: eyeTags, POSITIVE: "", TRIGGER_ANIMA: faceAnimaTriggers, TRIGGER_SDXL: faceSdxlTriggers, CHAR: "ASSET_MODE"}]})}`;
             }
             // HRF
             positiveFull += `\n[HRF_ACTIVATE]\n${hrfSdxl ? 'true' : 'false'}`;
@@ -25067,6 +25122,187 @@
             return { positive: positiveFull, negative, positiveLength, positiveColored, negativeColored };
         }
 
+        // ─── 설정 저장/불러오기 ────────────────────────────────
+        function saveAssetSettings() {
+            const isAnima = currentConfig?.asset_workflow_type === 'anima';
+            const settings = {
+                character: getAssetSelectValue('asset-character-select'),
+                appearance: getAssetSelectValue('asset-appearance-select'),
+                outfit: getAssetSelectValue('asset-outfit-select'),
+                expression: getAssetSelectValue('asset-expression-select'),
+                artist_preset: getAssetSelectValue('asset-artist-preset-select'),
+                quality_preset: getAssetSelectValue('asset-quality-preset-select'),
+                composition_preset: getAssetSelectValue('asset-composition-preset-select'),
+                character_negative_preset: getAssetSelectValue('asset-character-negative-preset-select'),
+                negative_preset: getAssetSelectValue('asset-negative-preset-select'),
+                natural_language_preset: getAssetSelectValue('asset-natural-language-preset-select'),
+                natural_language_text: document.getElementById('asset-natural-language-text')?.value || '',
+                ref_enabled: document.getElementById('asset-ref-toggle')?.checked || false,
+                ref_strength: parseFloat(document.getElementById('asset-ref-strength')?.value) || 0.55,
+                ref_dir: document.getElementById('asset-ref-folder-hash-text')?.textContent || '',
+                style_ref_enabled: document.getElementById('asset-style-ref-toggle')?.checked || false,
+                style_ref_strength: parseFloat(document.getElementById('asset-style-ref-strength')?.value) || 0.55,
+                style_ref_dir: document.getElementById('asset-style-ref-folder-hash-text')?.textContent || '',
+                lora_enabled: document.getElementById('asset-lora-toggle')?.checked || false,
+                lora_list: assetLoraList.map(l => ({...l})),
+                pose_enabled: document.getElementById('asset-pose-toggle')?.checked || false,
+                pose_id: assetSelectedPoseId || '',
+                img_w: parseInt(document.getElementById('asset-img-w')?.value) || 700,
+                img_h: parseInt(document.getElementById('asset-img-h')?.value) || 1024,
+            };
+            if (isAnima) {
+                settings.anima_artist_preset = getAssetSelectValue('anima-artist-preset-select');
+                settings.anima_quality_preset = getAssetSelectValue('anima-quality-preset-select');
+                settings.anima_negative_preset = getAssetSelectValue('anima-negative-preset-select');
+                settings.face_lora_enabled = document.getElementById('asset-face-lora-toggle')?.checked || false;
+                settings.face_lora_list = faceLoraList.map(l => ({...l}));
+                settings.face_crop_top = parseFloat(document.getElementById('asset-face-crop-top')?.value) || 2.5;
+                settings.face_crop_bottom = parseFloat(document.getElementById('asset-face-crop-bottom')?.value) || 1;
+                settings.face_tags = document.getElementById('asset-face-tags')?.value || '';
+                settings.eye_tags = document.getElementById('asset-eye-tags')?.value || '';
+                settings.hrf_sdxl = document.getElementById('asset-hrf-sdxl')?.checked || false;
+                settings.hrf_anima = document.getElementById('asset-hrf-anima')?.checked || false;
+                settings.hrf_size = parseFloat(document.getElementById('asset-hrf-size')?.value) || 2.0;
+                settings.hrf_restore_size = document.getElementById('asset-hrf-restore-size')?.checked || false;
+                settings.hrf_control_net = document.getElementById('asset-hrf-control-net')?.checked || false;
+                settings.sdxl_fd = document.getElementById('asset-sdxl-fd')?.checked || false;
+                settings.sdxl_hd = document.getElementById('asset-sdxl-hd')?.checked || false;
+                settings.sdxl_ed = document.getElementById('asset-sdxl-ed')?.checked || false;
+                settings.anima_fd = document.getElementById('asset-anima-fd')?.checked || false;
+                settings.anima_hd = document.getElementById('asset-anima-hd')?.checked || false;
+                settings.anima_ed = document.getElementById('asset-anima-ed')?.checked || false;
+                settings.seed = parseInt(document.getElementById('asset-seed-input')?.value) || -1;
+            } else {
+                settings.hrf_sdxl = document.getElementById('asset-sdxl-hrf-toggle')?.checked || false;
+                settings.hrf_size = parseFloat(document.getElementById('asset-sdxl-hrf-size')?.value) || 2.0;
+                settings.hrf_restore_size = document.getElementById('asset-sdxl-hrf-restore-size')?.checked || false;
+                settings.hrf_control_net = document.getElementById('asset-sdxl-hrf-control-net')?.checked || false;
+                settings.sdxl_fd = document.getElementById('asset-sdxl-fd-toggle')?.checked || false;
+                settings.sdxl_hd = document.getElementById('asset-sdxl-hd-toggle')?.checked || false;
+                settings.sdxl_ed = document.getElementById('asset-sdxl-ed-toggle')?.checked || false;
+            }
+            localStorage.setItem('assetModeSettings', JSON.stringify(settings));
+            showToast('설정이 캐시에 저장되었습니다');
+        }
+
+        function loadAssetSettings() {
+            const raw = localStorage.getItem('assetModeSettings');
+            if (!raw) { showToast('저장된 설정이 없습니다', 'error'); return; }
+            let s;
+            try { s = JSON.parse(raw); } catch(e) { showToast('설정 불러오기 실패', 'error'); return; }
+            const isAnima = currentConfig?.asset_workflow_type === 'anima';
+
+            setAssetSelectValue('asset-character-select', s.character);
+            onAssetCharacterChange(true);
+            // 캐릭터 변경 후 appearance/outfit/expression 드롭박스가 갱신되도록 지연 후 선택 + 태그칩 렌더
+            setTimeout(() => {
+                setAssetSelectValue('asset-appearance-select', s.appearance);
+                onAssetAppearanceChange();
+                setAssetSelectValue('asset-outfit-select', s.outfit);
+                onAssetOutfitChange();
+                setAssetSelectValue('asset-expression-select', s.expression);
+                onAssetExpressionChange();
+            }, 300);
+            setAssetSelectValue('asset-artist-preset-select', s.artist_preset);
+            loadArtistPreset();
+            setAssetSelectValue('asset-quality-preset-select', s.quality_preset);
+            loadQualityPreset();
+            setAssetSelectValue('asset-composition-preset-select', s.composition_preset);
+            loadCompositionPreset();
+            setAssetSelectValue('asset-character-negative-preset-select', s.character_negative_preset);
+            loadCharacterNegativePreset();
+            setAssetSelectValue('asset-negative-preset-select', s.negative_preset);
+            loadNegativePreset();
+            setAssetSelectValue('asset-natural-language-preset-select', s.natural_language_preset);
+            loadNaturalLanguagePreset();
+            const nlText = document.getElementById('asset-natural-language-text');
+            if (nlText) nlText.value = s.natural_language_text || '';
+
+            const refToggle = document.getElementById('asset-ref-toggle');
+            if (refToggle) { refToggle.checked = s.ref_enabled || false; refToggle.dispatchEvent(new Event('change')); }
+            const refStrength = document.getElementById('asset-ref-strength');
+            if (refStrength) { refStrength.value = s.ref_strength || 0.55; refStrength.dispatchEvent(new Event('input')); }
+            const styleToggle = document.getElementById('asset-style-ref-toggle');
+            if (styleToggle) { styleToggle.checked = s.style_ref_enabled || false; styleToggle.dispatchEvent(new Event('change')); }
+            const styleStrength = document.getElementById('asset-style-ref-strength');
+            if (styleStrength) { styleStrength.value = s.style_ref_strength || 0.55; styleStrength.dispatchEvent(new Event('input')); }
+
+            const loraToggle = document.getElementById('asset-lora-toggle');
+            if (loraToggle) { loraToggle.checked = s.lora_enabled || false; loraToggle.dispatchEvent(new Event('change')); }
+            assetLoraList = (s.lora_list || []).map(l => ({...l}));
+            renderAssetLoraList();
+
+            const poseToggle = document.getElementById('asset-pose-toggle');
+            if (poseToggle) { poseToggle.checked = s.pose_enabled || false; poseToggle.dispatchEvent(new Event('change')); }
+            if (s.pose_id) assetSelectedPoseId = s.pose_id;
+
+            const imgW = document.getElementById('asset-img-w');
+            if (imgW) imgW.value = s.img_w || 700;
+            const imgH = document.getElementById('asset-img-h');
+            if (imgH) imgH.value = s.img_h || 1024;
+
+            if (isAnima) {
+                setAssetSelectValue('anima-artist-preset-select', s.anima_artist_preset);
+                loadAnimaArtistPreset();
+                setAssetSelectValue('anima-quality-preset-select', s.anima_quality_preset);
+                loadAnimaQualityPreset();
+                setAssetSelectValue('anima-negative-preset-select', s.anima_negative_preset);
+                loadAnimaNegativePreset();
+                const faceLoraToggle = document.getElementById('asset-face-lora-toggle');
+                if (faceLoraToggle) { faceLoraToggle.checked = s.face_lora_enabled || false; faceLoraToggle.dispatchEvent(new Event('change')); }
+                faceLoraList = (s.face_lora_list || []).map(l => ({...l}));
+                renderAssetFaceLoraList();
+                const faceCropTop = document.getElementById('asset-face-crop-top');
+                if (faceCropTop) faceCropTop.value = s.face_crop_top ?? 2.5;
+                const faceCropBottom = document.getElementById('asset-face-crop-bottom');
+                if (faceCropBottom) faceCropBottom.value = s.face_crop_bottom ?? 1;
+                const faceTags = document.getElementById('asset-face-tags');
+                if (faceTags) faceTags.value = s.face_tags || '';
+                const eyeTags = document.getElementById('asset-eye-tags');
+                if (eyeTags) eyeTags.value = s.eye_tags || '';
+                const hrfSdxl = document.getElementById('asset-hrf-sdxl');
+                if (hrfSdxl) hrfSdxl.checked = s.hrf_sdxl || false;
+                const hrfAnima = document.getElementById('asset-hrf-anima');
+                if (hrfAnima) hrfAnima.checked = s.hrf_anima || false;
+                const hrfSize = document.getElementById('asset-hrf-size');
+                if (hrfSize) hrfSize.value = s.hrf_size || 2.0;
+                const hrfRestore = document.getElementById('asset-hrf-restore-size');
+                if (hrfRestore) hrfRestore.checked = s.hrf_restore_size !== false;
+                const hrfControlNet = document.getElementById('asset-hrf-control-net');
+                if (hrfControlNet) hrfControlNet.checked = s.hrf_control_net || false;
+                const sdxlFd = document.getElementById('asset-sdxl-fd');
+                if (sdxlFd) sdxlFd.checked = s.sdxl_fd || false;
+                const sdxlHd = document.getElementById('asset-sdxl-hd');
+                if (sdxlHd) sdxlHd.checked = s.sdxl_hd || false;
+                const sdxlEd = document.getElementById('asset-sdxl-ed');
+                if (sdxlEd) sdxlEd.checked = s.sdxl_ed || false;
+                const animaFd = document.getElementById('asset-anima-fd');
+                if (animaFd) animaFd.checked = s.anima_fd || false;
+                const animaHd = document.getElementById('asset-anima-hd');
+                if (animaHd) animaHd.checked = s.anima_hd || false;
+                const animaEd = document.getElementById('asset-anima-ed');
+                if (animaEd) animaEd.checked = s.anima_ed || false;
+                const seedInput = document.getElementById('asset-seed-input');
+                if (seedInput) seedInput.value = s.seed ?? -1;
+            } else {
+                const hrfSdxl = document.getElementById('asset-sdxl-hrf-toggle');
+                if (hrfSdxl) { hrfSdxl.checked = s.hrf_sdxl || false; hrfSdxl.dispatchEvent(new Event('change')); }
+                const hrfSize = document.getElementById('asset-sdxl-hrf-size');
+                if (hrfSize) { hrfSize.value = s.hrf_size || 2.0; hrfSize.dispatchEvent(new Event('input')); }
+                const hrfRestore = document.getElementById('asset-sdxl-hrf-restore-size');
+                if (hrfRestore) hrfRestore.checked = s.hrf_restore_size !== false;
+                const hrfControlNet = document.getElementById('asset-sdxl-hrf-control-net');
+                if (hrfControlNet) hrfControlNet.checked = s.hrf_control_net || false;
+                const sdxlFd = document.getElementById('asset-sdxl-fd-toggle');
+                if (sdxlFd) sdxlFd.checked = s.sdxl_fd || false;
+                const sdxlHd = document.getElementById('asset-sdxl-hd-toggle');
+                if (sdxlHd) sdxlHd.checked = s.sdxl_hd || false;
+                const sdxlEd = document.getElementById('asset-sdxl-ed-toggle');
+                if (sdxlEd) sdxlEd.checked = s.sdxl_ed || false;
+            }
+            showToast('설정을 불러왔습니다');
+        }
+
         // ─── 프롬프트 미리보기 ───────────────────────────────
         async function previewAssetPrompt() {
             const data = await buildAssetPromptFromUI();
@@ -25083,7 +25319,7 @@
                     </div>
                     <div style="margin-bottom:12px;">
                         <div style="font-size:0.8rem; font-weight:600; color:var(--success); margin-bottom:4px;">긍정 프롬프트</div>
-                        <div style="background:var(--surface2); padding:10px; border-radius:6px; font-size:0.75rem; white-space:pre-wrap; word-break:break-all; max-height:300px; overflow-y:auto; margin:0; font-family:'Consolas',monospace;">${data.positiveColored}${escapeHtml(data.positive.substring(data.positiveLength))}</div>
+                        <div style="background:var(--surface2); padding:10px; border-radius:6px; font-size:0.75rem; white-space:pre-wrap; word-break:break-all; max-height:300px; overflow-y:auto; margin:0; font-family:'Consolas',monospace;">${data.positiveColored}${colorBlockHeaders(data.positive.substring(data.positiveLength))}</div>
                     </div>
                     <div>
                         <div style="font-size:0.8rem; font-weight:600; color:var(--error); margin-bottom:4px;">부정 프롬프트</div>
@@ -25091,7 +25327,6 @@
                     </div>
                 </div>`;
             document.body.appendChild(overlay);
-            overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
         }
 
         // ─── 구도/기타 태그 ─────────────────────────────────
@@ -33486,7 +33721,10 @@
                     positiveFull += `\n[FACE_LORA_DATA]\n{"list":[]}`;
                 }
                 // CHAR_FACE_TAG_INFORM
-                positiveFull += `\n[CHAR_FACE_TAG_INFORM]\n${JSON.stringify({list: [{FACE_TAGS: slot.face_tags || '', EYE_TAGS: slot.eye_tags || '', POSITIVE: "", CHAR: "ASSET_MODE"}]})}`;
+                const faceLoraList = slot.face_lora_list || [];
+                const batchFaceAnimaTriggers = faceLoraList.filter(l => (l.BASE || 'anima') === 'anima').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
+                const batchFaceSdxlTriggers = faceLoraList.filter(l => l.BASE === 'sdxl').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
+                positiveFull += `\n[CHAR_FACE_TAG_INFORM]\n${JSON.stringify({list: [{FACE_TAGS: slot.face_tags || '', EYE_TAGS: slot.eye_tags || '', POSITIVE: "", TRIGGER_ANIMA: batchFaceAnimaTriggers, TRIGGER_SDXL: batchFaceSdxlTriggers, CHAR: "ASSET_MODE"}]})}`;
             }
             positiveFull += `\n[POSE_ACTIVATE]\n${poseEnabled ? 'true' : 'false'}`;
             if (poseEnabled && slot.pose_id) {
@@ -33605,7 +33843,10 @@
                 const faceLoraActive = slot.face_lora_enabled && (slot.face_lora_list || []).length > 0;
                 controlPart += `\n[FACE_LORA_ACTIVATE]\n${faceLoraActive ? 'true' : 'false'}`;
                 controlPart += `\n[FACE_LORA_DATA]\n${faceLoraActive ? JSON.stringify({list: slot.face_lora_list.map(l => ({lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima'}))}) : '{"list":[]}'}`;
-                controlPart += `\n[CHAR_FACE_TAG_INFORM]\n${JSON.stringify({list: [{FACE_TAGS: slot.face_tags || '', EYE_TAGS: slot.eye_tags || '', POSITIVE: "", CHAR: "ASSET_MODE"}]})}`;
+                const previewFaceLoraList = slot.face_lora_list || [];
+                const previewFaceAnimaTriggers = previewFaceLoraList.filter(l => (l.BASE || 'anima') === 'anima').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
+                const previewFaceSdxlTriggers = previewFaceLoraList.filter(l => l.BASE === 'sdxl').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
+                controlPart += `\n[CHAR_FACE_TAG_INFORM]\n${JSON.stringify({list: [{FACE_TAGS: slot.face_tags || '', EYE_TAGS: slot.eye_tags || '', POSITIVE: "", TRIGGER_ANIMA: previewFaceAnimaTriggers, TRIGGER_SDXL: previewFaceSdxlTriggers, CHAR: "ASSET_MODE"}]})}`;
             }
             controlPart += `\n[POSE_ACTIVATE]\n${poseEnabled ? 'true' : 'false'}`;
             controlPart += `\n[POSE_DATA]\n${poseEnabled && slot.pose_id ? '(포즈: ' + slot.pose_id + ')' : '{"people":[{"pose_keypoints_2d":[...]}],"canvas_height":1024,"canvas_width":700}'}`;
@@ -33629,7 +33870,7 @@
             }
             controlPart += '\n[END]';
 
-            return positiveColored + escapeHtml(controlPart);
+            return positiveColored + colorBlockHeaders(controlPart);
         }
 
         function previewBatchSlotNegativePrompt(slot) {
