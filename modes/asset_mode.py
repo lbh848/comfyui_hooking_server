@@ -1031,7 +1031,17 @@ class AssetMode:
         positive += f"\n[LORA_ACTIVATE]\n{'true' if lora_activate else 'false'}"
         positive += f"\n[LORA_DATA]\n{lora_data or '{"list":[]}'}"
         positive += f"\n[FACE_LORA_ACTIVATE]\n{'true' if face_lora_activate else 'false'}"
-        positive += f"\n[FACE_LORA_DATA]\n{face_lora_data or '{"list":[]}'}"
+        # FACE_LORA_DATA에 CHAR 필드 추가
+        if face_lora_data:
+            try:
+                flora_parsed = json.loads(face_lora_data)
+                for item in flora_parsed.get("list", []):
+                    item["CHAR"] = "asset_mode"
+                positive += f"\n[FACE_LORA_DATA]\n{json.dumps(flora_parsed, ensure_ascii=False)}"
+            except (json.JSONDecodeError, TypeError):
+                positive += f"\n[FACE_LORA_DATA]\n{face_lora_data}"
+        else:
+            positive += f"\n[FACE_LORA_DATA]\n{'{\"list\":[]}'}"
         positive += f"\n[CHAR_FACE_TAG_INFORM]\n{char_face_tag_inform or '{"list":[]}'}"
         positive += f"\n[POSE_ACTIVATE]\n{'true' if pose_enabled else 'false'}"
         if pose_enabled and pose_data:

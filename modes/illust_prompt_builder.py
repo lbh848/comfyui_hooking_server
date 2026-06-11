@@ -245,7 +245,8 @@ class IllustPromptBuilder:
                 all_face_loras.append({
                     "lora_path": flora_path,
                     "str": flora.get("strength", 0.8),
-                    "BASE": flora.get("BASE", "anima")
+                    "BASE": flora.get("BASE", "anima"),
+                    "CHAR": char_name
                 })
 
         # ─── 아티스트 프리셋 태그 ───

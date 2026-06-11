@@ -25064,7 +25064,7 @@
                 const faceLoraActive = faceLoraEnabled && faceLoraList.length > 0;
                 positiveFull += `\n[FACE_LORA_ACTIVATE]\n${faceLoraActive ? 'true' : 'false'}`;
                 if (faceLoraActive) {
-                    positiveFull += `\n[FACE_LORA_DATA]\n${JSON.stringify({list: faceLoraList.map(l => ({lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima'}))})}`;
+                    positiveFull += `\n[FACE_LORA_DATA]\n${JSON.stringify({list: faceLoraList.map(l => ({lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima', CHAR: 'asset_mode'}))})}`;
                 } else {
                     positiveFull += `\n[FACE_LORA_DATA]\n{"list":[]}`;
                 }
@@ -25073,7 +25073,7 @@
                 const eyeTags = document.getElementById('asset-eye-tags')?.value.trim() || '';
                 const faceAnimaTriggers = faceLoraList.filter(l => (l.BASE || 'anima') === 'anima').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
                 const faceSdxlTriggers = faceLoraList.filter(l => l.BASE === 'sdxl').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
-                positiveFull += `\n[CHAR_FACE_TAG_INFORM]\n${JSON.stringify({list: [{FACE_TAGS: faceTags, EYE_TAGS: eyeTags, POSITIVE: "", TRIGGER_ANIMA: faceAnimaTriggers, TRIGGER_SDXL: faceSdxlTriggers, CHAR: "ASSET_MODE"}]})}`;
+                positiveFull += `\n[CHAR_FACE_TAG_INFORM]\n${JSON.stringify({list: [{FACE_TAGS: faceTags, EYE_TAGS: eyeTags, POSITIVE: "", TRIGGER_ANIMA: faceAnimaTriggers, TRIGGER_SDXL: faceSdxlTriggers, CHAR: "asset_mode"}]})}`;
             }
             // HRF
             positiveFull += `\n[HRF_ACTIVATE]\n${hrfSdxl ? 'true' : 'false'}`;
@@ -33716,7 +33716,7 @@
                 const faceLoraActive = slot.face_lora_enabled && (slot.face_lora_list || []).length > 0;
                 positiveFull += `\n[FACE_LORA_ACTIVATE]\n${faceLoraActive ? 'true' : 'false'}`;
                 if (faceLoraActive) {
-                    positiveFull += `\n[FACE_LORA_DATA]\n${JSON.stringify({list: slot.face_lora_list.map(l => ({lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima'}))})}`;
+                    positiveFull += `\n[FACE_LORA_DATA]\n${JSON.stringify({list: slot.face_lora_list.map(l => ({lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima', CHAR: 'asset_mode'}))})}`;
                 } else {
                     positiveFull += `\n[FACE_LORA_DATA]\n{"list":[]}`;
                 }
@@ -33724,7 +33724,7 @@
                 const faceLoraList = slot.face_lora_list || [];
                 const batchFaceAnimaTriggers = faceLoraList.filter(l => (l.BASE || 'anima') === 'anima').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
                 const batchFaceSdxlTriggers = faceLoraList.filter(l => l.BASE === 'sdxl').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
-                positiveFull += `\n[CHAR_FACE_TAG_INFORM]\n${JSON.stringify({list: [{FACE_TAGS: slot.face_tags || '', EYE_TAGS: slot.eye_tags || '', POSITIVE: "", TRIGGER_ANIMA: batchFaceAnimaTriggers, TRIGGER_SDXL: batchFaceSdxlTriggers, CHAR: "ASSET_MODE"}]})}`;
+                positiveFull += `\n[CHAR_FACE_TAG_INFORM]\n${JSON.stringify({list: [{FACE_TAGS: slot.face_tags || '', EYE_TAGS: slot.eye_tags || '', POSITIVE: "", TRIGGER_ANIMA: batchFaceAnimaTriggers, TRIGGER_SDXL: batchFaceSdxlTriggers, CHAR: "asset_mode"}]})}`;
             }
             positiveFull += `\n[POSE_ACTIVATE]\n${poseEnabled ? 'true' : 'false'}`;
             if (poseEnabled && slot.pose_id) {
@@ -33842,11 +33842,11 @@
             if (isAnima) {
                 const faceLoraActive = slot.face_lora_enabled && (slot.face_lora_list || []).length > 0;
                 controlPart += `\n[FACE_LORA_ACTIVATE]\n${faceLoraActive ? 'true' : 'false'}`;
-                controlPart += `\n[FACE_LORA_DATA]\n${faceLoraActive ? JSON.stringify({list: slot.face_lora_list.map(l => ({lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima'}))}) : '{"list":[]}'}`;
+                controlPart += `\n[FACE_LORA_DATA]\n${faceLoraActive ? JSON.stringify({list: slot.face_lora_list.map(l => ({lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima', CHAR: 'asset_mode'}))}) : '{"list":[]}'}`;
                 const previewFaceLoraList = slot.face_lora_list || [];
                 const previewFaceAnimaTriggers = previewFaceLoraList.filter(l => (l.BASE || 'anima') === 'anima').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
                 const previewFaceSdxlTriggers = previewFaceLoraList.filter(l => l.BASE === 'sdxl').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
-                controlPart += `\n[CHAR_FACE_TAG_INFORM]\n${JSON.stringify({list: [{FACE_TAGS: slot.face_tags || '', EYE_TAGS: slot.eye_tags || '', POSITIVE: "", TRIGGER_ANIMA: previewFaceAnimaTriggers, TRIGGER_SDXL: previewFaceSdxlTriggers, CHAR: "ASSET_MODE"}]})}`;
+                controlPart += `\n[CHAR_FACE_TAG_INFORM]\n${JSON.stringify({list: [{FACE_TAGS: slot.face_tags || '', EYE_TAGS: slot.eye_tags || '', POSITIVE: "", TRIGGER_ANIMA: previewFaceAnimaTriggers, TRIGGER_SDXL: previewFaceSdxlTriggers, CHAR: "asset_mode"}]})}`;
             }
             controlPart += `\n[POSE_ACTIVATE]\n${poseEnabled ? 'true' : 'false'}`;
             controlPart += `\n[POSE_DATA]\n${poseEnabled && slot.pose_id ? '(포즈: ' + slot.pose_id + ')' : '{"people":[{"pose_keypoints_2d":[...]}],"canvas_height":1024,"canvas_width":700}'}`;
