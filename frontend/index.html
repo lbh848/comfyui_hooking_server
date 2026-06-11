@@ -24803,6 +24803,7 @@
             { key: 'sdxl_lora',     label: 'SDXL LORA',   cls: 'prompt-cat-sdxl-lora' },
             { key: 'artist',       label: '아티스트',      cls: 'prompt-cat-artist' },
             { key: 'anima_artist', label: 'ANIMA 아티스트', cls: 'prompt-cat-anima-artist' },
+            { key: 'sdxl_artist',  label: 'SDXL 아티스트',  cls: 'prompt-cat-artist' },
             { key: 'quality',      label: '품질',          cls: 'prompt-cat-quality' },
             { key: 'anima_quality', label: 'ANIMA 품질',   cls: 'prompt-cat-anima-quality' },
             { key: 'sdxl_quality',  label: 'SDXL 품질',    cls: 'prompt-cat-sdxl-quality' },
@@ -24893,18 +24894,32 @@
             let positiveColored = '';
 
             if (isAnima) {
-                const section1 = [
+                const animaQuality = animaQTags;
+                const animaArtist = animaArtistTags;
+                const sdxlQuality = qTags;
+                const sdxlArtist = artistTags;
+                const section1Rest = [
                     ...(animaLoraTriggerWords ? [animaLoraTriggerWords] : []),
-                    ...animaArtistTags, ...animaQTags, ...cTags, ...appTags, ...exprTags, ...outfitTags,
+                    ...animaArtistTags, ...animaQTags,
+                    ...cTags, ...appTags, ...exprTags, ...outfitTags,
                     ...(naturalLanguage ? [naturalLanguage] : []),
                 ].join(', ');
-                const section2 = [
+                const section2Rest = [
                     ...(sdxlLoraTriggerWords ? [sdxlLoraTriggerWords] : []),
-                    ...artistTags, ...qTags, ...cTags, ...appTags, ...exprTags, ...outfitTags,
+                    ...artistTags, ...qTags,
+                    ...cTags, ...appTags, ...exprTags, ...outfitTags,
                 ].join(', ');
-                positive = section1 + '\n[SDXL]\n' + section2;
+                positive = '[ANIMA_QUALITY]\n' + animaQuality.join(', ')
+                    + '\n[ANIMA_ARTIST]\n' + animaArtist.join(', ')
+                    + '\n[ANIMA]\n' + section1Rest
+                    + '\n[SDXL_QUALITY]\n' + sdxlQuality.join(', ')
+                    + '\n[SDXL_ARTIST]\n' + sdxlArtist.join(', ')
+                    + '\n[SDXL]\n' + section2Rest
+                    + '\n[CHAR_LIST]\nasset_mode';
 
-                const section1Data = [
+                const animaQualityData = [{ key: 'anima_quality', tags: animaQuality }];
+                const animaArtistData = [{ key: 'anima_artist', tags: animaArtist }];
+                const section1RestData = [
                     { key: 'anima_lora',    tags: animaLoraTriggerWords ? [animaLoraTriggerWords] : [] },
                     { key: 'anima_artist',  tags: animaArtistTags },
                     { key: 'anima_quality', tags: animaQTags },
@@ -24914,18 +24929,24 @@
                     { key: 'outfit',       tags: outfitTags },
                     { key: 'nl',           tags: naturalLanguage ? [naturalLanguage] : [] },
                 ];
-                const section2Data = [
+                const sdxlQualityData = [{ key: 'sdxl_quality', tags: sdxlQuality }];
+                const sdxlArtistData = [{ key: 'sdxl_artist', tags: sdxlArtist }];
+                const section2RestData = [
                     { key: 'sdxl_lora',     tags: sdxlLoraTriggerWords ? [sdxlLoraTriggerWords] : [] },
-                    { key: 'artist',       tags: artistTags },
+                    { key: 'sdxl_artist',   tags: artistTags },
                     { key: 'sdxl_quality', tags: qTags },
                     { key: 'composition',  tags: cTags },
                     { key: 'appearance',   tags: appTags },
                     { key: 'expression',   tags: exprTags },
                     { key: 'outfit',       tags: outfitTags },
                 ];
-                positiveColored = renderColoredPrompt(section1Data) +
-                    '\n<span style="color:#ff0;font-weight:bold;">[SDXL]</span>\n' +
-                    renderColoredPrompt(section2Data);
+                positiveColored = '<span style="color:#0ff;font-weight:bold;">[ANIMA_QUALITY]</span>\n' + renderColoredPrompt(animaQualityData)
+                    + '\n<span style="color:#0ff;font-weight:bold;">[ANIMA_ARTIST]</span>\n' + renderColoredPrompt(animaArtistData)
+                    + '\n<span style="color:#0ff;font-weight:bold;">[ANIMA]</span>\n' + renderColoredPrompt(section1RestData)
+                    + '\n<span style="color:#0ff;font-weight:bold;">[SDXL_QUALITY]</span>\n' + renderColoredPrompt(sdxlQualityData)
+                    + '\n<span style="color:#0ff;font-weight:bold;">[SDXL_ARTIST]</span>\n' + renderColoredPrompt(sdxlArtistData)
+                    + '\n<span style="color:#ff0;font-weight:bold;">[SDXL]</span>\n' + renderColoredPrompt(section2RestData)
+                    + '\n<span style="color:#0ff;font-weight:bold;">[CHAR_LIST]</span>\n<span class="prompt-cat-composition">asset_mode</span>';
             } else {
                 positive = [
                     ...(loraTriggerWords ? [loraTriggerWords] : []),
@@ -33406,16 +33427,28 @@
 
             let positiveTags = '';
             if (isAnima) {
-                const section1 = [
+                const animaQuality = t.animaQTags.filter(v => v.trim());
+                const animaArtist = t.animaArtistTags.filter(v => v.trim());
+                const sdxlQuality = t.qTags.filter(v => v.trim());
+                const sdxlArtist = t.artistTags.filter(v => v.trim());
+                const section1Rest = [
                     ...(t.animaLoraTriggerWords ? [t.animaLoraTriggerWords] : []),
-                    ...t.animaArtistTags, ...t.animaQTags, ...t.cTags, ...t.appTags, ...t.exprTags, ...t.outfitTags,
+                    ...t.animaArtistTags, ...t.animaQTags,
+                    ...t.cTags, ...t.appTags, ...t.exprTags, ...t.outfitTags,
                     ...(t.naturalLanguage ? [t.naturalLanguage] : []),
                 ].filter(v => typeof v === 'string' && v.trim());
-                const section2 = [
+                const section2Rest = [
                     ...(t.sdxlLoraTriggerWords ? [t.sdxlLoraTriggerWords] : []),
-                    ...t.artistTags, ...t.qTags, ...t.cTags, ...t.appTags, ...t.exprTags, ...t.outfitTags,
+                    ...t.artistTags, ...t.qTags,
+                    ...t.cTags, ...t.appTags, ...t.exprTags, ...t.outfitTags,
                 ].filter(v => typeof v === 'string' && v.trim());
-                positiveTags = section1.join(', ') + '\n[SDXL]\n' + section2.join(', ');
+                positiveTags = '[ANIMA_QUALITY]\n' + animaQuality.join(', ')
+                    + '\n[ANIMA_ARTIST]\n' + animaArtist.join(', ')
+                    + '\n[ANIMA]\n' + section1Rest.join(', ')
+                    + '\n[SDXL_QUALITY]\n' + sdxlQuality.join(', ')
+                    + '\n[SDXL_ARTIST]\n' + sdxlArtist.join(', ')
+                    + '\n[SDXL]\n' + section2Rest.join(', ')
+                    + '\n[CHAR_LIST]\nasset_mode';
             } else {
                 positiveTags = [
                     ...(t.loraTriggerWords ? [t.loraTriggerWords] : []),
@@ -33509,7 +33542,9 @@
             let positiveColored = '';
 
             if (isAnima) {
-                const section1Data = [
+                const animaQualityData = [{ key: 'anima_quality', tags: t.animaQTags }];
+                const animaArtistData = [{ key: 'anima_artist', tags: t.animaArtistTags }];
+                const section1RestData = [
                     { key: 'anima_lora',    tags: t.animaLoraTriggerWords ? [t.animaLoraTriggerWords] : [] },
                     { key: 'anima_artist',  tags: t.animaArtistTags },
                     { key: 'anima_quality', tags: t.animaQTags },
@@ -33519,18 +33554,24 @@
                     { key: 'outfit',       tags: t.outfitTags },
                     { key: 'nl',           tags: t.naturalLanguage ? [t.naturalLanguage] : [] },
                 ];
-                const section2Data = [
+                const sdxlQualityData = [{ key: 'sdxl_quality', tags: t.qTags }];
+                const sdxlArtistData = [{ key: 'sdxl_artist', tags: t.artistTags }];
+                const section2RestData = [
                     { key: 'sdxl_lora',     tags: t.sdxlLoraTriggerWords ? [t.sdxlLoraTriggerWords] : [] },
-                    { key: 'artist',       tags: t.artistTags },
+                    { key: 'sdxl_artist',   tags: t.artistTags },
                     { key: 'sdxl_quality', tags: t.qTags },
                     { key: 'composition',  tags: t.cTags },
                     { key: 'appearance',   tags: t.appTags },
                     { key: 'expression',   tags: t.exprTags },
                     { key: 'outfit',       tags: t.outfitTags },
                 ];
-                positiveColored = renderColoredPrompt(section1Data) +
-                    '\n<span style="color:#ff0;font-weight:bold;">[SDXL]</span>\n' +
-                    renderColoredPrompt(section2Data);
+                positiveColored = '<span style="color:#0ff;font-weight:bold;">[ANIMA_QUALITY]</span>\n' + renderColoredPrompt(animaQualityData)
+                    + '\n<span style="color:#0ff;font-weight:bold;">[ANIMA_ARTIST]</span>\n' + renderColoredPrompt(animaArtistData)
+                    + '\n<span style="color:#0ff;font-weight:bold;">[ANIMA]</span>\n' + renderColoredPrompt(section1RestData)
+                    + '\n<span style="color:#0ff;font-weight:bold;">[SDXL_QUALITY]</span>\n' + renderColoredPrompt(sdxlQualityData)
+                    + '\n<span style="color:#0ff;font-weight:bold;">[SDXL_ARTIST]</span>\n' + renderColoredPrompt(sdxlArtistData)
+                    + '\n<span style="color:#ff0;font-weight:bold;">[SDXL]</span>\n' + renderColoredPrompt(section2RestData)
+                    + '\n<span style="color:#0ff;font-weight:bold;">[CHAR_LIST]</span>\n<span class="prompt-cat-composition">asset_mode</span>';
             } else {
                 const categoryData = [
                     { key: 'lora',        tags: t.loraTriggerWords ? [t.loraTriggerWords] : [] },

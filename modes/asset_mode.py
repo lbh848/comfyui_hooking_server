@@ -915,66 +915,75 @@ class AssetMode:
         anima_n_tags = self._tags.get("anima_negative", [])
 
         if asset_workflow_type == "anima":
-            # ANIMA 모드: 2섹션 프롬프트 조립
-            section1_parts = []
-            # 1. ANIMA LoRA 트리거 워드
+            # ANIMA 모드: 블럭 분리 프롬프트 조립
+            anima_quality_parts = [t.strip() for t in anima_q_tags if t.strip()]
+            anima_artist_parts = [t.strip() for t in anima_artist_tags if t.strip()]
+            sdxl_quality_parts = [t.strip() for t in q_tags if t.strip()]
+            sdxl_artist_parts = [t.strip() for t in artist_tags if t.strip()]
+
+            section1_rest = []
+            # ANIMA LoRA 트리거 워드
             if anima_lora_trigger_words.strip():
-                section1_parts.append(anima_lora_trigger_words.strip())
-            # 2. ANIMA 아티스트 프리셋
+                section1_rest.append(anima_lora_trigger_words.strip())
+            # ANIMA 아티스트 프리셋
             for t in anima_artist_tags:
                 if t.strip():
-                    section1_parts.append(t.strip())
-            # 3. ANIMA 품질 태그
+                    section1_rest.append(t.strip())
+            # ANIMA 품질 태그
             for t in anima_q_tags:
                 if t.strip():
-                    section1_parts.append(t.strip())
-            # 4-7. 공통 태그 (composition → appearance → expression → outfit)
+                    section1_rest.append(t.strip())
+            # 공통 태그 (composition → appearance → expression → outfit)
             for t in c_tags:
                 if t.strip():
-                    section1_parts.append(t.strip())
+                    section1_rest.append(t.strip())
             for t in app_tags:
                 if t.strip():
-                    section1_parts.append(t.strip())
+                    section1_rest.append(t.strip())
             for t in expr_tags:
                 if t.strip():
-                    section1_parts.append(t.strip())
+                    section1_rest.append(t.strip())
             for t in outfit_tags:
                 if t.strip():
-                    section1_parts.append(t.strip())
-            # 8. 자연어
+                    section1_rest.append(t.strip())
+            # 자연어
             if natural_language.strip():
-                section1_parts.append(natural_language.strip())
+                section1_rest.append(natural_language.strip())
 
-            section2_parts = []
-            # 1. SDXL LoRA 트리거 워드
+            section2_rest = []
+            # SDXL LoRA 트리거 워드
             if sdxl_lora_trigger_words.strip():
-                section2_parts.append(sdxl_lora_trigger_words.strip())
-            # 2. 일반 아티스트 프리셋
+                section2_rest.append(sdxl_lora_trigger_words.strip())
+            # SDXL 아티스트 프리셋
             for t in artist_tags:
                 if t.strip():
-                    section2_parts.append(t.strip())
-            # 3. SDXL 품질 태그
+                    section2_rest.append(t.strip())
+            # SDXL 품질 태그
             for t in q_tags:
                 if t.strip():
-                    section2_parts.append(t.strip())
-            # 4-7. 공통 태그
+                    section2_rest.append(t.strip())
+            # 공통 태그
             for t in c_tags:
                 if t.strip():
-                    section2_parts.append(t.strip())
+                    section2_rest.append(t.strip())
             for t in app_tags:
                 if t.strip():
-                    section2_parts.append(t.strip())
+                    section2_rest.append(t.strip())
             for t in expr_tags:
                 if t.strip():
-                    section2_parts.append(t.strip())
+                    section2_rest.append(t.strip())
             for t in outfit_tags:
                 if t.strip():
-                    section2_parts.append(t.strip())
-            # 자연어 없음
+                    section2_rest.append(t.strip())
 
-            positive = ", ".join(section1_parts)
+            positive = "[ANIMA_QUALITY]\n" + ", ".join(anima_quality_parts)
+            positive += "\n[ANIMA_ARTIST]\n" + ", ".join(anima_artist_parts)
+            positive += "\n[ANIMA]\n" + ", ".join(section1_rest)
+            positive += "\n[SDXL_QUALITY]\n" + ", ".join(sdxl_quality_parts)
+            positive += "\n[SDXL_ARTIST]\n" + ", ".join(sdxl_artist_parts)
             positive += "\n[SDXL]"
-            positive += "\n" + ", ".join(section2_parts)
+            positive += "\n" + ", ".join(section2_rest)
+            positive += "\n[CHAR_LIST]\nasset_mode"
         else:
             # 일반 모드: 기존 로직 유지
             positive_parts = []
