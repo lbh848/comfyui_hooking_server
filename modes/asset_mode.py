@@ -1377,6 +1377,13 @@ class AssetMode:
             if not positive:
                 return {"success": False, "error": "프롬프트가 비어있음"}
 
+            # seed=-1이면 매 생성마다 랜덤값으로 치환
+            import re
+            def _replace_seed(m):
+                import random
+                return "[SEED]\n" + str(random.randint(0, 2**32 - 1))
+            positive = re.sub(r'\[SEED\]\n-1(?!\d)', _replace_seed, positive)
+
             self._log("generate_start", {
                 "character": character, "outfit": outfit, "expression": expression,
                 "positive_preview": positive[:100],
