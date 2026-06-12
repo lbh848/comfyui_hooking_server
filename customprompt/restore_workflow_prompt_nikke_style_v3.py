@@ -91,7 +91,7 @@ def _build_illust_prompt() -> dict:
 
     setup = "cowboy shot, straight-on, yellow background"
     char_section = f"{char}, standing, {hand}, {expr}"
-    supplement = f"Holding a wooden sign that reads \"Welcome to ComfyUI!\""
+    supplement = f"Holding a wooden sign that reads \"Manager V4\""
 
     positive = f"[SETUP]\n{setup}\n[CHAR]\n{char_section}\n[SUPPLEMENT]\n{supplement}"
     return {"positive": positive, "negative": _NEGATIVE}
@@ -108,7 +108,7 @@ def _build_v2_prompt() -> dict:
     sign = (
         f"{char}, "
         f"(holding sign:1.3), sign, wooden sign, "
-        f"(she hold text on sign: \"Welcome to ComfyUI!\":1.3), "
+        f"(she hold text on sign: \"Manager V4\":1.3), "
         f"standing, {hand}, {expr}, yellow background"
     )
     positive = f"{_QUALITY}\n{sign}\n\n[ILXL]\n{sign}\n\n[UPSCALE]\n{sign}"
