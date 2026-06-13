@@ -19482,9 +19482,11 @@
                         continue;
                     }
                     const groups = groupResult.data.groups;
+                    const genderTag = _getCharGenderTag(char.name);
+                    const appearance = (groups['외모/신체'] || []).filter(t => (t.tag || '').toLowerCase() !== genderTag.toLowerCase());
                     origResults.push({
                         name: char.name,
-                        appearance: groups['외모/신체'] || [],
+                        appearance,
                         uncategorized: groups['미분류'] || [],
                         outfit: groups['복장'] || []
                     });
@@ -19506,7 +19508,14 @@
                 if (savedEdited) {
                     _lbExtraEdited = origResults.map(orig => {
                         const saved = savedEdited.find(s => s.name === orig.name);
-                        if (saved && Array.isArray(saved.appearance) && Array.isArray(saved.outfit)) return saved;
+                        if (saved && Array.isArray(saved.appearance) && Array.isArray(saved.outfit)) {
+                            // 예전 버전 데이터에 gender_tag가 appearance에 섞여 있었을 수 있으므로 제거
+                            const gt = _getCharGenderTag(orig.name).toLowerCase();
+                            return {
+                                ...saved,
+                                appearance: saved.appearance.filter(t => (t.tag || '').toLowerCase() !== gt)
+                            };
+                        }
                         return JSON.parse(JSON.stringify(orig));
                     });
                 } else {
@@ -19820,14 +19829,18 @@
             const activeBg = isBlue ? 'rgba(59,130,246,0.15)' : 'rgba(244,114,182,0.15)';
             const activeBorder = isBlue ? 'rgba(59,130,246,0.3)' : 'rgba(244,114,182,0.3)';
 
-            if (orig.length === 0) return '<span style="font-size:0.75rem; color:var(--text2);">없음</span>';
-            return orig.map((t, ti) => {
+            // appearance 맨 앞에 고정 gender_tag 칩
+            const genderPrefix = isBlue ? _buildGenderFixedChip(_getCharGenderTag(_lbExtraOriginal[ci].name)) : '';
+
+            if (orig.length === 0 && !genderPrefix) return '<span style="font-size:0.75rem; color:var(--text2);">없음</span>';
+            const chips = orig.length === 0 ? '' : orig.map((t, ti) => {
                 const inEdited = edited.some(et => et.tag === t.tag);
                 if (inEdited) {
                     return `<span style="background:var(--surface2); border:1px solid var(--border); padding:2px 6px; border-radius:4px; font-size:0.75rem; color:var(--text2); opacity:0.45; display:inline-flex; align-items:center; gap:3px; cursor:default;"${_lbExtraShowDesc && t.desc ? ` title="${escAttr(t.desc)}"` : ''}>${escHtml(t.tag)}</span>`;
                 }
                 return `<span style="background:${activeBg}; border:1px solid ${activeBorder}; padding:2px 6px; border-radius:4px; font-size:0.75rem; display:inline-flex; align-items:center; gap:3px; cursor:default;"${_lbExtraShowDesc && t.desc ? ` title="${escAttr(t.desc)}"` : ''}>${escHtml(t.tag)}<span style="cursor:pointer; color:var(--accent); font-weight:bold; font-size:0.8rem; margin-left:2px;" onclick="event.stopPropagation(); _addLbExtraTag(${ci},'${group}',${ti})">→</span></span>`;
             }).join('');
+            return genderPrefix + chips;
         }
 
         function _buildUncategorizedTags(ci) {
@@ -19850,14 +19863,25 @@
             const bg = isBlue ? 'rgba(59,130,246,0.15)' : 'rgba(244,114,182,0.15)';
             const border = isBlue ? 'rgba(59,130,246,0.3)' : 'rgba(244,114,182,0.3)';
 
-            if (tags.length === 0) return '<span style="font-size:0.75rem; color:var(--text2);">없음</span>';
-            return tags.map((t, ti) => {
+            // appearance 맨 앞에 고정 gender_tag 칩 (드래그/X 불가)
+            const genderPrefix = isBlue ? _buildGenderFixedChip(_getCharGenderTag(_lbExtraEdited[ci].name)) : '';
+
+            if (tags.length === 0 && !genderPrefix) return '<span style="font-size:0.75rem; color:var(--text2);">없음</span>';
+            const chips = tags.length === 0 ? '' : tags.map((t, ti) => {
                 return `<span class="lb-extra-tag" draggable="true" data-tci="${ci}" data-tgrp="${group}" data-tti="${ti}" style="background:${bg}; border:1px solid ${border}; padding:2px 6px; border-radius:4px; font-size:0.75rem; display:inline-flex; align-items:center; gap:3px; cursor:grab;"${_lbExtraShowDesc && t.desc ? ` title="${escAttr(t.desc)}"` : ''}>${escHtml(t.tag)}<span style="cursor:pointer; color:var(--error); font-weight:bold; font-size:0.75rem; margin-left:2px;" onclick="event.stopPropagation(); _removeLbExtraTag(${ci},'${group}',${ti})">×</span></span>`;
             }).join('');
+            return genderPrefix + chips;
         }
 
         function _addLbExtraTag(ci, group, ti) {
             const tag = _lbExtraOriginal[ci][group][ti];
+            if (group === 'appearance') {
+                const gt = _getCharGenderTag(_lbExtraEdited[ci].name).toLowerCase();
+                if ((tag.tag || '').toLowerCase() === gt) {
+                    showToast(`'${gt}'는 성별 태그라 자동 고정됩니다`, 'info');
+                    return;
+                }
+            }
             if (!_lbExtraEdited[ci][group].some(t => t.tag === tag.tag)) {
                 _lbExtraEdited[ci][group].push(JSON.parse(JSON.stringify(tag)));
             }
@@ -19872,6 +19896,14 @@
         function _addLbExtraTagFromInput(ci, group, inputEl) {
             const val = (inputEl.value || '').trim();
             if (!val) return;
+            if (group === 'appearance') {
+                const gt = _getCharGenderTag(_lbExtraEdited[ci].name).toLowerCase();
+                if (val.toLowerCase() === gt) {
+                    showToast(`'${gt}'는 성별 태그라 자동 고정됩니다`, 'info');
+                    inputEl.value = '';
+                    return;
+                }
+            }
             if (_lbExtraEdited[ci][group].some(t => t.tag.toLowerCase() === val.toLowerCase())) {
                 showToast('이미 있는 태그입니다', 'error');
                 inputEl.value = '';
@@ -19997,6 +20029,13 @@
                         const src = JSON.parse(e.dataTransfer.getData('text/lbextra-uncat'));
                         if (src.ci !== dstCi) return;
                         const tag = _lbExtraOriginal[src.ci].uncategorized[src.ti];
+                        if (dstGrp === 'appearance') {
+                            const gt = _getCharGenderTag(_lbExtraEdited[dstCi].name).toLowerCase();
+                            if ((tag.tag || '').toLowerCase() === gt) {
+                                showToast(`'${gt}'는 성별 태그라 자동 고정됩니다`, 'info');
+                                return;
+                            }
+                        }
                         if (!_lbExtraEdited[dstCi][dstGrp].some(t => t.tag === tag.tag)) {
                             _lbExtraEdited[dstCi][dstGrp].push(JSON.parse(JSON.stringify(tag)));
                         }
@@ -20007,6 +20046,14 @@
                         if (src.group === dstGrp) return;
                         const arr = _lbExtraEdited[src.ci][src.group];
                         const [moved] = arr.splice(src.ti, 1);
+                        if (dstGrp === 'appearance') {
+                            const gt = _getCharGenderTag(_lbExtraEdited[dstCi].name).toLowerCase();
+                            if ((moved.tag || '').toLowerCase() === gt) {
+                                showToast(`'${gt}'는 성별 태그라 자동 고정됩니다`, 'info');
+                                _lbExtraEdited[src.ci][src.group].splice(src.ti, 0, moved); // 원위치 복구
+                                return;
+                            }
+                        }
                         if (!_lbExtraEdited[dstCi][dstGrp].some(t => t.tag === moved.tag)) {
                             _lbExtraEdited[dstCi][dstGrp].push(moved);
                         }
@@ -20025,15 +20072,35 @@
             openLightbox(url);
         }
 
+        // 캐릭터 gender_tag (1girl/1boy/1male) 조회 - lb extra appearance 맨 앞 고정
+        function _getCharGenderTag(name) {
+            const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
+            const char = bot ? (bot.characters || []).find(c => c.name === name) : null;
+            return (char && char.gender_tag) || '1girl';
+        }
+
+        // 성별 고정 칩 HTML (원본/편집본 공용)
+        function _buildGenderFixedChip(genderTag) {
+            if (!genderTag) return '';
+            return `<span title="성별 태그 (자동 고정, 편집 불가)" style="background:rgba(107,114,128,0.22); border:1px solid rgba(107,114,128,0.35); padding:2px 6px; border-radius:4px; font-size:0.75rem; display:inline-flex; align-items:center; gap:3px; color:var(--text2); cursor:help;">🔒 ${escHtml(genderTag)}</span>`;
+        }
+
         async function _saveLbExtra() {
             try {
                 let savedCount = 0;
-                // 캐릭터 분류 데이터 저장
+                // 캐릭터 분류 데이터 저장 (서버에는 gender_tag 없는 순수 appearance만 저장)
                 if (_lbExtraEdited.length > 0) {
+                    const sanitized = _lbExtraEdited.map(c => {
+                        const gt = _getCharGenderTag(c.name).toLowerCase();
+                        return {
+                            ...c,
+                            appearance: (c.appearance || []).filter(t => (t.tag || '').toLowerCase() !== gt)
+                        };
+                    });
                     const resp = await fetch('/api/bot_mode/lb_extra', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ bot_name: botCurrentBot, data: _lbExtraEdited })
+                        body: JSON.stringify({ bot_name: botCurrentBot, data: sanitized })
                     });
                     const result = await resp.json();
                     if (result.saved) {
@@ -20078,9 +20145,12 @@
                 output += spText.trim() + '\n\n';
             }
             for (const char of _lbExtraEdited) {
+                const gt = _getCharGenderTag(char.name);
+                const appearanceTags = char.appearance.map(t => t.tag).filter(t => t.toLowerCase() !== gt.toLowerCase());
+                const appearanceStr = [gt, ...appearanceTags].filter(Boolean).join(', ');
                 output += `### ${char.name}\n`;
                 output += `-Name\n${char.name}\n`;
-                output += `-Appearance\n${char.appearance.map(t => t.tag).join(', ')}\n`;
+                output += `-Appearance\n${appearanceStr}\n`;
                 output += `-normal outfit\n${char.outfit.map(t => t.tag).join(', ')}\n\n`;
             }
             if (!output.trim()) { showToast('내보낼 데이터가 없습니다', 'error'); return; }
@@ -20105,6 +20175,7 @@
         let _autoGroupEyeTags = [];  // tags mode eye tag chips
         let _autoGroupFaceText = '';  // text mode face tags
         let _autoGroupEyeText = '';   // text mode eye tags
+        let _autoGroupGenderTag = ''; // 캐릭터 gender_tag (1girl/1boy/1male) - FACE_TAGS 맨 앞 고정, 편집 불가
 
         async function autoGroupPrompt(charName) {
             const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
@@ -20154,7 +20225,7 @@
             _autoGroupViewMode = mode;
             // 모드 전환 시 칩/텍스트 동기화
             if (mode === 'chips') {
-                _autoGroupFaceTags = _autoGroupFaceText ? _autoGroupFaceText.split(',').map(t => t.trim()).filter(Boolean) : [];
+                _autoGroupFaceTags = _autoGroupFaceText ? _autoGroupFaceText.split(',').map(t => t.trim()).filter(Boolean).filter(t => t !== _autoGroupGenderTag) : [];
                 _autoGroupEyeTags = _autoGroupEyeText ? _autoGroupEyeText.split(',').map(t => t.trim()).filter(Boolean) : [];
             } else {
                 _autoGroupFaceText = _autoGroupFaceTags.join(', ');
@@ -20239,14 +20310,15 @@
             _autoGroupShowDesc = false;
             _autoGroupCharName = charName;
 
-            // 캐릭터에서 기존 face_tags/eye_tags 로드
+            // 캐릭터에서 기존 face_tags/eye_tags/gender_tag 로드
             const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
             const char = bot ? (bot.characters || []).find(c => c.name === charName) : null;
+            _autoGroupGenderTag = (char && char.gender_tag) || '1girl';
             const existingFaceTags = (char && char.face_tags) || '';
             const existingEyeTags = (char && char.eye_tags) || '';
-            _autoGroupFaceTags = existingFaceTags ? existingFaceTags.split(',').map(t => t.trim()).filter(Boolean) : [];
+            _autoGroupFaceTags = existingFaceTags ? existingFaceTags.split(',').map(t => t.trim()).filter(Boolean).filter(t => t !== _autoGroupGenderTag) : [];
             _autoGroupEyeTags = existingEyeTags ? existingEyeTags.split(',').map(t => t.trim()).filter(Boolean) : [];
-            _autoGroupFaceText = existingFaceTags;
+            _autoGroupFaceText = _autoGroupFaceTags.join(', ');
             _autoGroupEyeText = existingEyeTags;
 
             const overlay = document.createElement('div');
@@ -20427,11 +20499,16 @@
                 eyeEl.ondragleave = _agDragLeave;
                 eyeEl.ondrop = _agEyeDrop;
 
-                faceEl.innerHTML = _autoGroupFaceTags.length === 0
+                // 맨 앞 고정 gender_tag 칩 (회색 + 🔒, X 버튼 없음)
+                const genderChip = _autoGroupGenderTag
+                    ? `<span title="성별 태그 (자동 고정, 편집 불가)" style="background:rgba(107,114,128,0.22); padding:3px 8px; border-radius:4px; font-size:0.8rem; display:inline-flex; align-items:center; gap:4px; color:var(--text2); cursor:help;">🔒 ${escHtml(_autoGroupGenderTag)}</span>`
+                    : '';
+                const faceChips = _autoGroupFaceTags.length === 0
                     ? '<span style="color:var(--text2); font-size:0.8rem;">위 태그를 드래그하세요</span>'
                     : _autoGroupFaceTags.map((t, i) =>
                         `<span style="background:rgba(59,130,246,0.2); padding:3px 8px; border-radius:4px; font-size:0.8rem; display:inline-flex; align-items:center; gap:4px;">${escHtml(t)}<span onclick="_agRemoveFaceTag(${i})" style="cursor:pointer; font-size:0.7rem; opacity:0.6;">✕</span></span>`
                     ).join('');
+                faceEl.innerHTML = genderChip + faceChips;
 
                 eyeEl.innerHTML = _autoGroupEyeTags.length === 0
                     ? '<span style="color:var(--text2); font-size:0.8rem;">위 태그를 드래그하세요</span>'
@@ -20447,7 +20524,11 @@
                 eyeEl.ondragleave = null;
                 eyeEl.ondrop = null;
 
-                faceEl.innerHTML = `<input type="text" value="${escAttr(_autoGroupFaceText)}" oninput="_agFaceTextChanged(this)" placeholder="얼굴 태그를 쉼표로 입력" style="width:100%; border:none; background:transparent; color:var(--text); font-size:0.85rem; outline:none;">`;
+                // 입력창 위에 gender_tag 자동 고정 배지
+                const genderBadge = _autoGroupGenderTag
+                    ? `<div title="성별 태그 (자동 고정, 편집 불가)" style="width:100%; font-size:0.7rem; color:var(--text2); margin-bottom:4px; cursor:help;">🔒 자동 고정: ${escHtml(_autoGroupGenderTag)}</div>`
+                    : '';
+                faceEl.innerHTML = genderBadge + `<input type="text" value="${escAttr(_autoGroupFaceText)}" oninput="_agFaceTextChanged(this)" placeholder="얼굴 태그를 쉼표로 입력" style="width:100%; border:none; background:transparent; color:var(--text); font-size:0.85rem; outline:none;">`;
                 eyeEl.innerHTML = `<input type="text" value="${escAttr(_autoGroupEyeText)}" oninput="_agEyeTextChanged(this)" placeholder="눈 태그를 쉼표로 입력" style="width:100%; border:none; background:transparent; color:var(--text); font-size:0.85rem; outline:none;">`;
             }
         }
@@ -20462,10 +20543,10 @@
             let eyeTags = '';
 
             if (_autoGroupViewMode === 'chips') {
-                faceTags = _autoGroupFaceTags.join(', ');
+                faceTags = _autoGroupFaceTags.filter(t => t !== _autoGroupGenderTag).join(', ');
                 eyeTags = _autoGroupEyeTags.join(', ');
             } else {
-                faceTags = _autoGroupFaceText;
+                faceTags = _autoGroupFaceText.split(',').map(t => t.trim()).filter(t => t && t !== _autoGroupGenderTag).join(', ');
                 eyeTags = _autoGroupEyeText;
             }
 
