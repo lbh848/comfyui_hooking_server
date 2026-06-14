@@ -105,6 +105,144 @@ def create_lora(trigger: str) -> dict:
     return {"success": True, "id": lora_id}
 
 
+def import_uploaded_lora(
+    trigger: str,
+    profile: str,
+    safetensors_path: str,
+    safetensors_filename: str,
+    instance_lora_load_path: str = "",
+    preview_path: str = "",
+    preview_filename: str = "",
+) -> dict:
+    """이미 학습된 safetensors를 직접 업로드하여 인스턴스 로라로 등록.
+    - trigger-hash 기반 lora_id 생성 (create_lora와 동일 규칙)
+    - instance_lora/{lora_id}/ : preview 이미지(옵션) 저장
+    - {instance_lora_load_path}/{profile}/{lora_id}/uploaded-{ts}/ : safetensors + json 메타데이터 저장
+      → 기존 피커(list_instance_lora_for_picker)가 자동으로 인식
+    """
+    trigger = (trigger or "").strip()
+    if not trigger:
+        print("[INSTANCE_LORA] import_uploaded: trigger 누락")
+        return {"success": False, "error": "trigger 필수"}
+    if profile not in ("anima", "sdxl"):
+        print(f"[INSTANCE_LORA] import_uploaded: 잘못된 profile={profile}")
+        return {"success": False, "error": "profile은 anima 또는 sdxl이어야 함"}
+    if not safetensors_path or not os.path.isfile(safetensors_path):
+        print(f"[INSTANCE_LORA] import_uploaded: safetensors 파일 없음: {safetensors_path}")
+        return {"success": False, "error": "safetensors 파일이 없음"}
+    if not instance_lora_load_path:
+        print("[INSTANCE_LORA] import_uploaded: instance_lora_load_path 미설정")
+        return {"success": False, "error": "instance_lora_load_path 미설정"}
+    if not safetensors_filename.lower().endswith(".safetensors"):
+        print(f"[INSTANCE_LORA] import_uploaded: 확장자 오류: {safetensors_filename}")
+        return {"success": False, "error": ".safetensors 파일만 허용됨"}
+
+    data = _load_data()
+    base = _safe_dirname(trigger)
+    hashlib = __import__("hashlib")
+    time = __import__("time")
+    datetime = __import__("datetime")
+    short_hash = hashlib.md5(f"{trigger}{time.time()}".encode()).hexdigest()[:6]
+    lora_id = f"{base}-{short_hash}"
+    if lora_id in data.get("instance_loras", {}):
+        print(f"[INSTANCE_LORA] import_uploaded: 이미 존재: {lora_id}")
+        return {"success": False, "error": "이미 존재하는 로라입니다 (다시 시도하세요)"}
+
+    now_ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    session_name = f"uploaded-{now_ts}"
+    step_name = "imported"
+
+    # 1) instance_lora_manage.json 등록
+    entry = {
+        "trigger": trigger,
+        "lora_name": lora_id,
+        "images": [],
+        "sessions": {
+            session_name: {
+                "profile": profile,
+                "representative": None,
+                "imported": True,
+            }
+        },
+        "usage_count": 0,
+        "created_at": now_ts,
+        "imported": True,
+    }
+
+    # 2) 로컬 폴더 + preview 이미지(옵션)
+    local_dir = _lora_dir(lora_id)
+    os.makedirs(local_dir, exist_ok=True)
+    if preview_path and os.path.isfile(preview_path) and preview_filename:
+        # 확장자는 원본 유지, 카드 썸네일용
+        safe_prev = _safe_dirname(preview_filename) or "preview.webp"
+        dst_preview = os.path.join(local_dir, safe_prev)
+        try:
+            shutil.copy2(preview_path, dst_preview)
+            entry["images"].append(safe_prev)
+        except Exception as e:
+            print(f"[INSTANCE_LORA] import_uploaded preview 복사 실패: {preview_path} -> {dst_preview} - {e}")
+            traceback.print_exc()
+
+    data.setdefault("instance_loras", {})[lora_id] = entry
+    _save_data(data)
+
+    # 3) 학습 결과 위치에 safetensors + json 메타데이터 저장
+    session_dir = os.path.join(instance_lora_load_path, profile, lora_id, session_name)
+    os.makedirs(session_dir, exist_ok=True)
+
+    st_name = f"{step_name}.safetensors"
+    dst_st = os.path.join(session_dir, st_name)
+    try:
+        shutil.copy2(safetensors_path, dst_st)
+    except Exception as e:
+        print(f"[INSTANCE_LORA] import_uploaded safetensors 복사 실패: {safetensors_path} -> {dst_st} - {e}")
+        traceback.print_exc()
+        # 롤백
+        try:
+            shutil.rmtree(local_dir)
+        except Exception:
+            pass
+        data["instance_loras"].pop(lora_id, None)
+        _save_data(data)
+        return {"success": False, "error": f"safetensors 복사 실패: {e}"}
+
+    # preview를 session 폴더에도 복사 (피커 preview_url용)
+    previews_rel = []
+    if preview_path and os.path.isfile(preview_path) and preview_filename:
+        prev_in_session = os.path.join(session_dir, "preview" + os.path.splitext(preview_filename)[1])
+        try:
+            shutil.copy2(preview_path, prev_in_session)
+            previews_rel.append(os.path.basename(prev_in_session))
+        except Exception as e:
+            print(f"[INSTANCE_LORA] import_uploaded session preview 복사 실패: {e}")
+
+    # json 메타데이터 (list_instance_lora_for_picker 호환)
+    meta = {
+        "avr_loss": None,
+        "config_file": "",
+        "lora_file": st_name,
+        "previews": previews_rel,
+        "imported": True,
+        "source_filename": safetensors_filename,
+    }
+    json_path = os.path.join(session_dir, f"{step_name}.json")
+    try:
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump(meta, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[INSTANCE_LORA] import_uploaded 메타데이터 저장 실패: {json_path} - {e}")
+        traceback.print_exc()
+        return {"success": False, "error": f"메타데이터 저장 실패: {e}"}
+
+    print(f"[INSTANCE_LORA] import_uploaded 완료: {lora_id} profile={profile} session={session_name}")
+    return {
+        "success": True,
+        "id": lora_id,
+        "profile": profile,
+        "session": session_name,
+    }
+
+
 def delete_lora(lora_id: str, instance_lora_load_path: str = "") -> dict:
     data = _load_data()
     lora_id = _safe_dirname(lora_id)

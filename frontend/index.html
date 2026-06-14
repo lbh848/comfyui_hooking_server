@@ -5177,6 +5177,7 @@
                             <span style="font-weight:700; font-size:1.05rem;">인스턴스 로라</span>
                             <div style="display:flex; gap:8px;">
                                 <button onclick="showInstanceLoraCreateModal()" style="padding:6px 14px; background:var(--accent); color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600;">+ 로라 생성</button>
+                                <button onclick="showInstanceLoraImportModal()" style="padding:6px 14px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600;">+ 로라 직접 업로드</button>
                             </div>
                         </div>
                         <!-- 인스턴스 로라 카드 그리드 -->
@@ -5723,6 +5724,45 @@
             <div class="modal-footer" style="flex-shrink:0;">
                 <button onclick="closeInstanceLoraCreateModal()" style="padding:8px 16px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:6px; cursor:pointer;">취소</button>
                 <button onclick="confirmCreateInstanceLora()" style="padding:8px 20px; background:var(--accent); color:#fff; border:none; border-radius:6px; cursor:pointer; font-weight:600;">생성</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 인스턴스 로라 직접 업로드 모달 -->
+    <div class="modal" id="instance-lora-import-modal">
+        <div class="modal-content" style="width:560px; max-width:560px;">
+            <div class="modal-header">
+                <h2>로라 직접 업로드</h2>
+                <button class="modal-close" onclick="closeInstanceLoraImportModal()">&times;</button>
+            </div>
+            <div class="modal-body" style="padding:16px; display:flex; flex-direction:column; gap:14px;">
+                <div style="padding:8px 10px; background:rgba(255,180,0,0.1); border:1px solid rgba(255,180,0,0.3); border-radius:8px; font-size:0.78rem; color:var(--text-secondary);">
+                    이미 학습된 .safetensors 파일을 인스턴스 로라로 등록합니다. 학습 과정을 생략하며, 기존 로라와 동일하게 피커에서 적용할 수 있습니다.
+                </div>
+                <div>
+                    <label style="font-size:0.85rem; font-weight:600; display:block; margin-bottom:4px;">트리거워드 <span style="color:var(--error);">*</span></label>
+                    <input id="instance-lora-import-trigger" type="text" placeholder="예: my_character" style="width:100%; padding:8px; border-radius:6px; border:1px solid var(--border); background:var(--surface1); color:var(--text); font-size:0.9rem;">
+                </div>
+                <div>
+                    <label style="font-size:0.85rem; font-weight:600; display:block; margin-bottom:4px;">프로필 <span style="color:var(--error);">*</span></label>
+                    <select id="instance-lora-import-profile" style="width:100%; padding:8px; border-radius:6px; border:1px solid var(--border); background:var(--surface1); color:var(--text); font-size:0.9rem;">
+                        <option value="anima">anima</option>
+                        <option value="sdxl">sdxl</option>
+                    </select>
+                </div>
+                <div>
+                    <label style="font-size:0.85rem; font-weight:600; display:block; margin-bottom:4px;">LoRA 파일 (.safetensors) <span style="color:var(--error);">*</span></label>
+                    <input id="instance-lora-import-st" type="file" accept=".safetensors" style="width:100%; font-size:0.85rem;">
+                </div>
+                <div>
+                    <label style="font-size:0.85rem; font-weight:600; display:block; margin-bottom:4px;">프리뷰 이미지 (선택)</label>
+                    <input id="instance-lora-import-preview" type="file" accept="image/*" style="width:100%; font-size:0.85rem;">
+                    <div style="font-size:0.72rem; color:var(--text-secondary); margin-top:3px;">카드/피커 썸네일로 사용됩니다.</div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button onclick="closeInstanceLoraImportModal()" style="padding:8px 16px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:6px; cursor:pointer;">취소</button>
+                <button id="instance-lora-import-confirm" onclick="confirmImportInstanceLora()" style="padding:8px 20px; background:var(--accent); color:#fff; border:none; border-radius:6px; cursor:pointer; font-weight:600;">업로드</button>
             </div>
         </div>
     </div>
@@ -15992,6 +16032,53 @@
             // 얼굴 추출 옵션 초기화
             document.getElementById('ic-face-extract-toggle').checked = false;
             document.getElementById('ic-face-extract-body').style.display = 'none';
+        }
+
+        function showInstanceLoraImportModal() {
+            document.getElementById('instance-lora-import-trigger').value = '';
+            document.getElementById('instance-lora-import-profile').value = 'anima';
+            document.getElementById('instance-lora-import-st').value = '';
+            document.getElementById('instance-lora-import-preview').value = '';
+            document.getElementById('instance-lora-import-modal').style.display = 'flex';
+        }
+        function closeInstanceLoraImportModal() {
+            document.getElementById('instance-lora-import-modal').style.display = 'none';
+        }
+        async function confirmImportInstanceLora() {
+            const trigger = document.getElementById('instance-lora-import-trigger').value.trim();
+            const profile = document.getElementById('instance-lora-import-profile').value;
+            const stInput = document.getElementById('instance-lora-import-st');
+            const prevInput = document.getElementById('instance-lora-import-preview');
+            if (!trigger) { showToast('트리거워드를 입력하세요'); return; }
+            if (!profile) { showToast('프로필을 선택하세요'); return; }
+            if (!stInput.files || !stInput.files[0]) { showToast('safetensors 파일을 선택하세요'); return; }
+            const fd = new FormData();
+            fd.append('trigger', trigger);
+            fd.append('profile', profile);
+            fd.append('safetensors', stInput.files[0], stInput.files[0].name);
+            if (prevInput.files && prevInput.files[0]) {
+                fd.append('preview', prevInput.files[0], prevInput.files[0].name);
+            }
+            const btn = document.getElementById('instance-lora-import-confirm');
+            const origText = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = '업로드 중...';
+            try {
+                const resp = await fetch('/api/instance_lora/import_uploaded', { method: 'POST', body: fd });
+                const data = await resp.json();
+                if (!resp.ok || !data.success) {
+                    throw new Error(data.error || `HTTP ${resp.status}`);
+                }
+                showToast('업로드 완료');
+                closeInstanceLoraImportModal();
+                await loadInstanceLoraGrid();
+            } catch (e) {
+                console.error('[INSTANCE_LORA] 직접 업로드 실패:', e);
+                showToast(`업로드 실패: ${e.message || e}`);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = origText;
+            }
         }
         function toggleIcFaceExtract(checked) {
             const body = document.getElementById('ic-face-extract-body');

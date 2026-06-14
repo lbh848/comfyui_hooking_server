@@ -7470,6 +7470,89 @@ async def handle_api_instance_lora_images_upload(request):
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 
+async def handle_api_instance_lora_import_uploaded(request):
+    """이미 학습된 safetensors 직접 업로드하여 인스턴스 로라로 등록.
+    multipart 필드: trigger, profile, safetensors(file), preview(file, 옵션)"""
+    tmp_paths = []
+    try:
+        config = load_config()
+        instance_lora_load_path = config.get("instance_lora_load_path", "")
+        if not instance_lora_load_path:
+            return web.json_response({"success": False, "error": "instance_lora_load_path 미설정"}, status=400)
+
+        reader = await request.multipart()
+        trigger = ""
+        profile = ""
+        st_filename = ""
+        st_tmp = ""
+        prev_filename = ""
+        prev_tmp = ""
+
+        import tempfile
+        tmp_dir = os.path.join(BASE_DIR, "instance_lora", "_tmp_upload")
+        os.makedirs(tmp_dir, exist_ok=True)
+
+        while True:
+            part = await reader.next()
+            if part is None:
+                break
+            if part.name == "trigger":
+                trigger = (await part.text()).strip()
+            elif part.name == "profile":
+                profile = (await part.text()).strip()
+            elif part.name == "safetensors":
+                st_filename = part.filename or "upload.safetensors"
+                st_tmp = os.path.join(tmp_dir, f"st_{int(__import__('time').time()*1000)}_{st_filename}")
+                with open(st_tmp, "wb") as f:
+                    while True:
+                        chunk = await part.read_chunk()
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                tmp_paths.append(st_tmp)
+            elif part.name == "preview":
+                prev_filename = part.filename or ""
+                if prev_filename:
+                    prev_tmp = os.path.join(tmp_dir, f"prev_{int(__import__('time').time()*1000)}_{prev_filename}")
+                    with open(prev_tmp, "wb") as f:
+                        while True:
+                            chunk = await part.read_chunk()
+                            if not chunk:
+                                break
+                            f.write(chunk)
+                    tmp_paths.append(prev_tmp)
+
+        if not trigger:
+            return web.json_response({"success": False, "error": "trigger 필수"}, status=400)
+        if profile not in ("anima", "sdxl"):
+            return web.json_response({"success": False, "error": "profile은 anima 또는 sdxl"}, status=400)
+        if not st_tmp or not os.path.isfile(st_tmp):
+            return web.json_response({"success": False, "error": "safetensors 파일 누락"}, status=400)
+
+        from modes.instance_lora_mode import import_uploaded_lora
+        result = import_uploaded_lora(
+            trigger=trigger,
+            profile=profile,
+            safetensors_path=st_tmp,
+            safetensors_filename=st_filename,
+            instance_lora_load_path=instance_lora_load_path,
+            preview_path=prev_tmp if prev_tmp and os.path.isfile(prev_tmp) else "",
+            preview_filename=prev_filename,
+        )
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[INSTANCE_LORA_API] 직접 업로드 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+    finally:
+        for p in tmp_paths:
+            try:
+                if os.path.isfile(p):
+                    os.remove(p)
+            except OSError:
+                pass
+
+
 async def handle_api_instance_lora_face_extract(request):
     """인스턴스 LoRA 얼굴 추출 - 큐에 추가"""
     try:
@@ -7638,6 +7721,7 @@ app.router.add_post("/api/bot_lora/trained/cleanup-non-representative", handle_a
 
 app.router.add_get("/api/instance_lora/list", handle_api_instance_lora_list)
 app.router.add_post("/api/instance_lora/create", handle_api_instance_lora_create)
+app.router.add_post("/api/instance_lora/import_uploaded", handle_api_instance_lora_import_uploaded)
 app.router.add_post("/api/instance_lora/delete", handle_api_instance_lora_delete)
 app.router.add_get("/api/instance_lora/detail", handle_api_instance_lora_detail)
 app.router.add_get("/api/instance_lora/image/{id}/{filename}", handle_api_instance_lora_image)
