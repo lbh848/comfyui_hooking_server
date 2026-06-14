@@ -318,6 +318,7 @@ class BotMode:
         char_name = body.get("char_name", "").strip()
         face_tags = body.get("face_tags", "")
         eye_tags = body.get("eye_tags", "")
+        absolute_tags = body.get("absolute_tags", "")
         if not bot_name or not char_name:
             return _json_error("봇 또는 캐릭터 이름이 비어있습니다.")
         bot = next((b for b in data["bots"] if b["name"] == bot_name), None)
@@ -328,6 +329,7 @@ class BotMode:
             return _json_error(f"캐릭터를 찾을 수 없음: {char_name}")
         char["face_tags"] = face_tags
         char["eye_tags"] = eye_tags
+        char["absolute_tags"] = absolute_tags
         _save_bot_data(data)
         print(f"[BOT_MODE] 캐릭터 얼굴 태그 업데이트: {bot_name}/{char_name}")
         return _json_ok({"bots": data["bots"]})

@@ -19102,7 +19102,7 @@
                             style="background:rgba(244,114,182,0.12); color:var(--text); border:1px solid rgba(244,114,182,0.3); padding:8px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600; white-space:nowrap;">전체 이미지 보기</button>
                         <button class="btn-auto-group" data-char-name="${escAttr(char.name)}"
                             onclick="event.stopPropagation(); autoGroupPrompt('${escAttr(char.name)}')"
-                            style="background:rgba(34,197,94,0.12); color:var(--text); border:1px solid rgba(34,197,94,0.3); padding:8px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600; white-space:nowrap;">캐릭터 얼굴 태그 설정</button>
+                            style="background:rgba(34,197,94,0.12); color:var(--text); border:1px solid rgba(34,197,94,0.3); padding:8px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600; white-space:nowrap;">캐릭터 얼굴/눈/절대태그 설정</button>
                         <select onchange="saveCharGenderTag('${escAttr(char.name)}', this.value)"
                             style="padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface2); color:var(--text); font-size:0.8rem; cursor:pointer;">
                             ${['1girl','1boy','1male'].map(g =>
@@ -20623,8 +20623,10 @@
         let _autoGroupCharName = '';
         let _autoGroupFaceTags = []; // tags mode face tag chips
         let _autoGroupEyeTags = [];  // tags mode eye tag chips
+        let _autoGroupAbsoluteTags = []; // tags mode absolute tag chips
         let _autoGroupFaceText = '';  // text mode face tags
         let _autoGroupEyeText = '';   // text mode eye tags
+        let _autoGroupAbsoluteText = ''; // text mode absolute tags
         let _autoGroupGenderTag = ''; // 캐릭터 gender_tag (1girl/1boy/1male) - FACE_TAGS 맨 앞 고정, 편집 불가
 
         async function autoGroupPrompt(charName) {
@@ -20677,9 +20679,11 @@
             if (mode === 'chips') {
                 _autoGroupFaceTags = _autoGroupFaceText ? _autoGroupFaceText.split(',').map(t => t.trim()).filter(Boolean).filter(t => t !== _autoGroupGenderTag) : [];
                 _autoGroupEyeTags = _autoGroupEyeText ? _autoGroupEyeText.split(',').map(t => t.trim()).filter(Boolean) : [];
+                _autoGroupAbsoluteTags = _autoGroupAbsoluteText ? _autoGroupAbsoluteText.split(',').map(t => t.trim()).filter(Boolean) : [];
             } else {
                 _autoGroupFaceText = _autoGroupFaceTags.join(', ');
                 _autoGroupEyeText = _autoGroupEyeTags.join(', ');
+                _autoGroupAbsoluteText = _autoGroupAbsoluteTags.join(', ');
             }
             // 세그먼트 버튼 active 상태 업데이트
             const seg = document.getElementById('auto-group-view-toggle');
@@ -20766,23 +20770,26 @@
             _autoGroupGenderTag = (char && char.gender_tag) || '1girl';
             const existingFaceTags = (char && char.face_tags) || '';
             const existingEyeTags = (char && char.eye_tags) || '';
+            const existingAbsoluteTags = (char && char.absolute_tags) || '';
             _autoGroupFaceTags = existingFaceTags ? existingFaceTags.split(',').map(t => t.trim()).filter(Boolean).filter(t => t !== _autoGroupGenderTag) : [];
             _autoGroupEyeTags = existingEyeTags ? existingEyeTags.split(',').map(t => t.trim()).filter(Boolean) : [];
+            _autoGroupAbsoluteTags = existingAbsoluteTags ? existingAbsoluteTags.split(',').map(t => t.trim()).filter(Boolean) : [];
             _autoGroupFaceText = _autoGroupFaceTags.join(', ');
             _autoGroupEyeText = existingEyeTags;
+            _autoGroupAbsoluteText = existingAbsoluteTags;
 
             const overlay = document.createElement('div');
             overlay.id = 'auto-group-overlay';
             overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10010; display:flex; align-items:center; justify-content:center;';
 
             const modal = document.createElement('div');
-            modal.style.cssText = 'background:var(--surface); border-radius:12px; padding:24px; max-width:800px; width:90%; max-height:90vh; display:flex; flex-direction:column; position:relative;';
+            modal.style.cssText = 'background:var(--surface); border-radius:12px; padding:24px; max-width:1000px; width:92%; max-height:90vh; display:flex; flex-direction:column; position:relative;';
             modal.onclick = (e) => e.stopPropagation();
 
             modal.innerHTML = `
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
                     <div>
-                        <h3 style="margin:0; font-size:1.1rem;">캐릭터 얼굴 태그 설정 — ${escHtml(charName)}</h3>
+                        <h3 style="margin:0; font-size:1.1rem;">캐릭터 얼굴/눈/절대태그 설정 — ${escHtml(charName)}</h3>
                         <div style="font-size:0.7rem; color:var(--text2); margin-top:2px;">첫 번째 대표 이미지 프롬프트 분석</div>
                     </div>
                     <div style="display:flex; gap:8px; align-items:center;">
@@ -20799,18 +20806,29 @@
                             style="background:var(--surface2); color:var(--text); border:1px solid var(--border); width:32px; height:32px; border-radius:6px; cursor:pointer; font-size:1.2rem; display:flex; align-items:center; justify-content:center;">✕</button>
                     </div>
                 </div>
-                <div id="auto-group-content" style="flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:12px;">
-                    <div style="text-align:center; padding:40px; color:var(--text2);">분석 중...</div>
-                </div>
-                <div style="border-top:2px solid var(--border); margin-top:12px; padding-top:12px;">
-                    <div style="font-weight:600; font-size:0.9rem; margin-bottom:8px;">얼굴 태그 편집</div>
-                    <div id="auto-group-face-edit" style="min-height:40px; border:1px dashed var(--border); border-radius:6px; padding:8px; display:flex; flex-wrap:wrap; gap:4px; align-items:center;">
+                <div style="display:flex; gap:16px; flex:1; overflow:hidden;">
+                    <div id="auto-group-face-col" style="width:200px; flex-shrink:0; display:flex; flex-direction:column; gap:8px; overflow-y:auto;">
+                        <div style="font-size:0.7rem; color:var(--accent); font-weight:600;">캐릭터 얼굴</div>
+                        <div id="auto-group-face-img-wrap" style="position:relative; width:200px; min-height:200px; background:var(--surface2); border:1px solid var(--border); border-radius:8px; display:flex; align-items:center; justify-content:center; color:var(--text2); font-size:0.75rem;">로딩 중...</div>
                     </div>
-                    <div style="font-weight:600; font-size:0.9rem; margin-top:12px; margin-bottom:8px;">눈 태그 편집</div>
-                    <div id="auto-group-eye-edit" style="min-height:40px; border:1px dashed var(--border); border-radius:6px; padding:8px; display:flex; flex-wrap:wrap; gap:4px; align-items:center;">
-                    </div>
-                    <div style="display:flex; justify-content:flex-end; margin-top:10px;">
-                        <button onclick="_saveCharFaceTags()" style="background:var(--accent); color:#fff; border:none; padding:8px 20px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">저장</button>
+                    <div style="flex:1; display:flex; flex-direction:column; min-width:0;">
+                        <div id="auto-group-content" style="flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:12px;">
+                            <div style="text-align:center; padding:40px; color:var(--text2);">분석 중...</div>
+                        </div>
+                        <div style="border-top:2px solid var(--border); margin-top:12px; padding-top:12px;">
+                            <div style="font-weight:600; font-size:0.9rem; margin-bottom:8px;">얼굴 태그 편집</div>
+                            <div id="auto-group-face-edit" style="min-height:40px; border:1px dashed var(--border); border-radius:6px; padding:8px; display:flex; flex-wrap:wrap; gap:4px; align-items:center;">
+                            </div>
+                            <div style="font-weight:600; font-size:0.9rem; margin-top:12px; margin-bottom:8px;">눈 태그 편집</div>
+                            <div id="auto-group-eye-edit" style="min-height:40px; border:1px dashed var(--border); border-radius:6px; padding:8px; display:flex; flex-wrap:wrap; gap:4px; align-items:center;">
+                            </div>
+                            <div style="font-weight:600; font-size:0.9rem; margin-top:12px; margin-bottom:4px;">절대 태그 편집 <span style="font-size:0.7rem; color:var(--text2); font-weight:400;">(항상 강제로 들어가는 태그)</span></div>
+                            <div id="auto-group-absolute-edit" style="min-height:40px; border:1px dashed var(--border); border-radius:6px; padding:8px; display:flex; flex-wrap:wrap; gap:4px; align-items:center;">
+                            </div>
+                            <div style="display:flex; justify-content:flex-end; margin-top:10px;">
+                                <button onclick="_saveCharFaceTags()" style="background:var(--accent); color:#fff; border:none; padding:8px 20px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">저장</button>
+                            </div>
+                        </div>
                     </div>
                 </div>
             `;
@@ -20818,8 +20836,34 @@
             overlay.appendChild(modal);
             document.body.appendChild(overlay);
 
+            _loadAutoGroupFaceImage(charName);
             await _fetchAndRenderGroups(prompt);
             _renderFaceTagEditors();
+        }
+
+        async function _loadAutoGroupFaceImage(charName) {
+            const wrap = document.getElementById('auto-group-face-img-wrap');
+            if (!wrap) return;
+            try {
+                const resp = await fetch(`/api/bot_mode/images?bot=${encodeURIComponent(botCurrentBot)}&character=${encodeURIComponent(charName)}`);
+                const data = await resp.json();
+                const images = data.images || [];
+                const face = images.find(i => i.filename === '_face_image.webp');
+                const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
+                const char = bot ? (bot.characters || []).find(c => c.name === charName) : null;
+                const repImages = (char && char.rep_images) || [];
+                const fallback = repImages.map(fn => images.find(i => i.filename === fn)).find(Boolean);
+                const chosen = face || fallback;
+                if (chosen && chosen.url) {
+                    const url = `${chosen.url}?t=${Date.now()}`;
+                    wrap.innerHTML = `<img src="${escAttr(url)}" loading="lazy" onerror="this.parentElement.innerHTML='이미지 없음'" onclick="event.stopPropagation(); openLightbox(this.src)" style="cursor:zoom-in; width:100%; height:auto; max-height:60vh; object-fit:contain; border-radius:8px; display:block;">`;
+                } else {
+                    wrap.textContent = '이미지 없음';
+                }
+            } catch (e) {
+                console.error('[AUTO_GROUP] face image load error:', e);
+                wrap.textContent = '로드 실패';
+            }
         }
 
         async function _refreshAutoGroup(charName) {
@@ -20917,6 +20961,15 @@
             }
         }
 
+        function _agAbsoluteDrop(e) {
+            e.preventDefault();
+            e.currentTarget.style.borderColor = 'var(--border)';
+            if (_agDragTag && !_autoGroupAbsoluteTags.includes(_agDragTag)) {
+                _autoGroupAbsoluteTags.push(_agDragTag);
+                _renderFaceTagEditors();
+            }
+        }
+
         function _agRemoveFaceTag(idx) {
             _autoGroupFaceTags.splice(idx, 1);
             _renderFaceTagEditors();
@@ -20924,6 +20977,11 @@
 
         function _agRemoveEyeTag(idx) {
             _autoGroupEyeTags.splice(idx, 1);
+            _renderFaceTagEditors();
+        }
+
+        function _agRemoveAbsoluteTag(idx) {
+            _autoGroupAbsoluteTags.splice(idx, 1);
             _renderFaceTagEditors();
         }
 
@@ -20935,9 +20993,14 @@
             _autoGroupEyeText = input.value;
         }
 
+        function _agAbsoluteTextChanged(input) {
+            _autoGroupAbsoluteText = input.value;
+        }
+
         function _renderFaceTagEditors() {
             const faceEl = document.getElementById('auto-group-face-edit');
             const eyeEl = document.getElementById('auto-group-eye-edit');
+            const absEl = document.getElementById('auto-group-absolute-edit');
             if (!faceEl || !eyeEl) return;
 
             if (_autoGroupViewMode === 'chips') {
@@ -20948,6 +21011,11 @@
                 eyeEl.ondragover = _agAllowDrop;
                 eyeEl.ondragleave = _agDragLeave;
                 eyeEl.ondrop = _agEyeDrop;
+                if (absEl) {
+                    absEl.ondragover = _agAllowDrop;
+                    absEl.ondragleave = _agDragLeave;
+                    absEl.ondrop = _agAbsoluteDrop;
+                }
 
                 // 맨 앞 고정 gender_tag 칩 (회색 + 🔒, X 버튼 없음)
                 const genderChip = _autoGroupGenderTag
@@ -20965,6 +21033,14 @@
                     : _autoGroupEyeTags.map((t, i) =>
                         `<span style="background:rgba(168,85,247,0.2); padding:3px 8px; border-radius:4px; font-size:0.8rem; display:inline-flex; align-items:center; gap:4px;">${escHtml(t)}<span onclick="_agRemoveEyeTag(${i})" style="cursor:pointer; font-size:0.7rem; opacity:0.6;">✕</span></span>`
                     ).join('');
+
+                if (absEl) {
+                    absEl.innerHTML = _autoGroupAbsoluteTags.length === 0
+                        ? '<span style="color:var(--text2); font-size:0.8rem;">위 태그를 드래그하거나 직접 입력</span>'
+                        : _autoGroupAbsoluteTags.map((t, i) =>
+                            `<span style="background:rgba(239,68,68,0.2); padding:3px 8px; border-radius:4px; font-size:0.8rem; display:inline-flex; align-items:center; gap:4px;">${escHtml(t)}<span onclick="_agRemoveAbsoluteTag(${i})" style="cursor:pointer; font-size:0.7rem; opacity:0.6;">✕</span></span>`
+                        ).join('');
+                }
             } else {
                 // 텍스트 모드: 텍스트 입력
                 faceEl.ondragover = null;
@@ -20973,6 +21049,11 @@
                 eyeEl.ondragover = null;
                 eyeEl.ondragleave = null;
                 eyeEl.ondrop = null;
+                if (absEl) {
+                    absEl.ondragover = null;
+                    absEl.ondragleave = null;
+                    absEl.ondrop = null;
+                }
 
                 // 입력창 위에 gender_tag 자동 고정 배지
                 const genderBadge = _autoGroupGenderTag
@@ -20980,6 +21061,9 @@
                     : '';
                 faceEl.innerHTML = genderBadge + `<input type="text" value="${escAttr(_autoGroupFaceText)}" oninput="_agFaceTextChanged(this)" placeholder="얼굴 태그를 쉼표로 입력" style="width:100%; border:none; background:transparent; color:var(--text); font-size:0.85rem; outline:none;">`;
                 eyeEl.innerHTML = `<input type="text" value="${escAttr(_autoGroupEyeText)}" oninput="_agEyeTextChanged(this)" placeholder="눈 태그를 쉼표로 입력" style="width:100%; border:none; background:transparent; color:var(--text); font-size:0.85rem; outline:none;">`;
+                if (absEl) {
+                    absEl.innerHTML = `<input type="text" value="${escAttr(_autoGroupAbsoluteText)}" oninput="_agAbsoluteTextChanged(this)" placeholder="절대 태그를 쉼표로 입력" style="width:100%; border:none; background:transparent; color:var(--text); font-size:0.85rem; outline:none;">`;
+                }
             }
         }
 
@@ -20991,13 +21075,16 @@
 
             let faceTags = '';
             let eyeTags = '';
+            let absoluteTags = '';
 
             if (_autoGroupViewMode === 'chips') {
                 faceTags = _autoGroupFaceTags.filter(t => t !== _autoGroupGenderTag).join(', ');
                 eyeTags = _autoGroupEyeTags.join(', ');
+                absoluteTags = _autoGroupAbsoluteTags.join(', ');
             } else {
                 faceTags = _autoGroupFaceText.split(',').map(t => t.trim()).filter(t => t && t !== _autoGroupGenderTag).join(', ');
                 eyeTags = _autoGroupEyeText;
+                absoluteTags = _autoGroupAbsoluteText.split(',').map(t => t.trim()).filter(Boolean).join(', ');
             }
 
             try {
@@ -21009,7 +21096,8 @@
                         bot_name: botCurrentBot,
                         char_name: _autoGroupCharName,
                         face_tags: faceTags,
-                        eye_tags: eyeTags
+                        eye_tags: eyeTags,
+                        absolute_tags: absoluteTags
                     })
                 });
                 const data = await resp.json();

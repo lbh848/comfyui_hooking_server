@@ -52,7 +52,7 @@ class IllustPromptBuilder:
     """삽화 모드 프롬프트 빌더"""
 
     @staticmethod
-    def parse_sections(positive: str, lb_extra: list = None) -> dict:
+    def parse_sections(positive: str, lb_extra: list = None, characters: list = None) -> dict:
         """긍정 프롬프트를 [Name], [SETUP], [CHAR], [SUPPLEMENT] 섹션으로 파싱.
 
         [SETUP] 앞의 텍스트는 무시한다.
@@ -109,7 +109,7 @@ class IllustPromptBuilder:
         if lb_extra is not None:
             try:
                 sections["char"] = IllustPromptBuilder._insert_character_names(
-                    sections["char"], sections["name"], lb_extra
+                    sections["char"], sections["name"], lb_extra, characters
                 )
             except Exception as e:
                 print(f"[ILLUST_NAME_INSERT] 이름 삽입 실패 (스킵): {e}")
@@ -120,7 +120,7 @@ class IllustPromptBuilder:
 
     @staticmethod
     def _insert_character_names(char_section: str, name_section: str,
-                                 lb_extra: list) -> str:
+                                 lb_extra: list, characters: list = None) -> str:
         """CHAR 섹션의 각 | 세그먼트에 캐릭터 이름 삽입.
 
         1. name_section을 쉼표로 분할 → 후보 이름
@@ -131,7 +131,8 @@ class IllustPromptBuilder:
            - 다중 단어 태그("long hair")가 세그먼트의 "long red hair"에도 걸리도록
         5. 점수 내림차순 그리디 1:1 배정
         6. 이름이 세그먼트에 없으면 맨 앞에 "name, " 삽입
-        7. " | " 로 재조립
+        7. (absolute_tags) 매칭된 캐릭터의 절대 태그 중 세그먼트에 없는 것만 삽입
+        8. " | " 로 재조립
         """
         if not char_section or not name_section:
             return char_section
@@ -220,6 +221,30 @@ class IllustPromptBuilder:
             if re.search(pattern, seg.lower()):
                 continue
             segments[seg_idx] = name + ", " + seg
+
+        # 9. 매칭된 캐릭터의 absolute_tags 주입 (이미 있으면 스킵)
+        if characters:
+            for seg_idx, name in assignment.items():
+                char_data = next((c for c in characters
+                                  if c.get("name", "").lower() == name.lower()), None)
+                if not char_data:
+                    continue
+                abs_raw = char_data.get("absolute_tags", "") or ""
+                abs_tags = [t.strip() for t in abs_raw.split(",") if t.strip()]
+                if not abs_tags:
+                    continue
+                seg = segments[seg_idx]
+                seg_lower = seg.lower()
+                to_insert = []
+                for tag in abs_tags:
+                    pattern = r'(?<![a-zA-Z0-9_])' + re.escape(tag.lower()) + r'(?![a-zA-Z0-9_])'
+                    if re.search(pattern, seg_lower):
+                        continue
+                    to_insert.append(tag)
+                if to_insert:
+                    segments[seg_idx] = ", ".join(to_insert) + ", " + seg
+                    print(f"[ILLUST_NAME_INSERT] absolute_tags 삽입: "
+                          f"char={name}, tags={to_insert}")
 
         result = " | ".join(segments)
         print(f"[ILLUST_NAME_INSERT] 삽입 완료: candidates={candidates}, "

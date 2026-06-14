@@ -1584,8 +1584,12 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
 
             # 1. 섹션 파싱 (lb_extra 전달 → Name 기반 CHAR 이름 삽입 수행)
             from modes.bot_mode import _load_lb_extra as _load_lb_extra_local
+            from modes.bot_mode import _load_bot_data as _load_bot_data_local
             lb_extra_data = _load_lb_extra_local(bot_name) or []
-            sections = builder.parse_sections(positive, lb_extra=lb_extra_data)
+            bot_data = _load_bot_data_local()
+            bot = next((b for b in bot_data["bots"] if b["name"] == bot_name), None)
+            characters_for_parse = (bot.get("characters", []) if bot else [])
+            sections = builder.parse_sections(positive, lb_extra=lb_extra_data, characters=characters_for_parse)
 
             # 2. 각 섹션에 단어 치환 적용
             setup_replaced = apply_word_replacements(sections["setup"], "", bot_name)[0]
@@ -1593,9 +1597,6 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
             supplement_replaced = apply_word_replacements(sections["supplement"], "", bot_name)[0]
 
             # 3. 캐릭터 감지 (모든 섹션에서)
-            from modes.bot_mode import _load_bot_data as _load_bot_data_local
-            bot_data = _load_bot_data_local()
-            bot = next((b for b in bot_data["bots"] if b["name"] == bot_name), None)
             if bot:
                 char_names = [c["name"] for c in bot.get("characters", [])]
                 detected = builder.detect_characters(
