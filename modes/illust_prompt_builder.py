@@ -52,24 +52,27 @@ class IllustPromptBuilder:
     """삽화 모드 프롬프트 빌더"""
 
     @staticmethod
-    def parse_sections(positive: str) -> dict:
-        """긍정 프롬프트를 [SETUP], [CHAR], [SUPPLEMENT] 섹션으로 파싱.
+    def parse_sections(positive: str, lb_extra: list = None) -> dict:
+        """긍정 프롬프트를 [Name], [SETUP], [CHAR], [SUPPLEMENT] 섹션으로 파싱.
 
         [SETUP] 앞의 텍스트는 무시한다.
         대소문자 무관하게 매칭한다.
         섹션 태그는 항상 줄의 시작에 위치해야 한다.
         섹션이 없으면 빈 문자열로 반환한다.
 
+        lb_extra가 전달되면 파싱 직후 Name을 이용해 CHAR의 각 | 세그먼트에
+        캐릭터 이름을 삽입한다 (_insert_character_names 참고).
+
         Returns:
-            {"setup": str, "char": str, "supplement": str}
+            {"name": str, "setup": str, "char": str, "supplement": str}
         """
         if not positive:
-            return {"setup": "", "char": "", "supplement": ""}
+            return {"name": "", "setup": "", "char": "", "supplement": ""}
 
-        sections = {"setup": "", "char": "", "supplement": ""}
+        sections = {"name": "", "setup": "", "char": "", "supplement": ""}
 
         # 섹션 태그 위치 찾기 (대소문자 무관, 줄 시작 위치)
-        section_names = ["SETUP", "CHAR", "SUPPLEMENT"]
+        section_names = ["NAME", "SETUP", "CHAR", "SUPPLEMENT"]
         markers = []
         for name in section_names:
             for m in re.finditer(rf'^\[{name}\]', positive, re.IGNORECASE | re.MULTILINE):
@@ -93,14 +96,135 @@ class IllustPromptBuilder:
             next_pos = unique_markers[i + 1][0] if i + 1 < len(unique_markers) else len(positive)
             content = positive[tag_end:next_pos].strip()
             key = name.lower()
-            if key == "setup":
+            if key == "name":
+                sections["name"] = content
+            elif key == "setup":
                 sections["setup"] = content
             elif key == "char":
                 sections["char"] = content
             elif key == "supplement":
                 sections["supplement"] = content
 
+        # CHAR 섹션에 캐릭터 이름 삽입 (lb_extra 전달 시)
+        if lb_extra is not None:
+            try:
+                sections["char"] = IllustPromptBuilder._insert_character_names(
+                    sections["char"], sections["name"], lb_extra
+                )
+            except Exception as e:
+                print(f"[ILLUST_NAME_INSERT] 이름 삽입 실패 (스킵): {e}")
+                import traceback
+                traceback.print_exc()
+
         return sections
+
+    @staticmethod
+    def _insert_character_names(char_section: str, name_section: str,
+                                 lb_extra: list) -> str:
+        """CHAR 섹션의 각 | 세그먼트에 캐릭터 이름 삽입.
+
+        1. name_section을 쉼표로 분할 → 후보 이름
+        2. lb_extra에 등록된 이름만 필터 (대소문자 무관, lb_extra 정규 이름 사용)
+        3. char_section을 | 로 분할 → 세그먼트
+        4. 각 (세그먼트, 후보) 쌍에 대해 교집합 개수 산출:
+           - char_tag의 모든 단어가 세그먼트 단어 집합에 있으면 매칭
+           - 다중 단어 태그("long hair")가 세그먼트의 "long red hair"에도 걸리도록
+        5. 점수 내림차순 그리디 1:1 배정
+        6. 이름이 세그먼트에 없으면 맨 앞에 "name, " 삽입
+        7. " | " 로 재조립
+        """
+        if not char_section or not name_section:
+            return char_section
+        if not lb_extra:
+            return char_section
+
+        # 1. Name에서 후보 이름 추출 (쉼표 분리)
+        raw_names = [n.strip() for n in name_section.split(",") if n.strip()]
+        if not raw_names:
+            return char_section
+
+        # 2. lb_extra 정규 이름으로 필터 (대소문자 무관)
+        lb_names = [e.get("name", "") for e in lb_extra if e.get("name")]
+        candidates = []
+        for raw in raw_names:
+            match = next((n for n in lb_names if n.lower() == raw.lower()), None)
+            if match and match not in candidates:
+                candidates.append(match)
+        if not candidates:
+            print(f"[ILLUST_NAME_INSERT] lb_extra에 등록된 이름 없음: {raw_names}")
+            return char_section
+
+        # 3. lb_extra 캐릭터별 태그 집합 구축
+        char_tag_map: dict[str, set] = {}
+        for name in candidates:
+            char_data = next((e for e in lb_extra
+                              if e.get("name", "").lower() == name.lower()), None)
+            if not char_data:
+                continue
+            tags = set()
+            for cat in ("appearance", "outfit"):
+                for item in char_data.get(cat, []):
+                    tag = (item.get("tag", "") or "").strip().lower()
+                    if tag:
+                        tags.add(tag)
+            char_tag_map[name] = tags
+
+        # 4. CHAR를 | 로 분할
+        segments = [s.strip() for s in char_section.split("|")]
+        if not segments:
+            return char_section
+
+        # 5. (score, seg_idx, name) 쌍 생성 → 내림차순 정렬
+        scored = []
+        for seg_idx, seg in enumerate(segments):
+            seg_words = set(t for t in re.split(r'[\s,]+', seg.lower()) if t)
+            for name in candidates:
+                tags = char_tag_map.get(name, set())
+                score = 0
+                for ct in tags:
+                    ct_words = set(ct.split())
+                    if ct_words and ct_words.issubset(seg_words):
+                        score += 1
+                scored.append((score, seg_idx, name))
+        # 점수 내림차, seg_idx 오름차, name 오름차 (안정적)
+        scored.sort(key=lambda x: (-x[0], x[1], x[2]))
+
+        # 6. 그리디 1:1 배정
+        assignment: dict[int, str] = {}
+        used_names: set = set()
+        for score, seg_idx, name in scored:
+            if seg_idx in assignment:
+                continue
+            if name in used_names:
+                continue
+            assignment[seg_idx] = name
+            used_names.add(name)
+            if len(assignment) >= min(len(segments), len(candidates)):
+                break
+
+        # 7. 매칭 안 된 세그먼트 fallback (남은 이름 → 첫 후보)
+        remaining = [n for n in candidates if n not in used_names]
+        for seg_idx in range(len(segments)):
+            if seg_idx in assignment:
+                continue
+            if remaining:
+                assignment[seg_idx] = remaining.pop(0)
+                used_names.add(assignment[seg_idx])
+            else:
+                assignment[seg_idx] = candidates[0]
+
+        # 8. 세그먼트 맨 앞에 이름 삽입 (이미 있으면 스킵)
+        for seg_idx, name in assignment.items():
+            seg = segments[seg_idx]
+            pattern = r'(?<![a-zA-Z0-9_])' + re.escape(name.lower()) + r'(?![a-zA-Z0-9_])'
+            if re.search(pattern, seg.lower()):
+                continue
+            segments[seg_idx] = name + ", " + seg
+
+        result = " | ".join(segments)
+        print(f"[ILLUST_NAME_INSERT] 삽입 완료: candidates={candidates}, "
+              f"assignment={assignment}")
+        return result
 
     @staticmethod
     def detect_characters(text_sections: list, char_names: list) -> list:

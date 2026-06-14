@@ -1582,8 +1582,10 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
             builder = IllustPromptBuilder()
             raw_positive = positive
 
-            # 1. 섹션 파싱
-            sections = builder.parse_sections(positive)
+            # 1. 섹션 파싱 (lb_extra 전달 → Name 기반 CHAR 이름 삽입 수행)
+            from modes.bot_mode import _load_lb_extra as _load_lb_extra_local
+            lb_extra_data = _load_lb_extra_local(bot_name) or []
+            sections = builder.parse_sections(positive, lb_extra=lb_extra_data)
 
             # 2. 각 섹션에 단어 치환 적용
             setup_replaced = apply_word_replacements(sections["setup"], "", bot_name)[0]
