@@ -19102,7 +19102,7 @@
                             style="background:rgba(244,114,182,0.12); color:var(--text); border:1px solid rgba(244,114,182,0.3); padding:8px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600; white-space:nowrap;">전체 이미지 보기</button>
                         <button class="btn-auto-group" data-char-name="${escAttr(char.name)}"
                             onclick="event.stopPropagation(); autoGroupPrompt('${escAttr(char.name)}')"
-                            style="background:rgba(34,197,94,0.12); color:var(--text); border:1px solid rgba(34,197,94,0.3); padding:8px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600; white-space:nowrap;">캐릭터 얼굴/눈/절대태그 설정</button>
+                            style="background:rgba(34,197,94,0.12); color:var(--text); border:1px solid rgba(34,197,94,0.3); padding:8px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600; white-space:nowrap;">캐릭터 얼굴 / 눈 / 절대태그 설정</button>
                         <select onchange="saveCharGenderTag('${escAttr(char.name)}', this.value)"
                             style="padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface2); color:var(--text); font-size:0.8rem; cursor:pointer;">
                             ${['1girl','1boy','1male'].map(g =>
@@ -20783,13 +20783,13 @@
             overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10010; display:flex; align-items:center; justify-content:center;';
 
             const modal = document.createElement('div');
-            modal.style.cssText = 'background:var(--surface); border-radius:12px; padding:24px; max-width:1000px; width:92%; max-height:90vh; display:flex; flex-direction:column; position:relative;';
+            modal.style.cssText = 'background:var(--surface); border-radius:12px; padding:24px; max-width:1200px; width:92%; max-height:90vh; display:flex; flex-direction:column; position:relative;';
             modal.onclick = (e) => e.stopPropagation();
 
             modal.innerHTML = `
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
                     <div>
-                        <h3 style="margin:0; font-size:1.1rem;">캐릭터 얼굴/눈/절대태그 설정 — ${escHtml(charName)}</h3>
+                        <h3 style="margin:0; font-size:1.1rem;">캐릭터 얼굴 / 눈 / 절대태그 설정 — ${escHtml(charName)}</h3>
                         <div style="font-size:0.7rem; color:var(--text2); margin-top:2px;">첫 번째 대표 이미지 프롬프트 분석</div>
                     </div>
                     <div style="display:flex; gap:8px; align-items:center;">
@@ -20807,9 +20807,9 @@
                     </div>
                 </div>
                 <div style="display:flex; gap:16px; flex:1; overflow:hidden;">
-                    <div id="auto-group-face-col" style="width:200px; flex-shrink:0; display:flex; flex-direction:column; gap:8px; overflow-y:auto;">
+                    <div id="auto-group-face-col" style="width:400px; flex-shrink:0; display:flex; flex-direction:column; gap:8px; overflow-y:auto;">
                         <div style="font-size:0.7rem; color:var(--accent); font-weight:600;">캐릭터 얼굴</div>
-                        <div id="auto-group-face-img-wrap" style="position:relative; width:200px; min-height:200px; background:var(--surface2); border:1px solid var(--border); border-radius:8px; display:flex; align-items:center; justify-content:center; color:var(--text2); font-size:0.75rem;">로딩 중...</div>
+                        <div id="auto-group-face-img-wrap" style="position:relative; width:400px; min-height:400px; background:var(--surface2); border:1px solid var(--border); border-radius:8px; display:flex; align-items:center; justify-content:center; color:var(--text2); font-size:0.75rem;">로딩 중...</div>
                     </div>
                     <div style="flex:1; display:flex; flex-direction:column; min-width:0;">
                         <div id="auto-group-content" style="flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:12px;">
