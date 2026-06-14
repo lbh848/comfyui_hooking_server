@@ -30640,6 +30640,7 @@
         function stopAssetGeneration() { stopAssetQueue(); }
 
         async function loadAssetImages() {
+            const savedScroll = window.scrollY;
             // 네비게이션 상태 우선, 없으면 사이드바에서 가져옴
             const char = assetNavCharacter || document.getElementById('asset-character-select').value;
             const outfit = assetNavOutfit || getAssetSelectValue('asset-outfit-select');
@@ -30698,6 +30699,12 @@
                         </div>` : ''}`;
                     grid.appendChild(card);
                 });
+
+                if (savedScroll > 0) {
+                    requestAnimationFrame(() => {
+                        window.scrollTo(0, savedScroll);
+                    });
+                }
             } catch (e) {
                 console.error('[ASSET] 이미지 로드 실패:', e);
             }
