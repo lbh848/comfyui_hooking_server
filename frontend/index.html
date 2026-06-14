@@ -17030,15 +17030,22 @@
                     </div>
                 `).join('') : '<span style="font-size:0.75rem; color:var(--text-secondary);">학습 이력 없음</span>';
 
-                // 대표 이미지 (session_representative)
-                const sessionReps = ch.session_representatives || {};
-                const repHtml = Object.keys(sessionReps).length > 0 ? (() => {
-                    const latest = Object.entries(sessionReps).sort((a,b) => b[0].localeCompare(a[0]))[0];
-                    try {
-                        const repData = JSON.parse(latest[1]);
-                        return repData.preview ? `<img src="${repData.preview}" onclick="openLightbox(this.src)" onerror="this.style.display='none'" style="width:180px; max-height:240px; object-fit:contain; border-radius:6px; border:2px solid var(--accent); cursor:zoom-in;">` : '';
-                    } catch(e) { return ''; }
-                })() : '';
+                // 대표 이미지 (1순위 세션의 representative 우선, fallback은 가장 최신)
+                const sessionsForRep = ch.trained_sessions || [];
+                const prioritySessions = sessionsForRep
+                    .filter(s => !!s.representative && s.priority_rank && s.priority_rank > 0)
+                    .sort((a, b) => (a.priority_rank || 999) - (b.priority_rank || 999));
+                let repData = null;
+                if (prioritySessions.length > 0) {
+                    try { repData = JSON.parse(prioritySessions[0].representative); } catch(_) {}
+                } else {
+                    const sessionReps = ch.session_representatives || {};
+                    if (Object.keys(sessionReps).length > 0) {
+                        const latest = Object.entries(sessionReps).sort((a,b) => b[0].localeCompare(a[0]))[0];
+                        try { repData = JSON.parse(latest[1]); } catch(_) {}
+                    }
+                }
+                const repHtml = (repData && repData.preview) ? `<img src="${repData.preview}" onclick="openLightbox(this.src)" onerror="this.style.display='none'" style="width:180px; max-height:240px; object-fit:contain; border-radius:6px; border:2px solid var(--accent); cursor:zoom-in;">` : '';
 
                 // 프롬프트 행 (좌: 원본, 우: 수정본, 읽기 전용)
                 const promptRows = (ch.training_images || []).map(img => {
@@ -18124,6 +18131,7 @@
         let _botTrainedModalChar = '';
         let _botTrainedModalSession = '';
         let _botTrainedSessionRepSafetensors = '';
+        let _botTrainedSessionsCache = [];
 
         function closeBotLoraTrainedModal() {
             document.getElementById('bot-lora-trained-modal').style.display = 'none';
@@ -18156,24 +18164,86 @@
                 const resp = await fetchJSON(`/api/bot_lora/trained/sessions?bot=${enc(botLoraCurrentBot)}&project=${enc(botLoraCurrentProject)}&character=${enc(_botTrainedModalChar)}`);
                 if (!resp.success) { body.innerHTML = `<div style="text-align:center; padding:32px; color:var(--error);">${resp.error || '로드 실패'}</div>`; return; }
                 const sessions = resp.sessions || [];
+                _botTrainedSessionsCache = sessions;
                 if (sessions.length === 0) { body.innerHTML = '<div style="text-align:center; padding:32px; color:var(--text-secondary);">학습된 세션이 없습니다.</div>'; return; }
                 body.innerHTML = `<div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(320px, 1fr)); gap:12px;">${sessions.map(s => {
                     const previewHtml = s.preview_url ? `<img src="${s.preview_url}" style="width:100%; max-height:400px; object-fit:contain; background:var(--surface2); border-radius:8px 8px 0 0; display:block;">` : '';
-                    let repBadge = '';
-                    if (s.representative) { try { const rd = JSON.parse(s.representative); if (rd.preview) repBadge = '<div style="position:absolute; top:6px; left:6px; background:gold; color:#333; font-size:0.65rem; font-weight:700; padding:2px 6px; border-radius:3px;">세션 대표</div>'; } catch(_){} }
-                    return `<div onclick="enterBotLoraTrainedSession('${escapeHtml(s.name)}')" style="position:relative; border:1px solid var(--border); border-radius:10px; overflow:hidden; cursor:pointer; transition:border-color 0.15s; background:var(--surface);" onmouseenter="this.style.borderColor='var(--accent)'" onmouseleave="this.style.borderColor='var(--border)'">
+                    const rank = s.priority_rank || 0;
+                    const isTop = rank === 1;
+                    const borderColor = isTop ? '#16a34a' : 'var(--border)';
+                    const hoverColor = isTop ? '#15803d' : 'var(--accent)';
+                    const arrowHtml = isTop ? `
+                        <div style="position:absolute; top:6px; left:6px; display:flex; gap:2px; z-index:5; align-items:center;">
+                            <button onclick="event.stopPropagation(); moveBotLoraSessionPriority('${escapeHtml(s.name)}')" title="다음 세션을 1순위로 (순환)" style="background:rgba(0,0,0,0.6); color:#fff; border:none; border-radius:3px; width:24px; height:20px; font-size:0.7rem; cursor:pointer; padding:0; line-height:1;">▶</button>
+                            <span style="background:#16a34a; color:#fff; font-size:0.65rem; font-weight:700; padding:2px 6px; border-radius:3px;">1순위</span>
+                        </div>` : '';
+                    return `<div onclick="enterBotLoraTrainedSession('${escapeHtml(s.name)}')" style="position:relative; border:2px solid ${borderColor}; border-radius:10px; overflow:hidden; cursor:pointer; transition:border-color 0.15s; background:var(--surface);${isTop ? ' box-shadow:0 0 8px rgba(22,163,74,0.4);' : ''}" onmouseenter="this.style.borderColor='${hoverColor}'" onmouseleave="this.style.borderColor='${borderColor}'">
                         <button class="trained-delete-btn" onclick="event.stopPropagation(); deleteBotLoraTrainedSession('${escapeHtml(s.name)}')" style="position:absolute; top:6px; right:6px; z-index:5; background:rgba(220,80,80,0.9); color:#fff; border:none; border-radius:50%; width:22px; height:22px; font-size:0.7rem; cursor:pointer; display:flex; align-items:center; justify-content:center; opacity:0; transition:opacity 0.15s;">&times;</button>
-                        ${repBadge}
                         ${previewHtml}
                         <div style="padding:10px;">
                             <div style="font-weight:700; font-size:0.85rem;">${escapeHtml(s.name)}</div>
                             <div style="font-size:0.75rem; color:var(--text-secondary); margin-top:2px;">${s.step_count} files${s.has_final ? ' (최종 포함)' : ''}</div>
                         </div>
+                        ${arrowHtml}
                     </div>`;
                 }).join('')}</div>`;
             } catch (e) {
                 console.error('[BOT_LORA] 세션 로드 실패:', e);
                 body.innerHTML = '<div style="text-align:center; padding:32px; color:var(--error);">세션 로드 실패</div>';
+            }
+        }
+
+        async function moveBotLoraSessionPriority(sessionName) {
+            const sessions = _botTrainedSessionsCache;
+            const repNames = sessions.filter(s => !!s.representative).map(s => s.name);
+            if (repNames.length < 2) {
+                showToast('우선순위를 변경하려면 representative가 있는 세션이 2개 이상 필요합니다', 'info');
+                return;
+            }
+            const rankOf = (n) => {
+                const s = sessions.find(x => x.name === n);
+                return (s && s.priority_rank) || 999;
+            };
+            let sorted = [...repNames].sort((a, b) => rankOf(a) - rankOf(b));
+            const idx = sorted.indexOf(sessionName);
+            if (idx < 0) {
+                showToast('해당 세션을 찾을 수 없습니다', 'error');
+                return;
+            }
+            if (idx !== 0) {
+                showToast('1순위 세션에서만 이동할 수 있습니다', 'error');
+                return;
+            }
+            // rotate: 맨 앞(1순위)을 맨 뒤로 → 다음 세션이 새 1순위. 마지막이면 처음으로 순환.
+            sorted.push(sorted.shift());
+            try {
+                const resp = await fetch('/api/bot_lora/trained/session-priority', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        bot: botLoraCurrentBot,
+                        project: botLoraCurrentProject,
+                        character: _botTrainedModalChar,
+                        sessions: sorted
+                    })
+                });
+                const result = await resp.json();
+                if (!result.success) {
+                    showToast('우선순위 변경 실패: ' + (result.error || ''), 'error');
+                    return;
+                }
+                showToast('1순위 변경됨', 'success');
+                await loadBotLoraTrainedSessions();
+                try {
+                    const enc = encodeURIComponent;
+                    const projResp = await fetchJSON(`/api/bot_lora/project?bot=${enc(botLoraCurrentBot)}&project=${enc(botLoraCurrentProject)}`);
+                    if (projResp && projResp.success !== false) renderBotLoraProject(projResp);
+                } catch (e) {
+                    console.warn('[BOT_LORA] 부모 화면 갱신 실패:', e);
+                }
+            } catch (e) {
+                console.error('[BOT_LORA] 우선순위 변경 실패:', e);
+                showToast('우선순위 변경 실패: ' + e.message, 'error');
             }
         }
 
@@ -21353,7 +21423,11 @@
                 grid.innerHTML = '';
                 if (characters.length === 0) { grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--text-secondary);">캐릭터가 없습니다</div>'; return; }
                 characters.forEach(ch => {
-                    const repSession = (ch.trained_sessions || []).find(s => !!s.representative);
+                    const sessions = ch.trained_sessions || [];
+                    const prioritySessions = sessions
+                        .filter(s => !!s.representative && s.priority_rank && s.priority_rank > 0)
+                        .sort((a, b) => (a.priority_rank || 999) - (b.priority_rank || 999));
+                    const repSession = prioritySessions.length > 0 ? prioritySessions[0] : sessions.find(s => !!s.representative);
                     const hasRep = !!repSession;
                     let previewUrl = hasRep ? (repSession.preview_url || '') : '';
                     let repData = {};

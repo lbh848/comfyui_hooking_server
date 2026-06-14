@@ -7095,6 +7095,24 @@ async def handle_api_bot_lora_session_representative(request):
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 
+async def handle_api_bot_lora_session_priority(request):
+    try:
+        body = await request.json()
+        bot_name = body.get("bot", "")
+        project_name = body.get("project", "")
+        char_name = body.get("character", "")
+        sessions = body.get("sessions", [])
+        if not bot_name or not project_name or not char_name:
+            return web.json_response({"success": False, "error": "bot, project, character 필수"}, status=400)
+        from modes.bot_lora_mode import update_char_session_priority
+        result = update_char_session_priority(bot_name, project_name, char_name, sessions)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[BOT_LORA_API] 세션 우선순위 설정 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
 async def handle_api_bot_lora_cleanup_non_representative(request):
     try:
         body = await request.json()
@@ -7612,6 +7630,7 @@ app.router.add_get("/api/bot_lora/trained/preview/{bot}/{project}/{character}/{s
 app.router.add_post("/api/bot_lora/trained/delete", handle_api_bot_lora_trained_delete)
 app.router.add_post("/api/bot_lora/trained/delete-session", handle_api_bot_lora_trained_delete_session)
 app.router.add_post("/api/bot_lora/trained/session-representative", handle_api_bot_lora_session_representative)
+app.router.add_post("/api/bot_lora/trained/session-priority", handle_api_bot_lora_session_priority)
 app.router.add_post("/api/bot_lora/trained/cleanup-non-representative", handle_api_bot_lora_cleanup_non_representative)
 
 app.router.add_get("/api/instance_lora/list", handle_api_instance_lora_list)

@@ -1345,6 +1345,7 @@ def _list_bot_trained_sessions(lora_load_path: str, bot_name: str, project_name:
     manage_data = _load_bot_lora_manage()
     char_cfg = _get_char_config(manage_data, bot_name, project_name, char_name) or {}
     session_reps = char_cfg.get("session_representatives", {})
+    session_priority = _resolve_session_priority(char_cfg, entry_dir, session_reps)
 
     sessions = []
     for name in sorted(os.listdir(entry_dir), reverse=True):
@@ -1361,14 +1362,60 @@ def _list_bot_trained_sessions(lora_load_path: str, bot_name: str, project_name:
                 preview_url = rep_data.get("preview", "")
             except Exception:
                 pass
+        try:
+            priority_rank = session_priority.index(name) + 1 if name in session_priority else 0
+        except ValueError:
+            priority_rank = 0
         sessions.append({
             "name": name,
             "step_count": step_count,
             "has_final": has_final,
             "representative": session_rep,
             "preview_url": preview_url,
+            "priority_rank": priority_rank,
         })
     return sessions
+
+
+def _resolve_session_priority(char_cfg: dict, entry_dir: str, session_reps: dict) -> list:
+    """저장된 session_priority 반환. 비어있으면 representative 있는 세션들로 자동 채움(마이그레이션, 저장 안 함)."""
+    priority = list(char_cfg.get("session_priority", []) or [])
+    if priority:
+        return priority
+    if not os.path.isdir(entry_dir):
+        return []
+    auto = []
+    for name in sorted(os.listdir(entry_dir), reverse=True):
+        path = os.path.join(entry_dir, name)
+        if not os.path.isdir(path):
+            continue
+        if session_reps.get(name, ""):
+            auto.append(name)
+    return auto
+
+
+def get_char_session_priority(lora_load_path: str, bot_name: str, project_name: str, char_name: str) -> list:
+    """project API 등에서 우선순위만 조회. lora_load_path가 없으면 저장값만 반환."""
+    manage_data = _load_bot_lora_manage()
+    char_cfg = _get_char_config(manage_data, bot_name, project_name, char_name) or {}
+    session_reps = char_cfg.get("session_representatives", {})
+    if lora_load_path:
+        entry_dir = _trained_lora_dir(lora_load_path, bot_name, project_name, char_name)
+        return _resolve_session_priority(char_cfg, entry_dir, session_reps)
+    return list(char_cfg.get("session_priority", []) or [])
+
+
+def update_char_session_priority(bot_name: str, project_name: str, char_name: str, sessions_list: list) -> dict:
+    if not bot_name or not project_name or not char_name:
+        return {"success": False, "error": "봇/프로젝트/캐릭터 이름 누락"}
+    if not isinstance(sessions_list, list):
+        return {"success": False, "error": "sessions는 배열이어야 합니다"}
+    data = _load_bot_lora_manage()
+    char_cfg = data.setdefault("bot_loras", {}).setdefault(bot_name, {}).setdefault(project_name, {}).setdefault("characters", {}).setdefault(char_name, {})
+    char_cfg["session_priority"] = sessions_list
+    _save_bot_lora_manage(data)
+    print(f"[BOT_LORA] session_priority 업데이트: {bot_name}/{project_name}/{char_name} -> {sessions_list}")
+    return {"success": True}
 
 
 def list_bot_trained_sessions(lora_load_path: str, bot_name: str, project_name: str, char_name: str) -> list:
