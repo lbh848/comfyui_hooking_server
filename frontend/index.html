@@ -3345,7 +3345,7 @@
             <button id="load-more-btn" class="load-more-btn" style="display:none;" onclick="loadMore()">
                 더 불러오기
             </button>
-            <div id="active-bot-float" onclick="switchTab('bot')" title="삽화 모드 탭으로 이동"
+            <div id="active-bot-float" onclick="toggleBotFloatPopover(event)" title="봇 목록 보기"
                 style="position:fixed; right:24px; bottom:24px; z-index:9999; cursor:pointer;
                     display:none; align-items:center; gap:12px; padding:14px 20px;
                     background:rgba(15,52,96,0.55); backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px);
@@ -3361,6 +3361,18 @@
                     <span style="font-size:0.7rem; color:var(--text2); font-weight:500; letter-spacing:0.02em;">현재 활성화된 봇</span>
                     <span id="active-bot-float-name" style="font-size:1.05rem; font-weight:700; max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">--</span>
                 </div>
+                <span id="active-bot-float-caret" style="margin-left:4px; font-size:0.8rem; color:var(--text2); transition:transform 0.2s ease;">▲</span>
+            </div>
+            <div id="active-bot-popover"
+                style="position:fixed; right:24px; bottom:92px; z-index:10000; display:none;
+                    flex-direction:column; gap:4px; padding:8px; width:260px; max-height:60vh; overflow-y:auto;
+                    background:rgba(15,52,96,0.85); backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
+                    border:1px solid rgba(233,69,96,0.4); border-radius:14px;
+                    color:var(--text);
+                    box-shadow:0 10px 36px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.04) inset;
+                    transform:translateY(8px); opacity:0; transition:transform 0.18s ease, opacity 0.18s ease;">
+                <div style="font-size:0.7rem; color:var(--text2); font-weight:500; letter-spacing:0.02em; padding:4px 8px 6px;">봇 선택</div>
+                <div id="active-bot-popover-list" style="display:flex; flex-direction:column; gap:2px;"></div>
             </div>
         </div>
 
@@ -18979,8 +18991,102 @@
                 float.style.display = 'flex';
             } else {
                 float.style.display = 'none';
+                closeBotFloatPopover();
             }
         }
+
+        function renderBotFloatPopover() {
+            const list = document.getElementById('active-bot-popover-list');
+            if (!list) return;
+            list.innerHTML = '';
+            if (!botData || !botData.bots || botData.bots.length === 0) {
+                const empty = document.createElement('div');
+                empty.style.cssText = 'padding:10px; text-align:center; color:var(--text2); font-size:0.8rem;';
+                empty.textContent = '불러올 봇이 없습니다';
+                list.appendChild(empty);
+                return;
+            }
+            const sorted = botData.bots.slice();
+            const selected = botCurrentBot;
+            if (selected) {
+                sorted.sort((a, b) => {
+                    if (a.name === selected) return -1;
+                    if (b.name === selected) return 1;
+                    return 0;
+                });
+            }
+            for (const bot of sorted) {
+                const isSelected = bot.name === selected;
+                const charCount = (bot.characters || []).length;
+                const row = document.createElement('div');
+                row.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 10px; border-radius:8px; cursor:pointer; transition:background 0.15s ease;'
+                    + (isSelected ? ' background:rgba(233,69,96,0.18);' : '');
+                row.onmouseenter = () => { if (!isSelected) row.style.background = 'rgba(255,255,255,0.06)'; };
+                row.onmouseleave = () => { if (!isSelected) row.style.background = 'transparent'; };
+                row.innerHTML = '<div style="display:flex; flex-direction:column; gap:2px; min-width:0;">'
+                    + '<span style="font-size:0.9rem; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">' + escHtml(bot.name) + '</span>'
+                    + '<span style="font-size:0.7rem; color:var(--text2);">캐릭터 ' + charCount + '개</span>'
+                    + '</div>'
+                    + (isSelected ? '<span style="font-size:0.75rem; color:var(--accent); font-weight:600;">선택됨</span>' : '<span style="font-size:0.7rem; color:var(--text2);">선택</span>');
+                row.onclick = (e) => {
+                    e.stopPropagation();
+                    botCurrentBot = bot.name;
+                    const sel = document.getElementById('bot-select');
+                    if (sel) sel.value = bot.name;
+                    onBotChange();
+                    closeBotFloatPopover();
+                };
+                list.appendChild(row);
+            }
+        }
+
+        function openBotFloatPopover() {
+            const pop = document.getElementById('active-bot-popover');
+            if (!pop) return;
+            renderBotFloatPopover();
+            pop.style.display = 'flex';
+            requestAnimationFrame(() => {
+                pop.style.transform = 'translateY(0)';
+                pop.style.opacity = '1';
+            });
+            const caret = document.getElementById('active-bot-float-caret');
+            if (caret) caret.style.transform = 'rotate(180deg)';
+        }
+
+        function closeBotFloatPopover() {
+            const pop = document.getElementById('active-bot-popover');
+            if (!pop) return;
+            pop.style.transform = 'translateY(8px)';
+            pop.style.opacity = '0';
+            const caret = document.getElementById('active-bot-float-caret');
+            if (caret) caret.style.transform = '';
+            setTimeout(() => {
+                if (pop.style.opacity === '0') pop.style.display = 'none';
+            }, 180);
+        }
+
+        function toggleBotFloatPopover(e) {
+            if (e) e.stopPropagation();
+            const pop = document.getElementById('active-bot-popover');
+            if (!pop) return;
+            if (pop.style.display === 'flex' && pop.style.opacity === '1') {
+                closeBotFloatPopover();
+            } else {
+                openBotFloatPopover();
+            }
+        }
+
+        document.addEventListener('click', (e) => {
+            const pop = document.getElementById('active-bot-popover');
+            const float = document.getElementById('active-bot-float');
+            if (!pop || pop.style.display !== 'flex') return;
+            if (pop.contains(e.target) || (float && float.contains(e.target))) return;
+            closeBotFloatPopover();
+        });
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') closeBotFloatPopover();
+        });
 
         async function restoreBotCurrentBotLightweight() {
             try {
