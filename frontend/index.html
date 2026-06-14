@@ -21526,6 +21526,16 @@
             }
         }
 
+        function _normCharMatch(s) {
+            return String(s || '').toLowerCase().replace(/[\s_-]+/g, '');
+        }
+        function _isInstanceLoraRecommended(item, charName) {
+            const cn = _normCharMatch(charName);
+            if (!cn) return false;
+            const idHit = _normCharMatch(item.lora_id).includes(cn) || cn.includes(_normCharMatch(item.lora_id)) && _normCharMatch(item.lora_id).length > 0;
+            const trigHit = _normCharMatch(item.trigger).includes(cn) || (cn.includes(_normCharMatch(item.trigger)) && _normCharMatch(item.trigger).length > 0);
+            return idHit || trigHit;
+        }
         function renderBclpInstanceLoras() {
             const grid = document.getElementById('bclp-grid');
             if (!grid) return;
@@ -21533,15 +21543,22 @@
             const items = _botCharLoraPickerState.instanceData || [];
             grid.innerHTML = '';
             if (items.length === 0) { grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--text-secondary);">인스턴스 LoRA 항목이 없습니다</div>'; return; }
+            const charName = _botCharLoraPickerState.charName || '';
+            const recommended = [];
+            const others = [];
+            for (const it of items) {
+                if (charName && _isInstanceLoraRecommended(it, charName)) recommended.push(it);
+                else others.push(it);
+            }
             const enc = encodeURIComponent;
-            items.forEach(item => {
+            const renderCard = (item, isRecommended) => {
                 const profileNames = Object.keys(item.profiles);
                 let previewUrl = '';
                 if (item.first_image) {
                     previewUrl = `/api/instance_lora/image/${enc(item.lora_id)}/${enc(item.first_image)}`;
                 }
                 const card = document.createElement('div');
-                card.style.cssText = 'cursor:pointer; border-radius:8px; overflow:hidden; border:2px solid var(--border); transition:border-color 0.2s;';
+                card.style.cssText = 'cursor:pointer; border-radius:8px; overflow:hidden; border:2px solid var(--border); transition:border-color 0.2s; position:relative;';
                 const badges = profileNames.map(p =>
                     `<span style="font-size:0.55rem; background:${p === 'anima' ? 'rgba(100,180,255,0.3)' : 'rgba(255,180,100,0.3)'}; padding:1px 4px; border-radius:3px; margin:0 1px;">${p}</span>`
                 ).join('');
@@ -21549,6 +21566,12 @@
                     ? `<img src="${escapeHtml(previewUrl)}" style="width:100%; display:block; aspect-ratio:1; object-fit:contain;" loading="lazy">`
                     : `<div style="width:100%; aspect-ratio:1; background:var(--surface2); display:flex; align-items:center; justify-content:center;">⚡</div>`;
                 card.innerHTML += `<div style="font-size:0.7rem; padding:4px; text-align:center; background:var(--surface2);">${escapeHtml(item.lora_id)}<br>${badges}</div>`;
+                if (isRecommended) {
+                    const badge = document.createElement('div');
+                    badge.textContent = '⭐';
+                    badge.style.cssText = 'position:absolute; top:3px; right:4px; font-size:0.85rem; line-height:1; text-shadow:0 0 3px rgba(0,0,0,0.6);';
+                    card.appendChild(badge);
+                }
                 card.onmouseenter = () => { card.style.borderColor = 'var(--accent)'; };
                 card.onmouseleave = () => { card.style.borderColor = 'var(--border)'; };
                 card.onclick = () => {
@@ -21583,7 +21606,20 @@
                     showToast(`인스턴스 ${isFace ? '얼굴 ' : ''}LoRA "${item.lora_id}" ${addedCount}개 추가됨`, 'success');
                 };
                 grid.appendChild(card);
-            });
+            };
+            if (recommended.length > 0) {
+                const header = document.createElement('div');
+                header.style.cssText = 'grid-column:1/-1; display:flex; align-items:center; gap:6px; font-size:0.75rem; color:var(--text-secondary); margin-bottom:2px;';
+                header.innerHTML = '<span style="font-size:0.85rem;">⭐</span> 캐릭터 이름 기반 추천 로라';
+                grid.appendChild(header);
+            }
+            recommended.forEach(it => renderCard(it, true));
+            if (recommended.length > 0 && others.length > 0) {
+                const divider = document.createElement('div');
+                divider.style.cssText = 'grid-column:1/-1; height:0; border-top:1px solid var(--border); margin:6px 0;';
+                grid.appendChild(divider);
+            }
+            others.forEach(it => renderCard(it, false));
         }
 
         // ─── 봇 탭 ───
