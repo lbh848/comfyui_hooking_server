@@ -3671,6 +3671,16 @@
                         이름 치환 규칙
                     </button>
 
+                    <!-- 칩 드래그 자동 복사 토글 -->
+                    <div style="display:flex; align-items:center; gap:8px; padding:6px 8px; margin-bottom:8px; background:var(--surface); border:1px solid var(--border); border-radius:6px; font-size:0.72rem;">
+                        <span style="flex:1; color:var(--text-secondary);">칩 드래그 시 자동 복사</span>
+                        <label class="toggle-switch sm" style="flex:0 0 auto;">
+                            <input type="checkbox" id="chip-copy-toggle" onchange="onChipCopyToggleChange(this.checked)">
+                            <span class="toggle-slider"></span>
+                        </label>
+                        <span id="chip-copy-status" class="toggle-status off" style="font-size:0.7rem; padding:2px 6px; min-width:30px;">OFF</span>
+                    </div>
+
                     <!-- 캐릭터 섹션 -->
                     <div style="background:rgba(66,133,244,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
                     <div class="section-title">캐릭터</div>
@@ -34557,6 +34567,112 @@
                 document.querySelectorAll('.custom-select.open').forEach(o => o.classList.remove('open'));
             }
         });
+
+        // ─── 에셋 모드 칩: 드래그 시작 시 자동 복사 (토글로 ON/OFF) ──
+        let chipCopyEnabled = false; // 기본 OFF, 저장 안 함
+
+        function onChipCopyToggleChange(checked) {
+            chipCopyEnabled = !!checked;
+            const status = document.getElementById('chip-copy-status');
+            if (status) {
+                status.textContent = chipCopyEnabled ? 'ON' : 'OFF';
+                status.className = 'toggle-status ' + (chipCopyEnabled ? 'on' : 'off');
+                status.style.fontSize = '0.7rem';
+                status.style.padding = '2px 6px';
+                status.style.minWidth = '30px';
+            }
+        }
+
+        (function initChipAutoCopy() {
+            let hintEl = null;
+
+            function getHintEl() {
+                if (!hintEl) {
+                    hintEl = document.createElement('div');
+                    hintEl.id = 'chip-copy-hint';
+                    hintEl.style.cssText = 'position:fixed; z-index:99999; background:rgba(40,40,40,0.95); color:#fff; padding:4px 8px; border-radius:4px; font-size:0.72rem; pointer-events:none; display:none; box-shadow:0 2px 8px rgba(0,0,0,0.35); white-space:nowrap; font-family:var(--font, sans-serif);';
+                    document.body.appendChild(hintEl);
+                }
+                return hintEl;
+            }
+
+            function extractTag(chip) {
+                const clone = chip.cloneNode(true);
+                clone.querySelectorAll('.remove-tag').forEach(el => el.remove());
+                return (clone.textContent || '').trim();
+            }
+
+            function showHint(chip, tag) {
+                const hint = getHintEl();
+                const preview = tag.length > 30 ? tag.slice(0, 30) + '…' : tag;
+                hint.textContent = `드래그하면 복사됨: ${preview}`;
+                hint.style.display = 'block';
+                const rect = chip.getBoundingClientRect();
+                hint.style.left = rect.left + 'px';
+                hint.style.top = (rect.bottom + 4) + 'px';
+            }
+
+            function hideHint() {
+                if (hintEl) hintEl.style.display = 'none';
+            }
+
+            function doCopy(tag) {
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(tag).then(() => {
+                        const preview = tag.length > 40 ? tag.slice(0, 40) + '…' : tag;
+                        showToast(`복사됨: ${preview}`, 'success');
+                    }).catch(err => {
+                        console.error('[CHIP-COPY] clipboard API 실패:', err);
+                        showToast('복사 실패: ' + (err && err.message ? err.message : err), 'error');
+                    });
+                } else {
+                    let ok = false;
+                    try {
+                        const ta = document.createElement('textarea');
+                        ta.value = tag;
+                        ta.style.cssText = 'position:fixed; left:-9999px; top:-9999px; opacity:0;';
+                        document.body.appendChild(ta);
+                        ta.focus(); ta.select();
+                        ok = document.execCommand('copy');
+                        document.body.removeChild(ta);
+                    } catch (e) {
+                        console.error('[CHIP-COPY] fallback 복사 실패:', e);
+                    }
+                    if (ok) {
+                        const preview = tag.length > 40 ? tag.slice(0, 40) + '…' : tag;
+                        showToast(`복사됨: ${preview}`, 'success');
+                    } else {
+                        showToast('복사 실패: 클립보드 API 사용 불가', 'error');
+                    }
+                }
+            }
+
+            // mousedown: 토글 켜져 있을 때만 힌트 노출
+            document.addEventListener('mousedown', (e) => {
+                if (!chipCopyEnabled) return;
+                if (e.button !== 0) return;
+                if (e.target.closest('.remove-tag')) return;
+                const chip = e.target.closest('.tag-chip');
+                if (!chip) return;
+                const tag = extractTag(chip);
+                if (!tag) return;
+                showHint(chip, tag);
+            });
+
+            document.addEventListener('mouseup', hideHint);
+            document.addEventListener('dragend', hideHint, true);
+            window.addEventListener('blur', hideHint);
+
+            // dragstart: 자동 복사 실행
+            document.addEventListener('dragstart', (e) => {
+                if (!chipCopyEnabled) return;
+                const chip = e.target.closest('.tag-chip');
+                if (!chip) return;
+                const tag = extractTag(chip);
+                if (!tag) return;
+                doCopy(tag);
+            }, true);
+        })();
 
         // ─── 배치 슬롯 LoRA 피커 ──
         let batchLoraPickerCurrentTab = 'asset';
