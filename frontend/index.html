@@ -23888,6 +23888,7 @@
                 const span = document.createElement('span');
                 span.textContent = tag;
                 span.style.cssText = 'display:inline-block; padding:2px 6px; border-radius:3px; font-size:0.7rem; background:var(--surface2); border:1px solid var(--border); color:var(--text);';
+                _attachTagChipTooltip(span, tag);
                 container.appendChild(span);
             });
         }
@@ -24010,6 +24011,7 @@
                 x.textContent = '×';
                 x.addEventListener('click', () => illustTeRemoveTag(secId, idx));
                 chip.appendChild(x);
+                _attachTagChipTooltip(chip, tag);
                 block.appendChild(chip);
             });
             container.appendChild(block);
@@ -25751,6 +25753,48 @@
             }
         }
 
+        // 태그칩 호버 설명 캐시: tag명 → description (또는 null)
+        const _tagDescCache = new Map();
+
+        async function _lookupTagDescription(tagName) {
+            const key = tagName.trim().toLowerCase().replace(/\s+/g, ' ');
+            if (!key) return null;
+            if (_tagDescCache.has(key)) return _tagDescCache.get(key);
+            let desc = null;
+            try {
+                const resp = await fetch(`/api/autocomplete?query=${encodeURIComponent(key)}&limit=15`);
+                const tags = await resp.json();
+                if (Array.isArray(tags)) {
+                    const exact = tags.find(t => (t.name || '').toLowerCase() === key);
+                    const hit = exact || tags[0];
+                    desc = (hit && hit.description && hit.description.trim()) ? hit.description.trim() : null;
+                }
+            } catch (e) { /* 네트워크/파싱 실패 시 설명 없음 취급 */ }
+            _tagDescCache.set(key, desc);
+            return desc;
+        }
+
+        function _attachTagChipTooltip(chip, tagName) {
+            if (!chip || !tagName) return;
+            chip.addEventListener('mouseenter', async () => {
+                const tooltip = document.getElementById('ac-tooltip');
+                if (!tooltip) return;
+                const desc = await _lookupTagDescription(tagName);
+                if (!desc) return;
+                // 마우스가 이미 칩을 벗어났을 수도 있음 — 칩이 여전히 hover인지 확인
+                if (!chip.matches(':hover')) return;
+                tooltip.textContent = desc;
+                tooltip.style.display = 'block';
+                const rect = chip.getBoundingClientRect();
+                tooltip.style.left = rect.left + 'px';
+                tooltip.style.top = (rect.bottom + 4) + 'px';
+            });
+            chip.addEventListener('mouseleave', () => {
+                const tooltip = document.getElementById('ac-tooltip');
+                if (tooltip) tooltip.style.display = 'none';
+            });
+        }
+
         function renderTagChips(containerId, tags, removeFnName) {
             const container = document.getElementById(containerId);
             container.innerHTML = '';
@@ -25761,6 +25805,7 @@
                 chip.draggable = true;
                 chip.dataset.idx = idx;
                 chip.innerHTML = `${escapeHtml(tag)} <span class="remove-tag" onclick="${removeFnName}(${idx})">&times;</span>`;
+                _attachTagChipTooltip(chip, tag);
                 container.appendChild(chip);
             });
             attachDragReorder(container, tags, containerId, removeFnName);
@@ -28749,6 +28794,7 @@
                 x.textContent = '×';
                 x.addEventListener('click', () => removeFn(idx));
                 chip.appendChild(x);
+                _attachTagChipTooltip(chip, tag);
                 container.appendChild(chip);
             });
             attachDragReorder(container, tags, container.id, null, removeFn);
