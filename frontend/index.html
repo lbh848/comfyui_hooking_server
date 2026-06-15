@@ -3926,7 +3926,7 @@
                     </div>
 
                     <!-- 자연어 프리셋 편집 모달 -->
-                    <div id="nl-preset-modal" class="modal" onclick="if (event.target === this) closeNlPresetModal()">
+                    <div id="nl-preset-modal" class="modal">
                         <div class="modal-content" style="max-width:560px;">
                             <div class="modal-header">
                                 <h2>자연어 프리셋 편집</h2>
@@ -11625,11 +11625,28 @@
                         const galResp = await fetch(`/api/asset_mode/characters/${enc(charName)}/gallery`);
                         const galData = await galResp.json();
                         const gallery = galData.gallery || [];
+                        // 역매핑: 디렉터리명(_safe_dirname 적용됨) → 원본 프리셋명.
+                        // 슬래시 포함 프리셋(예: "SDstudio-80종공유용2/smug")은 디렉터리명에서 슬래시가 제거되어
+                        // 매칭 결과의 m.name(원본 프리셋명)으로 compareImages 조회 시 빈 값이 되는 문제를 보정.
+                        const tagsResp2 = await fetch('/api/asset_mode/tags');
+                        const tagsData2 = await tagsResp2.json();
+                        const dirToPreset = {};
+                        for (const presetName of Object.keys(tagsData2.expressions || {})) {
+                            const stripped = [...presetName].filter(c => /[\p{L}\p{N} _.-]/u.test(c)).join('').trim();
+                            if (stripped) dirToPreset[stripped] = presetName;
+                        }
                         for (const item of gallery) {
-                            if (item.image_count > 0 && !imgMap[item.expression]) {
+                            if (item.image_count > 0) {
                                 const repFile = item.representative || '';
-                                if (repFile) {
-                                    imgMap[item.expression] = `/api/asset_mode/characters/${enc(charName)}/outfits/${enc(item.outfit)}/expressions/${enc(item.expression)}/images/${enc(repFile)}`;
+                                if (!repFile) continue;
+                                // 디렉터리명에 대응하는 원본 프리셋명으로 키 저장; 디렉터리명도 fallback으로 함께 저장
+                                const keys = [];
+                                if (dirToPreset[item.expression]) keys.push(dirToPreset[item.expression]);
+                                if (!keys.includes(item.expression)) keys.push(item.expression);
+                                for (const key of keys) {
+                                    if (!imgMap[key]) {
+                                        imgMap[key] = `/api/asset_mode/characters/${enc(charName)}/outfits/${enc(item.outfit)}/expressions/${enc(item.expression)}/images/${enc(repFile)}`;
+                                    }
                                 }
                             }
                         }
