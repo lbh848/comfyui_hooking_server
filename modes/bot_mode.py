@@ -2054,6 +2054,7 @@ DEFAULT_ILLUST_SETTINGS = {
     "face_id_activate": False,
     "face_id_str": 0.55,
     "seed": -1,
+    "face_lora_upscale_size": "",
 }
 
 

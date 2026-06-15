@@ -391,12 +391,16 @@ class IllustPromptBuilder:
             # face_loras 수집
             for flora in char_data.get("face_loras", []):
                 flora_path = self._resolve_lora_path(flora)
-                all_face_loras.append({
+                item = {
                     "lora_path": flora_path,
                     "str": flora.get("strength", 0.8),
                     "BASE": flora.get("BASE", "anima"),
                     "CHAR": char_name
-                })
+                }
+                upscale_size = str(settings.get("face_lora_upscale_size", "") or "").strip()
+                if upscale_size:
+                    item["UPSCALE_SIZE"] = upscale_size
+                all_face_loras.append(item)
 
         # ─── 아티스트 프리셋 태그 ───
         artist_presets = tags.get("artist_presets", {})

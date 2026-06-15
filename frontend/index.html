@@ -3622,6 +3622,11 @@
                                     <input type="checkbox" id="illust-anima-ed-toggle" onchange="saveIllustSettings()"> ED
                                 </label>
                             </div>
+                            <div style="display:flex; gap:6px; align-items:center; margin-top:6px;">
+                                <span class="illust-chip label-chip">FACE LORA UPSCALE</span>
+                                <input type="number" id="illust-face-lora-upscale" min="0" step="1" placeholder="사용안함" onchange="saveIllustSettings()" style="width:80px; padding:2px 4px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.7rem; text-align:center;">
+                                <span style="font-size:0.65rem; color:var(--text-muted);">비움 = 사용안함</span>
+                            </div>
                             <div style="margin-top:6px;">
                                 <div style="font-size:0.75rem; color:var(--text-muted); margin-bottom:3px;">Seed</div>
                                 <div style="display:flex; gap:4px; align-items:center;">
@@ -23541,6 +23546,7 @@
                 hd_activate: document.getElementById('illust-hd-toggle').checked,
                 ed_activate: document.getElementById('illust-ed-toggle').checked,
                 seed: parseInt(document.getElementById('illust-seed-input').value) || -1,
+                face_lora_upscale_size: document.getElementById('illust-face-lora-upscale').value || '',
             };
             try {
                 await fetchJSON('/api/bot_mode/update_illust_settings', {
@@ -23583,6 +23589,7 @@
                     document.getElementById('illust-anima-hd-toggle').checked = s.anima_hd_activate || false;
                     document.getElementById('illust-anima-ed-toggle').checked = s.anima_ed_activate || false;
                     document.getElementById('illust-seed-input').value = s.seed ?? -1;
+                    document.getElementById('illust-face-lora-upscale').value = s.face_lora_upscale_size || '';
                     updateIllustToggles();
                     // 프리셋 태그 렌더링
                     renderIllustPresetTags('illust-sdxl-artist-preset','illust-sdxl-artist-tags','artist_presets');
@@ -23622,6 +23629,7 @@
                 hd_activate: document.getElementById('illust-hd-toggle').checked,
                 ed_activate: document.getElementById('illust-ed-toggle').checked,
                 seed: parseInt(document.getElementById('illust-seed-input').value) || -1,
+                face_lora_upscale_size: document.getElementById('illust-face-lora-upscale').value || '',
             };
             try {
                 await fetchJSON('/api/bot_mode/update_illust_settings', {
