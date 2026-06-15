@@ -3623,7 +3623,7 @@
                                 </label>
                             </div>
                             <div style="display:flex; gap:6px; align-items:center; margin-top:6px;">
-                                <span class="illust-chip label-chip">FD / ED 시 고정 사이즈</span>
+                                <span class="illust-chip label-chip" style="background:rgba(76,175,80,0.15); color:#81c784; border:1px solid rgba(76,175,80,0.35);">FD / ED 시 고정 사이즈</span>
                                 <input type="number" id="illust-face-lora-upscale" min="0" step="1" placeholder="사용안함" onchange="saveIllustSettings()" style="width:80px; padding:2px 4px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.7rem; text-align:center;">
                                 <span style="font-size:0.65rem; color:var(--text-muted);">비움 = 사용안함</span>
                             </div>
@@ -4162,6 +4162,11 @@
                             <label style="display:flex; align-items:center; gap:3px; font-size:0.75rem; cursor:pointer;"><input type="checkbox" id="asset-anima-fd"> FD</label>
                             <label style="display:flex; align-items:center; gap:3px; font-size:0.75rem; cursor:pointer;"><input type="checkbox" id="asset-anima-hd"> HD</label>
                             <label style="display:flex; align-items:center; gap:3px; font-size:0.75rem; cursor:pointer;"><input type="checkbox" id="asset-anima-ed"> ED</label>
+                        </div>
+                        <div style="display:flex; gap:6px; align-items:center; margin-top:6px;">
+                            <span class="illust-chip label-chip" style="background:rgba(76,175,80,0.15); color:#81c784; border:1px solid rgba(76,175,80,0.35);">FD / ED 시 고정 사이즈</span>
+                            <input type="number" id="asset-face-lora-upscale" min="0" step="1" placeholder="사용안함" style="width:80px; padding:2px 4px; border-radius:4px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-size:0.7rem; text-align:center;">
+                            <span style="font-size:0.65rem; color:var(--text-muted);">비움 = 사용안함</span>
                         </div>
                         <!-- 디테일러 옵션 -->
                         <div style="margin-top:8px; border-top:1px solid var(--border); padding-top:8px;">
@@ -26442,9 +26447,14 @@
             if (isAnima) {
                 const faceLoraEnabled = document.getElementById('asset-face-lora-toggle').checked;
                 const faceLoraActive = faceLoraEnabled && faceLoraList.length > 0;
+                const faceLoraUpscaleSize = (document.getElementById('asset-face-lora-upscale')?.value || '').trim();
                 positiveFull += `\n[FACE_LORA_ACTIVATE]\n${faceLoraActive ? 'true' : 'false'}`;
                 if (faceLoraActive) {
-                    positiveFull += `\n[FACE_LORA_DATA]\n${JSON.stringify({list: faceLoraList.map(l => ({lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima', CHAR: 'asset_mode'}))})}`;
+                    positiveFull += `\n[FACE_LORA_DATA]\n${JSON.stringify({list: faceLoraList.map(l => {
+                        const item = {lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima', CHAR: 'asset_mode'};
+                        if (faceLoraUpscaleSize) item.UPSCALE_SIZE = faceLoraUpscaleSize;
+                        return item;
+                    })})}`;
                 } else {
                     positiveFull += `\n[FACE_LORA_DATA]\n{"list":[]}`;
                 }
@@ -26551,6 +26561,7 @@
                 settings.anima_fd = document.getElementById('asset-anima-fd')?.checked || false;
                 settings.anima_hd = document.getElementById('asset-anima-hd')?.checked || false;
                 settings.anima_ed = document.getElementById('asset-anima-ed')?.checked || false;
+                settings.face_lora_upscale_size = document.getElementById('asset-face-lora-upscale')?.value || '';
                 settings.seed = parseInt(document.getElementById('asset-seed-input')?.value) || -1;
             } else {
                 settings.hrf_sdxl = document.getElementById('asset-sdxl-hrf-toggle')?.checked || false;
@@ -26646,7 +26657,7 @@
                 const hrfAnima = document.getElementById('asset-hrf-anima');
                 if (hrfAnima) hrfAnima.checked = s.hrf_anima || false;
                 const hrfSize = document.getElementById('asset-hrf-size');
-                if (hrfSize) hrfSize.value = s.hrf_size || 2.0;
+                if (hrfSize) { hrfSize.value = s.hrf_size || 2.0; hrfSize.dispatchEvent(new Event('input')); }
                 const hrfRestore = document.getElementById('asset-hrf-restore-size');
                 if (hrfRestore) hrfRestore.checked = s.hrf_restore_size !== false;
                 const hrfControlNet = document.getElementById('asset-hrf-control-net');
@@ -26663,6 +26674,8 @@
                 if (animaHd) animaHd.checked = s.anima_hd || false;
                 const animaEd = document.getElementById('asset-anima-ed');
                 if (animaEd) animaEd.checked = s.anima_ed || false;
+                const faceLoraUpscale = document.getElementById('asset-face-lora-upscale');
+                if (faceLoraUpscale) faceLoraUpscale.value = s.face_lora_upscale_size || '';
                 const seedInput = document.getElementById('asset-seed-input');
                 if (seedInput) seedInput.value = s.seed ?? -1;
             } else {
@@ -32900,7 +32913,7 @@
         // ═══════════════════════════════════════════════════════
         // ─── 그림 일괄생성 (Batch Chain) ──────────────────────
         // ═══════════════════════════════════════════════════════
-        let batchChains = [];   // [{character, appearance, outfit, expression, composition_preset, quality_preset, negative_preset, ref_enabled, ref_strength, ref_images, pose_enabled, pose_id, hrf_sdxl, hrf_anima, sdxl_fd_enabled, sdxl_hd_enabled, sdxl_ed_enabled, anima_fd_enabled, anima_hd_enabled, anima_ed_enabled, face_lora_enabled, face_lora_list, face_crop_top, face_crop_bottom, face_tags, eye_tags, face_positive, seed}, ...]
+        let batchChains = [];   // [{character, appearance, outfit, expression, composition_preset, quality_preset, negative_preset, ref_enabled, ref_strength, ref_images, pose_enabled, pose_id, hrf_sdxl, hrf_anima, sdxl_fd_enabled, sdxl_hd_enabled, sdxl_ed_enabled, anima_fd_enabled, anima_hd_enabled, anima_ed_enabled, face_lora_enabled, face_lora_list, face_crop_top, face_crop_bottom, face_tags, eye_tags, face_positive, face_lora_upscale_size, seed}, ...]
         let batchRunning = false;
         let batchActuallyRunning = false;
         let batchSlotIdCounter = 0;
@@ -32953,6 +32966,7 @@
                 face_tags: '',
                 eye_tags: '',
                 face_positive: '',
+                face_lora_upscale_size: '',
                 seed: -1,
                 artist_preset: '',
                 anima_artist_preset: '',
@@ -33197,6 +33211,12 @@
                                 <option value="on">모두 ON</option>
                                 <option value="off">모두 OFF</option>
                             </select>
+                        </div>
+                        <div style="display:flex; gap:8px; align-items:center; margin-bottom:6px;">
+                            <span class="illust-chip label-chip" style="background:rgba(76,175,80,0.15); color:#81c784; border:1px solid rgba(76,175,80,0.35);">FD / ED 시 고정 사이즈</span>
+                            <input type="number" id="bulk-face-lora-upscale" min="0" step="1" placeholder="사용안함" style="width:80px; padding:3px 4px; border:1px solid var(--border); background:var(--surface); color:var(--text); border-radius:4px; font-size:0.8rem; text-align:center;">
+                            <label style="font-size:0.75rem; display:flex; align-items:center; gap:4px; cursor:pointer;"><input type="checkbox" id="bulk-face-lora-upscale-check"> 적용</label>
+                            <span style="font-size:0.65rem; color:var(--text-muted);">비움 = 사용안함</span>
                         </div>
                     </div>
 
@@ -33850,6 +33870,8 @@
             const faceCropCheck = document.getElementById('bulk-face-crop-check')?.checked || false;
             const faceCropTop = parseFloat(document.getElementById('bulk-face-crop-top')?.value) || 2.5;
             const faceCropBottom = parseFloat(document.getElementById('bulk-face-crop-bottom')?.value) || 1;
+            const faceLoraUpscaleCheck = document.getElementById('bulk-face-lora-upscale-check')?.checked || false;
+            const faceLoraUpscale = (document.getElementById('bulk-face-lora-upscale')?.value || '').trim();
             const bulkFaceTags = document.getElementById('bulk-face-tags')?.value || '';
             const bulkEyeTags = document.getElementById('bulk-eye-tags')?.value || '';
             const seedCheck = document.getElementById('bulk-seed-check')?.checked || false;
@@ -33922,6 +33944,7 @@
                     slot.face_lora_enabled = true;
                 }
                 if (faceCropCheck) { slot.face_crop_top = faceCropTop; slot.face_crop_bottom = faceCropBottom; }
+                if (faceLoraUpscaleCheck) slot.face_lora_upscale_size = faceLoraUpscale;
                 if (bulkFaceTags) slot.face_tags = bulkFaceTags;
                 if (bulkEyeTags) slot.eye_tags = bulkEyeTags;
                 if (seedCheck) slot.seed = bulkSeed;
@@ -34200,6 +34223,11 @@
                     <label style="display:flex; align-items:center; gap:3px; font-size:0.7rem; cursor:pointer;"><input type="checkbox" data-field="anima_hd_enabled" ${slot.anima_hd_enabled ? 'checked' : ''}> HD</label>
                     <label style="display:flex; align-items:center; gap:3px; font-size:0.7rem; cursor:pointer;"><input type="checkbox" data-field="anima_ed_enabled" ${slot.anima_ed_enabled ? 'checked' : ''}> ED</label>
                 </div>
+                <div style="display:flex; gap:6px; align-items:center; margin-top:3px;">
+                    <span class="illust-chip label-chip" style="background:rgba(76,175,80,0.15); color:#81c784; border:1px solid rgba(76,175,80,0.35);">FD / ED 시 고정 사이즈</span>
+                    <input type="number" data-field="face_lora_upscale_size" value="${slot.face_lora_upscale_size ?? ''}" min="0" step="1" placeholder="사용안함" style="width:60px; padding:2px 4px; border-radius:4px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-size:0.65rem; text-align:center;">
+                    <span style="font-size:0.6rem; color:var(--text-muted);">비움 = 사용안함</span>
+                </div>
                 <div style="padding:4px 6px; background:var(--surface2); border-radius:4px; border:1px solid var(--border);">
                     <div style="font-size:0.65rem; color:var(--text-secondary); margin-bottom:3px;">FACE CROP</div>
                     <div style="display:flex; gap:6px; align-items:center; margin-bottom:4px;">
@@ -34414,10 +34442,14 @@
                     updateBatchPreview(slotEl, idx);
                 });
             });
-            // number 변경 (img_w, img_h)
+            // number 변경 (img_w, img_h, face_lora_upscale_size)
             slotEl.querySelectorAll('input[type="number"][data-field]').forEach(inp => {
                 inp.addEventListener('change', () => {
-                    batchChains[idx][inp.dataset.field] = parseInt(inp.value) || (inp.dataset.field === 'img_w' ? 700 : 1024);
+                    if (inp.dataset.field === 'face_lora_upscale_size') {
+                        batchChains[idx][inp.dataset.field] = inp.value.trim();
+                    } else {
+                        batchChains[idx][inp.dataset.field] = parseInt(inp.value) || (inp.dataset.field === 'img_w' ? 700 : 1024);
+                    }
                     updateBatchPreview(slotEl, idx);
                 });
             });
@@ -35522,9 +35554,14 @@
             // Face LoRA (ANIMA only)
             if (isAnima) {
                 const faceLoraActive = slot.face_lora_enabled && (slot.face_lora_list || []).length > 0;
+                const slotFaceLoraUpscale = (slot.face_lora_upscale_size || '').toString().trim();
                 positiveFull += `\n[FACE_LORA_ACTIVATE]\n${faceLoraActive ? 'true' : 'false'}`;
                 if (faceLoraActive) {
-                    positiveFull += `\n[FACE_LORA_DATA]\n${JSON.stringify({list: slot.face_lora_list.map(l => ({lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima', CHAR: 'asset_mode'}))})}`;
+                    positiveFull += `\n[FACE_LORA_DATA]\n${JSON.stringify({list: slot.face_lora_list.map(l => {
+                        const item = {lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima', CHAR: 'asset_mode'};
+                        if (slotFaceLoraUpscale) item.UPSCALE_SIZE = slotFaceLoraUpscale;
+                        return item;
+                    })})}`;
                 } else {
                     positiveFull += `\n[FACE_LORA_DATA]\n{"list":[]}`;
                 }
@@ -35649,8 +35686,13 @@
             controlPart += `\n[LORA_DATA]\n${loraActive ? JSON.stringify({list: slot.lora_list.map(l => ({lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima'}))}) : '{"list":[]}'}`;
             if (isAnima) {
                 const faceLoraActive = slot.face_lora_enabled && (slot.face_lora_list || []).length > 0;
+                const ctrlFaceLoraUpscale = (slot.face_lora_upscale_size || '').toString().trim();
                 controlPart += `\n[FACE_LORA_ACTIVATE]\n${faceLoraActive ? 'true' : 'false'}`;
-                controlPart += `\n[FACE_LORA_DATA]\n${faceLoraActive ? JSON.stringify({list: slot.face_lora_list.map(l => ({lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima', CHAR: 'asset_mode'}))}) : '{"list":[]}'}`;
+                controlPart += `\n[FACE_LORA_DATA]\n${faceLoraActive ? JSON.stringify({list: slot.face_lora_list.map(l => {
+                    const item = {lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima', CHAR: 'asset_mode'};
+                    if (ctrlFaceLoraUpscale) item.UPSCALE_SIZE = ctrlFaceLoraUpscale;
+                    return item;
+                })}) : '{"list":[]}'}`;
                 const previewFaceLoraList = slot.face_lora_list || [];
                 const previewFaceAnimaTriggers = previewFaceLoraList.filter(l => (l.BASE || 'anima') === 'anima').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
                 const previewFaceSdxlTriggers = previewFaceLoraList.filter(l => l.BASE === 'sdxl').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
@@ -36071,6 +36113,7 @@
                     face_lora_enabled: !!c.face_lora_enabled, face_lora_list: c.face_lora_list || [],
                     face_crop_top: c.face_crop_top ?? 2.5, face_crop_bottom: c.face_crop_bottom ?? 1,
                     face_tags: c.face_tags || '', eye_tags: c.eye_tags || '', face_positive: c.face_positive || '',
+                    face_lora_upscale_size: c.face_lora_upscale_size || '',
                     seed: c.seed ?? -1,
                 };
                 delete c._ref_image_data;
@@ -36430,6 +36473,7 @@
                 face_lora_enabled: !!c.face_lora_enabled, face_lora_list: c.face_lora_list || [],
                 face_crop_top: c.face_crop_top ?? 2.5, face_crop_bottom: c.face_crop_bottom ?? 1,
                 face_tags: c.face_tags || '', eye_tags: c.eye_tags || '', face_positive: c.face_positive || '',
+                face_lora_upscale_size: c.face_lora_upscale_size || '',
                 seed: c.seed ?? -1,
                 _id: ++batchSlotIdCounter,
             }));
