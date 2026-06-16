@@ -45,6 +45,10 @@ class QueueManager:
         self.current_item: Optional[QueueItem] = None
         self._processing = False
         self._lock = asyncio.Lock()
+        # 삽화 완료 후 다음 작업 시작 전 대기 (새 삽화 도착 시 즉시 진행)
+        self._illust_wait_event: Optional[asyncio.Event] = None
+        self._illust_wait_started_at: Optional[float] = None
+        self._illust_wait_seconds: float = 10.0
         # server.py에서 주입될 콜백 함수들
         self.notify_frontend = None  # async def(event_type, data)
         self.get_config = None       # def() -> dict
@@ -77,6 +81,10 @@ class QueueManager:
         self._resort_pending()
         print(f"[QUEUE] 항목 추가: type={item_type}, label={label}, id={item.id}, priority={priority}, 대기={len([i for i in self.items if i.status == 'pending'])}")
         await self._notify_queue_updated()
+        # 삽화 대기 중이면 즉시 깨움
+        if item_type == "illustration" and self._illust_wait_event is not None:
+            print("[QUEUE] 삽화 대기 중 새 삽화 도착 - 즉시 진행")
+            self._illust_wait_event.set()
         # 처리 루프가 idle이면 시작
         asyncio.ensure_future(self._process_loop())
         return item
@@ -110,6 +118,9 @@ class QueueManager:
             "current": self.current_item.to_dict() if self.current_item else None,
             "processing": self._processing,
             "pending_count": len([i for i in self.items if i.status == "pending"]),
+            "illust_waiting": self._illust_wait_event is not None,
+            "illust_wait_started_at": self._illust_wait_started_at,
+            "illust_wait_seconds": self._illust_wait_seconds if self._illust_wait_event is not None else 0,
         }
 
     def remove_item(self, item_id: str) -> bool:
@@ -154,6 +165,29 @@ class QueueManager:
     async def _notify_queue_updated(self):
         if self.notify_frontend:
             await self.notify_frontend("queue_updated", self.get_status())
+
+    async def _wait_after_illustration(self):
+        """삽화 완료 후 다음 작업 시작 전 대기.
+        - 이미 pending 삽화가 있으면 대기 없이 즉시 진행
+        - 10초 대기 중 새 삽화가 들어오면 이벤트 set으로 즉시 진행
+        - 아니면 10초 후 다음 작업 진행
+        """
+        if any(i.status == "pending" and i.type == "illustration" for i in self.items):
+            print("[QUEUE] 삽화 완료 후 pending 삽화 존재 - 대기 생략")
+            return
+        self._illust_wait_event = asyncio.Event()
+        self._illust_wait_started_at = time.time()
+        print(f"[QUEUE] 삽화 완료 후 {self._illust_wait_seconds:.0f}초 대기 시작")
+        await self._notify_queue_updated()
+        try:
+            await asyncio.wait_for(self._illust_wait_event.wait(), timeout=self._illust_wait_seconds)
+            print("[QUEUE] 삽화 대기 중 새 삽화 도착 - 즉시 진행")
+        except asyncio.TimeoutError:
+            print(f"[QUEUE] 삽화 {self._illust_wait_seconds:.0f}초 대기 완료 - 다음 작업 진행")
+        finally:
+            self._illust_wait_event = None
+            self._illust_wait_started_at = None
+            await self._notify_queue_updated()
 
     async def _notify_progress(self, item: QueueItem, detail: dict):
         percentage = detail.get("percentage")
@@ -220,11 +254,15 @@ class QueueManager:
                     traceback.print_exc()
                 next_item.completed_at = time.time()
                 self.current_item = None
+                was_illustration = next_item.type == "illustration"
                 # 완료 알림 후 잠시 유지
                 await self._notify_queue_updated()
                 await asyncio.sleep(2.0)
                 self.items = [i for i in self.items if i.status in ("pending", "processing")]
                 await self._notify_queue_updated()
+                # 삽화 완료 후: 새 삽화 들어오면 즉시, 아니면 10초 대기 후 다음 작업
+                if was_illustration:
+                    await self._wait_after_illustration()
         finally:
             self._processing = False
 

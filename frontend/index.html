@@ -31132,6 +31132,10 @@
         // ─── 통합 큐 모달 ──────────────────────────────────────
         let queueModalOpen = false;
         let queueModalData = []; // 큐 모달 전용 상태
+        let queueIllustWaiting = false; // 삽화 대기 중 여부
+        let queueIllustWaitStartedAt = null; // epoch(ms)
+        let queueIllustWaitSeconds = 10; // 총 대기 시간(초)
+        let _queueIllustWaitTimer = null; // 카운트다운 렌더 타이머
 
         function toggleQueueModal() {
             if (queueModalOpen) closeQueueModal();
@@ -31156,6 +31160,10 @@
                         _completedLocalTs: null,
                     }));
                     updateQueueBadge();
+                    queueIllustWaiting = !!data.illust_waiting;
+                    queueIllustWaitStartedAt = data.illust_wait_started_at ? data.illust_wait_started_at * 1000 : null;
+                    queueIllustWaitSeconds = data.illust_wait_seconds || 10;
+                    _updateIllustWaitTimer();
                 }
             } catch (e) { console.error('[QUEUE] 모달 열 때 상태 로드 실패:', e); }
             renderQueueModal();
@@ -31188,9 +31196,38 @@
             tag_analysis: '태그분석',
         };
 
+        function _updateIllustWaitTimer() {
+            if (queueIllustWaiting && !_queueIllustWaitTimer) {
+                _queueIllustWaitTimer = setInterval(() => {
+                    const banner = document.getElementById('queue-illust-wait-banner');
+                    if (!banner || !queueIllustWaiting || !queueIllustWaitStartedAt) return;
+                    const elapsedMs = Date.now() - queueIllustWaitStartedAt;
+                    const remainSec = Math.max(0, queueIllustWaitSeconds - Math.floor(elapsedMs / 1000));
+                    banner.innerHTML = `⏳ <b>삽화 대기 중</b> - 새 삽화 도착 시 즉시 실행, 없으면 <b>${remainSec}초</b> 후 다음 작업`;
+                }, 500);
+            } else if (!queueIllustWaiting && _queueIllustWaitTimer) {
+                clearInterval(_queueIllustWaitTimer);
+                _queueIllustWaitTimer = null;
+            }
+        }
+
         function renderQueueModal() {
             const body = document.getElementById('queue-modal-body');
             if (!body) { console.error('[QUEUE] renderQueueModal: queue-modal-body 요소 없음'); return; }
+            // 삽화 대기 배너
+            let waitBanner = document.getElementById('queue-illust-wait-banner');
+            if (queueIllustWaiting && queueIllustWaitStartedAt) {
+                const elapsedMs = Date.now() - queueIllustWaitStartedAt;
+                const remainSec = Math.max(0, queueIllustWaitSeconds - Math.floor(elapsedMs / 1000));
+                if (!waitBanner) {
+                    waitBanner = document.createElement('div');
+                    waitBanner.id = 'queue-illust-wait-banner';
+                    waitBanner.style.cssText = 'background:rgba(255,193,7,0.12);border:1px solid rgba(255,193,7,0.5);color:#ffc107;padding:8px 10px;border-radius:6px;font-size:0.82rem;margin-bottom:8px;text-align:center;';
+                }
+                waitBanner.innerHTML = `⏳ <b>삽화 대기 중</b> - 새 삽화 도착 시 즉시 실행, 없으면 <b>${remainSec}초</b> 후 다음 작업`;
+            } else if (waitBanner) {
+                waitBanner.remove();
+            }
             let empty = document.getElementById('queue-modal-empty');
             // innerHTML='' 로 삭제된 경우 재생성
             if (!empty) {
@@ -31204,12 +31241,14 @@
             if (!items.length) {
                 body.innerHTML = '';
                 body.appendChild(empty);
+                if (waitBanner) body.appendChild(waitBanner);
                 empty.style.display = 'block';
                 return;
             }
             empty.style.display = 'none';
             body.innerHTML = '';
             body.appendChild(empty);
+            if (waitBanner) body.appendChild(waitBanner);
             try {
             items.forEach((item, idx) => {
                 const el = document.createElement('div');
@@ -31381,6 +31420,12 @@
             }));
             queueModalAutoRemoveCompleted();
             updateQueueBadge();
+            // 삽화 대기 상태 동기화
+            const wasWaiting = queueIllustWaiting;
+            queueIllustWaiting = !!data.illust_waiting;
+            queueIllustWaitStartedAt = data.illust_wait_started_at ? data.illust_wait_started_at * 1000 : null;
+            queueIllustWaitSeconds = data.illust_wait_seconds || 10;
+            _updateIllustWaitTimer();
             if (queueModalOpen) renderQueueModal();
 
             // 인스턴스 LoRA 관련 큐 완료 시 그리드 자동 갱신
