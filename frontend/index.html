@@ -36105,9 +36105,10 @@
                 } catch (e) { console.warn('[EXPORT] 포즈 로드 실패:', poseId, e); }
             }
 
-            // 참고: FACE-IPAdapter / Style-IPAdapter 레퍼런스 이미지는 용량 문제로
-            // 공유 파일에서 제외한다. 가져오는 쪽에서는 ref_enabled/style_ref_enabled
-            // 설정만 유지되며 이미지는 비어 있으니 수동으로 다시 지정해야 함.
+            // 참고: FACE-IPAdapter / Style-IPAdapter 레퍼런스 이미지와 Face LoRA는
+            // 용량 및 로컬 의존성 문제로 공유 파일에서 제외한다. 가져오는 쪽에서는
+            // ref_enabled/style_ref_enabled/face_lora_enabled 설정만 유지되며
+            // 이미지/LoRA는 비어 있으니 수동으로 다시 지정해야 함.
 
             // 4) 체인 슬롯 직렬화
             const chains = batchChains.map(c => {
@@ -36121,7 +36122,7 @@
                     hrf_sdxl: !!c.hrf_sdxl, hrf_anima: !!c.hrf_anima,
                     sdxl_fd_enabled: !!c.sdxl_fd_enabled, sdxl_hd_enabled: !!c.sdxl_hd_enabled, sdxl_ed_enabled: !!c.sdxl_ed_enabled,
                     anima_fd_enabled: !!c.anima_fd_enabled, anima_hd_enabled: !!c.anima_hd_enabled, anima_ed_enabled: !!c.anima_ed_enabled,
-                    face_lora_enabled: !!c.face_lora_enabled, face_lora_list: c.face_lora_list || [],
+                    face_lora_enabled: !!c.face_lora_enabled,
                     face_crop_top: c.face_crop_top ?? 2.5, face_crop_bottom: c.face_crop_bottom ?? 1,
                     face_tags: c.face_tags || '', eye_tags: c.eye_tags || '', face_positive: c.face_positive || '',
                     face_lora_upscale_size: c.face_lora_upscale_size || '',
