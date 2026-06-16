@@ -4372,6 +4372,7 @@
                 <button onclick="openBatchBulkEdit()" style="background:var(--accent); color:#fff; border:none; padding:4px 10px; border-radius:4px; cursor:pointer; font-size:0.8rem; font-weight:600;">일괄 설정</button>
                 <button onclick="exportChainShare()" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:4px 10px; border-radius:4px; cursor:pointer; font-size:0.8rem;">공유</button>
                 <button onclick="importChainShare()" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:4px 10px; border-radius:4px; cursor:pointer; font-size:0.8rem;">로드</button>
+                <button onclick="openAppendChainModal()" title="현재 체인 뒤에 다른 체인 프리셋을 이어붙입니다" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:4px 10px; border-radius:4px; cursor:pointer; font-size:0.8rem;">🔗 이어붙이기</button>
                 <div style="margin-left:auto; display:flex; align-items:center; gap:8px;">
                     <span style="font-size:0.85rem;">반복:</span>
                     <input type="number" id="batch-repeat-count" value="1" min="1" max="100" style="width:55px; padding:4px 6px; border:1px solid var(--border); background:var(--surface); color:var(--text); border-radius:4px; text-align:center; font-size:0.85rem;" title="체인 반복 횟수">
@@ -35896,25 +35897,7 @@
                 document.getElementById('batch-repeat-count').value = preset.repeat || 1;
 
                 // 마이그레이션: 구 필드명 → 신 필드명 변환
-                batchChains.forEach(c => {
-                    if (c.hrf_enabled !== undefined && c.hrf_sdxl === undefined) {
-                        c.hrf_sdxl = !!c.hrf_enabled;
-                        c.hrf_anima = !!c.hrf_enabled;
-                        delete c.hrf_enabled;
-                        if (c.hrf_mode === 'anima') { c.hrf_sdxl = false; c.hrf_anima = true; }
-                        else if (c.hrf_mode === 'sdxl') { c.hrf_sdxl = true; c.hrf_anima = false; }
-                        delete c.hrf_mode;
-                    }
-                    if (c.fd_enabled !== undefined && c.sdxl_fd_enabled === undefined) {
-                        c.sdxl_fd_enabled = !!c.fd_enabled;
-                        c.sdxl_hd_enabled = !!c.hd_enabled;
-                        c.sdxl_ed_enabled = !!c.ed_enabled;
-                        c.anima_fd_enabled = false;
-                        c.anima_hd_enabled = false;
-                        c.anima_ed_enabled = false;
-                        delete c.fd_enabled; delete c.hd_enabled; delete c.ed_enabled;
-                    }
-                });
+                batchChains.forEach(c => migrateBatchChainFields(c));
                 // 마이그레이션: 구 프리셋 필드 유무 확인
                 const needsMigration = (preset.chains || []).some(c => c.hrf_enabled !== undefined || c.fd_enabled !== undefined);
                 if (needsMigration) {
@@ -35966,6 +35949,112 @@
         // ═══════════════════════════════════════════════════════
         // ─── 체인 공유 (Export / Import) ─────────────────────
         // ═══════════════════════════════════════════════════════
+
+        function migrateBatchChainFields(c) {
+            if (c.hrf_enabled !== undefined && c.hrf_sdxl === undefined) {
+                c.hrf_sdxl = !!c.hrf_enabled;
+                c.hrf_anima = !!c.hrf_enabled;
+                delete c.hrf_enabled;
+                if (c.hrf_mode === 'anima') { c.hrf_sdxl = false; c.hrf_anima = true; }
+                else if (c.hrf_mode === 'sdxl') { c.hrf_sdxl = true; c.hrf_anima = false; }
+                delete c.hrf_mode;
+            }
+            if (c.fd_enabled !== undefined && c.sdxl_fd_enabled === undefined) {
+                c.sdxl_fd_enabled = !!c.fd_enabled;
+                c.sdxl_hd_enabled = !!c.hd_enabled;
+                c.sdxl_ed_enabled = !!c.ed_enabled;
+                c.anima_fd_enabled = false;
+                c.anima_hd_enabled = false;
+                c.anima_ed_enabled = false;
+                delete c.fd_enabled; delete c.hd_enabled; delete c.ed_enabled;
+            }
+        }
+
+        async function openAppendChainModal() {
+            // 이미 열려있으면 중복 방지
+            if (document.getElementById('append-chain-overlay')) return;
+
+            // 프리셋 목록 로드
+            let presets = [];
+            try {
+                const resp = await fetch('/api/chain_presets');
+                const data = await resp.json();
+                presets = data.presets || [];
+            } catch (e) {
+                showToast('프리셋 목록 로드 실패: ' + e.message, 'error');
+                return;
+            }
+
+            if (presets.length === 0) {
+                showToast('이용 가능한 프리셋이 없습니다', 'error');
+                return;
+            }
+
+            const overlay = document.createElement('div');
+            overlay.id = 'append-chain-overlay';
+            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:10030; display:flex; align-items:center; justify-content:center;';
+            overlay.innerHTML = `
+                <div style="background:var(--surface); border-radius:10px; padding:18px; min-width:340px; max-width:90vw; box-shadow:0 4px 20px rgba(0,0,0,0.3);">
+                    <div style="font-weight:600; margin-bottom:6px; font-size:0.95rem;">🔗 체인 이어붙이기</div>
+                    <div style="font-size:0.78rem; color:var(--text-secondary); margin-bottom:12px;">선택한 프리셋의 슬롯을 현재 체인(현재 ${batchChains.length}슬롯) 뒤에 추가합니다.</div>
+                    <select id="append-chain-select" style="width:100%; padding:6px 10px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:6px; font-size:0.85rem; box-sizing:border-box;">
+                        ${presets.map(p => `<option value="${escapeHtml(p.name)}">${escapeHtml(p.name)} (${p.slot_count}슬롯)</option>`).join('')}
+                    </select>
+                    <div style="display:flex; gap:8px; margin-top:14px; justify-content:flex-end;">
+                        <button id="append-chain-cancel" style="padding:6px 14px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:6px; cursor:pointer; font-size:0.8rem;">취소</button>
+                        <button id="append-chain-ok" style="padding:6px 14px; border:none; background:var(--accent); color:#fff; border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600;">이어붙이기</button>
+                    </div>
+                </div>`;
+            document.body.appendChild(overlay);
+
+            const close = () => overlay.remove();
+            const okBtn = document.getElementById('append-chain-ok');
+            const sel = document.getElementById('append-chain-select');
+
+            overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+            document.getElementById('append-chain-cancel').onclick = close;
+            sel.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') okBtn.click();
+                if (e.key === 'Escape') close();
+            });
+            okBtn.onclick = async () => {
+                const name = sel.value;
+                close();
+                if (!name) { showToast('프리셋을 선택하세요', 'error'); return; }
+                await _appendChainPreset(name);
+            };
+            sel.focus();
+        }
+
+        async function _appendChainPreset(name) {
+            try {
+                const resp = await fetch(`/api/chain_presets/${encodeURIComponent(name)}`);
+                if (!resp.ok) { showToast(`프리셋 "${name}" 로드 실패: HTTP ${resp.status}`, 'error'); return; }
+                const preset = await resp.json();
+                const incoming = (preset.chains || []).map(c => ({
+                    ...c,
+                    _id: ++batchSlotIdCounter,
+                    artist_preset: c.artist_preset || '',
+                    natural_language_preset: c.natural_language_preset || '',
+                    natural_language: c.natural_language || '',
+                    ref_preview_url: c.ref_preview_url || c.ref_image_data || '',
+                }));
+                incoming.forEach(c => migrateBatchChainFields(c));
+
+                if (incoming.length === 0) {
+                    showToast(`프리셋 "${name}" 에 슬롯이 없습니다`, 'error');
+                    return;
+                }
+
+                for (const slot of incoming) batchChains.push(slot);
+                renderBatchChain();
+                scrollToBatchEnd();
+                showToast(`프리셋 "${name}" 에서 ${incoming.length}개 슬롯 이어붙임 (현재 ${batchChains.length}슬롯)`, 'success');
+            } catch (e) {
+                showToast('이어붙이기 실패: ' + (e?.message || String(e)), 'error');
+                console.error('[APPEND] 체인 이어붙이기 실패:', e);
+            }
+        }
 
         async function exportChainShare() {
             if (batchChains.length === 0) { showToast('내보낼 체인이 없습니다', 'error'); return; }
