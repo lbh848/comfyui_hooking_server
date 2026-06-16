@@ -36066,7 +36066,6 @@
             const usedApps = new Set(), usedOutfits = new Set(), usedExprs = new Set();
             const usedQual = new Set(), usedComp = new Set(), usedNeg = new Set(), usedCNeg = new Set();
             const usedChars = new Set(), usedPoseIds = new Set();
-            const slotsNeedingRef = [];
 
             batchChains.forEach(slot => {
                 if (slot.appearance) usedApps.add(slot.appearance);
@@ -36078,7 +36077,6 @@
                 if (slot.negative_preset) usedNeg.add(slot.negative_preset);
                 if (slot.character) usedChars.add(slot.character);
                 if (slot.pose_enabled && slot.pose_id) usedPoseIds.add(slot.pose_id);
-                if (slot.ref_enabled && (slot.ref_images?.length || slot.ref_image)) slotsNeedingRef.push(slot);
             });
 
             // 2) 태그 데이터 추출
@@ -36107,40 +36105,18 @@
                 } catch (e) { console.warn('[EXPORT] 포즈 로드 실패:', poseId, e); }
             }
 
-            // 4) FACE-IPAdapter 이미지 base64 수집
-            for (const slot of slotsNeedingRef) {
-                const urls = (slot.ref_preview_url || '').split('|').filter(Boolean);
-                const dataUrls = [];
-                for (const url of urls) {
-                    let dataUrl = url;
-                    if (dataUrl && !dataUrl.startsWith('data:')) {
-                        try {
-                            const imgResp = await fetch(dataUrl);
-                            const blob = await imgResp.blob();
-                            dataUrl = await new Promise(resolve => {
-                                const reader = new FileReader();
-                                reader.onloadend = () => resolve(reader.result);
-                                reader.readAsDataURL(blob);
-                            });
-                        } catch (e) { console.warn('[EXPORT] FACE-IPAdapter 이미지 변환 실패:', e); dataUrl = ''; }
-                    }
-                    if (dataUrl) dataUrls.push(dataUrl);
-                }
-                slot._ref_image_data = dataUrls[0] || '';  // 하위 호환
-                slot._ref_image_datas = dataUrls;
-            }
+            // 참고: FACE-IPAdapter / Style-IPAdapter 레퍼런스 이미지는 용량 문제로
+            // 공유 파일에서 제외한다. 가져오는 쪽에서는 ref_enabled/style_ref_enabled
+            // 설정만 유지되며 이미지는 비어 있으니 수동으로 다시 지정해야 함.
 
-            // 5) 체인 슬롯 직렬화
+            // 4) 체인 슬롯 직렬화
             const chains = batchChains.map(c => {
                 const o = {
                     character: c.character || '', appearance: c.appearance || '', outfit: c.outfit || '',
                     expression: c.expression || '', composition_preset: c.composition_preset || '',
                     quality_preset: c.quality_preset || '', negative_preset: c.negative_preset || '',
                     ref_enabled: !!c.ref_enabled, ref_strength: c.ref_strength || 0.55,
-                    ref_images: c.ref_images || [], ref_image_data: c._ref_image_data || '',
-                    ref_image_datas: c._ref_image_datas || [],
                     style_ref_enabled: !!c.style_ref_enabled, style_ref_strength: c.style_ref_strength || 0.55,
-                    style_ref_images: c.style_ref_images || [],
                     pose_enabled: !!c.pose_enabled, pose_id: c.pose_id || '',
                     hrf_sdxl: !!c.hrf_sdxl, hrf_anima: !!c.hrf_anima,
                     sdxl_fd_enabled: !!c.sdxl_fd_enabled, sdxl_hd_enabled: !!c.sdxl_hd_enabled, sdxl_ed_enabled: !!c.sdxl_ed_enabled,
@@ -36151,8 +36127,6 @@
                     face_lora_upscale_size: c.face_lora_upscale_size || '',
                     seed: c.seed ?? -1,
                 };
-                delete c._ref_image_data;
-                delete c._ref_image_datas;
                 return o;
             });
 
