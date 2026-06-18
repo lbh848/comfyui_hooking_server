@@ -20162,7 +20162,7 @@
                         <div style="flex:1; padding-right:12px;">
                             <div style="font-size:0.75rem; color:var(--text2); margin-bottom:4px; font-weight:600;">-Appearance</div>
                             <div class="lb-extra-orig-zone" data-oci="${ci}" data-ogrp="appearance" style="display:flex; flex-wrap:wrap; gap:4px; margin-bottom:8px;">${_buildOrigTags(ci, 'appearance')}</div>
-                            <div style="font-size:0.75rem; color:var(--text2); margin-bottom:4px; font-weight:600;">-normal outfit</div>
+                            <div style="font-size:0.75rem; color:var(--text2); margin-bottom:4px; font-weight:600;">-default_outfit</div>
                             <div class="lb-extra-orig-zone" data-oci="${ci}" data-ogrp="outfit" style="display:flex; flex-wrap:wrap; gap:4px; margin-bottom:8px;">${_buildOrigTags(ci, 'outfit')}</div>
                             <div style="font-size:0.75rem; color:var(--text2); margin-bottom:4px; font-weight:600; opacity:0.6;">-미분류</div>
                             <div class="lb-extra-orig-zone" data-oci="${ci}" data-ogrp="uncategorized" style="display:flex; flex-wrap:wrap; gap:4px;">${_buildUncategorizedTags(ci)}</div>
@@ -20176,7 +20176,7 @@
                                 <div class="tag-autocomplete-dropdown" id="lb-extra-ac-app-${ci}"></div>
                             </div>
                             <div class="lb-extra-drop" data-dci="${ci}" data-dgrp="appearance" style="display:flex; flex-wrap:wrap; gap:4px; margin-bottom:8px; min-height:24px; border-radius:4px; padding:2px; transition:background 0.15s;">${_buildEditTags(ci, 'appearance')}</div>
-                            <div style="font-size:0.75rem; color:var(--text2); margin-bottom:4px; font-weight:600;">-normal outfit</div>
+                            <div style="font-size:0.75rem; color:var(--text2); margin-bottom:4px; font-weight:600;">-default_outfit</div>
                             <div style="position:relative; margin-bottom:4px;">
                                 <input type="text" id="lb-extra-add-out-${ci}" placeholder="태그 추가..." style="width:calc(100% - 32px); padding:3px 8px; border:1px solid var(--border); border-radius:4px; font-size:0.75rem; background:var(--surface); color:var(--text);" onkeydown="if(event.key==='Enter'){event.preventDefault();_addLbExtraTagFromInput(${ci},'outfit',this);}">
                                 <button onclick="_addLbExtraTagFromInput(${ci},'outfit',document.getElementById('lb-extra-add-out-${ci}'))" style="margin-left:4px; padding:3px 8px; border-radius:4px; border:none; background:var(--accent); color:#fff; cursor:pointer; font-size:0.8rem; font-weight:600;">+</button>
@@ -20547,7 +20547,7 @@
                         <div style="display:flex; flex-wrap:wrap; gap:4px;">${_buildFocusOrigTags(ci, 'appearance')}</div>
                     </div>
                     <div style="margin-bottom:12px;">
-                        <div style="font-size:0.78rem; color:var(--text2); margin-bottom:4px; font-weight:600;">-normal outfit</div>
+                        <div style="font-size:0.78rem; color:var(--text2); margin-bottom:4px; font-weight:600;">-default_outfit</div>
                         <div style="display:flex; flex-wrap:wrap; gap:4px;">${_buildFocusOrigTags(ci, 'outfit')}</div>
                     </div>
                     <div>
@@ -20569,7 +20569,7 @@
                         <div class="fe-edit-drop" data-fdci="${ci}" data-fdgrp="appearance" style="display:flex; flex-wrap:wrap; gap:4px; min-height:36px; border-radius:4px; padding:6px; transition:background 0.15s; border:1px dashed var(--border);">${_buildFocusEditTags(ci, 'appearance')}</div>
                     </div>
                     <div>
-                        <div style="font-size:0.78rem; color:var(--text2); margin-bottom:4px; font-weight:600;">-normal outfit</div>
+                        <div style="font-size:0.78rem; color:var(--text2); margin-bottom:4px; font-weight:600;">-default_outfit</div>
                         <div style="position:relative; margin-bottom:6px;">
                             <input type="text" id="fe-add-out" placeholder="태그 추가..." style="width:calc(100% - 36px); padding:4px 8px; border:1px solid var(--border); border-radius:4px; font-size:0.8rem; background:var(--surface); color:var(--text);" onkeydown="if(event.key==='Enter'){event.preventDefault();_focusEditAddFromInput(${ci},'outfit',this);}">
                             <button onclick="_focusEditAddFromInput(${ci},'outfit',document.getElementById('fe-add-out'))" style="margin-left:4px; padding:4px 10px; border-radius:4px; border:none; background:var(--accent); color:#fff; cursor:pointer; font-size:0.8rem; font-weight:600;">+</button>
@@ -20897,7 +20897,7 @@
                 output += `### ${char.name}\n`;
                 output += `-Name\n${char.name}\n`;
                 output += `-Appearance\n${appearanceStr}\n`;
-                output += `-normal outfit\n${char.outfit.map(t => t.tag).join(', ')}\n\n`;
+                output += `-default_outfit\n${char.outfit.map(t => t.tag).join(', ')}\n\n`;
             }
             if (!output.trim()) { showToast('내보낼 데이터가 없습니다', 'error'); return; }
             const blob = new Blob([output.trimEnd() + '\n'], { type: 'text/plain;charset=utf-8' });
