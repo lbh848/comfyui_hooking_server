@@ -3405,13 +3405,12 @@
                     <div class="asset-empty-state" id="bot-empty-state">
                         <div class="construction-icon">
                             <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
-                                <line x1="12" y1="9" x2="12" y2="13"/>
-                                <line x1="12" y1="17" x2="12.01" y2="17"/>
+                                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
+                                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
                             </svg>
                         </div>
-                        <h3>현재 공사중..</h3>
-                        <p>삽화 설정 기능을 준비하고 있습니다.</p>
+                        <h3>삽화 라이브러리</h3>
+                        <p>캐릭터를 선택해 주세요.</p>
                     </div>
                     <div class="asset-folder-grid" id="bot-folder-grid" style="display:none;"></div>
                     <div id="bot-character-grid" style="display:none; padding:0 12px;"></div>
@@ -19087,8 +19086,8 @@
                 console.error('[BOT] 데이터 로드 실패:', e);
                 showBotView('empty');
                 const botEmptyState = document.getElementById('bot-empty-state');
-                botEmptyState.querySelector('h3').textContent = '현재 공사중..';
-                botEmptyState.querySelector('p').textContent = '삽화 설정 기능을 준비하고 있습니다.';
+                botEmptyState.querySelector('h3').textContent = '삽화 라이브러리';
+                botEmptyState.querySelector('p').textContent = '캐릭터를 선택해 주세요.';
                 const constructionIcon = botEmptyState.querySelector('.construction-icon');
                 if (constructionIcon) constructionIcon.style.display = '';
             }
@@ -19263,8 +19262,8 @@
                 if (btnSelected) btnSelected.style.display = 'none';
                 showBotView('empty');
                 const botEmptyState = document.getElementById('bot-empty-state');
-                botEmptyState.querySelector('h3').textContent = '현재 공사중..';
-                botEmptyState.querySelector('p').textContent = '삽화 설정 기능을 준비하고 있습니다.';
+                botEmptyState.querySelector('h3').textContent = '삽화 라이브러리';
+                botEmptyState.querySelector('p').textContent = '캐릭터를 선택해 주세요.';
                 const constructionIcon = botEmptyState.querySelector('.construction-icon');
                 if (constructionIcon) constructionIcon.style.display = '';
                 updateBotBreadcrumb();
@@ -19298,8 +19297,8 @@
             if (!botData || !botData.bots || botData.bots.length === 0) {
                 showBotView('empty');
                 const botEmptyState = document.getElementById('bot-empty-state');
-                botEmptyState.querySelector('h3').textContent = '현재 공사중..';
-                botEmptyState.querySelector('p').textContent = '삽화 설정 기능을 준비하고 있습니다.';
+                botEmptyState.querySelector('h3').textContent = '삽화 라이브러리';
+                botEmptyState.querySelector('p').textContent = '캐릭터를 선택해 주세요.';
                 const constructionIcon = botEmptyState.querySelector('.construction-icon');
                 if (constructionIcon) constructionIcon.style.display = '';
                 return;
@@ -19309,7 +19308,7 @@
             const msg = document.createElement('div');
             msg.className = 'bot-easter-egg';
             msg.style.cssText = 'text-align:center; padding:12px 16px; color:var(--accent); font-size:0.85rem; font-style:italic;';
-            msg.textContent = '공사중이라고 말했는데 지금 뭐하시나요?';
+            msg.textContent = '편집할 봇을 선택하세요';
             grid.parentElement.insertBefore(msg, grid);
 
             // 선택된 봇을 최상단에 배치, 구분선, 나머지 봇
