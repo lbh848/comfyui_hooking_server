@@ -113,12 +113,12 @@ def _build_illust_prompt() -> dict:
     supplement = f"Holding a wooden sign that reads \"Manager V4\""
 
     positive = (
+        f"[CHAT]\n(restore) no chat context\n"
+        f"[SLOT]\n(restore slot before) || (restore slot after)\n"
         f"[Name]\n{name}\n"
         f"[SETUP]\n{setup}\n"
         f"[CHAR]\n{char_section}\n"
-        f"[SUPPLEMENT]\n{supplement}\n"
-        f"[CHAT]\n(restore) no chat context\n"
-        f"[SLOT]\n"
+        f"[SUPPLEMENT]\n{supplement}"
     )
     return {"positive": positive, "negative": _NEGATIVE}
 
