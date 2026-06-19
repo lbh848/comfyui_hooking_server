@@ -81,19 +81,45 @@ def _build_random_char(seed: int) -> tuple[str, str, str]:
     return char, hand, expr
 
 
+def _extract_display_name(char_entry: str) -> str:
+    """캐릭터 풀 엔트리에서 표시 이름 추출.
+
+    "alice \\(nikke\\), pink bodysuit"        -> "Alice"
+    "anis \\(sparkling summer\\) \\(nikke\\)"  -> "Anis"
+    "red hood \\(nikke\\)"                     -> "Red Hood"
+    """
+    first = char_entry.split(",")[0].strip()
+    base = first.split("\\(")[0].strip()
+    return base.title()
+
+
 # ─── 삽화 모드: [SETUP]/[CHAR]/[SUPPLEMENT] 형식 ────────────
 
 def _build_illust_prompt() -> dict:
-    """v2 풀에서 랜덤 선택 후 섹션 형식으로 반환."""
+    """v2 풀에서 랜덤 선택 후 섹션 형식으로 반환.
+
+    삽화 모드 호환을 위해 [Name]/[CHAT]/[SLOT] 필드도 함께 제공한다.
+      - [Name]   : 선택된 캐릭터의 표시 이름 (IllustPromptBuilder가 lb_extra와 매칭)
+      - [CHAT]   : 더미 (split_prompt_chat이 여기서부터 말단을 chat으로 분리)
+      - [SLOT]   : 빈 더미 (|| 없음 → batch_mode가 키비주얼로 취급)
+    """
     seed = _make_seed()
     char, hand, expr = _build_random_char(seed)
     print(f"[RESTORE_V3] 삽화 모드: seed={seed}, char={char}, hand={hand}, expr={expr}")
 
+    name = _extract_display_name(char)
     setup = "cowboy shot, straight-on, yellow background"
     char_section = f"{char}, standing, {hand}, {expr}"
     supplement = f"Holding a wooden sign that reads \"Manager V4\""
 
-    positive = f"[SETUP]\n{setup}\n[CHAR]\n{char_section}\n[SUPPLEMENT]\n{supplement}"
+    positive = (
+        f"[Name]\n{name}\n"
+        f"[SETUP]\n{setup}\n"
+        f"[CHAR]\n{char_section}\n"
+        f"[SUPPLEMENT]\n{supplement}\n"
+        f"[CHAT]\n(restore) no chat context\n"
+        f"[SLOT]\n"
+    )
     return {"positive": positive, "negative": _NEGATIVE}
 
 
