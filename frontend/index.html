@@ -21972,6 +21972,9 @@
                     <button onclick="closeCharacterDetail()" style="width:100%; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:6px 8px; border-radius:4px; cursor:pointer; font-size:0.8rem; margin-bottom:8px;">← 캐릭터 목록으로</button>
                     <div style="background:rgba(66,133,244,0.08); border-radius:8px; padding:10px;">
                         <div class="section-title" id="bot-detail-title"></div>
+                        <input id="bot-detail-search" type="text" placeholder="🔍 파일명 검색" autocomplete="off"
+                            style="width:100%; margin-top:6px; padding:5px 8px; font-size:0.75rem; border:1px solid var(--border); border-radius:4px; background:var(--surface2); color:var(--text); box-sizing:border-box;"
+                            oninput="filterBotCharDetailImages(this.value)">
                         <div style="display:flex; flex-direction:column; gap:4px; margin-top:6px;">
                             <button id="btn-detail-upload" style="width:100%; background:var(--accent); color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">업로드</button>
                             <button id="btn-detail-import" style="width:100%; background:var(--accent); color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">에셋 가져오기</button>
@@ -22010,72 +22013,103 @@
             renderBotCharacters();
         }
 
-        async function loadBotCharDetailImages(charName) {
+        let _botCharDetailCache = null; // { charName, images, repImages }
+
+        function filterBotCharDetailImages(query) {
+            if (!_botCharDetailCache) return;
+            const q = (query || '').trim().toLowerCase();
+            const filtered = q
+                ? _botCharDetailCache.images.filter(img => (img.filename || '').toLowerCase().includes(q))
+                : _botCharDetailCache.images;
+            renderBotCharDetailGrid(_botCharDetailCache.charName, filtered, _botCharDetailCache.repImages);
+        }
+
+        function renderBotCharDetailGrid(charName, images, repImages) {
+            const grid = document.getElementById('bot-char-detail-grid');
+            if (!grid) { console.warn('[BOT] renderBotCharDetailGrid: grid 없음'); return; }
+            grid.innerHTML = '';
+            if (!images || images.length === 0) {
+                grid.innerHTML = '<div style="color:var(--text2); font-size:0.8rem; padding:20px;">이미지 없음</div>';
+                return;
+            }
+
+            // 대표 이미지를 먼저 배치 (순서대로)
+            const sorted = [...images].sort((a, b) => {
+                const ai = repImages.indexOf(a.filename);
+                const bi = repImages.indexOf(b.filename);
+                if (ai === -1 && bi === -1) return 0;
+                if (ai === -1) return 1;
+                if (bi === -1) return -1;
+                return ai - bi;
+            });
+
+            for (const img of sorted) {
+                const isRep = repImages.includes(img.filename);
+                const repIdx = isRep ? repImages.indexOf(img.filename) : -1;
+                const isFirst = repIdx === 0;
+                const canUp = isRep && repIdx > 0;
+                const canDown = isRep && repIdx < repImages.length - 1;
+                const card = document.createElement('div');
+                card.className = 'asset-gallery-card' + (isFirst ? ' rep-first' : '');
+                card.dataset.filename = img.filename;
+                if (isRep) card.dataset.rep = 'true';
+                card.innerHTML = `
+                    <div style="position:relative;">
+                        <img class="gallery-thumb" src="${img.url}" loading="lazy" onerror="this.style.display='none'" onclick="openLightbox(this.src)" style="cursor:zoom-in;">
+                        <button class="bot-img-rep-btn ${isRep ? 'active' : ''}"
+                            onclick="event.stopPropagation(); toggleRepImage('${escAttr(charName)}','${escAttr(img.filename)}')"
+                            title="대표 이미지 지정 (최대 3개)">⭐</button>
+                        ${isRep ? `
+                        <div style="position:absolute; bottom:6px; left:6px; display:flex; gap:4px; z-index:2;">
+                            <button class="bot-img-order-btn" ${canUp ? '' : 'disabled'}
+                                onclick="event.stopPropagation(); moveRepImage('${escAttr(charName)}','${escAttr(img.filename)}','up')" title="앞으로 이동">◀</button>
+                            <button class="bot-img-order-btn" ${canDown ? '' : 'disabled'}
+                                onclick="event.stopPropagation(); moveRepImage('${escAttr(charName)}','${escAttr(img.filename)}','down')" title="뒤로 이동">▶</button>
+                        </div>` : ''}
+                    </div>
+                    <div style="padding:6px 8px;">
+                        <div style="font-size:0.65rem; color:var(--text2); margin-bottom:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escAttr(img.filename)}">${escHtml(img.filename)}</div>
+                        <textarea class="bot-prompt-input" data-filename="${escAttr(img.filename)}" data-character="${escAttr(charName)}"
+                            placeholder="프롬프트 (비워두면 자동 태깅 대상)"
+                            style="width:100%; min-height:50px; font-size:0.7rem; resize:vertical; border:1px solid var(--border); border-radius:4px; background:var(--surface2); color:var(--text); padding:4px;"
+                            onblur="updateBotPrompt(this)">${escHtml(img.prompt)}</textarea>
+                        <button onclick="deleteBotImage('${escAttr(img.filename)}','${escAttr(charName)}')"
+                            style="width:100%; margin-top:4px; background:var(--error); color:#fff; border:none; padding:3px; border-radius:4px; cursor:pointer; font-size:0.7rem;">삭제</button>
+                        <div style="display:flex; gap:4px; margin-top:4px;">
+                            <button onclick="event.stopPropagation(); botAnalyzeSingle('${escAttr(charName)}','${escAttr(img.filename)}', this)"
+                                style="flex:1; background:#2E7D32; color:#fff; border:none; padding:3px; border-radius:4px; cursor:pointer; font-size:0.7rem;">태그 분석</button>
+                            <button onclick="event.stopPropagation(); botShowNegativeSingleModal('${escAttr(charName)}','${escAttr(img.filename)}')"
+                                style="flex:1; background:#9C27B0; color:#fff; border:none; padding:3px; border-radius:4px; cursor:pointer; font-size:0.7rem;">부정 프롬프트</button>
+                        </div>
+                    </div>
+                `;
+                grid.appendChild(card);
+            }
+        }
+
+        async function loadBotCharDetailImages(charName, preserveSearch = false) {
             const grid = document.getElementById('bot-char-detail-grid');
             grid.innerHTML = '<div style="color:var(--text2); font-size:0.8rem;">로딩 중...</div>';
+            const searchInput = document.getElementById('bot-detail-search');
+            const prevQuery = (searchInput && preserveSearch) ? searchInput.value : '';
+            if (searchInput && !preserveSearch) searchInput.value = '';
             try {
                 const resp = await fetch(`/api/bot_mode/images?bot=${encodeURIComponent(botCurrentBot)}&character=${encodeURIComponent(charName)}`);
                 const data = await resp.json();
-                grid.innerHTML = '';
                 if (!data.images || data.images.length === 0) {
+                    _botCharDetailCache = { charName, images: [], repImages: [] };
                     grid.innerHTML = '<div style="color:var(--text2); font-size:0.8rem; padding:20px;">이미지 없음</div>';
                     return;
                 }
                 const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
                 const ch = bot ? bot.characters.find(c => c.name === charName) : null;
                 const repImages = (ch && ch.rep_images) ? ch.rep_images : [];
-
-                // 대표 이미지를 먼저 배치 (순서대로)
-                const sorted = [...data.images].sort((a, b) => {
-                    const ai = repImages.indexOf(a.filename);
-                    const bi = repImages.indexOf(b.filename);
-                    if (ai === -1 && bi === -1) return 0;
-                    if (ai === -1) return 1;
-                    if (bi === -1) return -1;
-                    return ai - bi;
-                });
-
-                for (const img of sorted) {
-                    const isRep = repImages.includes(img.filename);
-                    const repIdx = isRep ? repImages.indexOf(img.filename) : -1;
-                    const isFirst = repIdx === 0;
-                    const canUp = isRep && repIdx > 0;
-                    const canDown = isRep && repIdx < repImages.length - 1;
-                    const card = document.createElement('div');
-                    card.className = 'asset-gallery-card' + (isFirst ? ' rep-first' : '');
-                    card.dataset.filename = img.filename;
-                    if (isRep) card.dataset.rep = 'true';
-                    card.innerHTML = `
-                        <div style="position:relative;">
-                            <img class="gallery-thumb" src="${img.url}" loading="lazy" onerror="this.style.display='none'" onclick="openLightbox(this.src)" style="cursor:zoom-in;">
-                            <button class="bot-img-rep-btn ${isRep ? 'active' : ''}"
-                                onclick="event.stopPropagation(); toggleRepImage('${escAttr(charName)}','${escAttr(img.filename)}')"
-                                title="대표 이미지 지정 (최대 3개)">⭐</button>
-                            ${isRep ? `
-                            <div style="position:absolute; bottom:6px; left:6px; display:flex; gap:4px; z-index:2;">
-                                <button class="bot-img-order-btn" ${canUp ? '' : 'disabled'}
-                                    onclick="event.stopPropagation(); moveRepImage('${escAttr(charName)}','${escAttr(img.filename)}','up')" title="앞으로 이동">◀</button>
-                                <button class="bot-img-order-btn" ${canDown ? '' : 'disabled'}
-                                    onclick="event.stopPropagation(); moveRepImage('${escAttr(charName)}','${escAttr(img.filename)}','down')" title="뒤로 이동">▶</button>
-                            </div>` : ''}
-                        </div>
-                        <div style="padding:6px 8px;">
-                            <div style="font-size:0.65rem; color:var(--text2); margin-bottom:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escAttr(img.filename)}">${escHtml(img.filename)}</div>
-                            <textarea class="bot-prompt-input" data-filename="${escAttr(img.filename)}" data-character="${escAttr(charName)}"
-                                placeholder="프롬프트 (비워두면 자동 태깅 대상)"
-                                style="width:100%; min-height:50px; font-size:0.7rem; resize:vertical; border:1px solid var(--border); border-radius:4px; background:var(--surface2); color:var(--text); padding:4px;"
-                                onblur="updateBotPrompt(this)">${escHtml(img.prompt)}</textarea>
-                            <button onclick="deleteBotImage('${escAttr(img.filename)}','${escAttr(charName)}')"
-                                style="width:100%; margin-top:4px; background:var(--error); color:#fff; border:none; padding:3px; border-radius:4px; cursor:pointer; font-size:0.7rem;">삭제</button>
-                            <div style="display:flex; gap:4px; margin-top:4px;">
-                                <button onclick="event.stopPropagation(); botAnalyzeSingle('${escAttr(charName)}','${escAttr(img.filename)}', this)"
-                                    style="flex:1; background:#2E7D32; color:#fff; border:none; padding:3px; border-radius:4px; cursor:pointer; font-size:0.7rem;">태그 분석</button>
-                                <button onclick="event.stopPropagation(); botShowNegativeSingleModal('${escAttr(charName)}','${escAttr(img.filename)}')"
-                                    style="flex:1; background:#9C27B0; color:#fff; border:none; padding:3px; border-radius:4px; cursor:pointer; font-size:0.7rem;">부정 프롬프트</button>
-                            </div>
-                        </div>
-                    `;
-                    grid.appendChild(card);
+                _botCharDetailCache = { charName, images: data.images, repImages };
+                if (searchInput && preserveSearch) {
+                    searchInput.value = prevQuery;
+                    filterBotCharDetailImages(prevQuery);
+                } else {
+                    renderBotCharDetailGrid(charName, data.images, repImages);
                 }
             } catch (e) {
                 console.error(`[BOT] 캐릭터 "${charName}" 이미지 로드 실패:`, e);
@@ -22737,7 +22771,7 @@
                 const data = await resp.json();
                 if (data.error) { showToast(data.error, 'error'); return; }
                 botData.bots = data.bots;
-                await loadBotCharDetailImages(charName);
+                await loadBotCharDetailImages(charName, true);
                 renderFloatingDock(charName, true);
             } catch (e) {
                 console.error('[BOT] 대표 이미지 순서 변경 실패:', e);
@@ -22783,7 +22817,7 @@
                 const data = await resp.json();
                 if (data.error) { showToast(data.error, 'error'); return; }
                 botData.bots = data.bots;
-                await loadBotCharDetailImages(charName);
+                await loadBotCharDetailImages(charName, true);
                 renderFloatingDock(charName, true);
             } catch (e) {
                 console.error('[BOT] 대표 이미지 토글 실패:', e);
@@ -25283,7 +25317,7 @@
                 });
                 const data = await resp.json();
                 if (data.error) { alert(data.error); return; }
-                await loadBotCharDetailImages(charName);
+                await loadBotCharDetailImages(charName, true);
                 showToast('이미지 삭제됨');
             } catch (e) {
                 console.error('[BOT] 이미지 삭제 실패:', e);
@@ -25312,7 +25346,7 @@
                         console.error('[BOT] 업로드 실패:', e);
                     }
                 }
-                await loadBotCharDetailImages(charName);
+                await loadBotCharDetailImages(charName, true);
                 showToast(`${input.files.length}개 이미지 업로드됨`);
             };
             input.click();
