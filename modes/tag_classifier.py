@@ -77,6 +77,9 @@ def _load():
     _loaded = True
 
 
+POSE_SUBCATEGORIES = {"자세", "포즈", "움직임", "시선", "표정", "유연성"}
+
+
 def _classify_tag(tag_name: str) -> tuple[str, str, str]:
     """단일 태그를 분류. 반환: (group, subcategory, description)"""
     if not _loaded:
@@ -89,6 +92,9 @@ def _classify_tag(tag_name: str) -> tuple[str, str, str]:
         return ("미분류", "", "")
 
     cat, subcat, description = info
+
+    if cat == "신체" and subcat in POSE_SUBCATEGORIES:
+        return ("미분류", subcat, description)
 
     group = GROUP_RULES.get((cat, subcat))
     if group:
