@@ -3374,6 +3374,32 @@
                 <div style="font-size:0.7rem; color:var(--text2); font-weight:500; letter-spacing:0.02em; padding:4px 8px 6px;">봇 선택</div>
                 <div id="active-bot-popover-list" style="display:flex; flex-direction:column; gap:2px;"></div>
             </div>
+
+            <!-- lighbd LLM 스트리밍 위젯: 항상 표시 -->
+            <div id="lighbd-llm-widget" style="position:fixed; right:24px; bottom:100px; z-index:9998; display:flex;
+                    flex-direction:column; gap:6px; padding:10px 12px; width:320px; max-width:calc(100vw - 48px);
+                    background:rgba(15,52,96,0.85); backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
+                    border:1px solid var(--border); border-radius:12px;
+                    color:var(--text); font-size:0.78rem;
+                    box-shadow:0 6px 28px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.04) inset;">
+                <div style="display:flex; align-items:center; gap:8px;">
+                    <span class="queue-spinner" id="lighbd-llm-spinner" style="width:12px; height:12px; border-width:2px; flex-shrink:0; display:none;"></span>
+                    <span style="font-size:0.7rem; color:var(--text2); font-weight:600; letter-spacing:0.02em; flex:1;">LIGHBD · LLM</span>
+                    <span id="lighbd-llm-status" style="font-size:0.7rem; color:var(--text2);">대기</span>
+                    <button onclick="openLighbdHistoryModal()" title="자세히 보기" style="background:transparent; border:none; color:var(--text2); cursor:pointer; font-size:0.78rem; padding:0 4px;">자세히</button>
+                    <button onclick="hideLighbdLlmWidget()" style="background:transparent; border:none; color:var(--text2); cursor:pointer; font-size:0.9rem; padding:0 2px;">×</button>
+                </div>
+                <div style="display:flex; gap:6px; font-size:0.7rem; color:var(--text2); font-family:monospace;">
+                    <span>모델: <span id="lighbd-llm-model" style="color:var(--text);">-</span></span>
+                </div>
+                <div style="display:flex; gap:10px; font-size:0.7rem; color:var(--text2); font-family:monospace; flex-wrap:wrap;">
+                    <span>토큰: <span id="lighbd-llm-tokens" style="color:var(--text);">0</span></span>
+                    <span>경과: <span id="lighbd-llm-elapsed" style="color:var(--text);">0.00</span>s</span>
+                    <span><span id="lighbd-llm-tps" style="color:var(--text);">0.0</span> t/s</span>
+                    <span>TTFT: <span id="lighbd-llm-ttft" style="color:var(--text);">-</span></span>
+                </div>
+                <pre id="lighbd-llm-output" style="margin:0; max-height:140px; overflow:hidden; padding:6px; border-radius:6px; border:1px solid var(--border); background:rgba(0,0,0,0.25); color:var(--text); font-family:monospace; font-size:0.72rem; line-height:1.4; white-space:pre-wrap; word-break:break-word;">-</pre>
+            </div>
         </div>
 
         <!-- 삽화 설정 탭 -->
@@ -6120,6 +6146,36 @@
                         </div>
                     </div>
 
+                    <!-- LLM 테스트 패널 -->
+                    <div class="setting-row" style="flex-direction: column; align-items: stretch; margin-top: 16px; padding: 12px; border: 1px dashed var(--border); border-radius: 8px;">
+                        <div class="setting-label" style="margin-bottom: 8px;">
+                            <div class="title">LLM 테스트 (스트리밍)</div>
+                            <div class="desc">현재 LLM1 설정으로 호출. 결과가 chunk 단위로 누적되고 통계가 실시간 표시됨. logs/llm_history.jsonl 에 20개까지 저장</div>
+                        </div>
+                        <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap;">
+                            <textarea id="llm-test-input" placeholder="테스트용 프롬프트 (user 메시지)"
+                                      style="flex: 1; min-width: 320px; min-height: 60px; padding: 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-family: inherit; resize: vertical;"></textarea>
+                        </div>
+                        <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap;">
+                            <label style="display: flex; align-items: center; gap: 4px; font-size: .85rem; color: var(--text);">
+                                <input type="checkbox" id="llm-test-stream" checked> 스트리밍
+                            </label>
+                            <button id="llm-test-send-btn" onclick="sendLlmTest()"
+                                    style="padding: 6px 14px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); cursor: pointer;">전송</button>
+                            <button onclick="clearLlmTest()"
+                                    style="padding: 6px 14px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); cursor: pointer;">지움</button>
+                            <div style="flex: 1;"></div>
+                            <div id="llm-test-stats" style="font-size: .8rem; color: var(--text2); font-family: monospace;">
+                                토큰: <span id="llm-test-tokens">0</span> |
+                                경과: <span id="llm-test-elapsed">0.00</span>s |
+                                <span id="llm-test-tps">0.0</span> t/s |
+                                TTFT: <span id="llm-test-ttft">-</span>
+                            </div>
+                        </div>
+                        <pre id="llm-test-output"
+                             style="min-height: 120px; max-height: 320px; overflow: auto; padding: 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font-family: monospace; font-size: .82rem; white-space: pre-wrap; word-break: break-word;"></pre>
+                    </div>
+
                     <!-- 임베딩 설정 -->
                     <div class="setting-row">
                         <div class="setting-label">
@@ -7269,6 +7325,10 @@
                             break;
                         case 'outfit_llm_completed':
                             autoRefreshOutfitResults();
+                            break;
+                        // lighbd LLM 스트리밍 (우하단 위젯)
+                        case 'lighbd_llm_stream':
+                            handleLighbdLlmStream(msg.data);
                             break;
                         case 'enhance_started':
                             showToast(`프롬프트 강화 시작 (${msg.data.char_count}명)`, 'info');
@@ -9605,6 +9665,292 @@
             }
         }
 
+        // ─── LLM 테스트 패널 ───
+        let _llmTestAbort = null;
+
+        function clearLlmTest() {
+            if (_llmTestAbort) { try { _llmTestAbort.abort(); } catch (_) {} _llmTestAbort = null; }
+            document.getElementById('llm-test-output').textContent = '';
+            document.getElementById('llm-test-tokens').textContent = '0';
+            document.getElementById('llm-test-elapsed').textContent = '0.00';
+            document.getElementById('llm-test-tps').textContent = '0.0';
+            document.getElementById('llm-test-ttft').textContent = '-';
+            const btn = document.getElementById('llm-test-send-btn');
+            if (btn) btn.disabled = false;
+        }
+
+        function _setLlmTestStats(tokens, elapsed, tps, ttft) {
+            if (tokens !== undefined && tokens !== null)
+                document.getElementById('llm-test-tokens').textContent = tokens;
+            if (elapsed !== undefined && elapsed !== null)
+                document.getElementById('llm-test-elapsed').textContent = (Math.round(elapsed * 100) / 100).toFixed(2);
+            if (tps !== undefined && tps !== null)
+                document.getElementById('llm-test-tps').textContent = (Math.round(tps * 10) / 10).toFixed(1);
+            if (ttft !== undefined && ttft !== null)
+                document.getElementById('llm-test-ttft').textContent = (Math.round(ttft * 1000)) + 'ms';
+        }
+
+        async function sendLlmTest() {
+            const inputEl = document.getElementById('llm-test-input');
+            const outEl = document.getElementById('llm-test-output');
+            const btn = document.getElementById('llm-test-send-btn');
+            const text = (inputEl.value || '').trim();
+            if (!text) {
+                showToast('프롬프트를 입력하세요', 'error');
+                return;
+            }
+
+            // 기존 요청 취소
+            if (_llmTestAbort) { try { _llmTestAbort.abort(); } catch (_) {} }
+            _llmTestAbort = new AbortController();
+
+            outEl.textContent = '';
+            _setLlmTestStats(0, 0.0, 0.0, null);
+            document.getElementById('llm-test-ttft').textContent = '-';
+            btn.disabled = true;
+            btn.textContent = '전송 중…';
+
+            const useStream = document.getElementById('llm-test-stream').checked;
+            const messages = [{"role": "user", "content": text}];
+
+            try {
+                const resp = await fetch('/api/llm/test_stream', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({messages, stream: useStream}),
+                    signal: _llmTestAbort.signal,
+                });
+                if (!resp.ok) {
+                    let errText = '';
+                    try { errText = await resp.text(); } catch (_) {}
+                    showToast(`HTTP ${resp.status}: ${errText.slice(0, 300)}`, 'error');
+                    return;
+                }
+                if (!resp.body) {
+                    showToast('응답 스트림을 열 수 없습니다', 'error');
+                    return;
+                }
+
+                const reader = resp.body.getReader();
+                const decoder = new TextDecoder('utf-8');
+                let buf = '';
+                let firstDeltaSeen = false;
+
+                while (true) {
+                    const {value, done} = await reader.read();
+                    if (done) break;
+                    buf += decoder.decode(value, {stream: true});
+
+                    // SSE 프레임 단위로 분리 (\n\n)
+                    let idx;
+                    while ((idx = buf.indexOf('\n\n')) !== -1) {
+                        const frame = buf.slice(0, idx);
+                        buf = buf.slice(idx + 2);
+
+                        let eventType = 'message';
+                        let dataStr = '';
+                        for (const line of frame.split('\n')) {
+                            if (line.startsWith('event:')) {
+                                eventType = line.slice(6).trim();
+                            } else if (line.startsWith('data:')) {
+                                dataStr += line.slice(5).trim();
+                            }
+                        }
+                        if (!dataStr) continue;
+
+                        let data;
+                        try { data = JSON.parse(dataStr); } catch (_) { continue; }
+
+                        if (eventType === 'delta') {
+                            if (!firstDeltaSeen && data.ttft !== undefined && data.ttft !== null) {
+                                firstDeltaSeen = true;
+                                document.getElementById('llm-test-ttft').textContent =
+                                    (Math.round(data.ttft * 1000)) + 'ms';
+                            }
+                            outEl.textContent += data.text || '';
+                            _setLlmTestStats(undefined, data.elapsed, undefined, undefined);
+                        } else if (eventType === 'done') {
+                            outEl.textContent = data.text || outEl.textContent;
+                            _setLlmTestStats(data.completion_tokens, data.elapsed, data.tps, data.ttft);
+                        } else if (eventType === 'error') {
+                            const errMsg = data.error || '알 수 없는 오류';
+                            outEl.textContent += (outEl.textContent ? '\n' : '') + '[ERROR] ' + errMsg;
+                            showToast('LLM 오류: ' + errMsg, 'error');
+                        }
+                    }
+                }
+            } catch (err) {
+                if (err.name === 'AbortError') {
+                    // 사용자 취소
+                } else {
+                    const msg = err && err.message ? err.message : String(err);
+                    showToast('LLM 테스트 실패: ' + msg, 'error');
+                    outEl.textContent += (outEl.textContent ? '\n' : '') + '[ERROR] ' + msg;
+                }
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '전송';
+                _llmTestAbort = null;
+            }
+        }
+
+        // ─── lighbd LLM 스트리밍 위젯 ───
+        let _lighbdLlmAutoHideTimer = null;
+
+        function hideLighbdLlmWidget() {
+            const w = document.getElementById('lighbd-llm-widget');
+            if (w) w.style.display = 'none';
+            if (_lighbdLlmAutoHideTimer) {
+                clearTimeout(_lighbdLlmAutoHideTimer);
+                _lighbdLlmAutoHideTimer = null;
+            }
+        }
+
+        function _showLighbdLlmWidget() {
+            const w = document.getElementById('lighbd-llm-widget');
+            if (!w) return;
+            w.style.display = 'flex';
+        }
+
+        function _setLlbStat(id, val) {
+            const el = document.getElementById(id);
+            if (el && val !== undefined && val !== null) el.textContent = val;
+        }
+
+        function handleLighbdLlmStream(data) {
+            if (!data || typeof data !== 'object') return;
+            const t = data.type;
+            if (t === 'start') {
+                _setLlbStat('lighbd-llm-model', data.model || '-');
+                _setLlbStat('lighbd-llm-status', '시작');
+                _setLlbStat('lighbd-llm-tokens', '0');
+                _setLlbStat('lighbd-llm-elapsed', '0.00');
+                _setLlbStat('lighbd-llm-tps', '0.0');
+                _setLlbStat('lighbd-llm-ttft', '-');
+                document.getElementById('lighbd-llm-output').textContent = '';
+                const spStart = document.getElementById('lighbd-llm-spinner');
+                if (spStart) spStart.style.display = '';
+                _showLighbdLlmWidget();
+                if (_lighbdLlmAutoHideTimer) {
+                    clearTimeout(_lighbdLlmAutoHideTimer);
+                    _lighbdLlmAutoHideTimer = null;
+                }
+            } else if (t === 'delta') {
+                _showLighbdLlmWidget();
+                const outEl = document.getElementById('lighbd-llm-output');
+                outEl.textContent += data.text || '';
+                // 자동 스크롤 (마지막 줄 유지)
+                outEl.scrollTop = outEl.scrollHeight;
+                if (data.ttft !== undefined && data.ttft !== null) {
+                    _setLlbStat('lighbd-llm-ttft', (Math.round(data.ttft * 1000)) + 'ms');
+                }
+                if (data.elapsed !== undefined && data.elapsed !== null) {
+                    _setLlbStat('lighbd-llm-elapsed', (Math.round(data.elapsed * 100) / 100).toFixed(2));
+                }
+                _setLlbStat('lighbd-llm-status', '스트리밍');
+            } else if (t === 'done') {
+                _showLighbdLlmWidget();
+                document.getElementById('lighbd-llm-output').textContent = data.text || document.getElementById('lighbd-llm-output').textContent;
+                _setLlbStat('lighbd-llm-tokens', data.completion_tokens ?? 0);
+                if (data.elapsed !== undefined && data.elapsed !== null)
+                    _setLlbStat('lighbd-llm-elapsed', (Math.round(data.elapsed * 100) / 100).toFixed(2));
+                _setLlbStat('lighbd-llm-tps', (Math.round((data.tps || 0) * 10) / 10).toFixed(1));
+                if (data.ttft !== undefined && data.ttft !== null)
+                    _setLlbStat('lighbd-llm-ttft', (Math.round(data.ttft * 1000)) + 'ms');
+                _setLlbStat('lighbd-llm-status', '완료');
+                const sp = document.getElementById('lighbd-llm-spinner');
+                if (sp) sp.style.display = 'none';
+                // 자동 숨김 없음 — 사용자가 × 누를 때까지 유지
+            } else if (t === 'error') {
+                _showLighbdLlmWidget();
+                const errMsg = data.error || '알 수 없는 오류';
+                const outEl = document.getElementById('lighbd-llm-output');
+                outEl.textContent += (outEl.textContent ? '\n' : '') + '[ERROR] ' + errMsg;
+                _setLlbStat('lighbd-llm-status', '오류');
+                const sp = document.getElementById('lighbd-llm-spinner');
+                if (sp) sp.style.display = 'none';
+                showToast('lighbd LLM 오류: ' + errMsg, 'error');
+                if (_lighbdLlmAutoHideTimer) clearTimeout(_lighbdLlmAutoHideTimer);
+                _lighbdLlmAutoHideTimer = setTimeout(hideLighbdLlmWidget, 8000);
+            }
+        }
+
+        // ─── lighbd 히스토리 모달 ───
+        async function openLighbdHistoryModal() {
+            // 기존 모달 제거
+            const existing = document.getElementById('lighbd-history-overlay');
+            if (existing) { existing.remove(); return; }
+
+            const overlay = document.createElement('div');
+            overlay.id = 'lighbd-history-overlay';
+            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10010; display:flex; align-items:center; justify-content:center;';
+            overlay.innerHTML = `
+                <div style="background:var(--surface); border:1px solid var(--border); border-radius:10px; width:min(900px, 92vw); height:min(80vh, 720px); display:flex; flex-direction:column; overflow:hidden;">
+                    <div style="display:flex; align-items:center; padding:12px 16px; border-bottom:1px solid var(--border); gap:10px;">
+                        <span style="font-size:0.95rem; font-weight:600; flex:1;">LIGHBD · LLM 히스토리 (최근 20개)</span>
+                        <button onclick="this.closest('#lighbd-history-overlay').remove()" style="background:none; border:none; color:var(--text2); font-size:1.2rem; cursor:pointer;">✕</button>
+                    </div>
+                    <div id="lighbd-history-list" style="flex:1; overflow-y:auto; padding:12px 16px; display:flex; flex-direction:column; gap:10px;">
+                        <div style="color:var(--text2); font-size:0.85rem;">불러오는 중...</div>
+                    </div>
+                </div>`;
+            overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+            document.body.appendChild(overlay);
+
+            try {
+                const resp = await fetch('/api/lighbd/history');
+                if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                const data = await resp.json();
+                renderLighbdHistoryList(data.history || []);
+            } catch (e) {
+                const list = document.getElementById('lighbd-history-list');
+                if (list) list.innerHTML = `<div style="color:#ff6b6b; font-size:0.85rem;">로드 실패: ${escapeHtml(e.message || String(e))}</div>`;
+            }
+        }
+
+        function renderLighbdHistoryList(records) {
+            const list = document.getElementById('lighbd-history-list');
+            if (!list) return;
+            if (!records.length) {
+                list.innerHTML = '<div style="color:var(--text2); font-size:0.85rem;">히스토리 없음</div>';
+                return;
+            }
+            // 최신 → 오래된 순
+            const sorted = [...records].reverse();
+            list.innerHTML = sorted.map((r, i) => {
+                const isError = r.status === 'error';
+                const inputMessages = Array.isArray(r.input) ? r.input : [];
+                const inputSummary = inputMessages.map(m => {
+                    const role = (m.role || '?').toUpperCase();
+                    const content = String(m.content || '');
+                    const preview = content.length > 200 ? content.slice(0, 200) + '...' : content;
+                    return `<div style="margin-bottom:4px;"><span style="color:var(--text2); font-weight:600;">[${escapeHtml(role)}]</span> <span style="white-space:pre-wrap; word-break:break-word;">${escapeHtml(preview)}</span></div>`;
+                }).join('');
+                const outputText = r.output || '';
+                const outputPreview = outputText.length > 500 ? outputText.slice(0, 500) + '...' : outputText;
+                const stats = `토큰 ${r.completion_tokens ?? 0} · ${r.elapsed ?? 0}s · ${r.tps ?? 0} t/s` + (r.ttft ? ` · TTFT ${r.ttft}s` : '');
+                return `
+                    <div style="border:1px solid var(--border); border-radius:6px; padding:10px; background:var(--surface2);">
+                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px; flex-wrap:wrap;">
+                            <span style="font-size:0.7rem; color:var(--text2);">${escapeHtml(r.ts || '')}</span>
+                            <span style="font-size:0.7rem; padding:1px 6px; border-radius:3px; background:${isError ? 'rgba(255,107,107,0.18)' : 'rgba(76,175,80,0.18)'}; color:${isError ? '#ff6b6b' : '#5cd5a0'}; font-weight:600;">${isError ? 'ERROR' : 'OK'}</span>
+                            <span style="font-size:0.7rem; color:var(--text2);">${escapeHtml(stats)}</span>
+                            <button onclick="document.getElementById('lighbd-hist-detail-${i}').style.display = (document.getElementById('lighbd-hist-detail-${i}').style.display === 'none' ? 'block' : 'none');" style="margin-left:auto; background:var(--surface); border:1px solid var(--border); color:var(--text2); padding:2px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">펼치기/접기</button>
+                        </div>
+                        <div style="font-size:0.7rem; color:var(--text2); margin-bottom:4px;">출력 요약:</div>
+                        <pre style="margin:0 0 6px 0; padding:6px; border-radius:4px; background:rgba(0,0,0,0.25); color:var(--text); font-family:monospace; font-size:0.72rem; line-height:1.4; white-space:pre-wrap; word-break:break-word; max-height:120px; overflow-y:auto;">${escapeHtml(isError ? (r.error || '') : outputPreview)}</pre>
+                        <div id="lighbd-hist-detail-${i}" style="display:none; margin-top:8px; border-top:1px dashed var(--border); padding-top:8px;">
+                            <div style="font-size:0.7rem; color:var(--text2); margin-bottom:4px;">입력 (전체):</div>
+                            <div style="padding:6px; border-radius:4px; background:rgba(0,0,0,0.15); font-size:0.72rem; line-height:1.4; max-height:300px; overflow-y:auto;">
+                                ${inputSummary || '<span style="color:var(--text2);">-</span>'}
+                            </div>
+                            ${outputText ? `
+                            <div style="font-size:0.7rem; color:var(--text2); margin:8px 0 4px;">출력 (전체):</div>
+                            <pre style="margin:0; padding:6px; border-radius:4px; background:rgba(0,0,0,0.25); color:var(--text); font-family:monospace; font-size:0.72rem; line-height:1.4; white-space:pre-wrap; word-break:break-word; max-height:300px; overflow-y:auto;">${escapeHtml(outputText)}</pre>` : ''}
+                        </div>
+                    </div>`;
+            }).join('');
+        }
         // ─── LLM 서비스 변경 ───
         function onLlmServiceChange() {
             const s1 = document.getElementById('setting-llm-service').value;

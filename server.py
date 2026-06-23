@@ -1,6 +1,7 @@
 ﻿import asyncio
 import json
 import os
+import sys
 import copy
 import time
 import uuid
@@ -14,6 +15,18 @@ import traceback
 import base64
 import shutil
 import mimetypes
+
+# ─── 모듈 이중 로드 방지 ─────────────────────────────────
+# python server.py 로 실행하면 이 파일은 __main__ 으로 로드되지만,
+# 다른 모듈(lighbd_service 등)이 `import server` 를 하면 Python 이
+# server.py 를 다시 한 번 `server` 라는 이름으로 로드해서 별도 인스턴스가
+# 생긴다. 이 결과 frontend_ws_connections, prompts, app_config 같은
+# 전역 상태가 두 벌이 되어 — WS 핸들러가 쓰는 dict 와 lighbd 가 읽는
+# dict 가 달라져 "클라이언트 0명" 버그가 발생한다.
+# __main__ 인 경우 sys.modules['server'] 를 자기 자신으로 alias 해서
+# 이후 import server 가 동일 인스턴스를 반환하게 만든다.
+if __name__ == "__main__":
+    sys.modules.setdefault("server", sys.modules[__name__])
 
 # webp mimetype 등록 (Windows 기본 누락 대응)
 mimetypes.add_type('image/webp', '.webp')
@@ -38,6 +51,8 @@ from modes import mode_logger
 from queue_manager import queue_manager
 import logging
 logging.basicConfig(level=logging.INFO, format='[%(name)s] %(message)s')
+# aiohttp.access (매 요청마다 찍히는 HTTP access 로그) 도배 방지
+logging.getLogger("aiohttp.access").setLevel(logging.WARNING)
 from modes import llm_service
 from modes import autocomplete_service
 from modes import asset_tool_mode
@@ -296,14 +311,36 @@ frontend_ws_connections = {}   # frontend client_id -> {"ws": ws, "last_pong": t
 async def notify_frontend(event_type: str, data: dict = None):
     """프론트엔드 대시보드에 이벤트를 전송한다."""
     message = {"type": event_type, "data": data or {}}
+    now = time.time()
     client_count = len(frontend_ws_connections)
-    print(f"[WS] → 프론트엔드 전송: {event_type} (클라이언트 {client_count}명)")
+    print(f"[WS-NOTIFY] event={event_type} clients={client_count}")
+    if client_count == 0:
+        print(f"[WS-NOTIFY] ⚠️ 클라이언트 0명 — event={event_type}, 현재 frontend_ws_connections 비어있음")
+        return
     for client_id, entry in list(frontend_ws_connections.items()):
         try:
-            await entry["ws"].send_json(message)
+            ws = entry["ws"]
+            pong_age = now - entry.get("last_pong", 0)
+            # ws 상태 진단
+            req_info = getattr(ws, "_req", None)
+            peer = ""
+            try:
+                if req_info is not None:
+                    peer = str(getattr(req_info, "remote", "")) or ""
+            except Exception:
+                peer = ""
+            ws_closed = ws.closed
+            print(f"[WS-NOTIFY]   → 송신 시도 client={client_id[:8]} peer={peer} pong_age={pong_age:.1f}s ws.closed={ws_closed}")
+            if ws_closed:
+                print(f"[WS-NOTIFY]     ✗ 이미 닫힌 ws — 제거 ({client_id[:8]})")
+                frontend_ws_connections.pop(client_id, None)
+                continue
+            await ws.send_json(message)
+            print(f"[WS-NOTIFY]     ✓ 송신 성공 ({client_id[:8]})")
         except Exception as e:
-            print(f"[WS] 프론트엔드 전송 실패 ({client_id}): {e}")
+            print(f"[WS-NOTIFY]     ✗ 송신 실패 client={client_id[:8]} err={type(e).__name__}: {e}")
             frontend_ws_connections.pop(client_id, None)
+            traceback.print_exc()
 
 WS_HEARTBEAT_INTERVAL = 30  # 초
 WS_STALE_TIMEOUT = 15       # 핑 후 응답 없으면 제거 (초)
@@ -504,6 +541,47 @@ async def update_workflow_if_needed() -> bool:
 
 
 # ─── 노드/프롬프트 유틸 ──────────────────────────────────
+def register_and_enqueue_illustration(
+    prompt_id: str,
+    prompt_data: dict,
+    raw_body: dict,
+    label: str,
+    client_id: str = "",
+    extra_data: dict | None = None,
+    save_node_id: str | None = None,
+) -> None:
+    """삽화 엔트리 사전 등록 + 통합 큐 적재.
+
+    handle_prompt (/prompt) 와 lighbd dispatch_generation 양쪽에서 공유.
+    한쪽만 고쳐도 양쪽에 반영되도록 이 함수를 단일 진입점으로 사용.
+
+    Args:
+        prompt_id: 프롬프트 식별자
+        prompt_data: ComfyUI API 워크플로우 dict
+        raw_body: 원본 요청 body (큐에 함께 적재, process_prompt 참조)
+        label: 큐 라벨
+        client_id: 클라이언트 식별자 (일반 /prompt 에서만 의미)
+        extra_data: extra_data (일반 /prompt 에서만 의미)
+        save_node_id: SaveImage 노드 id (None 이면 process_prompt 가 재탐색)
+    """
+    prompts[prompt_id] = {
+        "status": "running",
+        "prompt": prompt_data,
+        "client_id": client_id,
+        "extra_data": extra_data or {},
+        "outputs": {},
+        "filename": None,
+        "save_node_id": save_node_id,
+        "image_bytes": None,
+        "timestamp": time.time(),
+    }
+    asyncio.create_task(queue_manager.add_item(
+        "illustration", label,
+        {"prompt_id": prompt_id, "prompt_data": prompt_data, "raw_body": raw_body},
+        priority=0,
+    ))
+
+
 def find_save_image_node(prompt_data: dict) -> str | None:
     for node_id, node_info in prompt_data.items():
         if isinstance(node_info, dict):
@@ -1805,6 +1883,27 @@ async def handle_api_lighbd_enqueue(request: web.Request) -> web.Response:
         )
 
 
+async def handle_api_lighbd_history(request: web.Request) -> web.Response:
+    """GET /api/lighbd/history - lighbd LLM 호출 히스토리(최근 20개) 반환.
+
+    자세히 보기 모달 데이터 소스. 각 레코드: ts, prompt_id, input(messages),
+    output(plan), completion_tokens, elapsed, tps, status.
+    """
+    try:
+        from modes.lighbd_service import _load_lighbd_history, LIGHBD_HISTORY_MAX
+        limit = request.query.get("limit")
+        try:
+            limit_n = int(limit) if limit else LIGHBD_HISTORY_MAX
+        except (TypeError, ValueError):
+            limit_n = LIGHBD_HISTORY_MAX
+        records = _load_lighbd_history(limit=limit_n)
+        return web.json_response({"history": records, "count": len(records)})
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f"[LIGHBD] /api/lighbd/history error: {e}\n{tb}")
+        return web.json_response({"status": "error", "error": str(e)}, status=500)
+
+
 async def handle_api_llm_keys(request: web.Request) -> web.Response:
     """LLM API 키 별도 저장 (config.json 분리).
 
@@ -1884,6 +1983,84 @@ async def handle_api_llm_keys(request: web.Request) -> web.Response:
         tb = traceback.format_exc()
         print(f"[LLM_KEY] error: {e}\n{tb}")
         return web.json_response({"error": str(e)}, status=500)
+
+
+async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse:
+    """LLM 호출 테스트용 SSE 엔드포인트.
+
+    POST /api/llm/test_stream
+    body: {"messages": [...], "model": "...", "stream": true}
+    응답: text/event-stream. 이벤트: start / delta / done / error.
+    stream=False 면 callLLM 단발 호출 후 done 이벤트 1개만 전송.
+    """
+    try:
+        body = await request.json()
+    except Exception as e:
+        return web.json_response({"error": f"invalid JSON body: {e}"}, status=400)
+
+    messages = body.get("messages") or []
+    if not messages or not isinstance(messages, list):
+        return web.json_response({"error": "messages 가 비었거나 list 가 아님"}, status=400)
+
+    use_model = body.get("model") or None
+    use_stream = bool(body.get("stream", True))
+
+    resp = web.StreamResponse(status=200, headers={
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+    })
+    await resp.prepare(request)
+
+    def write_event(event_type: str, data: dict):
+        payload = json.dumps(data, ensure_ascii=False)
+        return resp.write(f"event: {event_type}\ndata: {payload}\n\n".encode("utf-8"))
+
+    try:
+        if use_stream:
+            async for ev in llm_service.callLLMStream(messages, model=use_model, log_history=False):
+                et = ev.get("type", "message")
+                await write_event(et, ev)
+                if et == "done":
+                    # 통계용 추가 이벤트 (프론트에서 이미 done 에서 읽어도 됨)
+                    pass
+        else:
+            # 단발 호출 → start / done 두 이벤트만
+            t0 = time.time()
+            service = llm_service.get_config().get("llm_service", "")
+            use_model_resolved = use_model or llm_service.get_config().get("llm_model", "")
+            await write_event("start", {"service": service, "model": use_model_resolved})
+            text = await llm_service.callLLM(messages, model=use_model)
+            elapsed = time.time() - t0
+            if isinstance(text, str) and text.startswith("[LLM 실패]"):
+                await write_event("error", {"error": text})
+            else:
+                tokens = max(1, len(text) // 3)
+                tps = (tokens / elapsed) if elapsed > 0 else 0.0
+                # 히스토리 로깅
+                llm_service._log_history(
+                    service=service, model=use_model_resolved,
+                    messages=messages, output=text,
+                    completion_tokens=tokens, elapsed=elapsed, tps=tps,
+                )
+                await write_event("done", {
+                    "text": text,
+                    "completion_tokens": tokens,
+                    "elapsed": elapsed,
+                    "tps": tps,
+                    "ttft": None,
+                })
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f"[LLM_TEST_STREAM] error: {e}\n{tb}")
+        try:
+            await write_event("error", {"error": f"{type(e).__name__}: {e}"})
+        except Exception:
+            pass
+
+    await resp.write_eof()
+    return resp
 
 
 def _load_llm_keys_into_config():
@@ -2234,26 +2411,17 @@ async def handle_prompt(request: web.Request) -> web.Response:
             f"nodes={len(prompt_data)}, SaveImage={save_node}"
         )
 
-        prompts[prompt_id] = {
-            "status": "running",
-            "prompt": prompt_data,
-            "client_id": body.get("client_id", ""),
-            "extra_data": body.get("extra_data", {}),
-            "outputs": {},
-            "filename": None,
-            "save_node_id": save_node,
-            "image_bytes": None,
-            "timestamp": time.time(),
-        }
-
-        # 큐에 삽화로 추가 (priority=0, 최우선)
         _illust_positive = extract_prompts_by_title(prompt_data, "긍정프롬프트") or ""
         _illust_label = f"삽화: {_illust_positive[:40]}..."
-        asyncio.create_task(queue_manager.add_item(
-            "illustration", _illust_label,
-            {"prompt_id": prompt_id, "prompt_data": prompt_data, "raw_body": body},
-            priority=0,
-        ))
+        register_and_enqueue_illustration(
+            prompt_id=prompt_id,
+            prompt_data=prompt_data,
+            raw_body=body,
+            label=_illust_label,
+            client_id=body.get("client_id", ""),
+            extra_data=body.get("extra_data", {}),
+            save_node_id=save_node,
+        )
         return web.json_response(
             {"prompt_id": prompt_id, "number": len(prompts), "node_errors": {}}
         )
@@ -2335,11 +2503,13 @@ async def _ws_heartbeat():
         for cid, entry in list(frontend_ws_connections.items()):
             elapsed = now - entry["last_pong"]
             if elapsed > WS_HEARTBEAT_INTERVAL + WS_STALE_TIMEOUT:
+                print(f"[HEARTBEAT] ✗ STALE 제거 client={cid[:8]} pong_age={elapsed:.1f}s")
                 stale.append(cid)
                 continue
             try:
                 await entry["ws"].send_json({"type": "ping"})
-            except Exception:
+            except Exception as e:
+                print(f"[HEARTBEAT] ✗ ping 실패로 제거 client={cid[:8]} err={type(e).__name__}: {e}")
                 stale.append(cid)
         for cid in stale:
             entry = frontend_ws_connections.pop(cid, None)
@@ -2348,7 +2518,6 @@ async def _ws_heartbeat():
                     await entry["ws"].close()
                 except Exception:
                     pass
-            print(f"[FRONTEND WS] 하트비트 응답 없음, 제거: {cid}")
 
 
 async def handle_frontend_ws(request: web.Request) -> web.WebSocketResponse:
@@ -2357,11 +2526,25 @@ async def handle_frontend_ws(request: web.Request) -> web.WebSocketResponse:
     await ws.prepare(request)
     client_id = str(uuid.uuid4())
 
+    # 접속 메타정보 (디버깅)
+    peer = ""
+    try:
+        peer = str(getattr(request, "remote", "")) or ""
+    except Exception:
+        pass
+    ua = request.headers.get("User-Agent", "")[:80]
+    origin = request.headers.get("Origin", "")
+    fwd_for = request.headers.get("X-Forwarded-For", "")
+    print(f"[FE-WS] connect 시도 peer={peer} origin={origin} xff={fwd_for} ua={ua}")
+
     # 기존 연결 정리 (혼자 사용하므로 최신 1개만 유지, close() 하지 않음 - 재연결 루프 방지)
+    cleared = list(frontend_ws_connections.keys())
+    if cleared:
+        print(f"[FE-WS] ⚠️ clear()로 기존 연결 {len(cleared)}개 dict에서 제거: {[c[:8] for c in cleared]}")
     frontend_ws_connections.clear()
 
     frontend_ws_connections[client_id] = {"ws": ws, "last_pong": time.time()}
-    print(f"[FRONTEND WS] 연결됨: {client_id} (총 {len(frontend_ws_connections)}명)")
+    print(f"[FE-WS] 연결됨 client={client_id[:8]} (총 {len(frontend_ws_connections)}명)")
 
     # Send initial reschedule status
     if reschedule_queue is not None:
@@ -2379,13 +2562,29 @@ async def handle_frontend_ws(request: web.Request) -> web.WebSocketResponse:
                         entry = frontend_ws_connections.get(client_id)
                         if entry:
                             entry["last_pong"] = time.time()
-                except:
-                    pass
-            elif msg.type in (aiohttp.WSMsgType.ERROR, aiohttp.WSMsgType.CLOSED):
+                        else:
+                            print(f"[FE-WS] ⚠️ pong from unknown client={client_id[:8]} (dict에서 사라짐)")
+                except Exception as e:
+                    print(f"[FE-WS] msg parse err client={client_id[:8]}: {e} raw={msg.data[:80]}")
+            elif msg.type == aiohttp.WSMsgType.CLOSE:
+                print(f"[FE-WS] CLOSE msg client={client_id[:8]}")
                 break
+            elif msg.type == aiohttp.WSMsgType.CLOSING:
+                print(f"[FE-WS] CLOSING msg client={client_id[:8]}")
+                break
+            elif msg.type == aiohttp.WSMsgType.CLOSED:
+                print(f"[FE-WS] CLOSED msg client={client_id[:8]}")
+                break
+            elif msg.type == aiohttp.WSMsgType.ERROR:
+                print(f"[FE-WS] ERROR msg client={client_id[:8]} exc={ws.exception()}")
+                break
+    except Exception as e:
+        print(f"[FE-WS] 루프 예외 client={client_id[:8]} err={type(e).__name__}: {e}")
+        traceback.print_exc()
     finally:
+        existed = client_id in frontend_ws_connections
         frontend_ws_connections.pop(client_id, None)
-        print(f"[FRONTEND WS] 해제됨: {client_id} (총 {len(frontend_ws_connections)}명)")
+        print(f"[FE-WS] 해제됨 client={client_id[:8]} was_in_dict={existed} (남은 접속자={len(frontend_ws_connections)})")
     return ws
 
 
@@ -3273,6 +3472,8 @@ async def handle_api_config(request: web.Request) -> web.Response:
                 app_config["asset_tag_analysis_workflow_source_path"] = str(body["asset_tag_analysis_workflow_source_path"])
 
             # LLM 서비스 설정 업데이트
+            # 주의: llm_api_key/llm_api_key2 는 /api/llm/keys 에서 별도 관리.
+            # 여기서 빈 문자열로 덮어쓰면 key/llm_keys.json 에서 로드한 키가 증발함.
             llm_service.update_config({
                 "llm_service": app_config.get("llm_service", "copilot"),
                 "llm_model": app_config.get("llm_model", "gpt-4.1"),
@@ -3280,8 +3481,6 @@ async def handle_api_config(request: web.Request) -> web.Response:
                 "llm_model2": app_config.get("llm_model2", ""),
                 "custom_api_url": app_config.get("custom_api_url", ""),
                 "custom_api_url2": app_config.get("custom_api_url2", ""),
-                "llm_api_key": app_config.get("llm_api_key", ""),
-                "llm_api_key2": app_config.get("llm_api_key2", ""),
                 "llm_url": app_config.get("llm_url", ""),
                 "llm_url2": app_config.get("llm_url2", ""),
                 "llm_reasoning_preset": app_config.get("llm_reasoning_preset", "auto"),
@@ -3806,6 +4005,7 @@ app.router.add_get("/api/conversion_info", handle_api_conversion_info)
 app.router.add_post("/api/regenerate", handle_api_regenerate)
 app.router.add_post("/api/reload_workflow", handle_api_reload_workflow)
 app.router.add_post("/api/lighbd/enqueue", handle_api_lighbd_enqueue)
+app.router.add_get("/api/lighbd/history", handle_api_lighbd_history)
 app.router.add_get("/api/lighbd/session/{sid}", handle_api_lighbd_session)
 app.router.add_get("/api/lighbd/image/{pid}", handle_api_lighbd_image)
 app.router.add_post("/api/lighbd/reroll", handle_api_lighbd_reroll)
@@ -3815,6 +4015,7 @@ app.router.add_delete("/api/llm/vertex_key", handle_api_lighbd_vertex_key)
 app.router.add_post("/api/llm/keys", handle_api_llm_keys)
 app.router.add_get("/api/llm/keys", handle_api_llm_keys)
 app.router.add_delete("/api/llm/keys", handle_api_llm_keys)
+app.router.add_post("/api/llm/test_stream", handle_api_llm_test_stream)
 app.router.add_get("/api/reschedule", handle_api_reschedule)
 app.router.add_post("/api/reschedule", handle_api_reschedule)
 app.router.add_post("/api/reschedule_with_modified_prompt", handle_api_reschedule_with_modified_prompt)

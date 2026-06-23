@@ -12,6 +12,7 @@ customprompt/ 폴더의 스크립트에서 callLLM 함수를 import하여 사용
 """
 
 import asyncio
+import datetime
 import json
 import os
 import time
@@ -79,6 +80,66 @@ def _llm_log(message: str):
     except:
         pass
     print(f"[LLM] {message}")
+
+
+HISTORY_MAX_ENTRIES = 20
+HISTORY_PATH = os.path.join(LOG_DIR, "llm_history.jsonl")
+HISTORY_BACKUP_DIR = os.path.join(BASE_DIR, "요구사항")
+HISTORY_BACKUP_PATH = os.path.join(HISTORY_BACKUP_DIR, "llm_history.jsonl.bak")
+
+
+def _log_history(service: str, model: str, messages: list, output: str,
+                 completion_tokens: int, elapsed: float, tps: float,
+                 ttft: float = None, error: str = ""):
+    """입출력 이력을 logs/llm_history.jsonl 에 append. 최근 20개까지만 유지.
+
+    단일 JSON Lines 파일에 input/output 필드로 분리되어 있어
+    `jq '.input'` / `jq '.output'` 형태로 쉽게 추출 가능.
+    """
+    os.makedirs(LOG_DIR, exist_ok=True)
+    os.makedirs(HISTORY_BACKUP_DIR, exist_ok=True)
+
+    record = {
+        "ts": datetime.datetime.now().isoformat(timespec="seconds"),
+        "service": service,
+        "model": model,
+        "input": messages,
+        "output": output,
+        "completion_tokens": completion_tokens,
+        "elapsed": round(elapsed, 3),
+        "tps": round(tps, 1),
+    }
+    if ttft is not None:
+        record["ttft"] = round(ttft, 3)
+    if error:
+        record["error"] = error
+
+    line = json.dumps(record, ensure_ascii=False) + "\n"
+
+    # 기존 파일 백업 (CLAUDE.md 규칙: write 전 백업 필수)
+    existing_lines = []
+    if os.path.exists(HISTORY_PATH):
+        try:
+            with open(HISTORY_BACKUP_PATH, "w", encoding="utf-8") as bf:
+                bf.write("")  # 백업 초기화
+            with open(HISTORY_PATH, "r", encoding="utf-8") as bf_read:
+                with open(HISTORY_BACKUP_PATH, "w", encoding="utf-8") as bf_write:
+                    bf_write.write(bf_read.read())
+            with open(HISTORY_PATH, "r", encoding="utf-8") as f:
+                existing_lines = f.readlines()
+        except Exception as e:
+            _llm_log(f"history 백업/읽기 실패: {e}")
+            existing_lines = []
+
+    existing_lines.append(line)
+    if len(existing_lines) > HISTORY_MAX_ENTRIES:
+        existing_lines = existing_lines[-HISTORY_MAX_ENTRIES:]
+
+    try:
+        with open(HISTORY_PATH, "w", encoding="utf-8") as f:
+            f.writelines(existing_lines)
+    except Exception as e:
+        _llm_log(f"history 쓰기 실패: {e}")
 
 
 # ─── Vertex AI 초기화 ──────────────────────────────────────
@@ -750,3 +811,617 @@ async def callLLM2(messages: list, model: str = None) -> str:
         _current_config["llm_reasoning_preset"] = saved_preset
         _current_config["llm_reasoning_effort"] = saved_effort
         _current_config["llm_custom_body"] = saved_body
+
+
+# ─── 스트리밍 (callLLMStream) ────────────────────────────────
+#
+# 이벤트 스키마:
+#   {"type": "start",  "service": str, "model": str}
+#   {"type": "delta",  "text": str, "elapsed": float, "ttft": float}
+#   {"type": "done",   "text": str, "completion_tokens": int, "elapsed": float, "tps": float, "ttft": float|None}
+#   {"type": "error",  "error": str}
+
+_STREAM_TIMEOUT = httpx.Timeout(connect=15.0, read=None, write=15.0, pool=15.0)
+
+
+def _approx_tokens(text: str) -> int:
+    """usage 정보가 없을 때 휴리스틱 (영어 4자 = 1토큰, 한글은 더 크게)."""
+    if not text:
+        return 0
+    return max(1, len(text) // 3)
+
+
+async def _stream_openai_compat(messages: list, model: str, url: str,
+                                 api_key: str = "", extra_headers: dict = None,
+                                 service: str = "openai-compat"):
+    """OpenAI 호환 SSE 스트리밍. openai/openrouter/lmstudio/ollama/ollama-cloud/customapi/vertex-openai 공용."""
+    if not url:
+        yield {"type": "error", "error": f"{service}: URL 이 설정되지 않음"}
+        return
+
+    norm_url = _normalize_openai_compat_url(url)
+    reasoning_family = _detect_reasoning_family(model, _current_config.get("llm_reasoning_preset", "auto"))
+    body = _build_openai_body(
+        model, messages, reasoning_family,
+        reasoning_effort=_current_config.get("llm_reasoning_effort", ""),
+        reasoning_budget=int(_current_config.get("llm_reasoning_budget_tokens", 0) or 0),
+        temperature=float(_current_config.get("llm_temperature", 1.0) or 1.0),
+        max_tokens=int(_current_config.get("llm_max_tokens", 0) or 0),
+        custom_body=_current_config.get("llm_custom_body", ""),
+    )
+    # 스트리밍 강제
+    body["stream"] = True
+    body["stream_options"] = {"include_usage": True}
+    # reasoning_effort 가 max_completion_tokens 로 옮겨간 경우 stream 유지
+    if "max_completion_tokens" in body and reasoning_family not in ("glm", "deepseek", "kimi"):
+        body["stream_options"] = {"include_usage": True}
+
+    headers = {"Content-Type": "application/json", "Accept": "text/event-stream"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    if extra_headers:
+        headers.update(extra_headers)
+
+    t0 = time.time()
+    ttft = None
+    accumulated = []
+    completion_tokens = None
+
+    _llm_log(f"{service} stream 요청: url={norm_url} model={model} family={reasoning_family}")
+    yield {"type": "start", "service": service, "model": model}
+
+    try:
+        async with httpx.AsyncClient(timeout=_STREAM_TIMEOUT) as client:
+            async with client.stream("POST", norm_url, json=body, headers=headers) as response:
+                if response.status_code != 200:
+                    err_bytes = await response.aread()
+                    err_text = err_bytes.decode("utf-8", errors="replace")[:500]
+                    _llm_log(f"{service} stream 실패: {response.status_code} - {err_text}")
+                    yield {"type": "error", "error": f"{service} HTTP {response.status_code}: {err_text}"}
+                    return
+
+                async for raw_line in response.aiter_lines():
+                    if not raw_line:
+                        continue
+                    line = raw_line.strip()
+                    if not line.startswith("data:"):
+                        continue
+                    data_str = line[len("data:"):].strip()
+                    if data_str == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(data_str)
+                    except json.JSONDecodeError:
+                        continue
+
+                    if isinstance(chunk.get("usage"), dict):
+                        ct = chunk["usage"].get("completion_tokens")
+                        if ct:
+                            completion_tokens = ct
+
+                    choices = chunk.get("choices") or []
+                    if choices:
+                        delta = choices[0].get("delta", {}) or {}
+                        text = delta.get("content") or ""
+                        if text:
+                            if ttft is None:
+                                ttft = time.time() - t0
+                            accumulated.append(text)
+                            elapsed = time.time() - t0
+                            yield {"type": "delta", "text": text, "elapsed": elapsed, "ttft": ttft}
+
+        full = "".join(accumulated)
+        elapsed = time.time() - t0
+        if completion_tokens is None:
+            completion_tokens = _approx_tokens(full)
+        tps = (completion_tokens / elapsed) if elapsed > 0 else 0.0
+        _llm_log(f"{service} stream 완료: {len(full)}자, tokens={completion_tokens}, elapsed={elapsed:.2f}s, tps={tps:.1f}")
+        yield {
+            "type": "done",
+            "text": full,
+            "completion_tokens": completion_tokens,
+            "elapsed": elapsed,
+            "tps": tps,
+            "ttft": ttft,
+        }
+    except httpx.TimeoutException:
+        _llm_log(f"{service} stream 타임아웃")
+        yield {"type": "error", "error": f"{service} stream 타임아웃"}
+    except Exception as e:
+        _llm_log(f"{service} stream 예외: {e}")
+        traceback.print_exc()
+        yield {"type": "error", "error": f"{service} stream 예외: {e}"}
+
+
+async def _stream_copilot(messages: list, model: str):
+    """Copilot (OpenAI 호환 SSE)."""
+    if not COPILOT_KEY:
+        yield {"type": "error", "error": "Copilot API 키가 없습니다"}
+        return
+    url = "https://api.githubcopilot.com/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {COPILOT_KEY}",
+        "Content-Type": "application/json",
+        "Editor-Version": "vscode/1.85.0",
+        "Editor-Plugin-Version": "copilot/1.150.0",
+        "Accept": "text/event-stream",
+    }
+
+    t0 = time.time()
+    ttft = None
+    accumulated = []
+    completion_tokens = None
+
+    body = {
+        "model": model,
+        "messages": messages,
+        "stream": True,
+        "stream_options": {"include_usage": True},
+        "temperature": float(_current_config.get("llm_temperature", 1.0) or 1.0),
+    }
+    if int(_current_config.get("llm_max_tokens", 0) or 0) > 0:
+        body["max_tokens"] = int(_current_config["llm_max_tokens"])
+
+    _llm_log(f"copilot stream 요청: model={model}")
+    yield {"type": "start", "service": "copilot", "model": model}
+
+    try:
+        async with httpx.AsyncClient(timeout=_STREAM_TIMEOUT) as client:
+            async with client.stream("POST", url, json=body, headers=headers) as response:
+                if response.status_code != 200:
+                    err_bytes = await response.aread()
+                    err_text = err_bytes.decode("utf-8", errors="replace")[:500]
+                    _llm_log(f"copilot stream 실패: {response.status_code} - {err_text}")
+                    yield {"type": "error", "error": f"copilot HTTP {response.status_code}: {err_text}"}
+                    return
+                async for raw_line in response.aiter_lines():
+                    line = (raw_line or "").strip()
+                    if not line.startswith("data:"):
+                        continue
+                    data_str = line[len("data:"):].strip()
+                    if data_str == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(data_str)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(chunk.get("usage"), dict):
+                        ct = chunk["usage"].get("completion_tokens")
+                        if ct:
+                            completion_tokens = ct
+                    choices = chunk.get("choices") or []
+                    if choices:
+                        delta = choices[0].get("delta", {}) or {}
+                        text = delta.get("content") or ""
+                        if text:
+                            if ttft is None:
+                                ttft = time.time() - t0
+                            accumulated.append(text)
+                            yield {"type": "delta", "text": text, "elapsed": time.time() - t0, "ttft": ttft}
+
+        full = "".join(accumulated)
+        elapsed = time.time() - t0
+        if completion_tokens is None:
+            completion_tokens = _approx_tokens(full)
+        tps = (completion_tokens / elapsed) if elapsed > 0 else 0.0
+        _llm_log(f"copilot stream 완료: {len(full)}자, tokens={completion_tokens}, elapsed={elapsed:.2f}s")
+        yield {
+            "type": "done",
+            "text": full,
+            "completion_tokens": completion_tokens,
+            "elapsed": elapsed,
+            "tps": tps,
+            "ttft": ttft,
+        }
+    except httpx.TimeoutException:
+        yield {"type": "error", "error": "copilot stream 타임아웃"}
+    except Exception as e:
+        _llm_log(f"copilot stream 예외: {e}")
+        traceback.print_exc()
+        yield {"type": "error", "error": f"copilot stream 예외: {e}"}
+
+
+async def _stream_gemini(messages: list, model: str):
+    """Google Gemini AI Studio (streamGenerateContent + alt=sse)."""
+    api_key = _current_config.get("llm_api_key", "")
+    if not api_key:
+        yield {"type": "error", "error": "gemini: llm_api_key 없음"}
+        return
+    base = _current_config.get("llm_url") or "https://generativelanguage.googleapis.com"
+    url = f"{base.rstrip('/')}/v1beta/models/{model}:streamGenerateContent?alt=sse&key={api_key}"
+
+    system_text = ""
+    user_parts = []
+    for msg in messages:
+        if msg.get("role") == "system":
+            system_text += (system_text and "\n\n" or "") + msg.get("content", "")
+        else:
+            user_parts.append({
+                "role": "user" if msg.get("role") != "assistant" else "model",
+                "parts": [{"text": msg.get("content", "")}],
+            })
+
+    body = {"contents": user_parts}
+    if system_text:
+        body["systemInstruction"] = {"parts": [{"text": system_text}]}
+    body["generationConfig"] = {
+        "temperature": float(_current_config.get("llm_temperature", 1.0) or 1.0),
+    }
+    if int(_current_config.get("llm_max_tokens", 0) or 0) > 0:
+        body["generationConfig"]["maxOutputTokens"] = int(_current_config["llm_max_tokens"])
+
+    t0 = time.time()
+    ttft = None
+    accumulated = []
+    completion_tokens = None
+
+    _llm_log(f"gemini stream 요청: model={model}")
+    yield {"type": "start", "service": "gemini", "model": model}
+
+    try:
+        async with httpx.AsyncClient(timeout=_STREAM_TIMEOUT) as client:
+            async with client.stream("POST", url, json=body,
+                                       headers={"Content-Type": "application/json", "Accept": "text/event-stream"}) as response:
+                if response.status_code != 200:
+                    err_bytes = await response.aread()
+                    err_text = err_bytes.decode("utf-8", errors="replace")[:500]
+                    _llm_log(f"gemini stream 실패: {response.status_code} - {err_text}")
+                    yield {"type": "error", "error": f"gemini HTTP {response.status_code}: {err_text}"}
+                    return
+                async for raw_line in response.aiter_lines():
+                    line = (raw_line or "").strip()
+                    if not line.startswith("data:"):
+                        continue
+                    data_str = line[len("data:"):].strip()
+                    if not data_str:
+                        continue
+                    try:
+                        chunk = json.loads(data_str)
+                    except json.JSONDecodeError:
+                        continue
+                    # usage (마지막 chunk 에 있음)
+                    md = chunk.get("usageMetadata") or {}
+                    if md.get("candidatesTokenCount"):
+                        completion_tokens = md["candidatesTokenCount"]
+                    candidates = chunk.get("candidates") or []
+                    if candidates:
+                        parts = candidates[0].get("content", {}).get("parts", []) or []
+                        text = "".join(p.get("text", "") for p in parts if isinstance(p, dict))
+                        if text:
+                            if ttft is None:
+                                ttft = time.time() - t0
+                            accumulated.append(text)
+                            yield {"type": "delta", "text": text, "elapsed": time.time() - t0, "ttft": ttft}
+
+        full = "".join(accumulated)
+        elapsed = time.time() - t0
+        if completion_tokens is None:
+            completion_tokens = _approx_tokens(full)
+        tps = (completion_tokens / elapsed) if elapsed > 0 else 0.0
+        _llm_log(f"gemini stream 완료: {len(full)}자, tokens={completion_tokens}, elapsed={elapsed:.2f}s")
+        yield {
+            "type": "done",
+            "text": full,
+            "completion_tokens": completion_tokens,
+            "elapsed": elapsed,
+            "tps": tps,
+            "ttft": ttft,
+        }
+    except httpx.TimeoutException:
+        yield {"type": "error", "error": "gemini stream 타임아웃"}
+    except Exception as e:
+        _llm_log(f"gemini stream 예외: {e}")
+        traceback.print_exc()
+        yield {"type": "error", "error": f"gemini stream 예외: {e}"}
+
+
+async def _stream_claude(messages: list, model: str):
+    """Anthropic Claude (messages API + stream:true, SSE)."""
+    api_key = _current_config.get("llm_api_key", "")
+    if not api_key:
+        yield {"type": "error", "error": "claude: llm_api_key 없음"}
+        return
+    base = _current_config.get("llm_url") or "https://api.anthropic.com"
+    url = f"{base.rstrip('/')}/v1/messages"
+
+    system_text = ""
+    msg_list = []
+    for msg in messages:
+        role = msg.get("role")
+        content = msg.get("content", "")
+        if role == "system":
+            system_text += (system_text and "\n\n" or "") + content
+        else:
+            msg_list.append({"role": "user" if role != "assistant" else "assistant", "content": content})
+
+    body = {
+        "model": model,
+        "max_tokens": int(_current_config.get("llm_max_tokens", 0) or 0) or 4096,
+        "messages": msg_list,
+        "stream": True,
+    }
+    if system_text:
+        body["system"] = system_text
+    if _current_config.get("llm_temperature") is not None:
+        body["temperature"] = float(_current_config.get("llm_temperature", 1.0) or 1.0)
+
+    headers = {
+        "x-api-key": api_key,
+        "anthropic-version": "2023-06-01",
+        "Content-Type": "application/json",
+        "Accept": "text/event-stream",
+    }
+
+    t0 = time.time()
+    ttft = None
+    accumulated = []
+    completion_tokens = None
+
+    _llm_log(f"claude stream 요청: model={model}")
+    yield {"type": "start", "service": "claude", "model": model}
+
+    try:
+        async with httpx.AsyncClient(timeout=_STREAM_TIMEOUT) as client:
+            async with client.stream("POST", url, json=body, headers=headers) as response:
+                if response.status_code != 200:
+                    err_bytes = await response.aread()
+                    err_text = err_bytes.decode("utf-8", errors="replace")[:500]
+                    _llm_log(f"claude stream 실패: {response.status_code} - {err_text}")
+                    yield {"type": "error", "error": f"claude HTTP {response.status_code}: {err_text}"}
+                    return
+
+                # Claude SSE: event: <type>\ndata: <json>\n\n
+                cur_event = ""
+                async for raw_line in response.aiter_lines():
+                    line = raw_line.rstrip("\n")
+                    if line.startswith("event:"):
+                        cur_event = line[len("event:"):].strip()
+                        continue
+                    if not line.startswith("data:"):
+                        continue
+                    data_str = line[len("data:"):].strip()
+                    if not data_str:
+                        continue
+                    try:
+                        chunk = json.loads(data_str)
+                    except json.JSONDecodeError:
+                        continue
+
+                    if cur_event == "content_block_delta":
+                        delta = chunk.get("delta", {}) or {}
+                        text = delta.get("text") or ""
+                        if text:
+                            if ttft is None:
+                                ttft = time.time() - t0
+                            accumulated.append(text)
+                            yield {"type": "delta", "text": text, "elapsed": time.time() - t0, "ttft": ttft}
+                    elif cur_event == "message_delta":
+                        usage = chunk.get("usage", {}) or {}
+                        if usage.get("output_tokens"):
+                            completion_tokens = usage["output_tokens"]
+                    elif cur_event == "message_start":
+                        usage = (chunk.get("message") or {}).get("usage", {}) or {}
+                        if usage.get("output_tokens"):
+                            completion_tokens = usage["output_tokens"]
+
+        full = "".join(accumulated)
+        elapsed = time.time() - t0
+        if completion_tokens is None:
+            completion_tokens = _approx_tokens(full)
+        tps = (completion_tokens / elapsed) if elapsed > 0 else 0.0
+        _llm_log(f"claude stream 완료: {len(full)}자, tokens={completion_tokens}, elapsed={elapsed:.2f}s")
+        yield {
+            "type": "done",
+            "text": full,
+            "completion_tokens": completion_tokens,
+            "elapsed": elapsed,
+            "tps": tps,
+            "ttft": ttft,
+        }
+    except httpx.TimeoutException:
+        yield {"type": "error", "error": "claude stream 타임아웃"}
+    except Exception as e:
+        _llm_log(f"claude stream 예외: {e}")
+        traceback.print_exc()
+        yield {"type": "error", "error": f"claude stream 예외: {e}"}
+
+
+async def _stream_vertex_sdk(messages: list, model: str):
+    """Vertex AI (vertexai SDK, stream=True). 동기 generator 를 executor 로 감쌈."""
+    _init_vertex()
+    if not _vertex_initialized:
+        yield {"type": "error", "error": "Vertex AI 초기화 실패"}
+        return
+
+    from vertexai.generative_models import GenerativeModel
+
+    text_parts = []
+    for msg in messages:
+        if msg.get("content"):
+            text_parts.append(msg["content"])
+    request_text = "\n\n".join(text_parts)
+    actual_model = model.split("/")[0]
+    vertex_model = GenerativeModel(actual_model)
+
+    t0 = time.time()
+    ttft = None
+    accumulated = []
+    completion_tokens = None
+
+    _llm_log(f"vertex stream 요청: model={actual_model}, text={len(request_text)}자")
+    yield {"type": "start", "service": "vertex", "model": actual_model}
+
+    loop = asyncio.get_event_loop()
+
+    def _consume_into_queue(q):
+        try:
+            stream = vertex_model.generate_content(request_text, stream=True)
+            for event in stream:
+                text = ""
+                try:
+                    text = event.text or ""
+                except Exception:
+                    text = ""
+                if text:
+                    loop.call_soon_threadsafe(q.put_nowait, ("delta", text))
+            loop.call_soon_threadsafe(q.put_nowait, ("done", None))
+        except Exception as e:
+            loop.call_soon_threadsafe(q.put_nowait, ("error", str(e)))
+
+    queue: asyncio.Queue = asyncio.Queue()
+    loop.run_in_executor(None, _consume_into_queue, queue)
+
+    try:
+        while True:
+            kind, payload = await queue.get()
+            if kind == "done":
+                break
+            if kind == "error":
+                _llm_log(f"vertex stream 예외: {payload}")
+                yield {"type": "error", "error": f"vertex stream 예외: {payload}"}
+                return
+            # delta
+            if ttft is None:
+                ttft = time.time() - t0
+            accumulated.append(payload)
+            yield {"type": "delta", "text": payload, "elapsed": time.time() - t0, "ttft": ttft}
+
+        full = "".join(accumulated)
+        elapsed = time.time() - t0
+        completion_tokens = _approx_tokens(full)
+        tps = (completion_tokens / elapsed) if elapsed > 0 else 0.0
+        _llm_log(f"vertex stream 완료: {len(full)}자, elapsed={elapsed:.2f}s")
+        yield {
+            "type": "done",
+            "text": full,
+            "completion_tokens": completion_tokens,
+            "elapsed": elapsed,
+            "tps": tps,
+            "ttft": ttft,
+        }
+    except Exception as e:
+        _llm_log(f"vertex stream 예외: {e}")
+        traceback.print_exc()
+        yield {"type": "error", "error": f"vertex stream 예외: {e}"}
+
+
+async def _stream_vertex_openai(messages: list, model: str):
+    """Vertex AI OpenAI 호환 엔드포인트 스트리밍."""
+    key_path = _get_vertex_key_path()
+    if not key_path:
+        yield {"type": "error", "error": "vertex-openai: Vertex 키 파일 (key/*.json) 없음"}
+        return
+    project = _vertex_project_id()
+    location = _current_config.get("llm_url") or "us-central1"
+    if location.startswith("http"):
+        url = _normalize_openai_compat_url(location)
+    else:
+        url = f"https://{location}-aiplatform.googleapis.com/v1beta1/projects/{project}/locations/{location}/endpoints/openapi/chat/completions"
+    try:
+        token = await _get_vertex_access_token(key_path)
+    except Exception as e:
+        yield {"type": "error", "error": f"vertex-openai 토큰 발급 실패: {e}"}
+        return
+    async for ev in _stream_openai_compat(messages, model, url, api_key=token, service="vertex-openai"):
+        yield ev
+
+
+async def _dispatch_stream(messages: list, service: str, model: str, endpoint: str = ""):
+    """스트리밍 라우팅. yield events."""
+    _llm_log(f"_dispatch_stream: service={service}, model={model}")
+
+    if service == "copilot":
+        async for ev in _stream_copilot(messages, model):
+            yield ev
+    elif service == "vertex":
+        async for ev in _stream_vertex_sdk(messages, model):
+            yield ev
+    elif service == "gemini":
+        async for ev in _stream_gemini(messages, model):
+            yield ev
+    elif service == "claude":
+        async for ev in _stream_claude(messages, model):
+            yield ev
+    elif service == "vertex-openai":
+        async for ev in _stream_vertex_openai(messages, model):
+            yield ev
+    elif service == "openai":
+        api_key = _current_config.get("llm_api_key", "")
+        if not api_key:
+            yield {"type": "error", "error": "openai: llm_api_key 없음"}
+            return
+        base = _current_config.get("llm_url") or "https://api.openai.com"
+        async for ev in _stream_openai_compat(messages, model, base, api_key=api_key, service="openai"):
+            yield ev
+    elif service == "openrouter":
+        api_key = _current_config.get("llm_api_key", "")
+        if not api_key:
+            yield {"type": "error", "error": "openrouter: llm_api_key 없음"}
+            return
+        base = _current_config.get("llm_url") or "https://openrouter.ai/api"
+        extra = {"HTTP-Referer": "https://risuai.xyz", "X-Title": "lighbd hooking server"}
+        async for ev in _stream_openai_compat(messages, model, base, api_key=api_key,
+                                                extra_headers=extra, service="openrouter"):
+            yield ev
+    elif service == "lmstudio":
+        base = _current_config.get("llm_url") or "http://localhost:1234"
+        async for ev in _stream_openai_compat(messages, model, base, service="lmstudio"):
+            yield ev
+    elif service == "ollama":
+        base = _current_config.get("llm_url") or "http://localhost:11434"
+        async for ev in _stream_openai_compat(messages, model, base, service="ollama"):
+            yield ev
+    elif service == "ollama-cloud":
+        api_key = _current_config.get("llm_api_key", "")
+        if not api_key:
+            yield {"type": "error", "error": "ollama-cloud: llm_api_key 없음"}
+            return
+        base = _current_config.get("llm_url") or "https://ollama.com"
+        async for ev in _stream_openai_compat(messages, model, base, api_key=api_key, service="ollama-cloud"):
+            yield ev
+    elif service in ("customapi", "openai-compat"):
+        if not endpoint:
+            yield {"type": "error", "error": f"{service}: URL 이 설정되지 않음"}
+            return
+        api_key = _current_config.get("llm_api_key", "")
+        async for ev in _stream_openai_compat(messages, model, endpoint, api_key=api_key, service=service):
+            yield ev
+    else:
+        yield {"type": "error", "error": f"알 수 없는 LLM 서비스: {service}"}
+
+
+async def callLLMStream(messages: list, model: str = None, log_history: bool = True):
+    """LLM1 스트리밍 호출. 이벤트 dict 를 yield.
+
+    log_history=True (기본) 면 done/error 시 logs/llm_history.jsonl 에 기록.
+    LLM 테스트 패널처럼 일회성 테스트 용도면 False 로 끔.
+    """
+    service = _current_config["llm_service"]
+    use_model = model or _current_config["llm_model"]
+    endpoint = _current_config.get("custom_api_url", "")
+
+    final_text = ""
+    final_tokens = 0
+    final_elapsed = 0.0
+    final_tps = 0.0
+    final_ttft = None
+    error_msg = ""
+
+    async for ev in _dispatch_stream(messages, service, use_model, endpoint):
+        if ev["type"] == "done":
+            final_text = ev.get("text", "")
+            final_tokens = ev.get("completion_tokens", 0)
+            final_elapsed = ev.get("elapsed", 0.0)
+            final_tps = ev.get("tps", 0.0)
+            final_ttft = ev.get("ttft")
+        elif ev["type"] == "error":
+            error_msg = ev.get("error", "")
+        yield ev
+
+    if log_history:
+        _log_history(
+            service=service, model=use_model, messages=messages,
+            output=final_text, completion_tokens=final_tokens,
+            elapsed=final_elapsed, tps=final_tps, ttft=final_ttft,
+            error=error_msg,
+        )
