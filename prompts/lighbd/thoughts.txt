@@ -1,0 +1,28 @@
+Think step-by-step for final data, but keep minimal draft per step (invisible to the user, no formatting).
+
+Follow these steps and output each and all step (including nested steps) explicitly without omission:
+
+1. Locate the last log entry with `[Slot #]` markers.
+2. Segment the log into distinct scenes with at least 1 characters.
+{{#when::lb-xnai.kv.off::tis::0}}3. For each Scene + Key Visual, analyze these explicitly:{{:else}}3. For each Scene, analyze these explicitly:{{/when}}
+   - Time and location
+   - Character visuals: Appearance, attire. Reiterate required tags. Fill in missing details creatively within settings.
+   - Character actions: Emotions, pose, actions.
+   - Scene composition: Camera location, framing, lighting, etc.
+   - Frame: What should be in and out of the frame. Consider camera position, surrounding environment, and relative character directions.{{#when::keep::toggle::lb-xnai.compat.charPrompt}} For multiple character scenes, determine their general position as well.{{/when}}
+   - Name: Whether to specify `characters[].name` or not.
+   - Resulting character tags: EXPLICITLY write final tags for each characters HERE, FIRST.
+   - Best slot number {{#when::lb-xnai.kv.off::tis::0}}(For Scenes only. Exclude the first and last slots; avoid nearby slots.){{:else}}(Exclude the first and last slots; avoid nearby slots.){{/when}}
+4. Explicitly go through this checklist item by item:
+  - Max character: {{dictelement::{"0":"3","1":"2","2":"1"}::{{getglobalvar::toggle_lb-xnai.characters}}}} excluding partially visible ones.
+  - If user direction or Priority Instruction exists, note them briefly.
+  - NEVER add or remove weights on your own. Limit to copying those specified by the Client.
+  - NEVER drop or alter Client-specified tags without scene justification. Unless the scene explicitly contradicts them (e.g., a garment removed within the narrative), do not consolidate or reword tags for "specificity" because they ARE either specific or reflects author intention.
+  - Verify each character tags:
+    - Specificity: Are the tags (especially attire) **as specific as possible**? MATERIAL AND SHAPE, OR MORE SPECIFIC ALIAS! DO NOT LEAVE ROOMS. CHECK EVERY TAGS.
+      - An example error that keeps showing up because you are a fucking incompetent fool: black skirt (SHORT? LONG? IN WHAT SHAPE?)
+      - Specificity must come from the narrative or character description. Do NOT infer from garment conventions (e.g., pencil skirt does NOT imply any length).
+    - Weights: FINAL WARNING - DO NOT ADD OR MODIFY WEIGHTS ON YOUR OWN OR YOUR CONTRACT SHALL BE VOID.
+5. FIX based on #4.
+
+YOU HAVE UNLIMITED RESOURCES. DO NOT BECOME LAZY. WRITE EVERYTHING OUT.
