@@ -5898,8 +5898,17 @@
                             <select id="setting-llm-service" onchange="onLlmServiceChange()"
                                     style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: 0.85rem;">
                                 <option value="copilot">Copilot</option>
-                                <option value="vertex">Vertex</option>
+                                <option value="vertex">Vertex Gemini</option>
+                                <option value="vertex-openai">Vertex OpenAI</option>
                                 <option value="customapi">CustomAPI</option>
+                                <option value="openai">OpenAI</option>
+                                <option value="openrouter">OpenRouter</option>
+                                <option value="gemini">Gemini (AI Studio)</option>
+                                <option value="claude">Claude</option>
+                                <option value="lmstudio">LM Studio (로컬)</option>
+                                <option value="ollama">Ollama (로컬)</option>
+                                <option value="ollama-cloud">Ollama Cloud</option>
+                                <option value="openai-compat">OpenAI 호환 (Custom)</option>
                             </select>
                         </div>
                     </div>
@@ -5907,7 +5916,7 @@
                     <div class="setting-row">
                         <div class="setting-label">
                             <div class="title">LLM 모델명</div>
-                            <div class="desc">사용할 모델 (예: gpt-4.1, gemini-3-flash-preview)</div>
+                            <div class="desc">사용할 모델 (예: gpt-4.1, gemini-3-flash-preview, glm-4.6, claude-sonnet-4)</div>
                         </div>
                         <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
                             <input type="text" id="setting-llm-model" value="gpt-4.1" placeholder="gpt-4.1"
@@ -5915,15 +5924,92 @@
                         </div>
                     </div>
 
+                    <div class="setting-row" id="llm-api-key-row" style="display: none;">
+                        <div class="setting-label">
+                            <div class="title">LLM API 키</div>
+                            <div class="desc">OpenAI / OpenRouter / Gemini / Claude 용</div>
+                        </div>
+                        <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                            <input type="text" id="setting-llm-api-key" placeholder="sk-..."
+                                   style="width: 300px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-family: monospace;">
+                        </div>
+                    </div>
+
+                    <div class="setting-row" id="llm-url-row" style="display: none;">
+                        <div class="setting-label">
+                            <div class="title">LLM 베이스 URL (오버라이드)</div>
+                            <div class="desc">비워두면 provider 기본 URL 사용. CustomAPI/openai-compat 은 필수</div>
+                        </div>
+                        <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                            <input type="text" id="setting-llm-url" placeholder="https://..."
+                                   style="width: 300px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text);">
+                        </div>
+                    </div>
+
                     <div class="setting-row" id="customapi-url-row" style="display: none;">
                         <div class="setting-label">
                             <div class="title">CustomAPI 접속 경로</div>
-                            <div class="desc">CustomAPI 서비스의 베이스 URL</div>
+                            <div class="desc">CustomAPI/openai-compat 서비스의 베이스 URL (레거시)</div>
                         </div>
                         <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
                             <input type="text" id="setting-custom-api-url" placeholder="예: http://localhost:8190/copilot"
                                    style="width: 300px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text);">
                         </div>
+                    </div>
+
+                    <div class="setting-row" id="llm-reasoning-row" style="display: none;">
+                        <div class="setting-label">
+                            <div class="title">LLM1 Reasoning 설정</div>
+                            <div class="desc">auto 가 기본 (모델명으로 추론). custom 선택 시 JSON body 직접 입력</div>
+                        </div>
+                        <div class="setting-control" style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                            <select id="setting-llm-reasoning-preset" onchange="onReasoningPresetChange()"
+                                    style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: .85rem;">
+                                <option value="auto">auto (모델명 추론)</option>
+                                <option value="none">none (일반 모델)</option>
+                                <option value="gpt">gpt (reasoning_effort)</option>
+                                <option value="glm">glm (thinking)</option>
+                                <option value="deepseek">deepseek (thinking)</option>
+                                <option value="kimi">kimi (thinking)</option>
+                                <option value="claude">claude</option>
+                                <option value="gemini">gemini</option>
+                                <option value="custom">custom (JSON body 직접 입력)</option>
+                            </select>
+                            <select id="setting-llm-reasoning-effort"
+                                    style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: .85rem;">
+                                <option value="">(미지정, 기본값)</option>
+                                <option value="none">none (명시적 끔)</option>
+                                <option value="low">low</option>
+                                <option value="medium">medium</option>
+                                <option value="high">high</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="setting-row" id="llm-custom-body-row" style="display: none; flex-direction: column; align-items: stretch;">
+                        <div class="setting-label" style="margin-bottom: 8px;">
+                            <div class="title">LLM1 Custom Body (JSON)</div>
+                            <div class="desc">preset=custom 일 때 이 JSON 이 요청 body 에 머지됨. model/messages/stream 은 보존, 나머지 덮어쓰기</div>
+                        </div>
+                        <textarea id="setting-llm-custom-body" placeholder='{\n  "temperature": 0.8,\n  "top_p": 0.9,\n  "thinking": { "type": "disabled" },\n  "reasoning_effort": "none"\n}'
+                                  style="width: 100%; min-height: 120px; padding: 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-family: monospace; font-size: .8rem;"></textarea>
+                    </div>
+
+                    <div class="setting-row" id="vertex-key-row" style="display: none; flex-direction: column; align-items: stretch;">
+                        <div class="setting-label" style="margin-bottom: 8px;">
+                            <div class="title">Vertex 서비스 계정 JSON</div>
+                            <div class="desc">GCP 서비스 계정 키 JSON 붙여넣거나 파일에서 불러오기. key/vertex.json 으로 저장됨</div>
+                        </div>
+                        <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 8px;">
+                            <input type="file" id="setting-vertex-key-file" accept=".json,application/json"
+                                   style="font-size: .8rem; flex: 1;">
+                            <button onclick="loadVertexKeyFile()" style="padding: 6px 12px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); cursor: pointer;">파일 불러오기</button>
+                            <button onclick="saveVertexKey()" style="padding: 6px 12px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); cursor: pointer;">저장</button>
+                            <button onclick="deleteVertexKey()" style="padding: 6px 12px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); cursor: pointer;">삭제</button>
+                        </div>
+                        <textarea id="setting-vertex-key-json" placeholder='{ "type": "service_account", "project_id": "...", ... }'
+                                  style="width: 100%; min-height: 120px; padding: 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-family: monospace; font-size: .8rem;"></textarea>
+                        <div id="vertex-key-status" style="margin-top: 6px; font-size: .75rem; color: var(--text2);"></div>
                     </div>
 
                     <div class="setting-row">
@@ -5936,8 +6022,17 @@
                                     style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: .85rem;">
                                 <option value="">(LLM1과 동일)</option>
                                 <option value="copilot">Copilot</option>
-                                <option value="vertex">Vertex</option>
+                                <option value="vertex">Vertex Gemini</option>
+                                <option value="vertex-openai">Vertex OpenAI</option>
                                 <option value="customapi">CustomAPI</option>
+                                <option value="openai">OpenAI</option>
+                                <option value="openrouter">OpenRouter</option>
+                                <option value="gemini">Gemini (AI Studio)</option>
+                                <option value="claude">Claude</option>
+                                <option value="lmstudio">LM Studio (로컬)</option>
+                                <option value="ollama">Ollama (로컬)</option>
+                                <option value="ollama-cloud">Ollama Cloud</option>
+                                <option value="openai-compat">OpenAI 호환 (Custom)</option>
                             </select>
                         </div>
                     </div>
@@ -5951,6 +6046,67 @@
                             <input type="text" id="setting-llm-model2" placeholder="예: gemini-3-flash-preview"
                                    style="width: 200px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text);">
                         </div>
+                    </div>
+
+                    <div class="setting-row" id="llm-api-key2-row" style="display: none;">
+                        <div class="setting-label">
+                            <div class="title">LLM2 API 키 (옵션)</div>
+                            <div class="desc">LLM2 가 LLM1 과 다른 provider 일 때만. 비워두면 LLM1 키 재사용</div>
+                        </div>
+                        <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                            <input type="text" id="setting-llm-api-key2" placeholder="sk-..."
+                                   style="width: 300px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-family: monospace;">
+                        </div>
+                    </div>
+
+                    <div class="setting-row" id="llm-url2-row" style="display: none;">
+                        <div class="setting-label">
+                            <div class="title">LLM2 베이스 URL (옵션)</div>
+                            <div class="desc">LLM2 전용 URL 오버라이드. 비워두면 LLM1 URL 재사용</div>
+                        </div>
+                        <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                            <input type="text" id="setting-llm-url2" placeholder="https://..."
+                                   style="width: 300px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text);">
+                        </div>
+                    </div>
+
+                    <div class="setting-row" id="llm-reasoning2-row" style="display: none;">
+                        <div class="setting-label">
+                            <div class="title">LLM2 Reasoning 설정</div>
+                            <div class="desc">LLM2 가 LLM1 과 다를 때만. 비워두면 LLM1 reasoning 설정 재사용</div>
+                        </div>
+                        <div class="setting-control" style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                            <select id="setting-llm-reasoning-preset2" onchange="onReasoningPreset2Change()"
+                                    style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: .85rem;">
+                                <option value="">(LLM1과 동일)</option>
+                                <option value="auto">auto</option>
+                                <option value="none">none</option>
+                                <option value="gpt">gpt</option>
+                                <option value="glm">glm</option>
+                                <option value="deepseek">deepseek</option>
+                                <option value="kimi">kimi</option>
+                                <option value="claude">claude</option>
+                                <option value="gemini">gemini</option>
+                                <option value="custom">custom (JSON body)</option>
+                            </select>
+                            <select id="setting-llm-reasoning-effort2"
+                                    style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: .85rem;">
+                                <option value="">(LLM1과 동일)</option>
+                                <option value="none">none</option>
+                                <option value="low">low</option>
+                                <option value="medium">medium</option>
+                                <option value="high">high</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="setting-row" id="llm-custom-body2-row" style="display: none; flex-direction: column; align-items: stretch;">
+                        <div class="setting-label" style="margin-bottom: 8px;">
+                            <div class="title">LLM2 Custom Body (JSON)</div>
+                            <div class="desc">LLM2 preset=custom 일 때 JSON body 머지</div>
+                        </div>
+                        <textarea id="setting-llm-custom-body2" placeholder='{ ... }'
+                                  style="width: 100%; min-height: 120px; padding: 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-family: monospace; font-size: .8rem;"></textarea>
                     </div>
 
                     <div class="setting-row" id="customapi-url2-row" style="display: none;">
@@ -8113,10 +8269,31 @@
             document.getElementById('setting-llm-service').value = llmService;
             document.getElementById('setting-llm-model').value = currentConfig.llm_model || 'gpt-4.1';
             document.getElementById('setting-custom-api-url').value = currentConfig.custom_api_url || '';
+            const llmUrlEl = document.getElementById('setting-llm-url');
+            if (llmUrlEl) llmUrlEl.value = currentConfig.llm_url || '';
+            const llmUrl2El = document.getElementById('setting-llm-url2');
+            if (llmUrl2El) llmUrl2El.value = currentConfig.llm_url2 || '';
+            const llmPresetEl = document.getElementById('setting-llm-reasoning-preset');
+            if (llmPresetEl) llmPresetEl.value = currentConfig.llm_reasoning_preset || 'auto';
+            const llmEffortEl = document.getElementById('setting-llm-reasoning-effort');
+            if (llmEffortEl) llmEffortEl.value = currentConfig.llm_reasoning_effort || '';
+            const llmCustomBodyEl = document.getElementById('setting-llm-custom-body');
+            if (llmCustomBodyEl) llmCustomBodyEl.value = currentConfig.llm_custom_body || '';
+            const llmPreset2El = document.getElementById('setting-llm-reasoning-preset2');
+            if (llmPreset2El) llmPreset2El.value = currentConfig.llm_reasoning_preset2 || '';
+            const llmEffort2El = document.getElementById('setting-llm-reasoning-effort2');
+            if (llmEffort2El) llmEffort2El.value = currentConfig.llm_reasoning_effort2 || '';
+            const llmCustomBody2El = document.getElementById('setting-llm-custom-body2');
+            if (llmCustomBody2El) llmCustomBody2El.value = currentConfig.llm_custom_body2 || '';
+            onReasoningPresetChange();
+            onReasoningPreset2Change();
             document.getElementById('setting-llm-service2').value = currentConfig.llm_service2 || '';
             document.getElementById('setting-llm-model2').value = currentConfig.llm_model2 || '';
             document.getElementById('setting-custom-api-url2').value = currentConfig.custom_api_url2 || '';
             onLlmServiceChange();
+
+            // LLM API 키 별도 로드 (key/llm_keys.json)
+            loadLlmKeys();
 
             // 임베딩 설정
             const embProvider = currentConfig.embedding_provider || 'voyage';
@@ -8807,6 +8984,14 @@
                 llm_model2: document.getElementById('setting-llm-model2').value,
                 custom_api_url: document.getElementById('setting-custom-api-url').value,
                 custom_api_url2: document.getElementById('setting-custom-api-url2').value,
+                llm_url: (document.getElementById('setting-llm-url') || {}).value || '',
+                llm_url2: (document.getElementById('setting-llm-url2') || {}).value || '',
+                llm_reasoning_preset: (document.getElementById('setting-llm-reasoning-preset') || {}).value || 'auto',
+                llm_reasoning_effort: (document.getElementById('setting-llm-reasoning-effort') || {}).value || '',
+                llm_custom_body: (document.getElementById('setting-llm-custom-body') || {}).value || '',
+                llm_reasoning_preset2: (document.getElementById('setting-llm-reasoning-preset2') || {}).value || '',
+                llm_reasoning_effort2: (document.getElementById('setting-llm-reasoning-effort2') || {}).value || '',
+                llm_custom_body2: (document.getElementById('setting-llm-custom-body2') || {}).value || '',
                 embedding_provider: document.getElementById('setting-embedding-provider').value,
                 embedding_url: document.getElementById('setting-embedding-url').value,
                 embedding_api_key: document.getElementById('setting-embedding-api-key').value,
@@ -8851,6 +9036,9 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(config)
                 });
+
+                // API 키는 별도 저장 (config.json 분리)
+                await saveLlmKeys();
 
                 if (result.success) {
                     showToast('설정이 저장되었습니다', 'success');
@@ -9421,18 +9609,151 @@
         function onLlmServiceChange() {
             const s1 = document.getElementById('setting-llm-service').value;
             const s2 = document.getElementById('setting-llm-service2').value;
-            // LLM1 CustomAPI URL
-            const customRow = document.getElementById('customapi-url-row');
-            customRow.style.display = (s1 === 'customapi') ? 'flex' : 'none';
-            // LLM2 CustomAPI URL
+
+            // 어떤 provider가 API 키 필요로 하는가 (lmstudio/ollama 는 로컬이라 키 옵션)
+            const needsKey = (s) => ['openai', 'openrouter', 'gemini', 'claude', 'openai-compat', 'ollama-cloud', 'customapi', 'lmstudio', 'ollama'].includes(s);
+            // 어떤 provider가 URL 필요 (오버라이드 또는 필수)
+            const needsUrl = (s) => ['customapi', 'openai-compat', 'lmstudio', 'ollama', 'ollama-cloud'].includes(s);
+            // 어떤 provider가 reasoning 설정 지원
+            const supportsReasoning = (s) => ['openai', 'openrouter', 'openai-compat', 'customapi', 'lmstudio', 'ollama', 'ollama-cloud'].includes(s);
+
+            // LLM1
+            document.getElementById('llm-api-key-row').style.display = needsKey(s1) ? 'flex' : 'none';
+            document.getElementById('llm-url-row').style.display = needsUrl(s1) ? 'flex' : 'none';
+            document.getElementById('customapi-url-row').style.display = (s1 === 'customapi') ? 'flex' : 'none';
+            document.getElementById('llm-reasoning-row').style.display = supportsReasoning(s1) ? 'flex' : 'none';
+            const vertexKeyRow = document.getElementById('vertex-key-row');
+            if (vertexKeyRow) {
+                vertexKeyRow.style.display = (s1 === 'vertex' || s1 === 'vertex-openai') ? 'flex' : 'none';
+                if (s1 === 'vertex' || s1 === 'vertex-openai') loadVertexKeyStatus();
+            }
+
+            // LLM2
+            const key2Row = document.getElementById('llm-api-key2-row');
+            const url2Row = document.getElementById('llm-url2-row');
             const customRow2 = document.getElementById('customapi-url2-row');
-            customRow2.style.display = (s2 === 'customapi') ? 'flex' : 'none';
+            const reasoning2Row = document.getElementById('llm-reasoning2-row');
+            if (s2) {
+                // LLM2 가 별도 서비스일 때만 LLM2 필드 표시
+                if (key2Row) key2Row.style.display = needsKey(s2) ? 'flex' : 'none';
+                if (url2Row) url2Row.style.display = needsUrl(s2) ? 'flex' : 'none';
+                if (customRow2) customRow2.style.display = (s2 === 'customapi') ? 'flex' : 'none';
+                if (reasoning2Row) reasoning2Row.style.display = supportsReasoning(s2) ? 'flex' : 'none';
+            } else {
+                // LLM2 = (LLM1과 동일) 이면 LLM2 전용 필드 숨김
+                if (key2Row) key2Row.style.display = 'none';
+                if (url2Row) url2Row.style.display = 'none';
+                if (customRow2) customRow2.style.display = 'none';
+                if (reasoning2Row) reasoning2Row.style.display = 'none';
+            }
         }
 
         function onEmbeddingProviderChange() {
             const provider = document.getElementById('setting-embedding-provider').value;
             const urlRow = document.getElementById('embedding-url-row');
             urlRow.style.display = (provider === 'custom') ? 'flex' : 'none';
+        }
+
+        function onReasoningPresetChange() {
+            const v = document.getElementById('setting-llm-reasoning-preset').value;
+            const row = document.getElementById('llm-custom-body-row');
+            if (row) row.style.display = (v === 'custom') ? 'flex' : 'none';
+        }
+        function onReasoningPreset2Change() {
+            const v = document.getElementById('setting-llm-reasoning-preset2').value;
+            const row = document.getElementById('llm-custom-body2-row');
+            if (row) row.style.display = (v === 'custom') ? 'flex' : 'none';
+        }
+
+        // ─── LLM API 키 별도 저장 (key/llm_keys.json) ───
+        async function loadLlmKeys() {
+            try {
+                const resp = await fetch('/api/llm/keys');
+                const data = await resp.json();
+                const k1 = document.getElementById('setting-llm-api-key');
+                if (k1) k1.value = data.llm_api_key || '';
+                const k2 = document.getElementById('setting-llm-api-key2');
+                if (k2) k2.value = data.llm_api_key2 || '';
+            } catch (e) {
+                console.error('load LLM keys:', e);
+            }
+        }
+
+        async function saveLlmKeys() {
+            const k1 = (document.getElementById('setting-llm-api-key') || {}).value || '';
+            const k2 = (document.getElementById('setting-llm-api-key2') || {}).value || '';
+            try {
+                await fetch('/api/llm/keys', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ llm_api_key: k1, llm_api_key2: k2 }),
+                });
+            } catch (e) {
+                console.error('save LLM keys:', e);
+            }
+        }
+
+        // ─── Vertex JSON key 핸들러 ───
+        async function loadVertexKeyStatus() {
+            try {
+                const resp = await fetch('/api/llm/vertex_key');
+                const data = await resp.json();
+                const statusEl = document.getElementById('vertex-key-status');
+                if (!statusEl) return;
+                if (data.exists) {
+                    statusEl.textContent = `✓ 저장됨: project=${data.project_id || '(알 수 없음)'} email=${data.client_email || ''}`;
+                    statusEl.style.color = '#5cd5a0';
+                } else {
+                    statusEl.textContent = '✗ 키 없음';
+                    statusEl.style.color = '#ff6b6b';
+                }
+            } catch (e) {
+                console.error('vertex key status:', e);
+            }
+        }
+
+        function loadVertexKeyFile() {
+            const input = document.getElementById('setting-vertex-key-file');
+            if (!input.files || !input.files[0]) return;
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                document.getElementById('setting-vertex-key-json').value = e.target.result;
+            };
+            reader.readAsText(input.files[0]);
+        }
+
+        async function saveVertexKey() {
+            const text = document.getElementById('setting-vertex-key-json').value.trim();
+            if (!text) {
+                alert('JSON 내용이 비었음');
+                return;
+            }
+            try {
+                const resp = await fetch('/api/llm/vertex_key', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ json: text }),
+                });
+                const data = await resp.json();
+                if (resp.ok) {
+                    loadVertexKeyStatus();
+                } else {
+                    alert('저장 실패: ' + (data.error || resp.status));
+                }
+            } catch (e) {
+                alert('저장 실패: ' + e.message);
+            }
+        }
+
+        async function deleteVertexKey() {
+            if (!confirm('Vertex 키를 삭제하시겠습니까? (key/vertex.json)')) return;
+            try {
+                await fetch('/api/llm/vertex_key', { method: 'DELETE' });
+                document.getElementById('setting-vertex-key-json').value = '';
+                loadVertexKeyStatus();
+            } catch (e) {
+                alert('삭제 실패: ' + e.message);
+            }
         }
 
         // ─── 복장정리프롬프트 파일 목록 로드 ───

@@ -89,12 +89,26 @@ DEFAULT_CONFIG = {
     "clamp_value": 1.2,  # 가중치 클램프 최대값
     "outfit_mode_enabled": False,  # 복장 추출 모드 활성화 여부
     "outfit_workflow_source_path": "",  # 복장 추출 워크플로우 원본 소스 전체 경로
-    "llm_service": "copilot",   # LLM 서비스: copilot / vertex / customapi
+    "llm_service": "copilot",   # LLM 서비스: copilot / vertex / vertex-openai / customapi / openai / openrouter / gemini / claude / lmstudio / ollama / ollama-cloud / openai-compat
     "llm_model": "gpt-4.1",    # LLM 모델명
     "llm_service2": "",         # LLM2 서비스 (비워두면 LLM1 서비스 사용)
     "llm_model2": "",           # LLM2 모델명 (폴백, 비어있으면 비활성)
     "custom_api_url": "",       # LLM1 CustomAPI 접속 경로
     "custom_api_url2": "",      # LLM2 CustomAPI 접속 경로
+    # 주의: API 키(llm_api_key, llm_api_key2)는 config.json 에 저장 안 함.
+    # key/llm_keys.json 으로 분리 (handle_api_llm_keys 참조).
+    "llm_url": "",              # LLM1 베이스 URL 오버라이드
+    "llm_url2": "",             # LLM2 베이스 URL 오버라이드 (옵션)
+    "llm_reasoning_preset": "auto",   # auto|none|gpt|glm|deepseek|kimi|claude|gemini|custom
+    "llm_reasoning_effort": "",       # low|medium|high (OpenAI reasoning_effort)
+    "llm_reasoning_budget_tokens": 0, # GLM/deepseek thinking budget_tokens
+    "llm_custom_body": "",            # preset=custom 일 때 JSON 문자열로 body 에 머지
+    "llm_custom_body2": "",           # LLM2 용
+    "llm_reasoning_preset2": "auto",  # LLM2 전용 reasoning preset
+    "llm_reasoning_effort2": "",      # LLM2 전용 reasoning effort
+    "llm_temperature": 1.0,
+    "llm_max_tokens": 0,              # 0 = 기본값 사용
+    "llm_stream": False,
     "embedding_provider": "voyage",  # 임베딩 프로바이더: voyage / custom
     "embedding_url": "https://api.voyageai.com/v1/embeddings",  # 임베딩 API URL
     "embedding_api_key": "",      # 임베딩 API 키
@@ -1750,6 +1764,282 @@ async def handle_get_illust_logs(request: web.Request) -> web.Response:
     return web.json_response({"logs": logs})
 
 
+async def handle_api_lighbd_enqueue(request: web.Request) -> web.Response:
+    """POST /api/lighbd/enqueue - lighbd V3 plugin ENQUEUE entry.
+
+    RisuAI V3 plugin sends body+context as JSON. Server calls LLM for scene
+    split, dispatches parallel image generation, persists session.
+
+    Request body: {"context": "<body+prior messages>", "session_id"?: str}
+    Returns: {"status": "ok"|"error", "prompt_id": str, "session_id": str,
+              "scenes_count": int, "error"?: str}
+    """
+    try:
+        body = await request.json()
+        context = body.get("context", "") or ""
+        session_id = body.get("session_id", "") or str(uuid.uuid4())
+
+        if not context.strip():
+            print("[LIGHBD] /api/lighbd/enqueue rejected: empty context")
+            return web.json_response(
+                {"status": "error", "prompt_id": session_id, "error": "empty context"},
+                status=400,
+            )
+
+        from modes.lighbd_service import handle_enqueue
+        print(f"[LIGHBD] /api/lighbd/enqueue received prompt_id={session_id[:8]} context_len={len(context)}")
+        result = await handle_enqueue(context, session_id)
+        return web.json_response({
+            "status": result["status"],
+            "prompt_id": session_id,
+            "session_id": result.get("session_id", session_id),
+            "scenes_count": result.get("scenes_count", 0),
+            "error": result.get("error", ""),
+        })
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f"[LIGHBD] /api/lighbd/enqueue error: {e}\n{tb}")
+        return web.json_response(
+            {"status": "error", "error": str(e)},
+            status=500,
+        )
+
+
+async def handle_api_llm_keys(request: web.Request) -> web.Response:
+    """LLM API 키 별도 저장 (config.json 분리).
+
+    POST /api/llm/keys   {"llm_api_key": "...", "llm_api_key2": "..."} → key/llm_keys.json 저장
+    GET  /api/llm/keys   → {"llm_api_key": "...", "llm_api_key2": "...", "set1": bool, "set2": bool}
+    DELETE /api/llm/keys → 삭제
+    """
+    import os as _os
+    KEY_DIR_LOCAL = _os.path.join(BASE_DIR, "key")
+    keys_path = _os.path.join(KEY_DIR_LOCAL, "llm_keys.json")
+
+    try:
+        if request.method == "POST":
+            body = await request.json()
+            key1 = (body.get("llm_api_key") or "").strip()
+            key2 = (body.get("llm_api_key2") or "").strip()
+            # 기존 파일 보존하면서 병합 (한쪽만 업데이트 허용)
+            existing = {}
+            if _os.path.exists(keys_path):
+                try:
+                    with open(keys_path, "r", encoding="utf-8") as f:
+                        existing = json.load(f)
+                except Exception:
+                    existing = {}
+            # 빈 문자열이 오면 삭제 (사용자가 지웠다는 의미)
+            if key1:
+                existing["llm_api_key"] = key1
+            else:
+                existing.pop("llm_api_key", None)
+            if key2:
+                existing["llm_api_key2"] = key2
+            else:
+                existing.pop("llm_api_key2", None)
+
+            _os.makedirs(KEY_DIR_LOCAL, exist_ok=True)
+            with open(keys_path, "w", encoding="utf-8") as f:
+                json.dump(existing, f, ensure_ascii=False, indent=2)
+
+            # 런타임 config 동기화
+            from modes.llm_service import _current_config as _ls_cfg
+            _ls_cfg["llm_api_key"] = key1
+            _ls_cfg["llm_api_key2"] = key2
+
+            print(f"[LLM_KEY] keys saved: llm_api_key={'set' if key1 else 'empty'}, llm_api_key2={'set' if key2 else 'empty'}")
+            return web.json_response({
+                "status": "ok",
+                "set1": bool(key1),
+                "set2": bool(key2),
+                "llm_api_key": key1,
+                "llm_api_key2": key2,
+            })
+
+        if request.method == "DELETE":
+            if _os.path.exists(keys_path):
+                _os.remove(keys_path)
+            from modes.llm_service import _current_config as _ls_cfg
+            _ls_cfg["llm_api_key"] = ""
+            _ls_cfg["llm_api_key2"] = ""
+            print("[LLM_KEY] keys deleted")
+            return web.json_response({"status": "ok"})
+
+        # GET — 평문 반환 (사용자가 자기 키 확인 가능)
+        existing = {}
+        if _os.path.exists(keys_path):
+            try:
+                with open(keys_path, "r", encoding="utf-8") as f:
+                    existing = json.load(f)
+            except Exception:
+                existing = {}
+        return web.json_response({
+            "llm_api_key": existing.get("llm_api_key", ""),
+            "llm_api_key2": existing.get("llm_api_key2", ""),
+            "set1": bool(existing.get("llm_api_key")),
+            "set2": bool(existing.get("llm_api_key2")),
+        })
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f"[LLM_KEY] error: {e}\n{tb}")
+        return web.json_response({"error": str(e)}, status=500)
+
+
+def _load_llm_keys_into_config():
+    """서버 시작 시 key/llm_keys.json 을 llm_service._current_config 에 반영."""
+    import os as _os
+    keys_path = _os.path.join(BASE_DIR, "key", "llm_keys.json")
+    if not _os.path.exists(keys_path):
+        return
+    try:
+        with open(keys_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        from modes.llm_service import _current_config as _ls_cfg
+        if data.get("llm_api_key"):
+            _ls_cfg["llm_api_key"] = data["llm_api_key"]
+        if data.get("llm_api_key2"):
+            _ls_cfg["llm_api_key2"] = data["llm_api_key2"]
+        print(f"[LLM_KEY] loaded from key/llm_keys.json: key1={'set' if data.get('llm_api_key') else 'empty'}, key2={'set' if data.get('llm_api_key2') else 'empty'}")
+    except Exception as e:
+        print(f"[LLM_KEY] load failed: {e}")
+
+
+async def handle_api_lighbd_vertex_key(request: web.Request) -> web.Response:
+    """Vertex 서비스 계정 JSON 업로드/조회/삭제.
+
+    POST /api/llm/vertex_key   {"json": "<service account JSON>"} → 저장 (key/vertex.json)
+    GET  /api/llm/vertex_key   → {"exists": bool, "project_id": str, "client_email": str}
+    DELETE /api/llm/vertex_key → 삭제
+    """
+    import os as _os
+    KEY_DIR_LOCAL = _os.path.join(BASE_DIR, "key")
+    vertex_path = _os.path.join(KEY_DIR_LOCAL, "vertex.json")
+
+    try:
+        if request.method == "POST":
+            body = await request.json()
+            json_str = body.get("json", "")
+            if not json_str or not json_str.strip():
+                return web.json_response({"error": "empty json"}, status=400)
+            # JSON 형식 검증
+            try:
+                data = json.loads(json_str)
+            except json.JSONDecodeError as e:
+                return web.json_response({"error": f"invalid JSON: {e}"}, status=400)
+            if "project_id" not in data:
+                return web.json_response(
+                    {"error": "service account JSON must contain project_id"},
+                    status=400,
+                )
+            _os.makedirs(KEY_DIR_LOCAL, exist_ok=True)
+            with open(vertex_path, "w", encoding="utf-8") as f:
+                f.write(json_str)
+            print(f"[LIGHBD] Vertex key saved: project={data['project_id']} path={vertex_path}")
+            return web.json_response({
+                "status": "ok",
+                "project_id": data.get("project_id", ""),
+                "client_email": data.get("client_email", ""),
+            })
+
+        if request.method == "DELETE":
+            if _os.path.exists(vertex_path):
+                _os.remove(vertex_path)
+                print(f"[LIGHBD] Vertex key deleted: {vertex_path}")
+            return web.json_response({"status": "ok"})
+
+        # GET
+        if not _os.path.exists(vertex_path):
+            return web.json_response({"exists": False, "project_id": "", "client_email": ""})
+        try:
+            with open(vertex_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return web.json_response({
+                "exists": True,
+                "project_id": data.get("project_id", ""),
+                "client_email": data.get("client_email", ""),
+            })
+        except Exception as e:
+            return web.json_response({"exists": True, "error": str(e)})
+
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f"[LIGHBD] vertex_key error: {e}\n{tb}")
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def handle_api_lighbd_session(request: web.Request) -> web.Response:
+    """GET /api/lighbd/session/{sid} - 세션 상태 조회.
+
+    Returns: {session_id, status, plan, body_text, scenes:[{idx, sentence_slot,
+              positive, negative, prompt_id, status}]}
+    """
+    sid = request.match_info.get("sid", "")
+    if not sid:
+        return web.json_response({"error": "missing sid"}, status=400)
+    try:
+        from modes.lighbd_service import get_session_state
+        state = get_session_state(sid)
+        if state is None:
+            return web.json_response({"error": f"session not found: {sid}"}, status=404)
+        return web.json_response(state)
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f"[LIGHBD] /api/lighbd/session error: {e}\n{tb}")
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def handle_api_lighbd_image(request: web.Request) -> web.Response:
+    """GET /api/lighbd/image/{pid} - 씬 이미지 bytes 반환.
+
+    완료된 prompt_id: 실제 PNG bytes.
+    미완료/알 수 없음: 1x1 placeholder PNG.
+    """
+    pid = request.match_info.get("pid", "")
+    if not pid:
+        return web.Response(body=create_placeholder_png(), content_type="image/png")
+    try:
+        from modes.lighbd_service import get_image_bytes
+        img = get_image_bytes(pid)
+        if img is None:
+            return web.Response(body=create_placeholder_png(), content_type="image/png")
+        return web.Response(body=img, content_type="image/png")
+    except Exception as e:
+        print(f"[LIGHBD] /api/lighbd/image error: {e}")
+        return web.Response(body=create_placeholder_png(), content_type="image/png")
+
+
+async def handle_api_lighbd_reroll(request: web.Request) -> web.Response:
+    """POST /api/lighbd/reroll {session_id, scene_idx} - 씬 재생성 디스패치.
+
+    Returns: {session_id, scene_idx, prompt_id: new_pid, status: "queued"}
+    """
+    try:
+        body = await request.json()
+        sid = body.get("session_id", "")
+        scene_idx = body.get("scene_idx")
+        if not sid or scene_idx is None:
+            return web.json_response(
+                {"error": "session_id and scene_idx required"},
+                status=400,
+            )
+        try:
+            scene_idx_int = int(scene_idx)
+        except (ValueError, TypeError):
+            return web.json_response({"error": "scene_idx must be int"}, status=400)
+
+        from modes.lighbd_service import reroll_scene
+        result = reroll_scene(sid, scene_idx_int)
+        if "error" in result:
+            return web.json_response(result, status=400)
+        print(f"[LIGHBD] /api/lighbd/reroll session={sid[:8]} scene={scene_idx_int} new_pid={result['prompt_id'][:8]}")
+        return web.json_response(result)
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f"[LIGHBD] /api/lighbd/reroll error: {e}\n{tb}")
+        return web.json_response({"error": str(e)}, status=500)
+
+
 # ─── 라우트 핸들러 (ComfyUI 프록시) ─────────────────────
 async def handle_prompt(request: web.Request) -> web.Response:
     global reschedule_queue
@@ -1762,6 +2052,8 @@ async def handle_prompt(request: web.Request) -> web.Response:
             json.dumps(body, indent=2, ensure_ascii=False),
         )
         cleanup_logs(keep=3)
+
+        prompt_data = body.get("prompt", {})
 
         # 배치 모드 재전송 예약 확인 (batch_mode의 scheduled_batch 우선)
         if batch_mode.has_scheduled_images():
@@ -2988,6 +3280,20 @@ async def handle_api_config(request: web.Request) -> web.Response:
                 "llm_model2": app_config.get("llm_model2", ""),
                 "custom_api_url": app_config.get("custom_api_url", ""),
                 "custom_api_url2": app_config.get("custom_api_url2", ""),
+                "llm_api_key": app_config.get("llm_api_key", ""),
+                "llm_api_key2": app_config.get("llm_api_key2", ""),
+                "llm_url": app_config.get("llm_url", ""),
+                "llm_url2": app_config.get("llm_url2", ""),
+                "llm_reasoning_preset": app_config.get("llm_reasoning_preset", "auto"),
+                "llm_reasoning_effort": app_config.get("llm_reasoning_effort", ""),
+                "llm_reasoning_preset2": app_config.get("llm_reasoning_preset2", "auto"),
+                "llm_reasoning_effort2": app_config.get("llm_reasoning_effort2", ""),
+                "llm_custom_body": app_config.get("llm_custom_body", ""),
+                "llm_custom_body2": app_config.get("llm_custom_body2", ""),
+                "llm_reasoning_budget_tokens": app_config.get("llm_reasoning_budget_tokens", 0),
+                "llm_temperature": app_config.get("llm_temperature", 1.0),
+                "llm_max_tokens": app_config.get("llm_max_tokens", 0),
+                "llm_stream": app_config.get("llm_stream", False),
             })
 
             # 임베딩 서비스 설정 업데이트
@@ -3447,8 +3753,33 @@ async def log_middleware(request, handler):
         raise
 
 
+@web.middleware
+async def cors_middleware(request, handler):
+    """lighbd V3 plugin 용 CORS. /api/lighbd/* 경로에만 적용."""
+    if request.path.startswith("/api/lighbd/"):
+        origin = request.headers.get("Origin", "*")
+        # Preflight
+        if request.method == "OPTIONS":
+            return web.Response(
+                status=204,
+                headers={
+                    "Access-Control-Allow-Origin": origin,
+                    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+                    "Access-Control-Max-Age": "86400",
+                },
+            )
+        response = await handler(request)
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+        return response
+    return await handler(request)
+
+
+
 # ─── 앱 설정 ─────────────────────────────────────────────
-app = web.Application(middlewares=[log_middleware], client_max_size=200*1024*1024)
+app = web.Application(middlewares=[log_middleware, cors_middleware], client_max_size=200*1024*1024)
 
 # ComfyUI 프록시 라우트
 app.router.add_post("/prompt", handle_prompt)
@@ -3474,6 +3805,16 @@ app.router.add_get("/api/backup_chat", handle_api_backup_chat)
 app.router.add_get("/api/conversion_info", handle_api_conversion_info)
 app.router.add_post("/api/regenerate", handle_api_regenerate)
 app.router.add_post("/api/reload_workflow", handle_api_reload_workflow)
+app.router.add_post("/api/lighbd/enqueue", handle_api_lighbd_enqueue)
+app.router.add_get("/api/lighbd/session/{sid}", handle_api_lighbd_session)
+app.router.add_get("/api/lighbd/image/{pid}", handle_api_lighbd_image)
+app.router.add_post("/api/lighbd/reroll", handle_api_lighbd_reroll)
+app.router.add_post("/api/llm/vertex_key", handle_api_lighbd_vertex_key)
+app.router.add_get("/api/llm/vertex_key", handle_api_lighbd_vertex_key)
+app.router.add_delete("/api/llm/vertex_key", handle_api_lighbd_vertex_key)
+app.router.add_post("/api/llm/keys", handle_api_llm_keys)
+app.router.add_get("/api/llm/keys", handle_api_llm_keys)
+app.router.add_delete("/api/llm/keys", handle_api_llm_keys)
 app.router.add_get("/api/reschedule", handle_api_reschedule)
 app.router.add_post("/api/reschedule", handle_api_reschedule)
 app.router.add_post("/api/reschedule_with_modified_prompt", handle_api_reschedule_with_modified_prompt)
@@ -7960,7 +8301,17 @@ async def on_startup(app):
         "llm_model2": app_config.get("llm_model2", ""),
         "custom_api_url": app_config.get("custom_api_url", ""),
         "custom_api_url2": app_config.get("custom_api_url2", ""),
+        "llm_url": app_config.get("llm_url", ""),
+        "llm_url2": app_config.get("llm_url2", ""),
+        "llm_reasoning_preset": app_config.get("llm_reasoning_preset", "auto"),
+        "llm_reasoning_effort": app_config.get("llm_reasoning_effort", ""),
+        "llm_reasoning_budget_tokens": app_config.get("llm_reasoning_budget_tokens", 0),
+        "llm_temperature": app_config.get("llm_temperature", 1.0),
+        "llm_max_tokens": app_config.get("llm_max_tokens", 0),
+        "llm_stream": app_config.get("llm_stream", False),
     })
+    # API 키는 config.json 이 아닌 key/llm_keys.json 에서 로드
+    _load_llm_keys_into_config()
     # 임베딩 서비스 설정 초기화
     embedding_service.update_config({
         "embedding_provider": app_config.get("embedding_provider", "voyage"),
