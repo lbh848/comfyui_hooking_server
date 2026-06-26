@@ -1904,6 +1904,74 @@ async def handle_api_lighbd_history(request: web.Request) -> web.Response:
         return web.json_response({"status": "error", "error": str(e)}, status=500)
 
 
+async def handle_api_lighbd_prompts(request: web.Request) -> web.Response:
+    """GET/POST /api/lighbd/prompts - lighbd 프롬프트 파일 6종 로드·저장.
+
+    GET: {system, preset, jailbreak, job, thoughts, format} 반환.
+    POST {<key>: str, ...}: 저장. CLAUDE.md 룰에 따라
+    요구사항/ 폴더에 백업 후 UTF-8 쓰기. 빈 키는 무시(부분 갱신 안 함).
+    """
+    import os as _os
+    from modes.lighbd_service import PROMPTS_DIR as _PROMPTS_DIR
+
+    method = request.method.upper()
+    keys = ["system", "preset", "jailbreak", "job", "thoughts", "format"]
+    files = {k: _os.path.join(_PROMPTS_DIR, f"{k}.txt") for k in keys}
+
+    if method == "GET":
+        try:
+            out = {}
+            for k, p in files.items():
+                if _os.path.exists(p):
+                    with open(p, "r", encoding="utf-8") as f:
+                        out[k] = f.read()
+                else:
+                    out[k] = ""
+            return web.json_response(out)
+        except Exception as e:
+            tb = traceback.format_exc()
+            print(f"[LIGHBD] GET /api/lighbd/prompts error: {e}\n{tb}")
+            return web.json_response({"status": "error", "error": f"{e}\n{tb}"}, status=500)
+
+    if method == "POST":
+        try:
+            body = await request.json()
+            if not isinstance(body, dict):
+                return web.json_response({"status": "error", "error": "body must be object"}, status=400)
+
+            backup_dir = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "요구사항")
+            _os.makedirs(backup_dir, exist_ok=True)
+            ts = time.strftime("%Y%m%d_%H%M%S")
+            saved = []
+            for k, p in files.items():
+                v = body.get(k)
+                if v is None:
+                    continue
+                if not isinstance(v, str):
+                    return web.json_response({"status": "error", "error": f"{k} must be string"}, status=400)
+                # 백업
+                if _os.path.exists(p):
+                    try:
+                        bak = _os.path.join(backup_dir, f"lighbd_{k}.txt.bak_{ts}")
+                        with open(p, "r", encoding="utf-8") as fr:
+                            old = fr.read()
+                        with open(bak, "w", encoding="utf-8") as fw:
+                            fw.write(old)
+                    except Exception as be:
+                        print(f"[LIGHBD] WARN: backup failed for {k}.txt: {be}")
+                with open(p, "w", encoding="utf-8") as f:
+                    f.write(v)
+                saved.append(k)
+
+            return web.json_response({"status": "ok", "saved": saved})
+        except Exception as e:
+            tb = traceback.format_exc()
+            print(f"[LIGHBD] POST /api/lighbd/prompts error: {e}\n{tb}")
+            return web.json_response({"status": "error", "error": f"{e}\n{tb}"}, status=500)
+
+    return web.json_response({"status": "error", "error": "method not allowed"}, status=405)
+
+
 async def handle_api_llm_keys(request: web.Request) -> web.Response:
     """LLM API 키 별도 저장 (config.json 분리).
 
@@ -4009,6 +4077,8 @@ app.router.add_get("/api/lighbd/history", handle_api_lighbd_history)
 app.router.add_get("/api/lighbd/session/{sid}", handle_api_lighbd_session)
 app.router.add_get("/api/lighbd/image/{pid}", handle_api_lighbd_image)
 app.router.add_post("/api/lighbd/reroll", handle_api_lighbd_reroll)
+app.router.add_get("/api/lighbd/prompts", handle_api_lighbd_prompts)
+app.router.add_post("/api/lighbd/prompts", handle_api_lighbd_prompts)
 app.router.add_post("/api/llm/vertex_key", handle_api_lighbd_vertex_key)
 app.router.add_get("/api/llm/vertex_key", handle_api_lighbd_vertex_key)
 app.router.add_delete("/api/llm/vertex_key", handle_api_lighbd_vertex_key)

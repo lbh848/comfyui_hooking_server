@@ -31,7 +31,7 @@ def load_prompts() -> dict:
     """prompts/lighbd/*.txt를 읽어 dict로 반환. 파일 mtime 기반 캐싱."""
     global _PROMPTS_CACHE, _PROMPTS_MTIME
 
-    files = ["system", "job", "format", "thoughts", "jailbreak"]
+    files = ["system", "job", "format", "thoughts", "jailbreak", "preset"]
     latest_mtime = 0.0
     for name in files:
         p = os.path.join(PROMPTS_DIR, f"{name}.txt")
@@ -160,6 +160,8 @@ def parse_scenes(plan_xml: str) -> list:
             "camera": str(sc.get("camera") or ""),
             "scene": str(sc.get("scene") or ""),
             "name": ", ".join(name_parts),
+            "supplement": str(sc.get("supplement") or ""),
+            "characters": chars if isinstance(chars, list) else [],
         })
     return out
 
@@ -320,6 +322,115 @@ async def _stream_with_frontend_notify(prompt_id: str, messages: list):
     _log_lighbd_history(final_record)
 
 
+# ─── Preset 프롬프트 빌드 ────────────────────────────────
+def build_preset_prompt(preset_content: str, desc: dict, body_text: str) -> tuple[str, str]:
+    """Lua gen.lua:buildPresetPrompt (comfy 모드) 포팅.
+
+    preset 템플릿에서 [Positive]/[Negative] 영역 추출 → 플레이스홀더 치환.
+    IllustPromptBuilder.parse_sections가 [Name]/[SETUP]/[CHAR]/[SUPPLEMENT]
+    마커를 인식하므로, 치환 후 결과를 process_prompt로 전달하면
+    캐릭터 감지/LoRA/품질 태그까지 자동 적용됨.
+
+    Args:
+        preset_content: preset.txt 원본 (빈 문자열 허용)
+        desc: parse_scenes()의 씬 딕셔너리 (camera/scene/characters/supplement)
+        body_text: ENQUEUE context에서 발췌한 본문 ([BODY] 이후)
+
+    Returns:
+        (positive, negative) 치환 완료된 문자열.
+    """
+    desc = desc or {}
+    chars = desc.get("characters") or []
+
+    # [Positive]/[Negative] 영역 추출
+    positive_tmpl = ""
+    negative_tmpl = ""
+    if preset_content:
+        pos_m = re.search(r'\[Positive\]\s*(.*?)\s*\[Negative\]',
+                          preset_content, re.DOTALL | re.IGNORECASE)
+        if pos_m:
+            positive_tmpl = pos_m.group(1).strip()
+        neg_m = re.search(r'\[Negative\]\s*(.*)\Z',
+                          preset_content, re.DOTALL | re.IGNORECASE)
+        if neg_m:
+            negative_tmpl = neg_m.group(1).strip()
+
+    # setup = camera + ', ' + scene (루아 line 47-52: camera first)
+    setup_parts = []
+    if desc.get("camera"):
+        setup_parts.append(desc["camera"].strip())
+    if desc.get("scene"):
+        setup_parts.append(desc["scene"].strip())
+    setup_prompt = ", ".join(s for s in setup_parts if s)
+
+    # charPromptP/N (comfy 기본 divider = " | ", charPrompt transform OFF)
+    char_divider = " | "
+    char_prompt_p = char_divider.join(
+        (c.get("positive") or "").strip()
+        for c in chars if isinstance(c, dict) and (c.get("positive") or "").strip()
+    )
+    char_prompt_n = char_divider.join(
+        (c.get("negative") or "").strip()
+        for c in chars if isinstance(c, dict) and (c.get("negative") or "").strip()
+    )
+
+    supplement = (desc.get("supplement") or "").strip()
+
+    # {name} 치환 (루아 line 174-184)
+    names = [c.get("name", "").strip() for c in chars
+             if isinstance(c, dict) and (c.get("name") or "").strip()]
+    name_text = ", ".join(names)
+
+    # {chat} = body_text, {slot} = '' (프로젝트 결정: Python 포트에선 fullChat 발췌 불가)
+    chat_text = body_text or ""
+    slot_text = ""
+
+    positive = positive_tmpl
+    positive = positive.replace("{chat}", chat_text)
+    positive = positive.replace("{slot}", slot_text)
+    positive = positive.replace("{name}", name_text)
+
+    # comfy non-{prompt} 분기 (사용자 preset엔 {prompt} 없음)
+    if "{prompt}" in positive:
+        prompt_body = setup_prompt
+        if char_prompt_p:
+            prompt_body = prompt_body + ",\n\n" + char_prompt_p
+        if supplement:
+            prompt_body = prompt_body + ",\n\n" + supplement
+        positive = positive.replace("{prompt}", prompt_body)
+    else:
+        if "{setup}" in positive:
+            positive = positive.replace("{setup}", setup_prompt)
+        elif setup_prompt:
+            positive = (positive + ", " + setup_prompt) if positive else setup_prompt
+
+        if "{char}" in positive:
+            positive = positive.replace("{char}", char_prompt_p)
+        elif char_prompt_p:
+            positive = (positive + "\n\n" + char_prompt_p) if positive else char_prompt_p
+
+        if "{supplement}" in positive:
+            positive = positive.replace("{supplement}", supplement)
+        elif supplement:
+            positive = (positive + "\n\n" + supplement) if positive else supplement
+
+    # negative (루아 line 252-270 comfy 분기; negativeNote 없음 → 빈 문자열)
+    negative = negative_tmpl
+    if not negative:
+        negative = "{prompt}"
+    if "{prompt}" not in negative:
+        negative = negative + "{prompt}"
+    negative = negative.replace("{prompt}", "")
+    if char_prompt_n:
+        negative = (negative + "\n\n" + char_prompt_n) if negative else char_prompt_n
+    negative = negative.strip()
+
+    positive = re.sub(r'\n\n\n+', '\n\n', positive)
+    negative = re.sub(r'\n\n\n+', '\n\n', negative)
+
+    return positive, negative
+
+
 # ─── 병렬 생성 디스패치 ───────────────────────────────────
 def dispatch_generation(session_id: str, scenes: list, session_data: dict) -> None:
     """각 씬마다 prompt_id 발급, prompts 엔트리 사전 등록, 큐에 병렬 디스패치.
@@ -348,18 +459,37 @@ def dispatch_generation(session_id: str, scenes: list, session_data: dict) -> No
         traceback.print_exc()
         return
 
+    # preset 템플릿 로드 (build_preset_prompt용)
+    prompts = load_prompts()
+    preset_content = prompts.get("preset", "") or ""
+    if not preset_content:
+        print("[LIGHBD] WARN: preset.txt 비었음 — 플레이스홀더 치환 없이 flat positive만 전송")
+
+    # 본문 (context의 [BODY] 이후 발췌)
+    body_text = session_data.get("body_text", "") or ""
+
     for sc in scenes:
         prompt_id = sc.get("prompt_id") or str(uuid.uuid4())
         sc["prompt_id"] = prompt_id
         sc["status"] = "queued"
         sc["dispatched_at"] = time.time()
 
-        # 최소 prompt_data 구조만 담아 넘김.
-        # process_prompt → generate_image_with_prompt 가 update_workflow_if_needed +
-        # build_prompt 를 알아서 수행. 따라서 dispatch 시점에 workflow 가 로드되어
-        # 있지 않아도 됨.
-        positive = sc.get("positive", "") or ""
-        negative = sc.get("negative", "") or ""
+        # 루아 buildPresetPrompt 포팅 — positive/negative에
+        # camera/scene/supplement/chars 가 모두 포함된 마커 포맷으로 조립.
+        # process_prompt → IllustPromptBuilder.parse_sections 가
+        # [Name]/[SETUP]/[CHAR]/[SUPPLEMENT] 를 인식해 최종 빌드.
+        if preset_content:
+            try:
+                positive, negative = build_preset_prompt(preset_content, sc, body_text)
+            except Exception as e:
+                print(f"[LIGHBD] build_preset_prompt 실패 scene {sc['idx']}: {e}")
+                traceback.print_exc()
+                positive = sc.get("positive", "") or ""
+                negative = sc.get("negative", "") or ""
+        else:
+            positive = sc.get("positive", "") or ""
+            negative = sc.get("negative", "") or ""
+
         prompt_data = {
             f"lighbd_pos_{sc['idx']}": {
                 "_meta": {"title": "긍정프롬프트"},
@@ -382,7 +512,7 @@ def dispatch_generation(session_id: str, scenes: list, session_data: dict) -> No
             raw_body={},
             label=label,
         )
-        print(f"[LIGHBD] dispatched scene {sc['idx']} prompt_id={prompt_id[:8]}")
+        print(f"[LIGHBD] dispatched scene {sc['idx']} prompt_id={prompt_id[:8]} pos_len={len(positive)} neg_len={len(negative)}")
 
     # idx 기반 머지 — reroll 시 일부 씬만 재디스패치해도 다른 씬이 안 날아감
     existing = {s.get("idx"): s for s in session_data.get("scenes", []) if isinstance(s, dict)}
@@ -456,23 +586,53 @@ async def handle_enqueue(context: str, prompt_id: str) -> dict:
         _log_enqueue(prompt_id, context, "", status="error", error=msg)
         return {"plan": "", "status": "error", "error": msg}
 
-    system_content = prompts["system"]
-    if prompts.get("jailbreak"):
-        system_content += "\n\n---\n\n" + prompts["jailbreak"]
-    if prompts.get("thoughts"):
-        system_content += "\n\n---\n\n[Thought process]\n" + prompts["thoughts"]
-
-    # 활성 봇의 캐릭터 도감(lb_extra) 주입 — LLM이 장면 분할 시 캐릭터 외모/복장 참조
+    # 루아 LightBoard XNAI 모듈의 메시지 구조 반영:
+    #   1. user:    "# System rules" + jailbreak(요정 프레임) + "# Job Instruction"
+    #   2. user:    [CHARACTER DICTIONARY] (lb_extra, 있을 때만 별도 메시지)
+    #   3. user:    "# Chat log / --- Start of the log ---"
+    #   4. assistant: context (로그 본문)
+    #   5. user:    "--- End of the log ---"
+    #   6. user:    "# Output" + thoughts + system(Tagging Details) + format
+    #   7. user:    최종 포맷 리마인더
+    # system role 사용 안 함. 로그는 assistant 메시지로 샌드위치.
+    # 캐릭터 도감 lb_extra 주입 — LLM이 장면 분할 시 캐릭터 외모/복장 참조
     char_dict_yaml = _build_character_dictionary_yaml()
+
+    jailbreak_txt = (prompts.get("jailbreak") or "").strip()
+    job_txt = (prompts.get("job") or "").strip()
+    thoughts_txt = (prompts.get("thoughts") or "").strip()
+    system_txt = (prompts.get("system") or "").strip()
+    format_txt = (prompts.get("format") or "").strip()
+
+    # 1. system rules + job
+    msg1_parts = []
+    if jailbreak_txt:
+        msg1_parts.append("# System rules\n" + jailbreak_txt)
+    if job_txt:
+        msg1_parts.append("# Job Instruction\n" + job_txt)
+    msg1 = "\n\n---\n\n".join(msg1_parts)
+
+    # 6. output instructions
+    msg6_parts = []
+    if thoughts_txt:
+        msg6_parts.append("# Output\n" + thoughts_txt)
+    if system_txt:
+        msg6_parts.append(system_txt)
+    if format_txt:
+        msg6_parts.append("[Output format]\n" + format_txt)
+    msg6 = "\n\n---\n\n".join(msg6_parts)
+
+    messages = []
+    if msg1:
+        messages.append({"role": "user", "content": msg1})
     if char_dict_yaml:
-        system_content += "\n\n---\n\n[CHARACTER DICTIONARY]\n" + char_dict_yaml
-
-    user_content = prompts.get("job", "") + "\n\n[Output format]\n" + prompts["format"] + "\n\n[Context]\n" + context
-
-    messages = [
-        {"role": "system", "content": system_content},
-        {"role": "user", "content": user_content},
-    ]
+        messages.append({"role": "user", "content": "[CHARACTER DICTIONARY]\n" + char_dict_yaml})
+    messages.append({"role": "user", "content": "# Chat log\n\n--- Start of the log ---"})
+    messages.append({"role": "assistant", "content": context})
+    messages.append({"role": "user", "content": "--- End of the log ---"})
+    if msg6:
+        messages.append({"role": "user", "content": msg6})
+    messages.append({"role": "user", "content": "---\n\nAdhere to the format. You MUST OUTPUT IN THE STRUCTURED FORMAT/SYNTAX ABOVE, AS EXPLICITLY INSTRUCTED, WITHOUT ASSUMPTIONS OR GUESSES."})
 
     try:
         from modes.llm_service import callLLMStream

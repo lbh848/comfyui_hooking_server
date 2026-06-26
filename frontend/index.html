@@ -3375,8 +3375,8 @@
                 <div id="active-bot-popover-list" style="display:flex; flex-direction:column; gap:2px;"></div>
             </div>
 
-            <!-- lighbd LLM 스트리밍 위젯: 항상 표시 -->
-            <div id="lighbd-llm-widget" style="position:fixed; right:24px; bottom:100px; z-index:9998; display:flex;
+            <!-- lighbd LLM 스트리밍 위젯: 실행 중에만 표시 -->
+            <div id="lighbd-llm-widget" style="position:fixed; right:24px; bottom:100px; z-index:9998; display:none;
                     flex-direction:column; gap:6px; padding:10px 12px; width:320px; max-width:calc(100vw - 48px);
                     background:rgba(15,52,96,0.85); backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
                     border:1px solid var(--border); border-radius:12px;
@@ -9923,11 +9923,9 @@
                 const inputSummary = inputMessages.map(m => {
                     const role = (m.role || '?').toUpperCase();
                     const content = String(m.content || '');
-                    const preview = content.length > 200 ? content.slice(0, 200) + '...' : content;
-                    return `<div style="margin-bottom:4px;"><span style="color:var(--text2); font-weight:600;">[${escapeHtml(role)}]</span> <span style="white-space:pre-wrap; word-break:break-word;">${escapeHtml(preview)}</span></div>`;
+                    return `<div style="margin-bottom:4px;"><span style="color:var(--text2); font-weight:600;">[${escapeHtml(role)}]</span> <span style="white-space:pre-wrap; word-break:break-word;">${escapeHtml(content)}</span></div>`;
                 }).join('');
                 const outputText = r.output || '';
-                const outputPreview = outputText.length > 500 ? outputText.slice(0, 500) + '...' : outputText;
                 const stats = `토큰 ${r.completion_tokens ?? 0} · ${r.elapsed ?? 0}s · ${r.tps ?? 0} t/s` + (r.ttft ? ` · TTFT ${r.ttft}s` : '');
                 return `
                     <div style="border:1px solid var(--border); border-radius:6px; padding:10px; background:var(--surface2);">
@@ -9938,7 +9936,7 @@
                             <button onclick="document.getElementById('lighbd-hist-detail-${i}').style.display = (document.getElementById('lighbd-hist-detail-${i}').style.display === 'none' ? 'block' : 'none');" style="margin-left:auto; background:var(--surface); border:1px solid var(--border); color:var(--text2); padding:2px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">펼치기/접기</button>
                         </div>
                         <div style="font-size:0.7rem; color:var(--text2); margin-bottom:4px;">출력 요약:</div>
-                        <pre style="margin:0 0 6px 0; padding:6px; border-radius:4px; background:rgba(0,0,0,0.25); color:var(--text); font-family:monospace; font-size:0.72rem; line-height:1.4; white-space:pre-wrap; word-break:break-word; max-height:120px; overflow-y:auto;">${escapeHtml(isError ? (r.error || '') : outputPreview)}</pre>
+                        <pre style="margin:0 0 6px 0; padding:6px; border-radius:4px; background:rgba(0,0,0,0.25); color:var(--text); font-family:monospace; font-size:0.72rem; line-height:1.4; white-space:pre-wrap; word-break:break-word; max-height:120px; overflow-y:auto;">${escapeHtml(isError ? (r.error || '') : outputText)}</pre>
                         <div id="lighbd-hist-detail-${i}" style="display:none; margin-top:8px; border-top:1px dashed var(--border); padding-top:8px;">
                             <div style="font-size:0.7rem; color:var(--text2); margin-bottom:4px;">입력 (전체):</div>
                             <div style="padding:6px; border-radius:4px; background:rgba(0,0,0,0.15); font-size:0.72rem; line-height:1.4; max-height:300px; overflow-y:auto;">
@@ -24960,10 +24958,52 @@
                         <h2>📋 프롬프트 빌드 로그</h2>
                         <button class="modal-close" onclick="document.getElementById('illust-log-modal').classList.remove('visible')">&times;</button>
                     </div>
-                    <div class="modal-body" id="illust-log-body" style="max-height:70vh; overflow-y:auto;">
-                        <div style="text-align:center; padding:20px; color:var(--text2);">로딩 중...</div>
+                    <div style="display:flex; gap:4px; padding:8px 16px 0; border-bottom:1px solid var(--border);">
+                        <button id="illust-tab-logs" onclick="switchIllustModalTab('logs')" style="background:var(--accent); color:#fff; border:none; padding:8px 16px; border-radius:6px 6px 0 0; cursor:pointer; font-size:0.85rem; font-weight:600;">빌드 로그</button>
+                        <button id="illust-tab-llm" onclick="switchIllustModalTab('llm')" style="background:var(--surface2); color:var(--text2); border:none; padding:8px 16px; border-radius:6px 6px 0 0; cursor:pointer; font-size:0.85rem;">LLM 프롬프트 빌드</button>
                     </div>
-                    <div class="modal-footer" style="display:flex; align-items:center; gap:8px;">
+                    <div class="modal-body" id="illust-log-body" style="max-height:70vh; overflow-y:auto;">
+                        <div id="illust-tab-content-logs">
+                            <div style="text-align:center; padding:20px; color:var(--text2);">로딩 중...</div>
+                        </div>
+                        <div id="illust-tab-content-llm" style="display:none; padding:12px 16px;">
+                            <div style="margin-bottom:12px; padding:8px; background:rgba(0,0,0,0.06); border-radius:6px; font-size:0.75rem; color:var(--text2); line-height:1.5;">
+                                lighbd LLM 메시지 시퀀스 (루아 LightBoard XNAI 구조 반영):<br>
+                                1. <strong>jailbreak.txt</strong> + <strong>job.txt</strong> → 첫 user 메시지 (# System rules + # Job Instruction)<br>
+                                2. <strong>CHARACTER DICTIONARY</strong> (lb_extra 자동 주입, 별도 user)<br>
+                                3. 로그 시작 마커 → 4. <strong>context</strong> → assistant 메시지 → 5. 로그 종료 마커<br>
+                                6. <strong>thoughts.txt</strong> + <strong>system.txt</strong>(Tagging Details) + <strong>format.txt</strong> → 마지막 user 메시지 (# Output)<br>
+                                7. 최종 포맷 리마인더<br>
+                                <strong>preset.txt</strong>는 LLM 출력이 아니라 분할 결과(descriptor)를 IllustPromptBuilder로 전달하기 위한 템플릿. 플레이스홀더: <code>{chat}</code>(본문), <code>{slot}</code>(빈 값), <code>{name}</code>, <code>{setup}</code>(camera+scene), <code>{char}</code>, <code>{supplement}</code>.
+                            </div>
+                            <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
+                                <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--text);">📝 jailbreak.txt (첫 user - # System rules / 요정 프레임)</summary>
+                                <textarea id="lighbd-prompt-jailbreak" data-lighbd-prompt="jailbreak" style="width:100%; height:140px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
+                            </details>
+                            <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
+                                <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--text);">📝 job.txt (첫 user - # Job Instruction)</summary>
+                                <textarea id="lighbd-prompt-job" data-lighbd-prompt="job" style="width:100%; height:90px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
+                            </details>
+                            <details style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
+                                <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--text);">📝 thoughts.txt (마지막 user - # Output step-by-step)</summary>
+                                <textarea id="lighbd-prompt-thoughts" data-lighbd-prompt="thoughts" style="width:100%; height:180px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
+                            </details>
+                            <details style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
+                                <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--text);">📝 system.txt (마지막 user - Tagging Details)</summary>
+                                <textarea id="lighbd-prompt-system" data-lighbd-prompt="system" style="width:100%; height:280px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
+                            </details>
+                            <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
+                                <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--text);">📝 format.txt (마지막 user - lb-xnai YAML 템플릿)</summary>
+                                <textarea id="lighbd-prompt-format" data-lighbd-prompt="format" style="width:100%; height:200px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
+                            </details>
+                            <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
+                                <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--text);">📝 preset.txt (IllustPromptBuilder용 템플릿)</summary>
+                                <textarea id="lighbd-prompt-preset" data-lighbd-prompt="preset" style="width:100%; height:220px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
+                            </details>
+                            <div id="lighbd-prompt-status" style="margin-top:8px; font-size:0.72rem; color:var(--text2);"></div>
+                        </div>
+                    </div>
+                    <div class="modal-footer" id="illust-log-footer-logs" style="display:flex; align-items:center; gap:8px;">
                         <button id="illust-log-prev" onclick="illustLogPage(-1)" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:6px 12px; border-radius:4px; cursor:pointer;">◀ 이전</button>
                         <span id="illust-log-page-info" style="font-size:0.8rem; color:var(--text2);"></span>
                         <button id="illust-log-next" onclick="illustLogPage(1)" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:6px 12px; border-radius:4px; cursor:pointer;">다음 ▶</button>
@@ -24971,11 +25011,90 @@
                         <button onclick="refreshIllustLogs()" style="background:var(--accent); color:#fff; border:none; padding:6px 16px; border-radius:4px; cursor:pointer;">새로고침</button>
                         <button onclick="document.getElementById('illust-log-modal').classList.remove('visible')" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:6px 16px; border-radius:4px; cursor:pointer;">닫기</button>
                     </div>
+                    <div class="modal-footer" id="illust-log-footer-llm" style="display:none; align-items:center; gap:8px;">
+                        <span id="lighbd-prompt-dirty" style="font-size:0.75rem; color:var(--text2); flex:1;"></span>
+                        <button onclick="loadLighbdPrompts()" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:6px 16px; border-radius:4px; cursor:pointer;">다시 불러오기</button>
+                        <button onclick="saveLighbdPrompts()" style="background:var(--accent); color:#fff; border:none; padding:6px 16px; border-radius:4px; cursor:pointer;">💾 저장</button>
+                        <button onclick="document.getElementById('illust-log-modal').classList.remove('visible')" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:6px 16px; border-radius:4px; cursor:pointer;">닫기</button>
+                    </div>
                 </div>
             `;
             document.body.appendChild(modal);
             modal.classList.add('visible');
             refreshIllustLogs();
+            loadLighbdPrompts();
+        }
+
+        function switchIllustModalTab(tab) {
+            const logs = document.getElementById('illust-tab-logs');
+            const llm = document.getElementById('illust-tab-llm');
+            const logsBody = document.getElementById('illust-tab-content-logs');
+            const llmBody = document.getElementById('illust-tab-content-llm');
+            const logsFooter = document.getElementById('illust-log-footer-logs');
+            const llmFooter = document.getElementById('illust-log-footer-llm');
+            if (tab === 'logs') {
+                logs.style.background = 'var(--accent)'; logs.style.color = '#fff'; logs.style.fontWeight = '600';
+                llm.style.background = 'var(--surface2)'; llm.style.color = 'var(--text2)'; llm.style.fontWeight = '400';
+                logsBody.style.display = '';
+                llmBody.style.display = 'none';
+                logsFooter.style.display = 'flex';
+                llmFooter.style.display = 'none';
+            } else {
+                llm.style.background = 'var(--accent)'; llm.style.color = '#fff'; llm.style.fontWeight = '600';
+                logs.style.background = 'var(--surface2)'; logs.style.color = 'var(--text2)'; logs.style.fontWeight = '400';
+                llmBody.style.display = '';
+                logsBody.style.display = 'none';
+                llmFooter.style.display = 'flex';
+                logsFooter.style.display = 'none';
+                loadLighbdPrompts();
+            }
+        }
+
+        async function loadLighbdPrompts() {
+            const statusEl = document.getElementById('lighbd-prompt-status');
+            const fields = ['system', 'preset', 'jailbreak', 'job', 'thoughts', 'format'];
+            statusEl.textContent = '불러오는 중...';
+            try {
+                const res = await fetch('/api/lighbd/prompts');
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                const data = await res.json();
+                for (const k of fields) {
+                    const el = document.getElementById('lighbd-prompt-' + k);
+                    if (el) el.value = data[k] || '';
+                }
+                const sizes = fields.map(k => `${k} ${data[k]?.length || 0}자`).join(' · ');
+                statusEl.textContent = `로드 완료 (${sizes})`;
+            } catch (e) {
+                statusEl.innerHTML = `<span style="color:#ff6b6b;">로드 실패: ${escapeHtml(e.message || String(e))}</span>`;
+            }
+        }
+
+        async function saveLighbdPrompts() {
+            const statusEl = document.getElementById('lighbd-prompt-status');
+            const fields = ['system', 'preset', 'jailbreak', 'job', 'thoughts', 'format'];
+            const body = {};
+            for (const k of fields) {
+                const el = document.getElementById('lighbd-prompt-' + k);
+                if (el) body[k] = el.value;
+            }
+            statusEl.textContent = '저장 중...';
+            try {
+                const res = await fetch('/api/lighbd/prompts', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(body),
+                });
+                if (!res.ok) {
+                    const errBody = await res.json().catch(() => ({}));
+                    throw new Error(errBody.error || ('HTTP ' + res.status));
+                }
+                const data = await res.json();
+                statusEl.innerHTML = `<span style="color:#5cd5a0;">저장 완료 (파일: ${(data.saved || []).join(', ')})</span>`;
+                showToast('lighbd 프롬프트 저장 완료', 'success');
+            } catch (e) {
+                statusEl.innerHTML = `<span style="color:#ff6b6b;">저장 실패: ${escapeHtml(e.message || String(e))}</span>`;
+                showToast('lighbd 프롬프트 저장 실패: ' + (e.message || String(e)), 'error');
+            }
         }
 
         function illustLogPage(delta) {
@@ -24984,7 +25103,7 @@
         }
 
         function _renderIllustLogPage() {
-            const body = document.getElementById('illust-log-body');
+            const body = document.getElementById('illust-tab-content-logs');
             if (!body) return;
             const logs = _illustLogAllLogs;
             const totalPages = Math.max(1, Math.ceil(logs.length / ILLUST_LOG_PER_PAGE));
@@ -25050,7 +25169,7 @@
         }
 
         async function refreshIllustLogs() {
-            const body = document.getElementById('illust-log-body');
+            const body = document.getElementById('illust-tab-content-logs');
             if (!body) return;
             try {
                 const res = await fetchJSON('/api/bot_mode/illust_logs');

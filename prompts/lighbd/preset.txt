@@ -1,0 +1,16 @@
+[Positive]
+[CHAT]
+{chat}
+[SLOT]
+{slot}
+[Name]
+{name}
+[SETUP]
+{setup}
+[CHAR]
+{char}
+[SUPPLEMENT]
+{supplement}
+
+[Negative]
+lowres, worst quality, bad quality, low quality, normal quality, worst detail, displeasing, fewer details, unfinished, incomplete, sketch, watermark, username, patreon username, logo, patreon logo, sign, artist collaboration, 3d, realistic, blender, pixel art, character doll, JPEG artifacts, aliasing, dithering, scan artifacts, blurry, chromatic aberration, screentone, film grain, heavy film grain, digital dissolve, censor, censored, mosaic censoring, bar censor, cropped, split theme, split screen, head out of frame, distorted composition, bad perspective, one-hour drawing challenge, 4koma, 2koma, bad anatomy, anatomically incorrect, bad proportions, mutation, deformed, disfigured, duplicate, amputee, bad hands, bad hand structure, bad arm, bad leg, bad limbs, bad feet, missing finger, extra digits, fewer digits, unclear fingertips, extra arms, extra legs, twist, bad face, mob face, bad eyes, unnatural hair, big head, big nose, nostrils, philtrum, beard, bald, long neck, futanari, breast ptosis, squiggly, bad gun anatomy, bullpup
