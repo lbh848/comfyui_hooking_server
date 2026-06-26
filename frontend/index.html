@@ -22835,27 +22835,133 @@
         }
 
         // ─── 봇 CRUD ──────────────────────────────
-        async function addBot() {
-            const name = prompt('봇 이름을 입력하세요:');
-            if (!name || !name.trim()) return;
-            try {
-                const resp = await fetch('/api/bot_mode/action', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({action: 'add_bot', name: name.trim()})
-                });
-                const data = await resp.json();
-                if (data.error) { alert(data.error); return; }
-                botData.bots = data.bots;
-                botCurrentBot = name.trim();
-                renderBotSelect();
-                renderBotList();
-                onBotChange();
-                showToast(`봇 "${name.trim()}" 추가됨`);
-            } catch (e) {
-                console.error('[BOT] 봇 추가 실패:', e);
-                alert('봇 추가 실패');
+        // 한글(Hangul Syllables / 호환 자모 / 확장) 포함 여부 실시간 체크용 정규식
+        const _BOT_NAME_KOREAN_RE = /[가-힣ᄀ-ᇿ㄰-㆏ꥠ-꥿ힰ-퟿]/;
+
+        function closeBotNameModal() {
+            const m = document.getElementById('bot-name-modal');
+            if (m) m.style.display = 'none';
+        }
+
+        // 범용 이름 입력 모달 — 한글 입력 시 즉시 차단 + 경고.
+        // opts: { title, placeholder, confirmText, onConfirm(name) }
+        function openBotNameModal(opts) {
+            const o = Object.assign({
+                title: '이름 입력',
+                placeholder: '',
+                confirmText: '확인',
+                onConfirm: () => {}
+            }, opts || {});
+
+            let modal = document.getElementById('bot-name-modal');
+            if (!modal) {
+                modal = document.createElement('div');
+                modal.id = 'bot-name-modal';
+                document.body.appendChild(modal);
             }
+            modal.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.6); z-index:10000; display:flex; align-items:center; justify-content:center;';
+            modal.innerHTML = `
+                <div style="background:var(--surface); border-radius:12px; width:90vw; max-width:420px; display:flex; flex-direction:column; overflow:hidden; box-shadow:0 12px 48px rgba(0,0,0,0.4);">
+                    <div style="padding:14px 18px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
+                        <h3 style="margin:0; font-size:1rem;">${escapeHtml(o.title)}</h3>
+                        <button onclick="closeBotNameModal()" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer; padding:0 4px;">✕</button>
+                    </div>
+                    <div style="padding:16px 18px;">
+                        <input id="bot-name-input" type="text" placeholder="${escapeHtml(o.placeholder)}" autocomplete="off"
+                            style="width:100%; box-sizing:border-box; padding:8px 10px; font-size:0.9rem; border:1px solid var(--border); border-radius:6px; background:var(--surface2); color:var(--text); font-family:monospace;">
+                        <div id="bot-name-warning" style="margin-top:8px; font-size:0.75rem; color:#ff6b6b; line-height:1.4; display:none;"></div>
+                        <div style="margin-top:6px; font-size:0.7rem; color:var(--text2); line-height:1.4;">
+                            영어/숫자/기호만 가능 (공백, 한글 불가)
+                        </div>
+                    </div>
+                    <div style="padding:12px 18px; border-top:1px solid var(--border); display:flex; gap:8px; justify-content:flex-end;">
+                        <button onclick="closeBotNameModal()" style="padding:8px 16px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); cursor:pointer;">취소</button>
+                        <button id="bot-name-confirm" style="padding:8px 16px; border-radius:6px; border:none; background:var(--accent); color:#fff; cursor:pointer;">${escapeHtml(o.confirmText)}</button>
+                    </div>
+                </div>
+            `;
+
+            const input = document.getElementById('bot-name-input');
+            const warning = document.getElementById('bot-name-warning');
+            const confirmBtn = document.getElementById('bot-name-confirm');
+            const onConfirm = o.onConfirm;
+
+            function applyState(disabled, warnText) {
+                confirmBtn.disabled = disabled;
+                confirmBtn.style.opacity = disabled ? '0.5' : '';
+                confirmBtn.style.cursor = disabled ? 'not-allowed' : '';
+                if (warnText) {
+                    warning.textContent = warnText;
+                    warning.style.display = '';
+                } else {
+                    warning.style.display = 'none';
+                }
+            }
+
+            function validate() {
+                const v = input.value;
+                if (_BOT_NAME_KOREAN_RE.test(v)) {
+                    applyState(true, '⚠ 한글은 사용할 수 없습니다. 영어/숫자/기호로만 입력하세요.');
+                } else if (!v.trim()) {
+                    applyState(true, '');
+                } else {
+                    applyState(false, '');
+                }
+            }
+
+            input.addEventListener('input', validate);
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    if (!confirmBtn.disabled) {
+                        const name = input.value.trim();
+                        closeBotNameModal();
+                        onConfirm(name);
+                    }
+                } else if (e.key === 'Escape') {
+                    closeBotNameModal();
+                }
+            });
+            confirmBtn.addEventListener('click', () => {
+                if (confirmBtn.disabled) return;
+                const name = input.value.trim();
+                closeBotNameModal();
+                onConfirm(name);
+            });
+
+            validate();
+            setTimeout(() => input.focus(), 0);
+        }
+
+        async function addBot() {
+            openBotNameModal({
+                title: '봇 이름 입력',
+                placeholder: '예: my_bot',
+                confirmText: '추가',
+                onConfirm: async (name) => {
+                    try {
+                        const resp = await fetch('/api/bot_mode/action', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({action: 'add_bot', name})
+                        });
+                        const data = await resp.json();
+                        if (data.error) {
+                            showToast('봇 추가 실패: ' + data.error, 'error');
+                            return;
+                        }
+                        botData.bots = data.bots;
+                        botCurrentBot = name;
+                        renderBotSelect();
+                        renderBotList();
+                        onBotChange();
+                        showToast(`봇 "${name}" 추가됨`);
+                    } catch (e) {
+                        console.error('[BOT] 봇 추가 실패:', e);
+                        showToast('봇 추가 실패: ' + (e.message || String(e)), 'error');
+                    }
+                }
+            });
         }
 
         async function removeBot() {
