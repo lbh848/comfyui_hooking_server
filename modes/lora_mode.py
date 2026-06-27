@@ -583,6 +583,34 @@ def save_training_prompt(character: str, entry: str, filename: str, positive: st
         return {"success": False, "error": str(e)}
 
 
+def save_training_prompt_positive_only(character: str, entry: str, filename: str, positive: str) -> dict:
+    """LLM 정제(일괄) 결과로 positive만 교체. negative/original_*는 기존값을 그대로 유지한다."""
+    if ".." in filename or os.path.sep in filename:
+        return {"success": False, "error": "잘못된 파일명"}
+    t_dir = _training_dir(character, entry)
+    base = os.path.splitext(filename)[0]
+    prompt_path = os.path.join(t_dir, f"{base}_prompt.json")
+    try:
+        existing = {}
+        if os.path.isfile(prompt_path):
+            with open(prompt_path, "r", encoding="utf-8") as f:
+                existing = json.load(f)
+        if "original_positive" not in existing:
+            existing["original_positive"] = existing.get("positive", "")
+        if "original_negative" not in existing:
+            existing["original_negative"] = existing.get("negative", "")
+        # positive만 교체 — negative는 절대 건드리지 않는다 (LLM 정제는 positive에만 관여).
+        existing["positive"] = positive
+        with open(prompt_path, "w", encoding="utf-8") as f:
+            json.dump(existing, f, ensure_ascii=False, indent=2)
+        print(f"[LORA] 학습 프롬프트 정제(positive-only) 저장 완료: {prompt_path}")
+        return {"success": True}
+    except Exception as e:
+        print(f"[LORA] 학습 프롬프트 정제(positive-only) 저장 실패: {prompt_path} - {e}")
+        traceback.print_exc()
+        return {"success": False, "error": str(e)}
+
+
 # ─── 테스트 이미지 관리 ─────────────────────────────────────
 
 def add_test_images(character: str, entry: str, sources: list) -> dict:
@@ -814,6 +842,33 @@ def save_test_prompt(character: str, entry: str, filename: str, positive: str, n
         return {"success": True}
     except Exception as e:
         print(f"[LORA] 테스트 프롬프트 저장 실패: {prompt_path} - {e}")
+        return {"success": False, "error": str(e)}
+
+
+def save_test_prompt_positive_only(character: str, entry: str, filename: str, positive: str) -> dict:
+    """LLM 정제(테스트 일괄 세팅) 결과로 positive만 교체. negative/original_*는 유지한다."""
+    if ".." in filename or os.path.sep in filename:
+        return {"success": False, "error": "잘못된 파일명"}
+    t_dir = _test_dir(character, entry)
+    base = os.path.splitext(filename)[0]
+    prompt_path = os.path.join(t_dir, f"{base}_prompt.json")
+    try:
+        existing = {}
+        if os.path.isfile(prompt_path):
+            with open(prompt_path, "r", encoding="utf-8") as f:
+                existing = json.load(f)
+        if "original_positive" not in existing:
+            existing["original_positive"] = existing.get("positive", "")
+        if "original_negative" not in existing:
+            existing["original_negative"] = existing.get("negative", "")
+        existing["positive"] = positive
+        with open(prompt_path, "w", encoding="utf-8") as f:
+            json.dump(existing, f, ensure_ascii=False, indent=2)
+        print(f"[LORA] 테스트 프롬프트 정제(positive-only) 저장 완료: {prompt_path}")
+        return {"success": True}
+    except Exception as e:
+        print(f"[LORA] 테스트 프롬프트 정제(positive-only) 저장 실패: {prompt_path} - {e}")
+        traceback.print_exc()
         return {"success": False, "error": str(e)}
 
 

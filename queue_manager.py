@@ -1617,6 +1617,10 @@ class QueueManager:
         if source_type == "bot_lora_test_setup":
             return await self._handle_bot_lora_test_setup(item, params)
 
+        # asset_test_setup: 에셋(asset) 테스트 이미지 일괄 세팅 (entry 단위, bot/project 미사용).
+        if source_type == "asset_test_setup":
+            return await self._handle_asset_test_setup(item, params)
+
         bot_name = params.get("bot_name", "")
         project_name = params.get("project_name", "")
         char_name = params.get("char_name", "")
@@ -1833,6 +1837,112 @@ class QueueManager:
             traceback.print_exc()
             return f"{type(e).__name__}: {e}"
 
+    async def _handle_asset_test_setup(self, item: QueueItem, params: dict) -> dict:
+        """에셋 테스트 이미지 일괄 세팅: 텍스트 LLM으로 테스트 프롬프트 생성 →
+        현재 entry의 해당 테스트 이미지 프롬프트 positive로 저장 (복사 불필요).
+        카드(캐릭터 복장/외모) 소스 = 현재 entry 학습 이미지 첫 번째 positive."""
+        from modes.instance_lora_mode import run_auto_refine_test_setup
+        char_name = params.get("char_name", "")
+        entry = params.get("entry", "")
+        card_positive = params.get("card_positive", "")
+        test_filename = params.get("test_filename", "")
+        test_positive = params.get("test_positive", "")
+        event_type = "lora_prompt_refine_progress"
+
+        if not char_name or not entry:
+            raise ValueError("asset_test_setup은 char_name, entry가 필요합니다")
+        if not test_filename:
+            raise ValueError("test_filename이 필요합니다")
+
+        await self._notify_progress(item, {"percentage": 0, "phase": "running"})
+        if self.notify_frontend:
+            await self.notify_frontend(event_type, {
+                "phase": "running",
+                "source_type": "asset_test_setup",
+                "character": char_name,
+                "entry": entry,
+                "test_filename": test_filename,
+            })
+
+        try:
+            result = await run_auto_refine_test_setup(
+                character=char_name,
+                test_filename=test_filename,
+                card_positive=card_positive,
+                test_positive=test_positive,
+                bot_name="",
+                project_name="",
+            )
+            if not result.get("success"):
+                err = result.get("error", "알 수 없는 오류")
+                print(f"[QUEUE:ASSET_TEST_SETUP] 정제 실패: char={char_name} entry={entry} test={test_filename} - {err}")
+                if self.notify_frontend:
+                    await self.notify_frontend(event_type, {
+                        "phase": "failed",
+                        "source_type": "asset_test_setup",
+                        "character": char_name,
+                        "entry": entry,
+                        "test_filename": test_filename,
+                        "error": err,
+                    })
+                raise RuntimeError(err)
+
+            refined_positive = result["data"].get("positive") or ""
+
+            persist_err = self._persist_asset_test_setup(char_name, entry, test_filename, refined_positive)
+            if persist_err:
+                print(f"[QUEUE:ASSET_TEST_SETUP] 영속화 실패: char={char_name} entry={entry} test={test_filename} - {persist_err}")
+                if self.notify_frontend:
+                    await self.notify_frontend(event_type, {
+                        "phase": "failed",
+                        "source_type": "asset_test_setup",
+                        "character": char_name,
+                        "entry": entry,
+                        "test_filename": test_filename,
+                        "error": persist_err,
+                    })
+                raise RuntimeError(persist_err)
+
+            await self._notify_progress(item, {"percentage": 100, "phase": "completed"})
+            if self.notify_frontend:
+                await self.notify_frontend(event_type, {
+                    "phase": "completed",
+                    "source_type": "asset_test_setup",
+                    "character": char_name,
+                    "entry": entry,
+                    "test_filename": test_filename,
+                    "positive": refined_positive,
+                })
+            print(f"[QUEUE:ASSET_TEST_SETUP] 완료: char={char_name} entry={entry} test={test_filename} 길이={len(refined_positive)}")
+            return {"success": True, "positive": refined_positive}
+        except Exception as e:
+            print(f"[QUEUE:ASSET_TEST_SETUP] char={char_name} entry={entry} test={test_filename} 실패: {e}")
+            traceback.print_exc()
+            if self.notify_frontend:
+                await self.notify_frontend(event_type, {
+                    "phase": "failed",
+                    "source_type": "asset_test_setup",
+                    "character": char_name,
+                    "entry": entry,
+                    "test_filename": test_filename,
+                    "error": str(e),
+                })
+            raise
+
+    def _persist_asset_test_setup(self, character: str, entry: str, test_filename: str, positive: str) -> str | None:
+        """에셋 테스트 일괄 세팅 영속화: 복사 불필요(이미 entry test_images에 존재).
+        조합 결과 positive를 해당 테스트 이미지 프롬프트에 저장. 반환: 성공 → None, 실패 → 에러."""
+        try:
+            from modes.lora_mode import save_test_prompt_positive_only
+            sv = save_test_prompt_positive_only(character, entry, test_filename, positive)
+            if not sv.get("success"):
+                return sv.get("error", "테스트 프롬프트 저장 실패")
+            return None
+        except Exception as e:
+            print(f"[QUEUE:ASSET_TEST_SETUP] 영속화 예외: {e}")
+            traceback.print_exc()
+            return f"{type(e).__name__}: {e}"
+
     def _persist_refined_positive(self, source_type: str, bot_name: str, project_name: str,
                                   char_name: str, entry: str, filename: str, positive: str) -> str | None:
         """LLM 정제 결과 positive만 영속화. negative는 절대 건드리지 않는다.
@@ -1845,6 +1955,15 @@ class QueueManager:
             if source_type == "bot_lora_training":
                 from modes.bot_lora_mode import save_bot_training_prompt_positive_only
                 sv = save_bot_training_prompt_positive_only(bot_name, project_name, char_name, filename, positive)
+                if not sv.get("success"):
+                    return sv.get("error", "저장 실패")
+                return None
+            if source_type == "training":
+                # 에셋(asset) 학습 이미지 일괄 정제 — entry 단위. bot/project 미사용.
+                from modes.lora_mode import save_training_prompt_positive_only
+                if not entry:
+                    return "training 소스는 entry가 필요합니다"
+                sv = save_training_prompt_positive_only(char_name, entry, filename, positive)
                 if not sv.get("success"):
                     return sv.get("error", "저장 실패")
                 return None
