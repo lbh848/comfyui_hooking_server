@@ -205,6 +205,8 @@ async def run_auto_refine_lora_prompt(
     반환: {"success": True, "data": {"positive": "..."}} 또는 {"success": False, "error": "..."}
     """
     from modes.llm_service import callLLMVision, supports_vision, get_config
+    from modes.lighbd_service import _log_lighbd_history
+    import datetime
 
     async def _notify_llm_widget(event_type: str, data: dict = None):
         try:
@@ -346,12 +348,23 @@ async def run_auto_refine_lora_prompt(
             if raw and not raw.startswith("[LLM 실패]"):
                 parsed = _parse_auto_lora_prompt_response(raw, gender_fallback=gender_tag)
                 if parsed is not None:
-                    await _notify_llm_widget("done", {
+                    done_data = {
                         "text": raw,
                         "completion_tokens": max(1, len(raw) // 3),
                         "elapsed": round(total_elapsed, 3),
                         "tps": round((max(1, len(raw) // 3) / total_elapsed), 1) if total_elapsed > 0 else 0.0,
                         "ttft": None,
+                    }
+                    await _notify_llm_widget("done", done_data)
+                    _log_lighbd_history({
+                        "ts": datetime.datetime.now().isoformat(timespec="seconds"),
+                        "prompt_id": f"auto_lora_prompt:{source_type}:{char_name}/{filename}",
+                        "input": messages,
+                        "output": raw,
+                        "completion_tokens": done_data["completion_tokens"],
+                        "elapsed": done_data["elapsed"],
+                        "tps": done_data["tps"],
+                        "status": "ok",
                     })
                     print(f"[INSTANCE_LORA] auto_refine_lora_prompt 완료: positive 길이={len(parsed['positive'])} (시도 {attempt + 1})")
                     return {"success": True, "data": parsed}
@@ -366,11 +379,28 @@ async def run_auto_refine_lora_prompt(
                 await asyncio.sleep(1.0 * (attempt + 1))
 
         await _notify_llm_widget("error", {"error": last_err or "알 수 없는 오류", "elapsed": round(total_elapsed, 3)})
+        _log_lighbd_history({
+            "ts": datetime.datetime.now().isoformat(timespec="seconds"),
+            "prompt_id": f"auto_lora_prompt:{source_type}:{char_name}/{filename}",
+            "input": messages,
+            "output": "",
+            "elapsed": round(total_elapsed, 3),
+            "status": "error",
+            "error": last_err or "알 수 없는 오류",
+        })
         return {"success": False, "error": f"{max_retries + 1}회 시도 후 실패: {last_err}"}
     except Exception as e:
         print(f"[INSTANCE_LORA] auto_refine_lora_prompt 예외: {e}")
         traceback.print_exc()
         await _notify_llm_widget("error", {"error": f"{type(e).__name__}: {e}"})
+        _log_lighbd_history({
+            "ts": datetime.datetime.now().isoformat(timespec="seconds"),
+            "prompt_id": f"auto_lora_prompt:{source_type}:{char_name}/{filename}",
+            "input": messages if "messages" in locals() else [],
+            "output": "",
+            "status": "error",
+            "error": f"{type(e).__name__}: {e}",
+        })
         return {"success": False, "error": str(e)}
 
 
