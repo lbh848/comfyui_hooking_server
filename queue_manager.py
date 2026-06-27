@@ -153,6 +153,14 @@ class QueueManager:
 
         type_order = type_order_map.get(item.type, 99)
 
+        # instance_lora_prompt_refine은 항상 analysis 직후·training 직전에 실행되어야 한다.
+        # config 누락(기본 99)이면 training보다 늦게 실행되어 "정제 안 된 태그로 학습"되는 버그가
+        # 발생하므로, 설정값과 무관하게 analysis와 training 사이로 강제 배치한다.
+        if item.type == "instance_lora_prompt_refine":
+            a = type_order_map.get("instance_lora_analysis", 4)
+            t = type_order_map.get("instance_lora_training", 5)
+            type_order = a + (t - a) / 2.0 if t > a else a + 0.5
+
         # instance_lora_training 내에서 anima > sdxl 순서 유지
         profile_order = 0
         if item.type == "instance_lora_training":
@@ -814,6 +822,7 @@ class QueueManager:
         trigger = params.get("trigger", "")
         is_asset_with_prompt = params.get("is_asset_with_prompt", False)
         use_block_tags = params.get("use_block_tags", True)
+        use_llm_refine = params.get("use_llm_refine", False)
 
         if is_asset_with_prompt:
             existing_prompt = params.get("existing_prompt") or {}
@@ -844,6 +853,14 @@ class QueueManager:
                     "lora_id": lora_id, "negative_prompt": negative_prompt,
                     "use_block_tags": use_block_tags,
                 })
+
+        # LLM 태그 정제 큐 추가 (analysis/프롬프트 저장 이후, 학습 이전)
+        if use_llm_refine and images_now:
+            await self.add_item("instance_lora_prompt_refine", f"태그 정제: {trigger}", {
+                "source_type": "instance",
+                "lora_id": lora_id,
+                "filename": images_now[0],
+            })
 
         # 학습 큐 추가 (both → anima, sdxl 분리)
         profile = params.get("profile", "anima")
@@ -1621,6 +1638,10 @@ class QueueManager:
         if source_type == "asset_test_setup":
             return await self._handle_asset_test_setup(item, params)
 
+        # instance: 인스턴스 LoRA 태그 정제 (직전 analysis/저장된 프롬프트의 positive를 비전 LLM으로 정제).
+        if source_type == "instance":
+            return await self._handle_instance_lora_tag_refine(item, params)
+
         bot_name = params.get("bot_name", "")
         project_name = params.get("project_name", "")
         char_name = params.get("char_name", "")
@@ -1716,6 +1737,86 @@ class QueueManager:
                     "filename": filename,
                     "entry": entry,
                     "error": str(e),
+                })
+            raise
+
+    async def _handle_instance_lora_tag_refine(self, item: QueueItem, params: dict) -> dict:
+        """인스턴스 LoRA 태그 정제: 직전 analysis/저장된 프롬프트의 positive(또는 original_positive)를
+        비전 LLM으로 정제해 positive만 덮어쓴다. original_positive/negative는 보존."""
+        from modes.instance_lora_mode import (
+            run_auto_refine_lora_prompt, get_image_prompt, save_image_prompt, _safe_dirname,
+        )
+        lora_id = params.get("lora_id", "")
+        filename = params.get("filename", "")
+        event_type = "lora_prompt_refine_progress"
+        if not lora_id or not filename:
+            raise ValueError("instance 태그 정제는 lora_id, filename이 필요합니다")
+        lora_id = _safe_dirname(lora_id)
+
+        gp = get_image_prompt(lora_id, filename)
+        existing = gp.get("data") if (isinstance(gp, dict) and gp.get("success")) else {}
+        current_positive = (existing.get("positive") or existing.get("original_positive") or "").strip()
+        if not current_positive:
+            err = f"정제할 긍정 프롬프트가 없습니다 (lora_id={lora_id} filename={filename}). analysis/프롬프트 저장이 선행되어야 합니다."
+            print(f"[QUEUE:LORA_PROMPT_REFINE] source=instance {err}")
+            if self.notify_frontend:
+                await self.notify_frontend(event_type, {
+                    "phase": "failed", "source_type": "instance",
+                    "lora_id": lora_id, "filename": filename, "error": err,
+                })
+            raise RuntimeError(err)
+
+        await self._notify_progress(item, {"percentage": 0, "phase": "running"})
+        if self.notify_frontend:
+            await self.notify_frontend(event_type, {
+                "phase": "running", "source_type": "instance",
+                "lora_id": lora_id, "filename": filename,
+            })
+
+        try:
+            result = await run_auto_refine_lora_prompt(
+                char_name="",
+                filename=filename,
+                current_positive=current_positive,
+                source_type="instance",
+                is_asset=True,
+                lora_id=lora_id,
+            )
+            if not result.get("success"):
+                err = result.get("error", "알 수 없는 오류")
+                print(f"[QUEUE:LORA_PROMPT_REFINE] source=instance 정제 실패: lora_id={lora_id} filename={filename} - {err}")
+                traceback.print_exc()
+                if self.notify_frontend:
+                    await self.notify_frontend(event_type, {
+                        "phase": "failed", "source_type": "instance",
+                        "lora_id": lora_id, "filename": filename, "error": err,
+                    })
+                raise RuntimeError(err)
+
+            refined_positive = result["data"].get("positive") or ""
+            if refined_positive:
+                save_image_prompt(lora_id, filename, {
+                    "positive": refined_positive,
+                    "negative": existing.get("negative", ""),
+                    "original_positive": existing.get("original_positive") or current_positive,
+                    "original_negative": existing.get("original_negative", existing.get("negative", "")),
+                })
+            await self._notify_progress(item, {"percentage": 100, "phase": "completed"})
+            if self.notify_frontend:
+                await self.notify_frontend(event_type, {
+                    "phase": "completed", "source_type": "instance",
+                    "lora_id": lora_id, "filename": filename,
+                    "positive": refined_positive,
+                })
+            print(f"[QUEUE:LORA_PROMPT_REFINE] source=instance 완료: lora_id={lora_id} filename={filename} 길이={len(refined_positive)}")
+            return {"success": True, "positive": refined_positive}
+        except Exception as e:
+            print(f"[QUEUE:LORA_PROMPT_REFINE] source=instance 실패: lora_id={lora_id} filename={filename} - {e}")
+            traceback.print_exc()
+            if self.notify_frontend:
+                await self.notify_frontend(event_type, {
+                    "phase": "failed", "source_type": "instance",
+                    "lora_id": lora_id, "filename": filename, "error": str(e),
                 })
             raise
 

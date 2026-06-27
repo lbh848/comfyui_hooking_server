@@ -8246,6 +8246,7 @@ async def handle_api_instance_lora_face_extract(request):
             "is_asset_with_prompt": body.get("is_asset_with_prompt", False),
             "existing_prompt": body.get("existing_prompt"),
             "use_block_tags": body.get("use_block_tags", True),
+            "use_llm_refine": body.get("use_llm_refine", False),
         })
         return web.json_response({"success": True, "queue_item_id": item.id, "label": item.label})
     except Exception as e:
@@ -8421,7 +8422,8 @@ async def handle_api_queue_add(request):
         label = body.get("label", "")
         params = body.get("params", {})
 
-        if item_type not in ("asset_generation", "asset_lora_training", "bot_lora_training", "instance_lora_training", "instance_lora_analysis", "tag_analysis", "auto_match_batch", "data_patch_utility"):
+        if item_type not in ("asset_generation", "asset_lora_training", "bot_lora_training", "instance_lora_training", "instance_lora_analysis", "instance_lora_prompt_refine", "tag_analysis", "auto_match_batch", "data_patch_utility"):
+            print(f"[QUEUE_API] 거부: 알 수 없는 타입 item_type={item_type} label={label}")
             return web.json_response({"success": False, "error": f"알 수 없는 타입: {item_type}"}, status=400)
 
         item = await queue_manager.add_item(item_type, label, params)

@@ -292,6 +292,7 @@ async def run_auto_refine_lora_prompt(
     entry: str = "",
     gender_override: str = "",
     is_asset: bool = False,
+    lora_id: str = "",
 ) -> dict:
     """LLM 비전 기반 LoRA 프롬프트 정제 (core).
 
@@ -299,6 +300,7 @@ async def run_auto_refine_lora_prompt(
       - "bot":               bot_name + char_name + filename → 봇 캐릭터 원본 이미지
       - "bot_lora_training": bot_name + project_name + char_name + filename → 봇 LoRA 학습 이미지
       - "training":          char_name + entry + filename → 에셋 LoRA 학습 이미지
+      - "instance":          lora_id + filename → 인스턴스 LoRA 이미지 (항상 에셋 템플릿/성별 자동추론)
 
     반환: {"success": True, "data": {"positive": "..."}} 또는 {"success": False, "error": "..."}
     """
@@ -315,9 +317,14 @@ async def run_auto_refine_lora_prompt(
 
     try:
         source_type = (source_type or "bot").strip().lower()
-        if source_type not in ("bot", "bot_lora_training", "training"):
+        if source_type not in ("bot", "bot_lora_training", "training", "instance"):
             return {"success": False, "error": f"지원하지 않는 source_type: {source_type}"}
-        if not char_name or not filename:
+        if source_type == "instance":
+            # 인스턴스 로라는 항상 에셋 템플릿(성별 자동 추론) 사용
+            is_asset = True
+            if not lora_id or not filename:
+                return {"success": False, "error": "instance 소스는 lora_id, filename 필드가 필요합니다."}
+        elif not char_name or not filename:
             return {"success": False, "error": "character, filename 필드가 필요합니다."}
         if source_type == "bot" and not bot_name:
             return {"success": False, "error": "bot 소스는 bot 필드가 필요합니다."}
@@ -350,7 +357,12 @@ async def run_auto_refine_lora_prompt(
 
         # 원본 이미지 경로
         img_path = None
-        if source_type == "bot":
+        if source_type == "instance":
+            img_path = get_image_path(lora_id, filename)
+            if not img_path or not os.path.isfile(img_path):
+                print(f"[INSTANCE_LORA] 인스턴스 이미지 없음: lora_id={lora_id} filename={filename}")
+                return {"success": False, "error": f"인스턴스 이미지를 찾을 수 없습니다: {filename} (lora_id={lora_id})"}
+        elif source_type == "bot":
             from modes.bot_lora_mode import get_bot_char_image_path
             img_path = get_bot_char_image_path(bot_name, char_name, filename)
             if not img_path or not os.path.isfile(img_path):
@@ -421,6 +433,8 @@ async def run_auto_refine_lora_prompt(
             source_desc = f"bot={bot_name}"
         elif source_type == "bot_lora_training":
             source_desc = f"bot={bot_name} project={project_name}"
+        elif source_type == "instance":
+            source_desc = f"instance lora_id={lora_id}"
         else:
             source_desc = f"training entry={entry}"
         print(f"[INSTANCE_LORA] auto_refine_lora_prompt 호출: source={source_type} {source_desc} char={char_name} filename={filename} service={service} is_asset={is_asset} gender={gender_tag} etc_len={len(current_positive)} use_custom={use_custom}")

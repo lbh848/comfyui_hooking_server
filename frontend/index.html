@@ -5857,6 +5857,7 @@
                         <div style="display:flex;align-items:center;gap:4px;margin-bottom:4px;">
                             <div style="font-size:0.8rem; font-weight:600; color:var(--text-secondary);">가져올 프롬프트</div>
                             <span id="ic-manual-edit-badge" style="display:none;font-size:0.62rem;background:var(--accent);color:#fff;padding:1px 5px;border-radius:3px;">수동 편집됨</span>
+                            <span id="ic-llm-refine-badge" style="display:none;font-size:0.62rem;background:#6b7280;color:#fff;padding:1px 5px;border-radius:3px;">LLM 정제 예정</span>
                         </div>
                         <div style="position:relative;">
                             <textarea id="instance-create-prompt-preview" rows="5" oninput="_icOnManualEdit(this)" style="padding:6px 8px 6px 6px; background:var(--surface1); border:1px solid var(--border); border-radius:6px; font-size:0.72rem; color:var(--text); white-space:pre-wrap; min-height:40px; max-height:300px; overflow-y:auto; line-height:1.4; resize:vertical; width:100%; box-sizing:border-box; font-family:inherit;"></textarea>
@@ -5885,6 +5886,10 @@
                         <label style="display:flex;align-items:center;gap:4px;font-size:0.78rem;cursor:pointer;">
                             <input type="radio" name="ic-tag-mode" value="raw" style="accent-color:var(--accent);">
                             <span>원본 태그 그대로 사용</span>
+                        </label>
+                        <label style="display:flex;align-items:center;gap:4px;font-size:0.78rem;cursor:pointer;">
+                            <input type="radio" name="ic-tag-mode" value="llm" style="accent-color:var(--accent);">
+                            <span>LLM 기반 태그 정제</span>
                         </label>
                     </div>
                     <!-- 블록 태그 규칙 -->
@@ -7664,7 +7669,23 @@
         // ─── API 호출 ───
         async function fetchJSON(url, options) {
             const resp = await fetch(url, options);
-            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            if (!resp.ok) {
+                // 응답 본문의 진짜 에러 사유까지 노출 (CLAUDE.md: 조용한 실패 금지)
+                let detail = '';
+                try {
+                    const ct = resp.headers.get('content-type') || '';
+                    if (ct.includes('application/json')) {
+                        const j = await resp.json();
+                        detail = (j && (j.error || j.message)) ? (j.error || j.message) : JSON.stringify(j).slice(0, 300);
+                    } else {
+                        detail = (await resp.text()).slice(0, 300);
+                    }
+                } catch (_) { /* 본문 읽기 실패는 무시 */ }
+                const method = (options && options.method) || 'GET';
+                const msg = `HTTP ${resp.status}${detail ? ' - ' + detail : ''}`;
+                console.error(`[fetchJSON] ${method} ${url} 실패: ${msg}`);
+                throw new Error(msg);
+            }
             return resp.json();
         }
 
@@ -17282,11 +17303,14 @@
                 neg = neg ? _icApplyFilterSteps(neg, _icPromptFilterSteps) : '';
             }
             const useBlock = document.querySelector('input[name="ic-tag-mode"]:checked')?.value !== 'raw';
+            const isLlmRefine = document.querySelector('input[name="ic-tag-mode"]:checked')?.value === 'llm';
             if (useBlock && pos && _loraBlockRules.length > 0) {
                 const tags = pos.split(',').map(t => t.trim()).filter(t => t);
                 const kept = tags.filter(t => !_matchBlockRule(t, _loraBlockRules));
                 pos = kept.join(', ');
             }
+            const llmBadge = document.getElementById('ic-llm-refine-badge');
+            if (llmBadge) llmBadge.style.display = isLlmRefine ? '' : 'none';
             f._existingPrompt = { positive: pos, negative: neg };
             promptPreview.dataset.filterApplied = '1';
             promptPreview.value = pos || '(필터 후 빈 프롬프트)';
@@ -17731,6 +17755,7 @@
             if (!trigger) { showToast('트리거워드를 입력하세요', 'error'); return; }
             if (_instanceCreateFiles.length === 0) { showToast('이미지를 1장 선택하세요', 'error'); return; }
             const negativePrompt = document.getElementById('instance-lora-create-negative').value.trim();
+            const useLlmRefine = document.querySelector('input[name="ic-tag-mode"]:checked')?.value === 'llm';
             try {
                 const createResp = await (await fetch('/api/instance_lora/create', {
                     method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -17776,12 +17801,13 @@
                             is_asset_with_prompt: firstImg.type === 'asset' && !!firstImg._existingPrompt,
                             existing_prompt: firstImg._existingPrompt || null,
                             use_block_tags: useBlockTags,
+                            use_llm_refine: useLlmRefine,
                         })
                     });
                     if (!extractResp.success) {
                         showToast('얼굴 추출 큐 추가 실패: ' + (extractResp.error || ''), 'error');
                     } else {
-                        showToast('인스턴스 로라 생성됨 (얼굴 추출 + 학습 큐에 추가)', 'success');
+                        showToast(`인스턴스 로라 생성됨 (얼굴 추출${useLlmRefine ? ' + 태그 정제' : ''} + 학습 큐에 추가)`, 'success');
                     }
                 } else {
                     // 일반: 이미지 바로 등록 후 분석/학습 큐
@@ -17839,6 +17865,21 @@
                         }
                     }
 
+                    // LLM 태그 정제 큐 (analysis/프롬프트 저장 이후, 학습 이전)
+                    if (useLlmRefine && filename) {
+                        const refineResp = await fetchJSON('/api/queue/add', {
+                            method: 'POST', headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({
+                                type: 'instance_lora_prompt_refine',
+                                label: `태그 정제: ${trigger}`,
+                                params: { source_type: 'instance', lora_id: loraId, filename }
+                            })
+                        });
+                        if (!refineResp.success) {
+                            console.error('[INSTANCE_LORA] 정제 큐 추가 실패:', refineResp.error);
+                        }
+                    }
+
                     // 학습 큐 추가
                     const trainProfile = document.getElementById('instance-lora-train-profile').value;
                     const trainResp = await fetchJSON('/api/instance_lora/training/start', {
@@ -17850,7 +17891,10 @@
                     }
 
                     const isAssetWithPromptFinal = firstImg.type === 'asset' && firstImg._existingPrompt;
-                    showToast(isAssetWithPromptFinal ? '인스턴스 로라 생성됨 (학습 큐에 추가)' : '인스턴스 로라 생성됨 (분석 + 학습 큐에 추가)', 'success');
+                    const refineSuffix = useLlmRefine ? ' + 태그 정제' : '';
+                    showToast(isAssetWithPromptFinal
+                        ? `인스턴스 로라 생성됨 (${refineSuffix.trim() || '학습'} 큐에 추가)`
+                        : `인스턴스 로라 생성됨 (분석${refineSuffix} + 학습 큐에 추가)`, 'success');
                 }
 
                 closeInstanceLoraCreateModal();
