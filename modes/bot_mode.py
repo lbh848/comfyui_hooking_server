@@ -1850,6 +1850,7 @@ class BotDataPatcher:
         try:
             body = await request.json()
             bot_name = body.get("bot_name", "").strip()
+            char_name = body.get("char_name", "").strip()
             if not bot_name:
                 return _json_error("봇 이름이 비어있습니다.")
 
@@ -1871,17 +1872,33 @@ class BotDataPatcher:
             if not bot:
                 return _json_error(f"봇을 찾을 수 없습니다: {bot_name}")
 
-            # 기존 봇 폴더 삭제 후 재생성
             bot_dst_root = os.path.join(comfy_input_dir, "soya_bot", bot_name)
-            if os.path.isdir(bot_dst_root):
-                shutil.rmtree(bot_dst_root)
-                print(f"[DATA_PATCH] 기존 폴더 삭제: {bot_dst_root}")
+            selected_only = bool(char_name)
+
+            if selected_only:
+                # 선택 캐릭터 모드: 봇 폴더 전체는 건드리지 않고,
+                # 해당 캐릭터 폴더만 삭제 후 재생성 (새 캐릭터 추가 시 기존 캐릭터 유지)
+                char = next((c for c in bot.get("characters", []) if c["name"] == char_name), None)
+                if not char:
+                    return _json_error(f"캐릭터를 찾을 수 없습니다: {char_name}")
+                target_chars = [char]
+                char_dst_dir = os.path.join(bot_dst_root, char_name)
+                if os.path.isdir(char_dst_dir):
+                    shutil.rmtree(char_dst_dir)
+                    print(f"[DATA_PATCH] 기존 캐릭터 폴더 삭제: {char_dst_dir}")
+                os.makedirs(bot_dst_root, exist_ok=True)
+            else:
+                # 전체 모드: 기존 봇 폴더 삭제 후 재생성
+                if os.path.isdir(bot_dst_root):
+                    shutil.rmtree(bot_dst_root)
+                    print(f"[DATA_PATCH] 기존 폴더 삭제: {bot_dst_root}")
+                target_chars = bot.get("characters", [])
 
             created_dirs = []
             copied_files = []
             skipped_files = []
 
-            for char in bot.get("characters", []):
+            for char in target_chars:
                 char_name = char["name"]
                 dst_dir = os.path.join(bot_dst_root, char_name)
                 os.makedirs(dst_dir, exist_ok=True)

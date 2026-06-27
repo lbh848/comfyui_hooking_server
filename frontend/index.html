@@ -3491,6 +3491,7 @@
                             <div class="section-title">데이터 패치</div>
                             <button id="btn-patch-settings" onclick="openPatchSettingsModal()" style="width:100%; margin-bottom:4px; background:#0D47A1; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">데이터 패치 설정</button>
                             <button id="btn-data-patch" onclick="dataPatchStart()" style="width:100%; background:#1565C0; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">데이터 패치 시작</button>
+                            <button id="btn-data-patch-selected" onclick="dataPatchStartSelected()" style="width:100%; margin-top:4px; background:#00695C; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">선택캐릭터 데이터 패치 시작</button>
                             <div id="data-patch-status" style="font-size:0.7rem; color:var(--text2); margin-top:4px; display:none;"></div>
                         </div>
                         <div style="background:rgba(255,152,0,0.08); border-radius:8px; padding:10px; margin-top:8px;">
@@ -27705,7 +27706,19 @@
             } catch (e) { el.textContent = ''; }
         }
 
-        async function dataPatchStart() {
+        async function dataPatchStartSelected() {
+            if (!botCurrentBot) {
+                showToast('봇을 먼저 선택하세요.', 'error');
+                return;
+            }
+            if (!botCurrentChar) {
+                showToast('선택된 캐릭터가 없습니다. 캐릭터를 먼저 선택하세요.', 'error');
+                return;
+            }
+            dataPatchStart('selected');
+        }
+
+        async function dataPatchStart(mode = 'all') {
             if (!botCurrentBot) {
                 showToast('봇을 먼저 선택하세요.', 'error');
                 return;
@@ -27721,12 +27734,16 @@
                 patchSettings = await resp.json();
             } catch (e) { console.error('[DATA_PATCH] 설정 로드 실패:', e); }
 
+            const isSel = mode === 'selected';
+            const titleSuffix = isSel ? ` (선택 캐릭터: ${botCurrentChar})` : '';
+
             const modal = document.createElement('div');
             modal.id = 'data-patch-confirm-modal';
+            modal.dataset.mode = mode;
             modal.style.cssText = 'position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:10000; background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:20px; min-width:400px; max-width:520px; box-shadow:0 8px 32px rgba(0,0,0,0.4);';
             modal.innerHTML = `
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
-                    <div style="font-weight:700; font-size:1rem;">데이터 패치 확인</div>
+                    <div style="font-weight:700; font-size:1rem;">데이터 패치 확인${escHtml(titleSuffix)}</div>
                     <button onclick="document.getElementById('data-patch-confirm-modal').remove()"
                         style="background:none; border:none; color:var(--text2); font-size:1.2rem; cursor:pointer;">✕</button>
                 </div>
@@ -27759,6 +27776,9 @@
 
         async function confirmDataPatch() {
             // 모달에서 설정값 가져와서 저장
+            const confirmModal = document.getElementById('data-patch-confirm-modal');
+            const mode = confirmModal?.dataset.mode || 'all';
+            const isSel = mode === 'selected';
             const settings = {
                 face_crop_top: parseFloat(document.getElementById('confirm-face-crop-top').value) || 1.0,
                 face_crop_bottom: parseFloat(document.getElementById('confirm-face-crop-bottom').value) || 1.0,
@@ -27773,12 +27793,13 @@
             } catch (e) { console.error('[DATA_PATCH] 설정 저장 실패:', e); }
 
             // 모달 닫기
-            const modal = document.getElementById('data-patch-confirm-modal');
-            if (modal) modal.remove();
+            if (confirmModal) confirmModal.remove();
 
             // 실제 패치 실행
-            const btn = document.getElementById('btn-data-patch');
+            const btn = document.getElementById(isSel ? 'btn-data-patch-selected' : 'btn-data-patch');
             const statusDiv = document.getElementById('data-patch-status');
+            const btnLabel = isSel ? '선택캐릭터 데이터 패치 시작' : '데이터 패치 시작';
+            _dataPatchActiveBtnId = isSel ? 'btn-data-patch-selected' : 'btn-data-patch';
             btn.disabled = true;
             btn.textContent = '패치 중…';
             statusDiv.style.display = 'block';
@@ -27787,21 +27808,28 @@
                 const patchResp = await fetch('/api/bot_mode/data_patch', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ bot_name: botCurrentBot })
+                    body: JSON.stringify(isSel
+                        ? { bot_name: botCurrentBot, char_name: botCurrentChar }
+                        : { bot_name: botCurrentBot })
                 });
                 const patchResult = await patchResp.json();
                 if (patchResult.error) {
                     statusDiv.textContent = '실패: ' + patchResult.error;
                     showToast('데이터 패치 실패: ' + patchResult.error, 'error');
+                    btn.disabled = false;
+                    btn.textContent = btnLabel;
                     return;
                 }
 
                 const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
-                const chars = (bot?.characters || []).filter(c => (c.rep_images || []).length > 0);
+                let chars = (bot?.characters || []).filter(c => (c.rep_images || []).length > 0);
+                if (isSel) chars = chars.filter(c => c.name === botCurrentChar);
                 if (chars.length === 0) {
                     statusDiv.textContent = `완료: ${patchResult.message} (얼굴 대상 없음)`;
                     showToast(patchResult.message, 'success');
                     renderBotCharacters();
+                    btn.disabled = false;
+                    btn.textContent = btnLabel;
                     return;
                 }
 
@@ -27830,12 +27858,17 @@
                 statusDiv.textContent = '요청 실패: ' + e.message;
                 showToast('데이터 패치 요청 실패: ' + e.message, 'error');
                 btn.disabled = false;
-                btn.textContent = '데이터 패치 시작';
+                btn.textContent = btnLabel;
             }
         }
 
         let _dataPatchQueueTotal = 0;
         let _dataPatchQueueDone = 0;
+        let _dataPatchActiveBtnId = 'btn-data-patch';
+
+        function _dataPatchBtnLabel(btnId) {
+            return btnId === 'btn-data-patch-selected' ? '선택캐릭터 데이터 패치 시작' : '데이터 패치 시작';
+        }
 
         function handleDataPatchProgress(data) {
             const phase = data.phase || '';
@@ -27849,8 +27882,8 @@
                 if (typeof renderBotCharacters === 'function') renderBotCharacters();
 
                 if (_dataPatchQueueDone >= _dataPatchQueueTotal) {
-                    const btn = document.getElementById('btn-data-patch');
-                    if (btn) { btn.disabled = false; btn.textContent = '데이터 패치 시작'; }
+                    const btn = document.getElementById(_dataPatchActiveBtnId);
+                    if (btn) { btn.disabled = false; btn.textContent = _dataPatchBtnLabel(_dataPatchActiveBtnId); }
                     const msg = `얼굴 완료: 성공 ${_dataPatchQueueDone}/${_dataPatchQueueTotal}`;
                     showToast(msg, 'success');
                     _dataPatchQueueTotal = 0;
@@ -27865,8 +27898,8 @@
                 showToast(`${data.char_name || ''} 실패: ${data.error || ''}`, 'error');
 
                 if (_dataPatchQueueDone >= _dataPatchQueueTotal) {
-                    const btn = document.getElementById('btn-data-patch');
-                    if (btn) { btn.disabled = false; btn.textContent = '데이터 패치 시작'; }
+                    const btn = document.getElementById(_dataPatchActiveBtnId);
+                    if (btn) { btn.disabled = false; btn.textContent = _dataPatchBtnLabel(_dataPatchActiveBtnId); }
                     _dataPatchQueueTotal = 0;
                     _dataPatchQueueDone = 0;
                     if (typeof checkPatchFiles === 'function') checkPatchFiles();
