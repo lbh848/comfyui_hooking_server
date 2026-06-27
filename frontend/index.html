@@ -16099,7 +16099,7 @@
                 document.getElementById('lora-picker-footer').innerHTML = `
                     <div style="display:flex; gap:6px; align-items:center; flex:1; flex-wrap:wrap;">
                         <button id="lora-training-llm-btn" type="button" style="padding:6px 12px;background:var(--accent);color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:0.8rem;font-weight:600;">🤖 LLM 정제</button>
-                        <button type="button" onclick="_openAutoLoraPromptModal()" style="padding:6px 12px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:0.8rem;">⚙️ 프롬프트</button>
+                        <button type="button" onclick="_openAutoLoraPromptModal(true)" style="padding:6px 12px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:0.8rem;">⚙️ LLM 프롬프트</button>
                         <span id="lora-training-refine-status" style="font-size:0.72rem;color:var(--text2);"></span>
                     </div>
                     <button onclick="closeLoraImagePicker()" style="padding:8px 16px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:6px; cursor:pointer;">닫기</button>
@@ -16120,6 +16120,7 @@
                             entry: _ctx.entry,
                             filename: _ctx.filename,
                             positive,
+                            is_asset: true,
                             btn: _llmBtn,
                             statusEl: document.getElementById('lora-training-refine-status'),
                         });
@@ -19457,7 +19458,7 @@
             document.getElementById('lora-picker-footer').innerHTML = `
                 <div style="display:flex; gap:6px; align-items:center; flex:1; flex-wrap:wrap;">
                     <button id="bot-lora-training-llm-btn" type="button" style="padding:6px 12px;background:var(--accent);color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:0.8rem;font-weight:600;">🤖 LLM 정제</button>
-                    <button type="button" onclick="_openAutoLoraPromptModal()" style="padding:6px 12px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:0.8rem;">⚙️ 프롬프트</button>
+                    <button type="button" onclick="_openAutoLoraPromptModal()" style="padding:6px 12px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:0.8rem;">⚙️ LLM 프롬프트</button>
                     <span id="bot-lora-training-refine-status" style="font-size:0.72rem;color:var(--text2);"></span>
                 </div>
                 <button onclick="closeLoraImagePicker()" style="padding:8px 16px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:6px; cursor:pointer;">닫기</button>
@@ -21942,7 +21943,7 @@
                         <button id="auto-group-refresh-btn" onclick="_refreshAutoGroup('${escAttr(charName)}')"
                             style="background:rgba(34,197,94,0.12); color:var(--text); border:1px solid rgba(34,197,94,0.3); padding:6px 14px; border-radius:6px; cursor:pointer; font-size:0.85rem;">새로고침</button>
                         <button id="auto-group-prompt-btn" onclick="_openAutoFaceTagPromptModal('${escAttr(charName)}')"
-                            style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:6px 14px; border-radius:6px; cursor:pointer; font-size:0.85rem;">프롬프트</button>
+                            style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:6px 14px; border-radius:6px; cursor:pointer; font-size:0.85rem;">LLM 프롬프트</button>
                         <button id="auto-group-llm-btn" onclick="_runAutoFaceTagLLM('${escAttr(charName)}')"
                             style="background:#7C3AED; color:#fff; border:1px solid #6D28D9; padding:6px 14px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">LLM 자동 분류</button>
                         <button onclick="_closeAutoGroupModal()"
@@ -22516,18 +22517,18 @@
         // { source_type, bot, character, filename, entry, btn, statusEl }
 
         function _runLoraPromptRefine(opts) {
-            const { source_type, bot = '', project = '', character, filename, entry = '', positive, btn, statusEl } = opts;
+            const { source_type, bot = '', project = '', character, filename, entry = '', positive, is_asset = false, btn, statusEl } = opts;
             if (!positive || !positive.trim()) {
                 showToast('정제할 긍정 프롬프트가 비어 있습니다', 'error');
                 return;
             }
-            _loraPromptRefineContext = { source_type, bot, project, character, filename, entry, btn, statusEl };
+            _loraPromptRefineContext = { source_type, bot, project, character, filename, entry, is_asset, btn, statusEl };
             if (btn) btn.textContent = '큐 적재 중...';
             if (statusEl) statusEl.textContent = '큐에 적재 중...';
             fetch('/api/instance_lora/auto_refine_enqueue', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ source_type, bot, project, character, filename, entry, positive }),
+                body: JSON.stringify({ source_type, bot, project, character, filename, entry, positive, is_asset }),
             }).then(r => r.text()).then(text => {
                 let data;
                 try { data = JSON.parse(text); }
@@ -22684,7 +22685,7 @@
         }
 
         // ─── 인스턴스 LoRA 프롬프트 정제 — 프롬프트 설정 모달 ─────────
-        let _autoLoraPromptState = { builtin: '', custom: '', useCustom: false, tab: 'general' };
+        let _autoLoraPromptState = { builtin: '', custom: '', useCustom: false, tab: 'general', isAsset: false };
 
         function _renderAutoLoraPromptPreview(template, etcSample, genderSample) {
             return (template || '')
@@ -22692,10 +22693,11 @@
                 .replace(/\{gender\}/g, genderSample || '1girl');
         }
 
-        async function _openAutoLoraPromptModal() {
+        async function _openAutoLoraPromptModal(isAsset) {
+            isAsset = !!isAsset;
             let builtin = '', custom = '', useCustom = false;
             try {
-                const resp = await fetch('/api/instance_lora/auto_lora_prompt');
+                const resp = await fetch('/api/instance_lora/auto_lora_prompt' + (isAsset ? '?asset=1' : ''));
                 const text = await resp.text();
                 let data;
                 try { data = JSON.parse(text); }
@@ -22714,6 +22716,7 @@
             _autoLoraPromptState.builtin = builtin;
             _autoLoraPromptState.custom = custom;
             _autoLoraPromptState.useCustom = useCustom;
+            _autoLoraPromptState.isAsset = isAsset;
             _autoLoraPromptState.tab = 'general';
 
             const existing = document.getElementById('auto-lora-prompt-overlay');
@@ -22729,11 +22732,11 @@
             modal.onclick = (e) => e.stopPropagation();
             modal.innerHTML = `
                 <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <h3 style="margin:0; font-size:1.05rem;">LoRA 프롬프트 정제 — 프롬프트 설정</h3>
+                    <h3 style="margin:0; font-size:1.05rem;">${isAsset ? '에셋 LoRA 프롬프트 정제 — 프롬프트 설정' : 'LoRA 프롬프트 정제 — 프롬프트 설정'}</h3>
                     <button onclick="document.getElementById('auto-lora-prompt-overlay').remove()"
                         style="background:var(--surface2); color:var(--text); border:1px solid var(--border); width:30px; height:30px; border-radius:6px; cursor:pointer; font-size:1.1rem;">✕</button>
                 </div>
-                <div style="font-size:0.72rem; color:var(--text2);">글로벌은 배포용(읽기 전용), 커스텀은 이 PC 전용(편집 가능). 변수: <code>{etc}</code> <code>{gender}</code></div>
+                <div style="font-size:0.72rem; color:var(--text2);">글로벌은 배포용(읽기 전용), 커스텀은 이 PC 전용(편집 가능). 변수: <code>{etc}</code>${isAsset ? '' : ' <code>{gender}</code>'}${isAsset ? ' <span style="color:var(--text2);">(에셋은 성별 정보 없음 — {gender} 사용 불가)</span>' : ''}</div>
                 <div style="display:flex; gap:0; border:1px solid var(--border); border-radius:6px; overflow:hidden; width:fit-content;">
                     <button id="aftlora-tab-general" onclick="_setAutoLoraPromptTab('general')" style="padding:5px 14px; border:none; cursor:pointer; font-size:0.8rem; font-weight:600; background:var(--accent); color:#fff;">편집</button>
                     <button id="aftlora-tab-preview" onclick="_setAutoLoraPromptTab('preview')" style="padding:5px 14px; border:none; cursor:pointer; font-size:0.8rem; font-weight:600; background:var(--surface2); color:var(--text);">미리보기</button>
@@ -22853,8 +22856,11 @@
         }
 
         // 미리보기를 표시할 때 호출: gender_tag 를 먼저 확보한 뒤 렌더.
+        // 에셋은 gender가 없으므로 조회를 건너뛴다.
         async function _refreshAutoLoraPreview() {
-            await _fetchPickerGender();
+            if (!_autoLoraPromptState.isAsset) {
+                await _fetchPickerGender();
+            }
             _updateAutoLoraPromptPreview();
         }
 
@@ -22908,8 +22914,11 @@
                 }
             }
 
-            // gender: 열린 프롬프트 편집 모달 캐릭터(_loraPickerGender) → 인스턴스 source 캐릭터 순
-            if (_loraPickerGender) {
+            // gender: 에셋은 성별 정보가 없으므로 사용하지 않는다 (빈 값, 에러 없음).
+            // 캐릭터(인스턴스/봇) 컨텍스트에서만 gender를 채운다.
+            if (_autoLoraPromptState.isAsset) {
+                genderValue = '';
+            } else if (_loraPickerGender) {
                 genderValue = _loraPickerGender;
             } else {
                 const f = _instanceCreateFiles[0];
@@ -22973,7 +22982,7 @@
                 const resp = await fetch('/api/instance_lora/auto_lora_prompt', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ custom, use_custom: useCustom }),
+                    body: JSON.stringify({ custom, use_custom: useCustom, asset: !!_autoLoraPromptState.isAsset }),
                 });
                 const text = await resp.text();
                 let data;

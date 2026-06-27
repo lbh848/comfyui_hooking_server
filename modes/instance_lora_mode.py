@@ -29,24 +29,47 @@ AUTO_LORA_PROMPT_BUILTIN_FILE = os.path.join(AUTO_LORA_PROMPT_DIR, "system.txt")
 AUTO_LORA_PROMPT_CUSTOM_FILE = os.path.join(ASSET_DATA_DIR, "auto_lora_prompt_custom.txt")
 AUTO_LORA_PROMPT_META_FILE = os.path.join(ASSET_DATA_DIR, "auto_lora_prompt_meta.json")
 
+# 에셋 전용(성별 정보 없음) — 캐릭터 LoRA 정제 프롬프트와 완전히 분리된 별도 템플릿/설정.
+AUTO_LORA_PROMPT_BUILTIN_ASSET_FILE = os.path.join(AUTO_LORA_PROMPT_DIR, "asset_system.txt")
+AUTO_LORA_PROMPT_CUSTOM_ASSET_FILE = os.path.join(ASSET_DATA_DIR, "auto_lora_prompt_asset_custom.txt")
+AUTO_LORA_PROMPT_META_ASSET_FILE = os.path.join(ASSET_DATA_DIR, "auto_lora_prompt_asset_meta.json")
+
 _auto_lora_prompt_builtin_cache: str | None = None
 _auto_lora_prompt_builtin_mtime: float = 0.0
+_auto_lora_prompt_builtin_asset_cache: str | None = None
+_auto_lora_prompt_builtin_asset_mtime: float = 0.0
 
 
-def _load_auto_lora_prompt_builtin() -> str:
-    """글로벌(배포용) 프롬프트 로드. mtime 기반 캐싱."""
+def _load_auto_lora_prompt_builtin(is_asset: bool = False) -> str:
+    """글로벌(배포용) 프롬프트 로드. mtime 기반 캐싱.
+
+    is_asset=True 이면 에셋 전용 builtin(gender 없음)을 로드한다.
+    """
     global _auto_lora_prompt_builtin_cache, _auto_lora_prompt_builtin_mtime
-    if not os.path.isfile(AUTO_LORA_PROMPT_BUILTIN_FILE):
-        print(f"[INSTANCE_LORA] auto_lora_prompt builtin 파일 없음: {AUTO_LORA_PROMPT_BUILTIN_FILE}")
+    global _auto_lora_prompt_builtin_asset_cache, _auto_lora_prompt_builtin_asset_mtime
+    if is_asset:
+        path = AUTO_LORA_PROMPT_BUILTIN_ASSET_FILE
+        cache_val = _auto_lora_prompt_builtin_asset_cache
+        mtime_val = _auto_lora_prompt_builtin_asset_mtime
+    else:
+        path = AUTO_LORA_PROMPT_BUILTIN_FILE
+        cache_val = _auto_lora_prompt_builtin_cache
+        mtime_val = _auto_lora_prompt_builtin_mtime
+    if not os.path.isfile(path):
+        print(f"[INSTANCE_LORA] auto_lora_prompt builtin 파일 없음: {path}")
         return ""
     try:
-        mtime = os.path.getmtime(AUTO_LORA_PROMPT_BUILTIN_FILE)
-        if _auto_lora_prompt_builtin_cache is not None and mtime == _auto_lora_prompt_builtin_mtime:
-            return _auto_lora_prompt_builtin_cache
-        with open(AUTO_LORA_PROMPT_BUILTIN_FILE, "r", encoding="utf-8") as f:
+        mtime = os.path.getmtime(path)
+        if cache_val is not None and mtime == mtime_val:
+            return cache_val
+        with open(path, "r", encoding="utf-8") as f:
             txt = f.read()
-        _auto_lora_prompt_builtin_cache = txt
-        _auto_lora_prompt_builtin_mtime = mtime
+        if is_asset:
+            _auto_lora_prompt_builtin_asset_cache = txt
+            _auto_lora_prompt_builtin_asset_mtime = mtime
+        else:
+            _auto_lora_prompt_builtin_cache = txt
+            _auto_lora_prompt_builtin_mtime = mtime
         return txt
     except Exception as e:
         print(f"[INSTANCE_LORA] auto_lora_prompt builtin 로드 실패: {e}")
@@ -54,59 +77,69 @@ def _load_auto_lora_prompt_builtin() -> str:
         return ""
 
 
-def _load_auto_lora_prompt_custom() -> tuple[str, bool]:
-    """커스텀 프롬프트와 use_custom 플래그 로드. (없으면 빈 문자열, False)."""
+def _load_auto_lora_prompt_custom(is_asset: bool = False) -> tuple[str, bool]:
+    """커스텀 프롬프트와 use_custom 플래그 로드. (없으면 빈 문자열, False).
+
+    is_asset=True 이면 에셋 전용 custom/meta 파일을 로드한다.
+    """
+    custom_file = AUTO_LORA_PROMPT_CUSTOM_ASSET_FILE if is_asset else AUTO_LORA_PROMPT_CUSTOM_FILE
+    meta_file = AUTO_LORA_PROMPT_META_ASSET_FILE if is_asset else AUTO_LORA_PROMPT_META_FILE
     custom = ""
-    if os.path.isfile(AUTO_LORA_PROMPT_CUSTOM_FILE):
+    if os.path.isfile(custom_file):
         try:
-            with open(AUTO_LORA_PROMPT_CUSTOM_FILE, "r", encoding="utf-8") as f:
+            with open(custom_file, "r", encoding="utf-8") as f:
                 custom = f.read()
         except Exception as e:
-            print(f"[INSTANCE_LORA] auto_lora_prompt custom 로드 실패: {e}")
+            print(f"[INSTANCE_LORA] auto_lora_prompt custom 로드 실패 (asset={is_asset}): {e}")
             traceback.print_exc()
 
     use_custom = False
-    if os.path.isfile(AUTO_LORA_PROMPT_META_FILE):
+    if os.path.isfile(meta_file):
         try:
-            with open(AUTO_LORA_PROMPT_META_FILE, "r", encoding="utf-8") as f:
+            with open(meta_file, "r", encoding="utf-8") as f:
                 meta = json.load(f)
                 use_custom = bool(meta.get("use_custom", False))
         except Exception as e:
-            print(f"[INSTANCE_LORA] auto_lora_prompt meta 로드 실패: {e}")
+            print(f"[INSTANCE_LORA] auto_lora_prompt meta 로드 실패 (asset={is_asset}): {e}")
             traceback.print_exc()
 
     return custom, use_custom
 
 
-def _save_auto_lora_prompt_custom(text: str, use_custom: bool) -> None:
-    """커스텀 프롬프트 저장. 기존 파일은 .bak 로 백업."""
-    os.makedirs(ASSET_DATA_DIR, exist_ok=True)
+def _save_auto_lora_prompt_custom(text: str, use_custom: bool, is_asset: bool = False) -> None:
+    """커스텀 프롬프트 저장. 기존 파일은 .bak 로 백업.
 
-    if os.path.isfile(AUTO_LORA_PROMPT_CUSTOM_FILE):
+    is_asset=True 이면 에셋 전용 custom/meta 파일에 저장한다.
+    """
+    os.makedirs(ASSET_DATA_DIR, exist_ok=True)
+    custom_file = AUTO_LORA_PROMPT_CUSTOM_ASSET_FILE if is_asset else AUTO_LORA_PROMPT_CUSTOM_FILE
+    meta_file = AUTO_LORA_PROMPT_META_ASSET_FILE if is_asset else AUTO_LORA_PROMPT_META_FILE
+
+    if os.path.isfile(custom_file):
         try:
-            shutil.copy2(AUTO_LORA_PROMPT_CUSTOM_FILE, AUTO_LORA_PROMPT_CUSTOM_FILE + ".bak")
+            shutil.copy2(custom_file, custom_file + ".bak")
         except Exception as e:
-            print(f"[INSTANCE_LORA] auto_lora_prompt custom 백업 실패: {e}")
+            print(f"[INSTANCE_LORA] auto_lora_prompt custom 백업 실패 (asset={is_asset}): {e}")
 
     try:
-        with open(AUTO_LORA_PROMPT_CUSTOM_FILE, "w", encoding="utf-8") as f:
+        with open(custom_file, "w", encoding="utf-8") as f:
             f.write(text)
     except Exception as e:
-        print(f"[INSTANCE_LORA] auto_lora_prompt custom 저장 실패: {e}")
+        print(f"[INSTANCE_LORA] auto_lora_prompt custom 저장 실패 (asset={is_asset}): {e}")
         traceback.print_exc()
         raise
 
-    if os.path.isfile(AUTO_LORA_PROMPT_META_FILE):
+    if os.path.isfile(meta_file):
         try:
-            shutil.copy2(AUTO_LORA_PROMPT_META_FILE, AUTO_LORA_PROMPT_META_FILE + ".bak")
+            shutil.copy2(meta_file, meta_file + ".bak")
         except Exception as e:
-            print(f"[INSTANCE_LORA] auto_lora_prompt meta 백업 실패: {e}")
+            print(f"[INSTANCE_LORA] auto_lora_prompt meta 백업 실패 (asset={is_asset}): {e}")
 
     try:
-        with open(AUTO_LORA_PROMPT_META_FILE, "w", encoding="utf-8") as f:
+        with open(meta_file, "w", encoding="utf-8") as f:
             json.dump({"use_custom": bool(use_custom)}, f, ensure_ascii=False, indent=2)
     except Exception as e:
-        print(f"[INSTANCE_LORA] auto_lora_prompt meta 저장 실패: {e}")
+        print(f"[INSTANCE_LORA] auto_lora_prompt meta 저장 실패 (asset={is_asset}): {e}")
         traceback.print_exc()
         raise
 
@@ -160,6 +193,7 @@ async def run_auto_refine_lora_prompt(
     project_name: str = "",
     entry: str = "",
     gender_override: str = "",
+    is_asset: bool = False,
 ) -> dict:
     """LLM 비전 기반 LoRA 프롬프트 정제 (core).
 
@@ -195,8 +229,11 @@ async def run_auto_refine_lora_prompt(
             return {"success": False, "error": "정제할 긍정 프롬프트가 비어 있습니다."}
 
         # 성별 태그: override > bot.json 캐릭터 gender_tag > 기본 1girl
+        # 에셋은 성별 정보가 없으므로 gender를 아예 사용하지 않는다 (빈 문자열).
         gender_tag = (gender_override or "").strip()
-        if not gender_tag and source_type in ("bot", "bot_lora_training"):
+        if is_asset:
+            gender_tag = ""
+        elif not gender_tag and source_type in ("bot", "bot_lora_training"):
             try:
                 from modes.bot_mode import _load_bot_data
                 data = _load_bot_data()
@@ -207,7 +244,7 @@ async def run_auto_refine_lora_prompt(
             except Exception as e:
                 print(f"[INSTANCE_LORA] gender_tag 로드 실패: {e}")
                 traceback.print_exc()
-        if not gender_tag:
+        if not is_asset and not gender_tag:
             gender_tag = "1girl"
             print(f"[INSTANCE_LORA] gender_tag 비어 있어 기본값 사용: {gender_tag}")
 
@@ -245,12 +282,12 @@ async def run_auto_refine_lora_prompt(
                 ),
             }
 
-        # 템플릿 선택 + 변수 치환
-        custom_text, use_custom = _load_auto_lora_prompt_custom()
+        # 템플릿 선택 + 변수 치환 (에셋은 gender 없는 에셋 전용 템플릿 사용)
+        custom_text, use_custom = _load_auto_lora_prompt_custom(is_asset)
         if use_custom and custom_text.strip():
             template = custom_text
         else:
-            template = _load_auto_lora_prompt_builtin()
+            template = _load_auto_lora_prompt_builtin(is_asset)
         if not template.strip():
             return {"success": False, "error": "프롬프트 템플릿이 비어 있습니다."}
 
@@ -286,7 +323,7 @@ async def run_auto_refine_lora_prompt(
             source_desc = f"bot={bot_name} project={project_name}"
         else:
             source_desc = f"training entry={entry}"
-        print(f"[INSTANCE_LORA] auto_refine_lora_prompt 호출: source={source_type} {source_desc} char={char_name} filename={filename} service={service} gender={gender_tag} etc_len={len(current_positive)} use_custom={use_custom}")
+        print(f"[INSTANCE_LORA] auto_refine_lora_prompt 호출: source={source_type} {source_desc} char={char_name} filename={filename} service={service} is_asset={is_asset} gender={gender_tag} etc_len={len(current_positive)} use_custom={use_custom}")
 
         use_model = cfg.get("llm_model", "")
         max_retries = max(0, int(cfg.get("auto_lora_prompt_max_retries", 2)))
@@ -338,16 +375,21 @@ async def run_auto_refine_lora_prompt(
 
 
 async def handle_get_auto_lora_prompt(request):
-    """GET /api/instance_lora/auto_lora_prompt - 글로벌/커스텀 프롬프트 조회."""
+    """GET /api/instance_lora/auto_lora_prompt - 글로벌/커스텀 프롬프트 조회.
+
+    ?asset=1 이면 에셋 전용(gender 없음) 프롬프트를 조회한다.
+    """
     try:
-        builtin = _load_auto_lora_prompt_builtin()
-        custom, use_custom = _load_auto_lora_prompt_custom()
+        is_asset = request.query.get("asset") in ("1", "true", "True")
+        builtin = _load_auto_lora_prompt_builtin(is_asset)
+        custom, use_custom = _load_auto_lora_prompt_custom(is_asset)
         return web.json_response({
             "success": True,
             "data": {
                 "builtin": builtin,
                 "custom": custom,
                 "use_custom": use_custom,
+                "is_asset": is_asset,
             },
         })
     except Exception as e:
@@ -357,15 +399,20 @@ async def handle_get_auto_lora_prompt(request):
 
 
 async def handle_set_auto_lora_prompt(request):
-    """POST /api/instance_lora/auto_lora_prompt - 커스텀 프롬프트 저장."""
+    """POST /api/instance_lora/auto_lora_prompt - 커스텀 프롬프트 저장.
+
+    body.asset 가 true 이면 에셋 전용(gender 없음) 프롬프트로 저장한다.
+    """
+    is_asset = False
     try:
         body = await request.json()
         custom = body.get("custom", "") or ""
         use_custom = bool(body.get("use_custom", False))
-        _save_auto_lora_prompt_custom(custom, use_custom)
+        is_asset = bool(body.get("asset", False))
+        _save_auto_lora_prompt_custom(custom, use_custom, is_asset)
         return web.json_response({"success": True})
     except Exception as e:
-        print(f"[INSTANCE_LORA] auto_lora_prompt 저장 실패: {e}")
+        print(f"[INSTANCE_LORA] auto_lora_prompt 저장 실패 (asset={is_asset}): {e}")
         traceback.print_exc()
         return web.json_response({"success": False, "error": str(e)})
 
@@ -414,6 +461,7 @@ async def handle_auto_refine_enqueue(request):
         entry = (body.get("entry") or "").strip()
         positive = body.get("positive", "") or ""
         gender = (body.get("gender") or "").strip()
+        is_asset = bool(body.get("is_asset", False))
 
         if source_type not in ("bot", "bot_lora_training", "training"):
             return web.json_response({"success": False, "error": f"지원하지 않는 source_type: {source_type}"})
@@ -457,11 +505,12 @@ async def handle_auto_refine_enqueue(request):
                 "entry": entry,
                 "positive": positive,
                 "gender": gender,
+                "is_asset": is_asset,
             },
             priority=10,
         )
 
-        print(f"[INSTANCE_LORA] auto_refine 큐 추가: source={source_type} bot={bot_name} project={project_name} char={char_name} entry={entry} filename={filename} id={item.id}")
+        print(f"[INSTANCE_LORA] auto_refine 큐 추가: source={source_type} bot={bot_name} project={project_name} char={char_name} entry={entry} filename={filename} is_asset={is_asset} id={item.id}")
         return web.json_response({"success": True, "data": {"id": item.id}})
     except Exception as e:
         print(f"[INSTANCE_LORA] auto_refine_enqueue 예외: {e}")

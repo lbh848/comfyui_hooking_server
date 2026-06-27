@@ -1619,6 +1619,7 @@ class QueueManager:
         entry = params.get("entry", "")
         positive = params.get("positive", "")
         gender = params.get("gender", "")
+        is_asset = bool(params.get("is_asset", False))
         event_type = "lora_prompt_refine_progress"
 
         if not char_name or not filename:
@@ -1652,6 +1653,7 @@ class QueueManager:
                 project_name=project_name,
                 entry=entry,
                 gender_override=gender,
+                is_asset=is_asset,
             )
             if not result.get("success"):
                 err = result.get("error", "알 수 없는 오류")
