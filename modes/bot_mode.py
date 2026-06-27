@@ -859,43 +859,69 @@ class BotMode:
             return _json_error(str(e))
 
     async def handle_get_asset_chars_with_rep(self, request):
-        """GET /api/bot_mode/asset_chars_with_rep - SSE 스트리밍으로 에셋 캐릭터별 대표 이미지 목록."""
+        """GET /api/bot_mode/asset_chars_with_rep - 에셋 캐릭터 목록(대표 1장만 경량 로드).
+
+        진입 시점에는 모든 캐릭터를 전체 스캔하지 않고, 각 캐릭터의 첫 대표이미지
+        정보만 빠르게 반환한다. 캐릭터별 전체 대표 이미지는 선택(체크) 시점에
+        /api/bot_mode/asset_character_rep_images 로 지연 조회한다.
+        """
         try:
             from modes import asset_mode as _am
-            chars = _am.list_characters()
-
-            async def _stream():
-                yield f"data: {json.dumps({'type': 'total', 'count': len(chars)}, ensure_ascii=False)}\n\n"
-                idx = 0
-                for char_name in chars:
-                    gallery = await asyncio.get_event_loop().run_in_executor(
-                        None, _am.list_character_gallery, char_name
-                    )
-                    reps = [g for g in gallery if g.get("representative")]
-                    if not reps:
-                        continue
-                    rep_images = []
-                    for g in reps:
-                        fn = g["representative"]
-                        rel = f"{char_name}/{g['outfit']}/{g['expression']}/{fn}"
-                        url = f"/api/asset_mode/characters/{char_name}/outfits/{g['outfit']}/expressions/{g['expression']}/images/{fn}"
-                        rep_images.append({"filename": fn, "outfit": g["outfit"], "expression": g["expression"], "path": rel, "url": url})
-                    idx += 1
-                    char_data = {"name": char_name, "rep_count": len(rep_images), "rep_images": rep_images}
-                    yield f"data: {json.dumps({'type': 'character', 'index': idx, 'data': char_data}, ensure_ascii=False)}\n\n"
-                yield f"data: {json.dumps({'type': 'done', 'total': idx}, ensure_ascii=False)}\n\n"
-
-            resp = web.StreamResponse(
-                status=200,
-                headers={"Content-Type": "text/event-stream", "Cache-Control": "no-cache"},
-            )
-            await resp.prepare(request)
-            async for chunk in _stream():
-                await resp.write(chunk.encode("utf-8"))
-            await resp.write_eof()
-            return resp
+            reps = _am.get_characters_representative()
+            chars = []
+            for char_name, info in reps.items():
+                fn = info.get("filename", "")
+                if not fn:
+                    continue
+                outfit = info.get("outfit", "")
+                expression = info.get("expression", "")
+                rel = f"{char_name}/{outfit}/{expression}/{fn}"
+                url = (f"/api/asset_mode/characters/{char_name}/outfits/"
+                       f"{outfit}/expressions/{expression}/images/{fn}")
+                chars.append({
+                    "name": char_name,
+                    "rep_image": {
+                        "filename": fn, "outfit": outfit, "expression": expression,
+                        "path": rel, "url": url,
+                    },
+                })
+            return _json_ok({"characters": chars})
         except Exception as e:
             print(f"[BOT_MODE] asset_chars_with_rep 오류: {e}")
+            traceback.print_exc()
+            return _json_error(str(e))
+
+    async def handle_get_asset_character_rep_images(self, request):
+        """GET /api/bot_mode/asset_character_rep_images?character=xxx
+        단일 캐릭터의 모든 대표 이미지 목록 (선택 시점 지연 로드용)."""
+        char_name = request.query.get("character", "").strip()
+        if not char_name:
+            return _json_error("캐릭터 이름이 필요합니다.")
+        try:
+            from modes import asset_mode as _am
+            gallery = await asyncio.get_event_loop().run_in_executor(
+                None, _am.list_character_gallery, char_name
+            )
+            reps = [g for g in gallery if g.get("representative")]
+            rep_images = []
+            for g in reps:
+                fn = g["representative"]
+                outfit = g["outfit"]
+                expression = g["expression"]
+                rel = f"{char_name}/{outfit}/{expression}/{fn}"
+                url = (f"/api/asset_mode/characters/{char_name}/outfits/"
+                       f"{outfit}/expressions/{expression}/images/{fn}")
+                rep_images.append({
+                    "filename": fn, "outfit": outfit, "expression": expression,
+                    "path": rel, "url": url,
+                })
+            return _json_ok({
+                "name": char_name,
+                "rep_count": len(rep_images),
+                "rep_images": rep_images,
+            })
+        except Exception as e:
+            print(f"[BOT_MODE] asset_character_rep_images 오류: {e}")
             traceback.print_exc()
             return _json_error(str(e))
 
@@ -1851,6 +1877,12 @@ class BotDataPatcher:
             body = await request.json()
             bot_name = body.get("bot_name", "").strip()
             char_name = body.get("char_name", "").strip()
+            # 다중 선택 지원: char_names(리스트)가 있으면 우선, 없으면 단일 char_name
+            char_names_raw = body.get("char_names", [])
+            if not isinstance(char_names_raw, list):
+                print(f"[DATA_PATCH] char_names가 리스트가 아님: {type(char_names_raw)}")
+                char_names_raw = []
+            char_names = [str(n).strip() for n in char_names_raw if str(n).strip()]
             if not bot_name:
                 return _json_error("봇 이름이 비어있습니다.")
 
@@ -1873,20 +1905,32 @@ class BotDataPatcher:
                 return _json_error(f"봇을 찾을 수 없습니다: {bot_name}")
 
             bot_dst_root = os.path.join(comfy_input_dir, "soya_bot", bot_name)
-            selected_only = bool(char_name)
+            # 요청된 캐릭터명 목록: char_names(다중) 우선, 없으면 단일 char_name
+            requested_names = char_names if char_names else ([char_name] if char_name else [])
+            selected_only = len(requested_names) > 0
 
             if selected_only:
                 # 선택 캐릭터 모드: 봇 폴더 전체는 건드리지 않고,
-                # 해당 캐릭터 폴더만 삭제 후 재생성 (새 캐릭터 추가 시 기존 캐릭터 유지)
-                char = next((c for c in bot.get("characters", []) if c["name"] == char_name), None)
-                if not char:
-                    return _json_error(f"캐릭터를 찾을 수 없습니다: {char_name}")
-                target_chars = [char]
-                char_dst_dir = os.path.join(bot_dst_root, char_name)
-                if os.path.isdir(char_dst_dir):
-                    shutil.rmtree(char_dst_dir)
-                    print(f"[DATA_PATCH] 기존 캐릭터 폴더 삭제: {char_dst_dir}")
+                # 선택한 캐릭터 폴더만 삭제 후 재생성 (새 캐릭터 추가 시 기존 캐릭터 유지)
+                target_chars = []
+                missing = []
+                for name in requested_names:
+                    char = next((c for c in bot.get("characters", []) if c["name"] == name), None)
+                    if not char:
+                        missing.append(name)
+                        print(f"[DATA_PATCH] 캐릭터를 찾을 수 없음(스킵): {name}")
+                        continue
+                    target_chars.append(char)
+                if missing:
+                    return _json_error(f"캐릭터를 찾을 수 없습니다: {', '.join(missing)}")
+                if not target_chars:
+                    return _json_error("선택된 캐릭터가 없습니다.")
                 os.makedirs(bot_dst_root, exist_ok=True)
+                for char in target_chars:
+                    char_dst_dir = os.path.join(bot_dst_root, char["name"])
+                    if os.path.isdir(char_dst_dir):
+                        shutil.rmtree(char_dst_dir)
+                        print(f"[DATA_PATCH] 기존 캐릭터 폴더 삭제: {char_dst_dir}")
             else:
                 # 전체 모드: 기존 봇 폴더 삭제 후 재생성
                 if os.path.isdir(bot_dst_root):

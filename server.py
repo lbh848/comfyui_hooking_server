@@ -5570,6 +5570,7 @@ app.router.add_post("/api/bot_mode/analyze_single", bot_mode.handle_analyze_sing
 app.router.add_post("/api/bot_mode/set_negative_single", bot_mode.handle_set_negative_single)
 app.router.add_get("/api/bot_mode/asset_images", bot_mode.handle_get_asset_images)
 app.router.add_get("/api/bot_mode/asset_character_images", bot_mode.handle_get_asset_character_images)
+app.router.add_get("/api/bot_mode/asset_character_rep_images", bot_mode.handle_get_asset_character_rep_images)
 app.router.add_post("/api/bot_mode/data_patch", data_patcher.handle_data_patch)
 app.router.add_get("/api/bot_mode/check_patch_files", data_patcher.handle_check_patch_files)
 app.router.add_post("/api/bot_mode/run_utility", data_patcher.handle_run_utility)

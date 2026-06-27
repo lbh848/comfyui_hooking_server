@@ -25294,18 +25294,12 @@
                     <button onclick="document.getElementById('bot-asset-char-modal').style.display='none'" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer;">&times;</button>
                 </div>
                 <div style="padding:12px 20px; font-size:0.75rem; color:var(--text2); border-bottom:1px solid var(--border);">
-                    대표 이미지가 설정된 에셋 캐릭터만 표시됩니다.
-                    <button onclick="document.querySelectorAll('.asset-char-check').forEach(c=>c.checked=true)" style="margin-left:12px; background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:2px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">전체 선택</button>
-                    <button onclick="document.querySelectorAll('.asset-char-check').forEach(c=>c.checked=false)" style="margin-left:4px; background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:2px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">전체 해제</button>
+                    대표 이미지가 설정된 에셋 캐릭터만 표시됩니다. 캐릭터 선택 시 해당 이미지를 불러옵니다.
+                    <button onclick="botAssetCharToggleAll(true)" style="margin-left:12px; background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:2px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">전체 선택</button>
+                    <button onclick="botAssetCharToggleAll(false)" style="margin-left:4px; background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:2px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">전체 해제</button>
                 </div>
                 <div id="bot-asset-char-list" style="padding:12px 20px; overflow-y:auto; flex:1; display:flex; flex-direction:column; gap:8px;">
-                    <div id="bot-asset-char-loading" style="color:var(--text2); text-align:center; padding:20px;">
-                        <div style="margin-bottom:8px;">로드 중...</div>
-                        <div id="bot-asset-char-progress-bar" style="width:100%; height:6px; background:var(--surface2); border-radius:3px; overflow:hidden; display:none;">
-                            <div id="bot-asset-char-progress-fill" style="height:100%; background:var(--accent); border-radius:3px; width:0%; transition:width 0.2s;"></div>
-                        </div>
-                        <div id="bot-asset-char-progress-text" style="font-size:0.7rem; margin-top:4px; display:none;">0 / 0</div>
-                    </div>
+                    <div id="bot-asset-char-loading" style="color:var(--text2); text-align:center; padding:20px;">로드 중...</div>
                 </div>
                 <div style="padding:12px 20px; border-top:1px solid var(--border); display:flex; justify-content:flex-end; gap:8px;">
                     <button onclick="document.getElementById('bot-asset-char-modal').style.display='none'" style="padding:8px 16px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); cursor:pointer;">취소</button>
@@ -25313,99 +25307,131 @@
                 </div>
             </div>`;
 
-            // 에셋 캐릭터 목록 로드 (SSE 스트리밍)
+            // 에셋 캐릭터 목록 로드 (경량: 각 캐릭터 대표 1장만 즉시, 전체는 선택 시 지연 로드)
             try {
-                const progressBar = document.getElementById('bot-asset-char-progress-bar');
-                const progressFill = document.getElementById('bot-asset-char-progress-fill');
-                const progressText = document.getElementById('bot-asset-char-progress-text');
                 const list = document.getElementById('bot-asset-char-list');
-
                 const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
                 const existingChars = new Set((bot?.characters || []).map(c => c.name));
-                const collectedChars = [];
-                let totalCount = 0;
+                window._assetCharData = {};  // name -> {name, rep_image, rep_images?, rep_count?, loaded}
 
                 const resp = await fetch('/api/bot_mode/asset_chars_with_rep');
-                const reader = resp.body.getReader();
-                const decoder = new TextDecoder();
-                let buffer = '';
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                const j = await resp.json();
+                const chars = (j.characters || []);
 
-                function _renderChar(ch) {
-                    const exists = existingChars.has(ch.name);
-                    const labelStyle = exists ? 'opacity:0.4; text-decoration:line-through;' : '';
-                    const thumbsHtml = ch.rep_images.slice(0, 4).map(ri =>
-                        `<img src="${ri.url}" loading="lazy" style="width:48px; height:48px; object-fit:cover; border-radius:4px;">`
-                    ).join('');
-                    const div = document.createElement('label');
-                    div.style.cssText = `display:flex; align-items:center; gap:10px; padding:8px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); cursor:${exists?'default':'pointer'}; ${labelStyle}`;
-                    div.innerHTML = `
-                        <input type="checkbox" class="asset-char-check" value="${escAttr(ch.name)}" ${exists?'disabled':''} style="width:18px; height:18px; cursor:pointer;">
-                        <div style="display:flex; gap:4px; flex-shrink:0;">${thumbsHtml}</div>
-                        <div style="flex:1; min-width:0;">
-                            <div style="font-size:0.85rem; font-weight:600;">${escHtml(ch.name)}${exists?' (이미 존재)':''}</div>
-                            <div style="font-size:0.7rem; color:var(--text2);">대표 ${ch.rep_count}장</div>
-                        </div>`;
-                    return div;
+                const loadingEl = document.getElementById('bot-asset-char-loading');
+                if (loadingEl) loadingEl.remove();
+
+                if (chars.length === 0) {
+                    list.innerHTML = '<div style="color:var(--text2); text-align:center; padding:20px;">대표 이미지가 있는 에셋 캐릭터가 없습니다.</div>';
+                    return;
                 }
-
-                function _updateProgress(current, total) {
-                    progressBar.style.display = 'block';
-                    progressText.style.display = 'block';
-                    const pct = total > 0 ? Math.round((current / total) * 100) : 0;
-                    progressFill.style.width = pct + '%';
-                    progressText.textContent = `${current} / ${total} 탐색중`;
-                }
-
-                while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-                    buffer += decoder.decode(value, { stream: true });
-
-                    const lines = buffer.split('\n');
-                    buffer = lines.pop();
-
-                    for (const line of lines) {
-                        if (!line.startsWith('data: ')) continue;
-                        try {
-                            const evt = JSON.parse(line.slice(6));
-                            if (evt.type === 'total') {
-                                totalCount = evt.count;
-                                _updateProgress(0, totalCount);
-                            } else if (evt.type === 'character') {
-                                collectedChars.push(evt.data);
-                                _updateProgress(evt.index, totalCount);
-                                // 첫 캐릭터면 로딩 영역 지우고 목록 시작
-                                if (evt.index === 1) {
-                                    const loadingEl = document.getElementById('bot-asset-char-loading');
-                                    if (loadingEl) loadingEl.style.display = 'none';
-                                }
-                                list.appendChild(_renderChar(evt.data));
-                            } else if (evt.type === 'done') {
-                                const loadingEl = document.getElementById('bot-asset-char-loading');
-                                if (loadingEl) loadingEl.remove();
-                                if (collectedChars.length === 0) {
-                                    list.innerHTML = '<div style="color:var(--text2); text-align:center; padding:20px;">대표 이미지가 있는 에셋 캐릭터가 없습니다.</div>';
-                                } else {
-                                    progressText.textContent = `완료: ${collectedChars.length} / ${totalCount} 캐릭터`;
-                                    setTimeout(() => { const bar = document.getElementById('bot-asset-char-progress-bar'); if (bar) bar.remove(); const txt = document.getElementById('bot-asset-char-progress-text'); if (txt) txt.remove(); }, 1500);
-                                }
-                            }
-                        } catch (parseErr) { /* skip */ }
-                    }
-                }
-                window._assetCharData = collectedChars;
+                chars.forEach(ch => {
+                    window._assetCharData[ch.name] = { ...ch, loaded: false };
+                    list.appendChild(_renderChar(ch, existingChars));
+                });
             } catch (e) {
                 console.error('[BOT] 에셋 캐릭터 로드 오류:', e);
-                showToast('에셋 캐릭터 목록 로드 실패', 'error');
+                showToast('에셋 캐릭터 목록 로드 실패: ' + (e.message || e), 'error');
                 modal.style.display = 'none';
             }
+        }
+
+        // 캐릭터 카드 렌더 (1단계: 대표 1장 썸네일만)
+        function _renderChar(ch, existingChars) {
+            const exists = existingChars && existingChars.has(ch.name);
+            const labelStyle = exists ? 'opacity:0.4; text-decoration:line-through;' : '';
+            const rep = ch.rep_image;
+            const thumbsHtml = rep
+                ? `<img src="${rep.url}" loading="lazy" style="width:48px; height:48px; object-fit:cover; border-radius:4px;">`
+                : '';
+            const div = document.createElement('label');
+            div.style.cssText = `display:flex; align-items:center; gap:10px; padding:8px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); cursor:${exists?'default':'pointer'}; ${labelStyle}`;
+            div.dataset.charName = ch.name;
+            div.innerHTML = `
+                <input type="checkbox" class="asset-char-check" value="${escAttr(ch.name)}" ${exists?'disabled':''} style="width:18px; height:18px; cursor:pointer;">
+                <div class="ac-thumbs" style="display:flex; gap:4px; flex-shrink:0;">${thumbsHtml}</div>
+                <div style="flex:1; min-width:0;">
+                    <div style="font-size:0.85rem; font-weight:600;">${escHtml(ch.name)}${exists?' (이미 존재)':''}</div>
+                    <div class="ac-count" style="font-size:0.7rem; color:var(--text2);">대표 이미지 보유</div>
+                </div>`;
+            if (!exists) {
+                const cb = div.querySelector('.asset-char-check');
+                cb.addEventListener('change', () => {
+                    if (cb.checked) _ensureCharRepImages(ch.name, div);
+                });
+            }
+            return div;
+        }
+
+        // 체크 시점: 단일 캐릭터의 전체 대표 이미지를 지연 로드하여 카드에 반영
+        async function _ensureCharRepImages(name, card) {
+            const data = window._assetCharData && window._assetCharData[name];
+            if (!data) return;
+            if (data.loaded && data.rep_images) return data;
+            if (!card) card = _findCharCard(name);
+            const countEl = card && card.querySelector('.ac-count');
+            if (countEl) countEl.textContent = '불러오는 중...';
+            try {
+                const resp = await fetch('/api/bot_mode/asset_character_rep_images?character=' + encodeURIComponent(name));
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                const j = await resp.json();
+                data.rep_count = j.rep_count || 0;
+                data.rep_images = j.rep_images || [];
+                data.loaded = true;
+                if (card) {
+                    const thumbs = card.querySelector('.ac-thumbs');
+                    if (thumbs) {
+                        thumbs.innerHTML = data.rep_images.slice(0, 4).map(ri =>
+                            `<img src="${ri.url}" loading="lazy" style="width:48px; height:48px; object-fit:cover; border-radius:4px;">`
+                        ).join('');
+                    }
+                    if (countEl) countEl.textContent = `대표 ${data.rep_count}장`;
+                }
+                return data;
+            } catch (e) {
+                console.error('[BOT] 캐릭터 대표 이미지 로드 오류:', name, e);
+                if (countEl) countEl.textContent = '로드 실패';
+                showToast(`[${name}] 대표 이미지 로드 실패: ${e.message || e}`, 'error');
+                // 로드 실패 시 체크 해제하여 잘못된 가져오기 방지
+                if (card) { const cb = card.querySelector('.asset-char-check'); if (cb) cb.checked = false; }
+            }
+        }
+
+        // 전체 선택/해제 — 체크된 캐릭터는 그때 지연 로드
+        function botAssetCharToggleAll(on) {
+            document.querySelectorAll('.asset-char-check').forEach(cb => {
+                if (cb.disabled) return;
+                cb.checked = on;
+                if (on) _ensureCharRepImages(cb.value, cb.closest('label'));
+            });
+        }
+
+        // 이름으로 캐릭터 카드(label) 찾기 (특수문자 안전)
+        function _findCharCard(name) {
+            let found = null;
+            document.querySelectorAll('.asset-char-check').forEach(el => {
+                if (el.value === name) found = el.closest('label');
+            });
+            return found;
         }
 
         async function botDoAssetCharImport() {
             const checks = document.querySelectorAll('.asset-char-check:checked');
             if (checks.length === 0) { showToast('가져올 캐릭터를 선택하세요', 'error'); return; }
             const selectedNames = [...checks].map(c => c.value);
-            const charsData = (window._assetCharData || []).filter(ch => selectedNames.includes(ch.name));
+            // 보장: 선택된 캐릭터의 대표 이미지가 아직 로드되지 않았으면 지금 로드
+            for (const n of selectedNames) {
+                const d = window._assetCharData && window._assetCharData[n];
+                if (!d || !d.loaded) await _ensureCharRepImages(n, _findCharCard(n));
+            }
+            const charsData = selectedNames
+                .map(n => window._assetCharData && window._assetCharData[n])
+                .filter(c => c && Array.isArray(c.rep_images) && c.rep_images.length);
+            if (charsData.length === 0) {
+                showToast('가져올 대표 이미지가 없습니다 (로드 실패 포함)', 'error');
+                return;
+            }
 
             // 확인 + 이름 편집 모달
             let confirmModal = document.getElementById('bot-asset-char-confirm');
@@ -27706,15 +27732,106 @@
             } catch (e) { el.textContent = ''; }
         }
 
+        // 선택캐릭터 데이터 패치: 패치할 캐릭터 목록 (다중 선택)
+        let _dataPatchSelectedChars = null;
+
         async function dataPatchStartSelected() {
             if (!botCurrentBot) {
                 showToast('봇을 먼저 선택하세요.', 'error');
                 return;
             }
-            if (!botCurrentChar) {
-                showToast('선택된 캐릭터가 없습니다. 캐릭터를 먼저 선택하세요.', 'error');
+            const existing = document.getElementById('data-patch-select-modal');
+            if (existing) { existing.remove(); return; }
+
+            const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
+            const chars = (bot?.characters || []);
+            if (!chars.length) {
+                showToast('이 봇에 캐릭터가 없습니다.', 'error');
                 return;
             }
+
+            // 캐릭터 선택 모달 (체크박스 다중 선택)
+            const modal = document.createElement('div');
+            modal.id = 'data-patch-select-modal';
+            modal.style.cssText = 'position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:10001; background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:20px; min-width:380px; max-width:520px; max-height:80vh; display:flex; flex-direction:column; box-shadow:0 8px 32px rgba(0,0,0,0.4);';
+
+            const rowsHtml = chars.map((c, i) => {
+                const cnt = (c.rep_images || []).length;
+                const noImg = cnt === 0 ? ' <span style="color:#e53935; font-size:0.7rem;">(대표 이미지 없음)</span>' : '';
+                const checked = (c.name === botCurrentChar) ? 'checked' : '';
+                const thumbPlaceholder = cnt === 0
+                    ? '<div class="data-patch-thumb" data-char-name="' + escHtml(c.name) + '" style="width:48px; height:48px; border-radius:4px; background:var(--surface2); border:1px solid var(--border); display:flex; align-items:center; justify-content:center; flex-shrink:0; font-size:0.6rem; color:var(--text2);">없음</div>'
+                    : '<div class="data-patch-thumb" data-char-name="' + escHtml(c.name) + '" style="width:48px; height:48px; border-radius:4px; background:var(--surface2); border:1px solid var(--border); flex-shrink:0;"></div>';
+                return `<label style="display:flex; align-items:center; gap:8px; padding:6px 8px; border-radius:4px; cursor:pointer;">
+                    <input type="checkbox" class="data-patch-char-cb" data-name="${escHtml(c.name)}" ${checked} style="cursor:pointer;">
+                    ${thumbPlaceholder}
+                    <span style="font-size:0.85rem;">${escHtml(c.name)} <span style="color:var(--text2); font-size:0.72rem;">(${cnt})</span>${noImg}</span>
+                </label>`;
+            }).join('');
+
+            modal.innerHTML = `
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                    <div style="font-weight:700; font-size:1rem;">캐릭터 선택</div>
+                    <button onclick="document.getElementById('data-patch-select-modal').remove()"
+                        style="background:none; border:none; color:var(--text2); font-size:1.2rem; cursor:pointer;">✕</button>
+                </div>
+                <div style="font-size:0.78rem; color:var(--text2); margin-bottom:8px;">패치할 캐릭터를 선택하세요. (대표 이미지가 없는 캐릭터는 건너뜁니다)</div>
+                <div style="margin-bottom:8px; display:flex; gap:8px;">
+                    <button onclick="(function(){document.querySelectorAll('.data-patch-char-cb').forEach(cb=>cb.checked=true);})()"
+                        style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:4px 10px; border-radius:4px; cursor:pointer; font-size:0.75rem;">전체 선택</button>
+                    <button onclick="(function(){document.querySelectorAll('.data-patch-char-cb').forEach(cb=>cb.checked=false);})()"
+                        style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:4px 10px; border-radius:4px; cursor:pointer; font-size:0.75rem;">전체 해제</button>
+                </div>
+                <div style="overflow-y:auto; flex:1; border:1px solid var(--border); border-radius:6px; padding:6px;">
+                    ${rowsHtml}
+                </div>
+                <div style="display:flex; gap:8px; margin-top:14px; justify-content:flex-end;">
+                    <button onclick="document.getElementById('data-patch-select-modal').remove()"
+                        style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:6px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem;">취소</button>
+                    <button onclick="confirmDataPatchCharSelection()"
+                        style="background:#00695C; color:#fff; border:none; padding:6px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">선택</button>
+                </div>
+            `;
+            document.body.appendChild(modal);
+
+            // 각 캐릭터의 첫 대표 이미지를 비동기로 로드해 섬네일로 표시
+            for (const c of chars) {
+                const repList = c.rep_images || [];
+                if (!repList.length) continue;
+                const firstRep = repList[0];
+                (async (charName, repFn) => {
+                    try {
+                        const resp = await fetch(`/api/bot_mode/images?bot=${encodeURIComponent(botCurrentBot)}&character=${encodeURIComponent(charName)}`);
+                        const data = await resp.json();
+                        const imgs = data.images || [];
+                        const found = imgs.find(im => im.filename === repFn) || imgs[0];
+                        if (!found || !found.url) return;
+                        const thumb = modal.querySelector(`.data-patch-thumb[data-char-name="${CSS.escape(charName)}"]`);
+                        if (!thumb) return;
+                        const img = document.createElement('img');
+                        img.src = `${found.url}?t=${Date.now()}`;
+                        img.alt = charName;
+                        img.style.cssText = 'width:48px; height:48px; object-fit:cover; border-radius:4px; display:block;';
+                        img.onerror = () => { thumb.textContent = '로드 실패'; };
+                        thumb.innerHTML = '';
+                        thumb.appendChild(img);
+                    } catch (e) {
+                        console.error('[DATA_PATCH] 섬네일 로드 실패:', charName, e);
+                    }
+                })(c.name, firstRep);
+            }
+        }
+
+        function confirmDataPatchCharSelection() {
+            const checked = Array.from(document.querySelectorAll('.data-patch-char-cb:checked'));
+            const names = checked.map(cb => cb.dataset.name).filter(Boolean);
+            if (!names.length) {
+                showToast('최소 한 개 이상의 캐릭터를 선택하세요.', 'error');
+                return;
+            }
+            _dataPatchSelectedChars = names;
+            const modal = document.getElementById('data-patch-select-modal');
+            if (modal) modal.remove();
             dataPatchStart('selected');
         }
 
@@ -27735,7 +27852,9 @@
             } catch (e) { console.error('[DATA_PATCH] 설정 로드 실패:', e); }
 
             const isSel = mode === 'selected';
-            const titleSuffix = isSel ? ` (선택 캐릭터: ${botCurrentChar})` : '';
+            const selNames = (isSel && Array.isArray(_dataPatchSelectedChars) && _dataPatchSelectedChars.length)
+                ? _dataPatchSelectedChars : [];
+            const titleSuffix = isSel ? ` (선택 캐릭터 ${selNames.length}개: ${selNames.join(', ')})` : '';
 
             const modal = document.createElement('div');
             modal.id = 'data-patch-confirm-modal';
@@ -27800,6 +27919,9 @@
             const statusDiv = document.getElementById('data-patch-status');
             const btnLabel = isSel ? '선택캐릭터 데이터 패치 시작' : '데이터 패치 시작';
             _dataPatchActiveBtnId = isSel ? 'btn-data-patch-selected' : 'btn-data-patch';
+            // 선택 모드일 때 대상 캐릭터명 확정
+            const selTargetNames = (isSel && Array.isArray(_dataPatchSelectedChars) && _dataPatchSelectedChars.length)
+                ? _dataPatchSelectedChars : [];
             btn.disabled = true;
             btn.textContent = '패치 중…';
             statusDiv.style.display = 'block';
@@ -27809,7 +27931,7 @@
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(isSel
-                        ? { bot_name: botCurrentBot, char_name: botCurrentChar }
+                        ? { bot_name: botCurrentBot, char_names: selTargetNames }
                         : { bot_name: botCurrentBot })
                 });
                 const patchResult = await patchResp.json();
@@ -27823,7 +27945,7 @@
 
                 const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
                 let chars = (bot?.characters || []).filter(c => (c.rep_images || []).length > 0);
-                if (isSel) chars = chars.filter(c => c.name === botCurrentChar);
+                if (isSel) chars = chars.filter(c => selTargetNames.includes(c.name));
                 if (chars.length === 0) {
                     statusDiv.textContent = `완료: ${patchResult.message} (얼굴 대상 없음)`;
                     showToast(patchResult.message, 'success');
