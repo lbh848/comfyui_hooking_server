@@ -16112,7 +16112,8 @@
                 if (_llmBtn) {
                     const _ctx = { character: loraCurrentCharacter, entry: loraCurrentEntry, filename };
                     _llmBtn.onclick = () => {
-                        const positive = _readLoraPromptContent('positive');
+                        // 정제 입력({etc})은 미리보기와 동일한 단일 소스에서 가져온다 (분리 금지).
+                        const positive = _refineInputPositive();
                         _runLoraPromptRefine({
                             source_type: 'training',
                             character: _ctx.character,
@@ -19470,7 +19471,8 @@
             if (_botLoraLlmBtn) {
                 const _ctx = { bot: botLoraCurrentBot, project: botLoraCurrentProject, character: charName, filename };
                 _botLoraLlmBtn.onclick = () => {
-                    const positive = _readLoraPromptContent('positive');
+                    // 정제 입력({etc})은 미리보기와 동일한 단일 소스에서 가져온다 (분리 금지).
+                    const positive = _refineInputPositive();
                     _runLoraPromptRefine({
                         source_type: 'bot_lora_training',
                         bot: _ctx.bot,
@@ -22857,7 +22859,7 @@
         }
 
         // 미리보기용 etc/gender 실제 값을 컨텍스트에 맞게 해석.
-        //  - 트레이닝 프롬프트 편집 모달이 열려 있으면: 그 편집창의 현재 긍정 프롬프트 + _loraPickerGender
+        //  - 트레이닝 프롬프트 편집 모달이 열려 있으면: 원본 긍정 프롬프트(WD Tagger 결과, _loraPromptState.origPos) + _loraPickerGender
         //  - 그 외(로라 생성 인스턴스 컨텍스트): _instanceCreateFiles[0]._existingPrompt + source 캐릭터의 gender_tag
         //  - 실제 값을 구하지 못하면 샘플로 대체하지 않고 에러 메시지를 반환한다 (조용한 폴백 금지).
         function _resolveRealGenderTag(botName, charName) {
@@ -22865,6 +22867,13 @@
             const bot = ((botData && botData.bots) || []).find(b => b.name === botName);
             const char = bot ? (bot.characters || []).find(c => c.name === charName) : null;
             return (char && char.gender_tag) || '';
+        }
+
+        // 정제 입력 프롬프트(= 템플릿 {etc} 에 들어갈 값)의 단일 소스.
+        // 원본 긍정 프롬프트(WD Tagger 결과)를 사용한다. 수정본(편집창)을 쓰지 않는다.
+        // 미리보기와 실제 전송이 반드시 같은 값을 쓰도록 이 함수 하나만 경유한다 (분리 금지).
+        function _refineInputPositive() {
+            return ((_loraPromptState && _loraPromptState.origPos) || '').trim();
         }
 
         function _autoLoraPreviewValues() {
@@ -22876,11 +22885,12 @@
             const pickerOpen = !!(pickerModal && pickerModal.style.display === 'flex');
             if (pickerOpen) {
                 try {
-                    const pos = _readLoraPromptContent('positive');
-                    if (pos && pos.trim()) {
-                        etcValue = pos.trim();
+                    // 정제 입력({etc})은 전송과 동일한 단일 소스에서 가져온다 (분리 금지).
+                    const pos = _refineInputPositive();
+                    if (pos) {
+                        etcValue = pos;
                     } else {
-                        etcError = '편집 모달의 긍정 프롬프트가 비어 있습니다';
+                        etcError = '편집 모달의 원본 긍정 프롬프트가 비어 있습니다';
                     }
                 } catch (e) {
                     console.warn('[auto_lora_preview] 트레이닝 프롬프트 읽기 실패:', e);

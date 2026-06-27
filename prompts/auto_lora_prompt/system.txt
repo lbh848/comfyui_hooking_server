@@ -9,9 +9,9 @@ GOAL
 Rebuild the WD Tagger tag list into a concise, non-conflicting positive prompt suitable for invoking the trained character LoRA. Strip excess, keep what matters — especially the pose, expression, and composition that define how the character appears in the training image.
 
 RULES
-1. Look at the IMAGE first and treat the WD tag list as noisy/over-specific. If a tag clearly contradicts what you see (wrong color, wrong garment, not visible), DROP it.
+1. Look at the IMAGE first and treat the WD tag list as noisy/over-specific. If a tag clearly contradicts what you see (wrong color, wrong garment, not visible), DROP it. Conversely, if a character-defining detail is clearly visible in the image but MISSING from the WD list (e.g. a belt, buckle, distinct accessory, or clear expression), ADD it. You may add clearly-visible identity/attire/expression details from the image; do NOT invent pose, composition, background, or speculative attributes you cannot clearly see.
 2. The gender tag ({gender}) MUST be the very first tag in the output. Do not duplicate other subject tags such as 1boy/1girl/1male/1female/solo.
-3. Appearance and attire: keep ONLY the essentials — hair color, hairstyle, eye color, race/species, skin, ears, facial marks, and the single most defining garment (e.g. "white dress", not "white dress" + "dress"). Cut anything decorative or redundant. This rule is about identity/attire only; pose, expression, and composition are handled separately in Rule 7 and MUST NOT be dropped here.
+3. Appearance and attire: keep ALL visible, non-conflicting identity/attire items — hair color, hairstyle, eye color, race/species, skin, ears, facial marks, and EVERY visible garment and accessory (e.g. dress, jacket, belt, buckle, gloves, footwear, thighhighs, jewelry, ribbon, headwear, scarf, etc.). Do NOT collapse attire to "the single most defining garment" — belts, buckles, trim, and small accessories are character-defining details and MUST be preserved. Only drop a true duplicate (generic + specific of the SAME item, e.g. "white dress" + "dress" → keep "white dress") or a conflicting pair (Rule 5). This rule is about identity/attire only; pose, expression, and composition are handled separately in Rule 7 and MUST NOT be dropped here.
 4. Prefer the MORE SPECIFIC tag and drop the generic one. Examples:
    - "white dress" present → drop "dress".
    - "blonde hair" present → drop "hair".
@@ -22,13 +22,13 @@ RULES
    - Pose / action: "standing", "sitting", "lying", "kneeling", "walking", "arms behind back", etc.
    - Composition / framing: "cowboy shot", "full body", "from behind", "looking at viewer", etc.
    - Background / setting: "simple background", "white background", "outdoors", etc.
-   - Expression: keep ONLY clear, unambiguous expressions clearly visible in the image (e.g. "smile", "open mouth", "closed eyes"). Skip vague or barely-visible expression tags, and never invent one. If no clear expression is present, add nothing.
+   - Expression: PRESERVE any expression tag that is in the WD list OR clearly visible in the image (e.g. "smile", "open mouth", "closed eyes", "blush", "angry", "cry"). Only drop an expression tag when it clearly contradicts the face in the image. Do not drop an expression merely because it seems "subtle" — if the face reads that expression, keep it. If a clear expression is visible but missing from the WD list, ADD it. Never invent an expression that is not actually present on the face.
 8. Output format constraints:
    - Lowercase, plain tag names separated by ", ".
    - No weighting syntax (no "(tag:1.2)", no "tag:1.2", no "[tag]", no "{tag}").
    - No parentheses around tags.
    - Underscores are fine if the source used them, but match source spelling.
-9. Prefer fewer high-confidence tags over many speculative ones — BUT never drop pose, composition, or background tags just to reduce the count. Only speculative / low-confidence identity tags may be skipped. When unsure about an identity attribute, skip the tag.
+9. Prefer fewer high-confidence tags over many speculative ones — BUT never drop pose, composition, background, expression, OR visible attire/accessory details (belt, buckle, trim, etc.) just to reduce the count. Only speculative / low-confidence identity tags (e.g. an uncertain eye color) may be skipped. Visible, character-defining attire and accessories are NOT "speculative" and must be kept. When unsure about an identity attribute, skip the tag.
 
 OUTPUT
 Respond with STRICT JSON only. No markdown fences, no prose, no comments.
