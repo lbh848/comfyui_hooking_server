@@ -5139,18 +5139,12 @@
                         <!-- 학습 설정 (프로젝트 진입 후) -->
                         <div id="bot-lora-config-section" style="display:none;">
                             <div style="margin-bottom:8px; font-weight:700; font-size:0.9rem;">학습 설정</div>
-                            <!-- 선택 이미지 일괄 LLM 정제 -->
-                            <div style="background:rgba(180,130,220,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
-                                <div style="font-size:0.8rem; font-weight:600; margin-bottom:6px;">일괄 LLM 정제(테스트 이미지 제외)</div>
-                                <button id="bot-lora-refine-batch-btn" onclick="openBotLoraRefineSelectModal()" style="width:100%; padding:8px; background:var(--accent); color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">선택 이미지 일괄 정제</button>
-                                <div id="bot-lora-refine-batch-status" style="margin-top:6px; font-size:0.72rem; color:var(--text-secondary); min-height:0.9rem;"></div>
-                            </div>
-                            <!-- 테스트 이미지 일괄 세팅 -->
-                            <div style="background:rgba(0,180,140,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
-                                <div style="font-size:0.8rem; font-weight:600; margin-bottom:6px;">테스트 이미지 일괄 세팅</div>
-                                <button id="bot-lora-test-setup-btn" onclick="openBotTestSetupCardSelectModal()" style="width:100%; padding:8px; background:rgba(0,180,140,0.85); color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">선택 이미지 일괄 정제</button>
-                                <button type="button" onclick="_openBotTestSetupPromptModal()" style="width:100%; margin-top:6px; padding:6px 12px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:0.78rem;">⚙️ LLM 프롬프트</button>
-                                <div id="bot-lora-test-setup-status" style="margin-top:6px; font-size:0.72rem; color:var(--text-secondary); min-height:0.9rem;"></div>
+                            <!-- 캐릭터 임포트 -->
+                            <div style="background:rgba(80,150,220,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
+                                <div style="font-size:0.8rem; font-weight:600; margin-bottom:6px;">캐릭터 추가</div>
+                                <button onclick="openBotLoraCharImportModal()" style="width:100%; padding:8px; background:rgba(80,150,220,0.15); color:var(--text); border:1px solid rgba(80,150,220,0.3); border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">
+                                    봇에서 캐릭터 임포트
+                                </button>
                             </div>
                             <!-- 테스트 이미지 추가 -->
                             <div style="background:rgba(0,150,255,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
@@ -5159,12 +5153,18 @@
                                     에셋에서 선택
                                 </button>
                             </div>
-                            <!-- 캐릭터 임포트 -->
-                            <div style="background:rgba(80,150,220,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
-                                <div style="font-size:0.8rem; font-weight:600; margin-bottom:6px;">캐릭터 추가</div>
-                                <button onclick="openBotLoraCharImportModal()" style="width:100%; padding:8px; background:rgba(80,150,220,0.15); color:var(--text); border:1px solid rgba(80,150,220,0.3); border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">
-                                    봇에서 캐릭터 임포트
-                                </button>
+                            <!-- 선택 이미지 일괄 LLM 정제 -->
+                            <div style="background:rgba(180,130,220,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
+                                <div style="font-size:0.8rem; font-weight:600; margin-bottom:6px;">LLM 기반 학습 이미지 태그 정제</div>
+                                <button id="bot-lora-refine-batch-btn" onclick="openBotLoraRefineSelectModal()" style="width:100%; padding:8px; background:var(--accent); color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">선택 이미지 일괄 정제</button>
+                                <div id="bot-lora-refine-batch-status" style="margin-top:6px; font-size:0.72rem; color:var(--text-secondary); min-height:0.9rem;"></div>
+                            </div>
+                            <!-- 테스트 이미지 일괄 세팅 -->
+                            <div style="background:rgba(0,180,140,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
+                                <div style="font-size:0.8rem; font-weight:600; margin-bottom:6px;">LLM 기반 테스트 이미지 태그 정제</div>
+                                <button id="bot-lora-test-setup-btn" onclick="openBotTestSetupCardSelectModal()" style="width:100%; padding:8px; background:rgba(0,180,140,0.85); color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">선택 이미지 일괄 정제</button>
+                                <button type="button" onclick="_openBotTestSetupPromptModal()" style="width:100%; margin-top:6px; padding:6px 12px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:0.78rem;">⚙️ LLM 프롬프트</button>
+                                <div id="bot-lora-test-setup-status" style="margin-top:6px; font-size:0.72rem; color:var(--text-secondary); min-height:0.9rem;"></div>
                             </div>
                             <!-- 학습 설정 폼 -->
                             <div style="background:rgba(100,150,255,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
