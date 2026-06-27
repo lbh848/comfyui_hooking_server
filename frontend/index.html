@@ -3499,6 +3499,11 @@
                             <button id="btn-bot-util-negative" onclick="botUtilityBatchNegative()" style="width:100%; margin-top:4px; background:#BF360C; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">얼굴 부정 태그 일괄 적용</button>
                             <div id="bot-util-status" style="font-size:0.7rem; color:var(--text2); margin-top:4px; display:none;"></div>
                         </div>
+                        <div style="background:rgba(124,58,237,0.08); border-radius:8px; padding:10px; margin-top:8px;">
+                            <div class="section-title">LLM 일괄 얼굴/눈 태그 분석</div>
+                            <button id="btn-bot-llm-batch" onclick="botLlmBatchAnalyze()" style="width:100%; background:#7C3AED; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">LLM 기반 선택 캐릭터 일괄 얼굴/눈 태그 분석</button>
+                            <div id="bot-llm-batch-status" style="font-size:0.7rem; color:var(--text2); margin-top:4px; display:none;"></div>
+                        </div>
                         <div style="background:rgba(0,105,92,0.08); border-radius:8px; padding:10px; margin-top:8px;">
                             <div class="section-title">분류 데이터 내보내기</div>
                             <button id="btn-export-lb-extra" onclick="exportLbExtraTxt()" style="width:100%; background:#00695C; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">lb-xnai.lb.extra.txt 내보내기</button>
@@ -7396,6 +7401,9 @@
                             break;
                         case 'data_patch_progress':
                             handleDataPatchProgress(msg.data);
+                            break;
+                        case 'bot_llm_face_tag_progress':
+                            _handleBotLlmFaceTagProgress(msg.data);
                             break;
                         case 'text_output':
                             handleTextOutput(msg.data);
@@ -26099,6 +26107,200 @@
                 btn.disabled = false;
                 btn.textContent = '얼굴 태그 일괄 분석';
             }
+        }
+
+        // ─── LLM 일괄 얼굴/눈 태그 분석 ──────────────────────
+        async function botLlmBatchAnalyze() {
+            if (!botCurrentBot) { showToast('봇을 먼저 선택하세요', 'error'); return; }
+            const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
+            if (!bot || !(bot.characters || []).length) { showToast('캐릭터가 없습니다', 'error'); return; }
+
+            const statusDiv = document.getElementById('bot-llm-batch-status');
+            statusDiv.style.display = 'block';
+            statusDiv.textContent = '얼굴 이미지 보유 캐릭터 조회 중...';
+
+            // utility_preview 에서 _face_image.webp 보유 캐릭터 목록 추출
+            let faceCharNames = new Set();
+            try {
+                const prevResp = await fetch(`/api/bot_mode/utility_preview?bot=${encodeURIComponent(botCurrentBot)}&character=`);
+                const prevData = await prevResp.json();
+                if (prevData.error) { showToast(prevData.error, 'error'); statusDiv.style.display = 'none'; return; }
+                (prevData.images || []).forEach(i => faceCharNames.add(i.character));
+            } catch (e) {
+                showToast(`얼굴 이미지 목록 로드 실패: ${e.message}`, 'error');
+                statusDiv.style.display = 'none';
+                return;
+            }
+
+            const chars = bot.characters.map(c => ({
+                name: c.name,
+                has_face: faceCharNames.has(c.name),
+                rep_count: (c.rep_images || []).length,
+                gender: c.gender_tag || '1girl',
+            }));
+            const analyzable = chars.filter(c => c.has_face && c.rep_count > 0);
+            if (analyzable.length === 0) {
+                showToast('분석 가능한 캐릭터가 없습니다 (_face_image.webp + rep_images 필요)', 'error');
+                statusDiv.style.display = 'none';
+                return;
+            }
+            statusDiv.style.display = 'none';
+            botShowLlmBatchModal(chars);
+        }
+
+        function botShowLlmBatchModal(chars) {
+            let modal = document.getElementById('bot-llm-batch-modal');
+            if (!modal) { modal = document.createElement('div'); modal.id = 'bot-llm-batch-modal'; document.body.appendChild(modal); }
+            const listHtml = chars.map((c, i) => {
+                const ok = c.has_face && c.rep_count > 0;
+                const disabled = ok ? '' : 'disabled';
+                const checked = ok ? 'checked' : '';
+                const badge = ok
+                    ? `<span style="color:#16A34A; font-size:0.68rem;">✓ 분석 가능</span>`
+                    : `<span style="color:var(--text2); font-size:0.68rem;">${c.has_face ? '' : '얼굴 이미지 없음 '}${c.rep_count === 0 ? 'rep_images 없음' : ''}</span>`;
+                return `<label style="display:flex; align-items:center; gap:10px; padding:8px; border-radius:6px; cursor:${ok ? 'pointer' : 'not-allowed'}; border:1px solid var(--border); background:var(--surface2); opacity:${ok ? 1 : 0.55};">
+                    <input type="checkbox" ${checked} ${disabled} class="llm-batch-check" data-character="${escAttr(c.name)}" data-gender="${escAttr(c.gender)}" style="width:18px; height:18px; cursor:${ok ? 'pointer' : 'not-allowed'};">
+                    <div style="flex:1; min-width:0;">
+                        <div style="font-size:0.8rem; font-weight:600;">${escHtml(c.name)}</div>
+                        <div style="font-size:0.7rem; margin-top:2px;">${badge} · gender: ${escHtml(c.gender)}</div>
+                    </div>
+                </label>`;
+            }).join('');
+            modal.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:10000; display:flex; align-items:center; justify-content:center;';
+            modal.innerHTML = `<div style="background:var(--surface); border-radius:12px; width:90vw; max-width:640px; max-height:85vh; display:flex; flex-direction:column; overflow:hidden;">
+                <div style="padding:16px 20px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
+                    <h3 style="margin:0;">LLM 일괄 얼굴/눈 태그 분석 대상 선택</h3>
+                    <button onclick="document.getElementById('bot-llm-batch-modal').remove()" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer;">&times;</button>
+                </div>
+                <div style="padding:8px 20px; font-size:0.75rem; color:var(--text2); display:flex; gap:12px; align-items:center; border-bottom:1px solid var(--border); flex-wrap:wrap;">
+                    <span>분석 가능 ${chars.filter(c => c.has_face && c.rep_count > 0).length} / 전체 ${chars.length}</span>
+                    <button onclick="document.querySelectorAll('.llm-batch-check:not([disabled])').forEach(c=>c.checked=true)" style="background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:2px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">전체 선택</button>
+                    <button onclick="document.querySelectorAll('.llm-batch-check:not([disabled])').forEach(c=>c.checked=false)" style="background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:2px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">전체 해제</button>
+                    <span style="color:var(--error);">주의: face/eye 태그를 완전히 덮어씁니다. gender_tag/절대 태그는 보존.</span>
+                </div>
+                <div style="padding:12px 20px; overflow-y:auto; flex:1; display:flex; flex-direction:column; gap:6px;">${listHtml}</div>
+                <div style="padding:12px 20px; border-top:1px solid var(--border); display:flex; justify-content:flex-end; gap:8px;">
+                    <button onclick="document.getElementById('bot-llm-batch-modal').remove()" style="padding:8px 16px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); cursor:pointer;">취소</button>
+                    <button onclick="botDoLlmBatch()" style="padding:8px 16px; border-radius:6px; border:none; background:#7C3AED; color:#fff; cursor:pointer; font-weight:600;">선택 분석 실행</button>
+                </div>
+            </div>`;
+        }
+
+        async function botDoLlmBatch() {
+            const checks = document.querySelectorAll('.llm-batch-check:checked');
+            if (checks.length === 0) { showToast('선택된 캐릭터가 없습니다', 'error'); return; }
+            const targets = [...checks].map(c => c.dataset.character);
+
+            // 덮어쓰기 경고
+            const ok = confirm(
+                `선택한 ${targets.length}명 캐릭터의 face/eye 태그를 LLM 분석 결과로 완전히 덮어씁니다.\n` +
+                `- gender_tag / 절대 태그는 보존됩니다.\n` +
+                `- 큐에 추가되어 순차 처리됩니다 (우선순위 제일 낮음).\n` +
+                `\n계속하시겠습니까?`
+            );
+            if (!ok) return;
+            document.getElementById('bot-llm-batch-modal').remove();
+
+            const btn = document.getElementById('btn-bot-llm-batch');
+            const statusDiv = document.getElementById('bot-llm-batch-status');
+            btn.disabled = true;
+            btn.textContent = '큐에 추가 중...';
+            statusDiv.style.display = 'block';
+            statusDiv.textContent = '큐에 추가 중...';
+
+            try {
+                const resp = await fetch('/api/bot_mode/llm_batch_enqueue', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ bot: botCurrentBot, characters: targets }),
+                });
+                const text = await resp.text();
+                let data;
+                try { data = JSON.parse(text); }
+                catch (_) { data = { success: false, error: `JSON 아님 (HTTP ${resp.status}): ${text.slice(0, 120)}` }; }
+                if (!data.success) {
+                    showToast(`큐 추가 실패: ${data.error || ''}`, 'error');
+                    btn.disabled = false;
+                    btn.textContent = 'LLM 기반 선택 캐릭터 일괄 얼굴/눈 태그 분석';
+                    return;
+                }
+                showToast(`${data.data.count}건 큐에 추가됨`, 'success');
+                _botLlmBatchTotal = (data.data.count || 0);
+                _botLlmBatchDone = 0;
+                _botLlmBatchFailed = [];
+                _updateBotLlmBatchStatus();
+            } catch (e) {
+                showToast(`큐 추가 실패: ${e.message}`, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'LLM 기반 선택 캐릭터 일괄 얼굴/눈 태그 분석';
+            }
+        }
+
+        // ─── LLM 일괄 분석 큐 상태 추적 ───
+        let _botLlmBatchTotal = 0;
+        let _botLlmBatchDone = 0;
+        let _botLlmBatchFailed = [];
+
+        function _updateBotLlmBatchStatus() {
+            const statusDiv = document.getElementById('bot-llm-batch-status');
+            if (!statusDiv) return;
+            const remaining = Math.max(0, _botLlmBatchTotal - _botLlmBatchDone);
+            if (_botLlmBatchTotal === 0) return;
+            if (remaining === 0) {
+                const failN = _botLlmBatchFailed.length;
+                if (failN === 0) {
+                    statusDiv.textContent = `완료: ${_botLlmBatchDone}명 처리 (전체 성공)`;
+                    statusDiv.style.color = '#16A34A';
+                } else {
+                    const failNames = _botLlmBatchFailed.map(f => f.name).join(', ');
+                    statusDiv.textContent = `완료: ${_botLlmBatchDone}/${_botLlmBatchTotal} (실패 ${failN}: ${failNames})`;
+                    statusDiv.style.color = 'var(--error)';
+                }
+                // 초기화 (다음 배치를 위해)
+                _botLlmBatchTotal = 0;
+                _botLlmBatchDone = 0;
+                _botLlmBatchFailed = [];
+                return;
+            }
+            statusDiv.style.color = 'var(--text2)';
+            statusDiv.textContent = `큐 대기/처리 중: ${remaining}명 남음 (완료 ${_botLlmBatchDone}/${_botLlmBatchTotal})`;
+        }
+
+        function _handleBotLlmFaceTagProgress(data) {
+            // data: {phase: "running"|"completed"|"failed", bot_name, char_name, error?, face_count?, eye_count?}
+            if (!data || !data.char_name) return;
+            if (data.phase === 'completed' || data.phase === 'failed') {
+                _botLlmBatchDone++;
+                if (data.phase === 'failed') {
+                    _botLlmBatchFailed.push({ name: data.char_name, error: data.error || '' });
+                }
+                _updateBotLlmBatchStatus();
+                // botData 캐시가 갱신되어야 다음 캐릭터 모달 열 때 새 분류 결과가 보임
+                _refreshBotDataSilent();
+            }
+        }
+
+        let _botDataRefreshTimer = null;
+        function _refreshBotDataSilent() {
+            // 디바운스: 연속 완료 이벤트를 하나의 refetch로 병합
+            if (_botDataRefreshTimer) clearTimeout(_botDataRefreshTimer);
+            _botDataRefreshTimer = setTimeout(async () => {
+                _botDataRefreshTimer = null;
+                try {
+                    const resp = await fetch('/api/bot_mode/bots');
+                    const data = await resp.json();
+                    if (data && data.bots) {
+                        botData = data;
+                        const grid = document.getElementById('bot-character-grid');
+                        if (grid && grid.style.display !== 'none' && botCurrentBot && typeof renderBotCharacters === 'function') {
+                            renderBotCharacters();
+                        }
+                    }
+                } catch (e) {
+                    console.warn('[BOT_LLM_BATCH] botData 새로고침 실패:', e);
+                }
+            }, 400);
         }
 
         async function botUtilityBatchNegative() {

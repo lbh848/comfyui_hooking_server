@@ -58,7 +58,7 @@ from modes import autocomplete_service
 from modes import asset_tool_mode
 from modes import bot_mode
 from modes.bot_mode import data_patcher
-from modes.bot_mode import handle_get_illust_settings, handle_update_illust_settings, handle_auto_group_prompt, handle_get_positive_rules, handle_save_positive_rules, handle_get_auto_face_tag_prompt, handle_set_auto_face_tag_prompt, handle_auto_classify_face_tags, handle_get_auto_face_tag_test_image
+from modes.bot_mode import handle_get_illust_settings, handle_update_illust_settings, handle_auto_group_prompt, handle_get_positive_rules, handle_save_positive_rules, handle_get_auto_face_tag_prompt, handle_set_auto_face_tag_prompt, handle_auto_classify_face_tags, handle_get_auto_face_tag_test_image, handle_llm_batch_enqueue
 from modes import embedding_service
 from modes.illust_prompt_builder import IllustPromptBuilder, log_illust_build, get_illust_logs
 import importlib.util
@@ -159,6 +159,7 @@ DEFAULT_CONFIG = {
         "instance_lora_training": 5,
         "tag_analysis": 6,
         "asset_generation": 7,
+        "bot_llm_face_tag_analysis": 8,
     },
 }
 
@@ -5596,6 +5597,7 @@ app.router.add_get("/api/bot_mode/auto_face_tag_prompt", handle_get_auto_face_ta
 app.router.add_post("/api/bot_mode/auto_face_tag_prompt", handle_set_auto_face_tag_prompt)
 app.router.add_get("/api/bot_mode/auto_face_tag_test_image", handle_get_auto_face_tag_test_image)
 app.router.add_post("/api/bot_mode/auto_classify_face_tags", handle_auto_classify_face_tags)
+app.router.add_post("/api/bot_mode/llm_batch_enqueue", handle_llm_batch_enqueue)
 # 자동완성 API
 app.router.add_get("/api/autocomplete", handle_api_autocomplete)
 # ─── 에셋툴 API 핸들러 ──────────────────────────────────

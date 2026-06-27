@@ -279,6 +279,7 @@ class QueueManager:
             "auto_match_batch": self._handle_auto_match_batch,
             "data_patch_utility": self._handle_data_patch_utility,
             "restore_manual": self._handle_restore_manual,
+            "bot_llm_face_tag_analysis": self._handle_bot_llm_face_tag_analysis,
         }
         handler = dispatch.get(item.type)
         if not handler:
@@ -1534,6 +1535,70 @@ class QueueManager:
             return {"success": True, "char_name": char_name}
         except Exception as e:
             print(f"[QUEUE:DATA_PATCH] {char_name} 실패: {e}")
+            traceback.print_exc()
+            if self.notify_frontend:
+                await self.notify_frontend(event_type, {
+                    "phase": "failed", "bot_name": bot_name, "char_name": char_name, "error": str(e)
+                })
+            raise
+
+    async def _handle_bot_llm_face_tag_analysis(self, item: QueueItem) -> dict:
+        """LLM 비전 기반 얼굴/눈 태그 자동 분류 (큐용). 절대 태그는 기존 값 보존."""
+        from modes.bot_mode import run_auto_classify_face_tags, save_char_face_tags, _load_bot_data
+        params = item.params
+        bot_name = params.get("bot_name", "")
+        char_name = params.get("char_name", "")
+        event_type = "bot_llm_face_tag_progress"
+
+        if not bot_name or not char_name:
+            raise ValueError("bot_name, char_name이 필요합니다")
+
+        await self._notify_progress(item, {"percentage": 0, "phase": "running"})
+        if self.notify_frontend:
+            await self.notify_frontend(event_type, {"phase": "running", "bot_name": bot_name, "char_name": char_name})
+
+        try:
+            result = await run_auto_classify_face_tags(bot_name, char_name)
+            if not result.get("success"):
+                err = result.get("error", "알 수 없는 오류")
+                if self.notify_frontend:
+                    await self.notify_frontend(event_type, {
+                        "phase": "failed", "bot_name": bot_name, "char_name": char_name, "error": err
+                    })
+                raise RuntimeError(err)
+
+            face_tags = (result["data"].get("face") or [])
+            eye_tags = (result["data"].get("eye") or [])
+
+            # 절대 태그는 기존 캐릭터 데이터에서 읽어 보존
+            data = _load_bot_data()
+            bot = next((b for b in data.get("bots", []) if b["name"] == bot_name), None)
+            char = next((c for c in (bot.get("characters", []) if bot else []) if c["name"] == char_name), None)
+            absolute_tags = (char and char.get("absolute_tags")) or ""
+
+            save_result = save_char_face_tags(
+                bot_name, char_name,
+                face_tags=", ".join(face_tags),
+                eye_tags=", ".join(eye_tags),
+                absolute_tags=absolute_tags,
+            )
+            if not save_result.get("success"):
+                err = save_result.get("error", "태그 저장 실패")
+                if self.notify_frontend:
+                    await self.notify_frontend(event_type, {
+                        "phase": "failed", "bot_name": bot_name, "char_name": char_name, "error": err
+                    })
+                raise RuntimeError(err)
+
+            await self._notify_progress(item, {"percentage": 100, "phase": "completed"})
+            if self.notify_frontend:
+                await self.notify_frontend(event_type, {
+                    "phase": "completed", "bot_name": bot_name, "char_name": char_name,
+                    "face_count": len(face_tags), "eye_count": len(eye_tags),
+                })
+            return {"success": True, "char_name": char_name, "face_count": len(face_tags), "eye_count": len(eye_tags)}
+        except Exception as e:
+            print(f"[QUEUE:BOT_LLM_FACE_TAG] {char_name} 실패: {e}")
             traceback.print_exc()
             if self.notify_frontend:
                 await self.notify_frontend(event_type, {

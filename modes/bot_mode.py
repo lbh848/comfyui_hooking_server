@@ -2373,8 +2373,10 @@ async def handle_set_auto_face_tag_prompt(request):
         return web.json_response({"success": False, "error": str(e)})
 
 
-async def handle_auto_classify_face_tags(request):
-    """POST /api/bot_mode/auto_classify_face_tags - LLM 비전 기반 얼굴/눈 태그 자동 분류."""
+async def run_auto_classify_face_tags(bot_name: str, char_name: str) -> dict:
+    """LLM 비전 기반 얼굴/눈 태그 자동 분류 (HTTP 래퍼 없는 core).
+    반환: {"success": True, "data": {"face": [...], "eye": [...]}} 또는 {"success": False, "error": "..."}
+    """
     import base64
     import time as _time
     from modes.tag_classifier import classify_prompt
@@ -2388,70 +2390,61 @@ async def handle_auto_classify_face_tags(request):
             print(f"[BOT_MODE] WARN: notify_frontend 실패: {e}")
 
     try:
-        body = await request.json()
-        bot_name = (body.get("bot") or "").strip()
-        char_name = (body.get("character") or "").strip()
         if not bot_name or not char_name:
-            return web.json_response({"success": False, "error": "bot, character 필드가 필요합니다."})
+            return {"success": False, "error": "bot, character 필드가 필요합니다."}
 
         char_dir = os.path.join(BOT_DIR, bot_name, char_name)
         face_path = os.path.join(char_dir, "_face_image.webp")
         if not os.path.isfile(face_path):
             print(f"[BOT_MODE] _face_image.webp 없음: {face_path}")
-            return web.json_response({
-                "success": False,
-                "error": f"_face_image.webp이 없습니다. 먼저 얼굴 이미지를 생성하세요. (경로: {char_dir})",
-            })
+            return {"success": False, "error": f"_face_image.webp이 없습니다. 먼저 얼굴 이미지를 생성하세요. (경로: {char_dir})"}
 
         # 대표 프롬프트 로드 (rep_images[0])
         data = _load_bot_data()
         bot = next((b for b in data.get("bots", []) if b["name"] == bot_name), None)
         if not bot:
-            return web.json_response({"success": False, "error": f"봇을 찾을 수 없습니다: {bot_name}"})
+            return {"success": False, "error": f"봇을 찾을 수 없습니다: {bot_name}"}
         char = next((c for c in bot.get("characters", []) if c["name"] == char_name), None)
         if not char:
-            return web.json_response({"success": False, "error": f"캐릭터를 찾을 수 없습니다: {char_name}"})
+            return {"success": False, "error": f"캐릭터를 찾을 수 없습니다: {char_name}"}
 
         rep_images = char.get("rep_images", [])
         if not rep_images:
-            return web.json_response({"success": False, "error": "대표 이미지(rep_images)가 없습니다."})
+            return {"success": False, "error": "대표 이미지(rep_images)가 없습니다."}
 
         rep0 = rep_images[0]
         rep_base = os.path.splitext(rep0)[0]
         prompt_path = os.path.join(char_dir, f"{rep_base}_prompt.json")
         if not os.path.isfile(prompt_path):
-            return web.json_response({
-                "success": False,
-                "error": f"대표 이미지 프롬프트 파일이 없습니다: {rep_base}_prompt.json",
-            })
+            return {"success": False, "error": f"대표 이미지 프롬프트 파일이 없습니다: {rep_base}_prompt.json"}
         try:
             with open(prompt_path, "r", encoding="utf-8") as pf:
                 prompt_text = json.load(pf).get("prompt", "")
         except Exception as e:
             print(f"[BOT_MODE] 대표 프롬프트 로드 실패: {e}")
             traceback.print_exc()
-            return web.json_response({"success": False, "error": f"대표 이미지 프롬프트 로드 실패: {e}"})
+            return {"success": False, "error": f"대표 이미지 프롬프트 로드 실패: {e}"}
 
         if not prompt_text:
-            return web.json_response({"success": False, "error": "대표 이미지 프롬프트가 비어 있습니다."})
+            return {"success": False, "error": "대표 이미지 프롬프트가 비어 있습니다."}
 
         # 태그 3그룹 분류
         groups = classify_prompt(prompt_text)
         if not any(groups.values()):
-            return web.json_response({"success": False, "error": "분류된 태그가 없습니다. 대표 프롬프트를 확인하세요."})
+            return {"success": False, "error": "분류된 태그가 없습니다. 대표 프롬프트를 확인하세요."}
 
         # 비전 서비스 확인
         cfg = get_config()
         service = cfg.get("llm_service", "")
         if not supports_vision(service):
             print(f"[BOT_MODE] 비전 미지원 서비스: {service}")
-            return web.json_response({
+            return {
                 "success": False,
                 "error": (
                     f"현재 LLM 서비스({service})는 비전(이미지 입력)을 지원하지 않습니다. "
                     "텍스트 전용 SDK를 사용하는 vertex 대신 OpenAI 호환/Gemini/Claude 등을 config.json에서 선택하세요."
                 ),
-            })
+            }
 
         # 프롬프트 선택 + 변수 치환
         custom_text, use_custom = _load_auto_face_tag_custom()
@@ -2460,7 +2453,7 @@ async def handle_auto_classify_face_tags(request):
         else:
             template = _load_auto_face_tag_builtin()
         if not template.strip():
-            return web.json_response({"success": False, "error": "프롬프트 템플릿이 비어 있습니다."})
+            return {"success": False, "error": "프롬프트 템플릿이 비어 있습니다."}
 
         rendered = _render_auto_face_tag_prompt(template, groups)
 
@@ -2471,7 +2464,7 @@ async def handle_auto_classify_face_tags(request):
         except Exception as e:
             print(f"[BOT_MODE] _face_image.webp 읽기 실패: {e}")
             traceback.print_exc()
-            return web.json_response({"success": False, "error": f"얼굴 이미지 읽기 실패: {e}"})
+            return {"success": False, "error": f"얼굴 이미지 읽기 실패: {e}"}
         img_b64 = base64.b64encode(img_bytes).decode("ascii")
 
         messages = [
@@ -2485,7 +2478,6 @@ async def handle_auto_classify_face_tags(request):
         max_retries = max(0, int(cfg.get("auto_face_tag_max_retries", 2)))
         await _notify_llm_widget("start", {"model": use_model, "prompt_id": f"auto_face_tag:{char_name}"})
 
-        # 외부 API(LLM) 실패에 대해서만 재시도. 데이터 문제(이미지 없음/프롬프트 없음/비전 미지원)는 위에서 이미 반환됨.
         raw = None
         last_err = None
         total_elapsed = 0.0
@@ -2503,7 +2495,6 @@ async def handle_auto_classify_face_tags(request):
             if raw and not raw.startswith("[LLM 실패]"):
                 parsed = _parse_auto_face_tag_response(raw)
                 if parsed is not None:
-                    # 성공
                     await _notify_llm_widget("done", {
                         "text": raw,
                         "completion_tokens": max(1, len(raw) // 3),
@@ -2512,8 +2503,7 @@ async def handle_auto_classify_face_tags(request):
                         "ttft": None,
                     })
                     print(f"[BOT_MODE] auto_classify_face_tags 완료: face={len(parsed['face'])}개 eye={len(parsed['eye'])}개 (시도 {attempt + 1})")
-                    return web.json_response({"success": True, "data": parsed})
-                # JSON 파싱 실패 → 재시도 대상
+                    return {"success": True, "data": parsed}
                 last_err = f"LLM 응답을 JSON으로 파싱하지 못했습니다. raw: {raw[:300]}"
                 print(f"[BOT_MODE] LLM 응답 JSON 파싱 실패 (시도 {attempt + 1}/{max_retries + 1}). raw={raw[:500]}")
             else:
@@ -2522,15 +2512,91 @@ async def handle_auto_classify_face_tags(request):
 
             if attempt < max_retries:
                 print(f"[BOT_MODE] 재시도 대기 중... ({attempt + 1}/{max_retries})")
-                await asyncio.sleep(1.0 * (attempt + 1))  # 1s, 2s, 3s 점진적 대기
+                await asyncio.sleep(1.0 * (attempt + 1))
 
-        # 모든 재시도 실패
         await _notify_llm_widget("error", {"error": last_err or "알 수 없는 오류", "elapsed": round(total_elapsed, 3)})
-        return web.json_response({"success": False, "error": f"{max_retries + 1}회 시도 후 실패: {last_err}"})
+        return {"success": False, "error": f"{max_retries + 1}회 시도 후 실패: {last_err}"}
     except Exception as e:
         print(f"[BOT_MODE] auto_classify_face_tags 예외: {e}")
         traceback.print_exc()
         await _notify_llm_widget("error", {"error": f"{type(e).__name__}: {e}"})
+        return {"success": False, "error": str(e)}
+
+
+def save_char_face_tags(bot_name: str, char_name: str, face_tags: str, eye_tags: str, absolute_tags: str) -> dict:
+    """캐릭터 face/eye/absolute 태그 저장 (bot.json 갱신). 반환: {"success": bool, "error"?: str}."""
+    try:
+        data = _load_bot_data()
+        bot = next((b for b in data.get("bots", []) if b["name"] == bot_name), None)
+        if not bot:
+            return {"success": False, "error": f"봇을 찾을 수 없음: {bot_name}"}
+        char = next((c for c in bot.get("characters", []) if c["name"] == char_name), None)
+        if not char:
+            return {"success": False, "error": f"캐릭터를 찾을 수 없음: {char_name}"}
+        char["face_tags"] = face_tags
+        char["eye_tags"] = eye_tags
+        char["absolute_tags"] = absolute_tags
+        _save_bot_data(data)
+        print(f"[BOT_MODE] 캐릭터 얼굴 태그 업데이트: {bot_name}/{char_name}")
+        return {"success": True}
+    except Exception as e:
+        print(f"[BOT_MODE] save_char_face_tags 예외: {e}")
+        traceback.print_exc()
+        return {"success": False, "error": str(e)}
+
+
+async def handle_auto_classify_face_tags(request):
+    """POST /api/bot_mode/auto_classify_face_tags - LLM 비전 기반 얼굴/눈 태그 자동 분류."""
+    try:
+        body = await request.json()
+        bot_name = (body.get("bot") or "").strip()
+        char_name = (body.get("character") or "").strip()
+        result = await run_auto_classify_face_tags(bot_name, char_name)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[BOT_MODE] handle_auto_classify_face_tags 예외: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)})
+
+
+async def handle_llm_batch_enqueue(request):
+    """POST /api/bot_mode/llm_batch_enqueue - 선택 캐릭터들을 큐에 추가 (bot_llm_face_tag_analysis 타입)."""
+    try:
+        body = await request.json()
+        bot_name = (body.get("bot") or "").strip()
+        characters = body.get("characters") or []
+        if not bot_name:
+            return web.json_response({"success": False, "error": "bot 필드가 필요합니다."})
+        if not isinstance(characters, list) or not characters:
+            return web.json_response({"success": False, "error": "characters (비어있지 않은 list) 가 필요합니다."})
+
+        # 큐 매니저 접근
+        try:
+            import server as _server
+            qm = _server.queue_manager
+        except Exception as e:
+            print(f"[BOT_MODE] queue_manager 접근 실패: {e}")
+            traceback.print_exc()
+            return web.json_response({"success": False, "error": f"큐 매니저 접근 실패: {e}"})
+
+        added = []
+        for char_name in characters:
+            cn = (str(char_name) or "").strip()
+            if not cn:
+                continue
+            item = await qm.add_item(
+                item_type="bot_llm_face_tag_analysis",
+                label=f"LLM 얼굴/눈 태그: {bot_name}/{cn}",
+                params={"bot_name": bot_name, "char_name": cn},
+                priority=10,
+            )
+            added.append({"char_name": cn, "id": item.id})
+
+        print(f"[BOT_MODE] LLM 일괄 분석 큐 추가: bot={bot_name} {len(added)}건")
+        return web.json_response({"success": True, "data": {"added": added, "count": len(added)}})
+    except Exception as e:
+        print(f"[BOT_MODE] llm_batch_enqueue 예외: {e}")
+        traceback.print_exc()
         return web.json_response({"success": False, "error": str(e)})
 
 
