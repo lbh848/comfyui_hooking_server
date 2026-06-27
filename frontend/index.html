@@ -3501,8 +3501,8 @@
                             <div id="bot-util-status" style="font-size:0.7rem; color:var(--text2); margin-top:4px; display:none;"></div>
                         </div>
                         <div style="background:rgba(124,58,237,0.08); border-radius:8px; padding:10px; margin-top:8px;">
-                            <div class="section-title">LLM 일괄 얼굴/눈 태그 분석</div>
-                            <button id="btn-bot-llm-batch" onclick="botLlmBatchAnalyze()" style="width:100%; background:#7C3AED; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">LLM 기반 선택 캐릭터 일괄 얼굴/눈 태그 분석</button>
+                            <div class="section-title">LLM 기반 얼굴/눈 태그 정제</div>
+                            <button id="btn-bot-llm-batch" onclick="botLlmBatchAnalyze()" style="width:100%; background:#7C3AED; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">선택 캐릭터 일괄 정제</button>
                             <div id="bot-llm-batch-status" style="font-size:0.7rem; color:var(--text2); margin-top:4px; display:none;"></div>
                         </div>
                         <div style="background:rgba(0,105,92,0.08); border-radius:8px; padding:10px; margin-top:8px;">
@@ -4929,13 +4929,6 @@
                         <div style="font-size:0.7rem; color:var(--text-secondary); margin-top:4px;">현재 캐릭터의 에셋 이미지에서 학습용 이미지를 추가합니다.</div>
                     </div>
 
-                    <!-- 학습용 이미지 일괄 LLM 정제 (항목 선택 시) -->
-                    <div id="asset-lora-refine-batch-section" style="display:none; background:rgba(180,130,220,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
-                        <div style="font-size:0.8rem; font-weight:600; margin-bottom:6px;">학습 이미지 일괄 LLM 정제</div>
-                        <button id="asset-lora-refine-batch-btn" onclick="openAssetLoraRefineSelectModal()" style="width:100%; padding:8px; background:var(--accent); color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">학습 이미지 일괄 태그 수정</button>
-                        <div id="asset-lora-refine-batch-status" style="margin-top:6px; font-size:0.72rem; color:var(--text-secondary); min-height:0.9rem;"></div>
-                    </div>
-
                     <!-- 테스트 이미지 추가 (항목 선택 시) -->
                     <div id="lora-test-add-section" style="display:none; background:rgba(0,150,255,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
                         <div class="section-title">테스트 이미지</div>
@@ -4945,10 +4938,17 @@
                         <div style="font-size:0.7rem; color:var(--text-secondary); margin-top:4px;">현재 캐릭터의 에셋 이미지에서 테스트용 이미지를 추가합니다.</div>
                     </div>
 
+                    <!-- 학습용 이미지 일괄 LLM 정제 (항목 선택 시) -->
+                    <div id="asset-lora-refine-batch-section" style="display:none; background:rgba(180,130,220,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
+                        <div style="font-size:0.8rem; font-weight:600; margin-bottom:6px;">LLM 기반 학습 이미지 태그 정제</div>
+                        <button id="asset-lora-refine-batch-btn" onclick="openAssetLoraRefineSelectModal()" style="width:100%; padding:8px; background:var(--accent); color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">선택 이미지 일괄 정제</button>
+                        <div id="asset-lora-refine-batch-status" style="margin-top:6px; font-size:0.72rem; color:var(--text-secondary); min-height:0.9rem;"></div>
+                    </div>
+
                     <!-- 테스트 이미지 일괄 LLM 정제 (항목 선택 시) -->
                     <div id="asset-lora-test-setup-section" style="display:none; background:rgba(0,180,140,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
-                        <div style="font-size:0.8rem; font-weight:600; margin-bottom:6px;">테스트 이미지 일괄 LLM 정제</div>
-                        <button id="asset-lora-test-setup-btn" onclick="openAssetLoraTestSetupModal()" style="width:100%; padding:8px; background:rgba(0,180,140,0.85); color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">테스트 이미지 일괄 태그 수정</button>
+                        <div style="font-size:0.8rem; font-weight:600; margin-bottom:6px;">LLM 기반 테스트 이미지 태그 정제</div>
+                        <button id="asset-lora-test-setup-btn" onclick="openAssetLoraTestSetupModal()" style="width:100%; padding:8px; background:rgba(0,180,140,0.85); color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">선택 이미지 일괄 정제</button>
                         <button type="button" onclick="_openBotTestSetupPromptModal()" style="width:100%; margin-top:6px; padding:6px 12px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:0.78rem;">⚙️ LLM 프롬프트</button>
                         <div style="font-size:0.68rem; color:var(--text-secondary); margin-top:4px;">학습 첫 이미지의 복장/외모 + 테스트 이미지의 품질/자세/구도를 조합합니다.</div>
                         <div id="asset-lora-test-setup-status" style="margin-top:6px; font-size:0.72rem; color:var(--text-secondary); min-height:0.9rem;"></div>
@@ -5660,7 +5660,7 @@
     <div class="modal" id="asset-lora-refine-select-modal" style="display:none; z-index:1700;">
         <div class="modal-content" style="max-width:760px;">
             <div class="modal-header">
-                <h2>학습 이미지 일괄 LLM 정제</h2>
+                <h2>LLM 기반 학습 이미지 태그 정제</h2>
                 <button class="modal-close" onclick="closeAssetLoraRefineSelectModal()">&times;</button>
             </div>
             <div class="modal-body">
@@ -5686,7 +5686,7 @@
     <div class="modal" id="asset-lora-test-setup-modal" style="display:none; z-index:1700;">
         <div class="modal-content" style="max-width:760px;">
             <div class="modal-header">
-                <h2>테스트 이미지 일괄 LLM 정제</h2>
+                <h2>LLM 기반 테스트 이미지 태그 정제</h2>
                 <button class="modal-close" onclick="closeAssetLoraTestSetupModal()">&times;</button>
             </div>
             <div class="modal-body">
@@ -28274,7 +28274,7 @@
                 if (!data.success) {
                     showToast(`큐 추가 실패: ${data.error || ''}`, 'error');
                     btn.disabled = false;
-                    btn.textContent = 'LLM 기반 선택 캐릭터 일괄 얼굴/눈 태그 분석';
+                    btn.textContent = '선택 캐릭터 일괄 정제';
                     return;
                 }
                 showToast(`${data.data.count}건 큐에 추가됨`, 'success');
@@ -28286,7 +28286,7 @@
                 showToast(`큐 추가 실패: ${e.message}`, 'error');
             } finally {
                 btn.disabled = false;
-                btn.textContent = 'LLM 기반 선택 캐릭터 일괄 얼굴/눈 태그 분석';
+                btn.textContent = '선택 캐릭터 일괄 정제';
             }
         }
 
