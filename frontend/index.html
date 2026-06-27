@@ -15651,9 +15651,41 @@
                 document.getElementById('lora-picker-title').textContent = '프롬프트 편집 (테스트)';
                 document.getElementById('lora-picker-footer').style.display = 'flex';
                 document.getElementById('lora-picker-footer').innerHTML = `
+                    <div style="display:flex; gap:6px; align-items:center; flex:1; flex-wrap:wrap;">
+                        <button id="lora-test-llm-btn" type="button" style="padding:6px 12px;background:var(--accent);color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:0.8rem;font-weight:600;">🤖 LLM 정제</button>
+                        <button type="button" onclick="_openBotTestSetupPromptModal()" style="padding:6px 12px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:0.8rem;">⚙️ LLM 프롬프트</button>
+                        <span id="lora-test-refine-status" style="font-size:0.72rem;color:var(--text2);"></span>
+                    </div>
                     <button onclick="closeLoraImagePicker()" style="padding:8px 16px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:6px; cursor:pointer;">닫기</button>
                     <button onclick="saveLoraTestPrompt('${escapeHtml(filename)}')" style="padding:8px 16px; background:var(--accent); color:#fff; border:none; border-radius:6px; cursor:pointer; font-weight:600;">저장</button>
                 `;
+                // 🤖 LLM 정제 버튼: card_positive(학습 첫 이미지 positive) + 현재 테스트 프롬프트 조합 정제.
+                // 정제 입력(test_positive)은 미리보기/전송 공통 단일 소스(_refineInputPositive)에서 가져온다.
+                const _assetTestLlmBtn = document.getElementById('lora-test-llm-btn');
+                if (_assetTestLlmBtn) {
+                    _assetTestLlmBtn.onclick = async () => {
+                        const test_positive = _refineInputPositive();
+                        if (!test_positive) { showToast('정제할 테스트 프롬프트가 비어 있습니다', 'error'); return; }
+                        let card_positive = '';
+                        try {
+                            const enc = encodeURIComponent;
+                            const r = await fetchJSON(`/api/lora/training_images?character=${enc(loraCurrentCharacter)}&entry=${enc(loraCurrentEntry)}`);
+                            if (r && r.success && r.images && r.images.length) {
+                                card_positive = (r.images[0].positive || '').trim();
+                            }
+                        } catch (e) {
+                            showToast(`카드 프롬프트 로드 실패: ${e.message}`, 'error');
+                            return;
+                        }
+                        if (!card_positive) { showToast('카드(학습 첫 이미지) 프롬프트가 없습니다. 먼저 학습 이미지를 정제/수정하세요.', 'error'); return; }
+                        _runLoraTestSetupRefine({
+                            source_type: 'asset_test_setup',
+                            character: loraCurrentCharacter, entry: loraCurrentEntry,
+                            card_positive, test_filename: filename, test_positive,
+                            btn: _assetTestLlmBtn, statusEl: document.getElementById('lora-test-refine-status'),
+                        });
+                    };
+                }
                 const origPos = img.original_positive || img.positive || '';
                 const origNeg = img.original_negative || img.negative || '';
                 const curPos = img.positive || '';
@@ -19255,9 +19287,33 @@
             document.getElementById('lora-picker-title').textContent = '프롬프트 편집';
             document.getElementById('lora-picker-footer').style.display = 'flex';
             document.getElementById('lora-picker-footer').innerHTML = `
+                <div style="display:flex; gap:6px; align-items:center; flex:1; flex-wrap:wrap;">
+                    <button id="bot-lora-char-test-llm-btn" type="button" style="padding:6px 12px;background:var(--accent);color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:0.8rem;font-weight:600;">🤖 LLM 정제</button>
+                    <button type="button" onclick="_openBotTestSetupPromptModal()" style="padding:6px 12px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:0.8rem;">⚙️ LLM 프롬프트</button>
+                    <span id="bot-lora-char-test-refine-status" style="font-size:0.72rem;color:var(--text2);"></span>
+                </div>
                 <button onclick="closeLoraImagePicker()" style="padding:8px 16px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:6px; cursor:pointer;">닫기</button>
                 <button onclick="saveBotLoraCharTestPromptModal('${escapeHtml(charName)}', '${escapeHtml(filename)}')" style="padding:8px 16px; background:var(--accent); color:#fff; border:none; border-radius:6px; cursor:pointer; font-weight:600;">저장</button>
             `;
+            // 🤖 LLM 정제 버튼: card_positive(캐릭터 학습 첫 이미지 positive) + 현재 테스트 프롬프트 조합 정제.
+            // 정제 입력(test_positive)은 미리보기/전송 공통 단일 소스(_refineInputPositive)에서 가져온다.
+            const _botCharTestLlmBtn = document.getElementById('bot-lora-char-test-llm-btn');
+            if (_botCharTestLlmBtn) {
+                _botCharTestLlmBtn.onclick = () => {
+                    const test_positive = _refineInputPositive();
+                    if (!test_positive) { showToast('정제할 테스트 프롬프트가 비어 있습니다', 'error'); return; }
+                    const _ch = (botLoraProjectData?.characters || []).find(c => c.name === charName);
+                    const _trainImg = _ch && (_ch.training_images || [])[0];
+                    const card_positive = ((_trainImg && _trainImg.positive) || '').trim();
+                    if (!card_positive) { showToast(`캐릭터 "${charName}"의 카드(학습 이미지) 프롬프트가 없습니다. 먼저 학습 이미지를 정제/수정하세요.`, 'error'); return; }
+                    _runLoraTestSetupRefine({
+                        source_type: 'bot_lora_char_test_setup',
+                        bot: botLoraCurrentBot, project: botLoraCurrentProject, character: charName,
+                        card_positive, test_filename: filename, test_positive,
+                        btn: _botCharTestLlmBtn, statusEl: document.getElementById('bot-lora-char-test-refine-status'),
+                    });
+                };
+            }
             document.getElementById('lora-picker-body').innerHTML = `
                 <div style="display:flex; gap:16px; margin-bottom:12px;">
                     <img src="/api/bot_lora/char_test_image/${enc(botLoraCurrentBot)}/${enc(botLoraCurrentProject)}/${enc(charName)}/${enc(filename)}" onclick="openLightbox(this.src)" style="width:120px; height:120px; object-fit:cover; border-radius:8px; display:block; flex-shrink:0; cursor:zoom-in;">
@@ -22772,6 +22828,58 @@
             });
         }
 
+        // ─── 테스트 이미지 프롬프트 정제 (단일 이미지, test_setup 계열) ─────
+        // test_setup 정제는 card_positive(캐릭터 카드 프롬프트) + test_positive(현재 테스트 프롬프트)
+        // 를 조합해 테스트 프롬프트를 재생성한다. 결과는 큐가 디스크에 자동 저장.
+        function _runLoraTestSetupRefine(opts) {
+            const { source_type, bot = '', project = '', character, entry = '', card_positive, test_filename, test_positive, btn, statusEl } = opts;
+            if (!test_positive || !test_positive.trim()) {
+                showToast('정제할 테스트 프롬프트가 비어 있습니다', 'error');
+                return;
+            }
+            if (!card_positive || !card_positive.trim()) {
+                showToast('카드(캐릭터 학습 이미지) 프롬프트가 비어 있습니다', 'error');
+                return;
+            }
+            // WS 결과 매칭을 위해 filename 슬롯에 test_filename을 담아둔다.
+            _loraPromptRefineContext = { source_type, bot, project, character, entry, filename: test_filename, btn, statusEl };
+            if (btn) btn.textContent = '큐 적재 중...';
+            if (statusEl) statusEl.textContent = '큐에 적재 중...';
+            const payload = source_type === 'asset_test_setup'
+                ? { source_type, character, entry, card_positive, test_filename, test_positive }
+                : { source_type, bot, project, character, card_positive, test_filename, test_positive };
+            fetch('/api/instance_lora/auto_refine_enqueue', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            }).then(r => r.text()).then(text => {
+                let data;
+                try { data = JSON.parse(text); }
+                catch (parseErr) {
+                    showToast(`정제 요청 실패: 서버 응답이 JSON이 아닙니다. 본문: ${text.slice(0, 120)}`, 'error');
+                    if (btn) btn.textContent = '🤖 LLM 정제';
+                    if (statusEl) statusEl.textContent = '';
+                    _loraPromptRefineContext = null;
+                    return;
+                }
+                if (!data.success) {
+                    showToast(`정제 요청 실패: ${data.error || ''}`, 'error');
+                    if (btn) btn.textContent = '🤖 LLM 정제';
+                    if (statusEl) statusEl.textContent = '';
+                    _loraPromptRefineContext = null;
+                    return;
+                }
+                if (btn) btn.textContent = '정제 중...';
+                if (statusEl) statusEl.textContent = '큐 대기 중...';
+            }).catch(e => {
+                showToast(`정제 요청 실패: ${e.message}`, 'error');
+                console.error('[LORA_TEST_REFINE] enqueue error:', e);
+                if (btn) btn.textContent = '🤖 LLM 정제';
+                if (statusEl) statusEl.textContent = '';
+                _loraPromptRefineContext = null;
+            });
+        }
+
         // ─── 에셋(asset) LoRA: 학습 이미지 일괄 LLM 정제 (이미지 1개 = 큐 1개) ─────
         let _assetLoraRefineBatch = { active: false, total: 0, remaining: 0, success: 0, fail: 0, skipped: 0 };
         let _assetLoraRefineSel = new Set(); // "enc(filename)"
@@ -23954,6 +24062,21 @@
             if (!data) return;
             const ctx = _loraPromptRefineContext;
             if (!ctx) return;
+            // ── 테스트 이미지 정제(test_setup 계열): WS 이벤트가 test_filename을 사용한다.
+            if (ctx.source_type === 'asset_test_setup') {
+                if ((data.source_type || '') !== 'asset_test_setup') return;
+                if (ctx.entry !== (data.entry || '') || ctx.character !== (data.character || '')) return;
+                if (ctx.filename !== (data.test_filename || '')) return;
+                _handleLoraTestSetupRefinePhases(ctx, data);
+                return;
+            }
+            if (ctx.source_type === 'bot_lora_char_test_setup') {
+                if ((data.source_type || '') !== 'bot_lora_char_test_setup') return;
+                if (ctx.bot !== (data.bot_name || '') || ctx.project !== (data.project_name || '') || ctx.character !== (data.char_name || '')) return;
+                if (ctx.filename !== (data.test_filename || '')) return;
+                _handleLoraTestSetupRefinePhases(ctx, data);
+                return;
+            }
             // 매칭 검사: 다른 대상의 이벤트는 무시
             if (ctx.source_type !== data.source_type || ctx.filename !== data.filename) return;
             if (ctx.source_type === 'bot' && ctx.bot !== data.bot_name) return;
@@ -24079,6 +24202,51 @@
 
         // ─── 인스턴스 LoRA 프롬프트 정제 — 프롬프트 설정 모달 ─────────
         let _autoLoraPromptState = { builtin: '', custom: '', useCustom: false, tab: 'general', isAsset: false };
+
+        // 테스트 이미지 정제(test_setup 계열) phase 처리. 결과는 큐가 이미 디스크에 저장했으므로
+        // 모달 수정창에만 반영하고 "저장됨" 표시 + 목록 새로고침.
+        function _handleLoraTestSetupRefinePhases(ctx, data) {
+            if (data.phase === 'running') {
+                if (ctx.btn) ctx.btn.textContent = '정제 중...';
+                if (ctx.statusEl) ctx.statusEl.textContent = 'LLM 정제 중...';
+                return;
+            }
+            if (data.phase === 'completed') {
+                if (ctx.btn) ctx.btn.textContent = '🤖 LLM 정제';
+                const positive = data.positive || '';
+                if (positive) {
+                    const tagCount = positive.split(',').map(s => s.trim()).filter(Boolean).length;
+                    _applyLoraTestSetupRefineResult(ctx, positive);
+                    if (ctx.statusEl) ctx.statusEl.textContent = `정제 완료 (${tagCount}개 태그) — 저장됨`;
+                    showToast(`테스트 프롬프트 정제 완료: ${tagCount}개 태그. 자동 저장됨`, 'success');
+                } else {
+                    if (ctx.statusEl) ctx.statusEl.textContent = '정제 완료 (결과 없음)';
+                }
+                _loraPromptRefineContext = null;
+                return;
+            }
+            if (data.phase === 'failed') {
+                if (ctx.btn) ctx.btn.textContent = '🤖 LLM 정제';
+                if (ctx.statusEl) ctx.statusEl.textContent = '';
+                const errMsg = data.error || '알 수 없는 오류';
+                showToast(`테스트 프롬프트 정제 실패: ${errMsg}`, 'error');
+                _loraPromptRefineContext = null;
+                return;
+            }
+        }
+
+        function _applyLoraTestSetupRefineResult(ctx, positive) {
+            _writeLoraPromptContent('positive', positive);
+            if (ctx.source_type === 'asset_test_setup') {
+                if (typeof loadLoraTestImages === 'function') {
+                    loadLoraTestImages().catch(e => console.warn('[LORA_TEST_REFINE] 테스트 목록 새로고침 실패:', e));
+                }
+            } else if (ctx.source_type === 'bot_lora_char_test_setup') {
+                if (typeof loadBotLoraProject === 'function') {
+                    loadBotLoraProject().catch(e => console.warn('[LORA_TEST_REFINE] 봇 LoRA 프로젝트 새로고침 실패:', e));
+                }
+            }
+        }
 
         function _renderAutoLoraPromptPreview(template, etcSample, genderSample) {
             return (template || '')

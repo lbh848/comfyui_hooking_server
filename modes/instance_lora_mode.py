@@ -772,7 +772,7 @@ async def handle_auto_refine_enqueue(request):
         gender = (body.get("gender") or "").strip()
         is_asset = bool(body.get("is_asset", False))
 
-        if source_type not in ("bot", "bot_lora_training", "training", "bot_lora_test_setup", "asset_test_setup"):
+        if source_type not in ("bot", "bot_lora_training", "training", "bot_lora_test_setup", "bot_lora_char_test_setup", "asset_test_setup"):
             return web.json_response({"success": False, "error": f"지원하지 않는 source_type: {source_type}"})
 
         # ── asset_test_setup: 에셋 테스트 이미지 일괄 세팅 전용 분기 ──
@@ -860,6 +860,49 @@ async def handle_auto_refine_enqueue(request):
                 priority=10,
             )
             print(f"[INSTANCE_LORA] auto_refine 큐 추가(bot_lora_test_setup): bot={bot_name} project={project_name} char={char_name} test={test_filename} id={item.id}")
+            return web.json_response({"success": True, "data": {"id": item.id}})
+
+        # ── bot_lora_char_test_setup: 캐릭터별 테스트 이미지 단일 정제 전용 분기 ──
+        # (공통→char_test 복사 없이, 이미 존재하는 char_test 이미지의 positive만 교체)
+        if source_type == "bot_lora_char_test_setup":
+            card_positive = body.get("card_positive", "") or ""
+            test_filename = (body.get("test_filename") or "").strip()
+            test_positive = body.get("test_positive", "") or ""
+            if not bot_name or not project_name:
+                return web.json_response({"success": False, "error": "bot_lora_char_test_setup 소스는 bot, project 필드가 필요합니다."})
+            if not char_name:
+                return web.json_response({"success": False, "error": "character 필드가 필요합니다."})
+            if not card_positive.strip():
+                return web.json_response({"success": False, "error": "card_positive(캐릭터 카드 수정 프롬프트) 필드가 비어 있습니다."})
+            if not test_filename:
+                return web.json_response({"success": False, "error": "test_filename 필드가 필요합니다."})
+            if not test_positive.strip():
+                return web.json_response({"success": False, "error": "test_positive(테스트 이미지 프롬프트) 필드가 비어 있습니다."})
+
+            try:
+                import server as _server
+                qm = _server.queue_manager
+            except Exception as e:
+                print(f"[INSTANCE_LORA] queue_manager 접근 실패: {e}")
+                traceback.print_exc()
+                return web.json_response({"success": False, "error": f"큐 매니저 접근 실패: {e}"})
+
+            label = f"테스트 이미지 정제: [bot_lora_char] {bot_name}/{project_name}/{char_name} test={test_filename}"
+            item = await qm.add_item(
+                item_type="instance_lora_prompt_refine",
+                label=label,
+                params={
+                    "source_type": source_type,
+                    "bot_name": bot_name,
+                    "project_name": project_name,
+                    "char_name": char_name,
+                    "card_positive": card_positive,
+                    "test_filename": test_filename,
+                    "test_positive": test_positive,
+                },
+                priority=10,
+            )
+            print(f"[INSTANCE_LORA] auto_refine 큐 추가(bot_lora_char_test_setup): bot={bot_name} project={project_name} char={char_name} test={test_filename} id={item.id}")
             return web.json_response({"success": True, "data": {"id": item.id}})
         # ── 일반 정제 분기 (기존) ──
 
