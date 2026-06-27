@@ -22923,11 +22923,13 @@
             const enc = encodeURIComponent;
             const items = [];
             for (const ch of chars) {
-                for (const img of (ch.training_images || [])) {
-                    // 복장/외모 소스는 캐릭터 카드의 "수정 프롬프트"(positive).
-                    const positive = (img.positive || '').trim();
-                    items.push({ char: ch.name, filename: img.filename, positive });
-                }
+                // 학습 이미지는 캐릭터당 첫 번째 이미지만 카드로 사용 (큐 과다 방지).
+                const imgs = (ch.training_images || []);
+                if (!imgs.length) continue;
+                const img = imgs[0];
+                // 복장/외모 소스는 캐릭터 카드의 "수정 프롬프트"(positive).
+                const positive = (img.positive || '').trim();
+                items.push({ char: ch.name, filename: img.filename, positive });
             }
             _botTestSetupCardSel.clear();
             const grid = items.map(it => {
