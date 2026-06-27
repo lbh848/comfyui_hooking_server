@@ -68,8 +68,62 @@ COPILOT_KEY = _load_copilot_key()
 
 # ─── 로깅 ──────────────────────────────────────────────────
 
+# API 키는 메모리에만 존재해야 하므로 로그(파일/stdout)에 절대 평문 노출 금지.
+_REDACTED_KEYS = {
+    "llm_api_key", "llm_api_key2", "api_key", "apikey",
+    "token", "access_token", "authorization", "x-api-key",
+    "key", "secret", "password",
+}
+
+
+def _redact_value(v):
+    """마스킹 대상 값 처리. 빈 문자열이면 그대로, 그 외에는 길이만 노출."""
+    if isinstance(v, str) and v:
+        return f"<redacted {len(v)} chars>"
+    return v
+
+
+def _redact_dict(d):
+    """dict 복사하면서 민감한 키 값을 마스킹. 중첩 dict 도 recursion."""
+    if not isinstance(d, dict):
+        return d
+    out = {}
+    for k, v in d.items():
+        if isinstance(k, str) and k.lower() in _REDACTED_KEYS:
+            out[k] = _redact_value(v)
+        elif isinstance(v, dict):
+            out[k] = _redact_dict(v)
+        else:
+            out[k] = v
+    return out
+
+
+def _redact_in_text(msg):
+    """문자열 내에서 실제 API 키 값을 직접 찾아 마스킹.
+    Bearer 헤더, ?key= 쿼리, 에러 응답에 포함된 키까지 커버하기 위해
+    패턴 매칭이 아니라 _current_config 의 실제 값으로 치환.
+    """
+    if not isinstance(msg, str):
+        return msg
+    redacted = msg
+    candidates = []
+    try:
+        for k in ("llm_api_key", "llm_api_key2"):
+            v = _current_config.get(k, "")
+            if isinstance(v, str) and len(v) >= 8:
+                candidates.append(v)
+    except Exception:
+        pass
+    if isinstance(COPILOT_KEY, str) and len(COPILOT_KEY) >= 8:
+        candidates.append(COPILOT_KEY)
+    for v in candidates:
+        redacted = redacted.replace(v, f"<redacted {len(v)} chars>")
+    return redacted
+
+
 def _llm_log(message: str):
-    """LLM 서비스 로그 (파일 + 콘솔)"""
+    """LLM 서비스 로그 (파일 + 콘솔). 파일/stdout 쓰기 전에 키 마스킹."""
+    message = _redact_in_text(message)
     os.makedirs(LOG_DIR, exist_ok=True)
     log_path = os.path.join(LOG_DIR, "llm_service.log")
     ts = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -340,7 +394,7 @@ def update_config(config: dict):
     for key, value in config.items():
         if key in _current_config:
             _current_config[key] = value
-    _llm_log(f"설정 업데이트: {config}")
+    _llm_log(f"설정 업데이트: {_redact_dict(config)}")
 
 
 def get_config() -> dict:
@@ -458,6 +512,109 @@ async def _call_lmstudio(messages: list, model: str) -> str:
     """LM Studio 로컬 서버 (OpenAI 호환)."""
     base = _current_config.get("llm_url") or "http://localhost:1234"
     return await _call_openai_compat(messages, model, base)
+
+
+# ─── 비전(vision) 메시지 헬퍼 ───────────────────────────────
+
+def _msg_text(content) -> str:
+    """OpenAI 멀티모달 content(str 또는 parts list)에서 순수 텍스트만 추출."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n\n".join(p.get("text", "") for p in content if p.get("type") == "text")
+    return ""
+
+
+def _build_gemini_parts(content) -> list:
+    """OpenAI content list → Gemini parts. 단순 str이면 텍스트 part 1개."""
+    if isinstance(content, str):
+        return [{"text": content}]
+    parts = []
+    if isinstance(content, list):
+        for p in content:
+            t = p.get("type")
+            if t == "text":
+                parts.append({"text": p.get("text", "")})
+            elif t == "image_url":
+                url = (p.get("image_url") or {}).get("url", "")
+                mime, b64 = _parse_data_url(url)
+                if b64:
+                    parts.append({"inline_data": {"mime_type": mime, "data": b64}})
+    return parts
+
+
+def _build_claude_content(content):
+    """OpenAI content list → Claude content(str 그대로 또는 blocks list)."""
+    if isinstance(content, str):
+        return content
+    blocks = []
+    if isinstance(content, list):
+        for p in content:
+            t = p.get("type")
+            if t == "text":
+                blocks.append({"type": "text", "text": p.get("text", "")})
+            elif t == "image_url":
+                url = (p.get("image_url") or {}).get("url", "")
+                mime, b64 = _parse_data_url(url)
+                if b64:
+                    blocks.append({"type": "image",
+                                   "source": {"type": "base64", "media_type": mime, "data": b64}})
+    return blocks
+
+
+def _parse_data_url(url: str) -> tuple[str, str]:
+    """data:<mime>;base64,<data> 형식에서 (mime, base64) 추출."""
+    if not url or not url.startswith("data:"):
+        return ("", "")
+    try:
+        header, b64 = url.split(",", 1)
+        mime = header.split(":")[1].split(";")[0]
+        return (mime, b64)
+    except Exception:
+        return ("", "")
+
+
+VISION_SUPPORTED_SERVICES = {
+    # OpenAI 호환 image_url 포맷을 그대로 처리하는 서비스들
+    "copilot", "openai", "openrouter", "openai-compat", "customapi",
+    "ollama", "ollama-cloud", "lmstudio", "vertex-openai",
+    # 자체 포맷으로 변환하는 서비스들
+    "gemini", "claude",
+}
+
+VISION_UNSUPPORTED_SERVICES = {
+    "vertex",  # 텍스트 전용 vertexai SDK 사용 — 이미지 입력 미지원
+}
+
+
+def supports_vision(service: str) -> bool:
+    """현재 LLM 서비스가 이미지 입력(비전) 전송 포맷을 지원하는지 여부.
+    모델 자체의 비전 능력과는 별개 — 포맷만 지원하면 True.
+    비전 미지원 모델이면 API 응답에서 별도 에러가 반환됨.
+    """
+    if service in VISION_UNSUPPORTED_SERVICES:
+        return False
+    return True
+
+
+def _build_vision_messages(messages: list, image_b64: str, image_mime: str = "image/webp") -> list:
+    """텍스트 messages + 이미지 → 마지막 user 메시지에 image_url 파트를 추가한 복사본 반환.
+    각 _call_*/_stream_* 함수는 content가 list인 경우를 서비스 포맷에 맞게 변환한다.
+    """
+    new_messages = [dict(m) for m in messages]
+    last_user_idx = None
+    for i in range(len(new_messages) - 1, -1, -1):
+        if new_messages[i].get("role") == "user":
+            last_user_idx = i
+            break
+    if last_user_idx is None:
+        raise ValueError("callLLMVision: user 메시지가 없습니다.")
+    user_text = _msg_text(new_messages[last_user_idx].get("content", ""))
+    new_messages[last_user_idx]["content"] = [
+        {"type": "text", "text": user_text},
+        {"type": "image_url", "image_url": {"url": f"data:{image_mime};base64,{image_b64}"}},
+    ]
+    return new_messages
 
 
 async def _call_ollama(messages: list, model: str) -> str:
@@ -612,10 +769,11 @@ async def _call_gemini(messages: list, model: str) -> str:
     user_parts = []
     for msg in messages:
         if msg.get("role") == "system":
-            system_text += (system_text and "\n\n" or "") + msg.get("content", "")
+            system_text += (system_text and "\n\n" or "") + _msg_text(msg.get("content", ""))
         else:
+            parts = _build_gemini_parts(msg.get("content", ""))
             user_parts.append({"role": "user" if msg.get("role") != "assistant" else "model",
-                               "parts": [{"text": msg.get("content", "")}]})
+                               "parts": parts})
 
     body = {"contents": user_parts}
     if system_text:
@@ -661,9 +819,10 @@ async def _call_claude(messages: list, model: str) -> str:
         role = msg.get("role")
         content = msg.get("content", "")
         if role == "system":
-            system_text += (system_text and "\n\n" or "") + content
+            system_text += (system_text and "\n\n" or "") + _msg_text(content)
         else:
-            msg_list.append({"role": "user" if role != "assistant" else "assistant", "content": content})
+            built = _build_claude_content(content)
+            msg_list.append({"role": "user" if role != "assistant" else "assistant", "content": built})
 
     body = {
         "model": model,
@@ -762,6 +921,73 @@ async def callLLM(messages: list, model: str = None) -> str:
     use_model = model or _current_config["llm_model"]
     endpoint = _current_config.get("custom_api_url", "")
     return await _dispatch(messages, service, use_model, endpoint)
+
+
+async def callLLMVision(messages: list, image_b64: str, image_mime: str = "image/webp", model: str = None) -> str:
+    """
+    비전(이미지 입력) LLM 호출 공개 함수.
+
+    messages의 마지막 user 메시지 content 끝에 이미지 파트를 추가하여 호출한다.
+    각 서비스(Gemini/Claude/OpenAI 호환군)에 맞는 포맷으로 변환은 _call_* 에서 처리.
+
+    Args:
+        messages: [{"role":"system"/"user", "content": "..."}] (텍스트만)
+        image_b64: base64 인코딩된 이미지 데이터 (data: 접두어 제외)
+        image_mime: 이미지 MIME 타입 (기본 image/webp)
+        model: 모델명 (None이면 설정에서 가져옴)
+
+    Returns:
+        LLM 응답 텍스트. 실패 시 "[LLM 실패] ..." 형식의 에러 문자열 반환.
+        미지원 서비스는 RuntimeError.
+    """
+    service = _current_config["llm_service"]
+    if not supports_vision(service):
+        raise RuntimeError(
+            f"현재 LLM 서비스({service})는 비전(이미지 입력)을 지원하지 않습니다. "
+            "텍스트 전용 SDK를 사용하는 서비스(vertex) 대신 OpenAI 호환/Gemini/Claude 등을 선택하세요."
+        )
+
+    use_model = model or _current_config["llm_model"]
+    endpoint = _current_config.get("custom_api_url", "")
+
+    if not image_b64:
+        return "[LLM 실패] callLLMVision: image_b64 가 비어 있습니다."
+
+    try:
+        new_messages = _build_vision_messages(messages, image_b64, image_mime=image_mime)
+    except ValueError as e:
+        return f"[LLM 실패] {e}"
+
+    _llm_log(f"callLLMVision: service={service} model={use_model} mime={image_mime} img_b64_len={len(image_b64)}")
+    return await _dispatch(new_messages, service, use_model, endpoint)
+
+
+async def callLLMVisionStream(messages: list, image_b64: str, image_mime: str = "image/webp", model: str = None, log_history: bool = True):
+    """비전(이미지 입력) LLM 스트리밍 호출. delta/done/error 이벤트를 비동기 제너레이터로 yield.
+
+    callLLMStream 과 동일한 이벤트 스키마를 사용한다.
+    """
+    service = _current_config["llm_service"]
+    if not supports_vision(service):
+        raise RuntimeError(
+            f"현재 LLM 서비스({service})는 비전(이미지 입력)을 지원하지 않습니다. "
+            "텍스트 전용 SDK를 사용하는 vertex 대신 OpenAI 호환/Gemini/Claude 등을 선택하세요."
+        )
+    use_model = model or _current_config["llm_model"]
+    if not image_b64:
+        yield {"type": "error", "error": "callLLMVisionStream: image_b64 가 비어 있습니다."}
+        return
+
+    try:
+        new_messages = _build_vision_messages(messages, image_b64, image_mime=image_mime)
+    except ValueError as e:
+        yield {"type": "error", "error": str(e)}
+        return
+
+    _llm_log(f"callLLMVisionStream: service={service} model={use_model} mime={image_mime} img_b64_len={len(image_b64)}")
+    # callLLMStream 내부 디스패치 재사용 (이미지 포함 messages를 그대로 처리 가능)
+    async for ev in callLLMStream(new_messages, model=use_model, log_history=log_history):
+        yield ev
 
 
 async def callLLM2(messages: list, model: str = None) -> str:
@@ -1034,11 +1260,12 @@ async def _stream_gemini(messages: list, model: str):
     user_parts = []
     for msg in messages:
         if msg.get("role") == "system":
-            system_text += (system_text and "\n\n" or "") + msg.get("content", "")
+            system_text += (system_text and "\n\n" or "") + _msg_text(msg.get("content", ""))
         else:
+            parts = _build_gemini_parts(msg.get("content", ""))
             user_parts.append({
                 "role": "user" if msg.get("role") != "assistant" else "model",
-                "parts": [{"text": msg.get("content", "")}],
+                "parts": parts,
             })
 
     body = {"contents": user_parts}
@@ -1130,9 +1357,10 @@ async def _stream_claude(messages: list, model: str):
         role = msg.get("role")
         content = msg.get("content", "")
         if role == "system":
-            system_text += (system_text and "\n\n" or "") + content
+            system_text += (system_text and "\n\n" or "") + _msg_text(content)
         else:
-            msg_list.append({"role": "user" if role != "assistant" else "assistant", "content": content})
+            built = _build_claude_content(content)
+            msg_list.append({"role": "user" if role != "assistant" else "assistant", "content": built})
 
     body = {
         "model": model,

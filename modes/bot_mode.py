@@ -8,6 +8,7 @@ BotMode - 삽화 설정 모드
 import asyncio
 import json
 import os
+import re
 import time
 import uuid
 import shutil
@@ -2159,6 +2160,378 @@ async def handle_save_positive_rules(request):
         print(f"[BOT_MODE] POSITIVE 규칙 저장 실패: {e}")
         traceback.print_exc()
         return _json_error(str(e))
+
+
+# ─── LLM 자동 얼굴/눈 태그 분류 (auto_face_tag) ─────────────
+
+AUTO_FACE_TAG_PROMPTS_DIR = os.path.join(BASE_DIR, "prompts", "auto_face_tag")
+AUTO_FACE_TAG_BUILTIN_FILE = os.path.join(AUTO_FACE_TAG_PROMPTS_DIR, "system.txt")
+AUTO_FACE_TAG_CUSTOM_FILE = os.path.join(ASSET_DATA_DIR, "auto_face_tag_custom.txt")
+AUTO_FACE_TAG_META_FILE = os.path.join(ASSET_DATA_DIR, "auto_face_tag_meta.json")
+
+_auto_face_tag_builtin_cache: str | None = None
+_auto_face_tag_builtin_mtime: float = 0.0
+
+
+def _load_auto_face_tag_builtin() -> str:
+    """글로벌(배포용) 프롬프트 로드. mtime 기반 캐싱."""
+    global _auto_face_tag_builtin_cache, _auto_face_tag_builtin_mtime
+    if not os.path.isfile(AUTO_FACE_TAG_BUILTIN_FILE):
+        print(f"[BOT_MODE] auto_face_tag builtin 파일 없음: {AUTO_FACE_TAG_BUILTIN_FILE}")
+        return ""
+    try:
+        mtime = os.path.getmtime(AUTO_FACE_TAG_BUILTIN_FILE)
+        if _auto_face_tag_builtin_cache is not None and mtime == _auto_face_tag_builtin_mtime:
+            return _auto_face_tag_builtin_cache
+        with open(AUTO_FACE_TAG_BUILTIN_FILE, "r", encoding="utf-8") as f:
+            txt = f.read()
+        _auto_face_tag_builtin_cache = txt
+        _auto_face_tag_builtin_mtime = mtime
+        return txt
+    except Exception as e:
+        print(f"[BOT_MODE] auto_face_tag builtin 로드 실패: {e}")
+        traceback.print_exc()
+        return ""
+
+
+def _load_auto_face_tag_custom() -> tuple[str, bool]:
+    """커스텀 프롬프트와 use_custom 플래그 로드. (없으면 빈 문자열, False)."""
+    custom = ""
+    if os.path.isfile(AUTO_FACE_TAG_CUSTOM_FILE):
+        try:
+            with open(AUTO_FACE_TAG_CUSTOM_FILE, "r", encoding="utf-8") as f:
+                custom = f.read()
+        except Exception as e:
+            print(f"[BOT_MODE] auto_face_tag custom 로드 실패: {e}")
+            traceback.print_exc()
+
+    use_custom = False
+    if os.path.isfile(AUTO_FACE_TAG_META_FILE):
+        try:
+            with open(AUTO_FACE_TAG_META_FILE, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+                use_custom = bool(meta.get("use_custom", False))
+        except Exception as e:
+            print(f"[BOT_MODE] auto_face_tag meta 로드 실패: {e}")
+            traceback.print_exc()
+
+    return custom, use_custom
+
+
+def _save_auto_face_tag_custom(text: str, use_custom: bool) -> None:
+    """커스텀 프롬프트 저장. 기존 파일은 .bak 로 백업."""
+    os.makedirs(ASSET_DATA_DIR, exist_ok=True)
+
+    if os.path.isfile(AUTO_FACE_TAG_CUSTOM_FILE):
+        try:
+            shutil.copy2(AUTO_FACE_TAG_CUSTOM_FILE, AUTO_FACE_TAG_CUSTOM_FILE + ".bak")
+        except Exception as e:
+            print(f"[BOT_MODE] auto_face_tag custom 백업 실패: {e}")
+
+    try:
+        with open(AUTO_FACE_TAG_CUSTOM_FILE, "w", encoding="utf-8") as f:
+            f.write(text)
+    except Exception as e:
+        print(f"[BOT_MODE] auto_face_tag custom 저장 실패: {e}")
+        traceback.print_exc()
+        raise
+
+    if os.path.isfile(AUTO_FACE_TAG_META_FILE):
+        try:
+            shutil.copy2(AUTO_FACE_TAG_META_FILE, AUTO_FACE_TAG_META_FILE + ".bak")
+        except Exception as e:
+            print(f"[BOT_MODE] auto_face_tag meta 백업 실패: {e}")
+
+    try:
+        with open(AUTO_FACE_TAG_META_FILE, "w", encoding="utf-8") as f:
+            json.dump({"use_custom": bool(use_custom)}, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[BOT_MODE] auto_face_tag meta 저장 실패: {e}")
+        traceback.print_exc()
+        raise
+
+
+def _strip_tag_wrapper(raw: str) -> str:
+    """'(tag:1.2)' / '[tag]' / '{tag}' 같은 가중치 구문에서 순수 태그명만 추출."""
+    s = raw.strip()
+    m = re.search(r'[\(\[{][\d.]*:?\s*([^()\[\]{}]+)[\)\]}]', s)
+    if m:
+        s = m.group(1).strip()
+    # 가중치 문법 "tag:1.2"에서 우측이 숫자면 제거
+    if ':' in s:
+        left, right = s.split(':', 1)
+        if right.strip().replace('.', '').isdigit():
+            s = left.strip()
+    return s
+
+
+def _render_auto_face_tag_prompt(template: str, groups: dict) -> str:
+    """template 의 {appearance}/{attire}/{etc} 변수를 그룹 태그로 치환.
+
+    format() 충돌을 피하기 위해 단순 str.replace 사용.
+    """
+    appearance_tags = ", ".join(_strip_tag_wrapper(t["tag"]) for t in groups.get("외모/신체", []))
+    attire_tags = ", ".join(_strip_tag_wrapper(t["tag"]) for t in groups.get("복장", []))
+    etc_tags = ", ".join(_strip_tag_wrapper(t["tag"]) for t in groups.get("미분류", []))
+
+    rendered = template.replace("{appearance}", appearance_tags)
+    rendered = rendered.replace("{attire}", attire_tags)
+    rendered = rendered.replace("{etc}", etc_tags)
+    return rendered
+
+
+def _parse_auto_face_tag_response(raw: str) -> dict | None:
+    """LLM 응답에서 JSON 객체 추출. 실패 시 None."""
+    if not raw:
+        return None
+    cleaned = raw.strip()
+    # markdown ```json ... ``` 제거
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r'^```[a-zA-Z]*\n?', '', cleaned)
+        cleaned = re.sub(r'\n?```$', '', cleaned).strip()
+    try:
+        data = json.loads(cleaned)
+        if isinstance(data, dict):
+            face = data.get("face")
+            eye = data.get("eye")
+            if isinstance(face, list) and isinstance(eye, list):
+                return {"face": [str(t).strip() for t in face if str(t).strip()],
+                        "eye": [str(t).strip() for t in eye if str(t).strip()]}
+    except json.JSONDecodeError:
+        pass
+    # fallback: 첫 {...} 블록 추출
+    m = re.search(r'\{[^{}]*"face"[^{}]*\}', cleaned, re.DOTALL)
+    if not m:
+        m = re.search(r'\{.*\}', cleaned, re.DOTALL)
+    if m:
+        try:
+            data = json.loads(m.group(0))
+            if isinstance(data, dict):
+                face = data.get("face", [])
+                eye = data.get("eye", [])
+                return {"face": [str(t).strip() for t in (face if isinstance(face, list) else []) if str(t).strip()],
+                        "eye": [str(t).strip() for t in (eye if isinstance(eye, list) else []) if str(t).strip()]}
+        except json.JSONDecodeError as e:
+            print(f"[BOT_MODE] auto_face_tag JSON 파싱 실패: {e}")
+    return None
+
+
+async def handle_get_auto_face_tag_prompt(request):
+    """GET /api/bot_mode/auto_face_tag_prompt - 글로벌/커스텀 프롬프트 조회."""
+    try:
+        builtin = _load_auto_face_tag_builtin()
+        custom, use_custom = _load_auto_face_tag_custom()
+        return web.json_response({
+            "success": True,
+            "data": {
+                "builtin": builtin,
+                "custom": custom,
+                "use_custom": use_custom,
+            },
+        })
+    except Exception as e:
+        print(f"[BOT_MODE] auto_face_tag_prompt 조회 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)})
+
+
+async def handle_get_auto_face_tag_test_image(request):
+    """GET /api/bot_mode/auto_face_tag_test_image - 배포 번들 테스트 이미지(base64 data URL)."""
+    import base64
+    path = os.path.join(AUTO_FACE_TAG_PROMPTS_DIR, "test_img.webp")
+    if not os.path.isfile(path):
+        print(f"[BOT_MODE] 테스트 이미지 없음: {path}")
+        return web.json_response({"success": False, "error": f"테스트 이미지가 없습니다: {path}"})
+    try:
+        with open(path, "rb") as f:
+            b64 = base64.b64encode(f.read()).decode("ascii")
+        return web.json_response({
+            "success": True,
+            "data": {
+                "image_b64": b64,
+                "mime": "image/webp",
+                "data_url": f"data:image/webp;base64,{b64}",
+            },
+        })
+    except Exception as e:
+        print(f"[BOT_MODE] 테스트 이미지 로드 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)})
+
+
+async def handle_set_auto_face_tag_prompt(request):
+    """POST /api/bot_mode/auto_face_tag_prompt - 커스텀 프롬프트 저장."""
+    try:
+        body = await request.json()
+        custom = body.get("custom", "") or ""
+        use_custom = bool(body.get("use_custom", False))
+        _save_auto_face_tag_custom(custom, use_custom)
+        return web.json_response({"success": True})
+    except Exception as e:
+        print(f"[BOT_MODE] auto_face_tag_prompt 저장 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)})
+
+
+async def handle_auto_classify_face_tags(request):
+    """POST /api/bot_mode/auto_classify_face_tags - LLM 비전 기반 얼굴/눈 태그 자동 분류."""
+    import base64
+    import time as _time
+    from modes.tag_classifier import classify_prompt
+    from modes.llm_service import callLLMVision, supports_vision, get_config
+
+    async def _notify_llm_widget(event_type: str, data: dict = None):
+        try:
+            import server as _server
+            await _server.notify_frontend("lighbd_llm_stream", {"type": event_type, **(data or {})})
+        except Exception as e:
+            print(f"[BOT_MODE] WARN: notify_frontend 실패: {e}")
+
+    try:
+        body = await request.json()
+        bot_name = (body.get("bot") or "").strip()
+        char_name = (body.get("character") or "").strip()
+        if not bot_name or not char_name:
+            return web.json_response({"success": False, "error": "bot, character 필드가 필요합니다."})
+
+        char_dir = os.path.join(BOT_DIR, bot_name, char_name)
+        face_path = os.path.join(char_dir, "_face_image.webp")
+        if not os.path.isfile(face_path):
+            print(f"[BOT_MODE] _face_image.webp 없음: {face_path}")
+            return web.json_response({
+                "success": False,
+                "error": f"_face_image.webp이 없습니다. 먼저 얼굴 이미지를 생성하세요. (경로: {char_dir})",
+            })
+
+        # 대표 프롬프트 로드 (rep_images[0])
+        data = _load_bot_data()
+        bot = next((b for b in data.get("bots", []) if b["name"] == bot_name), None)
+        if not bot:
+            return web.json_response({"success": False, "error": f"봇을 찾을 수 없습니다: {bot_name}"})
+        char = next((c for c in bot.get("characters", []) if c["name"] == char_name), None)
+        if not char:
+            return web.json_response({"success": False, "error": f"캐릭터를 찾을 수 없습니다: {char_name}"})
+
+        rep_images = char.get("rep_images", [])
+        if not rep_images:
+            return web.json_response({"success": False, "error": "대표 이미지(rep_images)가 없습니다."})
+
+        rep0 = rep_images[0]
+        rep_base = os.path.splitext(rep0)[0]
+        prompt_path = os.path.join(char_dir, f"{rep_base}_prompt.json")
+        if not os.path.isfile(prompt_path):
+            return web.json_response({
+                "success": False,
+                "error": f"대표 이미지 프롬프트 파일이 없습니다: {rep_base}_prompt.json",
+            })
+        try:
+            with open(prompt_path, "r", encoding="utf-8") as pf:
+                prompt_text = json.load(pf).get("prompt", "")
+        except Exception as e:
+            print(f"[BOT_MODE] 대표 프롬프트 로드 실패: {e}")
+            traceback.print_exc()
+            return web.json_response({"success": False, "error": f"대표 이미지 프롬프트 로드 실패: {e}"})
+
+        if not prompt_text:
+            return web.json_response({"success": False, "error": "대표 이미지 프롬프트가 비어 있습니다."})
+
+        # 태그 3그룹 분류
+        groups = classify_prompt(prompt_text)
+        if not any(groups.values()):
+            return web.json_response({"success": False, "error": "분류된 태그가 없습니다. 대표 프롬프트를 확인하세요."})
+
+        # 비전 서비스 확인
+        cfg = get_config()
+        service = cfg.get("llm_service", "")
+        if not supports_vision(service):
+            print(f"[BOT_MODE] 비전 미지원 서비스: {service}")
+            return web.json_response({
+                "success": False,
+                "error": (
+                    f"현재 LLM 서비스({service})는 비전(이미지 입력)을 지원하지 않습니다. "
+                    "텍스트 전용 SDK를 사용하는 vertex 대신 OpenAI 호환/Gemini/Claude 등을 config.json에서 선택하세요."
+                ),
+            })
+
+        # 프롬프트 선택 + 변수 치환
+        custom_text, use_custom = _load_auto_face_tag_custom()
+        if use_custom and custom_text.strip():
+            template = custom_text
+        else:
+            template = _load_auto_face_tag_builtin()
+        if not template.strip():
+            return web.json_response({"success": False, "error": "프롬프트 템플릿이 비어 있습니다."})
+
+        rendered = _render_auto_face_tag_prompt(template, groups)
+
+        # 이미지 base64 인코딩
+        try:
+            with open(face_path, "rb") as f:
+                img_bytes = f.read()
+        except Exception as e:
+            print(f"[BOT_MODE] _face_image.webp 읽기 실패: {e}")
+            traceback.print_exc()
+            return web.json_response({"success": False, "error": f"얼굴 이미지 읽기 실패: {e}"})
+        img_b64 = base64.b64encode(img_bytes).decode("ascii")
+
+        messages = [
+            {"role": "system", "content": "You are a precise tag classifier. Follow the user's instructions exactly and respond in strict JSON."},
+            {"role": "user", "content": rendered},
+        ]
+
+        print(f"[BOT_MODE] auto_classify_face_tags 호출: bot={bot_name} char={char_name} service={service} appearance={len(groups.get('외모/신체', []))} attire={len(groups.get('복장', []))} etc={len(groups.get('미분류', []))} use_custom={use_custom}")
+
+        use_model = cfg.get("llm_model", "")
+        max_retries = max(0, int(cfg.get("auto_face_tag_max_retries", 2)))
+        await _notify_llm_widget("start", {"model": use_model, "prompt_id": f"auto_face_tag:{char_name}"})
+
+        # 외부 API(LLM) 실패에 대해서만 재시도. 데이터 문제(이미지 없음/프롬프트 없음/비전 미지원)는 위에서 이미 반환됨.
+        raw = None
+        last_err = None
+        total_elapsed = 0.0
+        for attempt in range(max_retries + 1):
+            t0 = _time.time()
+            try:
+                raw = await callLLMVision(messages, image_b64=img_b64, image_mime="image/webp")
+            except Exception as call_err:
+                print(f"[BOT_MODE] callLLMVision 예외 (시도 {attempt + 1}/{max_retries + 1}): {call_err}")
+                traceback.print_exc()
+                last_err = f"{type(call_err).__name__}: {call_err}"
+                raw = None
+            total_elapsed += _time.time() - t0
+
+            if raw and not raw.startswith("[LLM 실패]"):
+                parsed = _parse_auto_face_tag_response(raw)
+                if parsed is not None:
+                    # 성공
+                    await _notify_llm_widget("done", {
+                        "text": raw,
+                        "completion_tokens": max(1, len(raw) // 3),
+                        "elapsed": round(total_elapsed, 3),
+                        "tps": round((max(1, len(raw) // 3) / total_elapsed), 1) if total_elapsed > 0 else 0.0,
+                        "ttft": None,
+                    })
+                    print(f"[BOT_MODE] auto_classify_face_tags 완료: face={len(parsed['face'])}개 eye={len(parsed['eye'])}개 (시도 {attempt + 1})")
+                    return web.json_response({"success": True, "data": parsed})
+                # JSON 파싱 실패 → 재시도 대상
+                last_err = f"LLM 응답을 JSON으로 파싱하지 못했습니다. raw: {raw[:300]}"
+                print(f"[BOT_MODE] LLM 응답 JSON 파싱 실패 (시도 {attempt + 1}/{max_retries + 1}). raw={raw[:500]}")
+            else:
+                last_err = f"LLM 호출 실패: {raw or '빈 응답'}"
+                print(f"[BOT_MODE] LLM 호출 실패 (시도 {attempt + 1}/{max_retries + 1}): {raw}")
+
+            if attempt < max_retries:
+                print(f"[BOT_MODE] 재시도 대기 중... ({attempt + 1}/{max_retries})")
+                await asyncio.sleep(1.0 * (attempt + 1))  # 1s, 2s, 3s 점진적 대기
+
+        # 모든 재시도 실패
+        await _notify_llm_widget("error", {"error": last_err or "알 수 없는 오류", "elapsed": round(total_elapsed, 3)})
+        return web.json_response({"success": False, "error": f"{max_retries + 1}회 시도 후 실패: {last_err}"})
+    except Exception as e:
+        print(f"[BOT_MODE] auto_classify_face_tags 예외: {e}")
+        traceback.print_exc()
+        await _notify_llm_widget("error", {"error": f"{type(e).__name__}: {e}"})
+        return web.json_response({"success": False, "error": str(e)})
 
 
 async def handle_auto_group_prompt(request):

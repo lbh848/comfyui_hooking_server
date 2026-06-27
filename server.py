@@ -58,7 +58,7 @@ from modes import autocomplete_service
 from modes import asset_tool_mode
 from modes import bot_mode
 from modes.bot_mode import data_patcher
-from modes.bot_mode import handle_get_illust_settings, handle_update_illust_settings, handle_auto_group_prompt, handle_get_positive_rules, handle_save_positive_rules
+from modes.bot_mode import handle_get_illust_settings, handle_update_illust_settings, handle_auto_group_prompt, handle_get_positive_rules, handle_save_positive_rules, handle_get_auto_face_tag_prompt, handle_set_auto_face_tag_prompt, handle_auto_classify_face_tags, handle_get_auto_face_tag_test_image
 from modes import embedding_service
 from modes.illust_prompt_builder import IllustPromptBuilder, log_illust_build, get_illust_logs
 import importlib.util
@@ -124,6 +124,7 @@ DEFAULT_CONFIG = {
     "llm_temperature": 1.0,
     "llm_max_tokens": 0,              # 0 = 기본값 사용
     "llm_stream": False,
+    "auto_face_tag_max_retries": 2,   # LLM 자동 얼굴/눈 태그 분류 재시도 횟수 (외부 API 실패/JSON 파싱 실패 시)
     "embedding_provider": "voyage",  # 임베딩 프로바이더: voyage / custom
     "embedding_url": "https://api.voyageai.com/v1/embeddings",  # 임베딩 API URL
     "embedding_api_key": "",      # 임베딩 API 키
@@ -2057,9 +2058,10 @@ async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse
     """LLM 호출 테스트용 SSE 엔드포인트.
 
     POST /api/llm/test_stream
-    body: {"messages": [...], "model": "...", "stream": true}
+    body: {"messages": [...], "model": "...", "stream": true, "image_b64": "...", "image_mime": "image/webp"}
     응답: text/event-stream. 이벤트: start / delta / done / error.
     stream=False 면 callLLM 단발 호출 후 done 이벤트 1개만 전송.
+    image_b64 가 있으면 callLLMVision (비전, 자동 단발 모드) 으로 호출.
     """
     try:
         body = await request.json()
@@ -2072,6 +2074,8 @@ async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse
 
     use_model = body.get("model") or None
     use_stream = bool(body.get("stream", True))
+    image_b64 = (body.get("image_b64") or "").strip()
+    image_mime = body.get("image_mime") or "image/webp"
 
     resp = web.StreamResponse(status=200, headers={
         "Content-Type": "text/event-stream",
@@ -2086,7 +2090,42 @@ async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse
         return resp.write(f"event: {event_type}\ndata: {payload}\n\n".encode("utf-8"))
 
     try:
-        if use_stream:
+        if image_b64:
+            # 비전 호출
+            if not llm_service.supports_vision(llm_service.get_config().get("llm_service", "")):
+                await write_event("error", {"error": f"현재 LLM 서비스({llm_service.get_config().get('llm_service','')})는 비전을 지원하지 않습니다."})
+                await resp.write_eof()
+                return resp
+            service = llm_service.get_config().get("llm_service", "")
+            use_model_resolved = use_model or llm_service.get_config().get("llm_model", "")
+            await write_event("start", {"service": service, "model": use_model_resolved})
+            t0 = time.time()
+            try:
+                if use_stream:
+                    # 스트리밍 비전
+                    async for ev in llm_service.callLLMVisionStream(messages, image_b64=image_b64, image_mime=image_mime, model=use_model, log_history=False):
+                        await write_event(ev.get("type", "message"), ev)
+                else:
+                    # 단발 비전
+                    text = await llm_service.callLLMVision(messages, image_b64=image_b64, image_mime=image_mime, model=use_model)
+                    elapsed = time.time() - t0
+                    if isinstance(text, str) and text.startswith("[LLM 실패]"):
+                        await write_event("error", {"error": text})
+                    else:
+                        tokens = max(1, len(text) // 3)
+                        tps = (tokens / elapsed) if elapsed > 0 else 0.0
+                        await write_event("done", {
+                            "text": text,
+                            "completion_tokens": tokens,
+                            "elapsed": elapsed,
+                            "tps": tps,
+                            "ttft": None,
+                        })
+            except Exception as ve:
+                await write_event("error", {"error": f"{type(ve).__name__}: {ve}"})
+            await resp.write_eof()
+            return resp
+        elif use_stream:
             async for ev in llm_service.callLLMStream(messages, model=use_model, log_history=False):
                 et = ev.get("type", "message")
                 await write_event(et, ev)
@@ -5553,6 +5592,10 @@ app.router.add_get("/api/bot_mode/system_prompt_presets", bot_mode.handle_get_sy
 app.router.add_post("/api/bot_mode/system_prompt_presets", bot_mode.handle_save_system_prompt_preset)
 app.router.add_delete("/api/bot_mode/system_prompt_presets", bot_mode.handle_delete_system_prompt_preset)
 app.router.add_post("/api/bot_mode/auto_group_prompt", handle_auto_group_prompt)
+app.router.add_get("/api/bot_mode/auto_face_tag_prompt", handle_get_auto_face_tag_prompt)
+app.router.add_post("/api/bot_mode/auto_face_tag_prompt", handle_set_auto_face_tag_prompt)
+app.router.add_get("/api/bot_mode/auto_face_tag_test_image", handle_get_auto_face_tag_test_image)
+app.router.add_post("/api/bot_mode/auto_classify_face_tags", handle_auto_classify_face_tags)
 # 자동완성 API
 app.router.add_get("/api/autocomplete", handle_api_autocomplete)
 # ─── 에셋툴 API 핸들러 ──────────────────────────────────

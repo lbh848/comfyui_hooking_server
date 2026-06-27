@@ -3301,6 +3301,32 @@
     <!-- 토스트 알림 -->
     <div id="toast" class="toast"></div>
 
+    <!-- lighbd LLM 스트리밍 위젯: 실행 중에만 표시 (전역 — 모든 탭에서 표시) -->
+    <div id="lighbd-llm-widget" style="position:fixed; right:24px; bottom:100px; z-index:9998; display:none;
+            flex-direction:column; gap:6px; padding:10px 12px; width:320px; max-width:calc(100vw - 48px);
+            background:rgba(15,52,96,0.85); backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
+            border:1px solid var(--border); border-radius:12px;
+            color:var(--text); font-size:0.78rem;
+            box-shadow:0 6px 28px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.04) inset;">
+        <div style="display:flex; align-items:center; gap:8px;">
+            <span class="queue-spinner" id="lighbd-llm-spinner" style="width:12px; height:12px; border-width:2px; flex-shrink:0; display:none;"></span>
+            <span style="font-size:0.7rem; color:var(--text2); font-weight:600; letter-spacing:0.02em; flex:1;">LIGHBD · LLM</span>
+            <span id="lighbd-llm-status" style="font-size:0.7rem; color:var(--text2);">대기</span>
+            <button onclick="openLighbdHistoryModal()" title="자세히 보기" style="background:transparent; border:none; color:var(--text2); cursor:pointer; font-size:0.78rem; padding:0 4px;">자세히</button>
+            <button onclick="hideLighbdLlmWidget()" style="background:transparent; border:none; color:var(--text2); cursor:pointer; font-size:0.9rem; padding:0 2px;">×</button>
+        </div>
+        <div style="display:flex; gap:6px; font-size:0.7rem; color:var(--text2); font-family:monospace;">
+            <span>모델: <span id="lighbd-llm-model" style="color:var(--text);">-</span></span>
+        </div>
+        <div style="display:flex; gap:10px; font-size:0.7rem; color:var(--text2); font-family:monospace; flex-wrap:wrap;">
+            <span>토큰: <span id="lighbd-llm-tokens" style="color:var(--text);">0</span></span>
+            <span>경과: <span id="lighbd-llm-elapsed" style="color:var(--text);">0.00</span>s</span>
+            <span><span id="lighbd-llm-tps" style="color:var(--text);">0.0</span> t/s</span>
+            <span>TTFT: <span id="lighbd-llm-ttft" style="color:var(--text);">-</span></span>
+        </div>
+        <pre id="lighbd-llm-output" style="margin:0; max-height:140px; overflow:hidden; padding:6px; border-radius:6px; border:1px solid var(--border); background:rgba(0,0,0,0.25); color:var(--text); font-family:monospace; font-size:0.72rem; line-height:1.4; white-space:pre-wrap; word-break:break-word;">-</pre>
+    </div>
+
     <!-- 복장 추출 진행 토스트 (우측 하단) -->
     <div id="outfit-progress-toast" class="outfit-progress-toast">
         <div class="spinner"></div>
@@ -3375,31 +3401,6 @@
                 <div id="active-bot-popover-list" style="display:flex; flex-direction:column; gap:2px;"></div>
             </div>
 
-            <!-- lighbd LLM 스트리밍 위젯: 실행 중에만 표시 -->
-            <div id="lighbd-llm-widget" style="position:fixed; right:24px; bottom:100px; z-index:9998; display:none;
-                    flex-direction:column; gap:6px; padding:10px 12px; width:320px; max-width:calc(100vw - 48px);
-                    background:rgba(15,52,96,0.85); backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
-                    border:1px solid var(--border); border-radius:12px;
-                    color:var(--text); font-size:0.78rem;
-                    box-shadow:0 6px 28px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.04) inset;">
-                <div style="display:flex; align-items:center; gap:8px;">
-                    <span class="queue-spinner" id="lighbd-llm-spinner" style="width:12px; height:12px; border-width:2px; flex-shrink:0; display:none;"></span>
-                    <span style="font-size:0.7rem; color:var(--text2); font-weight:600; letter-spacing:0.02em; flex:1;">LIGHBD · LLM</span>
-                    <span id="lighbd-llm-status" style="font-size:0.7rem; color:var(--text2);">대기</span>
-                    <button onclick="openLighbdHistoryModal()" title="자세히 보기" style="background:transparent; border:none; color:var(--text2); cursor:pointer; font-size:0.78rem; padding:0 4px;">자세히</button>
-                    <button onclick="hideLighbdLlmWidget()" style="background:transparent; border:none; color:var(--text2); cursor:pointer; font-size:0.9rem; padding:0 2px;">×</button>
-                </div>
-                <div style="display:flex; gap:6px; font-size:0.7rem; color:var(--text2); font-family:monospace;">
-                    <span>모델: <span id="lighbd-llm-model" style="color:var(--text);">-</span></span>
-                </div>
-                <div style="display:flex; gap:10px; font-size:0.7rem; color:var(--text2); font-family:monospace; flex-wrap:wrap;">
-                    <span>토큰: <span id="lighbd-llm-tokens" style="color:var(--text);">0</span></span>
-                    <span>경과: <span id="lighbd-llm-elapsed" style="color:var(--text);">0.00</span>s</span>
-                    <span><span id="lighbd-llm-tps" style="color:var(--text);">0.0</span> t/s</span>
-                    <span>TTFT: <span id="lighbd-llm-ttft" style="color:var(--text);">-</span></span>
-                </div>
-                <pre id="lighbd-llm-output" style="margin:0; max-height:140px; overflow:hidden; padding:6px; border-radius:6px; border:1px solid var(--border); background:rgba(0,0,0,0.25); color:var(--text); font-family:monospace; font-size:0.72rem; line-height:1.4; white-space:pre-wrap; word-break:break-word;">-</pre>
-            </div>
         </div>
 
         <!-- 삽화 설정 탭 -->
@@ -6160,6 +6161,13 @@
                             <label style="display: flex; align-items: center; gap: 4px; font-size: .85rem; color: var(--text);">
                                 <input type="checkbox" id="llm-test-stream" checked> 스트리밍
                             </label>
+                            <label style="display: flex; align-items: center; gap: 4px; font-size: .85rem; color: var(--text); cursor: pointer;">
+                                <input type="checkbox" id="llm-test-vision" onchange="_onLlmTestVisionToggle()"> 비전(이미지)
+                            </label>
+                            <label id="llm-test-image-label" style="display: none; align-items: center; gap: 4px; font-size: .8rem; color: var(--text2); cursor: pointer; padding: 4px 10px; border: 1px dashed var(--border); border-radius: 6px;">
+                                📷 <span id="llm-test-image-name">이미지 선택</span>
+                                <input type="file" id="llm-test-image" accept="image/*" style="display: none;" onchange="_onLlmTestImagePick(this)">
+                            </label>
                             <button id="llm-test-send-btn" onclick="sendLlmTest()"
                                     style="padding: 6px 14px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); cursor: pointer;">전송</button>
                             <button onclick="clearLlmTest()"
@@ -6174,6 +6182,18 @@
                         </div>
                         <pre id="llm-test-output"
                              style="min-height: 120px; max-height: 320px; overflow: auto; padding: 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font-family: monospace; font-size: .82rem; white-space: pre-wrap; word-break: break-word;"></pre>
+                    </div>
+
+                    <!-- LLM 자동 분류 재시도 횟수 -->
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="title">LLM 자동 분류 재시도 횟수</div>
+                            <div class="desc">캐릭터 얼굴/눈 태그 자동 분류(LLM 비전 호출)가 외부 API 실패 · JSON 파싱 실패 시 자동 재시도하는 횟수. 데이터 문제(얼굴 이미지 없음 등)는 재시도 안 함.</div>
+                        </div>
+                        <div class="setting-control">
+                            <input type="number" id="setting-auto-face-tag-retries" min="0" max="10" step="1"
+                                   style="width: 80px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: .85rem;">
+                        </div>
                     </div>
 
                     <!-- 임베딩 설정 -->
@@ -8333,6 +8353,8 @@
             if (llmUrlEl) llmUrlEl.value = currentConfig.llm_url || '';
             const llmUrl2El = document.getElementById('setting-llm-url2');
             if (llmUrl2El) llmUrl2El.value = currentConfig.llm_url2 || '';
+            const aftRetriesEl = document.getElementById('setting-auto-face-tag-retries');
+            if (aftRetriesEl) aftRetriesEl.value = (currentConfig.auto_face_tag_max_retries ?? 2);
             const llmPresetEl = document.getElementById('setting-llm-reasoning-preset');
             if (llmPresetEl) llmPresetEl.value = currentConfig.llm_reasoning_preset || 'auto';
             const llmEffortEl = document.getElementById('setting-llm-reasoning-effort');
@@ -9087,7 +9109,8 @@
                 webp_lossless: currentConfig.webp_lossless || false,
                 workflow_filename: currentConfig.workflow_filename || '',
                 debug_workflow_source_path: document.getElementById('setting-debug-workflow-source-path').value,
-                queue_type_order: currentConfig.queue_type_order || {}
+                queue_type_order: currentConfig.queue_type_order || {},
+                auto_face_tag_max_retries: parseInt(document.getElementById('setting-auto-face-tag-retries').value) || 0,
             };
 
             try {
@@ -9667,6 +9690,61 @@
 
         // ─── LLM 테스트 패널 ───
         let _llmTestAbort = null;
+        let _llmTestImage = { b64: '', mime: '', source: '' }; // 비전 테스트용 이미지
+
+        async function _loadDefaultTestImage() {
+            try {
+                const resp = await fetch('/api/bot_mode/auto_face_tag_test_image');
+                const text = await resp.text();
+                let data;
+                try { data = JSON.parse(text); }
+                catch (_) {
+                    showToast(`기본 이미지 로드 실패: 서버 응답이 JSON이 아님 (HTTP ${resp.status})`, 'error');
+                    return false;
+                }
+                if (!data.success) { showToast(`기본 이미지 로드 실패: ${data.error || ''}`, 'error'); return false; }
+                _llmTestImage = {
+                    b64: data.data.image_b64,
+                    mime: data.data.mime || 'image/webp',
+                    source: '기본 이미지',
+                };
+                const nameEl = document.getElementById('llm-test-image-name');
+                if (nameEl) nameEl.textContent = '기본 이미지 (test_img.webp)';
+                return true;
+            } catch (e) {
+                showToast(`기본 이미지 로드 실패: ${e.message}`, 'error');
+                return false;
+            }
+        }
+
+        async function _onLlmTestVisionToggle() {
+            const checked = document.getElementById('llm-test-vision').checked;
+            const label = document.getElementById('llm-test-image-label');
+            if (checked) {
+                if (label) label.style.display = 'flex';
+                if (!_llmTestImage.b64) {
+                    await _loadDefaultTestImage();
+                }
+            } else {
+                if (label) label.style.display = 'none';
+            }
+        }
+
+        function _onLlmTestImagePick(input) {
+            const file = input.files && input.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = () => {
+                // reader.result = "data:<mime>;base64,<data>"
+                const m = String(reader.result || '').match(/^data:([^;]+);base64,(.+)$/);
+                if (!m) { showToast('이미지 인코딩 실패', 'error'); return; }
+                _llmTestImage = { mime: m[1], b64: m[2], source: file.name };
+                const nameEl = document.getElementById('llm-test-image-name');
+                if (nameEl) nameEl.textContent = `${file.name} (${(file.size / 1024).toFixed(1)}KB)`;
+            };
+            reader.onerror = () => showToast('이미지 읽기 실패', 'error');
+            reader.readAsDataURL(file);
+        }
 
         function clearLlmTest() {
             if (_llmTestAbort) { try { _llmTestAbort.abort(); } catch (_) {} _llmTestAbort = null; }
@@ -9711,13 +9789,26 @@
             btn.textContent = '전송 중…';
 
             const useStream = document.getElementById('llm-test-stream').checked;
+            const useVision = document.getElementById('llm-test-vision').checked;
             const messages = [{"role": "user", "content": text}];
+
+            // 비전 모드: 이미지 필수
+            if (useVision && !_llmTestImage.b64) {
+                showToast('비전 테스트 이미지가 없습니다. 파일을 선택하거나 기본 이미지를 로드하세요.', 'error');
+                return;
+            }
+
+            const payload = {messages, stream: useStream};
+            if (useVision) {
+                payload.image_b64 = _llmTestImage.b64;
+                payload.image_mime = _llmTestImage.mime;
+            }
 
             try {
                 const resp = await fetch('/api/llm/test_stream', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({messages, stream: useStream}),
+                    body: JSON.stringify(payload),
                     signal: _llmTestAbort.signal,
                 });
                 if (!resp.ok) {
@@ -9768,10 +9859,24 @@
                                     (Math.round(data.ttft * 1000)) + 'ms';
                             }
                             outEl.textContent += data.text || '';
-                            _setLlmTestStats(undefined, data.elapsed, undefined, undefined);
+                            // 실시간 통계: 누적 텍스트로 토큰/tps 추정
+                            const accLen = outEl.textContent.length;
+                            const approxTokens = Math.max(0, Math.floor(accLen / 3));
+                            const elapsed = (typeof data.elapsed === 'number') ? data.elapsed : 0;
+                            const tps = (elapsed > 0 && approxTokens > 0) ? (approxTokens / elapsed) : 0;
+                            _setLlmTestStats(approxTokens, elapsed, tps, undefined);
                         } else if (eventType === 'done') {
                             outEl.textContent = data.text || outEl.textContent;
-                            _setLlmTestStats(data.completion_tokens, data.elapsed, data.tps, data.ttft);
+                            // 서버가 usage 를 안 주면 누적 텍스트로 폴백
+                            let tokens = data.completion_tokens;
+                            if ((!tokens || tokens === 0)) {
+                                tokens = Math.max(0, Math.floor(outEl.textContent.length / 3));
+                            }
+                            let tps = data.tps;
+                            if ((!tps || tps === 0) && data.elapsed && tokens) {
+                                tps = tokens / data.elapsed;
+                            }
+                            _setLlmTestStats(tokens, data.elapsed, tps, data.ttft);
                         } else if (eventType === 'error') {
                             const errMsg = data.error || '알 수 없는 오류';
                             outEl.textContent += (outEl.textContent ? '\n' : '') + '[ERROR] ' + errMsg;
@@ -9847,6 +9952,13 @@
                 if (data.elapsed !== undefined && data.elapsed !== null) {
                     _setLlbStat('lighbd-llm-elapsed', (Math.round(data.elapsed * 100) / 100).toFixed(2));
                 }
+                // 실시간 토큰/tps: 누적 텍스트로 추정
+                const accLen = outEl.textContent.length;
+                const approxTokens = Math.max(0, Math.floor(accLen / 3));
+                const elapsed = (typeof data.elapsed === 'number') ? data.elapsed : 0;
+                const tps = (elapsed > 0 && approxTokens > 0) ? (Math.round((approxTokens / elapsed) * 10) / 10) : 0;
+                _setLlbStat('lighbd-llm-tokens', approxTokens);
+                _setLlbStat('lighbd-llm-tps', tps.toFixed(1));
                 _setLlbStat('lighbd-llm-status', '스트리밍');
             } else if (t === 'done') {
                 _showLighbdLlmWidget();
@@ -21762,6 +21874,10 @@
                         </div>
                         <button id="auto-group-refresh-btn" onclick="_refreshAutoGroup('${escAttr(charName)}')"
                             style="background:rgba(34,197,94,0.12); color:var(--text); border:1px solid rgba(34,197,94,0.3); padding:6px 14px; border-radius:6px; cursor:pointer; font-size:0.85rem;">새로고침</button>
+                        <button id="auto-group-prompt-btn" onclick="_openAutoFaceTagPromptModal('${escAttr(charName)}')"
+                            style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:6px 14px; border-radius:6px; cursor:pointer; font-size:0.85rem;">프롬프트</button>
+                        <button id="auto-group-llm-btn" onclick="_runAutoFaceTagLLM('${escAttr(charName)}')"
+                            style="background:#7C3AED; color:#fff; border:1px solid #6D28D9; padding:6px 14px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">LLM 자동 분류</button>
                         <button onclick="_closeAutoGroupModal()"
                             style="background:var(--surface2); color:var(--text); border:1px solid var(--border); width:32px; height:32px; border-radius:6px; cursor:pointer; font-size:1.2rem; display:flex; align-items:center; justify-content:center;">✕</button>
                     </div>
@@ -22072,6 +22188,259 @@
         function _closeAutoGroupModal() {
             const overlay = document.getElementById('auto-group-overlay');
             if (overlay) overlay.remove();
+        }
+
+        // ─── LLM 자동 얼굴/눈 태그 분류 ───────────────────────────
+        let _autoFaceTagPromptState = { builtin: '', custom: '', useCustom: false, tab: 'general', charName: '' };
+
+        function _stripTagWrapperJs(raw) {
+            let s = (raw || '').trim();
+            const m = s.match(/[\(\[{][\d.]*:?\s*([^()\[\]{}]+)[\)\]}]/);
+            if (m) s = m[1].trim();
+            if (s.indexOf(':') >= 0) {
+                const idx = s.indexOf(':');
+                const right = s.slice(idx + 1).trim();
+                if (/^\d+(\.\d+)?$/.test(right)) s = s.slice(0, idx).trim();
+            }
+            return s;
+        }
+
+        function _renderAutoFaceTagPreview(template, groups) {
+            const g = groups || {};
+            const appearance = (g['외모/신체'] || []).map(t => _stripTagWrapperJs(t.tag)).join(', ');
+            const attire = (g['복장'] || []).map(t => _stripTagWrapperJs(t.tag)).join(', ');
+            const etc = (g['미분류'] || []).map(t => _stripTagWrapperJs(t.tag)).join(', ');
+            return template
+                .replace(/\{appearance\}/g, appearance)
+                .replace(/\{attire\}/g, attire)
+                .replace(/\{etc\}/g, etc);
+        }
+
+        async function _openAutoFaceTagPromptModal(charName) {
+            _autoFaceTagPromptState.charName = charName;
+            let builtin = '', custom = '', useCustom = false;
+            try {
+                const resp = await fetch('/api/bot_mode/auto_face_tag_prompt');
+                const text = await resp.text();
+                let data;
+                try { data = JSON.parse(text); }
+                catch (parseErr) {
+                    showToast(`프롬프트 로드 실패: 서버 응답이 JSON이 아닙니다 (HTTP ${resp.status}). 서버를 재시작했는지 확인하세요. 본문: ${text.slice(0, 120)}`, 'error');
+                    return;
+                }
+                if (!data.success) { showToast(data.error || '프롬프트 로드 실패', 'error'); return; }
+                builtin = data.data.builtin || '';
+                custom = data.data.custom || '';
+                useCustom = !!data.data.use_custom;
+            } catch (e) {
+                showToast(`프롬프트 로드 실패: ${e.message}`, 'error');
+                return;
+            }
+            _autoFaceTagPromptState.builtin = builtin;
+            _autoFaceTagPromptState.custom = custom;
+            _autoFaceTagPromptState.useCustom = useCustom;
+            _autoFaceTagPromptState.tab = 'general';
+
+            const existing = document.getElementById('auto-face-tag-prompt-overlay');
+            if (existing) existing.remove();
+
+            const overlay = document.createElement('div');
+            overlay.id = 'auto-face-tag-prompt-overlay';
+            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10015; display:flex; align-items:center; justify-content:center;';
+            // 바깥 클릭으로 닫기 금지 — ✕ 또는 저장 완료 후 명시적 닫기만 허용
+
+            const modal = document.createElement('div');
+            modal.style.cssText = 'background:var(--surface); border-radius:12px; padding:20px; max-width:900px; width:92%; max-height:90vh; display:flex; flex-direction:column; gap:10px;';
+            modal.onclick = (e) => e.stopPropagation();
+            modal.innerHTML = `
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <h3 style="margin:0; font-size:1.05rem;">LLM 자동 분류 — 프롬프트 설정</h3>
+                    <button onclick="document.getElementById('auto-face-tag-prompt-overlay').remove()"
+                        style="background:var(--surface2); color:var(--text); border:1px solid var(--border); width:30px; height:30px; border-radius:6px; cursor:pointer; font-size:1.1rem;">✕</button>
+                </div>
+                <div style="font-size:0.72rem; color:var(--text2);">글로벌은 배포용(읽기 전용), 커스텀은 이 PC 전용(편집 가능). 변수: <code>{appearance}</code> <code>{attire}</code> <code>{etc}</code></div>
+                <div style="display:flex; gap:0; border:1px solid var(--border); border-radius:6px; overflow:hidden; width:fit-content;">
+                    <button id="aft-tab-general" onclick="_setAutoFaceTagTab('general')" style="padding:5px 14px; border:none; cursor:pointer; font-size:0.8rem; font-weight:600; background:var(--accent); color:#fff;">편집</button>
+                    <button id="aft-tab-preview" onclick="_setAutoFaceTagTab('preview')" style="padding:5px 14px; border:none; cursor:pointer; font-size:0.8rem; font-weight:600; background:var(--surface2); color:var(--text);">미리보기</button>
+                </div>
+
+                <div id="aft-panel-general" style="flex:1; display:flex; flex-direction:column; gap:10px; min-height:0; overflow:hidden;">
+                    <div style="display:flex; flex-direction:column; gap:4px; flex:1; min-height:0;">
+                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                            <div style="font-size:0.78rem; font-weight:600; color:var(--text);">글로벌 프롬프트 <span style="font-size:0.7rem; color:var(--text2); font-weight:400;">(배포용 · 읽기 전용)</span></div>
+                            <div id="aft-active-badge" style="font-size:0.68rem; padding:1px 6px; border-radius:4px; background:var(--surface2); color:var(--text2);">비활성</div>
+                        </div>
+                        <textarea id="aft-builtin-area" readonly style="flex:1; min-height:120px; width:100%; resize:none; padding:8px; border:1px solid var(--border); background:var(--surface2); color:var(--text2); border-radius:6px; font-family:ui-monospace,Menlo,monospace; font-size:0.75rem; line-height:1.4;"></textarea>
+                    </div>
+                    <div style="display:flex; flex-direction:column; gap:4px; flex:1; min-height:0;">
+                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                            <div style="font-size:0.78rem; font-weight:600; color:var(--text);">커스텀 프롬프트 <span style="font-size:0.7rem; color:var(--text2); font-weight:400;">(이 PC 전용 · 편집 가능)</span></div>
+                            <button onclick="_copyBuiltinToCustom()" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:2px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">글로벌에서 복사</button>
+                        </div>
+                        <textarea id="aft-custom-area" placeholder="비어 있음 — 직접 작성하거나 위 '글로벌에서 복사'를 눌러 시작" style="flex:1; min-height:160px; width:100%; resize:vertical; padding:8px; border:1px solid var(--accent); background:var(--surface); color:var(--text); border-radius:6px; font-family:ui-monospace,Menlo,monospace; font-size:0.78rem; line-height:1.4;"></textarea>
+                    </div>
+                </div>
+
+                <div id="aft-panel-preview" style="flex:1; display:none; min-height:0; flex-direction:column;">
+                    <div style="font-size:0.75rem; color:var(--text2); margin-bottom:4px;">현재 적용된 프롬프트(<span id="aft-preview-source">글로벌</span>)의 변수 치환 결과:</div>
+                    <pre id="aft-preview-pre" style="flex:1; min-height:280px; max-height:60vh; overflow:auto; padding:10px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:6px; font-family:ui-monospace,Menlo,monospace; font-size:0.78rem; line-height:1.4; white-space:pre-wrap; word-wrap:break-word;"></pre>
+                </div>
+
+                <div style="display:flex; justify-content:space-between; align-items:center; padding-top:8px; border-top:1px solid var(--border);">
+                    <label style="display:flex; align-items:center; gap:6px; font-size:0.8rem; cursor:pointer;">
+                        <input type="checkbox" id="aft-use-custom" style="cursor:pointer;">
+                        <span>커스텀 프롬프트 사용 <span style="color:var(--text2); font-size:0.72rem;">(체크 해제 시 글로벌 적용)</span></span>
+                    </label>
+                    <button onclick="_saveAutoFaceTagPrompt()" style="background:var(--accent); color:#fff; border:none; padding:6px 18px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">저장</button>
+                </div>
+            `;
+            overlay.appendChild(modal);
+            document.body.appendChild(overlay);
+
+            document.getElementById('aft-builtin-area').value = builtin;
+            document.getElementById('aft-custom-area').value = custom;
+            document.getElementById('aft-use-custom').checked = useCustom;
+            // 사용자 입력에 따라 배지/미리보기 실시간 갱신
+            document.getElementById('aft-custom-area').addEventListener('input', () => { _updateAutoFaceTagActiveBadge(); _updateAutoFaceTagPreview(); });
+            document.getElementById('aft-use-custom').addEventListener('change', () => { _updateAutoFaceTagActiveBadge(); _updateAutoFaceTagPreview(); });
+            _updateAutoFaceTagActiveBadge();
+            _updateAutoFaceTagPreview();
+        }
+
+        function _updateAutoFaceTagActiveBadge() {
+            const badge = document.getElementById('aft-active-badge');
+            if (!badge) return;
+            const useCustom = document.getElementById('aft-use-custom')?.checked;
+            const customText = (document.getElementById('aft-custom-area')?.value || '').trim();
+            const effectivelyCustom = useCustom && customText;
+            badge.textContent = effectivelyCustom ? '커스텀 사용 중' : '글로벌 사용 중';
+            badge.style.background = effectivelyCustom ? 'rgba(124,58,237,0.18)' : 'var(--surface2)';
+            badge.style.color = effectivelyCustom ? '#7C3AED' : 'var(--text2)';
+        }
+
+        function _copyBuiltinToCustom() {
+            const builtin = document.getElementById('aft-builtin-area')?.value || '';
+            const ta = document.getElementById('aft-custom-area');
+            if (!ta) return;
+            if (ta.value.trim() && !confirm('현재 커스텀 내용을 글로벌 프롬프트로 덮어쓸까요?')) return;
+            ta.value = builtin;
+            const chk = document.getElementById('aft-use-custom');
+            if (chk) chk.checked = true;
+            _updateAutoFaceTagActiveBadge();
+            _updateAutoFaceTagPreview();
+            showToast('글로벌 프롬프트를 커스텀으로 복사했습니다 (저장 필요)', 'info');
+        }
+
+        function _setAutoFaceTagTab(tab) {
+            _autoFaceTagPromptState.tab = tab;
+            const btnG = document.getElementById('aft-tab-general');
+            const btnP = document.getElementById('aft-tab-preview');
+            const panelG = document.getElementById('aft-panel-general');
+            const panelP = document.getElementById('aft-panel-preview');
+            if (tab === 'general') {
+                if (btnG) { btnG.style.background = 'var(--accent)'; btnG.style.color = '#fff'; }
+                if (btnP) { btnP.style.background = 'var(--surface2)'; btnP.style.color = 'var(--text)'; }
+                if (panelG) panelG.style.display = 'flex';
+                if (panelP) panelP.style.display = 'none';
+            } else {
+                if (btnP) { btnP.style.background = 'var(--accent)'; btnP.style.color = '#fff'; }
+                if (btnG) { btnG.style.background = 'var(--surface2)'; btnG.style.color = 'var(--text)'; }
+                if (panelP) panelP.style.display = 'flex';
+                if (panelG) panelG.style.display = 'none';
+                _updateAutoFaceTagPreview();
+            }
+        }
+
+        function _aftEffectiveTemplate() {
+            const useCustom = document.getElementById('aft-use-custom')?.checked;
+            const customText = (document.getElementById('aft-custom-area')?.value || '').trim();
+            if (useCustom && customText) return { src: '커스텀', text: customText };
+            return { src: '글로벌', text: document.getElementById('aft-builtin-area')?.value || '' };
+        }
+
+        function _updateAutoFaceTagPreview() {
+            const pre = document.getElementById('aft-preview-pre');
+            if (!pre) return;
+            const eff = _aftEffectiveTemplate();
+            const rendered = _renderAutoFaceTagPreview(eff.text, _autoGroupLastGroups);
+            const srcLabel = document.getElementById('aft-preview-source');
+            if (srcLabel) srcLabel.textContent = eff.src;
+            pre.textContent = rendered || '(프롬프트가 비어 있습니다)';
+        }
+
+        async function _saveAutoFaceTagPrompt() {
+            const custom = document.getElementById('aft-custom-area').value;
+            const useCustom = document.getElementById('aft-use-custom').checked;
+            if (useCustom && !custom.trim()) {
+                showToast('커스텀 사용이 체크되어 있지만 커스텀 프롬프트가 비어 있습니다. 내용을 입력하거나 체크를 해제하세요.', 'error');
+                return;
+            }
+            try {
+                const resp = await fetch('/api/bot_mode/auto_face_tag_prompt', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        bot: botCurrentBot,
+                        character: _autoFaceTagPromptState.charName,
+                        custom,
+                        use_custom: useCustom,
+                    }),
+                });
+                const text = await resp.text();
+                let data;
+                try { data = JSON.parse(text); }
+                catch (parseErr) {
+                    showToast(`프롬프트 저장 실패: 서버 응답이 JSON이 아닙니다 (HTTP ${resp.status}). 서버 재시작 확인. 본문: ${text.slice(0, 120)}`, 'error');
+                    return;
+                }
+                if (!data.success) { showToast(`프롬프트 저장 실패: ${data.error || ''}`, 'error'); return; }
+                _autoFaceTagPromptState.custom = custom;
+                _autoFaceTagPromptState.useCustom = useCustom;
+                showToast(useCustom ? '커스텀 프롬프트 저장 + 활성화' : '커스텀 프롬프트 저장 (글로벌 사용 중)', 'success');
+                _updateAutoFaceTagActiveBadge();
+            } catch (e) {
+                showToast(`프롬프트 저장 실패: ${e.message}`, 'error');
+            }
+        }
+
+        async function _runAutoFaceTagLLM(charName) {
+            if (!botCurrentBot) { showToast('봇이 선택되지 않았습니다', 'error'); return; }
+            const btn = document.getElementById('auto-group-llm-btn');
+            if (btn) { btn.disabled = true; btn.textContent = '분류 중...'; }
+            try {
+                const resp = await fetch('/api/bot_mode/auto_classify_face_tags', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ bot: botCurrentBot, character: charName }),
+                });
+                const text = await resp.text();
+                let data;
+                try { data = JSON.parse(text); }
+                catch (parseErr) {
+                    showToast(`자동 분류 실패: 서버 응답이 JSON이 아닙니다 (HTTP ${resp.status}). 서버 재시작 확인. 본문: ${text.slice(0, 120)}`, 'error');
+                    return;
+                }
+                if (!data.success) {
+                    showToast(`자동 분류 실패: ${data.error || ''}`, 'error');
+                    return;
+                }
+                const face = (data.data && data.data.face) || [];
+                const eye = (data.data && data.data.eye) || [];
+                // chips 모드 상태
+                _autoGroupFaceTags = [...face];
+                _autoGroupEyeTags = [...eye];
+                // text 모드 상태
+                _autoGroupFaceText = face.join(', ');
+                _autoGroupEyeText = eye.join(', ');
+                // gender_tag, absolute 태그는 건드리지 않음
+                _renderFaceTagEditors();
+                showToast(`자동 분류 완료: face ${face.length}개 / eye ${eye.length}개`, 'success');
+            } catch (e) {
+                showToast(`자동 분류 요청 실패: ${e.message}`, 'error');
+                console.error('[AUTO_FACE_TAG] LLM classify error:', e);
+            } finally {
+                if (btn) { btn.disabled = false; btn.textContent = 'LLM 자동 분류'; }
+            }
         }
 
         // ─── 캐릭터 LoRA 피커 모달 ───────────────────────────────
