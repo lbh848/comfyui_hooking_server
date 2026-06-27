@@ -518,9 +518,14 @@ def get_project_data(bot_name: str, project_name: str, lora_load_path: str = "")
         trigger = char_cfg.get("trigger", "") or char_name
         trained_sessions = _list_bot_trained_sessions(lora_load_path, bot_name, project_name, char_name) if lora_load_path else []
 
+        # 메인 bot.json 캐릭터의 gender_tag (프롬프트 미리보기/정제용). 서버 정제 로직과 동일 출처.
+        bot_char = next((c for c in bot_info.get("characters", []) if c.get("name") == char_name), None)
+        gender_tag = (bot_char.get("gender_tag") or "") if bot_char else ""
+
         characters.append({
             "name": char_name,
             "trigger": trigger,
+            "gender_tag": gender_tag,
             "skip_training": char_cfg.get("skip_training", False),
             "training_images": training_images,
             "trained_sessions": trained_sessions,

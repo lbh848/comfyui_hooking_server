@@ -5,16 +5,468 @@ Instance LoRA 매니징 모듈
 - 태그 분석 후 1-pass 자동 학습
 """
 
-import os
+import asyncio
+import base64
 import json
+import os
+import re
 import shutil
+import time
 import traceback
+from aiohttp import web
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 INSTANCE_LORA_DIR = os.path.join(BASE_DIR, "instance_lora")
 INSTANCE_LORA_MANAGE_FILE = os.path.join(BASE_DIR, "asset_data", "instance_lora_manage.json")
+ASSET_DATA_DIR = os.path.join(BASE_DIR, "asset_data")
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+
+# ─── LLM 자동 LoRA 프롬프트 정제 (auto_lora_prompt) ─────────────
+
+AUTO_LORA_PROMPT_DIR = os.path.join(BASE_DIR, "prompts", "auto_lora_prompt")
+AUTO_LORA_PROMPT_BUILTIN_FILE = os.path.join(AUTO_LORA_PROMPT_DIR, "system.txt")
+AUTO_LORA_PROMPT_CUSTOM_FILE = os.path.join(ASSET_DATA_DIR, "auto_lora_prompt_custom.txt")
+AUTO_LORA_PROMPT_META_FILE = os.path.join(ASSET_DATA_DIR, "auto_lora_prompt_meta.json")
+
+_auto_lora_prompt_builtin_cache: str | None = None
+_auto_lora_prompt_builtin_mtime: float = 0.0
+
+
+def _load_auto_lora_prompt_builtin() -> str:
+    """글로벌(배포용) 프롬프트 로드. mtime 기반 캐싱."""
+    global _auto_lora_prompt_builtin_cache, _auto_lora_prompt_builtin_mtime
+    if not os.path.isfile(AUTO_LORA_PROMPT_BUILTIN_FILE):
+        print(f"[INSTANCE_LORA] auto_lora_prompt builtin 파일 없음: {AUTO_LORA_PROMPT_BUILTIN_FILE}")
+        return ""
+    try:
+        mtime = os.path.getmtime(AUTO_LORA_PROMPT_BUILTIN_FILE)
+        if _auto_lora_prompt_builtin_cache is not None and mtime == _auto_lora_prompt_builtin_mtime:
+            return _auto_lora_prompt_builtin_cache
+        with open(AUTO_LORA_PROMPT_BUILTIN_FILE, "r", encoding="utf-8") as f:
+            txt = f.read()
+        _auto_lora_prompt_builtin_cache = txt
+        _auto_lora_prompt_builtin_mtime = mtime
+        return txt
+    except Exception as e:
+        print(f"[INSTANCE_LORA] auto_lora_prompt builtin 로드 실패: {e}")
+        traceback.print_exc()
+        return ""
+
+
+def _load_auto_lora_prompt_custom() -> tuple[str, bool]:
+    """커스텀 프롬프트와 use_custom 플래그 로드. (없으면 빈 문자열, False)."""
+    custom = ""
+    if os.path.isfile(AUTO_LORA_PROMPT_CUSTOM_FILE):
+        try:
+            with open(AUTO_LORA_PROMPT_CUSTOM_FILE, "r", encoding="utf-8") as f:
+                custom = f.read()
+        except Exception as e:
+            print(f"[INSTANCE_LORA] auto_lora_prompt custom 로드 실패: {e}")
+            traceback.print_exc()
+
+    use_custom = False
+    if os.path.isfile(AUTO_LORA_PROMPT_META_FILE):
+        try:
+            with open(AUTO_LORA_PROMPT_META_FILE, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+                use_custom = bool(meta.get("use_custom", False))
+        except Exception as e:
+            print(f"[INSTANCE_LORA] auto_lora_prompt meta 로드 실패: {e}")
+            traceback.print_exc()
+
+    return custom, use_custom
+
+
+def _save_auto_lora_prompt_custom(text: str, use_custom: bool) -> None:
+    """커스텀 프롬프트 저장. 기존 파일은 .bak 로 백업."""
+    os.makedirs(ASSET_DATA_DIR, exist_ok=True)
+
+    if os.path.isfile(AUTO_LORA_PROMPT_CUSTOM_FILE):
+        try:
+            shutil.copy2(AUTO_LORA_PROMPT_CUSTOM_FILE, AUTO_LORA_PROMPT_CUSTOM_FILE + ".bak")
+        except Exception as e:
+            print(f"[INSTANCE_LORA] auto_lora_prompt custom 백업 실패: {e}")
+
+    try:
+        with open(AUTO_LORA_PROMPT_CUSTOM_FILE, "w", encoding="utf-8") as f:
+            f.write(text)
+    except Exception as e:
+        print(f"[INSTANCE_LORA] auto_lora_prompt custom 저장 실패: {e}")
+        traceback.print_exc()
+        raise
+
+    if os.path.isfile(AUTO_LORA_PROMPT_META_FILE):
+        try:
+            shutil.copy2(AUTO_LORA_PROMPT_META_FILE, AUTO_LORA_PROMPT_META_FILE + ".bak")
+        except Exception as e:
+            print(f"[INSTANCE_LORA] auto_lora_prompt meta 백업 실패: {e}")
+
+    try:
+        with open(AUTO_LORA_PROMPT_META_FILE, "w", encoding="utf-8") as f:
+            json.dump({"use_custom": bool(use_custom)}, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[INSTANCE_LORA] auto_lora_prompt meta 저장 실패: {e}")
+        traceback.print_exc()
+        raise
+
+
+def _render_auto_lora_prompt_prompt(template: str, etc_tags: str, gender: str) -> str:
+    """template 의 {etc} / {gender} 변수를 치환. format() 충돌 회피용 str.replace."""
+    rendered = template.replace("{etc}", etc_tags or "")
+    rendered = rendered.replace("{gender}", gender or "")
+    return rendered
+
+
+def _parse_auto_lora_prompt_response(raw: str, gender_fallback: str = "") -> dict | None:
+    """LLM 응답에서 {"positive": "..."} 추출. 실패 시 None."""
+    if not raw:
+        return None
+    cleaned = raw.strip()
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r'^```[a-zA-Z]*\n?', '', cleaned)
+        cleaned = re.sub(r'\n?```$', '', cleaned).strip()
+    try:
+        data = json.loads(cleaned)
+        if isinstance(data, dict):
+            positive = data.get("positive")
+            if isinstance(positive, str):
+                pos = positive.strip()
+                if pos:
+                    return {"positive": pos}
+                if gender_fallback:
+                    return {"positive": gender_fallback}
+    except json.JSONDecodeError:
+        pass
+    m = re.search(r'\{.*\}', cleaned, re.DOTALL)
+    if m:
+        try:
+            data = json.loads(m.group(0))
+            if isinstance(data, dict):
+                positive = data.get("positive", "")
+                if isinstance(positive, str) and positive.strip():
+                    return {"positive": positive.strip()}
+        except json.JSONDecodeError as e:
+            print(f"[INSTANCE_LORA] auto_lora_prompt JSON 파싱 실패: {e}")
+    return None
+
+
+async def run_auto_refine_lora_prompt(
+    char_name: str,
+    filename: str,
+    current_positive: str,
+    source_type: str = "bot",
+    bot_name: str = "",
+    project_name: str = "",
+    entry: str = "",
+    gender_override: str = "",
+) -> dict:
+    """LLM 비전 기반 LoRA 프롬프트 정제 (core).
+
+    source_type:
+      - "bot":               bot_name + char_name + filename → 봇 캐릭터 원본 이미지
+      - "bot_lora_training": bot_name + project_name + char_name + filename → 봇 LoRA 학습 이미지
+      - "training":          char_name + entry + filename → 에셋 LoRA 학습 이미지
+
+    반환: {"success": True, "data": {"positive": "..."}} 또는 {"success": False, "error": "..."}
+    """
+    from modes.llm_service import callLLMVision, supports_vision, get_config
+
+    async def _notify_llm_widget(event_type: str, data: dict = None):
+        try:
+            import server as _server
+            await _server.notify_frontend("lighbd_llm_stream", {"type": event_type, **(data or {})})
+        except Exception as e:
+            print(f"[INSTANCE_LORA] WARN: notify_frontend 실패: {e}")
+
+    try:
+        source_type = (source_type or "bot").strip().lower()
+        if source_type not in ("bot", "bot_lora_training", "training"):
+            return {"success": False, "error": f"지원하지 않는 source_type: {source_type}"}
+        if not char_name or not filename:
+            return {"success": False, "error": "character, filename 필드가 필요합니다."}
+        if source_type == "bot" and not bot_name:
+            return {"success": False, "error": "bot 소스는 bot 필드가 필요합니다."}
+        if source_type == "bot_lora_training" and (not bot_name or not project_name):
+            return {"success": False, "error": "bot_lora_training 소스는 bot, project 필드가 필요합니다."}
+        if source_type == "training" and not entry:
+            return {"success": False, "error": "training 소스는 entry 필드가 필요합니다."}
+        if not current_positive or not current_positive.strip():
+            return {"success": False, "error": "정제할 긍정 프롬프트가 비어 있습니다."}
+
+        # 성별 태그: override > bot.json 캐릭터 gender_tag > 기본 1girl
+        gender_tag = (gender_override or "").strip()
+        if not gender_tag and source_type in ("bot", "bot_lora_training"):
+            try:
+                from modes.bot_mode import _load_bot_data
+                data = _load_bot_data()
+                bot = next((b for b in data.get("bots", []) if b["name"] == bot_name), None)
+                char = next((c for c in (bot.get("characters", []) if bot else []) if c["name"] == char_name), None)
+                if char:
+                    gender_tag = (char.get("gender_tag") or "").strip()
+            except Exception as e:
+                print(f"[INSTANCE_LORA] gender_tag 로드 실패: {e}")
+                traceback.print_exc()
+        if not gender_tag:
+            gender_tag = "1girl"
+            print(f"[INSTANCE_LORA] gender_tag 비어 있어 기본값 사용: {gender_tag}")
+
+        # 원본 이미지 경로
+        img_path = None
+        if source_type == "bot":
+            from modes.bot_lora_mode import get_bot_char_image_path
+            img_path = get_bot_char_image_path(bot_name, char_name, filename)
+            if not img_path or not os.path.isfile(img_path):
+                print(f"[INSTANCE_LORA] 원본 이미지 없음: bot={bot_name} char={char_name} filename={filename}")
+                return {"success": False, "error": f"원본 이미지를 찾을 수 없습니다: {filename} (bot={bot_name} character={char_name})"}
+        elif source_type == "bot_lora_training":
+            from modes.bot_lora_mode import get_bot_training_image_path
+            img_path = get_bot_training_image_path(bot_name, project_name, char_name, filename)
+            if not img_path or not os.path.isfile(img_path):
+                print(f"[INSTANCE_LORA] 봇 LoRA 학습 이미지 없음: bot={bot_name} project={project_name} char={char_name} filename={filename}")
+                return {"success": False, "error": f"봇 LoRA 학습 이미지를 찾을 수 없습니다: {filename} (bot={bot_name} project={project_name} character={char_name})"}
+        else:
+            from modes.lora_mode import get_training_image_path
+            img_path = get_training_image_path(char_name, entry, filename)
+            if not img_path or not os.path.isfile(img_path):
+                print(f"[INSTANCE_LORA] 학습 이미지 없음: char={char_name} entry={entry} filename={filename}")
+                return {"success": False, "error": f"학습 이미지를 찾을 수 없습니다: {filename} (character={char_name} entry={entry})"}
+
+        # 비전 서비스 확인
+        cfg = get_config()
+        service = cfg.get("llm_service", "")
+        if not supports_vision(service):
+            print(f"[INSTANCE_LORA] 비전 미지원 서비스: {service}")
+            return {
+                "success": False,
+                "error": (
+                    f"현재 LLM 서비스({service})는 비전(이미지 입력)을 지원하지 않습니다. "
+                    "텍스트 전용 SDK를 사용하는 vertex 대신 OpenAI 호환/Gemini/Claude 등을 config.json에서 선택하세요."
+                ),
+            }
+
+        # 템플릿 선택 + 변수 치환
+        custom_text, use_custom = _load_auto_lora_prompt_custom()
+        if use_custom and custom_text.strip():
+            template = custom_text
+        else:
+            template = _load_auto_lora_prompt_builtin()
+        if not template.strip():
+            return {"success": False, "error": "프롬프트 템플릿이 비어 있습니다."}
+
+        rendered = _render_auto_lora_prompt_prompt(template, current_positive, gender_tag)
+
+        # 이미지 base64
+        try:
+            ext = os.path.splitext(filename)[1].lower()
+            if ext == ".png":
+                image_mime = "image/png"
+            elif ext in (".jpg", ".jpeg"):
+                image_mime = "image/jpeg"
+            elif ext == ".webp":
+                image_mime = "image/webp"
+            else:
+                image_mime = "image/webp"
+            with open(img_path, "rb") as f:
+                img_bytes = f.read()
+        except Exception as e:
+            print(f"[INSTANCE_LORA] 원본 이미지 읽기 실패: {img_path} - {e}")
+            traceback.print_exc()
+            return {"success": False, "error": f"원본 이미지 읽기 실패: {e}"}
+        img_b64 = base64.b64encode(img_bytes).decode("ascii")
+
+        messages = [
+            {"role": "system", "content": "You are a precise prompt refiner. Follow the user's instructions exactly and respond in strict JSON."},
+            {"role": "user", "content": rendered},
+        ]
+
+        if source_type == "bot":
+            source_desc = f"bot={bot_name}"
+        elif source_type == "bot_lora_training":
+            source_desc = f"bot={bot_name} project={project_name}"
+        else:
+            source_desc = f"training entry={entry}"
+        print(f"[INSTANCE_LORA] auto_refine_lora_prompt 호출: source={source_type} {source_desc} char={char_name} filename={filename} service={service} gender={gender_tag} etc_len={len(current_positive)} use_custom={use_custom}")
+
+        use_model = cfg.get("llm_model", "")
+        max_retries = max(0, int(cfg.get("auto_lora_prompt_max_retries", 2)))
+        await _notify_llm_widget("start", {"model": use_model, "prompt_id": f"auto_lora_prompt:{source_type}:{char_name}/{filename}"})
+
+        raw = None
+        last_err = None
+        total_elapsed = 0.0
+        for attempt in range(max_retries + 1):
+            t0 = time.time()
+            try:
+                raw = await callLLMVision(messages, image_b64=img_b64, image_mime=image_mime)
+            except Exception as call_err:
+                print(f"[INSTANCE_LORA] callLLMVision 예외 (시도 {attempt + 1}/{max_retries + 1}): {call_err}")
+                traceback.print_exc()
+                last_err = f"{type(call_err).__name__}: {call_err}"
+                raw = None
+            total_elapsed += time.time() - t0
+
+            if raw and not raw.startswith("[LLM 실패]"):
+                parsed = _parse_auto_lora_prompt_response(raw, gender_fallback=gender_tag)
+                if parsed is not None:
+                    await _notify_llm_widget("done", {
+                        "text": raw,
+                        "completion_tokens": max(1, len(raw) // 3),
+                        "elapsed": round(total_elapsed, 3),
+                        "tps": round((max(1, len(raw) // 3) / total_elapsed), 1) if total_elapsed > 0 else 0.0,
+                        "ttft": None,
+                    })
+                    print(f"[INSTANCE_LORA] auto_refine_lora_prompt 완료: positive 길이={len(parsed['positive'])} (시도 {attempt + 1})")
+                    return {"success": True, "data": parsed}
+                last_err = f"LLM 응답을 JSON으로 파싱하지 못했습니다. raw: {raw[:300]}"
+                print(f"[INSTANCE_LORA] LLM 응답 JSON 파싱 실패 (시도 {attempt + 1}/{max_retries + 1}). raw={raw[:500]}")
+            else:
+                last_err = f"LLM 호출 실패: {raw or '빈 응답'}"
+                print(f"[INSTANCE_LORA] LLM 호출 실패 (시도 {attempt + 1}/{max_retries + 1}): {raw}")
+
+            if attempt < max_retries:
+                print(f"[INSTANCE_LORA] 재시도 대기 중... ({attempt + 1}/{max_retries})")
+                await asyncio.sleep(1.0 * (attempt + 1))
+
+        await _notify_llm_widget("error", {"error": last_err or "알 수 없는 오류", "elapsed": round(total_elapsed, 3)})
+        return {"success": False, "error": f"{max_retries + 1}회 시도 후 실패: {last_err}"}
+    except Exception as e:
+        print(f"[INSTANCE_LORA] auto_refine_lora_prompt 예외: {e}")
+        traceback.print_exc()
+        await _notify_llm_widget("error", {"error": f"{type(e).__name__}: {e}"})
+        return {"success": False, "error": str(e)}
+
+
+async def handle_get_auto_lora_prompt(request):
+    """GET /api/instance_lora/auto_lora_prompt - 글로벌/커스텀 프롬프트 조회."""
+    try:
+        builtin = _load_auto_lora_prompt_builtin()
+        custom, use_custom = _load_auto_lora_prompt_custom()
+        return web.json_response({
+            "success": True,
+            "data": {
+                "builtin": builtin,
+                "custom": custom,
+                "use_custom": use_custom,
+            },
+        })
+    except Exception as e:
+        print(f"[INSTANCE_LORA] auto_lora_prompt 조회 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)})
+
+
+async def handle_set_auto_lora_prompt(request):
+    """POST /api/instance_lora/auto_lora_prompt - 커스텀 프롬프트 저장."""
+    try:
+        body = await request.json()
+        custom = body.get("custom", "") or ""
+        use_custom = bool(body.get("use_custom", False))
+        _save_auto_lora_prompt_custom(custom, use_custom)
+        return web.json_response({"success": True})
+    except Exception as e:
+        print(f"[INSTANCE_LORA] auto_lora_prompt 저장 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)})
+
+
+def resolve_char_gender_tag(bot_name: str, char_name: str) -> str:
+    """캐릭터의 gender_tag를 메인 bot.json에서 조회. 서버 정제 로직(auto_refine)과 동일 출처.
+    없으면 빈 문자열을 반환한다 (조용한 기본값 치환 금지)."""
+    if not bot_name or not char_name:
+        return ""
+    try:
+        from modes.bot_mode import _load_bot_data
+        data = _load_bot_data()
+        bot = next((b for b in data.get("bots", []) if b.get("name") == bot_name), None)
+        char = next((c for c in (bot.get("characters", []) if bot else []) if c.get("name") == char_name), None)
+        return (char.get("gender_tag") or "").strip() if char else ""
+    except Exception as e:
+        print(f"[INSTANCE_LORA] resolve_char_gender_tag 실패 (bot={bot_name} char={char_name}): {e}")
+        traceback.print_exc()
+        return ""
+
+
+async def handle_resolve_gender_tag(request):
+    """GET /api/instance_lora/resolve_gender?bot=&character= - 캐릭터 gender_tag 조회 (빈 값 허용)."""
+    try:
+        bot_name = request.query.get("bot", "").strip()
+        char_name = request.query.get("character", "").strip()
+        if not bot_name or not char_name:
+            return web.json_response({"success": False, "error": "bot, character 쿼리가 필요합니다"}, status=400)
+        gt = resolve_char_gender_tag(bot_name, char_name)
+        return web.json_response({"success": True, "gender_tag": gt})
+    except Exception as e:
+        print(f"[INSTANCE_LORA] resolve_gender_tag 조회 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_auto_refine_enqueue(request):
+    """POST /api/instance_lora/auto_refine_enqueue - 단일 프롬프트 정제를 큐에 추가."""
+    try:
+        body = await request.json()
+        source_type = (body.get("source_type") or "bot").strip().lower()
+        bot_name = (body.get("bot") or "").strip()
+        project_name = (body.get("project") or "").strip()
+        char_name = (body.get("character") or "").strip()
+        filename = (body.get("filename") or "").strip()
+        entry = (body.get("entry") or "").strip()
+        positive = body.get("positive", "") or ""
+        gender = (body.get("gender") or "").strip()
+
+        if source_type not in ("bot", "bot_lora_training", "training"):
+            return web.json_response({"success": False, "error": f"지원하지 않는 source_type: {source_type}"})
+        if not char_name:
+            return web.json_response({"success": False, "error": "character 필드가 필요합니다."})
+        if not filename:
+            return web.json_response({"success": False, "error": "filename 필드가 필요합니다."})
+        if source_type == "bot" and not bot_name:
+            return web.json_response({"success": False, "error": "bot 소스는 bot 필드가 필요합니다."})
+        if source_type == "bot_lora_training" and (not bot_name or not project_name):
+            return web.json_response({"success": False, "error": "bot_lora_training 소스는 bot, project 필드가 필요합니다."})
+        if source_type == "training" and not entry:
+            return web.json_response({"success": False, "error": "training 소스는 entry 필드가 필요합니다."})
+        if not positive.strip():
+            return web.json_response({"success": False, "error": "positive 필드가 비어 있습니다."})
+
+        try:
+            import server as _server
+            qm = _server.queue_manager
+        except Exception as e:
+            print(f"[INSTANCE_LORA] queue_manager 접근 실패: {e}")
+            traceback.print_exc()
+            return web.json_response({"success": False, "error": f"큐 매니저 접근 실패: {e}"})
+
+        if source_type == "bot":
+            label = f"LoRA 프롬프트 정제: {bot_name}/{char_name}/{filename}"
+        elif source_type == "bot_lora_training":
+            label = f"LoRA 프롬프트 정제: [bot_lora] {bot_name}/{project_name}/{char_name}/{filename}"
+        else:
+            label = f"LoRA 프롬프트 정제: [training] {char_name}/{entry}/{filename}"
+
+        item = await qm.add_item(
+            item_type="instance_lora_prompt_refine",
+            label=label,
+            params={
+                "source_type": source_type,
+                "bot_name": bot_name,
+                "project_name": project_name,
+                "char_name": char_name,
+                "filename": filename,
+                "entry": entry,
+                "positive": positive,
+                "gender": gender,
+            },
+            priority=10,
+        )
+
+        print(f"[INSTANCE_LORA] auto_refine 큐 추가: source={source_type} bot={bot_name} project={project_name} char={char_name} entry={entry} filename={filename} id={item.id}")
+        return web.json_response({"success": True, "data": {"id": item.id}})
+    except Exception as e:
+        print(f"[INSTANCE_LORA] auto_refine_enqueue 예외: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)})
 
 
 def _safe_dirname(name: str) -> str:

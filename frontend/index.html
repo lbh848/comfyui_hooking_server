@@ -7405,6 +7405,9 @@
                         case 'bot_llm_face_tag_progress':
                             _handleBotLlmFaceTagProgress(msg.data);
                             break;
+                        case 'lora_prompt_refine_progress':
+                            _handleLoraPromptRefineProgress(msg.data);
+                            break;
                         case 'text_output':
                             handleTextOutput(msg.data);
                             break;
@@ -15531,6 +15534,8 @@
 
         // ─── LoRA 프롬프트 편집 모드 토글 ───
         let _loraPromptState = { mode: 'text', origPos: '', origNeg: '', origPosTags: new Set(), origNegTags: new Set() };
+        let _loraPickerGender = ''; // 미리보기용: 현재 열린 프롬프트 편집 모달 캐릭터의 실제 gender_tag
+        let _loraPickerCtx = { bot: '', char: '' }; // 미리보기용: 현재 열린 모달의 (봇, 캐릭터) — 서버 gender_tag 조회용
         let loraPromptEditMode = 'text';
         let _loraBlockRules = []; // 전역 블록 태그 규칙
 
@@ -16092,9 +16097,33 @@
                 document.getElementById('lora-picker-title').textContent = '프롬프트 편집';
                 document.getElementById('lora-picker-footer').style.display = 'flex';
                 document.getElementById('lora-picker-footer').innerHTML = `
+                    <div style="display:flex; gap:6px; align-items:center; flex:1; flex-wrap:wrap;">
+                        <button id="lora-training-llm-btn" type="button" style="padding:6px 12px;background:var(--accent);color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:0.8rem;font-weight:600;">🤖 LLM 정제</button>
+                        <button type="button" onclick="_openAutoLoraPromptModal()" style="padding:6px 12px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:0.8rem;">⚙️ 프롬프트</button>
+                        <span id="lora-training-refine-status" style="font-size:0.72rem;color:var(--text2);"></span>
+                    </div>
                     <button onclick="closeLoraImagePicker()" style="padding:8px 16px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:6px; cursor:pointer;">닫기</button>
                     <button onclick="saveLoraTrainingPrompt('${escapeHtml(filename)}')" style="padding:8px 16px; background:var(--accent); color:#fff; border:none; border-radius:6px; cursor:pointer; font-weight:600;">저장</button>
                 `;
+                // LLM 정제 버튼 바인딩 (설정 값은 클릭 시점에 읽음)
+                _loraPickerCtx = { bot: (typeof botCurrentBot !== 'undefined' && botCurrentBot) || '', char: loraCurrentCharacter };
+                _loraPickerGender = _resolveRealGenderTag(_loraPickerCtx.bot, loraCurrentCharacter);
+                const _llmBtn = document.getElementById('lora-training-llm-btn');
+                if (_llmBtn) {
+                    const _ctx = { character: loraCurrentCharacter, entry: loraCurrentEntry, filename };
+                    _llmBtn.onclick = () => {
+                        const positive = _readLoraPromptContent('positive');
+                        _runLoraPromptRefine({
+                            source_type: 'training',
+                            character: _ctx.character,
+                            entry: _ctx.entry,
+                            filename: _ctx.filename,
+                            positive,
+                            btn: _llmBtn,
+                            statusEl: document.getElementById('lora-training-refine-status'),
+                        });
+                    };
+                }
                 const origPos = img.original_positive || img.positive || '';
                 const origNeg = img.original_negative || img.negative || '';
                 const curPos = img.positive || '';
@@ -16206,6 +16235,8 @@
 
         function closeLoraImagePicker() {
             document.getElementById('lora-image-picker-modal').style.display = 'none';
+            _loraPickerGender = '';
+            _loraPickerCtx = { bot: '', char: '' };
             _hideChipDesc();
         }
 
@@ -19423,9 +19454,35 @@
             document.getElementById('lora-picker-title').textContent = '프롬프트 편집';
             document.getElementById('lora-picker-footer').style.display = 'flex';
             document.getElementById('lora-picker-footer').innerHTML = `
+                <div style="display:flex; gap:6px; align-items:center; flex:1; flex-wrap:wrap;">
+                    <button id="bot-lora-training-llm-btn" type="button" style="padding:6px 12px;background:var(--accent);color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:0.8rem;font-weight:600;">🤖 LLM 정제</button>
+                    <button type="button" onclick="_openAutoLoraPromptModal()" style="padding:6px 12px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:0.8rem;">⚙️ 프롬프트</button>
+                    <span id="bot-lora-training-refine-status" style="font-size:0.72rem;color:var(--text2);"></span>
+                </div>
                 <button onclick="closeLoraImagePicker()" style="padding:8px 16px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:6px; cursor:pointer;">닫기</button>
                 <button onclick="saveBotLoraTrainingPromptModal('${escapeHtml(charName)}', '${escapeHtml(filename)}')" style="padding:8px 16px; background:var(--accent); color:#fff; border:none; border-radius:6px; cursor:pointer; font-weight:600;">저장</button>
             `;
+            // LLM 정제 버튼 바인딩 (설정 값은 클릭 시점에 읽음)
+            // gender_tag는 캐시 의존을 피해 서버에서 직접 조회 (미리보기 렌더 시점에 비동기 fetch).
+            _loraPickerCtx = { bot: botLoraCurrentBot, char: charName };
+            _loraPickerGender = (ch && ch.gender_tag) || ''; // 프로젝트 데이터에 있으면 선사용 (있을 때만)
+            const _botLoraLlmBtn = document.getElementById('bot-lora-training-llm-btn');
+            if (_botLoraLlmBtn) {
+                const _ctx = { bot: botLoraCurrentBot, project: botLoraCurrentProject, character: charName, filename };
+                _botLoraLlmBtn.onclick = () => {
+                    const positive = _readLoraPromptContent('positive');
+                    _runLoraPromptRefine({
+                        source_type: 'bot_lora_training',
+                        bot: _ctx.bot,
+                        project: _ctx.project,
+                        character: _ctx.character,
+                        filename: _ctx.filename,
+                        positive,
+                        btn: _botLoraLlmBtn,
+                        statusEl: document.getElementById('bot-lora-training-refine-status'),
+                    });
+                };
+            }
             document.getElementById('lora-picker-body').innerHTML = `
                 <div style="display:flex; gap:16px; margin-bottom:12px;">
                     <img src="/api/bot_lora/training_image/${enc(botLoraCurrentBot)}/${enc(botLoraCurrentProject)}/${enc(charName)}/${enc(filename)}" onclick="openLightbox(this.src)" style="width:120px; height:120px; object-fit:cover; border-radius:8px; display:block; flex-shrink:0; cursor:zoom-in;">
@@ -22448,6 +22505,480 @@
                 console.error('[AUTO_FACE_TAG] LLM classify error:', e);
             } finally {
                 if (btn) { btn.disabled = false; btn.textContent = 'LLM 자동 분류'; }
+            }
+        }
+
+        // ─── LoRA 프롬프트 정제 (봇 LV1 + 에셋 학습 공용) ─────────
+        // 현재 정제 중인 요청 컨텍스트. WS 진행 이벤트가 오면 이 컨텍스트와 매칭되는지 검사.
+        let _loraPromptRefineContext = null;
+        // { source_type, bot, character, filename, entry, btn, statusEl }
+
+        function _runLoraPromptRefine(opts) {
+            const { source_type, bot = '', project = '', character, filename, entry = '', positive, btn, statusEl } = opts;
+            if (!positive || !positive.trim()) {
+                showToast('정제할 긍정 프롬프트가 비어 있습니다', 'error');
+                return;
+            }
+            _loraPromptRefineContext = { source_type, bot, project, character, filename, entry, btn, statusEl };
+            if (btn) btn.textContent = '큐 적재 중...';
+            if (statusEl) statusEl.textContent = '큐에 적재 중...';
+            fetch('/api/instance_lora/auto_refine_enqueue', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ source_type, bot, project, character, filename, entry, positive }),
+            }).then(r => r.text()).then(text => {
+                let data;
+                try { data = JSON.parse(text); }
+                catch (parseErr) {
+                    showToast(`정제 요청 실패: 서버 응답이 JSON이 아닙니다 (HTTP). 본문: ${text.slice(0, 120)}`, 'error');
+                    if (btn) btn.textContent = '🤖 LLM 정제';
+                    if (statusEl) statusEl.textContent = '';
+                    _loraPromptRefineContext = null;
+                    return;
+                }
+                if (!data.success) {
+                    showToast(`정제 요청 실패: ${data.error || ''}`, 'error');
+                    if (btn) btn.textContent = '🤖 LLM 정제';
+                    if (statusEl) statusEl.textContent = '';
+                    _loraPromptRefineContext = null;
+                    return;
+                }
+                if (btn) btn.textContent = '정제 중...';
+                if (statusEl) statusEl.textContent = '큐 대기 중...';
+            }).catch(e => {
+                showToast(`정제 요청 실패: ${e.message}`, 'error');
+                console.error('[LORA_REFINE] enqueue error:', e);
+                if (btn) btn.textContent = '🤖 LLM 정제';
+                if (statusEl) statusEl.textContent = '';
+                _loraPromptRefineContext = null;
+            });
+        }
+
+        function _handleLoraPromptRefineProgress(data) {
+            if (!data) return;
+            const ctx = _loraPromptRefineContext;
+            if (!ctx) return;
+            // 매칭 검사: 다른 대상의 이벤트는 무시
+            if (ctx.source_type !== data.source_type || ctx.filename !== data.filename) return;
+            if (ctx.source_type === 'bot' && ctx.bot !== data.bot_name) return;
+            if (ctx.source_type === 'bot_lora_training' && (ctx.bot !== data.bot_name || ctx.project !== data.project_name)) return;
+            if (ctx.source_type === 'training' && ctx.entry !== data.entry) return;
+
+            if (data.phase === 'running') {
+                if (ctx.btn) ctx.btn.textContent = '정제 중...';
+                if (ctx.statusEl) ctx.statusEl.textContent = 'LLM 정제 중...';
+                return;
+            }
+            if (data.phase === 'completed') {
+                if (ctx.btn) ctx.btn.textContent = '🤖 LLM 정제';
+                const positive = data.positive || '';
+                if (positive) {
+                    const tagCount = positive.split(',').map(s => s.trim()).filter(Boolean).length;
+                    if (ctx.statusEl) ctx.statusEl.textContent = `정제 완료 (${tagCount}개 태그) — 자동 저장 중...`;
+                    showToast(`LoRA 프롬프트 정제 완료: ${tagCount}개 태그. 자동 저장 중...`, 'success');
+                    _applyLoraPromptRefineResult(ctx, positive);
+                } else {
+                    if (ctx.statusEl) ctx.statusEl.textContent = '정제 완료 (결과 없음)';
+                }
+                return;
+            }
+            if (data.phase === 'failed') {
+                if (ctx.btn) ctx.btn.textContent = '🤖 LLM 정제';
+                if (ctx.statusEl) ctx.statusEl.textContent = '';
+                const errMsg = data.error || '알 수 없는 오류';
+                showToast(`LoRA 프롬프트 정제 실패: ${errMsg}`, 'error');
+                _loraPromptRefineContext = null;
+                return;
+            }
+        }
+
+        function _applyLoraPromptRefineResult(ctx, positive) {
+            if (ctx.source_type === 'bot') {
+                const ta = document.getElementById('lv1-prompt-edit-ta');
+                if (ta) ta.value = positive;
+                fetch('/api/bot_mode/prompt', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ bot: ctx.bot, character: ctx.character, filename: ctx.filename, prompt: positive }),
+                }).then(r => r.json()).then(d => {
+                    if (d && d.success) {
+                        // 외부 프롬프트 박스 텍스트도 갱신
+                        document.querySelectorAll('.lv1-prompt-box').forEach(box => {
+                            if (box.dataset.filename === ctx.filename && box.dataset.character === ctx.character) {
+                                const t = box.querySelector('.lv1-prompt-text');
+                                if (t) t.textContent = positive || '<프롬프트 없음>';
+                            }
+                        });
+                        if (ctx.statusEl) ctx.statusEl.textContent = '정제 완료 — 저장됨';
+                        showToast('정제 프롬프트 자동 저장 완료', 'success');
+                    } else {
+                        const err = (d && d.error) ? d.error : '알 수 없는 오류';
+                        showToast(`자동 저장 실패: ${err}`, 'error');
+                        if (ctx.statusEl) ctx.statusEl.textContent = `정제 완료 — 자동 저장 실패`;
+                    }
+                }).catch(e => {
+                    showToast(`자동 저장 실패: ${e.message}`, 'error');
+                    if (ctx.statusEl) ctx.statusEl.textContent = `정제 완료 — 자동 저장 실패`;
+                });
+                return;
+            }
+            if (ctx.source_type === 'bot_lora_training') {
+                _writeLoraPromptContent('positive', positive);
+                const negative = _readLoraPromptContent('negative');
+                fetch('/api/bot_lora/training_images/prompt', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        bot: ctx.bot, project: ctx.project,
+                        character: ctx.character, filename: ctx.filename,
+                        positive, negative,
+                    }),
+                }).then(r => r.json()).then(d => {
+                    if (d && d.success) {
+                        if (ctx.statusEl) ctx.statusEl.textContent = '정제 완료 — 저장됨';
+                        showToast('정제 프롬프트 자동 저장 완료', 'success');
+                        if (typeof loadBotLoraProject === 'function') {
+                            loadBotLoraProject().catch(e => console.warn('[LORA_REFINE] 봇 LoRA 프로젝트 새로고침 실패:', e));
+                        }
+                    } else {
+                        const err = (d && d.error) ? d.error : '알 수 없는 오류';
+                        showToast(`자동 저장 실패: ${err}`, 'error');
+                        if (ctx.statusEl) ctx.statusEl.textContent = '정제 완료 — 자동 저장 실패';
+                    }
+                }).catch(e => {
+                    showToast(`자동 저장 실패: ${e.message}`, 'error');
+                    if (ctx.statusEl) ctx.statusEl.textContent = '정제 완료 — 자동 저장 실패';
+                });
+                return;
+            }
+            if (ctx.source_type === 'training') {
+                _writeLoraPromptContent('positive', positive);
+                const negative = _readLoraPromptContent('negative');
+                fetch('/api/lora/training_images/prompt', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        character: ctx.character, entry: ctx.entry, filename: ctx.filename,
+                        positive, negative,
+                    }),
+                }).then(r => r.json()).then(d => {
+                    if (d && d.success) {
+                        if (ctx.statusEl) ctx.statusEl.textContent = '정제 완료 — 저장됨';
+                        showToast('정제 프롬프트 자동 저장 완료', 'success');
+                        if (typeof loadLoraTrainingImages === 'function') {
+                            loadLoraTrainingImages().catch(e => console.warn('[LORA_REFINE] 목록 새로고침 실패:', e));
+                        }
+                    } else {
+                        const err = (d && d.error) ? d.error : '알 수 없는 오류';
+                        showToast(`자동 저장 실패: ${err}`, 'error');
+                        if (ctx.statusEl) ctx.statusEl.textContent = '정제 완료 — 자동 저장 실패';
+                    }
+                }).catch(e => {
+                    showToast(`자동 저장 실패: ${e.message}`, 'error');
+                    if (ctx.statusEl) ctx.statusEl.textContent = '정제 완료 — 자동 저장 실패';
+                });
+                return;
+            }
+        }
+
+        // ─── 인스턴스 LoRA 프롬프트 정제 — 프롬프트 설정 모달 ─────────
+        let _autoLoraPromptState = { builtin: '', custom: '', useCustom: false, tab: 'general' };
+
+        function _renderAutoLoraPromptPreview(template, etcSample, genderSample) {
+            return (template || '')
+                .replace(/\{etc\}/g, etcSample || '(WD Tagger 전체 태그)')
+                .replace(/\{gender\}/g, genderSample || '1girl');
+        }
+
+        async function _openAutoLoraPromptModal() {
+            let builtin = '', custom = '', useCustom = false;
+            try {
+                const resp = await fetch('/api/instance_lora/auto_lora_prompt');
+                const text = await resp.text();
+                let data;
+                try { data = JSON.parse(text); }
+                catch (parseErr) {
+                    showToast(`프롬프트 로드 실패: 서버 응답이 JSON이 아닙니다 (HTTP ${resp.status}). 서버를 재시작했는지 확인하세요. 본문: ${text.slice(0, 120)}`, 'error');
+                    return;
+                }
+                if (!data.success) { showToast(`프롬프트 로드 실패: ${data.error || ''}`, 'error'); return; }
+                builtin = data.data.builtin || '';
+                custom = data.data.custom || '';
+                useCustom = !!data.data.use_custom;
+            } catch (e) {
+                showToast(`프롬프트 로드 실패: ${e.message}`, 'error');
+                return;
+            }
+            _autoLoraPromptState.builtin = builtin;
+            _autoLoraPromptState.custom = custom;
+            _autoLoraPromptState.useCustom = useCustom;
+            _autoLoraPromptState.tab = 'general';
+
+            const existing = document.getElementById('auto-lora-prompt-overlay');
+            if (existing) existing.remove();
+
+            const overlay = document.createElement('div');
+            overlay.id = 'auto-lora-prompt-overlay';
+            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10015; display:flex; align-items:center; justify-content:center;';
+            // 바깥 클릭으로 닫기 금지 — ✕ 또는 저장 완료 후 명시적 닫기만 허용
+
+            const modal = document.createElement('div');
+            modal.style.cssText = 'background:var(--surface); border-radius:12px; padding:20px; max-width:900px; width:92%; max-height:90vh; display:flex; flex-direction:column; gap:10px;';
+            modal.onclick = (e) => e.stopPropagation();
+            modal.innerHTML = `
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <h3 style="margin:0; font-size:1.05rem;">LoRA 프롬프트 정제 — 프롬프트 설정</h3>
+                    <button onclick="document.getElementById('auto-lora-prompt-overlay').remove()"
+                        style="background:var(--surface2); color:var(--text); border:1px solid var(--border); width:30px; height:30px; border-radius:6px; cursor:pointer; font-size:1.1rem;">✕</button>
+                </div>
+                <div style="font-size:0.72rem; color:var(--text2);">글로벌은 배포용(읽기 전용), 커스텀은 이 PC 전용(편집 가능). 변수: <code>{etc}</code> <code>{gender}</code></div>
+                <div style="display:flex; gap:0; border:1px solid var(--border); border-radius:6px; overflow:hidden; width:fit-content;">
+                    <button id="aftlora-tab-general" onclick="_setAutoLoraPromptTab('general')" style="padding:5px 14px; border:none; cursor:pointer; font-size:0.8rem; font-weight:600; background:var(--accent); color:#fff;">편집</button>
+                    <button id="aftlora-tab-preview" onclick="_setAutoLoraPromptTab('preview')" style="padding:5px 14px; border:none; cursor:pointer; font-size:0.8rem; font-weight:600; background:var(--surface2); color:var(--text);">미리보기</button>
+                </div>
+
+                <div id="aftlora-panel-general" style="flex:1; display:flex; flex-direction:column; gap:10px; min-height:0; overflow:hidden;">
+                    <div style="display:flex; flex-direction:column; gap:4px; flex:1; min-height:0;">
+                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                            <div style="font-size:0.78rem; font-weight:600; color:var(--text);">글로벌 프롬프트 <span style="font-size:0.7rem; color:var(--text2); font-weight:400;">(배포용 · 읽기 전용)</span></div>
+                            <div id="aftlora-active-badge" style="font-size:0.68rem; padding:1px 6px; border-radius:4px; background:var(--surface2); color:var(--text2);">비활성</div>
+                        </div>
+                        <textarea id="aftlora-builtin-area" readonly style="flex:1; min-height:120px; width:100%; resize:none; padding:8px; border:1px solid var(--border); background:var(--surface2); color:var(--text2); border-radius:6px; font-family:ui-monospace,Menlo,monospace; font-size:0.75rem; line-height:1.4;"></textarea>
+                    </div>
+                    <div style="display:flex; flex-direction:column; gap:4px; flex:1; min-height:0;">
+                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                            <div style="font-size:0.78rem; font-weight:600; color:var(--text);">커스텀 프롬프트 <span style="font-size:0.7rem; color:var(--text2); font-weight:400;">(이 PC 전용 · 편집 가능)</span></div>
+                            <button onclick="_copyBuiltinToCustomLora()" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:2px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">글로벌에서 복사</button>
+                        </div>
+                        <textarea id="aftlora-custom-area" placeholder="비어 있음 — 직접 작성하거나 위 '글로벌에서 복사'를 눌러 시작" style="flex:1; min-height:160px; width:100%; resize:vertical; padding:8px; border:1px solid var(--accent); background:var(--surface); color:var(--text); border-radius:6px; font-family:ui-monospace,Menlo,monospace; font-size:0.78rem; line-height:1.4;"></textarea>
+                    </div>
+                </div>
+
+                <div id="aftlora-panel-preview" style="flex:1; display:none; min-height:0; flex-direction:column;">
+                    <div style="font-size:0.75rem; color:var(--text2); margin-bottom:4px;">현재 적용된 프롬프트(<span id="aftlora-preview-source">글로벌</span>)의 변수 치환 결과<span id="aftlora-preview-note">(샘플 값 사용)</span>:</div>
+                    <pre id="aftlora-preview-pre" style="flex:1; min-height:280px; max-height:60vh; overflow:auto; padding:10px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:6px; font-family:ui-monospace,Menlo,monospace; font-size:0.78rem; line-height:1.4; white-space:pre-wrap; word-wrap:break-word;"></pre>
+                </div>
+
+                <div style="display:flex; justify-content:space-between; align-items:center; padding-top:8px; border-top:1px solid var(--border);">
+                    <label style="display:flex; align-items:center; gap:6px; font-size:0.8rem; cursor:pointer;">
+                        <input type="checkbox" id="aftlora-use-custom" style="cursor:pointer;">
+                        <span>커스텀 프롬프트 사용 <span style="color:var(--text2); font-size:0.72rem;">(체크 해제 시 글로벌 적용)</span></span>
+                    </label>
+                    <button onclick="_saveAutoLoraPrompt()" style="background:var(--accent); color:#fff; border:none; padding:6px 18px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">저장</button>
+                </div>
+            `;
+            overlay.appendChild(modal);
+            document.body.appendChild(overlay);
+
+            document.getElementById('aftlora-builtin-area').value = builtin;
+            document.getElementById('aftlora-custom-area').value = custom;
+            document.getElementById('aftlora-use-custom').checked = useCustom;
+            document.getElementById('aftlora-custom-area').addEventListener('input', () => { _updateAutoLoraPromptActiveBadge(); _updateAutoLoraPromptPreview(); });
+            document.getElementById('aftlora-use-custom').addEventListener('change', () => { _updateAutoLoraPromptActiveBadge(); _updateAutoLoraPromptPreview(); });
+            _updateAutoLoraPromptActiveBadge();
+            _refreshAutoLoraPreview();
+        }
+
+        function _updateAutoLoraPromptActiveBadge() {
+            const badge = document.getElementById('aftlora-active-badge');
+            if (!badge) return;
+            const useCustom = document.getElementById('aftlora-use-custom')?.checked;
+            const customText = (document.getElementById('aftlora-custom-area')?.value || '').trim();
+            const effectivelyCustom = useCustom && customText;
+            badge.textContent = effectivelyCustom ? '커스텀 사용 중' : '글로벌 사용 중';
+            badge.style.background = effectivelyCustom ? 'rgba(124,58,237,0.18)' : 'var(--surface2)';
+            badge.style.color = effectivelyCustom ? '#7C3AED' : 'var(--text2)';
+        }
+
+        function _copyBuiltinToCustomLora() {
+            const builtin = document.getElementById('aftlora-builtin-area')?.value || '';
+            const ta = document.getElementById('aftlora-custom-area');
+            if (!ta) return;
+            if (ta.value.trim() && !confirm('현재 커스텀 내용을 글로벌 프롬프트로 덮어쓸까요?')) return;
+            ta.value = builtin;
+            const chk = document.getElementById('aftlora-use-custom');
+            if (chk) chk.checked = true;
+            _updateAutoLoraPromptActiveBadge();
+            _updateAutoLoraPromptPreview();
+            showToast('글로벌 프롬프트를 커스텀으로 복사했습니다 (저장 필요)', 'info');
+        }
+
+        function _setAutoLoraPromptTab(tab) {
+            _autoLoraPromptState.tab = tab;
+            const btnG = document.getElementById('aftlora-tab-general');
+            const btnP = document.getElementById('aftlora-tab-preview');
+            const panelG = document.getElementById('aftlora-panel-general');
+            const panelP = document.getElementById('aftlora-panel-preview');
+            if (tab === 'general') {
+                if (btnG) { btnG.style.background = 'var(--accent)'; btnG.style.color = '#fff'; }
+                if (btnP) { btnP.style.background = 'var(--surface2)'; btnP.style.color = 'var(--text)'; }
+                if (panelG) panelG.style.display = 'flex';
+                if (panelP) panelP.style.display = 'none';
+            } else {
+                if (btnP) { btnP.style.background = 'var(--accent)'; btnP.style.color = '#fff'; }
+                if (btnG) { btnG.style.background = 'var(--surface2)'; btnG.style.color = 'var(--text)'; }
+                if (panelP) panelP.style.display = 'flex';
+                if (panelG) panelG.style.display = 'none';
+                _refreshAutoLoraPreview();
+            }
+        }
+
+        function _aftLoraEffectiveTemplate() {
+            const useCustom = document.getElementById('aftlora-use-custom')?.checked;
+            const customText = (document.getElementById('aftlora-custom-area')?.value || '').trim();
+            if (useCustom && customText) return { src: '커스텀', text: customText };
+            return { src: '글로벌', text: document.getElementById('aftlora-builtin-area')?.value || '' };
+        }
+
+        // 서버에서 현재 모달 캐릭터의 gender_tag를 조회 (캐시 의존/거짓 성공 방지).
+        // _loraPickerGender 가 이미 있으면 재사용, 없으면 /api/instance_lora/resolve_gender 로 채운다.
+        async function _fetchPickerGender() {
+            if (_loraPickerGender) return _loraPickerGender;
+            if (!_loraPickerCtx.bot || !_loraPickerCtx.char) return '';
+            try {
+                const r = await fetchJSON('/api/instance_lora/resolve_gender?bot='
+                    + encodeURIComponent(_loraPickerCtx.bot)
+                    + '&character=' + encodeURIComponent(_loraPickerCtx.char));
+                if (r && r.success) {
+                    _loraPickerGender = (r.gender_tag || '').trim();
+                } else {
+                    console.warn('[auto_lora_preview] gender_tag 조회 실패:', r && r.error);
+                }
+            } catch (e) {
+                console.warn('[auto_lora_preview] gender_tag fetch 예외:', e);
+            }
+            return _loraPickerGender;
+        }
+
+        // 미리보기를 표시할 때 호출: gender_tag 를 먼저 확보한 뒤 렌더.
+        async function _refreshAutoLoraPreview() {
+            await _fetchPickerGender();
+            _updateAutoLoraPromptPreview();
+        }
+
+        // 미리보기용 etc/gender 실제 값을 컨텍스트에 맞게 해석.
+        //  - 트레이닝 프롬프트 편집 모달이 열려 있으면: 그 편집창의 현재 긍정 프롬프트 + _loraPickerGender
+        //  - 그 외(로라 생성 인스턴스 컨텍스트): _instanceCreateFiles[0]._existingPrompt + source 캐릭터의 gender_tag
+        //  - 실제 값을 구하지 못하면 샘플로 대체하지 않고 에러 메시지를 반환한다 (조용한 폴백 금지).
+        function _resolveRealGenderTag(botName, charName) {
+            if (!charName) return '';
+            const bot = ((botData && botData.bots) || []).find(b => b.name === botName);
+            const char = bot ? (bot.characters || []).find(c => c.name === charName) : null;
+            return (char && char.gender_tag) || '';
+        }
+
+        function _autoLoraPreviewValues() {
+            let etcValue = '', etcError = '';
+            let genderValue = '', genderError = '';
+
+            // (A) 트레이닝 프롬프트 편집 모달이 열려 있는지
+            const pickerModal = document.getElementById('lora-image-picker-modal');
+            const pickerOpen = !!(pickerModal && pickerModal.style.display === 'flex');
+            if (pickerOpen) {
+                try {
+                    const pos = _readLoraPromptContent('positive');
+                    if (pos && pos.trim()) {
+                        etcValue = pos.trim();
+                    } else {
+                        etcError = '편집 모달의 긍정 프롬프트가 비어 있습니다';
+                    }
+                } catch (e) {
+                    console.warn('[auto_lora_preview] 트레이닝 프롬프트 읽기 실패:', e);
+                    etcError = '편집 모달 프롬프트 읽기 실패 (' + ((e && e.message) || e) + ')';
+                }
+            } else {
+                // (B) 로라 생성 인스턴스 컨텍스트
+                const f = _instanceCreateFiles[0];
+                if (f && f._existingPrompt && f._existingPrompt.positive && f._existingPrompt.positive.trim()) {
+                    etcValue = f._existingPrompt.positive;
+                } else if (f) {
+                    etcError = '선택한 이미지에 positive 프롬프트가 없습니다';
+                } else {
+                    etcError = '표시할 프롬프트 컨텍스트가 없습니다 (이미지를 추가하거나 프롬프트 편집 모달을 여세요)';
+                }
+            }
+
+            // gender: 열린 프롬프트 편집 모달 캐릭터(_loraPickerGender) → 인스턴스 source 캐릭터 순
+            if (_loraPickerGender) {
+                genderValue = _loraPickerGender;
+            } else {
+                const f = _instanceCreateFiles[0];
+                const botName = (f && f.source && f.source.bot) || (typeof botCurrentBot !== 'undefined' && botCurrentBot) || '';
+                const charName = (f && f.source && f.source.character)
+                    || (typeof loraCurrentCharacter !== 'undefined' && loraCurrentCharacter)
+                    || '';
+                const g = _resolveRealGenderTag(botName, charName);
+                if (g) {
+                    genderValue = g;
+                } else if (charName) {
+                    genderError = "캐릭터 '" + charName + "'에 gender_tag가 설정되어 있지 않습니다";
+                } else {
+                    genderError = '캐릭터를 특정할 수 없어 gender_tag를 불러올 수 없습니다';
+                }
+            }
+
+            return { etcValue, etcError, genderValue, genderError };
+        }
+
+        function _updateAutoLoraPromptPreview() {
+            const pre = document.getElementById('aftlora-preview-pre');
+            if (!pre) return;
+            const eff = _aftLoraEffectiveTemplate();
+            const v = _autoLoraPreviewValues();
+
+            const srcLabel = document.getElementById('aftlora-preview-source');
+            if (srcLabel) srcLabel.textContent = eff.src;
+
+            const note = document.getElementById('aftlora-preview-note');
+
+            // 실제 값을 구하지 못한 경우: 샘플로 대체하지 않고 에러로 명시
+            if (v.etcError || v.genderError) {
+                const errs = [];
+                if (v.etcError) errs.push('etc: ' + v.etcError);
+                if (v.genderError) errs.push('gender: ' + v.genderError);
+                if (note) note.textContent = '(실제 값 없음 — 에러)';
+                pre.style.color = 'var(--error)';
+                pre.textContent =
+                    '⚠ 실제 값을 불러오지 못해 미리보기를 생성할 수 없습니다.\n\n' +
+                    errs.join('\n') +
+                    '\n\n→ 해당 이미지/캐릭터를 먼저 선택하거나, gender_tag/프롬프트가 비어 있지 않은지 확인하세요. (샘플 폴백은 사용하지 않습니다)';
+                return;
+            }
+
+            // 정상: 실제 값으로 렌더
+            pre.style.color = '';
+            if (note) note.textContent = '(선택한 이미지의 실제 값 사용)';
+            const rendered = _renderAutoLoraPromptPreview(eff.text, v.etcValue, v.genderValue);
+            pre.textContent = rendered || '(프롬프트가 비어 있습니다)';
+        }
+
+        async function _saveAutoLoraPrompt() {
+            const custom = document.getElementById('aftlora-custom-area').value;
+            const useCustom = document.getElementById('aftlora-use-custom').checked;
+            if (useCustom && !custom.trim()) {
+                showToast('커스텀 사용이 체크되어 있지만 커스텀 프롬프트가 비어 있습니다. 내용을 입력하거나 체크를 해제하세요.', 'error');
+                return;
+            }
+            try {
+                const resp = await fetch('/api/instance_lora/auto_lora_prompt', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ custom, use_custom: useCustom }),
+                });
+                const text = await resp.text();
+                let data;
+                try { data = JSON.parse(text); }
+                catch (parseErr) {
+                    showToast(`프롬프트 저장 실패: 서버 응답이 JSON이 아닙니다 (HTTP ${resp.status}). 서버 재시작 확인. 본문: ${text.slice(0, 120)}`, 'error');
+                    return;
+                }
+                if (!data.success) { showToast(`프롬프트 저장 실패: ${data.error || ''}`, 'error'); return; }
+                _autoLoraPromptState.custom = custom;
+                _autoLoraPromptState.useCustom = useCustom;
+                showToast(useCustom ? '커스텀 프롬프트 저장 + 활성화' : '커스텀 프롬프트 저장 (글로벌 사용 중)', 'success');
+                _updateAutoLoraPromptActiveBadge();
+            } catch (e) {
+                showToast(`프롬프트 저장 실패: ${e.message}`, 'error');
             }
         }
 

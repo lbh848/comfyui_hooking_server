@@ -57,6 +57,12 @@ def _migrate_solo_group(data: dict):
             if "loras_group" not in char:
                 char["loras_group"] = []
                 changed = True
+            # gender_tag 기본값 보정 — 드롭박스 표시 기본값(1girl)과 일치. 비어 있으면 1girl 로 채운다.
+            gt = (char.get("gender_tag") or "").strip()
+            if gt not in ("1girl", "1boy", "1male"):
+                char["gender_tag"] = "1girl"
+                changed = True
+                print(f"[BOT_MODE] 마이그레이션: gender_tag 기본값(1girl) 적용 ({bot['name']}/{char['name']})")
     if changed:
         _save_bot_data(data)
 

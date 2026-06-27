@@ -19,7 +19,7 @@ from typing import Optional
 @dataclass
 class QueueItem:
     id: str
-    type: str  # illustration | asset_generation | asset_lora_training | bot_lora_training | instance_lora_training | instance_lora_analysis | tag_analysis | auto_match_batch | data_patch_utility
+    type: str  # illustration | asset_generation | asset_lora_training | bot_lora_training | instance_lora_training | instance_lora_analysis | tag_analysis | auto_match_batch | data_patch_utility | instance_lora_prompt_refine
     label: str
     status: str = "pending"  # pending | processing | completed | failed | cancelled
     params: dict = field(default_factory=dict)
@@ -280,6 +280,7 @@ class QueueManager:
             "data_patch_utility": self._handle_data_patch_utility,
             "restore_manual": self._handle_restore_manual,
             "bot_llm_face_tag_analysis": self._handle_bot_llm_face_tag_analysis,
+            "instance_lora_prompt_refine": self._handle_instance_lora_prompt_refine,
         }
         handler = dispatch.get(item.type)
         if not handler:
@@ -1603,6 +1604,100 @@ class QueueManager:
             if self.notify_frontend:
                 await self.notify_frontend(event_type, {
                     "phase": "failed", "bot_name": bot_name, "char_name": char_name, "error": str(e)
+                })
+            raise
+
+    async def _handle_instance_lora_prompt_refine(self, item: QueueItem) -> dict:
+        """LLM 비전 기반 인스턴스 LoRA 프롬프트 정제 (큐용). 결과를 SSE로 프론트엔드에 전송."""
+        from modes.instance_lora_mode import run_auto_refine_lora_prompt
+        params = item.params
+        source_type = (params.get("source_type") or "bot").strip().lower()
+        bot_name = params.get("bot_name", "")
+        project_name = params.get("project_name", "")
+        char_name = params.get("char_name", "")
+        filename = params.get("filename", "")
+        entry = params.get("entry", "")
+        positive = params.get("positive", "")
+        gender = params.get("gender", "")
+        event_type = "lora_prompt_refine_progress"
+
+        if not char_name or not filename:
+            raise ValueError("char_name, filename이 필요합니다")
+        if source_type == "bot" and not bot_name:
+            raise ValueError("bot 소스는 bot_name이 필요합니다")
+        if source_type == "bot_lora_training" and (not bot_name or not project_name):
+            raise ValueError("bot_lora_training 소스는 bot_name, project_name이 필요합니다")
+        if source_type == "training" and not entry:
+            raise ValueError("training 소스는 entry가 필요합니다")
+
+        await self._notify_progress(item, {"percentage": 0, "phase": "running"})
+        if self.notify_frontend:
+            await self.notify_frontend(event_type, {
+                "phase": "running",
+                "source_type": source_type,
+                "bot_name": bot_name,
+                "project_name": project_name,
+                "char_name": char_name,
+                "filename": filename,
+                "entry": entry,
+            })
+
+        try:
+            result = await run_auto_refine_lora_prompt(
+                char_name=char_name,
+                filename=filename,
+                current_positive=positive,
+                source_type=source_type,
+                bot_name=bot_name,
+                project_name=project_name,
+                entry=entry,
+                gender_override=gender,
+            )
+            if not result.get("success"):
+                err = result.get("error", "알 수 없는 오류")
+                print(f"[QUEUE:LORA_PROMPT_REFINE] 정제 실패: source={source_type} bot={bot_name} project={project_name} char={char_name} filename={filename} - {err}")
+                traceback.print_exc()
+                if self.notify_frontend:
+                    await self.notify_frontend(event_type, {
+                        "phase": "failed",
+                        "source_type": source_type,
+                        "bot_name": bot_name,
+                        "project_name": project_name,
+                        "char_name": char_name,
+                        "filename": filename,
+                        "entry": entry,
+                        "error": err,
+                    })
+                raise RuntimeError(err)
+
+            refined_positive = result["data"].get("positive") or ""
+            await self._notify_progress(item, {"percentage": 100, "phase": "completed"})
+            if self.notify_frontend:
+                await self.notify_frontend(event_type, {
+                    "phase": "completed",
+                    "source_type": source_type,
+                    "bot_name": bot_name,
+                    "project_name": project_name,
+                    "char_name": char_name,
+                    "filename": filename,
+                    "entry": entry,
+                    "positive": refined_positive,
+                })
+            print(f"[QUEUE:LORA_PROMPT_REFINE] 완료: source={source_type} bot={bot_name} project={project_name} char={char_name} filename={filename} 길이={len(refined_positive)}")
+            return {"success": True, "positive": refined_positive}
+        except Exception as e:
+            print(f"[QUEUE:LORA_PROMPT_REFINE] source={source_type} bot={bot_name} project={project_name} char={char_name} filename={filename} 실패: {e}")
+            traceback.print_exc()
+            if self.notify_frontend:
+                await self.notify_frontend(event_type, {
+                    "phase": "failed",
+                    "source_type": source_type,
+                    "bot_name": bot_name,
+                    "project_name": project_name,
+                    "char_name": char_name,
+                    "filename": filename,
+                    "entry": entry,
+                    "error": str(e),
                 })
             raise
 

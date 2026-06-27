@@ -59,6 +59,7 @@ from modes import asset_tool_mode
 from modes import bot_mode
 from modes.bot_mode import data_patcher
 from modes.bot_mode import handle_get_illust_settings, handle_update_illust_settings, handle_auto_group_prompt, handle_get_positive_rules, handle_save_positive_rules, handle_get_auto_face_tag_prompt, handle_set_auto_face_tag_prompt, handle_auto_classify_face_tags, handle_get_auto_face_tag_test_image, handle_llm_batch_enqueue
+from modes.instance_lora_mode import handle_get_auto_lora_prompt, handle_set_auto_lora_prompt, handle_auto_refine_enqueue, handle_resolve_gender_tag
 from modes import embedding_service
 from modes.illust_prompt_builder import IllustPromptBuilder, log_illust_build, get_illust_logs
 import importlib.util
@@ -125,6 +126,7 @@ DEFAULT_CONFIG = {
     "llm_max_tokens": 0,              # 0 = 기본값 사용
     "llm_stream": False,
     "auto_face_tag_max_retries": 2,   # LLM 자동 얼굴/눈 태그 분류 재시도 횟수 (외부 API 실패/JSON 파싱 실패 시)
+    "auto_lora_prompt_max_retries": 2,   # LLM 자동 LoRA 프롬프트 정제 재시도 횟수 (외부 API 실패/JSON 파싱 실패 시)
     "embedding_provider": "voyage",  # 임베딩 프로바이더: voyage / custom
     "embedding_url": "https://api.voyageai.com/v1/embeddings",  # 임베딩 API URL
     "embedding_api_key": "",      # 임베딩 API 키
@@ -5598,6 +5600,10 @@ app.router.add_post("/api/bot_mode/auto_face_tag_prompt", handle_set_auto_face_t
 app.router.add_get("/api/bot_mode/auto_face_tag_test_image", handle_get_auto_face_tag_test_image)
 app.router.add_post("/api/bot_mode/auto_classify_face_tags", handle_auto_classify_face_tags)
 app.router.add_post("/api/bot_mode/llm_batch_enqueue", handle_llm_batch_enqueue)
+app.router.add_get("/api/instance_lora/auto_lora_prompt", handle_get_auto_lora_prompt)
+app.router.add_post("/api/instance_lora/auto_lora_prompt", handle_set_auto_lora_prompt)
+app.router.add_post("/api/instance_lora/auto_refine_enqueue", handle_auto_refine_enqueue)
+app.router.add_get("/api/instance_lora/resolve_gender", handle_resolve_gender_tag)
 # 자동완성 API
 app.router.add_get("/api/autocomplete", handle_api_autocomplete)
 # ─── 에셋툴 API 핸들러 ──────────────────────────────────
