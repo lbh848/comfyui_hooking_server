@@ -1612,6 +1612,11 @@ class QueueManager:
         from modes.instance_lora_mode import run_auto_refine_lora_prompt
         params = item.params
         source_type = (params.get("source_type") or "bot").strip().lower()
+
+        # bot_lora_test_setup: 텍스트 LLM 기반 테스트 이미지 일괄 세팅 (별도 처리).
+        if source_type == "bot_lora_test_setup":
+            return await self._handle_bot_lora_test_setup(item, params)
+
         bot_name = params.get("bot_name", "")
         project_name = params.get("project_name", "")
         char_name = params.get("char_name", "")
@@ -1709,6 +1714,124 @@ class QueueManager:
                     "error": str(e),
                 })
             raise
+
+    async def _handle_bot_lora_test_setup(self, item: QueueItem, params: dict) -> dict:
+        """테스트 이미지 일괄 세팅: 텍스트 LLM으로 테스트 프롬프트 생성 → 공통 test를
+        캐릭터 char_test로 복사 + 조합 결과를 그 테스트 이미지 프롬프트로 저장."""
+        from modes.instance_lora_mode import run_auto_refine_test_setup
+        bot_name = params.get("bot_name", "")
+        project_name = params.get("project_name", "")
+        char_name = params.get("char_name", "")
+        card_filename = params.get("card_filename", "")
+        card_positive = params.get("card_positive", "")
+        test_filename = params.get("test_filename", "")
+        test_positive = params.get("test_positive", "")
+        event_type = "lora_prompt_refine_progress"
+
+        if not bot_name or not project_name or not char_name:
+            raise ValueError("bot_lora_test_setup은 bot_name, project_name, char_name이 필요합니다")
+        if not test_filename:
+            raise ValueError("test_filename이 필요합니다")
+
+        await self._notify_progress(item, {"percentage": 0, "phase": "running"})
+        if self.notify_frontend:
+            await self.notify_frontend(event_type, {
+                "phase": "running",
+                "source_type": "bot_lora_test_setup",
+                "bot_name": bot_name,
+                "project_name": project_name,
+                "char_name": char_name,
+                "test_filename": test_filename,
+            })
+
+        try:
+            result = await run_auto_refine_test_setup(
+                character=char_name,
+                test_filename=test_filename,
+                card_positive=card_positive,
+                test_positive=test_positive,
+                bot_name=bot_name,
+                project_name=project_name,
+            )
+            if not result.get("success"):
+                err = result.get("error", "알 수 없는 오류")
+                print(f"[QUEUE:BOT_LORA_TEST_SETUP] 정제 실패: bot={bot_name} project={project_name} char={char_name} test={test_filename} card={card_filename} - {err}")
+                if self.notify_frontend:
+                    await self.notify_frontend(event_type, {
+                        "phase": "failed",
+                        "source_type": "bot_lora_test_setup",
+                        "bot_name": bot_name,
+                        "project_name": project_name,
+                        "char_name": char_name,
+                        "test_filename": test_filename,
+                        "error": err,
+                    })
+                raise RuntimeError(err)
+
+            refined_positive = result["data"].get("positive") or ""
+
+            # 영속화: 공통 test → 캐릭터 char_test 복사 + 조합 결과 프롬프트 저장.
+            persist_err = self._persist_bot_test_setup(
+                bot_name, project_name, char_name, test_filename, refined_positive)
+            if persist_err:
+                print(f"[QUEUE:BOT_LORA_TEST_SETUP] 영속화 실패: bot={bot_name} project={project_name} char={char_name} test={test_filename} - {persist_err}")
+                if self.notify_frontend:
+                    await self.notify_frontend(event_type, {
+                        "phase": "failed",
+                        "source_type": "bot_lora_test_setup",
+                        "bot_name": bot_name,
+                        "project_name": project_name,
+                        "char_name": char_name,
+                        "test_filename": test_filename,
+                        "error": persist_err,
+                    })
+                raise RuntimeError(persist_err)
+
+            await self._notify_progress(item, {"percentage": 100, "phase": "completed"})
+            if self.notify_frontend:
+                await self.notify_frontend(event_type, {
+                    "phase": "completed",
+                    "source_type": "bot_lora_test_setup",
+                    "bot_name": bot_name,
+                    "project_name": project_name,
+                    "char_name": char_name,
+                    "test_filename": test_filename,
+                    "positive": refined_positive,
+                })
+            print(f"[QUEUE:BOT_LORA_TEST_SETUP] 완료: bot={bot_name} project={project_name} char={char_name} test={test_filename} 길이={len(refined_positive)}")
+            return {"success": True, "positive": refined_positive}
+        except Exception as e:
+            print(f"[QUEUE:BOT_LORA_TEST_SETUP] bot={bot_name} project={project_name} char={char_name} test={test_filename} 실패: {e}")
+            traceback.print_exc()
+            if self.notify_frontend:
+                await self.notify_frontend(event_type, {
+                    "phase": "failed",
+                    "source_type": "bot_lora_test_setup",
+                    "bot_name": bot_name,
+                    "project_name": project_name,
+                    "char_name": char_name,
+                    "test_filename": test_filename,
+                    "error": str(e),
+                })
+            raise
+
+    def _persist_bot_test_setup(self, bot_name: str, project_name: str, char_name: str,
+                                test_filename: str, positive: str) -> str | None:
+        """공통 테스트 이미지를 캐릭터 char_test로 복사한 뒤, 조합 결과 positive를 저장.
+        반환: 성공 → None, 실패 → 에러 문자열."""
+        try:
+            from modes.bot_lora_mode import copy_project_test_to_char, save_bot_char_test_prompt_positive_only
+            cp = copy_project_test_to_char(bot_name, project_name, char_name, [test_filename])
+            if not cp.get("success"):
+                return cp.get("error", "공통 테스트 이미지 복사 실패")
+            sv = save_bot_char_test_prompt_positive_only(bot_name, project_name, char_name, test_filename, positive)
+            if not sv.get("success"):
+                return sv.get("error", "테스트 프롬프트 저장 실패")
+            return None
+        except Exception as e:
+            print(f"[QUEUE:BOT_LORA_TEST_SETUP] 영속화 예외: {e}")
+            traceback.print_exc()
+            return f"{type(e).__name__}: {e}"
 
     def _persist_refined_positive(self, source_type: str, bot_name: str, project_name: str,
                                   char_name: str, entry: str, filename: str, positive: str) -> str | None:

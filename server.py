@@ -59,7 +59,7 @@ from modes import asset_tool_mode
 from modes import bot_mode
 from modes.bot_mode import data_patcher
 from modes.bot_mode import handle_get_illust_settings, handle_update_illust_settings, handle_auto_group_prompt, handle_get_positive_rules, handle_save_positive_rules, handle_get_auto_face_tag_prompt, handle_set_auto_face_tag_prompt, handle_auto_classify_face_tags, handle_get_auto_face_tag_test_image, handle_llm_batch_enqueue
-from modes.instance_lora_mode import handle_get_auto_lora_prompt, handle_set_auto_lora_prompt, handle_auto_refine_enqueue, handle_resolve_gender_tag
+from modes.instance_lora_mode import handle_get_auto_lora_prompt, handle_set_auto_lora_prompt, handle_auto_refine_enqueue, handle_resolve_gender_tag, handle_get_bot_test_setup_prompt, handle_set_bot_test_setup_prompt
 from modes import embedding_service
 from modes.illust_prompt_builder import IllustPromptBuilder, log_illust_build, get_illust_logs
 import importlib.util
@@ -5604,6 +5604,8 @@ app.router.add_get("/api/instance_lora/auto_lora_prompt", handle_get_auto_lora_p
 app.router.add_post("/api/instance_lora/auto_lora_prompt", handle_set_auto_lora_prompt)
 app.router.add_post("/api/instance_lora/auto_refine_enqueue", handle_auto_refine_enqueue)
 app.router.add_get("/api/instance_lora/resolve_gender", handle_resolve_gender_tag)
+app.router.add_get("/api/instance_lora/bot_test_setup_prompt", handle_get_bot_test_setup_prompt)
+app.router.add_post("/api/instance_lora/bot_test_setup_prompt", handle_set_bot_test_setup_prompt)
 # 자동완성 API
 app.router.add_get("/api/autocomplete", handle_api_autocomplete)
 # ─── 에셋툴 API 핸들러 ──────────────────────────────────
