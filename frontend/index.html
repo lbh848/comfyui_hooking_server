@@ -5122,6 +5122,12 @@
                         <!-- 학습 설정 (프로젝트 진입 후) -->
                         <div id="bot-lora-config-section" style="display:none;">
                             <div style="margin-bottom:8px; font-weight:700; font-size:0.9rem;">학습 설정</div>
+                            <!-- 선택 이미지 일괄 LLM 정제 -->
+                            <div style="background:rgba(180,130,220,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
+                                <div style="font-size:0.8rem; font-weight:600; margin-bottom:6px;">일괄 LLM 정제</div>
+                                <button id="bot-lora-refine-batch-btn" onclick="openBotLoraRefineSelectModal()" style="width:100%; padding:8px; background:var(--accent); color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">선택 이미지 일괄 LLM 정리</button>
+                                <div id="bot-lora-refine-batch-status" style="margin-top:6px; font-size:0.72rem; color:var(--text-secondary); min-height:0.9rem;"></div>
+                            </div>
                             <!-- 테스트 이미지 추가 -->
                             <div style="background:rgba(0,150,255,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
                                 <div style="font-size:0.8rem; font-weight:600; margin-bottom:6px;">테스트 이미지</div>
@@ -5622,6 +5628,32 @@
             <div class="modal-footer">
                 <button onclick="closeBotLoraCharImportModal()" style="padding:8px 16px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:6px; cursor:pointer;">취소</button>
                 <button onclick="confirmBotLoraCharImport()" id="bot-lora-char-import-confirm-btn" style="padding:8px 20px; background:var(--accent); color:#fff; border:none; border-radius:6px; cursor:pointer; font-weight:600;">임포트</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 봇 LoRA: 일괄 LLM 정제 이미지 선택 모달 (바깥 클릭 닫기 없음) -->
+    <div class="modal" id="bot-lora-refine-select-modal" style="display:none; z-index:1700;">
+        <div class="modal-content" style="max-width:760px;">
+            <div class="modal-header">
+                <h2>일괄 LLM 정제 - 이미지 선택</h2>
+                <button class="modal-close" onclick="closeBotLoraRefineSelectModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div style="margin-bottom:10px; padding:8px 10px; background:rgba(255,180,0,0.08); border:1px solid rgba(255,180,0,0.25); border-radius:8px; font-size:0.78rem; color:var(--text-secondary);">
+                    선택한 이미지마다 LLM 정제 큐가 1개씩 추가됩니다. 정제 입력은 각 이미지의 원본 긍정 프롬프트(WD Tagger)이며, 프롬프트가 없는 이미지는 선택할 수 없습니다.
+                </div>
+                <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+                    <label style="display:flex; align-items:center; gap:4px; font-size:0.8rem; cursor:pointer;">
+                        <input type="checkbox" id="bot-lora-refine-select-master" onchange="_botLoraRefineModalSelectAll(this.checked)" style="cursor:pointer;"> 전체선택
+                    </label>
+                    <span id="bot-lora-refine-select-count" style="font-size:0.8rem; color:var(--text-secondary);">0 / 0장 선택</span>
+                </div>
+                <div id="bot-lora-refine-select-grid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(120px, 1fr)); gap:8px; max-height:60vh; overflow-y:auto; align-content:start;"></div>
+            </div>
+            <div class="modal-footer">
+                <button onclick="closeBotLoraRefineSelectModal()" style="padding:8px 16px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:6px; cursor:pointer;">취소</button>
+                <button id="bot-lora-refine-select-start" onclick="confirmBotLoraRefineSelect()" disabled style="padding:8px 20px; background:var(--accent); color:#fff; border:none; border-radius:6px; cursor:pointer; font-weight:600;">정제 시작</button>
             </div>
         </div>
     </div>
@@ -7406,6 +7438,7 @@
                             _handleBotLlmFaceTagProgress(msg.data);
                             break;
                         case 'lora_prompt_refine_progress':
+                            _handleBotLoraBatchRefineProgress(msg.data);
                             _handleLoraPromptRefineProgress(msg.data);
                             break;
                         case 'text_output':
@@ -17844,6 +17877,8 @@
             botLoraCurrentBot = '';
             botLoraCurrentProject = '';
             botLoraProjectData = null;
+            const _botLoraRefineStatusReset = document.getElementById('bot-lora-refine-batch-status');
+            if (_botLoraRefineStatusReset) _botLoraRefineStatusReset.textContent = '';
             document.getElementById('bot-lora-breadcrumb').innerHTML = '<span>봇 로라매니징</span>';
             document.getElementById('bot-lora-bots-section').style.display = '';
             document.getElementById('bot-lora-projects-section').style.display = 'none';
@@ -22555,6 +22590,220 @@
                 if (statusEl) statusEl.textContent = '';
                 _loraPromptRefineContext = null;
             });
+        }
+
+        // ─── 봇 LoRA: 선택 이미지 일괄 LLM 정제 (이미지 1개 = 큐 1개) ─────
+        let _botLoraRefineBatch = { active: false, total: 0, remaining: 0, success: 0, fail: 0, skipped: 0 };
+        let _botLoraRefineModalSel = new Set(); // 모달 선택: "enc(char)|enc(filename)"
+
+        function _botLoraRefineKey(char, filename) { return (char || '') + '|' + (filename || ''); }
+
+        function _botLoraRefineStatusEl() { return document.getElementById('bot-lora-refine-batch-status'); }
+
+        function _setBotLoraRefineBtnDisabled(disabled) {
+            const btn = document.getElementById('bot-lora-refine-batch-btn');
+            if (btn) btn.disabled = !!disabled;
+        }
+
+        // 모달 열기: 프로젝트 내 모든 학습 이미지를 그리드로 표시
+        function openBotLoraRefineSelectModal() {
+            if (_botLoraRefineBatch.active) { showToast('이미 일괄 정제가 진행 중입니다', 'error'); return; }
+            if (!botLoraProjectData) { showToast('프로젝트를 먼저 선택하세요', 'error'); return; }
+            const chars = botLoraProjectData.characters || [];
+            const enc = encodeURIComponent;
+            const items = [];
+            for (const ch of chars) {
+                for (const img of (ch.training_images || [])) {
+                    const positive = (img.original_positive || img.positive || '').trim();
+                    items.push({ char: ch.name, filename: img.filename, positive, source: img.source || '' });
+                }
+            }
+            _botLoraRefineModalSel.clear();
+
+            const grid = items.map(it => {
+                const key = _botLoraRefineKey(enc(it.char), enc(it.filename));
+                const hasPrompt = !!it.positive;
+                const imgSrc = `/api/bot_lora/training_image/${enc(botLoraCurrentBot)}/${enc(botLoraCurrentProject)}/${enc(it.char)}/${enc(it.filename)}`;
+                const border = hasPrompt ? '1px solid var(--border)' : '1px solid rgba(220,80,80,0.5)';
+                return `<label data-key="${key}" data-enabled="${hasPrompt ? '1' : '0'}" onclick="_toggleBotLoraRefineModalCard(this)" style="position:relative; display:block; width:120px; cursor:${hasPrompt ? 'pointer' : 'not-allowed'}; opacity:${hasPrompt ? '1' : '0.5'}; border:${border}; border-radius:8px; overflow:hidden; background:var(--surface2);">
+                    <img src="${imgSrc}" loading="lazy" style="width:100%; aspect-ratio:1; object-fit:cover; display:block;">
+                    <span class="refine-sel-tick" style="position:absolute; top:4px; left:4px; width:18px; height:18px; border-radius:4px; background:var(--accent); border:2px solid #fff; display:none; align-items:center; justify-content:center; color:#fff; font-size:0.7rem; font-weight:700;">✓</span>
+                    ${it.source === 'face' ? '<span style="position:absolute; top:4px; right:4px; background:rgba(0,0,0,0.7); color:#fff; font-size:0.6rem; padding:1px 4px; border-radius:3px;">얼굴</span>' : ''}
+                    <div style="padding:4px 6px; font-size:0.68rem; line-height:1.2;">
+                        <div style="font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(it.char)}</div>
+                        <div style="color:var(--text-secondary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(it.filename)}</div>
+                        ${hasPrompt ? '' : '<div style="color:var(--error); font-size:0.62rem;">프롬프트 없음</div>'}
+                    </div>
+                </label>`;
+            }).join('');
+
+            document.getElementById('bot-lora-refine-select-grid').innerHTML = grid ||
+                '<div style="grid-column:1/-1; text-align:center; padding:32px; color:var(--text-secondary); font-size:0.85rem;">학습 이미지가 없습니다.</div>';
+            _updateBotLoraRefineModalCount();
+            document.getElementById('bot-lora-refine-select-modal').style.display = 'flex';
+        }
+
+        function closeBotLoraRefineSelectModal() {
+            document.getElementById('bot-lora-refine-select-modal').style.display = 'none';
+        }
+
+        function _toggleBotLoraRefineModalCard(card) {
+            if (card.dataset.enabled !== '1') return; // 프롬프트 없음 → 선택 불가
+            const key = card.dataset.key;
+            const tick = card.querySelector('.refine-sel-tick');
+            if (_botLoraRefineModalSel.has(key)) {
+                _botLoraRefineModalSel.delete(key);
+                card.style.borderColor = 'var(--border)';
+                if (tick) tick.style.display = 'none';
+            } else {
+                _botLoraRefineModalSel.add(key);
+                card.style.borderColor = 'var(--accent)';
+                if (tick) tick.style.display = 'flex';
+            }
+            _updateBotLoraRefineModalCount();
+        }
+
+        function _botLoraRefineModalSelectAll(checked) {
+            document.querySelectorAll('#bot-lora-refine-select-grid label').forEach(card => {
+                if (card.dataset.enabled !== '1') return;
+                const key = card.dataset.key;
+                const tick = card.querySelector('.refine-sel-tick');
+                if (checked) {
+                    _botLoraRefineModalSel.add(key);
+                    card.style.borderColor = 'var(--accent)';
+                    if (tick) tick.style.display = 'flex';
+                } else {
+                    _botLoraRefineModalSel.delete(key);
+                    card.style.borderColor = 'var(--border)';
+                    if (tick) tick.style.display = 'none';
+                }
+            });
+            _updateBotLoraRefineModalCount();
+        }
+
+        function _updateBotLoraRefineModalCount() {
+            const total = document.querySelectorAll('#bot-lora-refine-select-grid label').length;
+            const enabled = document.querySelectorAll('#bot-lora-refine-select-grid label[data-enabled="1"]').length;
+            const countEl = document.getElementById('bot-lora-refine-select-count');
+            if (countEl) countEl.textContent = `${_botLoraRefineModalSel.size} / ${total}장 선택`;
+            const startBtn = document.getElementById('bot-lora-refine-select-start');
+            if (startBtn) startBtn.disabled = _botLoraRefineModalSel.size === 0;
+            const master = document.getElementById('bot-lora-refine-select-master');
+            if (master) {
+                master.checked = (enabled > 0 && _botLoraRefineModalSel.size === enabled);
+                master.indeterminate = (_botLoraRefineModalSel.size > 0 && _botLoraRefineModalSel.size < enabled);
+            }
+        }
+
+        // 모달 확인 → 선택 이미지 일괄 정제 큐 적재 (이미지 1개 = 큐 1개)
+        async function confirmBotLoraRefineSelect() {
+            if (_botLoraRefineBatch.active) { showToast('이미 일괄 정제가 진행 중입니다', 'error'); return; }
+            if (!botLoraProjectData) return;
+            if (_botLoraRefineModalSel.size === 0) { showToast('선택된 이미지가 없습니다', 'error'); return; }
+
+            const chars = botLoraProjectData.characters || [];
+            const targets = [];
+            let skippedEmpty = 0;
+            for (const key of _botLoraRefineModalSel) {
+                const idx = key.indexOf('|');
+                if (idx < 0) continue;
+                const charName = decodeURIComponent(key.slice(0, idx));
+                const filename = decodeURIComponent(key.slice(idx + 1));
+                if (!charName || !filename) continue;
+                const ch = chars.find(c => c.name === charName);
+                const img = ch && (ch.training_images || []).find(i => i.filename === filename);
+                if (!img) { skippedEmpty++; continue; }
+                // 정제 입력: 원본 긍정 프롬프트(WD Tagger) — 단일 정제와 동일 소스 (분리 금지)
+                const positive = (img.original_positive || img.positive || '').trim();
+                if (!positive) { skippedEmpty++; continue; }
+                targets.push({ charName, filename, positive });
+            }
+
+            if (targets.length === 0) {
+                showToast(`정제 가능한 이미지가 없습니다 (프롬프트 없음 ${skippedEmpty}장)`, 'error');
+                return;
+            }
+
+            closeBotLoraRefineSelectModal();
+
+            _botLoraRefineBatch = { active: true, total: targets.length, remaining: targets.length, success: 0, fail: 0, skipped: skippedEmpty };
+            _setBotLoraRefineBtnDisabled(true);
+            const statusEl = _botLoraRefineStatusEl();
+            if (statusEl) statusEl.textContent = `큐 적재 중... (0/${targets.length})`;
+            showToast(`${targets.length}장 일괄 정제 큐 적재 시작`, 'success');
+
+            let enqueued = 0;
+            for (const t of targets) {
+                try {
+                    const resp = await fetch('/api/instance_lora/auto_refine_enqueue', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            source_type: 'bot_lora_training',
+                            bot: botLoraCurrentBot,
+                            project: botLoraCurrentProject,
+                            character: t.charName,
+                            filename: t.filename,
+                            positive: t.positive,
+                        }),
+                    });
+                    const text = await resp.text();
+                    let data; try { data = JSON.parse(text); } catch (_) { data = null; }
+                    if (data && data.success) {
+                        enqueued++;
+                        if (statusEl) statusEl.textContent = `큐 적재 중... (${enqueued}/${targets.length})`;
+                    } else {
+                        const err = (data && data.error) || `HTTP ${resp.status}`;
+                        console.error(`[BOT_LORA_BATCH] enqueue 실패 ${t.charName}/${t.filename}: ${err}`);
+                        showToast(`적재 실패 ${t.charName}/${t.filename}: ${err}`, 'error');
+                    }
+                } catch (e) {
+                    console.error(`[BOT_LORA_BATCH] enqueue 예외 ${t.charName}/${t.filename}:`, e);
+                    showToast(`적재 예외 ${t.charName}/${t.filename}: ${e.message}`, 'error');
+                }
+            }
+
+            // 실제 큐에 들어간 만큼 total 보정. remaining은 적재 중 도착한 완료 이벤트와 합산.
+            _botLoraRefineBatch.total = enqueued;
+            _botLoraRefineBatch.remaining = Math.max(0, enqueued - (_botLoraRefineBatch.success + _botLoraRefineBatch.fail));
+            if (enqueued === 0) {
+                _botLoraRefineBatch.active = false;
+                _setBotLoraRefineBtnDisabled(false);
+                if (statusEl) statusEl.textContent = '적재 실패 — 큐에 추가된 항목 없음';
+            } else if (_botLoraRefineBatch.remaining === 0) {
+                _finalizeBotLoraRefineBatch();
+            } else if (statusEl) {
+                statusEl.textContent = `큐 적재 완료: ${enqueued}장 (대기/처리 중...)`;
+            }
+        }
+
+        // 일괄 정제 배치 종료 처리: 요약 토스트 + 프로젝트 새로고침
+        function _finalizeBotLoraRefineBatch() {
+            const b = _botLoraRefineBatch;
+            b.active = false;
+            const statusEl = _botLoraRefineStatusEl();
+            const msg = `일괄 정제 완료: 성공 ${b.success}장${b.fail ? ` / 실패 ${b.fail}장` : ''}${b.skipped ? ` / 프롬프트없음 ${b.skipped}장` : ''}`;
+            showToast(msg, b.fail ? 'error' : 'success');
+            if (statusEl) statusEl.textContent = msg;
+            _setBotLoraRefineBtnDisabled(false);
+            loadBotLoraProject();
+        }
+
+        // WS lora_prompt_refine_progress 이벤트로 일괄 정제 완료 추적 (현재 프로젝트만)
+        function _handleBotLoraBatchRefineProgress(data) {
+            const b = _botLoraRefineBatch;
+            if (!b.active || !data) return;
+            if ((data.source_type || '') !== 'bot_lora_training') return;
+            if (data.bot_name !== botLoraCurrentBot || data.project_name !== botLoraCurrentProject) return;
+            if (data.phase !== 'completed' && data.phase !== 'failed') return;
+
+            b.remaining = Math.max(0, b.remaining - 1);
+            if (data.phase === 'completed') b.success++; else b.fail++;
+            const statusEl = _botLoraRefineStatusEl();
+            if (statusEl) statusEl.textContent = `정제 진행 중: 완료 ${b.success} / 실패 ${b.fail} (남은 ${b.remaining})`;
+
+            if (b.remaining === 0) {
+                _finalizeBotLoraRefineBatch();
+            }
         }
 
         function _handleLoraPromptRefineProgress(data) {
