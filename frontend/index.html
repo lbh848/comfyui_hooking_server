@@ -22780,6 +22780,8 @@
         function _finalizeBotLoraRefineBatch() {
             const b = _botLoraRefineBatch;
             b.active = false;
+            // 대기 중 디바운스 갱신 취소 — 아래서 최종 갱신을 한 번에 수행.
+            if (_botLoraRefineRefreshTimer) { clearTimeout(_botLoraRefineRefreshTimer); _botLoraRefineRefreshTimer = null; }
             const statusEl = _botLoraRefineStatusEl();
             const msg = `일괄 정제 완료: 성공 ${b.success}장${b.fail ? ` / 실패 ${b.fail}장` : ''}${b.skipped ? ` / 프롬프트없음 ${b.skipped}장` : ''}`;
             showToast(msg, b.fail ? 'error' : 'success');
@@ -22801,9 +22803,25 @@
             const statusEl = _botLoraRefineStatusEl();
             if (statusEl) statusEl.textContent = `정제 진행 중: 완료 ${b.success} / 실패 ${b.fail} (남은 ${b.remaining})`;
 
+            // 각 결과가 서버에 저장됐으므로 completed마다 봇 LoRA 창을 갱신 (연속 완료 디바운스).
+            if (data.phase === 'completed') {
+                _scheduleBotLoraRefineRefresh();
+            }
+
             if (b.remaining === 0) {
                 _finalizeBotLoraRefineBatch();
             }
+        }
+
+        let _botLoraRefineRefreshTimer = null;
+        function _scheduleBotLoraRefineRefresh() {
+            if (_botLoraRefineRefreshTimer) clearTimeout(_botLoraRefineRefreshTimer);
+            _botLoraRefineRefreshTimer = setTimeout(() => {
+                _botLoraRefineRefreshTimer = null;
+                if (typeof loadBotLoraProject === 'function') {
+                    loadBotLoraProject().catch(e => console.warn('[BOT_LORA_BATCH] 정제 결과 갱신 실패:', e));
+                }
+            }, 600);
         }
 
         function _handleLoraPromptRefineProgress(data) {

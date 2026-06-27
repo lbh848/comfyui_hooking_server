@@ -1337,6 +1337,34 @@ def save_bot_training_prompt(bot_name: str, project_name: str, char_name: str, f
         return {"success": False, "error": str(e)}
 
 
+def save_bot_training_prompt_positive_only(bot_name: str, project_name: str, char_name: str, filename: str, positive: str) -> dict:
+    """LLM 정제 결과로 positive만 교체. negative/original_*는 기존값을 그대로 유지한다."""
+    if ".." in filename or os.path.sep in filename:
+        return {"success": False, "error": "잘못된 파일명"}
+    proj_char_dir = _bot_project_char_dir(bot_name, project_name, char_name)
+    base = os.path.splitext(filename)[0]
+    prompt_path = os.path.join(proj_char_dir, f"{base}_prompt.json")
+    try:
+        existing = {}
+        if os.path.isfile(prompt_path):
+            with open(prompt_path, "r", encoding="utf-8") as f:
+                existing = json.load(f)
+        if "original_positive" not in existing:
+            existing["original_positive"] = existing.get("positive", "")
+        if "original_negative" not in existing:
+            existing["original_negative"] = existing.get("negative", "")
+        # positive만 교체 — negative는 절대 건드리지 않는다 (LLM 정제는 positive에만 관여).
+        existing["positive"] = positive
+        with open(prompt_path, "w", encoding="utf-8") as f:
+            json.dump(existing, f, ensure_ascii=False, indent=2)
+        print(f"[BOT_LORA] 학습 프롬프트 정제(positive-only) 저장 완료: {prompt_path}")
+        return {"success": True}
+    except Exception as e:
+        print(f"[BOT_LORA] 학습 프롬프트 정제(positive-only) 저장 실패: {prompt_path} - {e}")
+        traceback.print_exc()
+        return {"success": False, "error": str(e)}
+
+
 # ─── 학습된 LoRA 관리 ────────────────────────────────────────
 
 def _list_bot_trained_sessions(lora_load_path: str, bot_name: str, project_name: str, char_name: str) -> list:

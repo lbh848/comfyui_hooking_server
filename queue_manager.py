@@ -1673,6 +1673,13 @@ class QueueManager:
                 raise RuntimeError(err)
 
             refined_positive = result["data"].get("positive") or ""
+            # 정제 결과(positive) 영속화 — 일괄 정제는 프론트가 저장하지 않으므로
+            # 서버 워커에서 직접 저장한다. negative는 LLM 정제가 관여하지 않으므로 건드리지 않는다.
+            if refined_positive:
+                persist_err = self._persist_refined_positive(
+                    source_type, bot_name, project_name, char_name, entry, filename, refined_positive)
+                if persist_err:
+                    print(f"[QUEUE:LORA_PROMPT_REFINE] 정제 positive 저장 실패: source={source_type} bot={bot_name} project={project_name} char={char_name} filename={filename} - {persist_err}")
             await self._notify_progress(item, {"percentage": 100, "phase": "completed"})
             if self.notify_frontend:
                 await self.notify_frontend(event_type, {
@@ -1702,6 +1709,27 @@ class QueueManager:
                     "error": str(e),
                 })
             raise
+
+    def _persist_refined_positive(self, source_type: str, bot_name: str, project_name: str,
+                                  char_name: str, entry: str, filename: str, positive: str) -> str | None:
+        """LLM 정제 결과 positive만 영속화. negative는 절대 건드리지 않는다.
+
+        반환: 성공/미지원 source → None, 실패 → 에러 문자열.
+        bot_lora_training(일괄 정제 진입점)만 서버 저장. bot/training source는
+        단건 정제 시 프론트가 저장하므로 여기서는 생략(중복 회피).
+        """
+        try:
+            if source_type == "bot_lora_training":
+                from modes.bot_lora_mode import save_bot_training_prompt_positive_only
+                sv = save_bot_training_prompt_positive_only(bot_name, project_name, char_name, filename, positive)
+                if not sv.get("success"):
+                    return sv.get("error", "저장 실패")
+                return None
+            return None
+        except Exception as e:
+            print(f"[QUEUE:LORA_PROMPT_REFINE] positive 영속화 예외: {e}")
+            traceback.print_exc()
+            return f"{type(e).__name__}: {e}"
 
     @staticmethod
     def _save_asset_prompt(img: dict, positive: str):
