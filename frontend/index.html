@@ -21040,6 +21040,7 @@
                             </span>
                         </label>
                         <div style="flex:1;"></div>
+                        <button id="btn-lb-extra-batch-refine" onclick="_lbExtraBatchRefine()" style="background:#7C3AED; color:#fff; border:none; padding:6px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">일괄 LLM 정제</button>
                         <button onclick="_saveLbExtra()" style="background:#1565C0; color:#fff; border:none; padding:6px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">저장</button>
                         <button onclick="_downloadLbExtra()" style="background:#00695C; color:#fff; border:none; padding:6px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">다운로드</button>
                         <button onclick="document.getElementById('lb-extra-overlay').remove()" style="background:none; border:none; color:var(--text2); font-size:1.2rem; cursor:pointer;">✕</button>
@@ -21586,6 +21587,8 @@
                             </span>
                         </label>
                         <div style="flex:1;"></div>
+                        <button onclick="_focusEditLlmRefine(_focusEditCharIdx)" id="fe-btn-llm-refine" style="background:#7C3AED; color:#fff; border:none; padding:5px 12px; border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600;">LLM 정제</button>
+                        <button onclick="_openLbExtraRefinePromptEditor()" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:5px 12px; border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600;">LLM 프롬프트</button>
                         <button onclick="_closeFocusEditModal()" style="background:none; border:none; color:var(--text2); font-size:1.2rem; cursor:pointer;">✕</button>
                     </div>
                     <div style="flex:1; display:flex; overflow:hidden;">
@@ -21644,6 +21647,456 @@
                 _renderLbExtraContent();
             }
         }
+
+        // ─── 집중편집: LLM 정제 (Appearance/default_outfit) ─────────
+        async function _focusEditLlmRefine(ci) {
+            if (ci < 0 || !_lbExtraOriginal[ci]) { showToast('캐릭터 데이터가 없습니다', 'error'); return; }
+            if (!botCurrentBot) { showToast('봇 정보가 없습니다', 'error'); return; }
+
+            const orig = _lbExtraOriginal[ci];
+            if (!confirm(
+                `LLM 비전 정제를 실행합니다.\n` +
+                `- 대표 이미지(rep_images[0])와 원본 분류(전체)를 보고 Appearance/default_outfit을 재구성합니다.\n` +
+                `- 자세/표정은 제외되고, 잘못 잡힌 WD 태그는 필터링됩니다.\n` +
+                `- 편집본의 Appearance / default_outfit을 결과로 완전히 덮어씁니다.\n\n계속하시겠습니까?`
+            )) return;
+
+            const btn = document.getElementById('fe-btn-llm-refine');
+            const origText = btn ? btn.textContent : '';
+            if (btn) { btn.disabled = true; btn.textContent = '정제 중…'; }
+
+            try {
+                const appearanceTags = (orig.appearance || []).map(t => t.tag).filter(Boolean);
+                const outfitTags = (orig.outfit || []).map(t => t.tag).filter(Boolean);
+                const etcTags = (orig.uncategorized || []).map(t => t.tag).filter(Boolean);
+
+                const resp = await fetch('/api/bot_mode/lb_extra_refine', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        bot: botCurrentBot,
+                        character: orig.name,
+                        appearance: appearanceTags,
+                        outfit: outfitTags,
+                        etc: etcTags,
+                    }),
+                });
+                const text = await resp.text();
+                let data;
+                try { data = JSON.parse(text); }
+                catch (_) { data = { success: false, error: `JSON 아님 (HTTP ${resp.status}): ${text.slice(0, 200)}` }; }
+                if (!data.success) {
+                    showToast(`정제 실패: ${data.error || ''}`, 'error');
+                    return;
+                }
+
+                const gt = _getCharGenderTag(_lbExtraEdited[ci].name).toLowerCase();
+                const toObjs = (arr) => (arr || [])
+                    .map(t => (typeof t === 'string' ? t.trim() : '').toLowerCase())
+                    .filter((t, i, a) => t && a.indexOf(t) === i && t !== gt)
+                    .map(t => ({ tag: t, desc: '' }));
+                _lbExtraEdited[ci].appearance = toObjs(data.data.appearance);
+                _lbExtraEdited[ci].outfit = toObjs(data.data.outfit);
+
+                showToast(`정제 완료 (appearance ${_lbExtraEdited[ci].appearance.length} / outfit ${_lbExtraEdited[ci].outfit.length})`, 'success');
+                _renderFocusEditContent();
+            } catch (e) {
+                console.error('[LB_EXTRA_REFINE] 실패:', e);
+                showToast(`정제 실패: ${e.message}`, 'error');
+            } finally {
+                if (btn) { btn.disabled = false; btn.textContent = origText; }
+            }
+        }
+
+        // LLM 정제 결과(문자열 배열) → 편집본용 {tag,desc} 배열. gender_tag 제외, 소문자 정규화, 중복 제거.
+        function _lbExtraRefineResultToTags(ci, arr) {
+            const gt = _getCharGenderTag(_lbExtraEdited[ci].name).toLowerCase();
+            const seen = new Set();
+            const out = [];
+            for (const t of (arr || [])) {
+                const s = (typeof t === 'string' ? t.trim() : '').toLowerCase();
+                if (!s || s === gt || seen.has(s)) continue;
+                seen.add(s);
+                out.push({ tag: s, desc: '' });
+            }
+            return out;
+        }
+
+        // ─── 분류 데이터 편집: 일괄 LLM 정제 (전용 진행도 오버레이) ──
+        let _lbExtraBatchCancelled = false;
+
+        async function _lbExtraBatchRefine() {
+            if (!botCurrentBot) { showToast('봇 정보가 없습니다', 'error'); return; }
+            if (!_lbExtraOriginal.length) { showToast('분류 데이터가 없습니다. 먼저 내보내기를 실행하세요', 'error'); return; }
+            _lbExtraShowBatchSelectModal();
+        }
+
+        function _lbExtraShowBatchSelectModal() {
+            const existing = document.getElementById('lb-extra-batch-select-overlay');
+            if (existing) existing.remove();
+
+            const chars = _lbExtraOriginal.map((c, ci) => ({
+                ci,
+                name: c.name,
+                app: (c.appearance || []).length,
+                out: (c.outfit || []).length,
+                etc: (c.uncategorized || []).length,
+            }));
+            const listHtml = chars.map(c => `
+                <label style="display:flex; align-items:center; gap:10px; padding:8px; border-radius:6px; cursor:pointer; border:1px solid var(--border); background:var(--surface2);">
+                    <input type="checkbox" class="lb-batch-sel" data-ci="${c.ci}" checked style="width:18px; height:18px; cursor:pointer;">
+                    <div style="flex:1; min-width:0;">
+                        <div style="font-size:0.82rem; font-weight:600;">${escHtml(c.name)}</div>
+                        <div style="font-size:0.68rem; color:var(--text2); margin-top:2px;">외모 ${c.app} · 복장 ${c.out} · 미분류 ${c.etc}</div>
+                    </div>
+                </label>`).join('');
+
+            const overlay = document.createElement('div');
+            overlay.id = 'lb-extra-batch-select-overlay';
+            overlay.style.cssText = 'position:fixed; inset:0; z-index:10004; background:rgba(0,0,0,0.6); display:flex; align-items:center; justify-content:center;';
+            // 바깥 클릭으로 닫기 금지 — 취소/실행 버튼만
+            overlay.innerHTML = `
+                <div style="background:var(--surface); border:1px solid var(--border); border-radius:12px; width:90vw; max-width:560px; max-height:85vh; display:flex; flex-direction:column; overflow:hidden;">
+                    <div style="padding:14px 18px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
+                        <h3 style="margin:0; font-size:1.0rem;">일괄 LLM 정제 — 캐릭터 선택</h3>
+                        <button onclick="document.getElementById('lb-extra-batch-select-overlay').remove()" style="background:none; border:none; color:var(--text2); font-size:1.2rem; cursor:pointer;">✕</button>
+                    </div>
+                    <div style="padding:8px 18px; font-size:0.74rem; color:var(--text2); display:flex; gap:10px; align-items:center; border-bottom:1px solid var(--border); flex-wrap:wrap;">
+                        <span>전체 ${chars.length}명</span>
+                        <button onclick="document.querySelectorAll('.lb-batch-sel').forEach(c=>c.checked=true)" style="background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:2px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">전체 선택</button>
+                        <button onclick="document.querySelectorAll('.lb-batch-sel').forEach(c=>c.checked=false)" style="background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:2px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">전체 해제</button>
+                        <span style="color:var(--error,#dc2626);">선택한 캐릭터의 Appearance/default_outfit을 덮어씁니다.</span>
+                    </div>
+                    <div style="padding:10px 18px; overflow-y:auto; flex:1; display:flex; flex-direction:column; gap:6px;">${listHtml}</div>
+                    <div style="padding:12px 18px; border-top:1px solid var(--border); display:flex; justify-content:flex-end; gap:8px;">
+                        <button onclick="document.getElementById('lb-extra-batch-select-overlay').remove()" style="padding:8px 16px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); cursor:pointer; font-size:0.82rem;">취소</button>
+                        <button onclick="_lbExtraBatchRefineStart()" style="padding:8px 16px; border-radius:6px; border:none; background:#7C3AED; color:#fff; cursor:pointer; font-size:0.82rem; font-weight:600;">선택 정제 실행</button>
+                    </div>
+                </div>`;
+            document.body.appendChild(overlay);
+        }
+
+        function _lbExtraBatchRefineStart() {
+            const checks = document.querySelectorAll('.lb-batch-sel:checked');
+            if (checks.length === 0) { showToast('선택된 캐릭터가 없습니다', 'error'); return; }
+            const indices = [...checks].map(c => parseInt(c.dataset.ci, 10)).filter(n => !isNaN(n));
+            document.getElementById('lb-extra-batch-select-overlay').remove();
+            _lbExtraBatchRefineRun(indices);
+        }
+
+        async function _lbExtraBatchRefineRun(indices) {
+            if (!indices || !indices.length) return;
+
+            // 진행도 오버레이 (화면 잠금)
+            const overlay = document.createElement('div');
+            overlay.id = 'lb-extra-batch-overlay';
+            overlay.style.cssText = 'position:fixed; inset:0; z-index:10005; background:rgba(0,0,0,0.7); display:flex; align-items:center; justify-content:center;';
+            // 바깥 클릭으로 닫기 금지 — 중단/닫기 버튼만
+            overlay.innerHTML = `
+                <div style="background:var(--surface); border:1px solid var(--border); border-radius:12px; width:92vw; max-width:560px; padding:20px; display:flex; flex-direction:column; gap:14px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <span style="font-weight:700; font-size:1.0rem;">일괄 LLM 정제 진행 중</span>
+                        <span id="lb-batch-status-badge" style="font-size:0.72rem; padding:2px 8px; border-radius:4px; background:rgba(124,58,237,0.18); color:#7C3AED;">실행 중</span>
+                    </div>
+                    <div style="font-size:0.8rem; color:var(--text2);">현재: <span id="lb-batch-current" style="color:var(--text); font-weight:600;">준비 중…</span></div>
+                    <div>
+                        <div style="display:flex; justify-content:space-between; font-size:0.78rem; color:var(--text2); margin-bottom:4px;">
+                            <span id="lb-batch-count">0 / ${indices.length}</span>
+                            <span id="lb-batch-summary" style="color:var(--text2);">성공 0 · 실패 0</span>
+                        </div>
+                        <div style="width:100%; height:8px; background:var(--surface2); border-radius:4px; overflow:hidden;">
+                            <div id="lb-batch-bar" style="width:0%; height:100%; background:#7C3AED; transition:width 0.2s;"></div>
+                        </div>
+                    </div>
+                    <div id="lb-batch-log" style="max-height:160px; overflow:auto; padding:8px; border:1px solid var(--border); border-radius:6px; background:var(--surface2); font-size:0.72rem; color:var(--text2); font-family:ui-monospace,Menlo,monospace; line-height:1.5;"></div>
+                    <div style="display:flex; justify-content:flex-end; gap:8px;">
+                        <button id="lb-batch-cancel-btn" onclick="_lbExtraBatchCancel()" style="background:var(--error,#dc2626); color:#fff; border:none; padding:7px 16px; border-radius:6px; cursor:pointer; font-size:0.82rem; font-weight:600;">중단</button>
+                    </div>
+                </div>`;
+            document.body.appendChild(overlay);
+
+            const total = indices.length;
+            const controller = new AbortController();
+            _lbExtraBatchCancelled = false;
+            _lbExtraBatchAbort = controller;
+            let success = 0, failed = 0;
+
+            const logEl = () => document.getElementById('lb-batch-log');
+            const logLine = (text) => { const el = logEl(); if (el) { el.innerHTML += escHtml(text) + '<br>'; el.scrollTop = el.scrollHeight; } };
+
+            for (let p = 0; p < total; p++) {
+                if (_lbExtraBatchCancelled) { logLine('— 사용자 중단 —'); break; }
+                const ci = indices[p];
+                const orig = _lbExtraOriginal[ci];
+                const cur = document.getElementById('lb-batch-current');
+                const cnt = document.getElementById('lb-batch-count');
+                const bar = document.getElementById('lb-batch-bar');
+                if (cur) cur.textContent = `${orig.name} (${p + 1}/${total})`;
+                if (cnt) cnt.textContent = `${p} / ${total}`;
+                if (bar) bar.style.width = `${(p / total) * 100}%`;
+
+                const appearanceTags = (orig.appearance || []).map(t => t.tag).filter(Boolean);
+                const outfitTags = (orig.outfit || []).map(t => t.tag).filter(Boolean);
+                const etcTags = (orig.uncategorized || []).map(t => t.tag).filter(Boolean);
+
+                try {
+                    const resp = await fetch('/api/bot_mode/lb_extra_refine', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ bot: botCurrentBot, character: orig.name, appearance: appearanceTags, outfit: outfitTags, etc: etcTags }),
+                        signal: controller.signal,
+                    });
+                    const text = await resp.text();
+                    let data;
+                    try { data = JSON.parse(text); }
+                    catch (_) { data = { success: false, error: `JSON 아님 (HTTP ${resp.status}): ${text.slice(0, 120)}` }; }
+                    if (!data.success) {
+                        failed++;
+                        logLine(`✗ ${orig.name}: ${data.error || '실패'}`);
+                    } else {
+                        _lbExtraEdited[ci].appearance = _lbExtraRefineResultToTags(ci, data.data.appearance);
+                        _lbExtraEdited[ci].outfit = _lbExtraRefineResultToTags(ci, data.data.outfit);
+                        success++;
+                        logLine(`✓ ${orig.name}: appearance ${_lbExtraEdited[ci].appearance.length} / outfit ${_lbExtraEdited[ci].outfit.length}`);
+                    }
+                } catch (e) {
+                    if (e.name === 'AbortError' || _lbExtraBatchCancelled) { logLine('— 사용자 중단 —'); break; }
+                    failed++;
+                    logLine(`✗ ${orig.name}: ${e.message}`);
+                    console.error('[LB_EXTRA_BATCH] 실패:', orig.name, e);
+                }
+
+                const sum = document.getElementById('lb-batch-summary');
+                if (sum) sum.textContent = `성공 ${success} · 실패 ${failed}`;
+            }
+
+            // 완료/중단 UI 갱신
+            const finishedCancelled = _lbExtraBatchCancelled;
+            _lbExtraBatchAbort = null;
+            const cnt = document.getElementById('lb-batch-count');
+            const bar = document.getElementById('lb-batch-bar');
+            const badge = document.getElementById('lb-batch-status-badge');
+            const cancelBtn = document.getElementById('lb-batch-cancel-btn');
+            if (cnt) cnt.textContent = `${success + failed} / ${total}`;
+            if (bar) bar.style.width = `${((success + failed) / total) * 100}%`;
+            if (badge) {
+                badge.textContent = finishedCancelled ? '중단됨' : '완료';
+                badge.style.background = finishedCancelled ? 'rgba(234,179,8,0.18)' : 'rgba(22,163,74,0.18)';
+                badge.style.color = finishedCancelled ? '#b45309' : '#16A34A';
+            }
+            logLine(`\n최종: 성공 ${success} / 실패 ${failed}${finishedCancelled ? ' (중단)' : ''}`);
+            if (cancelBtn) {
+                cancelBtn.textContent = '닫기';
+                cancelBtn.style.background = 'var(--surface2)';
+                cancelBtn.style.color = 'var(--text)';
+                cancelBtn.style.border = '1px solid var(--border)';
+                cancelBtn.onclick = () => {
+                    overlay.remove();
+                    _renderLbExtraContent();
+                    showToast(`일괄 정제 ${finishedCancelled ? '중단' : '완료'} (성공 ${success} / 실패 ${failed})`, finishedCancelled ? 'info' : 'success');
+                };
+            }
+        }
+
+        let _lbExtraBatchAbort = null;
+        function _lbExtraBatchCancel() {
+            _lbExtraBatchCancelled = true;
+            if (_lbExtraBatchAbort) { try { _lbExtraBatchAbort.abort(); } catch (_) {} }
+        }
+
+        // ─── 집중편집: LLM 정제 프롬프트 에디터 ──────────────────
+        async function _openLbExtraRefinePromptEditor() {
+            const existing = document.getElementById('lb-extra-refine-prompt-overlay');
+            if (existing) existing.remove();
+
+            // 현재 집중편집 캐릭터의 원본 태그(미리보기 변수 치환용)
+            const ci = _focusEditCharIdx;
+            const orig = (ci >= 0 && _lbExtraOriginal[ci]) ? _lbExtraOriginal[ci] : null;
+
+            const overlay = document.createElement('div');
+            overlay.id = 'lb-extra-refine-prompt-overlay';
+            overlay.style.cssText = 'position:fixed; inset:0; z-index:10002; background:rgba(0,0,0,0.6); display:flex; align-items:center; justify-content:center;';
+            // 바깥 클릭으로 닫기 금지 — ✕/저장/닫기 버튼만
+            overlay.innerHTML = `
+                <div style="background:var(--surface); border:1px solid var(--border); border-radius:12px; width:92vw; max-width:900px; height:88vh; display:flex; flex-direction:column; overflow:hidden;">
+                    <div style="display:flex; align-items:center; padding:12px 16px; border-bottom:1px solid var(--border); gap:12px; flex-shrink:0;">
+                        <span style="font-weight:700; font-size:1.0rem;">Appearance/Outfit 정제 프롬프트</span>
+                        <div style="flex:1;"></div>
+                        <button onclick="document.getElementById('lb-extra-refine-prompt-overlay').remove()" style="background:none; border:none; color:var(--text2); font-size:1.2rem; cursor:pointer;">✕</button>
+                    </div>
+                    <div style="padding:8px 16px; font-size:0.72rem; color:var(--text2); border-bottom:1px solid var(--border); flex-shrink:0;">
+                        글로벌은 배포용(읽기 전용), 커스텀은 이 PC 전용(편집 가능). 변수: <code>{Appearance}</code> <code>{outfit}</code> <code>{etc}</code>
+                    </div>
+                    <div style="display:flex; gap:0; padding:8px 16px 0 16px; border-bottom:1px solid var(--border); flex-shrink:0; width:fit-content;">
+                        <button id="ler-tab-general" onclick="_setLbExtraRefineTab('general')" style="padding:5px 14px; border:none; cursor:pointer; font-size:0.8rem; font-weight:600; background:var(--accent); color:#fff; border-radius:0;">편집</button>
+                        <button id="ler-tab-preview" onclick="_setLbExtraRefineTab('preview')" style="padding:5px 14px; border:none; cursor:pointer; font-size:0.8rem; font-weight:600; background:var(--surface2); color:var(--text); border-radius:0;">미리보기</button>
+                    </div>
+
+                    <div id="ler-panel-general" style="flex:1; display:flex; flex-direction:column; padding:12px 16px; overflow:hidden; gap:10px; min-height:0;">
+                        <div style="display:flex; flex-direction:column; gap:4px; flex:1; min-height:0;">
+                            <div style="display:flex; justify-content:space-between; align-items:center;">
+                                <div style="font-size:0.78rem; font-weight:600; color:var(--text);">글로벌 프롬프트 <span style="font-size:0.7rem; color:var(--text2); font-weight:400;">(배포용 · 읽기 전용)</span></div>
+                                <div id="ler-active-badge" style="font-size:0.68rem; padding:1px 6px; border-radius:4px; background:var(--surface2); color:var(--text2);">비활성</div>
+                            </div>
+                            <textarea id="ler-builtin-text" readonly style="flex:1; min-height:120px; width:100%; resize:none; padding:8px; border:1px solid var(--border); border-radius:6px; background:var(--surface2); color:var(--text2); font-size:0.75rem; font-family:ui-monospace,Menlo,monospace; line-height:1.4;"></textarea>
+                        </div>
+                        <div style="display:flex; flex-direction:column; gap:4px; flex:1; min-height:0;">
+                            <div style="display:flex; justify-content:space-between; align-items:center;">
+                                <div style="font-size:0.78rem; font-weight:600; color:var(--text);">커스텀 프롬프트 <span style="font-size:0.7rem; color:var(--text2); font-weight:400;">(이 PC 전용 · 편집 가능)</span></div>
+                                <button onclick="_lerCopyBuiltinToCustom()" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:2px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">글로벌에서 복사</button>
+                            </div>
+                            <textarea id="ler-custom-text" placeholder="비어 있음 — 직접 작성하거나 '글로벌에서 복사'로 시작" style="flex:1; min-height:160px; width:100%; resize:vertical; padding:8px; border:1px solid var(--accent); border-radius:6px; background:var(--surface); color:var(--text); font-size:0.78rem; font-family:ui-monospace,Menlo,monospace; line-height:1.4;"></textarea>
+                        </div>
+                    </div>
+
+                    <div id="ler-panel-preview" style="flex:1; display:none; min-height:0; flex-direction:column; padding:12px 16px;">
+                        <div style="font-size:0.75rem; color:var(--text2); margin-bottom:4px;">현재 적용된 프롬프트(<span id="ler-preview-source">글로벌</span>)의 변수 치환 결과:${orig ? ` (${escHtml(orig.name)} 원본 태그 사용)` : ' (캐릭터 미선택 — 샘플 값 사용)'}:</div>
+                        <pre id="ler-preview-pre" style="flex:1; min-height:0; overflow:auto; padding:10px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:6px; font-family:ui-monospace,Menlo,monospace; font-size:0.78rem; line-height:1.4; white-space:pre-wrap; word-wrap:break-word;"></pre>
+                    </div>
+
+                    <div style="padding:10px 16px; border-top:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; gap:8px; flex-shrink:0;">
+                        <label style="display:flex; align-items:center; gap:6px; font-size:0.8rem; cursor:pointer;">
+                            <input type="checkbox" id="ler-use-custom" style="cursor:pointer;">
+                            <span>커스텀 프롬프트 사용 <span style="color:var(--text2); font-size:0.72rem;">(체크 해제 시 글로벌 적용)</span></span>
+                        </label>
+                        <div style="display:flex; gap:8px;">
+                            <button onclick="document.getElementById('lb-extra-refine-prompt-overlay').remove()" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:6px 14px; border-radius:6px; cursor:pointer; font-size:0.8rem;">닫기</button>
+                            <button onclick="_saveLbExtraRefinePrompt()" style="background:#1565C0; color:#fff; border:none; padding:6px 16px; border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600;">저장</button>
+                        </div>
+                    </div>
+                </div>`;
+            document.body.appendChild(overlay);
+
+            // 데이터 로드
+            try {
+                const resp = await fetch('/api/bot_mode/lb_extra_refine_prompt');
+                const result = await resp.json();
+                const d = (result.data || {});
+                const builtin = d.builtin || '';
+                const custom = d.custom || '';
+                const useCustom = !!d.use_custom;
+                document.getElementById('ler-builtin-text').value = builtin;
+                document.getElementById('ler-custom-text').value = custom;
+                document.getElementById('ler-use-custom').checked = useCustom;
+            } catch (e) {
+                console.error('[LB_EXTRA_REFINE_PROMPT] 로드 실패:', e);
+                showToast(`프롬프트 로드 실패: ${e.message}`, 'error');
+            }
+
+            document.getElementById('ler-custom-text').addEventListener('input', () => { _lerUpdateActiveBadge(); _lerUpdatePreview(); });
+            document.getElementById('ler-use-custom').addEventListener('change', () => { _lerUpdateActiveBadge(); _lerUpdatePreview(); });
+            _lerUpdateActiveBadge();
+            _lerUpdatePreview();
+        }
+
+        function _lerEffectiveTemplate() {
+            const useCustom = document.getElementById('ler-use-custom')?.checked;
+            const customText = (document.getElementById('ler-custom-text')?.value || '').trim();
+            if (useCustom && customText) return { src: '커스텀', text: customText };
+            return { src: '글로벌', text: document.getElementById('ler-builtin-text')?.value || '' };
+        }
+
+        function _lerUpdateActiveBadge() {
+            const badge = document.getElementById('ler-active-badge');
+            if (!badge) return;
+            const useCustom = document.getElementById('ler-use-custom')?.checked;
+            const customText = (document.getElementById('ler-custom-text')?.value || '').trim();
+            const effectivelyCustom = useCustom && customText;
+            badge.textContent = effectivelyCustom ? '커스텀 사용 중' : '글로벌 사용 중';
+            badge.style.background = effectivelyCustom ? 'rgba(124,58,237,0.18)' : 'var(--surface2)';
+            badge.style.color = effectivelyCustom ? '#7C3AED' : 'var(--text2)';
+        }
+
+        function _lerCopyBuiltinToCustom() {
+            const builtin = document.getElementById('ler-builtin-text')?.value || '';
+            const ta = document.getElementById('ler-custom-text');
+            if (!ta) return;
+            if (ta.value.trim() && !confirm('현재 커스텀 내용을 글로벌 프롬프트로 덮어쓸까요?')) return;
+            ta.value = builtin;
+            const chk = document.getElementById('ler-use-custom');
+            if (chk) chk.checked = true;
+            _lerUpdateActiveBadge();
+            _lerUpdatePreview();
+            showToast('글로벌 프롬프트를 커스텀으로 복사했습니다 (저장 필요)', 'info');
+        }
+
+        function _lerPreviewValues() {
+            const ci = _focusEditCharIdx;
+            const orig = (ci >= 0 && _lbExtraOriginal[ci]) ? _lbExtraOriginal[ci] : null;
+            if (orig) {
+                return {
+                    appearance: (orig.appearance || []).map(t => t.tag).join(', '),
+                    outfit: (orig.outfit || []).map(t => t.tag).join(', '),
+                    etc: (orig.uncategorized || []).map(t => t.tag).join(', '),
+                };
+            }
+            // 샘플 fallback
+            return {
+                appearance: 'long hair, blonde hair, blue eyes',
+                outfit: 'white dress, ribbon, thighhighs',
+                etc: 'smile, standing, looking at viewer, belt',
+            };
+        }
+
+        function _lerUpdatePreview() {
+            const pre = document.getElementById('ler-preview-pre');
+            if (!pre) return;
+            const eff = _lerEffectiveTemplate();
+            const v = _lerPreviewValues();
+            const rendered = eff.text
+                .replace(/\{Appearance\}/g, v.appearance)
+                .replace(/\{outfit\}/g, v.outfit)
+                .replace(/\{etc\}/g, v.etc);
+            const srcLabel = document.getElementById('ler-preview-source');
+            if (srcLabel) srcLabel.textContent = eff.src;
+            pre.textContent = rendered || '(프롬프트가 비어 있습니다)';
+        }
+
+        function _setLbExtraRefineTab(tab) {
+            const btnG = document.getElementById('ler-tab-general');
+            const btnP = document.getElementById('ler-tab-preview');
+            const panelG = document.getElementById('ler-panel-general');
+            const panelP = document.getElementById('ler-panel-preview');
+            if (tab === 'general') {
+                if (btnG) { btnG.style.background = 'var(--accent)'; btnG.style.color = '#fff'; }
+                if (btnP) { btnP.style.background = 'var(--surface2)'; btnP.style.color = 'var(--text)'; }
+                if (panelG) panelG.style.display = 'flex';
+                if (panelP) panelP.style.display = 'none';
+            } else {
+                if (btnP) { btnP.style.background = 'var(--accent)'; btnP.style.color = '#fff'; }
+                if (btnG) { btnG.style.background = 'var(--surface2)'; btnG.style.color = 'var(--text)'; }
+                if (panelP) panelP.style.display = 'flex';
+                if (panelG) panelG.style.display = 'none';
+                _lerUpdatePreview();
+            }
+        }
+
+        async function _saveLbExtraRefinePrompt() {
+            const custom = (document.getElementById('ler-custom-text') || {}).value || '';
+            const useCustom = !!(document.getElementById('ler-use-custom') || {}).checked;
+            if (useCustom && !custom.trim()) {
+                showToast('커스텀 사용이 체크되어 있지만 커스텀 프롬프트가 비어 있습니다. 내용을 입력하거나 체크를 해제하세요.', 'error');
+                return;
+            }
+            try {
+                const resp = await fetch('/api/bot_mode/lb_extra_refine_prompt', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ custom, use_custom: useCustom }),
+                });
+                const result = await resp.json();
+                if (result.success) {
+                    showToast(useCustom ? '커스텀 프롬프트 저장 + 활성화' : '프롬프트 저장 (글로벌 사용 중)', 'success');
+                    _lerUpdateActiveBadge();
+                } else {
+                    showToast(`프롬프트 저장 실패: ${result.error || ''}`, 'error');
+                }
+            } catch (e) {
+                console.error('[LB_EXTRA_REFINE_PROMPT] 저장 실패:', e);
+                showToast(`프롬프트 저장 실패: ${e.message}`, 'error');
+            }
+        }
+
 
         function _renderFocusEditContent() {
             const ci = _focusEditCharIdx;

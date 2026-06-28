@@ -2318,6 +2318,147 @@ def _save_auto_face_tag_custom(text: str, use_custom: bool) -> None:
         raise
 
 
+# ─── lb-xnai.lb.extra.txt Appearance/Outfit 정제 프롬프트 ────────────
+LB_EXTRA_REFINE_BUILTIN_FILE = os.path.join(BASE_DIR, "prompts", "lb_extra_refine", "system.txt")
+LB_EXTRA_REFINE_CUSTOM_FILE = os.path.join(ASSET_DATA_DIR, "lb_extra_refine_custom.txt")
+LB_EXTRA_REFINE_META_FILE = os.path.join(ASSET_DATA_DIR, "lb_extra_refine_meta.json")
+
+_lb_extra_refine_builtin_cache: str | None = None
+_lb_extra_refine_builtin_mtime: float = 0.0
+
+
+def _load_lb_extra_refine_builtin() -> str:
+    """글로벌(배포용) 정제 프롬프트 로드. mtime 기반 캐싱."""
+    global _lb_extra_refine_builtin_cache, _lb_extra_refine_builtin_mtime
+    if not os.path.isfile(LB_EXTRA_REFINE_BUILTIN_FILE):
+        print(f"[BOT_MODE] lb_extra_refine builtin 파일 없음: {LB_EXTRA_REFINE_BUILTIN_FILE}")
+        return ""
+    try:
+        mtime = os.path.getmtime(LB_EXTRA_REFINE_BUILTIN_FILE)
+        if _lb_extra_refine_builtin_cache is not None and mtime == _lb_extra_refine_builtin_mtime:
+            return _lb_extra_refine_builtin_cache
+        with open(LB_EXTRA_REFINE_BUILTIN_FILE, "r", encoding="utf-8") as f:
+            txt = f.read()
+        _lb_extra_refine_builtin_cache = txt
+        _lb_extra_refine_builtin_mtime = mtime
+        return txt
+    except Exception as e:
+        print(f"[BOT_MODE] lb_extra_refine builtin 로드 실패: {e}")
+        traceback.print_exc()
+        return ""
+
+
+def _load_lb_extra_refine_custom() -> tuple[str, bool]:
+    """커스텀 정제 프롬프트와 use_custom 플래그 로드. (없으면 빈 문자열, False)."""
+    custom = ""
+    if os.path.isfile(LB_EXTRA_REFINE_CUSTOM_FILE):
+        try:
+            with open(LB_EXTRA_REFINE_CUSTOM_FILE, "r", encoding="utf-8") as f:
+                custom = f.read()
+        except Exception as e:
+            print(f"[BOT_MODE] lb_extra_refine custom 로드 실패: {e}")
+            traceback.print_exc()
+
+    use_custom = False
+    if os.path.isfile(LB_EXTRA_REFINE_META_FILE):
+        try:
+            with open(LB_EXTRA_REFINE_META_FILE, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+                use_custom = bool(meta.get("use_custom", False))
+        except Exception as e:
+            print(f"[BOT_MODE] lb_extra_refine meta 로드 실패: {e}")
+            traceback.print_exc()
+
+    return custom, use_custom
+
+
+def _save_lb_extra_refine_custom(text: str, use_custom: bool) -> None:
+    """커스텀 정제 프롬프트 저장. 기존 파일은 .bak 로 백업."""
+    os.makedirs(ASSET_DATA_DIR, exist_ok=True)
+
+    if os.path.isfile(LB_EXTRA_REFINE_CUSTOM_FILE):
+        try:
+            shutil.copy2(LB_EXTRA_REFINE_CUSTOM_FILE, LB_EXTRA_REFINE_CUSTOM_FILE + ".bak")
+        except Exception as e:
+            print(f"[BOT_MODE] lb_extra_refine custom 백업 실패: {e}")
+
+    try:
+        with open(LB_EXTRA_REFINE_CUSTOM_FILE, "w", encoding="utf-8") as f:
+            f.write(text)
+    except Exception as e:
+        print(f"[BOT_MODE] lb_extra_refine custom 저장 실패: {e}")
+        traceback.print_exc()
+        raise
+
+    if os.path.isfile(LB_EXTRA_REFINE_META_FILE):
+        try:
+            shutil.copy2(LB_EXTRA_REFINE_META_FILE, LB_EXTRA_REFINE_META_FILE + ".bak")
+        except Exception as e:
+            print(f"[BOT_MODE] lb_extra_refine meta 백업 실패: {e}")
+
+    try:
+        with open(LB_EXTRA_REFINE_META_FILE, "w", encoding="utf-8") as f:
+            json.dump({"use_custom": bool(use_custom)}, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[BOT_MODE] lb_extra_refine meta 저장 실패: {e}")
+        traceback.print_exc()
+        raise
+
+
+def _render_lb_extra_refine_prompt(template: str, appearance_tags: list, outfit_tags: list, etc_tags: list) -> str:
+    """template 의 {Appearance}/{outfit}/{etc} 변수를 태그 문자열로 치환.
+
+    format() 충돌을 피하기 위해 단순 str.replace 사용.
+    각 태그는 가중치 구문 제거 후 ", " 로 결합.
+    """
+    appearance_str = ", ".join(_strip_tag_wrapper(str(t)) for t in (appearance_tags or []) if str(t).strip())
+    outfit_str = ", ".join(_strip_tag_wrapper(str(t)) for t in (outfit_tags or []) if str(t).strip())
+    etc_str = ", ".join(_strip_tag_wrapper(str(t)) for t in (etc_tags or []) if str(t).strip())
+
+    rendered = template.replace("{Appearance}", appearance_str)
+    rendered = rendered.replace("{outfit}", outfit_str)
+    rendered = rendered.replace("{etc}", etc_str)
+    return rendered
+
+
+def _parse_lb_extra_refine_response(raw: str) -> dict | None:
+    """LLM 응답에서 {"appearance": [...], "outfit": [...]} 추출. 실패 시 None."""
+    if not raw:
+        return None
+    cleaned = raw.strip()
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r'^```[a-zA-Z]*\n?', '', cleaned)
+        cleaned = re.sub(r'\n?```$', '', cleaned).strip()
+    try:
+        data = json.loads(cleaned)
+        if isinstance(data, dict):
+            appearance = data.get("appearance", [])
+            outfit = data.get("outfit", [])
+            if not (isinstance(appearance, list) and isinstance(outfit, list)):
+                return None
+            return {
+                "appearance": [str(t).strip() for t in appearance if str(t).strip()],
+                "outfit": [str(t).strip() for t in outfit if str(t).strip()],
+            }
+    except json.JSONDecodeError:
+        pass
+    # fallback: 첫 {...} 블록 추출
+    m = re.search(r'\{.*\}', cleaned, re.DOTALL)
+    if m:
+        try:
+            data = json.loads(m.group(0))
+            if isinstance(data, dict):
+                appearance = data.get("appearance", [])
+                outfit = data.get("outfit", [])
+                return {
+                    "appearance": [str(t).strip() for t in (appearance if isinstance(appearance, list) else []) if str(t).strip()],
+                    "outfit": [str(t).strip() for t in (outfit if isinstance(outfit, list) else []) if str(t).strip()],
+                }
+        except json.JSONDecodeError as e:
+            print(f"[BOT_MODE] lb_extra_refine JSON 파싱 실패: {e}")
+    return None
+
+
 def _strip_tag_wrapper(raw: str) -> str:
     """'(tag:1.2)' / '[tag]' / '{tag}' 같은 가중치 구문에서 순수 태그명만 추출."""
     s = raw.strip()
@@ -2652,6 +2793,228 @@ async def handle_auto_classify_face_tags(request):
         return web.json_response(result)
     except Exception as e:
         print(f"[BOT_MODE] handle_auto_classify_face_tags 예외: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)})
+
+
+async def run_lb_extra_refine(bot_name: str, char_name: str, appearance_tags: list, outfit_tags: list, etc_tags: list) -> dict:
+    """LLM 비전 기반 Appearance/default_outfit 정제 (HTTP 래퍼 없는 core).
+
+    대표 이미지(rep_images[0]) 1장 + 원본 3풀(appearance/outfit/etc)을 LLM에 전달하여
+    자세/표정을 제외한 외모·복장만으로 두 그룹을 재구성.
+
+    반환: {"success": True, "data": {"appearance": [...], "outfit": [...]}} 또는 {"success": False, "error": "..."}
+    """
+    import base64
+    import time as _time
+    import datetime
+    from modes.llm_service import callLLMVision, supports_vision, get_config
+    from modes.lighbd_service import _log_lighbd_history
+
+    async def _notify_llm_widget(event_type: str, data: dict = None):
+        try:
+            import server as _server
+            await _server.notify_frontend("lighbd_llm_stream", {"type": event_type, **(data or {})})
+        except Exception as e:
+            print(f"[BOT_MODE] WARN: notify_frontend 실패: {e}")
+
+    try:
+        if not bot_name or not char_name:
+            return {"success": False, "error": "bot, character 필드가 필요합니다."}
+
+        char_dir = os.path.join(BOT_DIR, bot_name, char_name)
+        if not os.path.isdir(char_dir):
+            print(f"[BOT_MODE] 캐릭터 디렉토리 없음: {char_dir}")
+            return {"success": False, "error": f"캐릭터 디렉토리가 없습니다: {char_dir}"}
+
+        # 대표 이미지(rep_images[0]) 로드
+        data = _load_bot_data()
+        bot = next((b for b in data.get("bots", []) if b["name"] == bot_name), None)
+        if not bot:
+            return {"success": False, "error": f"봇을 찾을 수 없습니다: {bot_name}"}
+        char = next((c for c in bot.get("characters", []) if c["name"] == char_name), None)
+        if not char:
+            return {"success": False, "error": f"캐릭터를 찾을 수 없습니다: {char_name}"}
+
+        rep_images = char.get("rep_images", [])
+        if not rep_images:
+            return {"success": False, "error": "대표 이미지(rep_images)가 없습니다."}
+        rep0 = rep_images[0]
+        img_path = os.path.join(char_dir, rep0)
+        if not os.path.isfile(img_path):
+            print(f"[BOT_MODE] 대표 이미지 파일 없음: {img_path}")
+            return {"success": False, "error": f"대표 이미지 파일이 없습니다: {rep0}"}
+
+        # 비전 서비스 확인
+        cfg = get_config()
+        service = cfg.get("llm_service", "")
+        if not supports_vision(service):
+            print(f"[BOT_MODE] 비전 미지원 서비스: {service}")
+            return {
+                "success": False,
+                "error": (
+                    f"현재 LLM 서비스({service})는 비전(이미지 입력)을 지원하지 않습니다. "
+                    "텍스트 전용 SDK를 사용하는 vertex 대신 OpenAI 호환/Gemini/Claude 등을 config.json에서 선택하세요."
+                ),
+            }
+
+        # 프롬프트 선택 + 변수 치환
+        custom_text, use_custom = _load_lb_extra_refine_custom()
+        if use_custom and custom_text.strip():
+            template = custom_text
+        else:
+            template = _load_lb_extra_refine_builtin()
+        if not template.strip():
+            return {"success": False, "error": "정제 프롬프트 템플릿이 비어 있습니다."}
+
+        rendered = _render_lb_extra_refine_prompt(template, appearance_tags, outfit_tags, etc_tags)
+
+        # 이미지 base64 인코딩 (mime 추정)
+        ext = os.path.splitext(rep0)[1].lower().lstrip(".")
+        mime_map = {"webp": "image/webp", "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif"}
+        mime = mime_map.get(ext, "image/webp")
+        try:
+            with open(img_path, "rb") as f:
+                img_bytes = f.read()
+        except Exception as e:
+            print(f"[BOT_MODE] 대표 이미지 읽기 실패: {e}")
+            traceback.print_exc()
+            return {"success": False, "error": f"대표 이미지 읽기 실패: {e}"}
+        img_b64 = base64.b64encode(img_bytes).decode("ascii")
+
+        messages = [
+            {"role": "system", "content": "You are a precise tag refiner. Follow the user's instructions exactly and respond in strict JSON."},
+            {"role": "user", "content": rendered},
+        ]
+
+        print(f"[BOT_MODE] lb_extra_refine 호출: bot={bot_name} char={char_name} service={service} "
+              f"appearance={len(appearance_tags or [])} outfit={len(outfit_tags or [])} etc={len(etc_tags or [])} use_custom={use_custom}")
+
+        use_model = cfg.get("llm_model", "")
+        max_retries = max(0, int(cfg.get("auto_face_tag_max_retries", 2)))
+        await _notify_llm_widget("start", {"model": use_model, "prompt_id": f"lb_extra_refine:{char_name}"})
+
+        raw = None
+        last_err = None
+        total_elapsed = 0.0
+        for attempt in range(max_retries + 1):
+            t0 = _time.time()
+            try:
+                raw = await callLLMVision(messages, image_b64=img_b64, image_mime=mime)
+            except Exception as call_err:
+                print(f"[BOT_MODE] callLLMVision 예외 (시도 {attempt + 1}/{max_retries + 1}): {call_err}")
+                traceback.print_exc()
+                last_err = f"{type(call_err).__name__}: {call_err}"
+                raw = None
+            total_elapsed += _time.time() - t0
+
+            if raw and not raw.startswith("[LLM 실패]"):
+                parsed = _parse_lb_extra_refine_response(raw)
+                if parsed is not None:
+                    done_data = {
+                        "text": raw,
+                        "completion_tokens": max(1, len(raw) // 3),
+                        "elapsed": round(total_elapsed, 3),
+                        "tps": round((max(1, len(raw) // 3) / total_elapsed), 1) if total_elapsed > 0 else 0.0,
+                        "ttft": None,
+                    }
+                    await _notify_llm_widget("done", done_data)
+                    _log_lighbd_history({
+                        "ts": datetime.datetime.now().isoformat(timespec="seconds"),
+                        "prompt_id": f"lb_extra_refine:{char_name}",
+                        "input": messages,
+                        "output": raw,
+                        "completion_tokens": done_data["completion_tokens"],
+                        "elapsed": done_data["elapsed"],
+                        "tps": done_data["tps"],
+                        "status": "ok",
+                    })
+                    print(f"[BOT_MODE] lb_extra_refine 완료: appearance={len(parsed['appearance'])}개 outfit={len(parsed['outfit'])}개 (시도 {attempt + 1})")
+                    return {"success": True, "data": parsed}
+                last_err = f"LLM 응답을 JSON으로 파싱하지 못했습니다. raw: {raw[:300]}"
+                print(f"[BOT_MODE] LLM 응답 JSON 파싱 실패 (시도 {attempt + 1}/{max_retries + 1}). raw={raw[:500]}")
+            else:
+                last_err = f"LLM 호출 실패: {raw or '빈 응답'}"
+                print(f"[BOT_MODE] LLM 호출 실패 (시도 {attempt + 1}/{max_retries + 1}): {raw}")
+
+            if attempt < max_retries:
+                print(f"[BOT_MODE] 재시도 대기 중... ({attempt + 1}/{max_retries})")
+                await asyncio.sleep(1.0 * (attempt + 1))
+
+        await _notify_llm_widget("error", {"error": last_err or "알 수 없는 오류", "elapsed": round(total_elapsed, 3)})
+        _log_lighbd_history({
+            "ts": datetime.datetime.now().isoformat(timespec="seconds"),
+            "prompt_id": f"lb_extra_refine:{char_name}",
+            "input": messages,
+            "output": "",
+            "elapsed": round(total_elapsed, 3),
+            "status": "error",
+            "error": last_err or "알 수 없는 오류",
+        })
+        return {"success": False, "error": f"{max_retries + 1}회 시도 후 실패: {last_err}"}
+    except Exception as e:
+        print(f"[BOT_MODE] lb_extra_refine 예외: {e}")
+        traceback.print_exc()
+        await _notify_llm_widget("error", {"error": f"{type(e).__name__}: {e}"})
+        _log_lighbd_history({
+            "ts": datetime.datetime.now().isoformat(timespec="seconds"),
+            "prompt_id": f"lb_extra_refine:{char_name}",
+            "input": messages if "messages" in locals() else [],
+            "output": "",
+            "status": "error",
+            "error": f"{type(e).__name__}: {e}",
+        })
+        return {"success": False, "error": str(e)}
+
+
+async def handle_get_lb_extra_refine_prompt(request):
+    """GET /api/bot_mode/lb_extra_refine_prompt - 글로벌/커스텀 정제 프롬프트 조회."""
+    try:
+        builtin = _load_lb_extra_refine_builtin()
+        custom, use_custom = _load_lb_extra_refine_custom()
+        return web.json_response({
+            "success": True,
+            "data": {
+                "builtin": builtin,
+                "custom": custom,
+                "use_custom": use_custom,
+            },
+        })
+    except Exception as e:
+        print(f"[BOT_MODE] lb_extra_refine_prompt 조회 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)})
+
+
+async def handle_set_lb_extra_refine_prompt(request):
+    """POST /api/bot_mode/lb_extra_refine_prompt - 커스텀 정제 프롬프트 저장."""
+    try:
+        body = await request.json()
+        custom = body.get("custom", "") or ""
+        use_custom = bool(body.get("use_custom", False))
+        _save_lb_extra_refine_custom(custom, use_custom)
+        return web.json_response({"success": True})
+    except Exception as e:
+        print(f"[BOT_MODE] lb_extra_refine_prompt 저장 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)})
+
+
+async def handle_lb_extra_refine(request):
+    """POST /api/bot_mode/lb_extra_refine - LLM 비전 기반 Appearance/default_outfit 정제."""
+    try:
+        body = await request.json()
+        bot_name = (body.get("bot") or "").strip()
+        char_name = (body.get("character") or "").strip()
+        appearance_tags = body.get("appearance") or []
+        outfit_tags = body.get("outfit") or []
+        etc_tags = body.get("etc") or []
+        if not isinstance(appearance_tags, list) or not isinstance(outfit_tags, list) or not isinstance(etc_tags, list):
+            return web.json_response({"success": False, "error": "appearance/outfit/etc 는 list 여야 합니다."})
+        result = await run_lb_extra_refine(bot_name, char_name, appearance_tags, outfit_tags, etc_tags)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[BOT_MODE] handle_lb_extra_refine 예외: {e}")
         traceback.print_exc()
         return web.json_response({"success": False, "error": str(e)})
 
