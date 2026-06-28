@@ -326,7 +326,12 @@ def list_projects(bot_name: str) -> list:
 
 
 def add_project(bot_name: str, project_name: str, selected_chars: list | None = None, face_chars: list | None = None) -> dict:
-    """새 학습 프로젝트 추가 (selected_chars: 포함할 캐릭터, face_chars: 얼굴 이미지 포함할 캐릭터)"""
+    """새 학습 프로젝트 추가
+
+    - selected_chars: rep 이미지를 포함할 캐릭터
+    - face_chars: 얼굴 이미지를 포함할 캐릭터
+    - face_chars에만 있고 selected_chars에 없는 캐릭터는 rep 없이 face만 추가됨(face-only)
+    """
     if not bot_name:
         return {"success": False, "error": "봇 이름 누락"}
     if not project_name or not project_name.strip():
@@ -344,19 +349,24 @@ def add_project(bot_name: str, project_name: str, selected_chars: list | None = 
     project_dir = _bot_project_dir(bot_name, project_name)
     os.makedirs(project_dir, exist_ok=True)
 
+    if selected_chars is None:
+        selected_chars = []
     if face_chars is None:
         face_chars = []
 
-    # 캐릭터별 기본 설정 생성
+    # 캐릭터별 기본 설정 생성: rep 포함 캐릭터 ∪ face-only 캐릭터
+    add_set = set(selected_chars) | set(face_chars)
     bot_data = _load_bot_data()
     characters = {}
+    rep_images_map = {}
     for b in bot_data.get("bots", []):
         if b.get("name") == bot_name:
             for ch in b.get("characters", []):
                 cn = ch.get("name", "")
-                if cn:
-                    if selected_chars is None or cn in selected_chars:
-                        characters[cn] = {"trigger": cn}
+                if cn and cn in add_set:
+                    characters[cn] = {"trigger": cn}
+                    # face-only(selected_chars에 없음)면 rep_images 비움
+                    rep_images_map[cn] = ch.get("rep_images", []) if cn in selected_chars else []
             break
 
     bot_projects[project_name] = {
@@ -367,15 +377,12 @@ def add_project(bot_name: str, project_name: str, selected_chars: list | None = 
 
     # 프로젝트 생성 시에만 학습 이미지 동기화
     for ch_entry in characters:
-        bot_data2 = _load_bot_data()
-        for b in bot_data2.get("bots", []):
-            if b.get("name") == bot_name:
-                for ch in b.get("characters", []):
-                    if ch.get("name") == ch_entry:
-                        include_face = ch_entry in face_chars
-                        _sync_training_images_to_project(bot_name, project_name, ch_entry, ch.get("rep_images", []), include_face)
-                        break
-                break
+        include_face = ch_entry in face_chars
+        _sync_training_images_to_project(
+            bot_name, project_name, ch_entry, rep_images_map.get(ch_entry, []), include_face
+        )
+        if ch_entry not in selected_chars:
+            print(f"[BOT_LORA] face-only 추가: {bot_name}/{project_name}/{ch_entry}")
 
     print(f"[BOT_LORA] 프로젝트 추가: {bot_name}/{project_name} ({len(characters)}명)")
     return {"success": True, "name": project_name}
