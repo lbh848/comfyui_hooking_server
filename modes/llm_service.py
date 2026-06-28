@@ -284,15 +284,13 @@ async def _call_vertex(messages: list, model: str) -> str:
 
     from vertexai.generative_models import GenerativeModel
 
-    # messages → 단일 텍스트로 결합 (Vertex SDK는 텍스트 입력 사용)
-    text_parts = []
-    for msg in messages:
-        content = msg.get("content", "")
-        if content:
-            text_parts.append(content)
-    request_text = "\n\n".join(text_parts)
+    # messages → contents (이미지 포함 시 Part 리스트, 미포함 시 텍스트 문자열)
+    contents = _build_vertex_contents(messages)
 
-    _llm_log(f"Vertex 요청: model={model}, text={len(request_text)}자")
+    if isinstance(contents, list):
+        _llm_log(f"Vertex 요청(vision): model={model}, parts={len(contents)}")
+    else:
+        _llm_log(f"Vertex 요청: model={model}, text={len(contents)}자")
 
     actual_model = model.split("/")[0]
     vertex_model = GenerativeModel(actual_model)
@@ -300,7 +298,7 @@ async def _call_vertex(messages: list, model: str) -> str:
     try:
         loop = asyncio.get_event_loop()
         response = await loop.run_in_executor(
-            None, lambda: vertex_model.generate_content(request_text)
+            None, lambda: vertex_model.generate_content(contents)
         )
         result_text = response.text if hasattr(response, "text") else str(response)
         _llm_log(f"Vertex 성공: {len(result_text)}자")
@@ -574,16 +572,74 @@ def _parse_data_url(url: str) -> tuple[str, str]:
         return ("", "")
 
 
+def _build_vertex_parts(content) -> list:
+    """OpenAI content(str 또는 parts list) → vertexai generative_models.Part 리스트.
+
+    _build_gemini_parts 와 대칭. vertexai SDK는 import 가 선택적이므로 함수 내에서 import.
+    """
+    from vertexai.generative_models import Part
+    import base64 as _b64
+    parts = []
+    if isinstance(content, str):
+        if content:
+            parts.append(Part.from_text(content))
+        return parts
+    if isinstance(content, list):
+        for p in content:
+            t = p.get("type")
+            if t == "text":
+                txt = p.get("text", "")
+                if txt:
+                    parts.append(Part.from_text(txt))
+            elif t == "image_url":
+                url = (p.get("image_url") or {}).get("url", "")
+                mime, b64 = _parse_data_url(url)
+                if not b64:
+                    continue
+                try:
+                    raw = _b64.b64decode(b64)
+                    parts.append(Part.from_data(data=raw, mime_type=mime))
+                except Exception:
+                    _llm_log(f"vertex 이미지 파트 변환 실패: mime={mime}")
+                    traceback.print_exc()
+    return parts
+
+
+def _build_vertex_contents(messages: list):
+    """messages → vertexai SDK generate_content 용 contents.
+
+    이미지(image_url) 파트가 하나라도 있으면 Part 리스트를 반환하고,
+    없으면 기존 동작대로 단일 텍스트 문자열을 반환한다(텍스트 전용 경로 보존).
+    역할(role)은 기존 _call_vertex 와 동일하게 평탄화(flatten)한다.
+    """
+    has_image = any(
+        isinstance(m.get("content"), list)
+        and any(p.get("type") == "image_url" for p in m["content"] if isinstance(p, dict))
+        for m in messages
+    )
+    if not has_image:
+        text_parts = []
+        for m in messages:
+            content = m.get("content", "")
+            if content:
+                text_parts.append(_msg_text(content) if not isinstance(content, str) else content)
+        return "\n\n".join(text_parts)
+
+    parts = []
+    for m in messages:
+        parts.extend(_build_vertex_parts(m.get("content", "")))
+    return parts
+
+
 VISION_SUPPORTED_SERVICES = {
     # OpenAI 호환 image_url 포맷을 그대로 처리하는 서비스들
     "copilot", "openai", "openrouter", "openai-compat", "customapi",
     "ollama", "ollama-cloud", "lmstudio", "vertex-openai",
     # 자체 포맷으로 변환하는 서비스들
-    "gemini", "claude",
+    "gemini", "claude", "vertex",  # vertex: vertexai SDK Part 리스트로 이미지 첨부
 }
 
 VISION_UNSUPPORTED_SERVICES = {
-    "vertex",  # 텍스트 전용 vertexai SDK 사용 — 이미지 입력 미지원
 }
 
 
@@ -1463,11 +1519,8 @@ async def _stream_vertex_sdk(messages: list, model: str):
 
     from vertexai.generative_models import GenerativeModel
 
-    text_parts = []
-    for msg in messages:
-        if msg.get("content"):
-            text_parts.append(msg["content"])
-    request_text = "\n\n".join(text_parts)
+    # messages → contents (이미지 포함 시 Part 리스트, 미포함 시 텍스트 문자열)
+    contents = _build_vertex_contents(messages)
     actual_model = model.split("/")[0]
     vertex_model = GenerativeModel(actual_model)
 
@@ -1476,14 +1529,17 @@ async def _stream_vertex_sdk(messages: list, model: str):
     accumulated = []
     completion_tokens = None
 
-    _llm_log(f"vertex stream 요청: model={actual_model}, text={len(request_text)}자")
+    if isinstance(contents, list):
+        _llm_log(f"vertex stream 요청(vision): model={actual_model}, parts={len(contents)}")
+    else:
+        _llm_log(f"vertex stream 요청: model={actual_model}, text={len(contents)}자")
     yield {"type": "start", "service": "vertex", "model": actual_model}
 
     loop = asyncio.get_event_loop()
 
     def _consume_into_queue(q):
         try:
-            stream = vertex_model.generate_content(request_text, stream=True)
+            stream = vertex_model.generate_content(contents, stream=True)
             for event in stream:
                 text = ""
                 try:
