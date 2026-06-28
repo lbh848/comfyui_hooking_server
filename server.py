@@ -4766,6 +4766,9 @@ async def handle_api_asset_mode_tags_post(request: web.Request) -> web.Response:
         elif action == "batch_insert_preset":
             result = asset_mode.batch_insert_preset(
                 body.get("category", ""), body.get("name", ""), body.get("tags_text", ""))
+        elif action == "rename_preset":
+            result = asset_mode.rename_preset(
+                body.get("category", ""), body.get("old_name", ""), body.get("new_name", ""))
         elif action == "trace_preset_assets":
             result = asset_mode.trace_preset_assets(body.get("category", ""), body.get("name", ""))
         # ─── 범용 프리셋 태그 편집 (삽화 모드 태그 편집 모달용) ───

@@ -2227,6 +2227,87 @@ class AssetMode:
             results.append({"name": name, **r})
         return {"success": True, "results": results}
 
+    # ─── 프리셋매니징: 이름 변경 ───────────────────────────
+    # 카테고리 → characters[*] 참조 필드 매핑
+    _PRESET_REF_FIELD = {
+        "appearances": "appearance",
+        "outfits": "outfit",
+        "expressions": "expression",
+    }
+
+    def rename_preset(self, category: str, old_name: str, new_name: str) -> dict:
+        """프리셋 이름 변경 (활성/숨김 모두 지원).
+        appearances/outfits/expressions 인 경우 characters[*] 참조도 함께 갱신.
+        """
+        if category not in PRESET_MGMT_CATEGORIES:
+            print(f"[ASSET_MODE] rename_preset: 지원하지 않는 카테고리 '{category}'")
+            return {"success": False, "error": f"지원하지 않는 카테고리: {category}"}
+
+        old_name = (old_name or "").strip()
+        new_name = (new_name or "").strip()
+        if not old_name:
+            print("[ASSET_MODE] rename_preset: 기존 이름이 비어있음")
+            return {"success": False, "error": "기존 이름이 비어있습니다."}
+        if not new_name:
+            print("[ASSET_MODE] rename_preset: 새 이름이 비어있음")
+            return {"success": False, "error": "새 이름을 입력해주세요."}
+        if old_name == new_name:
+            return {"success": False, "error": "새 이름이 현재 이름과 같습니다."}
+
+        # 활성(tags.json) / 숨김(hidden_tags.json) 양쪽 탐색
+        cat_data = self._tags.get(category, {})
+        hidden = self.load_hidden_tags()
+        hidden_cat = hidden.get(category, {})
+
+        in_active = isinstance(cat_data, dict) and old_name in cat_data
+        in_hidden = isinstance(hidden_cat, dict) and old_name in hidden_cat
+        if not in_active and not in_hidden:
+            print(f"[ASSET_MODE] rename_preset: '{old_name}'을(를) {category}에서 찾을 수 없음")
+            return {"success": False, "error": f"'{old_name}'을(를) 찾을 수 없습니다."}
+
+        # 새 이름 충돌 검사 (같은 카테고리의 활성/숨김 양쪽)
+        if isinstance(cat_data, dict) and new_name in cat_data and new_name != old_name:
+            return {"success": False, "error": f"이미 존재하는 이름입니다: '{new_name}'"}
+        if isinstance(hidden_cat, dict) and new_name in hidden_cat and new_name != old_name:
+            return {"success": False, "error": f"숨김 목록에 이미 존재하는 이름입니다: '{new_name}'"}
+
+        # 순서 보존하며 키 교체
+        def _rebuild(d: dict) -> dict:
+            return {(new_name if k == old_name else k): v for k, v in d.items()}
+
+        touched_tags = False
+        touched_hidden = False
+        if in_active:
+            self._tags[category] = _rebuild(cat_data)
+            touched_tags = True
+        if in_hidden:
+            hidden[category] = _rebuild(hidden_cat)
+            touched_hidden = True
+
+        # 캐릭터 참조 갱신 (appearances/outfits/expressions)
+        ref_field = self._PRESET_REF_FIELD.get(category)
+        ref_count = 0
+        if ref_field:
+            chars = self._tags.get("characters", {})
+            for c in chars.values():
+                if isinstance(c, dict) and c.get(ref_field) == old_name:
+                    c[ref_field] = new_name
+                    ref_count += 1
+            if ref_count > 0:
+                touched_tags = True
+
+        if touched_tags:
+            self.save_tags()
+        if touched_hidden:
+            self.save_hidden_tags(hidden)
+
+        self._log("preset_renamed", {
+            "category": category, "old": old_name, "new": new_name,
+            "ref_updated": ref_count,
+        })
+        print(f"[ASSET_MODE] rename_preset: '{old_name}' -> '{new_name}' ({category}), 참조 {ref_count}건 갱신")
+        return {"success": True, "ref_updated": ref_count}
+
     @staticmethod
     def _split_tags_preserving_parens(text: str) -> list:
         """쉼표로 분리하되 괄호 () [] {} 내부의 쉼표는 무시."""
