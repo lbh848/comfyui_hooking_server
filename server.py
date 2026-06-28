@@ -5436,7 +5436,7 @@ async def handle_api_asset_mode_cancel_analyze(request: web.Request) -> web.Resp
 
 async def handle_api_asset_mode_batch_analyze(request: web.Request) -> web.Response:
     """대표이미지 일괄 태그 분석 → 큐에 추가."""
-    if not asset_tool.workflow_source_path:
+    if not asset_tool.use_builtin_tagger and not asset_tool.workflow_source_path:
         return web.json_response({"success": False, "error": "태그 분석 워크플로우 경로가 설정되지 않았습니다"}, status=400)
     try:
         body = await request.json()
@@ -5461,7 +5461,7 @@ async def handle_api_asset_mode_batch_analyze(request: web.Request) -> web.Respo
 
 async def handle_api_asset_mode_analyze_selected(request: web.Request) -> web.Response:
     """선택 이미지 태그 분석 → 큐에 추가."""
-    if not asset_tool.workflow_source_path:
+    if not asset_tool.use_builtin_tagger and not asset_tool.workflow_source_path:
         return web.json_response({"success": False, "error": "태그 분석 워크플로우 경로가 설정되지 않았습니다"}, status=400)
     try:
         body = await request.json()
@@ -5653,7 +5653,7 @@ async def handle_api_asset_tool_status(request: web.Request) -> web.Response:
     return web.json_response(asset_tool.get_status())
 
 async def handle_api_asset_tool_analyze(request: web.Request) -> web.Response:
-    if not asset_tool.workflow_source_path:
+    if not asset_tool.use_builtin_tagger and not asset_tool.workflow_source_path:
         return web.json_response({"success": False, "error": "태그 분석 워크플로우 경로가 설정되지 않았습니다"}, status=400)
     try:
         reader = await request.multipart()

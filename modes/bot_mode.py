@@ -1073,7 +1073,7 @@ class BotMode:
                 return _json_error("봇 이름이 필요합니다.")
 
             asset_tool = self._asset_tool
-            if not asset_tool or not asset_tool.workflow_source_path:
+            if not asset_tool or (not asset_tool.use_builtin_tagger and not asset_tool.workflow_source_path):
                 return _json_error("태그 분석 워크플로우 경로가 설정되지 않았습니다")
 
             from queue_manager import queue_manager
@@ -1263,7 +1263,7 @@ class BotMode:
                 return _json_error("봇 이름이 필요합니다.")
 
             asset_tool = self._asset_tool
-            if not asset_tool or not asset_tool.workflow_source_path:
+            if not asset_tool or (not asset_tool.use_builtin_tagger and not asset_tool.workflow_source_path):
                 return _json_error("태그 분석 워크플로우 경로가 설정되지 않았습니다")
 
             from queue_manager import queue_manager
@@ -1336,7 +1336,7 @@ class BotMode:
                 return _json_error("봇, 캐릭터, 파일명이 필요합니다.")
 
             asset_tool = self._asset_tool
-            if not asset_tool or not asset_tool.workflow_source_path:
+            if not asset_tool or (not asset_tool.use_builtin_tagger and not asset_tool.workflow_source_path):
                 return _json_error("태그 분석 워크플로우 경로가 설정되지 않았습니다")
 
             from queue_manager import queue_manager
