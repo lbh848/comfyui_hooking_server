@@ -199,11 +199,16 @@ def _log_history(service: str, model: str, messages: list, output: str,
 # ─── Vertex AI 초기화 ──────────────────────────────────────
 
 _vertex_initialized = False
+_vertex_client = None
 
 
 def _init_vertex():
-    """Vertex AI SDK 초기화 (최초 1회만)"""
-    global _vertex_initialized
+    """Vertex AI 초기화 — google-genai SDK (vertexai=True) 로 Client 생성 (최초 1회).
+
+    레거시 vertexai.generative_models SDK 대신 google-genai 를 사용해
+    최신/프리뷰 Gemini 모델의 응답 파싱 호환성을 확보한다.
+    """
+    global _vertex_initialized, _vertex_client
     if _vertex_initialized:
         return
 
@@ -214,16 +219,24 @@ def _init_vertex():
 
     try:
         from google.oauth2 import service_account
-        import vertexai
+        from google import genai
 
         with open(key_path, "r", encoding="utf-8") as f:
             data = json.load(f)
         project_id = data.get("project_id", "")
 
-        credentials = service_account.Credentials.from_service_account_file(key_path)
-        vertexai.init(project=project_id, location="global", credentials=credentials)
+        credentials = service_account.Credentials.from_service_account_file(
+            key_path,
+            scopes=["https://www.googleapis.com/auth/cloud-platform"],
+        )
+        _vertex_client = genai.Client(
+            vertexai=True,
+            project=project_id,
+            location="global",
+            credentials=credentials,
+        )
         _vertex_initialized = True
-        _llm_log(f"Vertex AI 초기화 완료: {project_id}")
+        _llm_log(f"Vertex AI(google-genai) 초기화 완료: {project_id}")
     except Exception as e:
         _llm_log(f"Vertex AI 초기화 실패: {e}")
         traceback.print_exc()
@@ -277,35 +290,35 @@ async def _call_copilot(messages: list, model: str) -> str:
 
 
 async def _call_vertex(messages: list, model: str) -> str:
-    """Vertex AI (vertexai SDK) 호출 (단일 시도)"""
+    """Vertex AI (google-genai SDK, vertexai=True) 호출 (단일 시도)"""
     _init_vertex()
-    if not _vertex_initialized:
+    if not _vertex_initialized or _vertex_client is None:
         return "[LLM 실패] Vertex AI 초기화 실패"
 
-    from vertexai.generative_models import GenerativeModel
-
-    # messages → contents (이미지 포함 시 Part 리스트, 미포함 시 텍스트 문자열)
-    contents = _build_vertex_contents(messages)
-
-    if isinstance(contents, list):
-        _llm_log(f"Vertex 요청(vision): model={model}, parts={len(contents)}")
-    else:
-        _llm_log(f"Vertex 요청: model={model}, text={len(contents)}자")
-
+    parts, system_instruction = _build_genai_contents(messages)
     actual_model = model.split("/")[0]
-    vertex_model = GenerativeModel(actual_model)
+    n_img = sum(1 for m in messages if isinstance(m.get("content"), list))
+    _llm_log(f"Vertex 요청(genai): model={actual_model}, parts={len(parts)}" + ("(vision)" if n_img else ""))
 
     try:
+        from google.genai import types
+        config = types.GenerateContentConfig(system_instruction=system_instruction) if system_instruction else None
         loop = asyncio.get_event_loop()
         response = await loop.run_in_executor(
-            None, lambda: vertex_model.generate_content(contents)
+            None,
+            lambda: _vertex_client.models.generate_content(model=actual_model, contents=parts, config=config),
         )
-        result_text = response.text if hasattr(response, "text") else str(response)
+        try:
+            result_text = response.text or ""
+        except Exception:
+            result_text = ""
+            _llm_log(f"Vertex 응답 text 추출 실패(후보 없음/차단 가능): {traceback.format_exc()}")
         _llm_log(f"Vertex 성공: {len(result_text)}자")
         return result_text
     except Exception as e:
         error_msg = str(e)
         _llm_log(f"Vertex 실패: {error_msg}")
+        traceback.print_exc()
         return f"[LLM 실패] Vertex 오류: {error_msg}"
 
 
@@ -572,63 +585,52 @@ def _parse_data_url(url: str) -> tuple[str, str]:
         return ("", "")
 
 
-def _build_vertex_parts(content) -> list:
-    """OpenAI content(str 또는 parts list) → vertexai generative_models.Part 리스트.
+def _build_genai_contents(messages: list):
+    """messages → (parts, system_instruction) for google-genai generate_content.
 
-    _build_gemini_parts 와 대칭. vertexai SDK는 import 가 선택적이므로 함수 내에서 import.
+    role=='system' 은 system_instruction(str) 으로 분리하고,
+    나머지(user/model)는 types.Part 리스트로 평탄화.
+    content 가 str 이면 텍스트 Part, list 이면 text/image_url 파트를 변환.
     """
-    from vertexai.generative_models import Part
+    from google.genai import types
     import base64 as _b64
     parts = []
-    if isinstance(content, str):
-        if content:
-            parts.append(Part.from_text(content))
-        return parts
-    if isinstance(content, list):
-        for p in content:
-            t = p.get("type")
-            if t == "text":
-                txt = p.get("text", "")
-                if txt:
-                    parts.append(Part.from_text(txt))
-            elif t == "image_url":
-                url = (p.get("image_url") or {}).get("url", "")
-                mime, b64 = _parse_data_url(url)
-                if not b64:
-                    continue
-                try:
-                    raw = _b64.b64decode(b64)
-                    parts.append(Part.from_data(data=raw, mime_type=mime))
-                except Exception:
-                    _llm_log(f"vertex 이미지 파트 변환 실패: mime={mime}")
-                    traceback.print_exc()
-    return parts
-
-
-def _build_vertex_contents(messages: list):
-    """messages → vertexai SDK generate_content 용 contents.
-
-    이미지(image_url) 파트가 하나라도 있으면 Part 리스트를 반환하고,
-    없으면 기존 동작대로 단일 텍스트 문자열을 반환한다(텍스트 전용 경로 보존).
-    역할(role)은 기존 _call_vertex 와 동일하게 평탄화(flatten)한다.
-    """
-    has_image = any(
-        isinstance(m.get("content"), list)
-        and any(p.get("type") == "image_url" for p in m["content"] if isinstance(p, dict))
-        for m in messages
-    )
-    if not has_image:
-        text_parts = []
-        for m in messages:
-            content = m.get("content", "")
-            if content:
-                text_parts.append(_msg_text(content) if not isinstance(content, str) else content)
-        return "\n\n".join(text_parts)
-
-    parts = []
+    system_chunks = []
     for m in messages:
-        parts.extend(_build_vertex_parts(m.get("content", "")))
-    return parts
+        if not isinstance(m, dict):
+            continue
+        role = m.get("role", "user")
+        content = m.get("content", "")
+        if role == "system":
+            sys_text = content if isinstance(content, str) else _msg_text(content)
+            if sys_text:
+                system_chunks.append(sys_text)
+            continue
+        if isinstance(content, str):
+            if content:
+                parts.append(types.Part.from_text(text=content))
+        elif isinstance(content, list):
+            for p in content:
+                if not isinstance(p, dict):
+                    continue
+                t = p.get("type")
+                if t == "text":
+                    txt = p.get("text", "")
+                    if txt:
+                        parts.append(types.Part.from_text(text=txt))
+                elif t == "image_url":
+                    url = (p.get("image_url") or {}).get("url", "")
+                    mime, b64 = _parse_data_url(url)
+                    if not b64:
+                        continue
+                    try:
+                        raw = _b64.b64decode(b64)
+                        parts.append(types.Part.from_bytes(data=raw, mime_type=mime))
+                    except Exception:
+                        _llm_log(f"vertex(genai) 이미지 파트 변환 실패: mime={mime}")
+                        traceback.print_exc()
+    system_instruction = "\n\n".join(system_chunks) if system_chunks else None
+    return parts, system_instruction
 
 
 VISION_SUPPORTED_SERVICES = {
@@ -1511,35 +1513,33 @@ async def _stream_claude(messages: list, model: str):
 
 
 async def _stream_vertex_sdk(messages: list, model: str):
-    """Vertex AI (vertexai SDK, stream=True). 동기 generator 를 executor 로 감쌈."""
+    """Vertex AI (google-genai SDK, generate_content_stream). 동기 iterator 를 executor 로 감쌈."""
     _init_vertex()
-    if not _vertex_initialized:
+    if not _vertex_initialized or _vertex_client is None:
         yield {"type": "error", "error": "Vertex AI 초기화 실패"}
         return
 
-    from vertexai.generative_models import GenerativeModel
-
-    # messages → contents (이미지 포함 시 Part 리스트, 미포함 시 텍스트 문자열)
-    contents = _build_vertex_contents(messages)
+    parts, system_instruction = _build_genai_contents(messages)
     actual_model = model.split("/")[0]
-    vertex_model = GenerativeModel(actual_model)
+    n_img = sum(1 for m in messages if isinstance(m.get("content"), list))
 
     t0 = time.time()
     ttft = None
     accumulated = []
     completion_tokens = None
 
-    if isinstance(contents, list):
-        _llm_log(f"vertex stream 요청(vision): model={actual_model}, parts={len(contents)}")
-    else:
-        _llm_log(f"vertex stream 요청: model={actual_model}, text={len(contents)}자")
+    _llm_log(f"vertex stream 요청(genai): model={actual_model}, parts={len(parts)}" + ("(vision)" if n_img else ""))
     yield {"type": "start", "service": "vertex", "model": actual_model}
 
+    from google.genai import types
+    config = types.GenerateContentConfig(system_instruction=system_instruction) if system_instruction else None
     loop = asyncio.get_event_loop()
 
     def _consume_into_queue(q):
         try:
-            stream = vertex_model.generate_content(contents, stream=True)
+            stream = _vertex_client.models.generate_content_stream(
+                model=actual_model, contents=parts, config=config
+            )
             for event in stream:
                 text = ""
                 try:
