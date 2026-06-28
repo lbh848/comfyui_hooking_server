@@ -3505,6 +3505,11 @@
                             <button id="btn-bot-llm-batch" onclick="botLlmBatchAnalyze()" style="width:100%; background:#7C3AED; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">선택 캐릭터 일괄 정제</button>
                             <div id="bot-llm-batch-status" style="font-size:0.7rem; color:var(--text2); margin-top:4px; display:none;"></div>
                         </div>
+                        <div style="background:rgba(13,71,161,0.08); border-radius:8px; padding:10px; margin-top:8px;">
+                            <div class="section-title">캐릭터 로라 자동 세팅</div>
+                            <button id="btn-bot-auto-lora" onclick="openBotAutoLoraSetupModal()" style="width:100%; background:#0D47A1; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">선택 캐릭터 로라 자동 세팅</button>
+                            <div id="bot-auto-lora-status" style="font-size:0.7rem; color:var(--text2); margin-top:4px; display:none;"></div>
+                        </div>
                         <div style="background:rgba(0,105,92,0.08); border-radius:8px; padding:10px; margin-top:8px;">
                             <div class="section-title">분류 데이터 내보내기</div>
                             <button id="btn-export-lb-extra" onclick="exportLbExtraTxt()" style="width:100%; background:#00695C; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">lb-xnai.lb.extra.txt 내보내기</button>
@@ -25606,6 +25611,417 @@
             } catch (e) {
                 grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--error);">로드 실패: ' + e.message + '</div>';
             }
+        }
+
+        // ─── 캐릭터 로라 자동 세팅 모달 ─────────────────────────
+        let _botAutoLoraState = null;
+
+        function openBotAutoLoraSetupModal() {
+            if (!botCurrentBot) { showToast('봇을 먼저 선택하세요', 'error'); return; }
+            const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
+            if (!bot || !bot.characters || bot.characters.length === 0) {
+                showToast(`봇 "${botCurrentBot}"에 캐릭터가 없습니다`, 'error'); return;
+            }
+            _botAutoLoraState = {
+                step: 1,
+                chars: bot.characters.map(c => ({ name: c.name, rep: (c.rep_images || [])[0] || '', gender: c.gender_tag || '' })),
+                checkedChars: {},
+                profile: 'solo',
+                conflict: 'add',
+                strength: 0.5,
+                tab: 'instance',
+                instanceItems: null, instanceLoaded: false,
+                botProjects: null, botProjectsLoaded: false,
+                botSelectedProject: '', botProjectData: null,
+                loraChecked: {}, // key -> bool (기본 true; false로 해제)
+            };
+            const overlay = document.createElement('div');
+            overlay.id = 'bot-auto-lora-overlay';
+            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10012; display:flex; align-items:center; justify-content:center;';
+            overlay.innerHTML = `
+                <div style="background:var(--surface); border-radius:12px; padding:20px; max-width:1150px; width:96%; height:92vh; max-height:95vh; display:flex; flex-direction:column;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                        <h3 style="margin:0;">선택 캐릭터 로라 자동 세팅 <span id="alr-step-label" style="font-size:0.75rem; color:var(--text2); font-weight:normal;">— 1/2 캐릭터 선택</span></h3>
+                        <button onclick="document.getElementById('bot-auto-lora-overlay').remove()" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer;">x</button>
+                    </div>
+
+                    <!-- STEP 1: 캐릭터 선택 -->
+                    <div id="alr-step1" style="display:flex; flex-direction:column; flex:1; min-height:0;">
+                        <div style="font-size:0.75rem; color:var(--text2); display:flex; gap:10px; align-items:center; margin-bottom:8px; flex-wrap:wrap;">
+                            <span>선택 <span id="alr-char-count">0</span> / ${bot.characters.length}</span>
+                            <button onclick="document.querySelectorAll('.alr-char-check').forEach(c=>c.checked=true); _alrSyncCharCount()" style="background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:2px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">전체 선택</button>
+                            <button onclick="document.querySelectorAll('.alr-char-check').forEach(c=>c.checked=false); _alrSyncCharCount()" style="background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:2px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">전체 해제</button>
+                        </div>
+                        <div id="alr-char-grid" style="overflow-y:auto; flex:1 1 0; min-height:360px; display:flex; flex-wrap:wrap; align-content:flex-start; gap:10px; padding:4px; border:1px solid var(--border); border-radius:8px;"></div>
+                        <div style="display:flex; justify-content:flex-end; margin-top:10px;">
+                            <button id="alr-continue-btn" onclick="_alrGoStep2()" style="background:#0D47A1; color:#fff; border:none; padding:8px 18px; border-radius:6px; cursor:pointer; font-weight:600;">계속</button>
+                        </div>
+                    </div>
+
+                    <!-- STEP 2: 설정 + 로라 선택 -->
+                    <div id="alr-step2" style="display:none; flex-direction:column; flex:1; min-height:0;">
+                        <div style="display:flex; gap:12px; margin-bottom:10px; flex-wrap:wrap;">
+                            <div style="background:var(--surface2); border-radius:8px; padding:6px 10px;">
+                                <div style="font-size:0.7rem; color:var(--text2); margin-bottom:3px;">대상 프로필</div>
+                                <label style="font-size:0.76rem; margin-right:6px;"><input type="radio" name="alr-profile" value="solo" checked onchange="_botAutoLoraState.profile=this.value"> solo</label>
+                                <label style="font-size:0.76rem; margin-right:6px;"><input type="radio" name="alr-profile" value="group" onchange="_botAutoLoraState.profile=this.value"> group</label>
+                                <label style="font-size:0.76rem;"><input type="radio" name="alr-profile" value="face" onchange="_botAutoLoraState.profile=this.value"> face</label>
+                            </div>
+                            <div style="background:var(--surface2); border-radius:8px; padding:6px 10px;">
+                                <div style="font-size:0.7rem; color:var(--text2); margin-bottom:3px;">기존 로라 충돌 시</div>
+                                <label style="font-size:0.76rem; margin-right:6px;"><input type="radio" name="alr-conflict" value="add" checked onchange="_botAutoLoraState.conflict=this.value"> 추가(중복 제거)</label>
+                                <label style="font-size:0.76rem;"><input type="radio" name="alr-conflict" value="overwrite" onchange="_botAutoLoraState.conflict=this.value"> 덮어쓰기</label>
+                            </div>
+                            <div style="background:var(--surface2); border-radius:8px; padding:6px 10px; min-width:150px;">
+                                <div style="font-size:0.7rem; color:var(--text2); margin-bottom:3px;">임포트 강도: <span id="alr-strength-val">0.5</span></div>
+                                <input type="range" min="0" max="1" step="0.05" value="0.5" oninput="_botAutoLoraState.strength=parseFloat(this.value); document.getElementById('alr-strength-val').textContent=this.value" style="width:100%;">
+                            </div>
+                        </div>
+
+                        <div style="display:flex; gap:0; margin-bottom:8px; border:1px solid var(--border); border-radius:8px; overflow:hidden;">
+                            <button onclick="switchAutoLoraTab('instance')" id="alr-tab-instance" style="flex:1; padding:7px; border:none; background:var(--surface2); color:var(--text); cursor:pointer; font-size:0.8rem; font-weight:600;">인스턴스 (⭐ 이름 매칭)</button>
+                            <button onclick="switchAutoLoraTab('bot')" id="alr-tab-bot" style="flex:1; padding:7px; border:none; background:var(--surface2); color:var(--text); cursor:pointer; font-size:0.8rem; font-weight:600;">봇 (프로젝트)</button>
+                        </div>
+
+                        <div id="alr-tab-content" style="flex:1 1 0; overflow-y:auto; border:1px solid var(--border); border-radius:8px; padding:10px; min-height:300px;"></div>
+
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-top:10px; gap:8px;">
+                            <div id="alr-exec-status" style="font-size:0.72rem; color:var(--text2); flex:1;"></div>
+                            <button onclick="_alrBackStep1()" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:8px 16px; border-radius:6px; cursor:pointer;">뒤로</button>
+                            <button onclick="executeBotAutoLoraSetup()" style="background:#0D47A1; color:#fff; border:none; padding:8px 16px; border-radius:6px; cursor:pointer; font-weight:600;">자동 세팅 실행</button>
+                        </div>
+                    </div>
+                </div>`;
+            document.body.appendChild(overlay);
+            _renderAutoLoraStep1();
+        }
+
+        // ── STEP 1 ──
+        function _renderAutoLoraStep1() {
+            const grid = document.getElementById('alr-char-grid');
+            if (!grid || !_botAutoLoraState) return;
+            const enc = encodeURIComponent;
+            grid.innerHTML = _botAutoLoraState.chars.map(c => {
+                const checked = _botAutoLoraState.checkedChars[c.name] ? 'checked' : '';
+                const img = c.rep
+                    ? `<img src="/api/bot_lora/char_image/${enc(botCurrentBot)}/${enc(c.name)}/${enc(c.rep)}" loading="lazy" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" style="width:160px; height:160px; object-fit:cover; display:block; border-radius:6px;"><div style="width:160px; height:160px; display:none; align-items:center; justify-content:center; background:var(--surface2); border-radius:6px; font-size:1.4rem;">👤</div>`
+                    : `<div style="width:160px; height:160px; display:flex; align-items:center; justify-content:center; background:var(--surface2); border-radius:6px; font-size:1.4rem;">👤</div>`;
+                return `<label style="display:block; width:172px; max-width:172px; height:200px; padding:6px; border:1px solid var(--border); border-radius:8px; background:var(--surface2); cursor:pointer; box-sizing:border-box; overflow:hidden;">
+                    ${img}
+                    <div style="width:160px; max-width:160px; margin-top:4px; display:flex; align-items:center; gap:4px;">
+                        <input type="checkbox" class="alr-char-check" data-character="${escAttr(c.name)}" ${checked} onchange="_alrSyncCharCount()" style="cursor:pointer; flex-shrink:0;">
+                        <span style="font-size:0.74rem; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${escAttr(c.name)}">${escHtml(c.name)}</span>
+                    </div>
+                </label>`;
+            }).join('');
+            _alrSyncCharCount();
+        }
+        function _alrSyncCharCount() {
+            const n = document.querySelectorAll('.alr-char-check:checked').length;
+            const el = document.getElementById('alr-char-count');
+            if (el) el.textContent = String(n);
+            const btn = document.getElementById('alr-continue-btn');
+            if (btn) btn.disabled = n === 0;
+        }
+        function _alrSyncCheckedChars() {
+            if (!_botAutoLoraState) return;
+            const set = new Set([...document.querySelectorAll('.alr-char-check:checked')].map(c => c.dataset.character));
+            _botAutoLoraState.chars.forEach(c => { _botAutoLoraState.checkedChars[c.name] = set.has(c.name); });
+        }
+        function _alrCheckedChars() {
+            if (!_botAutoLoraState) return [];
+            return _botAutoLoraState.chars.filter(c => _botAutoLoraState.checkedChars[c.name]).map(c => c.name);
+        }
+        function _alrGoStep2() {
+            _alrSyncCheckedChars();
+            const targets = _alrCheckedChars();
+            if (targets.length === 0) { showToast('세팅할 캐릭터를 한 개 이상 선택하세요', 'error'); return; }
+            _botAutoLoraState.step = 2;
+            document.getElementById('alr-step1').style.display = 'none';
+            document.getElementById('alr-step2').style.display = 'flex';
+            document.getElementById('alr-step-label').textContent = '— 2/2 설정 & 로라 선택';
+            switchAutoLoraTab('instance');
+        }
+        function _alrBackStep1() {
+            _alrSyncCheckedChars();
+            _botAutoLoraState.step = 1;
+            document.getElementById('alr-step2').style.display = 'none';
+            document.getElementById('alr-step1').style.display = 'flex';
+            document.getElementById('alr-step-label').textContent = '— 1/2 캐릭터 선택';
+            _renderAutoLoraStep1();
+        }
+
+        // ── STEP 2: 로라 선택 키/체크 ──
+        function _alrIKey(cn, loraId, base) { return `i|${cn}|${loraId}|${base}`; }
+        function _alrBKey(cn, path) { return `b|${cn}|${path}`; }
+        function _alrLoraIsChecked(key) { return _botAutoLoraState.loraChecked[key] !== false; }
+        function _alrLoraOnChange(el) {
+            const d = el.dataset;
+            const key = d.src === 'i' ? _alrIKey(d.cn, d.lora, d.base) : _alrBKey(d.cn, d.lora);
+            _botAutoLoraState.loraChecked[key] = el.checked;
+        }
+
+        function switchAutoLoraTab(tab) {
+            if (!_botAutoLoraState) return;
+            _botAutoLoraState.tab = tab;
+            ['instance', 'bot'].forEach(t => {
+                const btn = document.getElementById('alr-tab-' + t);
+                if (!btn) return;
+                if (t === tab) { btn.style.background = 'var(--accent)'; btn.style.color = '#fff'; }
+                else { btn.style.background = 'var(--surface2)'; btn.style.color = 'var(--text)'; }
+            });
+            _renderAutoLoraTab();
+        }
+        function _renderAutoLoraTab() {
+            const c = document.getElementById('alr-tab-content');
+            if (!c || !_botAutoLoraState) return;
+            const targets = _alrCheckedChars();
+            if (_botAutoLoraState.tab === 'instance') _renderAutoLoraInstance(targets, c);
+            else _renderAutoLoraBot(targets, c);
+        }
+
+        async function _renderAutoLoraInstance(targets, c) {
+            if (!_botAutoLoraState.instanceLoaded) {
+                c.innerHTML = '<div style="text-align:center; color:var(--text2); padding:12px;">로딩중...</div>';
+                try {
+                    const resp = await fetch('/api/instance_lora/for_picker');
+                    const data = await resp.json();
+                    if (!data.success) { c.innerHTML = '<div style="color:var(--error);">인스턴스 로라 로드 실패: ' + escapeHtml(data.error || '응답 실패') + '</div>'; return; }
+                    _botAutoLoraState.instanceItems = data.items || [];
+                    _botAutoLoraState.instanceLoaded = true;
+                } catch (e) {
+                    c.innerHTML = '<div style="color:var(--error);">인스턴스 로라 로드 실패: ' + escapeHtml(e.message) + '</div>'; return;
+                }
+            }
+            const items = _botAutoLoraState.instanceItems || [];
+            const enc = encodeURIComponent;
+            c.innerHTML = '<div style="font-size:0.72rem; color:var(--text2); margin-bottom:6px;">체크된 로라만 임포트됩니다 (기본: 캐릭터 이름과 lora_id/trigger 매칭).</div>' + targets.map(cn => {
+                const matched = items.filter(it => _isInstanceLoraRecommended(it, cn));
+                let body;
+                if (matched.length === 0) {
+                    body = '<div style="font-size:0.7rem; color:var(--warning);">매칭된 인스턴스 로라 없음</div>';
+                } else {
+                    body = matched.map(it => {
+                        let prev = '';
+                        if (it.first_image) prev = `/api/instance_lora/image/${enc(it.lora_id)}/${enc(it.first_image)}`;
+                        const profs = Object.keys(it.profiles || {});
+                        return profs.map(bk => {
+                            const key = _alrIKey(cn, it.lora_id, bk);
+                            const chk = _alrLoraIsChecked(key) ? 'checked' : '';
+                            const img = prev ? `<img src="${escapeHtml(prev)}" loading="lazy" onerror="this.style.display='none'" style="width:48px; height:48px; object-fit:cover; border-radius:4px; flex-shrink:0;">` : '<div style="width:48px; height:48px; display:flex; align-items:center; justify-content:center; background:var(--surface2); border-radius:4px; flex-shrink:0;">⚡</div>';
+                            return `<label style="display:flex; align-items:center; gap:6px; padding:4px 6px; border:1px solid var(--border); border-radius:5px; background:var(--surface2); cursor:pointer; margin-top:3px;">
+                                ${img}
+                                <input type="checkbox" data-src="i" data-cn="${escAttr(cn)}" data-lora="${escAttr(it.lora_id)}" data-base="${escAttr(bk)}" ${chk} onchange="_alrLoraOnChange(this)" style="cursor:pointer;">
+                                <span style="font-size:0.7rem;"><b>⭐ ${escHtml(it.lora_id)}</b> <span style="color:var(--text2);">(${bk})</span><br><span style="color:var(--text2);">${escHtml(it.trigger || '')}</span></span>
+                            </label>`;
+                        }).join('');
+                    }).join('');
+                }
+                return `<div style="border:1px solid var(--border); border-radius:6px; padding:6px 8px; margin-bottom:6px;">
+                    <div style="font-size:0.8rem; font-weight:600; margin-bottom:3px;">${escHtml(cn)} <span style="color:var(--text2); font-weight:normal;">— ${matched.length}개 매칭</span></div>
+                    ${body}
+                </div>`;
+            }).join('');
+        }
+
+        async function _renderAutoLoraBot(targets, c) {
+            const header = '<div style="font-size:0.72rem; color:var(--text2); margin-bottom:6px;">봇: <b>' + escHtml(botCurrentBot) + '</b> (고정) — 프로젝트를 선택하면 그 안에서 캐릭터 이름 매칭 representative 로라를 가져옵니다.</div>';
+            if (!_botAutoLoraState.botProjectsLoaded) {
+                c.innerHTML = header + '<div style="text-align:center; color:var(--text2); padding:12px;">프로젝트 로딩중...</div>';
+                try {
+                    const resp = await fetchJSON('/api/bot_lora/projects?bot=' + encodeURIComponent(botCurrentBot));
+                    if (!resp.success) { c.innerHTML = header + '<div style="color:var(--error);">프로젝트 로드 실패: ' + escapeHtml(resp.error || '응답 실패') + '</div>'; return; }
+                    _botAutoLoraState.botProjects = resp.projects || [];
+                    _botAutoLoraState.botProjectsLoaded = true;
+                } catch (e) {
+                    c.innerHTML = header + '<div style="color:var(--error);">프로젝트 로드 실패: ' + escapeHtml(e.message) + '</div>'; return;
+                }
+            }
+            const projects = _botAutoLoraState.botProjects || [];
+            let html = header;
+            html += '<div style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px;">';
+            if (projects.length === 0) {
+                html += '<div style="color:var(--warning); font-size:0.72rem;">학습 프로젝트가 없습니다</div>';
+            } else {
+                projects.forEach(p => {
+                    const sel = _botAutoLoraState.botSelectedProject === p.name;
+                    html += `<button onclick="selectAutoLoraBotProject('${escAttr(p.name)}')" style="padding:4px 10px; border:1px solid ${sel ? 'var(--accent)' : 'var(--border)'}; background:${sel ? 'var(--accent)' : 'var(--surface2)'}; color:${sel ? '#fff' : 'var(--text)'}; border-radius:4px; cursor:pointer; font-size:0.72rem;">${escHtml(p.name)} (${p.character_count})</button>`;
+                });
+            }
+            html += '</div>';
+            if (!_botAutoLoraState.botSelectedProject || !_botAutoLoraState.botProjectData) {
+                html += '<div style="text-align:center; color:var(--text2); padding:12px;">프로젝트를 선택하세요.</div>';
+            } else {
+                const pd = _botAutoLoraState.botProjectData;
+                const prof = (pd.training_config && pd.training_config.profile) || 'anima';
+                const chars = pd.characters || [];
+                html += `<div style="font-size:0.72rem; color:var(--text2); margin-bottom:6px;">선택 프로젝트 BASE: <b>${escHtml(prof)}</b></div>`;
+                html += targets.map(cn => {
+                    const mch = chars.find(ch => {
+                        const a = _normCharMatch(ch.name), b = _normCharMatch(cn);
+                        return a && b && (a.includes(b) || b.includes(a));
+                    });
+                    let body;
+                    if (!mch) {
+                        body = '<div style="font-size:0.7rem; color:var(--warning);">이 프로젝트에 매칭되는 캐릭터 없음</div>';
+                    } else {
+                        const sessions = (mch.trained_sessions || []).filter(s => !!s.representative);
+                        const prio = sessions.filter(s => s.priority_rank && s.priority_rank > 0).sort((a, b) => (a.priority_rank || 999) - (b.priority_rank || 999));
+                        const rep = prio.length > 0 ? prio[0] : sessions[0];
+                        if (!rep) {
+                            body = '<div style="font-size:0.7rem; color:var(--warning);">대표 로라 미선택</div>';
+                        } else {
+                            let repData = {};
+                            try { repData = JSON.parse(rep.representative); } catch (_) {}
+                            const loraPath = [botCurrentBot, 'Lora', _botAutoLoraState.botSelectedProject, mch.name, rep.name, repData.safetensors || ''].join('\\');
+                            const key = _alrBKey(cn, loraPath);
+                            const chk = _alrLoraIsChecked(key) ? 'checked' : '';
+                            const img = rep.preview_url ? `<img src="${escapeHtml(rep.preview_url)}" loading="lazy" onerror="this.style.display='none'" style="width:48px; height:48px; object-fit:cover; border-radius:4px; flex-shrink:0;">` : '<div style="width:48px; height:48px; display:flex; align-items:center; justify-content:center; background:var(--surface2); border-radius:4px; flex-shrink:0;">👤</div>';
+                            body = `<label style="display:flex; align-items:center; gap:6px; padding:4px 6px; border:1px solid var(--border); border-radius:5px; background:var(--surface2); cursor:pointer; margin-top:3px;">
+                                ${img}
+                                <input type="checkbox" data-src="b" data-cn="${escAttr(cn)}" data-lora="${escAttr(loraPath)}" ${chk} onchange="_alrLoraOnChange(this)" style="cursor:pointer;">
+                                <span style="font-size:0.7rem;"><b>⭐ ${escHtml(mch.name)}</b> <span style="color:var(--text2);">→ ${escHtml(rep.name)}</span></span>
+                            </label>`;
+                        }
+                    }
+                    return `<div style="border:1px solid var(--border); border-radius:6px; padding:6px 8px; margin-bottom:6px;">
+                        <div style="font-size:0.8rem; font-weight:600; margin-bottom:3px;">${escHtml(cn)}</div>
+                        ${body}
+                    </div>`;
+                }).join('');
+            }
+            c.innerHTML = html;
+        }
+
+        async function selectAutoLoraBotProject(projectName) {
+            if (!_botAutoLoraState) return;
+            _botAutoLoraState.botSelectedProject = projectName;
+            const c = document.getElementById('alr-tab-content');
+            if (c) c.innerHTML = '<div style="text-align:center; color:var(--text2); padding:12px;">로딩중...</div>';
+            try {
+                const enc = encodeURIComponent;
+                const resp = await fetchJSON(`/api/bot_lora/project?bot=${enc(botCurrentBot)}&project=${enc(projectName)}`);
+                if (!resp.success) {
+                    _botAutoLoraState.botProjectData = null;
+                    if (c) c.innerHTML = '<div style="color:var(--error);">프로젝트 로드 실패: ' + escapeHtml(resp.error || '응답 실패') + '</div>';
+                    return;
+                }
+                _botAutoLoraState.botProjectData = resp;
+                _renderAutoLoraTab();
+            } catch (e) {
+                _botAutoLoraState.botProjectData = null;
+                if (c) c.innerHTML = '<div style="color:var(--error);">프로젝트 로드 실패: ' + escapeHtml(e.message) + '</div>';
+            }
+        }
+
+        async function executeBotAutoLoraSetup() {
+            const st = document.getElementById('alr-exec-status');
+            if (!_botAutoLoraState) return;
+            const targets = _alrCheckedChars();
+            if (targets.length === 0) { if (st) { st.style.color = 'var(--error)'; st.textContent = '선택된 캐릭터가 없습니다. 뒤로 가서 선택하세요.'; } return; }
+
+            const tab = _botAutoLoraState.tab;
+            const srcLabel = tab === 'bot' ? '봇' : '인스턴스';
+            if (tab === 'bot' && !_botAutoLoraState.botSelectedProject) { if (st) { st.style.color = 'var(--error)'; st.textContent = '봇 탭에서 프로젝트를 먼저 선택하세요.'; } return; }
+            if (tab === 'instance' && !_botAutoLoraState.instanceLoaded) { if (st) { st.style.color = 'var(--error)'; st.textContent = '인스턴스 목록이 아직 로드되지 않았습니다.'; } return; }
+
+            const profile = _botAutoLoraState.profile;
+            const isFace = profile === 'face';
+            const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
+            const instanceItems = _botAutoLoraState.instanceItems || [];
+            const botProject = _botAutoLoraState.botProjectData;
+            const botProf = botProject ? ((botProject.training_config && botProject.training_config.profile) || 'anima') : 'anima';
+            const enc = encodeURIComponent;
+
+            if (st) { st.style.color = 'var(--text2)'; st.textContent = `${srcLabel} 소스에서 세팅 중...`; }
+
+            let totalAdded = 0;
+            const results = [];
+            for (const cn of targets) {
+                try {
+                    const charIdx = bot.characters.findIndex(c => c.name === cn);
+                    if (charIdx < 0) { results.push(`${cn}: 캐릭터 없음`); continue; }
+
+                    let loras = isFace ? getBotCharFaceLoras(cn) : getBotCharLoras(cn, profile);
+                    if (_botAutoLoraState.conflict === 'overwrite') loras = [];
+                    const before = loras.length;
+                    const existPaths = new Set(loras.map(l => l.lora_path).filter(Boolean));
+                    let skippedDup = 0;
+
+                    if (tab === 'instance') {
+                        // 인스턴스: 체크된 매칭 로라만
+                        const matchedInst = instanceItems.filter(it => _isInstanceLoraRecommended(it, cn));
+                        for (const it of matchedInst) {
+                            let previewUrl = '';
+                            if (it.first_image) previewUrl = `/api/instance_lora/image/${enc(it.lora_id)}/${enc(it.first_image)}`;
+                            for (const [baseKey, pData] of Object.entries(it.profiles || {})) {
+                                if (!_alrLoraIsChecked(_alrIKey(cn, it.lora_id, baseKey))) continue;
+                                if (existPaths.has(pData.lora_path)) { skippedDup++; continue; }
+                                loras.push({
+                                    source: 'instance', name: `${it.lora_id} (${baseKey})`, character: 'instance',
+                                    lora_path: pData.lora_path, strength: _botAutoLoraState.strength, preview_url: previewUrl,
+                                    trigger: it.trigger || '', BASE: baseKey, lora_id: it.lora_id,
+                                });
+                                existPaths.add(pData.lora_path);
+                            }
+                        }
+                    } else {
+                        // 봇: 체크된 representative만
+                        const chars = (botProject && botProject.characters) || [];
+                        const mch = chars.find(ch => {
+                            const a = _normCharMatch(ch.name), b = _normCharMatch(cn);
+                            return a && b && (a.includes(b) || b.includes(a));
+                        });
+                        if (mch) {
+                            const sessions = (mch.trained_sessions || []).filter(s => !!s.representative);
+                            const prio = sessions.filter(s => s.priority_rank && s.priority_rank > 0).sort((a, b) => (a.priority_rank || 999) - (b.priority_rank || 999));
+                            const rep = prio.length > 0 ? prio[0] : sessions[0];
+                            if (rep) {
+                                let repData = {};
+                                try { repData = JSON.parse(rep.representative); } catch (_) {}
+                                const botLoraPath = [botCurrentBot, 'Lora', _botAutoLoraState.botSelectedProject, mch.name, rep.name, repData.safetensors || ''].join('\\');
+                                if (_alrLoraIsChecked(_alrBKey(cn, botLoraPath))) {
+                                    if (existPaths.has(botLoraPath)) { skippedDup++; }
+                                    else {
+                                        loras.push({
+                                            source: 'bot', name: mch.name, bot_name: botCurrentBot,
+                                            project_name: _botAutoLoraState.botSelectedProject, character: mch.name,
+                                            lora_path: botLoraPath, strength: _botAutoLoraState.strength,
+                                            preview_url: rep.preview_url || '', trigger: mch.trigger || mch.name, BASE: botProf,
+                                        });
+                                        existPaths.add(botLoraPath);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    const added = loras.length - before;
+                    const kept = _botAutoLoraState.conflict === 'overwrite' ? 0 : before;
+                    if (isFace) {
+                        setBotCharFaceLoras(cn, loras);
+                        renderBotCharFaceLoraList(charIdx, cn, loras);
+                        await saveBotCharFaceLoras(cn);
+                    } else {
+                        setBotCharLoras(cn, loras, profile);
+                        renderBotCharLoraList(charIdx, cn, loras);
+                        await saveBotCharLoras(cn, profile);
+                    }
+                    totalAdded += added;
+                    const parts = [`${cn}: 기존${kept} +${added}`];
+                    if (skippedDup > 0) parts.push(`(중복${skippedDup}제거)`);
+                    results.push(parts.join(' '));
+                } catch (e) {
+                    console.error(`[BOT_AUTO_LORA] ${cn} 세팅 실패:`, e);
+                    results.push(`${cn}: 오류(${e.message})`);
+                }
+            }
+
+            const msg = `완료[${srcLabel}] — ${targets.length}캐릭터 / +${totalAdded}로라. ` + results.join(' / ');
+            if (st) { st.style.color = 'var(--text2)'; st.textContent = msg; }
+            const statusBar = document.getElementById('bot-auto-lora-status');
+            if (statusBar) { statusBar.style.display = 'block'; statusBar.textContent = msg; }
+            showToast(`자동 세팅 완료(${srcLabel}): ${targets.length}캐릭터 +${totalAdded}로라`, totalAdded > 0 ? 'success' : 'info');
         }
 
         async function checkPatchFiles() {
