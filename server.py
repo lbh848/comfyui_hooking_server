@@ -141,7 +141,8 @@ DEFAULT_CONFIG = {
     "anima_asset_workflow_source_path": "",  # ANIMA 에셋 생성 워크플로우 원본 소스 전체 경로
     "asset_workflow_type": "regular",  # 에셋 워크플로우 타입: "regular" | "anima"
     "tag_analysis_workflow_source_path": "",  # 태그 분석 워크플로우 원본 소스 전체 경로
-    "asset_tag_analysis_workflow_source_path": "",  # 에셋용 태그 분석 워크플로우 원본 소스 전체 경로
+    "asset_tag_analysis_workflow_source_path": "",  # 폴백 태그 분석 워크플로우 원본 소스 전체 경로 (primary 결과가 비었을 때, 예: 얼굴 미감지)
+    "use_builtin_tagger": False,  # 내장 WD Tagger(CPU ONNX) 사용 여부. true면 모든 태그 분석 경로가 ComfyUI 대신 내장 tagger 사용
     "lora_training_workflow_source_paths": {"anima": "", "sdxl": ""},  # 로라 학습 워크플로우 원본 소스 경로 (profile별)
     "face_extract_workflow_source_path": "",  # 얼굴 이미지 추출 워크플로우 원본 소스 전체 경로
     "lora_load_path": "",  # 로라 모델 로드 폴더 절대 경로 (에셋, SOYA_CHAR_LORA 자동 추가)
@@ -269,9 +270,22 @@ print(f"[ASSET_MODE] 초기화: source={asset_mode.workflow_source_path}, charac
 # ─── 에셋툴 모드 초기화 ───
 asset_tool = asset_tool_mode.AssetToolMode()
 asset_tool.workflow_source_path = app_config.get("tag_analysis_workflow_source_path", "")
+asset_tool.fallback_workflow_source_path = app_config.get("asset_tag_analysis_workflow_source_path", "")
 asset_tool.mode_log_func = mode_logger.log
+asset_tool.use_builtin_tagger = bool(app_config.get("use_builtin_tagger", False))
+if asset_tool.use_builtin_tagger:
+    try:
+        from modes.wd_tagger_standalone import WDTagger
+        print("[ASSET_TOOL] 내장 WD Tagger 모델 로드 중 (CPU, 서버 시작 시 다운로드/워밍업)...")
+        asset_tool.builtin_tagger = WDTagger()
+        print("[ASSET_TOOL] 내장 WD Tagger 초기화 완료 (CPU)")
+    except Exception as e:
+        print(f"[ASSET_TOOL] 내장 WD Tagger 초기화 실패: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
+        asset_tool.builtin_tagger = None
 bot_mode.set_asset_tool(asset_tool)
-print(f"[ASSET_TOOL] 초기화: source={asset_tool.workflow_source_path}")
+print(f"[ASSET_TOOL] 초기화: source={asset_tool.workflow_source_path}, fallback={asset_tool.fallback_workflow_source_path}, builtin_tagger={asset_tool.use_builtin_tagger}")
 
 # ─── 포즈 편집 모드 초기화 ───
 pose_mode.det_model_path = app_config.get("dwpose_det_model", "")
@@ -3577,9 +3591,28 @@ async def handle_api_config(request: web.Request) -> web.Response:
                 asset_tool._api_workflow = None
                 asset_tool._workflow_hash = ""
 
-            # 에셋용 태그 분석 워크플로우 설정 업데이트
+            # 폴백 태그 분석 워크플로우 설정 업데이트
             if "asset_tag_analysis_workflow_source_path" in body:
-                app_config["asset_tag_analysis_workflow_source_path"] = str(body["asset_tag_analysis_workflow_source_path"])
+                fb_path = str(body["asset_tag_analysis_workflow_source_path"])
+                app_config["asset_tag_analysis_workflow_source_path"] = fb_path
+                asset_tool.fallback_workflow_source_path = fb_path
+                asset_tool._fallback_api_workflow = None
+                asset_tool._fallback_hash = ""
+
+            # 내장 WD Tagger 사용 여부 업데이트
+            if "use_builtin_tagger" in body:
+                asset_tool.use_builtin_tagger = bool(body["use_builtin_tagger"])
+                app_config["use_builtin_tagger"] = asset_tool.use_builtin_tagger
+                if asset_tool.use_builtin_tagger and asset_tool.builtin_tagger is None:
+                    try:
+                        from modes.wd_tagger_standalone import WDTagger
+                        print("[ASSET_TOOL] 설정 변경으로 내장 WD Tagger 로드 중 (CPU)...")
+                        asset_tool.builtin_tagger = WDTagger()
+                        print("[ASSET_TOOL] 내장 WD Tagger 로드 완료")
+                    except Exception as e:
+                        print(f"[ASSET_TOOL] 내장 WD Tagger 로드 실패: {type(e).__name__}: {e}")
+                        import traceback
+                        traceback.print_exc()
 
             # LLM 서비스 설정 업데이트
             # 주의: llm_api_key/llm_api_key2 는 /api/llm/keys 에서 별도 관리.

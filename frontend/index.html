@@ -6729,6 +6729,13 @@
                             <div class="title">🔍 스마트 매치용 태그 분석 워크플로우</div>
                             <div class="desc">스마트 매치 태그 분석에 사용할 워크플로우 파일 (공통설정 탭 베이스 경로 공유)</div>
                         </div>
+                        <label style="display:flex; align-items:center; gap:6px; white-space:nowrap;"
+                               title="체크 시 모든 태그 분석 경로가 ComfyUI 대신 내장 WD Tagger(CPU)를 사용합니다.">
+                            <input type="checkbox" id="setting-use-builtin-tagger"
+                                   onchange="onUseBuiltinTaggerChange(this.checked)"
+                                   style="accent-color:var(--accent); cursor:pointer;">
+                            내장 WD Tagger 사용 (CPU)
+                        </label>
                     </div>
                     <div class="form-group" style="margin-top: -8px;">
                         <div class="autocomplete-wrapper">
@@ -6736,15 +6743,15 @@
                                    oninput="onTagAnalysisFilenameInput(this.value)" onfocus="onTagAnalysisFilenameInput(this.value)">
                             <div class="autocomplete-list" id="tag-analysis-workflow-autocomplete"></div>
                         </div>
-                        <div class="hint">공통설정 탭의 '베이스 경로'에서 검색됩니다</div>
+                        <div class="hint">공통설정 탭의 '베이스 경로'에서 검색됩니다 · 내장 tagger 사용 시 이 워크플로우는 미사용</div>
                     </div>
                     <input type="hidden" id="setting-tag-analysis-workflow-source-path">
 
-                    <!-- 에셋용 태그 분석 모드 -->
+                    <!-- 폴백 태그 분석 모드 -->
                     <div class="setting-row" style="margin-top: 12px;">
                         <div class="setting-label">
-                            <div class="title">🏷️ 에셋용 태그 분석 워크플로우</div>
-                            <div class="desc">에셋 생성 시 태그 분석에 사용할 워크플로우 파일 (공통설정 탭 베이스 경로 공유)</div>
+                            <div class="title">🛟 폴백 태그 분석 워크플로우</div>
+                            <div class="desc">스마트매치용 결과가 비었을 때(예: 얼굴 미감지) 사용할 폴백 워크플로우 파일 (공통설정 탭 베이스 경로 공유)</div>
                         </div>
                     </div>
                     <div class="form-group" style="margin-top: -8px;">
@@ -8668,6 +8675,10 @@
             document.getElementById('setting-tag-analysis-workflow-filename').value = tagAnalysisSplit.filename;
             document.getElementById('setting-tag-analysis-workflow-source-path').value = tagAnalysisPath;
 
+            // 내장 WD Tagger 사용 여부
+            document.getElementById('setting-use-builtin-tagger').checked = !!(currentConfig.use_builtin_tagger);
+            onUseBuiltinTaggerChange(!!(currentConfig.use_builtin_tagger));
+
             // 에셋용 태그 분석 모드
             const assetTagAnalysisPath = currentConfig.asset_tag_analysis_workflow_source_path || '';
             const assetTagAnalysisSplit = splitWorkflowPath(assetTagAnalysisPath);
@@ -9041,7 +9052,8 @@
                 anima_asset_workflow_source_path: 'ANIMA 에셋 생성 워크플로우',
                 asset_workflow_type: '에셋 워크플로우 타입',
                 tag_analysis_workflow_source_path: '스마트 매치용 태그 분석 워크플로우',
-                asset_tag_analysis_workflow_source_path: '에셋용 태그 분석 워크플로우',
+                asset_tag_analysis_workflow_source_path: '폴백 태그 분석 워크플로우',
+                use_builtin_tagger: '내장 WD Tagger 사용',
                 dwpose_det_model: 'DWPose 탐지 모델',
                 dwpose_pose_model: 'DWPose 포즈 모델',
                 dwpose_model_cache_dir: '모델 캐시 디렉토리',
@@ -9294,6 +9306,7 @@
                 asset_workflow_type: document.getElementById('setting-workflow-type-anima').checked ? 'anima' : 'regular',
                 tag_analysis_workflow_source_path: document.getElementById('setting-tag-analysis-workflow-source-path').value,
                 asset_tag_analysis_workflow_source_path: document.getElementById('setting-asset-tag-analysis-workflow-source-path').value,
+                use_builtin_tagger: document.getElementById('setting-use-builtin-tagger').checked,
                 lora_training_workflow_source_paths: {
                     anima: document.getElementById('setting-lora-workflow-anima-source-path').value,
                     sdxl: document.getElementById('setting-lora-workflow-sdxl-source-path').value
@@ -10731,6 +10744,26 @@
             const baseDir = document.getElementById('setting-workflow-base-dir').value;
             const filename = document.getElementById('setting-asset-tag-analysis-workflow-filename').value;
             document.getElementById('setting-asset-tag-analysis-workflow-source-path').value = combineWorkflowPath(baseDir, filename);
+        }
+
+        // 내장 WD Tagger 사용 시 태그 분석 워크플로우 입력란(스마트매치/폴백) 비활성화/활성화
+        function onUseBuiltinTaggerChange(checked) {
+            const ids = [
+                'setting-tag-analysis-workflow-filename',      // 스마트매치용 (얼굴)
+                'setting-asset-tag-analysis-workflow-filename' // 폴백 (범용)
+            ];
+            ids.forEach(id => {
+                const el = document.getElementById(id);
+                if (!el) return;
+                el.disabled = checked;
+                el.style.opacity = checked ? '0.4' : '';
+                el.style.cursor = checked ? 'not-allowed' : '';
+            });
+            // 자동완성 리스트도 숨김
+            if (checked) {
+                document.getElementById('tag-analysis-workflow-autocomplete')?.classList.remove('visible');
+                document.getElementById('asset-tag-analysis-workflow-autocomplete')?.classList.remove('visible');
+            }
         }
 
         // 로라 학습 워크플로우 자동완성 - Anima

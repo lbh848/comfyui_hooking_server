@@ -49,3 +49,5 @@ graphify-out/
 
 # Notification cache
 notification_cache.json
+# Built-in WD Tagger downloaded model (362MB ONNX, regenerate at runtime)
+tagger_data/
