@@ -6383,6 +6383,18 @@
                         </div>
                     </div>
 
+                    <!-- LLM 자동 분류 재시도 대기 시간 -->
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="title">LLM 자동 분류 재시도 대기(초)</div>
+                            <div class="desc">얼굴/눈 태그 분류 · LoRA 프롬프트 정제가 실패해 재시도할 때마다 대기하는 고정 시간(초). 0이면 바로 재시도. face/lora 공통.</div>
+                        </div>
+                        <div class="setting-control">
+                            <input type="number" id="setting-auto-llm-retry-delay" min="0" max="60" step="0.5"
+                                   style="width: 80px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: .85rem;">
+                        </div>
+                    </div>
+
                     <!-- 임베딩 설정 -->
                     <div class="setting-row">
                         <div class="setting-label">
@@ -8575,6 +8587,8 @@
             if (llmUrl2El) llmUrl2El.value = currentConfig.llm_url2 || '';
             const aftRetriesEl = document.getElementById('setting-auto-face-tag-retries');
             if (aftRetriesEl) aftRetriesEl.value = (currentConfig.auto_face_tag_max_retries ?? 2);
+            const aftDelayEl = document.getElementById('setting-auto-llm-retry-delay');
+            if (aftDelayEl) aftDelayEl.value = (currentConfig.auto_llm_retry_delay_sec ?? 1.0);
             const llmPresetEl = document.getElementById('setting-llm-reasoning-preset');
             if (llmPresetEl) llmPresetEl.value = currentConfig.llm_reasoning_preset || 'auto';
             const llmEffortEl = document.getElementById('setting-llm-reasoning-effort');
@@ -9337,6 +9351,7 @@
                 debug_workflow_source_path: document.getElementById('setting-debug-workflow-source-path').value,
                 queue_type_order: currentConfig.queue_type_order || {},
                 auto_face_tag_max_retries: parseInt(document.getElementById('setting-auto-face-tag-retries').value) || 0,
+                auto_llm_retry_delay_sec: parseFloat(document.getElementById('setting-auto-llm-retry-delay').value) || 0,
             };
 
             try {

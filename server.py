@@ -127,6 +127,7 @@ DEFAULT_CONFIG = {
     "llm_stream": False,
     "auto_face_tag_max_retries": 2,   # LLM 자동 얼굴/눈 태그 분류 재시도 횟수 (외부 API 실패/JSON 파싱 실패 시)
     "auto_lora_prompt_max_retries": 2,   # LLM 자동 LoRA 프롬프트 정제 재시도 횟수 (외부 API 실패/JSON 파싱 실패 시)
+    "auto_llm_retry_delay_sec": 1.0,   # LLM 자동 분류 재시도 간 고정 대기 시간(초) - face/lora 공통
     "embedding_provider": "voyage",  # 임베딩 프로바이더: voyage / custom
     "embedding_url": "https://api.voyageai.com/v1/embeddings",  # 임베딩 API URL
     "embedding_api_key": "",      # 임베딩 API 키

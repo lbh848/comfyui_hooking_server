@@ -2732,8 +2732,9 @@ async def run_auto_classify_face_tags(bot_name: str, char_name: str) -> dict:
                 print(f"[BOT_MODE] LLM 호출 실패 (시도 {attempt + 1}/{max_retries + 1}): {raw}")
 
             if attempt < max_retries:
-                print(f"[BOT_MODE] 재시도 대기 중... ({attempt + 1}/{max_retries})")
-                await asyncio.sleep(1.0 * (attempt + 1))
+                retry_delay = max(0.0, float(cfg.get("auto_llm_retry_delay_sec", 1.0)))
+                print(f"[BOT_MODE] 재시도 대기 중... ({attempt + 1}/{max_retries}) {retry_delay}초")
+                await asyncio.sleep(retry_delay)
 
         await _notify_llm_widget("error", {"error": last_err or "알 수 없는 오류", "elapsed": round(total_elapsed, 3)})
         _log_lighbd_history({
@@ -2938,8 +2939,9 @@ async def run_lb_extra_refine(bot_name: str, char_name: str, appearance_tags: li
                 print(f"[BOT_MODE] LLM 호출 실패 (시도 {attempt + 1}/{max_retries + 1}): {raw}")
 
             if attempt < max_retries:
-                print(f"[BOT_MODE] 재시도 대기 중... ({attempt + 1}/{max_retries})")
-                await asyncio.sleep(1.0 * (attempt + 1))
+                retry_delay = max(0.0, float(cfg.get("auto_llm_retry_delay_sec", 1.0)))
+                print(f"[BOT_MODE] 재시도 대기 중... ({attempt + 1}/{max_retries}) {retry_delay}초")
+                await asyncio.sleep(retry_delay)
 
         await _notify_llm_widget("error", {"error": last_err or "알 수 없는 오류", "elapsed": round(total_elapsed, 3)})
         _log_lighbd_history({
