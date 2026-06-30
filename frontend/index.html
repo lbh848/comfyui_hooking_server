@@ -5855,7 +5855,10 @@
     <div class="modal" id="instance-lora-create-modal">
         <div class="modal-content" style="width:900px; max-width:900px; height:80vh; max-height:80vh; overflow:hidden;">
             <div class="modal-header">
-                <h2>인스턴스 로라 생성</h2>
+                <div style="display:flex; align-items:center; gap:10px;">
+                    <h2>인스턴스 로라 생성</h2>
+                    <button type="button" onclick="_openAutoLoraPromptModal()" title="캐릭터 LoRA 정제 프롬프트 보기/편집" style="padding:5px 12px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:0.8rem;font-weight:600;">⚙️ LLM 프롬프트</button>
+                </div>
                 <button class="modal-close" onclick="closeInstanceLoraCreateModal()">&times;</button>
             </div>
             <div class="modal-body" style="display:flex; gap:16px; padding:16px; height:calc(80vh - 130px); min-height:0; overflow:hidden;">
