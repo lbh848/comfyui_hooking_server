@@ -6997,6 +6997,44 @@ async def handle_api_bot_lora_characters_import(request):
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 
+async def handle_api_bot_lora_characters_importable_from_project(request):
+    """소스 프로젝트에는 있지만 대상(현재) 프로젝트에는 없는 캐릭터 목록"""
+    try:
+        src_bot = request.query.get("src_bot", "")
+        src_project = request.query.get("src_project", "")
+        dst_bot = request.query.get("dst_bot", "")
+        dst_project = request.query.get("dst_project", "")
+        if not src_bot or not src_project or not dst_bot or not dst_project:
+            return web.json_response({"success": False, "error": "소스/대상 봇·프로젝트 이름 필수"}, status=400)
+        from modes.bot_lora_mode import list_project_importable_characters
+        result = list_project_importable_characters(src_bot, src_project, dst_bot, dst_project)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[BOT_LORA_API] 프로젝트 간 임포트 가능 캐릭터 조회 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_bot_lora_characters_import_from_project(request):
+    """소스 프로젝트의 캐릭터를 대상(현재) 프로젝트로 임포트"""
+    try:
+        body = await request.json()
+        src_bot = body.get("src_bot", "")
+        src_project = body.get("src_project", "")
+        dst_bot = body.get("dst_bot", "")
+        dst_project = body.get("dst_project", "")
+        char_names = body.get("characters", [])
+        if not src_bot or not src_project or not dst_bot or not dst_project:
+            return web.json_response({"success": False, "error": "소스/대상 봇·프로젝트 이름 필수"}, status=400)
+        from modes.bot_lora_mode import import_characters_from_project
+        result = import_characters_from_project(src_bot, src_project, dst_bot, dst_project, char_names)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[BOT_LORA_API] 프로젝트 간 캐릭터 임포트 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
 async def handle_api_bot_lora_character_remove(request):
     """프로젝트에서 캐릭터 제거"""
     try:
@@ -8390,6 +8428,8 @@ app.router.add_get("/api/bot_lora/bots", handle_api_bot_lora_bots)
 app.router.add_get("/api/bot_lora/characters/importable", handle_api_bot_lora_characters_importable)
 app.router.add_post("/api/bot_lora/characters/import", handle_api_bot_lora_characters_import)
 app.router.add_post("/api/bot_lora/character/remove", handle_api_bot_lora_character_remove)
+app.router.add_get("/api/bot_lora/characters/importable_from_project", handle_api_bot_lora_characters_importable_from_project)
+app.router.add_post("/api/bot_lora/characters/import_from_project", handle_api_bot_lora_characters_import_from_project)
 app.router.add_get("/api/bot_lora/projects", handle_api_bot_lora_projects)
 app.router.add_post("/api/bot_lora/project/add", handle_api_bot_lora_project_add)
 app.router.add_post("/api/bot_lora/project/delete", handle_api_bot_lora_project_delete)

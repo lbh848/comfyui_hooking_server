@@ -249,6 +249,114 @@ def import_characters(bot_name: str, project_name: str, char_names: list, face_c
     return {"success": True, "added": added, "count": len(added)}
 
 
+# ─── 프로젝트 간 캐릭터 임포트 ────────────────────────────────
+
+def list_project_importable_characters(src_bot: str, src_project: str, dst_bot: str, dst_project: str) -> dict:
+    """소스 프로젝트에는 있지만 대상(현재) 프로젝트에는 없는 캐릭터 목록 반환.
+    각 캐릭터의 프로젝트 학습 이미지 수를 함께 반환한다."""
+    if not src_bot or not src_project or not dst_bot or not dst_project:
+        print("[BOT_LORA_PROJ_IMPORT] 필수 파라미터 누락")
+        return {"success": False, "error": "소스/대상 봇·프로젝트 이름 필수"}
+
+    manage_data = _load_bot_lora_manage()
+    src_proj = _get_project_config(manage_data, src_bot, src_project)
+    if not src_proj:
+        print(f"[BOT_LORA_PROJ_IMPORT] 소스 프로젝트 없음: {src_bot}/{src_project}")
+        return {"success": False, "error": "소스 프로젝트를 찾을 수 없습니다"}
+
+    dst_proj = _get_project_config(manage_data, dst_bot, dst_project)
+    existing = set(dst_proj.get("characters", {}).keys()) if dst_proj else set()
+
+    importable = []
+    for cn, ccfg in src_proj.get("characters", {}).items():
+        if not cn or cn in existing:
+            continue
+        image_count = len(_get_project_training_images(src_bot, src_project, cn))
+        importable.append({
+            "name": cn,
+            "trigger": ccfg.get("trigger", cn),
+            "image_count": image_count,
+        })
+
+    print(f"[BOT_LORA_PROJ_IMPORT] 임포트 가능 캐릭터: {len(importable)}명 (현재 프로젝트 기존 {len(existing)}명)")
+    return {"success": True, "characters": importable}
+
+
+def import_characters_from_project(src_bot: str, src_project: str, dst_bot: str, dst_project: str, char_names: list) -> dict:
+    """소스 프로젝트의 캐릭터를 대상(현재) 프로젝트로 복사.
+    - 학습 이미지 폴더를 통째로 복사(편집/정제 프롬프트 포함)
+    - 캐릭터 설정은 trigger만 복사(skip_training, session_representatives 등은 버림)
+    """
+    if not src_bot or not src_project or not dst_bot or not dst_project:
+        print("[BOT_LORA_PROJ_IMPORT] 필수 파라미터 누락")
+        return {"success": False, "error": "소스/대상 봇·프로젝트 이름 필수"}
+    if not char_names:
+        print("[BOT_LORA_PROJ_IMPORT] 선택된 캐릭터 없음")
+        return {"success": False, "error": "임포트할 캐릭터를 선택하세요"}
+
+    manage_data = _load_bot_lora_manage()
+    src_proj = _get_project_config(manage_data, src_bot, src_project)
+    if not src_proj:
+        print(f"[BOT_LORA_PROJ_IMPORT] 소스 프로젝트 없음: {src_bot}/{src_project}")
+        return {"success": False, "error": "소스 프로젝트를 찾을 수 없습니다"}
+
+    dst_proj = _get_project_config(manage_data, dst_bot, dst_project)
+    if not dst_proj:
+        print(f"[BOT_LORA_PROJ_IMPORT] 대상 프로젝트 없음: {dst_bot}/{dst_project}")
+        return {"success": False, "error": "대상 프로젝트를 찾을 수 없습니다"}
+
+    src_chars = src_proj.get("characters", {})
+    dst_chars = dst_proj.setdefault("characters", {})
+    added = []
+
+    for cn in char_names:
+        if not cn or cn in dst_chars:
+            print(f"[BOT_LORA_PROJ_IMPORT] 스킵(이미 존재): {cn}")
+            continue
+        if cn not in src_chars:
+            print(f"[BOT_LORA_PROJ_IMPORT] 스킵(소스에 없음): {cn}")
+            continue
+
+        src_cfg = src_chars[cn]
+        # trigger만 복사. session_representatives(학습된 LoRA 참조)는 버림.
+        dst_chars[cn] = {"trigger": src_cfg.get("trigger", cn)}
+
+        # 학습 이미지 폴더 통째 복사 (이미지 + *_prompt.json)
+        src_dir = _bot_project_char_dir(src_bot, src_project, cn)
+        dst_dir = _bot_project_char_dir(dst_bot, dst_project, cn)
+        if os.path.isdir(src_dir):
+            try:
+                os.makedirs(_bot_project_dir(dst_bot, dst_project), exist_ok=True)
+                if not os.path.exists(dst_dir):
+                    shutil.copytree(src_dir, dst_dir)
+                    print(f"[BOT_LORA_PROJ_IMPORT] 폴더 복사: {src_dir} -> {dst_dir}")
+                else:
+                    # 폴더가 이미 존재하면 개별 파일 단위 복사(덮어쓰지 않음)
+                    copied = 0
+                    for fname in os.listdir(src_dir):
+                        s = os.path.join(src_dir, fname)
+                        d = os.path.join(dst_dir, fname)
+                        if os.path.isfile(s) and not os.path.exists(d):
+                            shutil.copy2(s, d)
+                            copied += 1
+                    print(f"[BOT_LORA_PROJ_IMPORT] 폴더 이미 존재, 파일 복사 {copied}건: {dst_dir}")
+            except Exception as e:
+                print(f"[BOT_LORA_PROJ_IMPORT] 폴더 복사 실패: {src_dir} -> {dst_dir} - {e}")
+                traceback.print_exc()
+        else:
+            print(f"[BOT_LORA_PROJ_IMPORT] 소스 캐릭터 폴더 없음(설정만 추가): {src_dir}")
+
+        added.append(cn)
+
+    if added:
+        _save_bot_lora_manage(manage_data)
+        print(f"[BOT_LORA_PROJ_IMPORT] 캐릭터 임포트 완료: {added}")
+    else:
+        print("[BOT_LORA_PROJ_IMPORT] 임포트할 새 캐릭터가 없음")
+
+    return {"success": True, "added": added, "count": len(added)}
+
+
 def remove_character_from_project(bot_name: str, project_name: str, char_name: str) -> dict:
     """프로젝트에서 캐릭터 제거"""
     if not bot_name or not project_name or not char_name:
