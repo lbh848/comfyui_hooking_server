@@ -359,6 +359,73 @@ def delete_image(project_id: str, filename: str) -> dict:
     return {"success": True}
 
 
+def delete_images_bulk(project_id: str, filenames_to_remove) -> dict:
+    """이미지 일괄 삭제(이미지 필터링용).
+    - 메타데이터 images 리스트에서 일괄 제거 (단일 _save_data 1회)
+    - 실제 이미지 파일 + 캡션(_prompt.json) 파일 삭제
+    - 삭제 전 asset_data/style_lora_manage.json 을 요구사항/ 에 백업 (데이터 안전 규칙)
+    반환: {success, deleted:int, failed:[...]}
+    """
+    data = _load_data()
+    project_id = _safe_dirname(project_id)
+    project = data.get("projects", {}).get(project_id)
+    if not project:
+        return {"success": False, "error": "존재하지 않는 프로젝트입니다"}
+
+    images = project.setdefault("images", [])
+    remove_set = set(filenames_to_remove)
+
+    # ── 메타데이터 백업 (덮어쓰기 전) ──
+    try:
+        os.makedirs(BACKUP_DIR, exist_ok=True)
+        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_name = f"style_lora_manage.backup_{ts}.json"
+        backup_path = os.path.join(BACKUP_DIR, backup_name)
+        shutil.copy2(STYLE_LORA_MANAGE_FILE, backup_path)
+        print(f"[STYLE_LORA] 메타데이터 백업: {backup_path}")
+    except Exception as e:
+        print(f"[STYLE_LORA] 경고: 메타데이터 백업 실패 - {e}")
+        traceback.print_exc()
+
+    # ── 메타데이터 images 리스트 갱신 (1회) ──
+    new_images = [f for f in images if f not in remove_set]
+    removed_in_meta = len(images) - len(new_images)
+    project["images"] = new_images
+    _save_data(data)
+
+    # ── 실제 파일 삭제 ──
+    pdir = _project_dir(project_id)
+    deleted = 0
+    failed = []
+    for fn in filenames_to_remove:
+        img_path = os.path.join(pdir, fn)
+        ok = True
+        if os.path.isfile(img_path):
+            try:
+                os.remove(img_path)
+                deleted += 1
+            except Exception as e:
+                print(f"[STYLE_LORA] 이미지 파일 삭제 실패: {img_path} - {e}")
+                failed.append({"filename": fn, "error": str(e)})
+                ok = False
+        # 캡션 파일도 함께 정리
+        prompt_path = os.path.join(pdir, os.path.splitext(fn)[0] + "_prompt.json")
+        if os.path.isfile(prompt_path):
+            try:
+                os.remove(prompt_path)
+            except Exception:
+                pass
+        # 파일은 없었지만 메타에는 있었던 경우 카운트 보정
+        if ok and not os.path.isfile(img_path):
+            # 파일이 이미 없었으면 deleted 에 포함시키지 않음 (메타에서만 제거됨)
+            pass
+
+    print(f"[STYLE_LORA] 일괄 삭제: project={project_id} meta_removed={removed_in_meta} "
+          f"file_deleted={deleted} failed={len(failed)}")
+    return {"success": True, "deleted": deleted, "failed": failed,
+            "meta_removed": removed_in_meta}
+
+
 def get_image_path(project_id: str, filename: str) -> str:
     return os.path.join(_project_dir(_safe_dirname(project_id)), filename)
 

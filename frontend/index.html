@@ -5434,6 +5434,7 @@
                                         <button onclick="backToStyleProjectList()" style="padding:5px 10px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:0.78rem;font-weight:600;">&larr; 목록</button>
                                         <span id="style-lora-title" style="font-weight:700;font-size:1.0rem;"></span>
                                         <span id="style-lora-selected-count" style="font-size:0.78rem;color:var(--text-secondary);"></span>
+                                        <button onclick="styleLoraOpenImageFilter()" style="padding:5px 10px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:0.78rem;font-weight:600;">🎚️ 이미지 필터링</button>
                                     </div>
                                     <div id="style-lora-batch-actions" style="display:none;gap:8px;flex-wrap:wrap;">
                                         <button onclick="styleLoraBatchTag()" style="padding:6px 12px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:0.78rem;font-weight:600;">🏷️ 일괄 태깅</button>
@@ -18529,6 +18530,191 @@
         function _styleNeedProject() {
             if (!_styleLora.currentProject) { showToast('프로젝트를 먼저 선택하세요', 'error'); return false; }
             return true;
+        }
+
+        // ─── 이미지 필터링 (프로젝트 전체 풀에서 N장만 남기고 나머지 삭제) ───
+        const _styleFilter = { pollTimer: null };
+
+        function styleLoraOpenImageFilter() {
+            if (!_styleNeedProject()) return;
+            const total = (_styleLora.images || []).length;
+            if (!total) { showToast('프로젝트에 이미지가 없습니다', 'error'); return; }
+
+            const overlay = document.createElement('div');
+            overlay.className = 'modal';
+            overlay.style.display = 'flex';
+            overlay.innerHTML = `
+                <div class="modal-content" style="max-width:560px;">
+                    <div class="modal-header"><span>🎚️ 이미지 필터링</span>
+                        <button onclick="this.closest('.modal').remove()" style="background:none;border:none;color:var(--text);font-size:1.4rem;cursor:pointer;">×</button>
+                    </div>
+                    <div class="modal-body" style="display:flex;flex-direction:column;gap:12px;">
+                        <div style="font-size:0.82rem;color:var(--text-secondary);">
+                            현재 프로젝트 전체 이미지 <b>${total}</b>장 중 <b>N</b>장만 남기고 나머지를 삭제합니다. (체크박스 선택과 무관하게 전체가 대상)
+                        </div>
+                        <div>
+                            <label style="font-size:0.8rem;font-weight:600;display:block;margin-bottom:4px;">선택 방식</label>
+                            <select id="style-filter-mode" style="width:100%;padding:6px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;font-size:0.82rem;box-sizing:border-box;">
+                                <option value="random">랜덤 선택 — 무작위 N장</option>
+                                <option value="diverse">가능한 고르게 — WD 임베딩 기반 최대 다양성 (CPU, 시간 소요)</option>
+                            </select>
+                        </div>
+                        <div id="style-filter-mode-desc" style="font-size:0.76rem;color:var(--text-secondary);padding:6px 8px;background:var(--surface2);border-radius:6px;"></div>
+                        <div>
+                            <label style="font-size:0.8rem;font-weight:600;display:block;margin-bottom:4px;">남길 개수 (최대 ${total})</label>
+                            <input id="style-filter-count" type="number" min="1" max="${total}" value="${Math.min(total, 100)}" style="width:100%;padding:6px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;font-size:0.82rem;box-sizing:border-box;" />
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button onclick="this.closest('.modal').remove()" style="padding:6px 12px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:0.82rem;">취소</button>
+                        <button id="style-filter-start" style="padding:6px 12px;background:var(--accent);color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:0.82rem;font-weight:600;">시작</button>
+                    </div>
+                </div>`;
+            document.body.appendChild(overlay);
+
+            const modeSel = overlay.querySelector('#style-filter-mode');
+            const desc = overlay.querySelector('#style-filter-mode-desc');
+            const descs = {
+                random: '무작위로 N장을 선택합니다. 즉시 완료됩니다. 나머지는 모두 삭제 대상이 됩니다.',
+                diverse: 'WD-vit-tagger-v3 의 태그확률 벡터(10861차원)를 임베딩으로 사용해 임베딩 공간에서 가장 넓게 퍼진 N장을 선택합니다(farthest-point sampling). 5000장도 2분 내 목표이나 CPU 부하가 큽니다. 진행률이 실시간 표시됩니다.',
+            };
+            const updateDesc = () => { desc.textContent = descs[modeSel.value] || ''; };
+            modeSel.onchange = updateDesc;
+            updateDesc();
+
+            overlay.querySelector('#style-filter-start').onclick = () => {
+                const mode = modeSel.value;
+                const count = parseInt(overlay.querySelector('#style-filter-count').value, 10);
+                if (!count || count < 1) { showToast('남길 개수를 1 이상으로 입력하세요', 'error'); return; }
+                if (count > total) { showToast(`남길 개수는 ${total} 이하여야 합니다`, 'error'); return; }
+                overlay.remove();
+                styleLoraStartFilter(mode, count, total);
+            };
+        }
+
+        async function styleLoraStartFilter(mode, count, total) {
+            const overlay = document.createElement('div');
+            overlay.className = 'modal';
+            overlay.style.display = 'flex';
+            overlay.innerHTML = `
+                <div class="modal-content" style="max-width:520px;">
+                    <div class="modal-header"><span>🎚️ 이미지 필터링 진행 중</span></div>
+                    <div class="modal-body" style="display:flex;flex-direction:column;gap:10px;">
+                        <div id="style-filter-stage" style="font-size:0.86rem;">준비 중...</div>
+                        <div style="background:var(--surface2);border-radius:6px;height:14px;overflow:hidden;border:1px solid var(--border);">
+                            <div id="style-filter-bar" style="height:100%;width:0%;background:var(--accent);transition:width 0.2s;"></div>
+                        </div>
+                        <div id="style-filter-count-txt" style="font-size:0.78rem;color:var(--text-secondary);">0 / ${total}</div>
+                    </div>
+                    <div class="modal-footer">
+                        <button id="style-filter-cancel" style="padding:6px 12px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:0.82rem;">닫기</button>
+                    </div>
+                </div>`;
+            document.body.appendChild(overlay);
+
+            const stageEl = overlay.querySelector('#style-filter-stage');
+            const barEl = overlay.querySelector('#style-filter-bar');
+            const cntEl = overlay.querySelector('#style-filter-count-txt');
+
+            let cancelled = false;
+            overlay.querySelector('#style-filter-cancel').onclick = () => {
+                cancelled = true;
+                if (_styleFilter.pollTimer) { clearTimeout(_styleFilter.pollTimer); _styleFilter.pollTimer = null; }
+                overlay.remove();
+            };
+
+            let jobId = null;
+            try {
+                const resp = await fetchJSON('/api/style_lora/image_filter/start', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({project: _styleLora.currentProject, mode, count})
+                });
+                if (!resp.success) {
+                    showToast(`필터링 시작 실패: ${resp.error || '알 수 없는 오류'}`, 'error');
+                    overlay.remove();
+                    return;
+                }
+                jobId = resp.job_id;
+            } catch (e) {
+                showToast(`필터링 시작 실패: ${e.message || e}`, 'error');
+                overlay.remove();
+                return;
+            }
+
+            const stageLabels = { init: '초기화 중...', embedding: '이미지 임베딩 계산 중...', selecting: '선택 계산 중...', idle: '대기 중' };
+            const poll = async () => {
+                if (cancelled) return;
+                try {
+                    const s = await fetchJSON(`/api/style_lora/image_filter/status?job_id=${encodeURIComponent(jobId)}`, { method: 'GET' });
+                    const st = s.status;
+                    const done = s.done || 0;
+                    const tot = s.total || total;
+                    barEl.style.width = `${tot ? Math.min(100, Math.round(done * 100 / tot)) : 0}%`;
+                    cntEl.textContent = `${done} / ${tot}`;
+                    stageEl.textContent = stageLabels[s.stage] || s.stage || '';
+                    if (st === 'done') {
+                        if (_styleFilter.pollTimer) { clearTimeout(_styleFilter.pollTimer); _styleFilter.pollTimer = null; }
+                        overlay.remove();
+                        styleLoraShowFilterConfirm(s.selected || [], s.to_delete || []);
+                        return;
+                    }
+                    if (st === 'error') {
+                        if (_styleFilter.pollTimer) { clearTimeout(_styleFilter.pollTimer); _styleFilter.pollTimer = null; }
+                        stageEl.textContent = `실패: ${s.error || '알 수 없는 오류'}`;
+                        showToast(`필터링 실패: ${s.error || '오류'}`, 'error');
+                        return;
+                    }
+                    _styleFilter.pollTimer = setTimeout(poll, 500);
+                } catch (e) {
+                    stageEl.textContent = `상태 조회 실패(재시도): ${e.message || e}`;
+                    _styleFilter.pollTimer = setTimeout(poll, 1500);
+                }
+            };
+            poll();
+        }
+
+        function styleLoraShowFilterConfirm(selected, toDelete) {
+            if (!toDelete.length) { showToast('삭제할 이미지가 없습니다 (전체 유지)', 'success'); return; }
+            const overlay = document.createElement('div');
+            overlay.className = 'modal';
+            overlay.style.display = 'flex';
+            overlay.innerHTML = `
+                <div class="modal-content" style="max-width:520px;">
+                    <div class="modal-header"><span>🗑️ 삭제 확인</span>
+                        <button onclick="this.closest('.modal').remove()" style="background:none;border:none;color:var(--text);font-size:1.4rem;cursor:pointer;">×</button>
+                    </div>
+                    <div class="modal-body" style="display:flex;flex-direction:column;gap:10px;">
+                        <div style="font-size:0.86rem;">유지 <b style="color:#5cb85c;">${selected.length}</b>장 / 삭제 <b style="color:#e25555;">${toDelete.length}</b>장</div>
+                        <div style="font-size:0.8rem;color:var(--text-secondary);">이 작업은 되돌릴 수 없습니다. 메타데이터 JSON은 자동 백업되지만, 삭제된 이미지 파일은 복구되지 않습니다.</div>
+                    </div>
+                    <div class="modal-footer">
+                        <button onclick="this.closest('.modal').remove()" style="padding:6px 12px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:0.82rem;">취소</button>
+                        <button id="style-filter-delete-btn" style="padding:6px 12px;background:#e25555;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:0.82rem;font-weight:600;">삭제 실행</button>
+                    </div>
+                </div>`;
+            document.body.appendChild(overlay);
+            overlay.querySelector('#style-filter-delete-btn').onclick = async () => {
+                const btn = overlay.querySelector('#style-filter-delete-btn');
+                btn.disabled = true; btn.textContent = '삭제 중...';
+                try {
+                    const resp = await fetchJSON('/api/style_lora/images/delete_bulk', {
+                        method: 'POST', headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({project: _styleLora.currentProject, filenames: toDelete})
+                    });
+                    if (!resp.success) {
+                        showToast(`삭제 실패: ${resp.error || '오류'}`, 'error');
+                        btn.disabled = false; btn.textContent = '삭제 실행';
+                        return;
+                    }
+                    overlay.remove();
+                    const failedN = (resp.failed && resp.failed.length) ? ` / 실패 ${resp.failed.length}장` : '';
+                    showToast(`삭제 완료: ${resp.deleted}장 (유지 ${selected.length}장)${failedN}`, 'success');
+                    loadStyleProjectImages(_styleLora.currentProject);
+                } catch (e) {
+                    showToast(`삭제 실패: ${e.message || e}`, 'error');
+                    btn.disabled = false; btn.textContent = '삭제 실행';
+                }
+            };
         }
 
         async function styleLoraBatchTag() {
