@@ -259,6 +259,7 @@ def get_project_detail(project_id: str) -> dict:
             "trigger": project.get("trigger", ""),
             "description": project.get("description", ""),
             "images": project.get("images", []),
+            "image_count": len(project.get("images", [])),
             "sessions": project.get("sessions", {}),
             "training_config": project.get("training_config", {"anima": {}, "sdxl": {}}),
             "usage_count": project.get("usage_count", 0),

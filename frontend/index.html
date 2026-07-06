@@ -18420,12 +18420,18 @@
                 if (!resp.success) { showToast(resp.error || '상세 로드 실패', 'error'); return; }
                 const d = resp.data;
                 _styleLora.images = d.images || [];
-                title.textContent = `${d.name} (${d.image_count}장) · trigger: ${d.trigger}`;
-                // 각 이미지 프롬프트 로드
-                _styleLora.prompts.clear();
-                for (const fn of _styleLora.images) {
-                    const pr = await fetchJSON(`/api/style_lora/prompt?project=${encodeURIComponent(_styleLora.currentProject)}&filename=${encodeURIComponent(fn)}`);
-                    if (pr.success) _styleLora.prompts.set(fn, pr.data);
+                title.textContent = `${d.name} (${_styleLora.images.length}장) · trigger: ${d.trigger}`;
+                // 1) 이미지 목록만으로 즉시 렌더 (삭제/추가 카드가 지연 없이 반영되도록)
+                renderStyleGrid();
+                // 2) 프롬프트는 병렬로 로드 후 갱신 (순차 await 지연 제거)
+                const results = await Promise.all(_styleLora.images.map(fn =>
+                    fetchJSON(`/api/style_lora/prompt?project=${encodeURIComponent(_styleLora.currentProject)}&filename=${encodeURIComponent(fn)}`)
+                        .then(pr => [fn, pr.success ? pr.data : null])
+                        .catch(() => [fn, null])
+                ));
+                for (const [fn, data] of results) {
+                    if (data) _styleLora.prompts.set(fn, data);
+                    else _styleLora.prompts.delete(fn);
                 }
                 renderStyleGrid();
             } catch (e) {
@@ -18744,10 +18750,134 @@
         }
 
         // 임포트 모달 (에셋/봇/업로드). 멀티선택 → /api/style_lora/images/add 또는 /upload
-        let _styleImportState = { source: 'asset', selected: [] }; // selected: [{type, character,outfit,expression,filename}] or upload files
+        // selected: 선택된 이미지 메타 평면 배열(여러 폴더 걸쳐 누적)
+        // allItems: 현재 그리드에 표시 중인 폴더의 전체 이미지
+        // gridContext: 현재 그리드의 폴더 범위(동기화 시 이 범위만 갱신, 타 폴더 선택 보존)
+        // botCharCache: "bot/char" -> 해당 캐릭터 이미지 메타 배열 (폴더 체크박스용 캐시)
+        let _styleImportState = { source: 'asset', selected: [], allItems: [], gridContext: null, botCharCache: {} };
+
+        // 썸네일 서빙 URL (에셋/봇 공통)
+        function _styleImportThumbUrl(it) {
+            if (it.type === 'asset') {
+                return `/api/asset_mode/characters/${encodeURIComponent(it.character)}/outfits/${encodeURIComponent(it.outfit)}/expressions/${encodeURIComponent(it.expression)}/images/${encodeURIComponent(it.filename)}`;
+            }
+            if (it.type === 'bot') {
+                return `/api/bot_lora/char_image/${encodeURIComponent(it.bot)}/${encodeURIComponent(it.character)}/${encodeURIComponent(it.filename)}`;
+            }
+            return '';
+        }
+
+        // 두 이미지 메타가 같은지 (폴더+파일명 기준)
+        function _styleItemEq(a, b) {
+            if (!a || !b || a.type !== b.type) return false;
+            if (a.type === 'asset') return a.character === b.character && a.outfit === b.outfit && a.expression === b.expression && a.filename === b.filename;
+            return a.bot === b.bot && a.character === b.character && a.filename === b.filename;
+        }
+        function _styleImportSelectedHas(it) {
+            return _styleImportState.selected.some(s => _styleItemEq(s, it));
+        }
+        // s 가 ctx 폴더 범위에 속하는지 (asset: 캐릭터 단위, bot: bot+캐릭터 단위)
+        function _styleImportInContext(s, ctx) {
+            if (!ctx || s.type !== ctx.type) return false;
+            if (s.type === 'asset') return s.character === ctx.character;
+            return s.bot === ctx.bot && s.character === ctx.character;
+        }
+
+        // 봇 캐릭터 이미지 목록 (캐시) — char_available_images 는 {filename,...} 객체 배열 반환
+        async function _styleImportGetBotCharItems(botName, charName) {
+            const key = `${botName}/${charName}`;
+            if (_styleImportState.botCharCache[key]) return _styleImportState.botCharCache[key];
+            try {
+                const resp = await fetchJSON(`/api/bot_lora/char_available_images/${encodeURIComponent(botName)}/${encodeURIComponent(charName)}`);
+                const imgs = (resp && (resp.images || resp.files)) || [];
+                const items = imgs.map(fn => ({type: 'bot', bot: botName, character: charName, filename: (fn && typeof fn === 'object') ? fn.filename : fn})).filter(it => it.filename);
+                _styleImportState.botCharCache[key] = items;
+                return items;
+            } catch (e) {
+                console.error('[STYLE_LORA_IMPORT] bot char images 실패:', e);
+                return [];
+            }
+        }
+        // 봇 캐릭터 폴더 체크박스 토글: 체크=폴더 전체 추가, 해제=폴더 전체 제거
+        async function styleImportToggleBotChar(botName, charName, checked) {
+            const items = await _styleImportGetBotCharItems(botName, charName);
+            _styleImportState.selected = _styleImportState.selected.filter(it => !(it.type === 'bot' && it.bot === botName && it.character === charName));
+            if (checked) {
+                for (const it of items) if (!_styleImportSelectedHas(it)) _styleImportState.selected.push(it);
+                if (!items.length) showToast(`${charName} 에 사용 가능한 이미지가 없습니다`, 'error');
+            }
+            _styleImportUpdateCount();
+        }
+        // 봇 캐릭터 폴더 체크박스 표시 상태: 캐시 있고 전부 선택됨 → true
+        function _styleImportBotCharChecked(botName, charName) {
+            const items = _styleImportState.botCharCache[`${botName}/${charName}`];
+            if (!items || !items.length) return false;
+            return items.every(it => _styleImportSelectedHas(it));
+        }
+
+        // 캐릭터 폴더 진입 후: 썸네일 그리드 + 체크박스 + 전체 선택/해제 토글
+        // opts.defaultAll=true  → 진입 시 전체 선택(에셋). false → 현재 selected 상태 반영(봇: 폴더 체크와 동기화)
+        function _styleImportRenderGrid(items, headerHtml, opts) {
+            opts = opts || {};
+            const defaultAll = opts.defaultAll !== false;
+            _styleImportState.allItems = items;
+            _styleImportState.gridContext = items[0] ? {type: items[0].type, bot: items[0].bot, character: items[0].character} : null;
+            if (defaultAll) {
+                _styleImportState.selected = items.slice(); // 기본 전체 선택
+            }
+            const body = document.getElementById('style-import-body');
+            const cards = items.map((it, i) => {
+                const checked = defaultAll ? true : _styleImportSelectedHas(it);
+                return `
+                <div class="simp-card" style="position:relative;border:1px solid var(--border);border-radius:6px;overflow:hidden;background:var(--surface2);">
+                    <img src="${_styleImportThumbUrl(it)}" loading="lazy" onerror="this.style.opacity=0.15;" style="width:100%;aspect-ratio:1;object-fit:cover;display:block;">
+                    <div style="position:absolute;top:4px;left:4px;background:rgba(0,0,0,0.55);border-radius:4px;padding:2px 3px;">
+                        <input type="checkbox" class="simp-check" data-i="${i}" ${checked ? 'checked' : ''} style="width:16px;height:16px;cursor:pointer;">
+                    </div>
+                    <div style="font-size:0.66rem;color:var(--text-secondary);padding:3px 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(it.filename)}</div>
+                </div>`;
+            }).join('');
+            body.innerHTML = `${headerHtml}
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+                    <button id="style-import-selectall" onclick="styleImportToggleAll()" style="padding:4px 10px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.8rem;">전체 해제</button>
+                    <span style="font-size:0.78rem;color:var(--text-secondary);">체크박스로 개별 선택/해제</span>
+                </div>
+                <div id="style-import-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px;">${cards}</div>`;
+            body.querySelectorAll('.simp-check').forEach(b => b.addEventListener('change', _styleImportSyncSelected));
+            _styleImportUpdateCount();
+            _styleImportUpdateSelectAllBtn();
+        }
+
+        // 현재 그리드(폴더) 범위만 갱신 — 다른 폴더의 선택은 보존
+        function _styleImportSyncSelected() {
+            const ctx = _styleImportState.gridContext;
+            const boxes = document.querySelectorAll('#style-import-grid input.simp-check');
+            if (ctx) {
+                _styleImportState.selected = _styleImportState.selected.filter(s => !_styleImportInContext(s, ctx));
+            }
+            boxes.forEach((b, i) => { if (b.checked && _styleImportState.allItems[i]) _styleImportState.selected.push(_styleImportState.allItems[i]); });
+            _styleImportUpdateCount();
+            _styleImportUpdateSelectAllBtn();
+        }
+
+        function _styleImportUpdateSelectAllBtn() {
+            const boxes = document.querySelectorAll('#style-import-grid input.simp-check');
+            const checkedCnt = Array.from(boxes).filter(b => b.checked).length;
+            const allOn = boxes.length > 0 && checkedCnt === boxes.length;
+            const btn = document.getElementById('style-import-selectall');
+            if (btn) btn.textContent = allOn ? '전체 해제' : '전체 선택';
+        }
+
+        function styleImportToggleAll() {
+            const boxes = document.querySelectorAll('#style-import-grid input.simp-check');
+            if (!boxes.length) return;
+            const turnOn = Array.from(boxes).some(b => !b.checked);
+            boxes.forEach(b => { b.checked = turnOn; });
+            _styleImportSyncSelected();
+        }
         function styleLoraOpenImport(source) {
             if (!_styleNeedProject()) return;
-            _styleImportState = { source, selected: [] };
+            _styleImportState = { source, selected: [], allItems: [], gridContext: null, botCharCache: {} };
             const overlay = document.createElement('div');
             overlay.className = 'modal';
             overlay.style.display = 'flex';
@@ -18789,7 +18919,7 @@
         }
 
         async function styleImportAssetPickChar(character) {
-            // 캐릭터의 모든 outfit/expression 이미지를 통째로 selected 에 추가
+            // 캐릭터의 모든 outfit/expression 이미지를 수집 → 썸네일 그리드로 표시 (기본 전체 선택)
             const body = document.getElementById('style-import-body');
             body.innerHTML = '<div style="text-align:center;padding:24px;"><div class="spinner" style="width:24px;height:24px;border-width:3px;margin:0 auto;"></div></div>';
             try {
@@ -18802,9 +18932,14 @@
                         items.push({type: 'asset', character, outfit: it.outfit, expression: it.expression, filename: img.filename});
                     }
                 }
-                _styleImportState.selected = items;
-                body.innerHTML = `<div style="margin-bottom:8px;"><button onclick="styleImportLoadAssetChars()" style="padding:4px 10px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.8rem;">&larr; 캐릭터</button> <span style="font-size:0.82rem;color:var(--text-secondary);">${esc(character)} 전체 ${items.length}장 선택됨</span></div>`;
-                _styleImportUpdateCount();
+                const backBtn = `<button onclick="styleImportLoadAssetChars()" style="padding:4px 10px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.8rem;">&larr; 캐릭터</button>`;
+                if (!items.length) {
+                    _styleImportState.allItems = []; _styleImportState.selected = []; _styleImportUpdateCount();
+                    body.innerHTML = `<div style="margin-bottom:8px;">${backBtn} <span style="font-size:0.82rem;color:var(--text-secondary);">${esc(character)} — 이미지가 없습니다.</span></div>`;
+                    return;
+                }
+                const header = `<div style="margin-bottom:8px;">${backBtn} <span style="font-size:0.82rem;color:var(--text-secondary);">${esc(character)} — ${items.length}장</span></div>`;
+                _styleImportRenderGrid(items, header);
             } catch (e) { body.innerHTML = `<div style="padding:24px;color:var(--error);">로드 실패: ${esc(e.message || e)}</div>`; }
         }
 
@@ -18827,23 +18962,60 @@
                 const bot = (resp && resp.bots || []).find(b => b.name === botName);
                 const chars = (bot && bot.characters) || [];
                 if (!chars.length) { body.innerHTML = `<div><button onclick="styleImportLoadBots()" style="padding:4px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;cursor:pointer;">&larr; 봇</button> <span style="color:var(--text-secondary);">캐릭터 없음</span></div>`; return; }
-                body.innerHTML = `<div style="margin-bottom:8px;"><button onclick="styleImportLoadBots()" style="padding:4px 10px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.8rem;">&larr; 봇</button> <span style="font-size:0.82rem;color:var(--text-secondary);">${esc(botName)} — 캐릭터 선택</span></div>` +
-                    '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px;">' +
-                    chars.map(c => `<div class="asset-folder-card" onclick="styleImportBotPickChar('${esc(botName)}','${esc(c.name)}')" style="cursor:pointer;"><div class="folder-icon">📁</div><div class="folder-name">${esc(c.name)}</div></div>`).join('') +
-                    '</div>';
+                // 현재 봇의 캐릭터 이름 목록 캐싱 (전체 선택/해제용)
+                const charNames = chars.map(c => c.name);
+                _styleImportState.currentBotChars = charNames;
+                _styleImportState.currentBot = botName;
+                // 각 캐릭터 폴더 카드: 체크박스(폴더 전체 선택) + 카드 클릭(진입해서 개별 선택)
+                const cards = chars.map(c => {
+                    const checked = _styleImportBotCharChecked(botName, c.name);
+                    return `<div class="asset-folder-card" onclick="styleImportBotPickChar('${esc(botName)}','${esc(c.name)}')" style="cursor:pointer;position:relative;">
+                        <div onclick="event.stopPropagation()" style="position:absolute;top:4px;left:4px;background:rgba(0,0,0,0.55);border-radius:4px;padding:2px 3px;z-index:2;">
+                            <input type="checkbox" ${checked ? 'checked' : ''} onchange="styleImportToggleBotChar('${esc(botName)}','${esc(c.name)}', this.checked)" style="width:16px;height:16px;cursor:pointer;" title="이 캐릭터 폴더 전체 가져오기">
+                        </div>
+                        <div class="folder-icon">📁</div><div class="folder-name">${esc(c.name)}</div>
+                    </div>`;
+                }).join('');
+                const allOn = charNames.length > 0 && charNames.every(cn => _styleImportBotCharChecked(botName, cn));
+                body.innerHTML = `<div style="margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;"><button onclick="styleImportLoadBots()" style="padding:4px 10px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.8rem;">&larr; 봇</button> <span style="font-size:0.82rem;color:var(--text-secondary);">${esc(botName)} — 캐릭터 선택 (체크박스=폴더 전체 / 폴더 클릭=개별 선택)</span><button id="style-import-bot-selectall" onclick="styleImportToggleAllBotChars('${esc(botName)}')" style="margin-left:auto;padding:4px 10px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.8rem;">${allOn ? '전체 해제' : '전체 선택'}</button></div>` +
+                    '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px;">' + cards + '</div>';
+                _styleImportUpdateCount();
             });
+        }
+
+        // 캐릭터 폴더 목록의 전체 선택/해제 토글
+        async function styleImportToggleAllBotChars(botName) {
+            const btn = document.getElementById('style-import-bot-selectall');
+            if (btn) { btn.disabled = true; btn.textContent = '처리 중...'; }
+            try {
+                const charNames = _styleImportState.currentBotChars || [];
+                // 모든 캐릭터의 이미지 확보 (캐시)
+                const allItems = [];
+                for (const cn of charNames) allItems.push(...(await _styleImportGetBotCharItems(botName, cn)));
+                const selectedForBot = _styleImportState.selected.filter(it => it.type === 'bot' && it.bot === botName);
+                const turnOn = selectedForBot.length < allItems.length; // 하나라도 덜 선택됐으면 전체 ON
+                _styleImportState.selected = _styleImportState.selected.filter(it => !(it.type === 'bot' && it.bot === botName));
+                if (turnOn) for (const it of allItems) if (!_styleImportSelectedHas(it)) _styleImportState.selected.push(it);
+            } catch (e) {
+                console.error('[STYLE_LORA_IMPORT] 전체 선택 토글 실패:', e);
+                showToast(`전체 선택 실패: ${e.message || e}`, 'error');
+            } finally {
+                styleImportBotPickBot(botName); // 재렌더로 체크박스/버튼 텍스트 동기화
+            }
         }
 
         async function styleImportBotPickChar(botName, charName) {
             const body = document.getElementById('style-import-body');
             body.innerHTML = '<div style="text-align:center;padding:24px;"><div class="spinner" style="width:24px;height:24px;border-width:3px;margin:0 auto;"></div></div>';
             try {
-                // 봇 캐릭터 이미지 목록 — char_image 서빙 경로 기반 파일명 조회
-                const resp = await fetchJSON(`/api/bot_lora/char_available_images/${encodeURIComponent(botName)}/${encodeURIComponent(charName)}`);
-                const imgs = (resp && (resp.images || resp.files)) || [];
-                _styleImportState.selected = imgs.map(fn => ({type: 'bot', bot: botName, character: charName, filename: fn}));
-                body.innerHTML = `<div style="margin-bottom:8px;"><button onclick="styleImportLoadBots()" style="padding:4px 10px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.8rem;">&larr; 봇</button> <span style="font-size:0.82rem;color:var(--text-secondary);">${esc(botName)}/${esc(charName)} ${imgs.length}장 선택됨</span></div>`;
-                _styleImportUpdateCount();
+                const items = await _styleImportGetBotCharItems(botName, charName);
+                const backBtn = `<button onclick="styleImportBotPickBot('${esc(botName)}')" style="padding:4px 10px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.8rem;">&larr; 캐릭터</button>`;
+                if (!items.length) {
+                    body.innerHTML = `<div style="margin-bottom:8px;">${backBtn} <span style="font-size:0.82rem;color:var(--text-secondary);">${esc(botName)}/${esc(charName)} — 이미지가 없습니다.</span></div>`;
+                    return;
+                }
+                const header = `<div style="margin-bottom:8px;">${backBtn} <span style="font-size:0.82rem;color:var(--text-secondary);">${esc(botName)}/${esc(charName)} — ${items.length}장</span></div>`;
+                _styleImportRenderGrid(items, header, {defaultAll: false}); // 폴더 체크 상태와 동기화(선택된 것만 표시)
             } catch (e) {
                 body.innerHTML = `<div style="padding:24px;color:var(--error);">봇 캐릭터 이미지 로드 실패: ${esc(e.message || e)}</div>`;
                 console.error('[STYLE_LORA_IMPORT] bot char images 실패:', e);
