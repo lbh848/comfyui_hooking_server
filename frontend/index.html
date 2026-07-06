@@ -5434,9 +5434,9 @@
                                         <button onclick="backToStyleProjectList()" style="padding:5px 10px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:0.78rem;font-weight:600;">&larr; 목록</button>
                                         <span id="style-lora-title" style="font-weight:700;font-size:1.0rem;"></span>
                                         <span id="style-lora-selected-count" style="font-size:0.78rem;color:var(--text-secondary);"></span>
-                                        <button onclick="styleLoraOpenImageFilter()" style="padding:5px 10px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:0.78rem;font-weight:600;">🎚️ 이미지 필터링</button>
                                     </div>
                                     <div id="style-lora-batch-actions" style="display:none;gap:8px;flex-wrap:wrap;">
+                                        <button onclick="styleLoraOpenImageFilter()" style="padding:6px 12px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:0.78rem;font-weight:600;">🎚️ 이미지 필터링</button>
                                         <button onclick="styleLoraBatchTag()" style="padding:6px 12px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:0.78rem;font-weight:600;">🏷️ 일괄 태깅</button>
                                         <button onclick="styleLoraBatchRefine()" style="padding:6px 12px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:0.78rem;font-weight:600;">✨ 일괄 LLM 정제</button>
                                         <button onclick="styleLoraSelectAll()" style="padding:6px 12px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:0.78rem;">전체 선택</button>
@@ -18576,7 +18576,7 @@
             const desc = overlay.querySelector('#style-filter-mode-desc');
             const descs = {
                 random: '무작위로 N장을 선택합니다. 즉시 완료됩니다. 나머지는 모두 삭제 대상이 됩니다.',
-                diverse: 'WD-vit-tagger-v3 의 태그확률 벡터(10861차원)를 임베딩으로 사용해 임베딩 공간에서 가장 넓게 퍼진 N장을 선택합니다(farthest-point sampling). 5000장도 2분 내 목표이나 CPU 부하가 큽니다. 진행률이 실시간 표시됩니다.',
+                diverse: 'WD-vit-tagger-v3 의 태그확률 벡터(10861차원)를 임베딩으로 사용해 임베딩 공간에서 가장 넓게 퍼진 N장을 선택합니다(farthest-point sampling). 진행률이 실시간 표시됩니다.',
             };
             const updateDesc = () => { desc.textContent = descs[modeSel.value] || ''; };
             modeSel.onchange = updateDesc;
