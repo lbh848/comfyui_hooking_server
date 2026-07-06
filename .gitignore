@@ -11,6 +11,7 @@ workflow_backup_static/
 mode_workflow/
 asset/
 asset_data/
+style_lora_data/
 pose_data/
 bot/
 instance_lora/
