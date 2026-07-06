@@ -195,6 +195,7 @@ def create_project(name: str, trigger: str = "", description: str = "") -> dict:
         "trigger": (trigger or "").strip() or name,
         "description": description or "",
         "images": [],
+        "test_images": [],
         "sessions": {},
         "training_config": {"anima": {}, "sdxl": {}},
         "usage_count": 0,
@@ -260,6 +261,7 @@ def get_project_detail(project_id: str) -> dict:
             "description": project.get("description", ""),
             "images": project.get("images", []),
             "image_count": len(project.get("images", [])),
+            "test_images": project.get("test_images", []),
             "sessions": project.get("sessions", {}),
             "training_config": project.get("training_config", {"anima": {}, "sdxl": {}}),
             "usage_count": project.get("usage_count", 0),
@@ -356,6 +358,178 @@ def delete_image(project_id: str, filename: str) -> dict:
             pass
 
     print(f"[STYLE_LORA] 이미지 삭제: {project_id}/{filename}")
+    return {"success": True}
+
+
+# ─── 테스트 이미지 관리 ─────────────────────────────────────────
+# 학습 이미지(images)와 동일 폴더(_project_dir)에 저장하지만 별도의 test_images 배열로 추적.
+# 학습 흐름과 분리된 테스트용 이미지 풀. 추가/삭제 시 add_image/delete_image 와 동일한
+# 복사·충돌회피·파일제거 패턴을 따른다.
+
+def add_test_image(project_id: str, src_path: str, filename: str) -> dict:
+    """테스트 이미지로 복사 추가. test_images 배열에 기록."""
+    data = _load_data()
+    project_id = _safe_dirname(project_id)
+    project = data.get("projects", {}).get(project_id)
+    if not project:
+        print(f"[STYLE_LORA] 테스트 이미지 추가 실패 - 프로젝트 없음: {project_id}")
+        return {"success": False, "error": "존재하지 않는 프로젝트입니다"}
+
+    dst_dir = _project_dir(project_id)
+    os.makedirs(dst_dir, exist_ok=True)
+    # 파일명 충돌 회피 (학습 이미지와 동일 폴더이므로 충돌 가능)
+    dst_name = filename
+    if os.path.exists(os.path.join(dst_dir, dst_name)):
+        stem, ext = os.path.splitext(filename)
+        dst_name = f"{stem}_{int(time.time() * 1000) % 100000}{ext}"
+    dst_path = os.path.join(dst_dir, dst_name)
+    try:
+        shutil.copy2(src_path, dst_path)
+    except Exception as e:
+        print(f"[STYLE_LORA] 테스트 이미지 복사 실패: {src_path} -> {dst_path} - {e}")
+        traceback.print_exc()
+        return {"success": False, "error": str(e)}
+
+    test_images = project.setdefault("test_images", [])
+    if dst_name not in test_images:
+        test_images.append(dst_name)
+    _save_data(data)
+
+    # 원본 에셋 프롬프트 시드: 소스의 {base}_prompt.json 이 있으면 읽어(원본 수정 금지 - 읽기만)
+    # {dst_base}_test_prompt.json 으로 복사본 생성. original_positive/negative 보존.
+    dst_base = os.path.splitext(dst_name)[0]
+    try:
+        src_dir = os.path.dirname(src_path)
+        src_prompt_path = os.path.join(src_dir, os.path.splitext(filename)[0] + "_prompt.json")
+        dst_prompt_path = os.path.join(dst_dir, f"{dst_base}_test_prompt.json")
+        if os.path.isfile(src_prompt_path):
+            with open(src_prompt_path, "r", encoding="utf-8") as pf:
+                pdata = json.load(pf)
+            seeded = {
+                "positive": pdata.get("positive", pdata.get("original_positive", "")),
+                "negative": pdata.get("negative", pdata.get("original_negative", "")),
+                "original_positive": pdata.get("original_positive", pdata.get("positive", "")),
+                "original_negative": pdata.get("original_negative", pdata.get("negative", "")),
+            }
+            with open(dst_prompt_path, "w", encoding="utf-8") as pf:
+                json.dump(seeded, pf, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[STYLE_LORA] 테스트 프롬프트 시드 실패(무시): {filename} - {e}")
+
+    print(f"[STYLE_LORA] 테스트 이미지 추가: {project_id}/{dst_name}")
+    return {"success": True, "filename": dst_name}
+
+
+def _test_prompt_path(project_id: str, filename: str) -> str:
+    base = os.path.splitext(filename)[0]
+    return os.path.join(_project_dir(_safe_dirname(project_id)), f"{base}_test_prompt.json")
+
+
+def get_test_image_prompt(project_id: str, filename: str) -> dict:
+    """테스트 이미지 1장의 프롬프트 조회. 없으면 빈 값."""
+    data = _load_data()
+    project_id = _safe_dirname(project_id)
+    project = data.get("projects", {}).get(project_id)
+    if not project:
+        return {"success": False, "error": "존재하지 않는 프로젝트입니다"}
+    if filename not in project.get("test_images", []):
+        return {"success": False, "error": "이미지가 테스트 목록에 없습니다"}
+
+    prompt_path = _test_prompt_path(project_id, filename)
+    if os.path.isfile(prompt_path):
+        try:
+            with open(prompt_path, "r", encoding="utf-8") as f:
+                pdata = json.load(f)
+            return {"success": True, "data": {
+                "positive": pdata.get("positive", ""),
+                "negative": pdata.get("negative", ""),
+                "original_positive": pdata.get("original_positive", ""),
+                "original_negative": pdata.get("original_negative", ""),
+            }}
+        except Exception as e:
+            print(f"[STYLE_LORA] 테스트 프롬프트 읽기 실패: {prompt_path} - {e}")
+            traceback.print_exc()
+            return {"success": False, "error": str(e)}
+    return {"success": True, "data": {"positive": "", "negative": "", "original_positive": "", "original_negative": ""}}
+
+
+def save_test_image_prompt(project_id: str, filename: str, prompt_data: dict) -> dict:
+    """테스트 이미지 프롬프트 저장. original_* 는 최초 1회 보존, positive/negative 만 갱신.
+    학습 이미지와 파일명이 분리({base}_test_prompt.json)되며 프로젝트 폴더에 저장 → 원본 에셋 영향 없음."""
+    data = _load_data()
+    project_id = _safe_dirname(project_id)
+    project = data.get("projects", {}).get(project_id)
+    if not project:
+        return {"success": False, "error": "존재하지 않는 프로젝트입니다"}
+    if filename not in project.get("test_images", []):
+        return {"success": False, "error": "이미지가 테스트 목록에 없습니다"}
+
+    prompt_path = _test_prompt_path(project_id, filename)
+    existing = {}
+    if os.path.isfile(prompt_path):
+        try:
+            with open(prompt_path, "r", encoding="utf-8") as f:
+                existing = json.load(f)
+        except Exception as e:
+            print(f"[STYLE_LORA] 기존 테스트 프롬프트 읽기 실패(무시): {prompt_path} - {e}")
+
+    positive = (prompt_data.get("positive") or "").strip()
+    negative = (prompt_data.get("negative") or "").strip()
+    out = {
+        "positive": positive,
+        "negative": negative,
+        "original_positive": existing.get("original_positive") or prompt_data.get("original_positive") or positive,
+        "original_negative": existing.get("original_negative") or prompt_data.get("original_negative") or negative,
+    }
+    try:
+        os.makedirs(os.path.dirname(prompt_path), exist_ok=True)
+        with open(prompt_path, "w", encoding="utf-8") as f:
+            json.dump(out, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[STYLE_LORA] 테스트 프롬프트 저장 실패: {prompt_path} - {e}")
+        traceback.print_exc()
+        return {"success": False, "error": str(e)}
+    print(f"[STYLE_LORA] 테스트 프롬프트 저장: {project_id}/{filename}")
+    return {"success": True}
+
+
+def delete_test_image(project_id: str, filename: str) -> dict:
+    """테스트 이미지 1건 삭제 (목록에서 제거 + 파일 삭제)."""
+    data = _load_data()
+    project_id = _safe_dirname(project_id)
+    project = data.get("projects", {}).get(project_id)
+    if not project:
+        print(f"[STYLE_LORA] 테스트 이미지 삭제 실패 - 프로젝트 없음: {project_id}")
+        return {"success": False, "error": "존재하지 않는 프로젝트입니다"}
+
+    test_images = project.get("test_images", [])
+    if filename not in test_images:
+        print(f"[STYLE_LORA] 테스트 이미지 삭제 실패 - 목록에 없음: {project_id}/{filename}")
+        return {"success": False, "error": "이미지가 테스트 목록에 없습니다"}
+
+    test_images.remove(filename)
+    _save_data(data)
+
+    pdir = _project_dir(project_id)
+    img_path = os.path.join(pdir, filename)
+    # 학습 이미지와 같은 폴더이므로, 동일 파일명이 images 에도 있으면 파일은 남김
+    if filename in project.get("images", []):
+        print(f"[STYLE_LORA] 테스트 이미지 파일 유지(학습 이미지와 공유): {project_id}/{filename}")
+    elif os.path.isfile(img_path):
+        try:
+            os.remove(img_path)
+        except Exception as e:
+            print(f"[STYLE_LORA] 테스트 이미지 파일 삭제 실패: {img_path} - {e}")
+
+    # 테스트 프롬프트 파일 정리 ({base}_test_prompt.json — 학습 캡션과 분리)
+    tp = _test_prompt_path(project_id, filename)
+    if os.path.isfile(tp):
+        try:
+            os.remove(tp)
+        except Exception as e:
+            print(f"[STYLE_LORA] 테스트 프롬프트 파일 삭제 실패: {tp} - {e}")
+
+    print(f"[STYLE_LORA] 테스트 이미지 삭제: {project_id}/{filename}")
     return {"success": True}
 
 

@@ -8508,6 +8508,29 @@ async def handle_api_style_lora_image(request):
         return web.json_response({"error": str(e)}, status=500)
 
 
+def _style_image_src_path(img: dict) -> str:
+    """style LoRA 이미지 추가용 소스 경로 계산 (asset/bot/path 공통).
+    img: {type:'asset'|'bot'|'path', character, outfit, expression, bot, filename, path}"""
+    from modes.asset_mode import ASSET_DIR
+    from modes.bot_lora_mode import _bot_char_dir as bot_char_dir_fn
+    src_type = img.get("type", "path")
+    filename = img.get("filename", "")
+    if src_type == "asset":
+        character = img.get("character", "")
+        outfit = img.get("outfit", "")
+        expression = img.get("expression", "")
+        if character and outfit and expression:
+            return os.path.join(ASSET_DIR, character, outfit, expression, filename)
+        return img.get("path", "")
+    elif src_type == "bot":
+        bot_name = img.get("bot", "")
+        char_name = img.get("character", "")
+        if bot_name and char_name:
+            return os.path.join(bot_char_dir_fn(bot_name, char_name), filename)
+        return img.get("path", "")
+    return img.get("path", "")
+
+
 async def handle_api_style_lora_images_add(request):
     """프로젝트에 이미지 복사 추가. body: { project, images:[{type:'asset'|'bot'|'path', ...}] }.
     asset/bot 소스 경로 계산은 인스턴스와 동일 규칙."""
@@ -8518,31 +8541,12 @@ async def handle_api_style_lora_images_add(request):
         if not project:
             return web.json_response({"success": False, "error": "project 필수"}, status=400)
         from modes.style_lora_mode import add_image
-        from modes.asset_mode import ASSET_DIR
-        from modes.bot_lora_mode import _bot_char_dir as bot_char_dir_fn
         results = []
         for img in images:
-            src_type = img.get("type", "path")
             filename = img.get("filename", "")
             if not filename:
                 continue
-            if src_type == "asset":
-                character = img.get("character", "")
-                outfit = img.get("outfit", "")
-                expression = img.get("expression", "")
-                if character and outfit and expression:
-                    src_path = os.path.join(ASSET_DIR, character, outfit, expression, filename)
-                else:
-                    src_path = img.get("path", "")
-            elif src_type == "bot":
-                bot_name = img.get("bot", "")
-                char_name = img.get("character", "")
-                if bot_name and char_name:
-                    src_path = os.path.join(bot_char_dir_fn(bot_name, char_name), filename)
-                else:
-                    src_path = img.get("path", "")
-            else:
-                src_path = img.get("path", "")
+            src_path = _style_image_src_path(img)
             if not src_path or not os.path.isfile(src_path):
                 print(f"[STYLE_LORA_API] 소스 파일 없음: {src_path}")
                 results.append({"success": False, "error": f"파일 없음: {filename}"})
@@ -8552,6 +8556,83 @@ async def handle_api_style_lora_images_add(request):
         return web.json_response({"success": True, "results": results})
     except Exception as e:
         print(f"[STYLE_LORA_API] 이미지 추가 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_style_lora_test_images_add(request):
+    """프로젝트에 테스트 이미지 복사 추가. body: { project, images:[{type,character,outfit,expression,filename}] }.
+    학습 images 가 아닌 test_images 배열에 기록. 소스 경로 규칙은 images/add 와 동일(_style_image_src_path)."""
+    try:
+        body = await request.json()
+        project = (body.get("project") or "").strip()
+        images = body.get("images", [])
+        if not project:
+            return web.json_response({"success": False, "error": "project 필수"}, status=400)
+        from modes.style_lora_mode import add_test_image
+        results = []
+        for img in images:
+            filename = img.get("filename", "")
+            if not filename:
+                continue
+            src_path = _style_image_src_path(img)
+            if not src_path or not os.path.isfile(src_path):
+                print(f"[STYLE_LORA_API] 테스트 이미지 소스 파일 없음: {src_path}")
+                results.append({"success": False, "error": f"파일 없음: {filename}"})
+                continue
+            r = add_test_image(project, src_path, filename)
+            results.append(r)
+        return web.json_response({"success": True, "results": results})
+    except Exception as e:
+        print(f"[STYLE_LORA_API] 테스트 이미지 추가 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_style_lora_test_images_delete(request):
+    """테스트 이미지 1건 삭제. body: { project, filename }"""
+    try:
+        body = await request.json()
+        project = (body.get("project") or "").strip()
+        filename = (body.get("filename") or "").strip()
+        if not project or not filename:
+            return web.json_response({"success": False, "error": "project, filename 필수"}, status=400)
+        from modes.style_lora_mode import delete_test_image
+        return web.json_response(delete_test_image(project, filename))
+    except Exception as e:
+        print(f"[STYLE_LORA_API] 테스트 이미지 삭제 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_style_lora_test_images_prompt_get(request):
+    """테스트 이미지 프롬프트 조회. query: project, filename"""
+    try:
+        project = (request.query.get("project") or "").strip()
+        filename = (request.query.get("filename") or "").strip()
+        if not project or not filename:
+            return web.json_response({"success": False, "error": "project, filename 필수"}, status=400)
+        from modes.style_lora_mode import get_test_image_prompt
+        return web.json_response(get_test_image_prompt(project, filename))
+    except Exception as e:
+        print(f"[STYLE_LORA_API] 테스트 프롬프트 조회 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_style_lora_test_images_prompt_save(request):
+    """테스트 이미지 프롬프트 저장. body: { project, filename, prompt: {positive,negative,...} }"""
+    try:
+        body = await request.json()
+        project = (body.get("project") or "").strip()
+        filename = (body.get("filename") or "").strip()
+        prompt = body.get("prompt") or {}
+        if not project or not filename:
+            return web.json_response({"success": False, "error": "project, filename 필수"}, status=400)
+        from modes.style_lora_mode import save_test_image_prompt
+        return web.json_response(save_test_image_prompt(project, filename, prompt))
+    except Exception as e:
+        print(f"[STYLE_LORA_API] 테스트 프롬프트 저장 실패: {e}")
         traceback.print_exc()
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
@@ -8870,6 +8951,10 @@ app.router.add_get("/api/style_lora/image/{project}/{filename}", handle_api_styl
 app.router.add_post("/api/style_lora/images/add", handle_api_style_lora_images_add)
 app.router.add_post("/api/style_lora/images/delete", handle_api_style_lora_images_delete)
 app.router.add_post("/api/style_lora/images/delete_bulk", handle_api_style_lora_images_delete_bulk)
+app.router.add_post("/api/style_lora/test_images/add", handle_api_style_lora_test_images_add)
+app.router.add_post("/api/style_lora/test_images/delete", handle_api_style_lora_test_images_delete)
+app.router.add_get("/api/style_lora/test_images/prompt", handle_api_style_lora_test_images_prompt_get)
+app.router.add_post("/api/style_lora/test_images/prompt", handle_api_style_lora_test_images_prompt_save)
 app.router.add_post("/api/style_lora/image_filter/start", handle_api_style_lora_image_filter_start)
 app.router.add_get("/api/style_lora/image_filter/status", handle_api_style_lora_image_filter_status)
 app.router.add_post("/api/style_lora/image_filter/cancel", handle_api_style_lora_image_filter_cancel)
