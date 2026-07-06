@@ -8624,6 +8624,17 @@ async def handle_api_style_lora_image_filter_status(request):
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 
+async def handle_api_style_lora_image_filter_cancel(request):
+    """이미지 필터링 잡 중지 요청."""
+    try:
+        from modes.image_filter_mode import cancel_filter_job
+        return web.json_response(cancel_filter_job())
+    except Exception as e:
+        print(f"[STYLE_LORA_API] 이미지 필터링 중지 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
 async def handle_api_style_lora_images_upload(request):
     """multipart 업로드. 필드: project, files[]."""
     try:
@@ -8854,6 +8865,7 @@ app.router.add_post("/api/style_lora/images/delete", handle_api_style_lora_image
 app.router.add_post("/api/style_lora/images/delete_bulk", handle_api_style_lora_images_delete_bulk)
 app.router.add_post("/api/style_lora/image_filter/start", handle_api_style_lora_image_filter_start)
 app.router.add_get("/api/style_lora/image_filter/status", handle_api_style_lora_image_filter_status)
+app.router.add_post("/api/style_lora/image_filter/cancel", handle_api_style_lora_image_filter_cancel)
 app.router.add_post("/api/style_lora/images/upload", handle_api_style_lora_images_upload)
 app.router.add_post("/api/style_lora/analyze", handle_api_style_lora_analyze)
 app.router.add_get("/api/style_lora/config", handle_api_style_lora_config_get)

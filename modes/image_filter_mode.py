@@ -15,6 +15,7 @@
 import asyncio
 import os
 import random
+import threading
 import time
 import traceback
 import uuid
@@ -32,6 +33,14 @@ log_prefix = "[IMAGE_FILTER]"
 
 # 배치 추론 크기. 벤치마크 결과 16 이상에서 수렴(~348ms/img). 메모리/속도 트레이드오프.
 BATCH_SIZE = 16
+
+
+class FilterCancelled(Exception):
+    """사용자 중지 요청으로 임베딩이 중단되었을 때 발생."""
+
+
+# 사용자 중지 요청 플래그 (스레드 간 안전한 Event)
+_cancel = threading.Event()
 
 # ─── ONNX 임베딩 세션 (lazy singleton) ──────────────────────────
 _session = None
@@ -115,6 +124,12 @@ def embed_images(paths, filenames, progress_cb):
 
             if progress_cb:
                 progress_cb(end)
+
+            # 사용자 중지 요청 확인 (배치 경계에서만 끊김 — 단일 ONNX 추론은 강제 kill 불가)
+            if _cancel.is_set():
+                print(f"{log_prefix} 사용자 중지 요청 감지 - 임베딩 중단 "
+                      f"(processed={len(valid_files)}/{n})")
+                raise FilterCancelled()
 
     if vecs:
         emb = np.vstack(vecs).astype(np.float32)
@@ -216,6 +231,7 @@ def start_filter_job(project: str, mode: str, count: int) -> dict:
 
     job_id = f"filter_{uuid.uuid4().hex[:8]}"
     _job.clear()
+    _cancel.clear()  # 이전 중지 요청 플래그 초기화
     _job.update({
         "id": job_id,
         "status": "running",
@@ -284,8 +300,23 @@ async def _run_job(job_id, project, mode, count, all_files):
         print(f"{log_prefix} diverse 완료: keep={len(sel)} "
               f"del={len(to_delete)} (failed_img={len(failed)})")
 
+    except FilterCancelled:
+        print(f"{log_prefix} 잡 중지됨 (사용자 요청)")
+        _job["status"] = "cancelled"
+        _job["stage"] = "cancelled"
+        _job["error"] = "사용자가 중지했습니다"
+
     except Exception as e:
         print(f"{log_prefix} 잡 실패: {type(e).__name__}: {e}")
         traceback.print_exc()
         _job["status"] = "error"
         _job["error"] = f"{type(e).__name__}: {e}"
+
+
+def cancel_filter_job() -> dict:
+    """실행 중인 필터링 잡에 중지 요청. 실제 중단은 현재 배치가 끝난 시점(수 초 내)."""
+    if _job.get("status") == "running":
+        _cancel.set()
+        print(f"{log_prefix} 중지 요청 수신 (현재 배치 완료 후 중단)")
+        return {"success": True, "message": "중지 요청됨 (현재 배치 완료 후 중단)"}
+    return {"success": False, "error": "실행 중인 필터링 작업이 없습니다"}

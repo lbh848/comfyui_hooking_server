@@ -18607,7 +18607,7 @@
                         <div id="style-filter-count-txt" style="font-size:0.78rem;color:var(--text-secondary);">0 / ${total}</div>
                     </div>
                     <div class="modal-footer">
-                        <button id="style-filter-cancel" style="padding:6px 12px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:0.82rem;">닫기</button>
+                        <button id="style-filter-cancel" style="padding:6px 12px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:0.82rem;">중지</button>
                     </div>
                 </div>`;
             document.body.appendChild(overlay);
@@ -18617,9 +18617,18 @@
             const cntEl = overlay.querySelector('#style-filter-count-txt');
 
             let cancelled = false;
-            overlay.querySelector('#style-filter-cancel').onclick = () => {
+            overlay.querySelector('#style-filter-cancel').onclick = async () => {
                 cancelled = true;
                 if (_styleFilter.pollTimer) { clearTimeout(_styleFilter.pollTimer); _styleFilter.pollTimer = null; }
+                const btn = overlay.querySelector('#style-filter-cancel');
+                btn.disabled = true; btn.textContent = '중지 요청 중...';
+                try {
+                    const r = await fetchJSON('/api/style_lora/image_filter/cancel', { method: 'POST' });
+                    if (r.success) showToast('필터링 중지 요청됨 (현재 배치 완료 후 중단)', 'success');
+                    else showToast(`중지 실패: ${r.error || '오류'}`, 'error');
+                } catch (e) {
+                    showToast(`중지 요청 실패: ${e.message || e}`, 'error');
+                }
                 overlay.remove();
             };
 
