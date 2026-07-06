@@ -1,16 +1,17 @@
 """
 Style LoRA(그림체 로라) 매니징 모듈
-- 2단계 계층: 그룹 > 프로젝트(=그림체 로라 1개)
-- 프로젝트가 학습 이미지 풀 + 학습 세션 보유
+- 평면 구조: 프로젝트(=그림체 로라 1개) 단일 계층 (과거 그룹>프로젝트 2단계 제거)
+- 프로젝트가 학습 이미지 풀 + 학습 세션 + 프로젝트별 training_config 보유
 - 인스턴스 로라(instance_lora_mode)의 함수형 API 구조를 미러.
 - 태깅/정제/학습은 모두 수동 버튼 트리거 (자동 E2E 체인 없음).
 - 이미지는 프로젝트 폴더에 새로 복사된다(원본 참조 X).
 
 데이터 파일: asset_data/style_lora_manage.json
-이미지 복사본: style_lora_data/{group_id}/{project_id}/{filename}
-캡션 파일: style_lora_data/{group_id}/{project_id}/{base}_prompt.json
+이미지 복사본: style_lora_data/{project_id}/{filename}
+캡션 파일: style_lora_data/{project_id}/{base}_prompt.json
 """
 
+import datetime
 import hashlib
 import json
 import os
@@ -23,10 +24,24 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STYLE_LORA_DIR = os.path.join(BASE_DIR, "style_lora_data")
 STYLE_LORA_MANAGE_FILE = os.path.join(BASE_DIR, "asset_data", "style_lora_manage.json")
 ASSET_DATA_DIR = os.path.join(BASE_DIR, "asset_data")
+BACKUP_DIR = os.path.join(BASE_DIR, "요구사항")
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 
-DEFAULT_SETTINGS = {"anima": {}, "sdxl": {}}
+# 프로젝트별 학습 설정 디폴트 (ANIMA/SDXL 각각 독립 보관)
+DEFAULT_PROFILE_SETTINGS = {
+    "step_per_image": 125,
+    "il_rate": 0.00025,
+    "save_per_step": 25,
+    "multi_img_folder_name": "soya_lora",
+    "gen_w": 1024,
+    "gen_h": 1024,
+    "upscale": False,
+    "resolution": 1024,
+    "save_after": 0,
+    "dim": 32,
+    "alpha": 16,
+}
 
 
 # ─── 유틸 ──────────────────────────────────────────────────────
@@ -35,12 +50,8 @@ def _safe_dirname(name: str) -> str:
     return "".join(c for c in str(name) if c.isalnum() or c in (' ', '_', '-', '.')).strip() or "unnamed"
 
 
-def _group_dir(group_id: str) -> str:
-    return os.path.join(STYLE_LORA_DIR, _safe_dirname(group_id))
-
-
-def _project_dir(group_id: str, project_id: str) -> str:
-    return os.path.join(_group_dir(group_id), _safe_dirname(project_id))
+def _project_dir(project_id: str) -> str:
+    return os.path.join(STYLE_LORA_DIR, _safe_dirname(project_id))
 
 
 def _gen_id(name: str) -> str:
@@ -49,18 +60,86 @@ def _gen_id(name: str) -> str:
     return f"{base}-{short_hash}"
 
 
-# ─── JSON 로드/세이브 ─────────────────────────────────────────
+# ─── JSON 로드/세이브 + 마이그레이션 ───────────────────────────
+
+def _backup_file(path: str):
+    """데이터 파일 덮어쓰기 전 요구사항/ 폴더에 백업."""
+    try:
+        if not os.path.isfile(path):
+            return
+        os.makedirs(BACKUP_DIR, exist_ok=True)
+        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        dst = os.path.join(BACKUP_DIR, f"{os.path.basename(path)}.bak.{ts}")
+        shutil.copy2(path, dst)
+        print(f"[STYLE_LORA] 데이터 백업: {dst}")
+    except Exception as e:
+        print(f"[STYLE_LORA] 백업 실패({path}): {e}")
+        traceback.print_exc()
+
+
+def _migrate_legacy(data: dict) -> dict:
+    """구 스키마(groups>projects, 최상위 settings)를 평면 projects 로 변환.
+    파일시스템 이미지 디렉터리도 style_lora_data/{group}/{project}/ -> {project}/ 로 이동."""
+    if "groups" not in data and "projects" not in data:
+        return data
+    if "projects" in data and "groups" not in data:
+        return data  # 이미 신스키마
+
+    print("[STYLE_LORA] 구 스키마 감지 → 평면 projects 로 마이그레이션")
+    _backup_file(STYLE_LORA_MANAGE_FILE)
+
+    new_projects = dict(data.get("projects", {}))
+    for group_id, gdata in (data.get("groups") or {}).items():
+        for project_id, pdata in (gdata.get("projects") or {}).items():
+            # 프로젝트 id 충돌 회피
+            pid = project_id
+            if pid in new_projects:
+                pid = f"{_safe_dirname(group_id)}_{project_id}"
+            new_projects[pid] = pdata
+            # 이미지 디렉터리 이동
+            legacy_dir = os.path.join(STYLE_LORA_DIR, _safe_dirname(group_id), _safe_dirname(project_id))
+            new_dir = _project_dir(pid)
+            if os.path.isdir(legacy_dir) and legacy_dir != new_dir:
+                try:
+                    if os.path.isdir(new_dir):
+                        # 병합: 파일 단위 이동
+                        for fn in os.listdir(legacy_dir):
+                            src = os.path.join(legacy_dir, fn)
+                            dst = os.path.join(new_dir, fn)
+                            if not os.path.exists(dst):
+                                shutil.move(src, dst)
+                    else:
+                        shutil.move(legacy_dir, new_dir)
+                    print(f"[STYLE_LORA] 디렉터리 이동: {legacy_dir} -> {new_dir}")
+                except Exception as e:
+                    print(f"[STYLE_LORA] 디렉터리 이동 실패({legacy_dir}): {e}")
+                    traceback.print_exc()
+            # 빈 그룹 폴더 정리
+            gpath = os.path.join(STYLE_LORA_DIR, _safe_dirname(group_id))
+            try:
+                if os.path.isdir(gpath) and not os.listdir(gpath):
+                    os.rmdir(gpath)
+            except OSError:
+                pass
+
+    migrated = {"projects": new_projects}
+    return migrated
+
 
 def _load_data() -> dict:
     if not os.path.isfile(STYLE_LORA_MANAGE_FILE):
-        return {"groups": {}, "settings": dict(DEFAULT_SETTINGS)}
+        return {"projects": {}}
     try:
         with open(STYLE_LORA_MANAGE_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
+        migrated = _migrate_legacy(data)
+        if migrated is not data:
+            _save_data(migrated)
+        return migrated
     except Exception as e:
         print(f"[STYLE_LORA] JSON 로드 실패: {e}")
         traceback.print_exc()
-        return {"groups": {}, "settings": dict(DEFAULT_SETTINGS)}
+        return {"projects": {}}
 
 
 def _save_data(data: dict):
@@ -72,74 +151,15 @@ def _save_data(data: dict):
         traceback.print_exc()
 
 
-# ─── 그룹 관리 ─────────────────────────────────────────────────
-
-def list_groups() -> list:
-    data = _load_data()
-    result = []
-    for group_id, gdata in data.get("groups", {}).items():
-        projects = gdata.get("projects", {})
-        result.append({
-            "id": group_id,
-            "name": gdata.get("name", group_id),
-            "project_count": len(projects),
-        })
-    return result
-
-
-def create_group(name: str) -> dict:
-    name = (name or "").strip()
-    if not name:
-        return {"success": False, "error": "그룹 이름이 필요합니다"}
-    data = _load_data()
-    group_id = _gen_id(name)
-    groups = data.setdefault("groups", {})
-    if group_id in groups:
-        return {"success": False, "error": "이미 존재하는 그룹입니다 (다시 시도하세요)"}
-    groups[group_id] = {"name": name, "projects": {}}
-    _save_data(data)
-    os.makedirs(_group_dir(group_id), exist_ok=True)
-    print(f"[STYLE_LORA] 그룹 생성: {group_id} (name={name})")
-    return {"success": True, "id": group_id}
-
-
-def delete_group(group_id: str, style_lora_load_path: str = "") -> dict:
-    data = _load_data()
-    group_id = _safe_dirname(group_id)
-    group = data.get("groups", {}).get(group_id)
-    if not group:
-        return {"success": False, "error": "존재하지 않는 그룹입니다"}
-
-    # 하위 프로젝트 학습 결과물 정리
-    for project_id in list(group.get("projects", {}).keys()):
-        delete_project(group_id, project_id, style_lora_load_path=style_lora_load_path, _data=data)
-
-    data.setdefault("groups", {}).pop(group_id, None)
-    _save_data(data)
-
-    gpath = _group_dir(group_id)
-    if os.path.isdir(gpath):
-        try:
-            shutil.rmtree(gpath)
-        except Exception as e:
-            print(f"[STYLE_LORA] 그룹 폴더 삭제 실패: {gpath} - {e}")
-
-    print(f"[STYLE_LORA] 그룹 삭제: {group_id}")
-    return {"success": True}
-
-
 # ─── 프로젝트 CRUD ─────────────────────────────────────────────
 
-def list_projects(group_id: str) -> list:
+def list_projects() -> list:
     data = _load_data()
-    group_id = _safe_dirname(group_id)
-    group = data.get("groups", {}).get(group_id, {})
     result = []
-    for project_id, pdata in group.get("projects", {}).items():
+    for project_id, pdata in data.get("projects", {}).items():
         images = pdata.get("images", [])
         sessions = pdata.get("sessions", {})
         entry = {
-            "group_id": group_id,
             "id": project_id,
             "name": pdata.get("name", project_id),
             "trigger": pdata.get("trigger", ""),
@@ -152,26 +172,20 @@ def list_projects(group_id: str) -> list:
             "created_at": pdata.get("created_at", ""),
         }
         if images:
-            prompt_result = get_image_prompt(group_id, project_id, images[0])
+            prompt_result = get_image_prompt(project_id, images[0])
             if prompt_result.get("success") and prompt_result.get("data"):
                 entry["prompt"] = prompt_result["data"]
         result.append(entry)
     return result
 
 
-def create_project(group_id: str, name: str, trigger: str = "", description: str = "") -> dict:
-    import datetime
+def create_project(name: str, trigger: str = "", description: str = "") -> dict:
     name = (name or "").strip()
     if not name:
         return {"success": False, "error": "프로젝트 이름이 필요합니다"}
     data = _load_data()
-    group_id = _safe_dirname(group_id)
-    group = data.setdefault("groups", {}).get(group_id)
-    if not group:
-        return {"success": False, "error": "존재하지 않는 그룹입니다"}
-
     project_id = _gen_id(name)
-    projects = group.setdefault("projects", {})
+    projects = data.setdefault("projects", {})
     if project_id in projects:
         return {"success": False, "error": "이미 존재하는 프로젝트입니다 (다시 시도하세요)"}
 
@@ -182,40 +196,40 @@ def create_project(group_id: str, name: str, trigger: str = "", description: str
         "description": description or "",
         "images": [],
         "sessions": {},
+        "training_config": {"anima": {}, "sdxl": {}},
         "usage_count": 0,
         "created_at": now,
     }
     _save_data(data)
-    os.makedirs(_project_dir(group_id, project_id), exist_ok=True)
-    print(f"[STYLE_LORA] 프로젝트 생성: {group_id}/{project_id} (name={name}, trigger={trigger})")
-    return {"success": True, "id": project_id, "group_id": group_id}
+    os.makedirs(_project_dir(project_id), exist_ok=True)
+    print(f"[STYLE_LORA] 프로젝트 생성: {project_id} (name={name}, trigger={trigger})")
+    return {"success": True, "id": project_id}
 
 
-def delete_project(group_id: str, project_id: str, style_lora_load_path: str = "", _data: dict = None) -> dict:
+def delete_project(project_id: str, style_lora_load_path: str = "", _data: dict = None) -> dict:
     own_data = _data is None
     data = _data if _data is not None else _load_data()
-    group_id = _safe_dirname(group_id)
     project_id = _safe_dirname(project_id)
-    group = data.get("groups", {}).get(group_id)
-    if not group or project_id not in group.get("projects", {}):
+    projects = data.get("projects", {})
+    if project_id not in projects:
         if own_data:
-            print(f"[STYLE_LORA] 삭제 대상 없음: {group_id}/{project_id}")
+            print(f"[STYLE_LORA] 삭제 대상 없음: {project_id}")
         return {"success": False, "error": "존재하지 않는 프로젝트입니다"}
 
-    group["projects"].pop(project_id, None)
+    projects.pop(project_id, None)
     if own_data:
         _save_data(data)
 
     # 학습 이미지 폴더 삭제
-    ppath = _project_dir(group_id, project_id)
+    ppath = _project_dir(project_id)
     if os.path.isdir(ppath):
         try:
             shutil.rmtree(ppath)
         except Exception as e:
             print(f"[STYLE_LORA] 프로젝트 폴더 삭제 실패: {ppath} - {e}")
 
-    # 학습 결과물 삭제 (anima/sdxl). 저장 경로 키: {group}_{project}
-    storage_key = f"{_safe_dirname(group_id)}_{project_id}"
+    # 학습 결과물 삭제 (anima/sdxl). 저장 경로 키: {project}
+    storage_key = _safe_dirname(project_id)
     if style_lora_load_path:
         for profile in ("anima", "sdxl"):
             trained_dir = os.path.join(style_lora_load_path, profile, storage_key)
@@ -226,39 +240,37 @@ def delete_project(group_id: str, project_id: str, style_lora_load_path: str = "
                 except Exception as e:
                     print(f"[STYLE_LORA] 학습 결과 삭제 실패: {trained_dir} - {e}")
 
-    print(f"[STYLE_LORA] 프로젝트 삭제: {group_id}/{project_id}")
+    print(f"[STYLE_LORA] 프로젝트 삭제: {project_id}")
     return {"success": True}
 
 
-def get_project_detail(group_id: str, project_id: str) -> dict:
+def get_project_detail(project_id: str) -> dict:
     data = _load_data()
-    group_id = _safe_dirname(group_id)
     project_id = _safe_dirname(project_id)
-    project = data.get("groups", {}).get(group_id, {}).get("projects", {}).get(project_id)
+    project = data.get("projects", {}).get(project_id)
     if not project:
-        print(f"[STYLE_LORA] 상세 조회 실패 - 없음: {group_id}/{project_id}")
+        print(f"[STYLE_LORA] 상세 조회 실패 - 없음: {project_id}")
         return {"success": False, "error": "존재하지 않는 프로젝트입니다"}
     return {
         "success": True,
         "data": {
-            "group_id": group_id,
             "id": project_id,
             "name": project.get("name", project_id),
             "trigger": project.get("trigger", ""),
             "description": project.get("description", ""),
             "images": project.get("images", []),
             "sessions": project.get("sessions", {}),
+            "training_config": project.get("training_config", {"anima": {}, "sdxl": {}}),
             "usage_count": project.get("usage_count", 0),
             "created_at": project.get("created_at", ""),
         },
     }
 
 
-def update_project(group_id: str, project_id: str, trigger: str = None, description: str = None) -> dict:
+def update_project(project_id: str, trigger: str = None, description: str = None) -> dict:
     data = _load_data()
-    group_id = _safe_dirname(group_id)
     project_id = _safe_dirname(project_id)
-    project = data.get("groups", {}).get(group_id, {}).get("projects", {}).get(project_id)
+    project = data.get("projects", {}).get(project_id)
     if not project:
         return {"success": False, "error": "존재하지 않는 프로젝트입니다"}
     if trigger is not None:
@@ -269,11 +281,10 @@ def update_project(group_id: str, project_id: str, trigger: str = None, descript
     return {"success": True}
 
 
-def increment_usage(group_id: str, project_id: str) -> dict:
+def increment_usage(project_id: str) -> dict:
     data = _load_data()
-    group_id = _safe_dirname(group_id)
     project_id = _safe_dirname(project_id)
-    project = data.get("groups", {}).get(group_id, {}).get("projects", {}).get(project_id)
+    project = data.get("projects", {}).get(project_id)
     if not project:
         return {"success": False, "error": "존재하지 않는 프로젝트입니다"}
     project["usage_count"] = project.get("usage_count", 0) + 1
@@ -283,15 +294,14 @@ def increment_usage(group_id: str, project_id: str) -> dict:
 
 # ─── 이미지 관리 ──────────────────────────────────────────────
 
-def add_image(group_id: str, project_id: str, src_path: str, filename: str) -> dict:
+def add_image(project_id: str, src_path: str, filename: str) -> dict:
     data = _load_data()
-    group_id = _safe_dirname(group_id)
     project_id = _safe_dirname(project_id)
-    project = data.get("groups", {}).get(group_id, {}).get("projects", {}).get(project_id)
+    project = data.get("projects", {}).get(project_id)
     if not project:
         return {"success": False, "error": "존재하지 않는 프로젝트입니다"}
 
-    dst_dir = _project_dir(group_id, project_id)
+    dst_dir = _project_dir(project_id)
     os.makedirs(dst_dir, exist_ok=True)
     # 파일명 충돌 회피
     dst_name = filename
@@ -311,15 +321,14 @@ def add_image(group_id: str, project_id: str, src_path: str, filename: str) -> d
         images.append(dst_name)
     _save_data(data)
 
-    print(f"[STYLE_LORA] 이미지 추가: {group_id}/{project_id}/{dst_name}")
+    print(f"[STYLE_LORA] 이미지 추가: {project_id}/{dst_name}")
     return {"success": True, "filename": dst_name}
 
 
-def delete_image(group_id: str, project_id: str, filename: str) -> dict:
+def delete_image(project_id: str, filename: str) -> dict:
     data = _load_data()
-    group_id = _safe_dirname(group_id)
     project_id = _safe_dirname(project_id)
-    project = data.get("groups", {}).get(group_id, {}).get("projects", {}).get(project_id)
+    project = data.get("projects", {}).get(project_id)
     if not project:
         return {"success": False, "error": "존재하지 않는 프로젝트입니다"}
 
@@ -330,7 +339,7 @@ def delete_image(group_id: str, project_id: str, filename: str) -> dict:
     images.remove(filename)
     _save_data(data)
 
-    pdir = _project_dir(group_id, project_id)
+    pdir = _project_dir(project_id)
     img_path = os.path.join(pdir, filename)
     if os.path.isfile(img_path):
         try:
@@ -345,27 +354,25 @@ def delete_image(group_id: str, project_id: str, filename: str) -> dict:
         except Exception:
             pass
 
-    print(f"[STYLE_LORA] 이미지 삭제: {group_id}/{project_id}/{filename}")
+    print(f"[STYLE_LORA] 이미지 삭제: {project_id}/{filename}")
     return {"success": True}
 
 
-def get_image_path(group_id: str, project_id: str, filename: str) -> str:
-    return os.path.join(_project_dir(_safe_dirname(group_id), _safe_dirname(project_id)), filename)
+def get_image_path(project_id: str, filename: str) -> str:
+    return os.path.join(_project_dir(_safe_dirname(project_id)), filename)
 
 
-def list_images(group_id: str, project_id: str) -> list:
+def list_images(project_id: str) -> list:
     data = _load_data()
-    group_id = _safe_dirname(group_id)
     project_id = _safe_dirname(project_id)
-    project = data.get("groups", {}).get(group_id, {}).get("projects", {}).get(project_id, {})
+    project = data.get("projects", {}).get(project_id, {})
     return project.get("images", [])
 
 
-def save_image_prompt(group_id: str, project_id: str, filename: str, prompt_data: dict) -> dict:
-    group_id = _safe_dirname(group_id)
+def save_image_prompt(project_id: str, filename: str, prompt_data: dict) -> dict:
     project_id = _safe_dirname(project_id)
     base = os.path.splitext(filename)[0]
-    prompt_path = os.path.join(_project_dir(group_id, project_id), f"{base}_prompt.json")
+    prompt_path = os.path.join(_project_dir(project_id), f"{base}_prompt.json")
     try:
         with open(prompt_path, "w", encoding="utf-8") as f:
             json.dump(prompt_data, f, ensure_ascii=False, indent=2)
@@ -376,11 +383,10 @@ def save_image_prompt(group_id: str, project_id: str, filename: str, prompt_data
         return {"success": False, "error": str(e)}
 
 
-def get_image_prompt(group_id: str, project_id: str, filename: str) -> dict:
-    group_id = _safe_dirname(group_id)
+def get_image_prompt(project_id: str, filename: str) -> dict:
     project_id = _safe_dirname(project_id)
     base = os.path.splitext(filename)[0]
-    prompt_path = os.path.join(_project_dir(group_id, project_id), f"{base}_prompt.json")
+    prompt_path = os.path.join(_project_dir(project_id), f"{base}_prompt.json")
     if not os.path.isfile(prompt_path):
         return {"success": False, "error": "프롬프트 없음"}
     try:
@@ -391,28 +397,65 @@ def get_image_prompt(group_id: str, project_id: str, filename: str) -> dict:
         return {"success": False, "error": str(e)}
 
 
-# ─── 설정 관리 (글로벌 학습 설정, instance 와 동일 스키마) ──────
+# ─── 설정 관리 (프로젝트별 학습 설정, ANIMA/SDXL) ───────────────
 
-def get_settings() -> dict:
+def _merged_profile_settings(stored: dict) -> dict:
+    merged = dict(DEFAULT_PROFILE_SETTINGS)
+    if isinstance(stored, dict):
+        for k, v in stored.items():
+            merged[k] = v
+    # 타입 정규화
+    for int_key in ("step_per_image", "save_per_step", "gen_w", "gen_h", "resolution", "save_after", "dim", "alpha"):
+        try:
+            merged[int_key] = int(merged.get(int_key))
+        except (TypeError, ValueError):
+            pass
+    try:
+        merged["il_rate"] = float(merged.get("il_rate"))
+    except (TypeError, ValueError):
+        pass
+    merged["upscale"] = bool(merged.get("upscale"))
+    return merged
+
+
+def get_project_settings(project_id: str) -> dict:
     data = _load_data()
-    return {"success": True, "data": data.get("settings", dict(DEFAULT_SETTINGS))}
+    project_id = _safe_dirname(project_id)
+    project = data.get("projects", {}).get(project_id)
+    if not project:
+        return {"success": False, "error": "존재하지 않는 프로젝트입니다"}
+    cfg = project.get("training_config", {}) or {}
+    return {
+        "success": True,
+        "data": {
+            "anima": _merged_profile_settings(cfg.get("anima", {})),
+            "sdxl": _merged_profile_settings(cfg.get("sdxl", {})),
+        },
+    }
 
 
-def save_settings(settings: dict) -> dict:
+def save_project_settings(project_id: str, settings: dict) -> dict:
     data = _load_data()
-    data["settings"] = settings
+    project_id = _safe_dirname(project_id)
+    project = data.get("projects", {}).get(project_id)
+    if not project:
+        return {"success": False, "error": "존재하지 않는 프로젝트입니다"}
+    cfg = {"anima": {}, "sdxl": {}}
+    if isinstance(settings, dict):
+        for profile in ("anima", "sdxl"):
+            cfg[profile] = settings.get(profile, {}) or {}
+    project["training_config"] = cfg
     _save_data(data)
-    print("[STYLE_LORA] 설정 저장 완료")
+    print(f"[STYLE_LORA] 프로젝트 설정 저장: {project_id}")
     return {"success": True}
 
 
 # ─── 세션 관리 ─────────────────────────────────────────────────
 
-def add_session(group_id: str, project_id: str, session_id: str, profile: str) -> dict:
+def add_session(project_id: str, session_id: str, profile: str) -> dict:
     data = _load_data()
-    group_id = _safe_dirname(group_id)
     project_id = _safe_dirname(project_id)
-    project = data.get("groups", {}).get(group_id, {}).get("projects", {}).get(project_id)
+    project = data.get("projects", {}).get(project_id)
     if not project:
         return {"success": False, "error": "존재하지 않는 프로젝트입니다"}
     project.setdefault("sessions", {})[session_id] = {
@@ -420,65 +463,63 @@ def add_session(group_id: str, project_id: str, session_id: str, profile: str) -
         "representative": None,
     }
     _save_data(data)
-    print(f"[STYLE_LORA] 세션 추가: {group_id}/{project_id}/{session_id} (profile={profile})")
+    print(f"[STYLE_LORA] 세션 추가: {project_id}/{session_id} (profile={profile})")
     return {"success": True}
 
 
-# ─── 피커용 (v2 통합 대비) ─────────────────────────────────────
+# ─── 피커용 ────────────────────────────────────────────────────
 
 def list_style_lora_for_picker(style_lora_load_path: str = "") -> list:
     """Style LoRA 피커용 목록. 학습 결과 파일시스템 스캔(instance 패턴).
-    저장 경로 키: {group_id}_{project_id}."""
+    저장 경로 키: {project_id}."""
     data = _load_data()
     result = []
-    for group_id, gdata in data.get("groups", {}).items():
-        for project_id, pdata in gdata.get("projects", {}).items():
-            profiles = {}
-            storage_key = f"{_safe_dirname(group_id)}_{_safe_dirname(project_id)}"
-            for profile in ("anima", "sdxl"):
-                if not style_lora_load_path:
+    for project_id, pdata in data.get("projects", {}).items():
+        profiles = {}
+        storage_key = _safe_dirname(project_id)
+        for profile in ("anima", "sdxl"):
+            if not style_lora_load_path:
+                continue
+            profile_dir = os.path.join(style_lora_load_path, profile, storage_key)
+            if not os.path.isdir(profile_dir):
+                continue
+            session_dirs = sorted(
+                [d for d in os.listdir(profile_dir) if os.path.isdir(os.path.join(profile_dir, d))],
+                reverse=True,
+            )
+            for session_name in session_dirs:
+                session_dir = os.path.join(profile_dir, session_name)
+                json_files = [f for f in os.listdir(session_dir) if f.endswith('.json')]
+                if not json_files:
                     continue
-                profile_dir = os.path.join(style_lora_load_path, profile, storage_key)
-                if not os.path.isdir(profile_dir):
+                json_path = os.path.join(session_dir, json_files[0])
+                try:
+                    with open(json_path, 'r', encoding='utf-8') as f:
+                        jdata = json.load(f)
+                    safetensors = jdata.get('lora_file', '')
+                    previews = jdata.get('previews', [])
+                    if safetensors and os.path.isfile(os.path.join(session_dir, safetensors)):
+                        rel_path = os.path.join(profile, storage_key, session_name, safetensors)
+                        preview = previews[0] if previews else ""
+                        profiles[profile] = {
+                            "lora_path": rel_path,
+                            "preview_url": preview,
+                            "session": session_name,
+                        }
+                        break
+                except Exception as e:
+                    print(f"[STYLE_LORA_PICKER] JSON 읽기 실패: {json_path} - {e}")
                     continue
-                session_dirs = sorted(
-                    [d for d in os.listdir(profile_dir) if os.path.isdir(os.path.join(profile_dir, d))],
-                    reverse=True,
-                )
-                for session_name in session_dirs:
-                    session_dir = os.path.join(profile_dir, session_name)
-                    json_files = [f for f in os.listdir(session_dir) if f.endswith('.json')]
-                    if not json_files:
-                        continue
-                    json_path = os.path.join(session_dir, json_files[0])
-                    try:
-                        with open(json_path, 'r', encoding='utf-8') as f:
-                            jdata = json.load(f)
-                        safetensors = jdata.get('lora_file', '')
-                        previews = jdata.get('previews', [])
-                        if safetensors and os.path.isfile(os.path.join(session_dir, safetensors)):
-                            rel_path = os.path.join(profile, storage_key, session_name, safetensors)
-                            preview = previews[0] if previews else ""
-                            profiles[profile] = {
-                                "lora_path": rel_path,
-                                "preview_url": preview,
-                                "session": session_name,
-                            }
-                            break
-                    except Exception as e:
-                        print(f"[STYLE_LORA_PICKER] JSON 읽기 실패: {json_path} - {e}")
-                        continue
-            if profiles:
-                images = pdata.get("images", [])
-                result.append({
-                    "group_id": group_id,
-                    "project_id": project_id,
-                    "id": f"{group_id}/{project_id}",
-                    "name": pdata.get("name", project_id),
-                    "trigger": pdata.get("trigger", ""),
-                    "first_image": images[0] if images else None,
-                    "profiles": profiles,
-                })
+        if profiles:
+            images = pdata.get("images", [])
+            result.append({
+                "project_id": project_id,
+                "id": project_id,
+                "name": pdata.get("name", project_id),
+                "trigger": pdata.get("trigger", ""),
+                "first_image": images[0] if images else None,
+                "profiles": profiles,
+            })
     return result
 
 
@@ -524,13 +565,12 @@ async def handle_set_style_lora_prompt(request):
 
 async def handle_style_lora_auto_refine_enqueue(request):
     """POST /api/style_lora/auto_refine_enqueue - 스타일 프로젝트 단일 이미지 LLM 정제 큐 적재.
-    body: { group, project, filename } (또는 filenames 배열 → 각각 별도 큐 아이템)."""
+    body: { project, filename } (또는 filenames 배열 → 각각 별도 큐 아이템)."""
     try:
         body = await request.json()
-        group = (body.get("group") or "").strip()
         project = (body.get("project") or "").strip()
-        if not group or not project:
-            return web.json_response({"success": False, "error": "group, project 필드가 필요합니다."}, status=400)
+        if not project:
+            return web.json_response({"success": False, "error": "project 필드가 필요합니다."}, status=400)
         filenames = body.get("filenames")
         if filenames:
             if not isinstance(filenames, list) or not filenames:
@@ -551,20 +591,19 @@ async def handle_style_lora_auto_refine_enqueue(request):
 
         items = []
         for fn in filenames:
-            label = f"스타일 LoRA 정제: {group}/{project}/{fn}"
+            label = f"스타일 LoRA 정제: {project}/{fn}"
             item = await qm.add_item(
                 item_type="instance_lora_prompt_refine",
                 label=label,
                 params={
                     "source_type": "style",
-                    "group": group,
                     "project": project,
                     "filename": fn,
                 },
                 priority=10,
             )
             items.append(item)
-        print(f"[STYLE_LORA] auto_refine 큐 추가: group={group} project={project} count={len(items)}")
+        print(f"[STYLE_LORA] auto_refine 큐 추가: project={project} count={len(items)}")
         return web.json_response({"success": True, "data": {"ids": [i.id for i in items], "count": len(items)}})
     except Exception as e:
         print(f"[STYLE_LORA] auto_refine_enqueue 예외: {e}")

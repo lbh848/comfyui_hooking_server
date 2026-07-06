@@ -883,8 +883,8 @@ class QueueManager:
 
         params.source:
           - "instance" (기본): params.id 로 instance_lora_mode 사용.
-          - "style_lora":       params.group + params.project 로 style_lora_mode 사용.
-                                저장경로 prefix SOYA_STYLE_LORA, 스토리지 키 {group}_{project}.
+          - "style_lora":       params.project 로 style_lora_mode 사용.
+                                저장경로 prefix SOYA_STYLE_LORA, 스토리지 키 {project}.
         """
         import aiohttp
         import shutil
@@ -902,22 +902,21 @@ class QueueManager:
             from modes.style_lora_mode import (
                 get_project_detail as _get_detail, list_images as _list_images,
                 get_image_prompt as _get_prompt, get_image_path as _get_path,
-                save_image_prompt as _save_prompt, get_settings as _get_settings,
+                save_image_prompt as _save_prompt, get_project_settings as _get_settings,
                 add_session as _add_session, _safe_dirname as _safe_dirname,
             )
-            group = _safe_dirname(params.get("group", ""))
             project = _safe_dirname(params.get("project", ""))
-            if not group or not project:
-                raise ValueError("style_lora 학습은 group, project 필드가 필요합니다")
-            detail_fn = lambda: _get_detail(group, project)
-            list_images_fn = lambda: _list_images(group, project)
-            get_prompt_fn = lambda fn: _get_prompt(group, project, fn)
-            get_path_fn = lambda fn: _get_path(group, project, fn)
-            save_prompt_fn = lambda fn, d: _save_prompt(group, project, fn, d)
-            settings_fn = lambda: _get_settings()
-            add_session_fn = lambda ts, prof: _add_session(group, project, ts, prof)
-            primary_id = f"{group}/{project}"           # 진행률/로그 식별자
-            storage_key = f"{_safe_dirname(group)}_{project}"
+            if not project:
+                raise ValueError("style_lora 학습은 project 필드가 필요합니다")
+            detail_fn = lambda: _get_detail(project)
+            list_images_fn = lambda: _list_images(project)
+            get_prompt_fn = lambda fn: _get_prompt(project, fn)
+            get_path_fn = lambda fn: _get_path(project, fn)
+            save_prompt_fn = lambda fn, d: _save_prompt(project, fn, d)
+            settings_fn = lambda: _get_settings(project)
+            add_session_fn = lambda ts, prof: _add_session(project, ts, prof)
+            primary_id = project                    # 진행률/로그 식별자
+            storage_key = project
             lora_save_prefix = "SOYA_STYLE_LORA"
             kind_label = "스타일"
         else:
@@ -983,13 +982,13 @@ class QueueManager:
             profile_settings = settings.get(profile, {})
             step = profile_settings.get("step_per_image", 125)
             il_rate = profile_settings.get("il_rate", 0.00025)
-            save_step = 25
+            save_step = profile_settings.get("save_per_step", 25)
             folder = profile_settings.get("multi_img_folder_name", "soya_lora")
-            gen_w = 1
-            gen_h = 1
+            gen_w = profile_settings.get("gen_w", 1)
+            gen_h = profile_settings.get("gen_h", 1)
             upscale = profile_settings.get("upscale", False)
             resolution = profile_settings.get("resolution", 1024)
-            save_after = 0
+            save_after = profile_settings.get("save_after", 0)
             dim = profile_settings.get("dim", 32)
             alpha = profile_settings.get("alpha", 16)
 
@@ -1053,11 +1052,11 @@ class QueueManager:
                 elif title == "부정프롬프트":
                     ninfo["inputs"]["value"] = negative_text
 
-            # 진행률 알림 (style 도 동일 이벤트, payload 에 source/group/project 추가)
+            # 진행률 알림 (style 도 동일 이벤트, payload 에 source/project 추가)
             profile_label = f" ({profile})" if len(profiles_to_train) > 1 else ""
             progress_extra = {"lora_id": primary_id, "profile": profile, "source": source}
             if source == "style_lora":
-                progress_extra.update({"group": group, "project": project})
+                progress_extra.update({"project": project})
             await self._notify_progress(item, {
                 "phase": "preparing",
                 **progress_extra,
@@ -1402,22 +1401,20 @@ class QueueManager:
                 })
         elif source == "style_lora":
             save_mode = "style_lora"
-            group = params.get("group", "")
             project = params.get("project", "")
             only_filenames = params.get("filenames", None)  # 일괄/개별: 지정한 파일만
-            if not group or not project:
-                raise ValueError("style_lora 소스는 group, project 필드가 필요합니다")
+            if not project:
+                raise ValueError("style_lora 소스는 project 필드가 필요합니다")
             from modes.style_lora_mode import list_images, get_image_path, _safe_dirname
-            group = _safe_dirname(group)
             project = _safe_dirname(project)
-            filenames = list_images(group, project)
+            filenames = list_images(project)
             if only_filenames:
                 only_set = set(only_filenames)
                 filenames = [fn for fn in filenames if fn in only_set]
             for fn in filenames:
                 images_to_analyze.append({
-                    "filepath": get_image_path(group, project, fn),
-                    "filename": fn, "group": group, "project": project,
+                    "filepath": get_image_path(project, fn),
+                    "filename": fn, "project": project,
                 })
         else:
             raise ValueError(f"알 수 없는 tag_analysis source: {source}")
@@ -1494,7 +1491,7 @@ class QueueManager:
                     success_count += 1
                 elif save_mode == "style_lora":
                     from modes.style_lora_mode import save_image_prompt as _style_save_prompt
-                    _style_save_prompt(img["group"], img["project"], img["filename"], {
+                    _style_save_prompt(img["project"], img["filename"], {
                         "positive": positive, "negative": "",
                         "original_positive": positive, "original_negative": "",
                     })
@@ -1906,25 +1903,23 @@ class QueueManager:
         instance 정제와 동일 동작, 별도 스타일 템플릿 사용(template_set="style")."""
         from modes.instance_lora_mode import run_auto_refine_lora_prompt
         from modes.style_lora_mode import get_image_prompt, save_image_prompt, _safe_dirname
-        group = params.get("group", "")
         project = params.get("project", "")
         filename = params.get("filename", "")
         event_type = "lora_prompt_refine_progress"
-        if not group or not project or not filename:
-            raise ValueError("style 태그 정제는 group, project, filename이 필요합니다")
-        group = _safe_dirname(group)
+        if not project or not filename:
+            raise ValueError("style 태그 정제는 project, filename이 필요합니다")
         project = _safe_dirname(project)
 
-        gp = get_image_prompt(group, project, filename)
+        gp = get_image_prompt(project, filename)
         existing = gp.get("data") if (isinstance(gp, dict) and gp.get("success")) else {}
         current_positive = (existing.get("positive") or existing.get("original_positive") or "").strip()
         if not current_positive:
-            err = f"정제할 긍정 프롬프트가 없습니다 (group={group} project={project} filename={filename}). 태깅이 선행되어야 합니다."
+            err = f"정제할 긍정 프롬프트가 없습니다 (project={project} filename={filename}). 태깅이 선행되어야 합니다."
             print(f"[QUEUE:LORA_PROMPT_REFINE] source=style {err}")
             if self.notify_frontend:
                 await self.notify_frontend(event_type, {
                     "phase": "failed", "source_type": "style",
-                    "group": group, "project": project, "filename": filename, "error": err,
+                    "project": project, "filename": filename, "error": err,
                 })
             raise RuntimeError(err)
 
@@ -1932,7 +1927,7 @@ class QueueManager:
         if self.notify_frontend:
             await self.notify_frontend(event_type, {
                 "phase": "running", "source_type": "style",
-                "group": group, "project": project, "filename": filename,
+                "project": project, "filename": filename,
             })
 
         try:
@@ -1943,22 +1938,22 @@ class QueueManager:
                 source_type="style",
                 is_asset=True,
                 template_set="style",
-                style_ctx={"group": group, "project": project},
+                style_ctx={"project": project},
             )
             if not result.get("success"):
                 err = result.get("error", "알 수 없는 오류")
-                print(f"[QUEUE:LORA_PROMPT_REFINE] source=style 정제 실패: group={group} project={project} filename={filename} - {err}")
+                print(f"[QUEUE:LORA_PROMPT_REFINE] source=style 정제 실패: project={project} filename={filename} - {err}")
                 traceback.print_exc()
                 if self.notify_frontend:
                     await self.notify_frontend(event_type, {
                         "phase": "failed", "source_type": "style",
-                        "group": group, "project": project, "filename": filename, "error": err,
+                        "project": project, "filename": filename, "error": err,
                     })
                 raise RuntimeError(err)
 
             refined_positive = result["data"].get("positive") or ""
             if refined_positive:
-                save_image_prompt(group, project, filename, {
+                save_image_prompt(project, filename, {
                     "positive": refined_positive,
                     "negative": existing.get("negative", ""),
                     "original_positive": existing.get("original_positive") or current_positive,
@@ -1968,18 +1963,18 @@ class QueueManager:
             if self.notify_frontend:
                 await self.notify_frontend(event_type, {
                     "phase": "completed", "source_type": "style",
-                    "group": group, "project": project, "filename": filename,
+                    "project": project, "filename": filename,
                     "positive": refined_positive,
                 })
-            print(f"[QUEUE:LORA_PROMPT_REFINE] source=style 완료: group={group} project={project} filename={filename} 길이={len(refined_positive)}")
+            print(f"[QUEUE:LORA_PROMPT_REFINE] source=style 완료: project={project} filename={filename} 길이={len(refined_positive)}")
             return {"success": True, "positive": refined_positive}
         except Exception as e:
-            print(f"[QUEUE:LORA_PROMPT_REFINE] source=style 실패: group={group} project={project} filename={filename} - {e}")
+            print(f"[QUEUE:LORA_PROMPT_REFINE] source=style 실패: project={project} filename={filename} - {e}")
             traceback.print_exc()
             if self.notify_frontend:
                 await self.notify_frontend(event_type, {
                     "phase": "failed", "source_type": "style",
-                    "group": group, "project": project, "filename": filename, "error": str(e),
+                    "project": project, "filename": filename, "error": str(e),
                 })
             raise
 

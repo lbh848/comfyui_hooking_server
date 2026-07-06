@@ -8427,8 +8427,8 @@ async def handle_api_instance_lora_prompt_filter_save(request):
 
 # ─── 스타일(그림체) LoRA API 핸들러 ──────────────────────────────
 
-async def handle_api_style_lora_groups(request):
-    """그룹 목록. POST 로 create(body.name), DELETE 로 delete(body.id) 도 함께 처리."""
+async def handle_api_style_lora_projects(request):
+    """프로젝트 목록. POST 로 create(body.name, body.trigger, body.description). 평면 구조(그룹 없음)."""
     try:
         from modes import style_lora_mode as sm
         if request.method == "POST":
@@ -8436,46 +8436,10 @@ async def handle_api_style_lora_groups(request):
             name = (body.get("name") or "").strip()
             if not name:
                 return web.json_response({"success": False, "error": "name 필수"}, status=400)
-            return web.json_response(sm.create_group(name))
-        return web.json_response({"success": True, "data": sm.list_groups()})
-    except Exception as e:
-        print(f"[STYLE_LORA_API] groups 실패: {e}")
-        traceback.print_exc()
-        return web.json_response({"success": False, "error": str(e)}, status=500)
-
-
-async def handle_api_style_lora_group_delete(request):
-    try:
-        body = await request.json()
-        group_id = (body.get("id") or "").strip()
-        if not group_id:
-            return web.json_response({"success": False, "error": "id 필수"}, status=400)
-        config = load_config()
-        from modes.style_lora_mode import delete_group
-        return web.json_response(delete_group(group_id, config.get("style_lora_load_path", "")))
-    except Exception as e:
-        print(f"[STYLE_LORA_API] group delete 실패: {e}")
-        traceback.print_exc()
-        return web.json_response({"success": False, "error": str(e)}, status=500)
-
-
-async def handle_api_style_lora_projects(request):
-    """프로젝트 목록. POST 로 create(body.group, body.name, body.trigger, body.description)."""
-    try:
-        from modes import style_lora_mode as sm
-        if request.method == "POST":
-            body = await request.json()
-            group = (body.get("group") or "").strip()
-            name = (body.get("name") or "").strip()
-            if not group or not name:
-                return web.json_response({"success": False, "error": "group, name 필수"}, status=400)
             trigger = (body.get("trigger") or "").strip()
             description = body.get("description", "") or ""
-            return web.json_response(sm.create_project(group, name, trigger, description))
-        group = (request.query.get("group") or "").strip()
-        if not group:
-            return web.json_response({"success": False, "error": "group 쿼리 필수"}, status=400)
-        return web.json_response({"success": True, "data": sm.list_projects(group)})
+            return web.json_response(sm.create_project(name, trigger, description))
+        return web.json_response({"success": True, "data": sm.list_projects()})
     except Exception as e:
         print(f"[STYLE_LORA_API] projects 실패: {e}")
         traceback.print_exc()
@@ -8485,13 +8449,12 @@ async def handle_api_style_lora_projects(request):
 async def handle_api_style_lora_project_delete(request):
     try:
         body = await request.json()
-        group = (body.get("group") or "").strip()
-        project = (body.get("project") or "").strip()
-        if not group or not project:
-            return web.json_response({"success": False, "error": "group, project 필수"}, status=400)
+        project = (body.get("project") or body.get("id") or "").strip()
+        if not project:
+            return web.json_response({"success": False, "error": "project 필수"}, status=400)
         config = load_config()
         from modes.style_lora_mode import delete_project
-        return web.json_response(delete_project(group, project, config.get("style_lora_load_path", "")))
+        return web.json_response(delete_project(project, config.get("style_lora_load_path", "")))
     except Exception as e:
         print(f"[STYLE_LORA_API] project delete 실패: {e}")
         traceback.print_exc()
@@ -8501,13 +8464,12 @@ async def handle_api_style_lora_project_delete(request):
 async def handle_api_style_lora_project_update(request):
     try:
         body = await request.json()
-        group = (body.get("group") or "").strip()
         project = (body.get("project") or "").strip()
-        if not group or not project:
-            return web.json_response({"success": False, "error": "group, project 필수"}, status=400)
+        if not project:
+            return web.json_response({"success": False, "error": "project 필수"}, status=400)
         from modes.style_lora_mode import update_project
         return web.json_response(update_project(
-            group, project,
+            project,
             trigger=body.get("trigger"),
             description=body.get("description"),
         ))
@@ -8519,12 +8481,11 @@ async def handle_api_style_lora_project_update(request):
 
 async def handle_api_style_lora_detail(request):
     try:
-        group = (request.query.get("group") or "").strip()
         project = (request.query.get("project") or "").strip()
-        if not group or not project:
-            return web.json_response({"success": False, "error": "group, project 필수"}, status=400)
+        if not project:
+            return web.json_response({"success": False, "error": "project 필수"}, status=400)
         from modes.style_lora_mode import get_project_detail
-        return web.json_response(get_project_detail(group, project))
+        return web.json_response(get_project_detail(project))
     except Exception as e:
         print(f"[STYLE_LORA_API] detail 실패: {e}")
         traceback.print_exc()
@@ -8533,11 +8494,10 @@ async def handle_api_style_lora_detail(request):
 
 async def handle_api_style_lora_image(request):
     try:
-        group = request.match_info.get("group", "")
         project = request.match_info.get("project", "")
         filename = request.match_info.get("filename", "")
         from modes.style_lora_mode import get_image_path
-        img_path = get_image_path(group, project, filename)
+        img_path = get_image_path(project, filename)
         if not os.path.isfile(img_path):
             print(f"[STYLE_LORA_API] 이미지 없음: {img_path}")
             return web.json_response({"error": "not found"}, status=404)
@@ -8549,15 +8509,14 @@ async def handle_api_style_lora_image(request):
 
 
 async def handle_api_style_lora_images_add(request):
-    """프로젝트에 이미지 복사 추가. body: { group, project, images:[{type:'asset'|'bot'|'path', ...}] }.
+    """프로젝트에 이미지 복사 추가. body: { project, images:[{type:'asset'|'bot'|'path', ...}] }.
     asset/bot 소스 경로 계산은 인스턴스와 동일 규칙."""
     try:
         body = await request.json()
-        group = (body.get("group") or "").strip()
         project = (body.get("project") or "").strip()
         images = body.get("images", [])
-        if not group or not project:
-            return web.json_response({"success": False, "error": "group, project 필수"}, status=400)
+        if not project:
+            return web.json_response({"success": False, "error": "project 필수"}, status=400)
         from modes.style_lora_mode import add_image
         from modes.asset_mode import ASSET_DIR
         from modes.bot_lora_mode import _bot_char_dir as bot_char_dir_fn
@@ -8588,7 +8547,7 @@ async def handle_api_style_lora_images_add(request):
                 print(f"[STYLE_LORA_API] 소스 파일 없음: {src_path}")
                 results.append({"success": False, "error": f"파일 없음: {filename}"})
                 continue
-            r = add_image(group, project, src_path, filename)
+            r = add_image(project, src_path, filename)
             results.append(r)
         return web.json_response({"success": True, "results": results})
     except Exception as e:
@@ -8600,13 +8559,12 @@ async def handle_api_style_lora_images_add(request):
 async def handle_api_style_lora_images_delete(request):
     try:
         body = await request.json()
-        group = (body.get("group") or "").strip()
         project = (body.get("project") or "").strip()
         filename = (body.get("filename") or "").strip()
-        if not group or not project or not filename:
-            return web.json_response({"success": False, "error": "group, project, filename 필수"}, status=400)
+        if not project or not filename:
+            return web.json_response({"success": False, "error": "project, filename 필수"}, status=400)
         from modes.style_lora_mode import delete_image
-        return web.json_response(delete_image(group, project, filename))
+        return web.json_response(delete_image(project, filename))
     except Exception as e:
         print(f"[STYLE_LORA_API] 이미지 삭제 실패: {e}")
         traceback.print_exc()
@@ -8614,37 +8572,29 @@ async def handle_api_style_lora_images_delete(request):
 
 
 async def handle_api_style_lora_images_upload(request):
-    """multipart 업로드. 필드: group, project, files[]."""
+    """multipart 업로드. 필드: project, files[]."""
     try:
         from modes.style_lora_mode import add_image
         reader = await request.multipart()
         results = []
-        group = None
         project = None
         tmp_paths = []
         while True:
             part = await reader.next()
             if part is None:
                 break
-            if part.name == 'group':
-                group = (await part.text()).strip()
-                continue
             if part.name == 'project':
                 project = (await part.text()).strip()
                 continue
             if part.name == 'files':
                 filename = part.filename
-                if not filename or not group or not project:
-                    if not filename:
-                        continue
-                    if not group:
-                        group = request.query.get("group", "").strip()
-                    if not project:
-                        project = request.query.get("project", "").strip()
-                if not group or not project:
-                    results.append({"success": False, "error": "group/project 없음"})
+                if not filename:
                     continue
-                import tempfile
+                if not project:
+                    project = request.query.get("project", "").strip()
+                if not project:
+                    results.append({"success": False, "error": "project 없음"})
+                    continue
                 tmp_dir = os.path.join(BASE_DIR, "style_lora_data", "_tmp_upload")
                 os.makedirs(tmp_dir, exist_ok=True)
                 tmp_path = os.path.join(tmp_dir, f"{project}_{filename}")
@@ -8655,7 +8605,7 @@ async def handle_api_style_lora_images_upload(request):
                             break
                         f.write(chunk)
                 tmp_paths.append(tmp_path)
-                r = add_image(group, project, tmp_path, filename)
+                r = add_image(project, tmp_path, filename)
                 results.append(r)
         # 임시 파일 정리
         for tp in tmp_paths:
@@ -8672,19 +8622,18 @@ async def handle_api_style_lora_images_upload(request):
 
 
 async def handle_api_style_lora_analyze(request):
-    """스타일 프로젝트 이미지 WD 태깅 → 큐. body: { group, project, filenames?:[] }.
+    """스타일 프로젝트 이미지 WD 태깅 → 큐. body: { project, filenames?:[] }.
     filenames 없으면 프로젝트 전체."""
     try:
         body = await request.json()
-        group = (body.get("group") or "").strip()
         project = (body.get("project") or "").strip()
-        if not group or not project:
-            return web.json_response({"success": False, "error": "group, project 필수"}, status=400)
+        if not project:
+            return web.json_response({"success": False, "error": "project 필수"}, status=400)
         filenames = body.get("filenames") or None
-        params = {"source": "style_lora", "group": group, "project": project}
+        params = {"source": "style_lora", "project": project}
         if filenames:
             params["filenames"] = filenames
-        label = f"스타일 태그 분석: {group}/{project}" + (f" ({len(filenames)}장)" if filenames else "")
+        label = f"스타일 태그 분석: {project}" + (f" ({len(filenames)}장)" if filenames else "")
         item = await queue_manager.add_item("tag_analysis", label, params)
         return web.json_response({"success": True, "item_id": item.id})
     except Exception as e:
@@ -8695,8 +8644,11 @@ async def handle_api_style_lora_analyze(request):
 
 async def handle_api_style_lora_config_get(request):
     try:
-        from modes.style_lora_mode import get_settings
-        return web.json_response(get_settings())
+        project = (request.query.get("project") or "").strip()
+        if not project:
+            return web.json_response({"success": False, "error": "project 필수"}, status=400)
+        from modes.style_lora_mode import get_project_settings
+        return web.json_response(get_project_settings(project))
     except Exception as e:
         print(f"[STYLE_LORA_API] 설정 조회 실패: {e}")
         traceback.print_exc()
@@ -8706,8 +8658,12 @@ async def handle_api_style_lora_config_get(request):
 async def handle_api_style_lora_config_save(request):
     try:
         body = await request.json()
-        from modes.style_lora_mode import save_settings
-        return web.json_response(save_settings(body))
+        project = (body.get("project") or "").strip()
+        settings = body.get("settings") or body.get("data") or {}
+        if not project:
+            return web.json_response({"success": False, "error": "project 필수"}, status=400)
+        from modes.style_lora_mode import save_project_settings
+        return web.json_response(save_project_settings(project, settings))
     except Exception as e:
         print(f"[STYLE_LORA_API] 설정 저장 실패: {e}")
         traceback.print_exc()
@@ -8717,14 +8673,13 @@ async def handle_api_style_lora_config_save(request):
 async def handle_api_style_lora_prompt_save(request):
     try:
         body = await request.json()
-        group = (body.get("group") or "").strip()
         project = (body.get("project") or "").strip()
         filename = (body.get("filename") or "").strip()
         prompt_data = body.get("prompt", {})
-        if not group or not project or not filename:
-            return web.json_response({"success": False, "error": "group, project, filename 필수"}, status=400)
+        if not project or not filename:
+            return web.json_response({"success": False, "error": "project, filename 필수"}, status=400)
         from modes.style_lora_mode import save_image_prompt
-        return web.json_response(save_image_prompt(group, project, filename, prompt_data))
+        return web.json_response(save_image_prompt(project, filename, prompt_data))
     except Exception as e:
         print(f"[STYLE_LORA_API] 프롬프트 저장 실패: {e}")
         traceback.print_exc()
@@ -8733,13 +8688,12 @@ async def handle_api_style_lora_prompt_save(request):
 
 async def handle_api_style_lora_prompt_get(request):
     try:
-        group = (request.query.get("group") or "").strip()
         project = (request.query.get("project") or "").strip()
         filename = (request.query.get("filename") or "").strip()
-        if not group or not project or not filename:
-            return web.json_response({"success": False, "error": "group, project, filename 필수"}, status=400)
+        if not project or not filename:
+            return web.json_response({"success": False, "error": "project, filename 필수"}, status=400)
         from modes.style_lora_mode import get_image_prompt
-        return web.json_response(get_image_prompt(group, project, filename))
+        return web.json_response(get_image_prompt(project, filename))
     except Exception as e:
         print(f"[STYLE_LORA_API] 프롬프트 조회 실패: {e}")
         traceback.print_exc()
@@ -8747,22 +8701,18 @@ async def handle_api_style_lora_prompt_get(request):
 
 
 async def handle_api_style_lora_training_start(request):
-    """스타일 LoRA 학습 → 기존 instance_lora_training 큐에 source=style_lora 로 적재."""
+    """스타일 LoRA 학습 → 기존 instance_lora_training 큐에 source=style_lora 로 적재.
+    ANIMA/SDXL 두 프로필을 순차 학습."""
     try:
         body = await request.json()
-        group = (body.get("group") or "").strip()
         project = (body.get("project") or "").strip()
-        profile = (body.get("profile") or "anima").strip()
-        if not group or not project:
-            return web.json_response({"success": False, "error": "group, project 필수"}, status=400)
-        if profile not in ("anima", "sdxl", "both"):
-            return web.json_response({"success": False, "error": "profile은 anima, sdxl, both만 가능"}, status=400)
-        profiles = ["anima", "sdxl"] if profile == "both" else [profile]
+        if not project:
+            return web.json_response({"success": False, "error": "project 필수"}, status=400)
         items = []
-        for p in profiles:
-            label = f"[스타일] {group}/{project} ({p})"
+        for p in ("anima", "sdxl"):
+            label = f"[스타일] {project} ({p})"
             item = await queue_manager.add_item("instance_lora_training", label, {
-                "source": "style_lora", "group": group, "project": project, "profiles": [p],
+                "source": "style_lora", "project": project, "profiles": [p],
             })
             items.append(item)
         return web.json_response({"success": True, "queue_item_ids": [i.id for i in items], "labels": [i.label for i in items]})
@@ -8840,15 +8790,12 @@ from modes.style_lora_mode import (
     handle_get_style_lora_prompt, handle_set_style_lora_prompt,
     handle_style_lora_auto_refine_enqueue,
 )
-app.router.add_get("/api/style_lora/groups", handle_api_style_lora_groups)
-app.router.add_post("/api/style_lora/groups", handle_api_style_lora_groups)
-app.router.add_post("/api/style_lora/group/delete", handle_api_style_lora_group_delete)
 app.router.add_get("/api/style_lora/projects", handle_api_style_lora_projects)
 app.router.add_post("/api/style_lora/projects", handle_api_style_lora_projects)
 app.router.add_post("/api/style_lora/project/delete", handle_api_style_lora_project_delete)
 app.router.add_post("/api/style_lora/project/update", handle_api_style_lora_project_update)
 app.router.add_get("/api/style_lora/detail", handle_api_style_lora_detail)
-app.router.add_get("/api/style_lora/image/{group}/{project}/{filename}", handle_api_style_lora_image)
+app.router.add_get("/api/style_lora/image/{project}/{filename}", handle_api_style_lora_image)
 app.router.add_post("/api/style_lora/images/add", handle_api_style_lora_images_add)
 app.router.add_post("/api/style_lora/images/delete", handle_api_style_lora_images_delete)
 app.router.add_post("/api/style_lora/images/upload", handle_api_style_lora_images_upload)

@@ -363,9 +363,9 @@ async def run_auto_refine_lora_prompt(
             is_asset = True
             template_set = "style"
             if not style_ctx or not filename:
-                return {"success": False, "error": "style 소스는 style_ctx(group, project), filename 필드가 필요합니다."}
-            if not style_ctx.get("group") or not style_ctx.get("project"):
-                return {"success": False, "error": "style_ctx 의 group, project 필드가 필요합니다."}
+                return {"success": False, "error": "style 소스는 style_ctx(project), filename 필드가 필요합니다."}
+            if not style_ctx.get("project"):
+                return {"success": False, "error": "style_ctx 의 project 필드가 필요합니다."}
         elif not char_name or not filename:
             return {"success": False, "error": "character, filename 필드가 필요합니다."}
         if source_type == "bot" and not bot_name:
@@ -406,10 +406,10 @@ async def run_auto_refine_lora_prompt(
                 return {"success": False, "error": f"인스턴스 이미지를 찾을 수 없습니다: {filename} (lora_id={lora_id})"}
         elif source_type == "style":
             from modes.style_lora_mode import get_image_path as _style_get_image_path
-            img_path = _style_get_image_path(style_ctx["group"], style_ctx["project"], filename)
+            img_path = _style_get_image_path(style_ctx["project"], filename)
             if not img_path or not os.path.isfile(img_path):
-                print(f"[INSTANCE_LORA] 스타일 이미지 없음: group={style_ctx['group']} project={style_ctx['project']} filename={filename}")
-                return {"success": False, "error": f"스타일 이미지를 찾을 수 없습니다: {filename} (group={style_ctx['group']} project={style_ctx['project']})"}
+                print(f"[INSTANCE_LORA] 스타일 이미지 없음: project={style_ctx['project']} filename={filename}")
+                return {"success": False, "error": f"스타일 이미지를 찾을 수 없습니다: {filename} (project={style_ctx['project']})"}
         elif source_type == "bot":
             from modes.bot_lora_mode import get_bot_char_image_path
             img_path = get_bot_char_image_path(bot_name, char_name, filename)
@@ -484,7 +484,7 @@ async def run_auto_refine_lora_prompt(
         elif source_type == "instance":
             source_desc = f"instance lora_id={lora_id}"
         elif source_type == "style":
-            source_desc = f"style group={style_ctx.get('group')} project={style_ctx.get('project')}"
+            source_desc = f"style project={style_ctx.get('project')}"
         else:
             source_desc = f"training entry={entry}"
         print(f"[INSTANCE_LORA] auto_refine_lora_prompt 호출: source={source_type} {source_desc} char={char_name} filename={filename} service={service} is_asset={is_asset} gender={gender_tag} etc_len={len(current_positive)} use_custom={use_custom}")
