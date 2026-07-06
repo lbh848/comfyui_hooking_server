@@ -4832,6 +4832,7 @@
                     <button id="lora-mode-asset-btn" onclick="switchLoraMode('asset')" style="padding:4px 14px; font-size:0.8rem; font-weight:600; cursor:pointer; border:none; background:var(--accent); color:#fff;">에셋</button>
                     <button id="lora-mode-bot-btn" onclick="switchLoraMode('bot')" style="padding:4px 14px; font-size:0.8rem; font-weight:600; cursor:pointer; border:none; background:var(--surface2); color:var(--text);">봇</button>
                     <button id="lora-mode-instance-btn" onclick="switchLoraMode('instance')" style="padding:4px 14px; font-size:0.8rem; font-weight:600; cursor:pointer; border:none; background:var(--surface2); color:var(--text);">인스턴스</button>
+                    <button id="lora-mode-style-btn" onclick="switchLoraMode('style')" style="padding:4px 14px; font-size:0.8rem; font-weight:600; cursor:pointer; border:none; background:var(--surface2); color:var(--text);">그림체</button>
                 </div>
             </div>
 
@@ -5401,6 +5402,104 @@
                 </div>
 
             </div><!-- /lora-instance-mode -->
+
+            <!-- 그림체(스타일) 모드 컨테이너 -->
+            <div id="lora-style-mode" style="display:none;">
+                <div class="asset-container">
+                    <!-- 좌측: 그룹/프로젝트 트리 -->
+                    <div id="style-lora-tree" style="width:240px;flex-shrink:0;border-right:1px solid var(--border);overflow-y:auto;display:flex;flex-direction:column;">
+                        <div style="padding:10px 12px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:6px;">
+                            <span style="font-weight:700;font-size:0.85rem;">그림체 프로젝트</span>
+                            <button onclick="styleLoraCreateGroup()" title="그룹 추가" style="padding:2px 8px;background:var(--accent);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.75rem;font-weight:600;">+ 그룹</button>
+                        </div>
+                        <div id="style-lora-tree-body" style="flex:1;overflow-y:auto;padding:8px;"></div>
+                    </div>
+                    <!-- 중앙: 이미지 카드 그리드 -->
+                    <div class="asset-main" id="style-lora-main">
+                        <div id="style-lora-toolbar" style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+                            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                                <span id="style-lora-title" style="font-weight:700;font-size:1.0rem;">프로젝트를 선택하세요</span>
+                                <span id="style-lora-selected-count" style="font-size:0.78rem;color:var(--text-secondary);"></span>
+                            </div>
+                            <div id="style-lora-batch-actions" style="display:none;gap:8px;flex-wrap:wrap;">
+                                <button onclick="styleLoraBatchTag()" style="padding:6px 12px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:0.78rem;font-weight:600;">🏷️ 일괄 태깅</button>
+                                <button onclick="styleLoraBatchRefine()" style="padding:6px 12px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:0.78rem;font-weight:600;">✨ 일괄 LLM 정제</button>
+                                <button onclick="styleLoraSelectAll()" style="padding:6px 12px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:0.78rem;">전체 선택</button>
+                            </div>
+                        </div>
+                        <div id="style-lora-grid" style="padding:16px;display:grid;grid-template-columns:repeat(auto-fill,minmax(380px,1fr));gap:16px;"></div>
+                        <div id="style-lora-empty" style="display:none;text-align:center;padding:48px;color:var(--text-secondary);">
+                            <p>선택한 프로젝트에 이미지가 없습니다.</p>
+                            <p>우측 사이드바에서 에셋/봇/업로드로 이미지를 추가하세요.</p>
+                        </div>
+                        <div id="style-lora-no-project" style="display:block;text-align:center;padding:48px;color:var(--text-secondary);">
+                            <p>좌측에서 그룹/프로젝트를 선택하거나 새 프로젝트를 만드세요.</p>
+                        </div>
+                    </div>
+                    <!-- 우측 사이드바: 임포트 + 학습 설정 + 학습 시작 -->
+                    <div class="asset-sidebar" id="style-lora-sidebar" style="display:flex;flex-direction:column;">
+                        <div style="padding:12px;border-bottom:1px solid var(--border);">
+                            <span style="font-weight:600;font-size:0.9rem;">이미지 추가</span>
+                        </div>
+                        <div style="padding:12px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:6px;">
+                            <button onclick="styleLoraOpenImport('asset')" style="padding:6px;background:var(--accent);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.78rem;font-weight:600;">+ 에셋에서 가져오기</button>
+                            <button onclick="styleLoraOpenImport('bot')" style="padding:6px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.78rem;font-weight:600;">+ 봇에서 가져오기</button>
+                            <button onclick="styleLoraOpenImport('upload')" style="padding:6px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.78rem;font-weight:600;">+ 이미지 업로드</button>
+                            <button onclick="styleLoraOpenProjectCreate()" style="padding:6px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.78rem;font-weight:600;margin-top:4px;">+ 새 프로젝트</button>
+                        </div>
+                        <div style="padding:12px;border-bottom:1px solid var(--border);">
+                            <span style="font-weight:600;font-size:0.9rem;">학습 설정</span>
+                        </div>
+                        <div style="flex:1;overflow-y:auto;padding:12px;">
+                            <div style="margin-bottom:10px;">
+                                <label style="font-size:0.8rem;font-weight:600;display:block;margin-bottom:4px;">프로필</label>
+                                <select id="style-lora-train-profile" style="width:100%;padding:6px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-size:0.85rem;">
+                                    <option value="anima">ANIMA만</option>
+                                    <option value="sdxl">SDXL만</option>
+                                    <option value="both">둘 다 (ANIMA + SDXL)</option>
+                                </select>
+                            </div>
+                            <div id="sset-anima-block" style="margin-bottom:10px;padding:8px;border:1px solid var(--border);border-radius:6px;">
+                                <div onclick="toggleBlock('sset-anima-body')" style="font-weight:600;font-size:0.78rem;margin-bottom:6px;color:var(--accent);cursor:pointer;display:flex;align-items:center;gap:4px;">
+                                    <span id="sset-anima-body-arrow" style="transition:transform 0.2s;">▼</span> ANIMA
+                                </div>
+                                <div id="sset-anima-body">
+                                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+                                        <div><label style="font-size:0.7rem;color:var(--text-secondary);">STEP</label><input data-profile="anima" data-key="step_per_image" type="number" value="125" class="sset-input"></div>
+                                        <div><label style="font-size:0.7rem;color:var(--text-secondary);">IL_RATE</label><input data-profile="anima" data-key="il_rate" type="number" step="0.00001" value="0.00025" class="sset-input"></div>
+                                        <div><label style="font-size:0.7rem;color:var(--text-secondary);">RESOLUTION</label><input data-profile="anima" data-key="resolution" type="number" value="1024" class="sset-input"></div>
+                                        <div><label style="font-size:0.7rem;color:var(--text-secondary);">DIM</label><input data-profile="anima" data-key="dim" type="number" value="32" class="sset-input"></div>
+                                        <div><label style="font-size:0.7rem;color:var(--text-secondary);">ALPHA</label><input data-profile="anima" data-key="alpha" type="number" value="16" class="sset-input"></div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div id="sset-sdxl-block" style="margin-bottom:10px;padding:8px;border:1px solid var(--border);border-radius:6px;">
+                                <div onclick="toggleBlock('sset-sdxl-body')" style="font-weight:600;font-size:0.78rem;margin-bottom:6px;color:var(--accent);cursor:pointer;display:flex;align-items:center;gap:4px;">
+                                    <span id="sset-sdxl-body-arrow" style="transition:transform 0.2s;">▼</span> SDXL
+                                </div>
+                                <div id="sset-sdxl-body">
+                                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+                                        <div><label style="font-size:0.7rem;color:var(--text-secondary);">STEP</label><input data-profile="sdxl" data-key="step_per_image" type="number" value="125" class="sset-input"></div>
+                                        <div><label style="font-size:0.7rem;color:var(--text-secondary);">IL_RATE</label><input data-profile="sdxl" data-key="il_rate" type="number" step="0.00001" value="0.00025" class="sset-input"></div>
+                                        <div><label style="font-size:0.7rem;color:var(--text-secondary);">RESOLUTION</label><input data-profile="sdxl" data-key="resolution" type="number" value="1024" class="sset-input"></div>
+                                        <div><label style="font-size:0.7rem;color:var(--text-secondary);">DIM</label><input data-profile="sdxl" data-key="dim" type="number" value="32" class="sset-input"></div>
+                                        <div><label style="font-size:0.7rem;color:var(--text-secondary);">ALPHA</label><input data-profile="sdxl" data-key="alpha" type="number" value="16" class="sset-input"></div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div style="display:flex;flex-direction:column;gap:8px;">
+                                <button onclick="styleLoraSaveSettings()" style="width:100%;padding:6px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.78rem;">설정 저장</button>
+                                <button onclick="styleLoraStartTraining()" style="width:100%;padding:8px;background:var(--accent);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.82rem;font-weight:700;">▶ 학습 시작</button>
+                                <button onclick="styleLoraEditPromptTemplate()" style="width:100%;padding:6px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.74rem;">✨ 정제 프롬프트 편집</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <!-- 그림체 라이트박스 -->
+                <div id="style-lora-lightbox" onclick="closeStyleLightbox()" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.85);z-index:10000;cursor:zoom-out;display:flex;align-items:center;justify-content:center;">
+                    <img id="style-lightbox-img" src="" draggable="false" style="max-width:90vw;max-height:90vh;object-fit:contain;border-radius:4px;user-select:none;-webkit-user-drag:none;pointer-events:none;">
+                </div>
+            </div><!-- /lora-style-mode -->
         </div>
 
         <!-- 프리셋매니징 탭 -->
@@ -7514,6 +7613,9 @@
                             if (typeof handleInstanceLoraTrainingProgress === 'function') {
                                 handleInstanceLoraTrainingProgress(msg.data);
                             }
+                            if (typeof handleStyleLoraTrainingProgress === 'function') {
+                                handleStyleLoraTrainingProgress(msg.data);
+                            }
                             break;
                         case 'instance_lora_face_extract_progress':
                             if (msg.data && msg.data.phase === 'complete') {
@@ -7644,6 +7746,9 @@
                         // 태그 분석 진행률 이벤트
                         case 'tag_analysis_progress':
                             handleTagAnalysisProgress(msg.data);
+                            if (typeof handleStyleLoraTagProgress === 'function') {
+                                handleStyleLoraTagProgress(msg.data);
+                            }
                             break;
                         case 'auto_match_batch_progress':
                             handleAutoMatchBatchProgress(msg.data);
@@ -7660,6 +7765,9 @@
                             _handleAssetLoraBatchRefineProgress(msg.data);
                             _handleAssetLoraTestSetupProgress(msg.data);
                             _handleLoraPromptRefineProgress(msg.data);
+                            if (typeof handleStyleLoraRefineProgress === 'function') {
+                                handleStyleLoraRefineProgress(msg.data);
+                            }
                             break;
                         case 'text_output':
                             handleTextOutput(msg.data);
@@ -16988,12 +17096,14 @@
             const assetBtn = document.getElementById('lora-mode-asset-btn');
             const botBtn = document.getElementById('lora-mode-bot-btn');
             const instBtn = document.getElementById('lora-mode-instance-btn');
+            const styleBtn = document.getElementById('lora-mode-style-btn');
             const assetMode = document.getElementById('lora-asset-mode');
             const botMode = document.getElementById('lora-bot-mode');
             const instMode = document.getElementById('lora-instance-mode');
+            const styleMode = document.getElementById('lora-style-mode');
             // 모두 비활성화
-            [assetBtn, botBtn, instBtn].forEach(b => { b.style.background = 'var(--surface2)'; b.style.color = 'var(--text)'; });
-            [assetMode, botMode, instMode].forEach(m => m.style.display = 'none');
+            [assetBtn, botBtn, instBtn, styleBtn].forEach(b => { b.style.background = 'var(--surface2)'; b.style.color = 'var(--text)'; });
+            [assetMode, botMode, instMode, styleMode].forEach(m => m.style.display = 'none');
             if (mode === 'asset') {
                 assetBtn.style.background = 'var(--accent)'; assetBtn.style.color = '#fff';
                 assetMode.style.display = '';
@@ -17006,6 +17116,10 @@
                 instBtn.style.background = 'var(--accent)'; instBtn.style.color = '#fff';
                 instMode.style.display = '';
                 initInstanceLoraTab();
+            } else if (mode === 'style') {
+                styleBtn.style.background = 'var(--accent)'; styleBtn.style.color = '#fff';
+                styleMode.style.display = '';
+                initStyleLoraTab();
             }
             sessionStorage.setItem('loraMode', mode);
         }
@@ -18181,6 +18295,698 @@
                 }
             } catch (e) {
                 showToast('재학습 실패', 'error');
+            }
+        }
+
+        // ─── Style(그림체) LoRA ──────────────────────────────────────
+        const _styleLora = {
+            groups: [],            // [{id,name,projects:[...]}]
+            currentGroup: null,
+            currentProject: null,
+            images: [],            // 현재 프로젝트 이미지 filename 목록
+            selected: new Set(),   // 체크된 filename
+            prompts: new Map(),    // filename -> {positive,negative,original_positive,original_negative}
+        };
+
+        async function initStyleLoraTab() {
+            _styleLora.currentGroup = null;
+            _styleLora.currentProject = null;
+            _styleLora.images = [];
+            _styleLora.selected.clear();
+            await loadStyleLoraTree();
+            loadStyleLoraSettings();
+            renderStyleGrid();
+        }
+
+        async function loadStyleLoraTree() {
+            const body = document.getElementById('style-lora-tree-body');
+            body.innerHTML = '<div style="text-align:center;padding:24px;color:var(--text-secondary);">로딩 중...</div>';
+            try {
+                const resp = await fetchJSON('/api/style_lora/groups');
+                if (!resp.success) { body.innerHTML = `<div style="padding:16px;color:var(--error);">${esc(resp.error || '로드 실패')}</div>`; return; }
+                _styleLora.groups = resp.data || [];
+                renderStyleTree();
+            } catch (e) {
+                console.error('[STYLE_LORA] 트리 로드 실패:', e);
+                body.innerHTML = '<div style="padding:16px;color:var(--error);">로드 실패</div>';
+            }
+        }
+
+        async function renderStyleTree() {
+            const body = document.getElementById('style-lora-tree-body');
+            if (_styleLora.groups.length === 0) {
+                body.innerHTML = '<div style="padding:16px;color:var(--text-secondary);font-size:0.8rem;text-align:center;">그룹이 없습니다.<br>+ 그룹 버튼으로 생성하세요.</div>';
+                return;
+            }
+            let html = '';
+            for (const g of _styleLora.groups) {
+                const expanded = g.id === _styleLora.currentGroup;
+                html += `<div style="margin-bottom:6px;">
+                    <div style="display:flex;align-items:center;gap:4px;padding:4px 6px;border-radius:4px;background:${expanded ? 'var(--surface2)' : 'transparent'};cursor:pointer;" onclick="styleLoraToggleGroup('${esc(g.id)}')">
+                        <span style="font-size:0.7rem;">${expanded ? '▼' : '▶'}</span>
+                        <span style="font-size:0.82rem;font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">📁 ${esc(g.name)}</span>
+                        <button onclick="event.stopPropagation();styleLoraDeleteGroup('${esc(g.id)}','${esc(g.name)}')" title="그룹 삭제" style="background:none;border:none;color:var(--text-secondary);cursor:pointer;font-size:0.8rem;padding:0 2px;">×</button>
+                    </div>`;
+                if (expanded) {
+                    if (!g.projects) {
+                        html += `<div style="padding:4px 10px 4px 22px;color:var(--text-secondary);font-size:0.78rem;">로딩 중...</div>`;
+                        styleLoraLoadProjects(g.id);
+                    } else {
+                        if (g.projects.length === 0) {
+                            html += `<div style="padding:4px 10px 4px 22px;color:var(--text-secondary);font-size:0.75rem;">프로젝트 없음</div>`;
+                        } else {
+                            for (const p of g.projects) {
+                                const active = (g.id === _styleLora.currentGroup && p.id === _styleLora.currentProject);
+                                html += `<div style="display:flex;align-items:center;padding:4px 10px 4px 22px;font-size:0.8rem;border-radius:4px;background:${active ? 'var(--accent)' : 'transparent'};color:${active ? '#fff' : 'var(--text)'};">
+                                    <span onclick="selectStyleProject('${esc(g.id)}','${esc(p.id)}')" style="flex:1;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">🎨 ${esc(p.name)} <span style="font-size:0.7rem;opacity:0.7;">(${p.image_count})</span></span>
+                                    <button onclick="event.stopPropagation();styleLoraDeleteProject('${esc(g.id)}','${esc(p.id)}','${esc(p.name)}')" title="프로젝트 삭제" style="background:none;border:none;color:${active?'#fff':'var(--text-secondary)'};cursor:pointer;font-size:0.85rem;padding:0 2px;flex-shrink:0;">×</button>
+                                </div>`;
+                            }
+                        }
+                        html += `<div onclick="styleLoraOpenProjectCreate('${esc(g.id)}')" style="padding:4px 10px 4px 22px;font-size:0.75rem;cursor:pointer;color:var(--accent);">+ 새 프로젝트</div>`;
+                    }
+                }
+                html += `</div>`;
+            }
+            body.innerHTML = html;
+        }
+
+        async function styleLoraToggleGroup(groupId) {
+            _styleLora.currentGroup = (_styleLora.currentGroup === groupId) ? null : groupId;
+            renderStyleTree();
+        }
+
+        async function styleLoraLoadProjects(groupId) {
+            try {
+                const resp = await fetchJSON('/api/style_lora/projects?group=' + encodeURIComponent(groupId));
+                if (!resp.success) { showToast(resp.error || '프로젝트 로드 실패', 'error'); return; }
+                const g = _styleLora.groups.find(x => x.id === groupId);
+                if (g) { g.projects = resp.data || []; renderStyleTree(); }
+            } catch (e) { console.error('[STYLE_LORA] 프로젝트 로드 실패:', e); }
+        }
+
+        async function styleLoraCreateGroup() {
+            const name = prompt('새 그룹 이름:');
+            if (!name || !name.trim()) return;
+            try {
+                const resp = await fetchJSON('/api/style_lora/groups', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({name: name.trim()})
+                });
+                if (resp.success) { showToast('그룹 생성됨', 'success'); _styleLora.currentGroup = resp.id; await loadStyleLoraTree(); }
+                else showToast(resp.error || '생성 실패', 'error');
+            } catch (e) { showToast('생성 실패', 'error'); }
+        }
+
+        async function styleLoraDeleteGroup(groupId, name) {
+            if (!confirm(`그룹 "${name}" 와 모든 하위 프로젝트/이미지/학습결과를 삭제할까요?`)) return;
+            try {
+                const resp = await fetchJSON('/api/style_lora/group/delete', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({id: groupId})
+                });
+                if (resp.success) {
+                    showToast('그룹 삭제됨', 'success');
+                    if (_styleLora.currentGroup === groupId) { _styleLora.currentGroup = null; _styleLora.currentProject = null; }
+                    await loadStyleLoraTree(); renderStyleGrid();
+                } else showToast(resp.error || '삭제 실패', 'error');
+            } catch (e) { showToast('삭제 실패', 'error'); }
+        }
+
+        function styleLoraOpenProjectCreate(groupId) {
+            if (!groupId) groupId = _styleLora.currentGroup || '';
+            const name = prompt('새 프로젝트(그림체 로라) 이름:');
+            if (!name || !name.trim()) return;
+            const trigger = prompt('트리거 워드 (없으면 프로젝트 이름 사용):', name.trim()) || name.trim();
+            if (!groupId) {
+                const gname = prompt('소속 그룹이 없습니다. 새 그룹 이름:');
+                if (!gname || !gname.trim()) return;
+                (async () => {
+                    const gr = await fetchJSON('/api/style_lora/groups', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:gname.trim()})});
+                    if (!gr.success) { showToast(gr.error||'그룹 생성 실패','error'); return; }
+                    await styleLoraCreateProjectDo(gr.id, name.trim(), trigger);
+                })();
+                return;
+            }
+            styleLoraCreateProjectDo(groupId, name.trim(), trigger);
+        }
+
+        async function styleLoraCreateProjectDo(groupId, name, trigger) {
+            try {
+                const resp = await fetchJSON('/api/style_lora/projects', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({group: groupId, name, trigger})
+                });
+                if (resp.success) {
+                    showToast('프로젝트 생성됨', 'success');
+                    await styleLoraLoadProjects(groupId);
+                    selectStyleProject(groupId, resp.id);
+                } else showToast(resp.error || '생성 실패', 'error');
+            } catch (e) { showToast('생성 실패', 'error'); }
+        }
+
+        async function styleLoraDeleteProject(groupId, projectId, name) {
+            if (!confirm(`프로젝트 "${name}" 와 모든 이미지/학습결과를 삭제할까요?`)) return;
+            try {
+                const resp = await fetchJSON('/api/style_lora/project/delete', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({group: groupId, project: projectId})
+                });
+                if (resp.success) {
+                    showToast('프로젝트 삭제됨', 'success');
+                    if (_styleLora.currentProject === projectId) { _styleLora.currentProject = null; }
+                    await styleLoraLoadProjects(groupId); renderStyleGrid();
+                } else showToast(resp.error || '삭제 실패', 'error');
+            } catch (e) { showToast('삭제 실패', 'error'); }
+        }
+
+        async function selectStyleProject(groupId, projectId) {
+            _styleLora.currentGroup = groupId;
+            _styleLora.currentProject = projectId;
+            _styleLora.selected.clear();
+            renderStyleTree();
+            await loadStyleProjectImages();
+        }
+
+        function _styleImgUrl(filename) {
+            return `/api/style_lora/image/${encodeURIComponent(_styleLora.currentGroup)}/${encodeURIComponent(_styleLora.currentProject)}/${encodeURIComponent(filename)}`;
+        }
+
+        async function loadStyleProjectImages() {
+            const grid = document.getElementById('style-lora-grid');
+            const empty = document.getElementById('style-lora-empty');
+            const noProj = document.getElementById('style-lora-no-project');
+            const title = document.getElementById('style-lora-title');
+            if (!_styleLora.currentProject) { renderStyleGrid(); return; }
+            try {
+                const resp = await fetchJSON(`/api/style_lora/detail?group=${encodeURIComponent(_styleLora.currentGroup)}&project=${encodeURIComponent(_styleLora.currentProject)}`);
+                if (!resp.success) { showToast(resp.error || '상세 로드 실패', 'error'); return; }
+                const d = resp.data;
+                _styleLora.images = d.images || [];
+                title.textContent = `${d.name} (${d.image_count}장) · trigger: ${d.trigger}`;
+                noProj.style.display = 'none';
+                // 각 이미지 프롬프트 로드
+                _styleLora.prompts.clear();
+                for (const fn of _styleLora.images) {
+                    const pr = await fetchJSON(`/api/style_lora/prompt?group=${encodeURIComponent(_styleLora.currentGroup)}&project=${encodeURIComponent(_styleLora.currentProject)}&filename=${encodeURIComponent(fn)}`);
+                    if (pr.success) _styleLora.prompts.set(fn, pr.data);
+                }
+                renderStyleGrid();
+            } catch (e) {
+                console.error('[STYLE_LORA] 이미지 로드 실패:', e);
+                showToast('이미지 로드 실패', 'error');
+            }
+        }
+
+        function renderStyleGrid() {
+            const grid = document.getElementById('style-lora-grid');
+            const empty = document.getElementById('style-lora-empty');
+            const noProj = document.getElementById('style-lora-no-project');
+            const batch = document.getElementById('style-lora-batch-actions');
+            const countEl = document.getElementById('style-lora-selected-count');
+            if (!_styleLora.currentProject) {
+                grid.innerHTML = '';
+                empty.style.display = 'none';
+                noProj.style.display = 'block';
+                batch.style.display = 'none';
+                document.getElementById('style-lora-title').textContent = '프로젝트를 선택하세요';
+                countEl.textContent = '';
+                return;
+            }
+            noProj.style.display = 'none';
+            batch.style.display = 'flex';
+            if (_styleLora.images.length === 0) {
+                grid.innerHTML = '';
+                empty.style.display = 'block';
+                countEl.textContent = '';
+                return;
+            }
+            empty.style.display = 'none';
+            countEl.textContent = _styleLora.selected.size ? `선택 ${_styleLora.selected.size}장` : '';
+            const g = _styleLora.currentGroup, p = _styleLora.currentProject;
+            grid.innerHTML = _styleLora.images.map(fn => {
+                const cardId = `${g}__${p}__${fn}`;
+                const prompt = _styleLora.prompts.get(fn) || {};
+                const positive = (prompt.positive || '').trim();
+                const negative = (prompt.negative || '').trim();
+                const hasPrompt = positive || negative;
+                const checked = _styleLora.selected.has(fn);
+                return `<div class="backup-card" data-filename="${escapeAttr(fn)}" style="position:relative;">
+                    <div style="position:absolute;top:6px;left:6px;z-index:3;background:rgba(0,0,0,0.6);border-radius:4px;padding:2px 4px;">
+                        <input type="checkbox" onchange="styleLoraOnCheck('${escapeAttr(fn)}', this.checked)" ${checked ? 'checked' : ''} style="cursor:pointer;width:16px;height:16px;">
+                    </div>
+                    <div class="card-image-area">
+                        <img src="${escapeAttr(_styleImgUrl(fn))}" alt="${escapeAttr(fn)}" loading="lazy" onclick="openStyleLightbox('${escapeAttr(_styleImgUrl(fn))}')">
+                    </div>
+                    <div class="card-body">
+                        <div class="card-meta">${escapeHtml(fn)}</div>
+                        <div class="card-actions">
+                            <button onclick="styleLoraTagOne('${escapeAttr(fn)}')">🏷️ 태깅</button>
+                            <button onclick="styleLoraRefineOne('${escapeAttr(fn)}')" ${hasPrompt ? '' : 'disabled title="태깅 먼저"'}>✨ 정제</button>
+                            <button onclick="styleLoraEditCaption('${escapeAttr(fn)}')">✏️ 수정</button>
+                            <button onclick="styleLoraDeleteImage('${escapeAttr(fn)}')" style="background:rgba(200,60,60,0.85);color:#fff;">🗑️ 삭제</button>
+                        </div>
+                        ${hasPrompt ? `
+                            <div style="display:flex;align-items:center;">
+                                <button class="prompt-toggle-btn" onclick="toggleStylePrompt('${escapeAttr(cardId)}')" id="prompt-btn-${escapeAttr(cardId)}">📝 프롬프트 펼치기</button>
+                            </div>
+                            <div class="prompt-preview" id="prompt-${escapeAttr(cardId)}">[긍정]\n${escapeHtml(positive)}\n\n[부정]\n${escapeHtml(negative)}</div>
+                        ` : '<div class="prompt-preview" style="color:var(--text2)">캡션 없음 (태깅 필요)</div>'}
+                    </div>
+                </div>`;
+            }).join('');
+        }
+
+        function styleLoraOnCheck(filename, checked) {
+            if (checked) _styleLora.selected.add(filename); else _styleLora.selected.delete(filename);
+            const countEl = document.getElementById('style-lora-selected-count');
+            countEl.textContent = _styleLora.selected.size ? `선택 ${_styleLora.selected.size}장` : '';
+        }
+
+        function styleLoraSelectAll() {
+            if (!_styleLora.images.length) return;
+            if (_styleLora.selected.size === _styleLora.images.length) {
+                _styleLora.selected.clear();
+            } else {
+                _styleLora.images.forEach(fn => _styleLora.selected.add(fn));
+            }
+            renderStyleGrid();
+        }
+
+        function toggleStylePrompt(cardId) {
+            const el = document.getElementById('prompt-' + cardId);
+            const btn = document.getElementById('prompt-btn-' + cardId);
+            if (el) {
+                el.classList.toggle('expanded');
+                btn.textContent = el.classList.contains('expanded') ? '📝 프롬프트 접기' : '📝 프롬프트 펼치기';
+            }
+        }
+
+        function openStyleLightbox(src) {
+            if (!src) return;
+            document.getElementById('style-lightbox-img').src = src;
+            document.getElementById('style-lora-lightbox').style.display = 'flex';
+        }
+        function closeStyleLightbox() {
+            document.getElementById('style-lora-lightbox').style.display = 'none';
+        }
+
+        function _styleNeedProject() {
+            if (!_styleLora.currentProject) { showToast('프로젝트를 먼저 선택하세요', 'error'); return false; }
+            return true;
+        }
+
+        async function styleLoraBatchTag() {
+            if (!_styleNeedProject()) return;
+            const fns = Array.from(_styleLora.selected);
+            if (!fns.length) { showToast('체크박스로 이미지를 선택하세요', 'error'); return; }
+            if (!confirm(`선택한 ${fns.length}장을 WD 태깅할까요? (기존 캡션 덮어쓰기)`)) return;
+            try {
+                const resp = await fetchJSON('/api/style_lora/analyze', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({group: _styleLora.currentGroup, project: _styleLora.currentProject, filenames: fns})
+                });
+                if (resp.success) showToast(`태깅 큐 추가됨 (${fns.length}장)`, 'success');
+                else showToast(resp.error || '태깅 실패', 'error');
+            } catch (e) { showToast('태깅 실패', 'error'); }
+        }
+
+        async function styleLoraBatchRefine() {
+            if (!_styleNeedProject()) return;
+            const fns = Array.from(_styleLora.selected);
+            if (!fns.length) { showToast('체크박스로 이미지를 선택하세요', 'error'); return; }
+            if (!confirm(`선택한 ${fns.length}장을 LLM 정제할까요? (캡션 필요)`)) return;
+            try {
+                const resp = await fetchJSON('/api/style_lora/auto_refine_enqueue', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({group: _styleLora.currentGroup, project: _styleLora.currentProject, filenames: fns})
+                });
+                if (resp.success) showToast(`정제 큐 추가됨 (${resp.data.count}장)`, 'success');
+                else showToast(resp.error || '정제 실패', 'error');
+            } catch (e) { showToast('정제 실패', 'error'); }
+        }
+
+        async function styleLoraTagOne(filename) {
+            if (!_styleNeedProject()) return;
+            if (!confirm(`"${filename}" 한 장을 WD 태깅할까요?`)) return;
+            try {
+                const resp = await fetchJSON('/api/style_lora/analyze', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({group: _styleLora.currentGroup, project: _styleLora.currentProject, filenames: [filename]})
+                });
+                if (resp.success) showToast('태깅 큐 추가됨', 'success');
+                else showToast(resp.error || '태깅 실패', 'error');
+            } catch (e) { showToast('태깅 실패', 'error'); }
+        }
+
+        async function styleLoraRefineOne(filename) {
+            if (!_styleNeedProject()) return;
+            if (!confirm(`"${filename}" 한 장을 LLM 정제할까요?`)) return;
+            try {
+                const resp = await fetchJSON('/api/style_lora/auto_refine_enqueue', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({group: _styleLora.currentGroup, project: _styleLora.currentProject, filenames: [filename]})
+                });
+                if (resp.success) showToast('정제 큐 추가됨', 'success');
+                else showToast(resp.error || '정제 실패', 'error');
+            } catch (e) { showToast('정제 실패', 'error'); }
+        }
+
+        async function styleLoraDeleteImage(filename) {
+            if (!_styleNeedProject()) return;
+            if (!confirm(`이미지 "${filename}" 를 프로젝트에서 삭제할까요? (복사본 삭제)`)) return;
+            try {
+                const resp = await fetchJSON('/api/style_lora/images/delete', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({group: _styleLora.currentGroup, project: _styleLora.currentProject, filename})
+                });
+                if (resp.success) { showToast('삭제됨', 'success'); _styleLora.selected.delete(filename); await loadStyleProjectImages(); }
+                else showToast(resp.error || '삭제 실패', 'error');
+            } catch (e) { showToast('삭제 실패', 'error'); }
+        }
+
+        function styleLoraEditCaption(filename) {
+            if (!_styleNeedProject()) return;
+            const existing = _styleLora.prompts.get(filename) || {};
+            const positive = existing.positive || '';
+            const negative = existing.negative || '';
+            // 모달 동적 생성 (바깥 클릭 닫기 금지 - 명시적 버튼만)
+            const overlay = document.createElement('div');
+            overlay.className = 'modal';
+            overlay.style.display = 'flex';
+            overlay.innerHTML = `
+                <div class="modal-content" style="max-width:720px;">
+                    <div class="modal-header"><span>✏️ 캡션 수정 — ${escapeHtml(filename)}</span><button onclick="this.closest('.modal').remove()" style="background:none;border:none;color:var(--text);font-size:1.4rem;cursor:pointer;">×</button></div>
+                    <div class="modal-body" style="display:flex;flex-direction:column;gap:10px;">
+                        <div><label style="font-size:0.8rem;font-weight:600;">긍정(positive)</label><textarea id="style-cap-pos" rows="6" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-size:0.82rem;">${escapeHtml(positive)}</textarea></div>
+                        <div><label style="font-size:0.8rem;font-weight:600;">부정(negative)</label><textarea id="style-cap-neg" rows="3" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-size:0.82rem;">${escapeHtml(negative)}</textarea></div>
+                        <div style="font-size:0.72rem;color:var(--text-secondary);">원본 태그(original_positive)는 보존됩니다: ${escapeHtml((existing.original_positive || '').slice(0,120))}${(existing.original_positive||'').length>120?'…':''}</div>
+                    </div>
+                    <div class="modal-footer">
+                        <button onclick="this.closest('.modal').remove()" style="padding:6px 14px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;cursor:pointer;">취소</button>
+                        <button id="style-cap-save" style="padding:6px 14px;background:var(--accent);color:#fff;border:none;border-radius:4px;cursor:pointer;font-weight:600;">저장</button>
+                    </div>
+                </div>`;
+            document.body.appendChild(overlay);
+            overlay.querySelector('#style-cap-save').onclick = async () => {
+                const pos = overlay.querySelector('#style-cap-pos').value;
+                const neg = overlay.querySelector('#style-cap-neg').value;
+                const payload = {
+                    positive: pos,
+                    negative: neg,
+                    original_positive: existing.original_positive || pos,
+                    original_negative: existing.original_negative || existing.negative || '',
+                };
+                try {
+                    const resp = await fetchJSON('/api/style_lora/prompt', {
+                        method: 'POST', headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({group: _styleLora.currentGroup, project: _styleLora.currentProject, filename, prompt: payload})
+                    });
+                    if (resp.success) { showToast('캡션 저장됨', 'success'); overlay.remove(); _styleLora.prompts.set(filename, payload); renderStyleGrid(); }
+                    else showToast(resp.error || '저장 실패', 'error');
+                } catch (e) { showToast('저장 실패', 'error'); }
+            };
+        }
+
+        async function loadStyleLoraSettings() {
+            try {
+                const resp = await fetchJSON('/api/style_lora/config');
+                if (!resp.success) return;
+                const s = resp.data || {};
+                const profileEl = document.getElementById('style-lora-train-profile');
+                if (s.selected_profile) profileEl.value = s.selected_profile;
+                document.querySelectorAll('.sset-input').forEach(el => {
+                    const ps = s[el.dataset.profile] || {};
+                    if (ps[el.dataset.key] !== undefined) el.value = ps[el.dataset.key];
+                });
+            } catch (e) { console.error('[STYLE_LORA] 설정 로드 실패:', e); }
+        }
+
+        async function styleLoraSaveSettings() {
+            let existing = {anima: {}, sdxl: {}};
+            try { const r = await fetchJSON('/api/style_lora/config'); if (r.success) existing = r.data || existing; } catch (e) {}
+            existing.selected_profile = document.getElementById('style-lora-train-profile').value;
+            for (const profile of ['anima', 'sdxl']) {
+                const ps = {};
+                document.querySelectorAll(`.sset-input[data-profile="${profile}"]`).forEach(el => {
+                    if (!el.disabled) { const v = el.value; ps[el.dataset.key] = isNaN(Number(v)) ? v : Number(v); }
+                });
+                if (Object.keys(ps).length > 0) existing[profile] = ps;
+            }
+            try {
+                const resp = await (await fetch('/api/style_lora/config', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(existing)})).json();
+                if (resp.success) showToast('설정 저장됨', 'success');
+                else showToast(resp.error || '저장 실패', 'error');
+            } catch (e) { showToast('저장 실패', 'error'); }
+        }
+
+        async function styleLoraStartTraining() {
+            if (!_styleNeedProject()) return;
+            const profile = document.getElementById('style-lora-train-profile').value;
+            const label = profile === 'both' ? 'ANIMA + SDXL' : profile.toUpperCase();
+            if (!confirm(`현재 프로젝트를 ${label} 프로필로 학습 큐에 추가할까요?`)) return;
+            try {
+                const resp = await fetchJSON('/api/style_lora/training/start', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({group: _styleLora.currentGroup, project: _styleLora.currentProject, profile})
+                });
+                if (resp.success) showToast(`학습 큐 추가됨: ${(resp.labels || []).join(', ')}`, 'success');
+                else showToast(resp.error || '학습 큐 추가 실패', 'error');
+            } catch (e) { showToast('학습 큐 추가 실패', 'error'); }
+        }
+
+        // 임포트 모달 (에셋/봇/업로드). 멀티선택 → /api/style_lora/images/add 또는 /upload
+        let _styleImportState = { source: 'asset', selected: [] }; // selected: [{type, character,outfit,expression,filename}] or upload files
+        function styleLoraOpenImport(source) {
+            if (!_styleNeedProject()) return;
+            _styleImportState = { source, selected: [] };
+            const overlay = document.createElement('div');
+            overlay.className = 'modal';
+            overlay.style.display = 'flex';
+            overlay.id = 'style-import-modal';
+            overlay.innerHTML = `
+                <div class="modal-content" style="max-width:900px;height:80vh;display:flex;flex-direction:column;">
+                    <div class="modal-header"><span>+ 이미지 가져오기 (${source === 'asset' ? '에셋' : source === 'bot' ? '봇' : '업로드'})</span><button onclick="this.closest('.modal').remove()" style="background:none;border:none;color:var(--text);font-size:1.4rem;cursor:pointer;">×</button></div>
+                    <div class="modal-body" style="flex:1;overflow-y:auto;" id="style-import-body"><div style="text-align:center;padding:24px;"><div class="spinner" style="width:28px;height:28px;border-width:3px;margin:0 auto;"></div></div></div>
+                    <div class="modal-footer">
+                        <span id="style-import-count" style="font-size:0.8rem;color:var(--text-secondary);margin-right:auto;">0장 선택</span>
+                        <button onclick="this.closest('.modal').remove()" style="padding:6px 14px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;cursor:pointer;">취소</button>
+                        <button id="style-import-confirm" style="padding:6px 14px;background:var(--accent);color:#fff;border:none;border-radius:4px;cursor:pointer;font-weight:600;">복사 추가</button>
+                    </div>
+                </div>`;
+            document.body.appendChild(overlay);
+            if (source === 'asset') styleImportLoadAssetChars();
+            else if (source === 'bot') styleImportLoadBots();
+            else styleImportLoadUpload();
+            overlay.querySelector('#style-import-confirm').onclick = styleImportConfirm;
+        }
+
+        function _styleImportUpdateCount() {
+            const n = _styleImportState.selected.length;
+            const el = document.getElementById('style-import-count');
+            if (el) el.textContent = `${n}장 선택`;
+        }
+
+        function styleImportLoadAssetChars() {
+            const body = document.getElementById('style-import-body');
+            fetchJSON('/api/lora/characters').then(resp => {
+                if (!resp || !resp.success || !resp.characters || !resp.characters.length) {
+                    body.innerHTML = '<div style="padding:24px;color:var(--text-secondary);text-align:center;">에셋 캐릭터가 없습니다.</div>'; return;
+                }
+                body.innerHTML = '<div style="font-size:0.82rem;color:var(--text-secondary);margin-bottom:8px;">캐릭터를 선택하세요 (해당 캐릭터의 모든 이미지를 통째로 복사합니다).</div>' +
+                    '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px;">' +
+                    resp.characters.map(name => `<div class="asset-folder-card" onclick="styleImportAssetPickChar('${esc(name)}')" style="cursor:pointer;"><div class="folder-icon">📁</div><div class="folder-name">${esc(name)}</div></div>`).join('') +
+                    '</div>';
+            }).catch(() => { body.innerHTML = '<div style="padding:24px;color:var(--error);text-align:center;">로드 실패</div>'; });
+        }
+
+        async function styleImportAssetPickChar(character) {
+            // 캐릭터의 모든 outfit/expression 이미지를 통째로 selected 에 추가
+            const body = document.getElementById('style-import-body');
+            body.innerHTML = '<div style="text-align:center;padding:24px;"><div class="spinner" style="width:24px;height:24px;border-width:3px;margin:0 auto;"></div></div>';
+            try {
+                const gResp = await fetchJSON(`/api/asset_mode/characters/${encodeURIComponent(character)}/gallery`);
+                const gallery = (gResp && gResp.gallery) || [];
+                const items = [];
+                for (const it of gallery) {
+                    const iResp = await fetchJSON(`/api/asset_mode/characters/${encodeURIComponent(character)}/outfits/${encodeURIComponent(it.outfit)}/expressions/${encodeURIComponent(it.expression)}/images`);
+                    for (const img of ((iResp && iResp.images) || [])) {
+                        items.push({type: 'asset', character, outfit: it.outfit, expression: it.expression, filename: img.filename});
+                    }
+                }
+                _styleImportState.selected = items;
+                body.innerHTML = `<div style="margin-bottom:8px;"><button onclick="styleImportLoadAssetChars()" style="padding:4px 10px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.8rem;">&larr; 캐릭터</button> <span style="font-size:0.82rem;color:var(--text-secondary);">${esc(character)} 전체 ${items.length}장 선택됨</span></div>`;
+                _styleImportUpdateCount();
+            } catch (e) { body.innerHTML = '<div style="padding:24px;color:var(--error);">로드 실패</div>'; }
+        }
+
+        function styleImportLoadBots() {
+            const body = document.getElementById('style-import-body');
+            fetchJSON('/api/bot_lora/bots').then(resp => {
+                if (!resp || !resp.success || !resp.bots || !resp.bots.length) {
+                    body.innerHTML = '<div style="padding:24px;color:var(--text-secondary);text-align:center;">봇이 없습니다.</div>'; return;
+                }
+                body.innerHTML = '<div style="font-size:0.82rem;color:var(--text-secondary);margin-bottom:8px;">봇 → 캐릭터를 선택하세요 (해당 캐릭터 이미지를 통째로 복사).</div>' +
+                    '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px;">' +
+                    resp.bots.map(bot => `<div class="asset-folder-card" onclick="styleImportBotPickBot('${esc(bot.name)}')" style="cursor:pointer;"><div class="folder-icon">📁</div><div class="folder-name">${esc(bot.name)}</div></div>`).join('') +
+                    '</div>';
+            }).catch(() => { body.innerHTML = '<div style="padding:24px;color:var(--error);text-align:center;">로드 실패</div>'; });
+        }
+
+        function styleImportBotPickBot(botName) {
+            const body = document.getElementById('style-import-body');
+            fetchJSON('/api/bot_lora/bots').then(async resp => {
+                const bot = (resp && resp.bots || []).find(b => b.name === botName);
+                const chars = (bot && bot.characters) || [];
+                if (!chars.length) { body.innerHTML = `<div><button onclick="styleImportLoadBots()" style="padding:4px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;cursor:pointer;">&larr; 봇</button> <span style="color:var(--text-secondary);">캐릭터 없음</span></div>`; return; }
+                body.innerHTML = `<div style="margin-bottom:8px;"><button onclick="styleImportLoadBots()" style="padding:4px 10px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.8rem;">&larr; 봇</button> <span style="font-size:0.82rem;color:var(--text-secondary);">${esc(botName)} — 캐릭터 선택</span></div>` +
+                    '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px;">' +
+                    chars.map(c => `<div class="asset-folder-card" onclick="styleImportBotPickChar('${esc(botName)}','${esc(c.name)}')" style="cursor:pointer;"><div class="folder-icon">📁</div><div class="folder-name">${esc(c.name)}</div></div>`).join('') +
+                    '</div>';
+            });
+        }
+
+        async function styleImportBotPickChar(botName, charName) {
+            const body = document.getElementById('style-import-body');
+            body.innerHTML = '<div style="text-align:center;padding:24px;"><div class="spinner" style="width:24px;height:24px;border-width:3px;margin:0 auto;"></div></div>';
+            try {
+                // 봇 캐릭터 이미지 목록 — char_image 서빙 경로 기반 파일명 조회
+                const resp = await fetchJSON(`/api/bot_lora/char_available_images/${encodeURIComponent(botName)}/${encodeURIComponent(charName)}`);
+                const imgs = (resp && (resp.images || resp.files)) || [];
+                _styleImportState.selected = imgs.map(fn => ({type: 'bot', bot: botName, character: charName, filename: fn}));
+                body.innerHTML = `<div style="margin-bottom:8px;"><button onclick="styleImportLoadBots()" style="padding:4px 10px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.8rem;">&larr; 봇</button> <span style="font-size:0.82rem;color:var(--text-secondary);">${esc(botName)}/${esc(charName)} ${imgs.length}장 선택됨</span></div>`;
+                _styleImportUpdateCount();
+            } catch (e) {
+                body.innerHTML = `<div style="padding:24px;color:var(--error);">봇 캐릭터 이미지 로드 실패: ${esc(e.message || e)}</div>`;
+                console.error('[STYLE_LORA_IMPORT] bot char images 실패:', e);
+            }
+        }
+
+        function styleImportLoadUpload() {
+            const body = document.getElementById('style-import-body');
+            body.innerHTML = `<div style="padding:16px;">
+                <input type="file" id="style-import-file" accept="image/*" multiple onchange="styleImportOnFiles(this.files)" style="font-size:0.82rem;">
+                <div id="style-import-filelist" style="margin-top:10px;font-size:0.8rem;color:var(--text-secondary);"></div>
+            </div>`;
+            _styleImportState.selected = [];
+            _styleImportState.uploadFiles = [];
+            _styleImportUpdateCount();
+        }
+
+        function styleImportOnFiles(fileList) {
+            const files = Array.from(fileList || []);
+            _styleImportState.uploadFiles = files;
+            _styleImportState.selected = files.map(f => ({type: 'upload', filename: f.name}));
+            const list = document.getElementById('style-import-filelist');
+            list.innerHTML = files.map(f => `<div>${esc(f.name)}</div>`).join('');
+            _styleImportUpdateCount();
+        }
+
+        async function styleImportConfirm() {
+            if (!_styleLora.currentProject) { showToast('프로젝트를 선택하세요', 'error'); return; }
+            const sel = _styleImportState.selected;
+            if (!sel.length) { showToast('선택된 이미지가 없습니다', 'error'); return; }
+            const btn = document.getElementById('style-import-confirm');
+            btn.disabled = true; btn.textContent = '복사 중...';
+            try {
+                if (_styleImportState.source === 'upload') {
+                    // multipart 업로드
+                    const fd = new FormData();
+                    fd.append('group', _styleLora.currentGroup);
+                    fd.append('project', _styleLora.currentProject);
+                    for (const f of (_styleImportState.uploadFiles || [])) fd.append('files', f, f.name);
+                    const resp = await (await fetch('/api/style_lora/images/upload', {method: 'POST', body: fd})).json();
+                    if (!resp.success) { showToast(resp.error || '업로드 실패', 'error'); btn.disabled = false; btn.textContent = '복사 추가'; return; }
+                    const ok = (resp.results || []).filter(r => r.success).length;
+                    showToast(`${ok}장 복사 완료`, 'success');
+                } else {
+                    const resp = await fetchJSON('/api/style_lora/images/add', {
+                        method: 'POST', headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({group: _styleLora.currentGroup, project: _styleLora.currentProject, images: sel})
+                    });
+                    if (!resp.success) { showToast(resp.error || '복사 실패', 'error'); btn.disabled = false; btn.textContent = '복사 추가'; return; }
+                    const ok = (resp.results || []).filter(r => r.success).length;
+                    const fail = (resp.results || []).length - ok;
+                    showToast(`${ok}장 복사 완료${fail ? ` (${fail}장 실패)` : ''}`, fail ? 'error' : 'success');
+                }
+                document.getElementById('style-import-modal').remove();
+                await loadStyleProjectImages();
+            } catch (e) {
+                console.error('[STYLE_LORA_IMPORT] 복사 실패:', e);
+                showToast(`복사 실패: ${e.message || e}`, 'error');
+                btn.disabled = false; btn.textContent = '복사 추가';
+            }
+        }
+
+        async function styleLoraEditPromptTemplate() {
+            // 스타일 정제 프롬프트 편집 모달 (builtin/custom/use_custom)
+            const overlay = document.createElement('div');
+            overlay.className = 'modal';
+            overlay.style.display = 'flex';
+            overlay.id = 'style-prompt-tmpl-modal';
+            overlay.innerHTML = `
+                <div class="modal-content" style="max-width:820px;height:80vh;display:flex;flex-direction:column;">
+                    <div class="modal-header"><span>✨ 스타일 LoRA 정제 프롬프트 편집</span><button onclick="this.closest('.modal').remove()" style="background:none;border:none;color:var(--text);font-size:1.4rem;cursor:pointer;">×</button></div>
+                    <div class="modal-body" style="flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:10px;" id="style-ptmpl-body"><div style="text-align:center;padding:24px;"><div class="spinner" style="width:24px;height:24px;border-width:3px;margin:0 auto;"></div></div></div>
+                    <div class="modal-footer">
+                        <button onclick="this.closest('.modal').remove()" style="padding:6px 14px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;cursor:pointer;">취소</button>
+                        <button id="style-ptmpl-save" style="padding:6px 14px;background:var(--accent);color:#fff;border:none;border-radius:4px;cursor:pointer;font-weight:600;">저장</button>
+                    </div>
+                </div>`;
+            document.body.appendChild(overlay);
+            const body = overlay.querySelector('#style-ptmpl-body');
+            try {
+                const resp = await fetchJSON('/api/style_lora/auto_lora_prompt');
+                if (!resp.success) { body.innerHTML = `<div style="padding:16px;color:var(--error);">${esc(resp.error||'로드 실패')}</div>`; return; }
+                const d = resp.data;
+                body.innerHTML = `
+                    <label style="font-size:0.82rem;display:flex;align-items:center;gap:6px;"><input type="checkbox" id="style-ptmpl-use" ${d.use_custom?'checked':''}> 커스텀 프롬프트 사용 (체크 해제 시 builtin)</label>
+                    <div style="font-size:0.74rem;color:var(--text-secondary);">Builtin (읽기 전용, {etc} 변수 사용):</div>
+                    <textarea id="style-ptmpl-builtin" rows="6" readonly style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);color:var(--text-secondary);font-size:0.78rem;">${escapeHtml(d.builtin||'')}</textarea>
+                    <div style="font-size:0.74rem;color:var(--text-secondary);">커스텀 (체크 시 이쪽 사용, .bak 백업):</div>
+                    <textarea id="style-ptmpl-custom" rows="10" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-size:0.8rem;">${escapeHtml(d.custom||'')}</textarea>`;
+                overlay.querySelector('#style-ptmpl-save').onclick = async () => {
+                    try {
+                        const r = await fetchJSON('/api/style_lora/auto_lora_prompt', {
+                            method: 'POST', headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({custom: overlay.querySelector('#style-ptmpl-custom').value, use_custom: overlay.querySelector('#style-ptmpl-use').checked})
+                        });
+                        if (r.success) { showToast('정제 프롬프트 저장됨', 'success'); overlay.remove(); }
+                        else showToast(r.error || '저장 실패', 'error');
+                    } catch (e) { showToast('저장 실패', 'error'); }
+                };
+            } catch (e) { body.innerHTML = `<div style="padding:16px;color:var(--error);">로드 실패: ${esc(e.message||e)}</div>`; }
+        }
+
+        // 스타일 LoRA 학습 진행률 — 같은 이벤트(instance_lora_training_progress)에서 source=style_lora 만 처리
+        function handleStyleLoraTrainingProgress(data) {
+            if (!data || data.source !== 'style_lora') return;
+            const phase = data.phase || '';
+            if (phase === 'all_complete') {
+                showToast('그림체 로라 학습 완료!', 'success');
+                if (_styleLora.currentGroup && _styleLora.currentProject) loadStyleProjectImages();
+            } else if (phase === 'error') {
+                showToast(`학습 오류: ${data.message || '알 수 없음'}`, 'error');
+            }
+        }
+
+        // 태깅/정제 완료 후 자동 갱신(기존 이벤트 재사용)
+        function handleStyleLoraTagProgress(data) {
+            if (!data) return;
+            if (data.phase === 'completed' && data.source === 'style_lora') {
+                showToast('스타일 태깅 완료', 'success');
+                if (_styleLora.currentProject) loadStyleProjectImages();
+            }
+        }
+
+        function handleStyleLoraRefineProgress(data) {
+            if (!data) return;
+            if (data.source_type !== 'style') return;
+            if (data.phase === 'completed') {
+                showToast('스타일 LLM 정제 완료', 'success');
+                if (_styleLora.currentProject) loadStyleProjectImages();
+            } else if (data.phase === 'failed') {
+                showToast(`정제 실패: ${data.error || '알 수 없음'}`, 'error');
             }
         }
 

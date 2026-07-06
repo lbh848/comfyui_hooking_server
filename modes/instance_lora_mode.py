@@ -40,6 +40,12 @@ BOT_TEST_SETUP_PROMPT_BUILTIN_FILE = os.path.join(AUTO_LORA_PROMPT_DIR, "bot_tes
 BOT_TEST_SETUP_PROMPT_CUSTOM_FILE = os.path.join(ASSET_DATA_DIR, "bot_test_setup_prompt_custom.txt")
 BOT_TEST_SETUP_PROMPT_META_FILE = os.path.join(ASSET_DATA_DIR, "bot_test_setup_prompt_meta.json")
 
+# 스타일 LoRA(그림체/화풍) 정제 전용 템플릿. 인스턴스 정제와 동일 동작이되 별도 템플릿으로 발전시키기 위해 분리.
+# template_set == "style" 일 때 사용된다.
+STYLE_LORA_PROMPT_BUILTIN_FILE = os.path.join(BASE_DIR, "prompts", "style_lora_prompt", "system.txt")
+STYLE_LORA_PROMPT_CUSTOM_FILE = os.path.join(ASSET_DATA_DIR, "style_lora_prompt_custom.txt")
+STYLE_LORA_PROMPT_META_FILE = os.path.join(ASSET_DATA_DIR, "style_lora_prompt_meta.json")
+
 _bot_test_setup_prompt_builtin_cache: str | None = None
 _bot_test_setup_prompt_builtin_mtime: float = 0.0
 
@@ -47,21 +53,39 @@ _auto_lora_prompt_builtin_cache: str | None = None
 _auto_lora_prompt_builtin_mtime: float = 0.0
 _auto_lora_prompt_builtin_asset_cache: str | None = None
 _auto_lora_prompt_builtin_asset_mtime: float = 0.0
+_auto_lora_prompt_builtin_style_cache: str | None = None
+_auto_lora_prompt_builtin_style_mtime: float = 0.0
 
 
-def _load_auto_lora_prompt_builtin(is_asset: bool = False) -> str:
+def _auto_lora_prompt_paths(template_set: str = "", is_asset: bool = False) -> tuple[str, str, str]:
+    """template_set 별 (builtin, custom, meta) 파일 경로 반환.
+    - "" (기본): is_asset 기준으로 캐릭터/에셋 템플릿 선택 (기존 동작 보존)
+    - "style": 스타일 LoRA 전용 템플릿 (is_asset 무시)
+    """
+    if template_set == "style":
+        return (STYLE_LORA_PROMPT_BUILTIN_FILE, STYLE_LORA_PROMPT_CUSTOM_FILE, STYLE_LORA_PROMPT_META_FILE)
+    if is_asset:
+        return (AUTO_LORA_PROMPT_BUILTIN_ASSET_FILE, AUTO_LORA_PROMPT_CUSTOM_ASSET_FILE, AUTO_LORA_PROMPT_META_ASSET_FILE)
+    return (AUTO_LORA_PROMPT_BUILTIN_FILE, AUTO_LORA_PROMPT_CUSTOM_FILE, AUTO_LORA_PROMPT_META_FILE)
+
+
+def _load_auto_lora_prompt_builtin(is_asset: bool = False, template_set: str = "") -> str:
     """글로벌(배포용) 프롬프트 로드. mtime 기반 캐싱.
 
     is_asset=True 이면 에셋 전용 builtin(gender 없음)을 로드한다.
+    template_set="style" 이면 스타일 LoRA 전용 builtin을 로드한다 (is_asset 무시).
     """
     global _auto_lora_prompt_builtin_cache, _auto_lora_prompt_builtin_mtime
     global _auto_lora_prompt_builtin_asset_cache, _auto_lora_prompt_builtin_asset_mtime
-    if is_asset:
-        path = AUTO_LORA_PROMPT_BUILTIN_ASSET_FILE
+    global _auto_lora_prompt_builtin_style_cache, _auto_lora_prompt_builtin_style_mtime
+    path = _auto_lora_prompt_paths(template_set, is_asset)[0]
+    if template_set == "style":
+        cache_val = _auto_lora_prompt_builtin_style_cache
+        mtime_val = _auto_lora_prompt_builtin_style_mtime
+    elif is_asset:
         cache_val = _auto_lora_prompt_builtin_asset_cache
         mtime_val = _auto_lora_prompt_builtin_asset_mtime
     else:
-        path = AUTO_LORA_PROMPT_BUILTIN_FILE
         cache_val = _auto_lora_prompt_builtin_cache
         mtime_val = _auto_lora_prompt_builtin_mtime
     if not os.path.isfile(path):
@@ -73,7 +97,10 @@ def _load_auto_lora_prompt_builtin(is_asset: bool = False) -> str:
             return cache_val
         with open(path, "r", encoding="utf-8") as f:
             txt = f.read()
-        if is_asset:
+        if template_set == "style":
+            _auto_lora_prompt_builtin_style_cache = txt
+            _auto_lora_prompt_builtin_style_mtime = mtime
+        elif is_asset:
             _auto_lora_prompt_builtin_asset_cache = txt
             _auto_lora_prompt_builtin_asset_mtime = mtime
         else:
@@ -86,20 +113,20 @@ def _load_auto_lora_prompt_builtin(is_asset: bool = False) -> str:
         return ""
 
 
-def _load_auto_lora_prompt_custom(is_asset: bool = False) -> tuple[str, bool]:
+def _load_auto_lora_prompt_custom(is_asset: bool = False, template_set: str = "") -> tuple[str, bool]:
     """커스텀 프롬프트와 use_custom 플래그 로드. (없으면 빈 문자열, False).
 
     is_asset=True 이면 에셋 전용 custom/meta 파일을 로드한다.
+    template_set="style" 이면 스타일 LoRA 전용 custom/meta 파일을 로드한다 (is_asset 무시).
     """
-    custom_file = AUTO_LORA_PROMPT_CUSTOM_ASSET_FILE if is_asset else AUTO_LORA_PROMPT_CUSTOM_FILE
-    meta_file = AUTO_LORA_PROMPT_META_ASSET_FILE if is_asset else AUTO_LORA_PROMPT_META_FILE
+    custom_file, meta_file = _auto_lora_prompt_paths(template_set, is_asset)[1:]
     custom = ""
     if os.path.isfile(custom_file):
         try:
             with open(custom_file, "r", encoding="utf-8") as f:
                 custom = f.read()
         except Exception as e:
-            print(f"[INSTANCE_LORA] auto_lora_prompt custom 로드 실패 (asset={is_asset}): {e}")
+            print(f"[INSTANCE_LORA] auto_lora_prompt custom 로드 실패 (asset={is_asset}, template_set={template_set}): {e}")
             traceback.print_exc()
 
     use_custom = False
@@ -109,32 +136,32 @@ def _load_auto_lora_prompt_custom(is_asset: bool = False) -> tuple[str, bool]:
                 meta = json.load(f)
                 use_custom = bool(meta.get("use_custom", False))
         except Exception as e:
-            print(f"[INSTANCE_LORA] auto_lora_prompt meta 로드 실패 (asset={is_asset}): {e}")
+            print(f"[INSTANCE_LORA] auto_lora_prompt meta 로드 실패 (asset={is_asset}, template_set={template_set}): {e}")
             traceback.print_exc()
 
     return custom, use_custom
 
 
-def _save_auto_lora_prompt_custom(text: str, use_custom: bool, is_asset: bool = False) -> None:
+def _save_auto_lora_prompt_custom(text: str, use_custom: bool, is_asset: bool = False, template_set: str = "") -> None:
     """커스텀 프롬프트 저장. 기존 파일은 .bak 로 백업.
 
     is_asset=True 이면 에셋 전용 custom/meta 파일에 저장한다.
+    template_set="style" 이면 스타일 LoRA 전용 custom/meta 파일에 저장한다 (is_asset 무시).
     """
     os.makedirs(ASSET_DATA_DIR, exist_ok=True)
-    custom_file = AUTO_LORA_PROMPT_CUSTOM_ASSET_FILE if is_asset else AUTO_LORA_PROMPT_CUSTOM_FILE
-    meta_file = AUTO_LORA_PROMPT_META_ASSET_FILE if is_asset else AUTO_LORA_PROMPT_META_FILE
+    custom_file, meta_file = _auto_lora_prompt_paths(template_set, is_asset)[1:]
 
     if os.path.isfile(custom_file):
         try:
             shutil.copy2(custom_file, custom_file + ".bak")
         except Exception as e:
-            print(f"[INSTANCE_LORA] auto_lora_prompt custom 백업 실패 (asset={is_asset}): {e}")
+            print(f"[INSTANCE_LORA] auto_lora_prompt custom 백업 실패 (asset={is_asset}, template_set={template_set}): {e}")
 
     try:
         with open(custom_file, "w", encoding="utf-8") as f:
             f.write(text)
     except Exception as e:
-        print(f"[INSTANCE_LORA] auto_lora_prompt custom 저장 실패 (asset={is_asset}): {e}")
+        print(f"[INSTANCE_LORA] auto_lora_prompt custom 저장 실패 (asset={is_asset}, template_set={template_set}): {e}")
         traceback.print_exc()
         raise
 
@@ -142,13 +169,13 @@ def _save_auto_lora_prompt_custom(text: str, use_custom: bool, is_asset: bool = 
         try:
             shutil.copy2(meta_file, meta_file + ".bak")
         except Exception as e:
-            print(f"[INSTANCE_LORA] auto_lora_prompt meta 백업 실패 (asset={is_asset}): {e}")
+            print(f"[INSTANCE_LORA] auto_lora_prompt meta 백업 실패 (asset={is_asset}, template_set={template_set}): {e}")
 
     try:
         with open(meta_file, "w", encoding="utf-8") as f:
             json.dump({"use_custom": bool(use_custom)}, f, ensure_ascii=False, indent=2)
     except Exception as e:
-        print(f"[INSTANCE_LORA] auto_lora_prompt meta 저장 실패 (asset={is_asset}): {e}")
+        print(f"[INSTANCE_LORA] auto_lora_prompt meta 저장 실패 (asset={is_asset}, template_set={template_set}): {e}")
         traceback.print_exc()
         raise
 
@@ -293,6 +320,8 @@ async def run_auto_refine_lora_prompt(
     gender_override: str = "",
     is_asset: bool = False,
     lora_id: str = "",
+    template_set: str = "",
+    style_ctx: dict = None,
 ) -> dict:
     """LLM 비전 기반 LoRA 프롬프트 정제 (core).
 
@@ -301,6 +330,11 @@ async def run_auto_refine_lora_prompt(
       - "bot_lora_training": bot_name + project_name + char_name + filename → 봇 LoRA 학습 이미지
       - "training":          char_name + entry + filename → 에셋 LoRA 학습 이미지
       - "instance":          lora_id + filename → 인스턴스 LoRA 이미지 (항상 에셋 템플릿/성별 자동추론)
+      - "style":             style_ctx(group, project) + filename → 스타일 LoRA 프로젝트 이미지
+                             (항상 스타일 전용 템플릿 / 성별 자동추론)
+
+    template_set: "" (기본, is_asset 기반) | "style" (스타일 LoRA 전용 템플릿).
+                  source_type=="style" 이면 자동으로 "style" 로 강제.
 
     반환: {"success": True, "data": {"positive": "..."}} 또는 {"success": False, "error": "..."}
     """
@@ -317,13 +351,21 @@ async def run_auto_refine_lora_prompt(
 
     try:
         source_type = (source_type or "bot").strip().lower()
-        if source_type not in ("bot", "bot_lora_training", "training", "instance"):
+        if source_type not in ("bot", "bot_lora_training", "training", "instance", "style"):
             return {"success": False, "error": f"지원하지 않는 source_type: {source_type}"}
         if source_type == "instance":
             # 인스턴스 로라는 항상 에셋 템플릿(성별 자동 추론) 사용
             is_asset = True
             if not lora_id or not filename:
                 return {"success": False, "error": "instance 소스는 lora_id, filename 필드가 필요합니다."}
+        elif source_type == "style":
+            # 스타일 로라는 항상 스타일 전용 템플릿(성별 자동 추론) 사용
+            is_asset = True
+            template_set = "style"
+            if not style_ctx or not filename:
+                return {"success": False, "error": "style 소스는 style_ctx(group, project), filename 필드가 필요합니다."}
+            if not style_ctx.get("group") or not style_ctx.get("project"):
+                return {"success": False, "error": "style_ctx 의 group, project 필드가 필요합니다."}
         elif not char_name or not filename:
             return {"success": False, "error": "character, filename 필드가 필요합니다."}
         if source_type == "bot" and not bot_name:
@@ -362,6 +404,12 @@ async def run_auto_refine_lora_prompt(
             if not img_path or not os.path.isfile(img_path):
                 print(f"[INSTANCE_LORA] 인스턴스 이미지 없음: lora_id={lora_id} filename={filename}")
                 return {"success": False, "error": f"인스턴스 이미지를 찾을 수 없습니다: {filename} (lora_id={lora_id})"}
+        elif source_type == "style":
+            from modes.style_lora_mode import get_image_path as _style_get_image_path
+            img_path = _style_get_image_path(style_ctx["group"], style_ctx["project"], filename)
+            if not img_path or not os.path.isfile(img_path):
+                print(f"[INSTANCE_LORA] 스타일 이미지 없음: group={style_ctx['group']} project={style_ctx['project']} filename={filename}")
+                return {"success": False, "error": f"스타일 이미지를 찾을 수 없습니다: {filename} (group={style_ctx['group']} project={style_ctx['project']})"}
         elif source_type == "bot":
             from modes.bot_lora_mode import get_bot_char_image_path
             img_path = get_bot_char_image_path(bot_name, char_name, filename)
@@ -394,12 +442,12 @@ async def run_auto_refine_lora_prompt(
                 ),
             }
 
-        # 템플릿 선택 + 변수 치환 (에셋은 gender 없는 에셋 전용 템플릿 사용)
-        custom_text, use_custom = _load_auto_lora_prompt_custom(is_asset)
+        # 템플릿 선택 + 변수 치환 (에셋은 gender 없는 에셋 전용 템플릿, 스타일은 스타일 전용 템플릿)
+        custom_text, use_custom = _load_auto_lora_prompt_custom(is_asset, template_set=template_set)
         if use_custom and custom_text.strip():
             template = custom_text
         else:
-            template = _load_auto_lora_prompt_builtin(is_asset)
+            template = _load_auto_lora_prompt_builtin(is_asset, template_set=template_set)
         if not template.strip():
             return {"success": False, "error": "프롬프트 템플릿이 비어 있습니다."}
 
@@ -435,6 +483,8 @@ async def run_auto_refine_lora_prompt(
             source_desc = f"bot={bot_name} project={project_name}"
         elif source_type == "instance":
             source_desc = f"instance lora_id={lora_id}"
+        elif source_type == "style":
+            source_desc = f"style group={style_ctx.get('group')} project={style_ctx.get('project')}"
         else:
             source_desc = f"training entry={entry}"
         print(f"[INSTANCE_LORA] auto_refine_lora_prompt 호출: source={source_type} {source_desc} char={char_name} filename={filename} service={service} is_asset={is_asset} gender={gender_tag} etc_len={len(current_positive)} use_custom={use_custom}")
