@@ -6987,14 +6987,19 @@
                             </div>
                             <div style="display: flex; align-items: center; gap: 0;">
                                 <span style="flex: 1; display: inline-flex; align-items: center; height: 36px;"></span>
-                                <span style="display: inline-flex; align-items: center; padding: 8px 10px; background: var(--bg-tertiary, #2a2a3e); border: 1px solid var(--border-color, #3a3a4e); border-left: none; border-radius: 0 0 6px 0; font-size: 13px; color: var(--text-secondary, #aaa); white-space: nowrap; user-select: none;">\SOYA_CHAR_LORA\SOYA_INSTANCE_LORA</span>
+                                <span style="display: inline-flex; align-items: center; padding: 8px 10px; background: var(--bg-tertiary, #2a2a3e); border: 1px solid var(--border-color, #3a3a4e); border-left: none; font-size: 13px; color: var(--text-secondary, #aaa); white-space: nowrap; user-select: none;">\SOYA_CHAR_LORA\SOYA_INSTANCE_LORA</span>
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 0;">
+                                <span style="flex: 1; display: inline-flex; align-items: center; height: 36px;"></span>
+                                <span style="display: inline-flex; align-items: center; padding: 8px 10px; background: var(--bg-tertiary, #2a2a3e); border: 1px solid var(--border-color, #3a3a4e); border-left: none; border-radius: 0 0 6px 0; font-size: 13px; color: var(--text-secondary, #aaa); white-space: nowrap; user-select: none;">\SOYA_CHAR_LORA\SOYA_STYLE_LORA</span>
                             </div>
                         </div>
                         <div class="hint" style="line-height: 1.6;">
                             다음 항목이 자동 추가됩니다:<br>
                             · 에셋 LoRA → \SOYA_CHAR_LORA<br>
                             · 봇 LoRA → \SOYA_CHAR_LORA\SOYA_BOT_LORA<br>
-                            · 인스턴스 LoRA → \SOYA_CHAR_LORA\SOYA_INSTANCE_LORA
+                            · 인스턴스 LoRA → \SOYA_CHAR_LORA\SOYA_INSTANCE_LORA<br>
+                            · 스타일(그림체) LoRA → \SOYA_CHAR_LORA\SOYA_STYLE_LORA
                         </div>
                         <button onclick="scanUntrackedLoras()" style="margin-top: 6px; padding: 6px 14px; font-size: 12px; background: var(--bg-tertiary, #2a2a3e); border: 1px solid var(--border-color, #3a3a4e); border-radius: 6px; color: var(--text-secondary, #aaa); cursor: pointer;">비추적 로라 제거</button>
                         <button onclick="openLoraFolder()" style="margin-top: 6px; padding: 6px 14px; font-size: 12px; background: var(--bg-tertiary, #2a2a3e); border: 1px solid var(--border-color, #3a3a4e); border-radius: 6px; color: var(--text-secondary, #aaa); cursor: pointer;">📁 폴더 열기</button>
@@ -8872,11 +8877,15 @@
             document.getElementById('setting-face-extract-workflow-filename').value = faceExtractSplit.filename;
             document.getElementById('setting-face-extract-workflow-source-path').value = faceExtractPath;
 
-            // 로라 로드 경로 (SOYA_CHAR_LORA, SOYA_CHAR_LORA\SOYA_BOT_LORA, SOYA_CHAR_LORA\SOYA_INSTANCE_LORA 접미사 제거 후 표시)
+            // 로라 로드 경로 (SOYA_CHAR_LORA, SOYA_CHAR_LORA\SOYA_BOT_LORA, SOYA_CHAR_LORA\SOYA_INSTANCE_LORA, SOYA_CHAR_LORA\SOYA_STYLE_LORA 접미사 제거 후 표시)
             const loraLoadPath = currentConfig.lora_load_path || '';
             const botLoraLoadPath = currentConfig.bot_lora_load_path || '';
             const instanceLoraLoadPath = currentConfig.instance_lora_load_path || '';
-            const basePath = loraLoadPath.replace(/\\SOYA_CHAR_LORA$/, '') || botLoraLoadPath.replace(/\\SOYA_CHAR_LORA\\SOYA_BOT_LORA$/, '').replace(/\\SOYA_BOT_LORA$/, '') || instanceLoraLoadPath.replace(/\\SOYA_CHAR_LORA\\SOYA_INSTANCE_LORA$/, '').replace(/\\SOYA_INSTANCE_LORA$/, '');
+            const styleLoraLoadPath = currentConfig.style_lora_load_path || '';
+            const basePath = loraLoadPath.replace(/\\SOYA_CHAR_LORA$/, '')
+                || botLoraLoadPath.replace(/\\SOYA_CHAR_LORA\\SOYA_BOT_LORA$/, '').replace(/\\SOYA_BOT_LORA$/, '')
+                || instanceLoraLoadPath.replace(/\\SOYA_CHAR_LORA\\SOYA_INSTANCE_LORA$/, '').replace(/\\SOYA_INSTANCE_LORA$/, '')
+                || styleLoraLoadPath.replace(/\\SOYA_CHAR_LORA\\SOYA_STYLE_LORA$/, '').replace(/\\SOYA_STYLE_LORA$/, '');
             document.getElementById('setting-lora-load-path').value = basePath || loraLoadPath;
 
             document.getElementById('settings-modal').classList.add('visible');
@@ -9477,6 +9486,7 @@
                 lora_load_path: document.getElementById('setting-lora-load-path').value.trim().replace(/\\?$/, '\\SOYA_CHAR_LORA'),
                 bot_lora_load_path: document.getElementById('setting-lora-load-path').value.trim().replace(/\\?$/, '\\SOYA_CHAR_LORA\\SOYA_BOT_LORA'),
                 instance_lora_load_path: document.getElementById('setting-lora-load-path').value.trim().replace(/\\?$/, '\\SOYA_CHAR_LORA\\SOYA_INSTANCE_LORA'),
+                style_lora_load_path: document.getElementById('setting-lora-load-path').value.trim().replace(/\\?$/, '\\SOYA_CHAR_LORA\\SOYA_STYLE_LORA'),
                 batch_mode_enabled: currentConfig.batch_mode_enabled || false,
                 webp_lossless: currentConfig.webp_lossless || false,
                 workflow_filename: currentConfig.workflow_filename || '',
@@ -18628,38 +18638,37 @@
         }
 
         // ─── 학습 설정 (프로젝트별, ANIMA/SDXL 둘 다 항상 표시) ──────
-        const _STYLE_LABELS = {
-            step_per_image: 'STEP_PER_IMAGE', il_rate: 'IL_RATE', save_per_step: 'SAVE_PER_STEP',
-            multi_img_folder_name: 'MULTI_IMG_FOLDER_NAME', gen_w: 'GEN_W', gen_h: 'GEN_H',
-            upscale: '업스케일링', resolution: 'RESOLUTION', save_after: 'SAVE_AFTER',
-            dim: 'DIM', alpha: 'ALPHA',
-        };
-
+        // 각 블록 = 해당 프로필(ANIMA 블록=anima, SDXL 블록=sdxl). Profile은 자동 지정.
+        // 디자인은 봇 모드 학습 설정(틴트 박스 · 단일 컬럼 · 추천값 라벨 · 업스케일링 토글 · DIM select)을 참고.
         function _styleSettingsBlockHtml(profile) {
             const id = `sset-${profile}`;
-            const lbl = k => `<label style="font-size:0.7rem;color:var(--text-secondary);">${_STYLE_LABELS[k] || k}</label>`;
-            const num = (k, val, step = '') => `<input data-profile="${profile}" data-key="${k}" type="number" ${step ? `step="${step}"` : ''} class="sset-input" value="${val}">`;
-            return `<div id="${id}-block" style="margin-bottom:10px;padding:8px;border:1px solid var(--border);border-radius:6px;">
-                <div onclick="toggleBlock('${id}-body')" style="font-weight:600;font-size:0.78rem;margin-bottom:6px;color:var(--accent);cursor:pointer;display:flex;align-items:center;gap:4px;">
+            const tint = profile === 'anima' ? 'rgba(100,150,255,0.10)' : 'rgba(180,120,220,0.10)';
+            const lbl = text => `<label style="font-size:0.7rem;color:var(--text-secondary);display:block;margin-bottom:2px;">${text}</label>`;
+            const inpStyle = 'width:100%;padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-size:0.8rem;box-sizing:border-box;';
+            const inp = (k, type, val, extra = '') => `<input data-profile="${profile}" data-key="${k}" type="${type}" ${extra} class="sset-input" value="${val}" style="${inpStyle}">`;
+            const sel = (k, opts) => `<select data-profile="${profile}" data-key="${k}" class="sset-input" style="${inpStyle}">${opts}</select>`;
+            return `<div id="${id}-block" style="background:${tint};border-radius:8px;padding:10px;margin-bottom:10px;">
+                <div onclick="toggleBlock('${id}-body')" style="font-size:0.8rem;font-weight:600;margin-bottom:8px;cursor:pointer;display:flex;align-items:center;gap:4px;">
                     <span id="${id}-body-arrow" style="transition:transform 0.2s;">▼</span> ${profile.toUpperCase()}
                 </div>
-                <div id="${id}-body">
-                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
-                        <div>${lbl('step_per_image')}${num('step_per_image', 125)}</div>
-                        <div>${lbl('il_rate')}${num('il_rate', 0.00025, '0.00001')}</div>
-                        <div>${lbl('save_per_step')}${num('save_per_step', 25)}</div>
-                        <div>${lbl('resolution')}${num('resolution', 1024)}</div>
-                        <div>${lbl('gen_w')}${num('gen_w', 1024)}</div>
-                        <div>${lbl('gen_h')}${num('gen_h', 1024)}</div>
-                        <div>${lbl('save_after')}${num('save_after', 0)}</div>
-                        <div>${lbl('dim')}<select data-profile="${profile}" data-key="dim" class="sset-input"><option value="16">16</option><option value="32" selected>32</option><option value="64">64</option></select></div>
-                        <div>${lbl('alpha')}${num('alpha', 16)}</div>
-                        <div style="grid-column:1/-1;">${lbl('multi_img_folder_name')}<input data-profile="${profile}" data-key="multi_img_folder_name" type="text" class="sset-input" value="soya_lora"></div>
-                        <div style="grid-column:1/-1;display:flex;align-items:center;gap:6px;padding:6px 8px;background:var(--surface2);border-radius:6px;border:1px solid var(--border);">
-                            <span style="font-size:0.78rem;">${_STYLE_LABELS.upscale}</span>
-                            <label class="toggle-switch"><input type="checkbox" data-profile="${profile}" data-key="upscale" class="sset-toggle"><span class="toggle-slider"></span></label>
-                        </div>
+                <div id="${id}-body" style="display:flex;flex-direction:column;gap:6px;">
+                    <div>${lbl('STEP_PER_IMAGE (추천값 - Anima:200 / XL:300)')}${inp('step_per_image', 'number', 125)}</div>
+                    <div>${lbl('IL_RATE (학습률) (추천값 - Anima:0.0003 / XL:0.0002)')}${inp('il_rate', 'number', 0.00025, 'step="0.00001"')}</div>
+                    <div>${lbl('SAVE_PER_STEP')}${inp('save_per_step', 'number', 25)}</div>
+                    <div>${lbl('MULTI_IMG_FOLDER_NAME')}${inp('multi_img_folder_name', 'text', 'soya_lora')}</div>
+                    <div>${lbl('GEN_W (추천값 - Anima:704 / XL:1024)')}${inp('gen_w', 'number', 1024)}</div>
+                    <div>${lbl('GEN_H (추천값 - Anima:1024 / XL:1536)')}${inp('gen_h', 'number', 1024)}</div>
+                    <div style="display:flex;align-items:center;gap:6px;padding:6px 8px;background:var(--surface2);border-radius:6px;border:1px solid var(--border);">
+                        <span style="font-size:0.8rem;">업스케일링</span>
+                        <label class="toggle-switch"><input type="checkbox" data-profile="${profile}" data-key="upscale" class="sset-toggle"><span class="toggle-slider"></span></label>
                     </div>
+                    <div>${lbl('RESOLUTION')}${inp('resolution', 'number', 1024)}</div>
+                    <div>${lbl('SAVE_AFTER')}${inp('save_after', 'number', 0)}</div>
+                    <div style="display:flex;gap:8px;">
+                        <div style="flex:1;">${lbl('DIM')}${sel('dim', '<option value="16">16</option><option value="32" selected>32</option><option value="64">64</option>')}</div>
+                        <div style="flex:1;">${lbl('ALPHA')}${inp('alpha', 'number', 16)}</div>
+                    </div>
+                    <div>${lbl('LORA_SAVE_PATH (자동)')}<span data-savepath="${profile}" style="display:block;padding:4px 8px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;font-size:0.78rem;color:var(--text-secondary);word-break:break-all;">SOYA_STYLE_LORA/${profile}/</span></div>
                 </div>
             </div>`;
         }
@@ -18685,6 +18694,10 @@
                 });
                 const proj = _styleLora.projects.find(p => p.id === projectId);
                 labelEl.textContent = proj ? proj.name : '';
+                // LORA_SAVE_PATH (자동) 표시 — 실제 저장 구조: SOYA_STYLE_LORA/{profile}/{project}
+                document.querySelectorAll('#style-lora-settings-area [data-savepath]').forEach(el => {
+                    el.textContent = `SOYA_STYLE_LORA/${el.dataset.savepath}/${projectId}`;
+                });
             } catch (e) { console.error('[STYLE_LORA] 설정 로드 실패:', e); }
         }
 

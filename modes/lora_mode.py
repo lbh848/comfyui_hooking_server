@@ -1387,8 +1387,8 @@ def scan_untracked_loras(lora_load_path: str) -> dict:
         if not os.path.isdir(char_path):
             continue
 
-        # SOYA_BOT_LORA, SOYA_INSTANCE_LORA 폴더는 전용 경로이므로 비추적 스캔에서 제외
-        if char_dir_name in ("SOYA_BOT_LORA", "SOYA_INSTANCE_LORA"):
+        # SOYA_BOT_LORA, SOYA_INSTANCE_LORA, SOYA_STYLE_LORA 폴더는 전용 경로이므로 비추적 스캔에서 제외
+        if char_dir_name in ("SOYA_BOT_LORA", "SOYA_INSTANCE_LORA", "SOYA_STYLE_LORA"):
             print(f"[LORA_UNTRACKED] {char_dir_name} 폴더 스킵: {char_path}")
             continue
 
