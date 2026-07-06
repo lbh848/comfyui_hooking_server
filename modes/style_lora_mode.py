@@ -498,6 +498,7 @@ def get_project_settings(project_id: str) -> dict:
         "data": {
             "anima": _merged_profile_settings(cfg.get("anima", {})),
             "sdxl": _merged_profile_settings(cfg.get("sdxl", {})),
+            "selected_profile": cfg.get("selected_profile", "both"),
         },
     }
 
@@ -508,10 +509,13 @@ def save_project_settings(project_id: str, settings: dict) -> dict:
     project = data.get("projects", {}).get(project_id)
     if not project:
         return {"success": False, "error": "존재하지 않는 프로젝트입니다"}
-    cfg = {"anima": {}, "sdxl": {}}
+    cfg = {"anima": {}, "sdxl": {}, "selected_profile": "both"}
     if isinstance(settings, dict):
         for profile in ("anima", "sdxl"):
             cfg[profile] = settings.get(profile, {}) or {}
+        sp = settings.get("selected_profile")
+        if sp in ("anima", "sdxl", "both"):
+            cfg["selected_profile"] = sp
     project["training_config"] = cfg
     _save_data(data)
     print(f"[STYLE_LORA] 프로젝트 설정 저장: {project_id}")

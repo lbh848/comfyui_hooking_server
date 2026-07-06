@@ -8766,14 +8766,21 @@ async def handle_api_style_lora_prompt_get(request):
 
 async def handle_api_style_lora_training_start(request):
     """스타일 LoRA 학습 → 기존 instance_lora_training 큐에 source=style_lora 로 적재.
-    ANIMA/SDXL 두 프로필을 순차 학습."""
+    profile: anima / sdxl / both(기본) — 선택한 프로필만 순차 학습."""
     try:
         body = await request.json()
         project = (body.get("project") or "").strip()
         if not project:
             return web.json_response({"success": False, "error": "project 필수"}, status=400)
+        profile = (body.get("profile") or "both").strip()
+        if profile == "both":
+            profiles = ["anima", "sdxl"]
+        elif profile in ("anima", "sdxl"):
+            profiles = [profile]
+        else:
+            return web.json_response({"success": False, "error": f"잘못된 profile 값: {profile}"}, status=400)
         items = []
-        for p in ("anima", "sdxl"):
+        for p in profiles:
             label = f"[스타일] {project} ({p})"
             item = await queue_manager.add_item("instance_lora_training", label, {
                 "source": "style_lora", "project": project, "profiles": [p],

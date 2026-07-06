@@ -2792,6 +2792,13 @@
             pointer-events: none;
         }
 
+        /* ─── "?" 호버 툴팁 (라벨 설명용, 공용) ─── */
+        .tip-wrap { position: relative; display: inline-flex; align-items: center; margin-left: 4px; }
+        .tip-q { display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; border-radius: 50%; border: 1px solid var(--border); background: var(--surface2); color: var(--text-secondary); font-size: 0.62rem; cursor: help; }
+        .tip-box { display: none; position: absolute; bottom: 20px; left: 0; z-index: 2000; width: 270px; padding: 8px 10px; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 6px; font-size: 0.7rem; line-height: 1.5; box-shadow: 0 2px 10px rgba(0,0,0,0.35); white-space: normal; }
+        .tip-box b { font-weight: 600; }
+        .tip-wrap:hover .tip-box { display: block; }
+
         /* ─── 오토매치 탭 ─── */
         .at-container { display: flex; flex-direction: column; height: calc(100vh - 60px); overflow: hidden; }
         .at-toolbar { display: flex; align-items: center; gap: 10px; padding: 6px 8px; background: var(--surface2); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
@@ -4980,7 +4987,13 @@
                                 <input type="number" id="lora-cfg-step" value="50" min="1" onchange="updateSaveAfterDropdown()" style="width:100%; padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); font-size:0.8rem; box-sizing:border-box;">
                             </div>
                             <div>
-                                <label style="font-size:0.7rem; color:var(--text-secondary); display:block; margin-bottom:2px;">IL_RATE(학습률)(추천값 - Anima:0.0003/XL:0.0002)</label>
+                                <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:2px;">
+                                    <label style="font-size:0.7rem; color:var(--text-secondary);">IL_RATE(학습률)</label>
+                                    <span style="display:flex; align-items:center; gap:6px;">
+                                        <span style="font-size:0.65rem; color:var(--text-secondary);">추천값-XL: 0.0002</span>
+                                        <button type="button" onclick="showIlRateRecommend()" style="font-size:0.65rem; padding:1px 6px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:4px; cursor:pointer;">ANIMA 추천값</button>
+                                    </span>
+                                </div>
                                 <input type="number" id="lora-cfg-ilrate" value="0.0005" step="0.0001" style="width:100%; padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); font-size:0.8rem; box-sizing:border-box;">
                             </div>
                             <div>
@@ -5191,7 +5204,13 @@
                                         <input type="number" id="bot-lora-cfg-step" value="50" min="1" style="width:100%; padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); font-size:0.8rem; box-sizing:border-box;">
                                     </div>
                                     <div>
-                                        <label style="font-size:0.7rem; color:var(--text-secondary); display:block; margin-bottom:2px;">IL_RATE(학습률)(추천값 - Anima:0.0003/XL:0.0002)</label>
+                                        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:2px;">
+                                            <label style="font-size:0.7rem; color:var(--text-secondary);">IL_RATE(학습률)</label>
+                                            <span style="display:flex; align-items:center; gap:6px;">
+                                                <span style="font-size:0.65rem; color:var(--text-secondary);">추천값-XL: 0.0002</span>
+                                                <button type="button" onclick="showIlRateRecommend()" style="font-size:0.65rem; padding:1px 6px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:4px; cursor:pointer;">ANIMA 추천값</button>
+                                            </span>
+                                        </div>
                                         <input type="number" id="bot-lora-cfg-ilrate" value="0.0005" step="0.0001" style="width:100%; padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); font-size:0.8rem; box-sizing:border-box;">
                                     </div>
                                     <div>
@@ -5306,7 +5325,7 @@
                                 <div id="iset-anima-body">
                                     <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
                                         <div><label style="font-size:0.7rem; color:var(--text-secondary);">STEP(추천값: 100)</label><input data-profile="anima" data-key="step_per_image" type="number" value="125" class="iset-input"></div>
-                                        <div><label style="font-size:0.7rem; color:var(--text-secondary);">IL_RATE(추천값: 0.0003)</label><input data-profile="anima" data-key="il_rate" type="number" step="0.00001" value="0.00025" class="iset-input"></div>
+                                        <div><span style="display:flex; align-items:center; justify-content:space-between; gap:4px;"><label style="font-size:0.7rem; color:var(--text-secondary);">IL_RATE(학습률)</label><button type="button" onclick="showIlRateRecommend()" style="font-size:0.6rem; padding:1px 5px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:4px; cursor:pointer;">ANIMA 추천값</button></span><input data-profile="anima" data-key="il_rate" type="number" step="0.00001" value="0.00025" class="iset-input"></div>
                                         <div><label style="font-size:0.7rem; color:var(--text-secondary);">RESOLUTION(추천값: 1024)</label><input data-profile="anima" data-key="resolution" type="number" value="1024" class="iset-input"></div>
                                         <div><label style="font-size:0.7rem; color:var(--text-secondary);">DIM(추천값: 32)</label><input data-profile="anima" data-key="dim" type="number" value="32" class="iset-input"></div>
                                         <div><label style="font-size:0.7rem; color:var(--text-secondary);">ALPHA(추천값: 16)</label><input data-profile="anima" data-key="alpha" type="number" value="16" class="iset-input"></div>
@@ -5322,7 +5341,7 @@
                                 <div id="iset-sdxl-body">
                                     <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
                                         <div><label style="font-size:0.7rem; color:var(--text-secondary);">STEP(추천값: 150)</label><input data-profile="sdxl" data-key="step_per_image" type="number" value="125" class="iset-input"></div>
-                                        <div><label style="font-size:0.7rem; color:var(--text-secondary);">IL_RATE(추천값: 0.0002)</label><input data-profile="sdxl" data-key="il_rate" type="number" step="0.00001" value="0.00025" class="iset-input"></div>
+                                        <div><label style="font-size:0.7rem; color:var(--text-secondary); display:block; margin-bottom:2px;">IL_RATE(학습률)(추천값-XL:0.0002)</label><input data-profile="sdxl" data-key="il_rate" type="number" step="0.00001" value="0.00025" class="iset-input"></div>
                                         <div><label style="font-size:0.7rem; color:var(--text-secondary);">RESOLUTION(추천값: 1024)</label><input data-profile="sdxl" data-key="resolution" type="number" value="1024" class="iset-input"></div>
                                         <div><label style="font-size:0.7rem; color:var(--text-secondary);">DIM(추천값: 32)</label><input data-profile="sdxl" data-key="dim" type="number" value="32" class="iset-input"></div>
                                         <div><label style="font-size:0.7rem; color:var(--text-secondary);">ALPHA(추천값: 16)</label><input data-profile="sdxl" data-key="alpha" type="number" value="16" class="iset-input"></div>
@@ -5462,10 +5481,18 @@
                                     <span style="font-weight:600;font-size:0.9rem;">학습 설정</span>
                                     <span id="style-lora-cfg-project-label" style="font-size:0.72rem;color:var(--text-secondary);"></span>
                                 </div>
+                                <div style="padding:8px 12px;border-bottom:1px solid var(--border);">
+                                    <label style="font-size:0.7rem;color:var(--text-secondary);display:block;margin-bottom:4px;">학습 프로필</label>
+                                    <select id="style-lora-train-profile" onchange="onStyleProfileChange()" style="width:100%;padding:5px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-size:0.8rem;box-sizing:border-box;">
+                                        <option value="anima">ANIMA만</option>
+                                        <option value="sdxl">SDXL만</option>
+                                        <option value="both" selected>둘 다 (ANIMA + SDXL)</option>
+                                    </select>
+                                </div>
                                 <div id="style-lora-settings-area" style="flex:1;overflow-y:auto;padding:12px;"></div>
                                 <div style="padding:12px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:8px;">
                                     <button onclick="styleLoraSaveSettings()" style="width:100%;padding:6px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.78rem;">설정 저장</button>
-                                    <button onclick="styleLoraStartTraining()" style="width:100%;padding:8px;background:var(--accent);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.82rem;font-weight:700;">▶ 학습 시작 (ANIMA + SDXL)</button>
+                                    <button id="style-lora-start-btn" onclick="styleLoraStartTraining()" style="width:100%;padding:8px;background:var(--accent);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.82rem;font-weight:700;">▶ 학습 시작 (ANIMA + SDXL)</button>
                                     <button onclick="styleLoraEditPromptTemplate()" style="width:100%;padding:6px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.74rem;">✨ 정제 프롬프트 편집</button>
                                 </div>
                             </div>
@@ -18172,6 +18199,28 @@
             sdxlBlock.style.opacity = (v === 'anima') ? '0.45' : '1';
         }
 
+        // 그림체(스타일) 모드 프로필 선택 변경 — 인스턴스와 동일 동작 (비선택 블록 dim/disable)
+        function onStyleProfileChange() {
+            const sel = document.getElementById('style-lora-train-profile');
+            const v = sel ? sel.value : 'both';
+            const animaBlock = document.getElementById('sset-anima-block');
+            const sdxlBlock = document.getElementById('sset-sdxl-block');
+            if (animaBlock) {
+                animaBlock.querySelectorAll('.sset-input').forEach(el => el.disabled = (v === 'sdxl'));
+                animaBlock.style.opacity = (v === 'sdxl') ? '0.45' : '1';
+            }
+            if (sdxlBlock) {
+                sdxlBlock.querySelectorAll('.sset-input').forEach(el => el.disabled = (v === 'anima'));
+                sdxlBlock.style.opacity = (v === 'anima') ? '0.45' : '1';
+            }
+            const btn = document.getElementById('style-lora-start-btn');
+            if (btn) {
+                btn.textContent = v === 'both' ? '▶ 학습 시작 (ANIMA + SDXL)'
+                    : v === 'anima' ? '▶ 학습 시작 (ANIMA)'
+                    : '▶ 학습 시작 (SDXL)';
+            }
+        }
+
         async function showPromptPreview(profile) {
             const modal = document.getElementById('instance-prompt-modal');
             const titleEl = document.getElementById('instance-prompt-modal-title');
@@ -18853,8 +18902,10 @@
                     <span id="${id}-body-arrow" style="transition:transform 0.2s;">▼</span> ${profile.toUpperCase()}
                 </div>
                 <div id="${id}-body" style="display:flex;flex-direction:column;gap:6px;">
-                    <div>${lbl('STEP_PER_IMAGE (추천값 - Anima:200 / XL:300)')}${inp('step_per_image', 'number', 125)}</div>
-                    <div>${lbl('IL_RATE (학습률) (추천값 - Anima:0.0003 / XL:0.0002)')}${inp('il_rate', 'number', 0.00025, 'step="0.00001"')}</div>
+                    <div><div style="font-size:0.7rem;color:var(--text-secondary);display:flex;align-items:center;margin-bottom:2px;">전체 STEP<span class="tip-wrap"><span class="tip-q">?</span><span class="tip-box">전체 학습 스텝 수를 의미해요.<br>이미지 장 수와 STEP 수의 대소 관계에 따라 학습에 쓰일 이미지가 정해집니다.<br><br>• 이미지가 STEP보다 많으면 → STEP 장 수만큼 무작위로 골라 학습<br>• 이미지와 STEP이 같으면 → 전체 이미지를 한 바퀴 돌며 학습<br>• 이미지가 STEP보다 적으면 → 모든 이미지를 먼저 한 바퀴 돌고, 남은 STEP은 무작위로 채워 학습</span></span></div>${inp('step_per_image', 'number', 125)}</div>
+                    <div>${profile === 'anima'
+                        ? `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:2px;"><label style="font-size:0.7rem;color:var(--text-secondary);">IL_RATE (학습률)</label><button type="button" onclick="showIlRateRecommend()" style="font-size:0.6rem;padding:1px 5px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;cursor:pointer;">ANIMA 추천값</button></div>`
+                        : `<label style="font-size:0.7rem;color:var(--text-secondary);display:block;margin-bottom:2px;">IL_RATE (학습률)(추천값-XL:0.0002)</label>`}${inp('il_rate', 'number', 0.00025, 'step="0.00001"')}</div>
                     <div>${lbl('SAVE_PER_STEP')}${inp('save_per_step', 'number', 25)}</div>
                     <div>${lbl('MULTI_IMG_FOLDER_NAME')}${inp('multi_img_folder_name', 'text', 'soya_lora')}</div>
                     <div>${lbl('GEN_W (추천값 - Anima:704 / XL:1024)')}${inp('gen_w', 'number', 1024)}</div>
@@ -18879,11 +18930,15 @@
             area.innerHTML = _styleSettingsBlockHtml('anima') + _styleSettingsBlockHtml('sdxl');
             const labelEl = document.getElementById('style-lora-cfg-project-label');
             labelEl.textContent = '';
-            if (!projectId) return;
+            if (!projectId) { onStyleProfileChange(); return; }
             try {
                 const resp = await fetchJSON(`/api/style_lora/config?project=${encodeURIComponent(projectId)}`);
-                if (!resp.success) { console.warn('[STYLE_LORA] 설정 로드 실패:', resp.error); return; }
+                if (!resp.success) { console.warn('[STYLE_LORA] 설정 로드 실패:', resp.error); onStyleProfileChange(); return; }
                 const data = resp.data || {};
+                // 저장된 학습 프로필 선택 복원
+                const profSel = document.getElementById('style-lora-train-profile');
+                if (profSel && data.selected_profile) profSel.value = data.selected_profile;
+                onStyleProfileChange();
                 document.querySelectorAll('#style-lora-settings-area .sset-input').forEach(el => {
                     const ps = data[el.dataset.profile] || {};
                     const v = ps[el.dataset.key];
@@ -18903,7 +18958,8 @@
         }
 
         function _collectStyleSettings() {
-            const settings = {anima: {}, sdxl: {}};
+            const profSel = document.getElementById('style-lora-train-profile');
+            const settings = {anima: {}, sdxl: {}, selected_profile: profSel ? profSel.value : 'both'};
             for (const profile of ['anima', 'sdxl']) {
                 document.querySelectorAll(`#style-lora-settings-area .sset-input[data-profile="${profile}"]`).forEach(el => {
                     const k = el.dataset.key;
@@ -18933,11 +18989,13 @@
 
         async function styleLoraStartTraining() {
             if (!_styleNeedProject()) return;
-            if (!confirm(`현재 프로젝트를 ANIMA + SDXL 순차 학습 큐에 추가할까요?`)) return;
+            const profileValue = document.getElementById('style-lora-train-profile').value;
+            const label = profileValue === 'both' ? 'ANIMA + SDXL (순차)' : profileValue.toUpperCase();
+            if (!confirm(`현재 프로젝트를 ${label} 프로필로 학습을 큐에 추가할까요?`)) return;
             try {
                 const resp = await fetchJSON('/api/style_lora/training/start', {
                     method: 'POST', headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({project: _styleLora.currentProject})
+                    body: JSON.stringify({project: _styleLora.currentProject, profile: profileValue})
                 });
                 if (resp.success) showToast(`학습 큐 추가됨: ${(resp.labels || []).join(', ')}`, 'success');
                 else showToast(resp.error || '학습 큐 추가 실패', 'error');
@@ -43462,7 +43520,50 @@
             document.getElementById('pm-trace-results').innerHTML = '';
             document.getElementById('pm-btn-clear').style.display = 'none';
         }
+
+        // IL_RATE(학습률) 추천값 표 데이터: [스텝, 학습률, 기본값여부]
+        const IL_RATE_RECOMMEND = [
+            [50, 0.000500, true], [100, 0.000480], [200, 0.000442], [300, 0.000408],
+            [400, 0.000376], [500, 0.000347], [600, 0.000320], [700, 0.000295],
+            [800, 0.000272], [900, 0.000251], [1000, 0.000231], [1100, 0.000213],
+            [1200, 0.000197], [1300, 0.000181], [1400, 0.000167], [1500, 0.000154],
+            [1600, 0.000142], [1700, 0.000131], [1800, 0.000121], [1900, 0.000111],
+            [2000, 0.000100, true]
+        ];
+        // IL_RATE 추천값 표 모달 열기 (에셋/봇/인스턴스/그림체 공용)
+        function showIlRateRecommend() {
+            const tbody = document.getElementById('ilrate-recommend-tbody');
+            tbody.innerHTML = IL_RATE_RECOMMEND.map(([s, r, isDefault]) => {
+                const sTxt = isDefault ? `${s} (기본값)` : `${s}`;
+                return `<tr><td style="padding:5px 8px; border-bottom:1px solid var(--border);">${sTxt}</td><td style="padding:5px 8px; border-bottom:1px solid var(--border); text-align:right; font-family:monospace;">${r.toFixed(6)}</td></tr>`;
+            }).join('');
+            document.getElementById('ilrate-recommend-modal').style.display = 'flex';
+        }
     </script>
+        <!-- IL_RATE(학습률) 추천값 표 모달 (공용: 에셋/봇/인스턴스/그림체) -->
+        <div class="modal" id="ilrate-recommend-modal" style="display:none;">
+            <div class="modal-content" style="max-width:400px;">
+                <div style="padding:12px 16px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between;">
+                    <span style="font-weight:600; font-size:0.95rem;">IL_RATE(학습률) 추천값(ANIMA)</span>
+                    <button onclick="document.getElementById('ilrate-recommend-modal').style.display='none'" style="background:none; border:none; cursor:pointer; color:var(--text-secondary); font-size:1.2rem;">&times;</button>
+                </div>
+                <div style="padding:16px; max-height:70vh; overflow:auto;">
+                    <table style="width:100%; border-collapse:collapse; font-size:0.8rem;">
+                        <thead>
+                            <tr>
+                                <th style="text-align:left; padding:6px 8px; border-bottom:1px solid var(--border); color:var(--text-secondary); font-weight:600;">입력값 (스텝 수)</th>
+                                <th style="text-align:right; padding:6px 8px; border-bottom:1px solid var(--border); color:var(--text-secondary); font-weight:600;">출력값 (학습률)</th>
+                            </tr>
+                        </thead>
+                        <tbody id="ilrate-recommend-tbody"></tbody>
+                    </table>
+                    <div style="margin-top:10px; font-size:0.7rem; color:var(--text-secondary); border-top:1px solid var(--border); padding-top:8px;">
+                        출처:
+                        <a href="https://arca.live/b/aiart/167638343" target="_blank" rel="noopener" style="color:var(--accent); text-decoration:none; word-break:break-all;">https://arca.live/b/aiart/167638343</a>
+                    </div>
+                </div>
+            </div>
+        </div>
         <div class="ac-tooltip" id="ac-tooltip"></div>
 </body>
 </html>

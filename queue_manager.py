@@ -8,6 +8,7 @@ import copy
 import datetime
 import json
 import os
+import random
 import re
 import time
 import traceback
@@ -991,6 +992,25 @@ class QueueManager:
             save_after = profile_settings.get("save_after", 0)
             dim = profile_settings.get("dim", 32)
             alpha = profile_settings.get("alpha", 16)
+
+            # 그림체(style_lora) 전용: "전체 STEP" = export 할 이미지 슬롯 수.
+            # ComfyUI에는 STEP_PER_IMAGE=1, N_IMG=전체STEP 로 넘기고,
+            # 슬롯을 (전체 STEP // 이미지 수)회 순회 + 나머지 무작위 로 구성한다.
+            if source == "style_lora":
+                total_step = step if (isinstance(step, int) and step > 0) else len(training_images)
+                n_img = len(training_images)
+                if n_img > 0:
+                    full = total_step // n_img            # 전체 이미지를 몇 바퀴 도는가
+                    rem = total_step % n_img              # 남은 슬롯
+                    picked = []
+                    for _ in range(full):
+                        picked.extend(training_images)    # 전체 이미지 1순회
+                    if rem:
+                        picked += random.sample(training_images, rem)  # 남은 슬롯은 무작위(중복 없이)
+                    # step < n_img 인 경우 full=0, rem=step → STEP 장을 무작위로 선택
+                    training_images = picked
+                    step = 1  # ComfyUI 전달값: STEP_PER_IMAGE=1, N_IMG=len(training_images)=total_step
+                    print(f"[STYLE_LORA] 전체 STEP={total_step}, 이미지 수={n_img} → export {len(training_images)}장 (전체 순회 {full}회 + 랜덤 {rem}장), STEP_PER_IMAGE=1")
 
             lora_save_path = f"{lora_save_prefix}/{profile}/{storage_key}"
 
