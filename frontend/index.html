@@ -2795,7 +2795,7 @@
         /* ─── "?" 호버 툴팁 (라벨 설명용, 공용) ─── */
         .tip-wrap { position: relative; display: inline-flex; align-items: center; margin-left: 4px; }
         .tip-q { display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; border-radius: 50%; border: 1px solid var(--border); background: var(--surface2); color: var(--text-secondary); font-size: 0.62rem; cursor: help; }
-        .tip-box { display: none; position: absolute; bottom: 20px; left: 0; z-index: 2000; width: 270px; padding: 8px 10px; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 6px; font-size: 0.7rem; line-height: 1.5; box-shadow: 0 2px 10px rgba(0,0,0,0.35); white-space: normal; }
+        .tip-box { display: none; position: absolute; top: 20px; left: 0; z-index: 2000; width: 270px; padding: 8px 10px; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 6px; font-size: 0.7rem; line-height: 1.5; box-shadow: 0 2px 10px rgba(0,0,0,0.35); white-space: normal; }
         .tip-box b { font-weight: 600; }
         .tip-wrap:hover .tip-box { display: block; }
 
@@ -18902,7 +18902,7 @@
                     <span id="${id}-body-arrow" style="transition:transform 0.2s;">▼</span> ${profile.toUpperCase()}
                 </div>
                 <div id="${id}-body" style="display:flex;flex-direction:column;gap:6px;">
-                    <div><div style="font-size:0.7rem;color:var(--text-secondary);display:flex;align-items:center;margin-bottom:2px;">전체 STEP<span class="tip-wrap"><span class="tip-q">?</span><span class="tip-box">전체 학습 스텝 수를 의미해요.<br>이미지 장 수와 STEP 수의 대소 관계에 따라 학습에 쓰일 이미지가 정해집니다.<br><br>• 이미지가 STEP보다 많으면 → STEP 장 수만큼 무작위로 골라 학습<br>• 이미지와 STEP이 같으면 → 전체 이미지를 한 바퀴 돌며 학습<br>• 이미지가 STEP보다 적으면 → 모든 이미지를 먼저 한 바퀴 돌고, 남은 STEP은 무작위로 채워 학습</span></span></div>${inp('step_per_image', 'number', 125)}</div>
+                    <div><div style="font-size:0.7rem;color:var(--text-secondary);display:flex;align-items:center;margin-bottom:2px;">전체 STEP<span class="tip-wrap"><span class="tip-q">?</span><span class="tip-box">전체 학습 스텝 수를 의미해요.<br>이미지 장 수와 STEP 수의 대소 관계에 따라 학습에 쓰일 이미지가 정해집니다.<br><br>• 이미지가 STEP보다 많으면 → STEP 장 수만큼 무작위로 골라 학습<br>• 이미지와 STEP이 같으면 → 전체 이미지를 한 바퀴 돌며 학습<br>• 이미지가 STEP보다 적으면 → 전체 이미지를 (STEP ÷ 이미지 수)바퀴 만큼 돌고, 남은 STEP은 무작위로 채워 학습</span></span></div>${inp('step_per_image', 'number', 125)}</div>
                     <div>${profile === 'anima'
                         ? `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:2px;"><label style="font-size:0.7rem;color:var(--text-secondary);">IL_RATE (학습률)</label><button type="button" onclick="showIlRateRecommend()" style="font-size:0.6rem;padding:1px 5px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;cursor:pointer;">ANIMA 추천값</button></div>`
                         : `<label style="font-size:0.7rem;color:var(--text-secondary);display:block;margin-bottom:2px;">IL_RATE (학습률)(추천값-XL:0.0002)</label>`}${inp('il_rate', 'number', 0.00025, 'step="0.00001"')}</div>
