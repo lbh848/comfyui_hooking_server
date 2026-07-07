@@ -55,13 +55,15 @@ def _get_session():
     model_path = _download_if_needed(WD_REPO, WD_MODEL_FILE, _model_cache_dir)
     opts = ort.SessionOptions()
     opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-    cpu = os.cpu_count() or 4
+    # 전체 코어에서 2개 남기고 사용 (시스템 응답성 확보). 최소 1.
+    cpu = max(1, (os.cpu_count() or 4) - 2)
     opts.intra_op_num_threads = cpu
     opts.inter_op_num_threads = 1
     _session = ort.InferenceSession(
         model_path, sess_options=opts, providers=["CPUExecutionProvider"]
     )
-    print(f"{log_prefix} ONNX 임베딩 세션 준비 완료 (intra_threads={cpu})")
+    print(f"{log_prefix} ONNX 임베딩 세션 준비 완료 "
+          f"(intra_threads={cpu}, total_cpu={os.cpu_count()}, 2 cores reserved)")
     return _session, _session.get_inputs()[0].name
 
 
@@ -95,7 +97,9 @@ def embed_images(paths, filenames, progress_cb):
     valid_files = []
     vecs = []
     failed = []
-    num_workers = max(1, min(os.cpu_count() or 4, 8))
+    # 전처리 스레드도 코어 2개 남기고 사용. 단일 ONNX 추론 스레드(intra_threads)와
+    # 겹쳐도 되지만, 과도한 스레드 경합을 막기 위해 동일한 상한을 적용.
+    num_workers = max(1, min((os.cpu_count() or 4) - 2, 8))
     t0 = time.time()
 
     with ThreadPoolExecutor(max_workers=num_workers) as ex:
