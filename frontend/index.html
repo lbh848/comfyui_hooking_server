@@ -5424,7 +5424,7 @@
 
             <!-- 그림체(스타일) 모드 컨테이너 -->
             <div id="lora-style-mode" style="display:none;">
-                <div class="asset-container" style="flex-direction:column;">
+                <div class="asset-container" style="flex-direction:column;height:calc(100vh - 200px);">
                     <!-- ▼ 프로젝트 목록 뷰 -->
                     <div id="style-lora-list-view" style="flex:1;display:flex;flex-direction:column;min-height:0;">
                         <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
@@ -5458,6 +5458,7 @@
                                         <button onclick="styleLoraOpenImageFilter()" style="padding:6px 12px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:0.78rem;font-weight:600;">🎚️ 이미지 필터링</button>
                                         <button onclick="styleLoraBatchTag()" style="padding:6px 12px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:0.78rem;font-weight:600;">🏷️ 일괄 태깅</button>
                                         <button onclick="styleLoraBatchRefine()" style="padding:6px 12px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:0.78rem;font-weight:600;">✨ 일괄 LLM 정제</button>
+                                        <button onclick="styleLoraEditPromptTemplate()" style="padding:6px 12px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:0.78rem;font-weight:600;">⚙️ 정제 프롬프트 편집</button>
                                         <button onclick="styleLoraSelectAll()" style="padding:6px 12px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:0.78rem;">전체 선택</button>
                                     </div>
                                 </div>
@@ -5483,6 +5484,13 @@
                                 <div style="padding:12px;border-bottom:1px solid var(--border);">
                                     <button onclick="openStyleTestImageModal()" style="padding:6px;background:rgba(180,130,220,0.2);color:var(--text);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.78rem;font-weight:600;width:100%;">🗂️ 테스트 이미지 관리 모달 열기</button>
                                 </div>
+                                <div style="padding:12px;border-bottom:1px solid var(--border);">
+                                    <span style="font-weight:600;font-size:0.9rem;">로라 관리</span>
+                                </div>
+                                <div style="padding:12px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:6px;">
+                                    <button onclick="openStyleTrainedModal('anima')" style="padding:6px;background:rgba(0,120,215,0.18);color:var(--text);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.78rem;font-weight:600;">🗂️ ANIMA 로라 관리</button>
+                                    <button onclick="openStyleTrainedModal('sdxl')" style="padding:6px;background:rgba(180,130,220,0.18);color:var(--text);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.78rem;font-weight:600;">🗂️ SDXL 로라 관리</button>
+                                </div>
                                 <div style="padding:12px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;">
                                     <span style="font-weight:600;font-size:0.9rem;">학습 설정</span>
                                     <span id="style-lora-cfg-project-label" style="font-size:0.72rem;color:var(--text-secondary);"></span>
@@ -5495,11 +5503,9 @@
                                         <option value="both" selected>둘 다 (ANIMA + SDXL)</option>
                                     </select>
                                 </div>
-                                <div id="style-lora-settings-area" style="flex:1;overflow-y:auto;padding:12px;"></div>
+                                <div id="style-lora-settings-area" style="padding:12px;"></div>
                                 <div style="padding:12px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:8px;">
-                                    <button onclick="styleLoraSaveSettings()" style="width:100%;padding:6px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.78rem;">설정 저장</button>
                                     <button id="style-lora-start-btn" onclick="styleLoraStartTraining()" style="width:100%;padding:8px;background:var(--accent);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.82rem;font-weight:700;">▶ 학습 시작 (ANIMA + SDXL)</button>
-                                    <button onclick="styleLoraEditPromptTemplate()" style="width:100%;padding:6px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.74rem;">✨ 정제 프롬프트 편집</button>
                                 </div>
                             </div>
                         </div>
@@ -6167,6 +6173,20 @@
             </div>
             <div id="bot-lora-trained-breadcrumb" style="padding:4px 16px 8px; font-size:0.82rem; color:var(--text-secondary);"></div>
             <div class="modal-body" id="bot-lora-trained-body" style="min-height:200px;">
+                <div style="text-align:center; padding:32px; color:var(--text-secondary);">로딩 중...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 그림체 LoRA 학습된 세션 관리 모달 (ANIMA/SDXL profile별) -->
+    <div class="modal" id="style-lora-trained-modal">
+        <div class="modal-content" style="max-width:1200px;">
+            <div class="modal-header">
+                <h2 id="style-lora-trained-title">로라 관리</h2>
+                <button class="modal-close" onclick="closeStyleTrainedModal()">&times;</button>
+            </div>
+            <div id="style-lora-trained-breadcrumb" style="padding:4px 16px 8px; font-size:0.82rem; color:var(--text-secondary);"></div>
+            <div class="modal-body" id="style-lora-trained-body" style="min-height:200px;">
                 <div style="text-align:center; padding:32px; color:var(--text-secondary);">로딩 중...</div>
             </div>
         </div>
@@ -18956,6 +18976,10 @@
                         <div style="flex:1;">${lbl('ALPHA')}${inp('alpha', 'number', 16)}</div>
                     </div>
                     <div>${lbl('LORA_SAVE_PATH (자동)')}<span data-savepath="${profile}" style="display:block;padding:4px 8px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;font-size:0.78rem;color:var(--text-secondary);word-break:break-all;">SOYA_STYLE_LORA/${profile}/</span></div>
+                    <div style="display:flex;gap:6px;margin-top:8px;">
+                        <button onclick="styleLoraSaveSettings()" style="flex:1;padding:6px;background:var(--accent);color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:0.8rem;font-weight:600;">저장</button>
+                    </div>
+                    <button onclick="showStylePromptPreview('${profile}')" style="width:100%;padding:6px;margin-top:4px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:0.8rem;font-weight:600;">프롬프트 Raw 보기</button>
                 </div>
             </div>`;
         }
@@ -19035,6 +19059,54 @@
                 if (resp.success) showToast(`학습 큐 추가됨: ${(resp.labels || []).join(', ')}`, 'success');
                 else showToast(resp.error || '학습 큐 추가 실패', 'error');
             } catch (e) { showToast(`학습 큐 추가 실패: ${e.message || e}`, 'error'); }
+        }
+
+        // 프롬프트 Raw 보기 — 서버(/api/style_lora/preview)가 큐의 실제 전송 프롬프트와
+        // 동일하게 _build_lora_training_text 로 빌드한 긍정/부정 원문을 반환.
+        async function showStylePromptPreview(profile) {
+            if (!_styleNeedProject()) return;
+            let overlay = document.getElementById('style-raw-overlay');
+            if (overlay) overlay.remove();
+            overlay = document.createElement('div');
+            overlay.id = 'style-raw-overlay';
+            overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:10000;display:flex;align-items:center;justify-content:center;';
+            overlay.innerHTML = `<div style="background:var(--surface);border-radius:12px;padding:20px;max-width:700px;width:90%;max-height:85vh;display:flex;flex-direction:column;overflow:hidden;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                    <h3 style="margin:0;">${profile.toUpperCase()} 프롬프트 Raw (불러오는 중...)</h3>
+                    <button onclick="document.getElementById('style-raw-overlay').remove()" style="background:none;border:none;font-size:1.4rem;cursor:pointer;color:var(--text);">&times;</button>
+                </div>
+                <div style="flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:12px;">
+                    <div>
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+                            <span style="font-weight:600;font-size:0.9rem;">긍정 프롬프트 Raw</span>
+                            <button onclick="navigator.clipboard.writeText(document.getElementById('style-raw-positive').textContent); showToast('복사 완료','success')" style="padding:2px 8px;font-size:0.75rem;background:var(--surface2);border:1px solid var(--border);border-radius:4px;cursor:pointer;">복사</button>
+                        </div>
+                        <pre id="style-raw-positive" style="background:var(--surface2);padding:10px;border-radius:8px;font-size:0.8rem;white-space:pre-wrap;word-break:break-all;margin:0;max-height:300px;overflow-y:auto;">로딩 중...</pre>
+                    </div>
+                    <div>
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+                            <span style="font-weight:600;font-size:0.9rem;">부정 프롬프트 Raw</span>
+                            <button onclick="navigator.clipboard.writeText(document.getElementById('style-raw-negative').textContent); showToast('복사 완료','success')" style="padding:2px 8px;font-size:0.75rem;background:var(--surface2);border:1px solid var(--border);border-radius:4px;cursor:pointer;">복사</button>
+                        </div>
+                        <pre id="style-raw-negative" style="background:var(--surface2);padding:10px;border-radius:8px;font-size:0.8rem;white-space:pre-wrap;word-break:break-all;margin:0;max-height:300px;overflow-y:auto;"></pre>
+                    </div>
+                </div>
+            </div>`;
+            document.body.appendChild(overlay);
+            try {
+                const resp = await fetchJSON(`/api/style_lora/preview?project=${encodeURIComponent(_styleLora.currentProject)}&profile=${encodeURIComponent(profile)}`);
+                const h3 = overlay.querySelector('h3');
+                const posEl = overlay.querySelector('#style-raw-positive');
+                const negEl = overlay.querySelector('#style-raw-negative');
+                if (!resp.success) { h3.textContent = `${profile.toUpperCase()} 프롬프트 Raw`; posEl.textContent = '로드 실패: ' + (resp.error || ''); return; }
+                const d = resp.data || {};
+                h3.textContent = `${profile.toUpperCase()} 프롬프트 Raw (이미지 ${d.n_img ?? 0}장 · 전체 STEP ${d.total_step ?? 0})`;
+                posEl.textContent = d.positive || '';
+                negEl.textContent = d.negative || '';
+            } catch (e) {
+                overlay.querySelector('h3').textContent = `${profile.toUpperCase()} 프롬프트 Raw`;
+                overlay.querySelector('#style-raw-positive').textContent = '오류: ' + (e.message || e);
+            }
         }
 
         // 임포트 모달 (에셋/봇/업로드). 멀티선택 → /api/style_lora/images/add 또는 /upload
@@ -21446,6 +21518,312 @@
             } catch (e) {
                 console.error('[BOT_LORA] TOML 로드 실패:', e);
                 showToast('TOML 로드 실패', 'error');
+            }
+        }
+
+        // ─── 그림체 LoRA 학습 결과 관리 (ANIMA/SDXL profile별) ───
+        let _styleTrainedProfile = '';
+        let _styleTrainedSession = '';
+        let _styleTrainedSessionsCache = [];
+        let _styleTrainedSessionRepSafetensors = '';
+
+        function _styleProfileLabel(profile) {
+            return profile === 'sdxl' ? 'SDXL' : 'ANIMA';
+        }
+
+        function closeStyleTrainedModal() {
+            const modal = document.getElementById('style-lora-trained-modal');
+            if (modal) modal.style.display = 'none';
+            if (window._styleLoraLossChart) { window._styleLoraLossChart.destroy(); window._styleLoraLossChart = null; }
+        }
+
+        async function openStyleTrainedModal(profile) {
+            if (!_styleLora.currentProject) { showToast('프로젝트를 먼저 선택하세요', 'info'); return; }
+            if (profile !== 'anima' && profile !== 'sdxl') { showToast('잘못된 profile', 'error'); return; }
+            _styleTrainedProfile = profile;
+            _styleTrainedSession = '';
+            const modal = document.getElementById('style-lora-trained-modal');
+            document.getElementById('style-lora-trained-title').textContent = `${_styleProfileLabel(profile)} 로라 관리`;
+            modal.style.display = 'flex';
+            await loadStyleTrainedSessions();
+        }
+
+        function _styleTrainedBreadcrumb(parts) {
+            document.getElementById('style-lora-trained-breadcrumb').innerHTML = parts.map((p, i) => {
+                if (i === parts.length - 1) return `<span style="color:var(--text);">${p.label}</span>`;
+                return `<span style="cursor:pointer; color:var(--accent);" onclick="${p.onclick}">${p.label}</span> <span style="color:var(--text-secondary);">/</span> `;
+            }).join('');
+        }
+
+        async function loadStyleTrainedSessions() {
+            _styleTrainedSession = '';
+            const body = document.getElementById('style-lora-trained-body');
+            _styleTrainedBreadcrumb([{label: `${_styleProfileLabel(_styleTrainedProfile)} 세션 목록`, onclick: 'loadStyleTrainedSessions()'}]);
+            body.innerHTML = '<div style="text-align:center; padding:32px; color:var(--text-secondary);">로딩 중...</div>';
+            try {
+                const enc = encodeURIComponent;
+                const resp = await fetchJSON(`/api/style_lora/trained/sessions?project=${enc(_styleLora.currentProject)}&profile=${enc(_styleTrainedProfile)}`);
+                if (!resp.success) { body.innerHTML = `<div style="text-align:center; padding:32px; color:var(--error);">${resp.error || '로드 실패'}</div>`; return; }
+                const sessions = resp.sessions || [];
+                _styleTrainedSessionsCache = sessions;
+                if (sessions.length === 0) { body.innerHTML = `<div style="text-align:center; padding:32px; color:var(--text-secondary);">학습된 ${_styleProfileLabel(_styleTrainedProfile)} 세션이 없습니다.</div>`; return; }
+                body.innerHTML = `<div style="display:flex; justify-content:flex-end; margin-bottom:10px;">
+                        <button onclick="cleanupStyleNonRepresentative('${_styleTrainedProfile}')" style="padding:5px 12px; background:rgba(220,80,80,0.15); color:var(--text); border:1px solid var(--border); border-radius:4px; cursor:pointer; font-size:0.78rem; font-weight:600;">🧹 대표외 ${_styleProfileLabel(_styleTrainedProfile)} 로라 정리</button>
+                    </div>
+                    <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(320px, 1fr)); gap:12px;">${sessions.map(s => {
+                    const previewHtml = s.preview_url ? `<img src="${s.preview_url}" style="width:100%; max-height:400px; object-fit:contain; background:var(--surface2); border-radius:8px 8px 0 0; display:block;">` : '';
+                    const rank = s.priority_rank || 0;
+                    const isTop = rank === 1;
+                    const borderColor = isTop ? '#16a34a' : 'var(--border)';
+                    const hoverColor = isTop ? '#15803d' : 'var(--accent)';
+                    const arrowHtml = isTop ? `
+                        <div style="position:absolute; top:6px; left:6px; display:flex; gap:2px; z-index:5; align-items:center;">
+                            <button onclick="event.stopPropagation(); moveStyleSessionPriority('${escapeHtml(s.name)}')" title="다음 세션을 1순위로 (순환)" style="background:rgba(0,0,0,0.6); color:#fff; border:none; border-radius:3px; width:24px; height:20px; font-size:0.7rem; cursor:pointer; padding:0; line-height:1;">▶</button>
+                            <span style="background:#16a34a; color:#fff; font-size:0.65rem; font-weight:700; padding:2px 6px; border-radius:3px;">1순위</span>
+                        </div>` : '';
+                    return `<div onclick="enterStyleTrainedSession('${escapeHtml(s.name)}')" style="position:relative; border:2px solid ${borderColor}; border-radius:10px; overflow:hidden; cursor:pointer; transition:border-color 0.15s; background:var(--surface);${isTop ? ' box-shadow:0 0 8px rgba(22,163,74,0.4);' : ''}" onmouseenter="this.style.borderColor='${hoverColor}'" onmouseleave="this.style.borderColor='${borderColor}'">
+                        <button class="trained-delete-btn" onclick="event.stopPropagation(); deleteStyleTrainedSession('${escapeHtml(s.name)}')" style="position:absolute; top:6px; right:6px; z-index:5; background:rgba(220,80,80,0.9); color:#fff; border:none; border-radius:50%; width:22px; height:22px; font-size:0.7rem; cursor:pointer; display:flex; align-items:center; justify-content:center; opacity:0; transition:opacity 0.15s;">&times;</button>
+                        ${previewHtml}
+                        <div style="padding:10px;">
+                            <div style="font-weight:700; font-size:0.85rem;">${escapeHtml(s.name)}</div>
+                            <div style="font-size:0.75rem; color:var(--text-secondary); margin-top:2px;">${s.step_count} files${s.has_final ? ' (최종 포함)' : ''}</div>
+                        </div>
+                        ${arrowHtml}
+                    </div>`;
+                }).join('')}</div>`;
+            } catch (e) {
+                console.error('[STYLE_LORA] 세션 로드 실패:', e);
+                body.innerHTML = `<div style="text-align:center; padding:32px; color:var(--error);">세션 로드 실패: ${e.message}</div>`;
+            }
+        }
+
+        async function moveStyleSessionPriority(sessionName) {
+            const sessions = _styleTrainedSessionsCache;
+            const repNames = sessions.filter(s => s.representative && Object.keys(s.representative).length).map(s => s.name);
+            if (repNames.length < 2) {
+                showToast('우선순위를 변경하려면 대표가 설정된 세션이 2개 이상 필요합니다', 'info');
+                return;
+            }
+            const rankOf = (n) => {
+                const s = sessions.find(x => x.name === n);
+                return (s && s.priority_rank) || 999;
+            };
+            let sorted = [...repNames].sort((a, b) => rankOf(a) - rankOf(b));
+            const idx = sorted.indexOf(sessionName);
+            if (idx < 0) { showToast('해당 세션을 찾을 수 없습니다', 'error'); return; }
+            if (idx !== 0) { showToast('1순위 세션에서만 이동할 수 있습니다', 'error'); return; }
+            sorted.push(sorted.shift());
+            try {
+                const resp = await fetch('/api/style_lora/trained/session-priority', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ project: _styleLora.currentProject, profile: _styleTrainedProfile, sessions: sorted })
+                });
+                const result = await resp.json();
+                if (!result.success) { showToast('우선순위 변경 실패: ' + (result.error || ''), 'error'); return; }
+                showToast('1순위 변경됨', 'success');
+                await loadStyleTrainedSessions();
+            } catch (e) {
+                console.error('[STYLE_LORA] 우선순위 변경 실패:', e);
+                showToast('우선순위 변경 실패: ' + e.message, 'error');
+            }
+        }
+
+        async function enterStyleTrainedSession(session) {
+            _styleTrainedSession = session;
+            const body = document.getElementById('style-lora-trained-body');
+            _styleTrainedBreadcrumb([
+                {label: `${_styleProfileLabel(_styleTrainedProfile)} 세션 목록`, onclick: 'loadStyleTrainedSessions()'},
+                {label: session, onclick: `enterStyleTrainedSession('${escapeHtml(session)}')`}
+            ]);
+            body.innerHTML = '<div style="text-align:center; padding:32px; color:var(--text-secondary);">로딩 중...</div>';
+            if (window._styleLoraLossChart) { window._styleLoraLossChart.destroy(); window._styleLoraLossChart = null; }
+            try {
+                const enc = encodeURIComponent;
+                const resp = await fetchJSON(`/api/style_lora/trained/steps?project=${enc(_styleLora.currentProject)}&profile=${enc(_styleTrainedProfile)}&session=${enc(session)}`);
+                if (!resp.success) { body.innerHTML = `<div style="text-align:center; padding:32px; color:var(--error);">${resp.error || '로드 실패'}</div>`; return; }
+                const steps = resp.steps || [];
+                if (steps.length === 0) { body.innerHTML = '<div style="text-align:center; padding:32px; color:var(--text-secondary);">step 파일이 없습니다.</div>'; return; }
+
+                // 세션 대표 safetensors 파일명 조회
+                _styleTrainedSessionRepSafetensors = '';
+                try {
+                    const sessResp = await fetchJSON(`/api/style_lora/trained/sessions?project=${enc(_styleLora.currentProject)}&profile=${enc(_styleTrainedProfile)}`);
+                    if (sessResp.success) {
+                        const sess = (sessResp.sessions || []).find(x => x.name === session);
+                        if (sess && sess.representative && sess.representative.safetensors) { _styleTrainedSessionRepSafetensors = sess.representative.safetensors; }
+                    }
+                } catch(_){}
+
+                // Loss 차트
+                const lossSteps = steps.filter(s => s.avr_loss != null);
+                let lossHtml = '';
+                if (lossSteps.length >= 2) {
+                    lossHtml = `<div style="margin-bottom:16px; border:1px solid var(--border); border-radius:8px; padding:12px; background:var(--surface);">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                            <span style="font-size:0.85rem; font-weight:700;">Loss 추이</span>
+                            <button onclick="showStyleTomlModal('${escapeHtml(session)}', '${escapeHtml(steps[0].name)}')" style="padding:3px 8px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:4px; cursor:pointer; font-size:0.75rem;">📄 TOML</button>
+                        </div>
+                        <canvas id="style-lora-loss-canvas" style="max-height:220px;"></canvas>
+                    </div>`;
+                }
+
+                const previewBase = `/api/style_lora/trained/preview/${enc(_styleLora.currentProject)}/${enc(_styleTrainedProfile)}/${enc(session)}`;
+                // 스텝 카드
+                const stepCards = steps.map(s => {
+                    const previewUrl = s.previews.length > 0 ? `${previewBase}/${enc(s.previews[0])}` : '';
+                    const isSessionRep = s.safetensors === _styleTrainedSessionRepSafetensors;
+                    return `<div onclick="enterStyleTrainedStep('${escapeHtml(session)}', '${escapeHtml(s.name)}')" style="position:relative; border:1px solid var(--border); border-radius:8px; overflow:hidden; cursor:pointer; transition:border-color 0.15s; background:var(--surface);" onmouseenter="this.style.borderColor='var(--accent)'" onmouseleave="this.style.borderColor='var(--border)'">
+                        <button class="trained-delete-btn" onclick="event.stopPropagation(); deleteStyleTrainedStep('${escapeHtml(session)}', '${escapeHtml(s.name)}')" style="position:absolute; top:6px; right:6px; z-index:5; background:rgba(220,80,80,0.9); color:#fff; border:none; border-radius:50%; width:22px; height:22px; font-size:0.7rem; cursor:pointer; display:flex; align-items:center; justify-content:center; opacity:0; transition:opacity 0.15s;">&times;</button>
+                        ${isSessionRep ? '<div style="position:absolute; top:6px; left:6px; z-index:5; background:gold; color:#333; font-size:0.65rem; font-weight:700; padding:2px 6px; border-radius:3px;">세션 대표</div>' : ''}
+                        ${previewUrl ? `<img src="${previewUrl}" style="width:100%; max-height:500px; object-fit:contain; background:var(--surface2); display:block;">` : '<div style="width:100%; padding:40px 0; background:var(--surface2); display:flex; align-items:center; justify-content:center; color:var(--text-secondary); font-size:0.75rem;">no preview</div>'}
+                        <div style="padding:8px;">
+                            <div style="font-size:0.8rem; font-weight:600;">${escapeHtml(s.name)}</div>
+                            <div style="font-size:0.7rem; color:var(--text-secondary);">프리뷰 ${s.previews.length}장${s.avr_loss != null ? ` · loss ${s.avr_loss.toFixed(5)}` : ''}</div>
+                        </div>
+                    </div>`;
+                }).join('');
+
+                body.innerHTML = `${lossHtml}
+                    <div style="font-size:0.82rem; color:var(--text-secondary); margin-bottom:10px;">step 파일을 클릭하면 프리뷰 이미지를 볼 수 있습니다.</div>
+                    <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(480px, 1fr)); gap:12px;">${stepCards}</div>`;
+
+                // Loss 차트 렌더
+                if (lossSteps.length >= 2) {
+                    const canvas = document.getElementById('style-lora-loss-canvas');
+                    if (canvas) {
+                        const labels = lossSteps.map(s => { const m = s.name.match(/step(\d+)/); return m ? parseInt(m[1], 10) : s.name; });
+                        const losses = lossSteps.map(s => s.avr_loss);
+                        window._styleLoraLossChart = new Chart(canvas.getContext('2d'), {
+                            type: 'line',
+                            data: { labels, datasets: [{ label: 'avr_loss', data: losses, borderColor: 'rgba(0,120,215,0.9)', backgroundColor: 'rgba(0,120,215,0.15)', fill: true, tension: 0.3, pointRadius: 3, pointHoverRadius: 5 }] },
+                            options: {
+                                responsive: true, maintainAspectRatio: false,
+                                plugins: { legend: { display: false }, tooltip: { callbacks: { title: (items) => 'step ' + items[0].label, label: (item) => 'loss: ' + item.formattedValue } } },
+                                scales: { x: { title: { display: true, text: 'step', color: 'var(--text-secondary)' }, ticks: { color: 'var(--text-secondary)' }, grid: { color: 'rgba(128,128,128,0.15)' } }, y: { title: { display: true, text: 'loss', color: 'var(--text-secondary)' }, ticks: { color: 'var(--text-secondary)' }, grid: { color: 'rgba(128,128,128,0.15)' } } }
+                            }
+                        });
+                    }
+                }
+            } catch (e) {
+                console.error('[STYLE_LORA] 스텝 로드 실패:', e);
+                body.innerHTML = `<div style="text-align:center; padding:32px; color:var(--error);">스텝 로드 실패: ${e.message}</div>`;
+            }
+        }
+
+        async function enterStyleTrainedStep(session, stepName) {
+            const body = document.getElementById('style-lora-trained-body');
+            _styleTrainedBreadcrumb([
+                {label: `${_styleProfileLabel(_styleTrainedProfile)} 세션 목록`, onclick: 'loadStyleTrainedSessions()'},
+                {label: session, onclick: `enterStyleTrainedSession('${escapeHtml(session)}')`},
+                {label: stepName, onclick: `enterStyleTrainedStep('${escapeHtml(session)}', '${escapeHtml(stepName)}')`}
+            ]);
+            body.innerHTML = '<div style="text-align:center; padding:32px; color:var(--text-secondary);">로딩 중...</div>';
+            try {
+                const enc = encodeURIComponent;
+                const resp = await fetchJSON(`/api/style_lora/trained/steps?project=${enc(_styleLora.currentProject)}&profile=${enc(_styleTrainedProfile)}&session=${enc(session)}`);
+                if (!resp.success) { body.innerHTML = `<div style="text-align:center; padding:32px; color:var(--error);">${resp.error || '로드 실패'}</div>`; return; }
+                const step = (resp.steps || []).find(s => s.name === stepName);
+                if (!step) { body.innerHTML = '<div style="text-align:center; padding:32px; color:var(--text-secondary);">step을 찾을 수 없습니다.</div>'; return; }
+
+                const previewBase = `/api/style_lora/trained/preview/${enc(_styleLora.currentProject)}/${enc(_styleTrainedProfile)}/${enc(session)}`;
+                let currentRepPreview = '';
+                if (_styleTrainedSessionRepSafetensors === step.safetensors) {
+                    currentRepPreview = step.previews[0] || '';
+                }
+
+                const previewCards = (step.previews || []).map(p => {
+                    const url = `${previewBase}/${enc(p)}`;
+                    const isRep = p === currentRepPreview;
+                    return `<div style="position:relative; border-radius:8px; overflow:hidden; border:1px solid var(--border); background:var(--surface2);">
+                        <img src="${url}" onclick="openStyleLightbox('${url}')" style="width:100%; display:block; cursor:zoom-in; max-height:600px; object-fit:contain; background:var(--surface2);">
+                        ${isRep ? '<div style="position:absolute; top:8px; left:8px; background:gold; color:#333; font-size:0.7rem; font-weight:700; padding:3px 8px; border-radius:4px; z-index:5;">현재 세션 대표</div>' : ''}
+                        <button onclick="setStyleSessionRepresentative('${escapeHtml(session)}', '${escapeHtml(step.safetensors)}', '${escapeHtml(url)}')" style="position:absolute; bottom:0; left:0; right:0; background:rgba(0,0,0,0.65); color:#fff; border:none; padding:6px; cursor:pointer; font-size:0.75rem; font-weight:600; text-align:center; opacity:0; transition:opacity 0.2s;" onmouseenter="this.style.opacity='1'; this.style.background='rgba(0,120,215,0.85)'" onmouseleave="this.style.opacity='0'; this.style.background='rgba(0,0,0,0.65)'">세션 대표로 설정</button>
+                    </div>`;
+                }).join('');
+
+                body.innerHTML = `
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                        <div>
+                            <span style="font-weight:700; font-size:0.9rem;">${escapeHtml(stepName)}</span>
+                            <span style="font-size:0.8rem; color:var(--text-secondary); margin-left:8px;">프리뷰 ${step.previews.length}장${step.avr_loss != null ? ` · loss ${step.avr_loss.toFixed(5)}` : ''}</span>
+                        </div>
+                        <button onclick="showStyleTomlModal('${escapeHtml(session)}', '${escapeHtml(stepName)}')" style="padding:4px 10px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:4px; cursor:pointer; font-size:0.75rem;">📄 TOML</button>
+                    </div>
+                    <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(480px, 1fr)); gap:12px;">${previewCards}</div>`;
+            } catch (e) {
+                console.error('[STYLE_LORA] 프리뷰 로드 실패:', e);
+                body.innerHTML = `<div style="text-align:center; padding:32px; color:var(--error);">프리뷰 로드 실패: ${e.message}</div>`;
+            }
+        }
+
+        async function deleteStyleTrainedStep(session, step) {
+            if (!confirm(`"${step}" 삭제하시겠습니까? safetensors, json, toml, preview 파일이 모두 삭제됩니다.`)) return;
+            try {
+                const resp = await fetchJSON('/api/style_lora/trained/delete', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ project: _styleLora.currentProject, profile: _styleTrainedProfile, session, step })
+                });
+                if (resp.success) { showToast('삭제 완료', 'success'); await enterStyleTrainedSession(session); }
+                else { showToast(resp.error || '삭제 실패', 'error'); }
+            } catch (e) { console.error('[STYLE_LORA] 스텝 삭제 실패:', e); showToast('삭제 실패: ' + e.message, 'error'); }
+        }
+
+        async function deleteStyleTrainedSession(session) {
+            if (!confirm(`"${session}" 세션 폴더를 전체 삭제하시겠습니까? 폴더 내 모든 파일이 삭제되며 복구할 수 없습니다.`)) return;
+            try {
+                const resp = await fetchJSON('/api/style_lora/trained/delete-session', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ project: _styleLora.currentProject, profile: _styleTrainedProfile, session })
+                });
+                if (resp.success) { showToast('세션 삭제 완료', 'success'); await loadStyleTrainedSessions(); }
+                else { showToast(resp.error || '삭제 실패', 'error'); }
+            } catch (e) { console.error('[STYLE_LORA] 세션 삭제 실패:', e); showToast('삭제 실패: ' + e.message, 'error'); }
+        }
+
+        async function cleanupStyleNonRepresentative(profile) {
+            if (!confirm(`이 프로젝트의 ${_styleProfileLabel(profile)} 대표 LoRA 외 모든 LoRA를 정리하시겠습니까?\n\n• 대표가 설정된 세션: 대표 step만 남기고 나머지 삭제\n• 대표가 없는 세션: 세션 전체 삭제\n\n복구할 수 없습니다.`)) return;
+            try {
+                const resp = await fetchJSON('/api/style_lora/trained/cleanup-non-representative', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ project: _styleLora.currentProject, profile })
+                });
+                if (resp.success) {
+                    const delSessions = (resp.deleted_sessions || []).length;
+                    const delSteps = (resp.deleted_steps || []).length;
+                    const errCount = (resp.errors || []).length;
+                    let msg = `정리 완료: 세션 ${delSessions}개 삭제, step ${delSteps}개 삭제`;
+                    if (errCount > 0) msg += ` (${errCount}개 오류)`;
+                    showToast(msg, errCount > 0 ? 'warning' : 'success');
+                    await loadStyleTrainedSessions();
+                } else { showToast(resp.error || '정리 실패', 'error'); }
+            } catch (e) { console.error('[STYLE_LORA] 대표외 LoRA 정리 실패:', e); showToast('정리 실패: ' + e.message, 'error'); }
+        }
+
+        async function setStyleSessionRepresentative(session, safetensors, previewUrl) {
+            try {
+                const representative = { safetensors, preview: previewUrl };
+                const resp = await fetchJSON('/api/style_lora/trained/session-representative', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ project: _styleLora.currentProject, profile: _styleTrainedProfile, session, representative })
+                });
+                if (resp.success) {
+                    _styleTrainedSessionRepSafetensors = safetensors;
+                    showToast('세션 대표 설정 완료', 'success');
+                    await enterStyleTrainedSession(session);
+                } else { showToast(resp.error || '설정 실패', 'error'); }
+            } catch (e) { console.error('[STYLE_LORA] 세션 대표 설정 실패:', e); showToast('설정 실패: ' + e.message, 'error'); }
+        }
+
+        async function showStyleTomlModal(session, step) {
+            try {
+                const enc = encodeURIComponent;
+                const resp = await fetchJSON(`/api/style_lora/trained/toml?project=${enc(_styleLora.currentProject)}&profile=${enc(_styleTrainedProfile)}&session=${enc(session)}&step=${enc(step)}`);
+                document.getElementById('lora-toml-modal-content').textContent = resp.content || resp.error || 'TOML 데이터 없음';
+                document.getElementById('lora-toml-modal-title').textContent = `TOML - ${step}`;
+                document.getElementById('lora-toml-modal').style.display = 'flex';
+            } catch (e) {
+                console.error('[STYLE_LORA] TOML 로드 실패:', e);
+                showToast('TOML 로드 실패: ' + e.message, 'error');
             }
         }
 

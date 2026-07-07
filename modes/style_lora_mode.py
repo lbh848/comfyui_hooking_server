@@ -713,6 +713,373 @@ def add_session(project_id: str, session_id: str, profile: str) -> dict:
     return {"success": True}
 
 
+# ─── 학습된 LoRA 관리 (ANIMA/SDXL profile별) ───────────────────
+# 학습 결과 파일 구조: {style_lora_load_path}/{profile}/{project}/{session}/
+#   안에 .json(lora_file, previews, avr_loss) · .safetensors · .previews · .toml
+# 세션 폴더명은 ComfyUI가 생성하므로 파일시스템을 직접 스캔한다.
+
+def _style_trained_dir(style_lora_load_path: str, profile: str, project_id: str) -> str:
+    return os.path.join(style_lora_load_path, profile, _safe_dirname(project_id))
+
+
+def _get_trained_manage(data: dict, project_id: str, profile: str) -> dict:
+    """project의 trained_manage[profile] 반환(없으면 빈 구조). profile은 'anima'/'sdxl'."""
+    project = data.get("projects", {}).get(_safe_dirname(project_id))
+    if not project:
+        return {"representatives": {}, "priority": []}
+    tm = project.setdefault("trained_manage", {}).setdefault(profile, {})
+    tm.setdefault("representatives", {})
+    tm.setdefault("priority", [])
+    return tm
+
+
+def _save_with_backup(data: dict):
+    _backup_file(STYLE_LORA_MANAGE_FILE)
+    _save_data(data)
+
+
+def _resolve_style_session_priority(tm: dict, entry_dir: str, reps: dict) -> list:
+    """저장된 priority 반환. 비어있으면 representative 있는 세션들로 자동 채움(저장 안 함)."""
+    priority = list(tm.get("priority", []) or [])
+    if priority:
+        return priority
+    if not os.path.isdir(entry_dir):
+        return []
+    auto = []
+    for name in sorted(os.listdir(entry_dir), reverse=True):
+        path = os.path.join(entry_dir, name)
+        if not os.path.isdir(path):
+            continue
+        if reps.get(name):
+            auto.append(name)
+    return auto
+
+
+def list_style_trained_sessions(style_lora_load_path: str, profile: str, project_id: str) -> list:
+    if not style_lora_load_path:
+        print("[STYLE_LORA_TRAINED] style_lora_load_path 미설정")
+        return []
+    if profile not in ("anima", "sdxl"):
+        print(f"[STYLE_LORA_TRAINED] 잘못된 profile: {profile}")
+        return []
+    entry_dir = _style_trained_dir(style_lora_load_path, profile, project_id)
+    if not os.path.isdir(entry_dir):
+        return []
+
+    data = _load_data()
+    tm = _get_trained_manage(data, project_id, profile)
+    reps = tm.get("representatives", {})
+    session_priority = _resolve_style_session_priority(tm, entry_dir, reps)
+
+    sessions = []
+    for name in sorted(os.listdir(entry_dir), reverse=True):
+        path = os.path.join(entry_dir, name)
+        if not os.path.isdir(path):
+            continue
+        step_count = sum(1 for f in os.listdir(path) if f.endswith('.safetensors'))
+        has_final = any('-step' not in f for f in os.listdir(path) if f.endswith('.safetensors'))
+        rep = reps.get(name) or {}
+        preview_url = rep.get("preview", "") if isinstance(rep, dict) else ""
+        try:
+            priority_rank = session_priority.index(name) + 1 if name in session_priority else 0
+        except ValueError:
+            priority_rank = 0
+        sessions.append({
+            "name": name,
+            "step_count": step_count,
+            "has_final": has_final,
+            "representative": rep,
+            "preview_url": preview_url,
+            "priority_rank": priority_rank,
+        })
+    return sessions
+
+
+def list_style_trained_steps(style_lora_load_path: str, profile: str, project_id: str, session: str) -> list:
+    if not style_lora_load_path:
+        print("[STYLE_LORA_TRAINED] style_lora_load_path 미설정")
+        return []
+    session_dir = os.path.join(_style_trained_dir(style_lora_load_path, profile, project_id), session)
+    if not os.path.isdir(session_dir):
+        print(f"[STYLE_LORA_TRAINED] 세션 폴더 없음: {session_dir}")
+        return []
+    steps = []
+    for fname in sorted(os.listdir(session_dir)):
+        if not fname.endswith('.json'):
+            continue
+        json_path = os.path.join(session_dir, fname)
+        try:
+            with open(json_path, 'r', encoding='utf-8') as f:
+                jdata = json.load(f)
+        except Exception as e:
+            print(f"[STYLE_LORA_TRAINED] JSON 읽기 실패: {json_path} - {e}")
+            continue
+        step_name = os.path.splitext(fname)[0]
+        steps.append({
+            "name": step_name,
+            "safetensors": jdata.get('lora_file', step_name + '.safetensors'),
+            "previews": jdata.get('previews', []),
+            "json_file": fname,
+            "avr_loss": jdata.get('avr_loss', None),
+        })
+    return steps
+
+
+def read_style_toml_file(style_lora_load_path: str, profile: str, project_id: str, session: str, step_name: str) -> dict:
+    if not style_lora_load_path:
+        return {"success": False, "error": "style_lora_load_path 미설정"}
+    session_dir = os.path.join(_style_trained_dir(style_lora_load_path, profile, project_id), session)
+    toml_path = os.path.join(session_dir, step_name + ".toml")
+    if not os.path.isfile(toml_path):
+        print(f"[STYLE_LORA_TRAINED] TOML 파일 없음: {toml_path}")
+        return {"success": False, "error": "TOML 파일이 없습니다"}
+    try:
+        with open(toml_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        return {"success": True, "content": content, "filename": step_name + ".toml"}
+    except Exception as e:
+        print(f"[STYLE_LORA_TRAINED] TOML 읽기 실패: {toml_path} - {e}")
+        traceback.print_exc()
+        return {"success": False, "error": str(e)}
+
+
+def get_style_trained_preview_path(style_lora_load_path: str, profile: str, project_id: str, session: str, filename: str) -> str:
+    if not style_lora_load_path:
+        return ""
+    path = os.path.join(_style_trained_dir(style_lora_load_path, profile, project_id), session, filename)
+    if os.path.isfile(path):
+        return path
+    return ""
+
+
+def delete_style_trained_step(style_lora_load_path: str, profile: str, project_id: str, session: str, step_name: str) -> dict:
+    if not style_lora_load_path:
+        return {"success": False, "error": "style_lora_load_path 미설정"}
+    session_dir = os.path.join(_style_trained_dir(style_lora_load_path, profile, project_id), session)
+    if not os.path.isdir(session_dir):
+        return {"success": False, "error": "세션 폴더 없음"}
+    json_path = os.path.join(session_dir, step_name + ".json")
+    if not os.path.isfile(json_path):
+        return {"success": False, "error": "JSON 파일 없음"}
+    try:
+        with open(json_path, 'r', encoding='utf-8') as f:
+            jdata = json.load(f)
+    except Exception as e:
+        return {"success": False, "error": f"JSON 읽기 실패: {e}"}
+    deleted = []
+    errors = []
+    st_name = jdata.get('lora_file', step_name + '.safetensors')
+    fp = os.path.join(session_dir, st_name)
+    if os.path.isfile(fp):
+        try:
+            os.remove(fp); deleted.append(st_name)
+        except Exception as e:
+            errors.append(f"{st_name}: {e}")
+    for p in jdata.get('previews', []):
+        fp = os.path.join(session_dir, p)
+        if os.path.isfile(fp):
+            try:
+                os.remove(fp); deleted.append(p)
+            except Exception as e:
+                errors.append(f"{p}: {e}")
+    toml_path = os.path.join(session_dir, step_name + ".toml")
+    if os.path.isfile(toml_path):
+        try:
+            os.remove(toml_path); deleted.append(step_name + ".toml")
+        except Exception as e:
+            errors.append(f"{step_name}.toml: {e}")
+    try:
+        os.remove(json_path); deleted.append(step_name + ".json")
+    except Exception as e:
+        errors.append(f"{step_name}.json: {e}")
+
+    # 삭제한 step이 이 세션의 대표였다면 대표 해제
+    try:
+        data = _load_data()
+        tm = _get_trained_manage(data, project_id, profile)
+        reps = tm.get("representatives", {})
+        rep = reps.get(session)
+        if isinstance(rep, dict) and rep.get("safetensors") == st_name:
+            del reps[session]
+            _save_with_backup(data)
+            print(f"[STYLE_LORA_TRAINED] 삭제된 대표 step 해제: {session}/{st_name}")
+    except Exception as e:
+        print(f"[STYLE_LORA_TRAINED] 대표 해제 실패: {e}")
+        traceback.print_exc()
+
+    if errors:
+        print(f"[STYLE_LORA_TRAINED] 삭제 중 일부 실패: {errors}")
+    return {"success": True, "deleted": deleted, "errors": errors}
+
+
+def delete_style_trained_session(style_lora_load_path: str, profile: str, project_id: str, session: str) -> dict:
+    if not style_lora_load_path:
+        return {"success": False, "error": "style_lora_load_path 미설정"}
+    session_dir = os.path.join(_style_trained_dir(style_lora_load_path, profile, project_id), session)
+    if not os.path.isdir(session_dir):
+        return {"success": False, "error": "세션 폴더 없음"}
+    try:
+        file_count = sum(1 for _ in os.listdir(session_dir))
+        shutil.rmtree(session_dir)
+        # trained_manage 에서 해당 세션 제거
+        data = _load_data()
+        tm = _get_trained_manage(data, project_id, profile)
+        changed = False
+        if session in tm.get("representatives", {}):
+            del tm["representatives"][session]
+            changed = True
+        if session in (tm.get("priority") or []):
+            tm["priority"] = [s for s in tm["priority"] if s != session]
+            changed = True
+        if changed:
+            _save_with_backup(data)
+            print(f"[STYLE_LORA_TRAINED] 세션 관리정보에서 제거: {session}")
+        print(f"[STYLE_LORA_TRAINED] 세션 폴더 삭제 완료: {session_dir} ({file_count}개 파일)")
+        return {"success": True, "deleted_session": session, "file_count": file_count}
+    except Exception as e:
+        print(f"[STYLE_LORA_TRAINED] 세션 폴더 삭제 실패: {session_dir} - {e}")
+        traceback.print_exc()
+        return {"success": False, "error": str(e)}
+
+
+def update_style_session_representative(project_id: str, profile: str, session: str, representative: dict) -> dict:
+    if not project_id or profile not in ("anima", "sdxl") or not session:
+        return {"success": False, "error": "project/profile/session 누락"}
+    data = _load_data()
+    project = data.get("projects", {}).get(_safe_dirname(project_id))
+    if not project:
+        return {"success": False, "error": "존재하지 않는 프로젝트입니다"}
+    tm = _get_trained_manage(data, project_id, profile)
+    tm.setdefault("representatives", {})[session] = representative
+    # 대표 설정 시 priority에 없으면 추가(1순위 후보가 되도록 맨 앞)
+    if session not in (tm.get("priority") or []):
+        tm.setdefault("priority", []).insert(0, session)
+    _save_with_backup(data)
+    print(f"[STYLE_LORA] 세션 대표 설정: {project_id}/{profile}/{session}")
+    return {"success": True}
+
+
+def update_style_session_priority(project_id: str, profile: str, sessions_list: list) -> dict:
+    if not project_id or profile not in ("anima", "sdxl"):
+        return {"success": False, "error": "project/profile 누락"}
+    if not isinstance(sessions_list, list):
+        return {"success": False, "error": "sessions는 배열이어야 합니다"}
+    data = _load_data()
+    project = data.get("projects", {}).get(_safe_dirname(project_id))
+    if not project:
+        return {"success": False, "error": "존재하지 않는 프로젝트입니다"}
+    tm = _get_trained_manage(data, project_id, profile)
+    tm["priority"] = sessions_list
+    _save_with_backup(data)
+    print(f"[STYLE_LORA] session_priority 업데이트: {project_id}/{profile} -> {sessions_list}")
+    return {"success": True}
+
+
+def cleanup_style_non_representative(style_lora_load_path: str, profile: str, project_id: str) -> dict:
+    """해당 profile의 대표 LoRA 외 모든 LoRA 정리.
+    - 대표가 설정된 세션: 대표 step만 남기고 나머지 step 삭제
+    - 대표가 없는 세션: 세션 전체 삭제
+    """
+    if not style_lora_load_path:
+        print("[STYLE_LORA_CLEANUP] style_lora_load_path 미설정")
+        return {"success": False, "error": "style_lora_load_path 미설정"}
+    if profile not in ("anima", "sdxl"):
+        return {"success": False, "error": f"잘못된 profile: {profile}"}
+
+    entry_dir = _style_trained_dir(style_lora_load_path, profile, project_id)
+    if not os.path.isdir(entry_dir):
+        print(f"[STYLE_LORA_CLEANUP] profile LoRA 폴더 없음: {entry_dir}")
+        return {"success": False, "error": "해당 profile의 LoRA 폴더가 없습니다"}
+
+    data = _load_data()
+    tm = _get_trained_manage(data, project_id, profile)
+    reps = tm.get("representatives", {})
+
+    deleted_sessions = []
+    deleted_steps = []
+    errors = []
+    reps_changed = False
+
+    for session_name in sorted(os.listdir(entry_dir)):
+        session_dir = os.path.join(entry_dir, session_name)
+        if not os.path.isdir(session_dir):
+            continue
+
+        rep = reps.get(session_name) or {}
+        rep_safetensors = rep.get("safetensors", "") if isinstance(rep, dict) else ""
+
+        # 대표가 없는 세션: 전체 삭제
+        if not rep_safetensors:
+            try:
+                file_count = sum(1 for _ in os.listdir(session_dir))
+                shutil.rmtree(session_dir)
+                deleted_sessions.append(session_name)
+                if session_name in reps:
+                    del reps[session_name]
+                    reps_changed = True
+                print(f"[STYLE_LORA_CLEANUP] 대표 없는 세션 삭제: {session_name} ({file_count}개 파일)")
+            except Exception as e:
+                errors.append(f"세션 {session_name} 삭제 실패: {e}")
+                print(f"[STYLE_LORA_CLEANUP] 세션 삭제 실패: {session_dir} - {e}")
+                traceback.print_exc()
+            continue
+
+        # 대표가 있는 세션: 대표 step만 남기고 나머지 삭제
+        for fname in sorted(os.listdir(session_dir)):
+            if not fname.endswith('.json'):
+                continue
+            step_name = os.path.splitext(fname)[0]
+            json_path = os.path.join(session_dir, fname)
+            try:
+                with open(json_path, 'r', encoding='utf-8') as f:
+                    jdata = json.load(f)
+            except Exception as e:
+                errors.append(f"JSON 읽기 실패 {fname}: {e}")
+                continue
+
+            st_name = jdata.get('lora_file', step_name + '.safetensors')
+            if st_name == rep_safetensors:
+                continue
+
+            # 비대표 step 삭제
+            fp = os.path.join(session_dir, st_name)
+            if os.path.isfile(fp):
+                try:
+                    os.remove(fp); deleted_steps.append(f"{session_name}/{st_name}")
+                except Exception as e:
+                    errors.append(f"{st_name}: {e}")
+            for p in jdata.get('previews', []):
+                fp = os.path.join(session_dir, p)
+                if os.path.isfile(fp):
+                    try:
+                        os.remove(fp)
+                    except Exception as e:
+                        errors.append(f"{p}: {e}")
+            toml_path = os.path.join(session_dir, step_name + ".toml")
+            if os.path.isfile(toml_path):
+                try:
+                    os.remove(toml_path)
+                except Exception as e:
+                    errors.append(f"{step_name}.toml: {e}")
+            try:
+                os.remove(json_path); deleted_steps.append(f"{session_name}/{step_name}")
+            except Exception as e:
+                errors.append(f"{fname}: {e}")
+            print(f"[STYLE_LORA_CLEANUP] 비대표 step 삭제: {session_name}/{step_name}")
+
+    if reps_changed:
+        _save_with_backup(data)
+
+    result = {
+        "success": True,
+        "deleted_sessions": deleted_sessions,
+        "deleted_steps": deleted_steps,
+        "errors": errors,
+    }
+    print(f"[STYLE_LORA_CLEANUP] 정리 완료: 세션 {len(deleted_sessions)}개 삭제, step {len(deleted_steps)}개 삭제")
+    return result
+
+
 # ─── 피커용 ────────────────────────────────────────────────────
 
 def list_style_lora_for_picker(style_lora_load_path: str = "") -> list:
@@ -729,12 +1096,33 @@ def list_style_lora_for_picker(style_lora_load_path: str = "") -> list:
             profile_dir = os.path.join(style_lora_load_path, profile, storage_key)
             if not os.path.isdir(profile_dir):
                 continue
-            session_dirs = sorted(
+            all_sessions = sorted(
                 [d for d in os.listdir(profile_dir) if os.path.isdir(os.path.join(profile_dir, d))],
                 reverse=True,
             )
-            for session_name in session_dirs:
+            # 대표 우선: priority 순 → 나머지 세션(최신순) 순회.
+            tm = _get_trained_manage(data, project_id, profile)
+            reps = tm.get("representatives", {})
+            priority = [s for s in (tm.get("priority") or []) if s in all_sessions]
+            ordered = priority + [s for s in all_sessions if s not in priority]
+
+            picked = False
+            for session_name in ordered:
                 session_dir = os.path.join(profile_dir, session_name)
+                # (1) 이 세션에 대표가 있으면 대표 safetensors 우선
+                rep = reps.get(session_name)
+                if isinstance(rep, dict) and rep.get("safetensors"):
+                    rep_safe = rep.get("safetensors")
+                    if os.path.isfile(os.path.join(session_dir, rep_safe)):
+                        rel_path = os.path.join(profile, storage_key, session_name, rep_safe)
+                        profiles[profile] = {
+                            "lora_path": rel_path,
+                            "preview_url": rep.get("preview", ""),
+                            "session": session_name,
+                        }
+                        picked = True
+                        break
+                # (2) 대표 없으면 이 세션의 첫 step 사용(기존 동작)
                 json_files = [f for f in os.listdir(session_dir) if f.endswith('.json')]
                 if not json_files:
                     continue
@@ -752,10 +1140,13 @@ def list_style_lora_for_picker(style_lora_load_path: str = "") -> list:
                             "preview_url": preview,
                             "session": session_name,
                         }
+                        picked = True
                         break
                 except Exception as e:
                     print(f"[STYLE_LORA_PICKER] JSON 읽기 실패: {json_path} - {e}")
                     continue
+            if picked:
+                continue
         if profiles:
             images = pdata.get("images", [])
             result.append({

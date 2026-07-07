@@ -8874,6 +8874,187 @@ async def handle_api_style_lora_training_start(request):
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 
+# ─── 스타일(그림체) LoRA 학습 결과(trained) 관리 API (ANIMA/SDXL profile별) ────
+
+async def handle_api_style_lora_trained_sessions(request):
+    try:
+        project = request.query.get("project", "")
+        profile = request.query.get("profile", "")
+        if not project or profile not in ("anima", "sdxl"):
+            return web.json_response({"success": False, "error": "project, profile(anima/sdxl) 필수"}, status=400)
+        config = load_config()
+        style_lora_load_path = config.get("style_lora_load_path", "")
+        if not style_lora_load_path:
+            return web.json_response({"success": False, "error": "style_lora_load_path 미설정"}, status=400)
+        from modes.style_lora_mode import list_style_trained_sessions
+        sessions = list_style_trained_sessions(style_lora_load_path, profile, project)
+        return web.json_response({"success": True, "sessions": sessions})
+    except Exception as e:
+        print(f"[STYLE_LORA_API] 세션 목록 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_style_lora_trained_steps(request):
+    try:
+        project = request.query.get("project", "")
+        profile = request.query.get("profile", "")
+        session = request.query.get("session", "")
+        if not project or profile not in ("anima", "sdxl") or not session:
+            return web.json_response({"success": False, "error": "project, profile(anima/sdxl), session 필수"}, status=400)
+        config = load_config()
+        style_lora_load_path = config.get("style_lora_load_path", "")
+        if not style_lora_load_path:
+            return web.json_response({"success": False, "error": "style_lora_load_path 미설정"}, status=400)
+        from modes.style_lora_mode import list_style_trained_steps
+        steps = list_style_trained_steps(style_lora_load_path, profile, project, session)
+        return web.json_response({"success": True, "steps": steps})
+    except Exception as e:
+        print(f"[STYLE_LORA_API] step 목록 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_style_lora_trained_toml(request):
+    try:
+        project = request.query.get("project", "")
+        profile = request.query.get("profile", "")
+        session = request.query.get("session", "")
+        step = request.query.get("step", "")
+        if not project or profile not in ("anima", "sdxl") or not session or not step:
+            return web.json_response({"success": False, "error": "project, profile(anima/sdxl), session, step 필수"}, status=400)
+        config = load_config()
+        style_lora_load_path = config.get("style_lora_load_path", "")
+        if not style_lora_load_path:
+            return web.json_response({"success": False, "error": "style_lora_load_path 미설정"}, status=400)
+        from modes.style_lora_mode import read_style_toml_file
+        result = read_style_toml_file(style_lora_load_path, profile, project, session, step)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[STYLE_LORA_API] TOML 읽기 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_style_lora_trained_preview(request):
+    try:
+        project = request.match_info.get("project", "")
+        profile = request.match_info.get("profile", "")
+        session = request.match_info.get("session", "")
+        filename = request.match_info.get("filename", "")
+        if not project or profile not in ("anima", "sdxl") or not session or not filename:
+            return web.Response(status=400)
+        config = load_config()
+        style_lora_load_path = config.get("style_lora_load_path", "")
+        from modes.style_lora_mode import get_style_trained_preview_path
+        fpath = get_style_trained_preview_path(style_lora_load_path, profile, project, session, filename)
+        if not fpath:
+            return web.Response(status=404)
+        return web.FileResponse(fpath)
+    except Exception as e:
+        print(f"[STYLE_LORA_API] 프리뷰 서빙 실패: {e}")
+        traceback.print_exc()
+        return web.Response(status=500)
+
+
+async def handle_api_style_lora_trained_delete(request):
+    try:
+        body = await request.json()
+        project = body.get("project", "")
+        profile = body.get("profile", "")
+        session = body.get("session", "")
+        step = body.get("step", "")
+        if not project or profile not in ("anima", "sdxl") or not session or not step:
+            return web.json_response({"success": False, "error": "project, profile(anima/sdxl), session, step 필수"}, status=400)
+        config = load_config()
+        style_lora_load_path = config.get("style_lora_load_path", "")
+        if not style_lora_load_path:
+            return web.json_response({"success": False, "error": "style_lora_load_path 미설정"}, status=400)
+        from modes.style_lora_mode import delete_style_trained_step
+        result = delete_style_trained_step(style_lora_load_path, profile, project, session, step)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[STYLE_LORA_API] step 삭제 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_style_lora_trained_delete_session(request):
+    try:
+        body = await request.json()
+        project = body.get("project", "")
+        profile = body.get("profile", "")
+        session = body.get("session", "")
+        if not project or profile not in ("anima", "sdxl") or not session:
+            return web.json_response({"success": False, "error": "project, profile(anima/sdxl), session 필수"}, status=400)
+        config = load_config()
+        style_lora_load_path = config.get("style_lora_load_path", "")
+        if not style_lora_load_path:
+            return web.json_response({"success": False, "error": "style_lora_load_path 미설정"}, status=400)
+        from modes.style_lora_mode import delete_style_trained_session
+        result = delete_style_trained_session(style_lora_load_path, profile, project, session)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[STYLE_LORA_API] 세션 삭제 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_style_lora_session_representative(request):
+    try:
+        body = await request.json()
+        project = body.get("project", "")
+        profile = body.get("profile", "")
+        session = body.get("session", "")
+        representative = body.get("representative", {})
+        if not project or profile not in ("anima", "sdxl") or not session:
+            return web.json_response({"success": False, "error": "project, profile(anima/sdxl), session 필수"}, status=400)
+        from modes.style_lora_mode import update_style_session_representative
+        result = update_style_session_representative(project, profile, session, representative)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[STYLE_LORA_API] 세션 대표 설정 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_style_lora_session_priority(request):
+    try:
+        body = await request.json()
+        project = body.get("project", "")
+        profile = body.get("profile", "")
+        sessions = body.get("sessions", [])
+        if not project or profile not in ("anima", "sdxl"):
+            return web.json_response({"success": False, "error": "project, profile(anima/sdxl) 필수"}, status=400)
+        from modes.style_lora_mode import update_style_session_priority
+        result = update_style_session_priority(project, profile, sessions)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[STYLE_LORA_API] 세션 우선순위 설정 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_style_lora_cleanup_non_representative(request):
+    try:
+        body = await request.json()
+        project = body.get("project", "")
+        profile = body.get("profile", "")
+        if not project or profile not in ("anima", "sdxl"):
+            return web.json_response({"success": False, "error": "project, profile(anima/sdxl) 필수"}, status=400)
+        config = load_config()
+        style_lora_load_path = config.get("style_lora_load_path", "")
+        if not style_lora_load_path:
+            return web.json_response({"success": False, "error": "style_lora_load_path 미설정"}, status=400)
+        from modes.style_lora_mode import cleanup_style_non_representative
+        result = cleanup_style_non_representative(style_lora_load_path, profile, project)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[STYLE_LORA_API] 대표외 LoRA 정리 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
 app.router.add_get("/api/bot_lora/bots", handle_api_bot_lora_bots)
 app.router.add_get("/api/bot_lora/characters/importable", handle_api_bot_lora_characters_importable)
 app.router.add_post("/api/bot_lora/characters/import", handle_api_bot_lora_characters_import)
@@ -8968,6 +9149,15 @@ app.router.add_post("/api/style_lora/training/start", handle_api_style_lora_trai
 app.router.add_get("/api/style_lora/auto_lora_prompt", handle_get_style_lora_prompt)
 app.router.add_post("/api/style_lora/auto_lora_prompt", handle_set_style_lora_prompt)
 app.router.add_post("/api/style_lora/auto_refine_enqueue", handle_style_lora_auto_refine_enqueue)
+app.router.add_get("/api/style_lora/trained/sessions", handle_api_style_lora_trained_sessions)
+app.router.add_get("/api/style_lora/trained/steps", handle_api_style_lora_trained_steps)
+app.router.add_get("/api/style_lora/trained/toml", handle_api_style_lora_trained_toml)
+app.router.add_get("/api/style_lora/trained/preview/{project}/{profile}/{session}/{filename}", handle_api_style_lora_trained_preview)
+app.router.add_post("/api/style_lora/trained/delete", handle_api_style_lora_trained_delete)
+app.router.add_post("/api/style_lora/trained/delete-session", handle_api_style_lora_trained_delete_session)
+app.router.add_post("/api/style_lora/trained/session-representative", handle_api_style_lora_session_representative)
+app.router.add_post("/api/style_lora/trained/session-priority", handle_api_style_lora_session_priority)
+app.router.add_post("/api/style_lora/trained/cleanup-non-representative", handle_api_style_lora_cleanup_non_representative)
 
 
 # ─── 통합 큐 API ───────────────────────────────────────────
@@ -9104,6 +9294,104 @@ async def handle_api_instance_lora_preview(request):
 
 
 app.router.add_get("/api/instance_lora/preview", handle_api_instance_lora_preview)
+
+
+async def handle_api_style_lora_preview(request):
+    """스타일 LoRA 학습 프롬프트 미리보기.
+    큐(_handle_instance_lora_training 의 source=style_lora 분기)와 동일한 로직으로
+    _build_lora_training_text 를 재사용해 실제 ComfyUI 전송 프롬프트를 반환한다."""
+    try:
+        import random
+        project = (request.query.get("project") or "").strip()
+        profile = request.query.get("profile", "anima")
+        if profile not in ("anima", "sdxl"):
+            return web.json_response({"success": False, "error": "profile 오류"}, status=400)
+        if not project:
+            return web.json_response({"success": True, "data": {
+                "positive": "(프로젝트를 선택하면 프롬프트가 표시됩니다)",
+                "negative": "", "profile": profile, "n_img": 0, "total_step": 0,
+            }})
+
+        from modes.style_lora_mode import (
+            get_project_detail, list_images, get_image_prompt,
+            get_project_settings, _safe_dirname,
+        )
+        project = _safe_dirname(project)
+        detail = get_project_detail(project)
+        if not detail.get("success"):
+            return web.json_response({"success": False, "error": detail.get("error", "프로젝트를 찾을 수 없습니다")}, status=400)
+        trigger = detail["data"].get("trigger", "")
+
+        images_list = list_images(project)
+        training_images = []
+        for filename in images_list:
+            pr = get_image_prompt(project, filename)
+            training_images.append({
+                "filename": filename,
+                "positive": pr.get("data", {}).get("positive", "") if pr.get("success") else "",
+                "negative": pr.get("data", {}).get("negative", "") if pr.get("success") else "",
+            })
+        if not training_images:
+            return web.json_response({"success": True, "data": {
+                "positive": "(학습 이미지가 없습니다)", "negative": "",
+                "profile": profile, "n_img": 0, "total_step": 0,
+            }})
+
+        settings = get_project_settings(project).get("data", {})
+        ps = settings.get(profile, {})
+        step = ps.get("step_per_image", 125)
+        il_rate = ps.get("il_rate", 0.00025)
+        save_step = ps.get("save_per_step", 25)
+        folder = ps.get("multi_img_folder_name", "soya_lora")
+        gen_w = ps.get("gen_w", 1)
+        gen_h = ps.get("gen_h", 1)
+        upscale = ps.get("upscale", False)
+        resolution = ps.get("resolution", 1024)
+        save_after = ps.get("save_after", 0)
+        dim = ps.get("dim", 32)
+        alpha = ps.get("alpha", 16)
+
+        # 그림체 전용 "전체 STEP" 확장 (queue_manager._handle_instance_lora_training 와 동일)
+        # 전체 STEP = export 할 이미지 슬롯 수. ComfyUI 에는 STEP_PER_IMAGE=1, N_IMG=전체STEP.
+        n_img = len(training_images)
+        total_step = step if (isinstance(step, int) and step > 0) else n_img
+        full = total_step // n_img
+        rem = total_step % n_img
+        picked = []
+        for _ in range(full):
+            picked.extend(training_images)
+        if rem:
+            picked += random.sample(training_images, rem)
+        step = 1
+        lora_save_path = f"SOYA_STYLE_LORA/{profile}/{project}"
+
+        positive_text = _build_lora_training_text(
+            picked, trigger, profile, step, il_rate, save_step, folder,
+            "positive", lora_save_path, gen_w, gen_h, upscale, resolution,
+            [], save_after, dim, alpha,
+        )
+        positive_text = positive_text.replace("[TEST_POSITIVE]\n", "[TEST_POSITIVE]\ninstance\n")
+        positive_text = positive_text.replace("[TEST_NEGATIVE]\n", "[TEST_NEGATIVE]\ninstance\n")
+        negative_text = _build_lora_training_text(
+            picked, trigger, profile, step, il_rate, save_step, folder,
+            "negative", lora_save_path, gen_w, gen_h, upscale, resolution,
+            [], save_after, dim, alpha,
+        )
+
+        return web.json_response({
+            "success": True,
+            "data": {
+                "positive": positive_text, "negative": negative_text,
+                "profile": profile, "n_img": n_img, "total_step": total_step,
+            },
+        })
+    except Exception as e:
+        print(f"[STYLE_LORA_API] 프리뷰 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+app.router.add_get("/api/style_lora/preview", handle_api_style_lora_preview)
 
 
 async def handle_api_open_folder(request):
