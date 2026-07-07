@@ -54,6 +54,7 @@ logging.basicConfig(level=logging.INFO, format='[%(name)s] %(message)s')
 # aiohttp.access (매 요청마다 찍히는 HTTP access 로그) 도배 방지
 logging.getLogger("aiohttp.access").setLevel(logging.WARNING)
 from modes import llm_service
+from modes import llm_prompt_edit
 from modes import autocomplete_service
 from modes import asset_tool_mode
 from modes import bot_mode
@@ -3160,6 +3161,173 @@ async def handle_api_reschedule_with_modified_prompt(request: web.Request) -> we
         return web.json_response({"error": str(e)}, status=500)
 
 
+async def handle_api_llm_edit_prompt(request: web.Request) -> web.Response:
+    """삽화백업 "LLM과 함께 수정" — LLM(비전)이 이미지+프롬프트 분석 후
+    주제 3개 블럭(ANIMA_CONTENT/ANIMA_ALL/SDXL)의 장면 태그만 편집해 반환한다.
+
+    요청: {name, positive, negative, direction}
+    응답: {plan, positive, negative} 또는 {error}
+
+    제어 블럭/트리거/아티스트/품질은 백엔드가 보존·재조립한다(llm_prompt_edit 참조).
+    """
+    try:
+        body = await request.json()
+        backup_name = body.get("name", "")
+        positive = body.get("positive", "")
+        negative = body.get("negative", "")
+        direction = (body.get("direction", "") or "").strip()
+
+        # 경로 조작 가드 (기존 reschedule 핸들러와 동일)
+        if ".." in backup_name or "/" in backup_name or "\\" in backup_name:
+            print(f"[LLM_EDIT] invalid name: {backup_name!r}")
+            return web.json_response({"error": "Invalid name"}, status=400)
+
+        if not positive:
+            print(f"[LLM_EDIT] positive 비어 있음 name={backup_name}")
+            return web.json_response({"error": "긍정 프롬프트가 비어 있습니다."}, status=400)
+        if not direction:
+            print(f"[LLM_EDIT] direction 비어 있음 name={backup_name}")
+            return web.json_response({"error": "수정 방향을 입력해주세요."}, status=400)
+
+        # 1) 빌드본 포맷 감지
+        if not llm_prompt_edit.detect_build_format(positive):
+            print(f"[LLM_EDIT] format mismatch (빌드본 아님) name={backup_name}")
+            return web.json_response({
+                "error": "이 백업은 삽화 빌드본 형식이 아닙니다(또는 배치/비삽화 백업). "
+                         "LLM과 함께 수정은 삽화 모드 빌드본에서만 동작합니다."
+            }, status=400)
+
+        # 2) 블럭 파싱
+        blocks = llm_prompt_edit.parse_blocks(positive)
+
+        # 3) bot_name 복원({name}_info.json) → 트리거 복원
+        bot_name = ""
+        info_path = os.path.join(WORKFLOW_BACKUP_DIR, f"{backup_name}_info.json")
+        try:
+            if os.path.isfile(info_path):
+                with open(info_path, "r", encoding="utf-8") as f:
+                    info = json.load(f)
+                bot_name = info.get("bot_name", "") or ""
+        except Exception as e:
+            print(f"[LLM_EDIT] _info.json 읽기 실패 name={backup_name}: {e}")
+
+        triggers = llm_prompt_edit.recover_triggers(blocks, bot_name)
+
+        # 4) 주제 블럭에서 원본 장면 토큰 추출(접두부 제거)
+        prefix_sets = llm_prompt_edit.build_prefix_sets(blocks, triggers)
+        scene_anima = llm_prompt_edit.extract_scene_tokens(
+            blocks.get("ANIMA_CONTENT", ""), prefix_sets["ANIMA_CONTENT"])
+        scene_sdxl = llm_prompt_edit.extract_scene_tokens(
+            blocks.get("SDXL", ""), prefix_sets["SDXL"])
+
+        if not scene_anima and not scene_sdxl:
+            print(f"[LLM_EDIT] 편집할 장면 내용 없음 name={backup_name}")
+            return web.json_response({
+                "plan": "편집할 장면 내용이 없습니다(트리거/아티스트만 있는 프롬프트).",
+                "positive": positive,
+                "negative": negative,
+            })
+
+        # 5) 백업 이미지 읽기 (없으면 텍스트 폴백)
+        image_b64 = ""
+        image_mime = "image/webp"
+        webp_path = os.path.join(WORKFLOW_BACKUP_DIR, f"{backup_name}.webp")
+        try:
+            if os.path.isfile(webp_path):
+                with open(webp_path, "rb") as f:
+                    image_b64 = base64.b64encode(f.read()).decode("ascii")
+        except Exception as e:
+            print(f"[LLM_EDIT] 백업 이미지 읽기 실패 name={backup_name}: {e}")
+            image_b64 = ""
+
+        fallback_note = ""
+        if not image_b64:
+            fallback_note = " (백업 이미지가 없어 프롬프트 텍스트만으로 분석했습니다)"
+
+        # 6) LLM 호출
+        messages = llm_prompt_edit.build_llm_messages(direction, scene_anima, scene_sdxl)
+        raw = None
+        try:
+            if image_b64:
+                raw = await llm_service.callLLMVision(
+                    messages, image_b64=image_b64, image_mime=image_mime, json_mode=True)
+            else:
+                raw = await llm_service.callLLM(messages, json_mode=True)
+        except RuntimeError as e:
+            # 비전 미지원 서비스 → 텍스트 전용 폴백
+            print(f"[LLM_EDIT] 비전 미지원, 텍스트 폴백 name={backup_name}: {e}")
+            fallback_note = " (현재 LLM 서비스가 비전을 지원하지 않아 텍스트만으로 분석했습니다)"
+            raw = await llm_service.callLLM(messages, json_mode=True)
+
+        if not raw or raw.startswith("[LLM 실패]"):
+            print(f"[LLM_EDIT] LLM 호출 실패 name={backup_name}: {raw}")
+            return web.json_response({
+                "error": f"LLM 호출 실패: {raw}",
+            }, status=500)
+
+        # 7) JSON 파싱
+        parsed = llm_prompt_edit.parse_llm_json(raw)
+        if not parsed:
+            print(f"[LLM_EDIT] JSON 파싱 실패, 원본 유지 name={backup_name}")
+            return web.json_response({
+                "plan": "LLM 응답을 파싱하지 못해 원본을 유지했습니다." + fallback_note,
+                "positive": positive,
+                "negative": negative,
+            })
+
+        # 8) 재조립
+        reassembled, scene = llm_prompt_edit.reassemble(positive, blocks, triggers, parsed)
+        plan_text = (scene.get("plan", "") or "장면 태그를 수정했습니다.") + fallback_note
+
+        print(f"[LLM_EDIT] 완료 name={backup_name} plan={plan_text[:80]!r}")
+        return web.json_response({
+            "plan": plan_text,
+            "positive": reassembled,
+            "negative": negative,
+        })
+
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f"[ERROR] llm_edit_prompt failed: {e}\n{tb}")
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def handle_api_get_llm_edit_template(request: web.Request) -> web.Response:
+    """GET /api/llm_edit_prompt_template — LLM 보조 프롬프트(builtin/custom/use_custom) 조회."""
+    try:
+        builtin = llm_prompt_edit._load_llm_edit_builtin()
+        custom, use_custom = llm_prompt_edit._load_llm_edit_custom()
+        return web.json_response({
+            "success": True,
+            "data": {
+                "builtin": builtin,
+                "custom": custom,
+                "use_custom": use_custom,
+            },
+        })
+    except Exception as e:
+        print(f"[LLM_EDIT] template 조회 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)})
+
+
+async def handle_api_set_llm_edit_template(request: web.Request) -> web.Response:
+    """POST /api/llm_edit_prompt_template — LLM 보조 프롬프트 커스텀 저장.
+    요청: {custom: str, use_custom: bool}
+    """
+    try:
+        body = await request.json()
+        custom = body.get("custom", "") or ""
+        use_custom = bool(body.get("use_custom", False))
+        llm_prompt_edit._save_llm_edit_custom(custom, use_custom)
+        print(f"[LLM_EDIT] template 저장: use_custom={use_custom} custom_len={len(custom)}")
+        return web.json_response({"success": True})
+    except Exception as e:
+        print(f"[LLM_EDIT] template 저장 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)})
+
+
 # ─── 배치 모드 API ─────────────────────────────────────────
 async def handle_api_batch_mode_status(request: web.Request) -> web.Response:
     """배치 모드 상태를 반환한다."""
@@ -4166,6 +4334,9 @@ app.router.add_post("/api/llm/test_stream", handle_api_llm_test_stream)
 app.router.add_get("/api/reschedule", handle_api_reschedule)
 app.router.add_post("/api/reschedule", handle_api_reschedule)
 app.router.add_post("/api/reschedule_with_modified_prompt", handle_api_reschedule_with_modified_prompt)
+app.router.add_post("/api/llm_edit_prompt", handle_api_llm_edit_prompt)
+app.router.add_get("/api/llm_edit_prompt_template", handle_api_get_llm_edit_template)
+app.router.add_post("/api/llm_edit_prompt_template", handle_api_set_llm_edit_template)
 # 배치 모드 API
 app.router.add_get("/api/batch_mode/status", handle_api_batch_mode_status)
 app.router.add_post("/api/batch_mode/config", handle_api_batch_mode_config)

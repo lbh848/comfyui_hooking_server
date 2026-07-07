@@ -17,6 +17,7 @@ import json
 import os
 import time
 import traceback
+from contextvars import ContextVar
 import aiohttp
 import httpx
 from typing import Optional
@@ -516,6 +517,13 @@ def _build_openai_body(
             except json.JSONDecodeError as e:
                 _llm_log(f"custom body JSON parse failed: {e}")
 
+    # JSON 모드(response_format) 적용 — 컨텍스트에 설정된 경우만.
+    # OpenAI 호환 계열은 json_object 를, 일부는 json_schema 도 지원하지만
+    # 호환성을 위해 json_object 만 사용한다.
+    _rf = _response_format_ctx.get()
+    if _rf:
+        body["response_format"] = _rf
+
     return body
 
 
@@ -643,6 +651,11 @@ VISION_SUPPORTED_SERVICES = {
 
 VISION_UNSUPPORTED_SERVICES = {
 }
+
+# JSON 모드(response_format) 전달용 컨텍스트 변수.
+# callLLM/callLLMVision 에서 json_mode=True 시 set 하고, _build_openai_body/_call_gemini
+# 가 get 하여 요청 body 에 반영한다. async 세이프하고 동시/중첩 호출에도 격리된다.
+_response_format_ctx: ContextVar = ContextVar("llm_response_format", default=None)
 
 
 def supports_vision(service: str) -> bool:
@@ -842,6 +855,10 @@ async def _call_gemini(messages: list, model: str) -> str:
     if int(_current_config.get("llm_max_tokens", 0) or 0) > 0:
         body["generationConfig"]["maxOutputTokens"] = int(_current_config["llm_max_tokens"])
 
+    # JSON 모드 — Gemini 는 responseMimeType 로 지정.
+    if _response_format_ctx.get():
+        body["generationConfig"]["responseMimeType"] = "application/json"
+
     _llm_log(f"gemini 요청: model={model} messages={len(messages)}")
 
     try:
@@ -957,7 +974,7 @@ async def _dispatch(messages: list, service: str, model: str, endpoint: str = ""
         return f"[LLM 실패] 알 수 없는 LLM 서비스: {service}"
 
 
-async def callLLM(messages: list, model: str = None) -> str:
+async def callLLM(messages: list, model: str = None, json_mode: bool = False) -> str:
     """
     LLM1 호출 공개 함수 (단일 시도)
 
@@ -971,6 +988,9 @@ async def callLLM(messages: list, model: str = None) -> str:
     Args:
         messages: [{"role": "system"/"user", "content": "..."}]
         model: 모델명 (None이면 설정에서 가져옴)
+        json_mode: True 면 OpenAI 호환/Gemini 요청에 response_format=json_object 를
+                   설정해 JSON 출력을 강제한다. 비지원 프로바이더는 프롬프트 기반 JSON
+                   지시에 의존한다(응답은 호출자가 파싱).
 
     Returns:
         LLM 응답 텍스트. 실패 시 "[LLM 실패] ..." 형식의 에러 문자열 반환
@@ -978,10 +998,15 @@ async def callLLM(messages: list, model: str = None) -> str:
     service = _current_config["llm_service"]
     use_model = model or _current_config["llm_model"]
     endpoint = _current_config.get("custom_api_url", "")
-    return await _dispatch(messages, service, use_model, endpoint)
+    token = _response_format_ctx.set({"type": "json_object"}) if json_mode else None
+    try:
+        return await _dispatch(messages, service, use_model, endpoint)
+    finally:
+        if token is not None:
+            _response_format_ctx.reset(token)
 
 
-async def callLLMVision(messages: list, image_b64: str, image_mime: str = "image/webp", model: str = None) -> str:
+async def callLLMVision(messages: list, image_b64: str, image_mime: str = "image/webp", model: str = None, json_mode: bool = False) -> str:
     """
     비전(이미지 입력) LLM 호출 공개 함수.
 
@@ -993,6 +1018,9 @@ async def callLLMVision(messages: list, image_b64: str, image_mime: str = "image
         image_b64: base64 인코딩된 이미지 데이터 (data: 접두어 제외)
         image_mime: 이미지 MIME 타입 (기본 image/webp)
         model: 모델명 (None이면 설정에서 가져옴)
+        json_mode: True 면 OpenAI 호환/Gemini 요청에 response_format=json_object 를
+                   설정해 JSON 출력을 강제한다. 비지원 프로바이더는 프롬프트 기반 JSON
+                   지시에 의존한다(응답은 호출자가 파싱).
 
     Returns:
         LLM 응답 텍스트. 실패 시 "[LLM 실패] ..." 형식의 에러 문자열 반환.
@@ -1016,8 +1044,13 @@ async def callLLMVision(messages: list, image_b64: str, image_mime: str = "image
     except ValueError as e:
         return f"[LLM 실패] {e}"
 
-    _llm_log(f"callLLMVision: service={service} model={use_model} mime={image_mime} img_b64_len={len(image_b64)}")
-    return await _dispatch(new_messages, service, use_model, endpoint)
+    _llm_log(f"callLLMVision: service={service} model={use_model} mime={image_mime} img_b64_len={len(image_b64)} json_mode={json_mode}")
+    token = _response_format_ctx.set({"type": "json_object"}) if json_mode else None
+    try:
+        return await _dispatch(new_messages, service, use_model, endpoint)
+    finally:
+        if token is not None:
+            _response_format_ctx.reset(token)
 
 
 async def callLLMVisionStream(messages: list, image_b64: str, image_mime: str = "image/webp", model: str = None, log_history: bool = True):

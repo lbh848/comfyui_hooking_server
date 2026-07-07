@@ -4810,6 +4810,13 @@
                         <div>프롬프트를 수정하여 새 이미지를 생성합니다.</div>
                     </div>
                 </div>
+                <div id="modal-llm-plan" style="display:none; margin-bottom:8px; padding:8px 10px; border:1px solid var(--accent); border-radius:6px; background:var(--surface1); position:relative;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                        <span style="font-weight:700; font-size:0.8rem; color:var(--accent);">LLM 수정 계획</span>
+                        <button onclick="document.getElementById('modal-llm-plan').style.display='none'" style="background:none; border:none; cursor:pointer; color:var(--text-secondary); font-size:1rem; padding:0 4px;">&times;</button>
+                    </div>
+                    <pre id="modal-llm-plan-text" style="white-space:pre-wrap; margin:0; font-size:0.78rem; color:var(--text); font-family:inherit; max-height:160px; overflow-y:auto;"></pre>
+                </div>
                 <div class="form-group" style="position:relative;">
                     <label>긍정 프롬프트 (Positive)</label>
                     <textarea id="modal-positive" placeholder="긍정 프롬프트를 입력하세요..."></textarea>
@@ -4823,8 +4830,40 @@
             </div>
             <div class="modal-footer">
                 <button class="cancel" onclick="closePromptModal()">취소</button>
+                <button id="modal-llm-edit-btn" onclick="openLlmEditModal()" style="padding:8px 14px; border:1px solid var(--accent); border-radius:6px; background:var(--surface2); color:var(--accent); font-weight:600; cursor:pointer;">
+                    <span id="modal-llm-edit-text">🤖 LLM과 함께 수정</span>
+                </button>
+                <button id="modal-llm-template-btn" onclick="openLlmEditTemplateOverlay()" title="LLM에 보낼 보조 프롬프트 편집" style="padding:8px 12px; border:1px solid var(--border); border-radius:6px; background:var(--surface2); color:var(--text); font-weight:600; cursor:pointer;">
+                    🛠 보조 프롬프트
+                </button>
                 <button class="confirm" id="modal-submit-btn" onclick="submitModifiedPrompt()">
                     <span id="modal-submit-text">프롬프트 수정 후 재생성</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- LLM 수정 방향 입력 모달 (prompt-modal 위에 오버레이) -->
+    <div class="modal" id="llm-edit-direction-modal">
+        <div class="modal-content" style="max-width:520px;">
+            <div class="modal-header">
+                <h2>🤖 LLM과 함께 수정</h2>
+                <button class="modal-close" onclick="closeLlmEditModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div style="margin-bottom:8px; font-size:0.82rem; color:var(--text-secondary);">
+                    LLM이 이미지와 프롬프트를 분석해 장면 태그만 수정합니다.<br>
+                    원하는 수정 방향을 자연어로 입력하세요.
+                </div>
+                <div class="form-group">
+                    <label>수정 방향</label>
+                    <textarea id="llm-edit-direction-input" rows="4" placeholder="예: 밤 분위기로 바꿔줘, 비 내리는 거리, 캐릭터가 미소 짓게, 복장을 학교교복으로" style="width:100%; resize:vertical;"></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="cancel" onclick="closeLlmEditModal()">취소</button>
+                <button class="confirm" id="llm-edit-run-btn" onclick="llmEditPrompt()">
+                    <span id="llm-edit-run-text">수정 실행</span>
                 </button>
             </div>
         </div>
@@ -8598,7 +8637,8 @@
 
         // ─── 프롬프트 수정 모달 ───
         let currentModalBackupName = null;
-        
+        let llmEditInFlight = false;
+
         function openPromptModal(btn) {
             const card = btn.closest('.backup-card');
             const name = card.dataset.name;
@@ -8616,12 +8656,210 @@
             document.getElementById('modal-negative').value = negative;
             document.getElementById('modal-submit-btn').disabled = false;
             document.getElementById('modal-submit-text').textContent = '프롬프트 수정 후 재생성';
+
+            // LLM과 함께 수정 버튼: 빌드본([ANIMA_CONTENT] 헤더)일 때만 활성화
+            const llmBtn = document.getElementById('modal-llm-edit-btn');
+            const isBuild = /\[ANIMA_CONTENT\]\n/.test(positive);
+            llmBtn.disabled = !isBuild;
+            llmBtn.title = isBuild ? '' : '삽화 모드 빌드본 프롬프트에서만 동작합니다';
+            // 계획 영역 초기화
+            document.getElementById('modal-llm-plan').style.display = 'none';
+            document.getElementById('modal-llm-plan-text').textContent = '';
+            document.getElementById('modal-llm-edit-text').textContent = '🤖 LLM과 함께 수정';
+
             document.getElementById('prompt-modal').classList.add('visible');
         }
 
         function closePromptModal() {
             document.getElementById('prompt-modal').classList.remove('visible');
+            // 방향 입력 모달도 함께 닫기
+            closeLlmEditModal();
             currentModalBackupName = null;
+            llmEditInFlight = false;
+        }
+
+        function openLlmEditModal() {
+            if (!currentModalBackupName) return;
+            // 빌드본이 아니면 진입 차단(버튼 disabled 와 이중 가드)
+            const positive = document.getElementById('modal-positive').value || '';
+            if (!/\[ANIMA_CONTENT\]\n/.test(positive)) {
+                alert('삽화 모드 빌드본 프롬프트에서만 동작합니다.');
+                return;
+            }
+            const input = document.getElementById('llm-edit-direction-input');
+            input.value = '';
+            document.getElementById('llm-edit-run-text').textContent = '수정 실행';
+            document.getElementById('llm-edit-run-btn').disabled = false;
+            document.getElementById('llm-edit-direction-modal').classList.add('visible');
+            setTimeout(() => input.focus(), 50);
+        }
+
+        function closeLlmEditModal() {
+            const el = document.getElementById('llm-edit-direction-modal');
+            if (el) el.classList.remove('visible');
+        }
+
+        async function llmEditPrompt() {
+            if (!currentModalBackupName) return;
+            if (llmEditInFlight) return;
+            const positive = document.getElementById('modal-positive').value;
+            const negative = document.getElementById('modal-negative').value;
+            const direction = (document.getElementById('llm-edit-direction-input').value || '').trim();
+            if (!direction) {
+                alert('수정 방향을 입력해주세요.');
+                return;
+            }
+
+            llmEditInFlight = true;
+            const btn = document.getElementById('llm-edit-run-btn');
+            const btnText = document.getElementById('llm-edit-run-text');
+            const origText = btnText.textContent;
+            btn.disabled = true;
+            btnText.textContent = 'LLM 분석 중...';
+
+            try {
+                const data = await fetchJSON('/api/llm_edit_prompt', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name: currentModalBackupName,
+                        positive: positive,
+                        negative: negative,
+                        direction: direction
+                    })
+                });
+
+                if (data.error) {
+                    alert('LLM 수정 실패: ' + data.error);
+                    return;
+                }
+
+                // 수정된 positive 반영 + 계획 표시 (prompt-modal 본문 인라인)
+                if (data.positive) {
+                    document.getElementById('modal-positive').value = data.positive;
+                }
+                if (data.plan) {
+                    document.getElementById('modal-llm-plan-text').textContent = data.plan;
+                    document.getElementById('modal-llm-plan').style.display = 'block';
+                }
+                showToast('LLM 수정 적용 완료', 'success');
+                closeLlmEditModal();
+            } catch (e) {
+                alert('LLM 수정 실패: ' + e.message);
+            } finally {
+                llmEditInFlight = false;
+                btn.disabled = false;
+                btnText.textContent = origText;
+            }
+        }
+
+        // ─── LLM 보조 프롬프트(builtin/custom) 편집 오버레이 ───
+        async function openLlmEditTemplateOverlay() {
+            const existing = document.getElementById('llm-edit-template-overlay');
+            if (existing) existing.remove();
+
+            const overlay = document.createElement('div');
+            overlay.id = 'llm-edit-template-overlay';
+            overlay.style.cssText = 'position:fixed; inset:0; z-index:10002; background:rgba(0,0,0,0.6); display:flex; align-items:center; justify-content:center;';
+            // 바깥 클릭으로 닫기 금지 — ✕/닫기/저장 버튼만
+            overlay.innerHTML = `
+                <div style="background:var(--surface); border:1px solid var(--border); border-radius:12px; width:92vw; max-width:820px; height:86vh; display:flex; flex-direction:column; overflow:hidden;">
+                    <div style="display:flex; align-items:center; padding:12px 16px; border-bottom:1px solid var(--border); gap:12px; flex-shrink:0;">
+                        <span style="font-weight:700; font-size:1.0rem;">🛠 LLM 보조 프롬프트</span>
+                        <div style="flex:1;"></div>
+                        <button onclick="document.getElementById('llm-edit-template-overlay').remove()" style="background:none; border:none; color:var(--text2); font-size:1.2rem; cursor:pointer;">✕</button>
+                    </div>
+                    <div style="padding:8px 16px; font-size:0.72rem; color:var(--text2); border-bottom:1px solid var(--border); flex-shrink:0;">
+                        글로벌은 배포용(읽기 전용), 커스텀은 이 PC 전용(편집 가능). LLM("LLM과 함께 수정")에 전송되는 시스템 프롬프트.
+                    </div>
+                    <div id="llm-tpl-panel" style="flex:1; display:flex; flex-direction:column; padding:12px 16px; overflow:hidden; gap:10px; min-height:0;">
+                        <div style="display:flex; flex-direction:column; gap:4px; flex:1; min-height:0;">
+                            <div style="display:flex; justify-content:space-between; align-items:center;">
+                                <div style="font-size:0.78rem; font-weight:600; color:var(--text);">글로벌 프롬프트 <span style="font-size:0.7rem; color:var(--text2); font-weight:400;">(배포용 · 읽기 전용)</span></div>
+                                <div id="llm-tpl-badge" style="font-size:0.68rem; padding:1px 6px; border-radius:4px; background:var(--surface2); color:var(--text2);">글로벌 사용 중</div>
+                            </div>
+                            <textarea id="llm-tpl-builtin" readonly style="flex:1; min-height:120px; width:100%; resize:none; padding:8px; border:1px solid var(--border); border-radius:6px; background:var(--surface2); color:var(--text2); font-size:0.75rem; font-family:ui-monospace,Menlo,monospace; line-height:1.4;"></textarea>
+                        </div>
+                        <div style="display:flex; flex-direction:column; gap:4px; flex:1; min-height:0;">
+                            <div style="display:flex; justify-content:space-between; align-items:center;">
+                                <div style="font-size:0.78rem; font-weight:600; color:var(--text);">커스텀 프롬프트 <span style="font-size:0.7rem; color:var(--text2); font-weight:400;">(이 PC 전용 · 편집 가능)</span></div>
+                                <button onclick="_llmTplCopyBuiltin()" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:2px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">글로벌에서 복사</button>
+                            </div>
+                            <textarea id="llm-tpl-custom" placeholder="비어 있음 — 직접 작성하거나 '글로벌에서 복사'로 시작" style="flex:1; min-height:160px; width:100%; resize:vertical; padding:8px; border:1px solid var(--accent); border-radius:6px; background:var(--surface); color:var(--text); font-size:0.78rem; font-family:ui-monospace,Menlo,monospace; line-height:1.4;"></textarea>
+                        </div>
+                    </div>
+                    <div style="padding:10px 16px; border-top:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; gap:8px; flex-shrink:0;">
+                        <label style="display:flex; align-items:center; gap:6px; font-size:0.8rem; cursor:pointer;">
+                            <input type="checkbox" id="llm-tpl-use" style="cursor:pointer;">
+                            <span>커스텀 프롬프트 사용 <span style="color:var(--text2); font-size:0.72rem;">(체크 해제 시 글로벌 적용)</span></span>
+                        </label>
+                        <div style="display:flex; gap:8px;">
+                            <button onclick="document.getElementById('llm-edit-template-overlay').remove()" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:6px 14px; border-radius:6px; cursor:pointer; font-size:0.8rem;">닫기</button>
+                            <button onclick="_saveLlmEditTemplate()" style="background:#1565C0; color:#fff; border:none; padding:6px 16px; border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600;">저장</button>
+                        </div>
+                    </div>
+                </div>`;
+            document.body.appendChild(overlay);
+
+            // 데이터 로드
+            try {
+                const resp = await fetch('/api/llm_edit_prompt_template');
+                const result = await resp.json();
+                const d = (result.data || {});
+                document.getElementById('llm-tpl-builtin').value = d.builtin || '';
+                document.getElementById('llm-tpl-custom').value = d.custom || '';
+                document.getElementById('llm-tpl-use').checked = !!d.use_custom;
+            } catch (e) {
+                console.error('[LLM_EDIT_TEMPLATE] 로드 실패:', e);
+                showToast(`보조 프롬프트 로드 실패: ${e.message}`, 'error');
+            }
+            document.getElementById('llm-tpl-custom').addEventListener('input', _llmTplUpdateBadge);
+            document.getElementById('llm-tpl-use').addEventListener('change', _llmTplUpdateBadge);
+            _llmTplUpdateBadge();
+        }
+
+        function _llmTplUpdateBadge() {
+            const badge = document.getElementById('llm-tpl-badge');
+            if (!badge) return;
+            const useCustom = document.getElementById('llm-tpl-use')?.checked;
+            const customText = (document.getElementById('llm-tpl-custom')?.value || '').trim();
+            const eff = useCustom && customText;
+            badge.textContent = eff ? '커스텀 사용 중' : '글로벌 사용 중';
+            badge.style.background = eff ? 'rgba(124,58,237,0.18)' : 'var(--surface2)';
+            badge.style.color = eff ? '#7C3AED' : 'var(--text2)';
+        }
+
+        function _llmTplCopyBuiltin() {
+            const builtin = document.getElementById('llm-tpl-builtin')?.value || '';
+            const ta = document.getElementById('llm-tpl-custom');
+            if (!ta) return;
+            if (ta.value.trim() && !confirm('현재 커스텀 내용을 글로벌 프롬프트로 덮어쓸까요?')) return;
+            ta.value = builtin;
+            const chk = document.getElementById('llm-tpl-use');
+            if (chk) chk.checked = true;
+            _llmTplUpdateBadge();
+            showToast('글로벌 프롬프트를 커스텀으로 복사했습니다 (저장 필요)', 'info');
+        }
+
+        async function _saveLlmEditTemplate() {
+            const custom = document.getElementById('llm-tpl-custom').value;
+            const useCustom = document.getElementById('llm-tpl-use').checked;
+            try {
+                const resp = await fetch('/api/llm_edit_prompt_template', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ custom, use_custom: useCustom })
+                });
+                const result = await resp.json();
+                if (!result.success) {
+                    alert('보조 프롬프트 저장 실패: ' + (result.error || '알 수 없는 오류'));
+                    return;
+                }
+                showToast('보조 프롬프트 저장 완료', 'success');
+                document.getElementById('llm-edit-template-overlay').remove();
+            } catch (e) {
+                alert('보조 프롬프트 저장 실패: ' + e.message);
+            }
         }
 
         async function submitModifiedPrompt() {
