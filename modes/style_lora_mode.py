@@ -1226,22 +1226,22 @@ async def handle_style_lora_auto_refine_enqueue(request):
             traceback.print_exc()
             return web.json_response({"success": False, "error": f"큐 매니저 접근 실패: {e}"})
 
-        items = []
+        items_spec = []
         for fn in filenames:
-            label = f"스타일 LoRA 정제: {project}/{fn}"
-            item = await qm.add_item(
-                item_type="instance_lora_prompt_refine",
-                label=label,
-                params={
+            items_spec.append({
+                "type": "instance_lora_prompt_refine",
+                "label": f"스타일 LoRA 정제: {project}/{fn}",
+                "batch_label": f"스타일 LoRA 정제: {project} ({len(filenames)}장)",
+                "params": {
                     "source_type": "style",
                     "project": project,
                     "filename": fn,
                 },
-                priority=10,
-            )
-            items.append(item)
-        print(f"[STYLE_LORA] auto_refine 큐 추가: project={project} count={len(items)}")
-        return web.json_response({"success": True, "data": {"ids": [i.id for i in items], "count": len(items)}})
+            })
+        created = await qm.add_items_batch(items_spec, priority=10)
+        batch_id = created[0].batch_id if created else None
+        print(f"[STYLE_LORA] auto_refine 배치 큐 추가: project={project} count={len(created)} batch_id={batch_id}")
+        return web.json_response({"success": True, "data": {"ids": [i.id for i in created], "count": len(created), "batch_id": batch_id}})
     except Exception as e:
         print(f"[STYLE_LORA] auto_refine_enqueue 예외: {e}")
         traceback.print_exc()

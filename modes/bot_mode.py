@@ -1077,12 +1077,24 @@ class BotMode:
                 return _json_error("태그 분석 워크플로우 경로가 설정되지 않았습니다")
 
             from queue_manager import queue_manager
-            label = f"태그 분석 (봇 대표: {bot_name}/{char_name or '전체'})"
-            item = await queue_manager.add_item("tag_analysis", label, {
-                "source": "bot_rep", "bot": bot_name, "character": char_name,
-                "filenames": body.get("filenames", []),
-            })
-            return _json_ok({"success": True, "item_id": item.id})
+            reps = queue_manager._get_bot_rep_paths(bot_name, char_name)
+            filenames = body.get("filenames", [])
+            if filenames:
+                _fnset = set(filenames)
+                reps = [r for r in reps if r["filename"] in _fnset]
+            batch_label = f"태그 분석 (봇 대표: {bot_name}/{char_name or '전체'}, {len(reps)}장)"
+            items_spec = []
+            for r in reps:
+                img = {"filepath": r["filepath"], "filename": r["filename"], "character": r["character"], "bot": bot_name}
+                items_spec.append({
+                    "type": "tag_analysis",
+                    "label": f"태그 분석(봇 대표) {bot_name}/{r['character']}/{r['filename']}",
+                    "batch_label": batch_label,
+                    "params": {"source": "bot_rep", "image": img},
+                })
+            created = await queue_manager.add_items_batch(items_spec)
+            batch_id = created[0].batch_id if created else None
+            return _json_ok({"success": True, "batch_id": batch_id, "count": len(created), "total": len(reps)})
         except Exception as e:
             print(f"[BOT_MODE] 일괄 분석 큐 추가 오류: {e}")
             traceback.print_exc()
@@ -1267,12 +1279,24 @@ class BotMode:
                 return _json_error("태그 분석 워크플로우 경로가 설정되지 않았습니다")
 
             from queue_manager import queue_manager
-            label = f"태그 분석 (봇 유틸: {bot_name})"
-            item = await queue_manager.add_item("tag_analysis", label, {
-                "source": "bot_utility", "bot": bot_name, "character": char_name,
-                "filenames": body.get("filenames", []),
-            })
-            return _json_ok({"success": True, "item_id": item.id})
+            reps = queue_manager._get_bot_utility_paths(bot_name, char_name)
+            filenames = body.get("filenames", [])
+            if filenames:
+                _fnset = set(filenames)
+                reps = [r for r in reps if r["filename"] in _fnset]
+            batch_label = f"태그 분석 (봇 유틸: {bot_name}, {len(reps)}장)"
+            items_spec = []
+            for r in reps:
+                img = {"filepath": r["filepath"], "filename": r["filename"], "character": r["character"], "bot": bot_name}
+                items_spec.append({
+                    "type": "tag_analysis",
+                    "label": f"태그 분석(봇 유틸) {bot_name}/{r['character']}/{r['filename']}",
+                    "batch_label": batch_label,
+                    "params": {"source": "bot_utility", "image": img},
+                })
+            created = await queue_manager.add_items_batch(items_spec)
+            batch_id = created[0].batch_id if created else None
+            return _json_ok({"success": True, "batch_id": batch_id, "count": len(created), "total": len(reps)})
         except Exception as e:
             print(f"[BOT_MODE] 유틸리티 분석 큐 추가 오류: {e}")
             traceback.print_exc()

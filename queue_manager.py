@@ -17,6 +17,14 @@ from dataclasses import dataclass, field, asdict
 from typing import Optional
 
 
+# LLM계열 큐 아이템 타입 — GPU/ComfyUI 자원을 쓰지 않고 네트워크(LLM API)만 사용하므로
+# 별도 워커풀(llm_max_concurrency)에서 동시 처리한다. GPU계열은 메인 루프에서 순차 처리.
+LLM_TYPES = frozenset({
+    "instance_lora_prompt_refine",  # 태그 정제 / test_setup (instance·style·bot·asset 전부 LLM 호출)
+    "bot_llm_face_tag_analysis",    # 비전 LLM 기반 얼굴/눈 태그 자동 분류
+})
+
+
 @dataclass
 class QueueItem:
     id: str
@@ -32,6 +40,12 @@ class QueueItem:
     error: Optional[str] = None
     result: Optional[dict] = None
     priority: int = 10  # 낮을수록 높은 우선순위 (삽화=0, 나머지=10)
+    # 배치(이미지별 다중 항목) 식별 — 일괄 태깅/정제에서 1000장=1000항목이 동일 batch_id 공유.
+    # None이면 단독 항목(큐 UI 개별 1줄). 있으면 동일 batch_id끼리 큐 모달에서 그룹핑/접기.
+    batch_id: Optional[str] = None
+    batch_label: Optional[str] = None
+    batch_index: Optional[int] = None  # 1..batch_total
+    batch_total: Optional[int] = None
 
     def to_dict(self) -> dict:
         d = asdict(self)
@@ -46,6 +60,11 @@ class QueueManager:
         self.current_item: Optional[QueueItem] = None
         self._processing = False
         self._lock = asyncio.Lock()
+        # LLM계열 병렬 워커풀 — llm_max_concurrency 개수만큼 동시 처리.
+        # GPU계열(item.type not in LLM_TYPES)은 메인 _process_loop 에서 순차 처리된다.
+        self._llm_worker_tasks: dict[int, asyncio.Future] = {}  # wid -> Task
+        self._llm_next_worker_id: int = 0
+        self._llm_wakeup: asyncio.Event = asyncio.Event()
         # 삽화 완료 후 다음 작업 시작 전 대기 (새 삽화 도착 시 즉시 진행)
         self._illust_wait_event: Optional[asyncio.Event] = None
         self._illust_wait_started_at: Optional[float] = None
@@ -70,7 +89,7 @@ class QueueManager:
         self.process_prompt_full = None         # async def(prompt_id, prompt_data, positive, negative) -> None
         self.save_backup = None                 # async def(img_bytes, mode, positive, negative) -> None
 
-    async def add_item(self, item_type: str, label: str, params: dict, priority: int = 10) -> QueueItem:
+    async def add_item(self, item_type: str, label: str, params: dict, priority: int = 10, skip_notify: bool = False) -> QueueItem:
         item = QueueItem(
             id=uuid.uuid4().hex[:12],
             type=item_type,
@@ -81,14 +100,61 @@ class QueueManager:
         self.items.append(item)
         self._resort_pending()
         print(f"[QUEUE] 항목 추가: type={item_type}, label={label}, id={item.id}, priority={priority}, 대기={len([i for i in self.items if i.status == 'pending'])}")
-        await self._notify_queue_updated()
+        if not skip_notify:
+            await self._notify_queue_updated()
         # 삽화 대기 중이면 즉시 깨움
         if item_type == "illustration" and self._illust_wait_event is not None:
             print("[QUEUE] 삽화 대기 중 새 삽화 도착 - 즉시 진행")
             self._illust_wait_event.set()
         # 처리 루프가 idle이면 시작
         asyncio.ensure_future(self._process_loop())
+        # LLM 워커풀도 깨움 (신규 LLM 아이템 또는 동시성 설정 변경 대응)
+        asyncio.ensure_future(self._ensure_llm_workers())
         return item
+
+    async def add_items_batch(self, items_spec: list, priority: int = 10) -> list:
+        """배치 적재 — 1000장 = 1000항목을 동일 batch_id로 한 번에 적재.
+        items_spec: [{params: dict, label: str}, ...].
+        항목당 add_item 호출은 skip_notify=True로 WS broadcast를 억제하고,
+        마지막에 _notify_queue_updated 1회만 전송(대량 적재 시 폭주 방지)."""
+        if not items_spec:
+            return []
+        batch_id = uuid.uuid4().hex[:12]
+        batch_total = len(items_spec)
+        created = []
+        for idx, spec in enumerate(items_spec, start=1):
+            params = dict(spec.get("params", {}))
+            params["batch_id"] = batch_id
+            params["batch_index"] = idx
+            params["batch_total"] = batch_total
+            item = await self.add_item(
+                spec.get("type", "tag_analysis"),
+                spec.get("label", ""),
+                params,
+                priority=priority,
+                skip_notify=True,
+            )
+            item.batch_id = batch_id
+            item.batch_label = spec.get("batch_label")
+            item.batch_index = idx
+            item.batch_total = batch_total
+            created.append(item)
+        print(f"[QUEUE] 배치 적재 완료: batch_id={batch_id}, 항목 {batch_total}개")
+        await self._notify_queue_updated()
+        return created
+
+    async def cancel_batch(self, batch_id: str) -> int:
+        """동일 batch_id의 pending 항목 전부 취소. processing은 현행 정책상 취소 불가."""
+        cancelled = 0
+        for item in self.items:
+            if item.batch_id == batch_id and item.status == "pending":
+                item.status = "cancelled"
+                item.completed_at = time.time()
+                cancelled += 1
+        if cancelled > 0:
+            print(f"[QUEUE] 배치 취소: batch_id={batch_id}, {cancelled}개")
+            await self._notify_queue_updated()
+        return cancelled
 
     async def cancel_item(self, item_id: str) -> bool:
         for item in self.items:
@@ -122,6 +188,8 @@ class QueueManager:
             "illust_waiting": self._illust_wait_event is not None,
             "illust_wait_started_at": self._illust_wait_started_at,
             "illust_wait_seconds": self._illust_wait_seconds if self._illust_wait_event is not None else 0,
+            "llm_active_workers": len([t for t in self._llm_worker_tasks.values() if not t.done()]),
+            "llm_target_workers": self._target_llm_workers(),
         }
 
     def remove_item(self, item_id: str) -> bool:
@@ -161,6 +229,15 @@ class QueueManager:
             a = type_order_map.get("instance_lora_analysis", 4)
             t = type_order_map.get("instance_lora_training", 5)
             type_order = a + (t - a) / 2.0 if t > a else a + 0.5
+
+        # tag_analysis(이미지별 분할) 중 instance_lora/style_lora 소스도 analysis 직후·training 직전에
+        # 강제 배치 — 정제/학습 전 태깅이 먼저 끝나도록 보장. 동일 batch_id 내 순서는 created_at(적재 순)가 보존.
+        if item.type == "tag_analysis":
+            src = (item.params.get("source") or "")
+            if src in ("instance_lora", "style_lora"):
+                a = type_order_map.get("instance_lora_analysis", 4)
+                t = type_order_map.get("instance_lora_training", 5)
+                type_order = a + (t - a) / 2.0 if t > a else a + 0.5
 
         # instance_lora_training 내에서 anima > sdxl 순서 유지
         profile_order = 0
@@ -230,52 +307,145 @@ class QueueManager:
             })
 
     async def _process_loop(self):
+        """GPU계열 아이템을 1개씩 순차 처리하는 메인 루프.
+        LLM계열(item.type in LLM_TYPES)은 여기서 처리하지 않고 _llm_worker_loop 워커풀에 위임한다."""
         async with self._lock:
             if self._processing:
                 return
             self._processing = True
         try:
             while True:
-                # pending 항목 중 우선순위가 가장 높은 것 (priority 낮은 것) 선택
                 pending_items = [i for i in self.items if i.status == "pending"]
                 if not pending_items:
                     break
                 pending_items.sort(key=self._sort_key)
-                next_item = pending_items[0]
-                if next_item is None:
-                    break
+                # GPU계열만 선택 (LLM계열은 워커풀이 처리)
+                gpu_pending = [i for i in pending_items if i.type not in LLM_TYPES]
+                if not gpu_pending:
+                    break  # 남은 pending은 전부 LLM계열 → 메인 루프는 종료, 워커풀이 처리
+                next_item = gpu_pending[0]
+                # 순서 보존: 더 높은 우선순위 작업이 pending/processing 중이면
+                # (예: analysis → refine → training 의존성) 그것이 끝날 때까지 대기.
+                next_key = self._sort_key(next_item)
+                blocking = any(
+                    self._sort_key(i) < next_key
+                    for i in self.items
+                    if i.status in ("pending", "processing") and i is not next_item
+                )
+                if blocking:
+                    break  # 블록 해제는 완료 시 _run_item_pipeline 이 _process_loop를 재점검
                 self.current_item = next_item
-                next_item.status = "processing"
-                next_item.started_at = time.time()
-                next_item.progress = 0.0
-                print(f"[QUEUE] 처리 시작: type={next_item.type}, label={next_item.label}, id={next_item.id}")
-                await self._notify_queue_updated()
-                try:
-                    result = await self._execute_item(next_item)
-                    next_item.status = "completed"
-                    next_item.result = result
-                    next_item.progress = 100.0
-                    print(f"[QUEUE] 처리 완료: id={next_item.id}")
-                except Exception as e:
-                    next_item.status = "failed"
-                    next_item.error = str(e)
-                    print(f"[QUEUE] 처리 실패: id={next_item.id}, error={e}")
-                    traceback.print_exc()
-                next_item.completed_at = time.time()
-                self.current_item = None
-                was_illustration = next_item.type == "illustration"
-                # 완료 알림 후 잠시 유지
-                await self._notify_queue_updated()
-                await asyncio.sleep(2.0)
-                self.items = [i for i in self.items if i.status in ("pending", "processing")]
-                await self._notify_queue_updated()
-                # 삽화 완료 후: 새 삽화 들어오면 즉시, 아니면 10초 대기 후 다음 작업
-                if was_illustration:
-                    await self._wait_after_illustration()
+                await self._run_item_pipeline(next_item, is_gpu=True)
         finally:
             self._processing = False
 
+    async def _run_item_pipeline(self, item: QueueItem, is_gpu: bool):
+        """단일 아이템 실행 → 완료/실패 처리 → 정리 공통 파이프라인.
+        GPU 메인 루프와 LLM 워커풀이 모두 이 함수를 경유한다."""
+        item.status = "processing"
+        item.started_at = time.time()
+        item.progress = 0.0
+        print(f"[QUEUE] 처리 시작: type={item.type}, label={item.label}, id={item.id}")
+        await self._notify_queue_updated()
+        try:
+            result = await self._execute_item(item)
+            item.status = "completed"
+            item.result = result
+            item.progress = 100.0
+            print(f"[QUEUE] 처리 완료: id={item.id}")
+        except Exception as e:
+            item.status = "failed"
+            item.error = str(e)
+            print(f"[QUEUE] 처리 실패: id={item.id}, error={e}")
+            traceback.print_exc()
+        item.completed_at = time.time()
+        if is_gpu:
+            self.current_item = None
+        was_illustration = item.type == "illustration"
+        # 완료 알림 후 잠시 유지
+        await self._notify_queue_updated()
+        await asyncio.sleep(2.0)
+        self.items = [i for i in self.items if i.status in ("pending", "processing")]
+        await self._notify_queue_updated()
+        # 삽화 완료 후: 새 삽화 들어오면 즉시, 아니면 10초 대기 후 다음 작업
+        if is_gpu and was_illustration:
+            await self._wait_after_illustration()
+        # 어떤 아이템이 완료되면 우선순위 블록이 풀렸을 수 있으니 메인 루프 재점검
+        asyncio.ensure_future(self._process_loop())
+
+    # ─── LLM 워커풀 ─────────────────────────────────────────
+
+    def _target_llm_workers(self) -> int:
+        """config의 llm_max_concurrency 값 (최소 1)."""
+        try:
+            n = int((self.get_config() if self.get_config else {}).get("llm_max_concurrency", 1))
+        except Exception as e:
+            print(f"[QUEUE:LLM_WORKER] llm_max_concurrency 읽기 실패, 기본 1 사용: {e}")
+            n = 1
+        return max(1, n)
+
+    async def _ensure_llm_workers(self):
+        """활성 LLM 워커 수를 llm_max_concurrency 에 맞춘다. 부족하면 추가 spawn, 초과면 축소 표시."""
+        # 종료된 워커 정리
+        self._llm_worker_tasks = {wid: t for wid, t in self._llm_worker_tasks.items() if not t.done()}
+        target = self._target_llm_workers()
+        while len(self._llm_worker_tasks) < target:
+            wid = self._llm_next_worker_id
+            self._llm_next_worker_id += 1
+            self._llm_worker_tasks[wid] = asyncio.ensure_future(self._llm_worker_loop(wid))
+            print(f"[QUEUE:LLM_WORKER] 워커 {wid} 시작 (활성 {len(self._llm_worker_tasks)}/목표 {target})")
+        # 대기 중인 워커 깨우기
+        self._llm_wakeup.set()
+
+    def _worker_should_exit(self, wid: int) -> bool:
+        """동시성이 축소된 경우, wid가 유지 대상(가장 오래된 target 개수)에 들지 않으면 True."""
+        target = self._target_llm_workers()
+        alive = sorted(w for w, t in self._llm_worker_tasks.items() if not t.done())
+        keep = set(alive[:target])
+        return wid not in keep
+
+    def _pop_next_llm_item(self) -> Optional[QueueItem]:
+        """대기 중인 LLM 아이템 중 우선순위가 가장 높은 것을 꺼내 processing 으로 전환."""
+        pending = [i for i in self.items if i.status == "pending" and i.type in LLM_TYPES]
+        if not pending:
+            return None
+        pending.sort(key=self._sort_key)
+        item = pending[0]
+        item.status = "processing"
+        item.started_at = time.time()
+        item.progress = 0.0
+        return item
+
+    async def _llm_worker_loop(self, wid: int):
+        """LLM계열 아이템을 꺼내 처리하는 워커. llm_max_concurrency 만큼 동시에 실행된다."""
+        try:
+            while True:
+                # 종료된 형제 워커 정리 + 축소 대상이면 자발 종료
+                self._llm_worker_tasks = {w: t for w, t in self._llm_worker_tasks.items() if not t.done()}
+                if self._worker_should_exit(wid):
+                    print(f"[QUEUE:LLM_WORKER] 워커 {wid} 종료 (동시성 축소, 활성 {len(self._llm_worker_tasks)})")
+                    return
+                item = self._pop_next_llm_item()
+                if item is None:
+                    self._llm_wakeup.clear()
+                    # lost-wakeup 방지: clear 이후 새 항목이 적재됐는지 재확인
+                    if any(i.status == "pending" and i.type in LLM_TYPES for i in self.items):
+                        continue
+                    await self._llm_wakeup.wait()
+                    continue
+                await self._run_item_pipeline(item, is_gpu=False)
+        except Exception:
+            print(f"[QUEUE:LLM_WORKER] 워커 {wid} 치명적 예외")
+            traceback.print_exc()
+
     async def _execute_item(self, item: QueueItem) -> dict:
+        # tag_analysis는 source별 분기 — 6개 일괄 소스는 이미지별 분할(1항목=1이미지) 핸들러,
+        # auto_match/bot_single은 결과 반환형이므로 기존 루프 핸들러 유지.
+        if item.type == "tag_analysis":
+            src = (item.params.get("source") or "")
+            if src in ("asset_batch", "asset_selected", "bot_rep", "bot_utility", "instance_lora", "style_lora"):
+                return await self._handle_tag_analysis_single(item)
+            return await self._handle_tag_analysis(item)
         dispatch = {
             "illustration": self._handle_illustration,
             "asset_generation": self._handle_asset_generation,
@@ -905,6 +1075,7 @@ class QueueManager:
                 get_image_prompt as _get_prompt, get_image_path as _get_path,
                 save_image_prompt as _save_prompt, get_project_settings as _get_settings,
                 add_session as _add_session, _safe_dirname as _safe_dirname,
+                get_test_image_prompt as _get_test_prompt,
             )
             project = _safe_dirname(params.get("project", ""))
             if not project:
@@ -943,6 +1114,21 @@ class QueueManager:
             raise ValueError(lora_detail.get("error", "로라를 찾을 수 없습니다"))
         lora_data = lora_detail["data"]
         trigger = lora_data.get("trigger", "")
+
+        # 스타일(그림체) LoRA 는 프로젝트의 테스트 이미지 프롬프트를 preview 에 그대로 사용.
+        # 인스턴스 계열은 기존대로 [] (instance 모드 폴백 사용).
+        if source == "style_lora":
+            test_images_list = []
+            for _fn in lora_data.get("test_images", []):
+                _pr = _get_test_prompt(project, _fn)
+                if _pr.get("success"):
+                    _d = _pr.get("data", {})
+                    test_images_list.append({
+                        "positive": _d.get("positive", ""),
+                        "negative": _d.get("negative", ""),
+                    })
+        else:
+            test_images_list = []
 
         for profile in profiles_to_train:
             images_list = list_images_fn()
@@ -1032,10 +1218,13 @@ class QueueManager:
             positive_text = self.build_lora_training_text(
                 training_images, trigger, profile, step, il_rate, save_step, folder,
                 "positive", lora_save_path, gen_w, gen_h, upscale, resolution,
-                [], save_after, dim, alpha,
+                test_images_list, save_after, dim, alpha,
             )
-            positive_text = positive_text.replace("[TEST_POSITIVE]\n", "[TEST_POSITIVE]\ninstance\n")
-            positive_text = positive_text.replace("[TEST_NEGATIVE]\n", "[TEST_NEGATIVE]\ninstance\n")
+            # "instance" preview 폴백 주입은 인스턴스 계열(source != style_lora)에서만.
+            # 스타일은 실제 테스트 프롬프트를 그대로 써야 SAVE_PER_STEP 기반 preview 가 동작한다.
+            if source != "style_lora":
+                positive_text = positive_text.replace("[TEST_POSITIVE]\n", "[TEST_POSITIVE]\ninstance\n")
+                positive_text = positive_text.replace("[TEST_NEGATIVE]\n", "[TEST_NEGATIVE]\ninstance\n")
 
             negative_text = self.build_lora_training_text(
                 training_images, trigger, profile, step, il_rate, save_step, folder,
@@ -1044,15 +1233,21 @@ class QueueManager:
             )
 
             # 워크플로우 로드
-            workflow_paths = config.get("lora_training_workflow_source_paths", {})
-            workflow_path = ""
-            if isinstance(workflow_paths, dict) and workflow_paths:
-                workflow_path = workflow_paths.get(profile, "")
-                if not workflow_path:
-                    for v in workflow_paths.values():
-                        if v:
-                            workflow_path = v
-                            break
+            # - source=="style_lora": 스타일(그림체) LoRA 전용 워크플로우 (폴백 없음)
+            # - 그 외(instance): 인스턴스/봇 LoRA 워크플로우 (기존 동작 유지)
+            if source == "style_lora":
+                workflow_paths = config.get("style_lora_training_workflow_source_paths", {})
+                workflow_path = workflow_paths.get(profile, "") if isinstance(workflow_paths, dict) else ""
+            else:
+                workflow_paths = config.get("lora_training_workflow_source_paths", {})
+                workflow_path = ""
+                if isinstance(workflow_paths, dict) and workflow_paths:
+                    workflow_path = workflow_paths.get(profile, "")
+                    if not workflow_path:
+                        for v in workflow_paths.values():
+                            if v:
+                                workflow_path = v
+                                break
             if not workflow_path or not os.path.isfile(workflow_path):
                 raise ValueError(f"워크플로우 파일 없음: {workflow_path}")
 
@@ -1318,7 +1513,9 @@ class QueueManager:
     # ─── 태그 분석 (공통) ──────────────────────────────────────
 
     async def _handle_tag_analysis(self, item: QueueItem) -> dict:
-        """태그 분석 통합 핸들러 (source별 분기)."""
+        """태그 분석 루프 핸들러 — 결과 반환형(auto_match/bot_single) 전용.
+        6개 일괄 소스(asset_batch/asset_selected/bot_rep/bot_utility/instance_lora/style_lora)는
+        이미지별 분할 핸들러 _handle_tag_analysis_single 로 라우팅되므로 여기서는 미처리."""
         import base64
         params = item.params
         source = params.get("source", "")
@@ -1326,62 +1523,9 @@ class QueueManager:
 
         # source별 이미지 리스트 준비
         images_to_analyze = []  # [{filepath, filename, ...metadata}]
-        save_mode = None  # "asset" | "bot" | "instance_lora" | None
+        save_mode = None  # "asset" | "bot" | None
 
-        if source == "asset_batch":
-            save_mode = "asset"
-            character = params.get("character", "")
-            if not character:
-                raise ValueError("character가 없습니다")
-            images_to_analyze = self.asset_mode.batch_analyze_representatives(character)
-            for img in images_to_analyze:
-                img["character"] = character
-
-        elif source == "asset_selected":
-            save_mode = "asset"
-            character = params.get("character", "")
-            images_info = params.get("images", [])
-            if not character or not images_info:
-                raise ValueError("character와 images가 필요합니다")
-            from modes.asset_mode import ASSET_DIR
-            for img_info in images_info:
-                outfit = img_info.get("outfit", "")
-                expression = img_info.get("expression", "")
-                filename = img_info.get("filename", "")
-                filepath = os.path.join(ASSET_DIR,
-                    self.asset_mode._safe_dirname(character),
-                    self.asset_mode._safe_dirname(outfit),
-                    self.asset_mode._safe_dirname(expression),
-                    filename)
-                images_to_analyze.append({
-                    "filepath": filepath, "filename": filename,
-                    "character": character, "outfit": outfit, "expression": expression,
-                })
-
-        elif source == "bot_rep":
-            save_mode = "bot"
-            bot = params.get("bot", "")
-            character = params.get("character", "")
-            filenames = params.get("filenames", [])
-            if not bot:
-                raise ValueError("bot이 없습니다")
-            reps = self._get_bot_rep_paths(bot, character)
-            if filenames:
-                reps = [r for r in reps if r["filename"] in filenames]
-            images_to_analyze = reps
-
-        elif source == "bot_utility":
-            save_mode = "bot"
-            bot = params.get("bot", "")
-            filenames = params.get("filenames", [])
-            if not bot:
-                raise ValueError("bot이 없습니다")
-            reps = self._get_bot_utility_paths(bot)
-            if filenames:
-                reps = [r for r in reps if r["filename"] in filenames]
-            images_to_analyze = reps
-
-        elif source == "bot_single":
+        if source == "bot_single":
             save_mode = "bot"
             bot = params.get("bot", "")
             character = params.get("character", "")
@@ -1406,36 +1550,6 @@ class QueueManager:
                         "category": category,
                     })
 
-        elif source == "instance_lora":
-            save_mode = "instance_lora"
-            lora_id = params.get("lora_id", "")
-            if not lora_id:
-                raise ValueError("lora_id가 없습니다")
-            from modes.instance_lora_mode import list_images, get_image_path, _safe_dirname
-            lora_id = _safe_dirname(lora_id)
-            filenames = list_images(lora_id)
-            for fn in filenames:
-                images_to_analyze.append({
-                    "filepath": get_image_path(lora_id, fn),
-                    "filename": fn, "lora_id": lora_id,
-                })
-        elif source == "style_lora":
-            save_mode = "style_lora"
-            project = params.get("project", "")
-            only_filenames = params.get("filenames", None)  # 일괄/개별: 지정한 파일만
-            if not project:
-                raise ValueError("style_lora 소스는 project 필드가 필요합니다")
-            from modes.style_lora_mode import list_images, get_image_path, _safe_dirname
-            project = _safe_dirname(project)
-            filenames = list_images(project)
-            if only_filenames:
-                only_set = set(only_filenames)
-                filenames = [fn for fn in filenames if fn in only_set]
-            for fn in filenames:
-                images_to_analyze.append({
-                    "filepath": get_image_path(project, fn),
-                    "filename": fn, "project": project,
-                })
         else:
             raise ValueError(f"알 수 없는 tag_analysis source: {source}")
 
@@ -1552,6 +1666,120 @@ class QueueManager:
             await self.notify_frontend(event_type, result_data)
 
         return {"success": True, "total": total, "success_count": success_count, "fail_count": fail_count}
+
+    # tag_analysis 단일 소스 → 결과 저장 방식 매핑 (이미지별 분할 핸들러용)
+    _TAG_SAVE_MODE = {
+        "asset_batch": "asset", "asset_selected": "asset",
+        "bot_rep": "bot", "bot_utility": "bot",
+        "instance_lora": "instance_lora", "style_lora": "style_lora",
+    }
+
+    async def _handle_tag_analysis_single(self, item: QueueItem) -> dict:
+        """이미지별 분할 태깅 핸들러 — 1 큐 항목 = 1 이미지.
+        params.image 에 단일 이미지({filepath|image_data, filename, ...metadata})를 받아
+        분석 → source별 저장 → tag_analysis_progress(completed|failed) 이벤트를 전송.
+        배치 단위 진행 집계/화면 갱신은 프론트엔드가 batch_id 로 처리한다."""
+        params = item.params
+        source = params.get("source", "")
+        img = params.get("image", {}) or {}
+        event_type = "tag_analysis_progress"
+        filename = img.get("filename", "")
+        batch_id = params.get("batch_id")
+        batch_index = params.get("batch_index")
+        batch_total = params.get("batch_total")
+        common_evt = {
+            "source": source, "filename": filename,
+            "batch_id": batch_id, "batch_index": batch_index, "batch_total": batch_total,
+        }
+
+        if not img:
+            err = "단일 태깅 항목에 image 정보가 없습니다"
+            print(f"[QUEUE:TAG_ANALYSIS_SINGLE] {err} source={source}")
+            if self.notify_frontend:
+                await self.notify_frontend(event_type, {
+                    **common_evt, "phase": "failed", "error": err,
+                    "success_count": 0, "fail_count": 1,
+                })
+            return {"success": False, "error": err}
+
+        try:
+            # 이미지 데이터 로드
+            if "image_data" in img:
+                image_data = img["image_data"]
+                category = img.get("category", "expressions")
+            else:
+                filepath = img.get("filepath", "")
+                if not os.path.isfile(filepath):
+                    err = f"이미지 없음: {filepath}"
+                    print(f"[QUEUE:TAG_ANALYSIS_SINGLE] {err}")
+                    if self.notify_frontend:
+                        await self.notify_frontend(event_type, {
+                            **common_evt, "phase": "failed", "error": err,
+                            "success_count": 0, "fail_count": 1,
+                        })
+                    return {"success": False, "error": err}
+                with open(filepath, "rb") as f:
+                    image_data = f.read()
+                category = "expressions"
+
+            result = await self.asset_tool.analyze_image(image_data, category)
+            if not result.get("success"):
+                err = result.get("error", "분석 실패")
+                print(f"[QUEUE:TAG_ANALYSIS_SINGLE] 분석 실패: {filename} - {err}")
+                if self.notify_frontend:
+                    await self.notify_frontend(event_type, {
+                        **common_evt, "phase": "failed", "error": err,
+                        "success_count": 0, "fail_count": 1,
+                    })
+                return {"success": False, "error": err}
+
+            tags = result.get("tags", [])
+            positive = ", ".join(tags) if tags else ""
+
+            # source별 결과 저장
+            save_mode = self._TAG_SAVE_MODE.get(source)
+            if save_mode == "asset":
+                self._save_asset_prompt(img, positive)
+            elif save_mode == "bot":
+                self._save_bot_prompt(img, positive)
+            elif save_mode == "instance_lora":
+                from modes.instance_lora_mode import save_image_prompt
+                save_image_prompt(img["lora_id"], img["filename"], {
+                    "positive": positive, "negative": "",
+                    "original_positive": positive, "original_negative": "",
+                })
+            elif save_mode == "style_lora":
+                from modes.style_lora_mode import save_image_prompt as _style_save_prompt
+                _style_save_prompt(img["project"], img["filename"], {
+                    "positive": positive, "negative": "",
+                    "original_positive": positive, "original_negative": "",
+                })
+            else:
+                err = f"지원하지 않는 단일 태깅 source: {source}"
+                print(f"[QUEUE:TAG_ANALYSIS_SINGLE] {err}")
+                if self.notify_frontend:
+                    await self.notify_frontend(event_type, {
+                        **common_evt, "phase": "failed", "error": err,
+                        "success_count": 0, "fail_count": 1,
+                    })
+                return {"success": False, "error": err}
+
+            if self.notify_frontend:
+                await self.notify_frontend(event_type, {
+                    **common_evt, "phase": "completed", "positive": positive,
+                    "success_count": 1, "fail_count": 0,
+                })
+            print(f"[QUEUE:TAG_ANALYSIS_SINGLE] 완료: source={source} filename={filename} 태그={len(tags)}")
+            return {"success": True, "positive": positive}
+        except Exception as e:
+            print(f"[QUEUE:TAG_ANALYSIS_SINGLE] 분석 오류: {filename} - {e}")
+            traceback.print_exc()
+            if self.notify_frontend:
+                await self.notify_frontend(event_type, {
+                    **common_evt, "phase": "failed", "error": str(e),
+                    "success_count": 0, "fail_count": 1,
+                })
+            return {"success": False, "error": str(e)}
 
     async def _handle_auto_match_batch(self, item: QueueItem) -> dict:
         """오토매치 배치 매칭 (임베딩 + 태그 매칭)."""
@@ -1846,6 +2074,11 @@ class QueueManager:
         lora_id = params.get("lora_id", "")
         filename = params.get("filename", "")
         event_type = "lora_prompt_refine_progress"
+        batch_evt = {
+            "batch_id": params.get("batch_id"),
+            "batch_index": params.get("batch_index"),
+            "batch_total": params.get("batch_total"),
+        }
         if not lora_id or not filename:
             raise ValueError("instance 태그 정제는 lora_id, filename이 필요합니다")
         lora_id = _safe_dirname(lora_id)
@@ -1858,7 +2091,7 @@ class QueueManager:
             print(f"[QUEUE:LORA_PROMPT_REFINE] source=instance {err}")
             if self.notify_frontend:
                 await self.notify_frontend(event_type, {
-                    "phase": "failed", "source_type": "instance",
+                    **batch_evt, "phase": "failed", "source_type": "instance",
                     "lora_id": lora_id, "filename": filename, "error": err,
                 })
             raise RuntimeError(err)
@@ -1866,7 +2099,7 @@ class QueueManager:
         await self._notify_progress(item, {"percentage": 0, "phase": "running"})
         if self.notify_frontend:
             await self.notify_frontend(event_type, {
-                "phase": "running", "source_type": "instance",
+                **batch_evt, "phase": "running", "source_type": "instance",
                 "lora_id": lora_id, "filename": filename,
             })
 
@@ -1885,7 +2118,7 @@ class QueueManager:
                 traceback.print_exc()
                 if self.notify_frontend:
                     await self.notify_frontend(event_type, {
-                        "phase": "failed", "source_type": "instance",
+                        **batch_evt, "phase": "failed", "source_type": "instance",
                         "lora_id": lora_id, "filename": filename, "error": err,
                     })
                 raise RuntimeError(err)
@@ -1901,7 +2134,7 @@ class QueueManager:
             await self._notify_progress(item, {"percentage": 100, "phase": "completed"})
             if self.notify_frontend:
                 await self.notify_frontend(event_type, {
-                    "phase": "completed", "source_type": "instance",
+                    **batch_evt, "phase": "completed", "source_type": "instance",
                     "lora_id": lora_id, "filename": filename,
                     "positive": refined_positive,
                 })
@@ -1912,7 +2145,7 @@ class QueueManager:
             traceback.print_exc()
             if self.notify_frontend:
                 await self.notify_frontend(event_type, {
-                    "phase": "failed", "source_type": "instance",
+                    **batch_evt, "phase": "failed", "source_type": "instance",
                     "lora_id": lora_id, "filename": filename, "error": str(e),
                 })
             raise
@@ -1926,6 +2159,11 @@ class QueueManager:
         project = params.get("project", "")
         filename = params.get("filename", "")
         event_type = "lora_prompt_refine_progress"
+        batch_evt = {
+            "batch_id": params.get("batch_id"),
+            "batch_index": params.get("batch_index"),
+            "batch_total": params.get("batch_total"),
+        }
         if not project or not filename:
             raise ValueError("style 태그 정제는 project, filename이 필요합니다")
         project = _safe_dirname(project)
@@ -1938,7 +2176,7 @@ class QueueManager:
             print(f"[QUEUE:LORA_PROMPT_REFINE] source=style {err}")
             if self.notify_frontend:
                 await self.notify_frontend(event_type, {
-                    "phase": "failed", "source_type": "style",
+                    **batch_evt, "phase": "failed", "source_type": "style",
                     "project": project, "filename": filename, "error": err,
                 })
             raise RuntimeError(err)
@@ -1946,7 +2184,7 @@ class QueueManager:
         await self._notify_progress(item, {"percentage": 0, "phase": "running"})
         if self.notify_frontend:
             await self.notify_frontend(event_type, {
-                "phase": "running", "source_type": "style",
+                **batch_evt, "phase": "running", "source_type": "style",
                 "project": project, "filename": filename,
             })
 
@@ -1966,7 +2204,7 @@ class QueueManager:
                 traceback.print_exc()
                 if self.notify_frontend:
                     await self.notify_frontend(event_type, {
-                        "phase": "failed", "source_type": "style",
+                        **batch_evt, "phase": "failed", "source_type": "style",
                         "project": project, "filename": filename, "error": err,
                     })
                 raise RuntimeError(err)
@@ -1982,7 +2220,7 @@ class QueueManager:
             await self._notify_progress(item, {"percentage": 100, "phase": "completed"})
             if self.notify_frontend:
                 await self.notify_frontend(event_type, {
-                    "phase": "completed", "source_type": "style",
+                    **batch_evt, "phase": "completed", "source_type": "style",
                     "project": project, "filename": filename,
                     "positive": refined_positive,
                 })
@@ -1993,7 +2231,7 @@ class QueueManager:
             traceback.print_exc()
             if self.notify_frontend:
                 await self.notify_frontend(event_type, {
-                    "phase": "failed", "source_type": "style",
+                    **batch_evt, "phase": "failed", "source_type": "style",
                     "project": project, "filename": filename, "error": str(e),
                 })
             raise

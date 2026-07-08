@@ -6611,6 +6611,18 @@
                         </div>
                     </div>
 
+                    <!-- LLM 동시 요청 수 -->
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="title">LLM 동시 요청 수</div>
+                            <div class="desc">큐에 쌓인 LLM 작업(태그 정제 · 얼굴/눈 태그 자동 분류)을 외부 API에 동시에 몇 개까지 요청할지. 1=순차(현행 동작). GPU/ComfyUI 작업(학습·삽화 등)과는 무관하게 네트워크만 병렬로 사용. 외부 API의 RPM/TPM 제한을 고려해 설정.</div>
+                        </div>
+                        <div class="setting-control">
+                            <input type="number" id="setting-llm-max-concurrency" min="1" max="20" step="1"
+                                   style="width: 80px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: .85rem;">
+                        </div>
+                    </div>
+
                     <!-- 임베딩 설정 -->
                     <div class="setting-row">
                         <div class="setting-label">
@@ -7043,6 +7055,40 @@
                         <div class="hint">공통설정 탭의 '베이스 경로'에서 검색됩니다</div>
                     </div>
                     <input type="hidden" id="setting-lora-workflow-sdxl-source-path">
+
+                    <!-- 스타일로라 학습 워크플로우 (Anima) -->
+                    <div class="setting-row" style="margin-top: 16px;">
+                        <div class="setting-label">
+                            <div class="title">🔧 스타일로라 학습 워크플로우 - Anima</div>
+                            <div class="desc">스타일(그림체) LoRA 학습 - Anima profile 워크플로우 파일</div>
+                        </div>
+                    </div>
+                    <div class="form-group" style="margin-top: -8px;">
+                        <div class="autocomplete-wrapper">
+                            <input type="text" id="setting-style-lora-workflow-anima-filename" placeholder="예: 스타일로라학습(anima).json"
+                                   oninput="onStyleLoraAnimaFilenameInput(this.value)" onfocus="onStyleLoraAnimaFilenameInput(this.value)">
+                            <div class="autocomplete-list" id="style-lora-workflow-anima-autocomplete"></div>
+                        </div>
+                        <div class="hint">공통설정 탭의 '베이스 경로'에서 검색됩니다</div>
+                    </div>
+                    <input type="hidden" id="setting-style-lora-workflow-anima-source-path">
+
+                    <!-- 스타일로라 학습 워크플로우 (SDXL) -->
+                    <div class="setting-row" style="margin-top: 16px;">
+                        <div class="setting-label">
+                            <div class="title">🔧 스타일로라 학습 워크플로우 - SDXL</div>
+                            <div class="desc">스타일(그림체) LoRA 학습 - SDXL profile 워크플로우 파일</div>
+                        </div>
+                    </div>
+                    <div class="form-group" style="margin-top: -8px;">
+                        <div class="autocomplete-wrapper">
+                            <input type="text" id="setting-style-lora-workflow-sdxl-filename" placeholder="예: 스타일로라학습(sdxl).json"
+                                   oninput="onStyleLoraSdxlFilenameInput(this.value)" onfocus="onStyleLoraSdxlFilenameInput(this.value)">
+                            <div class="autocomplete-list" id="style-lora-workflow-sdxl-autocomplete"></div>
+                        </div>
+                        <div class="hint">공통설정 탭의 '베이스 경로'에서 검색됩니다</div>
+                    </div>
+                    <input type="hidden" id="setting-style-lora-workflow-sdxl-source-path">
 
                     <!-- 얼굴 이미지 추출 워크플로우 -->
                     <div class="setting-row" style="margin-top: 16px;">
@@ -7819,6 +7865,7 @@
                             break;
                         // 태그 분석 진행률 이벤트
                         case 'tag_analysis_progress':
+                            _handleTagBatchProgress(msg.data);
                             handleTagAnalysisProgress(msg.data);
                             if (typeof handleStyleLoraTagProgress === 'function') {
                                 handleStyleLoraTagProgress(msg.data);
@@ -7834,6 +7881,7 @@
                             _handleBotLlmFaceTagProgress(msg.data);
                             break;
                         case 'lora_prompt_refine_progress':
+                            _handleTagBatchProgress(msg.data);
                             _handleBotLoraBatchRefineProgress(msg.data);
                             _handleBotTestSetupProgress(msg.data);
                             _handleAssetLoraBatchRefineProgress(msg.data);
@@ -9018,6 +9066,8 @@
             if (aftRetriesEl) aftRetriesEl.value = (currentConfig.auto_face_tag_max_retries ?? 2);
             const aftDelayEl = document.getElementById('setting-auto-llm-retry-delay');
             if (aftDelayEl) aftDelayEl.value = (currentConfig.auto_llm_retry_delay_sec ?? 1.0);
+            const llmConcEl = document.getElementById('setting-llm-max-concurrency');
+            if (llmConcEl) llmConcEl.value = (currentConfig.llm_max_concurrency ?? 1);
             const llmPresetEl = document.getElementById('setting-llm-reasoning-preset');
             if (llmPresetEl) llmPresetEl.value = currentConfig.llm_reasoning_preset || 'auto';
             const llmEffortEl = document.getElementById('setting-llm-reasoning-effort');
@@ -9163,6 +9213,19 @@
             document.getElementById('setting-lora-workflow-sdxl-filename').value = loraSdxlSplit.filename;
             document.getElementById('setting-lora-workflow-sdxl-source-path').value = loraSdxlPath;
 
+            // 스타일로라 학습 워크플로우 (profile별)
+            const styleLoraPaths = currentConfig.style_lora_training_workflow_source_paths || {};
+            // Anima
+            const styleLoraAnimaPath = styleLoraPaths.anima || '';
+            const styleLoraAnimaSplit = splitWorkflowPath(styleLoraAnimaPath);
+            document.getElementById('setting-style-lora-workflow-anima-filename').value = styleLoraAnimaSplit.filename;
+            document.getElementById('setting-style-lora-workflow-anima-source-path').value = styleLoraAnimaPath;
+            // SDXL
+            const styleLoraSdxlPath = styleLoraPaths.sdxl || '';
+            const styleLoraSdxlSplit = splitWorkflowPath(styleLoraSdxlPath);
+            document.getElementById('setting-style-lora-workflow-sdxl-filename').value = styleLoraSdxlSplit.filename;
+            document.getElementById('setting-style-lora-workflow-sdxl-source-path').value = styleLoraSdxlPath;
+
             // 얼굴 추출 워크플로우
             const faceExtractPath = currentConfig.face_extract_workflow_source_path || '';
             const faceExtractSplit = splitWorkflowPath(faceExtractPath);
@@ -9220,6 +9283,8 @@
             updateTagAnalysisWorkflowPath();
             updateLoraAnimaWorkflowPath();
             updateLoraSdxlWorkflowPath();
+            updateStyleLoraAnimaWorkflowPath();
+            updateStyleLoraSdxlWorkflowPath();
             updateFaceExtractWorkflowPath();
         }
 
@@ -9345,6 +9410,8 @@
 
         // ─── 태그 분석 진행률 이벤트 처리 ───
         async function handleTagAnalysisProgress(data) {
+            // 이미지별 분할 배치는 _handleTagBatchProgress가 처리 → 여기서는 폴백(자동매치/봇단일)만.
+            if (data && data.batch_id) return;
             const source = data.source || '';
             const phase = data.phase || '';
             if (phase === 'completed') {
@@ -9443,6 +9510,114 @@
                     const progressInner = document.getElementById('at-progress-inner');
                     if (progressInner) progressInner.style.width = `${(data.current / total) * 100}%`;
                     // auto_match는 per-image 업데이트를 completed에서만 함 (results 배열에 있을 때)
+                }
+            }
+        }
+
+        // ─── 일괄 태깅/정제 배치 추적 (이미지별 분할 큐 + 장당 디바운스 화면 갱신) ───
+        // batch_id → { label, total, remaining, success, fail, source, refreshFn, refreshTimer, processedIds:Set, finalizeFn }
+        // 1000장=1000항목이 동일 batch_id 공유. completed/failed 이벤트가 올 때마다 remaining-- 하고
+        // 디바운스(600ms)로 화면 갱신 1회 → 전체 reload 스래싱 방지. remaining 0에서 finalize(토스트 1회).
+        const _tagBatches = {};
+
+        function _tagBatchStatusEl(source) {
+            const m = {
+                'asset_batch': 'au-analyze-status', 'asset_selected': 'au-analyze-status',
+                'bot_rep': 'bot-analyze-status', 'bot_utility': 'bot-util-status',
+            };
+            return document.getElementById(m[source] || '');
+        }
+
+        function _tagBatchRefreshFn(source) {
+            switch (source) {
+                case 'style_lora': case 'style_refine':
+                    return () => { if (typeof loadStyleProjectImages === 'function' && _styleLora && _styleLora.currentProject) loadStyleProjectImages(); };
+                case 'instance_lora':
+                    return () => { if (typeof loadInstanceLoraGrid === 'function') loadInstanceLoraGrid(); };
+                case 'asset_batch': case 'asset_selected':
+                    return () => {
+                        if (typeof auRenderImages === 'function' && typeof auNavLevel !== 'undefined' && auNavLevel >= 2 && auNavOutfit && auNavExpression) {
+                            auRenderImages(auNavCharacter, auNavOutfit, auNavExpression);
+                        }
+                    };
+                case 'bot_rep':
+                    return () => {
+                        if (typeof renderBotCharacters === 'function') renderBotCharacters();
+                        if (typeof botCurrentChar !== 'undefined' && botCurrentChar && typeof loadBotCharDetailImages === 'function') loadBotCharDetailImages(botCurrentChar);
+                    };
+                case 'bot_utility':
+                    return () => { if (typeof renderBotCharacters === 'function') renderBotCharacters(); };
+                default:
+                    return null;
+            }
+        }
+
+        function _startTagBatch(batchId, label, total, source, opts) {
+            if (!batchId || !total) return;
+            opts = opts || {};
+            _tagBatches[batchId] = {
+                label: label || '', total: total, remaining: total, success: 0, fail: 0,
+                source: source, refreshFn: opts.refreshFn || _tagBatchRefreshFn(source),
+                refreshTimer: null, processedIds: new Set(), finalizeFn: opts.finalizeFn || null,
+            };
+        }
+
+        function _scheduleTagBatchRefresh(batchId) {
+            const b = _tagBatches[batchId];
+            if (!b || !b.refreshFn) return;
+            if (b.refreshTimer) clearTimeout(b.refreshTimer);
+            b.refreshTimer = setTimeout(() => {
+                b.refreshTimer = null;
+                try { b.refreshFn(); } catch (e) { console.warn('[TAG_BATCH] 화면 갱신 실패:', e); }
+            }, 600);
+        }
+
+        function _finalizeTagBatch(batchId) {
+            const b = _tagBatches[batchId];
+            if (!b) return;
+            if (b.refreshTimer) { clearTimeout(b.refreshTimer); b.refreshTimer = null; }
+            try { if (b.refreshFn) b.refreshFn(); } catch (e) { console.warn('[TAG_BATCH] 최종 갱신 실패:', e); }
+            const msg = `${b.label || '일괄 작업'} 완료: 성공 ${b.success}건${b.fail ? ` / 실패 ${b.fail}건` : ''}`;
+            showToast(msg, b.fail ? 'error' : 'success');
+            const statusEl = _tagBatchStatusEl(b.source);
+            if (statusEl) statusEl.textContent = msg;
+            if (typeof b.finalizeFn === 'function') { try { b.finalizeFn(b); } catch (e) { console.warn('[TAG_BATCH] finalize 실패:', e); } }
+            delete _tagBatches[batchId];
+        }
+
+        // tag_analysis_progress(6 소스) + lora_prompt_refine_progress(style) 양쪽에서 호출.
+        // batch_id 없는 이벤트(자동매치/봇단일/단일 정제)는 여기서 무시 → 기존 핸들러가 처리.
+        function _handleTagBatchProgress(data) {
+            if (!data || !data.batch_id) return;
+            const b = _tagBatches[data.batch_id];
+            if (!b) return;
+            const phase = data.phase;
+            if (phase !== 'completed' && phase !== 'failed') return;
+            const key = (data.filename || '') + '#' + (data.batch_index || '');
+            if (b.processedIds.has(key)) return; // 중복 이벤트 방지
+            b.processedIds.add(key);
+            b.remaining = Math.max(0, b.remaining - 1);
+            if (phase === 'completed') b.success++; else b.fail++;
+            const statusEl = _tagBatchStatusEl(b.source);
+            if (statusEl) statusEl.textContent = `${b.label || '일괄 작업'}: 완료 ${b.success} / 실패 ${b.fail} (남은 ${b.remaining})`;
+            if (phase === 'completed') _scheduleTagBatchRefresh(data.batch_id);
+            if (b.remaining === 0) _finalizeTagBatch(data.batch_id);
+        }
+
+        // WS 누락 보정: /api/queue/status 폴백에서 남은(pending+processing) 개수로 remaining 보정.
+        // 백엔드는 완료 항목을 ~2초 후 큐에서 제거하므로, 완료 수 대신 '아직 끝나지 않은 수' 기준이 견고하다.
+        function _reconcileTagBatchesFromQueue(items) {
+            if (!items || !items.length) return;
+            for (const batchId of Object.keys(_tagBatches)) {
+                const b = _tagBatches[batchId];
+                const grp = items.filter(i => i.batch_id === batchId);
+                if (!grp.length) continue;
+                const pendingProc = grp.filter(i => i.status === 'pending' || i.status === 'processing').length;
+                if (pendingProc < b.remaining) {
+                    b.remaining = pendingProc;
+                    const statusEl = _tagBatchStatusEl(b.source);
+                    if (statusEl) statusEl.textContent = `${b.label || '일괄 작업'}: 완료 ${b.success} / 실패 ${b.fail} (남은 ${b.remaining})`;
+                    if (b.remaining === 0) _finalizeTagBatch(batchId);
                 }
             }
         }
@@ -9774,6 +9949,10 @@
                     anima: document.getElementById('setting-lora-workflow-anima-source-path').value,
                     sdxl: document.getElementById('setting-lora-workflow-sdxl-source-path').value
                 },
+                style_lora_training_workflow_source_paths: {
+                    anima: document.getElementById('setting-style-lora-workflow-anima-source-path').value,
+                    sdxl: document.getElementById('setting-style-lora-workflow-sdxl-source-path').value
+                },
                 face_extract_workflow_source_path: document.getElementById('setting-face-extract-workflow-source-path').value,
                 lora_load_path: document.getElementById('setting-lora-load-path').value.trim().replace(/\\?$/, '\\SOYA_CHAR_LORA'),
                 bot_lora_load_path: document.getElementById('setting-lora-load-path').value.trim().replace(/\\?$/, '\\SOYA_CHAR_LORA\\SOYA_BOT_LORA'),
@@ -9786,6 +9965,7 @@
                 queue_type_order: currentConfig.queue_type_order || {},
                 auto_face_tag_max_retries: parseInt(document.getElementById('setting-auto-face-tag-retries').value) || 0,
                 auto_llm_retry_delay_sec: parseFloat(document.getElementById('setting-auto-llm-retry-delay').value) || 0,
+                llm_max_concurrency: parseInt(document.getElementById('setting-llm-max-concurrency').value) || 1,
             };
 
             try {
@@ -9933,6 +10113,10 @@
                         selectLoraAnimaWorkflowFile(path, filename);
                     } else if (list.id === 'lora-workflow-sdxl-autocomplete') {
                         selectLoraSdxlWorkflowFile(path, filename);
+                    } else if (list.id === 'style-lora-workflow-anima-autocomplete') {
+                        selectStyleLoraAnimaWorkflowFile(path, filename);
+                    } else if (list.id === 'style-lora-workflow-sdxl-autocomplete') {
+                        selectStyleLoraSdxlWorkflowFile(path, filename);
                     } else if (list.id === 'face-extract-workflow-autocomplete') {
                         selectFaceExtractWorkflowFile(path, filename);
                     } else if (list.id === 'anima-asset-workflow-autocomplete') {
@@ -11289,6 +11473,66 @@
             const baseDir = document.getElementById('setting-workflow-base-dir').value;
             const filename = document.getElementById('setting-lora-workflow-sdxl-filename').value;
             document.getElementById('setting-lora-workflow-sdxl-source-path').value = combineWorkflowPath(baseDir, filename);
+        }
+
+        // 스타일로라 학습 워크플로우 자동완성 - Anima
+        let styleLoraAnimaAutocompleteTimeout;
+        async function onStyleLoraAnimaFilenameInput(value) {
+            updateStyleLoraAnimaWorkflowPath();
+            const list = document.getElementById('style-lora-workflow-anima-autocomplete');
+            const baseDir = document.getElementById('setting-workflow-base-dir').value.trim();
+            clearTimeout(styleLoraAnimaAutocompleteTimeout);
+            styleLoraAnimaAutocompleteTimeout = setTimeout(async () => {
+                try {
+                    const params = new URLSearchParams({ search: value, base_dir: baseDir });
+                    const data = await fetchJSON(`/api/workflow_files?${params}`);
+                    renderAutocompleteItems(data.files, list);
+                } catch (e) {
+                    list.classList.remove('visible');
+                }
+            }, 300);
+        }
+
+        function selectStyleLoraAnimaWorkflowFile(fullPath, filename) {
+            document.getElementById('setting-style-lora-workflow-anima-filename').value = filename;
+            document.getElementById('setting-style-lora-workflow-anima-source-path').value = fullPath;
+            document.getElementById('style-lora-workflow-anima-autocomplete').classList.remove('visible');
+        }
+
+        function updateStyleLoraAnimaWorkflowPath() {
+            const baseDir = document.getElementById('setting-workflow-base-dir').value;
+            const filename = document.getElementById('setting-style-lora-workflow-anima-filename').value;
+            document.getElementById('setting-style-lora-workflow-anima-source-path').value = combineWorkflowPath(baseDir, filename);
+        }
+
+        // 스타일로라 학습 워크플로우 자동완성 - SDXL
+        let styleLoraSdxlAutocompleteTimeout;
+        async function onStyleLoraSdxlFilenameInput(value) {
+            updateStyleLoraSdxlWorkflowPath();
+            const list = document.getElementById('style-lora-workflow-sdxl-autocomplete');
+            const baseDir = document.getElementById('setting-workflow-base-dir').value.trim();
+            clearTimeout(styleLoraSdxlAutocompleteTimeout);
+            styleLoraSdxlAutocompleteTimeout = setTimeout(async () => {
+                try {
+                    const params = new URLSearchParams({ search: value, base_dir: baseDir });
+                    const data = await fetchJSON(`/api/workflow_files?${params}`);
+                    renderAutocompleteItems(data.files, list);
+                } catch (e) {
+                    list.classList.remove('visible');
+                }
+            }, 300);
+        }
+
+        function selectStyleLoraSdxlWorkflowFile(fullPath, filename) {
+            document.getElementById('setting-style-lora-workflow-sdxl-filename').value = filename;
+            document.getElementById('setting-style-lora-workflow-sdxl-source-path').value = fullPath;
+            document.getElementById('style-lora-workflow-sdxl-autocomplete').classList.remove('visible');
+        }
+
+        function updateStyleLoraSdxlWorkflowPath() {
+            const baseDir = document.getElementById('setting-workflow-base-dir').value;
+            const filename = document.getElementById('setting-style-lora-workflow-sdxl-filename').value;
+            document.getElementById('setting-style-lora-workflow-sdxl-source-path').value = combineWorkflowPath(baseDir, filename);
         }
 
         // 얼굴 추출 워크플로우 자동완성
@@ -17554,6 +17798,7 @@
                 });
                 if (data.success) {
                     showToast('큐에 추가되었습니다', 'info');
+                    _startTagBatch(data.batch_id, `인스턴스 LoRA 태깅 (${data.total || 0}장)`, data.total || 0, 'instance_lora');
                 } else showToast(data.error || '큐 추가 실패', 'error');
             } catch (e) { showToast('큐 추가 실패', 'error'); }
         }
@@ -19078,7 +19323,10 @@
                     method: 'POST', headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({project: _styleLora.currentProject, filenames: fns})
                 });
-                if (resp.success) showToast(`태깅 큐 추가됨 (${fns.length}장)`, 'success');
+                if (resp.success) {
+                    showToast(`태깅 큐 추가됨 (${fns.length}장)`, 'success');
+                    _startTagBatch(resp.batch_id, `스타일 태깅 (${fns.length}장)`, resp.total || fns.length, 'style_lora');
+                }
                 else showToast(resp.error || '태깅 실패', 'error');
             } catch (e) { showToast(`태깅 실패: ${e.message || e}`, 'error'); }
         }
@@ -19093,7 +19341,10 @@
                     method: 'POST', headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({project: _styleLora.currentProject, filenames: fns})
                 });
-                if (resp.success) showToast(`정제 큐 추가됨 (${resp.data.count}장)`, 'success');
+                if (resp.success) {
+                    showToast(`정제 큐 추가됨 (${resp.data.count}장)`, 'success');
+                    _startTagBatch(resp.data.batch_id, `스타일 LLM 정제 (${resp.data.count}장)`, resp.data.count, 'style_refine');
+                }
                 else showToast(resp.error || '정제 실패', 'error');
             } catch (e) { showToast(`정제 실패: ${e.message || e}`, 'error'); }
         }
@@ -19106,7 +19357,10 @@
                     method: 'POST', headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({project: _styleLora.currentProject, filenames: [filename]})
                 });
-                if (resp.success) showToast('태깅 큐 추가됨', 'success');
+                if (resp.success) {
+                    showToast('태깅 큐 추가됨', 'success');
+                    _startTagBatch(resp.batch_id, `스타일 태깅 (${filename})`, resp.total || 1, 'style_lora');
+                }
                 else showToast(resp.error || '태깅 실패', 'error');
             } catch (e) { showToast(`태깅 실패: ${e.message || e}`, 'error'); }
         }
@@ -19119,7 +19373,10 @@
                     method: 'POST', headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({project: _styleLora.currentProject, filenames: [filename]})
                 });
-                if (resp.success) showToast('정제 큐 추가됨', 'success');
+                if (resp.success) {
+                    showToast('정제 큐 추가됨', 'success');
+                    _startTagBatch(resp.data.batch_id, `스타일 LLM 정제 (${filename})`, resp.data.count || 1, 'style_refine');
+                }
                 else showToast(resp.error || '정제 실패', 'error');
             } catch (e) { showToast(`정제 실패: ${e.message || e}`, 'error'); }
         }
@@ -19936,6 +20193,7 @@
         // 태깅/정제 완료 후 자동 갱신(기존 이벤트 재사용)
         function handleStyleLoraTagProgress(data) {
             if (!data) return;
+            if (data.batch_id) return; // 배치 추적기가 처리
             if (data.phase === 'completed' && data.source === 'style_lora') {
                 showToast('스타일 태깅 완료', 'success');
                 if (_styleLora.currentProject) loadStyleProjectImages();
@@ -19944,6 +20202,7 @@
 
         function handleStyleLoraRefineProgress(data) {
             if (!data) return;
+            if (data.batch_id) return; // 배치 추적기가 처리
             if (data.source_type !== 'style') return;
             if (data.phase === 'completed') {
                 showToast('스타일 LLM 정제 완료', 'success');
@@ -29512,6 +29771,9 @@
                 if (data.error) { showToast(data.error, 'error'); if (btn) { btn.disabled = false; btn.textContent = '선택 분석 실행'; } return; }
                 status.textContent = `큐에 추가됨 (${filenames.length}장) - 대기 중...`;
                 showToast('큐에 추가되었습니다', 'info');
+                _startTagBatch(data.batch_id, `봇 대표 태깅 (${filenames.length}장)`, data.total || filenames.length, 'bot_rep', {
+                    finalizeFn: () => { const b = document.getElementById('bot-analyze-confirm-btn'); if (b) { b.disabled = false; b.textContent = '선택 분석 실행'; } },
+                });
             } catch (e) {
                 console.error('[BOT] 일괄 분석 큐 추가 오류:', e);
                 showToast('큐 추가 오류', 'error');
@@ -31600,6 +31862,9 @@
                 if (data.error) { showToast(data.error, 'error'); btn.disabled = false; btn.textContent = '얼굴 태그 일괄 분석'; return; }
                 statusDiv.textContent = `큐에 추가됨 (${filenames.length}장) - 대기 중...`;
                 showToast('큐에 추가되었습니다', 'info');
+                _startTagBatch(data.batch_id, `봇 유틸 태깅 (${filenames.length}장)`, data.total || filenames.length, 'bot_utility', {
+                    finalizeFn: () => { const b = document.getElementById('btn-bot-util-analyze'); if (b) { b.disabled = false; b.textContent = '얼굴 태그 일괄 분석'; } },
+                });
             } catch (e) {
                 showToast('큐 추가 오류', 'error');
                 btn.disabled = false;
@@ -36523,6 +36788,9 @@
                     auSetAnalyzingState(false);
                 } else {
                     statusEl.textContent = `큐에 추가됨 (${data.total}장) - 대기 중...`;
+                    _startTagBatch(data.batch_id, `에셋 선택 태깅 (${data.total}장)`, data.total, 'asset_selected', {
+                        finalizeFn: () => { if (typeof auSetAnalyzingState === 'function') auSetAnalyzingState(false); },
+                    });
                 }
             } catch (e) {
                 statusEl.textContent = '오류: ' + e.message;
@@ -36577,6 +36845,9 @@
                     auSetAnalyzingState(false);
                 } else {
                     statusEl.textContent = `큐에 추가됨 (${data.total}장) - 대기 중...`;
+                    _startTagBatch(data.batch_id, `에셋 일괄 태깅 (${data.total}장)`, data.total, 'asset_batch', {
+                        finalizeFn: () => { if (typeof auSetAnalyzingState === 'function') auSetAnalyzingState(false); },
+                    });
                 }
             } catch (e) {
                 statusEl.textContent = '오류: ' + e.message;
@@ -37725,14 +37996,26 @@
             }
 
             if (processing) {
-                barLabel.textContent = processing.label;
-                const pct = Math.round(processing.progress || 0);
-                barProgressText.textContent = pct + '%';
-                barProgressBar.style.width = pct + '%';
+                // 배치 항목이면 배치 단위 진행률 표시(장당 라벨 대신 배치 라벨 + X/Y).
+                if (processing.batch_id) {
+                    const grp = assetQueue.filter(q => q.batch_id === processing.batch_id);
+                    const total = processing.batch_total || grp.length;
+                    const pend = grp.filter(q => q.status === 'pending').length;
+                    const done = Math.max(0, total - pend - grp.filter(q => q.status === 'processing').length);
+                    barLabel.textContent = processing.batch_label || processing.label;
+                    const pct = total > 0 ? Math.round((done / total) * 100) : Math.round(processing.progress || 0);
+                    barProgressText.textContent = done + '/' + total;
+                    barProgressBar.style.width = pct + '%';
+                } else {
+                    barLabel.textContent = processing.label;
+                    const pct = Math.round(processing.progress || 0);
+                    barProgressText.textContent = pct + '%';
+                    barProgressBar.style.width = pct + '%';
+                }
                 barSpinner.style.display = 'block';
                 barStopBtn.style.display = 'inline-block';
             } else if (pending.length > 0) {
-                barLabel.textContent = '다음: ' + pending[0].label;
+                barLabel.textContent = '다음: ' + (pending[0].batch_label || pending[0].label);
                 barProgressText.textContent = '준비중...';
                 barProgressBar.style.width = '0%';
                 barSpinner.style.display = 'block';
@@ -37741,7 +38024,13 @@
 
             if (pending.length > 0) {
                 barWaiting.style.display = 'inline-block';
-                barWaiting.textContent = pending.length + ' 대기';
+                // 배치 단위 대기 표시: 1000장이 "1000 대기"로 도배되지 않게 배치 수+장 수.
+                const _batchIds = new Set();
+                let _standalone = 0;
+                pending.forEach(q => q.batch_id ? _batchIds.add(q.batch_id) : _standalone++);
+                barWaiting.textContent = (_batchIds.size > 0)
+                    ? `${_batchIds.size}배치 / ${pending.length}장 대기`
+                    : (pending.length + ' 대기');
             } else {
                 barWaiting.style.display = 'none';
             }
@@ -37764,68 +38053,98 @@
             const panelBody = document.getElementById('asset-queue-panel-body');
             if (!panelBody) { console.error('[QUEUE] renderAssetQueueUI: asset-queue-panel-body 요소 없음'); return; }
             panelBody.innerHTML = '';
+            // 배치 그룹핑: 동일 batch_id 항목을 1줄 요약(대량 항목 DOM 폭주 방지).
+            const rendered = new Set();
             assetQueue.forEach(item => {
-                const ts = getTypeStyle(item.type);
-                const row = document.createElement('div');
-                row.className = 'asset-queue-item item-' + item.status;
-                row.dataset.queueItemId = item.id;
-                let icon = '';
-                let statusText = '';
-                switch (item.status) {
-                    case 'pending':
-                        icon = ts.icon; break;
-                    case 'processing':
-                        icon = '<span class="queue-spinner" style="width:14px;height:14px;border-width:2px;"></span>';
-                        statusText = Math.round(item.progress || 0) + '%';
-                        break;
-                    case 'completed':
-                        icon = '✔'; break;
-                    case 'failed':
-                        icon = '✘'; statusText = item.errorMsg || '실패'; break;
-                    case 'cancelled':
-                        icon = '■'; statusText = '취소'; break;
-                }
-                if (!statusText && item.status === 'pending') statusText = '대기';
-                if (!statusText && item.status === 'completed') statusText = '완료';
-
-                // 학습 진행률 상세 (phase별 표시)
-                let phaseHint = '';
-                if (item.status === 'processing' && item.progress_detail) {
-                    const d = item.progress_detail;
-                    if (d.phase === 'generating' || d.phase === 'preview') {
-                        const cur = d.current || d.value || 0;
-                        const tot = d.total || d.max || 0;
-                        statusText = '프리뷰';
-                        phaseHint = '<span style="font-size:0.65rem;color:var(--text3);margin-left:2px;">' + cur + '/' + tot + '</span>';
-                    } else if (d.phase === 'training') {
-                        if (d.step !== undefined && d.total) {
-                            statusText = '학습';
-                            phaseHint = '<span style="font-size:0.65rem;color:var(--text3);margin-left:2px;">' + d.step + '/' + d.total + '</span>';
-                        } else if (d.step !== undefined) {
-                            statusText = '학습 step ' + d.step;
-                        }
-                    } else if (d.step && d.total) {
-                        statusText = d.step + '/' + d.total;
-                    }
-                }
-
-                let actionBtn = '';
-                if (item.status === 'pending') {
-                    actionBtn = '<button class="item-dismiss-btn" onclick="event.stopPropagation(); cancelQueueItem(\'' + item.id + '\');">✕</button>';
-                } else if (item.status === 'processing') {
-                    actionBtn = '<button class="item-dismiss-btn" style="background:rgba(230,126,34,0.2);color:#e67e22;" onclick="event.stopPropagation(); skipCurrentItem(\'' + item.id + '\');">건너뛰기</button>';
+                if (rendered.has(item.id)) return;
+                if (item.batch_id) {
+                    const grp = assetQueue.filter(i => i.batch_id === item.batch_id);
+                    grp.forEach(g => rendered.add(g.id));
+                    const total = item.batch_total || grp.length;
+                    const pend = grp.filter(i => i.status === 'pending').length;
+                    const proc = grp.filter(i => i.status === 'processing').length;
+                    const done = Math.max(0, total - pend - proc);
+                    const ts = getTypeStyle(item.type);
+                    const row = document.createElement('div');
+                    row.className = 'asset-queue-item item-batch' + (proc ? ' processing' : '');
+                    row.dataset.queueItemId = item.id;
+                    const icon = proc ? '<span class="queue-spinner" style="width:14px;height:14px;border-width:2px;"></span>' : ts.icon;
+                    const statusText = proc ? (done + '/' + total) : (pend > 0 ? (done + '/' + total + ' 대기') : '완료');
+                    const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+                    const actionBtn = pend > 0
+                        ? '<button class="item-dismiss-btn" onclick="event.stopPropagation(); cancelQueueBatchBackend(\'' + item.batch_id + '\');">✕</button>'
+                        : '';
+                    const labelColor = proc ? ts.color : '';
+                    row.innerHTML =
+                        '<div class="item-icon">' + icon + '</div>' +
+                        '<div class="item-label" style="' + (labelColor ? 'color:' + labelColor : '') + '">' + escapeHtml(item.batch_label || item.label || '배치') + '</div>' +
+                        (proc ? '<div class="item-progress-bar"><div class="item-progress-bar-inner" style="width:' + pct + '%"></div></div>' : '') +
+                        '<div class="item-status">' + statusText + '</div>' +
+                        actionBtn;
+                    panelBody.appendChild(row);
                 } else {
-                    actionBtn = '<button class="item-dismiss-btn" onclick="event.stopPropagation(); removeQueueItemBackend(\'' + item.id + '\');">✕</button>';
-                }
+                    const ts = getTypeStyle(item.type);
+                    const row = document.createElement('div');
+                    row.className = 'asset-queue-item item-' + item.status;
+                    row.dataset.queueItemId = item.id;
+                    let icon = '';
+                    let statusText = '';
+                    switch (item.status) {
+                        case 'pending':
+                            icon = ts.icon; break;
+                        case 'processing':
+                            icon = '<span class="queue-spinner" style="width:14px;height:14px;border-width:2px;"></span>';
+                            statusText = Math.round(item.progress || 0) + '%';
+                            break;
+                        case 'completed':
+                            icon = '✔'; break;
+                        case 'failed':
+                            icon = '✘'; statusText = item.errorMsg || '실패'; break;
+                        case 'cancelled':
+                            icon = '■'; statusText = '취소'; break;
+                    }
+                    if (!statusText && item.status === 'pending') statusText = '대기';
+                    if (!statusText && item.status === 'completed') statusText = '완료';
 
-                const labelColor = item.status === 'processing' ? ts.color : '';
-                row.innerHTML =
-                    '<div class="item-icon">' + icon + '</div>' +
-                    '<div class="item-label" style="' + (labelColor ? 'color:' + labelColor : '') + '">' + escapeHtml(item.label) + '</div>' +
-                    (item.status === 'processing' ? '<div class="item-progress-bar"><div class="item-progress-bar-inner" style="width:' + Math.round(item.progress || 0) + '%"></div></div>' : '') +
-                    '<div class="item-status">' + statusText + phaseHint + '</div>' +
-                    actionBtn;
-                panelBody.appendChild(row);
+                    // 학습 진행률 상세 (phase별 표시)
+                    let phaseHint = '';
+                    if (item.status === 'processing' && item.progress_detail) {
+                        const d = item.progress_detail;
+                        if (d.phase === 'generating' || d.phase === 'preview') {
+                            const cur = d.current || d.value || 0;
+                            const tot = d.total || d.max || 0;
+                            statusText = '프리뷰';
+                            phaseHint = '<span style="font-size:0.65rem;color:var(--text3);margin-left:2px;">' + cur + '/' + tot + '</span>';
+                        } else if (d.phase === 'training') {
+                            if (d.step !== undefined && d.total) {
+                                statusText = '학습';
+                                phaseHint = '<span style="font-size:0.65rem;color:var(--text3);margin-left:2px;">' + d.step + '/' + d.total + '</span>';
+                            } else if (d.step !== undefined) {
+                                statusText = '학습 step ' + d.step;
+                            }
+                        } else if (d.step && d.total) {
+                            statusText = d.step + '/' + d.total;
+                        }
+                    }
+
+                    let actionBtn = '';
+                    if (item.status === 'pending') {
+                        actionBtn = '<button class="item-dismiss-btn" onclick="event.stopPropagation(); cancelQueueItem(\'' + item.id + '\');">✕</button>';
+                    } else if (item.status === 'processing') {
+                        actionBtn = '<button class="item-dismiss-btn" style="background:rgba(230,126,34,0.2);color:#e67e22;" onclick="event.stopPropagation(); skipCurrentItem(\'' + item.id + '\');">건너뛰기</button>';
+                    } else {
+                        actionBtn = '<button class="item-dismiss-btn" onclick="event.stopPropagation(); removeQueueItemBackend(\'' + item.id + '\');">✕</button>';
+                    }
+
+                    const labelColor = item.status === 'processing' ? ts.color : '';
+                    row.innerHTML =
+                        '<div class="item-icon">' + icon + '</div>' +
+                        '<div class="item-label" style="' + (labelColor ? 'color:' + labelColor : '') + '">' + escapeHtml(item.label) + '</div>' +
+                        (item.status === 'processing' ? '<div class="item-progress-bar"><div class="item-progress-bar-inner" style="width:' + Math.round(item.progress || 0) + '%"></div></div>' : '') +
+                        '<div class="item-status">' + statusText + phaseHint + '</div>' +
+                        actionBtn;
+                    panelBody.appendChild(row);
+                }
             });
 
             // 패널 헤더
@@ -37847,6 +38166,19 @@
                     body: JSON.stringify({ id: id }),
                 });
             } catch (e) { console.error('[QUEUE] 항목 제거 실패:', e); }
+        }
+
+        async function cancelQueueBatchBackend(batchId) {
+            if (!batchId) return;
+            if (!confirm('이 배치의 남은 대기 항목을 모두 취소할까요? (처리 중인 1건은 완료됩니다)')) return;
+            try {
+                const resp = await fetchJSON('/api/queue/cancel_batch', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ batch_id: batchId }),
+                });
+                if (resp && resp.success) showToast(`배치 취소: ${resp.cancelled || 0}건`, 'success');
+                else showToast((resp && resp.error) || '배치 취소 실패', 'error');
+            } catch (e) { showToast(`배치 취소 실패: ${e.message || e}`, 'error'); }
         }
 
         function toggleAssetQueuePanel() {
@@ -38170,12 +38502,17 @@
         }
 
         function updateQueueBadge() {
-            const pending = queueModalData.filter(i => i.status === 'pending').length;
-            const processing = queueModalData.filter(i => i.status === 'processing').length;
+            // 배치(동일 batch_id)는 1작업으로 취급 — 1000장 일괄 태깅이 배지를 1000으로 도배하지 않도록.
+            const active = queueModalData.filter(i => i.status === 'pending' || i.status === 'processing');
+            const batchIds = new Set();
+            let standalone = 0;
+            active.forEach(i => { if (i.batch_id) batchIds.add(i.batch_id); else standalone++; });
+            const jobs = standalone + batchIds.size;
+            const totalImages = active.length;
             const badge = document.getElementById('queue-badge');
             if (!badge) { console.error('[QUEUE] updateQueueBadge: queue-badge 요소 없음'); return; }
-            if (pending + processing > 0) {
-                badge.textContent = pending + processing;
+            if (jobs > 0) {
+                badge.textContent = (batchIds.size > 0 && totalImages > jobs) ? `${jobs}(${totalImages})` : String(jobs);
                 badge.style.display = 'flex';
             } else {
                 badge.style.display = 'none';
@@ -38244,43 +38581,104 @@
             body.appendChild(empty);
             if (waitBanner) body.appendChild(waitBanner);
             try {
+            // 배치 그룹핑: 동일 batch_id 항목을 1줄 요약(접기/펼치기). batch_id 없으면 개별 1줄.
+            const rendered = new Set();
             items.forEach((item, idx) => {
-                const el = document.createElement('div');
-                el.className = 'queue-modal-item' + (item.status === 'processing' ? ' processing' : '') + (item.status === 'completed' ? ' completed' : '');
-                el.dataset.queueModalIdx = idx;
-                const isPending = item.status === 'pending';
-                const isProcessing = item.status === 'processing';
-                const pct = item.progress ? Math.round(item.progress) : 0;
-                let progressLabel = pct + '%';
-                if (isProcessing && item.progress_detail) {
-                    const d = item.progress_detail;
-                    if (d.phase === 'generating' || d.phase === 'preview') {
-                        const cur = d.current || d.value || 0;
-                        const tot = d.total || d.max || 0;
-                        progressLabel = '프리뷰 <span style="font-size:0.65rem;color:var(--text3);">' + cur + '/' + tot + '</span>';
-                    } else if (d.phase === 'training' && d.step !== undefined && d.total) {
-                        progressLabel = pct + '% <span style="font-size:0.65rem;color:var(--text3);">' + d.step + '/' + d.total + '</span>';
+                if (rendered.has(item.id)) return;
+                if (item.batch_id) {
+                    const grp = items.filter(i => i.batch_id === item.batch_id);
+                    grp.forEach(g => rendered.add(g.id));
+                    const total = item.batch_total || grp.length;
+                    const pending = grp.filter(i => i.status === 'pending').length;
+                    const processing = grp.filter(i => i.status === 'processing').length;
+                    const done = Math.max(0, total - pending - processing);
+                    const anyPending = pending > 0;
+                    const expanded = _queueBatchExpanded.has(item.batch_id);
+                    const label = item.batch_label || item.label || '배치';
+                    const typeLabel = _queueTypeLabels[item.type] || item.type || '';
+                    const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+                    const el = document.createElement('div');
+                    el.className = 'queue-modal-item queue-modal-batch' + (processing ? ' processing' : '') + ((pending === 0 && processing === 0) ? ' completed' : '');
+                    el.innerHTML = `
+                        <span class="qm-handle">&nbsp;</span>
+                        <span class="qm-type">${typeLabel}</span>
+                        <span class="qm-label" style="cursor:pointer" onclick="queueModalToggleBatch('${escapeHtml(item.batch_id)}')">${expanded ? '▼' : '▶'} ${escapeHtml(label)}</span>
+                        <span class="qm-progress">${done}/${total} <span style="font-size:0.6rem;color:var(--text3);">${pct}%</span></span>
+                        <span class="qm-actions">
+                            ${anyPending ? '<button onclick="queueModalCancelBatch(\''+escapeHtml(item.batch_id)+'\')" title="배치 전체 취소">✕</button>' : ''}
+                        </span>
+                    `;
+                    body.appendChild(el);
+                    if (expanded) {
+                        grp.forEach(gi => {
+                            const gidx = items.indexOf(gi);
+                            body.appendChild(_renderQueueItemRow(gi, gidx, true));
+                        });
                     }
+                } else {
+                    body.appendChild(_renderQueueItemRow(item, idx, false));
                 }
-                const typeLabel = _queueTypeLabels[item.type] || item.type || '';
-                el.innerHTML = `
-                    <span class="qm-handle" title="드래그하여 이동">${isPending ? '⠿' : '&nbsp;'}</span>
-                    <span class="qm-type">${typeLabel}</span>
-                    <span class="qm-label">${escapeHtml(item.label || '')}</span>
-                    <span class="qm-progress">${isProcessing ? progressLabel : (item.status === 'completed' ? '✓' : item.status === 'failed' ? '✗' : item.status === 'cancelled' ? '—' : '')}</span>
-                    <span class="qm-actions">
-                        ${isPending ? '<button onclick="queueModalMoveUp('+idx+')" title="위로">▲</button><button onclick="queueModalMoveDown('+idx+')" title="아래로">▼</button>' : ''}
-                        ${isPending ? '<button onclick="queueModalCancelItem(\''+item.id+'\')" title="취소">✕</button>' : ''}
-                    </span>
-                `;
-                // 드래그 핸들
-                if (isPending) {
-                    const handle = el.querySelector('.qm-handle');
-                    handle.addEventListener('mousedown', (e) => queueModalDragStart(e, idx));
-                }
-                body.appendChild(el);
             });
             } catch (err) { console.error('[QUEUE] renderQueueModal 아이템 렌더링 실패:', err, 'items:', items); }
+        }
+
+        // 배치 그룹 항목 1줄 렌더 헬퍼 (개별/펼침 자식 공용). indent=true면 자식 항목(↳ 들여쓰기).
+        function _renderQueueItemRow(item, idx, indent) {
+            const el = document.createElement('div');
+            el.className = 'queue-modal-item' + (item.status === 'processing' ? ' processing' : '') + (item.status === 'completed' ? ' completed' : '') + (indent ? ' indented' : '');
+            el.dataset.queueModalIdx = idx;
+            const isPending = item.status === 'pending';
+            const isProcessing = item.status === 'processing';
+            const pct = item.progress ? Math.round(item.progress) : 0;
+            let progressLabel = pct + '%';
+            if (isProcessing && item.progress_detail) {
+                const d = item.progress_detail;
+                if (d.phase === 'generating' || d.phase === 'preview') {
+                    const cur = d.current || d.value || 0;
+                    const tot = d.total || d.max || 0;
+                    progressLabel = '프리뷰 <span style="font-size:0.65rem;color:var(--text3);">' + cur + '/' + tot + '</span>';
+                } else if (d.phase === 'training' && d.step !== undefined && d.total) {
+                    progressLabel = pct + '% <span style="font-size:0.65rem;color:var(--text3);">' + d.step + '/' + d.total + '</span>';
+                }
+            }
+            const typeLabel = indent ? '' : (_queueTypeLabels[item.type] || item.type || '');
+            const labelTxt = indent ? '↳ ' + (item.label || '') : (item.label || '');
+            el.innerHTML = `
+                <span class="qm-handle" title="드래그하여 이동">${isPending ? '⠿' : '&nbsp;'}</span>
+                <span class="qm-type">${typeLabel}</span>
+                <span class="qm-label">${escapeHtml(labelTxt)}</span>
+                <span class="qm-progress">${isProcessing ? progressLabel : (item.status === 'completed' ? '✓' : item.status === 'failed' ? '✗' : item.status === 'cancelled' ? '—' : '')}</span>
+                <span class="qm-actions">
+                    ${isPending ? '<button onclick="queueModalMoveUp('+idx+')" title="위로">▲</button><button onclick="queueModalMoveDown('+idx+')" title="아래로">▼</button>' : ''}
+                    ${isPending ? '<button onclick="queueModalCancelItem(\''+item.id+'\')" title="취소">✕</button>' : ''}
+                </span>
+            `;
+            if (isPending) {
+                const handle = el.querySelector('.qm-handle');
+                handle.addEventListener('mousedown', (e) => queueModalDragStart(e, idx));
+            }
+            return el;
+        }
+
+        const _queueBatchExpanded = new Set();
+        function queueModalToggleBatch(batchId) {
+            if (!batchId) return;
+            if (_queueBatchExpanded.has(batchId)) _queueBatchExpanded.delete(batchId);
+            else _queueBatchExpanded.add(batchId);
+            renderQueueModal();
+        }
+
+        async function queueModalCancelBatch(batchId) {
+            if (!batchId) return;
+            if (!confirm('이 배치의 남은 대기 항목을 모두 취소할까요? (처리 중인 1건은 완료됩니다)')) return;
+            try {
+                const resp = await fetchJSON('/api/queue/cancel_batch', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ batch_id: batchId })
+                });
+                if (resp && resp.success) showToast(`배치 취소: ${resp.cancelled || 0}건`, 'success');
+                else showToast((resp && resp.error) || '배치 취소 실패', 'error');
+            } catch (e) { showToast(`배치 취소 실패: ${e.message || e}`, 'error'); }
         }
 
         // 완료/실패 항목 3초 후 자동 제거
@@ -38390,6 +38788,10 @@
                 endTime: item.completed_at ? item.completed_at * 1000 : null,
                 errorMsg: item.error || '',
                 autoHideAt: null,
+                batch_id: item.batch_id || null,
+                batch_label: item.batch_label || null,
+                batch_index: item.batch_index || null,
+                batch_total: item.batch_total || null,
             }));
             assetQueueProcessing = data.processing;
             assetCurrentQueueId = data.current ? data.current.id : null;
@@ -38408,6 +38810,10 @@
                 status: item.status,
                 progress: item.progress || 0,
                 progress_detail: item.progress_detail || {},
+                batch_id: item.batch_id || null,
+                batch_label: item.batch_label || null,
+                batch_index: item.batch_index || null,
+                batch_total: item.batch_total || null,
                 _completedLocalTs: (item.status === 'completed' || item.status === 'failed' || item.status === 'cancelled')
                     ? (prevStatus[item.id] !== item.status ? Date.now() : (queueModalData.find(q => q.id === item.id)?._completedLocalTs || Date.now()))
                     : null,
@@ -38440,6 +38846,11 @@
             );
             if (genJustCompleted && typeof loadBackups === 'function') {
                 loadBackups(true);
+            }
+
+            // 일괄 태깅/정제 배치 — WS completed 누락 보정(폴백 폴링 포함).
+            if (typeof _reconcileTagBatchesFromQueue === 'function') {
+                _reconcileTagBatchesFromQueue(data.items);
             }
         }
 

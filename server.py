@@ -126,6 +126,7 @@ DEFAULT_CONFIG = {
     "llm_temperature": 1.0,
     "llm_max_tokens": 0,              # 0 = 기본값 사용
     "llm_stream": False,
+    "llm_max_concurrency": 1,         # LLM계열 큐 아이템(태그 정제/얼굴 태그 분류) 동시 처리 수. 1=순차(현행 동작). GPU/ComfyUI 작업과 무관.
     "auto_face_tag_max_retries": 2,   # LLM 자동 얼굴/눈 태그 분류 재시도 횟수 (외부 API 실패/JSON 파싱 실패 시)
     "auto_lora_prompt_max_retries": 2,   # LLM 자동 LoRA 프롬프트 정제 재시도 횟수 (외부 API 실패/JSON 파싱 실패 시)
     "auto_llm_retry_delay_sec": 1.0,   # LLM 자동 분류 재시도 간 고정 대기 시간(초) - face/lora 공통
@@ -145,7 +146,8 @@ DEFAULT_CONFIG = {
     "tag_analysis_workflow_source_path": "",  # 태그 분석 워크플로우 원본 소스 전체 경로
     "asset_tag_analysis_workflow_source_path": "",  # 폴백 태그 분석 워크플로우 원본 소스 전체 경로 (primary 결과가 비었을 때, 예: 얼굴 미감지)
     "use_builtin_tagger": False,  # 내장 WD Tagger(CPU ONNX) 사용 여부. true면 모든 태그 분석 경로가 ComfyUI 대신 내장 tagger 사용
-    "lora_training_workflow_source_paths": {"anima": "", "sdxl": ""},  # 로라 학습 워크플로우 원본 소스 경로 (profile별)
+    "lora_training_workflow_source_paths": {"anima": "", "sdxl": ""},  # 로라 학습 워크플로우 원본 소스 경로 (profile별) - 인스턴스/봇 LoRA
+    "style_lora_training_workflow_source_paths": {"anima": "", "sdxl": ""},  # 스타일(그림체) LoRA 학습 워크플로우 원본 소스 경로 (profile별)
     "face_extract_workflow_source_path": "",  # 얼굴 이미지 추출 워크플로우 원본 소스 전체 경로
     "lora_load_path": "",  # 로라 모델 로드 폴더 절대 경로 (에셋, SOYA_CHAR_LORA 자동 추가)
     "bot_lora_load_path": "",  # 봇 LoRA 모델 로드 폴더 절대 경로 (SOYA_BOT_LORA 자동 추가)
@@ -3819,6 +3821,13 @@ async def handle_api_config(request: web.Request) -> web.Response:
             # 파일로 저장
             save_config(app_config)
 
+            # LLM 동시성 설정 변경 시 워커풀 즉시 갱신 (다음 아이템 적재까지 대기하지 않음)
+            if "llm_max_concurrency" in body:
+                try:
+                    asyncio.ensure_future(queue_manager._ensure_llm_workers())
+                except Exception as e:
+                    print(f"[CONFIG] LLM 워커풀 갱신 실패: {e}")
+
             print(f"[CONFIG] 설정 업데이트: {list(body.keys())}")
             return web.json_response({"success": True, "config": app_config})
         except Exception as e:
@@ -5621,11 +5630,22 @@ async def handle_api_asset_mode_batch_analyze(request: web.Request) -> web.Respo
         if not reps:
             return web.json_response({"success": True, "results": [], "total": 0, "success_count": 0, "fail_count": 0})
 
-        label = f"태그 분석 (에셋: {character}, {len(reps)}장)"
-        item = await queue_manager.add_item("tag_analysis", label, {
-            "source": "asset_batch", "character": character,
-        })
-        return web.json_response({"success": True, "item_id": item.id, "total": len(reps)})
+        batch_label = f"태그 분석 (에셋: {character}, {len(reps)}장)"
+        items_spec = []
+        for rep in reps:
+            img = {
+                "filepath": rep["filepath"], "filename": rep["filename"],
+                "character": character, "outfit": rep.get("outfit", ""), "expression": rep.get("expression", ""),
+            }
+            items_spec.append({
+                "type": "tag_analysis",
+                "label": f"태그 분석(에셋) {character}/{rep.get('outfit','')}/{rep.get('expression','')}/{rep['filename']}",
+                "batch_label": batch_label,
+                "params": {"source": "asset_batch", "image": img},
+            })
+        created = await queue_manager.add_items_batch(items_spec)
+        batch_id = created[0].batch_id if created else None
+        return web.json_response({"success": True, "batch_id": batch_id, "count": len(created), "total": len(created)})
     except Exception as e:
         print(f"[ASSET_MODE] 일괄 분석 큐 추가 오류: {e}")
         traceback.print_exc()
@@ -5644,10 +5664,28 @@ async def handle_api_asset_mode_analyze_selected(request: web.Request) -> web.Re
             return web.json_response({"success": False, "error": "character와 images가 필요합니다"}, status=400)
 
         label = f"태그 분석 (에셋 선택: {character}, {len(images)}장)"
-        item = await queue_manager.add_item("tag_analysis", label, {
-            "source": "asset_selected", "character": character, "images": images,
-        })
-        return web.json_response({"success": True, "item_id": item.id, "total": len(images)})
+        from modes.asset_mode import ASSET_DIR
+        items_spec = []
+        for img_info in images:
+            outfit = img_info.get("outfit", "")
+            expression = img_info.get("expression", "")
+            filename = img_info.get("filename", "")
+            filepath = os.path.join(ASSET_DIR,
+                asset_mode._safe_dirname(character),
+                asset_mode._safe_dirname(outfit),
+                asset_mode._safe_dirname(expression),
+                filename)
+            img = {"filepath": filepath, "filename": filename,
+                   "character": character, "outfit": outfit, "expression": expression}
+            items_spec.append({
+                "type": "tag_analysis",
+                "label": f"태그 분석(에셋 선택) {character}/{outfit}/{expression}/{filename}",
+                "batch_label": label,
+                "params": {"source": "asset_selected", "image": img},
+            })
+        created = await queue_manager.add_items_batch(items_spec)
+        batch_id = created[0].batch_id if created else None
+        return web.json_response({"success": True, "batch_id": batch_id, "count": len(created), "total": len(images)})
     except Exception as e:
         print(f"[ASSET_MODE] 선택 분석 큐 추가 오류: {e}")
         traceback.print_exc()
@@ -8196,11 +8234,22 @@ async def handle_api_instance_lora_analyze(request):
         if not lora_id:
             return web.json_response({"success": False, "error": "id 필수"}, status=400)
 
-        label = f"태그 분석 (인스턴스: {lora_id})"
-        item = await queue_manager.add_item("tag_analysis", label, {
-            "source": "instance_lora", "lora_id": lora_id,
-        })
-        return web.json_response({"success": True, "item_id": item.id})
+        from modes.instance_lora_mode import list_images, get_image_path, _safe_dirname
+        lora_id = _safe_dirname(lora_id)
+        filenames = list_images(lora_id)
+        batch_label = f"태그 분석 (인스턴스: {lora_id}, {len(filenames)}장)"
+        items_spec = []
+        for fn in filenames:
+            img = {"filepath": get_image_path(lora_id, fn), "filename": fn, "lora_id": lora_id}
+            items_spec.append({
+                "type": "tag_analysis",
+                "label": f"태그 분석(인스턴스) {lora_id}/{fn}",
+                "batch_label": batch_label,
+                "params": {"source": "instance_lora", "image": img},
+            })
+        created = await queue_manager.add_items_batch(items_spec)
+        batch_id = created[0].batch_id if created else None
+        return web.json_response({"success": True, "batch_id": batch_id, "count": len(created), "total": len(filenames)})
     except Exception as e:
         print(f"[INSTANCE_LORA_API] 분석 큐 추가 실패: {e}")
         traceback.print_exc()
@@ -8946,12 +8995,25 @@ async def handle_api_style_lora_analyze(request):
         if not project:
             return web.json_response({"success": False, "error": "project 필수"}, status=400)
         filenames = body.get("filenames") or None
-        params = {"source": "style_lora", "project": project}
+        from modes.style_lora_mode import list_images, get_image_path, _safe_dirname
+        project = _safe_dirname(project)
+        all_fns = list_images(project)
         if filenames:
-            params["filenames"] = filenames
-        label = f"스타일 태그 분석: {project}" + (f" ({len(filenames)}장)" if filenames else "")
-        item = await queue_manager.add_item("tag_analysis", label, params)
-        return web.json_response({"success": True, "item_id": item.id})
+            only_set = set(filenames)
+            all_fns = [fn for fn in all_fns if fn in only_set]
+        batch_label = f"스타일 태그 분석: {project}" + (f" ({len(all_fns)}장)" if all_fns else "")
+        items_spec = []
+        for fn in all_fns:
+            img = {"filepath": get_image_path(project, fn), "filename": fn, "project": project}
+            items_spec.append({
+                "type": "tag_analysis",
+                "label": f"스타일 태그 분석: {project}/{fn}",
+                "batch_label": batch_label,
+                "params": {"source": "style_lora", "image": img},
+            })
+        created = await queue_manager.add_items_batch(items_spec)
+        batch_id = created[0].batch_id if created else None
+        return web.json_response({"success": True, "batch_id": batch_id, "count": len(created), "total": len(all_fns)})
     except Exception as e:
         print(f"[STYLE_LORA_API] 분석 큐 추가 실패: {e}")
         traceback.print_exc()
@@ -9371,6 +9433,20 @@ async def handle_api_queue_cancel_all(request):
     await queue_manager.cancel_all_pending()
     return web.json_response({"success": True})
 
+async def handle_api_queue_cancel_batch(request):
+    """동일 batch_id의 pending 항목 전부 취소 (이미지별 분할 배치 전체 취소)."""
+    try:
+        body = await request.json()
+        batch_id = body.get("batch_id", "")
+        if not batch_id:
+            return web.json_response({"success": False, "error": "batch_id가 필요합니다"}, status=400)
+        cancelled = await queue_manager.cancel_batch(batch_id)
+        return web.json_response({"success": True, "cancelled": cancelled})
+    except Exception as e:
+        print(f"[QUEUE_API] 배치 취소 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
 async def handle_api_queue_remove(request):
     """완료/취소된 큐 아이템 제거"""
     try:
@@ -9385,6 +9461,7 @@ app.router.add_get("/api/queue/status", handle_api_queue_status)
 app.router.add_post("/api/queue/add", handle_api_queue_add)
 app.router.add_post("/api/queue/cancel", handle_api_queue_cancel)
 app.router.add_post("/api/queue/cancel_all", handle_api_queue_cancel_all)
+app.router.add_post("/api/queue/cancel_batch", handle_api_queue_cancel_batch)
 app.router.add_post("/api/queue/remove", handle_api_queue_remove)
 
 
