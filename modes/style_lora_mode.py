@@ -420,6 +420,55 @@ def add_test_image(project_id: str, src_path: str, filename: str) -> dict:
     return {"success": True, "filename": dst_name}
 
 
+def add_test_image_from_train(project_id: str, filename: str) -> dict:
+    """현재 프로젝트의 학습 이미지를 테스트 이미지로 등록.
+    학습 이미지와 같은 폴더에 이미 존재하므로 파일 복사 없이 test_images 배열에만 추가.
+    학습 캡션({base}_prompt.json)이 있으면 {base}_test_prompt.json 으로 시드 복사."""
+    data = _load_data()
+    project_id = _safe_dirname(project_id)
+    project = data.get("projects", {}).get(project_id)
+    if not project:
+        print(f"[STYLE_LORA] 테스트 이미지(학습) 추가 실패 - 프로젝트 없음: {project_id}")
+        return {"success": False, "error": "존재하지 않는 프로젝트입니다"}
+
+    filename = (filename or "").strip()
+    if not filename:
+        return {"success": False, "error": "filename 필수"}
+    if filename not in project.get("images", []):
+        print(f"[STYLE_LORA] 테스트 이미지(학습) 추가 실패 - 학습 이미지 아님: {project_id}/{filename}")
+        return {"success": False, "error": "학습 이미지 목록에 없습니다"}
+
+    test_images = project.setdefault("test_images", [])
+    if filename in test_images:
+        # 이미 테스트 이미지로 등록됨 — 멱등하게 성공 처리
+        return {"success": True, "filename": filename, "skipped": True}
+    test_images.append(filename)
+    _save_data(data)
+
+    # 학습 캡션 시드: {base}_prompt.json → {base}_test_prompt.json (있을 때만)
+    pdir = _project_dir(project_id)
+    dst_base = os.path.splitext(filename)[0]
+    src_prompt_path = os.path.join(pdir, f"{dst_base}_prompt.json")
+    dst_prompt_path = os.path.join(pdir, f"{dst_base}_test_prompt.json")
+    if os.path.isfile(src_prompt_path) and not os.path.isfile(dst_prompt_path):
+        try:
+            with open(src_prompt_path, "r", encoding="utf-8") as pf:
+                pdata = json.load(pf)
+            seeded = {
+                "positive": pdata.get("positive", pdata.get("original_positive", "")),
+                "negative": pdata.get("negative", pdata.get("original_negative", "")),
+                "original_positive": pdata.get("original_positive", pdata.get("positive", "")),
+                "original_negative": pdata.get("original_negative", pdata.get("negative", "")),
+            }
+            with open(dst_prompt_path, "w", encoding="utf-8") as pf:
+                json.dump(seeded, pf, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"[STYLE_LORA] 테스트 프롬프트 시드 실패(무시): {filename} - {e}")
+
+    print(f"[STYLE_LORA] 테스트 이미지(학습에서) 추가: {project_id}/{filename}")
+    return {"success": True, "filename": filename}
+
+
 def _test_prompt_path(project_id: str, filename: str) -> str:
     base = os.path.splitext(filename)[0]
     return os.path.join(_project_dir(_safe_dirname(project_id)), f"{base}_test_prompt.json")
@@ -637,6 +686,58 @@ def get_image_prompt(project_id: str, filename: str) -> dict:
     except Exception as e:
         print(f"[STYLE_LORA] 프롬프트 로드 실패: {prompt_path} - {e}")
         return {"success": False, "error": str(e)}
+
+
+def batch_set_negative(project_id: str, filenames, negative_tags: str) -> dict:
+    """학습 이미지 캡션({base}_prompt.json)의 negative 필드를 일괄 덮어쓰기.
+    positive 등 기존 필드는 보존. asset_mode.batch_set_negative 와 동일 패턴.
+    반환: {success, total, success_count, fail_count, failed:[{filename,error}]}"""
+    project_id = _safe_dirname(project_id)
+    data = _load_data()
+    project = data.get("projects", {}).get(project_id)
+    if not project:
+        print(f"[STYLE_LORA] 부정 프롬프트 일괄 적용 실패 - 프로젝트 없음: {project_id}")
+        return {"success": False, "error": "존재하지 않는 프로젝트입니다"}
+
+    images = set(project.get("images", []))
+    pdir = _project_dir(project_id)
+    negative_tags = (negative_tags or "").strip()
+
+    success_count = 0
+    fail_count = 0
+    failed = []
+    for fn in filenames:
+        fn = (fn or "").strip()
+        if not fn:
+            continue
+        if fn not in images:
+            print(f"[STYLE_LORA] 부정 프롬프트 적용 스킵 - 학습 이미지 아님: {project_id}/{fn}")
+            fail_count += 1
+            failed.append({"filename": fn, "error": "학습 이미지 목록에 없음"})
+            continue
+        prompt_path = os.path.join(pdir, os.path.splitext(fn)[0] + "_prompt.json")
+        existing = {}
+        if os.path.isfile(prompt_path):
+            try:
+                with open(prompt_path, "r", encoding="utf-8") as pf:
+                    existing = json.load(pf)
+            except Exception as e:
+                print(f"[STYLE_LORA] 기존 프롬프트 읽기 실패(무시): {prompt_path} - {e}")
+        existing["negative"] = negative_tags
+        try:
+            with open(prompt_path, "w", encoding="utf-8") as pf:
+                json.dump(existing, pf, ensure_ascii=False, indent=2)
+            success_count += 1
+        except Exception as e:
+            print(f"[STYLE_LORA] 부정 프롬프트 저장 실패: {prompt_path} - {e}")
+            traceback.print_exc()
+            fail_count += 1
+            failed.append({"filename": fn, "error": str(e)})
+
+    print(f"[STYLE_LORA] 부정 프롬프트 일괄 적용: project={project_id} "
+          f"ok={success_count} fail={fail_count}")
+    return {"success": True, "total": len(filenames),
+            "success_count": success_count, "fail_count": fail_count, "failed": failed}
 
 
 # ─── 설정 관리 (프로젝트별 학습 설정, ANIMA/SDXL) ───────────────

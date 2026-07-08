@@ -8809,6 +8809,57 @@ async def handle_api_style_lora_test_images_add(request):
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 
+async def handle_api_style_lora_test_images_add_from_train(request):
+    """현재 프로젝트의 학습 이미지를 테스트 이미지로 등록(파일 복사 없이).
+    body: { project, filenames:[...] }"""
+    try:
+        body = await request.json()
+        project = (body.get("project") or "").strip()
+        filenames = body.get("filenames", [])
+        if not project:
+            return web.json_response({"success": False, "error": "project 필수"}, status=400)
+        if not filenames:
+            return web.json_response({"success": False, "error": "filenames 필수"}, status=400)
+        from modes.style_lora_mode import add_test_image_from_train
+        results = []
+        added = 0
+        skipped = 0
+        for fn in filenames:
+            r = add_test_image_from_train(project, fn)
+            results.append(r)
+            if r.get("success"):
+                if r.get("skipped"):
+                    skipped += 1
+                else:
+                    added += 1
+        return web.json_response({"success": True, "results": results,
+                                  "added": added, "skipped": skipped})
+    except Exception as e:
+        print(f"[STYLE_LORA_API] 테스트 이미지(학습) 추가 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_style_lora_batch_set_negative(request):
+    """학습 이미지 캡션의 negative 필드 일괄 덮어쓰기.
+    body: { project, filenames:[...], negative_tags:str }"""
+    try:
+        body = await request.json()
+        project = (body.get("project") or "").strip()
+        filenames = body.get("filenames", [])
+        negative_tags = body.get("negative_tags", "")
+        if not project:
+            return web.json_response({"success": False, "error": "project 필수"}, status=400)
+        if not filenames:
+            return web.json_response({"success": False, "error": "filenames 필수"}, status=400)
+        from modes.style_lora_mode import batch_set_negative
+        return web.json_response(batch_set_negative(project, filenames, negative_tags))
+    except Exception as e:
+        print(f"[STYLE_LORA_API] 부정 프롬프트 일괄 적용 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
 async def handle_api_style_lora_test_images_delete(request):
     """테스트 이미지 1건 삭제. body: { project, filename }"""
     try:
@@ -9366,6 +9417,8 @@ app.router.add_post("/api/style_lora/images/add", handle_api_style_lora_images_a
 app.router.add_post("/api/style_lora/images/delete", handle_api_style_lora_images_delete)
 app.router.add_post("/api/style_lora/images/delete_bulk", handle_api_style_lora_images_delete_bulk)
 app.router.add_post("/api/style_lora/test_images/add", handle_api_style_lora_test_images_add)
+app.router.add_post("/api/style_lora/test_images/add_from_train", handle_api_style_lora_test_images_add_from_train)
+app.router.add_post("/api/style_lora/batch_set_negative", handle_api_style_lora_batch_set_negative)
 app.router.add_post("/api/style_lora/test_images/delete", handle_api_style_lora_test_images_delete)
 app.router.add_get("/api/style_lora/test_images/prompt", handle_api_style_lora_test_images_prompt_get)
 app.router.add_post("/api/style_lora/test_images/prompt", handle_api_style_lora_test_images_prompt_save)

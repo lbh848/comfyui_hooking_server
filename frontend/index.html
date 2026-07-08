@@ -5498,6 +5498,7 @@
                                         <button onclick="styleLoraBatchTag()" style="padding:6px 12px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:0.78rem;font-weight:600;">🏷️ 일괄 태깅</button>
                                         <button onclick="styleLoraBatchRefine()" style="padding:6px 12px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:0.78rem;font-weight:600;">✨ 일괄 LLM 정제</button>
                                         <button onclick="styleLoraEditPromptTemplate()" style="padding:6px 12px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:0.78rem;font-weight:600;">⚙️ 정제 프롬프트 편집</button>
+                                        <button onclick="styleLoraBatchNegative()" style="padding:6px 12px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:0.78rem;font-weight:600;">🚫 부정 프롬프트 일괄 적용</button>
                                         <button onclick="styleLoraSelectAll()" style="padding:6px 12px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:0.78rem;">전체 선택</button>
                                     </div>
                                 </div>
@@ -19349,6 +19350,98 @@
             } catch (e) { showToast(`정제 실패: ${e.message || e}`, 'error'); }
         }
 
+        // 부정 프롬프트 일괄 적용 — 선택된 학습 이미지의 negative 를 프리셋 태그로 일괄 덮어쓰기.
+        // 에셋/봇 모드(auBatchSetNegative / botDoBatchNegative)와 동일한 negative_presets 소스 사용.
+        async function styleLoraBatchNegative() {
+            if (!_styleNeedProject()) return;
+            const fns = Array.from(_styleLora.selected);
+            if (!fns.length) { showToast('체크박스로 이미지를 선택하세요', 'error'); return; }
+
+            // negative_presets 로드 (assetTags 가 비었으면 직접 fetch)
+            let presets = assetTags && assetTags.negative_presets;
+            if (!presets) {
+                try {
+                    const resp = await fetch('/api/asset_mode/tags');
+                    if (resp.ok) { assetTags = await resp.json(); presets = assetTags.negative_presets; }
+                } catch (e) { showToast(`프리셋 로드 실패: ${e.message || e}`, 'error'); return; }
+            }
+            const presetNames = presets ? Object.keys(presets) : [];
+            if (!presetNames.length) { showToast('부정 프리셋이 없습니다', 'error'); return; }
+
+            // 모달 (바깥 클릭 닫기 금지 - 명시적 버튼만)
+            const exist = document.getElementById('style-batch-negative-modal');
+            if (exist) exist.remove();
+            const overlay = document.createElement('div');
+            overlay.className = 'modal';
+            overlay.style.display = 'flex';
+            overlay.style.zIndex = '1500';
+            overlay.id = 'style-batch-negative-modal';
+            const optionsHtml = presetNames.map(n =>
+                `<option value="${escapeAttr(n)}">${escapeHtml(n)} (${(presets[n] || []).length})</option>`).join('');
+            overlay.innerHTML = `
+                <div class="modal-content" style="max-width:560px;">
+                    <div class="modal-header"><span>🚫 부정 프롬프트 일괄 적용</span><button onclick="this.closest('.modal').remove()" style="background:none;border:none;color:var(--text);font-size:1.4rem;cursor:pointer;">×</button></div>
+                    <div class="modal-body" style="padding:16px;display:flex;flex-direction:column;gap:12px;">
+                        <div style="font-size:0.82rem;color:var(--text-secondary);">선택한 <b>${fns.length}장</b>의 학습 이미지 부정 프롬프트를 프리셋으로 <b>덮어씁니다</b>.</div>
+                        <div>
+                            <label style="font-size:0.78rem;display:block;margin-bottom:4px;">부정 프리셋</label>
+                            <select id="style-batch-neg-select" style="width:100%;padding:6px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-size:0.85rem;box-sizing:border-box;">${optionsHtml}</select>
+                        </div>
+                        <div id="style-batch-neg-preview" style="font-size:0.75rem;color:var(--text-secondary);background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:8px;max-height:120px;overflow-y:auto;white-space:pre-wrap;"></div>
+                    </div>
+                    <div class="modal-footer">
+                        <button onclick="this.closest('.modal').remove()" style="padding:6px 14px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;cursor:pointer;">취소</button>
+                        <button id="style-batch-neg-apply" onclick="styleLoraDoBatchNegative()" style="padding:6px 14px;background:var(--accent);color:#fff;border:none;border-radius:4px;cursor:pointer;font-weight:600;">적용</button>
+                    </div>
+                </div>`;
+            document.body.appendChild(overlay);
+            const sel = document.getElementById('style-batch-neg-select');
+            const preview = document.getElementById('style-batch-neg-preview');
+            const renderPreview = () => {
+                const tags = presets[sel.value] || [];
+                preview.textContent = tags.join(', ');
+            };
+            sel.addEventListener('change', renderPreview);
+            renderPreview();
+            // 선택한 이미지 목록을 버튼 dataset 에 전달 (모달이 별도 스코프)
+            document.getElementById('style-batch-neg-apply').dataset.filenames = JSON.stringify(fns);
+        }
+
+        async function styleLoraDoBatchNegative() {
+            const btn = document.getElementById('style-batch-neg-apply');
+            const sel = document.getElementById('style-batch-neg-select');
+            if (!btn || !sel) return;
+            const project = _styleLora.currentProject;
+            let fns = [];
+            try { fns = JSON.parse(btn.dataset.filenames || '[]'); } catch (e) {}
+            const presetName = sel.value;
+            const tags = (assetTags && assetTags.negative_presets && assetTags.negative_presets[presetName]) || [];
+            const negativeTags = tags.join(', ');
+            if (!fns.length) { showToast('대상 이미지가 없습니다', 'error'); return; }
+            if (!confirm(`선택한 ${fns.length}장에 부정 프롬프트를 덮어쓰시겠습니까?\n[${presetName}]`)) return;
+
+            btn.disabled = true; btn.textContent = '적용 중...';
+            try {
+                const resp = await fetchJSON('/api/style_lora/batch_set_negative', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({project, filenames: fns, negative_tags: negativeTags})
+                });
+                if (!resp.success) { showToast(resp.error || '적용 실패', 'error'); return; }
+                const ok = resp.success_count || 0;
+                const fail = resp.fail_count || 0;
+                showToast(`${ok}장 적용 완료` + (fail > 0 ? `, ${fail}건 실패` : ''), fail > 0 ? 'warning' : 'success');
+                // 모달 닫기 + 프롬프트 캐시 갱신
+                const m = document.getElementById('style-batch-negative-modal');
+                if (m) m.remove();
+                await loadStyleProjectImages();
+            } catch (e) {
+                console.error('[STYLE_LORA] 부정 프롬프트 일괄 적용 실패:', e);
+                showToast(`적용 실패: ${e.message || e}`, 'error');
+            } finally {
+                btn.disabled = false; btn.textContent = '적용';
+            }
+        }
+
         async function styleLoraTagOne(filename) {
             if (!_styleNeedProject()) return;
             if (!confirm(`"${filename}" 한 장을 WD 태깅할까요?`)) return;
@@ -19965,6 +20058,7 @@
                     <div class="modal-header"><span>🗂️ 테스트 이미지 관리</span><button onclick="this.closest('.modal').remove()" style="background:none;border:none;color:var(--text);font-size:1.4rem;cursor:pointer;">×</button></div>
                     <div style="padding:10px 12px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;">
                         <button onclick="openStyleTestImagePicker()" style="padding:6px 12px;background:rgba(180,130,220,0.2);color:var(--text);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.8rem;font-weight:600;">+ 에셋에서 선택</button>
+                        <button onclick="openStyleTestFromTrainPicker()" style="padding:6px 12px;background:rgba(0,120,215,0.18);color:var(--text);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.8rem;font-weight:600;">📥 프로젝트에서 가져오기</button>
                         <span id="style-test-img-count" style="font-size:0.78rem;color:var(--text-secondary);margin-left:auto;">0장</span>
                     </div>
                     <div class="modal-body" style="flex:1;overflow-y:auto;padding:12px;" id="style-test-img-body">
@@ -19997,6 +20091,97 @@
             `;
             document.getElementById('lora-image-picker-modal').style.display = 'flex';
             loadLoraPickerCharacters();
+        }
+
+        // 테스트 이미지 모달 내 "프로젝트에서 가져오기" — 현재 프로젝트의 학습 이미지(images) 중
+        // 아직 테스트로 등록되지 않은 것을 체크박스로 선택 → test_images 에 추가(파일 복사 없음).
+        // 학습 이미지와 같은 폴더에 있으므로 add_test_image_from_train 이 배열 등록만 수행.
+        async function openStyleTestFromTrainPicker() {
+            if (!_styleNeedProject()) return;
+            // 학습 이미지가 아직 로드되지 않았을 수 있으니 보장
+            if (!_styleLora.images || !_styleLora.images.length) {
+                await loadStyleProjectImages();
+            }
+            const train = _styleLora.images || [];
+            const testSet = new Set(_styleLora.testImages || []);
+            const candidates = train.filter(fn => !testSet.has(fn));
+            if (!candidates.length) {
+                showToast('프로젝트의 모든 학습 이미지가 이미 테스트에 등록되어 있습니다', 'info');
+                return;
+            }
+
+            const exist = document.getElementById('style-test-from-train-modal');
+            if (exist) exist.remove();
+            const overlay = document.createElement('div');
+            overlay.className = 'modal';
+            overlay.style.display = 'flex';
+            overlay.style.zIndex = '1500'; // 테스트 이미지 모달(1400) 위
+            overlay.id = 'style-test-from-train-modal';
+            const selected = new Set();
+            // 토글 핸들러 노출: 인라인 onclick → selected Set 갱신 후 체크 표시만 부분 갱신
+            window._toggleStyleTrainPick = (fn, el) => {
+                if (selected.has(fn)) { selected.delete(fn); el.style.border = '1px solid var(--border)'; }
+                else { selected.add(fn); el.style.border = '2px solid var(--accent)'; }
+                const badge = el.querySelector('[data-pick-badge]');
+                if (badge) badge.textContent = selected.has(fn) ? '☑' : '☐';
+                const count = document.getElementById('style-test-from-train-count');
+                if (count) count.textContent = `${selected.size}장 선택`;
+            };
+            overlay.innerHTML = `
+                <div class="modal-content" style="max-width:760px;height:80vh;display:flex;flex-direction:column;">
+                    <div class="modal-header"><span>📥 프로젝트(학습 이미지)에서 가져오기</span><button onclick="this.closest('.modal').remove()" style="background:none;border:none;color:var(--text);font-size:1.4rem;cursor:pointer;">×</button></div>
+                    <div style="padding:8px 12px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;">
+                        <span style="font-size:0.78rem;color:var(--text-secondary);">현재 프로젝트 학습 이미지 ${train.length}장 중 테스트 미등록 ${candidates.length}장</span>
+                        <span id="style-test-from-train-count" style="margin-left:auto;font-size:0.78rem;color:var(--accent);font-weight:600;">0장 선택</span>
+                    </div>
+                    <div class="modal-body" style="flex:1;overflow-y:auto;padding:10px;" id="style-test-from-train-body">
+                        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;">
+                        ${candidates.map(fn => {
+                            const url = _styleImgUrl(fn);
+                            return `<div onclick="window._toggleStyleTrainPick('${escapeAttr(fn)}', this)" style="position:relative;border:1px solid var(--border);border-radius:6px;overflow:hidden;cursor:pointer;">
+                                <img src="${escapeAttr(url)}" style="display:block;width:100%;height:120px;object-fit:cover;" loading="lazy" onerror="this.style.background='var(--surface2)';this.removeAttribute('src');">
+                                <div data-pick-badge="1" style="position:absolute;top:4px;left:4px;background:rgba(0,0,0,0.6);border-radius:3px;padding:1px 4px;font-size:0.7rem;color:#fff;">☐</div>
+                                <div style="padding:3px 5px;font-size:0.62rem;color:var(--text-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(fn)}</div>
+                            </div>`;
+                        }).join('')}
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button onclick="this.closest('.modal').remove()" style="padding:6px 14px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;cursor:pointer;">취소</button>
+                        <button id="style-test-from-train-confirm" onclick="confirmStyleTestFromTrain()" style="padding:6px 14px;background:var(--accent);color:#fff;border:none;border-radius:4px;cursor:pointer;font-weight:600;">선택 완료</button>
+                    </div>
+                </div>`;
+            document.body.appendChild(overlay);
+            // 선택 집합을 버튼 dataset 에 JSON 으로 저장할 수 없으므로 window 에 보관 (모달 닫힐 때 정리)
+            window._styleTrainSelected = selected;
+        }
+
+        async function confirmStyleTestFromTrain() {
+            const btn = document.getElementById('style-test-from-train-confirm');
+            if (!btn) return;
+            const picked = Array.from(window._styleTrainSelected || []);
+            if (!picked.length) { showToast('이미지를 선택하세요', 'error'); return; }
+            btn.disabled = true; btn.textContent = '가져오는 중...';
+            try {
+                const resp = await fetchJSON('/api/style_lora/test_images/add_from_train', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({project: _styleLora.currentProject, filenames: picked})
+                });
+                if (!resp.success) { showToast(resp.error || '가져오기 실패', 'error'); return; }
+                const added = resp.added || 0;
+                const skipped = resp.skipped || 0;
+                showToast(`${added}장 가져오기 완료` + (skipped > 0 ? ` (이미 등록 ${skipped}장 제외)` : ''), 'success');
+                const m = document.getElementById('style-test-from-train-modal');
+                if (m) m.remove();
+                window._styleTrainSelected = null;
+                await loadStyleTestImages();
+                renderStyleTestImageGrid();
+            } catch (e) {
+                console.error('[STYLE_LORA] 학습에서 테스트 가져오기 실패:', e);
+                showToast(`가져오기 실패: ${e.message || e}`, 'error');
+            } finally {
+                btn.disabled = false; btn.textContent = '선택 완료';
+            }
         }
 
         function renderStyleTestImageGrid() {
