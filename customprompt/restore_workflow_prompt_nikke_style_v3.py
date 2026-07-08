@@ -4,7 +4,7 @@
 v2의 캐릭터/손동작/표정 풀을 그대로 사용하되,
 삽화 모드가 활성화되어 있으면 [SETUP]/[CHAR]/[SUPPLEMENT] 섹션 형식으로 반환합니다.
 큐 매니저의 _apply_illust_pipeline()이 이 프롬프트를 파싱하여
-단어 치환 → 캐릭터 감지 → IllustPromptBuilder 빌드를 수행합니다.
+단어 기반 규칙 → 캐릭터 감지 → IllustPromptBuilder 빌드를 수행합니다.
 
 삽화 모드가 꺼져 있으면 v2와 완전 동일하게 동작합니다.
 

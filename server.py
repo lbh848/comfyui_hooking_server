@@ -648,8 +648,53 @@ def clamp_weights(prompt: str, clamp_value: float) -> str:
     return re.sub(r':(-?\d+(?:\.\d+)?)\)', replacer, prompt)
 
 
+def _apply_remove_rule(text: str, rule: dict) -> tuple:
+    """제거 모드 규칙을 적용한다. 반환: (새 텍스트, 적용여부).
+
+    - trigger가 있으면 해당 텍스트에 trigger가 존재할 때만 발동한다.
+    - 쉼표 단위 세그먼트로 분리하여 pattern(* → 임의 문자열)에 fullmatch되는
+      세그먼트를 제거한다. remove_trigger=false면 trigger와 동일한 세그먼트는 보존한다.
+    """
+    if not text:
+        return text, False
+    pattern_str = (rule.get("pattern") or "").strip()
+    if not pattern_str:
+        print("[WORD_RULE] 제거 모드 규칙에 pattern이 없어 스킵합니다.")
+        return text, False
+    trigger = (rule.get("trigger") or "").strip()
+    remove_trigger = bool(rule.get("remove_trigger", False))
+    # trigger 조건: trigger가 지정된 경우 텍스트에 존재해야 발동
+    if trigger and not re.search(re.escape(trigger), text, flags=re.IGNORECASE):
+        return text, False
+    # 와일드카드 패턴 → 정규식 (세그먼트 단위 fullmatch). * 는 임의 문자열.
+    parts = pattern_str.split("*")
+    regex = ".*".join(re.escape(p) for p in parts)
+    try:
+        rx = re.compile(regex, flags=re.IGNORECASE)
+    except re.error as e:
+        print(f"[WORD_RULE] 제거 패턴 컴파일 실패(pattern={pattern_str!r}): {e}")
+        return text, False
+    trig_low = trigger.lower()
+    segs = [s.strip() for s in text.split(",")]
+    out = []
+    removed = 0
+    for seg in segs:
+        if seg and rx.fullmatch(seg):
+            # trigger 보존: trigger와 동일 세그먼트는 remove_trigger=true일 때만 제거
+            if trigger and not remove_trigger and seg.lower() == trig_low:
+                out.append(seg)
+                continue
+            removed += 1
+            continue
+        out.append(seg)
+    if removed == 0:
+        return text, False
+    print(f"[WORD_RULE] 제거 모드 적용: pattern={pattern_str!r}, trigger={trigger!r}, {removed}개 세그먼트 제거")
+    return ", ".join(s for s in out if s), True
+
+
 def apply_word_replacements(positive: str, negative: str, bot_name: str) -> tuple:
-    """봇의 단어 치환 규칙을 프롬프트에 적용한다."""
+    """봇의 단어 기반 규칙(치환/제거)을 프롬프트에 적용한다."""
     if not bot_name:
         return positive, negative
     from modes.bot_mode import _load_word_replacements
@@ -661,6 +706,14 @@ def apply_word_replacements(positive: str, negative: str, bot_name: str) -> tupl
     for rule in rules:
         if not rule.get("enabled", True):
             continue
+        rtype = (rule.get("type") or "replace").strip().lower()
+        if rtype == "remove":
+            positive, did_p = _apply_remove_rule(positive, rule)
+            negative, did_n = _apply_remove_rule(negative, rule)
+            if did_p or did_n:
+                applied += 1
+            continue
+        # 치환 모드 (기본)
         source = rule.get("source", "").strip()
         target = rule.get("target", "").strip()
         if not source:
@@ -670,7 +723,7 @@ def apply_word_replacements(positive: str, negative: str, bot_name: str) -> tupl
         negative = re.sub(pattern, target, negative, flags=re.IGNORECASE)
         applied += 1
     if applied > 0:
-        print(f"[WORD_REPL] 단어 치환 적용: bot={bot_name}, {applied}개 규칙")
+        print(f"[WORD_RULE] 단어 기반 규칙 적용: bot={bot_name}, {applied}개 규칙")
     return positive, negative
 
 
@@ -1690,7 +1743,7 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
             if positive != original_positive or negative != original_negative:
                 print(f"[CLAMP] 가중치 클램프 적용 (clamp={clamp_val})")
 
-        # 단어 치환 규칙 적용 / 삽화 모드 프롬프트 빌딩
+        # 단어 기반 규칙 적용 / 삽화 모드 프롬프트 빌딩
         bot_name = app_config.get("bot_selected", "")
         if bot_name and app_config.get("bot_mode_enabled", False):
             # 삽화 모드: 프롬프트 파싱 → 치환 → 캐릭터 감지 → 빌드
@@ -1706,7 +1759,7 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
             characters_for_parse = (bot.get("characters", []) if bot else [])
             sections = builder.parse_sections(positive, lb_extra=lb_extra_data, characters=characters_for_parse)
 
-            # 2. 각 섹션에 단어 치환 적용
+            # 2. 각 섹션에 단어 기반 규칙(치환/제거) 적용
             setup_replaced = apply_word_replacements(sections["setup"], "", bot_name)[0]
             char_replaced = apply_word_replacements(sections["char"], "", bot_name)[0]
             supplement_replaced = apply_word_replacements(sections["supplement"], "", bot_name)[0]
@@ -1777,7 +1830,7 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                 print(f"[ILLUST] 봇을 찾을 수 없음: {bot_name}, 기존 치환 로직 사용")
                 positive, negative = apply_word_replacements(positive, negative, bot_name)
         else:
-            # 비삽화 모드: 기존 단어 치환만 적용
+            # 비삽화 모드: 단어 기반 규칙만 적용
             if bot_name and app_config.get("bot_mode_enabled", False):
                 positive, negative = apply_word_replacements(positive, negative, bot_name)
 

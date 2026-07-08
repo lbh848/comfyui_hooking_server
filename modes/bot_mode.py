@@ -1472,7 +1472,7 @@ class BotMode:
             if not bot_name:
                 return _json_error("봇 이름이 필요합니다.")
             _save_word_replacements(bot_name, {"rules": rules})
-            print(f"[BOT_MODE] 단어 치환 규칙 저장: bot={bot_name}, {len(rules)}개 규칙")
+            print(f"[BOT_MODE] 단어 기반 규칙 저장: bot={bot_name}, {len(rules)}개 규칙")
             return _json_ok({"saved": True})
         except Exception as e:
             print(f"[BOT_MODE] word_replacements 저장 실패: {e}")
@@ -1770,7 +1770,7 @@ def _load_word_replacements(bot_name: str) -> dict:
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                print(f"[BOT_MODE] 단어 치환 로드: {bot_name} ({len(data.get('rules', []))}개 규칙)")
+                print(f"[BOT_MODE] 단어 기반 규칙 로드: {bot_name} ({len(data.get('rules', []))}개 규칙)")
                 return data
         except Exception as e:
             print(f"[BOT_MODE] word_replacements 로드 실패: {e}")
