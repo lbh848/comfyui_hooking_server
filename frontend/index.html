@@ -4869,6 +4869,33 @@
         </div>
     </div>
 
+    <!-- 시드 선택 재생성 모달 -->
+    <div class="modal" id="seed-regen-modal">
+        <div class="modal-content" style="max-width:480px;">
+            <div class="modal-header">
+                <h2>🔄 재생성 — 시드 선택</h2>
+                <button class="modal-close" onclick="closeSeedRegenModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div style="margin-bottom:12px; font-size:0.85rem; color:var(--text-secondary);">
+                    이 프롬프트에 [SEED] 블록이 감지되었습니다.<br>
+                    시드를 바꿔 다른 결과를 얻거나, 그대로 재생성할 수 있습니다.
+                </div>
+                <div style="display:flex; flex-wrap:wrap; gap:16px; font-size:0.9rem; align-items:center;">
+                    <div>현재 시드: <span id="seed-regen-current" style="font-family:monospace; color:var(--text-secondary);">-</span></div>
+                    <div>새 시드: <span id="seed-regen-new" style="font-family:monospace; color:#ffd54f; font-weight:600;">-</span>
+                        <button onclick="rollNewSeed()" title="새 시드 다시 뽑기" style="margin-left:4px; padding:1px 8px; cursor:pointer; border:1px solid var(--border); background:var(--surface2); border-radius:4px;">🎲</button>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="cancel" onclick="closeSeedRegenModal()">취소</button>
+                <button class="confirm" style="background:var(--surface2);" onclick="seedRegenAsIs()">🔄 그대로 재생성</button>
+                <button class="confirm" onclick="seedRegenWithNewSeed()">🎲 시드 바꿔서 재생성</button>
+            </div>
+        </div>
+    </div>
+
         <!-- 로라매니징 탭 -->
         <div id="tab-lora-content" class="tab-content">
             <!-- 에셋/봇 모드 선택 -->
@@ -8604,6 +8631,21 @@
                 return;
             }
 
+            // [SEED] 블록 감지 → 시드 변경 여부 선택 모달
+            const promptData = promptDataMap.get(name) || {};
+            const positive = promptData.enhanced_positive || promptData.positive || '';
+            const negative = promptData.negative || '';
+            const seedMatch = positive.match(/\[SEED\]\n(-?\d+)/);
+            if (seedMatch) {
+                openSeedRegenModal(name, btn, positive, negative, seedMatch[1]);
+                return;
+            }
+
+            await doRegenerate(name, btn);
+        }
+
+        // 실제 재생성 (원본 프롬프트 그대로)
+        async function doRegenerate(name, btn) {
             const originalText = btn.innerHTML;
             btn.disabled = true;
             btn.innerHTML = '<span class="spinner"></span>';
@@ -8632,6 +8674,77 @@
                 btn.innerHTML = originalText;
                 hideTopProgress();
             }
+        }
+
+        // 시드 변경 재생성 (수정된 positive로 즉시 생성)
+        async function doRegenerateWithModifiedSeed(name, btn, positive, negative) {
+            const originalText = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner"></span>';
+            showTopProgress();
+
+            try {
+                const data = await fetchJSON('/api/reschedule_with_modified_prompt', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: name, positive: positive, negative: negative })
+                });
+
+                if (data.error) {
+                    alert('재생성 실패: ' + data.error);
+                    return;
+                }
+
+                showToast('재생성 완료 (시드 변경)', 'success');
+                await loadBackups(true);
+            } catch (e) {
+                alert('재생성 실패: ' + e.message);
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = originalText;
+                hideTopProgress();
+            }
+        }
+
+        // ─── 시드 선택 재생성 모달 ───
+        let seedRegenState = null;
+
+        function openSeedRegenModal(name, btn, positive, negative, currentSeed) {
+            seedRegenState = { name, btn, positive, negative, currentSeed, newSeed: null };
+            document.getElementById('seed-regen-current').textContent = currentSeed;
+            rollNewSeed();
+            document.getElementById('seed-regen-modal').classList.add('visible');
+        }
+
+        function closeSeedRegenModal() {
+            document.getElementById('seed-regen-modal').classList.remove('visible');
+            seedRegenState = null;
+        }
+
+        function rollNewSeed() {
+            if (!seedRegenState) return;
+            const ns = Math.floor(Math.random() * 4294967295);
+            seedRegenState.newSeed = ns;
+            document.getElementById('seed-regen-new').textContent = ns;
+        }
+
+        async function seedRegenWithNewSeed() {
+            if (!seedRegenState) return;
+            const { name, btn, positive, negative, newSeed } = seedRegenState;
+            if (newSeed == null) {
+                showToast('새 시드가 없습니다', 'warning');
+                return;
+            }
+            const newPositive = positive.replace(/\[SEED\]\n-?\d+/, '[SEED]\n' + newSeed);
+            closeSeedRegenModal();
+            await doRegenerateWithModifiedSeed(name, btn, newPositive, negative);
+        }
+
+        async function seedRegenAsIs() {
+            if (!seedRegenState) return;
+            const { name, btn } = seedRegenState;
+            closeSeedRegenModal();
+            await doRegenerate(name, btn);
         }
 
         // ─── 재전송 예약 ───
@@ -10211,6 +10324,7 @@
                 closePromptModal();
                 closeSettingsModal();
                 closeQueueModal();
+                closeSeedRegenModal();
             }
         });
 
