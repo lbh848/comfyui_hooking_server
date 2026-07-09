@@ -2785,7 +2785,7 @@
             white-space: normal;
             word-break: break-word;
             max-width: 300px;
-            z-index: 300;
+            z-index: 99999;
             box-shadow: 0 4px 12px rgba(0,0,0,0.3);
             color: var(--text);
             line-height: 1.4;
@@ -24361,6 +24361,38 @@
             _attachLbExtraDnD(el);
             _attachLbExtraTagDnD(el);
             _attachLbExtraAutoComplete();
+            _attachLbExtraChipTooltips();
+        }
+
+        // 분류 데이터 편집 모달 — 편집본 칩(우측)과 원본 칩(좌측) 모두에 설명 hover 툴팁 연결.
+        // t.desc가 있으면 그걸 우선, 없으면 /api/autocomplete 로 조회 (집중편집/앱 다른 태그칩과 동일 패턴).
+        function _attachLbExtraChipTooltips() {
+            const el = document.getElementById('lb-extra-content');
+            if (!el) return;
+
+            // 편집본 칩 (data-tti) -> _lbExtraEdited
+            el.querySelectorAll('.lb-extra-tag').forEach(chip => {
+                const tci = parseInt(chip.dataset.tci, 10);
+                const grp = chip.dataset.tgrp;
+                const tti = parseInt(chip.dataset.tti, 10);
+                const t = _lbExtraEdited[tci] && _lbExtraEdited[tci][grp] && _lbExtraEdited[tci][grp][tti];
+                if (!t) return;
+                _attachTagChipTooltip(chip, t.tag, t.desc || '', () => _lbExtraShowDesc);
+            });
+
+            // 원본 칩 (data-lboti, 활성 + inEdited 회색 모두) -> _lbExtraOriginal
+            el.querySelectorAll('[data-lboti]').forEach(chip => {
+                const lbci = parseInt(chip.dataset.lbci, 10);
+                const grp = chip.dataset.lbgrp;
+                const lboti = parseInt(chip.dataset.lboti, 10);
+                const arr = (grp === 'uncategorized')
+                    ? (_lbExtraOriginal[lbci] && _lbExtraOriginal[lbci].uncategorized)
+                    : (_lbExtraOriginal[lbci] && _lbExtraOriginal[lbci][grp]);
+                if (!arr) return;
+                const t = arr[lboti];
+                if (!t) return;
+                _attachTagChipTooltip(chip, t.tag, t.desc || '', () => _lbExtraShowDesc);
+            });
         }
 
         function _buildOrigTags(ci, group) {
@@ -24377,9 +24409,9 @@
             const chips = orig.length === 0 ? '' : orig.map((t, ti) => {
                 const inEdited = edited.some(et => et.tag === t.tag);
                 if (inEdited) {
-                    return `<span style="background:var(--surface2); border:1px solid var(--border); padding:2px 6px; border-radius:4px; font-size:0.75rem; color:var(--text2); opacity:0.45; display:inline-flex; align-items:center; gap:3px; cursor:default;"${_lbExtraShowDesc && t.desc ? ` title="${escAttr(t.desc)}"` : ''}>${escHtml(t.tag)}</span>`;
+                    return `<span data-lbci="${ci}" data-lbgrp="${group}" data-lboti="${ti}" style="background:var(--surface2); border:1px solid var(--border); padding:2px 6px; border-radius:4px; font-size:0.75rem; color:var(--text2); opacity:0.45; display:inline-flex; align-items:center; gap:3px; cursor:default;">${escHtml(t.tag)}</span>`;
                 }
-                return `<span style="background:${activeBg}; border:1px solid ${activeBorder}; padding:2px 6px; border-radius:4px; font-size:0.75rem; display:inline-flex; align-items:center; gap:3px; cursor:default;"${_lbExtraShowDesc && t.desc ? ` title="${escAttr(t.desc)}"` : ''}>${escHtml(t.tag)}<span style="cursor:pointer; color:var(--accent); font-weight:bold; font-size:0.8rem; margin-left:2px;" onclick="event.stopPropagation(); _addLbExtraTag(${ci},'${group}',${ti})">→</span></span>`;
+                return `<span data-lbci="${ci}" data-lbgrp="${group}" data-lboti="${ti}" style="background:${activeBg}; border:1px solid ${activeBorder}; padding:2px 6px; border-radius:4px; font-size:0.75rem; display:inline-flex; align-items:center; gap:3px; cursor:default;">${escHtml(t.tag)}<span style="cursor:pointer; color:var(--accent); font-weight:bold; font-size:0.8rem; margin-left:2px;" onclick="event.stopPropagation(); _addLbExtraTag(${ci},'${group}',${ti})">→</span></span>`;
             }).join('');
             return genderPrefix + chips;
         }
@@ -24392,9 +24424,9 @@
             return orig.map((t, ti) => {
                 const inEdited = editedApp.some(et => et.tag === t.tag) || editedOut.some(et => et.tag === t.tag);
                 if (inEdited) {
-                    return `<span style="background:var(--surface2); border:1px solid var(--border); padding:2px 6px; border-radius:4px; font-size:0.75rem; color:var(--text2); opacity:0.45; display:inline-flex; align-items:center; gap:3px; cursor:default;"${_lbExtraShowDesc && t.desc ? ` title="${escAttr(t.desc)}"` : ''}>${escHtml(t.tag)}</span>`;
+                    return `<span data-lbci="${ci}" data-lbgrp="uncategorized" data-lboti="${ti}" style="background:var(--surface2); border:1px solid var(--border); padding:2px 6px; border-radius:4px; font-size:0.75rem; color:var(--text2); opacity:0.45; display:inline-flex; align-items:center; gap:3px; cursor:default;">${escHtml(t.tag)}</span>`;
                 }
-                return `<span class="lb-extra-uncat" draggable="true" data-uci="${ci}" data-uti="${ti}" style="background:rgba(156,163,175,0.12); border:1px solid rgba(156,163,175,0.3); padding:2px 6px; border-radius:4px; font-size:0.75rem; display:inline-flex; align-items:center; gap:3px; cursor:grab;"${_lbExtraShowDesc && t.desc ? ` title="${escAttr(t.desc)}"` : ''}>${escHtml(t.tag)}</span>`;
+                return `<span class="lb-extra-uncat" draggable="true" data-uci="${ci}" data-uti="${ti}" data-lbci="${ci}" data-lbgrp="uncategorized" data-lboti="${ti}" style="background:rgba(156,163,175,0.12); border:1px solid rgba(156,163,175,0.3); padding:2px 6px; border-radius:4px; font-size:0.75rem; display:inline-flex; align-items:center; gap:3px; cursor:grab;">${escHtml(t.tag)}</span>`;
             }).join('');
         }
 
@@ -24409,7 +24441,7 @@
 
             if (tags.length === 0 && !genderPrefix) return '<span style="font-size:0.75rem; color:var(--text2);">없음</span>';
             const chips = tags.length === 0 ? '' : tags.map((t, ti) => {
-                return `<span class="lb-extra-tag" draggable="true" data-tci="${ci}" data-tgrp="${group}" data-tti="${ti}" style="background:${bg}; border:1px solid ${border}; padding:2px 6px; border-radius:4px; font-size:0.75rem; display:inline-flex; align-items:center; gap:3px; cursor:grab;"${_lbExtraShowDesc && t.desc ? ` title="${escAttr(t.desc)}"` : ''}>${escHtml(t.tag)}<span style="cursor:pointer; color:var(--error); font-weight:bold; font-size:0.75rem; margin-left:2px;" onclick="event.stopPropagation(); _removeLbExtraTag(${ci},'${group}',${ti})">×</span></span>`;
+                return `<span class="lb-extra-tag" draggable="true" data-tci="${ci}" data-tgrp="${group}" data-tti="${ti}" style="background:${bg}; border:1px solid ${border}; padding:2px 6px; border-radius:4px; font-size:0.75rem; display:inline-flex; align-items:center; gap:3px; cursor:grab;">${escHtml(t.tag)}<span style="cursor:pointer; color:var(--error); font-weight:bold; font-size:0.75rem; margin-left:2px;" onclick="event.stopPropagation(); _removeLbExtraTag(${ci},'${group}',${ti})">×</span></span>`;
             }).join('');
             return genderPrefix + chips;
         }
@@ -25203,6 +25235,40 @@
 
             _attachFocusEditDnD();
             _attachFocusEditAutoComplete();
+            _attachFocusEditChipTooltips();
+        }
+
+        // 집중편집 — 편집본 칩(사용자가 세팅한 하단 태그칩)과 원본 칩 모두에 설명 hover 툴팁 연결.
+        // t.desc가 있으면 그걸 우선, 없으면 /api/autocomplete 로 조회 (앱 다른 태그칩과 동일 패턴).
+        function _attachFocusEditChipTooltips() {
+            const overlay = document.getElementById('focus-edit-overlay');
+            if (!overlay) return;
+
+            // 편집본 칩 (data-fti) -> _lbExtraEdited
+            overlay.querySelectorAll('.fe-edit-tag').forEach(chip => {
+                const fci = parseInt(chip.dataset.fci, 10);
+                const grp = chip.dataset.fegrp;
+                const fti = parseInt(chip.dataset.fti, 10);
+                const arr = _lbExtraEdited[fci] && _lbExtraEdited[fci][grp];
+                if (!arr) return;
+                const t = arr[fti];
+                if (!t) return;
+                _attachTagChipTooltip(chip, t.tag, t.desc || '', () => _lbExtraShowDesc);
+            });
+
+            // 원본 칩 (data-foti, draggable + inEdited 회색 모두) -> _lbExtraOriginal
+            overlay.querySelectorAll('[data-foti]').forEach(chip => {
+                const fci = parseInt(chip.dataset.fci, 10);
+                const grp = chip.dataset.fogrp;
+                const foti = parseInt(chip.dataset.foti, 10);
+                const arr = (grp === 'uncategorized')
+                    ? (_lbExtraOriginal[fci] && _lbExtraOriginal[fci].uncategorized)
+                    : (_lbExtraOriginal[fci] && _lbExtraOriginal[fci][grp]);
+                if (!arr) return;
+                const t = arr[foti];
+                if (!t) return;
+                _attachTagChipTooltip(chip, t.tag, t.desc || '', () => _lbExtraShowDesc);
+            });
         }
 
         function _buildFocusOrigTags(ci, group) {
@@ -25216,9 +25282,9 @@
             const chips = orig.length === 0 ? '' : orig.map((t, ti) => {
                 const inEdited = edited.some(et => et.tag === t.tag);
                 if (inEdited) {
-                    return `<span style="background:var(--surface2); border:1px solid var(--border); padding:3px 8px; border-radius:4px; font-size:0.78rem; color:var(--text2); opacity:0.45; display:inline-flex; align-items:center; gap:3px; cursor:default;"${_lbExtraShowDesc && t.desc ? ` title="${escAttr(t.desc)}"` : ''}>${escHtml(t.tag)}</span>`;
+                    return `<span data-fci="${ci}" data-fogrp="${group}" data-foti="${ti}" style="background:var(--surface2); border:1px solid var(--border); padding:3px 8px; border-radius:4px; font-size:0.78rem; color:var(--text2); opacity:0.45; display:inline-flex; align-items:center; gap:3px; cursor:default;">${escHtml(t.tag)}</span>`;
                 }
-                return `<span class="fe-orig-tag" draggable="true" data-fci="${ci}" data-fogrp="${group}" data-foti="${ti}" style="background:${activeBg}; border:1px solid ${activeBorder}; padding:3px 8px; border-radius:4px; font-size:0.78rem; display:inline-flex; align-items:center; gap:3px; cursor:grab;"${_lbExtraShowDesc && t.desc ? ` title="${escAttr(t.desc)}"` : ''}>${escHtml(t.tag)}</span>`;
+                return `<span class="fe-orig-tag" draggable="true" data-fci="${ci}" data-fogrp="${group}" data-foti="${ti}" style="background:${activeBg}; border:1px solid ${activeBorder}; padding:3px 8px; border-radius:4px; font-size:0.78rem; display:inline-flex; align-items:center; gap:3px; cursor:grab;">${escHtml(t.tag)}</span>`;
             }).join('');
             return genderPrefix + chips;
         }
@@ -25231,9 +25297,9 @@
             return orig.map((t, ti) => {
                 const inEdited = editedApp.some(et => et.tag === t.tag) || editedOut.some(et => et.tag === t.tag);
                 if (inEdited) {
-                    return `<span style="background:var(--surface2); border:1px solid var(--border); padding:3px 8px; border-radius:4px; font-size:0.78rem; color:var(--text2); opacity:0.45; display:inline-flex; align-items:center; gap:3px; cursor:default;"${_lbExtraShowDesc && t.desc ? ` title="${escAttr(t.desc)}"` : ''}>${escHtml(t.tag)}</span>`;
+                    return `<span data-fci="${ci}" data-fogrp="uncategorized" data-foti="${ti}" style="background:var(--surface2); border:1px solid var(--border); padding:3px 8px; border-radius:4px; font-size:0.78rem; color:var(--text2); opacity:0.45; display:inline-flex; align-items:center; gap:3px; cursor:default;">${escHtml(t.tag)}</span>`;
                 }
-                return `<span class="fe-orig-tag" draggable="true" data-fci="${ci}" data-fogrp="uncategorized" data-foti="${ti}" style="background:rgba(156,163,175,0.15); border:1px solid rgba(156,163,175,0.35); padding:3px 8px; border-radius:4px; font-size:0.78rem; display:inline-flex; align-items:center; gap:3px; cursor:grab;"${_lbExtraShowDesc && t.desc ? ` title="${escAttr(t.desc)}"` : ''}>${escHtml(t.tag)}</span>`;
+                return `<span class="fe-orig-tag" draggable="true" data-fci="${ci}" data-fogrp="uncategorized" data-foti="${ti}" style="background:rgba(156,163,175,0.15); border:1px solid rgba(156,163,175,0.35); padding:3px 8px; border-radius:4px; font-size:0.78rem; display:inline-flex; align-items:center; gap:3px; cursor:grab;">${escHtml(t.tag)}</span>`;
             }).join('');
         }
 
@@ -25245,7 +25311,7 @@
             const genderPrefix = isBlue ? _buildGenderFixedChip(_getCharGenderTag(_lbExtraEdited[ci].name)) : '';
             if (tags.length === 0 && !genderPrefix) return '<span style="font-size:0.78rem; color:var(--text2); opacity:0.6;">없음 — 상단에서 드래그하거나 입력창으로 추가</span>';
             const chips = tags.length === 0 ? '' : tags.map((t, ti) => {
-                return `<span class="fe-edit-tag" draggable="true" data-fci="${ci}" data-fegrp="${group}" data-fti="${ti}" style="background:${bg}; border:1px solid ${border}; padding:3px 8px; border-radius:4px; font-size:0.78rem; display:inline-flex; align-items:center; gap:3px; cursor:grab;"${_lbExtraShowDesc && t.desc ? ` title="${escAttr(t.desc)}"` : ''}>${escHtml(t.tag)}<span style="cursor:pointer; color:var(--error); font-weight:bold; font-size:0.75rem; margin-left:2px;" onclick="event.stopPropagation(); _focusEditRemoveTag(${ci},'${group}',${ti})">×</span></span>`;
+                return `<span class="fe-edit-tag" draggable="true" data-fci="${ci}" data-fegrp="${group}" data-fti="${ti}" style="background:${bg}; border:1px solid ${border}; padding:3px 8px; border-radius:4px; font-size:0.78rem; display:inline-flex; align-items:center; gap:3px; cursor:grab;">${escHtml(t.tag)}<span style="cursor:pointer; color:var(--error); font-weight:bold; font-size:0.75rem; margin-left:2px;" onclick="event.stopPropagation(); _focusEditRemoveTag(${ci},'${group}',${ti})">×</span></span>`;
             }).join('');
             return genderPrefix + chips;
         }
@@ -33659,12 +33725,17 @@
             return desc;
         }
 
-        function _attachTagChipTooltip(chip, tagName) {
+        function _attachTagChipTooltip(chip, tagName, preloadedDesc, gateFn) {
             if (!chip || !tagName) return;
             chip.addEventListener('mouseenter', async () => {
+                // gateFn(예: "설명" 토글)이 닫혀 있으면 툴팁을 띄우지 않는다
+                if (gateFn && !gateFn()) return;
                 const tooltip = document.getElementById('ac-tooltip');
                 if (!tooltip) return;
-                const desc = await _lookupTagDescription(tagName);
+                // API(최신 형식, 소속 경로 포함)를 우선 조회하고, 실패 시 preloadedDesc로 폴백.
+                // 원본/편집본 칩 모두 동일한 설명 형식이 표시되도록 함.
+                const preloaded = (typeof preloadedDesc === 'string') ? preloadedDesc.trim() : '';
+                const desc = (await _lookupTagDescription(tagName)) || preloaded;
                 if (!desc) return;
                 // 마우스가 이미 칩을 벗어났을 수도 있음 — 칩이 여전히 hover인지 확인
                 if (!chip.matches(':hover')) return;
