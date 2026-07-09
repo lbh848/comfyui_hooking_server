@@ -668,6 +668,63 @@ def supports_vision(service: str) -> bool:
     return True
 
 
+# 비전 LLM이 직접 수용하는 Pillow 포맷명. 이 외(AVIF/HEIF/BMP/TIFF 등)는 PNG로 재인코딩.
+_VISION_NATIVE_FORMATS = {"PNG", "JPEG", "WEBP", "GIF"}
+
+
+def _normalize_vision_image(image_b64: str, image_mime: str) -> tuple:
+    """비전 LLM이 못 여는 이미지 포맷(AVIF 등)을 PNG로 변환.
+
+    중요: 들어온 image_mime 라벨을 신뢰하지 않고 바이트에서 Pillow로 실제 포맷을
+    감지한다. 호출자(bot/asset/instance/style)가 .avif 파일을 image/webp 로 잘못
+    라벨링하거나, 브라우저가 application/octet-stream 으로 보내는 경우도 모두 커버.
+
+    Returns:
+        (image_b64, image_mime): 네이티브 포맷이면 원본 b64에 '보정된' mime,
+        비네이티브(AVIF 등)면 PNG 재인코딩 결과. 변환 실패 시 원본 통과.
+    """
+    if not image_b64:
+        return image_b64, image_mime
+    try:
+        import base64 as _b64
+        import io
+        from PIL import Image
+        try:
+            import pillow_avif  # noqa: F401  AVIF 디코드 보장용 레지스터
+        except Exception:
+            pass
+
+        raw = _b64.b64decode(image_b64)
+        img = Image.open(io.BytesIO(raw))
+        try:
+            fmt = (img.format or "").upper()
+            # 네이티브 포맷이면 재인코딩 없이 통과 (단, 실제 포맷에 맞게 mime 보정)
+            if fmt == "PNG":
+                return image_b64, "image/png"
+            if fmt in ("JPEG", "JPG"):
+                return image_b64, "image/jpeg"
+            if fmt == "WEBP":
+                return image_b64, "image/webp"
+            if fmt == "GIF":
+                return image_b64, "image/gif"
+            # AVIF / HEIF / BMP / TIFF / 미식별 등 → PNG 재인코딩
+            img.load()
+            out = io.BytesIO()
+            save_img = img if img.mode in ("RGBA", "LA") else img.convert("RGB")
+            save_img.save(out, format="PNG")
+        finally:
+            img.close()
+        new_b64 = _b64.b64encode(out.getvalue()).decode("ascii")
+        _llm_log(f"_normalize_vision_image: 변환 {fmt}/{image_mime} -> image/png "
+                 f"({len(raw)}B -> {len(out.getvalue())}B)")
+        return new_b64, "image/png"
+    except Exception:
+        print(f"[LLM_SERVICE] _normalize_vision_image 변환/감지 실패 (mime={image_mime}): "
+              f"원본 그대로 전송 시도")
+        traceback.print_exc()
+        return image_b64, image_mime
+
+
 def _build_vision_messages(messages: list, image_b64: str, image_mime: str = "image/webp") -> list:
     """텍스트 messages + 이미지 → 마지막 user 메시지에 image_url 파트를 추가한 복사본 반환.
     각 _call_*/_stream_* 함수는 content가 list인 경우를 서비스 포맷에 맞게 변환한다.
@@ -1039,6 +1096,9 @@ async def callLLMVision(messages: list, image_b64: str, image_mime: str = "image
     if not image_b64:
         return "[LLM 실패] callLLMVision: image_b64 가 비어 있습니다."
 
+    # AVIF / octet-stream 등 비전 LLM이 못 여는 포맷을 PNG로 정규화
+    image_b64, image_mime = _normalize_vision_image(image_b64, image_mime)
+
     try:
         new_messages = _build_vision_messages(messages, image_b64, image_mime=image_mime)
     except ValueError as e:
@@ -1068,6 +1128,9 @@ async def callLLMVisionStream(messages: list, image_b64: str, image_mime: str = 
     if not image_b64:
         yield {"type": "error", "error": "callLLMVisionStream: image_b64 가 비어 있습니다."}
         return
+
+    # AVIF / octet-stream 등 비전 LLM이 못 여는 포맷을 PNG로 정규화
+    image_b64, image_mime = _normalize_vision_image(image_b64, image_mime)
 
     try:
         new_messages = _build_vision_messages(messages, image_b64, image_mime=image_mime)
