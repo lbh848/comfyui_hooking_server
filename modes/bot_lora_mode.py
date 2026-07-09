@@ -208,16 +208,26 @@ def list_importable_characters(bot_name: str, project_name: str) -> dict:
 
 
 def import_characters(bot_name: str, project_name: str, char_names: list, face_chars: list | None = None) -> dict:
-    """선택한 캐릭터를 프로젝트에 추가"""
+    """선택한 캐릭터를 프로젝트에 추가
+
+    - char_names: rep 이미지를 포함할 캐릭터
+    - face_chars: 얼굴 이미지를 포함할 캐릭터
+    - face_chars에만 있고 char_names에 없는 캐릭터는 rep 없이 face만 추가됨(face-only)
+    """
     if not bot_name or not project_name:
         print("[BOT_LORA_IMPORT] 봇/프로젝트 이름 누락")
         return {"success": False, "error": "봇/프로젝트 이름 필수"}
-    if not char_names:
-        print("[BOT_LORA_IMPORT] 선택된 캐릭터 없음")
-        return {"success": False, "error": "임포트할 캐릭터를 선택하세요"}
 
+    if char_names is None:
+        char_names = []
     if face_chars is None:
         face_chars = []
+
+    # rep 포함 캐릭터 ∪ face-only 캐릭터
+    add_set = set(char_names) | set(face_chars)
+    if not add_set:
+        print("[BOT_LORA_IMPORT] 선택된 캐릭터/얼굴 없음")
+        return {"success": False, "error": "임포트할 캐릭터 또는 얼굴을 선택하세요"}
 
     bot_data = _load_bot_data()
     manage_data = _load_bot_lora_manage()
@@ -233,10 +243,14 @@ def import_characters(bot_name: str, project_name: str, char_names: list, face_c
         if b.get("name") == bot_name:
             for ch in b.get("characters", []):
                 cn = ch.get("name", "")
-                if cn in char_names and cn not in existing_chars:
+                if cn in add_set and cn not in existing_chars:
                     existing_chars[cn] = {"trigger": cn}
                     include_face = cn in face_chars
-                    _sync_training_images_to_project(bot_name, project_name, cn, ch.get("rep_images", []), include_face)
+                    # face-only(char_names에 없음)면 rep_images 비움
+                    rep_imgs = ch.get("rep_images", []) if cn in char_names else []
+                    _sync_training_images_to_project(bot_name, project_name, cn, rep_imgs, include_face)
+                    if cn not in char_names:
+                        print(f"[BOT_LORA_IMPORT] face-only 임포트: {bot_name}/{project_name}/{cn}")
                     added.append(cn)
             break
 

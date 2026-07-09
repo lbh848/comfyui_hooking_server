@@ -5850,6 +5850,15 @@
                 <div style="margin-bottom:12px; padding:10px; background:rgba(255,180,0,0.1); border:1px solid rgba(255,180,0,0.3); border-radius:8px; font-size:0.8rem; color:var(--text-secondary);">
                     현재 봇에 있지만 프로젝트에 없는 캐릭터만 표시됩니다.<br>선택한 캐릭터가 프로젝트에 추가되며, 학습 이미지도 함께 동기화됩니다.
                 </div>
+                <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin-bottom:8px; padding:6px 8px; background:var(--surface1); border:1px solid var(--border); border-radius:6px;">
+                    <span style="font-size:0.75rem; color:var(--text-secondary); font-weight:600;">캐릭터(rep)</span>
+                    <button type="button" onclick="_botLoraBulkToggle('bot-lora-char-import-list','rep',true)" style="padding:3px 8px; font-size:0.72rem; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:4px; cursor:pointer;">모두체크</button>
+                    <button type="button" onclick="_botLoraBulkToggle('bot-lora-char-import-list','rep',false)" style="padding:3px 8px; font-size:0.72rem; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:4px; cursor:pointer;">모두해제</button>
+                    <span style="width:1px; height:16px; background:var(--border);"></span>
+                    <span style="font-size:0.75rem; color:var(--text-secondary); font-weight:600;">얼굴(face)</span>
+                    <button type="button" onclick="_botLoraBulkToggle('bot-lora-char-import-list','face',true)" style="padding:3px 8px; font-size:0.72rem; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:4px; cursor:pointer;">모두체크</button>
+                    <button type="button" onclick="_botLoraBulkToggle('bot-lora-char-import-list','face',false)" style="padding:3px 8px; font-size:0.72rem; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:4px; cursor:pointer;">모두해제</button>
+                </div>
                 <div id="bot-lora-char-import-list" style="display:flex; flex-direction:column; gap:6px; max-height:360px; overflow-y:auto;"></div>
                 <div id="bot-lora-char-import-empty" style="display:none; text-align:center; padding:32px; color:var(--text-secondary); font-size:0.85rem;">
                     임포트할 새 캐릭터가 없습니다.
@@ -21148,15 +21157,16 @@
         async function confirmBotLoraCharImport() {
             if (!botLoraCurrentBot || !botLoraCurrentProject) return;
             const checked = [...document.querySelectorAll('.bot-lora-char-import-check:checked')].map(el => el.value);
-            if (checked.length === 0) { showToast('임포트할 캐릭터를 선택하세요', 'error'); return; }
             const faceChars = [...document.querySelectorAll('.bot-lora-char-import-face-check:checked')].map(el => el.value);
+            if (checked.length === 0 && faceChars.length === 0) { showToast('캐릭터 또는 얼굴을 최소 1개 선택하세요', 'error'); return; }
             try {
                 const resp = await fetchJSON('/api/bot_lora/characters/import', {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ bot: botLoraCurrentBot, project: botLoraCurrentProject, characters: checked, face_chars: faceChars })
                 });
                 if (resp.success) {
-                    showToast(`${resp.count}명 캐릭터 임포트 완료`, 'success');
+                    const faceOnly = faceChars.filter(c => !checked.includes(c)).length;
+                    showToast(`임포트 완료 (rep ${checked.length}명 · 얼굴 ${faceChars.length}${faceOnly ? `, face-only ${faceOnly}` : ''})`, 'success');
                     closeBotLoraCharImportModal();
                     await loadBotLoraProject();
                 } else {
