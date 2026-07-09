@@ -67,6 +67,49 @@ def _migrate_solo_group(data: dict):
         _save_bot_data(data)
 
 
+def _migrate_system_prompt_preset(data: dict):
+    """각 봇에 system_prompt_preset(선택된 단일 프리셋 이름)을 보장한다.
+
+    봇의 시스템 프롬프트는 항상 선택된 전역 프리셋에서 파생된다.
+    - 기존 system_prompt 본문이 있으면 그 내용으로 프리셋을 생성해 연결.
+    - 본문이 비어있으면 전역 '기본' 프리셋을 연결.
+    """
+    changed = False
+    presets = data.get("system_prompt_presets")
+    if not isinstance(presets, dict):
+        presets = {}
+        data["system_prompt_presets"] = presets
+        changed = True
+    if "기본" not in presets:
+        presets["기본"] = ""
+        changed = True
+        print("[BOT_MODE] 마이그레이션: 전역 기본 프리셋 생성 (system_prompt_presets['기본'])")
+    for bot in data.get("bots", []):
+        bot_name = bot.get("name", "?")
+        preset = (bot.get("system_prompt_preset") or "").strip()
+        if preset and preset in presets:
+            continue  # 유효한 참조 — 유지
+        sp_text = bot.get("system_prompt", "") or ""
+        if sp_text.strip():
+            # 기존 본문이 있으면 그 내용으로 프리셋 생성 후 연결
+            base = f"{bot_name} 기본"
+            new_name = base
+            i = 2
+            while new_name in presets and presets[new_name] != sp_text:
+                new_name = f"{base} ({i})"
+                i += 1
+            presets[new_name] = sp_text
+            bot["system_prompt_preset"] = new_name
+            changed = True
+            print(f"[BOT_MODE] 마이그레이션: 시스템 프롬프트 본문 → 프리셋 '{new_name}' 생성/연결 ({bot_name})")
+        else:
+            bot["system_prompt_preset"] = "기본"
+            changed = True
+            print(f"[BOT_MODE] 마이그레이션: system_prompt_preset='기본' 할당 ({bot_name})")
+    if changed:
+        _save_bot_data(data)
+
+
 def _load_bot_data() -> dict:
     """bot.json 로드. 없으면 기본값 생성."""
     if os.path.isfile(BOT_DATA_FILE):
@@ -86,6 +129,8 @@ def _load_bot_data() -> dict:
                 for bot in data.get("bots", []):
                     if "system_prompt" not in bot:
                         bot["system_prompt"] = ""
+                # system_prompt_preset 필드 보장 (프리셋 기반 모델)
+                _migrate_system_prompt_preset(data)
                 # solo/group 프로필 마이그레이션
                 _migrate_solo_group(data)
                 return data
@@ -1585,27 +1630,42 @@ class BotMode:
             bot = next((b for b in data["bots"] if b["name"] == bot_name), None)
             if not bot:
                 return _json_error(f"봇을 찾을 수 없습니다: {bot_name}")
-            return _json_ok({"text": bot.get("system_prompt", "")})
+            preset = (bot.get("system_prompt_preset") or "").strip()
+            presets = data.get("system_prompt_presets", {})
+            # 본문은 항상 선택된 전역 프리셋에서 파생. 프리셋이 없으면 기존 필드 폴백.
+            text = presets.get(preset, bot.get("system_prompt", "")) if preset else bot.get("system_prompt", "")
+            return _json_ok({"text": text, "preset": preset})
         except Exception as e:
             print(f"[BOT_MODE] 시스템 프롬프트 로드 실패: {e}")
             traceback.print_exc()
             return _json_error(str(e))
 
     async def handle_save_system_prompt(self, request):
-        """POST /api/bot_mode/system_prompt - 봇의 시스템 프롬프트 저장"""
+        """POST /api/bot_mode/system_prompt - 선택된 프리셋에 시스템 프롬프트 저장(덮어쓰기)
+
+        봇은 항상 하나의 프리셋을 선택해야 하며, 에디터에서 편집한 내용은
+        해당 전역 프리셋에 덮어쓰기된다(같은 프리셋을 쓰는 다른 봇에도 반영).
+        """
         try:
             body = await request.json()
             bot_name = body.get("bot_name", "").strip()
             text = body.get("text", "")
+            preset_name = (body.get("preset_name") or "").strip()
             if not bot_name:
                 return _json_error("봇 이름이 비어있습니다.")
+            if not preset_name:
+                return _json_error("저장할 프리셋이 선택되지 않았습니다. 프리셋을 먼저 선택하세요.")
             data = _load_bot_data()
             bot = next((b for b in data["bots"] if b["name"] == bot_name), None)
             if not bot:
                 return _json_error(f"봇을 찾을 수 없습니다: {bot_name}")
-            bot["system_prompt"] = text
+            if "system_prompt_presets" not in data:
+                data["system_prompt_presets"] = {}
+            data["system_prompt_presets"][preset_name] = text  # 전역 프리셋 덮어쓰기
+            bot["system_prompt_preset"] = preset_name
+            bot["system_prompt"] = text  # dead field이나 일관성 유지
             _save_bot_data(data)
-            print(f"[BOT_MODE] 시스템 프롬프트 저장: {bot_name} ({len(text)}자)")
+            print(f"[BOT_MODE] 시스템 프롬프트 저장: {bot_name} → 프리셋 '{preset_name}' ({len(text)}자)")
             return _json_ok({"saved": True})
         except Exception as e:
             print(f"[BOT_MODE] 시스템 프롬프트 저장 실패: {e}")
@@ -1653,6 +1713,13 @@ class BotMode:
             presets = data.get("system_prompt_presets", {})
             if name not in presets:
                 return _json_error(f"프리셋을 찾을 수 없습니다: {name}")
+            # 사용 중인 봇이 있으면 삭제 불가 (프리셋은 항상 하나가 선택되어야 함)
+            using = [b.get("name", "?") for b in data.get("bots", [])
+                     if (b.get("system_prompt_preset") or "").strip() == name]
+            if using:
+                return _json_error(
+                    f"이 프리셋을 사용 중인 봇이 있어 삭제할 수 없습니다: {', '.join(using)}"
+                )
             del presets[name]
             data["system_prompt_presets"] = presets
             _save_bot_data(data)
