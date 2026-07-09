@@ -32432,24 +32432,27 @@
         async function botDoUtilityAnalyze() {
             const checks = document.querySelectorAll('.util-analyze-check:checked');
             if (checks.length === 0) { showToast('선택된 이미지가 없습니다', 'error'); return; }
-            const filenames = [...checks].map(c => c.dataset.filename);
+            // 주의: 모든 캐릭터의 얼굴 이미지 파일명이 "_face_image.webp"로 동일하므로
+            // filename이 아니라 character 이름으로 선택 여부를 전달해야 함.
+            const characters = [...checks].map(c => c.dataset.character).filter(Boolean);
+            if (characters.length === 0) { showToast('선택된 캐릭터가 없습니다', 'error'); return; }
             document.getElementById('bot-util-analyze-modal').style.display = 'none';
             const btn = document.getElementById('btn-bot-util-analyze');
             const statusDiv = document.getElementById('bot-util-status');
             btn.disabled = true;
             btn.textContent = '큐에 추가 중...';
             statusDiv.style.display = 'block';
-            statusDiv.textContent = `큐에 추가 중... (${filenames.length}장)`;
+            statusDiv.textContent = `큐에 추가 중... (${characters.length}장)`;
             try {
                 const data = await fetchJSON('/api/bot_mode/batch_analyze_utility', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({bot: botCurrentBot, filenames})
+                    body: JSON.stringify({bot: botCurrentBot, characters})
                 });
                 if (data.error) { showToast(data.error, 'error'); btn.disabled = false; btn.textContent = '얼굴 태그 일괄 분석'; return; }
-                statusDiv.textContent = `큐에 추가됨 (${filenames.length}장) - 대기 중...`;
+                statusDiv.textContent = `큐에 추가됨 (${characters.length}장) - 대기 중...`;
                 showToast('큐에 추가되었습니다', 'info');
-                _startTagBatch(data.batch_id, `봇 유틸 태깅 (${filenames.length}장)`, data.total || filenames.length, 'bot_utility', {
+                _startTagBatch(data.batch_id, `봇 유틸 태깅 (${characters.length}장)`, data.total || characters.length, 'bot_utility', {
                     finalizeFn: () => { const b = document.getElementById('btn-bot-util-analyze'); if (b) { b.disabled = false; b.textContent = '얼굴 태그 일괄 분석'; } },
                 });
             } catch (e) {
@@ -32737,7 +32740,10 @@
         async function botDoUtilityNegative() {
             const checks = document.querySelectorAll('.util-neg-check:checked');
             if (checks.length === 0) { showToast('선택된 이미지가 없습니다', 'error'); return; }
-            const filenames = [...checks].map(c => c.dataset.filename);
+            // 주의: 모든 캐릭터의 얼굴 이미지 파일명이 "_face_image.webp"로 동일하므로
+            // filename이 아니라 character 이름으로 선택 여부를 전달해야 함.
+            const characters = [...checks].map(c => c.dataset.character).filter(Boolean);
+            if (characters.length === 0) { showToast('선택된 캐릭터가 없습니다', 'error'); return; }
             const presetSel = document.getElementById('util-neg-modal-preset');
             const presetName = presetSel.value;
             const presetTags = (assetTags.negative_presets || {})[presetName] || [];
@@ -32748,12 +32754,12 @@
             btn.disabled = true;
             btn.textContent = '적용 중...';
             statusDiv.style.display = 'block';
-            statusDiv.textContent = `0/${filenames.length} 적용 중...`;
+            statusDiv.textContent = `0/${characters.length} 적용 중...`;
             try {
                 const resp = await fetch('/api/bot_mode/batch_set_negative_utility', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({bot: botCurrentBot, negative_tags: negativeTags, filenames})
+                    body: JSON.stringify({bot: botCurrentBot, negative_tags: negativeTags, characters})
                 });
                 const data = await resp.json();
                 if (data.error) { showToast(data.error, 'error'); return; }

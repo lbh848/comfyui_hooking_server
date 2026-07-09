@@ -1299,10 +1299,13 @@ class BotMode:
 
             from queue_manager import queue_manager
             reps = queue_manager._get_bot_utility_paths(bot_name, char_name)
-            filenames = body.get("filenames", [])
-            if filenames:
-                _fnset = set(filenames)
-                reps = [r for r in reps if r["filename"] in _fnset]
+            # 모든 캐릭터의 얼굴 이미지 파일명이 "_face_image.webp"로 동일하므로
+            # filename이 아닌 character 이름으로 선택 여부를 필터링해야 함.
+            characters = body.get("characters", [])
+            if characters:
+                _cset = set(str(c).strip() for c in characters if str(c).strip())
+                reps = [r for r in reps if r["character"] in _cset]
+            # (레거시) filenames 만 온 경우에도 filename은 캐릭터를 구분하지 못하므로 무시.
             batch_label = f"태그 분석 (봇 유틸: {bot_name}, {len(reps)}장)"
             items_spec = []
             for r in reps:
@@ -1332,9 +1335,13 @@ class BotMode:
                 return _json_error("봇 이름이 필요합니다.")
 
             reps = self._get_utility_image_paths(bot_name, char_name)
-            only_filenames = body.get("filenames", [])
-            if only_filenames:
-                reps = [r for r in reps if r["filename"] in only_filenames]
+            # 모든 캐릭터의 얼굴 이미지 파일명이 "_face_image.webp"로 동일하므로
+            # filename이 아닌 character 이름으로 선택 여부를 필터링해야 함.
+            characters = body.get("characters", [])
+            if characters:
+                _cset = set(str(c).strip() for c in characters if str(c).strip())
+                reps = [r for r in reps if r["character"] in _cset]
+            # (레거시) filenames 만 온 경우에도 filename은 캐릭터를 구분하지 못하므로 무시.
             if not reps:
                 return _json_ok({"total": 0, "success_count": 0, "fail_count": 0})
 
