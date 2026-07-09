@@ -177,6 +177,8 @@ class BotMode:
                     return await self._update_char_face_tags(data, body)
                 elif action == "update_char_face_loras":
                     return await self._update_char_face_loras(data, body)
+                elif action == "update_char_style_loras":
+                    return await self._update_char_style_loras(data, body)
                 elif action == "update_char_gender_tag":
                     return await self._update_char_gender_tag(data, body)
                 else:
@@ -377,6 +379,23 @@ class BotMode:
         char["face_loras"] = face_loras
         _save_bot_data(data)
         print(f"[BOT_MODE] 캐릭터 얼굴 LoRA 업데이트: {bot_name}/{char_name} ({len(face_loras)}개)")
+        return _json_ok({"bots": data["bots"]})
+
+    async def _update_char_style_loras(self, data, body):
+        bot_name = body.get("bot_name", "").strip()
+        char_name = body.get("char_name", "").strip()
+        style_loras = body.get("style_loras", [])
+        if not bot_name or not char_name:
+            return _json_error("봇 또는 캐릭터 이름이 비어있습니다.")
+        bot = next((b for b in data["bots"] if b["name"] == bot_name), None)
+        if not bot:
+            return _json_error(f"봇을 찾을 수 없음: {bot_name}")
+        char = next((c for c in bot.get("characters", []) if c["name"] == char_name), None)
+        if not char:
+            return _json_error(f"캐릭터를 찾을 수 없음: {char_name}")
+        char["style_loras"] = style_loras
+        _save_bot_data(data)
+        print(f"[BOT_MODE] 캐릭터 스타일(그림체) LoRA 업데이트: {bot_name}/{char_name} ({len(style_loras)}개)")
         return _json_ok({"bots": data["bots"]})
 
     async def _update_char_gender_tag(self, data, body):

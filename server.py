@@ -6826,8 +6826,23 @@ async def handle_api_instance_lora_for_picker(request):
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 
+async def handle_api_style_lora_for_picker(request):
+    """스타일(그림체) LoRA 피커용 목록 (project_id + 프로필별 대표 경로)"""
+    try:
+        from modes.style_lora_mode import list_style_lora_for_picker
+        config = load_config()
+        style_lora_load_path = config.get("style_lora_load_path", "")
+        items = list_style_lora_for_picker(style_lora_load_path)
+        return web.json_response({"success": True, "items": items})
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        print(f"[STYLE_LORA_PICKER] 목록 조회 실패: {e}")
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
 app.router.add_get("/api/bot_lora/for_picker", handle_api_bot_lora_for_picker)
 app.router.add_get("/api/instance_lora/for_picker", handle_api_instance_lora_for_picker)
+app.router.add_get("/api/style_lora/for_picker", handle_api_style_lora_for_picker)
 
 
 async def handle_api_lora_entry_image(request):

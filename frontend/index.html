@@ -23378,6 +23378,14 @@
                             </div>
                         </div>
                     </div>
+                    <div class="card-section" id="char-style-lora-section-${charIdx}">
+                        <div class="card-section-title" style="display:inline-flex; align-items:center; gap:10px; margin-bottom:0;">
+                            <span>스타일(그림체) 로라 설정</span>
+                            <button class="lora-add-btn" onclick="event.stopPropagation(); openBotCharStyleLoraPicker('${escAttr(char.name)}', ${charIdx})"
+                                style="font-size:0.75rem; padding:4px 10px; border:1px dashed var(--border); background:var(--surface2); border-radius:6px; cursor:pointer; color:var(--text2); transition:border-color 0.15s;">+ 스타일 LoRA 추가</button>
+                        </div>
+                        <div id="char-style-lora-list-${charIdx}" class="lora-cards-row" style="margin-top:8px;"></div>
+                    </div>
                 `;
                 grid.appendChild(card);
 
@@ -23479,6 +23487,11 @@
                 if (charFaceLoras.length > 0) {
                     renderBotCharFaceLoraList(charIdx, char.name, charFaceLoras);
                 }
+                // 스타일(그림체) LoRA 목록 렌더링
+                const charStyleLoras = char.style_loras || [];
+                if (charStyleLoras.length > 0) {
+                    renderBotCharStyleLoraList(charIdx, char.name, charStyleLoras);
+                }
             }
             showBotView('chars');
             checkPatchFiles();
@@ -23554,6 +23567,56 @@
                     <div style="display:flex; align-items:center; gap:6px; margin-top:6px;">
                         <input type="range" min="0" max="1" step="0.01" value="${lora.strength ?? 0.5}"
                             oninput="updateBotCharFaceLoraField(${charIdx},'${escAttr(charName)}',${i},'strength',parseFloat(this.value)); this.nextElementSibling.textContent=parseFloat(this.value).toFixed(2)"
+                            onclick="event.stopPropagation()"
+                            style="flex:1; cursor:pointer;">
+                        <span style="font-size:0.7rem; min-width:28px; text-align:right;">${(lora.strength ?? 0.5).toFixed(2)}</span>
+                    </div>
+                </div>`;
+            }).join('');
+        }
+
+        // ─── 스타일(그림체) LoRA 카드 렌더링 ──────────────────────
+        function renderBotCharStyleLoraList(charIdx, charName, styleLoras) {
+            const container = document.getElementById(`char-style-lora-list-${charIdx}`);
+            if (!container) return;
+            if (!styleLoras || styleLoras.length === 0) { container.innerHTML = ''; return; }
+            container.innerHTML = styleLoras.map((lora, i) => {
+                const source = lora.source === 'style' ? '스타일' : `${escHtml(lora.character || '')}`;
+                const fallback = (lora.project_id && lora.first_image)
+                    ? `/api/style_lora/image/${encodeURIComponent(lora.project_id)}/${encodeURIComponent(lora.first_image)}`
+                    : '';
+                const primary = lora.preview_url || fallback;
+                const imgHtml = `<div style="position:relative; width:70%; aspect-ratio:1; margin:0 auto; border-radius:6px; overflow:hidden;">
+                    <div style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:2rem; background:var(--surface);">🎨</div>
+                    ${primary ? `<img src="${escHtml(primary)}" data-fallback="${escAttr(fallback)}"
+                        onerror="if(!this.dataset.tried && this.dataset.fallback){this.dataset.tried='1'; this.src=this.dataset.fallback;}else{this.style.display='none';}"
+                        style="position:relative; width:100%; height:100%; object-fit:cover; cursor:zoom-in;" loading="lazy"
+                        onclick="event.stopPropagation(); openLightbox(this.src)">` : ''}
+                </div>`;
+                return `<div style="padding:8px; background:var(--surface2); border-radius:6px; border:1px solid var(--border); position:relative; width:180px;">
+                    <button onclick="event.stopPropagation(); removeBotCharStyleLora(${charIdx},'${escAttr(charName)}',${i})"
+                        style="position:absolute; top:2px; right:4px; background:none; border:none; color:var(--error); cursor:pointer; font-size:1.2rem; padding:2px 4px;">x</button>
+                    ${imgHtml}
+                    <div style="margin-top:6px;">
+                        <div style="font-size:0.8rem; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escHtml(lora.name || '')}</div>
+                        <div style="font-size:0.65rem; color:var(--text-secondary);">${escHtml(source)}</div>
+                    </div>
+                    <div style="margin-top:4px;">
+                        <div style="font-size:0.65rem; color:var(--text-secondary); margin-bottom:2px;">트리거 워드</div>
+                        <input type="text" value="${escAttr(lora.trigger || '')}" onchange="updateBotCharStyleLoraField(${charIdx},'${escAttr(charName)}',${i},'trigger',this.value)"
+                            onclick="event.stopPropagation()"
+                            style="width:100%; padding:3px 6px; border:1px solid var(--border); background:var(--surface); color:var(--text); border-radius:4px; font-size:0.75rem;"
+                            placeholder="트리거 워드 입력">
+                    </div>
+                    <select onchange="updateBotCharStyleLoraField(${charIdx},'${escAttr(charName)}',${i},'BASE',this.value)"
+                        onclick="event.stopPropagation()"
+                        style="width:100%; margin-top:6px; background:var(--surface); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:3px 4px; font-size:0.75rem; cursor:pointer;">
+                        <option value="anima" ${(lora.BASE || 'anima') === 'anima' ? 'selected' : ''}>anima</option>
+                        <option value="sdxl" ${lora.BASE === 'sdxl' ? 'selected' : ''}>sdxl</option>
+                    </select>
+                    <div style="display:flex; align-items:center; gap:6px; margin-top:6px;">
+                        <input type="range" min="0" max="1" step="0.01" value="${lora.strength ?? 0.5}"
+                            oninput="updateBotCharStyleLoraField(${charIdx},'${escAttr(charName)}',${i},'strength',parseFloat(this.value)); this.nextElementSibling.textContent=parseFloat(this.value).toFixed(2)"
                             onclick="event.stopPropagation()"
                             style="flex:1; cursor:pointer;">
                         <span style="font-size:0.7rem; min-width:28px; text-align:right;">${(lora.strength ?? 0.5).toFixed(2)}</span>
@@ -23730,6 +23793,60 @@
             renderBotCharFaceLoraList(charIdx, charName, faceLoras);
             await saveBotCharFaceLoras(charName);
             showToast('얼굴 LoRA 삭제됨', 'info');
+        }
+
+        // ─── 스타일(그림체) LoRA getter/setter/save ───────────────
+        function getBotCharStyleLoras(charName) {
+            const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
+            if (!bot) return [];
+            const char = (bot.characters || []).find(c => c.name === charName);
+            return char ? (char.style_loras || []) : [];
+        }
+
+        function setBotCharStyleLoras(charName, styleLoras) {
+            const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
+            if (!bot) return;
+            const char = (bot.characters || []).find(c => c.name === charName);
+            if (!char) return;
+            char.style_loras = styleLoras;
+        }
+
+        async function saveBotCharStyleLoras(charName) {
+            const styleLoras = getBotCharStyleLoras(charName);
+            try {
+                const resp = await fetch('/api/bot_mode/action', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'update_char_style_loras', bot_name: botCurrentBot, char_name: charName, style_loras: styleLoras })
+                });
+                const result = await resp.json();
+                if (result.error) {
+                    console.error('[BOT] 스타일 LoRA 저장 실패:', result.error);
+                    showToast('스타일 LoRA 저장 실패: ' + result.error, 'error');
+                } else {
+                    if (result.bots) botData.bots = result.bots;
+                }
+            } catch (e) {
+                console.error('[BOT] 스타일 LoRA 저장 실패:', e);
+                showToast('스타일 LoRA 저장 실패: ' + e.message, 'error');
+            }
+        }
+
+        async function updateBotCharStyleLoraField(charIdx, charName, loraIdx, field, value) {
+            const styleLoras = getBotCharStyleLoras(charName);
+            if (styleLoras[loraIdx]) {
+                styleLoras[loraIdx][field] = value;
+                await saveBotCharStyleLoras(charName);
+            }
+        }
+
+        async function removeBotCharStyleLora(charIdx, charName, loraIdx) {
+            const styleLoras = getBotCharStyleLoras(charName);
+            styleLoras.splice(loraIdx, 1);
+            setBotCharStyleLoras(charName, styleLoras);
+            renderBotCharStyleLoraList(charIdx, charName, styleLoras);
+            await saveBotCharStyleLoras(charName);
+            showToast('스타일 LoRA 삭제됨', 'info');
         }
 
         // ─── lb-xnai.lb.extra.txt 내보내기 ─────────────────────
@@ -28163,6 +28280,102 @@
                 grid.appendChild(divider);
             }
             others.forEach(it => renderCard(it, false));
+        }
+
+        // ─── 스타일(그림체) LoRA 피커 ───
+        async function openBotCharStyleLoraPicker(charName, charIdx) {
+            _botCharLoraPickerState = { charName, charIdx, tab: 'style', assetData: null, instanceData: null, styleData: null, botStep: 'bots', botBots: null, botProjects: null, botSelectedBot: '', botSelectedProject: '', botSelectedChar: '', isFaceLora: false, isStyleLora: true, profile: 'solo' };
+            const overlay = document.createElement('div');
+            overlay.id = 'bot-char-lora-picker-overlay';
+            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10010; display:flex; align-items:center; justify-content:center;';
+            overlay.innerHTML = `
+                <div style="background:var(--surface); border-radius:12px; padding:24px; max-width:1100px; width:95%; max-height:95vh; display:flex; flex-direction:column;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                        <h3 style="margin:0;">스타일(그림체) LoRA 선택</h3>
+                        <button onclick="document.getElementById('bot-char-lora-picker-overlay').remove()" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer;">x</button>
+                    </div>
+                    <div id="bclp-breadcrumb" style="margin-bottom:10px; font-size:0.8rem; color:var(--text2); display:flex; align-items:center; gap:4px; flex-wrap:wrap;"></div>
+                    <div id="bclp-grid" style="display:grid; grid-template-columns:repeat(3,1fr); gap:12px; overflow-y:auto; max-height:calc(95vh - 130px);"></div>
+                </div>`;
+            document.body.appendChild(overlay);
+            await loadBclpStyleLoras();
+        }
+
+        async function loadBclpStyleLoras() {
+            const grid = document.getElementById('bclp-grid');
+            if (!grid) return;
+            grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--text-secondary);">로딩중...</div>';
+            _bclpBreadcrumb([{ label: '스타일(그림체) LoRA' }]);
+            try {
+                const resp = await fetch('/api/style_lora/for_picker');
+                const data = await resp.json();
+                if (!data.success) { grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--error);">로드 실패: ' + escapeHtml(data.error || '') + '</div>'; return; }
+                _botCharLoraPickerState.styleData = data.items || [];
+                renderBclpStyleLoras();
+            } catch (e) {
+                grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--error);">로드 실패: ' + escapeHtml(e.message) + '</div>';
+            }
+        }
+
+        function renderBclpStyleLoras() {
+            const grid = document.getElementById('bclp-grid');
+            if (!grid) return;
+            _bclpBreadcrumb([{ label: '스타일(그림체) LoRA' }]);
+            const items = _botCharLoraPickerState.styleData || [];
+            const enc = encodeURIComponent;
+            grid.innerHTML = '';
+            if (items.length === 0) { grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--text-secondary);">스타일 LoRA 항목이 없습니다</div>'; return; }
+            items.forEach(item => {
+                const profileNames = Object.keys(item.profiles || {});
+                const previewUrl = item.first_image ? `/api/style_lora/image/${enc(item.project_id)}/${enc(item.first_image)}` : '';
+                const card = document.createElement('div');
+                card.style.cssText = 'cursor:pointer; border-radius:8px; overflow:hidden; border:2px solid var(--border); transition:border-color 0.2s; position:relative;';
+                const badges = profileNames.map(p =>
+                    `<span style="font-size:0.55rem; background:${p === 'anima' ? 'rgba(100,180,255,0.3)' : 'rgba(255,180,100,0.3)'}; padding:1px 4px; border-radius:3px; margin:0 1px;">${p}</span>`
+                ).join('');
+                card.innerHTML = `<div style="position:relative; width:100%; aspect-ratio:1;">
+                        <div style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center; background:var(--surface2);">🎨</div>
+                        ${previewUrl ? `<img src="${escapeHtml(previewUrl)}" onerror="this.style.display='none'" style="position:relative; width:100%; height:100%; object-fit:contain; display:block;" loading="lazy">` : ''}
+                    </div>`;
+                card.innerHTML += `<div style="font-size:0.7rem; padding:4px; text-align:center; background:var(--surface2);">${escapeHtml(item.name || item.project_id)}<br>${badges}</div>`;
+                card.onmouseenter = () => { card.style.borderColor = 'var(--accent)'; };
+                card.onmouseleave = () => { card.style.borderColor = 'var(--border)'; };
+                card.onclick = () => {
+                    const styleLoras = getBotCharStyleLoras(_botCharLoraPickerState.charName);
+                    let addedCount = 0;
+                    for (const [pf, pData] of Object.entries(item.profiles || {})) {
+                        let prev = '';
+                        const rawPrev = pData.preview_url || '';
+                        if (rawPrev) {
+                            // representative.preview는 이미 전체 URL, fallback(previews[0])은 파일명
+                            prev = (rawPrev.startsWith('http') || rawPrev.startsWith('/api/'))
+                                ? rawPrev
+                                : `/api/style_lora/trained/preview/${enc(item.project_id)}/${enc(pf)}/${enc(pData.session || '')}/${enc(rawPrev)}`;
+                        } else if (item.first_image) {
+                            prev = `/api/style_lora/image/${enc(item.project_id)}/${enc(item.first_image)}`;
+                        }
+                        styleLoras.push({
+                            source: 'style',
+                            name: `${item.name || item.project_id} (${pf})`,
+                            character: 'style',
+                            lora_path: pData.lora_path,
+                            strength: 0.5,
+                            preview_url: prev,
+                            first_image: item.first_image || null,
+                            trigger: item.trigger || '',
+                            BASE: pf,
+                            project_id: item.project_id,
+                        });
+                        addedCount++;
+                    }
+                    setBotCharStyleLoras(_botCharLoraPickerState.charName, styleLoras);
+                    renderBotCharStyleLoraList(_botCharLoraPickerState.charIdx, _botCharLoraPickerState.charName, styleLoras);
+                    saveBotCharStyleLoras(_botCharLoraPickerState.charName);
+                    document.getElementById('bot-char-lora-picker-overlay').remove();
+                    showToast(`스타일(그림체) LoRA "${item.name || item.project_id}" ${addedCount}개 추가됨`, 'success');
+                };
+                grid.appendChild(card);
+            });
         }
 
         // ─── 봇 탭 ───

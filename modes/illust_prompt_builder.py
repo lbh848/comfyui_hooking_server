@@ -292,6 +292,7 @@ class IllustPromptBuilder:
         - asset: SOYA_CHAR_LORA\\<lora_path>
         - bot:    SOYA_CHAR_LORA\\SOYA_BOT_LORA\\<lora_path>
         - instance: SOYA_CHAR_LORA\\SOYA_INSTANCE_LORA\\<lora_path>
+        - style:  SOYA_CHAR_LORA\\SOYA_STYLE_LORA\\<lora_path>
 
         기존 bot.json에 파일명만 저장된 봇 LoRA의 경우,
         bot_name/project_name/character/preview_url 메타데이터로
@@ -327,6 +328,9 @@ class IllustPromptBuilder:
 
         if source == "instance":
             return f"SOYA_CHAR_LORA\\SOYA_INSTANCE_LORA\\{raw}"
+
+        if source == "style":
+            return f"SOYA_CHAR_LORA\\SOYA_STYLE_LORA\\{raw}"
 
         # asset
         return f"SOYA_CHAR_LORA\\{raw}"
@@ -401,6 +405,30 @@ class IllustPromptBuilder:
                 if upscale_size:
                     item["UPSCALE_SIZE"] = upscale_size
                 all_face_loras.append(item)
+
+            # style_loras(그림체) 수집 → 일반 LoRA(LORA_DATA)에 추가 요소로 병합
+            for slora in char_data.get("style_loras", []):
+                strigger = (slora.get("trigger", "") or "").strip()
+                sbase = slora.get("BASE", "anima")
+                slora_path = self._resolve_lora_path(slora)
+                sstrength = slora.get("strength", 0.8)
+
+                if sbase == "anima":
+                    if strigger and strigger not in anima_triggers:
+                        anima_triggers.append(strigger)
+                    anima_loras.append({
+                        "lora_path": slora_path,
+                        "str": sstrength,
+                        "BASE": "anima"
+                    })
+                elif sbase == "sdxl":
+                    if strigger and strigger not in sdxl_triggers:
+                        sdxl_triggers.append(strigger)
+                    sdxl_loras.append({
+                        "lora_path": slora_path,
+                        "str": sstrength,
+                        "BASE": "sdxl"
+                    })
 
         # ─── 아티스트 프리셋 태그 ───
         artist_presets = tags.get("artist_presets", {})
