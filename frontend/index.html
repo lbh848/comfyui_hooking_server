@@ -23978,9 +23978,27 @@
         let _lbExtraEdited = [];
         let _lbExtraShowDesc = false;
         let _lbExtraTab = 'classification'; // 'classification' | 'systemPrompt'
-        let _systemPromptPresets = {};
         let _systemPromptText = '';
-        let _systemPromptPresetSelected = '';
+        let _systemPromptPresetSelected = '';   // 선택된 프리셋 이름
+        let _systemPromptScope = 'local';       // 'builtin'(배포자료·잠금) | 'local'(사용자·편집가능)
+        let _systemPromptBuiltin = {};          // 배포자료 프리셋 {name: text} (git 배포, 읽기전용)
+        let _systemPromptLocal = {};            // 사용자(편집가능) 프리셋 {name: text} (bot.json)
+
+        // value 인코딩: select option value = `${scope}::${name}` (builtin/local 구분)
+        function _spEncodeOpt(scope, name) { return scope + '::' + name; }
+        function _spDecodeOpt(val) {
+            if (!val || val.indexOf('::') < 0) return { scope: 'local', name: val || '' };
+            const idx = val.indexOf('::');
+            return { scope: val.slice(0, idx), name: val.slice(idx + 2) };
+        }
+        // 현재 선택된 (scope, name) 이 잠긴 배포자료인지
+        function _spIsLocked(scope) { return scope === 'builtin'; }
+        // (scope, name) → 본문 텍스트 조회 (미리보기/전송 공통 소스)
+        function _spGetPresetText(scope, name) {
+            if (!name) return '';
+            if (scope === 'builtin') return _systemPromptBuiltin[name] || '';
+            return _systemPromptLocal[name] || '';
+        }
 
         // 집중 편집 모드 상태
         let _focusEditCharIdx = -1;
@@ -24143,9 +24161,9 @@
                 if (spBtn) { spBtn.style.background = 'var(--accent)'; spBtn.style.color = '#fff'; }
                 if (colHeader) colHeader.style.display = 'none';
                 if (descLabel) descLabel.style.display = 'none';
-                // 시스템 프롬프트 탭 진입 시 데이터 로드
+                // 시스템 프롬프트 탭 진입 시 데이터 로드 (builtin+local 모두 GET system_prompt 에서 반환)
                 (async () => {
-                    await Promise.all([_loadSystemPrompt(), _loadSystemPromptPresets()]);
+                    await _loadSystemPrompt();
                     _renderLbExtraContent();
                 })();
                 return;
@@ -24154,92 +24172,125 @@
         }
 
         async function _loadSystemPromptPresets() {
+            // local(사용자·편집가능) 프리셋만 별도 로드. builtin은 _loadSystemPrompt 에서 함께 옴.
             try {
                 const resp = await fetch('/api/bot_mode/system_prompt_presets');
                 const result = await resp.json();
-                _systemPromptPresets = result.presets || {};
+                _systemPromptLocal = result.presets || {};
             } catch (e) {
-                console.error('[LB_EXTRA] 프리셋 로드 실패:', e);
-                _systemPromptPresets = {};
+                console.error('[LB_EXTRA] local 프리셋 로드 실패:', e);
+                _systemPromptLocal = {};
             }
         }
 
         async function _loadSystemPrompt() {
-            if (!botCurrentBot) { _systemPromptText = ''; _systemPromptPresetSelected = ''; return; }
+            if (!botCurrentBot) { _systemPromptText = ''; _systemPromptPresetSelected = ''; _systemPromptScope = 'local'; _systemPromptBuiltin = {}; _systemPromptLocal = {}; return; }
             try {
                 const resp = await fetch(`/api/bot_mode/system_prompt?bot_name=${encodeURIComponent(botCurrentBot)}`);
                 const result = await resp.json();
                 _systemPromptText = result.text || '';
                 _systemPromptPresetSelected = result.preset || '';
+                _systemPromptScope = result.scope || 'local';
+                _systemPromptBuiltin = result.builtin_presets || {};
+                _systemPromptLocal = result.local_presets || {};
             } catch (e) {
                 console.error('[LB_EXTRA] 시스템 프롬프트 로드 실패:', e);
                 _systemPromptText = '';
                 _systemPromptPresetSelected = '';
+                _systemPromptScope = 'local';
+                _systemPromptBuiltin = {};
+                _systemPromptLocal = {};
             }
         }
 
         function _renderSystemPromptTab() {
             const el = document.getElementById('lb-extra-content');
             if (!el) return;
-            const presetNames = Object.keys(_systemPromptPresets);
-            // 프리셋은 항상 하나가 선택되어야 함. 저장된 선택이 없거나 유효하지 않으면 첫 프리셋으로 보정.
-            if (presetNames.length > 0) {
-                if (!_systemPromptPresetSelected || !Object.prototype.hasOwnProperty.call(_systemPromptPresets, _systemPromptPresetSelected)) {
-                    _systemPromptPresetSelected = presetNames[0];
-                }
-            } else {
-                _systemPromptPresetSelected = '';
+
+            // 두 그룹: builtin(배포자료·잠금) / local(사용자·편집가능)
+            const builtinNames = Object.keys(_systemPromptBuiltin);
+            const localNames = Object.keys(_systemPromptLocal);
+
+            // 선택 보정: 현재 (scope,name) 이 더 이상 존재하지 않으면 폴백.
+            const selExists =
+                (_systemPromptScope === 'builtin' && Object.prototype.hasOwnProperty.call(_systemPromptBuiltin, _systemPromptPresetSelected)) ||
+                (_systemPromptScope === 'local' && Object.prototype.hasOwnProperty.call(_systemPromptLocal, _systemPromptPresetSelected));
+            if (!selExists) {
+                _systemPromptScope = 'local';
+                _systemPromptPresetSelected = localNames[0] || builtinNames[0] || '';
             }
-            // 에디터 본문은 항상 선택된 프리셋의 텍스트에서 파생
-            _systemPromptText = _systemPromptPresetSelected ? (_systemPromptPresets[_systemPromptPresetSelected] || '') : '';
-            const presetOptions = presetNames.length === 0
-                ? '<option value="">(프리셋 없음)</option>'
-                : '<option value="">-- 프리셋 선택 --</option>' + presetNames.map(n => `<option value="${escHtml(n)}"${n === _systemPromptPresetSelected ? ' selected' : ''}>${escHtml(n)}</option>`).join('');
+            // 에디터 본문은 선택된 프리셋의 텍스트에서 파생
+            _systemPromptText = _spGetPresetText(_systemPromptScope, _systemPromptPresetSelected);
+
+            const selectedVal = _systemPromptPresetSelected ? _spEncodeOpt(_systemPromptScope, _systemPromptPresetSelected) : '';
+            const opt = (scope, n) => `<option value="${escHtml(_spEncodeOpt(scope, n))}"${_spEncodeOpt(scope, n) === selectedVal ? ' selected' : ''}>${escHtml(n)}</option>`;
+            let presetOptions = '';
+            if (builtinNames.length === 0 && localNames.length === 0) {
+                presetOptions = '<option value="">(프리셋 없음)</option>';
+            } else {
+                if (builtinNames.length > 0) presetOptions += `<optgroup label="📦 배포자료 (읽기전용)">${builtinNames.map(n => opt('builtin', n)).join('')}</optgroup>`;
+                if (localNames.length > 0) presetOptions += `<optgroup label="✏️ 사용자 (편집가능)">${localNames.map(n => opt('local', n)).join('')}</optgroup>`;
+            }
+
+            const isLocked = _spIsLocked(_systemPromptScope);
+            const isLocal = _systemPromptScope === 'local' && !!_systemPromptPresetSelected;
+
             el.innerHTML = `
                 <div style="max-width:900px; margin:0 auto;">
                     <div style="display:flex; align-items:center; gap:6px; margin-bottom:12px; flex-wrap:wrap;">
-                        <select id="sp-preset-select" onchange="_onSystemPromptPresetChange()" style="padding:4px 8px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.85rem; max-width:200px;">${presetOptions}</select>
-                        <button onclick="_onSystemPromptPresetSave()" style="padding:4px 10px; border-radius:4px; border:none; background:var(--accent); color:#fff; cursor:pointer; font-size:0.8rem; font-weight:600;">추가</button>
-                        <button onclick="_onSystemPromptPresetDuplicate()" style="padding:4px 10px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); cursor:pointer; font-size:0.8rem;">복제</button>
-                        <button onclick="_onSystemPromptPresetOverwrite()" style="padding:4px 10px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); cursor:pointer; font-size:0.8rem;">저장</button>
-                        <button onclick="_onSystemPromptPresetDelete()" style="padding:4px 10px; border-radius:4px; border:1px solid #c62828; background:var(--surface2); color:#c62828; cursor:pointer; font-size:0.8rem;">삭제</button>
+                        <select id="sp-preset-select" onchange="_onSystemPromptPresetChange()" style="padding:4px 8px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.85rem; max-width:240px;">${presetOptions}</select>
+                        <button id="sp-btn-add" onclick="_onSystemPromptPresetSave()" style="padding:4px 10px; border-radius:4px; border:none; background:var(--accent); color:#fff; cursor:pointer; font-size:0.8rem; font-weight:600;">추가</button>
+                        <button id="sp-btn-dup" onclick="_onSystemPromptPresetDuplicate()" style="padding:4px 10px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); cursor:pointer; font-size:0.8rem;">복제</button>
+                        <button id="sp-btn-over" onclick="_onSystemPromptPresetOverwrite()" ${isLocked ? 'disabled' : ''} style="padding:4px 10px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); cursor:pointer; font-size:0.8rem;${isLocked ? ' opacity:0.4; cursor:not-allowed;' : ''}">저장</button>
+                        <button id="sp-btn-del" onclick="_onSystemPromptPresetDelete()" ${(!isLocal) ? 'disabled' : ''} style="padding:4px 10px; border-radius:4px; border:1px solid #c62828; background:var(--surface2); color:#c62828; cursor:pointer; font-size:0.8rem;${(!isLocal) ? ' opacity:0.4; cursor:not-allowed;' : ''}">삭제</button>
                     </div>
-                    <textarea id="sp-editor" style="width:100%; height:calc(100vh - 240px); min-height:300px; resize:vertical; padding:12px; border:1px solid var(--border); border-radius:6px; background:var(--surface2); color:var(--text); font-family:monospace; font-size:0.85rem; line-height:1.5; box-sizing:border-box;" placeholder="시스템 프롬프트를 입력하세요...">${escHtml(_systemPromptText)}</textarea>
+                    <div id="sp-lock-badge" style="display:${isLocked ? 'flex' : 'none'}; align-items:center; gap:6px; margin-bottom:8px; padding:6px 10px; background:rgba(124,58,237,0.12); border:1px solid #7C3AED; border-radius:6px; font-size:0.78rem; color:#7C3AED;">
+                        🔒 배포자료(읽기전용) — 이 프리셋은 편집할 수 없습니다. <b>‘복제’</b>로 사용자 프리셋을 만들어 편집하세요.
+                    </div>
+                    <div id="sp-local-badge" style="display:${isLocal ? 'flex' : 'none'}; align-items:center; gap:6px; margin-bottom:8px; padding:6px 10px; background:rgba(21,101,192,0.10); border:1px solid #1565C0; border-radius:6px; font-size:0.78rem; color:#1565C0;">
+                        ✏️ 사용자 프리셋(편집가능) — 이 PC의 bot.json 에 저장됩니다.
+                    </div>
+                    <textarea id="sp-editor" style="width:100%; height:calc(100vh - 280px); min-height:300px; resize:vertical; padding:12px; border:1px solid var(--border); border-radius:6px; background:var(--surface2); color:var(--text); font-family:monospace; font-size:0.85rem; line-height:1.5; box-sizing:border-box;${isLocked ? ' opacity:0.7;' : ''}" placeholder="시스템 프롬프트를 입력하세요..." ${isLocked ? 'readonly' : ''}>${escHtml(_systemPromptText)}</textarea>
                 </div>`;
         }
 
         function _onSystemPromptPresetChange() {
             const sel = document.getElementById('sp-preset-select');
             if (!sel || !sel.value) return;
-            const text = _systemPromptPresets[sel.value];
-            if (text === undefined) { showToast('프리셋을 찾을 수 없습니다', 'error'); return; }
-            _systemPromptPresetSelected = sel.value;
+            const { scope, name } = _spDecodeOpt(sel.value);
+            const text = _spGetPresetText(scope, name);
+            _systemPromptScope = scope;
+            _systemPromptPresetSelected = name;
             const editor = document.getElementById('sp-editor');
             if (editor) editor.value = text;
             _systemPromptText = text;
-            showToast(`프리셋 "${sel.value}" 로드 완료`, 'success');
+            _renderSystemPromptTab();  // 잠금/버튼 상태 갱신
         }
 
         async function _onSystemPromptPresetSave() {
             const editor = document.getElementById('sp-editor');
             const text = editor ? editor.value : '';
-            const name = prompt('새 프리셋 이름을 입력하세요:');
+            const name = prompt('새 사용자 프리셋 이름을 입력하세요 (이 PC의 bot.json에 저장됩니다):');
             if (!name || !name.trim()) return;
-            if (_systemPromptPresets[name.trim()]) {
-                if (!confirm(`"${name.trim()}" 프리셋이 이미 존재합니다. 덮어쓰시겠습니까?`)) return;
+            if (Object.prototype.hasOwnProperty.call(_systemPromptBuiltin, name.trim())) {
+                showToast(`"${name.trim()}" 은(는) 배포자료 이름과 같아 사용할 수 없습니다.`, 'error');
+                return;
+            }
+            if (_systemPromptLocal[name.trim()] !== undefined) {
+                if (!confirm(`사용자 프리셋 "${name.trim()}"이(가) 이미 존재합니다. 덮어쓰시겠습니까?`)) return;
             }
             try {
                 const resp = await fetch('/api/bot_mode/system_prompt_presets', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name: name.trim(), text })
+                    body: JSON.stringify({ name: name.trim(), text, scope: 'local' })
                 });
                 const result = await resp.json();
-                if (result.presets) {
-                    _systemPromptPresets = result.presets;
-                }
-                _systemPromptPresetSelected = name.trim();  // 새 프리셋을 현재 선택으로
-                showToast(`프리셋 "${name.trim()}" 추가 완료`, 'success');
+                if (result.error) { showToast('프리셋 추가 실패: ' + result.error, 'error'); return; }
+                if (result.presets) _systemPromptLocal = result.presets;
+                _systemPromptScope = 'local';
+                _systemPromptPresetSelected = name.trim();  // 새 사용자 프리셋을 현재 선택으로
+                showToast(`사용자 프리셋 "${name.trim()}" 추가 완료`, 'success');
                 _renderSystemPromptTab();
             } catch (e) {
                 console.error('[LB_EXTRA] 프리셋 추가 실패:', e);
@@ -24250,27 +24301,31 @@
         async function _onSystemPromptPresetOverwrite() {
             const sel = document.getElementById('sp-preset-select');
             if (!sel || !sel.value) { showToast('덮어쓸 프리셋을 선택하세요', 'error'); return; }
+            const { scope, name } = _spDecodeOpt(sel.value);
+            if (_spIsLocked(scope)) {
+                showToast(`"${name}" 은(는) 배포자료(읽기전용)라 덮어쓸 수 없습니다. ‘복제’로 사용자 프리셋을 만드세요.`, 'error');
+                return;
+            }
             const editor = document.getElementById('sp-editor');
             const text = editor ? editor.value : '';
-            if (!confirm(`"${sel.value}" 프리셋을 현재 내용으로 덮어쓰시겠습니까?`)) return;
+            if (!confirm(`사용자 프리셋 "${name}" 을(를) 현재 내용으로 덮어쓰시겠습니까?`)) return;
             try {
                 const resp = await fetch('/api/bot_mode/system_prompt_presets', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name: sel.value, text })
+                    body: JSON.stringify({ name, text, scope: 'local' })
                 });
                 const result = await resp.json();
-                if (result.presets) {
-                    _systemPromptPresets = result.presets;
-                }
-                _systemPromptPresets[sel.value] = text;
+                if (result.error) { showToast('프리셋 저장 실패: ' + result.error, 'error'); return; }
+                if (result.presets) _systemPromptLocal = result.presets;
                 _systemPromptText = text;
-                _systemPromptPresetSelected = sel.value;
-                showToast(`프리셋 "${sel.value}" 저장 완료`, 'success');
+                _systemPromptScope = 'local';
+                _systemPromptPresetSelected = name;
+                showToast(`프리셋 "${name}" 저장 완료`, 'success');
                 _renderSystemPromptTab();
             } catch (e) {
                 console.error('[LB_EXTRA] 프리셋 저장 실패:', e);
-                showToast('프리셋 저장 실패', 'error');
+                showToast('프리셋 저장 실패: ' + e.message, 'error');
             }
         }
 
@@ -24278,25 +24333,32 @@
             const sel = document.getElementById('sp-preset-select');
             const editor = document.getElementById('sp-editor');
             const text = editor ? editor.value : '';
-            if (!sel || !sel.value) {
-                // 프리셋 미선택 시 현재 텍스트로 복제
+            let srcScope = _systemPromptScope, srcName = _systemPromptPresetSelected;
+            if (sel && sel.value) {
+                const dec = _spDecodeOpt(sel.value);
+                srcScope = dec.scope; srcName = dec.name;
+            }
+            if (!srcName) {
                 if (!text.trim()) { showToast('복제할 내용이 없습니다', 'error'); return; }
             }
-            const srcName = sel ? sel.value : '(새 프리셋)';
-            const name = prompt(`"${srcName}"을(를) 복제합니다. 새 프리셋 이름:`, sel ? sel.value + ' 복사' : '');
+            const name = prompt(`"${srcName || '(새 프리셋)'}"을(를) 사용자 프리셋으로 복제합니다. 이름:`, (srcName || '') + ' 복사');
             if (!name || !name.trim()) return;
+            if (Object.prototype.hasOwnProperty.call(_systemPromptBuiltin, name.trim())) {
+                showToast(`"${name.trim()}" 은(는) 배포자료 이름과 같아 사용할 수 없습니다.`, 'error');
+                return;
+            }
             try {
                 const resp = await fetch('/api/bot_mode/system_prompt_presets', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name: name.trim(), text })
+                    body: JSON.stringify({ name: name.trim(), text, scope: 'local' })
                 });
                 const result = await resp.json();
-                if (result.presets) {
-                    _systemPromptPresets = result.presets;
-                }
-                _systemPromptPresetSelected = name.trim();  // 복제한 프리셋을 현재 선택으로
-                showToast(`프리셋 "${name.trim()}" 복제 완료`, 'success');
+                if (result.error) { showToast('프리셋 복제 실패: ' + result.error, 'error'); return; }
+                if (result.presets) _systemPromptLocal = result.presets;
+                _systemPromptScope = 'local';
+                _systemPromptPresetSelected = name.trim();  // 복제한 사용자 프리셋을 현재 선택으로
+                showToast(`사용자 프리셋 "${name.trim()}" 복제 완료`, 'success');
                 _renderSystemPromptTab();
             } catch (e) {
                 console.error('[LB_EXTRA] 프리셋 복제 실패:', e);
@@ -24307,25 +24369,29 @@
         async function _onSystemPromptPresetDelete() {
             const sel = document.getElementById('sp-preset-select');
             if (!sel || !sel.value) { showToast('삭제할 프리셋을 선택하세요', 'error'); return; }
-            if (!confirm(`프리셋 "${sel.value}"을(를) 삭제하시겠습니까?`)) return;
+            const { scope, name } = _spDecodeOpt(sel.value);
+            if (scope !== 'local') {
+                showToast('배포자료(읽기전용) 프리셋은 삭제할 수 없습니다. 사용자 프리셋만 삭제 가능합니다.', 'error');
+                return;
+            }
+            if (!confirm(`사용자 프리셋 "${name}"을(를) 삭제하시겠습니까?`)) return;
             try {
                 const resp = await fetch('/api/bot_mode/system_prompt_presets', {
                     method: 'DELETE',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name: sel.value })
+                    body: JSON.stringify({ name, scope: 'local' })
                 });
                 const result = await resp.json();
                 if (!result.deleted) {
                     showToast('프리셋 삭제 실패: ' + (result.error || ''), 'error');
                     return;
                 }
-                if (result.presets) {
-                    _systemPromptPresets = result.presets;
-                }
-                if (_systemPromptPresetSelected === sel.value) {
+                if (result.presets) _systemPromptLocal = result.presets;
+                if (_systemPromptPresetSelected === name && _systemPromptScope === 'local') {
+                    _systemPromptScope = 'local';
                     _systemPromptPresetSelected = '';  // render가 첫 프리셋으로 보정
                 }
-                showToast(`프리셋 "${sel.value}" 삭제 완료`, 'success');
+                showToast(`사용자 프리셋 "${name}" 삭제 완료`, 'success');
                 _renderSystemPromptTab();
             } catch (e) {
                 console.error('[LB_EXTRA] 프리셋 삭제 실패:', e);
@@ -25568,25 +25634,33 @@
                         showToast('분류 데이터 저장 실패: ' + (result.error || ''), 'error');
                     }
                 }
-                // 시스템 프롬프트 저장 (선택된 전역 프리셋에 덮어쓰기 + 봇 바인딩)
+                // 시스템 프롬프트 저장 (선택된 프리셋에 덮어쓰기 + 봇 바인딩). scope 로 저장 공간 결정.
                 if (botCurrentBot) {
                     const editor = document.getElementById('sp-editor');
                     const text = editor ? editor.value : _systemPromptText;
                     const sel = document.getElementById('sp-preset-select');
-                    const presetName = (sel && sel.value) ? sel.value : _systemPromptPresetSelected;
+                    let presetScope = _systemPromptScope, presetName = _systemPromptPresetSelected;
+                    if (sel && sel.value) {
+                        const dec = _spDecodeOpt(sel.value);
+                        presetScope = dec.scope; presetName = dec.name;
+                    }
                     if (!presetName) {
                         showToast('저장할 프리셋을 먼저 선택하세요', 'error');
+                    } else if (_spIsLocked(presetScope)) {
+                        // 배포자료(읽기전용)는 상단 저장 버튼으로도 덮어쓸 수 없음. 안내만.
+                        showToast(`"${presetName}" 은(는) 배포자료(읽기전용)라 저장할 수 없습니다. ‘복제’로 사용자 프리셋을 만드세요.`, 'error');
                     } else {
                         const resp = await fetch('/api/bot_mode/system_prompt', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ bot_name: botCurrentBot, preset_name: presetName, text })
+                            body: JSON.stringify({ bot_name: botCurrentBot, preset_name: presetName, scope: 'local', text })
                         });
                         const result = await resp.json();
                         if (result.saved) {
                             _systemPromptText = text;
+                            _systemPromptScope = 'local';
                             _systemPromptPresetSelected = presetName;
-                            _systemPromptPresets[presetName] = text;  // 로컬 프리셋 동기화
+                            _systemPromptLocal[presetName] = text;  // 사용자(편집가능) 프리셋 동기화
                             savedCount++;
                         } else {
                             showToast('시스템 프롬프트 저장 실패: ' + (result.error || ''), 'error');

@@ -24,6 +24,15 @@ BOT_DIR = os.path.join(BASE_DIR, "bot")
 BOT_DATA_FILE = os.path.join(ASSET_DATA_DIR, "bot.json")
 ASSET_DIR = os.path.join(BASE_DIR, "asset")
 
+# ─── 시스템 프롬프트 프리셋 — 배포자료 builtin (git 추적) ───
+# builtin(prompts/bot_system_prompt/presets.json): 배포자료·읽기전용. git 커밋으로 배포.
+# local(asset_data/bot.json 의 system_prompt_presets): 이 PC 전용·편집가능. gitignore.
+# 잠금은 이름이 아니라 저장 위치로 판정한다.
+BUILTIN_PRESETS_DIR = os.path.join(BASE_DIR, "prompts", "bot_system_prompt")
+BUILTIN_PRESETS_FILE = os.path.join(BUILTIN_PRESETS_DIR, "presets.json")
+_builtin_presets_cache = None
+_builtin_presets_mtime = -1.0
+
 DEFAULT_BOT_DATA = {
     "bots": [],
     "positive_whitelist": [],
@@ -67,12 +76,61 @@ def _migrate_solo_group(data: dict):
         _save_bot_data(data)
 
 
-def _migrate_system_prompt_preset(data: dict):
-    """각 봇에 system_prompt_preset(선택된 단일 프리셋 이름)을 보장한다.
+# 전역 시스템 프롬프트 프리셋 — 배포자료 builtin (git 추적) / local(bot.json, 편집가용) 2-레이어.
+# 잠금은 이름이 아니라 저장 위치로 판정: builtin = 읽기전용, local = 편집가능.
 
-    봇의 시스템 프롬프트는 항상 선택된 전역 프리셋에서 파생된다.
-    - 기존 system_prompt 본문이 있으면 그 내용으로 프리셋을 생성해 연결.
-    - 본문이 비어있으면 전역 '기본' 프리셋을 연결.
+
+def _load_builtin_presets() -> dict:
+    """배포자료 builtin 프리셋 로드. mtime 기반 캐싱. 파일 없으면 빈 dict."""
+    global _builtin_presets_cache, _builtin_presets_mtime
+    if not os.path.isfile(BUILTIN_PRESETS_FILE):
+        if _builtin_presets_cache is not None:
+            return _builtin_presets_cache
+        return {}
+    try:
+        mtime = os.path.getmtime(BUILTIN_PRESETS_FILE)
+        if _builtin_presets_cache is not None and mtime == _builtin_presets_mtime:
+            return _builtin_presets_cache
+        with open(BUILTIN_PRESETS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            data = {}
+        _builtin_presets_cache = data
+        _builtin_presets_mtime = mtime
+        return data
+    except Exception as e:
+        print(f"[BOT_MODE] builtin 프리셋 로드 실패: {e}")
+        traceback.print_exc()
+        return _builtin_presets_cache if _builtin_presets_cache is not None else {}
+
+
+def _ensure_bot_preset_scope(bot: dict, builtin_names, local_names):
+    """봇의 preset_scope 를 보정한다. 이름이 builtin 에 있으면 'builtin', 아니면 'local'.
+
+    과거 버전(global/private) 필드도 여기서 새 스키마로 정리한다.
+    """
+    preset = (bot.get("system_prompt_preset") or "").strip()
+    scope = (bot.get("preset_scope") or "").strip()
+    if scope == "builtin" and preset in builtin_names:
+        return
+    if scope == "local" and preset in local_names:
+        return
+    # 보정: builtin 우선, 그 다음 local
+    if preset and preset in builtin_names:
+        bot["preset_scope"] = "builtin"
+    elif preset and preset in local_names:
+        bot["preset_scope"] = "local"
+    else:
+        bot["preset_scope"] = "local"  # 폴백(기본은 local)
+
+
+def _migrate_system_prompt_preset(data: dict):
+    """각 봇에 system_prompt_preset + preset_scope(builtin|local) 를 보장한다.
+
+    - builtin(prompts/bot_system_prompt/presets.json): 배포자료·읽기전용(git 배포).
+    - local(bot.json system_prompt_presets): 편집가능. '기본' 보장.
+    - local 에 builtin 과 이름이 같은 프리셋이 있으면 builtin 이 권위를 갖도록 local 에서 제거(dedup).
+    - 깨진 참조는 system_prompt 본문으로 local 프리셋을 생성해 복구.
     """
     changed = False
     presets = data.get("system_prompt_presets")
@@ -83,27 +141,64 @@ def _migrate_system_prompt_preset(data: dict):
     if "기본" not in presets:
         presets["기본"] = ""
         changed = True
-        print("[BOT_MODE] 마이그레이션: 전역 기본 프리셋 생성 (system_prompt_presets['기본'])")
+        print("[BOT_MODE] 마이그레이션: local 기본 프리셋 생성 (system_prompt_presets['기본'])")
+
+    builtin = _load_builtin_presets() or {}
+    builtin_names = set(builtin.keys())
+
+    # dedup: local 에 builtin 이름이 있으면 local 쪽 제거 (builtin 권위)
+    for name in list(presets.keys()):
+        if name in builtin_names:
+            del presets[name]
+            changed = True
+            print(f"[BOT_MODE] 마이그레이션: local 프리셋 '{name}' → builtin 으로 이관(중복 제거)")
+
+    local_names = set(presets.keys())
     for bot in data.get("bots", []):
         bot_name = bot.get("name", "?")
+        # 과거 스키마 잔재(custom_system_presets) 제거
+        if "custom_system_presets" in bot:
+            del bot["custom_system_presets"]
+            changed = True
         preset = (bot.get("system_prompt_preset") or "").strip()
-        if preset and preset in presets:
-            continue  # 유효한 참조 — 유지
+        prev_scope = bot.get("preset_scope")
+        _ensure_bot_preset_scope(bot, builtin_names, local_names)
+        # 유효한 참조면 다음 봇으로
+        if preset and ((bot["preset_scope"] == "builtin" and preset in builtin_names) or
+                       (bot["preset_scope"] == "local" and preset in local_names)):
+            if prev_scope != bot["preset_scope"]:
+                changed = True
+                print(f"[BOT_MODE] 마이그레이션: preset_scope='{bot['preset_scope']}' 보정 ({bot_name})")
+            continue
+        # auto-adopt: 참조가 어디에도 없지만 '배포_'+이름 이 builtin 에 있으면
+        # 배포자료 prefix 도입 전의 구이름 참조를 새 builtin 으로 자동 이관.
+        # (단, 같은 이름의 local 프리셋이 있으면 사용자 편집을 존중해 건드리지 않는다)
+        if preset and preset not in local_names:
+            adopted = "배포_" + preset
+            if adopted in builtin_names:
+                bot["system_prompt_preset"] = adopted
+                bot["preset_scope"] = "builtin"
+                changed = True
+                print(f"[BOT_MODE] 마이그레이션: 구참조 '{preset}' → builtin '{adopted}' 자동 이관 ({bot_name})")
+                continue
+        # 깨진 참조 복구
         sp_text = bot.get("system_prompt", "") or ""
         if sp_text.strip():
-            # 기존 본문이 있으면 그 내용으로 프리셋 생성 후 연결
             base = f"{bot_name} 기본"
             new_name = base
             i = 2
-            while new_name in presets and presets[new_name] != sp_text:
+            while new_name in local_names:
                 new_name = f"{base} ({i})"
                 i += 1
             presets[new_name] = sp_text
+            local_names.add(new_name)
             bot["system_prompt_preset"] = new_name
+            bot["preset_scope"] = "local"
             changed = True
-            print(f"[BOT_MODE] 마이그레이션: 시스템 프롬프트 본문 → 프리셋 '{new_name}' 생성/연결 ({bot_name})")
+            print(f"[BOT_MODE] 마이그레이션: 시스템 프롬프트 본문 → local 프리셋 '{new_name}' 생성/연결 ({bot_name})")
         else:
             bot["system_prompt_preset"] = "기본"
+            bot["preset_scope"] = "local"
             changed = True
             print(f"[BOT_MODE] 마이그레이션: system_prompt_preset='기본' 할당 ({bot_name})")
     if changed:
@@ -1621,7 +1716,11 @@ class BotMode:
 
     # ─── 시스템 프롬프트 ────────────────────────────────────
     async def handle_get_system_prompt(self, request):
-        """GET /api/bot_mode/system_prompt - 봇의 시스템 프롬프트 반환"""
+        """GET /api/bot_mode/system_prompt - 봇의 시스템 프롬프트 반환
+
+        선택 프리셋은 builtin(배포자료·읽기전용, git 배포) 또는 local(bot.json, 편집가능) 이다.
+        scope 로 어느 공간인지 구분해 본문을 해석한다.
+        """
         try:
             bot_name = request.query.get("bot_name", "").strip()
             if not bot_name:
@@ -1630,42 +1729,66 @@ class BotMode:
             bot = next((b for b in data["bots"] if b["name"] == bot_name), None)
             if not bot:
                 return _json_error(f"봇을 찾을 수 없습니다: {bot_name}")
+            builtin = _load_builtin_presets() or {}
+            local = data.get("system_prompt_presets", {}) or {}
+            _ensure_bot_preset_scope(bot, set(builtin.keys()), set(local.keys()))
+
             preset = (bot.get("system_prompt_preset") or "").strip()
-            presets = data.get("system_prompt_presets", {})
-            # 본문은 항상 선택된 전역 프리셋에서 파생. 프리셋이 없으면 기존 필드 폴백.
-            text = presets.get(preset, bot.get("system_prompt", "")) if preset else bot.get("system_prompt", "")
-            return _json_ok({"text": text, "preset": preset})
+            scope = (bot.get("preset_scope") or "local").strip()
+            # 참조 보정
+            if scope == "builtin" and (not preset or preset not in builtin):
+                scope = "local"
+            if scope == "local" and (not preset or preset not in local):
+                preset = "기본" if "기본" in local else (next(iter(local), "") if local else "")
+            # 본문 해석
+            if scope == "builtin":
+                text = builtin.get(preset, "")
+            else:
+                text = local.get(preset, bot.get("system_prompt", "")) if preset else bot.get("system_prompt", "")
+            return _json_ok({
+                "text": text,
+                "preset": preset,
+                "scope": scope,
+                "builtin_presets": builtin,     # 배포자료(잠금)
+                "local_presets": local,          # 사용자(편집가능)
+            })
         except Exception as e:
             print(f"[BOT_MODE] 시스템 프롬프트 로드 실패: {e}")
             traceback.print_exc()
             return _json_error(str(e))
 
     async def handle_save_system_prompt(self, request):
-        """POST /api/bot_mode/system_prompt - 선택된 프리셋에 시스템 프롬프트 저장(덮어쓰기)
+        """POST /api/bot_mode/system_prompt - local 프리셋에 저장(덮어쓰기) + 봇 바인딩
 
-        봇은 항상 하나의 프리셋을 선택해야 하며, 에디터에서 편집한 내용은
-        해당 전역 프리셋에 덮어쓰기된다(같은 프리셋을 쓰는 다른 봇에도 반영).
+        builtin(배포자료)은 읽기전용이라 거부. local 만 덮어쓸 수 있다.
         """
         try:
             body = await request.json()
             bot_name = body.get("bot_name", "").strip()
             text = body.get("text", "")
             preset_name = (body.get("preset_name") or "").strip()
+            scope = (body.get("scope") or "local").strip()
             if not bot_name:
                 return _json_error("봇 이름이 비어있습니다.")
             if not preset_name:
                 return _json_error("저장할 프리셋이 선택되지 않았습니다. 프리셋을 먼저 선택하세요.")
+            if scope == "builtin":
+                return _json_error(
+                    f"'{preset_name}' 은(는) 배포자료(읽기전용) 프리셋이라 덮어쓸 수 없습니다. "
+                    "‘복제’로 사용자(편집가능) 프리셋을 만들어 편집하세요."
+                )
             data = _load_bot_data()
             bot = next((b for b in data["bots"] if b["name"] == bot_name), None)
             if not bot:
                 return _json_error(f"봇을 찾을 수 없습니다: {bot_name}")
             if "system_prompt_presets" not in data:
                 data["system_prompt_presets"] = {}
-            data["system_prompt_presets"][preset_name] = text  # 전역 프리셋 덮어쓰기
+            data["system_prompt_presets"][preset_name] = text  # local 프리셋 덮어쓰기
             bot["system_prompt_preset"] = preset_name
+            bot["preset_scope"] = "local"
             bot["system_prompt"] = text  # dead field이나 일관성 유지
             _save_bot_data(data)
-            print(f"[BOT_MODE] 시스템 프롬프트 저장: {bot_name} → 프리셋 '{preset_name}' ({len(text)}자)")
+            print(f"[BOT_MODE] 시스템 프롬프트 저장: {bot_name} → [local] '{preset_name}' ({len(text)}자)")
             return _json_ok({"saved": True})
         except Exception as e:
             print(f"[BOT_MODE] 시스템 프롬프트 저장 실패: {e}")
@@ -1673,7 +1796,7 @@ class BotMode:
             return _json_error(str(e))
 
     async def handle_get_system_prompt_presets(self, request):
-        """GET /api/bot_mode/system_prompt_presets - 전역 프리셋 목록 반환"""
+        """GET /api/bot_mode/system_prompt_presets - local(편집가능) 프리셋 목록 반환"""
         try:
             data = _load_bot_data()
             return _json_ok({"presets": data.get("system_prompt_presets", {})})
@@ -1683,19 +1806,34 @@ class BotMode:
             return _json_error(str(e))
 
     async def handle_save_system_prompt_preset(self, request):
-        """POST /api/bot_mode/system_prompt_presets - 프리셋 저장/업데이트"""
+        """POST /api/bot_mode/system_prompt_presets - local 프리셋 저장/추가/복제
+
+        scope=local 만 허용. builtin(배포자료) 쓰기는 거부.
+        새 프리셋 추가/복제는 항상 local(bot.json) 로 들어간다.
+        """
         try:
             body = await request.json()
             name = body.get("name", "").strip()
             text = body.get("text", "")
+            scope = (body.get("scope") or "local").strip()
             if not name:
                 return _json_error("프리셋 이름이 비어있습니다.")
+            if scope == "builtin":
+                return _json_error(
+                    f"'{name}' 은(는) 배포자료(읽기전용)라 저장할 수 없습니다. 사용자 프리셋으로 추가해주세요."
+                )
+            builtin = _load_builtin_presets() or {}
+            if name in builtin:
+                return _json_error(
+                    f"'{name}' 은(는) 배포자료(읽기전용) 이름과 같아 사용자 프리셋으로 사용할 수 없습니다. "
+                    "다른 이름을 사용하세요."
+                )
             data = _load_bot_data()
             if "system_prompt_presets" not in data:
                 data["system_prompt_presets"] = {}
             data["system_prompt_presets"][name] = text
             _save_bot_data(data)
-            print(f"[BOT_MODE] 시스템 프롬프트 프리셋 저장: {name} ({len(text)}자)")
+            print(f"[BOT_MODE] local 시스템 프롬프트 프리셋 저장: {name} ({len(text)}자)")
             return _json_ok({"saved": True, "presets": data["system_prompt_presets"]})
         except Exception as e:
             print(f"[BOT_MODE] 시스템 프롬프트 프리셋 저장 실패: {e}")
@@ -1703,27 +1841,35 @@ class BotMode:
             return _json_error(str(e))
 
     async def handle_delete_system_prompt_preset(self, request):
-        """DELETE /api/bot_mode/system_prompt_presets - 프리셋 삭제"""
+        """DELETE /api/bot_mode/system_prompt_presets - local 프리셋 삭제
+
+        scope=local 만 삭제 허용. builtin(배포자료)은 삭제 불가.
+        """
         try:
             body = await request.json()
             name = body.get("name", "").strip()
+            scope = (body.get("scope") or "local").strip()
             if not name:
                 return _json_error("프리셋 이름이 비어있습니다.")
+            if scope == "builtin":
+                return _json_error("배포자료(읽기전용) 프리셋은 삭제할 수 없습니다.")
+            builtin = _load_builtin_presets() or {}
+            if name in builtin:
+                return _json_error(f"'{name}' 은(는) 배포자료(읽기전용)라 삭제할 수 없습니다.")
             data = _load_bot_data()
             presets = data.get("system_prompt_presets", {})
             if name not in presets:
-                return _json_error(f"프리셋을 찾을 수 없습니다: {name}")
-            # 사용 중인 봇이 있으면 삭제 불가 (프리셋은 항상 하나가 선택되어야 함)
+                return _json_error(f"사용자 프리셋을 찾을 수 없습니다: {name}")
+            # 사용 중인 다른 봇이 있으면 삭제 불가
             using = [b.get("name", "?") for b in data.get("bots", [])
-                     if (b.get("system_prompt_preset") or "").strip() == name]
+                     if (b.get("system_prompt_preset") or "").strip() == name
+                     and (b.get("preset_scope") or "local") == "local"]
             if using:
-                return _json_error(
-                    f"이 프리셋을 사용 중인 봇이 있어 삭제할 수 없습니다: {', '.join(using)}"
-                )
+                return _json_error(f"이 프리셋을 사용 중인 봇이 있어 삭제할 수 없습니다: {', '.join(using)}")
             del presets[name]
             data["system_prompt_presets"] = presets
             _save_bot_data(data)
-            print(f"[BOT_MODE] 시스템 프롬프트 프리셋 삭제: {name}")
+            print(f"[BOT_MODE] local 시스템 프롬프트 프리셋 삭제: {name}")
             return _json_ok({"deleted": True, "presets": presets})
         except Exception as e:
             print(f"[BOT_MODE] 시스템 프롬프트 프리셋 삭제 실패: {e}")
