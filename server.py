@@ -5412,6 +5412,41 @@ async def handle_api_asset_mode_export(request: web.Request) -> web.Response:
         log.error(f"[ZIP 내보내기] 오류 — {e}")
         return web.json_response({"error": str(e)}, status=500)
 
+async def handle_api_asset_mode_export_post(request: web.Request) -> web.Response:
+    """POST /api/asset_mode/export — body {character, outfits?, expressions?} 로 선택 항목만 ZIP 내보내기."""
+    import logging as _log
+    log = _log.getLogger("asset_export")
+    try:
+        body = await request.json()
+    except Exception as e:
+        return web.json_response({"error": f"잘못된 요청 본문: {e}"}, status=400)
+    character = body.get("character", "") if isinstance(body, dict) else ""
+    if not character:
+        return web.json_response({"error": "캐릭터 이름 필요"}, status=400)
+    outfits = body.get("outfits") if isinstance(body, dict) else None
+    expressions = body.get("expressions") if isinstance(body, dict) else None
+    log.info(f"[ZIP 내보내기] POST 요청 수신 — 캐릭터: {character}, 복장={outfits}, 표정={expressions}")
+    try:
+        buf = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: asset_mode.export_character_zip(character, outfits, expressions),
+        )
+        if buf is None:
+            log.warning(f"[ZIP 내보내기] 내보낼 이미지 없음 — 캐릭터: {character}")
+            return web.json_response({"error": "내보낼 대표 이미지가 없습니다."}, status=404)
+        from urllib.parse import quote
+        filename = quote(f"{character}.zip")
+        size_kb = buf.getbuffer().nbytes / 1024
+        log.info(f"[ZIP 내보내기] 응답 전송 — {character}.zip ({size_kb:.1f}KB)")
+        return web.Response(
+            body=buf.getvalue(),
+            content_type="application/zip",
+            headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"},
+        )
+    except Exception as e:
+        log.error(f"[ZIP 내보내기] 오류 — {e}")
+        return web.json_response({"error": str(e)}, status=500)
+
 # ─── 포즈 편집 모드 API 핸들러 ─────────────────────────────
 async def handle_api_pose_mode_status(request: web.Request) -> web.Response:
     return web.json_response(pose_mode.get_status())
@@ -5847,6 +5882,7 @@ app.router.add_get("/api/asset_mode/ep_settings/{character}", handle_api_ep_sett
 app.router.add_get("/api/asset_mode/ep_settings_last", handle_api_ep_settings_last_get)
 app.router.add_post("/api/asset_mode/ep_settings", handle_api_ep_settings_post)
 app.router.add_get("/api/asset_mode/export/{character}", handle_api_asset_mode_export)
+app.router.add_post("/api/asset_mode/export", handle_api_asset_mode_export_post)
 # ─── 봇 모드 API 라우트 ──────────────────────────────────
 app.router.add_get("/api/bot_mode/bots", bot_mode.handle_get_bots)
 app.router.add_post("/api/bot_mode/action", bot_mode.handle_bot_action)

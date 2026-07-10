@@ -35511,15 +35511,177 @@
             overlay.id = 'name-mapping-overlay';
             overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10000; display:flex; align-items:center; justify-content:center;';
 
-            // Initialize naming order and enabled state
+            // 세션 상태 (모달을 열 때마다 초기화 — 전체 선택)
+            window._nmCharName = charName;
+            window._nmInfo = info;
             window._nmNamingOrder = info.naming_order || ['character', 'outfit', 'expression'];
             window._nmNamingEnabled = info.naming_enabled || {character: true, outfit: true, expression: true};
+            window._nmSelectedOutfits = {};
+            window._nmSelectedExpressions = {};
+            (info.outfits || []).forEach(o => { window._nmSelectedOutfits[o] = true; });
+            (info.expressions || []).forEach(e => { window._nmSelectedExpressions[e] = true; });
+            window._nmCurrentPage = 1;
 
+            overlay.innerHTML = `
+                <div style="background:var(--surface); border-radius:12px; padding:20px; max-width:600px; width:90%; max-height:80vh; display:flex; flex-direction:column;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                        <h3 style="margin:0;">이름 치환 규칙 - ${escapeHtml(charName)}</h3>
+                        <button onclick="document.getElementById('name-mapping-overlay').remove()" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer;">x</button>
+                    </div>
+                    <div id="nm-step-label" style="font-size:0.8rem; font-weight:600; color:var(--accent); margin-bottom:12px;">1/3 표정 선택</div>
+
+                    <div style="overflow-y:auto; flex:1;">
+                        <!-- 페이지 1: 표정 선택 -->
+                        <div id="nm-page-1">
+                            <div style="font-size:0.85rem; margin-bottom:8px;">내보낼 <b style="color:#FF9800;">표정</b>을 선택하세요. (선택한 표정만 ZIP에 포함됩니다)</div>
+                            <div id="nm-select-list-expression"></div>
+                        </div>
+                        <!-- 페이지 2: 복장 선택 -->
+                        <div id="nm-page-2" hidden>
+                            <div style="font-size:0.85rem; margin-bottom:8px;">내보낼 <b style="color:#4CAF50;">복장</b>을 선택하세요. (선택한 복장만 ZIP에 포함됩니다)</div>
+                            <div id="nm-select-list-outfit"></div>
+                        </div>
+                        <!-- 페이지 3: 기존 이름 치환 규칙 -->
+                        <div id="nm-page-3" hidden>
+                            <!-- 파일명 미리보기 -->
+                            <div style="background:rgba(0,0,0,0.03); border:1px solid var(--border); border-radius:8px; padding:10px; margin-bottom:12px;">
+                                <div style="font-size:0.7rem; color:var(--text-secondary); margin-bottom:4px;">파일명 구성 미리보기</div>
+                                <div id="nm-filename-preview" style="font-size:0.85rem; font-family:monospace; word-break:break-all;"></div>
+                            </div>
+
+                            <!-- 이미지 출력 설정 (고정) -->
+                            <div style="background:rgba(156,39,176,0.08); border-radius:8px; padding:10px; margin-bottom:12px;">
+                                <div style="font-size:0.75rem; font-weight:600; margin-bottom:8px; color:#9C27B0;">이미지 출력 설정</div>
+                                <div style="display:flex; align-items:center; gap:12px;">
+                                    <div style="display:flex; align-items:center; gap:6px; flex:1;">
+                                        <label style="font-size:0.8rem; white-space:nowrap;">형식</label>
+                                        <select id="nm-export-format" onchange="updateNamePreview()" style="flex:1; font-size:0.8rem; padding:4px 6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text);">
+                                            <option value="webp" ${info.export_format === 'webp' ? 'selected' : ''}>WebP</option>
+                                            <option value="png" ${info.export_format === 'png' ? 'selected' : ''}>PNG</option>
+                                            <option value="jpeg" ${info.export_format === 'jpeg' ? 'selected' : ''}>JPEG</option>
+                                            <option value="avif" ${info.export_format === 'avif' ? 'selected' : ''}>AVIF</option>
+                                        </select>
+                                    </div>
+                                    <div style="display:flex; align-items:center; gap:6px; flex:2;">
+                                        <label style="font-size:0.8rem; white-space:nowrap;">품질</label>
+                                        <input type="range" id="nm-export-quality" min="1" max="90" value="${info.export_quality || 90}"
+                                            style="flex:1;" oninput="document.getElementById('nm-quality-value').textContent=this.value" />
+                                        <span id="nm-quality-value" style="font-size:0.8rem; min-width:28px; text-align:right;">${info.export_quality || 90}</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- 네이밍 블록 (체크박스로 선택한 항목만 표시) -->
+                            <div id="nm-naming-blocks"></div>
+                        </div>
+                    </div>
+
+                    <!-- 하단 버튼 -->
+                    <div style="display:flex; gap:8px; margin-top:12px; align-items:center;">
+                        <button id="nm-prev-btn" onclick="nmGoToPage(window._nmCurrentPage - 1)" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:8px 14px; border-radius:6px; cursor:pointer; font-size:0.85rem;">이전</button>
+                        <button id="nm-next-btn" onclick="nmGoToPage(window._nmCurrentPage + 1)" style="flex:1; background:var(--accent); color:#fff; border:none; padding:8px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">다음</button>
+                        <div id="nm-final-btns" style="display:none; flex:1; gap:8px; flex-wrap:wrap;">
+                            <button id="nm-save-btn" onclick="saveNameMapping('${escapeHtml(charName)}')" style="flex:1; min-width:90px; background:var(--accent); color:#fff; border:none; padding:8px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">저장</button>
+                            <button onclick="exportNameMappingRule()" style="flex:1; min-width:90px; background:#2196F3; color:#fff; border:none; padding:8px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">규칙 내보내기</button>
+                            <button onclick="importNameMappingRule()" style="flex:1; min-width:90px; background:#FF9800; color:#fff; border:none; padding:8px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">규칙 불러오기</button>
+                            <button id="nm-export-btn" onclick="exportCharacterAsset('${escapeHtml(charName)}')" style="flex:1; min-width:90px; background:#4CAF50; color:#fff; border:none; padding:8px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">내보내기 (ZIP)</button>
+                            <button onclick="document.getElementById('name-mapping-overlay').remove()" style="flex:1; min-width:90px; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:8px; border-radius:6px; cursor:pointer; font-size:0.85rem;">닫기</button>
+                        </div>
+                    </div>
+                </div>`;
+            document.body.appendChild(overlay);
+
+            // 페이지 1·2 선택 리스트 렌더
+            nmRenderSelectList('expression');
+            nmRenderSelectList('outfit');
+            nmGoToPage(1);
+        }
+
+        // ─── 마법사 페이지 전환 ──────────────────────────────
+        function nmGoToPage(n) {
+            if (n < 1 || n > 3) return;
+            window._nmCurrentPage = n;
+            for (let i = 1; i <= 3; i++) {
+                const sec = document.getElementById('nm-page-' + i);
+                if (sec) sec.hidden = (i !== n);
+            }
+            const labels = ['', '1/3 표정 선택', '2/3 복장 선택', '3/3 이름 치환 규칙'];
+            const lab = document.getElementById('nm-step-label');
+            if (lab) lab.textContent = labels[n];
+            const prevBtn = document.getElementById('nm-prev-btn');
+            const nextBtn = document.getElementById('nm-next-btn');
+            const finalBtns = document.getElementById('nm-final-btns');
+            if (prevBtn) prevBtn.style.visibility = (n === 1) ? 'hidden' : 'visible';
+            if (nextBtn) nextBtn.style.display = (n === 3) ? 'none' : '';
+            if (finalBtns) finalBtns.style.display = (n === 3) ? 'flex' : 'none';
+            if (n === 3) {
+                renderNmBlocks();
+            }
+        }
+
+        // ─── 1·2페이지 체크박스 선택 리스트 ─────────────────
+        function nmGetSelectedMap(field) {
+            return field === 'outfit' ? window._nmSelectedOutfits : window._nmSelectedExpressions;
+        }
+        function nmGetList(field) {
+            return field === 'outfit' ? (window._nmInfo.outfits || []) : (window._nmInfo.expressions || []);
+        }
+        function nmToggleSelect(field, value, checked) {
+            nmGetSelectedMap(field)[value] = checked;
+            nmUpdateSelectCount(field);
+        }
+        function nmSelectAll(field, checked) {
+            const list = nmGetList(field);
+            const map = nmGetSelectedMap(field);
+            list.forEach(name => { map[name] = checked; });
+            document.querySelectorAll(`.nm-select-check[data-field="${field}"]`).forEach(cb => { cb.checked = checked; });
+            nmUpdateSelectCount(field);
+        }
+        function nmUpdateSelectCount(field) {
+            const list = nmGetList(field);
+            const map = nmGetSelectedMap(field);
+            const cnt = list.filter(n => map[n]).length;
+            const el = document.getElementById('nm-select-count-' + field);
+            if (el) el.textContent = `${cnt}/${list.length} 선택됨`;
+        }
+        function nmRenderSelectList(field) {
+            const container = document.getElementById('nm-select-list-' + field);
+            if (!container) return;
+            const list = nmGetList(field);
+            const map = nmGetSelectedMap(field);
+            const label = field === 'outfit' ? '복장' : '표정';
+            if (list.length === 0) {
+                container.innerHTML = `<div style="color:var(--text-secondary); font-size:0.8rem; padding:8px;">생성된 ${label}이 없습니다.</div>`;
+                return;
+            }
+            let html = `<div style="display:flex; gap:8px; align-items:center; margin-bottom:8px;">
+                <button onclick="nmSelectAll('${field}', true)" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:4px 10px; border-radius:4px; cursor:pointer; font-size:0.78rem;">모두 선택</button>
+                <button onclick="nmSelectAll('${field}', false)" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:4px 10px; border-radius:4px; cursor:pointer; font-size:0.78rem;">모두 해제</button>
+                <span id="nm-select-count-${field}" style="font-size:0.75rem; color:var(--text-secondary);"></span>
+            </div>`;
+            html += '<div style="display:flex; flex-direction:column; gap:1px;">';
+            for (const name of list) {
+                html += `<label style="display:flex; align-items:center; gap:8px; padding:5px 6px; border-radius:6px; cursor:pointer; font-size:0.82rem;" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background='transparent'">
+                    <input type="checkbox" class="nm-select-check" data-field="${field}" value="${escapeHtml(name)}" ${map[name] ? 'checked' : ''} onchange="nmToggleSelect('${field}', this.value, this.checked)" />
+                    <span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeHtml(name)}">${escapeHtml(name)}</span>
+                </label>`;
+            }
+            html += '</div>';
+            container.innerHTML = html;
+            nmUpdateSelectCount(field);
+        }
+
+        // ─── 3페이지 네이밍 블록 렌더 (선택한 항목만) ─────────
+        function renderNmBlocks() {
+            const info = window._nmInfo;
+
+            // 복장 매핑 입력란 — 선택된 복장만
+            const selOutfits = (info.outfits || []).filter(o => window._nmSelectedOutfits[o]);
             let outfitsHtml = '';
-            if (info.outfits.length === 0) {
-                outfitsHtml = '<div style="color:var(--text-secondary); font-size:0.8rem; padding:8px;">생성된 복장이 없습니다.</div>';
+            if (selOutfits.length === 0) {
+                outfitsHtml = '<div style="color:var(--text-secondary); font-size:0.8rem; padding:4px;">선택된 복장이 없습니다.</div>';
             } else {
-                for (const o of info.outfits) {
+                for (const o of selOutfits) {
                     const mapped = (info.outfit_mapping && info.outfit_mapping[o]) || '';
                     outfitsHtml += `
                         <div style="display:flex; align-items:center; gap:8px; padding:4px 0;">
@@ -35530,11 +35692,13 @@
                 }
             }
 
+            // 표정 매핑 입력란 — 선택된 표정만
+            const selExprs = (info.expressions || []).filter(e => window._nmSelectedExpressions[e]);
             let expressionsHtml = '';
-            if (info.expressions.length === 0) {
-                expressionsHtml = '<div style="color:var(--text-secondary); font-size:0.8rem; padding:8px;">생성된 표정이 없습니다.</div>';
+            if (selExprs.length === 0) {
+                expressionsHtml = '<div style="color:var(--text-secondary); font-size:0.8rem; padding:4px;">선택된 표정이 없습니다.</div>';
             } else {
-                for (const e of info.expressions) {
+                for (const e of selExprs) {
                     const mapped = (info.expression_mapping && info.expression_mapping[e]) || '';
                     expressionsHtml += `
                         <div style="display:flex; align-items:center; gap:8px; padding:4px 0;">
@@ -35545,33 +35709,31 @@
                 }
             }
 
-            // Block definitions for dynamic ordering
             const nmBlockDefs = {
                 character: {
                     label: '캐릭터 이름',
                     color: '#4285F4',
                     bg: 'rgba(66,133,244,0.08)',
                     content: `<div style="display:flex; align-items:center; gap:8px;">
-                            <span style="flex:1; font-size:0.85rem; font-weight:600;">${escapeHtml(charName)}</span>
+                            <span style="flex:1; font-size:0.85rem; font-weight:600;">${escapeHtml(window._nmCharName)}</span>
                             <input type="text" id="nm-export-name" value="${escapeHtml(info.export_name || '')}" placeholder="내보낼 이름"
                                 style="flex:1; font-size:0.85rem; padding:6px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text);" />
                         </div>`
                 },
                 outfit: {
-                    label: `복장 (${info.outfits.length}개)`,
+                    label: `복장 (${selOutfits.length}/${(info.outfits || []).length})`,
                     color: '#4CAF50',
                     bg: 'rgba(76,175,80,0.08)',
                     content: outfitsHtml
                 },
                 expression: {
-                    label: `표정 (${info.expressions.length}개)`,
+                    label: `표정 (${selExprs.length}/${(info.expressions || []).length})`,
                     color: '#FF9800',
                     bg: 'rgba(255,152,0,0.08)',
                     content: expressionsHtml
                 }
             };
 
-            // Generate naming blocks in saved order
             let namingBlocksHtml = '';
             for (const id of window._nmNamingOrder) {
                 const def = nmBlockDefs[id];
@@ -35596,62 +35758,12 @@
                     </div>`;
             }
 
-            overlay.innerHTML = `
-                <div style="background:var(--surface); border-radius:12px; padding:20px; max-width:600px; width:90%; max-height:80vh; display:flex; flex-direction:column;">
-                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-                        <h3 style="margin:0;">이름 치환 규칙 - ${escapeHtml(charName)}</h3>
-                        <button onclick="document.getElementById('name-mapping-overlay').remove()" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer;">x</button>
-                    </div>
-
-                    <div style="overflow-y:auto; flex:1;">
-                        <!-- 파일명 미리보기 -->
-                        <div style="background:rgba(0,0,0,0.03); border:1px solid var(--border); border-radius:8px; padding:10px; margin-bottom:12px;">
-                            <div style="font-size:0.7rem; color:var(--text-secondary); margin-bottom:4px;">파일명 구성 미리보기</div>
-                            <div id="nm-filename-preview" style="font-size:0.85rem; font-family:monospace; word-break:break-all;"></div>
-                        </div>
-
-                        <!-- 이미지 출력 설정 (고정) -->
-                        <div style="background:rgba(156,39,176,0.08); border-radius:8px; padding:10px; margin-bottom:12px;">
-                            <div style="font-size:0.75rem; font-weight:600; margin-bottom:8px; color:#9C27B0;">이미지 출력 설정</div>
-                            <div style="display:flex; align-items:center; gap:12px;">
-                                <div style="display:flex; align-items:center; gap:6px; flex:1;">
-                                    <label style="font-size:0.8rem; white-space:nowrap;">형식</label>
-                                    <select id="nm-export-format" onchange="updateNamePreview()" style="flex:1; font-size:0.8rem; padding:4px 6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text);">
-                                        <option value="webp" ${info.export_format === 'webp' ? 'selected' : ''}>WebP</option>
-                                        <option value="png" ${info.export_format === 'png' ? 'selected' : ''}>PNG</option>
-                                        <option value="jpeg" ${info.export_format === 'jpeg' ? 'selected' : ''}>JPEG</option>
-                                        <option value="avif" ${info.export_format === 'avif' ? 'selected' : ''}>AVIF</option>
-                                    </select>
-                                </div>
-                                <div style="display:flex; align-items:center; gap:6px; flex:2;">
-                                    <label style="font-size:0.8rem; white-space:nowrap;">품질</label>
-                                    <input type="range" id="nm-export-quality" min="1" max="90" value="${info.export_quality || 90}"
-                                        style="flex:1;" oninput="document.getElementById('nm-quality-value').textContent=this.value" />
-                                    <span id="nm-quality-value" style="font-size:0.8rem; min-width:28px; text-align:right;">${info.export_quality || 90}</span>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- 네이밍 블록 (드래그로 순서 변경 가능) -->
-                        <div id="nm-naming-blocks">
-                            ${namingBlocksHtml}
-                        </div>
-                    </div>
-
-                    <!-- 하단 버튼 -->
-                    <div style="display:flex; gap:8px; margin-top:12px;">
-                        <button id="nm-save-btn" onclick="saveNameMapping('${escapeHtml(charName)}')" style="flex:1; background:var(--accent); color:#fff; border:none; padding:8px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">저장</button>
-                        <button onclick="exportNameMappingRule()" style="flex:1; background:#2196F3; color:#fff; border:none; padding:8px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">규칙 내보내기</button>
-                        <button onclick="importNameMappingRule()" style="flex:1; background:#FF9800; color:#fff; border:none; padding:8px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">규칙 불러오기</button>
-                        <button id="nm-export-btn" onclick="exportCharacterAsset('${escapeHtml(charName)}')" style="flex:1; background:#4CAF50; color:#fff; border:none; padding:8px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">내보내기 (ZIP)</button>
-                        <button onclick="document.getElementById('name-mapping-overlay').remove()" style="flex:1; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:8px; border-radius:6px; cursor:pointer; font-size:0.85rem;">닫기</button>
-                    </div>
-                </div>`;
-            document.body.appendChild(overlay);
-
-            // Initial preview
+            const container = document.getElementById('nm-naming-blocks');
+            if (container) container.innerHTML = namingBlocksHtml;
             updateNamePreview();
         }
+
+        // ─── 네이밍 블록 헬퍼 ──────────────────────────────
 
         // ─── 네이밍 블록 헬퍼 ──────────────────────────────
 
@@ -35709,16 +35821,19 @@
         async function saveNameMapping(character) {
             const exportName = document.getElementById('nm-export-name').value.trim();
 
-            const outfitMapping = {};
+            // 표시된(선택된) 항목만 편집 반영. 표시되지 않은(선택 해제) 항목의 기존 매핑은 유지.
+            const outfitMapping = (window._nmInfo && window._nmInfo.outfit_mapping) ? { ...window._nmInfo.outfit_mapping } : {};
             document.querySelectorAll('.nm-outfit-input').forEach(input => {
                 const val = input.value.trim();
                 if (val) outfitMapping[input.dataset.original] = val;
+                else delete outfitMapping[input.dataset.original];
             });
 
-            const expressionMapping = {};
+            const expressionMapping = (window._nmInfo && window._nmInfo.expression_mapping) ? { ...window._nmInfo.expression_mapping } : {};
             document.querySelectorAll('.nm-expr-input').forEach(input => {
                 const val = input.value.trim();
                 if (val) expressionMapping[input.dataset.original] = val;
+                else delete expressionMapping[input.dataset.original];
             });
 
             // 중복 검사: 모든 변환 이름을 모아서 빈도 확인
@@ -35779,13 +35894,18 @@
         // ─── 치환 규칙 내보내기/불러오기 ────────────────────
         function exportNameMappingRule() {
             const exportName = document.getElementById('nm-export-name').value.trim();
-            const outfitMapping = {};
+            // 기존 매핑(선택 해제된 항목 포함)을 베이스로 두고 표시된 입력란만 반영
+            const outfitMapping = (window._nmInfo && window._nmInfo.outfit_mapping) ? { ...window._nmInfo.outfit_mapping } : {};
             document.querySelectorAll('.nm-outfit-input').forEach(input => {
-                outfitMapping[input.dataset.original] = input.value.trim();
+                const val = input.value.trim();
+                if (val) outfitMapping[input.dataset.original] = val;
+                else delete outfitMapping[input.dataset.original];
             });
-            const expressionMapping = {};
+            const expressionMapping = (window._nmInfo && window._nmInfo.expression_mapping) ? { ...window._nmInfo.expression_mapping } : {};
             document.querySelectorAll('.nm-expr-input').forEach(input => {
-                expressionMapping[input.dataset.original] = input.value.trim();
+                const val = input.value.trim();
+                if (val) expressionMapping[input.dataset.original] = val;
+                else delete expressionMapping[input.dataset.original];
             });
 
             const data = {
@@ -35819,10 +35939,17 @@
                 reader.onload = (ev) => {
                     try {
                         const data = JSON.parse(ev.target.result);
-                        if (data.export_name !== undefined) {
-                            document.getElementById('nm-export-name').value = data.export_name || '';
+                        // window._nmInfo 에 병합 (선택 해제된 항목의 매핑도 보존/반영)
+                        if (window._nmInfo) {
+                            if (data.export_name !== undefined) window._nmInfo.export_name = data.export_name || '';
+                            if (data.outfit_mapping) window._nmInfo.outfit_mapping = { ...(window._nmInfo.outfit_mapping || {}), ...data.outfit_mapping };
+                            if (data.expression_mapping) window._nmInfo.expression_mapping = { ...(window._nmInfo.expression_mapping || {}), ...data.expression_mapping };
+                            if (data.export_format) window._nmInfo.export_format = data.export_format;
+                            if (data.export_quality !== undefined) window._nmInfo.export_quality = data.export_quality;
                         }
-                        // 출력 설정 복원
+                        if (data.naming_order) window._nmNamingOrder = data.naming_order;
+                        if (data.naming_enabled) window._nmNamingEnabled = data.naming_enabled;
+                        // 출력 설정 DOM 동기화 (이 영역은 renderNmBlocks 이 다시 그리지 않음)
                         if (data.export_format) {
                             const fmtSel = document.getElementById('nm-export-format');
                             if (fmtSel) fmtSel.value = data.export_format;
@@ -35833,55 +35960,8 @@
                             if (qSlider) qSlider.value = data.export_quality;
                             if (qValue) qValue.textContent = data.export_quality;
                         }
-                        // 복장: 매칭되는 이름만 적용, 나머진 그대로
-                        if (data.outfit_mapping) {
-                            document.querySelectorAll('.nm-outfit-input').forEach(input => {
-                                const original = input.dataset.original;
-                                if (data.outfit_mapping.hasOwnProperty(original)) {
-                                    input.value = data.outfit_mapping[original] || '';
-                                }
-                            });
-                        }
-                        // 표정: 매칭되는 이름만 적용, 나머진 그대로
-                        if (data.expression_mapping) {
-                            document.querySelectorAll('.nm-expr-input').forEach(input => {
-                                const original = input.dataset.original;
-                                if (data.expression_mapping.hasOwnProperty(original)) {
-                                    input.value = data.expression_mapping[original] || '';
-                                }
-                            });
-                        }
-                        // 네이밍 순서 및 활성화 상태 복원
-                        if (data.naming_order) {
-                            window._nmNamingOrder = data.naming_order;
-                            const container = document.getElementById('nm-naming-blocks');
-                            if (container) {
-                                const blocks = {};
-                                container.querySelectorAll('.nm-naming-block').forEach(b => {
-                                    blocks[b.dataset.blockId] = b;
-                                });
-                                data.naming_order.forEach(id => {
-                                    if (blocks[id]) container.appendChild(blocks[id]);
-                                });
-                            }
-                        }
-                        if (data.naming_enabled) {
-                            window._nmNamingEnabled = data.naming_enabled;
-                            Object.entries(data.naming_enabled).forEach(([id, enabled]) => {
-                                const block = document.getElementById(`nm-block-${id}`);
-                                if (block) {
-                                    const toggle = block.querySelector('.nm-toggle-btn');
-                                    block.style.opacity = enabled ? '1' : '0.5';
-                                    if (toggle) {
-                                        toggle.textContent = enabled ? '활성' : '비활성';
-                                        toggle.style.background = enabled ? '#4CAF50' : '#999';
-                                    }
-                                }
-                            });
-                        }
-                        if (data.naming_order || data.naming_enabled) {
-                            updateNamePreview();
-                        }
+                        // 3페이지 블록 전체 재렌더 (매핑·순서·토글·미리보기 일괄 반영)
+                        renderNmBlocks();
                         showToast('치환 규칙 불러오기 완료', 'success');
                     } catch (err) {
                         showToast('파일 파싱 실패: ' + err.message, 'error');
@@ -35894,11 +35974,22 @@
 
         async function exportCharacterAsset(character) {
             const btn = document.getElementById('nm-export-btn');
+            // 1·2페이지에서 선택한 표정/복장만 내보내기
+            const sel = window._nmSelectedOutfits && window._nmSelectedExpressions;
+            const outfits = sel ? Object.keys(window._nmSelectedOutfits).filter(k => window._nmSelectedOutfits[k]) : null;
+            const expressions = sel ? Object.keys(window._nmSelectedExpressions).filter(k => window._nmSelectedExpressions[k]) : null;
+            if (sel && ((outfits && outfits.length === 0) || (expressions && expressions.length === 0))) {
+                showToast('선택된 표정/복장이 없습니다. 1·2페이지에서 항목을 선택하세요.', 'error');
+                return;
+            }
             btn.disabled = true;
             btn.textContent = '내보내는 중...';
             try {
-                const enc = encodeURIComponent;
-                const resp = await fetch(`/api/asset_mode/export/${enc(character)}`);
+                const resp = await fetch('/api/asset_mode/export', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ character, outfits, expressions }),
+                });
                 if (!resp.ok) {
                     const data = await resp.json().catch(() => ({}));
                     showToast(data.error || '내보내기 실패', 'error');

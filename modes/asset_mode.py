@@ -1892,13 +1892,17 @@ class AssetMode:
         self._save_name_mapping(data)
         return {"success": True}
 
-    def export_character_zip(self, character: str) -> str:
-        """캐릭터의 대표 이미지를 이름 치환 규칙에 따라 이름_복장_표정.ext로 만들어 zip 반환."""
+    def export_character_zip(self, character: str, selected_outfits=None, selected_expressions=None) -> str:
+        """캐릭터의 대표 이미지를 이름 치환 규칙에 따라 이름_복장_표정.ext로 만들어 zip 반환.
+        selected_outfits / selected_expressions(디렉터리명 리스트)가 주어지면 해당 항목만 내보낸다.
+        None이면 전체 내보내기(기존 동작)."""
         import zipfile, io, tempfile, logging
         from PIL import Image
 
         log = logging.getLogger("asset_export")
-        log.info(f"[ZIP 내보내기] 시작 — 캐릭터: {character}")
+        sel_out = set(selected_outfits) if selected_outfits is not None else None
+        sel_expr = set(selected_expressions) if selected_expressions is not None else None
+        log.info(f"[ZIP 내보내기] 시작 — 캐릭터: {character}, 선택 복장={sel_out}, 선택 표정={sel_expr}")
 
         char_dir = os.path.join(ASSET_DIR, self._safe_dirname(character))
         if not os.path.isdir(char_dir):
@@ -1948,9 +1952,13 @@ class AssetMode:
                     continue
                 if outfit_dir_name == "Lora":
                     continue
+                if sel_out is not None and outfit_dir_name not in sel_out:
+                    continue
                 for expr_dir_name in sorted(os.listdir(outfit_path)):
                     expr_path = os.path.join(outfit_path, expr_dir_name)
                     if not os.path.isdir(expr_path):
+                        continue
+                    if sel_expr is not None and expr_dir_name not in sel_expr:
                         continue
 
                     # 대표 이미지 찾기
