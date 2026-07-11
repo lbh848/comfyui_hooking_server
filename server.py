@@ -3334,6 +3334,19 @@ async def handle_api_llm_edit_prompt(request: web.Request) -> web.Response:
 
         # 6) LLM 호출 (외부 API 분기: edit_illustration_prompt task_key 라우팅)
         messages = llm_prompt_edit.build_llm_messages(direction, scene_anima, scene_sdxl)
+        # 우하단 LIGHBD LLM 위젯 활성화 — 다른 LLM 서비스(bot_mode 등)와 동일 패턴.
+        # raw 전체를 위젯에 띄워 파싱 실패 원인을 즉시 확인 가능하게 한다.
+        from modes.lighbd_service import _log_lighbd_history as _log_hist
+        t0 = time.time()
+        _hist_pid = f"edit_illustration_prompt:{backup_name}"
+        try:
+            await notify_frontend("lighbd_llm_stream", {
+                "type": "start",
+                "model": f"삽화 프롬프트 편집 ({'비전' if image_b64 else '텍스트'})",
+            })
+        except Exception as _e:
+            print(f"[LLM_EDIT] WARN: 위젯 start 알림 실패: {_e}")
+
         raw = None
         try:
             if image_b64:
@@ -3348,20 +3361,71 @@ async def handle_api_llm_edit_prompt(request: web.Request) -> web.Response:
             fallback_note = " (현재 LLM 서비스가 비전을 지원하지 않아 텍스트만으로 분석했습니다)"
             raw = await llm_service.callLLMTask("edit_illustration_prompt", messages, json_mode=True)
 
-        if not raw or raw.startswith("[LLM 실패]"):
+        # 위젯에 raw 표시 — LLM 실패/빈 응답은 error, 정상 응답은 done(raw 전체)
+        if not raw:
+            print(f"[LLM_EDIT] LLM 응답 없음(빈 문자열) name={backup_name}")
+            try:
+                await notify_frontend("lighbd_llm_stream", {
+                    "type": "error", "error": "LLM 응답이 빈 문자열입니다."})
+            except Exception as _e:
+                print(f"[LLM_EDIT] WARN: 위젯 error 알림 실패: {_e}")
+            try:
+                _log_hist({
+                    "ts": datetime.datetime.now().isoformat(timespec="seconds"),
+                    "prompt_id": _hist_pid, "input": messages, "output": "",
+                    "elapsed": round(time.time() - t0, 3),
+                    "status": "error", "error": "LLM 응답이 빈 문자열입니다.",
+                })
+            except Exception as _e:
+                print(f"[LLM_EDIT] WARN: 히스토리 기록 실패: {_e}")
+            return web.json_response({
+                "error": "LLM 응답이 비어 있습니다.",
+            }, status=500)
+        if raw.startswith("[LLM 실패]"):
             print(f"[LLM_EDIT] LLM 호출 실패 name={backup_name}: {raw}")
+            try:
+                await notify_frontend("lighbd_llm_stream", {
+                    "type": "error", "error": raw})
+            except Exception as _e:
+                print(f"[LLM_EDIT] WARN: 위젯 error 알림 실패: {_e}")
+            try:
+                _log_hist({
+                    "ts": datetime.datetime.now().isoformat(timespec="seconds"),
+                    "prompt_id": _hist_pid, "input": messages, "output": "",
+                    "elapsed": round(time.time() - t0, 3),
+                    "status": "error", "error": raw,
+                })
+            except Exception as _e:
+                print(f"[LLM_EDIT] WARN: 히스토리 기록 실패: {_e}")
             return web.json_response({
                 "error": f"LLM 호출 실패: {raw}",
             }, status=500)
+        # 정상 raw → 위젯에 전체 표시 (파싱 실패 시 원인 확인용) + 히스토리 기록(자세히 모달)
+        try:
+            await notify_frontend("lighbd_llm_stream", {"type": "done", "text": raw})
+        except Exception as _e:
+            print(f"[LLM_EDIT] WARN: 위젯 done 알림 실패: {_e}")
+        try:
+            _log_hist({
+                "ts": datetime.datetime.now().isoformat(timespec="seconds"),
+                "prompt_id": _hist_pid, "input": messages, "output": raw,
+                "elapsed": round(time.time() - t0, 3),
+                "status": "ok",
+            })
+        except Exception as _e:
+            print(f"[LLM_EDIT] WARN: 히스토리 기록 실패: {_e}")
 
         # 7) JSON 파싱
         parsed = llm_prompt_edit.parse_llm_json(raw)
         if not parsed:
-            print(f"[LLM_EDIT] JSON 파싱 실패, 원본 유지 name={backup_name}")
+            print(f"[LLM_EDIT] JSON 파싱 실패, 원본 유지 name={backup_name}\n"
+                  f"  raw(앞 500자): {raw[:500]!r}")
             return web.json_response({
-                "plan": "LLM 응답을 파싱하지 못해 원본을 유지했습니다." + fallback_note,
+                "plan": "LLM 응답을 파싱하지 못해 원본을 유지했습니다. "
+                        "우하단 LIGHBD 위젯(자세히)에서 LLM 원본 응답을 확인하세요." + fallback_note,
                 "positive": positive,
                 "negative": negative,
+                "parse_failed": True,
             })
 
         # 8) 재조립
@@ -9916,10 +9980,15 @@ async def on_startup(app):
         "llm_url2": app_config.get("llm_url2", ""),
         "llm_reasoning_preset": app_config.get("llm_reasoning_preset", "auto"),
         "llm_reasoning_effort": app_config.get("llm_reasoning_effort", ""),
+        "llm_reasoning_preset2": app_config.get("llm_reasoning_preset2", "auto"),
+        "llm_reasoning_effort2": app_config.get("llm_reasoning_effort2", ""),
+        "llm_custom_body": app_config.get("llm_custom_body", ""),
+        "llm_custom_body2": app_config.get("llm_custom_body2", ""),
         "llm_reasoning_budget_tokens": app_config.get("llm_reasoning_budget_tokens", 0),
         "llm_temperature": app_config.get("llm_temperature", 1.0),
         "llm_max_tokens": app_config.get("llm_max_tokens", 0),
         "llm_stream": app_config.get("llm_stream", False),
+        "llm_routing": app_config.get("llm_routing", {}),
     })
     # API 키는 config.json 이 아닌 key/llm_keys.json 에서 로드
     _load_llm_keys_into_config()

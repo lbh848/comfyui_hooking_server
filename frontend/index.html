@@ -7724,17 +7724,30 @@
         }
 
         // ─── WebSocket 연결 ───
+        let _wsReconnectTimer = null;
+        function _scheduleWsReconnect(delay) {
+            // 이미 재연결 예약 중이면 중복 잡지 않는다(onclose/onerror 양쪽에서 호출되므로).
+            if (_wsReconnectTimer) return;
+            console.log(`[Frontend WS] ${delay}ms 후 재연결 시도`);
+            _wsReconnectTimer = setTimeout(() => {
+                _wsReconnectTimer = null;
+                connectFrontendWs();
+            }, delay);
+        }
         function connectFrontendWs() {
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
             const wsUrl = `${protocol}//${window.location.host}/api/frontend_ws`;
 
             if (frontendWs) {
-                try { frontendWs.close(); } catch(e) {}
+                // 기존 WS 닫을 때 핸들러 해제 — 닫기 이벤트가 재연결을 트리거하지 않게.
+                try { frontendWs.onclose = null; frontendWs.onerror = null; frontendWs.close(); } catch(e) {}
             }
 
             frontendWs = new WebSocket(wsUrl);
 
             frontendWs.onopen = function() {
+                // 연결 성공 시 대기 중 재연결 타이머 정리
+                if (_wsReconnectTimer) { clearTimeout(_wsReconnectTimer); _wsReconnectTimer = null; }
                 console.log('[Frontend WS] 연결됨');
                 // 연결 시 큐 상태 동기화
                 fetch('/api/queue/status').then(r => r.json()).then(data => {
@@ -7990,12 +8003,15 @@
             };
             
             frontendWs.onclose = function() {
-                console.log('[Frontend WS] 연결 종료, 3초 후 재연결...');
-                setTimeout(connectFrontendWs, 3000);
+                console.log('[Frontend WS] 연결 종료, 자동 재연결 예정');
+                _scheduleWsReconnect(2000);
             };
 
             frontendWs.onerror = function(error) {
                 console.error('[Frontend WS] 에러:', error);
+                // 일부 환경에서는 onerror만 발생하고 onclose가 오지 않아
+                // 자동 재연결이 안 걸릴 수 있어, 명시적으로 close 하여 onclose(재연결) 경로를 태운다.
+                try { frontendWs.close(); } catch(e) {}
             };
         }
 
@@ -8961,6 +8977,11 @@
                 if (data.plan) {
                     document.getElementById('modal-llm-plan-text').textContent = data.plan;
                     document.getElementById('modal-llm-plan').style.display = 'block';
+                }
+                // 파싱 실패(원본 유지)는 "완료"가 아님 — 원인을 우하단 LIGHBD 위젯에서 확인
+                if (data.parse_failed) {
+                    showToast('LLM 응답 파싱 실패 — 원본 유지. 우하단 LIGHBD 위젯(자세히) 확인', 'warning');
+                    return;
                 }
                 showToast('LLM 수정 적용 완료', 'success');
                 closeLlmEditModal();
