@@ -34495,11 +34495,18 @@
             const styleDir = document.getElementById('asset-style-ref-folder-hash-text')?.textContent || '';
             positiveFull += `\n[STYLE_DIR]\n${styleDir || 'soya_style_ref/fallback'}`;
             const loraActive = loraEnabled && assetLoraList.length > 0;
-            positiveFull += `\n[LORA_ACTIVATE]\n${loraActive ? 'true' : 'false'}`;
-            if (loraActive) {
-                positiveFull += `\n[LORA_DATA]\n${JSON.stringify({list: assetLoraList.map(l => ({lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima'}))})}`;
+            const styleLoraActive = styleLoraEnabled && styleLoraList.length > 0;
+            const regularLoraData = assetLoraList.map(l => ({lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima'}));
+            const styleLoraData = styleLoraList.map(l => ({lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima'}));
+            if (isAnima) {
+                // ANIMA: 일반/스타일 LoRA 분리 (워크플로우에 별도 STYLE_LORA 로더 노드 존재)
+                positiveFull += `\n[LORA_ACTIVATE]\n${loraActive ? 'true' : 'false'}`;
+                positiveFull += `\n[LORA_DATA]\n${JSON.stringify({list: regularLoraData})}`;
             } else {
-                positiveFull += `\n[LORA_DATA]\n{"list":[]}`;
+                // ILXL: 스타일 LoRA를 LORA_DATA에 합쳐서 단일 로더로 처리 (둘 중 하나만 ON이어도 활성화)
+                const mergedActive = loraActive || styleLoraActive;
+                positiveFull += `\n[LORA_ACTIVATE]\n${mergedActive ? 'true' : 'false'}`;
+                positiveFull += `\n[LORA_DATA]\n${JSON.stringify({list: [...regularLoraData, ...styleLoraData]})}`;
             }
             // FACE_CROP (ANIMA only)
             if (isAnima) {
@@ -34543,15 +34550,13 @@
                 const faceSdxlTriggers = faceLoraList.filter(l => l.BASE === 'sdxl').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
                 positiveFull += `\n[CHAR_FACE_TAG_INFORM]\n${JSON.stringify({list: [{FACE_TAGS: faceTags, EYE_TAGS: eyeTags, POSITIVE: "", TRIGGER_ANIMA: faceAnimaTriggers, TRIGGER_SDXL: faceSdxlTriggers, CHAR: "asset_mode"}]})}`;
             }
-            // Style(그림체) LoRA (ANIMA/SDXL 공통)
-            {
-                const styleLoraActive = styleLoraEnabled && styleLoraList.length > 0;
+            // Style(그림체) LoRA — ANIMA는 별도 토큰(분리 로더), ILXL은 LORA_DATA에 합쳐졌으므로 비활성/빈 값
+            if (isAnima) {
                 positiveFull += `\n[STYLE_LORA_ACTIVATE]\n${styleLoraActive ? 'true' : 'false'}`;
-                if (styleLoraActive) {
-                    positiveFull += `\n[STYLE_LORA_DATA]\n${JSON.stringify({list: styleLoraList.map(l => ({lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima'}))})}`;
-                } else {
-                    positiveFull += `\n[STYLE_LORA_DATA]\n{"list":[]}`;
-                }
+                positiveFull += `\n[STYLE_LORA_DATA]\n${JSON.stringify({list: styleLoraData})}`;
+            } else {
+                positiveFull += `\n[STYLE_LORA_ACTIVATE]\nfalse`;
+                positiveFull += `\n[STYLE_LORA_DATA]\n{"list":[]}`;
             }
             // HRF
             positiveFull += `\n[HRF_ACTIVATE]\n${hrfSdxl ? 'true' : 'false'}`;
@@ -44203,11 +44208,17 @@
                 positiveFull += `\n[FACE_CROP_BOTTOM]\n${slot.face_crop_bottom ?? 1}`;
             }
             const loraActive = slot.lora_enabled && (slot.lora_list || []).length > 0;
-            positiveFull += `\n[LORA_ACTIVATE]\n${loraActive ? 'true' : 'false'}`;
-            if (loraActive) {
-                positiveFull += `\n[LORA_DATA]\n${JSON.stringify({list: slot.lora_list.map(l => ({lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima'}))})}`;
+            const styleLoraActive = slot.style_lora_enabled && (slot.style_lora_list || []).length > 0;
+            const regularLoraData = (slot.lora_list || []).map(l => ({lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima'}));
+            const styleLoraData = (slot.style_lora_list || []).map(l => ({lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima'}));
+            if (isAnima) {
+                positiveFull += `\n[LORA_ACTIVATE]\n${loraActive ? 'true' : 'false'}`;
+                positiveFull += `\n[LORA_DATA]\n${JSON.stringify({list: regularLoraData})}`;
             } else {
-                positiveFull += `\n[LORA_DATA]\n{"list":[]}`;
+                // ILXL: 스타일 LoRA를 LORA_DATA에 합쳐서 단일 로더 처리 (둘 중 하나만 ON이어도 활성화)
+                const mergedActive = loraActive || styleLoraActive;
+                positiveFull += `\n[LORA_ACTIVATE]\n${mergedActive ? 'true' : 'false'}`;
+                positiveFull += `\n[LORA_DATA]\n${JSON.stringify({list: [...regularLoraData, ...styleLoraData]})}`;
             }
             // Face LoRA (ANIMA only)
             if (isAnima) {
@@ -44229,15 +44240,13 @@
                 const batchFaceSdxlTriggers = faceLoraList.filter(l => l.BASE === 'sdxl').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
                 positiveFull += `\n[CHAR_FACE_TAG_INFORM]\n${JSON.stringify({list: [{FACE_TAGS: slot.face_tags || '', EYE_TAGS: slot.eye_tags || '', POSITIVE: "", TRIGGER_ANIMA: batchFaceAnimaTriggers, TRIGGER_SDXL: batchFaceSdxlTriggers, CHAR: "asset_mode"}]})}`;
             }
-            // Style(그림체) LoRA (ANIMA/SDXL 공통)
-            {
-                const styleLoraActive = slot.style_lora_enabled && (slot.style_lora_list || []).length > 0;
+            // Style(그림체) LoRA — ANIMA는 별도 토큰(분리 로더), ILXL은 LORA_DATA에 합쳐졌으므로 비활성/빈 값
+            if (isAnima) {
                 positiveFull += `\n[STYLE_LORA_ACTIVATE]\n${styleLoraActive ? 'true' : 'false'}`;
-                if (styleLoraActive) {
-                    positiveFull += `\n[STYLE_LORA_DATA]\n${JSON.stringify({list: slot.style_lora_list.map(l => ({lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima'}))})}`;
-                } else {
-                    positiveFull += `\n[STYLE_LORA_DATA]\n{"list":[]}`;
-                }
+                positiveFull += `\n[STYLE_LORA_DATA]\n${JSON.stringify({list: styleLoraData})}`;
+            } else {
+                positiveFull += `\n[STYLE_LORA_ACTIVATE]\nfalse`;
+                positiveFull += `\n[STYLE_LORA_DATA]\n{"list":[]}`;
             }
             positiveFull += `\n[POSE_ACTIVATE]\n${poseEnabled ? 'true' : 'false'}`;
             if (poseEnabled && slot.pose_id) {
@@ -44350,8 +44359,17 @@
                 controlPart += `\n[FACE_CROP_BOTTOM]\n${slot.face_crop_bottom ?? 1}`;
             }
             const loraActive = slot.lora_enabled && (slot.lora_list || []).length > 0;
-            controlPart += `\n[LORA_ACTIVATE]\n${loraActive ? 'true' : 'false'}`;
-            controlPart += `\n[LORA_DATA]\n${loraActive ? JSON.stringify({list: slot.lora_list.map(l => ({lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima'}))}) : '{"list":[]}'}`;
+            const styleLoraActive = slot.style_lora_enabled && (slot.style_lora_list || []).length > 0;
+            const regularLoraData = (slot.lora_list || []).map(l => ({lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima'}));
+            const styleLoraData = (slot.style_lora_list || []).map(l => ({lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima'}));
+            if (isAnima) {
+                controlPart += `\n[LORA_ACTIVATE]\n${loraActive ? 'true' : 'false'}`;
+                controlPart += `\n[LORA_DATA]\n${JSON.stringify({list: regularLoraData})}`;
+            } else {
+                const mergedActive = loraActive || styleLoraActive;
+                controlPart += `\n[LORA_ACTIVATE]\n${mergedActive ? 'true' : 'false'}`;
+                controlPart += `\n[LORA_DATA]\n${JSON.stringify({list: [...regularLoraData, ...styleLoraData]})}`;
+            }
             if (isAnima) {
                 const faceLoraActive = slot.face_lora_enabled && (slot.face_lora_list || []).length > 0;
                 const ctrlFaceLoraUpscale = (slot.face_lora_upscale_size || '').toString().trim();
@@ -44366,10 +44384,12 @@
                 const previewFaceSdxlTriggers = previewFaceLoraList.filter(l => l.BASE === 'sdxl').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
                 controlPart += `\n[CHAR_FACE_TAG_INFORM]\n${JSON.stringify({list: [{FACE_TAGS: slot.face_tags || '', EYE_TAGS: slot.eye_tags || '', POSITIVE: "", TRIGGER_ANIMA: previewFaceAnimaTriggers, TRIGGER_SDXL: previewFaceSdxlTriggers, CHAR: "asset_mode"}]})}`;
             }
-            {
-                const styleLoraActive = slot.style_lora_enabled && (slot.style_lora_list || []).length > 0;
+            if (isAnima) {
                 controlPart += `\n[STYLE_LORA_ACTIVATE]\n${styleLoraActive ? 'true' : 'false'}`;
-                controlPart += `\n[STYLE_LORA_DATA]\n${styleLoraActive ? JSON.stringify({list: slot.style_lora_list.map(l => ({lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima'}))}) : '{"list":[]}'}`;
+                controlPart += `\n[STYLE_LORA_DATA]\n${JSON.stringify({list: styleLoraData})}`;
+            } else {
+                controlPart += `\n[STYLE_LORA_ACTIVATE]\nfalse`;
+                controlPart += `\n[STYLE_LORA_DATA]\n{"list":[]}`;
             }
             controlPart += `\n[POSE_ACTIVATE]\n${poseEnabled ? 'true' : 'false'}`;
             controlPart += `\n[POSE_DATA]\n${poseEnabled && slot.pose_id ? '(포즈: ' + slot.pose_id + ')' : '{"people":[{"pose_keypoints_2d":[...]}],"canvas_height":1024,"canvas_width":700}'}`;
