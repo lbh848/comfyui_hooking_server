@@ -4093,6 +4093,24 @@
                     </div>
                     </div>
 
+                    <!-- Style LoRA 섹션 (ANIMA/SDXL 공통) -->
+                    <div id="asset-style-lora-wrapper">
+                    <div style="background:rgba(76,175,80,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <div class="section-title" style="margin-bottom:0;">Style(그림체) LoRA</div>
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="asset-style-lora-toggle" onchange="onAssetStyleLoraToggle()">
+                                <span class="toggle-slider"></span>
+                            </label>
+                            <span id="asset-style-lora-status" class="toggle-status off">OFF</span>
+                        </div>
+                        <div id="asset-style-lora-section" style="display:none; margin-top:8px;">
+                            <button onclick="openAssetStyleLoraPicker()" style="width:100%; font-size:0.8rem; padding:6px; border:1px dashed var(--border); background:var(--surface2); border-radius:6px; cursor:pointer; color:var(--text-secondary); transition:border-color 0.15s;">+ Style LoRA 추가</button>
+                            <div id="asset-style-lora-list" style="margin-top:6px; display:flex; flex-direction:column; gap:6px;"></div>
+                        </div>
+                    </div>
+                    </div>
+
                     <!-- 포즈 섹션 -->
                     <div id="asset-pose-container" style="background:rgba(0,188,212,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
                         <div style="display:flex; align-items:center; gap:8px;">
@@ -34374,9 +34392,13 @@
             const exprTags = expr ? (assetTags.expressions?.[expr] || []).filter(t => t.trim()) : [];
             const outfitTags = outfit ? (assetTags.outfits?.[outfit] || []).filter(t => t.trim()) : [];
             const naturalLanguage = document.getElementById('asset-natural-language-text')?.value?.trim() || '';
-            const loraTriggerWords = loraEnabled ? assetLoraList.map(l => l.trigger).filter(t => t && t.trim()).join(', ') : '';
-            const animaLoraTriggerWords = loraEnabled ? assetLoraList.filter(l => (l.BASE || 'anima') === 'anima').map(l => l.trigger).filter(t => t && t.trim()).join(', ') : '';
-            const sdxlLoraTriggerWords = loraEnabled ? assetLoraList.filter(l => l.BASE === 'sdxl').map(l => l.trigger).filter(t => t && t.trim()).join(', ') : '';
+            const styleLoraEnabled = document.getElementById('asset-style-lora-toggle')?.checked || false;
+            // 일반 LoRA + 스타일(그림체) LoRA 트리거를 BASE별로 병합 — 스타일 토글이 ON일 때만 스타일 포함.
+            // (스타일 LoRA 트리거도 일반 LoRA와 동일 위치에 주입)
+            const triggerSrc = [...(loraEnabled ? assetLoraList : []), ...(styleLoraEnabled ? styleLoraList : [])];
+            const loraTriggerWords = triggerSrc.map(l => l.trigger).filter(t => t && t.trim()).join(', ');
+            const animaLoraTriggerWords = triggerSrc.filter(l => (l.BASE || 'anima') === 'anima').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
+            const sdxlLoraTriggerWords = triggerSrc.filter(l => l.BASE === 'sdxl').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
             const animaArtistName = getAssetSelectValue('anima-artist-preset-select') || '';
             const animaArtistTags = animaArtistName ? (assetTags.artist_presets?.[animaArtistName] || []).filter(t => t.trim()) : [];
             const animaQTags = (assetTags.anima_quality || []).filter(t => t.trim());
@@ -34521,6 +34543,16 @@
                 const faceSdxlTriggers = faceLoraList.filter(l => l.BASE === 'sdxl').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
                 positiveFull += `\n[CHAR_FACE_TAG_INFORM]\n${JSON.stringify({list: [{FACE_TAGS: faceTags, EYE_TAGS: eyeTags, POSITIVE: "", TRIGGER_ANIMA: faceAnimaTriggers, TRIGGER_SDXL: faceSdxlTriggers, CHAR: "asset_mode"}]})}`;
             }
+            // Style(그림체) LoRA (ANIMA/SDXL 공통)
+            {
+                const styleLoraActive = styleLoraEnabled && styleLoraList.length > 0;
+                positiveFull += `\n[STYLE_LORA_ACTIVATE]\n${styleLoraActive ? 'true' : 'false'}`;
+                if (styleLoraActive) {
+                    positiveFull += `\n[STYLE_LORA_DATA]\n${JSON.stringify({list: styleLoraList.map(l => ({lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima'}))})}`;
+                } else {
+                    positiveFull += `\n[STYLE_LORA_DATA]\n{"list":[]}`;
+                }
+            }
             // HRF
             positiveFull += `\n[HRF_ACTIVATE]\n${hrfSdxl ? 'true' : 'false'}`;
             if (isAnima) positiveFull += `\n[ANIMA_HRF_ACTIVATE]\n${hrfAnima ? 'true' : 'false'}`;
@@ -34591,6 +34623,8 @@
                 style_ref_dir: document.getElementById('asset-style-ref-folder-hash-text')?.textContent || '',
                 lora_enabled: document.getElementById('asset-lora-toggle')?.checked || false,
                 lora_list: assetLoraList.map(l => ({...l})),
+                style_lora_enabled: document.getElementById('asset-style-lora-toggle')?.checked || false,
+                style_lora_list: styleLoraList.map(l => ({...l})),
                 pose_enabled: document.getElementById('asset-pose-toggle')?.checked || false,
                 pose_id: assetSelectedPoseId || '',
                 img_w: parseInt(document.getElementById('asset-img-w')?.value) || 700,
@@ -34678,6 +34712,11 @@
             if (loraToggle) { loraToggle.checked = s.lora_enabled || false; loraToggle.dispatchEvent(new Event('change')); }
             assetLoraList = (s.lora_list || []).map(l => ({...l}));
             renderAssetLoraList();
+
+            const styleLoraToggle = document.getElementById('asset-style-lora-toggle');
+            if (styleLoraToggle) { styleLoraToggle.checked = s.style_lora_enabled || false; styleLoraToggle.dispatchEvent(new Event('change')); }
+            styleLoraList = (s.style_lora_list || []).map(l => ({...l}));
+            renderAssetStyleLoraList();
 
             const poseToggle = document.getElementById('asset-pose-toggle');
             if (poseToggle) { poseToggle.checked = s.pose_enabled || false; poseToggle.dispatchEvent(new Event('change')); }
@@ -36327,7 +36366,8 @@
         // ─── LoRA 블록 (개별 에셋) ──
         let assetLoraList = []; // [{name, character, lora_path, strength, preview_url, trigger, BASE}]
         let faceLoraList = []; // Face LoRA (동일 구조)
-        let _loraPickerCfg = { list: assetLoraList, render: null, overlayId: 'asset-lora-picker-overlay' };
+        let styleLoraList = []; // Style(그림체) LoRA (동일 구조)
+        let _loraPickerCfg = { list: assetLoraList, render: null, overlayId: 'asset-lora-picker-overlay', showStyleTab: false };
 
         function onAssetLoraToggle() {
             const on = document.getElementById('asset-lora-toggle').checked;
@@ -36341,6 +36381,7 @@
             const src = l.source || 'asset';
             if (src === 'bot') return 'SOYA_CHAR_LORA\\SOYA_BOT_LORA\\' + l.lora_path;
             if (src === 'instance') return 'SOYA_CHAR_LORA\\SOYA_INSTANCE_LORA\\' + l.lora_path;
+            if (src === 'style') return 'SOYA_CHAR_LORA\\SOYA_STYLE_LORA\\' + l.lora_path;
             return 'SOYA_CHAR_LORA\\' + l.lora_path;
         }
 
@@ -36427,6 +36468,55 @@
             `).join('');
         }
 
+        // ─── Style(그림체) LoRA 블록 (개별 에셋) ──
+        function onAssetStyleLoraToggle() {
+            const on = document.getElementById('asset-style-lora-toggle').checked;
+            document.getElementById('asset-style-lora-section').style.display = on ? 'block' : 'none';
+            const status = document.getElementById('asset-style-lora-status');
+            status.textContent = on ? 'ON' : 'OFF';
+            status.className = 'toggle-status ' + (on ? 'on' : 'off');
+        }
+
+        function renderAssetStyleLoraList() {
+            const container = document.getElementById('asset-style-lora-list');
+            if (!container) return;
+            if (styleLoraList.length === 0) {
+                container.innerHTML = '<div style="font-size:0.75rem; color:var(--text-secondary); text-align:center; padding:4px;">선택된 Style LoRA가 없습니다</div>';
+                return;
+            }
+            container.innerHTML = styleLoraList.map((lora, i) => `
+                <div style="padding:8px; background:var(--surface2); border-radius:6px; border:1px solid var(--border); position:relative;">
+                    <button onclick="styleLoraList.splice(${i},1); renderAssetStyleLoraList();"
+                        style="position:absolute; top:2px; right:4px; background:none; border:none; color:var(--error); cursor:pointer; font-size:1.8rem; padding:2px 4px;">x</button>
+                    ${lora.preview_url ? `<img src="${escapeHtml(lora.preview_url)}" style="width:70%; aspect-ratio:1; object-fit:cover; border-radius:6px; display:block; margin:0 auto;">` : '<div style="width:70%; aspect-ratio:1; background:var(--surface); border-radius:6px; display:flex; align-items:center; justify-content:center; font-size:2rem; margin:0 auto;">🎨</div>'}
+                    <div style="margin-top:6px;">
+                        <div style="display:flex; align-items:center; gap:4px;">
+                            <span style="font-size:0.6rem; background:${lora.source === 'style' ? 'rgba(0,188,212,0.3)' : lora.source === 'bot' ? 'rgba(76,175,80,0.3)' : lora.source === 'instance' ? 'rgba(255,152,0,0.3)' : 'rgba(180,140,255,0.3)'}; padding:1px 4px; border-radius:3px; color:var(--text);">${lora.source === 'style' ? '스타일' : lora.source === 'bot' ? '봇' : lora.source === 'instance' ? '인스턴스' : '에셋'}</span>
+                            <div style="font-size:0.8rem; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:1;">${escapeHtml(lora.name)}</div>
+                        </div>
+                        <div style="font-size:0.65rem; color:var(--text-secondary);">${escapeHtml(lora.character)}</div>
+                    </div>
+                    <div style="margin-top:4px;">
+                        <div style="font-size:0.65rem; color:var(--text-secondary); margin-bottom:2px;">트리거 워드</div>
+                        <input type="text" value="${escapeHtml(lora.trigger || '')}" onchange="styleLoraList[${i}].trigger=this.value"
+                            style="width:100%; padding:3px 6px; border:1px solid var(--border); background:var(--surface); color:var(--text); border-radius:4px; font-size:0.75rem;"
+                            placeholder="트리거 워드 입력">
+                    </div>
+                    <select onchange="styleLoraList[${i}].BASE=this.value"
+                        style="width:100%; margin-top:6px; background:var(--surface); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:3px 4px; font-size:0.75rem; cursor:pointer;">
+                        <option value="anima" ${lora.BASE === 'anima' ? 'selected' : ''}>anima</option>
+                        <option value="sdxl" ${(lora.BASE === 'sdxl' || lora.BASE === 'ilxl') ? 'selected' : ''}>sdxl</option>
+                    </select>
+                    <div style="display:flex; align-items:center; gap:6px; margin-top:6px;">
+                        <input type="range" min="0" max="1" step="0.01" value="${lora.strength}"
+                            oninput="styleLoraList[${i}].strength=parseFloat(this.value); this.nextElementSibling.textContent=parseFloat(this.value).toFixed(2)"
+                            style="flex:1; cursor:pointer;">
+                        <span style="font-size:0.7rem; min-width:28px; text-align:right;">${lora.strength.toFixed(2)}</span>
+                    </div>
+                </div>
+            `).join('');
+        }
+
         let loraPickerData = null;
 
         let loraPickerCurrentTab = 'asset';
@@ -36439,13 +36529,18 @@
         }
 
         async function openAssetLoraPicker() {
-            _loraPickerCfg = { list: assetLoraList, render: renderAssetLoraList, overlayId: 'asset-lora-picker-overlay' };
+            _loraPickerCfg = { list: assetLoraList, render: renderAssetLoraList, overlayId: 'asset-lora-picker-overlay', showStyleTab: false };
             _openLoraPickerModal('LoRA 선택', 'asset-lora-picker-overlay');
         }
 
         async function openAssetFaceLoraPicker() {
-            _loraPickerCfg = { list: faceLoraList, render: renderAssetFaceLoraList, overlayId: 'asset-face-lora-picker-overlay' };
+            _loraPickerCfg = { list: faceLoraList, render: renderAssetFaceLoraList, overlayId: 'asset-face-lora-picker-overlay', showStyleTab: false };
             _openLoraPickerModal('Face LoRA 선택', 'asset-face-lora-picker-overlay');
+        }
+
+        async function openAssetStyleLoraPicker() {
+            _loraPickerCfg = { list: styleLoraList, render: renderAssetStyleLoraList, overlayId: 'asset-style-lora-picker-overlay', showStyleTab: true };
+            _openLoraPickerModal('Style LoRA 선택', 'asset-style-lora-picker-overlay');
         }
 
         async function _openLoraPickerModal(title, overlayId) {
@@ -36462,6 +36557,7 @@
                         <button id="lora-picker-tab-asset" onclick="switchLoraPickerTab('asset')" style="padding:4px 14px; font-size:0.8rem; font-weight:600; cursor:pointer; border:none; background:var(--accent); color:#fff; border-radius:4px;">에셋</button>
                         <button id="lora-picker-tab-bot" onclick="switchLoraPickerTab('bot')" style="padding:4px 14px; font-size:0.8rem; font-weight:600; cursor:pointer; border:none; background:var(--surface2); color:var(--text); border-radius:4px;">봇</button>
                         <button id="lora-picker-tab-instance" onclick="switchLoraPickerTab('instance')" style="padding:4px 14px; font-size:0.8rem; font-weight:600; cursor:pointer; border:none; background:var(--surface2); color:var(--text); border-radius:4px;">인스턴스</button>
+                        ${_loraPickerCfg.showStyleTab ? `<button id="lora-picker-tab-style" onclick="switchLoraPickerTab('style')" style="padding:4px 14px; font-size:0.8rem; font-weight:600; cursor:pointer; border:none; background:var(--surface2); color:var(--text); border-radius:4px;">스타일</button>` : ''}
                     </div>
                     <div id="lora-picker-back" style="display:none; margin-bottom:8px;">
                         <button onclick="loraPickerBackAction()" style="background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:4px 12px; border-radius:4px; cursor:pointer; font-size:0.8rem;">← 뒤로</button>
@@ -36470,14 +36566,13 @@
                 </div>`;
             document.body.appendChild(overlay);
             overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
-            loraPickerCurrentTab = 'asset';
-            await loadLoraFilePickerCharacters();
+            await switchLoraPickerTab(_loraPickerCfg.showStyleTab ? 'style' : 'asset');
         }
 
         function switchLoraPickerTab(tab) {
             loraPickerCurrentTab = tab;
             loraPickerBackFn = null;
-            ['asset','bot','instance'].forEach(t => {
+            ['asset','bot','instance','style'].forEach(t => {
                 const btn = document.getElementById(`lora-picker-tab-${t}`);
                 if (btn) {
                     btn.style.background = t === tab ? 'var(--accent)' : 'var(--surface2)';
@@ -36486,9 +36581,88 @@
             });
             const backEl = document.getElementById('lora-picker-back');
             if (backEl) backEl.style.display = 'none';
-            if (tab === 'asset') loadLoraFilePickerCharacters();
-            else if (tab === 'bot') loadBotLoraPickerData();
-            else if (tab === 'instance') loadInstanceLoraPickerData();
+            if (tab === 'asset') return loadLoraFilePickerCharacters();
+            if (tab === 'bot') return loadBotLoraPickerData();
+            if (tab === 'instance') return loadInstanceLoraPickerData();
+            if (tab === 'style') return loadStyleLoraPickerData();
+        }
+
+        // ─── 스타일(그림체) LoRA 피커 데이터 ──
+        let styleLoraPickerData = [];
+        async function loadStyleLoraPickerData() {
+            const grid = document.getElementById('lora-picker-grid');
+            if (!grid) return;
+            grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--text-secondary);">로딩중...</div>';
+            const backEl = document.getElementById('lora-picker-back');
+            if (backEl) backEl.style.display = 'none';
+            loraPickerBackFn = null;
+            try {
+                const resp = await fetch('/api/style_lora/for_picker');
+                const data = await resp.json();
+                if (!data.success) { grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--error);">로드 실패: ' + escapeHtml(data.error || '') + '</div>'; return; }
+                styleLoraPickerData = data.items || [];
+                showStyleLoraPickerItems();
+            } catch (e) {
+                grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--error);">로드 실패: ' + escapeHtml(e.message) + '</div>';
+            }
+        }
+
+        function showStyleLoraPickerItems() {
+            const grid = document.getElementById('lora-picker-grid');
+            if (!grid) return;
+            const items = styleLoraPickerData;
+            const enc = encodeURIComponent;
+            grid.innerHTML = '';
+            if (items.length === 0) { grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--text-secondary);">스타일 LoRA 항목이 없습니다</div>'; return; }
+            items.forEach(item => {
+                const profileNames = Object.keys(item.profiles || {});
+                const previewUrl = item.first_image ? `/api/style_lora/image/${enc(item.project_id)}/${enc(item.first_image)}` : '';
+                const card = document.createElement('div');
+                card.style.cssText = 'cursor:pointer; border-radius:8px; overflow:hidden; border:2px solid var(--border); transition:border-color 0.2s; position:relative;';
+                const badges = profileNames.map(p =>
+                    `<span style="font-size:0.55rem; background:${p === 'anima' ? 'rgba(100,180,255,0.3)' : 'rgba(255,180,100,0.3)'}; padding:1px 4px; border-radius:3px; margin:0 1px;">${p}</span>`
+                ).join('');
+                card.innerHTML = `<div style="position:relative; width:100%; aspect-ratio:1;">
+                        <div style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center; background:var(--surface2);">🎨</div>
+                        ${previewUrl ? `<img src="${escapeHtml(previewUrl)}" onerror="this.style.display='none'" style="position:relative; width:100%; height:100%; object-fit:contain; display:block;" loading="lazy">` : ''}
+                    </div>`;
+                card.innerHTML += `<div style="font-size:0.7rem; padding:4px; text-align:center; background:var(--surface2);">${escapeHtml(item.name || item.project_id)}<br>${badges}</div>`;
+                card.onmouseenter = () => { card.style.borderColor = 'var(--accent)'; };
+                card.onmouseleave = () => { card.style.borderColor = 'var(--border)'; };
+                card.onclick = () => {
+                    const list = _loraPickerCfg.list;
+                    let addedCount = 0;
+                    for (const [pf, pData] of Object.entries(item.profiles || {})) {
+                        let prev = '';
+                        const rawPrev = pData.preview_url || '';
+                        if (rawPrev) {
+                            prev = (rawPrev.startsWith('http') || rawPrev.startsWith('/api/'))
+                                ? rawPrev
+                                : `/api/style_lora/trained/preview/${enc(item.project_id)}/${enc(pf)}/${enc(pData.session || '')}/${enc(rawPrev)}`;
+                        } else if (item.first_image) {
+                            prev = `/api/style_lora/image/${enc(item.project_id)}/${enc(item.first_image)}`;
+                        }
+                        list.push({
+                            source: 'style',
+                            name: `${item.name || item.project_id} (${pf})`,
+                            character: 'style',
+                            lora_path: pData.lora_path,
+                            strength: 0.5,
+                            preview_url: prev,
+                            first_image: item.first_image || null,
+                            trigger: item.trigger || '',
+                            BASE: pf,
+                            project_id: item.project_id,
+                        });
+                        addedCount++;
+                    }
+                    if (_loraPickerCfg.render) _loraPickerCfg.render();
+                    const ov = document.getElementById(_loraPickerCfg.overlayId);
+                    if (ov) ov.remove();
+                    showToast(`스타일(그림체) LoRA "${item.name || item.project_id}" ${addedCount}개 추가됨`, 'success');
+                };
+                grid.appendChild(card);
+            });
         }
 
         // ─── 에셋 LoRA 피커 (기존 로직) ──────────────────────────
@@ -41302,6 +41476,8 @@
                 anima_ed_enabled: false,
                 face_lora_enabled: false,
                 face_lora_list: [],
+                style_lora_enabled: false,
+                style_lora_list: [],
                 face_crop_top: 2.5,
                 face_crop_bottom: 1,
                 face_tags: '',
@@ -41337,6 +41513,7 @@
             if (!assetTags) { showToast('태그 데이터를 먼저 로드하세요', 'error'); return; }
             bulkLoraList = [];
             bulkFaceLoraList = [];
+            bulkStyleLoraList = [];
             bulkFaceTagsArray = [];
             bulkDropdownValues = {};
 
@@ -41450,6 +41627,21 @@
                         <div style="font-size:0.8rem; margin-bottom:4px;">LoRA 추가 (적용 시 모든 슬롯에 추가)</div>
                         <div id="bulk-lora-list" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(120px, 1fr)); gap:6px; margin-bottom:6px;"></div>
                         <button onclick="openBulkLoraPicker()" style="font-size:0.75rem; padding:4px 10px; border:1px dashed var(--border); background:var(--surface2); color:var(--text-secondary); border-radius:4px; cursor:pointer; width:100%;">+ LoRA 추가</button>
+                    </div>
+
+                    <div style="border-top:1px solid var(--border); padding-top:10px;">
+                        <div class="batch-field-label" style="margin-bottom:6px;">Style(그림체) LoRA 일괄 설정</div>
+                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+                            <label style="font-size:0.8rem;">적용 여부:</label>
+                            <select id="bulk-style-lora-action" class="batch-select" style="width:auto; min-width:120px;">
+                                <option value="">변경 안함</option>
+                                <option value="on">모두 ON</option>
+                                <option value="off">모두 OFF</option>
+                            </select>
+                        </div>
+                        <div style="font-size:0.8rem; margin-bottom:4px;">Style LoRA 추가 (적용 시 모든 슬롯에 추가)</div>
+                        <div id="bulk-style-lora-list" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(120px, 1fr)); gap:6px; margin-bottom:6px;"></div>
+                        <button onclick="openBulkStyleLoraPicker()" style="font-size:0.75rem; padding:4px 10px; border:1px dashed var(--border); background:var(--surface2); color:var(--text-secondary); border-radius:4px; cursor:pointer; width:100%;">+ Style LoRA 추가</button>
                     </div>
 
                     ${isAnima ? `
@@ -41789,6 +41981,7 @@
             // 초기 렌더링 (빈 상태 표시)
             renderBulkLoraList();
             renderBulkFaceLoraList();
+            renderBulkStyleLoraList();
             renderBulkFaceTagChips();
             syncBulkFaceTagsInput();
         }
@@ -41993,6 +42186,7 @@
 
         let bulkLoraList = [];
         let bulkFaceLoraList = [];
+        let bulkStyleLoraList = [];
 
         function renderBulkFaceLoraList() {
             const container = document.getElementById('bulk-face-lora-list');
@@ -42086,6 +42280,53 @@
             _openBatchLoraPickerModal('LoRA 선택', 'bulk-lora-picker-overlay');
         }
 
+        function renderBulkStyleLoraList() {
+            const container = document.getElementById('bulk-style-lora-list');
+            if (!container) return;
+            if (bulkStyleLoraList.length === 0) { container.innerHTML = ''; return; }
+            container.innerHTML = bulkStyleLoraList.map((l, i) => `
+                <div style="padding:6px; background:var(--surface2); border-radius:6px; border:1px solid var(--border); position:relative;">
+                    <button onclick="bulkStyleLoraList.splice(${i},1); renderBulkStyleLoraList();"
+                        style="position:absolute; top:1px; right:3px; background:none; border:none; color:var(--error); cursor:pointer; font-size:1.2rem; padding:2px 4px;">x</button>
+                    ${l.preview_url ? `<img src="${escapeHtml(l.preview_url)}" style="width:70%; aspect-ratio:1; object-fit:cover; border-radius:6px; display:block; margin:0 auto;">` : '<div style="width:70%; aspect-ratio:1; background:var(--surface); border-radius:6px; display:flex; align-items:center; justify-content:center; font-size:1.2rem; margin:0 auto;">🎨</div>'}
+                    <div style="margin-top:4px;">
+                        <div style="display:flex; align-items:center; gap:3px;">
+                            <span style="font-size:0.55rem; background:rgba(0,188,212,0.3); padding:1px 3px; border-radius:3px; color:var(--text);">스타일</span>
+                            <div style="font-size:0.7rem; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:1;">${escapeHtml(l.name)}</div>
+                        </div>
+                        <div style="font-size:0.6rem; color:var(--text-secondary);">${escapeHtml(l.trigger || '')}</div>
+                    </div>
+                    <select onchange="bulkStyleLoraList[${i}].BASE=this.value"
+                        style="width:100%; margin-top:4px; background:var(--surface); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:2px 4px; font-size:0.65rem; cursor:pointer;">
+                        <option value="anima" ${l.BASE === 'anima' ? 'selected' : ''}>anima</option>
+                        <option value="sdxl" ${(l.BASE === 'sdxl' || l.BASE === 'ilxl') ? 'selected' : ''}>sdxl</option>
+                    </select>
+                    <div style="margin-top:4px;">
+                        <input type="range" min="0" max="1" step="0.01" value="${l.strength}" style="width:100%; cursor:pointer;"
+                            oninput="bulkStyleLoraList[${i}].strength=parseFloat(this.value); this.parentElement.querySelector('.style-lora-strength-val').textContent=parseFloat(this.value).toFixed(2)">
+                        <div class="style-lora-strength-val" style="font-size:0.65rem; text-align:right; margin-top:1px;">${l.strength.toFixed(2)}</div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function openBulkStyleLoraPicker() {
+            _batchLoraPickerCfg = {
+                listField: 'style_lora_list',
+                enabledField: 'style_lora_enabled',
+                overlayId: 'bulk-style-lora-picker-overlay',
+                target: -1,
+                showStyleTab: true,
+                onPick: (items, displayName) => {
+                    for (const it of items) bulkStyleLoraList.push(it);
+                    renderBulkStyleLoraList();
+                    document.getElementById('bulk-style-lora-picker-overlay').remove();
+                    showToast(`Style LoRA "${displayName}" 추가됨`, 'success');
+                }
+            };
+            _openBatchLoraPickerModal('Style LoRA 선택', 'bulk-style-lora-picker-overlay');
+        }
+
         function applyBatchBulkEdit() {
             const fields = {
                 character: bulkDropdownValues.character || '',
@@ -42125,6 +42366,7 @@
             const animaHdAction = document.getElementById('bulk-anima-hd-action')?.value || '';
             const animaEdAction = document.getElementById('bulk-anima-ed-action')?.value || '';
             const loraAction = document.getElementById('bulk-lora-action').value;
+            const styleLoraAction = document.getElementById('bulk-style-lora-action')?.value || '';
             const faceLoraAction = document.getElementById('bulk-face-lora-action')?.value || '';
             const faceCropCheck = document.getElementById('bulk-face-crop-check')?.checked || false;
             const faceCropTop = parseFloat(document.getElementById('bulk-face-crop-top')?.value) || 2.5;
@@ -42174,6 +42416,13 @@
                     slot.lora_enabled = true;
                 }
                 if (loraAction === 'off') slot.lora_enabled = false;
+                if (styleLoraAction === 'on') slot.style_lora_enabled = true;
+                if (styleLoraAction === 'off') slot.style_lora_enabled = false;
+                if (bulkStyleLoraList.length > 0) {
+                    slot.style_lora_list = bulkStyleLoraList.map(l => ({...l}));
+                    slot.style_lora_enabled = true;
+                }
+                if (styleLoraAction === 'off') slot.style_lora_enabled = false;
                 if (sdxlFdAction === 'on') slot.sdxl_fd_enabled = true;
                 if (sdxlFdAction === 'off') slot.sdxl_fd_enabled = false;
                 if (sdxlHdAction === 'on') slot.sdxl_hd_enabled = true;
@@ -42432,6 +42681,40 @@
                 </div>
                 ` : ''}
 
+                <div class="batch-toggle-row" style="background:rgba(76,175,80,0.08); border-radius:4px; padding:2px 6px;">
+                    <label>Style LoRA</label>
+                    <label class="toggle-switch"><input type="checkbox" data-field="style_lora_enabled" ${slot.style_lora_enabled ? 'checked' : ''}><span class="toggle-slider"></span></label>
+                </div>
+                <div class="batch-style-lora-section" style="display:${slot.style_lora_enabled ? 'block' : 'none'}; margin-bottom:4px;">
+                    <button class="batch-style-lora-add-btn" style="width:100%; font-size:0.7rem; padding:3px; border:1px dashed var(--border); background:var(--surface2); border-radius:4px; cursor:pointer; color:var(--text-secondary);" onclick="openBatchSlotStyleLoraPicker(${idx})">+ Style LoRA 추가</button>
+                    <div class="batch-style-lora-items">
+                        ${(slot.style_lora_list || []).map((l, li) => `
+                            <div style="padding:6px; background:var(--surface2); border-radius:6px; border:1px solid var(--border); margin-top:4px; position:relative;">
+                                <button onclick="batchChains[${idx}].style_lora_list.splice(${li},1); renderBatchChain();"
+                                    style="position:absolute; top:2px; right:4px; background:none; border:none; color:var(--error); cursor:pointer; font-size:1.4rem; padding:2px 4px;">x</button>
+                                ${l.preview_url ? `<img src="${escapeHtml(l.preview_url)}" style="width:70%; aspect-ratio:1; object-fit:cover; border-radius:6px; display:block; margin:0 auto;">` : '<div style="width:70%; aspect-ratio:1; background:var(--surface); border-radius:6px; display:flex; align-items:center; justify-content:center; font-size:1.5rem; margin:0 auto;">🎨</div>'}
+                                <div style="margin-top:4px;">
+                                    <div style="display:flex; align-items:center; gap:3px;">
+                                        <span style="font-size:0.55rem; background:rgba(0,188,212,0.3); padding:1px 3px; border-radius:3px; color:var(--text);">스타일</span>
+                                        <div style="font-size:0.75rem; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:1;">${escapeHtml(l.name)}</div>
+                                    </div>
+                                    <div style="font-size:0.6rem; color:var(--text-secondary);">${escapeHtml(l.trigger || '')}</div>
+                                </div>
+                                <select onchange="batchChains[${idx}].style_lora_list[${li}].BASE=this.value; updateBatchPreview(this.closest('.batch-slot'), ${idx})"
+                                    style="width:100%; margin-top:4px; background:var(--surface); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:2px 4px; font-size:0.7rem; cursor:pointer;">
+                                    <option value="anima" ${l.BASE === 'anima' ? 'selected' : ''}>anima</option>
+                                    <option value="sdxl" ${(l.BASE === 'sdxl' || l.BASE === 'ilxl') ? 'selected' : ''}>sdxl</option>
+                                </select>
+                                <div style="display:flex; align-items:center; gap:4px; margin-top:4px;">
+                                    <input type="range" min="0" max="1" step="0.01" value="${l.strength}" style="flex:1; cursor:pointer;"
+                                        oninput="batchChains[${idx}].style_lora_list[${li}].strength=parseFloat(this.value); this.nextElementSibling.textContent=parseFloat(this.value).toFixed(2); updateBatchPreview(this.closest('.batch-slot'), ${idx})">
+                                    <span style="font-size:0.7rem; min-width:28px; text-align:right;">${l.strength.toFixed(2)}</span>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+
                 <div class="batch-toggle-row" ${isAnima ? 'style="opacity:0.4; pointer-events:none;"' : ''}>
                     <label>포즈</label>
                     <label class="toggle-switch"><input type="checkbox" data-field="pose_enabled" ${isAnima ? 'disabled' : ''} ${slot.pose_enabled ? 'checked' : ''}><span class="toggle-slider"></span></label>
@@ -42681,6 +42964,9 @@
                     }
                     if (cb.dataset.field === 'face_lora_enabled') {
                         slotEl.querySelector('.batch-face-lora-section').style.display = cb.checked ? 'block' : 'none';
+                    }
+                    if (cb.dataset.field === 'style_lora_enabled') {
+                        slotEl.querySelector('.batch-style-lora-section').style.display = cb.checked ? 'block' : 'none';
                     }
                     updateBatchPreview(slotEl, idx);
                 });
@@ -43014,6 +43300,25 @@
             _openBatchLoraPickerModal('Face LoRA 선택', 'batch-face-lora-picker-overlay');
         }
 
+        function openBatchSlotStyleLoraPicker(slotIdx) {
+            _batchLoraPickerCfg = {
+                listField: 'style_lora_list',
+                enabledField: 'style_lora_enabled',
+                overlayId: 'batch-style-lora-picker-overlay',
+                target: slotIdx,
+                showStyleTab: true,
+                onPick: (items, displayName) => {
+                    if (!batchChains[slotIdx].style_lora_list) batchChains[slotIdx].style_lora_list = [];
+                    for (const it of items) batchChains[slotIdx].style_lora_list.push(it);
+                    batchChains[slotIdx].style_lora_enabled = true;
+                    renderBatchChain();
+                    document.getElementById('batch-style-lora-picker-overlay').remove();
+                    showToast(`Style LoRA "${displayName}" 추가됨`, 'success');
+                }
+            };
+            _openBatchLoraPickerModal('Style LoRA 선택', 'batch-style-lora-picker-overlay');
+        }
+
         function _openBatchLoraPickerModal(title, overlayId) {
             batchLoraPickerTarget = _batchLoraPickerCfg.target ?? -1;
             const overlay = document.createElement('div');
@@ -43029,6 +43334,7 @@
                         <button id="batch-lora-picker-tab-asset" onclick="switchBatchLoraPickerTab('asset')" style="padding:4px 14px; font-size:0.8rem; font-weight:600; cursor:pointer; border:none; background:var(--accent); color:#fff; border-radius:4px;">에셋</button>
                         <button id="batch-lora-picker-tab-bot" onclick="switchBatchLoraPickerTab('bot')" style="padding:4px 14px; font-size:0.8rem; font-weight:600; cursor:pointer; border:none; background:var(--surface2); color:var(--text); border-radius:4px;">봇</button>
                         <button id="batch-lora-picker-tab-instance" onclick="switchBatchLoraPickerTab('instance')" style="padding:4px 14px; font-size:0.8rem; font-weight:600; cursor:pointer; border:none; background:var(--surface2); color:var(--text); border-radius:4px;">인스턴스</button>
+                        ${_batchLoraPickerCfg.showStyleTab ? `<button id="batch-lora-picker-tab-style" onclick="switchBatchLoraPickerTab('style')" style="padding:4px 14px; font-size:0.8rem; font-weight:600; cursor:pointer; border:none; background:var(--surface2); color:var(--text); border-radius:4px;">스타일</button>` : ''}
                     </div>
                     <div id="batch-lora-picker-back" style="display:none; margin-bottom:8px;">
                         <button onclick="batchLoraPickerBackAction()" style="background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:4px 12px; border-radius:4px; cursor:pointer; font-size:0.8rem;">← 뒤로</button>
@@ -43037,14 +43343,19 @@
                 </div>`;
             document.body.appendChild(overlay);
             overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
-            batchLoraPickerCurrentTab = 'asset';
-            loadBatchLoraPickerData();
+            if (_batchLoraPickerCfg.showStyleTab) {
+                batchLoraPickerCurrentTab = 'style';
+                loadBatchLoraPickerStyleData();
+            } else {
+                batchLoraPickerCurrentTab = 'asset';
+                loadBatchLoraPickerData();
+            }
         }
 
         function switchBatchLoraPickerTab(tab) {
             batchLoraPickerCurrentTab = tab;
             batchLoraPickerBackFn = null;
-            ['asset','bot','instance'].forEach(t => {
+            ['asset','bot','instance','style'].forEach(t => {
                 const btn = document.getElementById(`batch-lora-picker-tab-${t}`);
                 if (btn) {
                     btn.style.background = t === tab ? 'var(--accent)' : 'var(--surface2)';
@@ -43053,9 +43364,84 @@
             });
             const backEl = document.getElementById('batch-lora-picker-back');
             if (backEl) backEl.style.display = 'none';
-            if (tab === 'asset') loadBatchLoraPickerAssetData();
-            else if (tab === 'bot') loadBatchLoraPickerBotData();
-            else if (tab === 'instance') loadBatchLoraPickerInstanceData();
+            if (tab === 'asset') return loadBatchLoraPickerAssetData();
+            if (tab === 'bot') return loadBatchLoraPickerBotData();
+            if (tab === 'instance') return loadBatchLoraPickerInstanceData();
+            if (tab === 'style') return loadBatchLoraPickerStyleData();
+        }
+
+        // ─── 배치: 스타일(그림체) LoRA ──────────────────────────
+        let batchStyleLoraPickerData = [];
+        async function loadBatchLoraPickerStyleData() {
+            const grid = document.getElementById('batch-lora-picker-grid');
+            if (!grid) return;
+            grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--text-secondary);">로딩중...</div>';
+            const backEl = document.getElementById('batch-lora-picker-back');
+            if (backEl) backEl.style.display = 'none';
+            batchLoraPickerBackFn = null;
+            try {
+                const resp = await fetch('/api/style_lora/for_picker');
+                const data = await resp.json();
+                if (!data.success) { grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--error);">로드 실패: ' + escapeHtml(data.error || '') + '</div>'; return; }
+                batchStyleLoraPickerData = data.items || [];
+                showBatchLoraPickerStyleItems();
+            } catch (e) {
+                grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--error);">로드 실패: ' + escapeHtml(e.message) + '</div>';
+            }
+        }
+
+        function showBatchLoraPickerStyleItems() {
+            const grid = document.getElementById('batch-lora-picker-grid');
+            if (!grid) return;
+            const items = batchStyleLoraPickerData;
+            const enc = encodeURIComponent;
+            grid.innerHTML = '';
+            if (items.length === 0) { grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--text-secondary);">스타일 LoRA 항목이 없습니다</div>'; return; }
+            items.forEach(item => {
+                const profileNames = Object.keys(item.profiles || {});
+                const previewUrl = item.first_image ? `/api/style_lora/image/${enc(item.project_id)}/${enc(item.first_image)}` : '';
+                const card = document.createElement('div');
+                card.style.cssText = 'cursor:pointer; border-radius:8px; overflow:hidden; border:2px solid var(--border); transition:border-color 0.2s; position:relative;';
+                const badges = profileNames.map(p =>
+                    `<span style="font-size:0.55rem; background:${p === 'anima' ? 'rgba(100,180,255,0.3)' : 'rgba(255,180,100,0.3)'}; padding:1px 4px; border-radius:3px; margin:0 1px;">${p}</span>`
+                ).join('');
+                card.innerHTML = `<div style="position:relative; width:100%; aspect-ratio:1;">
+                        <div style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center; background:var(--surface2);">🎨</div>
+                        ${previewUrl ? `<img src="${escapeHtml(previewUrl)}" onerror="this.style.display='none'" style="position:relative; width:100%; height:100%; object-fit:contain; display:block;" loading="lazy">` : ''}
+                    </div>`;
+                card.innerHTML += `<div style="font-size:0.7rem; padding:4px; text-align:center; background:var(--surface2);">${escapeHtml(item.name || item.project_id)}<br>${badges}</div>`;
+                card.onmouseenter = () => { card.style.borderColor = 'var(--accent)'; };
+                card.onmouseleave = () => { card.style.borderColor = 'var(--border)'; };
+                card.onclick = () => {
+                    const picked = [];
+                    for (const [pf, pData] of Object.entries(item.profiles || {})) {
+                        let prev = '';
+                        const rawPrev = pData.preview_url || '';
+                        if (rawPrev) {
+                            prev = (rawPrev.startsWith('http') || rawPrev.startsWith('/api/'))
+                                ? rawPrev
+                                : `/api/style_lora/trained/preview/${enc(item.project_id)}/${enc(pf)}/${enc(pData.session || '')}/${enc(rawPrev)}`;
+                        } else if (item.first_image) {
+                            prev = `/api/style_lora/image/${enc(item.project_id)}/${enc(item.first_image)}`;
+                        }
+                        picked.push({
+                            source: 'style',
+                            name: `${item.name || item.project_id} (${pf})`,
+                            character: 'style',
+                            lora_path: pData.lora_path,
+                            strength: 0.5,
+                            preview_url: prev,
+                            first_image: item.first_image || null,
+                            trigger: item.trigger || '',
+                            BASE: pf,
+                            project_id: item.project_id,
+                        });
+                    }
+                    const displayName = `${item.name || item.project_id} (${picked.length}개)`;
+                    _batchLoraPickerCfg.onPick(picked, displayName);
+                };
+                grid.appendChild(card);
+            });
         }
 
         // ─── 배치: 에셋 LoRA ──────────────────────────────────────
@@ -43744,9 +44130,11 @@
 
         // ─── 배치 프롬프트 빌드 (미리보기 + 전송 공통) ──────────
         function _resolveBatchSlotTags(slot) {
-            const loraTriggerWords = (slot.lora_list || []).map(l => l.trigger).filter(t => t && t.trim()).join(', ');
-            const animaLoraTriggerWords = (slot.lora_list || []).filter(l => (l.BASE || 'anima') === 'anima').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
-            const sdxlLoraTriggerWords = (slot.lora_list || []).filter(l => l.BASE === 'sdxl').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
+            // 일반 LoRA + 스타일(그림체) LoRA 트리거를 BASE별로 병합 (스타일 토글이 ON일 때만 스타일 포함)
+            const triggerSrc = [...(slot.lora_list || []), ...(slot.style_lora_enabled ? (slot.style_lora_list || []) : [])];
+            const loraTriggerWords = triggerSrc.map(l => l.trigger).filter(t => t && t.trim()).join(', ');
+            const animaLoraTriggerWords = triggerSrc.filter(l => (l.BASE || 'anima') === 'anima').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
+            const sdxlLoraTriggerWords = triggerSrc.filter(l => l.BASE === 'sdxl').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
             const artistTags = (slot.artist_preset && assetTags.artist_presets?.[slot.artist_preset]) || [];
             const animaArtistTags = (slot.anima_artist_preset && assetTags.artist_presets?.[slot.anima_artist_preset]) || [];
             const qTags = (slot.quality_preset && assetTags.quality_presets?.[slot.quality_preset]) || [];
@@ -43840,6 +44228,16 @@
                 const batchFaceAnimaTriggers = faceLoraList.filter(l => (l.BASE || 'anima') === 'anima').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
                 const batchFaceSdxlTriggers = faceLoraList.filter(l => l.BASE === 'sdxl').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
                 positiveFull += `\n[CHAR_FACE_TAG_INFORM]\n${JSON.stringify({list: [{FACE_TAGS: slot.face_tags || '', EYE_TAGS: slot.eye_tags || '', POSITIVE: "", TRIGGER_ANIMA: batchFaceAnimaTriggers, TRIGGER_SDXL: batchFaceSdxlTriggers, CHAR: "asset_mode"}]})}`;
+            }
+            // Style(그림체) LoRA (ANIMA/SDXL 공통)
+            {
+                const styleLoraActive = slot.style_lora_enabled && (slot.style_lora_list || []).length > 0;
+                positiveFull += `\n[STYLE_LORA_ACTIVATE]\n${styleLoraActive ? 'true' : 'false'}`;
+                if (styleLoraActive) {
+                    positiveFull += `\n[STYLE_LORA_DATA]\n${JSON.stringify({list: slot.style_lora_list.map(l => ({lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima'}))})}`;
+                } else {
+                    positiveFull += `\n[STYLE_LORA_DATA]\n{"list":[]}`;
+                }
             }
             positiveFull += `\n[POSE_ACTIVATE]\n${poseEnabled ? 'true' : 'false'}`;
             if (poseEnabled && slot.pose_id) {
@@ -43967,6 +44365,11 @@
                 const previewFaceAnimaTriggers = previewFaceLoraList.filter(l => (l.BASE || 'anima') === 'anima').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
                 const previewFaceSdxlTriggers = previewFaceLoraList.filter(l => l.BASE === 'sdxl').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
                 controlPart += `\n[CHAR_FACE_TAG_INFORM]\n${JSON.stringify({list: [{FACE_TAGS: slot.face_tags || '', EYE_TAGS: slot.eye_tags || '', POSITIVE: "", TRIGGER_ANIMA: previewFaceAnimaTriggers, TRIGGER_SDXL: previewFaceSdxlTriggers, CHAR: "asset_mode"}]})}`;
+            }
+            {
+                const styleLoraActive = slot.style_lora_enabled && (slot.style_lora_list || []).length > 0;
+                controlPart += `\n[STYLE_LORA_ACTIVATE]\n${styleLoraActive ? 'true' : 'false'}`;
+                controlPart += `\n[STYLE_LORA_DATA]\n${styleLoraActive ? JSON.stringify({list: slot.style_lora_list.map(l => ({lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima'}))}) : '{"list":[]}'}`;
             }
             controlPart += `\n[POSE_ACTIVATE]\n${poseEnabled ? 'true' : 'false'}`;
             controlPart += `\n[POSE_DATA]\n${poseEnabled && slot.pose_id ? '(포즈: ' + slot.pose_id + ')' : '{"people":[{"pose_keypoints_2d":[...]}],"canvas_height":1024,"canvas_width":700}'}`;
@@ -44446,6 +44849,7 @@
                     sdxl_fd_enabled: !!c.sdxl_fd_enabled, sdxl_hd_enabled: !!c.sdxl_hd_enabled, sdxl_ed_enabled: !!c.sdxl_ed_enabled,
                     anima_fd_enabled: !!c.anima_fd_enabled, anima_hd_enabled: !!c.anima_hd_enabled, anima_ed_enabled: !!c.anima_ed_enabled,
                     face_lora_enabled: !!c.face_lora_enabled,
+                    style_lora_enabled: !!c.style_lora_enabled,
                     face_crop_top: c.face_crop_top ?? 2.5, face_crop_bottom: c.face_crop_bottom ?? 1,
                     face_tags: c.face_tags || '', eye_tags: c.eye_tags || '', face_positive: c.face_positive || '',
                     face_lora_upscale_size: c.face_lora_upscale_size || '',
@@ -44804,6 +45208,7 @@
                 sdxl_fd_enabled: !!c.sdxl_fd_enabled, sdxl_hd_enabled: !!c.sdxl_hd_enabled, sdxl_ed_enabled: !!c.sdxl_ed_enabled,
                 anima_fd_enabled: !!c.anima_fd_enabled, anima_hd_enabled: !!c.anima_hd_enabled, anima_ed_enabled: !!c.anima_ed_enabled,
                 face_lora_enabled: !!c.face_lora_enabled, face_lora_list: c.face_lora_list || [],
+                style_lora_enabled: !!c.style_lora_enabled, style_lora_list: c.style_lora_list || [],
                 face_crop_top: c.face_crop_top ?? 2.5, face_crop_bottom: c.face_crop_bottom ?? 1,
                 face_tags: c.face_tags || '', eye_tags: c.eye_tags || '', face_positive: c.face_positive || '',
                 face_lora_upscale_size: c.face_lora_upscale_size || '',
