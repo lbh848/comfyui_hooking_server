@@ -1111,9 +1111,26 @@
         /* ─── 설정 모달 탭 ─── */
         .settings-tab-bar {
             display: flex;
+            align-items: stretch;
             border-bottom: 2px solid var(--border);
             margin-bottom: 8px;
         }
+        .settings-tab-scroll {
+            display: flex;
+            overflow-x: auto;
+            overflow-y: hidden;
+            scroll-behavior: smooth;
+            flex: 1;
+            scrollbar-width: thin; /* Firefox */
+            scrollbar-color: var(--accent) transparent;
+        }
+        .settings-tab-scroll::-webkit-scrollbar { height: 6px; width: 0; }
+        .settings-tab-scroll::-webkit-scrollbar-track { background: transparent; }
+        .settings-tab-scroll::-webkit-scrollbar-thumb {
+            background: var(--accent);
+            border-radius: 3px;
+        }
+        .settings-tab-scroll::-webkit-scrollbar-thumb:hover { background: var(--accent); }
         .settings-tab-btn {
             background: transparent;
             color: var(--text2);
@@ -1124,7 +1141,21 @@
             border-bottom: 2px solid transparent;
             margin-bottom: -2px;
             transition: all 0.2s;
+            flex-shrink: 0;
+            white-space: nowrap;
         }
+        .settings-tab-arrow {
+            background: transparent;
+            color: var(--text2);
+            border: none;
+            padding: 0 10px;
+            font-size: 1.1rem;
+            cursor: pointer;
+            flex-shrink: 0;
+            transition: color 0.2s;
+        }
+        .settings-tab-arrow:hover { color: var(--accent); }
+        .settings-tab-arrow:disabled { opacity: 0.3; cursor: default; }
         .settings-tab-btn:hover { color: var(--text); }
         .settings-tab-btn.active {
             color: var(--accent);
@@ -6296,14 +6327,18 @@
             <div class="modal-body">
                 <!-- 설정 탭 바 -->
                 <div class="settings-tab-bar">
-                    <button class="settings-tab-btn active" onclick="switchSettingsTab('common')">공통설정</button>
-                    <button class="settings-tab-btn" onclick="switchSettingsTab('api')">외부 API</button>
-                    <button class="settings-tab-btn" onclick="switchSettingsTab('api_route')">외부 API 분기</button>
-                    <button class="settings-tab-btn" onclick="switchSettingsTab('illustration')">삽화</button>
-                    <button class="settings-tab-btn" onclick="switchSettingsTab('asset')">에셋</button>
-                    <button class="settings-tab-btn" onclick="switchSettingsTab('lora')">로라</button>
-                    <button class="settings-tab-btn" onclick="switchSettingsTab('queue')">큐</button>
-                    <button class="settings-tab-btn" onclick="switchSettingsTab('debug')">디버그</button>
+                    <button class="settings-tab-arrow" id="settings-tab-prev" onclick="scrollSettingsTabs(-1)" title="이전">‹</button>
+                    <div class="settings-tab-scroll" id="settings-tab-scroll" onscroll="updateSettingsTabArrows()">
+                        <button class="settings-tab-btn active" onclick="switchSettingsTab('common')">공통설정</button>
+                        <button class="settings-tab-btn" onclick="switchSettingsTab('api')">외부 API</button>
+                        <button class="settings-tab-btn" onclick="switchSettingsTab('api_route')">외부 API 분기</button>
+                        <button class="settings-tab-btn" onclick="switchSettingsTab('illustration')">삽화</button>
+                        <button class="settings-tab-btn" onclick="switchSettingsTab('asset')">에셋</button>
+                        <button class="settings-tab-btn" onclick="switchSettingsTab('lora')">로라</button>
+                        <button class="settings-tab-btn" onclick="switchSettingsTab('queue')">큐</button>
+                        <button class="settings-tab-btn" onclick="switchSettingsTab('debug')">디버그</button>
+                    </div>
+                    <button class="settings-tab-arrow" id="settings-tab-next" onclick="scrollSettingsTabs(1)" title="다음">›</button>
                 </div>
 
                 <!-- Tab 1: 공통설정 -->
@@ -9130,10 +9165,35 @@
         function switchSettingsTab(tabName) {
             document.querySelectorAll('.settings-tab-btn').forEach(btn => btn.classList.remove('active'));
             document.querySelectorAll('.settings-tab-panel').forEach(panel => panel.classList.remove('active'));
-            document.querySelector(`.settings-tab-btn[onclick*="'${tabName}'"]`).classList.add('active');
+            const targetBtn = document.querySelector(`.settings-tab-btn[onclick*="'${tabName}'"]`);
+            targetBtn.classList.add('active');
             document.getElementById('settings-tab-' + tabName).classList.add('active');
+            // 활성 탭이 보이도록 스크롤
+            const scroll = document.getElementById('settings-tab-scroll');
+            if (scroll && targetBtn) {
+                const left = targetBtn.offsetLeft - 10;
+                const right = left + targetBtn.offsetWidth + 20 - scroll.clientWidth;
+                if (left < scroll.scrollLeft) scroll.scrollTo({ left, behavior: 'smooth' });
+                else if (right > scroll.scrollLeft) scroll.scrollTo({ left: right, behavior: 'smooth' });
+                setTimeout(updateSettingsTabArrows, 250);
+            }
             // 탭 전환 시 모든 자동완성 닫기
             document.querySelectorAll('.autocomplete-list').forEach(list => list.classList.remove('visible'));
+        }
+
+        // ─── 설정 모달 탭 스크롤 화살표 ───
+        function scrollSettingsTabs(dir) {
+            const scroll = document.getElementById('settings-tab-scroll');
+            if (!scroll) return;
+            scroll.scrollBy({ left: dir * 200, behavior: 'smooth' });
+        }
+        function updateSettingsTabArrows() {
+            const scroll = document.getElementById('settings-tab-scroll');
+            if (!scroll) return;
+            const prev = document.getElementById('settings-tab-prev');
+            const next = document.getElementById('settings-tab-next');
+            if (prev) prev.disabled = scroll.scrollLeft <= 0;
+            if (next) next.disabled = scroll.scrollLeft + scroll.clientWidth >= scroll.scrollWidth - 1;
         }
 
         // ─── 설정 모달 ───
