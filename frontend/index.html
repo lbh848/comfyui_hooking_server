@@ -987,6 +987,15 @@
             transform: translateX(24px);
         }
 
+        /* 잠금 영역: 사용 중단/보류 컨트롤을 회색 음영 처리하고 클릭 차단.
+           해제하려면 컨테이너에서 ui-locked 클래스만 제거하면 됨. */
+        .ui-locked {
+            opacity: 0.45;
+            pointer-events: none;
+            filter: grayscale(0.6);
+            user-select: none;
+        }
+
         /* 작은 토글 (스킵 토글 등) */
         .toggle-switch.sm {
             width: 36px;
@@ -6907,6 +6916,10 @@
                         </div>
                     </div>
 
+                    <!-- ===== 잠금 영역: 복장 추출 모드 ~ 프롬프트 강화 모드 (현재 미사용, 일시 잠금) =====
+                         해제하려면 아래 래퍼의 ui-locked 클래스만 제거 -->
+                    <div class="ui-locked" data-lock-reason="현재 미사용으로 일시 잠금">
+
                     <!-- 복장 추출 모드 -->
                     <div class="setting-row">
                         <div class="setting-label">
@@ -6967,6 +6980,9 @@
                         </select>
                         <div class="hint">customprompt/ 폴더의 강화 프롬프트 파일을 선택합니다 (기본: enhance_outfit_prompt.py)</div>
                     </div>
+
+                    </div>
+                    <!-- ===== 잠금 영역 끝 ===== -->
 
                     <!-- 워크플로우 복원 프롬프트 -->
                     <div class="setting-row">
@@ -11209,8 +11225,8 @@
         // ─── 외부 API 분기: 작업별 LLM1/LLM2 라우팅 테이블 ───
         // task_key 목록과 표시명. DEFAULT_CONFIG(server.py) 와 일치해야 함.
         const LLM_ROUTING_TASKS = [
-            { key: 'extract_outfit',           label: '복장 추출',          kind: '텍스트' },
-            { key: 'enhance_outfit',           label: '복장 정제',          kind: '텍스트' },
+            { key: 'extract_outfit',           label: '복장 추출',          kind: '텍스트', locked: true },
+            { key: 'enhance_outfit',           label: '복장 정제',          kind: '텍스트', locked: true },
             { key: 'restore_workflow',         label: '수동 그리기/복원(LLM)', kind: '텍스트' },
             { key: 'classify_face_tags',       label: '얼굴/눈 태그 분류',  kind: '비전' },
             { key: 'refine_lb_extra',          label: '외모/복장 태그 정제',kind: '비전' },
@@ -11242,7 +11258,7 @@
                 const supportsJson = t.key === 'edit_illustration_prompt';
                 const jsonMode = supportsJson ? (entry.json_mode !== undefined ? !!entry.json_mode : true) : null;
 
-                html += `<div style="display: grid; grid-template-columns: ${gridCols}; gap: 8px; align-items: center; padding: 6px 8px; background: var(--surface2); border-radius: 6px;">`;
+                html += `<div class="${t.locked ? 'ui-locked' : ''}" style="display: grid; grid-template-columns: ${gridCols}; gap: 8px; align-items: center; padding: 6px 8px; background: var(--surface2); border-radius: 6px;"${t.locked ? ' data-lock-reason="현재 미사용으로 일시 잠금" title="현재 미사용으로 일시 잠금"' : ''}>`;
                 html += `<div style="font-size: 13px;">${t.label}</div>`;
                 html += `<div style="font-size: 12px; color: var(--text-dim);">${t.kind}</div>`;
                 html += `<div><select data-route-key="${t.key}" data-route-field="primary" style="padding: 4px 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text);">`;
@@ -11267,7 +11283,13 @@
 
         function collectLlmRouting() {
             const routing = {};
+            const prevRouting = (currentConfig && currentConfig.llm_routing) || {};
             for (const t of LLM_ROUTING_TASKS) {
+                // 잠긴 항목은 UI에서 편집 불가하므로 기존 설정값을 그대로 보존
+                if (t.locked) {
+                    routing[t.key] = prevRouting[t.key] || { primary: 'llm1', fallback: false };
+                    continue;
+                }
                 const sel = document.querySelector(`select[data-route-key="${t.key}"][data-route-field="primary"]`);
                 const cb = document.querySelector(`input[data-route-key="${t.key}"][data-route-field="fallback"]`);
                 const entry = {
