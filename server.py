@@ -135,7 +135,7 @@ DEFAULT_CONFIG = {
         "refine_lb_extra":         {"primary": "llm1", "fallback": False},
         "refine_lora_prompt":      {"primary": "llm1", "fallback": False},
         "refine_lora_test_setup":  {"primary": "llm1", "fallback": False},
-        "edit_illustration_prompt":{"primary": "llm1", "fallback": False},
+        "edit_illustration_prompt":{"primary": "llm1", "fallback": False, "json_mode": True},  # json_mode: 외부 API 분기 토글. 끄면 response_format 미전송(Cerebras/Gemma 루프 회피)
     },
     "llm_max_concurrency": 1,         # LLM계열 큐 아이템(태그 정제/얼굴 태그 분류) 동시 처리 수. 1=순차(현행 동작). GPU/ComfyUI 작업과 무관.
     "auto_face_tag_max_retries": 2,   # LLM 자동 얼굴/눈 태그 분류 재시도 횟수 (외부 API 실패/JSON 파싱 실패 시)

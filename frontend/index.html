@@ -11227,17 +11227,22 @@
             const llm2Model = (currentConfig && currentConfig.llm_model2) || '';
             const llm2Ready = !!llm2Model;
 
-            // 헤더
+            // 헤더 (5열: 작업 / 형태 / 메인 LLM / 폴백 / JSON)
+            const gridCols = '1.6fr 0.8fr 0.7fr 0.5fr 0.5fr';
             let html = '';
-            html += '<div style="display: grid; grid-template-columns: 1.6fr 0.8fr 0.7fr 0.5fr; gap: 8px; padding: 4px 8px; font-size: 12px; color: var(--text-dim); border-bottom: 1px solid var(--border);">';
-            html += '<div>작업</div><div>형태</div><div>메인 LLM</div><div>폴백</div>';
+            html += `<div style="display: grid; grid-template-columns: ${gridCols}; gap: 8px; padding: 4px 8px; font-size: 12px; color: var(--text-dim); border-bottom: 1px solid var(--border);">`;
+            html += '<div>작업</div><div>형태</div><div>메인 LLM</div><div style="text-align: center;">폴백</div><div style="text-align: center;" title="response_format: json_object 강제 여부. 일부 서버(Cerebras/Gemma 등)에서 반복 루프가 나면 끄세요.">JSON</div>';
             html += '</div>';
 
             for (const t of LLM_ROUTING_TASKS) {
                 const entry = routing[t.key] || {};
                 const primary = entry.primary === 'llm2' ? 'llm2' : 'llm1';
                 const fallback = !!entry.fallback;
-                html += '<div style="display: grid; grid-template-columns: 1.6fr 0.8fr 0.7fr 0.5fr; gap: 8px; align-items: center; padding: 6px 8px; background: var(--surface2); border-radius: 6px;">';
+                // JSON 토글은 edit_illustration_prompt 에만. 기존 설정에 키가 없으면 기본 ON.
+                const supportsJson = t.key === 'edit_illustration_prompt';
+                const jsonMode = supportsJson ? (entry.json_mode !== undefined ? !!entry.json_mode : true) : null;
+
+                html += `<div style="display: grid; grid-template-columns: ${gridCols}; gap: 8px; align-items: center; padding: 6px 8px; background: var(--surface2); border-radius: 6px;">`;
                 html += `<div style="font-size: 13px;">${t.label}</div>`;
                 html += `<div style="font-size: 12px; color: var(--text-dim);">${t.kind}</div>`;
                 html += `<div><select data-route-key="${t.key}" data-route-field="primary" style="padding: 4px 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text);">`;
@@ -11245,12 +11250,18 @@
                 html += `<option value="llm2"${primary === 'llm2' ? ' selected' : ''}${llm2Ready ? '' : ' disabled'}>LLM2${llm2Ready ? '' : ' (미설정)'}</option>`;
                 html += '</select></div>';
                 html += `<div style="text-align: center;"><input type="checkbox" data-route-key="${t.key}" data-route-field="fallback"${fallback ? ' checked' : ''} title="메인 LLM 실패 시 반대 LLM으로 재시도"></div>`;
+                if (supportsJson) {
+                    html += `<div style="text-align: center;"><input type="checkbox" data-route-key="${t.key}" data-route-field="json_mode"${jsonMode ? ' checked' : ''} title="JSON 포맷 강제(response_format=json_object). Cerebras/Gemma 등에서 반복 루프가 나면 꺼보세요."></div>`;
+                } else {
+                    html += '<div></div>';
+                }
                 html += '</div>';
             }
 
             if (!llm2Ready) {
                 html += '<div style="margin-top: 6px; font-size: 12px; color: #d89a3a;">⚠ 외부 API 탭에서 LLM2 모델명을 설정해야 LLM2 선택/폴백이 동작합니다.</div>';
             }
+            html += '<div style="margin-top: 6px; font-size: 11px; color: var(--text-dim);">💡 JSON 토글은 <b>삽화 LLM과 함께 수정</b>에만 적용됩니다. 끄면 response_format을 보내지 않아 모델이 자연스럽게 JSON을 쓰고 stop합니다(파싱은 그대로 복구).</div>';
             container.innerHTML = html;
         }
 
@@ -11259,10 +11270,16 @@
             for (const t of LLM_ROUTING_TASKS) {
                 const sel = document.querySelector(`select[data-route-key="${t.key}"][data-route-field="primary"]`);
                 const cb = document.querySelector(`input[data-route-key="${t.key}"][data-route-field="fallback"]`);
-                routing[t.key] = {
+                const entry = {
                     primary: (sel && sel.value === 'llm2') ? 'llm2' : 'llm1',
                     fallback: !!(cb && cb.checked),
                 };
+                // JSON 포맷 토글은 edit_illustration_prompt 에만 저장
+                if (t.key === 'edit_illustration_prompt') {
+                    const jm = document.querySelector(`input[data-route-key="${t.key}"][data-route-field="json_mode"]`);
+                    entry.json_mode = !!(jm && jm.checked);
+                }
+                routing[t.key] = entry;
             }
             return routing;
         }
