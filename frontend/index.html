@@ -25646,22 +25646,30 @@
                     }
                     if (!presetName) {
                         showToast('저장할 프리셋을 먼저 선택하세요', 'error');
-                    } else if (_spIsLocked(presetScope)) {
-                        // 배포자료(읽기전용)는 상단 저장 버튼으로도 덮어쓸 수 없음. 안내만.
-                        showToast(`"${presetName}" 은(는) 배포자료(읽기전용)라 저장할 수 없습니다. ‘복제’로 사용자 프리셋을 만드세요.`, 'error');
                     } else {
+                        const isBuiltin = _spIsLocked(presetScope);
+                        // builtin(배포자료): 읽기전용이라 본문은 저장하지 않고, 봇이 이 프리셋을 '선택'했다는 바인딩만 저장.
+                        // local(사용자): 프리셋 본문 덮어쓰기 + 바인딩.
+                        const payload = isBuiltin
+                            ? { bot_name: botCurrentBot, preset_name: presetName, scope: 'builtin' }
+                            : { bot_name: botCurrentBot, preset_name: presetName, scope: 'local', text };
                         const resp = await fetch('/api/bot_mode/system_prompt', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ bot_name: botCurrentBot, preset_name: presetName, scope: 'local', text })
+                            body: JSON.stringify(payload)
                         });
                         const result = await resp.json();
                         if (result.saved) {
-                            _systemPromptText = text;
-                            _systemPromptScope = 'local';
+                            _systemPromptScope = isBuiltin ? 'builtin' : 'local';
                             _systemPromptPresetSelected = presetName;
-                            _systemPromptLocal[presetName] = text;  // 사용자(편집가능) 프리셋 동기화
+                            if (!isBuiltin) {
+                                _systemPromptText = text;
+                                _systemPromptLocal[presetName] = text;  // 사용자(편집가능) 프리셋 동기화
+                            }
                             savedCount++;
+                            if (isBuiltin) {
+                                showToast(`"${presetName}"(배포자료) 선택 저장 완료 (읽기전용: 본문은 그대로)`, 'success');
+                            }
                         } else {
                             showToast('시스템 프롬프트 저장 실패: ' + (result.error || ''), 'error');
                         }

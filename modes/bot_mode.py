@@ -1758,9 +1758,11 @@ class BotMode:
             return _json_error(str(e))
 
     async def handle_save_system_prompt(self, request):
-        """POST /api/bot_mode/system_prompt - local 프리셋에 저장(덮어쓰기) + 봇 바인딩
+        """POST /api/bot_mode/system_prompt - 시스템 프롬프트 저장 + 봇 바인딩
 
-        builtin(배포자료)은 읽기전용이라 거부. local 만 덮어쓸 수 있다.
+        - scope=local : 프리셋 본문(덮어쓰기) + 봇 바인딩
+        - scope=builtin: 본문(배포자료, 읽기전용)은 건드리지 않고 봇 '선택(바인딩)'만 영속화.
+          → 사용자가 배포자료 프리셋을 선택한 사실을 저장하기 위함.
         """
         try:
             body = await request.json()
@@ -1772,15 +1774,25 @@ class BotMode:
                 return _json_error("봇 이름이 비어있습니다.")
             if not preset_name:
                 return _json_error("저장할 프리셋이 선택되지 않았습니다. 프리셋을 먼저 선택하세요.")
-            if scope == "builtin":
-                return _json_error(
-                    f"'{preset_name}' 은(는) 배포자료(읽기전용) 프리셋이라 덮어쓸 수 없습니다. "
-                    "‘복제’로 사용자(편집가능) 프리셋을 만들어 편집하세요."
-                )
+            if scope not in ("local", "builtin"):
+                return _json_error(f"알 수 없는 scope 입니다: {scope}")
             data = _load_bot_data()
             bot = next((b for b in data["bots"] if b["name"] == bot_name), None)
             if not bot:
                 return _json_error(f"봇을 찾을 수 없습니다: {bot_name}")
+
+            if scope == "builtin":
+                # 배포자료(읽기전용): 본문 파일은 건드리지 않고, 봇이 이 프리셋을 '선택'했다는 사실만 바인딩.
+                builtin = _load_builtin_presets() or {}
+                if preset_name not in builtin:
+                    return _json_error(f"'{preset_name}' 배포자료 프리셋을 찾을 수 없습니다.")
+                bot["system_prompt_preset"] = preset_name
+                bot["preset_scope"] = "builtin"
+                _save_bot_data(data)
+                print(f"[BOT_MODE] 시스템 프롬프트 바인딩(읽기전용): {bot_name} → [builtin] '{preset_name}'")
+                return _json_ok({"saved": True, "bind_only": True})
+
+            # local: 프리셋 본문 덮어쓰기 + 봇 바인딩
             if "system_prompt_presets" not in data:
                 data["system_prompt_presets"] = {}
             data["system_prompt_presets"][preset_name] = text  # local 프리셋 덮어쓰기
