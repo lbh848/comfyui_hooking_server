@@ -39,7 +39,7 @@ import json
 import os
 import datetime
 import tiktoken
-from modes.llm_service import callLLM, callLLM2, get_config
+from modes.llm_service import callLLMTask, get_config
 
 
 # ─── Storage (v4와 공유) ────────────────────────────────
@@ -1391,16 +1391,8 @@ async def run_all(
         "chat": chat[:300] if chat else "",
     }
 
-    # LLM1 호출
-    result = await callLLM(messages)
-
-    # LLM2 폴백
-    if result.startswith("[LLM 실패]"):
-        config = get_config()
-        llm_model2 = config.get("llm_model2", "")
-        if llm_model2:
-            messages2 = gpt2gemini(messages) if _is_gemini_model(llm_model2) else messages
-            result = await callLLM2(messages2)
+    # LLM 호출 (외부 API 분기: llm_service 가 task_key 별 primary/fallback 판단)
+    result = await callLLMTask("enhance_outfit", messages)
 
     if result.startswith("[LLM 실패]"):
         _log_prompt_io(",".join(log_names), log_input, result)

@@ -126,6 +126,19 @@ DEFAULT_CONFIG = {
     "llm_temperature": 1.0,
     "llm_max_tokens": 0,              # 0 = 기본값 사용
     "llm_stream": False,
+    # 작업별 LLM1/LLM2 라우팅 (외부 API 분기 탭).
+    # task_key -> {"primary": "llm1"|"llm2", "fallback": bool}.
+    # 기본값은 현행 동작 보존: 폴백 있던 텍스트 작업(extract/enhance/restore)만 fallback=True.
+    "llm_routing": {
+        "extract_outfit":          {"primary": "llm1", "fallback": True},
+        "enhance_outfit":          {"primary": "llm1", "fallback": True},
+        "restore_workflow":        {"primary": "llm1", "fallback": True},
+        "classify_face_tags":      {"primary": "llm1", "fallback": False},
+        "refine_lb_extra":         {"primary": "llm1", "fallback": False},
+        "refine_lora_prompt":      {"primary": "llm1", "fallback": False},
+        "refine_lora_test_setup":  {"primary": "llm1", "fallback": False},
+        "edit_illustration_prompt":{"primary": "llm1", "fallback": False},
+    },
     "llm_max_concurrency": 1,         # LLM계열 큐 아이템(태그 정제/얼굴 태그 분류) 동시 처리 수. 1=순차(현행 동작). GPU/ComfyUI 작업과 무관.
     "auto_face_tag_max_retries": 2,   # LLM 자동 얼굴/눈 태그 분류 재시도 횟수 (외부 API 실패/JSON 파싱 실패 시)
     "auto_lora_prompt_max_retries": 2,   # LLM 자동 LoRA 프롬프트 정제 재시도 횟수 (외부 API 실패/JSON 파싱 실패 시)
@@ -3299,20 +3312,21 @@ async def handle_api_llm_edit_prompt(request: web.Request) -> web.Response:
         if not image_b64:
             fallback_note = " (백업 이미지가 없어 프롬프트 텍스트만으로 분석했습니다)"
 
-        # 6) LLM 호출
+        # 6) LLM 호출 (외부 API 분기: edit_illustration_prompt task_key 라우팅)
         messages = llm_prompt_edit.build_llm_messages(direction, scene_anima, scene_sdxl)
         raw = None
         try:
             if image_b64:
-                raw = await llm_service.callLLMVision(
-                    messages, image_b64=image_b64, image_mime=image_mime, json_mode=True)
+                raw = await llm_service.callLLMVisionTask(
+                    "edit_illustration_prompt", messages,
+                    image_b64=image_b64, image_mime=image_mime, json_mode=True)
             else:
-                raw = await llm_service.callLLM(messages, json_mode=True)
+                raw = await llm_service.callLLMTask("edit_illustration_prompt", messages, json_mode=True)
         except RuntimeError as e:
             # 비전 미지원 서비스 → 텍스트 전용 폴백
             print(f"[LLM_EDIT] 비전 미지원, 텍스트 폴백 name={backup_name}: {e}")
             fallback_note = " (현재 LLM 서비스가 비전을 지원하지 않아 텍스트만으로 분석했습니다)"
-            raw = await llm_service.callLLM(messages, json_mode=True)
+            raw = await llm_service.callLLMTask("edit_illustration_prompt", messages, json_mode=True)
 
         if not raw or raw.startswith("[LLM 실패]"):
             print(f"[LLM_EDIT] LLM 호출 실패 name={backup_name}: {raw}")
@@ -3861,6 +3875,7 @@ async def handle_api_config(request: web.Request) -> web.Response:
                 "llm_temperature": app_config.get("llm_temperature", 1.0),
                 "llm_max_tokens": app_config.get("llm_max_tokens", 0),
                 "llm_stream": app_config.get("llm_stream", False),
+                "llm_routing": app_config.get("llm_routing", {}),
             })
 
             # 임베딩 서비스 설정 업데이트

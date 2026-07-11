@@ -232,22 +232,14 @@ async def run() -> dict:
         {"role": "user", "content": _build_user_prompt(char_name, appearance, outfit, gender)},
     ]
 
+    # LLM 호출 (외부 API 분기: llm_service 가 task_key 별 primary/fallback 판단)
     result = None
     try:
-        from modes.llm_service import callLLM
-        result = await callLLM(messages)
+        from modes.llm_service import callLLMTask
+        result = await callLLMTask("restore_workflow", messages)
     except Exception as e:
-        print(f"[RESTORE_LLM_SOLO] callLLM 예외: {e}")
+        print(f"[RESTORE_LLM_SOLO] callLLMTask 예외: {e}")
         traceback.print_exc()
-
-    if not result:
-        print("[RESTORE_LLM_SOLO] LLM1 응답 없음/실패 → LLM2 폴백 시도")
-        try:
-            from modes.llm_service import callLLM2
-            result = await callLLM2(messages)
-        except Exception as e:
-            print(f"[RESTORE_LLM_SOLO] callLLM2 예외: {e}")
-            traceback.print_exc()
 
     if not result:
         print("[RESTORE_LLM_SOLO] LLM 응답을 받지 못해 빈 프롬프트를 반환합니다.")

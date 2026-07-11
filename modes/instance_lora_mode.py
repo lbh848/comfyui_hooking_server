@@ -338,7 +338,7 @@ async def run_auto_refine_lora_prompt(
 
     반환: {"success": True, "data": {"positive": "..."}} 또는 {"success": False, "error": "..."}
     """
-    from modes.llm_service import callLLMVision, supports_vision, get_config
+    from modes.llm_service import callLLMVisionTask, supports_vision, get_config, routing_primary_service
     from modes.lighbd_service import _log_lighbd_history
     import datetime
 
@@ -429,9 +429,9 @@ async def run_auto_refine_lora_prompt(
                 print(f"[INSTANCE_LORA] 학습 이미지 없음: char={char_name} entry={entry} filename={filename}")
                 return {"success": False, "error": f"학습 이미지를 찾을 수 없습니다: {filename} (character={char_name} entry={entry})"}
 
-        # 비전 서비스 확인
+        # 비전 서비스 확인 (외부 API 분기: primary LLM 기준)
         cfg = get_config()
-        service = cfg.get("llm_service", "")
+        service = routing_primary_service("refine_lora_prompt")
         if not supports_vision(service):
             print(f"[INSTANCE_LORA] 비전 미지원 서비스: {service}")
             return {
@@ -499,7 +499,7 @@ async def run_auto_refine_lora_prompt(
         for attempt in range(max_retries + 1):
             t0 = time.time()
             try:
-                raw = await callLLMVision(messages, image_b64=img_b64, image_mime=image_mime)
+                raw = await callLLMVisionTask("refine_lora_prompt", messages, image_b64=img_b64, image_mime=image_mime)
             except Exception as call_err:
                 print(f"[INSTANCE_LORA] callLLMVision 예외 (시도 {attempt + 1}/{max_retries + 1}): {call_err}")
                 traceback.print_exc()
@@ -582,7 +582,7 @@ async def run_auto_refine_test_setup(
 
     반환: {"success": True, "data": {"positive": "..."}} 또는 {"success": False, "error": "..."}
     """
-    from modes.llm_service import callLLM, get_config
+    from modes.llm_service import callLLMTask, get_config
     from modes.lighbd_service import _log_lighbd_history
     import datetime
 
@@ -634,7 +634,7 @@ async def run_auto_refine_test_setup(
         for attempt in range(max_retries + 1):
             t0 = time.time()
             try:
-                raw = await callLLM(messages)
+                raw = await callLLMTask("refine_lora_test_setup", messages)
             except Exception as call_err:
                 print(f"[INSTANCE_LORA] callLLM 예외 (시도 {attempt + 1}/{max_retries + 1}): {call_err}")
                 traceback.print_exc()

@@ -6298,6 +6298,7 @@
                 <div class="settings-tab-bar">
                     <button class="settings-tab-btn active" onclick="switchSettingsTab('common')">공통설정</button>
                     <button class="settings-tab-btn" onclick="switchSettingsTab('api')">외부 API</button>
+                    <button class="settings-tab-btn" onclick="switchSettingsTab('api_route')">외부 API 분기</button>
                     <button class="settings-tab-btn" onclick="switchSettingsTab('illustration')">삽화</button>
                     <button class="settings-tab-btn" onclick="switchSettingsTab('asset')">에셋</button>
                     <button class="settings-tab-btn" onclick="switchSettingsTab('lora')">로라</button>
@@ -6724,6 +6725,17 @@
                             <input type="text" id="setting-embedding-model" placeholder="예: voyage-4-large"
                                    style="width: 200px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text);">
                         </div>
+                    </div>
+                </div>
+
+                <!-- Tab: 외부 API 분기 (작업별 LLM1/LLM2 라우팅) -->
+                <div class="settings-tab-panel" id="settings-tab-api_route">
+                    <div class="setting-row" style="flex-direction: column; align-items: stretch;">
+                        <div style="margin-bottom: 8px; color: var(--text-dim); font-size: 13px;">
+                            각 LLM 작업이 메인으로 사용할 LLM(LLM1/LLM2)과, 실패 시 반대 LLM으로 폴백할지 여부를 지정합니다.
+                            LLM2 설정은 <b>외부 API</b> 탭에서 먼저 구성하세요(LLM2 모델명이 비어있으면 LLM2 사용/폴백이 동작하지 않습니다).
+                        </div>
+                        <div id="llm-routing-table" style="display: flex; flex-direction: column; gap: 6px;"></div>
                     </div>
                 </div>
 
@@ -9231,6 +9243,9 @@
             // LLM API 키 별도 로드 (key/llm_keys.json)
             loadLlmKeys();
 
+            // 외부 API 분기(작업별 LLM1/LLM2 라우팅) 테이블 빌드
+            renderLlmRoutingTable();
+
             // 임베딩 설정
             const embProvider = currentConfig.embedding_provider || 'voyage';
             document.getElementById('setting-embedding-provider').value = embProvider;
@@ -10062,6 +10077,7 @@
                 llm_reasoning_preset2: (document.getElementById('setting-llm-reasoning-preset2') || {}).value || '',
                 llm_reasoning_effort2: (document.getElementById('setting-llm-reasoning-effort2') || {}).value || '',
                 llm_custom_body2: (document.getElementById('setting-llm-custom-body2') || {}).value || '',
+                llm_routing: collectLlmRouting(),
                 embedding_provider: document.getElementById('setting-embedding-provider').value,
                 embedding_url: document.getElementById('setting-embedding-url').value,
                 embedding_api_key: document.getElementById('setting-embedding-api-key').value,
@@ -11120,6 +11136,67 @@
             const v = document.getElementById('setting-llm-reasoning-preset2').value;
             const row = document.getElementById('llm-custom-body2-row');
             if (row) row.style.display = (v === 'custom') ? 'flex' : 'none';
+        }
+
+        // ─── 외부 API 분기: 작업별 LLM1/LLM2 라우팅 테이블 ───
+        // task_key 목록과 표시명. DEFAULT_CONFIG(server.py) 와 일치해야 함.
+        const LLM_ROUTING_TASKS = [
+            { key: 'extract_outfit',           label: '복장 추출',          kind: '텍스트' },
+            { key: 'enhance_outfit',           label: '복장 정제',          kind: '텍스트' },
+            { key: 'restore_workflow',         label: '수동 그리기/복원(LLM)', kind: '텍스트' },
+            { key: 'classify_face_tags',       label: '얼굴/눈 태그 분류',  kind: '비전' },
+            { key: 'refine_lb_extra',          label: '외모/복장 태그 정제',kind: '비전' },
+            { key: 'refine_lora_prompt',       label: 'LoRA/에셋/스타일 정제', kind: '비전' },
+            { key: 'refine_lora_test_setup',   label: '테스트 이미지 일괄 세팅(봇/에셋)',kind: '텍스트' },
+            { key: 'edit_illustration_prompt', label: '삽화 LLM과 함께 수정', kind: '비전/JSON' },
+        ];
+
+        function renderLlmRoutingTable() {
+            const container = document.getElementById('llm-routing-table');
+            if (!container) return;
+            const routing = (currentConfig && currentConfig.llm_routing) || {};
+            // LLM2 설정 여부 안내용
+            const llm2Model = (currentConfig && currentConfig.llm_model2) || '';
+            const llm2Ready = !!llm2Model;
+
+            // 헤더
+            let html = '';
+            html += '<div style="display: grid; grid-template-columns: 1.6fr 0.8fr 0.7fr 0.5fr; gap: 8px; padding: 4px 8px; font-size: 12px; color: var(--text-dim); border-bottom: 1px solid var(--border);">';
+            html += '<div>작업</div><div>형태</div><div>메인 LLM</div><div>폴백</div>';
+            html += '</div>';
+
+            for (const t of LLM_ROUTING_TASKS) {
+                const entry = routing[t.key] || {};
+                const primary = entry.primary === 'llm2' ? 'llm2' : 'llm1';
+                const fallback = !!entry.fallback;
+                html += '<div style="display: grid; grid-template-columns: 1.6fr 0.8fr 0.7fr 0.5fr; gap: 8px; align-items: center; padding: 6px 8px; background: var(--surface2); border-radius: 6px;">';
+                html += `<div style="font-size: 13px;">${t.label}</div>`;
+                html += `<div style="font-size: 12px; color: var(--text-dim);">${t.kind}</div>`;
+                html += `<div><select data-route-key="${t.key}" data-route-field="primary" style="padding: 4px 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text);">`;
+                html += `<option value="llm1"${primary === 'llm1' ? ' selected' : ''}>LLM1</option>`;
+                html += `<option value="llm2"${primary === 'llm2' ? ' selected' : ''}${llm2Ready ? '' : ' disabled'}>LLM2${llm2Ready ? '' : ' (미설정)'}</option>`;
+                html += '</select></div>';
+                html += `<div style="text-align: center;"><input type="checkbox" data-route-key="${t.key}" data-route-field="fallback"${fallback ? ' checked' : ''} title="메인 LLM 실패 시 반대 LLM으로 재시도"></div>`;
+                html += '</div>';
+            }
+
+            if (!llm2Ready) {
+                html += '<div style="margin-top: 6px; font-size: 12px; color: #d89a3a;">⚠ 외부 API 탭에서 LLM2 모델명을 설정해야 LLM2 선택/폴백이 동작합니다.</div>';
+            }
+            container.innerHTML = html;
+        }
+
+        function collectLlmRouting() {
+            const routing = {};
+            for (const t of LLM_ROUTING_TASKS) {
+                const sel = document.querySelector(`select[data-route-key="${t.key}"][data-route-field="primary"]`);
+                const cb = document.querySelector(`input[data-route-key="${t.key}"][data-route-field="fallback"]`);
+                routing[t.key] = {
+                    primary: (sel && sel.value === 'llm2') ? 'llm2' : 'llm1',
+                    fallback: !!(cb && cb.checked),
+                };
+            }
+            return routing;
         }
 
         // ─── LLM API 키 별도 저장 (key/llm_keys.json) ───

@@ -2864,7 +2864,7 @@ async def run_auto_classify_face_tags(bot_name: str, char_name: str) -> dict:
     import time as _time
     import datetime
     from modes.tag_classifier import classify_prompt
-    from modes.llm_service import callLLMVision, supports_vision, get_config
+    from modes.llm_service import callLLMVisionTask, supports_vision, get_config, routing_primary_service
     from modes.lighbd_service import _log_lighbd_history
 
     async def _notify_llm_widget(event_type: str, data: dict = None):
@@ -2918,9 +2918,9 @@ async def run_auto_classify_face_tags(bot_name: str, char_name: str) -> dict:
         if not any(groups.values()):
             return {"success": False, "error": "분류된 태그가 없습니다. 대표 프롬프트를 확인하세요."}
 
-        # 비전 서비스 확인
+        # 비전 서비스 확인 (외부 API 분기: primary LLM 기준)
         cfg = get_config()
-        service = cfg.get("llm_service", "")
+        service = routing_primary_service("classify_face_tags")
         if not supports_vision(service):
             print(f"[BOT_MODE] 비전 미지원 서비스: {service}")
             return {
@@ -2969,7 +2969,7 @@ async def run_auto_classify_face_tags(bot_name: str, char_name: str) -> dict:
         for attempt in range(max_retries + 1):
             t0 = _time.time()
             try:
-                raw = await callLLMVision(messages, image_b64=img_b64, image_mime="image/webp")
+                raw = await callLLMVisionTask("classify_face_tags", messages, image_b64=img_b64, image_mime="image/webp")
             except Exception as call_err:
                 print(f"[BOT_MODE] callLLMVision 예외 (시도 {attempt + 1}/{max_retries + 1}): {call_err}")
                 traceback.print_exc()
@@ -3084,7 +3084,7 @@ async def run_lb_extra_refine(bot_name: str, char_name: str, appearance_tags: li
     import base64
     import time as _time
     import datetime
-    from modes.llm_service import callLLMVision, supports_vision, get_config
+    from modes.llm_service import callLLMVisionTask, supports_vision, get_config, routing_primary_service
     from modes.lighbd_service import _log_lighbd_history
 
     async def _notify_llm_widget(event_type: str, data: dict = None):
@@ -3121,9 +3121,9 @@ async def run_lb_extra_refine(bot_name: str, char_name: str, appearance_tags: li
             print(f"[BOT_MODE] 대표 이미지 파일 없음: {img_path}")
             return {"success": False, "error": f"대표 이미지 파일이 없습니다: {rep0}"}
 
-        # 비전 서비스 확인
+        # 비전 서비스 확인 (외부 API 분기: primary LLM 기준)
         cfg = get_config()
-        service = cfg.get("llm_service", "")
+        service = routing_primary_service("refine_lb_extra")
         if not supports_vision(service):
             print(f"[BOT_MODE] 비전 미지원 서비스: {service}")
             return {
@@ -3176,7 +3176,7 @@ async def run_lb_extra_refine(bot_name: str, char_name: str, appearance_tags: li
         for attempt in range(max_retries + 1):
             t0 = _time.time()
             try:
-                raw = await callLLMVision(messages, image_b64=img_b64, image_mime=mime)
+                raw = await callLLMVisionTask("refine_lb_extra", messages, image_b64=img_b64, image_mime=mime)
             except Exception as call_err:
                 print(f"[BOT_MODE] callLLMVision 예외 (시도 {attempt + 1}/{max_retries + 1}): {call_err}")
                 traceback.print_exc()

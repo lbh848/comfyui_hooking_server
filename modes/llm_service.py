@@ -397,6 +397,9 @@ _current_config = {
     "llm_temperature": 1.0,
     "llm_max_tokens": 0,              # 0 = 기본값 사용
     "llm_stream": False,
+    # 작업별 LLM1/LLM2 라우팅 (외부 API 분기). task_key -> {"primary": "llm1"|"llm2", "fallback": bool}
+    # 실제 기본값은 server.py 의 DEFAULT_CONFIG 에서 update_config 로 내려온다.
+    "llm_routing": {},
 }
 
 
@@ -1144,7 +1147,7 @@ async def callLLMVisionStream(messages: list, image_b64: str, image_mime: str = 
         yield ev
 
 
-async def callLLM2(messages: list, model: str = None) -> str:
+async def callLLM2(messages: list, model: str = None, json_mode: bool = False) -> str:
     """
     LLM2 호출 공개 함수 (단일 시도)
 
@@ -1153,6 +1156,9 @@ async def callLLM2(messages: list, model: str = None) -> str:
     Args:
         messages: [{"role": "system"/"user", "content": "..."}]
         model: 모델명 (None이면 설정의 llm_model2 사용)
+        json_mode: True 면 OpenAI 호환/Gemini 요청에 response_format=json_object 를
+                   설정해 JSON 출력을 강제한다. 비지원 프로바이더는 프롬프트 기반 JSON
+                   지시에 의존한다(응답은 호출자가 파싱).
 
     Returns:
         LLM 응답 텍스트. 실패 시 "[LLM 실패] ..." 형식의 에러 문자열 반환
@@ -1173,6 +1179,7 @@ async def callLLM2(messages: list, model: str = None) -> str:
     saved_preset = _current_config.get("llm_reasoning_preset", "auto")
     saved_effort = _current_config.get("llm_reasoning_effort", "")
     saved_body = _current_config.get("llm_custom_body", "")
+    token = _response_format_ctx.set({"type": "json_object"}) if json_mode else None
     try:
         if key2:
             _current_config["llm_api_key"] = key2
@@ -1186,11 +1193,143 @@ async def callLLM2(messages: list, model: str = None) -> str:
             _current_config["llm_custom_body"] = body2
         return await _dispatch(messages, service, use_model, endpoint)
     finally:
+        if token is not None:
+            _response_format_ctx.reset(token)
         _current_config["llm_api_key"] = saved_key
         _current_config["llm_url"] = saved_url
         _current_config["llm_reasoning_preset"] = saved_preset
         _current_config["llm_reasoning_effort"] = saved_effort
         _current_config["llm_custom_body"] = saved_body
+
+
+# ─── 작업별 LLM 라우팅 (외부 API 분기) ─────────────────────────
+#
+# callLLMTask / callLLMVisionTask 는 task_key 별로 (primary LLM, fallback on/off) 를
+# config["llm_routing"] 에서 읽어 메인 LLM 을 호출하고, 실패 시(반대 LLM 폴백이 켜져 있으면)
+# 반대 LLM 으로 재시도한다. 기존에 각 customprompt 스크립트에 하드코딩되던 폴백 로직을
+# 단일 경로로 통합한다.
+
+def _is_llm_failed(result) -> bool:
+    """LLM 호출 결과가 실패(에러 문자열 또는 빈 결과)인지 판별."""
+    return (not result) or (isinstance(result, str) and result.startswith("[LLM 실패]"))
+
+
+def _routing_for(task_key: str):
+    """task_key 의 (primary, fallback) 설정 반환. 미설정 시 (llm1, False)."""
+    entry = (_current_config.get("llm_routing") or {}).get(task_key, {}) or {}
+    primary = entry.get("primary", "llm1")
+    if primary not in ("llm1", "llm2"):
+        primary = "llm1"
+    return primary, bool(entry.get("fallback", False))
+
+
+def routing_primary_service(task_key: str) -> str:
+    """task_key 의 primary LLM 서비스명 반환. 라우팅 미설정/llm1 이면 LLM1 서비스.
+    primary=llm2 인데 llm_service2 가 비어 있으면 LLM1 서비스를 재사용(callLLM2 와 동일)."""
+    primary, _ = _routing_for(task_key)
+    if primary == "llm2":
+        return _current_config.get("llm_service2") or _current_config["llm_service"]
+    return _current_config["llm_service"]
+
+
+async def callLLMTask(task_key: str, messages: list, model: str = None, json_mode: bool = False) -> str:
+    """
+    작업별 라우팅 텍스트 LLM 호출.
+
+    config["llm_routing"][task_key] 의 primary(llm1/llm2) 에 따라 메인 LLM 호출 후,
+    fallback 이 켜져 있고 결과가 실패면 반대 LLM 으로 재시도한다.
+    """
+    primary, fallback = _routing_for(task_key)
+    first, second = (callLLM2, callLLM) if primary == "llm2" else (callLLM, callLLM2)
+    _llm_log(f"callLLMTask[{task_key}]: primary={primary} fallback={fallback}")
+    result = await first(messages, model=model, json_mode=json_mode)
+    if fallback and _is_llm_failed(result):
+        _llm_log(f"callLLMTask[{task_key}]: primary 실패→폴백 시도 ({result[:80] if result else ''})")
+        result = await second(messages, model=model, json_mode=json_mode)
+    return result
+
+
+async def callLLMVision2(messages: list, image_b64: str, image_mime: str = "image/webp",
+                         model: str = None, json_mode: bool = False) -> str:
+    """
+    LLM2 비전(이미지 입력) 호출 공개 함수.
+
+    callLLM2 의 설정 스왑 패턴(key2/url2/preset2/effort2/body2 → LLM1 슬롯 임시 덮어쓰기)과
+    callLLMVision 의 비전 처리(_normalize_vision_image/_build_vision_messages)를 합성.
+    LLM2 서비스가 비전을 지원하지 않으면 RuntimeError 대신 "[LLM 실패]" 문자열 반환.
+    """
+    service = _current_config.get("llm_service2") or _current_config["llm_service"]
+    if not supports_vision(service):
+        return (f"[LLM 실패] LLM2 서비스({service})가 비전(이미지 입력)을 지원하지 않습니다. "
+                "OpenAI 호환/Gemini/Claude 등 비전 지원 서비스를 선택하세요.")
+
+    use_model = model or _current_config["llm_model2"]
+    if not use_model:
+        return "[LLM 실패] LLM2 모델명이 설정되지 않았습니다"
+    endpoint = _current_config.get("custom_api_url2", "") or _current_config.get("custom_api_url", "")
+
+    if not image_b64:
+        return "[LLM 실패] callLLMVision2: image_b64 가 비어 있습니다."
+
+    # 설정 스왑용 LLM2 값
+    key2 = _current_config.get("llm_api_key2", "")
+    url2 = _current_config.get("llm_url2", "")
+    preset2 = _current_config.get("llm_reasoning_preset2", "")
+    effort2 = _current_config.get("llm_reasoning_effort2", "")
+    body2 = _current_config.get("llm_custom_body2", "")
+    saved_key = _current_config.get("llm_api_key", "")
+    saved_url = _current_config.get("llm_url", "")
+    saved_preset = _current_config.get("llm_reasoning_preset", "auto")
+    saved_effort = _current_config.get("llm_reasoning_effort", "")
+    saved_body = _current_config.get("llm_custom_body", "")
+
+    # 비전 messages 빌드는 스왑 전/후 무관하지만, 로그 정확도를 위해 스왑과 무관하게 수행
+    try:
+        image_b64, image_mime = _normalize_vision_image(image_b64, image_mime)
+        new_messages = _build_vision_messages(messages, image_b64, image_mime=image_mime)
+    except ValueError as e:
+        return f"[LLM 실패] {e}"
+
+    _llm_log(f"callLLMVision2: service={service} model={use_model} mime={image_mime} img_b64_len={len(image_b64)} json_mode={json_mode}")
+    token = _response_format_ctx.set({"type": "json_object"}) if json_mode else None
+    try:
+        if key2:
+            _current_config["llm_api_key"] = key2
+        if url2:
+            _current_config["llm_url"] = url2
+        if preset2:
+            _current_config["llm_reasoning_preset"] = preset2
+        if effort2:
+            _current_config["llm_reasoning_effort"] = effort2
+        if body2:
+            _current_config["llm_custom_body"] = body2
+        return await _dispatch(new_messages, service, use_model, endpoint)
+    finally:
+        if token is not None:
+            _response_format_ctx.reset(token)
+        _current_config["llm_api_key"] = saved_key
+        _current_config["llm_url"] = saved_url
+        _current_config["llm_reasoning_preset"] = saved_preset
+        _current_config["llm_reasoning_effort"] = saved_effort
+        _current_config["llm_custom_body"] = saved_body
+
+
+async def callLLMVisionTask(task_key: str, messages: list, image_b64: str, image_mime: str = "image/webp",
+                            model: str = None, json_mode: bool = False) -> str:
+    """
+    작업별 라우팅 비전 LLM 호출.
+
+    config["llm_routing"][task_key] 의 primary(llm1/llm2) 에 따라 메인 비전 LLM 호출 후,
+    fallback 이 켜져 있고 결과가 실패면 반대 비전 LLM 으로 재시도한다.
+    """
+    primary, fallback = _routing_for(task_key)
+    first, second = (callLLMVision2, callLLMVision) if primary == "llm2" else (callLLMVision, callLLMVision2)
+    _llm_log(f"callLLMVisionTask[{task_key}]: primary={primary} fallback={fallback}")
+    result = await first(messages, image_b64, image_mime, model=model, json_mode=json_mode)
+    if fallback and _is_llm_failed(result):
+        _llm_log(f"callLLMVisionTask[{task_key}]: primary 실패→폴백 시도 ({result[:80] if result else ''})")
+        result = await second(messages, image_b64, image_mime, model=model, json_mode=json_mode)
+    return result
 
 
 # ─── 스트리밍 (callLLMStream) ────────────────────────────────

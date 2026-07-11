@@ -50,7 +50,7 @@ import re
 import json
 import os
 import datetime
-from modes.llm_service import callLLM, callLLM2, get_config
+from modes.llm_service import callLLMTask, get_config
 
 
 # ─── Prompt Logger ────────────────────────────────────────
@@ -587,20 +587,9 @@ async def run(character_name: str, outfit_list: list, chat_list: list = [],
         {"role": "user", "content": data_prompt},
     ]
 
-    # LLM1 호출
+    # LLM 호출 (외부 API 분기: task_key 별 primary/fallback 은 llm_service 가 config 에서 판단)
     config = get_config()
-    result = await callLLM(messages)
-
-    # LLM1 실패 시 LLM2 폴백
-    if result.startswith("[LLM 실패]"):
-        llm_model2 = config.get("llm_model2", "")
-        if llm_model2:
-            # LLM2가 Gemini 계열이면 messages 변환
-            if _is_gemini_model(llm_model2):
-                messages2 = gpt2gemini(messages)
-            else:
-                messages2 = messages
-            result = await callLLM2(messages2)
+    result = await callLLMTask("extract_outfit", messages)
 
     # ─── 출력 로그 ───
     _log_prompt_io(character_name, log_input, result)
