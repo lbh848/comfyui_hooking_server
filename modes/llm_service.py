@@ -644,8 +644,8 @@ def supports_vision(service: str) -> bool:
     return True
 
 
-# 비전 LLM이 직접 수용하는 Pillow 포맷명. 이 외(AVIF/HEIF/BMP/TIFF 등)는 PNG로 재인코딩.
-_VISION_NATIVE_FORMATS = {"PNG", "JPEG", "WEBP", "GIF"}
+# 비전 LLM이 직접 수용하는 Pillow 포맷명. 이 외(WEBP/AVIF/HEIF/BMP/TIFF 등)는 PNG로 재인코딩.
+_VISION_NATIVE_FORMATS = {"PNG", "JPEG", "GIF"}
 
 
 def _normalize_vision_image(image_b64: str, image_mime: str) -> tuple:
@@ -679,11 +679,11 @@ def _normalize_vision_image(image_b64: str, image_mime: str) -> tuple:
                 return image_b64, "image/png"
             if fmt in ("JPEG", "JPG"):
                 return image_b64, "image/jpeg"
-            if fmt == "WEBP":
-                return image_b64, "image/webp"
+            # GIF는 투명 프레임 보존을 위해 네이티브 통과
             if fmt == "GIF":
                 return image_b64, "image/gif"
-            # AVIF / HEIF / BMP / TIFF / 미식별 등 → PNG 재인코딩
+            # WEBP / AVIF / HEIF / BMP / TIFF / 미식별 등 → PNG 재인코딩
+            # (WEBP는 Cerebras 등 webp 미지원 비전 프로바이더 호환을 위해 PNG로)
             img.load()
             out = io.BytesIO()
             save_img = img if img.mode in ("RGBA", "LA") else img.convert("RGB")
