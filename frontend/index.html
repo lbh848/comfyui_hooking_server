@@ -6386,7 +6386,6 @@
                                 <option value="copilot">Copilot</option>
                                 <option value="vertex">Vertex Gemini</option>
                                 <option value="vertex-openai">Vertex OpenAI</option>
-                                <option value="customapi">CustomAPI</option>
                                 <option value="openai">OpenAI</option>
                                 <option value="openrouter">OpenRouter</option>
                                 <option value="gemini">Gemini (AI Studio)</option>
@@ -6394,7 +6393,6 @@
                                 <option value="lmstudio">LM Studio (로컬)</option>
                                 <option value="ollama">Ollama (로컬)</option>
                                 <option value="ollama-cloud">Ollama Cloud</option>
-                                <option value="openai-compat">OpenAI 호환 (Custom)</option>
                             </select>
                         </div>
                     </div>
@@ -6424,21 +6422,10 @@
                     <div class="setting-row" id="llm-url-row" style="display: none;">
                         <div class="setting-label">
                             <div class="title">LLM 베이스 URL (오버라이드)</div>
-                            <div class="desc">비워두면 provider 기본 URL 사용. CustomAPI/openai-compat 은 필수</div>
+                            <div class="desc">OpenAI 호환 서비스(openai/openrouter/lmstudio/ollama/ollama-cloud)의 엔드포인트. 비워두면 provider 기본 URL. {model} 치환 지원 (예: http://host/v1/{model})</div>
                         </div>
                         <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
                             <input type="text" id="setting-llm-url" placeholder="https://..."
-                                   style="width: 300px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text);">
-                        </div>
-                    </div>
-
-                    <div class="setting-row" id="customapi-url-row" style="display: none;">
-                        <div class="setting-label">
-                            <div class="title">CustomAPI 접속 경로</div>
-                            <div class="desc">CustomAPI/openai-compat 서비스의 베이스 URL (레거시)</div>
-                        </div>
-                        <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
-                            <input type="text" id="setting-custom-api-url" placeholder="예: http://localhost:8190/copilot"
                                    style="width: 300px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text);">
                         </div>
                     </div>
@@ -6510,7 +6497,6 @@
                                 <option value="copilot">Copilot</option>
                                 <option value="vertex">Vertex Gemini</option>
                                 <option value="vertex-openai">Vertex OpenAI</option>
-                                <option value="customapi">CustomAPI</option>
                                 <option value="openai">OpenAI</option>
                                 <option value="openrouter">OpenRouter</option>
                                 <option value="gemini">Gemini (AI Studio)</option>
@@ -6518,7 +6504,6 @@
                                 <option value="lmstudio">LM Studio (로컬)</option>
                                 <option value="ollama">Ollama (로컬)</option>
                                 <option value="ollama-cloud">Ollama Cloud</option>
-                                <option value="openai-compat">OpenAI 호환 (Custom)</option>
                             </select>
                         </div>
                     </div>
@@ -6595,22 +6580,21 @@
                                   style="width: 100%; min-height: 120px; padding: 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-family: monospace; font-size: .8rem;"></textarea>
                     </div>
 
-                    <div class="setting-row" id="customapi-url2-row" style="display: none;">
-                        <div class="setting-label">
-                            <div class="title">LLM2 CustomAPI 접속 경로</div>
-                            <div class="desc">LLM2 전용 CustomAPI 베이스 URL (비워두면 LLM1 경로 사용)</div>
-                        </div>
-                        <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
-                            <input type="text" id="setting-custom-api-url2" placeholder="예: http://localhost:8191/copilot"
-                                   style="width: 300px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text);">
-                        </div>
-                    </div>
-
                     <!-- LLM 테스트 패널 -->
                     <div class="setting-row" style="flex-direction: column; align-items: stretch; margin-top: 16px; padding: 12px; border: 1px dashed var(--border); border-radius: 8px;">
                         <div class="setting-label" style="margin-bottom: 8px;">
-                            <div class="title">LLM 테스트 (스트리밍)</div>
-                            <div class="desc">현재 LLM1 설정으로 호출. 결과가 chunk 단위로 누적되고 통계가 실시간 표시됨. logs/llm_history.jsonl 에 20개까지 저장</div>
+                            <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 4px;">
+                                <div class="title">LLM 테스트 (스트리밍)</div>
+                                <label style="display: flex; align-items: center; gap: 4px; font-size: .85rem; color: var(--text);">
+                                    대상
+                                    <select id="llm-test-target"
+                                            style="padding: 4px 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: .85rem;">
+                                        <option value="llm1">LLM1</option>
+                                        <option value="llm2">LLM2</option>
+                                    </select>
+                                </label>
+                            </div>
+                            <div class="desc">선택한 LLM(LLM1/LLM2) 설정으로 호출. 결과가 chunk 단위로 누적되고 통계가 실시간 표시됨. logs/llm_history.jsonl 에 20개까지 저장</div>
                         </div>
                         <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap;">
                             <textarea id="llm-test-input" placeholder="테스트용 프롬프트 (user 메시지)"
@@ -9210,7 +9194,6 @@
             const llmService = currentConfig.llm_service || 'copilot';
             document.getElementById('setting-llm-service').value = llmService;
             document.getElementById('setting-llm-model').value = currentConfig.llm_model || 'gpt-4.1';
-            document.getElementById('setting-custom-api-url').value = currentConfig.custom_api_url || '';
             const llmUrlEl = document.getElementById('setting-llm-url');
             if (llmUrlEl) llmUrlEl.value = currentConfig.llm_url || '';
             const llmUrl2El = document.getElementById('setting-llm-url2');
@@ -9237,7 +9220,6 @@
             onReasoningPreset2Change();
             document.getElementById('setting-llm-service2').value = currentConfig.llm_service2 || '';
             document.getElementById('setting-llm-model2').value = currentConfig.llm_model2 || '';
-            document.getElementById('setting-custom-api-url2').value = currentConfig.custom_api_url2 || '';
             onLlmServiceChange();
 
             // LLM API 키 별도 로드 (key/llm_keys.json)
@@ -9825,8 +9807,6 @@
                 llm_model: 'LLM 모델',
                 llm_service2: 'LLM2 서비스',
                 llm_model2: 'LLM2 모델',
-                custom_api_url: 'Custom API URL',
-                custom_api_url2: 'Custom API URL 2',
                 embedding_provider: '임베딩 프로바이더',
                 embedding_url: '임베딩 URL',
                 embedding_api_key: '임베딩 API Key',
@@ -10067,8 +10047,6 @@
                 llm_model: document.getElementById('setting-llm-model').value,
                 llm_service2: document.getElementById('setting-llm-service2').value,
                 llm_model2: document.getElementById('setting-llm-model2').value,
-                custom_api_url: document.getElementById('setting-custom-api-url').value,
-                custom_api_url2: document.getElementById('setting-custom-api-url2').value,
                 llm_url: (document.getElementById('setting-llm-url') || {}).value || '',
                 llm_url2: (document.getElementById('setting-llm-url2') || {}).value || '',
                 llm_reasoning_preset: (document.getElementById('setting-llm-reasoning-preset') || {}).value || 'auto',
@@ -10709,6 +10687,15 @@
         let _llmTestAbort = null;
         let _llmTestImage = { b64: '', mime: '', source: '' }; // 비전 테스트용 이미지
 
+        // LLM1/LLM2 선택 복원
+        (function _restoreLlmTestTarget() {
+            try {
+                const saved = localStorage.getItem('llm-test-target');
+                const sel = document.getElementById('llm-test-target');
+                if (saved && sel) sel.value = saved;
+            } catch (_) {}
+        })();
+
         async function _loadDefaultTestImage() {
             try {
                 const resp = await fetch('/api/bot_mode/auto_face_tag_test_image');
@@ -10816,6 +10803,10 @@
             }
 
             const payload = {messages, stream: useStream};
+            const targetSel = document.getElementById('llm-test-target');
+            const targetVal = (targetSel && targetSel.value === 'llm2') ? 'llm2' : 'llm1';
+            payload.target = targetVal;
+            try { localStorage.setItem('llm-test-target', targetVal); } catch (_) {}
             if (useVision) {
                 payload.image_b64 = _llmTestImage.b64;
                 payload.image_mime = _llmTestImage.mime;
@@ -11084,16 +11075,15 @@
             const s2 = document.getElementById('setting-llm-service2').value;
 
             // 어떤 provider가 API 키 필요로 하는가 (lmstudio/ollama 는 로컬이라 키 옵션)
-            const needsKey = (s) => ['openai', 'openrouter', 'gemini', 'claude', 'openai-compat', 'ollama-cloud', 'customapi', 'lmstudio', 'ollama'].includes(s);
-            // 어떤 provider가 URL 필요 (오버라이드 또는 필수)
-            const needsUrl = (s) => ['customapi', 'openai-compat', 'lmstudio', 'ollama', 'ollama-cloud'].includes(s);
+            const needsKey = (s) => ['openai', 'openrouter', 'gemini', 'claude', 'ollama-cloud', 'lmstudio', 'ollama'].includes(s);
+            // 어떤 provider가 베이스 URL 입력 필요 (OpenAI 호환 서비스들)
+            const needsUrl = (s) => ['openai', 'openrouter', 'lmstudio', 'ollama', 'ollama-cloud'].includes(s);
             // 어떤 provider가 reasoning 설정 지원
-            const supportsReasoning = (s) => ['openai', 'openrouter', 'openai-compat', 'customapi', 'lmstudio', 'ollama', 'ollama-cloud'].includes(s);
+            const supportsReasoning = (s) => ['openai', 'openrouter', 'lmstudio', 'ollama', 'ollama-cloud'].includes(s);
 
             // LLM1
             document.getElementById('llm-api-key-row').style.display = needsKey(s1) ? 'flex' : 'none';
             document.getElementById('llm-url-row').style.display = needsUrl(s1) ? 'flex' : 'none';
-            document.getElementById('customapi-url-row').style.display = (s1 === 'customapi') ? 'flex' : 'none';
             document.getElementById('llm-reasoning-row').style.display = supportsReasoning(s1) ? 'flex' : 'none';
             const vertexKeyRow = document.getElementById('vertex-key-row');
             if (vertexKeyRow) {
@@ -11104,19 +11094,16 @@
             // LLM2
             const key2Row = document.getElementById('llm-api-key2-row');
             const url2Row = document.getElementById('llm-url2-row');
-            const customRow2 = document.getElementById('customapi-url2-row');
             const reasoning2Row = document.getElementById('llm-reasoning2-row');
             if (s2) {
                 // LLM2 가 별도 서비스일 때만 LLM2 필드 표시
                 if (key2Row) key2Row.style.display = needsKey(s2) ? 'flex' : 'none';
                 if (url2Row) url2Row.style.display = needsUrl(s2) ? 'flex' : 'none';
-                if (customRow2) customRow2.style.display = (s2 === 'customapi') ? 'flex' : 'none';
                 if (reasoning2Row) reasoning2Row.style.display = supportsReasoning(s2) ? 'flex' : 'none';
             } else {
                 // LLM2 = (LLM1과 동일) 이면 LLM2 전용 필드 숨김
                 if (key2Row) key2Row.style.display = 'none';
                 if (url2Row) url2Row.style.display = 'none';
-                if (customRow2) customRow2.style.display = 'none';
                 if (reasoning2Row) reasoning2Row.style.display = 'none';
             }
         }

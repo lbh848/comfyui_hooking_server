@@ -106,15 +106,13 @@ DEFAULT_CONFIG = {
     "clamp_value": 1.2,  # 가중치 클램프 최대값
     "outfit_mode_enabled": False,  # 복장 추출 모드 활성화 여부
     "outfit_workflow_source_path": "",  # 복장 추출 워크플로우 원본 소스 전체 경로
-    "llm_service": "copilot",   # LLM 서비스: copilot / vertex / vertex-openai / customapi / openai / openrouter / gemini / claude / lmstudio / ollama / ollama-cloud / openai-compat
+    "llm_service": "copilot",   # LLM 서비스: copilot / vertex / vertex-openai / openai / openrouter / gemini / claude / lmstudio / ollama / ollama-cloud
     "llm_model": "gpt-4.1",    # LLM 모델명
     "llm_service2": "",         # LLM2 서비스 (비워두면 LLM1 서비스 사용)
     "llm_model2": "",           # LLM2 모델명 (폴백, 비어있으면 비활성)
-    "custom_api_url": "",       # LLM1 CustomAPI 접속 경로
-    "custom_api_url2": "",      # LLM2 CustomAPI 접속 경로
     # 주의: API 키(llm_api_key, llm_api_key2)는 config.json 에 저장 안 함.
     # key/llm_keys.json 으로 분리 (handle_api_llm_keys 참조).
-    "llm_url": "",              # LLM1 베이스 URL 오버라이드
+    "llm_url": "",              # LLM1 베이스 URL 오버라이드 (OpenAI 호환 서비스, {model} 치환 지원)
     "llm_url2": "",             # LLM2 베이스 URL 오버라이드 (옵션)
     "llm_reasoning_preset": "auto",   # auto|none|gpt|glm|deepseek|kimi|claude|gemini|custom
     "llm_reasoning_effort": "",       # low|medium|high (OpenAI reasoning_effort)
@@ -213,6 +211,8 @@ def load_config() -> dict:
                 # 기본값과 병합 (deepcopy로 중첩 dict 오염 방지)
                 merged = copy.deepcopy(DEFAULT_CONFIG)
                 merged.update(config)
+                # 레거시 서비스(openai-compat/customapi) -> openai 마이그레이션
+                llm_service.migrate_config(merged)
                 return merged
         except Exception as e:
             print(f"[CONFIG] 설정 파일 로드 실패: {e}")
@@ -2146,10 +2146,10 @@ async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse
     """LLM 호출 테스트용 SSE 엔드포인트.
 
     POST /api/llm/test_stream
-    body: {"messages": [...], "model": "...", "stream": true, "image_b64": "...", "image_mime": "image/webp"}
+    body: {"messages": [...], "model": "...", "stream": true, "image_b64": "...", "image_mime": "image/webp", "target": "llm1"|"llm2"}
     응답: text/event-stream. 이벤트: start / delta / done / error.
-    stream=False 면 callLLM 단발 호출 후 done 이벤트 1개만 전송.
-    image_b64 가 있으면 callLLMVision (비전, 자동 단발 모드) 으로 호출.
+    stream=False 면 단발 호출 후 done 이벤트 1개만 전송.
+    image_b64 가 있으면 비전 호출. target 이 llm2 면 LLM2 설정으로 호출.
     """
     try:
         body = await request.json()
@@ -2164,6 +2164,26 @@ async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse
     use_stream = bool(body.get("stream", True))
     image_b64 = (body.get("image_b64") or "").strip()
     image_mime = body.get("image_mime") or "image/webp"
+    target = (body.get("target") or "llm1").strip().lower()
+    if target not in ("llm1", "llm2"):
+        target = "llm1"
+
+    # target 에 따른 서비스/모델/함수 선택
+    cfg = llm_service.get_config()
+    if target == "llm2":
+        cur_service = cfg.get("llm_service2") or cfg.get("llm_service", "")
+        cur_model_key = "llm_model2"
+        fn_stream = llm_service.callLLM2Stream
+        fn_vision_stream = llm_service.callLLMVision2Stream
+        fn_single = llm_service.callLLM2
+        fn_vision_single = llm_service.callLLMVision2
+    else:
+        cur_service = cfg.get("llm_service", "")
+        cur_model_key = "llm_model"
+        fn_stream = llm_service.callLLMStream
+        fn_vision_stream = llm_service.callLLMVisionStream
+        fn_single = llm_service.callLLM
+        fn_vision_single = llm_service.callLLMVision
 
     resp = web.StreamResponse(status=200, headers={
         "Content-Type": "text/event-stream",
@@ -2180,22 +2200,22 @@ async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse
     try:
         if image_b64:
             # 비전 호출
-            if not llm_service.supports_vision(llm_service.get_config().get("llm_service", "")):
-                await write_event("error", {"error": f"현재 LLM 서비스({llm_service.get_config().get('llm_service','')})는 비전을 지원하지 않습니다."})
+            if not llm_service.supports_vision(cur_service):
+                await write_event("error", {"error": f"현재 LLM 서비스({cur_service})는 비전을 지원하지 않습니다."})
                 await resp.write_eof()
                 return resp
-            service = llm_service.get_config().get("llm_service", "")
-            use_model_resolved = use_model or llm_service.get_config().get("llm_model", "")
+            service = cur_service
+            use_model_resolved = use_model or cfg.get(cur_model_key, "")
             await write_event("start", {"service": service, "model": use_model_resolved})
             t0 = time.time()
             try:
                 if use_stream:
                     # 스트리밍 비전
-                    async for ev in llm_service.callLLMVisionStream(messages, image_b64=image_b64, image_mime=image_mime, model=use_model, log_history=False):
+                    async for ev in fn_vision_stream(messages, image_b64=image_b64, image_mime=image_mime, model=use_model, log_history=False):
                         await write_event(ev.get("type", "message"), ev)
                 else:
                     # 단발 비전
-                    text = await llm_service.callLLMVision(messages, image_b64=image_b64, image_mime=image_mime, model=use_model)
+                    text = await fn_vision_single(messages, image_b64=image_b64, image_mime=image_mime, model=use_model)
                     elapsed = time.time() - t0
                     if isinstance(text, str) and text.startswith("[LLM 실패]"):
                         await write_event("error", {"error": text})
@@ -2214,7 +2234,7 @@ async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse
             await resp.write_eof()
             return resp
         elif use_stream:
-            async for ev in llm_service.callLLMStream(messages, model=use_model, log_history=False):
+            async for ev in fn_stream(messages, model=use_model, log_history=False):
                 et = ev.get("type", "message")
                 await write_event(et, ev)
                 if et == "done":
@@ -2223,10 +2243,10 @@ async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse
         else:
             # 단발 호출 → start / done 두 이벤트만
             t0 = time.time()
-            service = llm_service.get_config().get("llm_service", "")
-            use_model_resolved = use_model or llm_service.get_config().get("llm_model", "")
+            service = cur_service
+            use_model_resolved = use_model or cfg.get(cur_model_key, "")
             await write_event("start", {"service": service, "model": use_model_resolved})
-            text = await llm_service.callLLM(messages, model=use_model)
+            text = await fn_single(messages, model=use_model)
             elapsed = time.time() - t0
             if isinstance(text, str) and text.startswith("[LLM 실패]"):
                 await write_event("error", {"error": text})
@@ -3861,8 +3881,6 @@ async def handle_api_config(request: web.Request) -> web.Response:
                 "llm_model": app_config.get("llm_model", "gpt-4.1"),
                 "llm_service2": app_config.get("llm_service2", ""),
                 "llm_model2": app_config.get("llm_model2", ""),
-                "custom_api_url": app_config.get("custom_api_url", ""),
-                "custom_api_url2": app_config.get("custom_api_url2", ""),
                 "llm_url": app_config.get("llm_url", ""),
                 "llm_url2": app_config.get("llm_url2", ""),
                 "llm_reasoning_preset": app_config.get("llm_reasoning_preset", "auto"),
@@ -4034,8 +4052,6 @@ async def handle_api_outfit_run_llm(request: web.Request) -> web.Response:
             "llm_model": app_config.get("llm_model", "gpt-4.1"),
             "llm_service2": app_config.get("llm_service2", ""),
             "llm_model2": app_config.get("llm_model2", ""),
-            "custom_api_url": app_config.get("custom_api_url", ""),
-            "custom_api_url2": app_config.get("custom_api_url2", ""),
         })
 
         try:
@@ -9896,8 +9912,6 @@ async def on_startup(app):
         "llm_model": app_config.get("llm_model", "gpt-4.1"),
         "llm_service2": app_config.get("llm_service2", ""),
         "llm_model2": app_config.get("llm_model2", ""),
-        "custom_api_url": app_config.get("custom_api_url", ""),
-        "custom_api_url2": app_config.get("custom_api_url2", ""),
         "llm_url": app_config.get("llm_url", ""),
         "llm_url2": app_config.get("llm_url2", ""),
         "llm_reasoning_preset": app_config.get("llm_reasoning_preset", "auto"),

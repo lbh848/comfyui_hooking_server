@@ -4,7 +4,7 @@ LLMService - 외부 LLM 서비스 호출 모듈
 지원 서비스:
 - copilot: GitHub Copilot API (gpt-4.1, gemini-3-flash-preview 등)
 - vertex: Google Vertex AI (vertexai SDK)
-- customapi: 사용자 지정 HTTP API 엔드포인트
+- openai/openrouter/lmstudio/ollama/ollama-cloud: OpenAI 호환 엔드포인트 (llm_url 베이스 URL, {model} 치환 지원)
 
 customprompt/ 폴더의 스크립트에서 callLLM 함수를 import하여 사용:
     from modes.llm_service import callLLM
@@ -323,69 +323,16 @@ async def _call_vertex(messages: list, model: str) -> str:
         return f"[LLM 실패] Vertex 오류: {error_msg}"
 
 
-async def _call_custom_api(messages: list, model: str, endpoint: str) -> str:
-    """사용자 지정 API 엔드포인트 호출 (OpenAI 호환 형식, reasoning 지원).
-    endpoint: 'https://host/path' 또는 'https://host/path/{model}' 형태.
-              {model} 플레이스홀더가 있으면 치환, 없으면 reasoning 지원 URL 정규화.
-    """
-    if "{model}" in endpoint or endpoint.rstrip("/").endswith(model):
-        url = endpoint.replace("{model}", model)
-    else:
-        # OpenAI-compat 정규화: /v1/chat/completions 붙임
-        url = _normalize_openai_compat_url(endpoint)
-
-    reasoning_family = _detect_reasoning_family(model, _current_config.get("llm_reasoning_preset", "auto"))
-    request_body = _build_openai_body(
-        model, messages, reasoning_family,
-        reasoning_effort=_current_config.get("llm_reasoning_effort", ""),
-        reasoning_budget=int(_current_config.get("llm_reasoning_budget_tokens", 0) or 0),
-        temperature=float(_current_config.get("llm_temperature", 1.0) or 1.0),
-        max_tokens=int(_current_config.get("llm_max_tokens", 0) or 0),
-        custom_body=_current_config.get("llm_custom_body", ""),
-    )
-
-    headers = {"Content-Type": "application/json"}
-    api_key = _current_config.get("llm_api_key", "")
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-
-    _llm_log(f"CustomAPI 요청: url={url}, family={reasoning_family}, messages={len(messages)}개")
-
-    try:
-        async with httpx.AsyncClient(timeout=300.0) as client:
-            response = await client.post(url, json=request_body, headers=headers)
-            _llm_log(f"CustomAPI 응답: status={response.status_code}")
-
-            if response.status_code == 200:
-                result = response.json()
-                content = result.get("choices", [{}])[0] \
-                              .get("message", {}).get("content", "")
-                _llm_log(f"CustomAPI 성공: {len(content)}자")
-                return content
-            else:
-                error_text = response.text[:500]
-                _llm_log(f"CustomAPI 실패: {response.status_code} - {error_text}")
-                return f"[LLM 실패] CustomAPI {response.status_code} 오류: {error_text}"
-    except httpx.TimeoutException:
-        _llm_log("CustomAPI 타임아웃")
-        return "[LLM 실패] CustomAPI 타임아웃"
-    except Exception as e:
-        _llm_log(f"CustomAPI 예외: {e}")
-        return f"[LLM 실패] CustomAPI 예외: {e}"
-
-
 # ─── 설정 관리 ──────────────────────────────────────────────
 
 _current_config = {
     "llm_service": "copilot",
     "llm_model": "gpt-4.1",
-    "llm_service2": "",       # LLM2 서비스 (copilot / vertex / customapi / openai / openrouter / gemini / claude / openai-compat)
+    "llm_service2": "",       # LLM2 서비스 (copilot / vertex / vertex-openai / openai / openrouter / gemini / claude / lmstudio / ollama / ollama-cloud)
     "llm_model2": "",         # LLM2 모델명 (폴백, 비워두면 비활성)
-    "custom_api_url": "",     # LLM1 CustomAPI/openai-compat 접속 경로
-    "custom_api_url2": "",    # LLM2 CustomAPI/openai-compat 접속 경로
     "llm_api_key": "",        # OpenAI / OpenRouter / Gemini / Claude API 키
     "llm_api_key2": "",       # LLM2 전용 (옵션)
-    "llm_url": "",            # 베이스 URL 오버라이드 (openai/openrouter/gemini/claude)
+    "llm_url": "",            # 베이스 URL 오버라이드 (모든 OpenAI 호환 서비스). {model} 치환 지원
     "llm_url2": "",           # LLM2 전용 URL 오버라이드
     "llm_reasoning_preset": "auto",   # auto|gpt|gemini|claude|deepseek|kimi|glm|custom|none
     "llm_reasoning_effort": "",       # ""|low|medium|high|none (OpenAI reasoning_effort)
@@ -403,9 +350,35 @@ _current_config = {
 }
 
 
+def migrate_config(config: dict) -> dict:
+    """레거시 서비스 스키마를 현재 스키마로 변환 (in-place + 반환).
+
+    - openai-compat / customapi 서비스 -> openai (단일 '베이스 URL' 필드로 통합됨)
+    - llm_url(2) 이 비어있고 구 custom_api_url(2) 값이 있으면 그 값을 llm_url(2) 로 승계해
+      기존 엔드포인트가 끊기지 않게 한다.
+    부분 dict (UI 저장 등) 도 안전하게 처리: 키가 없으면 건드리지 않는다.
+    """
+    for svc_key, url_key, legacy_url_key in (
+        ("llm_service", "llm_url", "custom_api_url"),
+        ("llm_service2", "llm_url2", "custom_api_url2"),
+    ):
+        if config.get(svc_key) in ("openai-compat", "customapi"):
+            old = config.get(svc_key)
+            config[svc_key] = "openai"
+            if not config.get(url_key):
+                legacy = config.get(legacy_url_key)
+                if legacy:
+                    config[url_key] = legacy
+                    _llm_log(f"[MIGRATE] {svc_key}: {old} -> openai, {url_key} <- {legacy_url_key}")
+                else:
+                    _llm_log(f"[MIGRATE] {svc_key}: {old} -> openai")
+    return config
+
+
 def update_config(config: dict):
     """server.py에서 설정 업데이트"""
     global _current_config
+    migrate_config(config)
     for key, value in config.items():
         if key in _current_config:
             _current_config[key] = value
@@ -646,7 +619,7 @@ def _build_genai_contents(messages: list):
 
 VISION_SUPPORTED_SERVICES = {
     # OpenAI 호환 image_url 포맷을 그대로 처리하는 서비스들
-    "copilot", "openai", "openrouter", "openai-compat", "customapi",
+    "copilot", "openai", "openrouter",
     "ollama", "ollama-cloud", "lmstudio", "vertex-openai",
     # 자체 포맷으로 변환하는 서비스들
     "gemini", "claude", "vertex",  # vertex: vertexai SDK Part 리스트로 이미지 첨부
@@ -827,6 +800,9 @@ async def _call_openai_compat(messages: list, model: str, endpoint: str,
     if not endpoint:
         return "[LLM 실패] openai-compat: URL 없음"
 
+    # {model} 플레이스홀더 치환 (구 customapi 기능 흡수). 없으면 일반 정규화.
+    if "{model}" in endpoint:
+        endpoint = endpoint.replace("{model}", model)
     url = _normalize_openai_compat_url(endpoint)
     reasoning_family = _detect_reasoning_family(model, _current_config.get("llm_reasoning_preset", "auto"))
     body = _build_openai_body(
@@ -998,7 +974,7 @@ async def _call_claude(messages: list, model: str) -> str:
 
 # ─── 공개 함수 ──────────────────────────────────────────────
 
-async def _dispatch(messages: list, service: str, model: str, endpoint: str = "") -> str:
+async def _dispatch(messages: list, service: str, model: str) -> str:
     """서비스 라우팅 내부 함수"""
     _llm_log(f"_dispatch: service={service}, model={model}")
 
@@ -1006,10 +982,6 @@ async def _dispatch(messages: list, service: str, model: str, endpoint: str = ""
         return await _call_copilot(messages, model)
     elif service == "vertex":
         return await _call_vertex(messages, model)
-    elif service == "customapi":
-        if not endpoint:
-            return "[LLM 실패] CustomAPI URL이 설정되지 않았습니다"
-        return await _call_custom_api(messages, model, endpoint)
     elif service == "openai":
         return await _call_openai_direct(messages, model)
     elif service == "openrouter":
@@ -1018,10 +990,6 @@ async def _dispatch(messages: list, service: str, model: str, endpoint: str = ""
         return await _call_gemini(messages, model)
     elif service == "claude":
         return await _call_claude(messages, model)
-    elif service == "openai-compat":
-        if not endpoint:
-            return "[LLM 실패] openai-compat: llm_url 또는 custom_api_url이 설정되지 않았습니다"
-        return await _call_openai_compat(messages, model, endpoint, api_key=_current_config.get("llm_api_key", ""))
     elif service == "lmstudio":
         return await _call_lmstudio(messages, model)
     elif service == "ollama":
@@ -1057,10 +1025,9 @@ async def callLLM(messages: list, model: str = None, json_mode: bool = False) ->
     """
     service = _current_config["llm_service"]
     use_model = model or _current_config["llm_model"]
-    endpoint = _current_config.get("custom_api_url", "")
     token = _response_format_ctx.set({"type": "json_object"}) if json_mode else None
     try:
-        return await _dispatch(messages, service, use_model, endpoint)
+        return await _dispatch(messages, service, use_model)
     finally:
         if token is not None:
             _response_format_ctx.reset(token)
@@ -1094,7 +1061,6 @@ async def callLLMVision(messages: list, image_b64: str, image_mime: str = "image
         )
 
     use_model = model or _current_config["llm_model"]
-    endpoint = _current_config.get("custom_api_url", "")
 
     if not image_b64:
         return "[LLM 실패] callLLMVision: image_b64 가 비어 있습니다."
@@ -1110,7 +1076,7 @@ async def callLLMVision(messages: list, image_b64: str, image_mime: str = "image
     _llm_log(f"callLLMVision: service={service} model={use_model} mime={image_mime} img_b64_len={len(image_b64)} json_mode={json_mode}")
     token = _response_format_ctx.set({"type": "json_object"}) if json_mode else None
     try:
-        return await _dispatch(new_messages, service, use_model, endpoint)
+        return await _dispatch(new_messages, service, use_model)
     finally:
         if token is not None:
             _response_format_ctx.reset(token)
@@ -1167,7 +1133,6 @@ async def callLLM2(messages: list, model: str = None, json_mode: bool = False) -
     use_model = model or _current_config["llm_model2"]
     if not use_model:
         return "[LLM 실패] LLM2 모델명이 설정되지 않았습니다"
-    endpoint = _current_config.get("custom_api_url2", "") or _current_config.get("custom_api_url", "")
 
     key2 = _current_config.get("llm_api_key2", "")
     url2 = _current_config.get("llm_url2", "")
@@ -1191,7 +1156,7 @@ async def callLLM2(messages: list, model: str = None, json_mode: bool = False) -
             _current_config["llm_reasoning_effort"] = effort2
         if body2:
             _current_config["llm_custom_body"] = body2
-        return await _dispatch(messages, service, use_model, endpoint)
+        return await _dispatch(messages, service, use_model)
     finally:
         if token is not None:
             _response_format_ctx.reset(token)
@@ -1266,7 +1231,6 @@ async def callLLMVision2(messages: list, image_b64: str, image_mime: str = "imag
     use_model = model or _current_config["llm_model2"]
     if not use_model:
         return "[LLM 실패] LLM2 모델명이 설정되지 않았습니다"
-    endpoint = _current_config.get("custom_api_url2", "") or _current_config.get("custom_api_url", "")
 
     if not image_b64:
         return "[LLM 실패] callLLMVision2: image_b64 가 비어 있습니다."
@@ -1303,7 +1267,7 @@ async def callLLMVision2(messages: list, image_b64: str, image_mime: str = "imag
             _current_config["llm_reasoning_effort"] = effort2
         if body2:
             _current_config["llm_custom_body"] = body2
-        return await _dispatch(new_messages, service, use_model, endpoint)
+        return await _dispatch(new_messages, service, use_model)
     finally:
         if token is not None:
             _response_format_ctx.reset(token)
@@ -1358,6 +1322,9 @@ async def _stream_openai_compat(messages: list, model: str, url: str,
         yield {"type": "error", "error": f"{service}: URL 이 설정되지 않음"}
         return
 
+    # {model} 플레이스홀더 치환 (구 customapi 기능 흡수). 없으면 일반 정규화.
+    if "{model}" in url:
+        url = url.replace("{model}", model)
     norm_url = _normalize_openai_compat_url(url)
     reasoning_family = _detect_reasoning_family(model, _current_config.get("llm_reasoning_preset", "auto"))
     body = _build_openai_body(
@@ -1845,7 +1812,7 @@ async def _stream_vertex_openai(messages: list, model: str):
         yield ev
 
 
-async def _dispatch_stream(messages: list, service: str, model: str, endpoint: str = ""):
+async def _dispatch_stream(messages: list, service: str, model: str):
     """스트리밍 라우팅. yield events."""
     _llm_log(f"_dispatch_stream: service={service}, model={model}")
 
@@ -1898,13 +1865,6 @@ async def _dispatch_stream(messages: list, service: str, model: str, endpoint: s
         base = _current_config.get("llm_url") or "https://ollama.com"
         async for ev in _stream_openai_compat(messages, model, base, api_key=api_key, service="ollama-cloud"):
             yield ev
-    elif service in ("customapi", "openai-compat"):
-        if not endpoint:
-            yield {"type": "error", "error": f"{service}: URL 이 설정되지 않음"}
-            return
-        api_key = _current_config.get("llm_api_key", "")
-        async for ev in _stream_openai_compat(messages, model, endpoint, api_key=api_key, service=service):
-            yield ev
     else:
         yield {"type": "error", "error": f"알 수 없는 LLM 서비스: {service}"}
 
@@ -1917,7 +1877,6 @@ async def callLLMStream(messages: list, model: str = None, log_history: bool = T
     """
     service = _current_config["llm_service"]
     use_model = model or _current_config["llm_model"]
-    endpoint = _current_config.get("custom_api_url", "")
 
     final_text = ""
     final_tokens = 0
@@ -1926,7 +1885,7 @@ async def callLLMStream(messages: list, model: str = None, log_history: bool = T
     final_ttft = None
     error_msg = ""
 
-    async for ev in _dispatch_stream(messages, service, use_model, endpoint):
+    async for ev in _dispatch_stream(messages, service, use_model):
         if ev["type"] == "done":
             final_text = ev.get("text", "")
             final_tokens = ev.get("completion_tokens", 0)
@@ -1944,3 +1903,104 @@ async def callLLMStream(messages: list, model: str = None, log_history: bool = T
             elapsed=final_elapsed, tps=final_tps, ttft=final_ttft,
             error=error_msg,
         )
+
+
+async def callLLM2Stream(messages: list, model: str = None, log_history: bool = True):
+    """LLM2 스트리밍 호출. 이벤트 dict 를 yield.
+
+    callLLM2 의 설정 스왑 패턴(key2/url2/preset2/effort2/body2 → LLM1 슬롯 임시 덮어쓰기)과
+    callLLMStream 의 스트리밍 디스패치(_dispatch_stream)를 합성한다.
+    llm_service2 가 비어 있으면 LLM1 서비스/엔드포인트를 재사용(callLLM2 와 동일).
+    """
+    service = _current_config.get("llm_service2") or _current_config["llm_service"]
+    use_model = model or _current_config.get("llm_model2")
+    if not use_model:
+        yield {"type": "error", "error": "[LLM 실패] LLM2 모델명이 설정되지 않았습니다"}
+        return
+
+    key2 = _current_config.get("llm_api_key2", "")
+    url2 = _current_config.get("llm_url2", "")
+    preset2 = _current_config.get("llm_reasoning_preset2", "")
+    effort2 = _current_config.get("llm_reasoning_effort2", "")
+    body2 = _current_config.get("llm_custom_body2", "")
+    saved_key = _current_config.get("llm_api_key", "")
+    saved_url = _current_config.get("llm_url", "")
+    saved_preset = _current_config.get("llm_reasoning_preset", "auto")
+    saved_effort = _current_config.get("llm_reasoning_effort", "")
+    saved_body = _current_config.get("llm_custom_body", "")
+
+    final_text = ""
+    final_tokens = 0
+    final_elapsed = 0.0
+    final_tps = 0.0
+    final_ttft = None
+    error_msg = ""
+
+    try:
+        if key2:
+            _current_config["llm_api_key"] = key2
+        if url2:
+            _current_config["llm_url"] = url2
+        if preset2:
+            _current_config["llm_reasoning_preset"] = preset2
+        if effort2:
+            _current_config["llm_reasoning_effort"] = effort2
+        if body2:
+            _current_config["llm_custom_body"] = body2
+
+        async for ev in _dispatch_stream(messages, service, use_model):
+            if ev["type"] == "done":
+                final_text = ev.get("text", "")
+                final_tokens = ev.get("completion_tokens", 0)
+                final_elapsed = ev.get("elapsed", 0.0)
+                final_tps = ev.get("tps", 0.0)
+                final_ttft = ev.get("ttft")
+            elif ev["type"] == "error":
+                error_msg = ev.get("error", "")
+            yield ev
+
+        if log_history:
+            _log_history(
+                service=service, model=use_model, messages=messages,
+                output=final_text, completion_tokens=final_tokens,
+                elapsed=final_elapsed, tps=final_tps, ttft=final_ttft,
+                error=error_msg,
+            )
+    finally:
+        _current_config["llm_api_key"] = saved_key
+        _current_config["llm_url"] = saved_url
+        _current_config["llm_reasoning_preset"] = saved_preset
+        _current_config["llm_reasoning_effort"] = saved_effort
+        _current_config["llm_custom_body"] = saved_body
+
+
+async def callLLMVision2Stream(messages: list, image_b64: str, image_mime: str = "image/webp",
+                                model: str = None, log_history: bool = True):
+    """비전(이미지 입력) LLM2 스트리밍 호출. delta/done/error 이벤트를 비동기 제너레이터로 yield.
+
+    callLLMVision2 의 비전 처리(_normalize_vision_image/_build_vision_messages, supports_vision 체크) 후
+    callLLM2Stream 으로 위임한다. callLLMVisionStream → callLLMStream 구조와 동일.
+    """
+    service = _current_config.get("llm_service2") or _current_config["llm_service"]
+    if not supports_vision(service):
+        yield {"type": "error", "error": f"[LLM 실패] LLM2 서비스({service})가 비전(이미지 입력)을 지원하지 않습니다. "
+                                          "OpenAI 호환/Gemini/Claude 등 비전 지원 서비스를 선택하세요."}
+        return
+    use_model = model or _current_config.get("llm_model2")
+    if not use_model:
+        yield {"type": "error", "error": "[LLM 실패] LLM2 모델명이 설정되지 않았습니다"}
+        return
+    if not image_b64:
+        yield {"type": "error", "error": "callLLMVision2Stream: image_b64 가 비어 있습니다."}
+        return
+
+    try:
+        image_b64, image_mime = _normalize_vision_image(image_b64, image_mime)
+        new_messages = _build_vision_messages(messages, image_b64, image_mime=image_mime)
+    except ValueError as e:
+        yield {"type": "error", "error": str(e)}
+        return
+
+    _llm_log(f"callLLMVision2Stream: service={service} model={use_model} mime={image_mime} img_b64_len={len(image_b64)}")
+    async for ev in callLLM2Stream(new_messages, model=use_model, log_history=log_history):
+        yield ev
