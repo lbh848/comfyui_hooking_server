@@ -364,6 +364,7 @@ class IllustPromptBuilder:
         anima_loras = []
         sdxl_loras = []
         all_face_loras = []
+        all_style_loras = []
 
         for char_name in detected_chars:
             char_data = next((c for c in characters if c["name"] == char_name), None)
@@ -406,29 +407,28 @@ class IllustPromptBuilder:
                     item["UPSCALE_SIZE"] = upscale_size
                 all_face_loras.append(item)
 
-            # style_loras(그림체) 수집 → 일반 LoRA(LORA_DATA)에 추가 요소로 병합
+            # style_loras(그림체) 수집 → 트리거는 메인 트리거에 유지,
+            # LoRA 데이터는 일반 LoRA(LORA_DATA)에서 분리하여 STYLE_LORA_DATA로 별도 출력
             for slora in char_data.get("style_loras", []):
                 strigger = (slora.get("trigger", "") or "").strip()
                 sbase = slora.get("BASE", "anima")
                 slora_path = self._resolve_lora_path(slora)
                 sstrength = slora.get("strength", 0.8)
 
+                # 트리거워드는 메인 트리거(ANIMA_CONTENT/SDXL 맨 앞)에 유지
                 if sbase == "anima":
                     if strigger and strigger not in anima_triggers:
                         anima_triggers.append(strigger)
-                    anima_loras.append({
-                        "lora_path": slora_path,
-                        "str": sstrength,
-                        "BASE": "anima"
-                    })
                 elif sbase == "sdxl":
                     if strigger and strigger not in sdxl_triggers:
                         sdxl_triggers.append(strigger)
-                    sdxl_loras.append({
-                        "lora_path": slora_path,
-                        "str": sstrength,
-                        "BASE": "sdxl"
-                    })
+
+                # LoRA 경로/강도/BASE는 STYLE_LORA_DATA로 분리
+                all_style_loras.append({
+                    "lora_path": slora_path,
+                    "str": sstrength,
+                    "BASE": sbase
+                })
 
         # ─── 아티스트 프리셋 태그 ───
         artist_presets = tags.get("artist_presets", {})
@@ -568,6 +568,15 @@ class IllustPromptBuilder:
         face_lora_data = {"list": all_face_loras}
         positive += "\n[FACE_LORA_DATA]"
         positive += "\n" + json.dumps(face_lora_data, ensure_ascii=False)
+
+        # STYLE LORA (그림체) — 캐릭터 LoRA(LORA_DATA)와 분리하여 별도 섹션 출력
+        has_style_lora = len(all_style_loras) > 0
+        positive += f"\n[STYLE_LORA_ACTIVATE]"
+        positive += f"\n{'true' if has_style_lora else 'false'}"
+
+        style_lora_data = {"list": all_style_loras}
+        positive += "\n[STYLE_LORA_DATA]"
+        positive += "\n" + json.dumps(style_lora_data, ensure_ascii=False)
 
         # CHAR FACE TAG INFORM
         whitelist = settings.get("positive_whitelist", [])
