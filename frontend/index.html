@@ -40213,6 +40213,7 @@
             instance_lora_training: '인스턴스로라',
             instance_lora_analysis: '인스턴스분석',
             tag_analysis: '태그분석',
+            regenerate: '재생성',
         };
 
         function _updateIllustWaitTimer() {
@@ -40529,7 +40530,7 @@
             }
 
             // 이미지 생성 계열 큐 완료 시 백업 탭 자동 갱신 (WS 불안정 폴백)
-            const genTypes = ['restore_manual', 'illustration', 'asset_generation', 'data_patch'];
+            const genTypes = ['restore_manual', 'illustration', 'regenerate', 'asset_generation', 'data_patch'];
             const genJustCompleted = data.items.some(i =>
                 genTypes.includes(i.type) &&
                 (i.status === 'completed' || i.status === 'failed') &&

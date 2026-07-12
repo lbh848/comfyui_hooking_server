@@ -48,8 +48,9 @@ class QueueItem:
     batch_total: Optional[int] = None
 
     def to_dict(self) -> dict:
-        d = asdict(self)
-        return d
+        # completion_future 는 dataclass 필드가 아닌 일반 인스턴스 속성(add_item에서 부착)이므로
+        # asdict 가 건드리지 않는다 — deepcopy 불가 Future 가 직렬화에 섞이지 않음.
+        return asdict(self)
 
 
 class QueueManager:
@@ -89,6 +90,19 @@ class QueueManager:
         self.process_prompt_full = None         # async def(prompt_id, prompt_data, positive, negative) -> None
         self.save_backup = None                 # async def(img_bytes, mode, positive, negative) -> None
 
+    def _settle_future(self, item: QueueItem) -> None:
+        """아이템이 종료 상태(completed/failed/cancelled)에 도달했을 때
+        completion_future를 해결한다. 이미 해결된 경우 무시."""
+        fut = getattr(item, "completion_future", None)
+        if fut is None or fut.done():
+            return
+        if item.status == "completed":
+            fut.set_result(item.result)
+        elif item.status == "failed":
+            fut.set_exception(RuntimeError(item.error or "큐 처리 실패"))
+        elif item.status == "cancelled":
+            fut.set_exception(RuntimeError("큐 항목이 취소되었습니다"))
+
     async def add_item(self, item_type: str, label: str, params: dict, priority: int = 10, skip_notify: bool = False) -> QueueItem:
         item = QueueItem(
             id=uuid.uuid4().hex[:12],
@@ -97,14 +111,19 @@ class QueueManager:
             params=params,
             priority=priority,
         )
+        # 대기 완료를 기다릴 수 있도록 Future 부착 (재생성 HTTP 핸들러 등이 await)
+        try:
+            item.completion_future = asyncio.get_running_loop().create_future()
+        except RuntimeError:
+            item.completion_future = asyncio.get_event_loop().create_future()
         self.items.append(item)
         self._resort_pending()
         print(f"[QUEUE] 항목 추가: type={item_type}, label={label}, id={item.id}, priority={priority}, 대기={len([i for i in self.items if i.status == 'pending'])}")
         if not skip_notify:
             await self._notify_queue_updated()
-        # 삽화 대기 중이면 즉시 깨움
-        if item_type == "illustration" and self._illust_wait_event is not None:
-            print("[QUEUE] 삽화 대기 중 새 삽화 도착 - 즉시 진행")
+        # 삽화 대기 중이면 즉시 깨움 (재생성도 삽화와 같은 줄이므로 즉시 진행)
+        if item_type in ("illustration", "regenerate") and self._illust_wait_event is not None:
+            print(f"[QUEUE] 삽화 대기 중 새 {item_type} 도착 - 즉시 진행")
             self._illust_wait_event.set()
         # 처리 루프가 idle이면 시작
         asyncio.ensure_future(self._process_loop())
@@ -150,6 +169,7 @@ class QueueManager:
             if item.batch_id == batch_id and item.status == "pending":
                 item.status = "cancelled"
                 item.completed_at = time.time()
+                self._settle_future(item)
                 cancelled += 1
         if cancelled > 0:
             print(f"[QUEUE] 배치 취소: batch_id={batch_id}, {cancelled}개")
@@ -163,6 +183,7 @@ class QueueManager:
                     item.status = "cancelled"
                     item.completed_at = time.time()
                     print(f"[QUEUE] 항목 취소: id={item_id}, label={item.label}")
+                    self._settle_future(item)
                     await self._notify_queue_updated()
                     return True
                 return False
@@ -174,6 +195,7 @@ class QueueManager:
             if item.status == "pending":
                 item.status = "cancelled"
                 item.completed_at = time.time()
+                self._settle_future(item)
                 cancelled += 1
         if cancelled > 0:
             print(f"[QUEUE] 대기 항목 {cancelled}개 전체 취소")
@@ -210,8 +232,9 @@ class QueueManager:
         self.items = other + pending
 
     def _sort_key(self, item):
-        # illustration은 항상 최우선 (priority=0)
-        if item.type == "illustration":
+        # illustration / regenerate 는 항상 최우선 그룹 (priority=0, type_order=0).
+        # 같은 그룹 내에서는 적재 순(created_at) FIFO — 일반 삽화와 재생성이 같은 줄에 선다.
+        if item.type in ("illustration", "regenerate"):
             return (item.priority, 0, 0, item.created_at)
 
         # config에서 타입별 순서 읽기
@@ -359,6 +382,8 @@ class QueueManager:
             print(f"[QUEUE] 처리 실패: id={item.id}, error={e}")
             traceback.print_exc()
         item.completed_at = time.time()
+        # 대기 중인 HTTP 핸들러 등에게 완료/실패 알림
+        self._settle_future(item)
         if is_gpu:
             self.current_item = None
         was_illustration = item.type == "illustration"
@@ -458,6 +483,7 @@ class QueueManager:
             "auto_match_batch": self._handle_auto_match_batch,
             "data_patch_utility": self._handle_data_patch_utility,
             "restore_manual": self._handle_restore_manual,
+            "regenerate": self._handle_regenerate,
             "bot_llm_face_tag_analysis": self._handle_bot_llm_face_tag_analysis,
             "instance_lora_prompt_refine": self._handle_instance_lora_prompt_refine,
         }
@@ -518,6 +544,54 @@ class QueueManager:
         elif not img_bytes:
             raise RuntimeError(f"이미지 생성 실패: {error}")
         return {"success": True}
+
+    async def _handle_regenerate(self, item: QueueItem) -> dict:
+        """삽화 백업 재생성 (백업 프롬프트 + 현재 워크플로우로 이미지 재생성).
+        백업 읽기/강화 프롬프트/bot_name 추출은 HTTP 핸들러(server.py)에서 미리 수행해
+        params 로 backup_name/positive/negative/bot_name 을 넘겨받는다.
+        큐 매니저는 ComfyUI 자원(삽화와 동일 priority=0 직렬화)만 담당한다."""
+        params = item.params
+        positive = params.get("positive", "")
+        negative = params.get("negative", "")
+        bot_name = params.get("bot_name", "")
+        backup_name = params.get("backup_name", "")
+
+        if not self.generate_image_with_prompt:
+            raise RuntimeError("generate_image_with_prompt 콜백이 설정되지 않았습니다")
+
+        async def _on_regen_progress(value, max_value):
+            await self._notify_progress(item, {
+                "phase": "generating",
+                "value": value,
+                "max": max_value,
+                "current": value,
+                "total": max_value,
+            })
+
+        start_time = time.time()
+        img_bytes, error = await self.generate_image_with_prompt(positive, negative, progress_callback=_on_regen_progress)
+        elapsed_time = time.time() - start_time
+
+        if not img_bytes:
+            raise RuntimeError(f"재생성 실패: {error}")
+
+        # 재생성 이미지 백업 저장 — 원본 백업의 bot_name 상속 (같은 봇 딱지)
+        regen_id = uuid.uuid4().hex
+        if self.save_backup:
+            await self.save_backup(
+                img_bytes, regen_id, positive, negative,
+                generation_time=elapsed_time, bot_name=bot_name,
+            )
+        print(
+            f"[QUEUE:regenerate] 완료: backup={backup_name} ({len(img_bytes):,}B, {elapsed_time:.1f}s)"
+            + (f" (bot={bot_name})" if bot_name else "")
+        )
+        return {
+            "success": True,
+            "image_size": len(img_bytes),
+            "generation_time": elapsed_time,
+            "backup_name": backup_name,
+        }
 
     async def _handle_asset_generation(self, item: QueueItem) -> dict:
         """에셋 이미지 생성 (기존 handle_api_asset_mode_generate 로직)."""

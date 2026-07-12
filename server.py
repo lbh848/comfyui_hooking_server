@@ -3249,7 +3249,13 @@ async def handle_api_conversion_info(request: web.Request) -> web.Response:
 
 
 async def handle_api_regenerate(request: web.Request) -> web.Response:
-    """백업의 프롬프트 + 현재 워크플로우로 이미지를 재생성해 반환한다."""
+    """백업의 프롬프트 + 현재 워크플로우로 이미지를 재생성해 반환한다.
+
+    생성 자체는 통합 큐(regenerate 타입, priority=0)를 경유해 일반 삽화 생성과
+    ComfyUI 자원을 공유하며 직렬 처리된다. HTTP 응답은 큐 항목 완료를 await 한다.
+    (프론트엔드는 응답의 image를 사용하지 않고 loadBackups()로 결과를 보므로
+    base64는 더 이상 반환하지 않는다.)
+    """
     try:
         body = await request.json()
         backup_name = body.get("name", "")
@@ -3278,24 +3284,28 @@ async def handle_api_regenerate(request: web.Request) -> web.Response:
             except Exception:
                 pass
 
-        print(f"[REGEN] 재생성 시작: {backup_name}")
+        # 원본 백업의 bot_name 상속 (같은 봇 딱지)
+        src_bot_name = _read_backup_bot_name(backup_name)
+
+        print(f"[REGEN] 재생성 큐 등록: {backup_name}")
         print(f"[REGEN] 긍정: {positive[:60]}...")
 
-        start_time = time.time()
-        img_bytes, result_info = await generate_image_with_prompt(positive, negative)
-        elapsed_time = time.time() - start_time
-        
-        if img_bytes is None:
-            return web.json_response({"error": str(result_info)}, status=500)
-
-        # 재생성 이미지도 백업 저장 (원본 백업의 bot_name을 물려받아 같은 봇 딱지가 붙도록)
-        regen_id = uuid.uuid4().hex
-        src_bot_name = _read_backup_bot_name(backup_name)
-        await save_backup(img_bytes, regen_id, positive, negative, generation_time=elapsed_time, bot_name=src_bot_name)
-
-        b64 = base64.b64encode(img_bytes).decode("ascii")
-        print(f"[REGEN] 완료: {len(img_bytes):,} bytes ({elapsed_time:.1f}s)" + (f" (bot={src_bot_name})" if src_bot_name else ""))
-        return web.json_response({"image": f"data:image/png;base64,{b64}"})
+        item = await queue_manager.add_item(
+            "regenerate",
+            f"재생성: {backup_name}",
+            {
+                "backup_name": backup_name,
+                "positive": positive,
+                "negative": negative,
+                "bot_name": src_bot_name or "",
+            },
+            priority=0,
+        )
+        # 큐 처리 완료를 동기 대기 — 프론트엔드의 await 기반 UX(스피너/토스트) 보존
+        result = await item.completion_future
+        elapsed_time = result.get("generation_time") if isinstance(result, dict) else None
+        print(f"[REGEN] 완료: backup={backup_name} ({elapsed_time:.1f}s)" if elapsed_time else f"[REGEN] 완료: {backup_name}")
+        return web.json_response({"success": True, "message": "재생성 완료"})
 
     except Exception as e:
         tb = traceback.format_exc()
@@ -3481,48 +3491,50 @@ async def handle_api_reschedule(request: web.Request) -> web.Response:
 
 
 async def handle_api_reschedule_with_modified_prompt(request: web.Request) -> web.Response:
-    """Reschedule with modified prompt - generates new image with modified prompts and schedules for retransmission."""
-    global reschedule_queue
-    
+    """Reschedule with modified prompt - generates new image with modified prompts and schedules for retransmission.
+
+    생성은 통합 큐(regenerate 타입, priority=0)를 경유해 일반 삽화 생성과 ComfyUI 자원을
+    공유하며 직렬 처리된다. HTTP 응답은 큐 항목 완료를 await 한다.
+    """
     try:
         body = await request.json()
         backup_name = body.get("name", "")
         modified_positive = body.get("positive", "")
         modified_negative = body.get("negative", "")
-        
+
         if ".." in backup_name or "/" in backup_name or "\\" in backup_name:
             return web.json_response({"error": "Invalid name"}, status=400)
-        
+
         if not modified_positive and not modified_negative:
             return web.json_response({"error": "At least one prompt must be modified"}, status=400)
-        
-        print(f"[RESCHEDULE_MOD] Modified reschedule: {backup_name}")
+
+        # 원본 백업의 bot_name 상속 (같은 봇 딱지)
+        src_bot_name = _read_backup_bot_name(backup_name)
+
+        print(f"[RESCHEDULE_MOD] 수정 재생성 큐 등록: {backup_name}")
         print(f"[RESCHEDULE_MOD] Modified positive: {modified_positive[:60]}...")
         print(f"[RESCHEDULE_MOD] Modified negative: {modified_negative[:60]}...")
-        
-        # Generate new image with modified prompts
-        start_time = time.time()
-        img_bytes, node_errors = await generate_image_with_prompt(modified_positive, modified_negative)
-        elapsed_time = time.time() - start_time
-        
-        if img_bytes is None:
-            return web.json_response({"error": str(node_errors)}, status=500)
-        
-        # Backup the new image (원본 백업의 bot_name을 물려받아 같은 봇 딱지가 붙도록)
-        regen_id = uuid.uuid4().hex
-        src_bot_name = _read_backup_bot_name(backup_name)
-        await save_backup(img_bytes, regen_id, modified_positive, modified_negative, generation_time=elapsed_time, bot_name=src_bot_name)
-        
-        print(f"[RESCHEDULE_MOD] New image generated: {len(img_bytes):,} bytes ({elapsed_time:.1f}s)" + (f" (bot={src_bot_name})" if src_bot_name else ""))
-        
-        # Return base64 of new image for preview
-        b64 = base64.b64encode(img_bytes).decode("ascii")
+
+        item = await queue_manager.add_item(
+            "regenerate",
+            f"수정재생성: {backup_name}",
+            {
+                "backup_name": backup_name,
+                "positive": modified_positive,
+                "negative": modified_negative,
+                "bot_name": src_bot_name or "",
+            },
+            priority=0,
+        )
+        # 큐 처리 완료 동기 대기 — 프론트엔드의 await 기반 UX 보존
+        result = await item.completion_future
+        elapsed_time = result.get("generation_time") if isinstance(result, dict) else None
+        print(f"[RESCHEDULE_MOD] 완료: backup={backup_name}" + (f" ({elapsed_time:.1f}s)" if elapsed_time else "") + (f" (bot={src_bot_name})" if src_bot_name else ""))
         return web.json_response({
             "success": True,
-            "image": f"data:image/png;base64,{b64}",
             "message": "Modified image generated"
         })
-        
+
     except Exception as e:
         tb = traceback.format_exc()
         print(f"[ERROR] reschedule_with_modified_prompt failed: {e}\n{tb}")
