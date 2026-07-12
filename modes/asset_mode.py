@@ -13,6 +13,7 @@ import uuid
 import hashlib
 import shutil
 import traceback
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional, Callable, Awaitable
 
 
@@ -81,6 +82,143 @@ DEFAULT_TAGS = {
     "anima_quality": [],
     "anima_negative": [],
 }
+
+
+# ─── 프리셋 추적 병렬화 (I/O 바운드 → 스레드풀) ───────────────────────
+def _trace_worker_count() -> int:
+    """스레드풀 워커 수. 시스템 여유 확보를 위해 cpu-2 기반, 최소 2, 상한 16."""
+    cpu = os.cpu_count() or 4
+    base = max(2, cpu - 2)
+    return min(16, base * 2)
+
+
+_trace_executor: Optional[ThreadPoolExecutor] = None
+
+
+def _get_trace_executor() -> ThreadPoolExecutor:
+    """프리셋 추적 전용 공유 스레드풀(지연 생성, 재사용)."""
+    global _trace_executor
+    if _trace_executor is None:
+        _trace_executor = ThreadPoolExecutor(
+            max_workers=_trace_worker_count(), thread_name_prefix="preset-trace"
+        )
+    return _trace_executor
+
+
+# 카테고리 → prompt_data 필드 매핑 (필드값 일치 후 태그 카운트)
+_TRACE_FIELD_MAP = {
+    "appearances": "appearance",
+    "outfits": "outfit",
+    "expressions": "expression",
+}
+
+
+def _collect_prompt_files() -> list:
+    """asset/ 트리의 모든 *_prompt.json 을 (char, outfit, expr, expr_dir, fname, path) 튜플로 수집.
+    순회 1회만 수행하여 total 카운트/스캔 중복 순회를 제거한다."""
+    files = []
+    if not os.path.isdir(ASSET_DIR):
+        return files
+    for char_name in os.listdir(ASSET_DIR):
+        char_dir = os.path.join(ASSET_DIR, char_name)
+        if not os.path.isdir(char_dir):
+            continue
+        for outfit_name in os.listdir(char_dir):
+            outfit_dir = os.path.join(char_dir, outfit_name)
+            if not os.path.isdir(outfit_dir):
+                continue
+            for expr_name in os.listdir(outfit_dir):
+                expr_dir = os.path.join(outfit_dir, expr_name)
+                if not os.path.isdir(expr_dir):
+                    continue
+                for fname in os.listdir(expr_dir):
+                    if fname.endswith("_prompt.json"):
+                        files.append((
+                            char_name, outfit_name, expr_name,
+                            expr_dir, fname, os.path.join(expr_dir, fname),
+                        ))
+    return files
+
+
+def _match_one_prompt(args) -> Optional[dict]:
+    """프롬프트 파일 1개를 읽어 프리셋 매칭. 스레드 안전(공유 가변 상태 없음, 읽기 전용).
+    인자: (prompt_path, category, name, preset_tags, char_name, outfit_name, expr_name, expr_dir, fname)
+    반환: 매치 시 dict(positive/negative/_prompt_data 포함 슈퍼셋), 미매치·실패 시 None."""
+    (prompt_path, category, name, preset_tags,
+     char_name, outfit_name, expr_name, expr_dir, fname) = args
+    try:
+        with open(prompt_path, "r", encoding="utf-8") as f:
+            prompt_data = json.load(f)
+    except Exception as e:
+        print(f"[ASSET_MODE] trace: {prompt_path} 읽기 실패: {e}")
+        return None
+
+    match_count = 0
+    if category in _TRACE_FIELD_MAP:
+        field = _TRACE_FIELD_MAP[category]
+        if prompt_data.get(field) == name:
+            positive = prompt_data.get("positive", "")
+            match_count = sum(1 for tag in preset_tags if tag and tag.lower() in positive.lower())
+            if match_count == 0:
+                match_count = 1
+    elif category in ("quality_presets", "composition_presets", "artist_presets"):
+        positive = prompt_data.get("positive", "")
+        match_count = sum(1 for tag in preset_tags if tag and tag.lower() in positive.lower())
+    elif category in ("negative_presets", "character_negative_presets"):
+        negative = prompt_data.get("negative", "")
+        match_count = sum(1 for tag in preset_tags if tag and tag.lower() in negative.lower())
+    elif category == "natural_language_presets":
+        positive = prompt_data.get("positive", "")
+        nl_text = preset_tags[0] if preset_tags else ""
+        if nl_text and nl_text.lower() in positive.lower():
+            match_count = 1
+
+    if match_count <= 0:
+        return None
+
+    img_file = fname.replace("_prompt.json", "")
+    for ext in (".png", ".jpg", ".jpeg", ".webp"):
+        if os.path.isfile(os.path.join(expr_dir, img_file + ext)):
+            img_file = img_file + ext
+            break
+    else:
+        img_file = fname
+
+    return {
+        "character": prompt_data.get("character", char_name),
+        "outfit": prompt_data.get("outfit", outfit_name),
+        "expression": prompt_data.get("expression", expr_name),
+        "image_file": img_file,
+        "match_count": match_count,
+        "positive": prompt_data.get("positive", ""),
+        "negative": prompt_data.get("negative", ""),
+        "_prompt_data": prompt_data,  # 내부용: 동기 경로만 사용
+    }
+
+
+def _split_chunks(seq, n):
+    """seq를 n개 청크로 분할(균등). n > len(seq) 이면 빈 청크 없이 분배."""
+    n = max(1, min(n, len(seq))) if seq else 1
+    k, m = divmod(len(seq), n)
+    out = []
+    start = 0
+    for i in range(n):
+        size = k + (1 if i < m else 0)
+        out.append(seq[start:start + size])
+        start += size
+    return out
+
+
+def _match_chunk(file_args) -> list:
+    """한 청크(파일 인자 리스트)를 순차 스캔해 매치 결과 리스트 반환.
+    청크 단위로 future를 만들어 10k future 제출 오버헤드를 회피한다.
+    웜 캐시에서 순차와 동급, 콜드 캐시에서 스레드풀 I/O 병렬 이득 유지."""
+    out = []
+    for a in file_args:
+        m = _match_one_prompt(a)
+        if m is not None:
+            out.append(m)
+    return out
 
 
 class AssetMode:
@@ -2397,104 +2535,54 @@ class AssetMode:
         return {"success": True, "name": name, "count": len(tags)}
 
     # ─── 프리셋매니징: 에셋 추적 ────────────────────────────
+    def _get_preset_tags_raw(self, category: str, name: str) -> Optional[list]:
+        """활성/숨김에서 프리셋 태그 원본 리스트를 가져온다. 못 찾으면 None."""
+        active_cat = self._tags.get(category, {})
+        hidden = self.load_hidden_tags()
+        hidden_cat = hidden.get(category, {})
+        if isinstance(active_cat, dict) and name in active_cat:
+            v = active_cat[name]
+            return v if isinstance(v, list) else [v]
+        if isinstance(hidden_cat, dict) and name in hidden_cat:
+            v = hidden_cat[name]
+            return v if isinstance(v, list) else [v]
+        return None
+
     def trace_preset_assets(self, category: str, name: str) -> dict:
-        """프리셋이 사용된 에셋 이미지를 추적"""
+        """프리셋이 사용된 에셋 이미지를 추적 (스레드풀 병렬 스캔)."""
         if category not in PRESET_MGMT_CATEGORIES:
             print(f"[ASSET_MODE] trace_preset_assets: 지원하지 않는 카테고리 '{category}'")
             return {"success": False, "error": f"지원하지 않는 카테고리: {category}"}
 
-        # 프리셋 태그 가져오기 (활성 + 숨김 모두 확인)
-        preset_tags = []
-        active_cat = self._tags.get(category, {})
-        hidden = self.load_hidden_tags()
-        hidden_cat = hidden.get(category, {})
-
-        if isinstance(active_cat, dict) and name in active_cat:
-            preset_tags = active_cat[name] if isinstance(active_cat[name], list) else [active_cat[name]]
-        elif isinstance(hidden_cat, dict) and name in hidden_cat:
-            preset_tags = hidden_cat[name] if isinstance(hidden_cat[name], list) else [hidden_cat[name]]
-        else:
+        preset_tags = self._get_preset_tags_raw(category, name)
+        if preset_tags is None:
             print(f"[ASSET_MODE] trace_preset_assets: '{name}'을(를) 찾을 수 없음")
             return {"success": False, "error": f"'{name}'을(를) 찾을 수 없습니다."}
 
-        # asset/ 디렉토리 순회
-        results = []
-        if not os.path.isdir(ASSET_DIR):
-            print(f"[ASSET_MODE] trace_preset_assets: asset/ 디렉토리 없음")
+        # 파일 목록 1회 수집
+        files = _collect_prompt_files()
+        if not files:
+            print(f"[ASSET_MODE] trace_preset_assets: asset/ 디렉토리 없음 또는 프롬프트 파일 없음")
             return {"success": True, "results": [], "preset_tags": preset_tags}
 
-        for char_name in os.listdir(ASSET_DIR):
-            char_dir = os.path.join(ASSET_DIR, char_name)
-            if not os.path.isdir(char_dir):
-                continue
-            for outfit_name in os.listdir(char_dir):
-                outfit_dir = os.path.join(char_dir, outfit_name)
-                if not os.path.isdir(outfit_dir):
-                    continue
-                for expr_name in os.listdir(outfit_dir):
-                    expr_dir = os.path.join(outfit_dir, expr_name)
-                    if not os.path.isdir(expr_dir):
-                        continue
-                    # _prompt.json 파일 순회
-                    for fname in os.listdir(expr_dir):
-                        if not fname.endswith("_prompt.json"):
-                            continue
-                        prompt_path = os.path.join(expr_dir, fname)
-                        try:
-                            with open(prompt_path, "r", encoding="utf-8") as f:
-                                prompt_data = json.load(f)
-                        except Exception as e:
-                            print(f"[ASSET_MODE] trace: {prompt_path} 읽기 실패: {e}")
-                            continue
-
-                        match_count = 0
-                        if category in ("appearances", "outfits", "expressions"):
-                            # 필드값 매칭 후 개별 태그 수 카운트
-                            field_map = {
-                                "appearances": "appearance",
-                                "outfits": "outfit",
-                                "expressions": "expression",
-                            }
-                            field = field_map[category]
-                            if prompt_data.get(field) == name:
-                                positive = prompt_data.get("positive", "")
-                                match_count = sum(1 for tag in preset_tags if tag and tag.lower() in positive.lower())
-                                if match_count == 0:
-                                    match_count = 1
-                        elif category in ("quality_presets", "composition_presets", "artist_presets"):
-                            # positive 텍스트에서 태그 포함 여부
-                            positive = prompt_data.get("positive", "")
-                            match_count = sum(1 for tag in preset_tags if tag and tag.lower() in positive.lower())
-                        elif category in ("negative_presets", "character_negative_presets"):
-                            # negative 텍스트에서 태그 포함 여부
-                            negative = prompt_data.get("negative", "")
-                            match_count = sum(1 for tag in preset_tags if tag and tag.lower() in negative.lower())
-                        elif category == "natural_language_presets":
-                            # positive 텍스트에서 자연어 텍스트 포함 여부
-                            positive = prompt_data.get("positive", "")
-                            nl_text = preset_tags[0] if preset_tags else ""
-                            if nl_text and nl_text.lower() in positive.lower():
-                                match_count = 1
-
-                        if match_count > 0:
-                            img_file = fname.replace("_prompt.json", "")
-                            # 실제 이미지 확장자 확인
-                            for ext in [".png", ".jpg", ".jpeg", ".webp"]:
-                                if os.path.isfile(os.path.join(expr_dir, img_file + ext)):
-                                    img_file = img_file + ext
-                                    break
-                            else:
-                                # 이미지 파일이 없으면 prompt 파일명만 유지
-                                img_file = fname
-
-                            results.append({
-                                "character": prompt_data.get("character", char_name),
-                                "outfit": prompt_data.get("outfit", outfit_name),
-                                "expression": prompt_data.get("expression", expr_name),
-                                "image_file": img_file,
-                                "prompt_data": prompt_data,
-                                "match_count": match_count,
-                            })
+        # 스레드풀 병렬 매칭 (청크 단위, I/O 바운드)
+        executor = _get_trace_executor()
+        args_list = [
+            (path, category, name, preset_tags, char, outfit, expr, expr_dir, fname)
+            for (char, outfit, expr, expr_dir, fname, path) in files
+        ]
+        chunks = _split_chunks(args_list, executor._max_workers)
+        results = []
+        for chunk_matches in executor.map(_match_chunk, chunks):
+            for m in chunk_matches:
+                results.append({
+                    "character": m["character"],
+                    "outfit": m["outfit"],
+                    "expression": m["expression"],
+                    "image_file": m["image_file"],
+                    "prompt_data": m["_prompt_data"],
+                    "match_count": m["match_count"],
+                })
 
         # 일치순 정렬 (매칭 태그 수 많은 순)
         results.sort(key=lambda r: r.get("match_count", 0), reverse=True)
@@ -2502,22 +2590,16 @@ class AssetMode:
         return {"success": True, "results": results, "preset_tags": preset_tags}
 
     def trace_preset_assets_stream(self, category: str, name: str):
-        """프리셋 추적 제너레이터 - 매치 결과를 개별 이벤트로 yield"""
+        """프리셋 추적 제너레이터 - 스레드풀 병렬 스캔, 매치 결과를 개별 이벤트로 yield.
+
+        SSE 이벤트 계약 유지: start / progress / match / done / error (프론트엔드 변경 없음).
+        매치는 완료 순서로 도착한다(디렉토리 순서 아님). UI는 도착 순 렌더라 무관."""
         if category not in PRESET_MGMT_CATEGORIES:
             yield ("error", {"error": f"지원하지 않는 카테고리: {category}"})
             return
 
-        # 프리셋 태그 가져오기 (중복 제거)
-        preset_tags_raw = []
-        active_cat = self._tags.get(category, {})
-        hidden = self.load_hidden_tags()
-        hidden_cat = hidden.get(category, {})
-
-        if isinstance(active_cat, dict) and name in active_cat:
-            preset_tags_raw = active_cat[name] if isinstance(active_cat[name], list) else [active_cat[name]]
-        elif isinstance(hidden_cat, dict) and name in hidden_cat:
-            preset_tags_raw = hidden_cat[name] if isinstance(hidden_cat[name], list) else [hidden_cat[name]]
-        else:
+        preset_tags_raw = self._get_preset_tags_raw(category, name)
+        if preset_tags_raw is None:
             yield ("error", {"error": f"'{name}'을(를) 찾을 수 없습니다."})
             return
 
@@ -2532,104 +2614,52 @@ class AssetMode:
                 seen.add(t_lower)
                 preset_tags.append(t)
 
-        # 전체 _prompt.json 파일 수 먼저 카운트
-        total = 0
-        if os.path.isdir(ASSET_DIR):
-            for char_name in os.listdir(ASSET_DIR):
-                char_dir = os.path.join(ASSET_DIR, char_name)
-                if not os.path.isdir(char_dir):
-                    continue
-                for outfit_name in os.listdir(char_dir):
-                    outfit_dir = os.path.join(char_dir, outfit_name)
-                    if not os.path.isdir(outfit_dir):
-                        continue
-                    for expr_name in os.listdir(outfit_dir):
-                        expr_dir = os.path.join(outfit_dir, expr_name)
-                        if not os.path.isdir(expr_dir):
-                            continue
-                        for fname in os.listdir(expr_dir):
-                            if fname.endswith("_prompt.json"):
-                                total += 1
+        # 파일 목록 1회 수집 (기존 2회 순회 → 1회)
+        files = _collect_prompt_files()
+        total = len(files)
 
         yield ("start", {"total": total, "preset_tags": preset_tags})
 
         scanned = 0
-        match_count_total = 0
-        if os.path.isdir(ASSET_DIR):
-            for char_name in os.listdir(ASSET_DIR):
-                char_dir = os.path.join(ASSET_DIR, char_name)
-                if not os.path.isdir(char_dir):
-                    continue
-                for outfit_name in os.listdir(char_dir):
-                    outfit_dir = os.path.join(char_dir, outfit_name)
-                    if not os.path.isdir(outfit_dir):
-                        continue
-                    for expr_name in os.listdir(outfit_dir):
-                        expr_dir = os.path.join(outfit_dir, expr_name)
-                        if not os.path.isdir(expr_dir):
-                            continue
-                        for fname in os.listdir(expr_dir):
-                            if not fname.endswith("_prompt.json"):
-                                continue
-                            scanned += 1
-                            prompt_path = os.path.join(expr_dir, fname)
-                            try:
-                                with open(prompt_path, "r", encoding="utf-8") as f:
-                                    prompt_data = json.load(f)
-                            except Exception as e:
-                                print(f"[ASSET_MODE] trace: {prompt_path} 읽기 실패: {e}")
-                                yield ("progress", {"scanned": scanned, "total": total, "found": match_count_total})
-                                continue
+        found = 0
+        if total == 0:
+            yield ("done", {"total_found": 0})
+            self._log("preset_traced", {"category": category, "name": name, "matches": 0})
+            return
 
-                            match_count = 0
-                            if category in ("appearances", "outfits", "expressions"):
-                                field_map = {
-                                    "appearances": "appearance",
-                                    "outfits": "outfit",
-                                    "expressions": "expression",
-                                }
-                                field = field_map[category]
-                                if prompt_data.get(field) == name:
-                                    positive = prompt_data.get("positive", "")
-                                    match_count = sum(1 for tag in preset_tags if tag and tag.lower() in positive.lower())
-                                    if match_count == 0:
-                                        match_count = 1
-                            elif category in ("quality_presets", "composition_presets", "artist_presets"):
-                                positive = prompt_data.get("positive", "")
-                                match_count = sum(1 for tag in preset_tags if tag and tag.lower() in positive.lower())
-                            elif category in ("negative_presets", "character_negative_presets"):
-                                negative = prompt_data.get("negative", "")
-                                match_count = sum(1 for tag in preset_tags if tag and tag.lower() in negative.lower())
-                            elif category == "natural_language_presets":
-                                positive = prompt_data.get("positive", "")
-                                nl_text = preset_tags[0] if preset_tags else ""
-                                if nl_text and nl_text.lower() in positive.lower():
-                                    match_count = 1
+        # 스레드풀 병렬 매칭(청크 단위), 완료 순서대로 스트리밍
+        executor = _get_trace_executor()
+        args_list = [
+            (path, category, name, preset_tags, char, outfit, expr, expr_dir, fname)
+            for (char, outfit, expr, expr_dir, fname, path) in files
+        ]
+        chunks = _split_chunks(args_list, executor._max_workers)
+        fut_to_len = {executor.submit(_match_chunk, ch): len(ch) for ch in chunks}
 
-                            if match_count > 0:
-                                img_file = fname.replace("_prompt.json", "")
-                                for ext in [".png", ".jpg", ".jpeg", ".webp"]:
-                                    if os.path.isfile(os.path.join(expr_dir, img_file + ext)):
-                                        img_file = img_file + ext
-                                        break
-                                else:
-                                    img_file = fname
+        for fut in as_completed(fut_to_len):
+            ch_len = fut_to_len[fut]
+            try:
+                chunk_matches = fut.result()
+            except Exception as e:
+                print(f"[ASSET_MODE] trace: 청크 작업 예외 {type(e).__name__}: {e}")
+                traceback.print_exc()
+                chunk_matches = []
+            for m in chunk_matches:
+                found += 1
+                yield ("match", {
+                    "character": m["character"],
+                    "outfit": m["outfit"],
+                    "expression": m["expression"],
+                    "image_file": m["image_file"],
+                    "match_count": m["match_count"],
+                    "positive": m["positive"],
+                    "negative": m["negative"],
+                })
+            scanned += ch_len
+            yield ("progress", {"scanned": scanned, "total": total, "found": found})
 
-                                match_count_total += 1
-                                yield ("match", {
-                                    "character": prompt_data.get("character", char_name),
-                                    "outfit": prompt_data.get("outfit", outfit_name),
-                                    "expression": prompt_data.get("expression", expr_name),
-                                    "image_file": img_file,
-                                    "match_count": match_count,
-                                    "positive": prompt_data.get("positive", ""),
-                                    "negative": prompt_data.get("negative", ""),
-                                })
-
-                            yield ("progress", {"scanned": scanned, "total": total, "found": match_count_total})
-
-        yield ("done", {"total_found": match_count_total})
-        self._log("preset_traced", {"category": category, "name": name, "matches": match_count_total})
+        yield ("done", {"total_found": found})
+        self._log("preset_traced", {"category": category, "name": name, "matches": found})
     def get_status(self) -> dict:
         return {
             "workflow_source_path": self.workflow_source_path,
