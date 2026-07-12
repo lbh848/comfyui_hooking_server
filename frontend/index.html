@@ -278,6 +278,17 @@
             background: #3e8e41;
         }
 
+        .card-actions button.delete-backup-btn {
+            background: var(--error);
+            border-color: var(--error);
+            color: #fff;
+        }
+
+        .card-actions button.delete-backup-btn:hover:not(:disabled) {
+            background: #d32f2f;
+            border-color: #d32f2f;
+        }
+
         /* ─── 변환 정보 영역 ─── */
         .conversion-info {
             background: var(--bg);
@@ -8348,6 +8359,9 @@
                             <button onclick="toggleChat('${escapeAttr(b.name)}')">
                                 💬 채팅
                             </button>
+                            <button class="delete-backup-btn" onclick="deleteBackup('${escapeAttr(b.name)}', this)" title="이미지와 메타데이터를 삭제합니다">
+                                🗑️ 삭제
+                            </button>
                         </div>
                         ${hasPrompt ? `
                             <div style="display:flex; align-items:center;">
@@ -8707,6 +8721,50 @@
                     });
             } else {
                 el.style.display = 'none';
+            }
+        }
+
+        // ─── 백업 삭제 (이미지 + 메타데이터 3개 + 보조 파일 전부) ───
+        async function deleteBackup(name, btn) {
+            // 배치에 속한 백업은 삭제 금지 (프론트 선검사)
+            const currentBatchFiles = new Set(batchModeState.current_batch?.backup_filenames || []);
+            const scheduledBatchFiles = new Set(batchModeState.scheduled_batch?.backup_filenames || []);
+            if (scheduledBatchFiles.has(name)) {
+                showToast('예약된 배치의 백업은 삭제할 수 없습니다', 'error');
+                return;
+            }
+            if (currentBatchFiles.has(name)) {
+                showToast('현재 배치 진행 중인 백업은 삭제할 수 없습니다', 'error');
+                return;
+            }
+            if (!confirm(`이 백업을 삭제하시겠습니까?\n\n${name}\n\n이미지와 메타데이터가 모두 삭제되며, 삭제된 이미지 파일은 복구되지 않습니다.`)) {
+                return;
+            }
+            const originalText = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner"></span>';
+            try {
+                const data = await fetchJSON('/api/backup_delete/' + encodeURIComponent(name), {
+                    method: 'POST',
+                });
+                if (data.error) {
+                    showToast('삭제 실패: ' + data.error, 'error');
+                    btn.disabled = false;
+                    btn.innerHTML = originalText;
+                    return;
+                }
+                showToast('백업 삭제 완료', 'success');
+                // 로컬 목록/통계 갱신 (전체 새로고침 없이)
+                const idx = backupsData.findIndex(b => b.name === name);
+                if (idx >= 0) backupsData.splice(idx, 1);
+                paginationState.total = Math.max(0, paginationState.total - 1);
+                renderBackups(backupsData);
+                updateStatsBar();
+            } catch (e) {
+                // fetchJSON이 HTTP 에러 본문까지 노출 (CLAUDE.md: 구체적 에러 메시지)
+                showToast('삭제 실패: ' + (e.message || e), 'error');
+                btn.disabled = false;
+                btn.innerHTML = originalText;
             }
         }
 

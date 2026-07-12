@@ -2998,6 +2998,62 @@ async def handle_api_backup_chat(request: web.Request) -> web.Response:
     return web.json_response({"chat": chat})
 
 
+async def handle_api_backup_delete(request: web.Request) -> web.Response:
+    """백업 하나를 삭제한다. 이미지 + 워크플로우 메타데이터 + 보조 파일 전부."""
+    global reschedule_queue
+    name = request.match_info.get("name", "")
+    if not name or ".." in name or "/" in name or "\\" in name:
+        print(f"[BACKUP_DELETE] ✗ 잘못된 name: {name!r}")
+        return web.Response(status=400, text="Invalid name")
+
+    # 재전송 예약 중인 백업은 삭제 금지 (예약 먼저 취소해야 함)
+    if reschedule_queue is not None and reschedule_queue.get("name") == name:
+        print(f"[BACKUP_DELETE] ✗ 재전송 예약 중이라 삭제 불가: {name}")
+        return web.json_response(
+            {"error": "재전송 예약 중인 백업은 삭제할 수 없습니다. 예약을 먼저 취소하세요."},
+            status=409,
+        )
+
+    backup_dir = get_backup_base_dir()
+    # 핵심 3개(이미지/워크플로우/변환정보) + 보조 파일 + 구버전 .txt 호환
+    candidates = [
+        f"{name}.webp",
+        f"{name}.json",
+        f"{name}_info.json",
+        f"{name}_chat.txt",
+        f"{name}_enhanced.txt",
+        f"{name}_wildcard.json",
+        f"{name}.txt",
+    ]
+    deleted, failed = [], []
+    try:
+        for fname in candidates:
+            path = os.path.join(backup_dir, fname)
+            if not os.path.exists(path):
+                continue
+            try:
+                os.remove(path)
+                deleted.append(fname)
+            except Exception as e:
+                print(f"[BACKUP_DELETE] ⚠ 파일 삭제 실패: {fname} -> {e}")
+                traceback.print_exc()
+                failed.append(fname)
+
+        if not deleted:
+            print(f"[BACKUP_DELETE] ✗ 삭제할 백업 파일이 없음: {name}")
+            return web.json_response(
+                {"error": f"백업 파일을 찾을 수 없습니다: {name}"},
+                status=404,
+            )
+
+        print(f"[BACKUP_DELETE] 삭제 완료: {name} -> {deleted}" + (f" | 실패: {failed}" if failed else ""))
+        return web.json_response({"deleted": deleted, "failed": failed})
+    except Exception as e:
+        print(f"[BACKUP_DELETE] ✗ 예외: {name} -> {e}")
+        traceback.print_exc()
+        return web.json_response({"error": f"삭제 중 오류: {e}"}, status=500)
+
+
 async def handle_api_conversion_info(request: web.Request) -> web.Response:
     """현재 변환 정보를 반환한다."""
     return web.json_response(current_conversion_info)
@@ -4471,6 +4527,7 @@ app.router.add_get("/api/backups", handle_api_backups)
 app.router.add_get("/api/backup_image/{filename}", handle_api_backup_image)
 app.router.add_get("/api/backup_prompt/{name}", handle_api_backup_prompt)
 app.router.add_get("/api/backup_chat", handle_api_backup_chat)
+app.router.add_post("/api/backup_delete/{name}", handle_api_backup_delete)
 app.router.add_get("/api/conversion_info", handle_api_conversion_info)
 app.router.add_post("/api/regenerate", handle_api_regenerate)
 app.router.add_post("/api/reload_workflow", handle_api_reload_workflow)
