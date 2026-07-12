@@ -9699,6 +9699,7 @@ app.router.add_post("/api/instance_lora/images/upload", handle_api_instance_lora
 from modes.style_lora_mode import (
     handle_get_style_lora_prompt, handle_set_style_lora_prompt,
     handle_style_lora_auto_refine_enqueue,
+    handle_style_lora_test_auto_refine_enqueue,
 )
 app.router.add_get("/api/style_lora/projects", handle_api_style_lora_projects)
 app.router.add_post("/api/style_lora/projects", handle_api_style_lora_projects)
@@ -9728,6 +9729,7 @@ app.router.add_post("/api/style_lora/training/start", handle_api_style_lora_trai
 app.router.add_get("/api/style_lora/auto_lora_prompt", handle_get_style_lora_prompt)
 app.router.add_post("/api/style_lora/auto_lora_prompt", handle_set_style_lora_prompt)
 app.router.add_post("/api/style_lora/auto_refine_enqueue", handle_style_lora_auto_refine_enqueue)
+app.router.add_post("/api/style_lora/test_auto_refine_enqueue", handle_style_lora_test_auto_refine_enqueue)
 app.router.add_get("/api/style_lora/trained/sessions", handle_api_style_lora_trained_sessions)
 app.router.add_get("/api/style_lora/trained/steps", handle_api_style_lora_trained_steps)
 app.router.add_get("/api/style_lora/trained/toml", handle_api_style_lora_trained_toml)

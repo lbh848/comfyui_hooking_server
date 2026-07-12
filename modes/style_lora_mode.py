@@ -1347,3 +1347,53 @@ async def handle_style_lora_auto_refine_enqueue(request):
         print(f"[STYLE_LORA] auto_refine_enqueue 예외: {e}")
         traceback.print_exc()
         return web.json_response({"success": False, "error": str(e)})
+
+
+async def handle_style_lora_test_auto_refine_enqueue(request):
+    """POST /api/style_lora/test_auto_refine_enqueue - 스타일 프로젝트 테스트 이미지 LLM 정제 큐 적재.
+    body: { project, filename } (또는 filenames 배열 → 각각 별도 큐 아이템).
+    학습 이미지 정제(handle_style_lora_auto_refine_enqueue)와 동일한 비전 LLM 프롬프트(template_set="style")를
+    사용하되, 저장은 테스트 전용 프롬프트 파일({base}_test_prompt.json)에 한다(source_type="style_test")."""
+    try:
+        body = await request.json()
+        project = (body.get("project") or "").strip()
+        if not project:
+            return web.json_response({"success": False, "error": "project 필드가 필요합니다."}, status=400)
+        filenames = body.get("filenames")
+        if filenames:
+            if not isinstance(filenames, list) or not filenames:
+                return web.json_response({"success": False, "error": "filenames 가 비어 있습니다."}, status=400)
+        else:
+            filename = (body.get("filename") or "").strip()
+            if not filename:
+                return web.json_response({"success": False, "error": "filename 필드가 필요합니다."}, status=400)
+            filenames = [filename]
+
+        try:
+            import server as _server
+            qm = _server.queue_manager
+        except Exception as e:
+            print(f"[STYLE_LORA] queue_manager 접근 실패: {e}")
+            traceback.print_exc()
+            return web.json_response({"success": False, "error": f"큐 매니저 접근 실패: {e}"})
+
+        items_spec = []
+        for fn in filenames:
+            items_spec.append({
+                "type": "instance_lora_prompt_refine",
+                "label": f"스타일 LoRA 테스트 정제: {project}/{fn}",
+                "batch_label": f"스타일 LoRA 테스트 정제: {project} ({len(filenames)}장)",
+                "params": {
+                    "source_type": "style_test",
+                    "project": project,
+                    "filename": fn,
+                },
+            })
+        created = await qm.add_items_batch(items_spec, priority=10)
+        batch_id = created[0].batch_id if created else None
+        print(f"[STYLE_LORA] test_auto_refine 배치 큐 추가: project={project} count={len(created)} batch_id={batch_id}")
+        return web.json_response({"success": True, "data": {"ids": [i.id for i in created], "count": len(created), "batch_id": batch_id}})
+    except Exception as e:
+        print(f"[STYLE_LORA] test_auto_refine_enqueue 예외: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)})

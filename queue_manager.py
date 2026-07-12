@@ -1967,6 +1967,11 @@ class QueueManager:
         if source_type == "style":
             return await self._handle_style_lora_tag_refine(item, params)
 
+        # style_test: 스타일 LoRA 테스트 이미지 태그 정제. 학습 정제(style)와 동일한 비전 LLM 프롬프트를
+        # 사용하되, 저장은 테스트 전용 프롬프트 파일({base}_test_prompt.json)에 한다.
+        if source_type == "style_test":
+            return await self._handle_style_lora_test_tag_refine(item, params)
+
         bot_name = params.get("bot_name", "")
         project_name = params.get("project_name", "")
         char_name = params.get("char_name", "")
@@ -2232,6 +2237,94 @@ class QueueManager:
             if self.notify_frontend:
                 await self.notify_frontend(event_type, {
                     **batch_evt, "phase": "failed", "source_type": "style",
+                    "project": project, "filename": filename, "error": str(e),
+                })
+            raise
+
+    async def _handle_style_lora_test_tag_refine(self, item: QueueItem, params: dict) -> dict:
+        """스타일 LoRA(그림체) 테스트 이미지 태그 정제: 학습 이미지 정제(_handle_style_lora_tag_refine)와
+        동일한 비전 LLM 프롬프트(template_set="style", 이미지+태그 기반)를 사용하되, 저장은 테스트 전용
+        프롬프트 파일({base}_test_prompt.json)에 한다. 학습 캡션 파일({base}_prompt.json)은 미변경."""
+        from modes.instance_lora_mode import run_auto_refine_lora_prompt
+        from modes.style_lora_mode import get_test_image_prompt, save_test_image_prompt, _safe_dirname
+        project = params.get("project", "")
+        filename = params.get("filename", "")
+        event_type = "lora_prompt_refine_progress"
+        batch_evt = {
+            "batch_id": params.get("batch_id"),
+            "batch_index": params.get("batch_index"),
+            "batch_total": params.get("batch_total"),
+        }
+        if not project or not filename:
+            raise ValueError("style_test 태그 정제는 project, filename이 필요합니다")
+        project = _safe_dirname(project)
+
+        gp = get_test_image_prompt(project, filename)
+        existing = gp.get("data") if (isinstance(gp, dict) and gp.get("success")) else {}
+        if not isinstance(existing, dict):
+            existing = {}
+        current_positive = (existing.get("positive") or existing.get("original_positive") or "").strip()
+        if not current_positive:
+            err = f"정제할 긍정 프롬프트가 없습니다 (project={project} filename={filename}). 테스트 이미지 프롬프트를 먼저 등록/태깅하세요."
+            print(f"[QUEUE:LORA_PROMPT_REFINE] source=style_test {err}")
+            if self.notify_frontend:
+                await self.notify_frontend(event_type, {
+                    **batch_evt, "phase": "failed", "source_type": "style_test",
+                    "project": project, "filename": filename, "error": err,
+                })
+            raise RuntimeError(err)
+
+        await self._notify_progress(item, {"percentage": 0, "phase": "running"})
+        if self.notify_frontend:
+            await self.notify_frontend(event_type, {
+                **batch_evt, "phase": "running", "source_type": "style_test",
+                "project": project, "filename": filename,
+            })
+
+        try:
+            result = await run_auto_refine_lora_prompt(
+                char_name="",
+                filename=filename,
+                current_positive=current_positive,
+                source_type="style",
+                is_asset=True,
+                template_set="style",
+                style_ctx={"project": project},
+            )
+            if not result.get("success"):
+                err = result.get("error", "알 수 없는 오류")
+                print(f"[QUEUE:LORA_PROMPT_REFINE] source=style_test 정제 실패: project={project} filename={filename} - {err}")
+                traceback.print_exc()
+                if self.notify_frontend:
+                    await self.notify_frontend(event_type, {
+                        **batch_evt, "phase": "failed", "source_type": "style_test",
+                        "project": project, "filename": filename, "error": err,
+                    })
+                raise RuntimeError(err)
+
+            refined_positive = result["data"].get("positive") or ""
+            if refined_positive:
+                save_test_image_prompt(project, filename, {
+                    "positive": refined_positive,
+                    "negative": existing.get("negative", ""),
+                    "original_positive": existing.get("original_positive") or current_positive,
+                    "original_negative": existing.get("original_negative", existing.get("negative", "")),
+                })
+            await self._notify_progress(item, {"percentage": 100, "phase": "completed"})
+            if self.notify_frontend:
+                await self.notify_frontend(event_type, {
+                    **batch_evt, "phase": "completed", "source_type": "style_test",
+                    "project": project, "filename": filename,
+                    "positive": refined_positive,
+                })
+            print(f"[QUEUE:LORA_PROMPT_REFINE] source=style_test 완료: project={project} filename={filename} 길이={len(refined_positive)}")
+            return {"success": True, "positive": refined_positive}
+        except Exception as e:
+            print(f"[QUEUE:LORA_PROMPT_REFINE] source=style_test 실패: project={project} filename={filename} - {e}")
+            traceback.print_exc()
+            if self.notify_frontend:
+                await self.notify_frontend(event_type, {
+                    **batch_evt, "phase": "failed", "source_type": "style_test",
                     "project": project, "filename": filename, "error": str(e),
                 })
             raise
