@@ -4930,6 +4930,25 @@
         </div>
     </div>
 
+    <!-- 수동 그리기 캐릭터 선택 모달 (restore_workflow_prompt_llm_solo 전용) -->
+    <div class="modal" id="restore-char-select-modal">
+        <div class="modal-content" style="max-width:560px;">
+            <div class="modal-header">
+                <h2>🖌️ 수동 그리기 — 캐릭터 선택</h2>
+                <button class="modal-close" onclick="closeRestoreCharSelectModal(false)">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="restore-char-select-status" style="margin-bottom:10px; font-size:0.82rem; color:var(--text-secondary);">
+                    캐릭터 목록을 불러오는 중...
+                </div>
+                <div id="restore-char-select-grid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(120px, 1fr)); gap:10px;"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="cancel" onclick="closeRestoreCharSelectModal(false)">취소</button>
+            </div>
+        </div>
+    </div>
+
     <!-- LLM 수정 방향 입력 모달 (prompt-modal 위에 오버레이) -->
     <div class="modal" id="llm-edit-direction-modal">
         <div class="modal-content" style="max-width:520px;">
@@ -10893,6 +10912,104 @@
         }
 
         // ─── 수동 그리기 ───
+        // restore_workflow_prompt_llm_solo 일 때만 캐릭터 선택 모달을 띄운다.
+        // openRestoreCharSelectModal() 은 Promise 를 반환:
+        //   null  → 사용자 취소(그리기 중단)
+        //   ''   → 🎲 랜덤
+        //   '이름' → 지정 캐릭터
+        let _restoreCharSelectResolve = null;
+
+        function closeRestoreCharSelectModal(confirmed) {
+            const modal = document.getElementById('restore-char-select-modal');
+            if (modal) modal.classList.remove('visible');
+            if (_restoreCharSelectResolve) {
+                // confirmed=false → 취소. 모달 밖/✕/취소버튼 모두 여기로.
+                _restoreCharSelectResolve(confirmed ? '' : null);
+                _restoreCharSelectResolve = null;
+            }
+        }
+
+        function _pickRestoreChar(charName) {
+            const modal = document.getElementById('restore-char-select-modal');
+            if (modal) modal.classList.remove('visible');
+            if (_restoreCharSelectResolve) {
+                _restoreCharSelectResolve(charName); // '' = 랜덤, '이름' = 지정
+                _restoreCharSelectResolve = null;
+            }
+        }
+
+        async function openRestoreCharSelectModal() {
+            const modal = document.getElementById('restore-char-select-modal');
+            const statusEl = document.getElementById('restore-char-select-status');
+            const grid = document.getElementById('restore-char-select-grid');
+            grid.innerHTML = '';
+            statusEl.textContent = '캐릭터 목록을 불러오는 중...';
+            statusEl.style.color = 'var(--text-secondary)';
+            modal.classList.add('visible');
+
+            // 캐릭터 목록 로드
+            let characters = [];
+            try {
+                const resp = await fetch('/api/restore_manual/characters');
+                const data = await resp.json();
+                if (data.error) {
+                    statusEl.textContent = `캐릭터 목록 로드 실패: ${data.error}`;
+                    statusEl.style.color = 'var(--danger, #e53935)';
+                    return null;
+                }
+                characters = data.characters || [];
+            } catch (e) {
+                statusEl.textContent = `캐릭터 목록 로드 오류: ${e.message}`;
+                statusEl.style.color = 'var(--danger, #e53935)';
+                return null;
+            }
+
+            if (characters.length === 0) {
+                statusEl.textContent = '선택된 봇에 캐릭터가 없습니다. 먼저 봇/캐릭터를 설정하세요.';
+                statusEl.style.color = 'var(--danger, #e53935)';
+                return null;
+            }
+            statusEl.textContent = `${characters.length}명의 캐릭터 중 하나를 선택하거나 🎲 랜덤으로 그리세요.`;
+
+            // 🎲 랜덤 카드
+            const randomCard = document.createElement('div');
+            randomCard.style.cursor = 'pointer';
+            randomCard.style.textAlign = 'center';
+            randomCard.style.padding = '10px 6px';
+            randomCard.style.border = '1px solid var(--border)';
+            randomCard.style.borderRadius = '8px';
+            randomCard.style.background = 'var(--surface2)';
+            randomCard.innerHTML = `
+                <div style="width:96px; height:96px; margin:0 auto 6px; display:flex; align-items:center; justify-content:center; font-size:2.6rem; background:var(--surface1); border-radius:6px;">🎲</div>
+                <div style="font-weight:700; font-size:0.85rem;">랜덤</div>
+                <div style="font-size:0.72rem; color:var(--text-secondary);">무작위 캐릭터</div>`;
+            randomCard.onclick = () => _pickRestoreChar('');
+            grid.appendChild(randomCard);
+
+            // 캐릭터 카드들
+            characters.forEach(ch => {
+                const card = document.createElement('div');
+                card.style.cursor = 'pointer';
+                card.style.textAlign = 'center';
+                card.style.padding = '10px 6px';
+                card.style.border = '1px solid var(--border)';
+                card.style.borderRadius = '8px';
+                card.style.background = 'var(--surface1)';
+                const imgHtml = ch.rep_url
+                    ? `<img src="${ch.rep_url}" alt="" style="width:96px; height:96px; object-fit:cover; border-radius:6px; display:block; margin:0 auto 6px;">`
+                    : `<div style="width:96px; height:96px; margin:0 auto 6px; background:var(--surface2); border-radius:6px; display:flex; align-items:center; justify-content:center; color:var(--text-secondary); font-size:0.7rem;">이미지 없음</div>`;
+                card.innerHTML = `
+                    ${imgHtml}
+                    <div style="font-weight:700; font-size:0.85rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${ch.name}</div>
+                    <div style="font-size:0.72rem; color:var(--text-secondary);">${ch.gender_tag || ''}</div>`;
+                card.onclick = () => _pickRestoreChar(ch.name);
+                grid.appendChild(card);
+            });
+
+            // Promise 대기 (취소=null, 랜덤='', 지정='이름')
+            return new Promise(resolve => { _restoreCharSelectResolve = resolve; });
+        }
+
         async function manualRestoreDraw() {
             // WS 연결 확인 및 재연결
             if (!frontendWs || frontendWs.readyState !== WebSocket.OPEN) {
@@ -10919,11 +11036,27 @@
                 console.warn('[수동 그리기] 워크플로우 이름 확인 실패, 진행:', e);
             }
 
+            // restore_workflow_prompt_llm_solo 일 때 캐릭터 선택 모달
+            // 결과: null=취소, ''=랜덤, '이름'=지정 캐릭터
+            let charName = '';
+            if ((currentConfig.restore_prompt_file || '') === 'restore_workflow_prompt_llm_solo.py') {
+                const choice = await openRestoreCharSelectModal();
+                if (choice === null) {
+                    console.log('[수동 그리기] 캐릭터 선택 취소로 중단');
+                    return;
+                }
+                charName = choice;
+            }
+
             const btn = document.getElementById('restore-manual-btn');
             btn.disabled = true;
             btn.textContent = '🖌️ 큐 등록 중...';
             try {
-                const resp = await fetch('/api/restore_manual_draw', { method: 'POST' });
+                const resp = await fetch('/api/restore_manual_draw', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ char_name: charName || '' }),
+                });
                 const data = await resp.json();
                 if (data.success && data.queued) {
                     showToast('수동 그리기가 큐에 등록되었습니다', 'success');

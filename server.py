@@ -4314,6 +4314,17 @@ async def handle_api_restore_manual_draw(request: web.Request) -> web.Response:
     if not os.path.isfile(filepath):
         return web.json_response({"error": f"복원 프롬프트 파일 없음: {prompt_file}"}, status=400)
 
+    # 수동 그리기 캐릭터 지정 (선택 모달에서 특정 캐릭터 고른 경우).
+    # restore_workflow_prompt_llm_solo 처럼 run(char_name=...) 시그니처를 지원하는
+    # 프롬프트 파일에만 전달되고, 그렇지 않은 파일은 무시한다.
+    char_name = None
+    try:
+        body = await request.json()
+        if isinstance(body, dict):
+            char_name = (body.get("char_name") or "").strip() or None
+    except Exception:
+        char_name = None
+
     try:
         spec = importlib.util.spec_from_file_location("restore_prompt_manual", filepath)
         module = importlib.util.module_from_spec(spec)
@@ -4322,7 +4333,19 @@ async def handle_api_restore_manual_draw(request: web.Request) -> web.Response:
         if not hasattr(module, "run"):
             return web.json_response({"error": f"run() 함수 없음: {prompt_file}"}, status=400)
 
-        result = await module.run()
+        # run() 시그니처에 char_name 파라미터가 있을 때만 전달
+        import inspect
+        run_params = inspect.signature(module.run).parameters
+        if char_name and "char_name" in run_params:
+            print(f"[RESTORE_MANUAL] 지정 캐릭터로 그리기: {char_name!r}")
+            result = await module.run(char_name=char_name)
+        else:
+            if char_name:
+                print(
+                    f"[RESTORE_MANUAL] 이 프롬프트({prompt_file})는 char_name 을 지원하지 않아 "
+                    "랜덤으로 그립니다."
+                )
+            result = await module.run()
         positive = result.get("positive", "") if isinstance(result, dict) else ""
         negative = result.get("negative", "") if isinstance(result, dict) else ""
 
@@ -4379,6 +4402,44 @@ async def handle_api_restore_manual_draw(request: web.Request) -> web.Response:
         print(f"[RESTORE_MANUAL] 오류: {e}")
         traceback.print_exc()
         return web.json_response({"error": str(e)}, status=500)
+
+
+async def handle_api_restore_manual_characters(request: web.Request) -> web.Response:
+    """수동 그리기 캐릭터 선택 모달용: 선택된 봇의 캐릭터 목록(name/gender/대표이미지) 반환."""
+    bot_name = app_config.get("bot_selected", "")
+    if not bot_name:
+        return web.json_response(
+            {"error": "bot_selected 가 지정되지 않았습니다"}, status=400
+        )
+
+    try:
+        from modes.bot_mode import _load_bot_data
+        data = _load_bot_data() or {}
+    except Exception as e:
+        print(f"[RESTORE_MANUAL_CHARS] _load_bot_data 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"error": f"봇 데이터 로드 실패: {e}"}, status=500)
+
+    bot = next((b for b in data.get("bots", []) if b.get("name") == bot_name), None)
+    if not bot:
+        return web.json_response(
+            {"error": f"봇을 찾을 수 없습니다: {bot_name}"}, status=404
+        )
+
+    characters = []
+    for c in bot.get("characters", []):
+        rep_images = c.get("rep_images", []) or []
+        rep_url = ""
+        if rep_images:
+            rep_url = f"/api/bot_mode/image/{bot_name}/{c.get('name','')}/{rep_images[0]}"
+        characters.append({
+            "name": c.get("name", ""),
+            "gender_tag": c.get("gender_tag", ""),
+            "rep_url": rep_url,
+        })
+
+    print(f"[RESTORE_MANUAL_CHARS] 봇={bot_name!r} 캐릭터 {len(characters)}명")
+    return web.json_response({"bot_name": bot_name, "characters": characters})
 
 
 # ─── LLM / Custom Prompt API ────────────────────────────────
@@ -4841,6 +4902,7 @@ app.router.add_get("/api/mode_workflow_files", handle_api_mode_workflow_files)
 app.router.add_get("/api/customprompt_files", handle_api_customprompt_files)
 app.router.add_post("/api/outfit_mode/run_llm", handle_api_outfit_run_llm)
 app.router.add_post("/api/restore_manual_draw", handle_api_restore_manual_draw)
+app.router.add_get("/api/restore_manual/characters", handle_api_restore_manual_characters)
 # 프론트엔드
 app.router.add_get("/api/frontend_ws", handle_frontend_ws)
 app.router.add_get("/api/config", handle_api_config)

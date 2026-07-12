@@ -182,7 +182,7 @@ def _ensure_tags_in_char(char_section: str, appearance: list[str],
 
 # ─── 진입점 ──────────────────────────────────────────────────
 
-async def run() -> dict:
+async def run(char_name: str | None = None) -> dict:
     # 1. 활성 봇 확인
     config = _read_json(CONFIG_PATH) or {}
     bot_name = config.get("bot_selected", "")
@@ -203,11 +203,24 @@ async def run() -> dict:
         print(f"[RESTORE_LLM_SOLO] 활성 봇을 찾을 수 없음: {bot_name!r}")
         return {"positive": "", "negative": ""}
 
-    # 3. 무작위 캐릭터 선택
-    char = _pick_random_character(bot)
-    if not char:
-        print(f"[RESTORE_LLM_SOLO] 봇에 캐릭터가 없음: {bot_name!r}")
-        return {"positive": "", "negative": ""}
+    # 3. 캐릭터 선택: char_name 이 지정되면 해당 캐릭터, 없으면 무작위
+    if char_name:
+        char = next(
+            (c for c in bot.get("characters", []) if c.get("name") == char_name),
+            None,
+        )
+        if not char:
+            print(
+                f"[RESTORE_LLM_SOLO] 지정한 캐릭터를 찾을 수 없음: {char_name!r} "
+                f"(봇={bot_name!r})"
+            )
+            return {"positive": "", "negative": ""}
+        print(f"[RESTORE_LLM_SOLO] 지정 캐릭터 사용: {char_name!r}")
+    else:
+        char = _pick_random_character(bot)
+        if not char:
+            print(f"[RESTORE_LLM_SOLO] 봇에 캐릭터가 없음: {bot_name!r}")
+            return {"positive": "", "negative": ""}
 
     char_name = char.get("name", "")
     gender = char.get("gender_tag", "1girl")
