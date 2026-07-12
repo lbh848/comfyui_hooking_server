@@ -544,6 +544,7 @@ class AssetToolMode:
             tag_category=tag_category,
             top_n=top_n,
             threshold=threshold,
+            tags_data=tags_data,
         )
 
         for r in results:

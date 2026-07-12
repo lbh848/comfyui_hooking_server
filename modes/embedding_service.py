@@ -29,6 +29,7 @@ import traceback
 from typing import Optional
 
 import httpx
+import numpy as np
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOG_DIR = os.path.join(BASE_DIR, "logs")
@@ -141,6 +142,12 @@ def clean_name_by_steps(name: str, steps: list[dict]) -> str:
 
 
 def _get_active_steps(profile_type: str) -> list[dict]:
+    # 태그 정제는 모달에서 "적용"한 인메모리 규칙(오버라이드)이 있으면 우선.
+    # 파일로 저장되지 않으며, 서버 재시작 시 활성 프로필로 되돌아간다.
+    if profile_type == "tag":
+        override = _current_config.get("tag_steps_override")
+        if override is not None:
+            return override
     if profile_type == "preset":
         profile_name = _current_config.get("active_preset_profile", "")
     else:
@@ -152,10 +159,24 @@ def _get_active_steps(profile_type: str) -> list[dict]:
     return profiles.get(fallback_key, DEFAULT_CLEAN_PROFILES.get(fallback_key, []))
 
 
+def apply_tag_cleaning_steps(steps: list) -> dict:
+    """모달에서 편집한 감정 추출 규칙을 인메모리로 적용(저장하지 않음).
+    매칭(_clean_tag_name)이 이 규칙을 사용한다. 서버 재시작 시 사라진다."""
+    cleaned = list(steps or [])
+    _current_config["tag_steps_override"] = cleaned
+    _log(f"태그 정제 규칙 인메모리 적용 ({len(cleaned)}단계)")
+    return {"success": True, "steps": cleaned}
+
+
+def get_effective_tag_steps() -> list[dict]:
+    """현재 매칭에 사용되는 태그 정제 규칙(오버라이드 우선) 반환."""
+    return _get_active_steps("tag")
+
+
 def _signature_for_config() -> dict:
     profiles = _current_config.get("clean_profiles", {})
     return {
-        "cache_format": "v2",
+        "cache_format": "v3",
         "provider": _current_config.get("embedding_provider", "voyage"),
         "model": _current_config.get("embedding_model", "voyage-4-large"),
         "url": _current_config.get("embedding_url", ""),
@@ -502,8 +523,21 @@ def cosine_similarity(a: list[float], b: list[float]) -> float:
     return dot / (norm_a * norm_b)
 
 
+def _cache_key(text: str, input_type: str) -> str:
+    """캐시 키. input_type(query/document)을 포함해 같은 텍스트의
+    비대칭 임베딩이 뒤섞이는 것을 방지."""
+    return f"{input_type}:{text}"
+
+
+def _normalize_rows(matrix: np.ndarray) -> np.ndarray:
+    """행 단위 L2 정규화. 0벡터 행은 0 그대로."""
+    norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+    norms = np.where(norms == 0, 1.0, norms)
+    return matrix / norms
+
+
 async def get_embedding_cached(text: str, input_type: str = "query") -> Optional[list[float]]:
-    cache_key = text
+    cache_key = _cache_key(text, input_type)
     if cache_key in _embedding_cache:
         return _embedding_cache[cache_key]
     if cache_key in _file_cache:
@@ -524,7 +558,7 @@ async def batch_get_embeddings(texts: list[str], input_type: str = "document",
     uncached_texts: list[str] = []
 
     for i, text in enumerate(texts):
-        cache_key = text
+        cache_key = _cache_key(text, input_type)
         if cache_key in _embedding_cache:
             all_embeddings[i] = _embedding_cache[cache_key]
         elif cache_key in _file_cache:
@@ -548,7 +582,7 @@ async def batch_get_embeddings(texts: list[str], input_type: str = "document",
 
             for j, (idx, embedding) in enumerate(zip(batch_indices, results)):
                 all_embeddings[idx] = embedding
-                cache_key = uncached_texts[start + j]
+                cache_key = _cache_key(uncached_texts[start + j], input_type)
                 _embedding_cache[cache_key] = embedding
 
     if any(e is None for e in all_embeddings):
@@ -558,80 +592,111 @@ async def batch_get_embeddings(texts: list[str], input_type: str = "document",
     return all_embeddings
 
 
-async def match_presets_by_names(
-    tag_names: list[str],
-    preset_names: list[str],
-    tag_category: str = "expressions",
-    top_n: int = 10,
-    threshold: float = 0.3,
-    tags_data: dict = None,
-) -> list[dict]:
-    try:
-        api_key = _current_config.get("embedding_api_key", "")
-        if not api_key:
-            _log("API 키 없음 - 태그 기반 임베딩 매칭 스킵")
-            return []
+async def _prepare_match_state(tag_names: list[str], preset_names: list[str],
+                               tags_data: dict = None) -> Optional[dict]:
+    """태그(query)와 프리셋 '정제된 이름'(document) 임베딩을 만들어 정규화된 유사도
+    행렬과 매핑 테이블을 반환. 배치 전체에서 한 번만 계산하면 모든 이미지가 재사용한다.
 
-        if not tag_names or not preset_names:
-            _log(f"태그 기반 임베딩 매칭 스킵: tag_names={len(tag_names) if tag_names else 0}, preset_names={len(preset_names) if preset_names else 0}")
-            return []
+    매칭 대상은 프리셋의 '이름'(프로필로 정제)이며, 프리셋이 담은 태그 내용은 쓰지 않는다.
+    반환:
+      sim           (np.ndarray, U_t × U_n) 정규화 코사인 행렬
+      tag_to_idx    {clean_tag: row}
+      name_to_idx   {clean_name: col}
+      clean_tag_of  {raw_tag: clean_tag}
+      preset_items  [(preset_name, clean_name), ...] (빈 이름 제외)
+    """
+    clean_tag_of: dict[str, str] = {}
+    clean_tags: list[str] = []
+    for t in tag_names:
+        ct = _clean_tag_name(t)
+        clean_tag_of[t] = ct
+        if ct:
+            clean_tags.append(ct)
+    unique_clean_tags = list(dict.fromkeys(clean_tags))
+    if not unique_clean_tags:
+        _log(f"임베딩 매칭 스킵: 정제 후 태그 없음 (원본 {len(tag_names)}개)")
+        return None
 
-        clean_tags = [_clean_tag_name(t) for t in tag_names]
-        clean_tags = [c for c in clean_tags if c]
-        if not clean_tags:
-            _log(f"태그 기반 임베딩 매칭 스킵: 정제 후 태그 없음 (원본: {tag_names})")
-            return []
+    preset_items = [(n, _clean_preset_name(n, tags_data)) for n in preset_names]
+    preset_items = [(n, cn) for n, cn in preset_items if cn]
+    if not preset_items:
+        _log("임베딩 매칭 스킵: 정제 후 프리셋 이름 없음")
+        return None
+    unique_clean_names = list(dict.fromkeys(cn for _, cn in preset_items))
 
-        clean_presets = [_clean_preset_name(n, tags_data) for n in preset_names]
-        unique_clean_tags = list(dict.fromkeys(clean_tags))
-        unique_clean_presets = list(dict.fromkeys(clean_presets))
-        unique_clean_presets = [c for c in unique_clean_presets if c]
+    _log(f"임베딩 매칭 준비: 정제태그={len(unique_clean_tags)}, 프리셋이름={len(unique_clean_names)}(프리셋={len(preset_items)})")
 
-        _log(f"태그 기반 임베딩 매칭 시작: 원본태그={len(tag_names)}, 정제태그={len(unique_clean_tags)}, 프리셋={len(unique_clean_presets)}")
+    tag_embs = await batch_get_embeddings(unique_clean_tags, input_type="query")
+    name_embs = await batch_get_embeddings(unique_clean_names, input_type="document")
+    if tag_embs is None:
+        _log("임베딩 매칭 실패: 태그 임베딩 결과가 None")
+        return None
+    if name_embs is None:
+        _log("임베딩 매칭 실패: 프리셋 이름 임베딩 결과가 None")
+        return None
 
-        tag_embs = await batch_get_embeddings(unique_clean_tags, input_type="query")
-        preset_embs = await batch_get_embeddings(unique_clean_presets, input_type="document")
+    tag_mat = _normalize_rows(np.asarray(tag_embs, dtype=np.float32))
+    name_mat = _normalize_rows(np.asarray(name_embs, dtype=np.float32))
+    sim = tag_mat @ name_mat.T  # (U_t, U_n)
 
-        if tag_embs is None:
-            _log("태그 기반 임베딩 매칭 실패: 태그 임베딩 결과가 None")
-            return []
-        if preset_embs is None:
-            _log("태그 기반 임베딩 매칭 실패: 프리셋 임베딩 결과가 None")
-            return []
+    return {
+        "sim": sim,
+        "tag_to_idx": {t: i for i, t in enumerate(unique_clean_tags)},
+        "name_to_idx": {cn: i for i, cn in enumerate(unique_clean_names)},
+        "clean_tag_of": clean_tag_of,
+        "preset_items": preset_items,
+    }
 
-        tag_emb_map = dict(zip(unique_clean_tags, tag_embs))
-        preset_emb_map = dict(zip(unique_clean_presets, preset_embs))
 
-        results = {}
-        for tag_name, clean_tag in zip(tag_names, clean_tags):
-            if not clean_tag or clean_tag not in tag_emb_map:
-                continue
-            tag_emb = tag_emb_map[clean_tag]
-            for preset_name, clean_preset in zip(preset_names, clean_presets):
-                if not clean_preset or clean_preset not in preset_emb_map:
-                    continue
-                sim = cosine_similarity(tag_emb, preset_emb_map[clean_preset])
-                if sim >= threshold:
-                    key = preset_name
-                    if key not in results or sim > results[key]["similarity"]:
-                        results[key] = {
-                            "name": preset_name,
-                            "clean_name": clean_preset,
-                            "similarity": round(sim, 4),
-                            "matched_tag": clean_tag,
-                            "original_tag": tag_name,
-                        }
+def _score_image(image_tags: list[str], state: dict, threshold: float,
+                 top_n: Optional[int] = None) -> list[dict]:
+    """이미지의 태그들로부터 각 프리셋(이름) 점수를 계산.
+    각 프리셋 점수 = (이미지 태그들과 해당 프리셋 이름의 유사도) 중 최댓값.
+    matched_tag = 그 최댓값을 낸 태그.
+    """
+    sim = state["sim"]
+    tag_to_idx = state["tag_to_idx"]
+    name_to_idx = state["name_to_idx"]
+    clean_tag_of = state["clean_tag_of"]
+    preset_items = state["preset_items"]
 
-        results_list = sorted(results.values(), key=lambda x: x["similarity"], reverse=True)
-        _log(f"태그 기반 임베딩 매칭: {len(clean_tags)}개 태그 vs {len(preset_names)}개 프리셋, "
-             f"결과 {len(results_list)}개 (threshold={threshold})")
-    except Exception as e:
-        _log(f"태그 기반 임베딩 매칭 예외: {type(e).__name__}: {e}")
-        import traceback
-        traceback.print_exc()
+    rows: list[tuple[int, str, str]] = []  # (row_idx, raw_tag, clean_tag)
+    seen_rows: set[int] = set()
+    for raw in image_tags:
+        ct = clean_tag_of.get(raw) or _clean_tag_name(raw)
+        if not ct:
+            continue
+        idx = tag_to_idx.get(ct)
+        if idx is None or idx in seen_rows:
+            continue
+        seen_rows.add(idx)
+        rows.append((idx, raw, ct))
+    if not rows:
         return []
 
-    return results_list[:top_n]
+    row_indices = [r[0] for r in rows]
+    sub = sim[row_indices]            # (k, U_n)
+    per_name_max = sub.max(axis=0)     # (U_n,)
+    per_name_arg = sub.argmax(axis=0)  # (U_n,) 최댓값을 낸 행
+
+    scored = []
+    for preset_name, cn in preset_items:
+        col = name_to_idx[cn]
+        score = float(per_name_max[col])
+        if score < threshold:
+            continue
+        _, raw_tag, clean_tag = rows[int(per_name_arg[col])]
+        scored.append({
+            "name": preset_name,
+            "clean_name": cn,
+            "similarity": round(score, 4),
+            "matched_tag": clean_tag,
+            "original_tag": raw_tag,
+        })
+    scored.sort(key=lambda x: x["similarity"], reverse=True)
+    if top_n is not None:
+        scored = scored[:top_n]
+    return scored
 
 
 def _clean_preset_name(name: str, tags_data: dict = None) -> str:
@@ -652,6 +717,41 @@ def _clean_tag_name(name: str) -> str:
     return clean_name_by_steps(name, steps)
 
 
+async def match_presets_by_names(
+    tag_names: list[str],
+    preset_names: list[str],
+    tag_category: str = "expressions",
+    top_n: int = 10,
+    threshold: float = 0.3,
+    tags_data: dict = None,
+) -> list[dict]:
+    """태그(query) vs 프리셋 '정제된 이름'(document) 임베딩 매칭.
+    각 프리셋 점수 = 이미지 태그들과 해당 프리셋 이름 유사도의 최댓값.
+    """
+    try:
+        api_key = _current_config.get("embedding_api_key", "")
+        if not api_key:
+            _log("API 키 없음 - 태그 기반 임베딩 매칭 스킵")
+            return []
+
+        if not tag_names or not preset_names:
+            _log(f"태그 기반 임베딩 매칭 스킵: tags={len(tag_names) if tag_names else 0}, presets={len(preset_names) if preset_names else 0}")
+            return []
+
+        state = await _prepare_match_state(tag_names, preset_names, tags_data)
+        if state is None:
+            return []
+
+        results_list = _score_image(tag_names, state, threshold, top_n=top_n)
+        _log(f"태그 기반 임베딩 매칭: {len(tag_names)}개 태그 vs {len(preset_names)}개 프리셋, "
+             f"결과 {len(results_list)}개 (threshold={threshold})")
+    except Exception as e:
+        _log(f"태그 기반 임베딩 매칭 예외: {type(e).__name__}: {e}")
+        traceback.print_exc()
+        return []
+    return results_list
+
+
 async def match_presets_by_query(
     query_text: str,
     preset_names: list[str],
@@ -660,44 +760,46 @@ async def match_presets_by_query(
     threshold: float = 0.3,
     tags_data: dict = None,
 ) -> list[dict]:
+    """쿼리 텍스트(query) vs 프리셋 '정제된 이름'(document) 임베딩 매칭."""
     api_key = _current_config.get("embedding_api_key", "")
     if not api_key:
         _log("API 키 없음 - 임베딩 매칭 스킵")
         return []
 
-    if not preset_names:
+    if not query_text or not preset_names:
         return []
 
-    clean_names = [_clean_preset_name(n, tags_data) for n in preset_names]
-    unique_clean = list(dict.fromkeys(clean_names))
-    unique_clean = [c for c in unique_clean if c]
+    preset_items = [(n, _clean_preset_name(n, tags_data)) for n in preset_names]
+    preset_items = [(n, cn) for n, cn in preset_items if cn]
+    if not preset_items:
+        return []
+    unique_clean = list(dict.fromkeys(cn for _, cn in preset_items))
 
     query_emb = await get_embedding_cached(query_text, input_type="query")
     if query_emb is None:
         return []
-
-    preset_embs = await batch_get_embeddings(unique_clean, input_type="document")
-    if preset_embs is None:
+    name_embs = await batch_get_embeddings(unique_clean, input_type="document")
+    if name_embs is None:
         return []
 
-    clean_to_emb = dict(zip(unique_clean, preset_embs))
+    q = _normalize_rows(np.asarray([query_emb], dtype=np.float32))   # (1, d)
+    n = _normalize_rows(np.asarray(name_embs, dtype=np.float32))     # (U_n, d)
+    sims = (q @ n.T)[0]                                              # (U_n,)
+    name_to_idx = {cn: i for i, cn in enumerate(unique_clean)}
 
     results = []
-    for preset_name, clean_name in zip(preset_names, clean_names):
-        emb = clean_to_emb.get(clean_name)
-        if emb is None:
-            continue
-        sim = cosine_similarity(query_emb, emb)
-        if sim >= threshold:
+    for preset_name, cn in preset_items:
+        score = float(sims[name_to_idx[cn]])
+        if score >= threshold:
             results.append({
                 "name": preset_name,
-                "clean_name": clean_name,
-                "similarity": round(sim, 4),
+                "clean_name": cn,
+                "similarity": round(score, 4),
             })
 
     results.sort(key=lambda x: x["similarity"], reverse=True)
     _log(f"유사도 매칭 결과: query='{query_text}', 카테고리={tag_category}, "
-         f"결과 {len(results)}/{len(preset_names)}개 (threshold={threshold})")
+         f"결과 {len(results)}/{len(preset_items)}개 (threshold={threshold})")
     return results[:top_n]
 
 
@@ -709,7 +811,8 @@ async def match_presets_by_names_batch(
     threshold: float = 0.3,
     tags_data: dict = None,
 ) -> list[dict]:
-    """배치 임베딩 매칭: 여러 이미지의 태그를 한번에 임베딩 후 이미지별 결과 반환.
+    """배치 임베딩 매칭: 여러 이미지의 태그를 한 번에 임베딩한 뒤 이미지별 결과 반환.
+    태그×프리셋이름 유사도 행렬은 배치 전체에서 1회만 계산하고 모든 이미지가 재사용한다.
 
     image_tags: [{"image_name": str, "tags": [str]}, ...]
     반환: [{"image_name": str, "embedding_matches": [dict]}, ...]
@@ -724,76 +827,30 @@ async def match_presets_by_names_batch(
             _log(f"배치 임베딩 매칭 스킵: images={len(image_tags) if image_tags else 0}, presets={len(preset_names) if preset_names else 0}")
             return []
 
-        # 1. 모든 이미지의 태그를 수집하고 정제
-        all_tags = []
+        all_tags: list[str] = []
         for item in image_tags:
             all_tags.extend(item.get("tags", []))
 
-        clean_tags = [_clean_tag_name(t) for t in all_tags]
-        clean_tags = [c for c in clean_tags if c]
-        if not clean_tags:
-            _log(f"배치 임베딩 매칭 스킵: 정제 후 태그 없음 (원본: {len(all_tags)})")
+        state = await _prepare_match_state(all_tags, preset_names, tags_data)
+        if state is None:
             return []
 
-        clean_presets = [_clean_preset_name(n, tags_data) for n in preset_names]
-        unique_clean_tags = list(dict.fromkeys(clean_tags))
-        unique_clean_presets = list(dict.fromkeys([c for c in clean_presets if c]))
+        _log(f"배치 임베딩 매칭 시작: 이미지={len(image_tags)}, 태그 종류={len(state['tag_to_idx'])}, 프리셋이름={len(state['name_to_idx'])}")
 
-        _log(f"배치 임베딩 매칭 시작: 이미지={len(image_tags)}, 태그={len(unique_clean_tags)}, 프리셋={len(unique_clean_presets)}")
-
-        # 2. 태그 + 프리셋 임베딩을 한 번에 배치 처리
-        tag_embs = await batch_get_embeddings(unique_clean_tags, input_type="query")
-        preset_embs = await batch_get_embeddings(unique_clean_presets, input_type="document")
-
-        if tag_embs is None:
-            _log("배치 임베딩 매칭 실패: 태그 임베딩 결과가 None")
-            return []
-        if preset_embs is None:
-            _log("배치 임베딩 매칭 실패: 프리셋 임베딩 결과가 None")
-            return []
-
-        tag_emb_map = dict(zip(unique_clean_tags, tag_embs))
-        preset_emb_map = dict(zip(unique_clean_presets, preset_embs))
-
-        # 3. 이미지별로 매칭 결과 계산
         results = []
         for item in image_tags:
             image_name = item.get("image_name", "")
             item_tags = item.get("tags", [])
-            matches = {}
-
-            for tag_name in item_tags:
-                clean_tag = _clean_tag_name(tag_name)
-                if not clean_tag or clean_tag not in tag_emb_map:
-                    continue
-                tag_emb = tag_emb_map[clean_tag]
-
-                for preset_name, clean_preset in zip(preset_names, clean_presets):
-                    if not clean_preset or clean_preset not in preset_emb_map:
-                        continue
-                    sim = cosine_similarity(tag_emb, preset_emb_map[clean_preset])
-                    if sim >= threshold:
-                        key = preset_name
-                        if key not in matches or sim > matches[key]["similarity"]:
-                            matches[key] = {
-                                "name": preset_name,
-                                "clean_name": clean_preset,
-                                "similarity": round(sim, 4),
-                                "matched_tag": clean_tag,
-                                "original_tag": tag_name,
-                            }
-
-            sorted_matches = sorted(matches.values(), key=lambda x: x["similarity"], reverse=True)[:top_n]
+            matches = _score_image(item_tags, state, threshold, top_n=top_n)
             results.append({
                 "image_name": image_name,
-                "embedding_matches": sorted_matches,
+                "embedding_matches": matches,
             })
-            _log(f"배치 매칭: {image_name} → {len(sorted_matches)}개 결과")
+            _log(f"배치 매칭: {image_name} → {len(matches)}개 결과")
 
-        _log(f"배치 임베딩 매칭 완료: {len(image_tags)}개 이미지, 태그={len(unique_clean_tags)}, 프리셋={len(unique_clean_presets)}")
+        _log(f"배치 임베딩 매칭 완료: {len(image_tags)}개 이미지, 태그 종류={len(state['tag_to_idx'])}, 프리셋이름={len(state['name_to_idx'])}")
     except Exception as e:
         _log(f"배치 임베딩 매칭 예외: {type(e).__name__}: {e}")
-        import traceback
         traceback.print_exc()
         return []
 
@@ -812,13 +869,13 @@ def preview_clean_names(names: list[str], steps: list[dict]) -> list[dict]:
 
 
 async def build_preset_embeddings(tags_data: dict, progress_callback=None, skip_cached: bool = False) -> dict:
+    """모든 카테고리 프리셋의 '정제된 이름' 임베딩을 사전에 빌드해 캐시에 저장한다.
+    저장 키는 매칭이 쓰는 키(document:{정제된 이름})와 동일하므로, 빌드 후 오토매치 매칭 시
+    프리셋 이름 임베딩 API 재요청이 발생하지 않는다."""
     api_key = _current_config.get("embedding_api_key", "")
     if not api_key:
         _log("API 키 없음 - 임베딩 빌드 불가")
         return {"success": False, "error": "API 키가 설정되지 않았습니다"}
-
-    all_names_to_embed: dict[str, tuple[str, str, str]] = {}
-    name_map: dict[str, dict[str, str]] = {}
 
     categories = {
         "expressions": tags_data.get("expressions", {}),
@@ -829,29 +886,32 @@ async def build_preset_embeddings(tags_data: dict, progress_callback=None, skip_
         "negative_presets": tags_data.get("negative_presets", {}),
     }
 
+    # 각 프리셋 이름 → 정제된 이름. 정제된 이름 단위로 중복 제거해 임베딩.
+    names_to_embed: dict[str, tuple[str, str]] = {}  # clean_name -> (cat_key, preset_name)
+    name_map: dict[str, dict[str, str]] = {}          # cat_key -> {preset_name: clean_name}
     for cat_key, cat_data in categories.items():
         if not isinstance(cat_data, dict):
             continue
         name_map[cat_key] = {}
-        for preset_name in cat_data:
-            if not isinstance(cat_data[preset_name], list):
+        for preset_name, preset_tags in cat_data.items():
+            if not isinstance(preset_tags, list):
                 continue
-            clean = _clean_preset_name(preset_name, tags_data)
-            name_map[cat_key][preset_name] = clean
-            if clean and clean not in all_names_to_embed:
-                all_names_to_embed[clean] = (cat_key, preset_name, "document")
+            cn = _clean_preset_name(preset_name, tags_data)
+            name_map[cat_key][preset_name] = cn
+            if cn and cn not in names_to_embed:
+                names_to_embed[cn] = (cat_key, preset_name)
 
-    unique_names = list(all_names_to_embed.keys())
+    unique_names = list(names_to_embed.keys())
 
     if skip_cached:
         cache = _load_local_cache()
         cached_embs = cache.get("embeddings", {})
         names_to_request = []
-        for name in unique_names:
-            cache_key = f"document:{name}"
+        for cn in unique_names:
+            cache_key = _cache_key(cn, "document")
             if cache_key in _embedding_cache or cache_key in cached_embs:
                 continue
-            names_to_request.append(name)
+            names_to_request.append(cn)
         _log(f"임베딩 빌드 시작 (캐시 스킵): 전체 {len(unique_names)}개 중 캐시 {len(unique_names) - len(names_to_request)}개 스킵, 신규 {len(names_to_request)}개")
         unique_names_for_api = names_to_request
     else:
@@ -878,8 +938,8 @@ async def build_preset_embeddings(tags_data: dict, progress_callback=None, skip_
                 await progress_callback(embedded_count, total_count, f"배치 {batch_idx + 1} 실패")
             continue
 
-        for name, emb in zip(batch, results):
-            cache_key = f"document:{name}"
+        for cn, emb in zip(batch, results):
+            cache_key = _cache_key(cn, "document")
             _embedding_cache[cache_key] = emb
 
         embedded_count += len(batch)
@@ -888,9 +948,9 @@ async def build_preset_embeddings(tags_data: dict, progress_callback=None, skip_
             await progress_callback(embedded_count, total_count,
                                     f"배치 {batch_idx + 1}/{total_batches} 완료")
 
-    for name, emb in _embedding_cache.items():
-        if name not in _file_cache:
-            _file_cache[name] = emb
+    for key, emb in _embedding_cache.items():
+        if key not in _file_cache:
+            _file_cache[key] = emb
     cache = _load_local_cache()
     cache["signature"] = _signature_for_config()
     _local_cache = cache

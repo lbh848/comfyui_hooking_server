@@ -2899,6 +2899,8 @@
         .at-dropzone:hover, .at-dropzone.dragover { border-color: var(--accent); background: rgba(66,133,244,0.06); }
         .at-dropzone-icon { font-size: 2.5rem; margin-bottom: 8px; }
         .at-dropzone-text { color: var(--text2); font-size: 0.9rem; }
+        #at-modal-dropzone { border: 2px dashed var(--border); border-radius: 8px; padding: 28px 16px; text-align: center; cursor: pointer; transition: all 0.2s; margin-bottom: 10px; background: var(--surface2); }
+        #at-modal-dropzone:hover, #at-modal-dropzone.at-modal-dragover { border-color: var(--accent); background: rgba(66,133,244,0.08); }
         .at-images { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
         .at-image-card { position: relative; width: 120px; border-radius: 6px; overflow: hidden; border: 1px solid var(--border); background: var(--surface2); }
         .at-image-card img { width: 120px; height: 120px; object-fit: cover; display: block; }
@@ -4574,26 +4576,53 @@
                             </div>
                             <!-- 준비 상태 체크리스트 -->
                             <div id="at-ready-checklist" style="display:flex; gap:12px; margin-bottom:10px; font-size:0.78rem; color:var(--text2); flex-wrap:wrap;">
-                                <div id="at-check-profile" style="display:flex; align-items:center; gap:4px; padding:4px 8px; border-radius:4px; background:var(--surface2); border:1px solid var(--border);">
-                                    <span id="at-check-profile-icon">❓</span>
-                                    <span id="at-check-profile-text">표정 프로필 확인 중...</span>
-                                </div>
                                 <div id="at-check-embedding" style="display:flex; align-items:center; gap:4px; padding:4px 8px; border-radius:4px; background:var(--surface2); border:1px solid var(--border);">
                                     <span id="at-check-embedding-icon">❓</span>
                                     <span id="at-check-embedding-text">임베딩 확인 중...</span>
                                 </div>
-                                <div id="at-check-tag-preview" style="display:flex; align-items:center; gap:4px; padding:4px 8px; border-radius:4px; background:var(--surface2); border:1px solid var(--border);">
-                                    <span id="at-check-tag-preview-icon">❓</span>
-                                    <span id="at-check-tag-preview-text">업로드 태그 미리보기 안 됨</span>
-                                </div>
                             </div>
-                            <div class="at-dropzone" id="at-dropzone" onclick="document.getElementById('at-file-input').click()">
-                                <div class="at-dropzone-icon">📁</div>
-                                <div class="at-dropzone-text">이미지를 드래그앤드롭하거나 클릭하여 선택</div>
-                                <input type="file" id="at-file-input" multiple accept="image/*" style="display:none;" onchange="atOnFilesSelected(this.files)">
+                            <div style="margin-bottom:10px;">
+                                <button class="at-btn at-btn-primary" id="at-upload-open-btn" onclick="atOpenUploadModal()" style="font-size:0.9rem;">📷 이미지 업로드</button>
                             </div>
                             <div class="at-images" id="at-images"></div>
                             <div class="at-progress-bar" id="at-progress-bar" style="display:none;"><div class="at-progress-bar-inner" id="at-progress-inner"></div></div>
+                        </div>
+                        <!-- 이미지 업로드 & 감정 추출 모달 -->
+                        <div id="at-upload-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:1000; align-items:center; justify-content:center;">
+                            <div style="background:var(--surface); border-radius:10px; padding:16px; max-width:760px; width:92%; max-height:88vh; overflow:auto; position:relative; box-shadow:0 8px 32px rgba(0,0,0,0.3);">
+                                <button onclick="atCloseUploadModal()" style="position:absolute; top:8px; right:10px; background:none; border:none; font-size:1.1rem; cursor:pointer; color:var(--text2);">✕</button>
+                                <div style="font-size:1rem; font-weight:700; margin-bottom:12px;">📷 이미지 업로드 &amp; 감정 추출</div>
+
+                                <!-- 감정 추출 규칙 (평면 규칙 리스트, batch-add 스타일) -->
+                                <div style="border:1px solid var(--border); border-radius:8px; padding:10px; margin-bottom:12px;">
+                                    <div style="font-size:0.85rem; font-weight:700; margin-bottom:6px;">🏷️ 감정 추출 규칙</div>
+                                    <div id="at-emotion-rules"></div>
+                                    <button class="at-btn" onclick="atEmotionAddRule()" style="margin-top:6px; font-size:0.78rem;">＋ 규칙 추가</button>
+                                    <div style="font-size:0.74rem; color:var(--text2); margin-top:6px;">이미지 파일명에서 감정을 추출하는 규칙. 임베딩 매칭은 이 감정(이미지 이름) vs 감정 프리셋 이름으로 동작.</div>
+                                </div>
+
+                                <!-- 이미지 선택 (드래그앤드롭) -->
+                                <div id="at-modal-dropzone"
+                                    ondragover="event.preventDefault(); this.classList.add('at-modal-dragover');"
+                                    ondragleave="this.classList.remove('at-modal-dragover');"
+                                    ondrop="event.preventDefault(); this.classList.remove('at-modal-dragover'); if(event.dataTransfer.files && event.dataTransfer.files.length) atOnFilesSelected(event.dataTransfer.files);"
+                                    onclick="document.getElementById('at-modal-file-input').click()">
+                                    <div style="font-size:2rem; margin-bottom:6px; opacity:0.6;">📁</div>
+                                    <div style="color:var(--text2); font-size:0.85rem;">이미지를 여기로 드래그앤드롭하거나 클릭하여 선택</div>
+                                </div>
+                                <input type="file" id="at-modal-file-input" multiple accept="image/*" style="display:none;" onchange="atOnFilesSelected(this.files)">
+                                <div style="font-size:0.78rem; color:var(--text2); margin-bottom:10px;">선택한 이미지는 오토매치 업로드 목록에 추가됩니다.</div>
+
+                                <!-- 추출 결과 미리보기 (파일명 → 감정) -->
+                                <div style="font-size:0.85rem; font-weight:600; margin-bottom:6px;">추출 결과 미리보기</div>
+                                <div id="at-emotion-preview" style="min-height:40px; max-height:240px; overflow-y:auto; padding:8px; background:var(--surface2); border-radius:6px; font-size:0.8rem; color:var(--text2); margin-bottom:10px;">
+                                    파일을 선택하면 추출된 감정이 여기에 표시됩니다.
+                                </div>
+
+                                <div style="display:flex; gap:8px; justify-content:flex-end;">
+                                    <button class="at-btn at-btn-primary" onclick="atEmotionApply()">✅ 적용</button>
+                                </div>
+                            </div>
                         </div>
                         <div id="at-view-result" style="display:none;">
                             <div id="at-canvas" class="at-canvas">
@@ -4626,25 +4655,6 @@
                                             <button class="at-btn" onclick="atResetCurrentProfile('preset')" style="font-size:0.82rem;">🔄 기본값</button>
                                         </div>
                                     </div>
-                                    <!-- 세로 구분선 -->
-                                    <div style="width:1px; align-self:stretch; background:var(--border);"></div>
-                                    <!-- 태그 정제 영역 -->
-                                    <div style="flex:1; min-width:0; border:1px solid var(--border); border-radius:8px; padding:10px;">
-                                        <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px; flex-wrap:wrap;">
-                                            <span style="font-size:0.85rem; font-weight:700;">🏷️ 업로드 태그</span>
-                                            <label style="font-size:0.78rem; font-weight:600;">프로필:</label>
-                                            <select id="at-embed-profile-select-tag" style="padding:3px 6px; border-radius:5px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-size:0.78rem; min-width:140px;" onchange="atOnProfileSelect('tag')">
-                                            </select>
-                                            <button class="at-btn" onclick="atNewProfile('tag')" style="font-size:0.72rem;">＋ 새 프로필</button>
-                                            <button class="at-btn" onclick="atDeleteProfile('tag')" style="font-size:0.72rem; color:#e55;">🗑 삭제</button>
-                                        </div>
-                                        <div id="at-embed-steps-container-tag"></div>
-                                        <div style="margin-top:8px; display:flex; gap:8px;">
-                                            <button class="at-btn at-btn-primary" onclick="atSaveCurrentProfile('tag')" style="font-size:0.82rem;">💾 저장 및 적용</button>
-                                            <button class="at-btn" onclick="atAddStep('tag')" style="font-size:0.82rem;">＋ 단계 추가</button>
-                                            <button class="at-btn" onclick="atResetCurrentProfile('tag')" style="font-size:0.82rem;">🔄 기본값</button>
-                                        </div>
-                                    </div>
                                 </div>
                             </div>
                             <div class="at-section" style="margin-bottom:16px;">
@@ -4655,7 +4665,6 @@
                                 <div style="display:flex; gap:8px; margin-bottom:8px;">
                                     <button class="at-btn" onclick="atPreviewClean('preset')" id="at-preview-preset-btn" style="font-size:0.82rem;">📋 내 프리셋 미리보기</button>
                                     <button class="at-btn" onclick="atSaveProfileMap()" id="at-save-profile-map-btn" style="font-size:0.78rem; background:var(--accent); color:#fff; border-color:var(--accent); font-weight:600;">💾 할당 저장</button>
-                                    <button class="at-btn" onclick="atPreviewClean('tag')" id="at-preview-tag-btn" style="font-size:0.82rem;">🏷️ 업로드 태그 미리보기</button>
                                 </div>
                                 <div id="at-embed-preview" style="max-height:260px; overflow-y:auto; background:var(--surface2); border-radius:6px; padding:10px;">
                                     <div style="color:var(--text2); font-size:0.85rem;">미리보기를 불러오려면 새로고침 버튼을 누르세요.</div>
@@ -13941,6 +13950,8 @@
         };
 
         _atLoadState();
+        // 초기 업로드 화면 렌더 (이미지가 없으면 빈 상태 안내 표시)
+        if (typeof atRenderImages === 'function') atRenderImages();
 
         function atOnFilesSelected(files) {
             for (const file of files) {
@@ -13952,6 +13963,7 @@
             atTagPreviewDone = false;
             atCheckReadyStates();
             atRenderImages();
+            atEmotionUpdatePreview();
             document.getElementById('at-analyze-btn').disabled = atState.images.length === 0;
             document.getElementById('at-clear-btn').disabled = atState.images.length === 0;
         }
@@ -13961,10 +13973,12 @@
             if (item.url) URL.revokeObjectURL(item.url);
             atState.images.splice(index, 1);
             atRenderImages();
+            atEmotionUpdatePreview();
             document.getElementById('at-analyze-btn').disabled = atState.images.length === 0;
         }
 
         function atSwitchView(view) {
+            atCloseUploadModal();
             document.getElementById('at-view-upload').style.display = view === 'upload' ? '' : 'none';
             document.getElementById('at-view-result').style.display = view === 'result' ? 'flex' : 'none';
             document.getElementById('at-view-embed').style.display = view === 'embed' ? '' : 'none';
@@ -13976,7 +13990,7 @@
             if (view === 'result') atRenderSourceCards();
             if (view === 'embed') atInitEmbedView();
             if (view === 'expr-profile') initExprProfileTab();
-            if (view === 'upload') atCheckReadyStates();
+            if (view === 'upload') { atCheckReadyStates(); atRenderImages(); }
         }
 
         async function atLoadCharacterList() {
@@ -14103,6 +14117,7 @@
             atState.chains = [];
             sessionStorage.removeItem('atState');
             atRenderImages();
+            atEmotionUpdatePreview();
             const canvas = document.getElementById('at-canvas');
             if (canvas) canvas.innerHTML = '<div class="at-empty-state">이미지를 분석하면<br>매칭 결과가 여기에 표시됩니다</div>';
             document.getElementById('at-analyze-btn').disabled = true;
@@ -14144,6 +14159,15 @@
         function atRenderImages() {
             const container = document.getElementById('at-images');
             container.innerHTML = '';
+            if (atState.images.length === 0) {
+                container.innerHTML = `
+                    <div style="text-align:center; padding:48px 20px; border:2px dashed var(--border); border-radius:10px; color:var(--text2); background:var(--surface2);">
+                        <div style="font-size:2.4rem; margin-bottom:10px; opacity:0.6;">🖼️</div>
+                        <div style="font-size:0.95rem; margin-bottom:6px; color:var(--text);">이미지가 없습니다.</div>
+                        <div style="font-size:0.82rem;">위 <b style="color:var(--accent);">📷 이미지 업로드</b> 버튼을 눌러 이미지 업로드를 진행해주세요.</div>
+                    </div>`;
+                return;
+            }
             atState.images.forEach((item, i) => {
                 const card = document.createElement('div');
                 card.className = 'at-image-card';
@@ -14152,9 +14176,215 @@
                 else if (item.status === 'analyzing') badge = '<div class="at-analysis-badge" style="color:#ffd700;">⏳ 분석중</div>';
                 else if (item.status === 'pending') badge = '<div class="at-analysis-badge" style="color:#888;">⏸ 대기중</div>';
                 else if (item.status === 'error') badge = '<div class="at-analysis-badge" style="color:#f44;">❌ 오류</div>';
-                card.innerHTML = `<img src="${item.url}"><button class="at-remove-btn" onclick="atRemoveImage(${i})">✕</button>${badge}`;
+                const emotion = atExtractEmotion(item.file ? item.file.name : '');
+                const emotionLabel = emotion
+                    ? `<div style="position:absolute; left:4px; bottom:4px; right:4px; background:rgba(0,0,0,0.65); color:#fff; font-size:0.72rem; padding:2px 6px; border-radius:4px; line-height:1.2;">감정: ${escapeHtml(emotion)}</div>`
+                    : '';
+                card.style.position = 'relative';
+                card.innerHTML = `<img src="${item.url}"><button class="at-remove-btn" onclick="atRemoveImage(${i})">✕</button>${badge}${emotionLabel}`;
                 container.appendChild(card);
             });
+        }
+
+        // ── 감정 추출(업로드 태그 정제) 클라이언트 구현 ──────────────
+        // 서버 clean_name_by_steps/_parse_take/_apply_take 의 JS 미러.
+        // 이미지 파일명에서 확장자를 뺀 뒤 활성 태그 프로필 규칙을 적용해 감정만 추출한다.
+        function atParseTake(takeValue) {
+            if (typeof takeValue === 'number') return takeValue;
+            if (typeof takeValue !== 'string') return takeValue;
+            if (takeValue.endsWith(':')) {
+                const n = parseInt(takeValue.slice(0, -1), 10);
+                return isNaN(n) ? takeValue : [n, null];
+            }
+            if (takeValue.startsWith(':')) {
+                const n = parseInt(takeValue.slice(1), 10);
+                return isNaN(n) ? takeValue : [null, n];
+            }
+            if (takeValue.includes(':')) {
+                const p = takeValue.split(':', 2);
+                const a = p[0] ? parseInt(p[0], 10) : NaN;
+                const b = p[1] ? parseInt(p[1], 10) : NaN;
+                return [isNaN(a) ? null : a, isNaN(b) ? null : b];
+            }
+            return takeValue;
+        }
+
+        function atApplyTake(parts, takeValue, joinSep) {
+            if (typeof takeValue === 'number') {
+                // JS는 parts[-1] 처럼 음수 인덱스를 지원하지 않으므로 변환.
+                const n = takeValue;
+                if (-parts.length <= n && n < parts.length) {
+                    return parts[n < 0 ? parts.length + n : n];
+                }
+                return n < 0 ? parts[parts.length - 1] : parts[0];
+            }
+            if (Array.isArray(takeValue)) {
+                let start = takeValue[0], end = takeValue[1];
+                if (start != null && start < 0) start = parts.length + start;
+                if (end != null && end < 0) end = parts.length + end;
+                // JS slice는 end=null을 0으로 취급하므로 null은 undefined(끝까지)로 변환.
+                // 파이썬 parts[1:None] == parts[1:] 동작과 일치시킴.
+                const s = (start == null) ? undefined : start;
+                const e = (end == null) ? undefined : end;
+                return parts.slice(s, e).join(joinSep);
+            }
+            return parts[parts.length - 1];
+        }
+
+        function atCleanNameBySteps(name, steps) {
+            if (!name) return '';
+            let result = name;
+            for (const step of (steps || [])) {
+                const action = step.action || '';
+                try {
+                    if (action === 'split_by') {
+                        const sep = step.separator || '_';
+                        const parts = result.split(sep);
+                        if (!parts.length) continue;
+                        result = atApplyTake(parts, atParseTake(step.take), sep);
+                    } else if (action === 'strip_suffix') {
+                        const p = step.pattern || '';
+                        if (p) result = result.replace(new RegExp(p, 'g'), '');
+                    } else if (action === 'strip_prefix') {
+                        const p = step.pattern || '';
+                        if (p) result = result.replace(new RegExp('^' + p, 'g'), '');
+                    } else if (action === 'replace') {
+                        const from = step.from || '';
+                        const to = step.to != null ? step.to : ' ';
+                        if (from) result = result.split(from).join(to);
+                    } else if (action === 'strip') {
+                        result = result.trim();
+                    } else if (action === 'lower') {
+                        result = result.toLowerCase();
+                    }
+                } catch (e) {
+                    console.error('[atCleanNameBySteps] 단계 적용 오류:', step, e);
+                }
+            }
+            return (result || '').trim();
+        }
+
+        function atExtractEmotion(filename) {
+            if (!filename) return '';
+            const dot = filename.lastIndexOf('.');
+            const baseName = dot > 0 ? filename.substring(0, dot) : filename;
+            const cleaned = atCleanNameBySteps(baseName, atEmbedActiveSteps.tag);
+            // 규칙 결과가 빈 값이면 baseName으로 폴백 → "(없음)" 방지
+            return cleaned || baseName;
+        }
+
+        // ── 이미지 업로드 & 감정 추출 모달 (batch-add 스타일) ─────────
+        const AT_EMOTION_DEFAULT_RULES = [{ action: 'split_by', separator: '_', take: -1 }];
+
+        function atOpenUploadModal() {
+            const modal = document.getElementById('at-upload-modal');
+            if (!modal) return;
+            modal.style.display = 'flex';
+            // 태그 정제 규칙(활성 태그 프로필 steps) 로드 후 규칙 편집기/미리보기 렌더
+            (async () => {
+                if (!atEmbedProfiles || Object.keys(atEmbedProfiles).length === 0) {
+                    await atLoadProfiles();
+                }
+                if (!atEmbedActiveSteps.tag || atEmbedActiveSteps.tag.length === 0) {
+                    atEmbedActiveSteps.tag = JSON.parse(JSON.stringify(AT_EMOTION_DEFAULT_RULES));
+                }
+                atEmotionRenderRules();
+                atEmotionUpdatePreview();
+            })();
+        }
+
+        function atCloseUploadModal() {
+            const modal = document.getElementById('at-upload-modal');
+            if (modal) modal.style.display = 'none';
+        }
+
+        function atEmotionRenderRules() {
+            const container = document.getElementById('at-emotion-rules');
+            if (!container) return;
+            container.innerHTML = '';
+            const rules = atEmbedActiveSteps.tag || [];
+            const maxRows = Math.max(rules.length, 1);
+            for (let i = 0; i < maxRows; i++) {
+                const step = rules[i] || {};
+                const row = document.createElement('div');
+                row.style.cssText = 'display:flex; gap:4px; margin-bottom:4px; align-items:center; flex-wrap:wrap;';
+                let paramsHtml = '';
+                if (step.action === 'split_by') {
+                    paramsHtml = `<input type="text" value="${escHtml(step.separator || '_')}" placeholder="구분자" oninput="atEmbedActiveSteps.tag[${i}].separator=this.value; atEmotionUpdatePreview(); atRenderImages();" style="width:50px; padding:2px 4px; font-size:0.75rem; border:1px solid var(--border); border-radius:3px; background:var(--surface2); color:var(--text);">
+                        <input type="text" value="${escHtml(String(step.take ?? -1))}" placeholder="인덱스(-1/0/1:)" oninput="atEmbedActiveSteps.tag[${i}].take=this.value.trim().match(/^-?\d+$/) ? parseInt(this.value.trim()) : this.value.trim(); atEmotionUpdatePreview(); atRenderImages();" style="width:60px; padding:2px 4px; font-size:0.75rem; border:1px solid var(--border); border-radius:3px; background:var(--surface2); color:var(--text);">`;
+                } else if (step.action === 'strip_suffix' || step.action === 'strip_prefix') {
+                    paramsHtml = `<input type="text" value="${escHtml(step.pattern || '')}" placeholder="패턴(정규식)" oninput="atEmbedActiveSteps.tag[${i}].pattern=this.value; atEmotionUpdatePreview(); atRenderImages();" style="width:140px; padding:2px 4px; font-size:0.75rem; border:1px solid var(--border); border-radius:3px; background:var(--surface2); color:var(--text);">`;
+                } else if (step.action === 'replace') {
+                    paramsHtml = `<input type="text" value="${escHtml(step.from || '')}" placeholder="찾을값" oninput="atEmbedActiveSteps.tag[${i}].from=this.value; atEmotionUpdatePreview(); atRenderImages();" style="width:70px; padding:2px 4px; font-size:0.75rem; border:1px solid var(--border); border-radius:3px; background:var(--surface2); color:var(--text);">
+                        <input type="text" value="${escHtml(step.to != null ? step.to : ' ')}" placeholder="바꿀값" oninput="atEmbedActiveSteps.tag[${i}].to=this.value; atEmotionUpdatePreview(); atRenderImages();" style="width:70px; padding:2px 4px; font-size:0.75rem; border:1px solid var(--border); border-radius:3px; background:var(--surface2); color:var(--text);">`;
+                }
+                row.innerHTML = `
+                    <select onchange="atEmbedActiveSteps.tag[${i}]={action:this.value}; atEmotionRenderRules(); atEmotionUpdatePreview(); atRenderImages();" style="padding:2px 4px; font-size:0.75rem; border:1px solid var(--border); border-radius:3px; background:var(--surface2); color:var(--text);">
+                        <option value="split_by" ${step.action==='split_by'?'selected':''}>구분자로 분리</option>
+                        <option value="strip_suffix" ${step.action==='strip_suffix'?'selected':''}>접미사 제거</option>
+                        <option value="strip_prefix" ${step.action==='strip_prefix'?'selected':''}>접두사 제거</option>
+                        <option value="replace" ${step.action==='replace'?'selected':''}>치환</option>
+                        <option value="strip" ${step.action==='strip'?'selected':''}>공백 제거</option>
+                        <option value="lower" ${step.action==='lower'?'selected':''}>소문자화</option>
+                    </select>
+                    ${paramsHtml}
+                    <button onclick="atEmotionRemoveRule(${i})" style="background:var(--error); color:#fff; border:none; padding:2px 6px; border-radius:3px; cursor:pointer; font-size:0.7rem;">✕</button>
+                `;
+                container.appendChild(row);
+            }
+        }
+
+        function atEmotionAddRule() {
+            if (!atEmbedActiveSteps.tag) atEmbedActiveSteps.tag = [];
+            atEmbedActiveSteps.tag.push({ action: 'replace', from: '_', to: ' ' });
+            atEmotionRenderRules();
+            atEmotionUpdatePreview();
+            atRenderImages();
+        }
+
+        function atEmotionRemoveRule(i) {
+            if (!atEmbedActiveSteps.tag) return;
+            atEmbedActiveSteps.tag.splice(i, 1);
+            atEmotionRenderRules();
+            atEmotionUpdatePreview();
+            atRenderImages();
+        }
+
+        function atEmotionUpdatePreview() {
+            const preview = document.getElementById('at-emotion-preview');
+            if (!preview) return;
+            if (!atState.images.length) {
+                preview.innerHTML = '<span style="color:var(--text2);">파일을 선택하면 추출된 감정이 여기에 표시됩니다.</span>';
+                return;
+            }
+            preview.innerHTML = atState.images.map(item => {
+                const fname = item.file ? item.file.name : '';
+                const emotion = atExtractEmotion(fname);
+                return `<div style="display:flex; justify-content:space-between; gap:8px; padding:2px 0;">
+                    <span style="color:var(--text2); word-break:break-all;">${escapeHtml(fname)}</span>
+                    <span style="color:var(--accent); font-weight:600; word-break:break-all; white-space:nowrap;">→ ${escapeHtml(emotion)}</span>
+                </div>`;
+            }).join('');
+        }
+
+        async function atEmotionApply() {
+            const steps = JSON.parse(JSON.stringify(atEmbedActiveSteps.tag || []));
+            try {
+                const resp = await fetch('/api/asset_tool/embedding_tag_rule_apply', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ steps })
+                });
+                const result = await resp.json();
+                if (result.success) {
+                    showToast('감정 추출 규칙이 적용되었습니다', 'success');
+                    await atLoadProfiles();
+                } else {
+                    showToast('적용 실패: ' + (result.error || ''), 'error');
+                }
+            } catch (e) {
+                showToast('적용 오류: ' + e.message, 'error');
+            }
         }
 
 
@@ -14186,31 +14416,10 @@
 
         // 준비 상태 체크리스트 업데이트
         async function atCheckReadyStates() {
-            const profileIcon = document.getElementById('at-check-profile-icon');
-            const profileText = document.getElementById('at-check-profile-text');
-            const profileBox = document.getElementById('at-check-profile');
             const embedIcon = document.getElementById('at-check-embedding-icon');
             const embedText = document.getElementById('at-check-embedding-text');
             const embedBox = document.getElementById('at-check-embedding');
-            if (!profileIcon || !embedIcon) return;
-
-            // 표정 프로필 상태 확인 (오토매치 표정 프로필 탭에서 스캔한 데이터 기준)
-            let profileReady = false;
-            // epProfiles는 scanExprProfilePresets() 실행 시 채워짐
-            if (typeof epProfiles !== 'undefined' && epProfiles && epProfiles.length > 0) {
-                profileReady = true;
-            }
-            if (profileReady) {
-                profileIcon.textContent = '✅';
-                profileText.textContent = '표정 프로필 준비됨';
-                profileBox.style.borderColor = 'var(--success, #4caf50)';
-                profileBox.style.color = 'var(--success, #4caf50)';
-            } else {
-                profileIcon.textContent = '❌';
-                profileText.textContent = '표정 프로필 없음';
-                profileBox.style.borderColor = 'var(--error, #f44336)';
-                profileBox.style.color = 'var(--error, #f44336)';
-            }
+            if (!embedIcon) return;
 
             // 임베딩 캐시 상태 확인
             let embedReady = false;
@@ -14234,24 +14443,6 @@
                 embedText.textContent = '임베딩 캐시 없음';
                 embedBox.style.borderColor = 'var(--error, #f44336)';
                 embedBox.style.color = 'var(--error, #f44336)';
-            }
-
-            // 업로드 태그 미리보기 상태
-            const tagPreviewIcon = document.getElementById('at-check-tag-preview-icon');
-            const tagPreviewText = document.getElementById('at-check-tag-preview-text');
-            const tagPreviewBox = document.getElementById('at-check-tag-preview');
-            if (tagPreviewIcon) {
-                if (atTagPreviewDone) {
-                    tagPreviewIcon.textContent = '✅';
-                    tagPreviewText.textContent = '업로드 태그 미리보기 완료';
-                    tagPreviewBox.style.borderColor = 'var(--success, #4caf50)';
-                    tagPreviewBox.style.color = 'var(--success, #4caf50)';
-                } else {
-                    tagPreviewIcon.textContent = '❌';
-                    tagPreviewText.textContent = '업로드 태그 미리보기 안 됨';
-                    tagPreviewBox.style.borderColor = 'var(--error, #f44336)';
-                    tagPreviewBox.style.color = 'var(--error, #f44336)';
-                }
             }
         }
 
@@ -15227,11 +15418,14 @@
                 const presetSteps = atEmbedProfiles[presetName] || [];
                 atEmbedActiveSteps.preset = JSON.parse(JSON.stringify(presetSteps));
                 atRenderCleanSteps(atEmbedActiveSteps.preset, 'preset');
-                // 태그 steps
-                const tagName = result.active_tag_profile;
-                const tagSteps = atEmbedProfiles[tagName] || [];
+                // 태그 steps (모달 평면 규칙 리스트에서 편집) — 오버라이드(인메모리 적용) 우선
+                const tagSteps = Array.isArray(result.active_tag_steps) ? result.active_tag_steps : (atEmbedProfiles[result.active_tag_profile] || []);
                 atEmbedActiveSteps.tag = JSON.parse(JSON.stringify(tagSteps));
                 atRenderCleanSteps(atEmbedActiveSteps.tag, 'tag');
+                // 모달이 열려 있으면 규칙 편집기/미리보기 갱신, 업로드 카드 감정 라벨도 갱신
+                atEmotionRenderRules();
+                atEmotionUpdatePreview();
+                atRenderImages();
             } catch (e) {
                 showToast('프로필 로드 오류: ' + e.message, 'error');
             }
@@ -15260,6 +15454,7 @@
 
         function atRenderCleanSteps(steps, source) {
             const container = document.getElementById(`at-embed-steps-container-${source}`);
+            if (!container) return; // 태그 정제는 모달의 평면 규칙 리스트(atEmotionRenderRules)로 이관
             container.innerHTML = '';
             const maxSteps = Math.max(steps.length, 1);
             for (let i = 0; i < maxSteps; i++) {
@@ -15324,6 +15519,11 @@
 
                 container.appendChild(stepDiv);
             }
+            // 태그 규칙 변경 시 모달/업로드 화면의 감정 라벨을 실시간 갱신
+            if (source === 'tag') {
+                atEmotionUpdatePreview();
+                atRenderImages();
+            }
         }
 
         function atOnStepChange(stepIndex, source) {
@@ -15340,6 +15540,7 @@
         function atReadStepsFromUI(source) {
             const steps = [];
             const container = document.getElementById(`at-embed-steps-container-${source}`);
+            if (!container) return steps; // 태그 정제는 모달 평면 규칙 리스트 사용
             const rows = container.querySelectorAll(':scope > div');
             rows.forEach((row, i) => {
                 const actionSelect = row.querySelector('select');

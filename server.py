@@ -6712,8 +6712,23 @@ async def handle_api_asset_tool_embedding_profiles(request: web.Request) -> web.
             "profiles": profiles,
             "active_preset_profile": current_config.get("active_preset_profile", ""),
             "active_tag_profile": current_config.get("active_tag_profile", ""),
+            "active_tag_steps": embedding_service.get_effective_tag_steps(),
         })
     except Exception as e:
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_asset_tool_embedding_tag_rule_apply(request: web.Request) -> web.Response:
+    try:
+        body = await request.json()
+        steps = body.get("steps", [])
+        if not isinstance(steps, list):
+            return web.json_response({"success": False, "error": "steps는 리스트여야 합니다"}, status=400)
+        result = embedding_service.apply_tag_cleaning_steps(steps)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[ASSET_TOOL] 태그 정제 규칙 적용 오류: {e}")
+        traceback.print_exc()
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 
@@ -6885,6 +6900,7 @@ app.router.add_post("/api/asset_tool/embedding_preview", handle_api_asset_tool_e
 app.router.add_post("/api/asset_tool/embedding_start", handle_api_asset_tool_embedding_start)
 app.router.add_get("/api/asset_tool/embedding_cache_status", handle_api_asset_tool_embedding_cache_status)
 app.router.add_get("/api/asset_tool/embedding_profiles", handle_api_asset_tool_embedding_profiles)
+app.router.add_post("/api/asset_tool/embedding_tag_rule_apply", handle_api_asset_tool_embedding_tag_rule_apply)
 app.router.add_post("/api/asset_tool/embedding_profile_save", handle_api_asset_tool_embedding_profile_save)
 app.router.add_post("/api/asset_tool/embedding_profile_delete", handle_api_asset_tool_embedding_profile_delete)
 app.router.add_post("/api/asset_tool/embedding_profile_apply", handle_api_asset_tool_embedding_profile_apply)
