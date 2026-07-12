@@ -3358,6 +3358,39 @@ async def handle_api_reload_workflow(request: web.Request) -> web.Response:
         return web.json_response({"error": str(e)}, status=500)
 
 
+async def handle_api_workflow_name_check(request: web.Request) -> web.Response:
+    """설정의 삽화 워크플로우 소스 파일명과 workflow/ 폴더에 실제 저장된 파일명을 비교한다.
+    삽화 수동 그리기 실행 전 프론트엔드가 호출하여 불일치 경고를 띄우는 데 사용한다.
+    실제 삽화 생성은 workflow/ 폴더의 파일로 이루어지므로, 두 이름이 다르면
+    설정과 다른 워크플로우로 그려지게 됨을 알려준다."""
+    try:
+        src = get_comfy_workflow_source_path()
+        configured_name = os.path.basename(src) if src else ""
+        if src and not os.path.isfile(src):
+            print(f"[WORKFLOW_NAME_CHECK] 설정 소스 파일 없음: {src}")
+
+        wf_file = get_workflow_file()
+        folder_name = os.path.basename(wf_file) if wf_file else ""
+        if not wf_file:
+            print("[WORKFLOW_NAME_CHECK] workflow 폴더에 JSON 파일 없음")
+
+        # 비교 가능한 상태(둘 다 존재)일 때만 불일치 판정
+        comparable = bool(configured_name) and bool(folder_name)
+        match = (configured_name == folder_name) if comparable else True
+
+        if comparable and not match:
+            print(f"[WORKFLOW_NAME_CHECK] 불일치: 설정='{configured_name}' 폴더='{folder_name}'")
+
+        return web.json_response({
+            "configured_name": configured_name,
+            "folder_name": folder_name,
+            "match": match,
+        })
+    except Exception as e:
+        traceback.print_exc()
+        return web.json_response({"error": str(e)}, status=500)
+
+
 async def handle_api_reschedule(request: web.Request) -> web.Response:
     """Reschedule queue management for retransmission."""
     global reschedule_queue
@@ -4760,6 +4793,7 @@ app.router.add_post("/api/backup_delete/{name}", handle_api_backup_delete)
 app.router.add_get("/api/conversion_info", handle_api_conversion_info)
 app.router.add_post("/api/regenerate", handle_api_regenerate)
 app.router.add_post("/api/reload_workflow", handle_api_reload_workflow)
+app.router.add_get("/api/workflow_name_check", handle_api_workflow_name_check)
 app.router.add_post("/api/lighbd/enqueue", handle_api_lighbd_enqueue)
 app.router.add_get("/api/lighbd/history", handle_api_lighbd_history)
 app.router.add_get("/api/lighbd/session/{sid}", handle_api_lighbd_session)

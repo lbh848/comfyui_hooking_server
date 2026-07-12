@@ -10900,6 +10900,25 @@
                 connectFrontendWs();
                 await new Promise(r => setTimeout(r, 500));
             }
+
+            // 설정 워크플로우와 폴더 워크플로우 파일명 불일치 경고
+            // 실제 삽화는 workflow/ 폴더의 파일로 그려지므로, 설정과 다르면 다른 워크플로우가 사용됨
+            try {
+                const resp = await fetch('/api/workflow_name_check');
+                const chk = await resp.json();
+                if (chk.error) {
+                    showToast(`워크플로우 확인 실패: ${chk.error}`, 'error');
+                } else if (chk.match === false) {
+                    const msg = `설정된 삽화 워크플로우('${chk.configured_name}')와 폴더에 저장된 워크플로우('${chk.folder_name}') 이름이 다릅니다.\n\n실제 그림은 폴더의 워크플로우로 그려집니다. 계속하시겠습니까?`;
+                    if (!confirm(msg)) {
+                        console.log('[수동 그리기] 워크플로우 불일치 경고로 사용자 취소');
+                        return;
+                    }
+                }
+            } catch (e) {
+                console.warn('[수동 그리기] 워크플로우 이름 확인 실패, 진행:', e);
+            }
+
             const btn = document.getElementById('restore-manual-btn');
             btn.disabled = true;
             btn.textContent = '🖌️ 큐 등록 중...';
