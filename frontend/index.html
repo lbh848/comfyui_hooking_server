@@ -221,6 +221,18 @@
             vertical-align: middle;
         }
 
+        .gen-method-badge {
+            display: inline-block;
+            background: #6b7a8f;
+            color: #fff;
+            font-size: 0.7rem;
+            font-weight: 600;
+            padding: 1px 7px;
+            border-radius: 10px;
+            margin-right: 4px;
+            vertical-align: middle;
+        }
+
         .card-actions {
             display: flex;
             gap: 8px;
@@ -3416,6 +3428,12 @@
     <div class="stats-bar" id="stats-bar" style="display:none;">
         <span>총 <span class="count" id="total-count">0</span>개의 백업</span>
         <span id="loaded-count">0개 로드됨</span>
+        <label class="backup-filter-label" style="margin-left:auto; display:flex; align-items:center; gap:6px; font-size:0.85rem; color:var(--text2);">
+            모아보기
+            <select id="backup-filter" onchange="onBackupFilterChange()" style="background:var(--bg2); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:4px 8px; font-size:0.85rem; cursor:pointer;">
+                <option value="all">전체</option>
+            </select>
+        </label>
     </div>
 
     <main>
@@ -7667,7 +7685,8 @@
             limit: 20,
             total: 0,
             hasMore: true,
-            isLoading: false
+            isLoading: false,
+            filter: 'all'  // 모아보기 필터: all / restore / bot:{bot_name} / bot_none
         };
         
         // 설정 상태
@@ -8109,6 +8128,8 @@
                 await loadBackups(true);
                 console.log('[Backup] 목록 갱신 완료');
             }
+            // 새 백업이 새 bot_name을 가져올 수 있으므로 필터 드롭다운 갱신
+            if (typeof loadBackupFilters === 'function') loadBackupFilters();
         }
 
         // ─── API 호출 ───
@@ -8238,7 +8259,8 @@
 
                 const params = new URLSearchParams({
                     offset: paginationState.offset,
-                    limit: paginationState.limit
+                    limit: paginationState.limit,
+                    filter: paginationState.filter
                 });
 
                 const data = await fetchJSON(`/api/backups?${params}`);
@@ -8297,6 +8319,48 @@
             await loadBackups(false);
         }
 
+        // ─── 모아보기 필터 ───
+        let _backupFiltersLoading = false;
+        async function loadBackupFilters() {
+            // 필터 드롭다운 옵션(전체/restore 프로세스/bot_name별)을 서버에서 가져와 채운다.
+            if (_backupFiltersLoading) return;
+            _backupFiltersLoading = true;
+            try {
+                const data = await fetchJSON('/api/backups/filters');
+                const sel = document.getElementById('backup-filter');
+                if (!sel) return;
+                const cur = paginationState.filter || 'all';
+                let html = '';
+                for (const it of (data.filters || [])) {
+                    html += `<option value="${escapeAttr(it.key)}">${escapeHtml(it.label)} (${it.count})</option>`;
+                }
+                sel.innerHTML = html;
+                // 현재 선택된 필터 유지 (필터 목록에 없으면 전체로 복귀)
+                if ([...sel.options].some(o => o.value === cur)) {
+                    sel.value = cur;
+                } else {
+                    paginationState.filter = 'all';
+                    sel.value = 'all';
+                }
+            } catch (e) {
+                console.error('[BACKUP_FILTER] 필터 목록 로드 실패:', e);
+            } finally {
+                _backupFiltersLoading = false;
+            }
+        }
+
+        function onBackupFilterChange() {
+            const sel = document.getElementById('backup-filter');
+            if (!sel) return;
+            paginationState.filter = sel.value || 'all';
+            // 필터 변경 시 페이지네이션 초기화 후 재조회
+            paginationState.offset = 0;
+            paginationState.hasMore = true;
+            paginationState.total = 0;
+            backupsData = [];
+            loadBackups(true);
+        }
+
         function renderBackups(backups) {
             const content = document.getElementById('content');
             if (!backups || backups.length === 0) {
@@ -8340,7 +8404,7 @@
                         </div>
                     </div>
                     <div class="card-body">
-                        <div class="card-meta">${info.bot_name ? `<span class="bot-badge">${escapeHtml(info.bot_name)}</span> ` : ''}${escapeHtml(dateStr)} &mdash; ${escapeHtml(b.name)}${info.generation_time ? ` · ⏱️ ${info.generation_time.toFixed(1)}초` : ''}</div>
+                        <div class="card-meta">${info.bot_name ? `<span class="bot-badge">${escapeHtml(info.bot_name)}</span> ` : ''}${info.gen_method ? `<span class="gen-method-badge">${escapeHtml(info.gen_method)}</span> ` : ''}${escapeHtml(dateStr)} &mdash; ${escapeHtml(b.name)}${info.generation_time ? ` · ⏱️ ${info.generation_time.toFixed(1)}초` : ''}</div>
                         <div class="card-actions">
                             <button class="regen-btn" onclick="regenerate('${escapeAttr(b.name)}', this)"
                                     ${b.has_prompt ? '' : 'disabled title="프롬프트 없음"'}>
@@ -8763,6 +8827,8 @@
                 paginationState.total = Math.max(0, paginationState.total - 1);
                 renderBackups(backupsData);
                 updateStatsBar();
+                // 삭제로 인해 필터 카운트/옵션이 달라질 수 있으므로 드롭다운 갱신
+                loadBackupFilters();
             } catch (e) {
                 // fetchJSON이 HTTP 에러 본문까지 노출 (CLAUDE.md: 구체적 에러 메시지)
                 showToast('삭제 실패: ' + (e.message || e), 'error');
@@ -12257,6 +12323,7 @@
 
         // ─── 초기 로드 ───
         loadBackups(true);
+        loadBackupFilters();
         connectFrontendWs();
 
         // 배치 모드 상태를 먼저 로드한 후, 다른 모드 초기화

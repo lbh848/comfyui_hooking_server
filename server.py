@@ -857,8 +857,10 @@ def create_placeholder_png() -> bytes:
 
 
 # ─── 백업 관리 ────────────────────────────────────────────
-async def save_backup(image_bytes: bytes, prompt_id: str, positive: str, negative: str, generation_time: float = None, chat_content: str = "", enhanced_positive: str = "", wildcard_info: dict = None, bot_name: str = ""):
-    """이미지(WebP q80 + 원본 워크플로우 메타데이터)와 원본 워크플로우를 백업한다."""
+async def save_backup(image_bytes: bytes, prompt_id: str, positive: str, negative: str, generation_time: float = None, chat_content: str = "", enhanced_positive: str = "", wildcard_info: dict = None, bot_name: str = "", gen_method: str = ""):
+    """이미지(WebP q80 + 원본 워크플로우 메타데이터)와 원본 워크플로우를 백업한다.
+    bot_name: 봇/워크플로우 컨텍스트 딱지 (bot 모드일 때 봇 이름).
+    gen_method: 생성 방법 딱지 (수동 그리기 / 자동 복원 등). 일반 생성·재생성은 빈칸."""
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     base_name = f"{ts}_{prompt_id[:8]}"
 
@@ -947,6 +949,8 @@ async def save_backup(image_bytes: bytes, prompt_id: str, positive: str, negativ
         info_to_save["generation_time"] = generation_time
     if bot_name:
         info_to_save["bot_name"] = bot_name
+    if gen_method:
+        info_to_save["gen_method"] = gen_method
 
     info_path = os.path.join(WORKFLOW_BACKUP_DIR, f"{base_name}_info.json")
     with open(info_path, "w", encoding="utf-8") as f:
@@ -954,6 +958,8 @@ async def save_backup(image_bytes: bytes, prompt_id: str, positive: str, negativ
 
     # 4) 오래된 백업 정리
     cleanup_backups()
+    # 5) 필터 인덱스 캐시 무효화 (신규 백업 + 정리된 백업 반영)
+    _invalidate_backup_filter_cache()
 
     # 5) 프론트엔드에 새 백업 생성 알림
     await notify_frontend("backup_created", {"name": base_name})
@@ -1715,8 +1721,8 @@ async def _do_restore_workflow():
         img_bytes, error = await generate_image_with_prompt(positive, negative)
         if img_bytes:
             print(f"[RESTORE] 복원 완료 (이미지 {len(img_bytes):,}B)")
-            # 백업에 저장하여 대시보드에 구분자로 표시
-            await save_backup(img_bytes, "restore", positive, negative)
+            # 백업에 저장하여 대시보드에 구분자로 표시 (생성 방법 딱지로 '자동 복원' 부여, bot_name 없음)
+            await save_backup(img_bytes, "restore", positive, negative, gen_method="자동 복원")
             await notify_frontend("restore_image_saved", {"positive": positive[:100]})
         else:
             print(f"[RESTORE] 복원 실행 결과: {error}")
@@ -1933,7 +1939,9 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
 
         # 백업 저장 (WebP + 원본 워크플로우 JSON + 변환정보)
         _backup_bot_name = bot_name if (bot_name and app_config.get("bot_mode_enabled", False)) else ""
-        await save_backup(img_bytes, prompt_id, positive, negative, generation_time=elapsed_time, bot_name=_backup_bot_name)
+        # 수동 그리기(prompt_id 'manual-' 접두사)는 생성 방법 딱지 부여 (봇 딱지와 별개 차원)
+        _gen_method = "수동 그리기" if str(prompt_id).startswith("manual-") else ""
+        await save_backup(img_bytes, prompt_id, positive, negative, generation_time=elapsed_time, bot_name=_backup_bot_name, gen_method=_gen_method)
 
         # 프록시 응답 설정
         our_filename = f"ComfyUI_{prompt_id[:8]}.png"
@@ -2914,8 +2922,76 @@ def _extract_prompts_from_backup(filepath: str) -> tuple[str, str]:
     return positive, negative
 
 
+# ─── 백업 필터용 bot_name 인덱스 캐시 ──────────────────────────
+# 백업이 ~5000개일 때 info 파일 전체 스캔이 약 0.8초 걸린다.
+# 페이지네이션/자동새로고침 때마다 반복 스캔하지 않도록 bot_name 인덱스를 캐싱하고
+# 신규 백업(save_backup) / 삭제(handle_api_backup_delete) 시 무효화한다.
+_backup_filter_cache = None  # None 또는 dict
+
+
+def _invalidate_backup_filter_cache():
+    """백업 추가/삭제 후 캐시를 무효화한다. 다음 조회 시 재구축된다."""
+    global _backup_filter_cache
+    _backup_filter_cache = None
+
+
+def _read_backup_bot_name(backup_name: str) -> str:
+    """백업의 bot_name을 읽어 반환한다. 재생성 결과가 원본과 같은 봇 딱지를 달도록 물려주기 위함."""
+    info_path = os.path.join(WORKFLOW_BACKUP_DIR, f"{backup_name}_info.json")
+    if not os.path.exists(info_path):
+        return ""
+    try:
+        with open(info_path, "r", encoding="utf-8") as f:
+            return json.load(f).get("bot_name", "") or ""
+    except Exception as e:
+        print(f"[BACKUP] ⚠ 원본 bot_name 읽기 실패 {backup_name}: {e}")
+        return ""
+
+
+def _ensure_backup_filter_cache(backup_dir: str) -> dict:
+    """bot_name 인덱스 캐시를 (필요시) 구축하여 반환한다."""
+    global _backup_filter_cache
+    if _backup_filter_cache is not None:
+        return _backup_filter_cache
+    t0 = time.time()
+    name_to_bot = {}
+    name_to_method = {}
+    bot_counts = {}
+    method_counts = {}
+    total = 0
+    for f in glob.glob(os.path.join(backup_dir, "*.webp")):
+        base = os.path.splitext(os.path.basename(f))[0]
+        total += 1
+        bn = ""
+        gm = ""
+        info_path = os.path.join(backup_dir, f"{base}_info.json")
+        if os.path.exists(info_path):
+            try:
+                with open(info_path, "r", encoding="utf-8") as fp:
+                    d = json.load(fp)
+                    bn = d.get("bot_name", "") or ""
+                    gm = d.get("gen_method", "") or ""
+            except Exception as e:
+                print(f"[BACKUP_FILTER] ⚠ info 읽기 실패 {base}: {e}")
+                bn = ""
+                gm = ""
+        name_to_bot[base] = bn
+        name_to_method[base] = gm
+        bot_counts[bn] = bot_counts.get(bn, 0) + 1
+        method_counts[gm] = method_counts.get(gm, 0) + 1
+    _backup_filter_cache = {
+        "name_to_bot": name_to_bot,
+        "name_to_method": name_to_method,
+        "bot_counts": bot_counts,
+        "method_counts": method_counts,
+        "total": total,
+    }
+    print(f"[BACKUP_FILTER] 캐시 구축: {total}개, {time.time() - t0:.2f}s")
+    return _backup_filter_cache
+
+
 async def handle_api_backups(request: web.Request) -> web.Response:
-    """백업 이미지 목록을 반환한다. 페이지네이션 지원."""
+    """백업 이미지 목록을 반환한다. 페이지네이션 + 모아보기 필터 지원."""
     global reschedule_queue
     
     # 페이지네이션 파라미터
@@ -2924,13 +3000,36 @@ async def handle_api_backups(request: web.Request) -> web.Response:
         limit = int(request.query.get("limit", "20"))
     except ValueError:
         offset, limit = 0, 20
-    
+
+    # 모아보기 필터: all(기본) / bot:{bot_name} / bot_none / method:{gen_method}
+    filter_param = request.query.get("filter", "all") or "all"
+
     backup_dir = get_backup_base_dir()
     pattern = os.path.join(backup_dir, "*.webp")
     files = sorted(glob.glob(pattern), key=os.path.getmtime, reverse=True)
-    
-    total_count = len(files)
-    
+
+    # ─── 필터 적용 ───
+    if filter_param == "bot_none" or filter_param.startswith("bot:"):
+        # bot_name 기준 필터는 info 파일을 읽어야 하므로 캐시된 인덱스 사용.
+        target_bot = filter_param[4:] if filter_param.startswith("bot:") else None  # bot_none → None
+        cache = _ensure_backup_filter_cache(backup_dir)
+        name_to_bot = cache["name_to_bot"]
+        if target_bot is None:
+            files = [f for f in files if not name_to_bot.get(os.path.splitext(os.path.basename(f))[0], "")]
+        else:
+            files = [f for f in files if name_to_bot.get(os.path.splitext(os.path.basename(f))[0], "") == target_bot]
+        total_count = len(files)
+    elif filter_param.startswith("method:"):
+        # 생성 방법(gen_method) 기준 필터.
+        target_method = filter_param[7:]
+        cache = _ensure_backup_filter_cache(backup_dir)
+        name_to_method = cache["name_to_method"]
+        files = [f for f in files if name_to_method.get(os.path.splitext(os.path.basename(f))[0], "") == target_method]
+        total_count = len(files)
+    else:
+        # all: 필터 없음
+        total_count = len(files)
+
     # 페이지네이션 적용
     files = files[offset:offset + limit]
     
@@ -2996,6 +3095,41 @@ async def handle_api_backups(request: web.Request) -> web.Response:
         "limit": limit,
         "has_more": (offset + limit) < total_count
     })
+
+
+async def handle_api_backups_filters(request: web.Request) -> web.Response:
+    """모아보기 필터 드롭다운용: bot_name별 / restore별 개수를 반환한다.
+    응답: { filters: [{key, label, count}, ...], total }
+    key 종류: 'all', 'restore', 'bot:{bot_name}', 'bot_none' """
+    backup_dir = get_backup_base_dir()
+    try:
+        cache = _ensure_backup_filter_cache(backup_dir)
+    except Exception:
+        traceback.print_exc()
+        return web.json_response({"error": "필터 인덱스 구축 실패"}, status=500)
+
+    bot_counts = cache["bot_counts"]
+    method_counts = cache["method_counts"]
+    total = cache["total"]
+
+    items = []
+    items.append({"key": "all", "label": "전체", "count": total})
+    # bot_name 있는 것들은 개수 내림차순
+    named = [(name, c) for name, c in bot_counts.items() if name]
+    named.sort(key=lambda x: -x[1])
+    for name, c in named:
+        items.append({"key": f"bot:{name}", "label": name, "count": c})
+    # 생성 방법(gen_method) 있는 것들 — 수동 그리기 / 자동 복원 등
+    methods = [(m, c) for m, c in method_counts.items() if m]
+    methods.sort(key=lambda x: -x[1])
+    for m, c in methods:
+        items.append({"key": f"method:{m}", "label": m, "count": c})
+    # bot_name 없는 것은 별도 항목
+    none_count = bot_counts.get("", 0)
+    if none_count:
+        items.append({"key": "bot_none", "label": "(bot_name 없음)", "count": none_count})
+
+    return web.json_response({"filters": items, "total": total})
 
 
 async def handle_api_backup_image(request: web.Request) -> web.Response:
@@ -3100,6 +3234,8 @@ async def handle_api_backup_delete(request: web.Request) -> web.Response:
             )
 
         print(f"[BACKUP_DELETE] 삭제 완료: {name} -> {deleted}" + (f" | 실패: {failed}" if failed else ""))
+        # 필터 인덱스 캐시 무효화 (삭제된 백업 반영)
+        _invalidate_backup_filter_cache()
         return web.json_response({"deleted": deleted, "failed": failed})
     except Exception as e:
         print(f"[BACKUP_DELETE] ✗ 예외: {name} -> {e}")
@@ -3152,12 +3288,13 @@ async def handle_api_regenerate(request: web.Request) -> web.Response:
         if img_bytes is None:
             return web.json_response({"error": str(result_info)}, status=500)
 
-        # 재생성 이미지도 백업 저장
+        # 재생성 이미지도 백업 저장 (원본 백업의 bot_name을 물려받아 같은 봇 딱지가 붙도록)
         regen_id = uuid.uuid4().hex
-        await save_backup(img_bytes, regen_id, positive, negative, generation_time=elapsed_time)
+        src_bot_name = _read_backup_bot_name(backup_name)
+        await save_backup(img_bytes, regen_id, positive, negative, generation_time=elapsed_time, bot_name=src_bot_name)
 
         b64 = base64.b64encode(img_bytes).decode("ascii")
-        print(f"[REGEN] 완료: {len(img_bytes):,} bytes ({elapsed_time:.1f}s)")
+        print(f"[REGEN] 완료: {len(img_bytes):,} bytes ({elapsed_time:.1f}s)" + (f" (bot={src_bot_name})" if src_bot_name else ""))
         return web.json_response({"image": f"data:image/png;base64,{b64}"})
 
     except Exception as e:
@@ -3338,11 +3475,12 @@ async def handle_api_reschedule_with_modified_prompt(request: web.Request) -> we
         if img_bytes is None:
             return web.json_response({"error": str(node_errors)}, status=500)
         
-        # Backup the new image
+        # Backup the new image (원본 백업의 bot_name을 물려받아 같은 봇 딱지가 붙도록)
         regen_id = uuid.uuid4().hex
-        await save_backup(img_bytes, regen_id, modified_positive, modified_negative, generation_time=elapsed_time)
+        src_bot_name = _read_backup_bot_name(backup_name)
+        await save_backup(img_bytes, regen_id, modified_positive, modified_negative, generation_time=elapsed_time, bot_name=src_bot_name)
         
-        print(f"[RESCHEDULE_MOD] New image generated: {len(img_bytes):,} bytes ({elapsed_time:.1f}s)")
+        print(f"[RESCHEDULE_MOD] New image generated: {len(img_bytes):,} bytes ({elapsed_time:.1f}s)" + (f" (bot={src_bot_name})" if src_bot_name else ""))
         
         # Return base64 of new image for preview
         b64 = base64.b64encode(img_bytes).decode("ascii")
@@ -4614,6 +4752,7 @@ app.router.add_get("/extensions", handle_dummy)
 # 프런트엔드 / API 라우트
 app.router.add_get("/", handle_frontend)
 app.router.add_get("/api/backups", handle_api_backups)
+app.router.add_get("/api/backups/filters", handle_api_backups_filters)
 app.router.add_get("/api/backup_image/{filename}", handle_api_backup_image)
 app.router.add_get("/api/backup_prompt/{name}", handle_api_backup_prompt)
 app.router.add_get("/api/backup_chat", handle_api_backup_chat)

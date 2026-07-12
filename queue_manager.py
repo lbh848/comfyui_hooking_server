@@ -511,7 +511,8 @@ class QueueManager:
 
         img_bytes, error = await self.generate_image_with_prompt(positive, negative, progress_callback=_on_restore_progress)
         if img_bytes and self.save_backup:
-            await self.save_backup(img_bytes, "restore_manual", positive, negative)
+            # 비삽화모드 수동 그리기: bot_name 없음, 생성 방법 딱지로 '수동 그리기' 부여
+            await self.save_backup(img_bytes, "restore_manual", positive, negative, gen_method="수동 그리기")
             print(f"[QUEUE:restore_manual] 완료 (이미지 {len(img_bytes):,}B)")
             return {"success": True, "image_size": len(img_bytes)}
         elif not img_bytes:
