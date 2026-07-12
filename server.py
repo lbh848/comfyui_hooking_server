@@ -1034,7 +1034,7 @@ def count_ksampler_total_steps(workflow: dict) -> int:
     return total
 
 
-async def wait_for_real_comfy(ws, real_prompt_id: str, progress_callback=None, total_steps: int = 0) -> dict | None:
+async def wait_for_real_comfy(ws, real_prompt_id: str, progress_callback=None, total_steps: int = 0, error_holder: dict | None = None) -> dict | None:
     print(f"[PROXY] WS 대기 시작 (prompt={real_prompt_id}, total_steps={total_steps})")
     saw_executing = False
     cumulative_steps = 0
@@ -1127,12 +1127,24 @@ async def wait_for_real_comfy(ws, real_prompt_id: str, progress_callback=None, t
                         f"[PROXY] ✗ 실행 에러: "
                         f"{json.dumps(msg_data, ensure_ascii=False)[:300]}"
                     )
+                    if error_holder is not None:
+                        error_holder["error"] = "execution_error"
+                        error_holder["detail"] = msg_data
                     return None
 
             elif msg.type in (aiohttp.WSMsgType.ERROR, aiohttp.WSMsgType.CLOSED):
+                if error_holder is not None and "error" not in error_holder:
+                    error_holder["error"] = "ws_closed"
+                    error_holder["detail"] = {"ws_msg_type": str(msg.type)}
                 break
     except Exception as e:
         print(f"[PROXY] WS 예외: {e}")
+        if error_holder is not None and "error" not in error_holder:
+            error_holder["error"] = "ws_exception"
+            error_holder["detail"] = str(e)
+    if error_holder is not None and "error" not in error_holder:
+        error_holder["error"] = "timeout"
+        error_holder["detail"] = "WS 응답 없음 (executing/완료 신호 수신 못함)"
     return None
 
 
@@ -1207,9 +1219,23 @@ async def generate_image_with_prompt(positive: str, negative: str, progress_call
             node_errors = submit_result.get("node_errors", {})
 
             total_steps = count_ksampler_total_steps(current_api_workflow)
-            ws_result = await wait_for_real_comfy(real_ws, real_prompt_id, progress_callback=_on_gen_progress, total_steps=total_steps)
+            error_holder = {}
+            ws_result = await wait_for_real_comfy(real_ws, real_prompt_id, progress_callback=_on_gen_progress, total_steps=total_steps, error_holder=error_holder)
             if ws_result is None:
-                return None, "생성 실패 또는 타임아웃"
+                err_type = error_holder.get("error", "unknown")
+                detail = error_holder.get("detail", "")
+                if err_type == "execution_error" and isinstance(detail, dict):
+                    node_id = detail.get("node_id") or detail.get("node") or "?"
+                    node_type = detail.get("node_type", "?")
+                    exc_msg = detail.get("exception_message") or detail.get("exception_type") or json.dumps(detail, ensure_ascii=False)
+                    return None, f"ComfyUI 실행 에러: 노드 {node_id} ({node_type}) — {exc_msg}"
+                elif err_type == "ws_exception":
+                    return None, f"ComfyUI WebSocket 연결 예외: {detail}"
+                elif err_type == "ws_closed":
+                    return None, f"ComfyUI WebSocket 연결 종료: {detail}"
+                elif err_type == "timeout":
+                    return None, f"ComfyUI 생성 타임아웃/응답 없음: {detail}"
+                return None, f"생성 실패 (알 수 없는 WS 종료): {detail or error_holder}"
 
     history = await fetch_real_history(real_prompt_id, port=illust_port)
     real_entry = history.get(real_prompt_id, {})
@@ -1222,7 +1248,15 @@ async def generate_image_with_prompt(positive: str, negative: str, progress_call
             break
 
     if not real_images:
-        return None, "ComfyUI에서 이미지를 찾을 수 없음"
+        out_info = ", ".join(f"{nid}:{list(nout.keys())}" for nid, nout in real_outputs.items()) or "(출력 노드 없음)"
+        status_info = real_entry.get("status", {})
+        err_detail = ""
+        if node_errors:
+            err_detail += f" | node_errors: {json.dumps(node_errors, ensure_ascii=False)}"
+        if status_info:
+            err_detail += f" | status: {json.dumps(status_info, ensure_ascii=False)[:300]}"
+        print(f"[GEN] 이미지 미출력 — 출력 노드: {out_info} | status: {json.dumps(status_info, ensure_ascii=False)[:500]}")
+        return None, f"ComfyUI에서 이미지 결과를 얻지 못함 (출력 노드: {out_info}){err_detail}"
 
     first_img = real_images[0]
     img_bytes = await fetch_real_image(
@@ -1312,9 +1346,23 @@ async def submit_workflow_to_comfy(workflow_api: dict, progress_callback=None) -
                 print(f"[ASSET] submit_result: status={submit_result.get('status','?')}, prompt_id={real_prompt_id}")
 
                 total_steps = count_ksampler_total_steps(workflow_api)
-                ws_result = await wait_for_real_comfy(real_ws, real_prompt_id, progress_callback=progress_callback, total_steps=total_steps)
+                error_holder = {}
+                ws_result = await wait_for_real_comfy(real_ws, real_prompt_id, progress_callback=progress_callback, total_steps=total_steps, error_holder=error_holder)
                 if ws_result is None:
-                    return None, "생성 실패 또는 타임아웃"
+                    err_type = error_holder.get("error", "unknown")
+                    detail = error_holder.get("detail", "")
+                    if err_type == "execution_error" and isinstance(detail, dict):
+                        node_id = detail.get("node_id") or detail.get("node") or "?"
+                        node_type = detail.get("node_type", "?")
+                        exc_msg = detail.get("exception_message") or detail.get("exception_type") or json.dumps(detail, ensure_ascii=False)
+                        return None, f"ComfyUI 실행 에러: 노드 {node_id} ({node_type}) — {exc_msg}"
+                    elif err_type == "ws_exception":
+                        return None, f"ComfyUI WebSocket 연결 예외: {detail}"
+                    elif err_type == "ws_closed":
+                        return None, f"ComfyUI WebSocket 연결 종료: {detail}"
+                    elif err_type == "timeout":
+                        return None, f"ComfyUI 생성 타임아웃/응답 없음: {detail}"
+                    return None, f"생성 실패 (알 수 없는 WS 종료): {detail or error_holder}"
 
         history = await fetch_real_history(real_prompt_id)
         real_entry = history.get(real_prompt_id, {})
@@ -1330,10 +1378,15 @@ async def submit_workflow_to_comfy(workflow_api: dict, progress_callback=None) -
                 break
 
         if not real_images:
+            out_info = ", ".join(f"{nid}:{list(nout.keys())}" for nid, nout in real_outputs.items()) or "(출력 노드 없음)"
+            status_info = real_entry.get("status", {})
             err_detail = ""
             if node_errors:
-                err_detail = f" (node_errors: {json.dumps(node_errors, ensure_ascii=False)})"
-            return None, f"ComfyUI에서 이미지를 찾을 수 없음{err_detail}"
+                err_detail += f" | node_errors: {json.dumps(node_errors, ensure_ascii=False)}"
+            if status_info:
+                err_detail += f" | status: {json.dumps(status_info, ensure_ascii=False)[:300]}"
+            print(f"[ASSET] 이미지 미출력 — 출력 노드: {out_info} | status: {json.dumps(status_info, ensure_ascii=False)[:500]}")
+            return None, f"ComfyUI에서 이미지 결과를 얻지 못함 (출력 노드: {out_info}){err_detail}"
 
         first_img = real_images[0]
         img_bytes = await fetch_real_image(
