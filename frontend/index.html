@@ -34885,13 +34885,11 @@
                 const faceSdxlTriggers = faceLoraList.filter(l => l.BASE === 'sdxl').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
                 positiveFull += `\n[CHAR_FACE_TAG_INFORM]\n${JSON.stringify({list: [{FACE_TAGS: faceTags, EYE_TAGS: eyeTags, POSITIVE: "", TRIGGER_ANIMA: faceAnimaTriggers, TRIGGER_SDXL: faceSdxlTriggers, CHAR: "asset_mode"}]})}`;
             }
-            // Style(그림체) LoRA — ANIMA는 별도 토큰(분리 로더), ILXL은 LORA_DATA에 합쳐졌으므로 비활성/빈 값
+            // Style(그림체) LoRA — ANIMA는 별도 토큰(분리 로더).
+            // 일반(ILXL) 모드는 스타일 LoRA가 LORA_DATA에 흡수되므로 이 토큰들을 출력하지 않음.
             if (isAnima) {
                 positiveFull += `\n[STYLE_LORA_ACTIVATE]\n${styleLoraActive ? 'true' : 'false'}`;
                 positiveFull += `\n[STYLE_LORA_DATA]\n${JSON.stringify({list: styleLoraData})}`;
-            } else {
-                positiveFull += `\n[STYLE_LORA_ACTIVATE]\nfalse`;
-                positiveFull += `\n[STYLE_LORA_DATA]\n{"list":[]}`;
             }
             // HRF
             positiveFull += `\n[HRF_ACTIVATE]\n${hrfSdxl ? 'true' : 'false'}`;
@@ -39834,6 +39832,10 @@
             } else if (type === 'asset_generation_completed') {
                 if (data.status === 'success') {
                     renderAssetMainArea();
+                } else if (data.status === 'error') {
+                    const errMsg = (data.result && data.result.error) || data.error || '에셋 생성 실패';
+                    console.error('[ASSET] 생성 실패:', errMsg);
+                    showToast(errMsg, 'error');
                 }
                 hideTopProgress();
             }
@@ -44575,13 +44577,11 @@
                 const batchFaceSdxlTriggers = faceLoraList.filter(l => l.BASE === 'sdxl').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
                 positiveFull += `\n[CHAR_FACE_TAG_INFORM]\n${JSON.stringify({list: [{FACE_TAGS: slot.face_tags || '', EYE_TAGS: slot.eye_tags || '', POSITIVE: "", TRIGGER_ANIMA: batchFaceAnimaTriggers, TRIGGER_SDXL: batchFaceSdxlTriggers, CHAR: "asset_mode"}]})}`;
             }
-            // Style(그림체) LoRA — ANIMA는 별도 토큰(분리 로더), ILXL은 LORA_DATA에 합쳐졌으므로 비활성/빈 값
+            // Style(그림체) LoRA — ANIMA는 별도 토큰(분리 로더).
+            // 일반(ILXL) 모드는 스타일 LoRA가 LORA_DATA에 흡수되므로 이 토큰들을 출력하지 않음.
             if (isAnima) {
                 positiveFull += `\n[STYLE_LORA_ACTIVATE]\n${styleLoraActive ? 'true' : 'false'}`;
                 positiveFull += `\n[STYLE_LORA_DATA]\n${JSON.stringify({list: styleLoraData})}`;
-            } else {
-                positiveFull += `\n[STYLE_LORA_ACTIVATE]\nfalse`;
-                positiveFull += `\n[STYLE_LORA_DATA]\n{"list":[]}`;
             }
             positiveFull += `\n[POSE_ACTIVATE]\n${poseEnabled ? 'true' : 'false'}`;
             if (poseEnabled && slot.pose_id) {
@@ -44719,12 +44719,10 @@
                 const previewFaceSdxlTriggers = previewFaceLoraList.filter(l => l.BASE === 'sdxl').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
                 controlPart += `\n[CHAR_FACE_TAG_INFORM]\n${JSON.stringify({list: [{FACE_TAGS: slot.face_tags || '', EYE_TAGS: slot.eye_tags || '', POSITIVE: "", TRIGGER_ANIMA: previewFaceAnimaTriggers, TRIGGER_SDXL: previewFaceSdxlTriggers, CHAR: "asset_mode"}]})}`;
             }
+            // Style(그림체) LoRA — 일반(ILXL) 모드는 LORA_DATA에 흡수되므로 ANIMA만 출력
             if (isAnima) {
                 controlPart += `\n[STYLE_LORA_ACTIVATE]\n${styleLoraActive ? 'true' : 'false'}`;
                 controlPart += `\n[STYLE_LORA_DATA]\n${JSON.stringify({list: styleLoraData})}`;
-            } else {
-                controlPart += `\n[STYLE_LORA_ACTIVATE]\nfalse`;
-                controlPart += `\n[STYLE_LORA_DATA]\n{"list":[]}`;
             }
             controlPart += `\n[POSE_ACTIVATE]\n${poseEnabled ? 'true' : 'false'}`;
             controlPart += `\n[POSE_DATA]\n${poseEnabled && slot.pose_id ? '(포즈: ' + slot.pose_id + ')' : '{"people":[{"pose_keypoints_2d":[...]}],"canvas_height":1024,"canvas_width":700}'}`;

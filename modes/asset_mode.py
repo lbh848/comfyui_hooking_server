@@ -1044,9 +1044,11 @@ class AssetMode:
                 positive += f"\n[FACE_LORA_DATA]\n{face_lora_data}"
         else:
             positive += f"\n[FACE_LORA_DATA]\n{'{\"list\":[]}'}"
-        # Style(그림체) LoRA — 프론트엔드 pre-built 우선, 폴백 시에만 사용
-        positive += f"\n[STYLE_LORA_ACTIVATE]\n{'true' if style_lora_activate else 'false'}"
-        positive += f"\n[STYLE_LORA_DATA]\n{style_lora_data or '{"list":[]}'}"
+        # Style(그림체) LoRA — ANIMA 모드에서만 별도 토큰(분리 로더) 출력.
+        # 일반(ILXL) 모드는 스타일 LoRA가 LORA_DATA에 흡수되므로 이 토큰들을 출력하지 않음.
+        if asset_workflow_type == "anima":
+            positive += f"\n[STYLE_LORA_ACTIVATE]\n{'true' if style_lora_activate else 'false'}"
+            positive += f"\n[STYLE_LORA_DATA]\n{style_lora_data or '{"list":[]}'}"
         positive += f"\n[CHAR_FACE_TAG_INFORM]\n{char_face_tag_inform or '{"list":[]}'}"
         positive += f"\n[POSE_ACTIVATE]\n{'true' if pose_enabled else 'false'}"
         if pose_enabled and pose_data:
