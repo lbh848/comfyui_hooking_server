@@ -4920,6 +4920,9 @@
                 <button class="modal-close" onclick="closeLlmEditModal()">&times;</button>
             </div>
             <div class="modal-body">
+                <div id="llm-edit-format-badge" style="margin-bottom:8px; padding:3px 10px; border-radius:4px; background:var(--surface2); color:var(--text2); font-size:0.74rem; font-weight:600; display:inline-block;">
+                    감지된 형식: -
+                </div>
                 <div style="margin-bottom:8px; font-size:0.82rem; color:var(--text-secondary);">
                     LLM이 이미지와 프롬프트를 분석해 장면 태그만 수정합니다.<br>
                     원하는 수정 방향을 자연어로 입력하세요.
@@ -8949,6 +8952,17 @@
         let currentModalBackupName = null;
         let llmEditInFlight = false;
 
+        // positive 프롬프트 포맷 자동 감지 — V3(삽화 빌드본) / V1(ILXL/UPSCALE) / ''(지원불가)
+        // 백엔드 llm_prompt_edit.detect_format 과 동일 기준.
+        function detectPromptFormat(positive) {
+            if (!positive) return '';
+            // V3: ANIMA_CONTENT 등 핵심 헤더 존재
+            if (/\[ANIMA_CONTENT\]\n/.test(positive) && /\[SDXL\]\n/.test(positive)) return 'v3';
+            // V1: ILXL + UPSCALE 헤더 존재 (V3 헤더는 없음)
+            if (/\[ILXL\]\n/.test(positive) && /\[UPSCALE\]\n/.test(positive)) return 'v1';
+            return '';
+        }
+
         function openPromptModal(btn) {
             const card = btn.closest('.backup-card');
             const name = card.dataset.name;
@@ -8967,11 +8981,12 @@
             document.getElementById('modal-submit-btn').disabled = false;
             document.getElementById('modal-submit-text').textContent = '프롬프트 수정 후 재생성';
 
-            // LLM과 함께 수정 버튼: 빌드본([ANIMA_CONTENT] 헤더)일 때만 활성화
+            // LLM과 함께 수정 버튼: V3(빌드본) 또는 V1(ILXL/UPSCALE)일 때 활성화
             const llmBtn = document.getElementById('modal-llm-edit-btn');
-            const isBuild = /\[ANIMA_CONTENT\]\n/.test(positive);
-            llmBtn.disabled = !isBuild;
-            llmBtn.title = isBuild ? '' : '삽화 모드 빌드본 프롬프트에서만 동작합니다';
+            const fmt = detectPromptFormat(positive);
+            const supported = !!fmt;
+            llmBtn.disabled = !supported;
+            llmBtn.title = supported ? '' : '삽화 V3(빌드본) 또는 V1(ILXL/UPSCALE) 프롬프트에서만 동작합니다.';
             // 계획 영역 초기화
             document.getElementById('modal-llm-plan').style.display = 'none';
             document.getElementById('modal-llm-plan-text').textContent = '';
@@ -8990,11 +9005,18 @@
 
         function openLlmEditModal() {
             if (!currentModalBackupName) return;
-            // 빌드본이 아니면 진입 차단(버튼 disabled 와 이중 가드)
+            // V3(빌드본) 또는 V1(ILXL/UPSCALE)이 아니면 진입 차단(버튼 disabled 와 이중 가드)
             const positive = document.getElementById('modal-positive').value || '';
-            if (!/\[ANIMA_CONTENT\]\n/.test(positive)) {
-                alert('삽화 모드 빌드본 프롬프트에서만 동작합니다.');
+            const fmt = detectPromptFormat(positive);
+            if (!fmt) {
+                alert('삽화 V3(빌드본) 또는 V1(ILXL/UPSCALE) 프롬프트에서만 동작합니다.');
                 return;
+            }
+            // 감지된 형식 배지 표시
+            const badge = document.getElementById('llm-edit-format-badge');
+            if (badge) {
+                const label = fmt === 'v1' ? 'V1 (ILXL/UPSCALE)' : 'V3 (삽화 빌드본)';
+                badge.textContent = '감지된 형식: ' + label;
             }
             const input = document.getElementById('llm-edit-direction-input');
             input.value = '';

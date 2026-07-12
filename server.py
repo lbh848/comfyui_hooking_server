@@ -3333,44 +3333,74 @@ async def handle_api_llm_edit_prompt(request: web.Request) -> web.Response:
             print(f"[LLM_EDIT] direction 비어 있음 name={backup_name}")
             return web.json_response({"error": "수정 방향을 입력해주세요."}, status=400)
 
-        # 1) 빌드본 포맷 감지
-        if not llm_prompt_edit.detect_build_format(positive):
-            print(f"[LLM_EDIT] format mismatch (빌드본 아님) name={backup_name}")
+        # 1) 포맷 자동 감지 — V3(삽화 빌드본) / V1(ILXL-UPSCALE)
+        fmt = llm_prompt_edit.detect_format(positive)
+        if not fmt:
+            print(f"[LLM_EDIT] format mismatch (지원 불가) name={backup_name}")
             return web.json_response({
-                "error": "이 백업은 삽화 빌드본 형식이 아닙니다(또는 배치/비삽화 백업). "
-                         "LLM과 함께 수정은 삽화 모드 빌드본에서만 동작합니다."
+                "error": "이 백업은 지원 형식이 아닙니다. "
+                         "LLM과 함께 수정은 삽화 빌드본(V3: ANIMA_CONTENT/SDXL 등) 또는 "
+                         "V1(ILXL/UPSCALE) 프롬프트에서만 동작합니다."
             }, status=400)
 
-        # 2) 블럭 파싱
-        blocks = llm_prompt_edit.parse_blocks(positive)
+        print(f"[LLM_EDIT] 감지된 포맷: {fmt} name={backup_name}")
 
-        # 3) bot_name 복원({name}_info.json) → 트리거 복원
-        bot_name = ""
-        info_path = os.path.join(WORKFLOW_BACKUP_DIR, f"{backup_name}_info.json")
-        try:
-            if os.path.isfile(info_path):
-                with open(info_path, "r", encoding="utf-8") as f:
-                    info = json.load(f)
-                bot_name = info.get("bot_name", "") or ""
-        except Exception as e:
-            print(f"[LLM_EDIT] _info.json 읽기 실패 name={backup_name}: {e}")
+        # 2) 포맷별 파싱 + 장면 추출
+        # V3 파이프라인 상태
+        blocks = {}
+        triggers = {}
+        prefix_sets = {}
+        scene_anima = ""
+        scene_sdxl = ""
+        # V1 파이프라인 상태
+        v1_parsed = {}
+        v1_char = ""
+        v1_setup = ""
+        v1_supplement = ""
 
-        triggers = llm_prompt_edit.recover_triggers(blocks, bot_name)
+        if fmt == "v1":
+            v1_parsed = llm_prompt_edit.parse_v1_sections(positive)
+            v1_char = v1_parsed.get("char", "")
+            v1_setup = v1_parsed.get("setup", "")
+            v1_supplement = v1_parsed.get("supplement", "")
+            if not (v1_char or v1_setup or v1_supplement):
+                print(f"[LLM_EDIT][V1] 편집할 장면 내용 없음 name={backup_name}")
+                return web.json_response({
+                    "plan": "편집할 장면 내용이 없습니다(UPSCALE/ILXL 이 비어 있음).",
+                    "positive": positive,
+                    "negative": negative,
+                })
+        else:
+            # V3: 블럭 파싱
+            blocks = llm_prompt_edit.parse_blocks(positive)
 
-        # 4) 주제 블럭에서 원본 장면 토큰 추출(접두부 제거)
-        prefix_sets = llm_prompt_edit.build_prefix_sets(blocks, triggers)
-        scene_anima = llm_prompt_edit.extract_scene_tokens(
-            blocks.get("ANIMA_CONTENT", ""), prefix_sets["ANIMA_CONTENT"])
-        scene_sdxl = llm_prompt_edit.extract_scene_tokens(
-            blocks.get("SDXL", ""), prefix_sets["SDXL"])
+            # 3) bot_name 복원({name}_info.json) → 트리거 복원
+            bot_name = ""
+            info_path = os.path.join(WORKFLOW_BACKUP_DIR, f"{backup_name}_info.json")
+            try:
+                if os.path.isfile(info_path):
+                    with open(info_path, "r", encoding="utf-8") as f:
+                        info = json.load(f)
+                    bot_name = info.get("bot_name", "") or ""
+            except Exception as e:
+                print(f"[LLM_EDIT] _info.json 읽기 실패 name={backup_name}: {e}")
 
-        if not scene_anima and not scene_sdxl:
-            print(f"[LLM_EDIT] 편집할 장면 내용 없음 name={backup_name}")
-            return web.json_response({
-                "plan": "편집할 장면 내용이 없습니다(트리거/아티스트만 있는 프롬프트).",
-                "positive": positive,
-                "negative": negative,
-            })
+            triggers = llm_prompt_edit.recover_triggers(blocks, bot_name)
+
+            # 4) 주제 블럭에서 원본 장면 토큰 추출(접두부 제거)
+            prefix_sets = llm_prompt_edit.build_prefix_sets(blocks, triggers)
+            scene_anima = llm_prompt_edit.extract_scene_tokens(
+                blocks.get("ANIMA_CONTENT", ""), prefix_sets["ANIMA_CONTENT"])
+            scene_sdxl = llm_prompt_edit.extract_scene_tokens(
+                blocks.get("SDXL", ""), prefix_sets["SDXL"])
+
+            if not scene_anima and not scene_sdxl:
+                print(f"[LLM_EDIT] 편집할 장면 내용 없음 name={backup_name}")
+                return web.json_response({
+                    "plan": "편집할 장면 내용이 없습니다(트리거/아티스트만 있는 프롬프트).",
+                    "positive": positive,
+                    "negative": negative,
+                })
 
         # 5) 백업 이미지 읽기 (없으면 텍스트 폴백)
         image_b64 = ""
@@ -3389,7 +3419,11 @@ async def handle_api_llm_edit_prompt(request: web.Request) -> web.Response:
             fallback_note = " (백업 이미지가 없어 프롬프트 텍스트만으로 분석했습니다)"
 
         # 6) LLM 호출 (외부 API 분기: edit_illustration_prompt task_key 라우팅)
-        messages = llm_prompt_edit.build_llm_messages(direction, scene_anima, scene_sdxl)
+        if fmt == "v1":
+            messages = llm_prompt_edit.build_v1_llm_messages(
+                direction, v1_char, v1_setup, v1_supplement)
+        else:
+            messages = llm_prompt_edit.build_llm_messages(direction, scene_anima, scene_sdxl)
         # 우하단 LIGHBD LLM 위젯 활성화 — 다른 LLM 서비스(bot_mode 등)와 동일 패턴.
         # raw 전체를 위젯에 띄워 파싱 실패 원인을 즉시 확인 가능하게 한다.
         from modes.lighbd_service import _log_lighbd_history as _log_hist
@@ -3485,7 +3519,10 @@ async def handle_api_llm_edit_prompt(request: web.Request) -> web.Response:
             })
 
         # 8) 재조립
-        reassembled, scene = llm_prompt_edit.reassemble(positive, blocks, triggers, parsed)
+        if fmt == "v1":
+            reassembled, scene = llm_prompt_edit.reassemble_v1(positive, v1_parsed, parsed)
+        else:
+            reassembled, scene = llm_prompt_edit.reassemble(positive, blocks, triggers, parsed)
         plan_text = (scene.get("plan", "") or "장면 태그를 수정했습니다.") + fallback_note
 
         print(f"[LLM_EDIT] 완료 name={backup_name} plan={plan_text[:80]!r}")
