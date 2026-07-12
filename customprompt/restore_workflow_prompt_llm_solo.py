@@ -97,19 +97,23 @@ def _collect_tags(entry: dict, key: str) -> list[str]:
 
 def _build_system_prompt() -> str:
     return (
-        "당신은 단일 캐릭터(solo) 삽화용 프롬프트를 만드는 도우미다.\n"
-        "주어진 캐릭터의 외모/복장 태그와 성별 태그를 바탕으로, 무작위이면서도 "
-        "자연스러운 단일 인물 상황을 상상해 아래 양식 그대로 출력한다.\n\n"
-        "규칙:\n"
-        "1. 반드시 단일 캐릭터(solo) 장면만 만든다. 다른 인물을 등장시키지 않는다.\n"
-        "2. [CHAR] 섹션에는 주어진 '외모 태그'와 '복장 태그'를 모두 포함해야 한다.\n"
-        "   외모/복장 태그는 원문 그대로 사용하고, 거기에 포즈/표정/동작 태그를 추가한다.\n"
-        "3. [SETUP] 은 구도·프레이밍·배경(예: cowboy shot, from above, cafe, night)을 담는다.\n"
-        "   매번 다른 분위기가 되도록 무작위로 다양하게 선택한다.\n"
-        "4. [SUPPLEMENT] 은 소품/효과/광원 등 부가 요소다. 필요 없으면 비워도 된다.\n"
-        "5. 모든 내용은 danbooru 스타일의 영문 태그를 쉼표로 구분한다. 한국어 문장 금지.\n"
-        "6. 출력은 정확히 아래 세 섹션만. 다른 설명·주석·여분 텍스트 금지.\n\n"
-        "출력 양식:\n"
+        "You are a helper that creates single-character (solo) illustration prompts.\n"
+        "Based on the given character's appearance/outfit tags and the gender tag, "
+        "imagine a random yet natural single-person scene and output it exactly in the "
+        "format below.\n\n"
+        "Rules:\n"
+        "1. Always create a single-character (solo) scene. Do not introduce any other person.\n"
+        "2. The [CHAR] section must include all of the given 'appearance tags' and 'outfit tags'.\n"
+        "   Use the appearance/outfit tags verbatim, and add pose/expression/action tags to them.\n"
+        "3. [SETUP] holds composition, framing, and background (e.g. cowboy shot, from above, "
+        "cafe, night). Vary it randomly so each result has a different mood.\n"
+        "4. [SUPPLEMENT] holds accessories, effects, lighting, and other extras. It may be left "
+        "empty if unnecessary.\n"
+        "5. All content must be danbooru-style English tags separated by commas. No Korean "
+        "sentences.\n"
+        "6. Output exactly the three sections below. No other explanation, commentary, or extra "
+        "text.\n\n"
+        "Output format:\n"
         "[SETUP]\n"
         "<setup tags>\n"
         "[CHAR]\n"
@@ -120,16 +124,44 @@ def _build_system_prompt() -> str:
 
 
 def _build_user_prompt(char_name: str, appearance: list[str], outfit: list[str],
-                       gender: str) -> str:
-    appearance_str = ", ".join(appearance) if appearance else "(없음)"
-    outfit_str = ", ".join(outfit) if outfit else "(없음)"
-    return (
-        f"캐릭터 이름: {char_name}\n"
-        f"성별 태그: {gender}\n"
-        f"외모 태그: {appearance_str}\n"
-        f"복장 태그: {outfit_str}\n\n"
-        "이 캐릭터 단독으로 등장하는 무작위 상황을 위 양식대로 만들어 줘."
+                       gender: str, situation: str = "") -> str:
+    appearance_str = ", ".join(appearance) if appearance else "(none)"
+    outfit_str = ", ".join(outfit) if outfit else "(none)"
+    base = (
+        f"Character name: {char_name}\n"
+        f"Gender tag: {gender}\n"
+        f"Appearance tags: {appearance_str}\n"
+        f"Outfit tags: {outfit_str}\n"
     )
+    sit = (situation or "").strip()
+    if sit:
+        # User gives a rough situation directive -> the LLM must obey it, but freely
+        # invent details the directive does not specify.
+        base += (
+            f"Situation directive: {sit}\n\n"
+            "Create a scene where this character appears alone, strictly following the "
+            "'Situation directive' above. Freely imagine any details not covered by the directive "
+            "(composition, background, pose, expression, props, etc.) and output them in the "
+            "format above."
+        )
+    else:
+        base += "\nCreate a random scene where this character appears alone, in the format above."
+    return base
+
+
+async def _notify_llm_widget(event_type: str, data: dict | None = None) -> None:
+    """LIGHBD 우하단 위젯용 WS 이벤트 발생.
+
+    callLLMTask 는 비스트리밍이라 delta 가 없지만, start/done/error 만으로
+    위젯은 충분히 표시된다(bot_mode/instance_lora 와 동일 패턴).
+    """
+    try:
+        import server as _server
+        await _server.notify_frontend(
+            "lighbd_llm_stream", {"type": event_type, **(data or {})}
+        )
+    except Exception as e:
+        print(f"[RESTORE_LLM_SOLO] WARN: notify_frontend 실패: {e}")
 
 
 # ─── LLM 출력 파싱 ───────────────────────────────────────────
@@ -182,7 +214,7 @@ def _ensure_tags_in_char(char_section: str, appearance: list[str],
 
 # ─── 진입점 ──────────────────────────────────────────────────
 
-async def run(char_name: str | None = None) -> dict:
+async def run(char_name: str | None = None, situation: str | None = None) -> dict:
     # 1. 활성 봇 확인
     config = _read_json(CONFIG_PATH) or {}
     bot_name = config.get("bot_selected", "")
@@ -240,23 +272,73 @@ async def run(char_name: str | None = None) -> dict:
         )
 
     # 5. LLM 호출
+    sit = (situation or "").strip()
     messages = [
         {"role": "system", "content": _build_system_prompt()},
-        {"role": "user", "content": _build_user_prompt(char_name, appearance, outfit, gender)},
+        {"role": "user", "content": _build_user_prompt(char_name, appearance, outfit, gender, sit)},
     ]
+    if sit:
+        print(f"[RESTORE_LLM_SOLO] 상황 지시 있음({len(sit)}자) — LLM이 준수하며 자유 작성")
+    else:
+        print("[RESTORE_LLM_SOLO] 상황 지시 없음 — 무작위 상황 생성")
 
     # LLM 호출 (외부 API 분기: llm_service 가 task_key 별 primary/fallback 판단)
+    # LIGHBD 우하단 위젯 표시(start/done/error) + 자세히 히스토리(lighbd_history.jsonl) 기록.
+    import time as _time
+    import datetime
+    from modes.lighbd_service import _log_lighbd_history
+    prompt_id = f"restore_llm_solo:{char_name}"
+
+    await _notify_llm_widget("start", {"model": "restore_workflow"})
+    _t0 = _time.time()
     result = None
+    err_msg = None
     try:
         from modes.llm_service import callLLMTask
         result = await callLLMTask("restore_workflow", messages)
     except Exception as e:
         print(f"[RESTORE_LLM_SOLO] callLLMTask 예외: {e}")
         traceback.print_exc()
+        err_msg = f"{type(e).__name__}: {e}"
+        await _notify_llm_widget("error", {"error": err_msg})
 
-    if not result:
-        print("[RESTORE_LLM_SOLO] LLM 응답을 받지 못해 빈 프롬프트를 반환합니다.")
+    elapsed = round(_time.time() - _t0, 3)
+
+    # 실패(예외 또는 빈 응답) → error 히스토리 기록 후 빈 프롬프트 반환
+    if err_msg or not result:
+        msg = err_msg or "LLM 응답을 받지 못함(빈 응답)"
+        print(f"[RESTORE_LLM_SOLO] LLM 실패: {msg}")
+        _log_lighbd_history({
+            "ts": datetime.datetime.now().isoformat(timespec="seconds"),
+            "prompt_id": prompt_id,
+            "input": messages,
+            "output": result or "",
+            "elapsed": elapsed,
+            "status": "error",
+            "error": msg,
+        })
         return {"positive": "", "negative": ""}
+
+    # 성공 → done 위젯 표시 + 히스토리 기록 (이후 파싱 실패해도 LLM 출력은 남김)
+    est_tokens = max(1, len(result) // 3)
+    est_tps = round(est_tokens / elapsed, 1) if elapsed > 0 else 0.0
+    await _notify_llm_widget("done", {
+        "text": result,
+        "completion_tokens": est_tokens,
+        "elapsed": elapsed,
+        "tps": est_tps,
+    })
+    _log_lighbd_history({
+        "ts": datetime.datetime.now().isoformat(timespec="seconds"),
+        "prompt_id": prompt_id,
+        "input": messages,
+        "output": result,
+        "completion_tokens": est_tokens,
+        "elapsed": elapsed,
+        "tps": est_tps,
+        "ttft": None,
+        "status": "ok",
+    })
 
     # 6. 섹션 파싱
     setup, char_section, supplement = _parse_llm_sections(result)

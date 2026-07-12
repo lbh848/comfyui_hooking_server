@@ -4314,16 +4314,19 @@ async def handle_api_restore_manual_draw(request: web.Request) -> web.Response:
     if not os.path.isfile(filepath):
         return web.json_response({"error": f"복원 프롬프트 파일 없음: {prompt_file}"}, status=400)
 
-    # 수동 그리기 캐릭터 지정 (선택 모달에서 특정 캐릭터 고른 경우).
-    # restore_workflow_prompt_llm_solo 처럼 run(char_name=...) 시그니처를 지원하는
-    # 프롬프트 파일에만 전달되고, 그렇지 않은 파일은 무시한다.
+    # 수동 그리기 캐릭터/상황 지정 (선택 모달에서 고른 경우).
+    # restore_workflow_prompt_llm_solo 처럼 run(char_name=..., situation=...) 시그니처를
+    # 지원하는 프롬프트 파일에만 전달되고, 그렇지 않은 파일은 무시한다.
     char_name = None
+    situation = None
     try:
         body = await request.json()
         if isinstance(body, dict):
             char_name = (body.get("char_name") or "").strip() or None
+            situation = (body.get("situation") or "").strip() or None
     except Exception:
         char_name = None
+        situation = None
 
     try:
         spec = importlib.util.spec_from_file_location("restore_prompt_manual", filepath)
@@ -4333,19 +4336,26 @@ async def handle_api_restore_manual_draw(request: web.Request) -> web.Response:
         if not hasattr(module, "run"):
             return web.json_response({"error": f"run() 함수 없음: {prompt_file}"}, status=400)
 
-        # run() 시그니처에 char_name 파라미터가 있을 때만 전달
+        # run() 시그니처에서 지원하는 키워드 인자만 골라 전달
         import inspect
         run_params = inspect.signature(module.run).parameters
+        kwargs = {}
         if char_name and "char_name" in run_params:
+            kwargs["char_name"] = char_name
             print(f"[RESTORE_MANUAL] 지정 캐릭터로 그리기: {char_name!r}")
-            result = await module.run(char_name=char_name)
-        else:
-            if char_name:
-                print(
-                    f"[RESTORE_MANUAL] 이 프롬프트({prompt_file})는 char_name 을 지원하지 않아 "
-                    "랜덤으로 그립니다."
-                )
-            result = await module.run()
+        elif char_name:
+            print(
+                f"[RESTORE_MANUAL] 이 프롬프트({prompt_file})는 char_name 을 지원하지 않아 "
+                "랜덤으로 그립니다."
+            )
+        if situation and "situation" in run_params:
+            kwargs["situation"] = situation
+            print(f"[RESTORE_MANUAL] 상황 지시 전달({len(situation)}자)")
+        elif situation:
+            print(
+                f"[RESTORE_MANUAL] 이 프롬프트({prompt_file})는 situation 을 지원하지 않아 무시합니다."
+            )
+        result = await module.run(**kwargs)
         positive = result.get("positive", "") if isinstance(result, dict) else ""
         negative = result.get("negative", "") if isinstance(result, dict) else ""
 

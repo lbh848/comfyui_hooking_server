@@ -4930,21 +4930,44 @@
         </div>
     </div>
 
-    <!-- 수동 그리기 캐릭터 선택 모달 (restore_workflow_prompt_llm_solo 전용) -->
+    <!-- 수동 그리기 2단계 모달 (restore_workflow_prompt_llm_solo 전용)
+         1단계: 캐릭터(🎲 랜덤/지정)  2단계: 상황(🎲 랜덤/직접 입력) -->
     <div class="modal" id="restore-char-select-modal">
         <div class="modal-content" style="max-width:560px;">
             <div class="modal-header">
-                <h2>🖌️ 수동 그리기 — 캐릭터 선택</h2>
-                <button class="modal-close" onclick="closeRestoreCharSelectModal(false)">&times;</button>
+                <h2>🖌️ 수동 그리기 <span id="restore-draw-step-indicator" style="font-size:0.8rem; color:var(--text2); font-weight:600;">1/2 · 캐릭터</span></h2>
+                <button class="modal-close" onclick="closeRestoreCharSelectModal()">&times;</button>
             </div>
             <div class="modal-body">
-                <div id="restore-char-select-status" style="margin-bottom:10px; font-size:0.82rem; color:var(--text-secondary);">
-                    캐릭터 목록을 불러오는 중...
+                <!-- 1단계: 캐릭터 선택 -->
+                <div id="restore-draw-step1">
+                    <div id="restore-char-select-status" style="margin-bottom:10px; font-size:0.82rem; color:var(--text-secondary);">
+                        캐릭터 목록을 불러오는 중...
+                    </div>
+                    <div id="restore-char-select-grid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(120px, 1fr)); gap:10px;"></div>
                 </div>
-                <div id="restore-char-select-grid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(120px, 1fr)); gap:10px;"></div>
+                <!-- 2단계: 상황 입력 -->
+                <div id="restore-draw-step2" style="display:none;">
+                    <div id="restore-draw-selected-char" style="margin-bottom:10px; padding:6px 10px; border-radius:6px; background:var(--surface2); font-size:0.8rem; color:var(--text);"></div>
+                    <div style="margin-bottom:10px; font-size:0.8rem; color:var(--text-secondary);">
+                        상황을 어떻게 정할까요?<br>
+                        🎲 랜덤 = LLM이 자동 생성 · ✍️ 직접 입력 = LLM이 그 지시를 준수하며 나머지는 자유 작성
+                    </div>
+                    <div style="display:flex; gap:14px; margin-bottom:10px; font-size:0.85rem;">
+                        <label style="display:flex; align-items:center; gap:5px; cursor:pointer;">
+                            <input type="radio" name="restore-situation-mode" value="random" checked onchange="onRestoreSituationModeChange()"> 🎲 랜덤
+                        </label>
+                        <label style="display:flex; align-items:center; gap:5px; cursor:pointer;">
+                            <input type="radio" name="restore-situation-mode" value="custom" onchange="onRestoreSituationModeChange()"> ✍️ 직접 입력
+                        </label>
+                    </div>
+                    <textarea id="restore-situation-input" rows="5" placeholder="예: 카페 창가에 앉아 커피를 마시는 장면 / 해변에서 검을 들고 있는 장면 ..." style="display:none; width:100%; box-sizing:border-box; padding:8px; border:1px solid var(--border); border-radius:6px; background:var(--surface1); color:var(--text); font-family:inherit; font-size:0.85rem; resize:vertical;"></textarea>
+                </div>
             </div>
             <div class="modal-footer">
-                <button class="cancel" onclick="closeRestoreCharSelectModal(false)">취소</button>
+                <button class="cancel" onclick="closeRestoreCharSelectModal()">취소</button>
+                <button id="restore-draw-back-btn" onclick="restoreDrawGoStep1()" style="display:none; padding:8px 14px; border:1px solid var(--border); border-radius:6px; background:var(--surface2); color:var(--text); cursor:pointer;">이전</button>
+                <button id="restore-draw-next-btn" onclick="restoreDrawConfirm()" style="display:none; padding:8px 16px; border:none; border-radius:6px; background:var(--accent); color:#fff; font-weight:600; cursor:pointer;">그리기</button>
             </div>
         </div>
     </div>
@@ -10911,40 +10934,96 @@
             }
         }
 
-        // ─── 수동 그리기 ───
-        // restore_workflow_prompt_llm_solo 일 때만 캐릭터 선택 모달을 띄운다.
-        // openRestoreCharSelectModal() 은 Promise 를 반환:
-        //   null  → 사용자 취소(그리기 중단)
-        //   ''   → 🎲 랜덤
-        //   '이름' → 지정 캐릭터
-        let _restoreCharSelectResolve = null;
+        // ─── 수동 그리기 (2단계 모달) ───
+        // restore_workflow_prompt_llm_solo 일 때만 모달을 띄운다.
+        //   1단계: 캐릭터 (🎲 랜덤 / 지정 캐릭터)
+        //   2단계: 상황  (🎲 랜덤 = LLM 자동 / ✍️ 직접 입력 = LLM이 준수하며 자유 작성)
+        // openRestoreDrawModal() 은 Promise 를 반환:
+        //   null                    → 사용자 취소(그리기 중단)
+        //   {char_name, situation}  → char_name: ''=랜덤/'이름', situation: ''=랜덤/'텍스트'
+        let _restoreDrawResolve = null;
+        let _restoreDrawState = { selectedChar: '', charLabel: '' };
 
-        function closeRestoreCharSelectModal(confirmed) {
+        function closeRestoreCharSelectModal() {
             const modal = document.getElementById('restore-char-select-modal');
             if (modal) modal.classList.remove('visible');
-            if (_restoreCharSelectResolve) {
-                // confirmed=false → 취소. 모달 밖/✕/취소버튼 모두 여기로.
-                _restoreCharSelectResolve(confirmed ? '' : null);
-                _restoreCharSelectResolve = null;
+            if (_restoreDrawResolve) {
+                _restoreDrawResolve(null); // 취소
+                _restoreDrawResolve = null;
             }
         }
 
-        function _pickRestoreChar(charName) {
-            const modal = document.getElementById('restore-char-select-modal');
-            if (modal) modal.classList.remove('visible');
-            if (_restoreCharSelectResolve) {
-                _restoreCharSelectResolve(charName); // '' = 랜덤, '이름' = 지정
-                _restoreCharSelectResolve = null;
+        function _restoreDrawShowStep(step) {
+            const s1 = document.getElementById('restore-draw-step1');
+            const s2 = document.getElementById('restore-draw-step2');
+            const ind = document.getElementById('restore-draw-step-indicator');
+            const backBtn = document.getElementById('restore-draw-back-btn');
+            const nextBtn = document.getElementById('restore-draw-next-btn');
+            if (step === 1) {
+                s1.style.display = '';
+                s2.style.display = 'none';
+                ind.textContent = '1/2 · 캐릭터';
+                backBtn.style.display = 'none';
+                nextBtn.style.display = 'none';
+            } else {
+                s1.style.display = 'none';
+                s2.style.display = '';
+                ind.textContent = '2/2 · 상황';
+                backBtn.style.display = '';
+                nextBtn.style.display = '';
+                nextBtn.textContent = '그리기';
             }
         }
 
-        async function openRestoreCharSelectModal() {
+        function onRestoreSituationModeChange() {
+            const mode = document.querySelector('input[name="restore-situation-mode"]:checked').value;
+            const ta = document.getElementById('restore-situation-input');
+            ta.style.display = (mode === 'custom') ? '' : 'none';
+        }
+
+        function restoreDrawGoStep1() {
+            _restoreDrawShowStep(1);
+        }
+
+        function restoreDrawConfirm() {
+            const modal = document.getElementById('restore-char-select-modal');
+            const mode = document.querySelector('input[name="restore-situation-mode"]:checked').value;
+            let situation = '';
+            if (mode === 'custom') {
+                situation = (document.getElementById('restore-situation-input').value || '').trim();
+                if (!situation) {
+                    showToast('상황을 입력하거나 🎲 랜덤을 선택하세요', 'warning');
+                    return;
+                }
+            }
+            if (modal) modal.classList.remove('visible');
+            if (_restoreDrawResolve) {
+                _restoreDrawResolve({ char_name: _restoreDrawState.selectedChar, situation });
+                _restoreDrawResolve = null;
+            }
+        }
+
+        function _restoreDrawPickChar(charName, charLabel) {
+            _restoreDrawState.selectedChar = charName; // '' = 랜덤
+            _restoreDrawState.charLabel = charLabel;
+            const sel = document.getElementById('restore-draw-selected-char');
+            sel.textContent = `선택 캐릭터: ${charLabel}`;
+            // 상황 단계 초기화
+            document.querySelector('input[name="restore-situation-mode"][value="random"]').checked = true;
+            document.getElementById('restore-situation-input').value = '';
+            document.getElementById('restore-situation-input').style.display = 'none';
+            _restoreDrawShowStep(2);
+        }
+
+        async function openRestoreDrawModal() {
             const modal = document.getElementById('restore-char-select-modal');
             const statusEl = document.getElementById('restore-char-select-status');
             const grid = document.getElementById('restore-char-select-grid');
             grid.innerHTML = '';
             statusEl.textContent = '캐릭터 목록을 불러오는 중...';
             statusEl.style.color = 'var(--text-secondary)';
+            _restoreDrawState = { selectedChar: '', charLabel: '' };
+            _restoreDrawShowStep(1);
             modal.classList.add('visible');
 
             // 캐릭터 목록 로드
@@ -10969,9 +11048,9 @@
                 statusEl.style.color = 'var(--danger, #e53935)';
                 return null;
             }
-            statusEl.textContent = `${characters.length}명의 캐릭터 중 하나를 선택하거나 🎲 랜덤으로 그리세요.`;
+            statusEl.textContent = `${characters.length}명 중 하나를 선택하거나 🎲 랜덤으로 그리세요.`;
 
-            // 🎲 랜덤 카드
+            // 🎲 랜덤 카드 (캐릭터 무작위)
             const randomCard = document.createElement('div');
             randomCard.style.cursor = 'pointer';
             randomCard.style.textAlign = 'center';
@@ -10983,7 +11062,7 @@
                 <div style="width:96px; height:96px; margin:0 auto 6px; display:flex; align-items:center; justify-content:center; font-size:2.6rem; background:var(--surface1); border-radius:6px;">🎲</div>
                 <div style="font-weight:700; font-size:0.85rem;">랜덤</div>
                 <div style="font-size:0.72rem; color:var(--text-secondary);">무작위 캐릭터</div>`;
-            randomCard.onclick = () => _pickRestoreChar('');
+            randomCard.onclick = () => _restoreDrawPickChar('', '🎲 랜덤');
             grid.appendChild(randomCard);
 
             // 캐릭터 카드들
@@ -11002,12 +11081,12 @@
                     ${imgHtml}
                     <div style="font-weight:700; font-size:0.85rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${ch.name}</div>
                     <div style="font-size:0.72rem; color:var(--text-secondary);">${ch.gender_tag || ''}</div>`;
-                card.onclick = () => _pickRestoreChar(ch.name);
+                card.onclick = () => _restoreDrawPickChar(ch.name, ch.name);
                 grid.appendChild(card);
             });
 
-            // Promise 대기 (취소=null, 랜덤='', 지정='이름')
-            return new Promise(resolve => { _restoreCharSelectResolve = resolve; });
+            // Promise 대기 (취소=null, 확정={char_name, situation})
+            return new Promise(resolve => { _restoreDrawResolve = resolve; });
         }
 
         async function manualRestoreDraw() {
@@ -11036,16 +11115,20 @@
                 console.warn('[수동 그리기] 워크플로우 이름 확인 실패, 진행:', e);
             }
 
-            // restore_workflow_prompt_llm_solo 일 때 캐릭터 선택 모달
-            // 결과: null=취소, ''=랜덤, '이름'=지정 캐릭터
+            // restore_workflow_prompt_llm_solo 일 때 2단계 모달(캐릭터 → 상황)
+            // 결과: null=취소, {char_name, situation}=확정
+            //   char_name: ''=랜덤 / '이름'=지정
+            //   situation: ''=랜덤(LLM 자동) / '텍스트'=LLM이 준수하며 자유 작성
             let charName = '';
+            let situation = '';
             if ((currentConfig.restore_prompt_file || '') === 'restore_workflow_prompt_llm_solo.py') {
-                const choice = await openRestoreCharSelectModal();
+                const choice = await openRestoreDrawModal();
                 if (choice === null) {
-                    console.log('[수동 그리기] 캐릭터 선택 취소로 중단');
+                    console.log('[수동 그리기] 모달 취소로 중단');
                     return;
                 }
-                charName = choice;
+                charName = choice.char_name || '';
+                situation = choice.situation || '';
             }
 
             const btn = document.getElementById('restore-manual-btn');
@@ -11055,7 +11138,7 @@
                 const resp = await fetch('/api/restore_manual_draw', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ char_name: charName || '' }),
+                    body: JSON.stringify({ char_name: charName || '', situation: situation || '' }),
                 });
                 const data = await resp.json();
                 if (data.success && data.queued) {
