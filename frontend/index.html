@@ -9274,28 +9274,35 @@
                         <button onclick="document.getElementById('llm-edit-template-overlay').remove()" style="background:none; border:none; color:var(--text2); font-size:1.2rem; cursor:pointer;">✕</button>
                     </div>
                     <div style="padding:8px 16px; font-size:0.72rem; color:var(--text2); border-bottom:1px solid var(--border); flex-shrink:0;">
-                        글로벌은 배포용(읽기 전용), 커스텀은 이 PC 전용(편집 가능). LLM("LLM과 함께 수정")에 전송되는 시스템 프롬프트.
+                        글로벌은 배포용(읽기 전용), 커스텀은 이 PC 전용(편집 가능). 드롭다운으로 3개 템플릿(System 역할 / User 지시 V3·V1)을 전환하며 편집. 커스텀 사용 스위치가 켜져 있어도, 해당 칸이 비어 있으면 그 슬롯만 글로벌 적용.
                     </div>
                     <div id="llm-tpl-panel" style="flex:1; display:flex; flex-direction:column; padding:12px 16px; overflow:hidden; gap:10px; min-height:0;">
+                        <div style="display:flex; align-items:center; gap:8px; flex-shrink:0;">
+                            <label for="llm-tpl-slot" style="font-size:0.78rem; font-weight:600; color:var(--text);">편집 대상</label>
+                            <select id="llm-tpl-slot" onchange="_llmTplSwitchSlot(this)" style="flex:1; padding:4px 8px; border:1px solid var(--border); border-radius:6px; background:var(--surface); color:var(--text); font-size:0.8rem; cursor:pointer;">
+                                <option value="system">System 역할 (V3·V1 공통)</option>
+                                <option value="user_v3">User 지시 — V3 (삽화 빌드본)</option>
+                                <option value="user_v1">User 지시 — V1 (ILXL·UPSCALE)</option>
+                            </select>
+                            <div id="llm-tpl-badge" style="font-size:0.68rem; padding:1px 6px; border-radius:4px; background:var(--surface2); color:var(--text2); white-space:nowrap;">이 슬롯: 글로벌</div>
+                        </div>
                         <div style="display:flex; flex-direction:column; gap:4px; flex:1; min-height:0;">
-                            <div style="display:flex; justify-content:space-between; align-items:center;">
-                                <div style="font-size:0.78rem; font-weight:600; color:var(--text);">글로벌 프롬프트 <span style="font-size:0.7rem; color:var(--text2); font-weight:400;">(배포용 · 읽기 전용)</span></div>
-                                <div id="llm-tpl-badge" style="font-size:0.68rem; padding:1px 6px; border-radius:4px; background:var(--surface2); color:var(--text2);">글로벌 사용 중</div>
-                            </div>
-                            <textarea id="llm-tpl-builtin" readonly style="flex:1; min-height:120px; width:100%; resize:none; padding:8px; border:1px solid var(--border); border-radius:6px; background:var(--surface2); color:var(--text2); font-size:0.75rem; font-family:ui-monospace,Menlo,monospace; line-height:1.4;"></textarea>
+                            <div style="font-size:0.78rem; font-weight:600; color:var(--text);">글로벌 <span style="font-size:0.7rem; color:var(--text2); font-weight:400;">(배포용 · 읽기 전용)</span></div>
+                            <textarea id="llm-tpl-builtin" readonly style="flex:1; min-height:100px; width:100%; resize:none; padding:8px; border:1px solid var(--border); border-radius:6px; background:var(--surface2); color:var(--text2); font-size:0.75rem; font-family:ui-monospace,Menlo,monospace; line-height:1.4;"></textarea>
                         </div>
                         <div style="display:flex; flex-direction:column; gap:4px; flex:1; min-height:0;">
                             <div style="display:flex; justify-content:space-between; align-items:center;">
-                                <div style="font-size:0.78rem; font-weight:600; color:var(--text);">커스텀 프롬프트 <span style="font-size:0.7rem; color:var(--text2); font-weight:400;">(이 PC 전용 · 편집 가능)</span></div>
+                                <div style="font-size:0.78rem; font-weight:600; color:var(--text);">커스텀 <span style="font-size:0.7rem; color:var(--text2); font-weight:400;">(이 PC 전용 · 편집 가능)</span></div>
                                 <button onclick="_llmTplCopyBuiltin()" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:2px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">글로벌에서 복사</button>
                             </div>
-                            <textarea id="llm-tpl-custom" placeholder="비어 있음 — 직접 작성하거나 '글로벌에서 복사'로 시작" style="flex:1; min-height:160px; width:100%; resize:vertical; padding:8px; border:1px solid var(--accent); border-radius:6px; background:var(--surface); color:var(--text); font-size:0.78rem; font-family:ui-monospace,Menlo,monospace; line-height:1.4;"></textarea>
+                            <textarea id="llm-tpl-custom" placeholder="비어 있음 — 이 슬롯은 글로벌 적용. 직접 작성하거나 '글로벌에서 복사'로 시작" style="flex:1; min-height:140px; width:100%; resize:vertical; padding:8px; border:1px solid var(--accent); border-radius:6px; background:var(--surface); color:var(--text); font-size:0.78rem; font-family:ui-monospace,Menlo,monospace; line-height:1.4;"></textarea>
+                            <div id="llm-tpl-hint" style="font-size:0.7rem; color:var(--text2);"></div>
                         </div>
                     </div>
                     <div style="padding:10px 16px; border-top:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; gap:8px; flex-shrink:0;">
                         <label style="display:flex; align-items:center; gap:6px; font-size:0.8rem; cursor:pointer;">
                             <input type="checkbox" id="llm-tpl-use" style="cursor:pointer;">
-                            <span>커스텀 프롬프트 사용 <span style="color:var(--text2); font-size:0.72rem;">(체크 해제 시 글로벌 적용)</span></span>
+                            <span>커스텀 프롬프트 사용 <span style="color:var(--text2); font-size:0.72rem;">(체크 해제 시 전부 글로벌)</span></span>
                         </label>
                         <div style="display:flex; gap:8px;">
                             <button onclick="document.getElementById('llm-edit-template-overlay').remove()" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:6px 14px; border-radius:6px; cursor:pointer; font-size:0.8rem;">닫기</button>
@@ -9305,21 +9312,66 @@
                 </div>`;
             document.body.appendChild(overlay);
 
-            // 데이터 로드
+            // 슬롯 메타데이터(라벨/힌트)
+            const LLM_TPL_SLOTS = {
+                system:  { hint: 'LLM의 역할·출력 형식(JSON only)을 정의. 모든 포맷에 공통 적용.' },
+                user_v3: { hint: '삽화 빌드본(ANIMA/SDXL)용 user 지시. 플레이스홀더 {direction} {scene_current} {scene_sdxl} 은 자동 치환됨.' },
+                user_v1: { hint: 'ILXL/UPSCALE(V1)용 user 지시. 플레이스홀더 {direction} {setup} {char} {supplement} 은 자동 치환됨.' },
+            };
+
+            // 데이터 로드 → 3슬롯 상태 구성
+            window._llmTplState = {
+                current: 'system',
+                builtins: { system: '', user_v3: '', user_v1: '' },
+                customs: { system: '', user_v3: '', user_v1: '' },
+            };
             try {
                 const resp = await fetch('/api/llm_edit_prompt_template');
                 const result = await resp.json();
                 const d = (result.data || {});
-                document.getElementById('llm-tpl-builtin').value = d.builtin || '';
-                document.getElementById('llm-tpl-custom').value = d.custom || '';
                 document.getElementById('llm-tpl-use').checked = !!d.use_custom;
+                const tpls = d.templates || {};
+                for (const slot of Object.keys(window._llmTplState.builtins)) {
+                    const t = tpls[slot] || {};
+                    window._llmTplState.builtins[slot] = t.builtin || '';
+                    window._llmTplState.customs[slot] = t.custom || '';
+                }
             } catch (e) {
                 console.error('[LLM_EDIT_TEMPLATE] 로드 실패:', e);
                 showToast(`보조 프롬프트 로드 실패: ${e.message}`, 'error');
             }
-            document.getElementById('llm-tpl-custom').addEventListener('input', _llmTplUpdateBadge);
+            window._llmTplSlotsMeta = LLM_TPL_SLOTS;
+            _llmTplRenderSlot();
+            document.getElementById('llm-tpl-custom').addEventListener('input', () => { _llmTplSyncCurrent(); _llmTplUpdateBadge(); });
             document.getElementById('llm-tpl-use').addEventListener('change', _llmTplUpdateBadge);
+        }
+
+        // 현재 슬롯의 커스텀 textarea 값을 state 에 동기화(슬롯 전환/저장 전 호출)
+        function _llmTplSyncCurrent() {
+            const st = window._llmTplState;
+            const ta = document.getElementById('llm-tpl-custom');
+            if (!st || !ta) return;
+            st.customs[st.current] = ta.value;
+        }
+
+        // state 의 현재 슬롯 값을 UI 에 렌더
+        function _llmTplRenderSlot() {
+            const st = window._llmTplState;
+            if (!st) return;
+            const slot = st.current;
+            document.getElementById('llm-tpl-slot').value = slot;
+            document.getElementById('llm-tpl-builtin').value = st.builtins[slot] || '';
+            document.getElementById('llm-tpl-custom').value = st.customs[slot] || '';
+            const meta = (window._llmTplSlotsMeta || {})[slot] || {};
+            document.getElementById('llm-tpl-hint').textContent = meta.hint || '';
             _llmTplUpdateBadge();
+        }
+
+        // 드롭다운 슬롯 전환: 현재 값 동기화 후 새 슬롯 렌더
+        function _llmTplSwitchSlot(sel) {
+            _llmTplSyncCurrent();
+            window._llmTplState.current = sel.value;
+            _llmTplRenderSlot();
         }
 
         function _llmTplUpdateBadge() {
@@ -9328,7 +9380,7 @@
             const useCustom = document.getElementById('llm-tpl-use')?.checked;
             const customText = (document.getElementById('llm-tpl-custom')?.value || '').trim();
             const eff = useCustom && customText;
-            badge.textContent = eff ? '커스텀 사용 중' : '글로벌 사용 중';
+            badge.textContent = eff ? '이 슬롯: 커스텀' : '이 슬롯: 글로벌';
             badge.style.background = eff ? 'rgba(124,58,237,0.18)' : 'var(--surface2)';
             badge.style.color = eff ? '#7C3AED' : 'var(--text2)';
         }
@@ -9337,22 +9389,29 @@
             const builtin = document.getElementById('llm-tpl-builtin')?.value || '';
             const ta = document.getElementById('llm-tpl-custom');
             if (!ta) return;
-            if (ta.value.trim() && !confirm('현재 커스텀 내용을 글로벌 프롬프트로 덮어쓸까요?')) return;
+            if (ta.value.trim() && !confirm('현재 슬롯의 커스텀 내용을 글로벌로 덮어쓸까요?')) return;
             ta.value = builtin;
             const chk = document.getElementById('llm-tpl-use');
             if (chk) chk.checked = true;
+            _llmTplSyncCurrent();
             _llmTplUpdateBadge();
-            showToast('글로벌 프롬프트를 커스텀으로 복사했습니다 (저장 필요)', 'info');
+            showToast('글로벌을 커스텀으로 복사했습니다 (저장 필요)', 'info');
         }
 
         async function _saveLlmEditTemplate() {
-            const custom = document.getElementById('llm-tpl-custom').value;
+            _llmTplSyncCurrent();
+            const st = window._llmTplState;
             const useCustom = document.getElementById('llm-tpl-use').checked;
+            const templates = {
+                system: st.customs.system || '',
+                user_v3: st.customs.user_v3 || '',
+                user_v1: st.customs.user_v1 || '',
+            };
             try {
                 const resp = await fetch('/api/llm_edit_prompt_template', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ custom, use_custom: useCustom })
+                    body: JSON.stringify({ use_custom: useCustom, templates })
                 });
                 const result = await resp.json();
                 if (!result.success) {

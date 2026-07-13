@@ -1,0 +1,27 @@
+## User edit direction
+{direction}
+
+## Current scene tags (setup / background)
+{setup}
+
+## Current scene tags (char / character + pose + scene)
+{char}
+
+## Current scene tags (supplement / extra)
+{supplement}
+
+## Instructions
+1. Look at the provided image (if any) and the tags above to understand the current scene.
+2. This is a V1 prompt where `char` is the WHOLE scene (background + character + pose + expression + outfit + auxiliary tags combined). Put the ENTIRE edited scene into `scene_char`. Leave `scene_setup` and `scene_supplement` as empty strings (""). Do NOT move tags between fields.
+3. Preserve the character's core identity (the character/series name tag at the start of scene_char, e.g. "shifty \(nikke\)"); focus changes on scene/mood/pose/outfit.
+4. Keep original tags for any part that does not need changing (avoid unnecessary edits).
+5. Keep using English danbooru-style tags separated by comma+space (", ").
+6. Write the "plan" field in Korean; write scene_* tags in English.
+
+## Output (JSON schema - return ONLY a JSON object in this form)
+{
+  "plan": "edit plan - briefly explain why and which tags to add/remove (write in Korean)",
+  "scene_setup": "background/location/lighting/weather/mood tags, comma+space separated",
+  "scene_char": "character appearance/pose/expression/outfit tags, comma+space separated",
+  "scene_supplement": "extra auxiliary tags, or empty string \"\""
+}

@@ -1,0 +1,25 @@
+## User edit direction
+{direction}
+
+## Current scene tags (ANIMA, includes supplement)
+{scene_current}
+
+## Current scene tags (SDXL, no supplement)
+{scene_sdxl}
+
+## Instructions
+1. Look at the provided image (if any) and the tags above to understand the current scene.
+2. Adjust scene_setup/scene_char/scene_supplement to match the user's edit direction.
+3. Preserve the character's core identity (key appearance traits); focus changes on scene/mood/pose/outfit.
+4. Keep original tags for any part that does not need changing (avoid unnecessary edits).
+5. scene_supplement is NOT applied to the SDXL block, so only put SDXL-absent auxiliary descriptions there.
+6. Keep using English danbooru-style tags separated by comma+space (", ").
+7. Write the "plan" field in Korean; write scene_* tags in English.
+
+## Output (JSON schema - return ONLY a JSON object in this form)
+{
+  "plan": "edit plan - briefly explain why and which tags to add/remove (write in Korean)",
+  "scene_setup": "background/location/lighting/weather/mood tags, comma+space separated",
+  "scene_char": "character appearance/pose/expression/outfit tags, comma+space separated",
+  "scene_supplement": "extra auxiliary tags, or empty string \"\""
+}

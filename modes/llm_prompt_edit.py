@@ -25,11 +25,21 @@ BOT_JSON_PATH = os.path.join(ASSET_DATA_DIR, "bot.json")
 # lb_extra_refine 패턴과 동일: builtin(배포용·읽기전용) / custom(이PC 전용·편집가능) /
 # meta(use_custom 토글). effective = (use_custom && custom) ? custom : builtin.
 LLM_EDIT_PROMPT_DIR = os.path.join(BASE_DIR, "prompts", "llm_prompt_edit")
+
+# builtin(배포용·읽기전용) 템플릿 — system 역할 / user 지시 V3 / user 지시 V1
 LLM_EDIT_BUILTIN_FILE = os.path.join(LLM_EDIT_PROMPT_DIR, "system.txt")
-LLM_EDIT_CUSTOM_FILE = os.path.join(ASSET_DATA_DIR, "llm_prompt_edit_custom.txt")
+LLM_EDIT_BUILTIN_USER_V3_FILE = os.path.join(LLM_EDIT_PROMPT_DIR, "user_template.txt")
+LLM_EDIT_BUILTIN_USER_V1_FILE = os.path.join(LLM_EDIT_PROMPT_DIR, "user_template_v1.txt")
+
+# custom(이 PC 전용·편집가능) 템플릿 — 슬롯별 파일. 빈 칸이면 해당 슬롯은 builtin 폴백.
+LLM_EDIT_CUSTOM_FILE = os.path.join(ASSET_DATA_DIR, "llm_prompt_edit_custom.txt")  # system
+LLM_EDIT_CUSTOM_USER_V3_FILE = os.path.join(ASSET_DATA_DIR, "llm_prompt_edit_custom_user_v3.txt")
+LLM_EDIT_CUSTOM_USER_V1_FILE = os.path.join(ASSET_DATA_DIR, "llm_prompt_edit_custom_user_v1.txt")
+
 LLM_EDIT_META_FILE = os.path.join(ASSET_DATA_DIR, "llm_prompt_edit_meta.json")
 
-# builtin 파일이 없을 때의 폴백 기본값(= 배포 전 기본 시스템 프롬프트).
+# builtin 파일이 없을 때의 폴백 기본값(배포 전/파일 누락 대비). builtin 파일이 항상 존재하므로
+# 정상 동작에서는 거의 쓰이지 않는다.
 DEFAULT_SYSTEM_PROMPT = (
     "You are an expert editor for the positive prompt of a Stable Diffusion Illust workflow. "
     "Analyze the user's 'edit direction', the generated image (if provided), and the current scene tags, "
@@ -37,40 +47,119 @@ DEFAULT_SYSTEM_PROMPT = (
     "Return ONLY a valid JSON object - no other text, no markdown code fences, no explanations."
 )
 
-_llm_edit_builtin_cache = None
-_llm_edit_builtin_mtime = 0.0
+DEFAULT_USER_V3_TEMPLATE = (
+    "## User edit direction\n{direction}\n\n"
+    "## Current scene tags (ANIMA, includes supplement)\n{scene_current}\n\n"
+    "## Current scene tags (SDXL, no supplement)\n{scene_sdxl}\n\n"
+    "## Instructions\n"
+    "1. Look at the provided image (if any) and the tags above to understand the current scene.\n"
+    "2. Adjust scene_setup/scene_char/scene_supplement to match the user's edit direction.\n"
+    "3. Preserve the character's core identity (key appearance traits); focus changes on scene/mood/pose/outfit.\n"
+    "4. Keep original tags for any part that does not need changing (avoid unnecessary edits).\n"
+    "5. scene_supplement is NOT applied to the SDXL block, so only put SDXL-absent auxiliary descriptions there.\n"
+    "6. Keep using English danbooru-style tags separated by comma+space (\", \").\n"
+    "7. Write the \"plan\" field in Korean; write scene_* tags in English.\n\n"
+    "## Output (JSON schema - return ONLY a JSON object in this form)\n"
+    "{\n"
+    '  "plan": "edit plan - briefly explain why and which tags to add/remove (write in Korean)",\n'
+    '  "scene_setup": "background/location/lighting/weather/mood tags, comma+space separated",\n'
+    '  "scene_char": "character appearance/pose/expression/outfit tags, comma+space separated",\n'
+    '  "scene_supplement": "extra auxiliary tags, or empty string \\"\\"\n"'
+    "}"
+)
+
+DEFAULT_USER_V1_TEMPLATE = (
+    "## User edit direction\n{direction}\n\n"
+    "## Current scene tags (setup / background)\n{setup}\n\n"
+    "## Current scene tags (char / character + pose + scene)\n{char}\n\n"
+    "## Current scene tags (supplement / extra)\n{supplement}\n\n"
+    "## Instructions\n"
+    "1. Look at the provided image (if any) and the tags above to understand the current scene.\n"
+    "2. This is a V1 prompt where `char` is the WHOLE scene (background + character + pose + "
+    "expression + outfit + auxiliary tags combined). Put the ENTIRE edited scene into "
+    "`scene_char`. Leave `scene_setup` and `scene_supplement` as empty strings (\"\"). "
+    "Do NOT move tags between fields.\n"
+    "3. Preserve the character's core identity (the character/series name tag at the start of "
+    "scene_char, e.g. \"shifty \\(nikke\\)\"); focus changes on scene/mood/pose/outfit.\n"
+    "4. Keep original tags for any part that does not need changing (avoid unnecessary edits).\n"
+    "5. Keep using English danbooru-style tags separated by comma+space (\", \").\n"
+    "6. Write the \"plan\" field in Korean; write scene_* tags in English.\n\n"
+    "## Output (JSON schema - return ONLY a JSON object in this form)\n"
+    "{\n"
+    '  "plan": "edit plan - briefly explain why and which tags to add/remove (write in Korean)",\n'
+    '  "scene_setup": "background/location/lighting/weather/mood tags, comma+space separated",\n'
+    '  "scene_char": "character appearance/pose/expression/outfit tags, comma+space separated",\n'
+    '  "scene_supplement": "extra auxiliary tags, or empty string \\"\\"\n"'
+    "}"
+)
+
+# builtin 텍스트 로드 캐시 — 경로별 mtime 기반
+_builtin_cache = {}  # path -> (mtime, text)
+
+
+def _load_builtin_text(path: str, fallback: str) -> str:
+    """배포용 builtin 텍스트 로드. mtime 기반 캐싱. 파일 없으면 fallback."""
+    if not os.path.isfile(path):
+        return fallback
+    try:
+        mtime = os.path.getmtime(path)
+        cached = _builtin_cache.get(path)
+        if cached and cached[0] == mtime:
+            return cached[1]
+        with open(path, "r", encoding="utf-8") as f:
+            txt = f.read()
+        _builtin_cache[path] = (mtime, txt)
+        return txt
+    except Exception as e:
+        print(f"[LLM_EDIT] builtin 로드 실패({path}): {e}")
+        traceback.print_exc()
+        return fallback
 
 
 def _load_llm_edit_builtin() -> str:
-    """배포용(글로벌) 시스템 프롬프트 로드. mtime 기반 캐싱. 파일 없으면 DEFAULT_SYSTEM_PROMPT."""
-    global _llm_edit_builtin_cache, _llm_edit_builtin_mtime
-    if not os.path.isfile(LLM_EDIT_BUILTIN_FILE):
-        return DEFAULT_SYSTEM_PROMPT
+    """system 역할 builtin (서버/기존 호출 호환 래퍼)."""
+    return _load_builtin_text(LLM_EDIT_BUILTIN_FILE, DEFAULT_SYSTEM_PROMPT)
+
+
+def _load_user_v3_builtin() -> str:
+    """user 지시 V3 builtin 템플릿 로드."""
+    return _load_builtin_text(LLM_EDIT_BUILTIN_USER_V3_FILE, DEFAULT_USER_V3_TEMPLATE)
+
+
+def _load_user_v1_builtin() -> str:
+    """user 지시 V1 builtin 템플릿 로드."""
+    return _load_builtin_text(LLM_EDIT_BUILTIN_USER_V1_FILE, DEFAULT_USER_V1_TEMPLATE)
+
+
+# 슬롯 정의 — builtin 로더 / custom 경로 매핑. 드롭다운 편집 대상 3종.
+SLOTS = {
+    "system": {"builtin": _load_llm_edit_builtin, "custom_file": LLM_EDIT_CUSTOM_FILE},
+    "user_v3": {"builtin": _load_user_v3_builtin, "custom_file": LLM_EDIT_CUSTOM_USER_V3_FILE},
+    "user_v1": {"builtin": _load_user_v1_builtin, "custom_file": LLM_EDIT_CUSTOM_USER_V1_FILE},
+}
+
+
+def _read_text_file(path: str) -> str:
+    """텍스트 파일 읽기. 없거나 실패 시 ''(빈문자열). 예외 미전파."""
+    if not os.path.isfile(path):
+        return ""
     try:
-        mtime = os.path.getmtime(LLM_EDIT_BUILTIN_FILE)
-        if _llm_edit_builtin_cache is not None and mtime == _llm_edit_builtin_mtime:
-            return _llm_edit_builtin_cache
-        with open(LLM_EDIT_BUILTIN_FILE, "r", encoding="utf-8") as f:
-            txt = f.read()
-        _llm_edit_builtin_cache = txt
-        _llm_edit_builtin_mtime = mtime
-        return txt
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read()
     except Exception as e:
-        print(f"[LLM_EDIT] builtin 로드 실패: {e}")
+        print(f"[LLM_EDIT] 텍스트 로드 실패({path}): {e}")
         traceback.print_exc()
-        return DEFAULT_SYSTEM_PROMPT
+        return ""
 
 
 def _load_llm_edit_custom() -> tuple:
-    """커스텀 프롬프트와 use_custom 플래그 로드. (없으면 '', False)."""
-    custom = ""
-    if os.path.isfile(LLM_EDIT_CUSTOM_FILE):
-        try:
-            with open(LLM_EDIT_CUSTOM_FILE, "r", encoding="utf-8") as f:
-                custom = f.read()
-        except Exception as e:
-            print(f"[LLM_EDIT] custom 로드 실패: {e}")
-            traceback.print_exc()
+    """3종 custom 텍스트 + use_custom 플래그 로드.
+
+    반환: (customs, use_custom)
+      customs = {"system": str, "user_v3": str, "user_v1": str} (파일 없으면 '')
+      use_custom = bool (메타 없으면 False)
+    """
+    customs = {slot: _read_text_file(meta["custom_file"]) for slot, meta in SLOTS.items()}
 
     use_custom = False
     if os.path.isfile(LLM_EDIT_META_FILE):
@@ -82,26 +171,34 @@ def _load_llm_edit_custom() -> tuple:
             print(f"[LLM_EDIT] meta 로드 실패: {e}")
             traceback.print_exc()
 
-    return custom, use_custom
+    return customs, use_custom
 
 
-def _save_llm_edit_custom(text: str, use_custom: bool) -> None:
-    """커스텀 프롬프트 저장. 기존 파일은 .bak 로 백업."""
+def _save_llm_edit_custom(customs: dict, use_custom: bool) -> None:
+    """3종 custom 텍스트 + use_custom 저장. 기존 파일은 .bak 로 백업.
+
+    customs = {"system": str, "user_v3": str, "user_v1": str}. 누락 슬롯은 '' 취급.
+    """
     os.makedirs(ASSET_DATA_DIR, exist_ok=True)
 
-    if os.path.isfile(LLM_EDIT_CUSTOM_FILE):
+    for slot, text in customs.items():
+        path = SLOTS.get(slot, {}).get("custom_file")
+        if not path:
+            print(f"[LLM_EDIT] 저장: 알 수 없는 슬롯 '{slot}' 스킵")
+            continue
+        text = text or ""
+        if os.path.isfile(path):
+            try:
+                shutil.copy2(path, path + ".bak")
+            except Exception as e:
+                print(f"[LLM_EDIT] {slot} 백업 실패: {e}")
         try:
-            shutil.copy2(LLM_EDIT_CUSTOM_FILE, LLM_EDIT_CUSTOM_FILE + ".bak")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(text)
         except Exception as e:
-            print(f"[LLM_EDIT] custom 백업 실패: {e}")
-
-    try:
-        with open(LLM_EDIT_CUSTOM_FILE, "w", encoding="utf-8") as f:
-            f.write(text)
-    except Exception as e:
-        print(f"[LLM_EDIT] custom 저장 실패: {e}")
-        traceback.print_exc()
-        raise
+            print(f"[LLM_EDIT] {slot} 저장 실패: {e}")
+            traceback.print_exc()
+            raise
 
     if os.path.isfile(LLM_EDIT_META_FILE):
         try:
@@ -118,12 +215,36 @@ def _save_llm_edit_custom(text: str, use_custom: bool) -> None:
         raise
 
 
+def _effective_text(slot: str, custom_text: str = None, use_custom: bool = None) -> str:
+    """슬롯의 실제 적용 텍스트.
+
+    규칙: use_custom 이 켜져 있고 해당 슬롯 custom 텍스트가 비어있지 않으면 custom,
+    아니면 builtin. custom_text/use_custom 이 None 이면 디스크에서 로드한다.
+    """
+    if use_custom is None or custom_text is None:
+        customs, uc = _load_llm_edit_custom()
+        if use_custom is None:
+            use_custom = uc
+        if custom_text is None:
+            custom_text = customs.get(slot, "")
+    if use_custom and custom_text.strip():
+        return custom_text
+    return SLOTS[slot]["builtin"]()
+
+
 def get_effective_system_prompt() -> str:
-    """실제 LLM 호출에 사용할 시스템 프롬프트. use_custom && custom 이면 custom, 아니면 builtin."""
-    custom, use_custom = _load_llm_edit_custom()
-    if use_custom and custom.strip():
-        return custom
-    return _load_llm_edit_builtin()
+    """실제 LLM 호출에 사용할 system 프롬프트."""
+    return _effective_text("system")
+
+
+def get_effective_user_template_v3() -> str:
+    """실제 LLM 호출에 사용할 user 지시(V3) 템플릿."""
+    return _effective_text("user_v3")
+
+
+def get_effective_user_template_v1() -> str:
+    """실제 LLM 호출에 사용할 user 지시(V1) 템플릿."""
+    return _effective_text("user_v1")
 
 # 빌드본 포맷 감지에 필요한 블럭 헤더들
 REQUIRED_HEADERS = [
@@ -294,38 +415,44 @@ def build_prefix_sets(blocks: dict, triggers: dict) -> dict:
     }
 
 
+def _substitute_placeholders(template: str, values: dict) -> str:
+    """template 안의 {key} 플레이스홀더를 values[key] 로 치환.
+
+    str.format 이 아니다(안전) — danbooru 태그/JSON 스키마에 중괄호가 섞여 있어 포맷
+    이스케이프를 강제하기보다 정확한 리터럴 치환이 안전하다.
+    값이 None 이거나 빈 문자열이면 '(none)' 으로 치환(빈 섹션 방지).
+    치환 후에도 남은 {word} 패턴이 있으면 경고 로그(오타/알 수 없는 키).
+    """
+    out = template
+    for key, val in values.items():
+        ph = "{" + key + "}"
+        if val is None or str(val).strip() == "":
+            val = "(none)"
+        else:
+            val = str(val)
+        out = out.replace(ph, val)
+
+    leftover = set(re.findall(r"\{[a-z_]+\}", out))
+    if leftover:
+        print(f"[LLM_EDIT] 치환되지 않은 플레이스홀더가 템플릿에 남음: {leftover}")
+    return out
+
+
 def build_llm_messages(direction: str, scene_current: str, scene_sdxl: str) -> list:
-    """LLM(비전) 호출용 messages 빌드.
+    """LLM(비전) 호출용 messages 빌드 (V3 빌드본).
 
     이미지는 callLLMVision 의 _build_vision_messages 가 마지막 user 메시지에
     image_url 파트로 추가하므로, 여기서는 텍스트만 작성한다.
-    시스템 프롬프트는 get_effective_system_prompt() (배포용 builtin 또는 사용자 custom).
+    system/user 모두 get_effective_* (builtin 또는 사용자 custom 빈칸폴백) 템플릿을
+    사용하고, 동적 데이터(direction/scene_*)는 플레이스홀더로 치환한다.
     """
     system = get_effective_system_prompt()
-
-    schema_desc = (
-        "{\n"
-        '  "plan": "edit plan - briefly explain why and which tags to add/remove (write in Korean)",\n'
-        '  "scene_setup": "background/location/lighting/weather/mood tags, comma+space separated",\n'
-        '  "scene_char": "character appearance/pose/expression/outfit tags, comma+space separated",\n'
-        '  "scene_supplement": "extra auxiliary tags, or empty string \\"\\""\n'
-        "}"
-    )
-
-    user = (
-        f"## User edit direction\n{direction}\n\n"
-        f"## Current scene tags (ANIMA, includes supplement)\n{scene_current or '(none)'}\n\n"
-        f"## Current scene tags (SDXL, no supplement)\n{scene_sdxl or '(none)'}\n\n"
-        "## Instructions\n"
-        "1. Look at the provided image (if any) and the tags above to understand the current scene.\n"
-        "2. Adjust scene_setup/scene_char/scene_supplement to match the user's edit direction.\n"
-        "3. Preserve the character's core identity (key appearance traits); focus changes on scene/mood/pose/outfit.\n"
-        "4. Keep original tags for any part that does not need changing (avoid unnecessary edits).\n"
-        "5. scene_supplement is NOT applied to the SDXL block, so only put SDXL-absent auxiliary descriptions there.\n"
-        "6. Keep using English danbooru-style tags separated by comma+space (\", \").\n"
-        "7. Write the \"plan\" field in Korean; write scene_* tags in English.\n"
-        f"## Output (JSON schema - return ONLY a JSON object in this form)\n{schema_desc}"
-    )
+    template = get_effective_user_template_v3()
+    user = _substitute_placeholders(template, {
+        "direction": direction,
+        "scene_current": scene_current,
+        "scene_sdxl": scene_sdxl,
+    })
 
     return [
         {"role": "system", "content": system},
@@ -642,41 +769,20 @@ def parse_v1_sections(positive: str) -> dict:
 
 
 def build_v1_llm_messages(direction: str, char: str, setup: str, supplement: str) -> list:
-    """V1 용 LLM(비전) 호출 messages 빌드.
+    """V1 용 LLM(비전) 호출 messages 빌드 (ILXL/UPSCALE).
 
-    시스템 프롬프트는 V3 와 동일(get_effective_system_prompt). V1 은 ANIMA/SDXL 분리가
-    없으므로 단일 scene(setup/char/supplement) 만 전달하고, 캐릭터 정체성(시리즈/이름
-    태그) 유지를 명시한다.
+    시스템 프롬프트는 V3 와 동일(get_effective_system_prompt). user 지시는 V1 전용
+    템플릿(get_effective_user_template_v1)을 사용하고, 단일 scene(setup/char/supplement)
+    을 플레이스홀더로 치환한다.
     """
     system = get_effective_system_prompt()
-
-    schema_desc = (
-        "{\n"
-        '  "plan": "edit plan - briefly explain why and which tags to add/remove (write in Korean)",\n'
-        '  "scene_setup": "background/location/lighting/weather/mood tags, comma+space separated",\n'
-        '  "scene_char": "character appearance/pose/expression/outfit tags, comma+space separated",\n'
-        '  "scene_supplement": "extra auxiliary tags, or empty string \\"\\""\n'
-        "}"
-    )
-
-    user = (
-        f"## User edit direction\n{direction}\n\n"
-        f"## Current scene tags (setup / background)\n{setup or '(none)'}\n\n"
-        f"## Current scene tags (char / character + pose + scene)\n{char or '(none)'}\n\n"
-        f"## Current scene tags (supplement / extra)\n{supplement or '(none)'}\n\n"
-        "## Instructions\n"
-        "1. Look at the provided image (if any) and the tags above to understand the current scene.\n"
-        "2. This is a V1 prompt where `char` is the WHOLE scene (background + character + pose + "
-        "expression + outfit + auxiliary tags combined). Put the ENTIRE edited scene into "
-        "`scene_char`. Leave `scene_setup` and `scene_supplement` as empty strings (\"\"). "
-        "Do NOT move tags between fields.\n"
-        "3. Preserve the character's core identity (the character/series name tag at the start of "
-        "scene_char, e.g. \"shifty \\(nikke\\)\"); focus changes on scene/mood/pose/outfit.\n"
-        "4. Keep original tags for any part that does not need changing (avoid unnecessary edits).\n"
-        "5. Keep using English danbooru-style tags separated by comma+space (\", \").\n"
-        "6. Write the \"plan\" field in Korean; write scene_* tags in English.\n"
-        f"## Output (JSON schema - return ONLY a JSON object in this form)\n{schema_desc}"
-    )
+    template = get_effective_user_template_v1()
+    user = _substitute_placeholders(template, {
+        "direction": direction,
+        "setup": setup,
+        "char": char,
+        "supplement": supplement,
+    })
 
     return [
         {"role": "system", "content": system},

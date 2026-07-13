@@ -3775,16 +3775,25 @@ async def handle_api_llm_edit_prompt(request: web.Request) -> web.Response:
 
 
 async def handle_api_get_llm_edit_template(request: web.Request) -> web.Response:
-    """GET /api/llm_edit_prompt_template — LLM 보조 프롬프트(builtin/custom/use_custom) 조회."""
+    """GET /api/llm_edit_prompt_template — LLM 보조 프롬프트 3종 슬롯 조회.
+
+    반환 data:
+      use_custom: bool (단일 글로벌 스위치)
+      templates: { system / user_v3 / user_v1: {builtin, custom} }
+    """
     try:
-        builtin = llm_prompt_edit._load_llm_edit_builtin()
-        custom, use_custom = llm_prompt_edit._load_llm_edit_custom()
+        customs, use_custom = llm_prompt_edit._load_llm_edit_custom()
+        templates = {}
+        for slot, meta in llm_prompt_edit.SLOTS.items():
+            templates[slot] = {
+                "builtin": meta["builtin"](),
+                "custom": customs.get(slot, ""),
+            }
         return web.json_response({
             "success": True,
             "data": {
-                "builtin": builtin,
-                "custom": custom,
                 "use_custom": use_custom,
+                "templates": templates,
             },
         })
     except Exception as e:
@@ -3794,15 +3803,24 @@ async def handle_api_get_llm_edit_template(request: web.Request) -> web.Response
 
 
 async def handle_api_set_llm_edit_template(request: web.Request) -> web.Response:
-    """POST /api/llm_edit_prompt_template — LLM 보조 프롬프트 커스텀 저장.
-    요청: {custom: str, use_custom: bool}
+    """POST /api/llm_edit_prompt_template — LLM 보조 프롬프트 커스텀 3종 슬롯 저장.
+
+    요청: {
+        use_custom: bool,
+        templates: { system: str, user_v3: str, user_v1: str }  # 각 custom 텍스트
+      }
+    누락 슬롯은 '' 로 저장(해당 슬롯 builtin 폴백).
     """
     try:
         body = await request.json()
-        custom = body.get("custom", "") or ""
         use_custom = bool(body.get("use_custom", False))
-        llm_prompt_edit._save_llm_edit_custom(custom, use_custom)
-        print(f"[LLM_EDIT] template 저장: use_custom={use_custom} custom_len={len(custom)}")
+        raw = body.get("templates", {}) or {}
+        customs = {}
+        for slot in llm_prompt_edit.SLOTS:
+            customs[slot] = (raw.get(slot, "") or "")
+        llm_prompt_edit._save_llm_edit_custom(customs, use_custom)
+        lens = {s: len(t) for s, t in customs.items()}
+        print(f"[LLM_EDIT] template 저장: use_custom={use_custom} lens={lens}")
         return web.json_response({"success": True})
     except Exception as e:
         print(f"[LLM_EDIT] template 저장 실패: {e}")
