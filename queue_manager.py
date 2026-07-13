@@ -61,6 +61,9 @@ class QueueManager:
         self.current_item: Optional[QueueItem] = None
         self._processing = False
         self._lock = asyncio.Lock()
+        # 일시정지: True면 새 작업을 꺼내지 않는다 (현재 실행중은 그대로 완료).
+        # 큐 적재(add_item)는 계속되며, 재개 시 대기 항목이 순차 처리된다.
+        self._paused = False
         # LLM계열 병렬 워커풀 — llm_max_concurrency 개수만큼 동시 처리.
         # GPU계열(item.type not in LLM_TYPES)은 메인 _process_loop 에서 순차 처리된다.
         self._llm_worker_tasks: dict[int, asyncio.Future] = {}  # wid -> Task
@@ -189,6 +192,24 @@ class QueueManager:
                 return False
         return False
 
+    async def set_paused(self, paused: bool) -> bool:
+        """큐 실행을 일시정지/재개한다.
+        - 일시정지: 새 작업을 꺼내지 않는다. 현재 실행 중인 GPU/LLM 작업은 끝까지 완료된다.
+        - 재개: 대기 중이던 작업 처리를 이어간다 (메인 루프 재기동 + LLM 워커 깨움).
+        큐 적재(add_item)는 paused 여부와 무관하게 계속된다.
+        상태가 실제로 바뀐 경우에만 broadcast한다."""
+        paused = bool(paused)
+        if paused == self._paused:
+            return self._paused
+        self._paused = paused
+        print(f"[QUEUE] {'일시정지' if paused else '재개'}")
+        await self._notify_queue_updated()
+        if not paused:
+            # 재개: idle 상태였던 처리 루프들을 다시 기동.
+            asyncio.ensure_future(self._process_loop())
+            self._llm_wakeup.set()
+        return self._paused
+
     async def cancel_all_pending(self):
         cancelled = 0
         for item in self.items:
@@ -206,6 +227,7 @@ class QueueManager:
             "items": [i.to_dict() for i in self.items],
             "current": self.current_item.to_dict() if self.current_item else None,
             "processing": self._processing,
+            "paused": self._paused,
             "pending_count": len([i for i in self.items if i.status == "pending"]),
             "illust_waiting": self._illust_wait_event is not None,
             "illust_wait_started_at": self._illust_wait_started_at,
@@ -338,6 +360,11 @@ class QueueManager:
             self._processing = True
         try:
             while True:
+                # 일시정지 중이면 새 작업을 꺼내지 않는다.
+                # (현재 _run_item_pipeline 안에서 실행 중인 작업은 이 루프 밖이므로 그대로 완료됨)
+                if self._paused:
+                    print("[QUEUE] 일시정지 중 - GPU 메인 루프 대기")
+                    break
                 pending_items = [i for i in self.items if i.status == "pending"]
                 if not pending_items:
                     break
@@ -450,6 +477,13 @@ class QueueManager:
                 if self._worker_should_exit(wid):
                     print(f"[QUEUE:LLM_WORKER] 워커 {wid} 종료 (동시성 축소, 활성 {len(self._llm_worker_tasks)})")
                     return
+                # 일시정지 중이면 새 작업을 꺼내지 않고 재개 이벤트 대기.
+                # 현재 실행중인 LLM 작업은 이미 _run_item_pipeline 안이므로 그대로 완료됨.
+                if self._paused:
+                    self._llm_wakeup.clear()
+                    print(f"[QUEUE:LLM_WORKER] 워커 {wid} 일시정지 대기")
+                    await self._llm_wakeup.wait()
+                    continue
                 item = self._pop_next_llm_item()
                 if item is None:
                     self._llm_wakeup.clear()

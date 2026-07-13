@@ -7423,6 +7423,7 @@
             <div class="modal-header">
                 <h2>&#x1F4CB; 작업 큐</h2>
                 <div style="display:flex;gap:8px;align-items:center;">
+                    <button id="queue-pause-btn" onclick="queueModalTogglePause()" style="background:transparent;border:1px solid var(--border);color:var(--text2);padding:4px 10px;border-radius:4px;cursor:pointer;font-size:0.75rem;">⏸ 일시정지</button>
                     <button onclick="queueModalClearCompleted()" style="background:transparent;border:1px solid var(--border);color:var(--text2);padding:4px 10px;border-radius:4px;cursor:pointer;font-size:0.75rem;">완료 정리</button>
                     <button onclick="queueModalCancelAll()" style="background:transparent;border:1px solid var(--border);color:var(--text2);padding:4px 10px;border-radius:4px;cursor:pointer;font-size:0.75rem;">전체 취소</button>
                     <button class="modal-close" onclick="closeQueueModal()">&times;</button>
@@ -40399,6 +40400,7 @@
         let queueIllustWaitStartedAt = null; // epoch(ms)
         let queueIllustWaitSeconds = 10; // 총 대기 시간(초)
         let _queueIllustWaitTimer = null; // 카운트다운 렌더 타이머
+        let queuePaused = false; // 큐 일시정지 중 여부 (새 작업 꺼내기만 멈춤, 적재는 계속)
 
         function toggleQueueModal() {
             if (queueModalOpen) closeQueueModal();
@@ -40427,6 +40429,8 @@
                     queueIllustWaitStartedAt = data.illust_wait_started_at ? data.illust_wait_started_at * 1000 : null;
                     queueIllustWaitSeconds = data.illust_wait_seconds || 10;
                     _updateIllustWaitTimer();
+                    queuePaused = !!data.paused;
+                    _updateQueuePauseUI();
                 }
             } catch (e) { console.error('[QUEUE] 모달 열 때 상태 로드 실패:', e); }
             renderQueueModal();
@@ -40500,6 +40504,19 @@
                 // 방금 제거한 배너를 다시 붙이지 않음 (대기 종료 후 배너가 안 사라지는 버그 수정)
                 waitBanner = null;
             }
+            // 일시정지 배너 — 큐는 계속 쌓이지만 새 작업 실행이 멈춰 있음을 표시
+            let pauseBanner = document.getElementById('queue-pause-banner');
+            if (queuePaused) {
+                if (!pauseBanner) {
+                    pauseBanner = document.createElement('div');
+                    pauseBanner.id = 'queue-pause-banner';
+                    pauseBanner.style.cssText = 'background:rgba(255,193,7,0.12);border:1px solid rgba(255,193,7,0.5);color:#ffc107;padding:8px 10px;border-radius:6px;font-size:0.82rem;margin-bottom:8px;text-align:center;';
+                }
+                pauseBanner.innerHTML = '⏸ <b>큐 일시정지 중</b> — 새 작업이 꺼내지지 않고 대기합니다 (현재 실행중 작업은 완료까지 진행).';
+            } else if (pauseBanner) {
+                pauseBanner.remove();
+                pauseBanner = null;
+            }
             let empty = document.getElementById('queue-modal-empty');
             // innerHTML='' 로 삭제된 경우 재생성
             if (!empty) {
@@ -40513,6 +40530,7 @@
             if (!items.length) {
                 body.innerHTML = '';
                 body.appendChild(empty);
+                if (pauseBanner) body.appendChild(pauseBanner);
                 if (waitBanner) body.appendChild(waitBanner);
                 empty.style.display = 'block';
                 return;
@@ -40520,6 +40538,7 @@
             empty.style.display = 'none';
             body.innerHTML = '';
             body.appendChild(empty);
+            if (pauseBanner) body.appendChild(pauseBanner);
             if (waitBanner) body.appendChild(waitBanner);
             try {
             // 배치 그룹핑: 동일 batch_id 항목을 1줄 요약(접기/펼치기). batch_id 없으면 개별 1줄.
@@ -40709,6 +40728,44 @@
             if (!confirm('대기 중인 모든 작업을 취소하시겠습니까?')) return;
             try { await fetchJSON('/api/queue/cancel_all', { method: 'POST' }); } catch (e) { console.error('[QUEUE] 전체 취소 실패:', e); }
         }
+        async function queueModalTogglePause() {
+            const next = !queuePaused;
+            try {
+                const res = await fetchJSON('/api/queue/pause', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ paused: next }),
+                });
+                if (res && typeof res.paused === 'boolean') {
+                    queuePaused = res.paused;
+                    _updateQueuePauseUI();
+                } else if (res && res.error) {
+                    alert('일시정지 토글 실패: ' + res.error);
+                }
+            } catch (e) {
+                console.error('[QUEUE] 일시정지 토글 실패:', e);
+                alert('일시정지 토글 실패: ' + (e && e.message ? e.message : e));
+            }
+        }
+        function _updateQueuePauseUI() {
+            const btn = document.getElementById('queue-pause-btn');
+            if (btn) {
+                if (queuePaused) {
+                    btn.textContent = '▶ 재개';
+                    btn.style.background = 'var(--accent)';
+                    btn.style.color = '#fff';
+                    btn.style.borderColor = 'var(--accent)';
+                } else {
+                    btn.textContent = '⏸ 일시정지';
+                    btn.style.background = 'transparent';
+                    btn.style.color = 'var(--text2)';
+                    btn.style.borderColor = 'var(--border)';
+                }
+            }
+            // 상단 툴바 배지 색으로 일시정지 상태 표시 (정지 중엔 주황/경고색)
+            const badge = document.getElementById('queue-badge');
+            if (badge) badge.style.background = queuePaused ? 'var(--warning, #e8a33d)' : 'var(--accent)';
+        }
         function queueModalClearCompleted() {
             queueModalData = queueModalData.filter(i => i.status === 'pending' || i.status === 'processing');
             renderQueueModal();
@@ -40767,6 +40824,9 @@
             queueIllustWaitStartedAt = data.illust_wait_started_at ? data.illust_wait_started_at * 1000 : null;
             queueIllustWaitSeconds = data.illust_wait_seconds || 10;
             _updateIllustWaitTimer();
+            const prevPaused = queuePaused;
+            queuePaused = !!data.paused;
+            if (prevPaused !== queuePaused) _updateQueuePauseUI();
             if (queueModalOpen) renderQueueModal();
 
             // 인스턴스 LoRA 관련 큐 완료 시 그리드 자동 갱신

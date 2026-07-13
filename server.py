@@ -10131,12 +10131,29 @@ async def handle_api_queue_remove(request):
     except Exception as e:
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
+async def handle_api_queue_pause(request):
+    """큐 실행 일시정지/재개 토글.
+    body: {"paused": true|false}. 현재 실행중인 작업은 그대로 완료되고 새 작업 꺼내기만 멈춘다."""
+    try:
+        body = await request.json() if request.can_read_body else {}
+    except Exception as e:
+        return web.json_response({"success": False, "error": f"잘못된 요청 본문: {e}"}, status=400)
+    paused = bool(body.get("paused", False))
+    try:
+        result = await queue_manager.set_paused(paused)
+        return web.json_response({"success": True, "paused": result})
+    except Exception as e:
+        print(f"[QUEUE_API] 일시정지 토글 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
 app.router.add_get("/api/queue/status", handle_api_queue_status)
 app.router.add_post("/api/queue/add", handle_api_queue_add)
 app.router.add_post("/api/queue/cancel", handle_api_queue_cancel)
 app.router.add_post("/api/queue/cancel_all", handle_api_queue_cancel_all)
 app.router.add_post("/api/queue/cancel_batch", handle_api_queue_cancel_batch)
 app.router.add_post("/api/queue/remove", handle_api_queue_remove)
+app.router.add_post("/api/queue/pause", handle_api_queue_pause)
 
 
 async def handle_api_negative_presets(request):
