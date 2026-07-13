@@ -1352,6 +1352,33 @@
         #tab-btn-bot {
             background: var(--surface2);
             border-radius: 6px;
+            position: relative;
+            padding-top: 22px;
+        }
+        /* 삽화/디버그 상태 딱지 (탭 버튼 우상단) */
+        .tab-status-badges {
+            position: absolute;
+            top: 3px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 4px;
+            pointer-events: none;
+            white-space: nowrap;
+        }
+        .status-chip {
+            font-size: 0.6rem;
+            font-weight: 700;
+            padding: 1px 6px;
+            border-radius: 8px;
+            line-height: 1.4;
+            color: #fff;
+        }
+        .status-chip.on {
+            background: #4caf50;
+        }
+        .status-chip.off {
+            background: #e53935;
         }
         .tab-btn[onclick*="'asset'"],
         .tab-btn[onclick*="'asset-upload'"],
@@ -3358,7 +3385,13 @@
     <!-- 탭 바 -->
     <div class="tab-bar">
         <button id="tab-btn-backup" class="tab-btn active" onclick="switchTab('backup')">삽화 백업</button>
-        <button id="tab-btn-bot" class="tab-btn" onclick="switchTab('bot')">삽화 모드</button>
+        <button id="tab-btn-bot" class="tab-btn" onclick="switchTab('bot')">
+            <span class="tab-status-badges">
+                <span id="bot-mode-chip" class="status-chip off">삽화</span>
+                <span id="debug-mode-chip" class="status-chip off">디버그</span>
+            </span>
+            삽화 모드
+        </button>
         <span class="tab-divider"></span>
         <button class="tab-btn" onclick="switchTab('asset')">에셋 생성</button>
         <button class="tab-btn" onclick="switchTab('asset-upload')">에셋 업로드</button>
@@ -12592,6 +12625,9 @@
                 const debugModeOn = cfg.debug_mode_enabled || false;
                 document.getElementById('debug-mode-toggle').checked = debugModeOn;
                 updateDebugModeStatus(debugModeOn);
+                const botModeOn = cfg.bot_mode_enabled || false;
+                document.getElementById('bot-mode-toggle').checked = botModeOn;
+                updateBotModeStatus(botModeOn);
                 updateHeaderButtonsVisibility();
             } catch (e) { /* 무시 */ }
         })();
@@ -23770,12 +23806,22 @@
                 statusEl.textContent = checked ? 'ON' : 'OFF';
                 statusEl.className = 'toggle-status ' + (checked ? 'on' : 'off');
             }
+            const chip = document.getElementById('bot-mode-chip');
+            if (chip) {
+                chip.className = 'status-chip ' + (checked ? 'on' : 'off');
+            }
         }
 
         function updateDebugModeStatus(on) {
             const el = document.getElementById('debug-mode-status');
-            el.textContent = on ? 'ON' : 'OFF';
-            el.className = 'toggle-status ' + (on ? 'on' : 'off');
+            if (el) {
+                el.textContent = on ? 'ON' : 'OFF';
+                el.className = 'toggle-status ' + (on ? 'on' : 'off');
+            }
+            const chip = document.getElementById('debug-mode-chip');
+            if (chip) {
+                chip.className = 'status-chip ' + (on ? 'on' : 'off');
+            }
         }
 
         async function onDebugModeToggle() {
