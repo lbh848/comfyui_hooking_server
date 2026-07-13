@@ -5906,6 +5906,21 @@
         </div>
     </div>
 
+    <!-- LoRA 학습 세션 STEP 보기 모달 (세션 카드 클릭 → step/loss/프리뷰를 모달로) -->
+    <!-- CLAUDE.md 규칙: 바깥 클릭 닫기 금지 — ✕/breadcrumb 상위 세그먼트로만 닫힘 -->
+    <div class="modal" id="lora-trained-session-modal" style="z-index:1450;">
+        <div class="modal-content" style="max-width:1400px; width:96vw; max-height:94vh; height:94vh; overflow:hidden;">
+            <div class="modal-header" style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+                <!-- 기존 #lora-breadcrumb 가 이 슬롯으로 이동함 -->
+                <div id="lora-trained-session-bc" style="flex:1; min-width:200px;"></div>
+                <button class="modal-close" onclick="closeTrainedSessionModalAndRefresh()" title="닫기">&times;</button>
+            </div>
+            <div class="modal-body" id="lora-trained-session-body" style="flex:1; overflow-y:auto; padding:16px;">
+                <!-- lora-loss-chart-container / lora-trained-steps / lora-trained-previews 가 이동함 -->
+            </div>
+        </div>
+    </div>
+
     <!-- LoRA 항목 복제 모달 -->
     <div class="modal" id="lora-duplicate-modal" onclick="if (event.target === this) closeLoraDuplicateModal()">
         <div class="modal-content" style="max-width:560px;">
@@ -15998,6 +16013,7 @@
         }
 
         async function initLoraTab() {
+            closeTrainedSessionModal();
             loraCurrentEntry = '';
             loraCurrentCharacter = '';
             _loraHideAll();
@@ -16040,6 +16056,7 @@
         // ─── Level 2: 캐릭터의 LoRA 항목 그리드 ─────────────────────────
         async function enterLoraCharacter(character) {
             loraCurrentCharacter = character;
+            closeTrainedSessionModal();
             loraCurrentEntry = '';
             _loraHideAll();
             document.getElementById('lora-project-add-btn').style.display = '';
@@ -16100,6 +16117,7 @@
 
         // ─── Level 3: LoRA 항목 상세 ─────────────────────────────────
         async function enterLoraEntry(name) {
+            closeTrainedSessionModal();
             loraCurrentEntry = name;
 
             // breadcrumb
@@ -16144,6 +16162,82 @@
         let loraCurrentTrainedSession = '';
         let loraCurrentTrainedStep = '';
         let loraEntryRepresentative = '';
+
+        // ─── 학습 세션 STEP 보기 모달 (세션 카드 클릭 → 모달화, 방법 B: 노드 이동) ───
+        // 이동한 노드들의 원래 위치를 기억해 닫을 때 복원한다.
+        let _loraTrainedSessionMoved = []; // [{node, parent, next}]
+        const _loraTrainedSessionBodyIds = ['lora-loss-chart-container', 'lora-trained-steps', 'lora-trained-previews', 'lora-trained-empty'];
+
+        function _loraTrainedMoveTo(host, id) {
+            const el = document.getElementById(id);
+            if (!el) { console.warn('[LORA_SESSION_MODAL] 이동할 요소를 찾을 수 없음:', id); return; }
+            _loraTrainedSessionMoved.push({ node: el, parent: el.parentElement, next: el.nextSibling });
+            el.style.display = '';
+            host.appendChild(el);
+        }
+
+        // 세션 STEP 보기 모달을 연다. 이미 열려 있으면(재진입) 노드 이동은 생략 — 데이터만 다시 로드.
+        function openTrainedSessionModal() {
+            const modal = document.getElementById('lora-trained-session-modal');
+            if (!modal) { console.error('[LORA_SESSION_MODAL] 모달 요소 없음'); return; }
+
+            if (_loraTrainedSessionMoved.length === 0) {
+                const bodyHost = document.getElementById('lora-trained-session-body');
+                const bcHost = document.getElementById('lora-trained-session-bc');
+                if (!bodyHost) { console.error('[LORA_SESSION_MODAL] 본문 호스트 없음'); return; }
+                for (const id of _loraTrainedSessionBodyIds) _loraTrainedMoveTo(bodyHost, id);
+                if (bcHost) _loraTrainedMoveTo(bcHost, 'lora-breadcrumb');
+            }
+
+            modal.classList.add('visible');
+        }
+
+        function closeTrainedSessionModal() {
+            const modal = document.getElementById('lora-trained-session-modal');
+            if (_loraTrainedSessionMoved.length === 0) {
+                if (modal) modal.classList.remove('visible');
+                return;
+            }
+            // 노드들을 원래 부모/순서로 복원
+            for (const { node, parent, next } of _loraTrainedSessionMoved) {
+                if (!parent) continue;
+                try {
+                    if (next && next.parentNode === parent) parent.insertBefore(node, next);
+                    else parent.appendChild(node);
+                } catch (e) {
+                    console.error('[LORA_SESSION_MODAL] 노드 복원 실패:', node && node.id, e);
+                    try { parent.appendChild(node); } catch (_) {}
+                }
+                node.style.display = 'none';
+            }
+            _loraTrainedSessionMoved = [];
+            if (modal) modal.classList.remove('visible');
+
+            // 상태 정리 — 세션 목록(엔트리 상세)으로 복귀
+            loraCurrentTrainedSession = '';
+            loraCurrentTrainedStep = '';
+            // breadcrumb 를 엔트리 단계로 복원
+            document.getElementById('lora-breadcrumb').innerHTML =
+                `<span style="cursor:pointer;" onclick="initLoraTab()">로라매니징</span> / ` +
+                `<span style="cursor:pointer;" onclick="enterLoraCharacter('${escapeHtml(loraCurrentCharacter)}')">${escapeHtml(loraCurrentCharacter)}</span> / ` +
+                `<span>${escapeHtml(loraCurrentEntry)}</span>`;
+            // 세션 목록 + (있던) 대표 표시 복원
+            const sessionsEl = document.getElementById('lora-trained-sessions');
+            if (sessionsEl) sessionsEl.style.display = '';
+            const repEl = document.getElementById('lora-representative');
+            if (repEl && repEl.innerHTML.trim()) repEl.style.display = '';
+        }
+
+        // ✕ 버튼용: 모달을 닫고 세션 목록 카드를 새로고침한다.
+        // 모달 안에서 세션 대표 설정/step 삭제 등 변경된 내용을 카드에 반영하기 위함.
+        async function closeTrainedSessionModalAndRefresh() {
+            const entry = loraCurrentEntry;
+            closeTrainedSessionModal();
+            if (entry) {
+                try { await loadTrainedLoraSessions(); }
+                catch (e) { console.error('[LORA_SESSION_MODAL] 세션 목록 새로고침 실패:', e); }
+            }
+        }
 
         async function loadTrainedLoraSessions() {
             const section = document.getElementById('lora-trained-section');
@@ -16263,6 +16357,9 @@
             loraCurrentTrainedSession = session;
             const loadingEl = document.getElementById('lora-loading');
             loadingEl.style.display = 'flex';
+
+            // STEP 보기를 모달로 띄운다 (loss chart / steps / previews + breadcrumb 이동).
+            openTrainedSessionModal();
 
             // breadcrumb 업데이트
             document.getElementById('lora-breadcrumb').innerHTML =
@@ -16963,6 +17060,13 @@
                 const stopBtn2 = document.getElementById('lora-training-stop-btn');
                 if (stopBtn2) stopBtn2.style.display = 'none';
                 showToast('LoRA 학습+프리뷰가 완료되었습니다!', 'success');
+                // 학습 완료 시 세션 카드 목록을 새로고침해 새 세션이 바로 보이게 한다.
+                // (엔트리 상세 화면을 보고 있을 때만)
+                const trainedSec = document.getElementById('lora-trained-section');
+                if (trainedSec && trainedSec.style.display !== 'none' && loraCurrentEntry) {
+                    try { loadTrainedLoraSessions(); }
+                    catch (e) { console.error('[LORA_TRAINING] 완료 후 세션 목록 새로고침 실패:', e); }
+                }
             } else if (phase === 'error') {
                 if (phaseEl) { phaseEl.textContent = '에러 발생'; phaseEl.style.color = 'var(--error)'; }
                 if (pctEl) pctEl.textContent = '';
