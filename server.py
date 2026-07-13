@@ -6308,19 +6308,45 @@ async def handle_api_asset_mode_batch_set_negative(request: web.Request) -> web.
         body = await request.json()
         character = body.get("character", "")
         negative_tags = body.get("negative_tags", "")
+        images = body.get("images", [])  # [{outfit, expression, filename}, ...] — 선택 이미지 적용 시
         if not character:
             return web.json_response({"success": False, "error": "character 필수"}, status=400)
 
-        reps = asset_mode.batch_analyze_representatives(character)
-        if not reps:
+        # 대상 파일 목록 결정:
+        # - images 가 주어지면: 선택한 개별 이미지들만 (LV2 선택 적용)
+        # - images 가 없으면: 캐릭터 전체 대표이미지 일괄 (기존 동작, 하위호환)
+        targets = []  # [{img_dir, base, filename}]
+        if images:
+            from modes.asset_mode import ASSET_DIR
+            for img_info in images:
+                outfit = img_info.get("outfit", "")
+                expression = img_info.get("expression", "")
+                filename = img_info.get("filename", "")
+                if not filename:
+                    continue
+                img_dir = os.path.join(ASSET_DIR,
+                    asset_mode._safe_dirname(character),
+                    asset_mode._safe_dirname(outfit),
+                    asset_mode._safe_dirname(expression))
+                base = os.path.splitext(filename)[0]
+                targets.append({"img_dir": img_dir, "base": base, "filename": filename})
+        else:
+            reps = asset_mode.batch_analyze_representatives(character)
+            for rep in reps:
+                targets.append({
+                    "img_dir": os.path.dirname(rep["filepath"]),
+                    "base": os.path.splitext(rep["filename"])[0],
+                    "filename": rep["filename"],
+                })
+
+        if not targets:
             return web.json_response({"success": True, "total": 0, "success_count": 0, "fail_count": 0})
 
         success_count = 0
         fail_count = 0
-        for rep in reps:
+        for tgt in targets:
             try:
-                img_dir = os.path.dirname(rep["filepath"])
-                prompt_path = os.path.join(img_dir, f"{os.path.splitext(rep['filename'])[0]}_prompt.json")
+                prompt_path = os.path.join(tgt["img_dir"], f"{tgt['base']}_prompt.json")
                 existing = {}
                 if os.path.isfile(prompt_path):
                     try:
@@ -6332,16 +6358,16 @@ async def handle_api_asset_mode_batch_set_negative(request: web.Request) -> web.
                 with open(prompt_path, "w", encoding="utf-8") as pf:
                     json.dump(existing, pf, ensure_ascii=False, indent=2)
                 success_count += 1
-                print(f"[ASSET_MODE] 부정 프롬프트 적용 완료: {rep['filename']}")
+                print(f"[ASSET_MODE] 부정 프롬프트 적용 완료: {tgt['filename']}")
             except Exception as e:
                 fail_count += 1
-                print(f"[ASSET_MODE] 부정 프롬프트 적용 실패: {rep['filename']} - {e}")
+                print(f"[ASSET_MODE] 부정 프롬프트 적용 실패: {tgt['filename']} - {e}")
                 import traceback
                 traceback.print_exc()
 
         return web.json_response({
             "success": True,
-            "total": len(reps),
+            "total": len(targets),
             "success_count": success_count,
             "fail_count": fail_count,
         })

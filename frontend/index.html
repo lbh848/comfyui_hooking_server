@@ -1378,7 +1378,7 @@
             background: #4caf50;
         }
         .status-chip.off {
-            background: #e53935;
+            background: #888;
         }
         .tab-btn[onclick*="'asset'"],
         .tab-btn[onclick*="'asset-upload'"],
@@ -4446,15 +4446,16 @@
                         <div class="section-title">태그 분석</div>
                         <div style="font-size:0.72rem; color:var(--text-secondary); margin-bottom:6px;">갤러리에서 이미지를 선택한 후 분석할 수 있습니다.</div>
                         <button id="au-analyze-btn" onclick="auAnalyzeSelectedImages()" style="width:100%; background:#4CAF50; color:#fff; border:none; padding:6px 10px; border-radius:6px; cursor:pointer; font-size:0.82rem; font-weight:600;" disabled>선택 이미지 태그 분석</button>
-                        <button id="au-batch-rep-btn" onclick="auBatchAnalyzeRepresentatives()" style="width:100%; background:#2E7D32; color:#fff; border:none; padding:6px 10px; border-radius:6px; cursor:pointer; font-size:0.82rem; font-weight:600; margin-top:4px; opacity:0.5;">대표이미지 일괄 태그 분석</button>
+                        <button id="au-batch-rep-btn" onclick="auBatchAnalyzeRepresentatives()" style="width:100%; background:#2E7D32; color:#fff; border:none; padding:6px 10px; border-radius:6px; cursor:pointer; font-size:0.82rem; font-weight:600; margin-top:4px;">대표이미지 일괄 태그 분석</button>
                         <div id="au-analyze-status" style="font-size:0.72rem; color:var(--text2); margin-top:4px; display:none;"></div>
                     </div>
 
-                    <!-- 부정 프롬프트 일괄 적용 -->
+                    <!-- 부정 프롬프트 적용 -->
                     <div style="background:rgba(156,39,176,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
-                        <div class="section-title">부정 프롬프트 일괄 적용</div>
+                        <div class="section-title">부정 프롬프트 적용</div>
                         <div id="au-negative-preset-select" style="margin-bottom:6px;"></div>
-                        <button id="au-batch-negative-btn" onclick="auBatchSetNegative()" style="width:100%; background:#9C27B0; color:#fff; border:none; padding:6px 10px; border-radius:6px; cursor:pointer; font-size:0.82rem; font-weight:600;">대표이미지에 부정 프롬프트 적용</button>
+                        <button id="au-batch-negative-btn" onclick="auBatchSetNegative()" style="width:100%; background:#9C27B0; color:#fff; border:none; padding:6px 10px; border-radius:6px; cursor:pointer; font-size:0.82rem; font-weight:600;">대표 이미지 일괄 부정 프롬프트 적용</button>
+                        <button id="au-batch-negative-selected-btn" onclick="auBatchSetNegativeSelected()" style="width:100%; background:#9C27B0; color:#fff; border:none; padding:6px 10px; border-radius:6px; cursor:pointer; font-size:0.82rem; font-weight:600; margin-top:4px;" disabled>선택 이미지에 부정 프롬프트 적용</button>
                     </div>
                 </div>
             </div>
@@ -38624,11 +38625,29 @@
             btn.textContent = auSelectedImages.size > 0
                 ? `선택 이미지 태그 분석 (${auSelectedImages.size}장)`
                 : '선택 이미지 태그 분석';
-            const batchBtn = document.getElementById('au-batch-rep-btn');
-            batchBtn.style.opacity = auNavLevel < 1 ? '0.5' : '1';
+            // 선택 이미지 부정 프롬프트 버튼도 선택 수 연동
+            const negSelBtn = document.getElementById('au-batch-negative-selected-btn');
+            if (negSelBtn) {
+                negSelBtn.disabled = auSelectedImages.size === 0;
+                negSelBtn.textContent = auSelectedImages.size > 0
+                    ? `선택 이미지에 부정 프롬프트 적용 (${auSelectedImages.size}장)`
+                    : '선택 이미지에 부정 프롬프트 적용';
+            }
+
+            // 레벨별 버튼 노출:
+            //  - LV1(갤러리): 대표이미지 일괄 태그 분석 / 대표 이미지 일괄 부정 프롬프트 적용
+            //  - LV2(이미지): 선택 이미지 태그 분석 / 선택 이미지에 부정 프롬프트 적용
+            //  - LV0(캐릭터 목록): 둘 다 숨김
+            const isLV1 = auNavLevel === 1;
+            const isLV2 = auNavLevel === 2;
+            const show = (id, on) => { const el = document.getElementById(id); if (el) el.style.display = on ? '' : 'none'; };
+            show('au-analyze-btn', isLV2);
+            show('au-batch-rep-btn', isLV1);
+            show('au-batch-negative-btn', isLV1);
+            show('au-batch-negative-selected-btn', isLV2);
             // 일괄 대표 설정 블록: LV1에서만 표시
             const repSetBlock = document.getElementById('au-batch-rep-set-block');
-            if (repSetBlock) repSetBlock.style.display = auNavLevel === 1 ? '' : 'none';
+            if (repSetBlock) repSetBlock.style.display = isLV1 ? '' : 'none';
         }
 
         // ─── 일괄 대표 설정 ───
@@ -38879,7 +38898,64 @@
                 showToast('부정 프롬프트 적용 오류: ' + e.message, 'error');
             } finally {
                 btn.disabled = false;
-                btn.textContent = '대표이미지에 부정 프롬프트 적용';
+                btn.textContent = '대표 이미지 일괄 부정 프롬프트 적용';
+            }
+        }
+
+        async function auBatchSetNegativeSelected() {
+            if (auNavLevel !== 2 || !auNavCharacter) {
+                showToast('LV2(이미지 목록)에서만 사용 가능합니다', 'error');
+                return;
+            }
+            if (auSelectedImages.size === 0) { showToast('이미지를 먼저 선택하세요', 'error'); return; }
+            const container = document.getElementById('au-negative-preset-select');
+            const selEl = container ? container.querySelector('.custom-select-value') : null;
+            const presetName = selEl ? selEl.textContent : '';
+            if (!presetName || presetName.startsWith('--')) {
+                showToast('부정 프리셋을 먼저 선택하세요', 'error');
+                return;
+            }
+            const presetTags = assetTags.negative_presets?.[presetName];
+            if (!presetTags || !Array.isArray(presetTags) || presetTags.length === 0) {
+                showToast('선택한 프리셋에 태그가 없습니다', 'error');
+                return;
+            }
+            const negativeTags = presetTags.join(', ');
+            // URL → {outfit, expression, filename} 추출 (auAnalyzeSelectedImages 와 동일 패턴)
+            const images = [...auSelectedImages].map(url => {
+                const parts = url.split('/images/');
+                const filename = parts.length > 1 ? decodeURIComponent(parts[parts.length - 1]) : '';
+                return { outfit: auNavOutfit, expression: auNavExpression, filename };
+            }).filter(img => img.filename);
+            if (images.length === 0) { showToast('유효한 이미지가 없습니다', 'error'); return; }
+            if (!confirm(`선택한 ${images.length}장 이미지에 부정 프롬프트를 적용하시겠습니까?\n기존 부정 프롬프트가 덮어씌워집니다.`)) return;
+
+            const btn = document.getElementById('au-batch-negative-selected-btn');
+            btn.disabled = true;
+            const origText = btn.textContent;
+            btn.textContent = '적용 중...';
+            try {
+                const resp = await fetch('/api/asset_mode/batch_set_negative', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ character: auNavCharacter, negative_tags: negativeTags, images }),
+                });
+                const data = await resp.json();
+                if (!data.success) {
+                    showToast(data.error || '적용 실패', 'error');
+                    return;
+                }
+                const ok = data.success_count || 0;
+                const fail = data.fail_count || 0;
+                showToast(
+                    `선택 ${ok}장에 부정 프롬프트 적용 완료` + (fail > 0 ? `, ${fail}건 실패` : ''),
+                    fail > 0 ? 'warning' : 'success'
+                );
+            } catch (e) {
+                showToast('부정 프롬프트 적용 오류: ' + e.message, 'error');
+            } finally {
+                btn.disabled = auSelectedImages.size === 0;
+                btn.textContent = origText;
             }
         }
 
