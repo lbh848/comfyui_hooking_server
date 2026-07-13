@@ -15710,7 +15710,9 @@
             atEmbedCurrentSource = source;
             const previewDiv = document.getElementById('at-embed-preview');
             document.getElementById('at-preview-preset-btn').classList.toggle('at-btn-primary', source === 'preset');
-            document.getElementById('at-preview-tag-btn').classList.toggle('at-btn-primary', source === 'tag');
+            // 태그 미리보기는 업로드 모달(atEmotionUpdatePreview)로 이관되어 이 버튼은 없을 수 있음
+            const tagBtn = document.getElementById('at-preview-tag-btn');
+            if (tagBtn) tagBtn.classList.toggle('at-btn-primary', source === 'tag');
             previewDiv.innerHTML = '<div style="color:var(--text2); font-size:0.85rem;">로딩 중...</div>';
             try {
                 let resp;
