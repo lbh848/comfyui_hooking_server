@@ -264,6 +264,83 @@ def delete_trained_session(lora_load_path: str, character: str, entry: str, sess
         return {"success": False, "error": str(e)}
 
 
+def delete_non_rep_steps_in_session(lora_load_path: str, character: str, entry: str, session: str) -> dict:
+    """세션 대표(step)만 남기고 나머지 step을 삭제.
+    - 세션 대표가 지정된 경우: 해당 safetensors만 남기고 나머지 step 삭제
+    - 세션 대표가 없는 경우: 모든 step 삭제 (세션 폴더 자체는 유지)
+    각 step은 delete_trained_step 과 동일하게 safetensors/json/toml/previews 묶음으로 삭제된다.
+    """
+    if not lora_load_path:
+        print("[LORA_TRAINED] lora_load_path 미설정")
+        return {"success": False, "error": "lora_load_path 미설정"}
+    session_dir = os.path.join(lora_load_path, _safe_dirname(character), "Lora", _safe_dirname(entry), session)
+    if not os.path.isdir(session_dir):
+        print(f"[LORA_TRAINED] 세션 폴더 없음: {session_dir}")
+        return {"success": False, "error": "세션 폴더 없음"}
+
+    # 세션 대표 safetensors 파일명 조회
+    manage_data = _load_lora_manage()
+    manage_entry = _get_entry(manage_data, character, entry)
+    session_reps = (manage_entry or {}).get("session_representatives", {})
+    rep_st = ""
+    raw_rep = session_reps.get(session, "")
+    if raw_rep:
+        try:
+            rep_st = json.loads(raw_rep).get("safetensors", "")
+        except Exception as e:
+            print(f"[LORA_TRAINED] 세션 대표 파싱 실패(session={session}): {e}")
+    print(f"[LORA_TRAINED] 세션 대표 외 제거: session={session}, rep={rep_st or '(없음)'}")
+
+    steps = list_trained_steps(lora_load_path, character, entry, session)
+    # json 기반 step가 가리키는 safetensors 목록
+    step_st_files = {s["safetensors"] for s in steps}
+
+    deleted_count = 0
+    kept = None
+    errors = []
+
+    # 1) json 메타데이터가 있는 step들: 대표가 아닌 것 삭제
+    for s in steps:
+        if rep_st and s["safetensors"] == rep_st:
+            kept = s["safetensors"]
+            continue
+        r = delete_trained_step(lora_load_path, character, entry, session, s["name"])
+        if r.get("success"):
+            deleted_count += 1
+        else:
+            errors.append(f"{s['name']}: {r.get('error', '알 수 없음')}")
+        errors.extend(r.get("errors", []))
+
+    # 2) json 메타데이터 없이 safetensors만 있는 파일(orphan): 대표가 아니면 직접 삭제
+    try:
+        for fname in os.listdir(session_dir):
+            if not fname.endswith(".safetensors"):
+                continue
+            if fname == rep_st:
+                kept = fname
+                continue
+            if fname in step_st_files:
+                continue  # 위 step 루프에서 이미 처리됨
+            fp = os.path.join(session_dir, fname)
+            try:
+                os.remove(fp)
+                deleted_count += 1
+                print(f"[LORA_TRAINED] orphan safetensors 삭제: {fname}")
+            except Exception as e:
+                errors.append(f"{fname}: {e}")
+    except Exception as e:
+        errors.append(f"폴더 순회 실패: {e}")
+
+    print(f"[LORA_TRAINED] 세션 대표 외 제거 완료: session={session}, 삭제 step={deleted_count}, 남긴 대표={kept}, errors={len(errors)}")
+    return {
+        "success": True,
+        "deleted_count": deleted_count,
+        "kept": kept,
+        "had_rep": bool(rep_st),
+        "errors": errors,
+    }
+
+
 def get_trained_preview_path(lora_load_path: str, character: str, entry: str, session: str, filename: str) -> str:
     """학습된 LoRA 프리뷰 이미지 경로 반환"""
     if not lora_load_path:

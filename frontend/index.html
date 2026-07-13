@@ -16246,6 +16246,11 @@
                                     ${isRep ? 'disabled' : ''}>
                                 ${isRep ? '현재 엔트리 대표' : '엔트리 대표로 설정'}
                             </button>` : ''}
+                            <button onclick="event.stopPropagation(); removeNonSessionRepAssets('${escapeHtml(s.name)}', ${s.step_count})"
+                                    style="margin-top:4px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:4px 10px; font-size:0.75rem; cursor:pointer; width:100%;"
+                                    title="이 세션의 대표 step만 남기고 나머지를 삭제합니다">
+                                세션 대표 외 제거
+                            </button>
                         </div>`;
                     }).join('') + '</div>';
             } catch (e) {
@@ -16563,6 +16568,36 @@
             } catch (e) {
                 console.error('[LORA_TRAINED] 세션 삭제 실패:', e);
                 showToast('세션 삭제 실패', 'error');
+            }
+        }
+
+        async function removeNonSessionRepAssets(sessionName, stepCount) {
+            const msg = stepCount && stepCount > 0
+                ? `세션 "${sessionName}"에서 대표 step만 남기고 나머지 ${stepCount - 1}개 step을 삭제합니다.\n세션 대표가 없으면 모든 step이 삭제됩니다.\n복구할 수 없습니다. 계속하시겠습니까?`
+                : `세션 "${sessionName}"의 대표 외 step을 삭제합니다.\n복구할 수 없습니다. 계속하시겠습니까?`;
+            if (!confirm(msg)) return;
+            try {
+                const resp = await fetchJSON('/api/lora/trained/delete-non-rep', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        character: loraCurrentCharacter,
+                        entry: loraCurrentEntry,
+                        session: sessionName,
+                    }),
+                });
+                if (resp.success) {
+                    const kept = resp.kept ? `\n남긴 대표: ${resp.kept}` : (resp.had_rep ? '\n(대표 파일을 찾지 못해 남긴 파일 없음)' : '\n(세션 대표 미지정 - 전체 삭제)');
+                    const errNote = resp.errors && resp.errors.length ? `\n일부 오류: ${resp.errors.length}건` : '';
+                    showToast(`세션 대표 외 제거 완료 (${resp.deleted_count}개 step 삭제)${errNote}`, errNote ? 'warning' : 'success');
+                    console.log(`[LORA_TRAINED] 세션 대표 외 제거: ${sessionName}${kept}${errNote}`, resp.errors);
+                    loadTrainedLoraSessions();
+                } else {
+                    showToast(resp.error || '세션 대표 외 제거 실패', 'error');
+                }
+            } catch (e) {
+                console.error('[LORA_TRAINED] 세션 대표 외 제거 실패:', e);
+                showToast('세션 대표 외 제거 실패: ' + (e && e.message ? e.message : e), 'error');
             }
         }
 

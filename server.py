@@ -7750,7 +7750,30 @@ async def handle_api_lora_trained_delete_session(request):
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 
+async def handle_api_lora_trained_delete_non_rep(request):
+    """세션 대표 step만 남기고 나머지 step 삭제 (세션 대표 없으면 전체 삭제)."""
+    try:
+        body = await request.json()
+        character = body.get("character", "")
+        entry = body.get("entry", "")
+        session = body.get("session", "")
+        if not character or not entry or not session:
+            return web.json_response({"success": False, "error": "character, entry, session 필수"}, status=400)
+        config = load_config()
+        lora_load_path = config.get("lora_load_path", "")
+        if not lora_load_path:
+            return web.json_response({"success": False, "error": "lora_load_path 미설정"}, status=400)
+        from modes.lora_mode import delete_non_rep_steps_in_session
+        result = delete_non_rep_steps_in_session(lora_load_path, character, entry, session)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[LORA_TRAINED] 세션 대표 외 제거 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
 app.router.add_post("/api/lora/trained/delete-session", handle_api_lora_trained_delete_session)
+app.router.add_post("/api/lora/trained/delete-non-rep", handle_api_lora_trained_delete_non_rep)
 
 
 async def handle_api_lora_untracked_scan(request):
