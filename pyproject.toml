@@ -23,6 +23,7 @@ dependencies = [
     "mediapipe",
     "huggingface-hub",
     "ultralytics>=8.4.95",
+    "dill>=0.4.1",
 ]
 
 [tool.uv]

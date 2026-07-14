@@ -38,6 +38,23 @@ if errorlevel 1 (
     goto :end
 )
 
+:: Windows GPU 가속: onnxruntime(CPU)을 onnxruntime-directml 로 교체.
+:: DirectML = Windows에서 NVIDIA/AMD/Intel 가리지 않고 GPU 사용. GPU 없으면 자동 CPU 폴백.
+:: 이미 directml provider가 있으면 스킵(재설치 방지). uv run --no-sync 로 sync 재반영 차단.
+echo       Checking DirectML (GPU) provider...
+uv run --no-sync python -c "import onnxruntime,sys; sys.exit(0 if 'DmlExecutionProvider' in onnxruntime.get_available_providers() else 1)" >nul 2>&1
+if errorlevel 1 (
+    echo       DirectML not found - installing onnxruntime-directml for GPU acceleration...
+    uv pip install --quiet onnxruntime-directml
+    if errorlevel 1 (
+        echo       [WARN] onnxruntime-directml install failed - falling back to CPU onnxruntime.
+    ) else (
+        echo       DirectML installed.
+    )
+) else (
+    echo       DirectML OK.
+)
+
 echo [3/4] Packages installed.
 
 :: Create required folders
@@ -60,7 +77,7 @@ echo   ComfyUI Proxy Server Start (port 8189)
 echo   Frontend: http://127.0.0.1:8189/
 echo ============================================
 echo.
-uv run python server.py
+uv run --no-sync python server.py
 
 :end
 pause

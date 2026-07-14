@@ -3462,6 +3462,7 @@ async def handle_api_postprocess_preview_face(request: web.Request) -> web.Respo
             face_conf = float(body.get("face_conf", 0.3) or 0.3)
         except (TypeError, ValueError):
             face_conf = 0.3
+        device = (body.get("device") or "auto").strip() or "auto"
 
         if not bot_name:
             return web.json_response({"error": "봇이 선택되지 않았습니다."}, status=400)
@@ -3486,9 +3487,13 @@ async def handle_api_postprocess_preview_face(request: web.Request) -> web.Respo
             return web.json_response({"error": f"이미지 열기 실패: {e}"}, status=400)
 
         # target_size는 미리보기 표시용으로 충분히 큰 고정값. 합성 결과와 크롭 영역은 동일.
+        # 크롭 실행 시간(YOLO 추론+리사이즈)만 측정 — 매칭/로드/IO 제외.
+        _t0 = time.perf_counter()
         crop = face_detector.crop_face(
             base, top_mult=face_crop_top, bottom_mult=face_crop_bottom,
-            target_size=256, conf_thres=face_conf)
+            target_size=256, conf_thres=face_conf, device=device)
+        _crop_ms = (time.perf_counter() - _t0) * 1000.0
+        print(f"[FACE_DETECTOR] 크롭 {os.path.basename(matched[0])}: {_crop_ms:.0f}ms")
         if crop is None:
             return web.json_response(
                 {"error": f"얼굴 검출 실패(CONF>{face_conf} 박스 없음): {matched[0]}"},
@@ -3496,10 +3501,28 @@ async def handle_api_postprocess_preview_face(request: web.Request) -> web.Respo
 
         buf = BytesIO()
         crop.save(buf, format="PNG")
-        return web.Response(body=buf.getvalue(), content_type="image/png")
+        return web.Response(
+            body=buf.getvalue(), content_type="image/png",
+            headers={"X-Crop-Ms": f"{_crop_ms:.0f}"})
     except Exception as e:
         tb = traceback.format_exc()
         print(f"[ERROR] postprocess_preview_face 실패: {e}\n{tb}")
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def handle_api_postprocess_face_devices(request: web.Request) -> web.Response:
+    """GET /api/postprocess/face_devices
+
+    얼굴 검출(ONNX Runtime)에 사용 가능한 디바이스(Execution Provider) 목록.
+    응답: {"devices": [{key, label, provider}, ...], "auto": "<자동선택 key>"}
+    설치된 onnxruntime 패키지에 따라 CUDA/DirectML/CPU 가 노출된다.
+    """
+    try:
+        from modes import face_detector
+        devices = face_detector.list_devices()
+        return web.json_response({"devices": devices, "auto": "auto"})
+    except Exception as e:
+        print(f"[ERROR] face_devices 실패: {e}\n{traceback.format_exc()}")
         return web.json_response({"error": str(e)}, status=500)
 
 
@@ -5360,6 +5383,7 @@ app.router.add_post("/api/reschedule", handle_api_reschedule)
 app.router.add_post("/api/reschedule_with_modified_prompt", handle_api_reschedule_with_modified_prompt)
 app.router.add_post("/api/postprocess/preview", handle_api_postprocess_preview)
 app.router.add_post("/api/postprocess/preview_face", handle_api_postprocess_preview_face)
+app.router.add_get("/api/postprocess/face_devices", handle_api_postprocess_face_devices)
 app.router.add_post("/api/postprocess/emotion_sources", handle_api_postprocess_emotion_sources)
 app.router.add_get("/api/postprocess/emotion_char_counts", handle_api_postprocess_emotion_char_counts)
 app.router.add_post("/api/postprocess/match_image", handle_api_postprocess_match_image)

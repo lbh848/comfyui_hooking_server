@@ -603,6 +603,7 @@ def compose_postprocess(image_bytes: bytes, speak_text: str,
         face_conf = 0.3
     prefix = settings.get("prefix", "") or ""
     suffix = settings.get("suffix", "") or ""
+    face_device = (settings.get("face_device") or "auto").strip() or "auto"
 
     first_speaker_seg = next((s for s in segments if s.get("speaker")), None)
     face_img = None  # 정사각형 PIL.Image 또는 None
@@ -621,7 +622,7 @@ def compose_postprocess(image_bytes: bytes, speak_text: str,
                     _face_target = max(128, int(bar_h))
                     face_img = face_detector.crop_face(
                         base, top_mult=face_crop_top, bottom_mult=face_crop_bottom,
-                        target_size=_face_target, conf_thres=face_conf)
+                        target_size=_face_target, conf_thres=face_conf, device=face_device)
                     if face_img is None:
                         # 얼굴 검출 실패 시 매칭된 원본을 center-crop 정사각형으로 폴백.
                         # 빈 슬롯보다는 나은 근사치(얼굴이 프레임 밖일 수 있음).
@@ -1088,6 +1089,7 @@ def get_vn_settings(config: dict, bot_name: str = "") -> Optional[dict]:
         "face_crop_top": float(vn.get("face_crop_top", 1.8) or 1.8),
         "face_crop_bottom": float(vn.get("face_crop_bottom", 1.0) or 1.0),
         "face_conf": float(vn.get("face_conf", 0.3) or 0.3),
+        "face_device": str(vn.get("face_device", "auto") or "auto"),
         "theme": str(vn.get("theme", VN_THEME_DEFAULT) or VN_THEME_DEFAULT),
         "opacity": int(vn.get("opacity", 100) if vn.get("opacity", 100) is not None else 100),
     }

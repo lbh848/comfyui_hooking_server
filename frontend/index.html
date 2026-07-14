@@ -6723,7 +6723,16 @@
                                             <input type="number" id="pp-vn-face-conf" value="0.3" step="0.05" min="0" max="1" class="input" style="width:100%;" oninput="collectPpVnSettings(); renderPostprocessPreview(); ppRenderFaceCrop();">
                                         </div>
                                     </div>
-                                    <div class="pp-hint" style="margin-top:4px;">첫 화자의 캐릭터 이미지에서 얼굴을 검출(CPU YOLO)해 크롭. <b>1.0=검출 박스 그대로(raw)</b>, 클수록 박스 중심 기준 위·아래로 확장(데이터패치 노드와 동일 규칙). CONF 이하 신뢰도 박스는 무시.</div>
+                                    <div class="pp-field-inline" style="margin-top:6px; align-items:flex-end;">
+                                        <div style="flex:1;">
+                                            <div style="font-size:0.7rem; color:var(--text2, #999); margin-bottom:2px;">추론 디바이스 (GPU 가속)</div>
+                                            <select id="pp-vn-face-device" class="select" style="width:100%;" onchange="collectPpVnSettings(); ppRenderFaceCrop();">
+                                                <option value="auto">자동 (권장)</option>
+                                            </select>
+                                        </div>
+                                        <button type="button" class="btn" style="padding:4px 10px; font-size:0.7rem; margin-left:6px;" onclick="ppRefreshFaceDevices()" title="설치된 onnxruntime 패키지 기준으로 사용 가능 디바이스를 다시 조회">새로고침</button>
+                                    </div>
+                                    <div class="pp-hint" style="margin-top:4px;">첫 화자의 캐릭터 이미지에서 얼굴을 검출(ONNX Runtime)해 크롭. <b>1.0=검출 박스 그대로(raw)</b>, 클수록 박스 중심 기준 위·아래로 확장(데이터패치 노드와 동일 규칙). CONF 이하 신뢰도 박스는 무시. 디바이스: CUDA(NVIDIA)/DirectML(Windows AMD·Intel·NVIDIA)/CPU 자동 감지 — GPU provider 패키지(onnxruntime-gpu / onnxruntime-directml) 설치 시에만 GPU 항목이 노출됨.</div>
                                     <!-- YOLO 크롭 결과 실시간 미리보기 -->
                                     <div style="margin-top:8px; border-top:1px solid var(--border); padding-top:8px;">
                                         <div style="font-size:0.74rem; color:var(--text2, #999); margin-bottom:4px;">YOLO 크롭 결과 (실시간)</div>
@@ -24517,7 +24526,7 @@
                 ppApplyVnToUI();
                 renderPostprocessPreview();
                 ppRenderPreviewMatch();
-                ppRenderFaceCrop();
+                ppRefreshFaceDevices().then(() => ppRenderFaceCrop());
             } catch (e) {
                 console.error('[POSTPROCESS] 봇 설정 로드 실패:', e);
                 showToast('봇 설정 로드 실패: ' + (e.message || e), 'error');
@@ -24540,7 +24549,7 @@
             } else {
                 ppApplyVnToUI();
                 renderPostprocessPreview();
-                ppRenderFaceCrop();
+                ppRefreshFaceDevices().then(() => ppRenderFaceCrop());
             }
         }
 
@@ -25020,6 +25029,8 @@
             const _fcEl = document.getElementById('pp-vn-face-conf');
             const _fcRaw = _fcEl ? parseFloat(_fcEl.value) : NaN;
             vn.face_conf = isNaN(_fcRaw) ? 0.3 : Math.min(1.0, Math.max(0.0, _fcRaw));
+            const _fdEl = document.getElementById('pp-vn-face-device');
+            vn.face_device = _fdEl ? (_fdEl.value || 'auto') : (vn.face_device || 'auto');
             const _themeEl = document.getElementById('pp-vn-theme');
             vn.theme = _themeEl ? (_themeEl.value || 'sky') : (vn.theme || 'sky');
             const _opaEl = document.getElementById('pp-vn-opacity');
@@ -25192,6 +25203,7 @@
         }
 
         // YOLO 크롭 결과(합성과 동일)를 ObjectURL로 반환. 병렬 테스트/실시간 미리보기 공용.
+        // {url, cropMs} 반환 — cropMs는 서버 X-Crop-Ms 헤더(YOLO 추론+리사이즈 ms).
         async function ppFetchFaceCropUrl(character, emotion, vn) {
             const resp = await fetch('/api/postprocess/preview_face', {
                 method: 'POST',
@@ -25205,6 +25217,7 @@
                     face_crop_top: vn && vn.face_crop_top,
                     face_crop_bottom: vn && vn.face_crop_bottom,
                     face_conf: vn && vn.face_conf,
+                    device: (vn && vn.face_device) || 'auto',
                 })
             });
             if (!resp.ok) {
@@ -25213,8 +25226,9 @@
                 err._handled = j.error;
                 throw err;
             }
+            const cropMsRaw = resp.headers.get('X-Crop-Ms');
             const blob = await resp.blob();
-            return URL.createObjectURL(blob);
+            return { url: URL.createObjectURL(blob), cropMs: cropMsRaw ? parseFloat(cropMsRaw) : null };
         }
 
         async function ppRenderPreviewMatch() {
@@ -25239,6 +25253,26 @@
         }
 
         let ppFaceCropTimer = null;
+        // 추론 디바이스 드롭박스를 서버에서 받아 채운 뒤, 현재 선택값 복원.
+        async function ppRefreshFaceDevices() {
+            const sel = document.getElementById('pp-vn-face-device');
+            if (!sel) return;
+            const cur = (ppWorking && ppWorking.vn && ppWorking.vn.face_device) || 'auto';
+            try {
+                const resp = await fetch('/api/postprocess/face_devices');
+                const j = await resp.json();
+                const devs = (j && Array.isArray(j.devices)) ? j.devices : [];
+                if (!devs.length) devs.push({ key: 'auto', label: '자동 (권장)' });
+                sel.innerHTML = devs.map(d => `<option value="${escapeHtml(d.key)}">${escapeHtml(d.label)}</option>`).join('');
+                // 현재 선택값이 목록에 있으면 유지, 없으면 auto
+                sel.value = devs.some(d => d.key === cur) ? cur : 'auto';
+                if (ppWorking && ppWorking.vn) ppWorking.vn.face_device = sel.value;
+            } catch (e) {
+                console.error('[POSTPROCESS] 디바이스 목록 조회 실패:', e);
+                sel.innerHTML = `<option value="auto">자동 (조회 실패)</option>`;
+                showToast('디바이스 목록 조회 실패: ' + (e.message || e), 'error');
+            }
+        }
         async function ppRenderFaceCrop() {
             clearTimeout(ppFaceCropTimer);
             ppFaceCropTimer = setTimeout(async () => {
@@ -25256,13 +25290,13 @@
                 const emotion = vn.strip_emotion ? (seg.emotion || '') : '';
                 cont.innerHTML = '<div style="font-size:0.74rem; color:var(--text2,#888);">크롭 중...</div>';
                 try {
-                    const url = await ppFetchFaceCropUrl(seg.speaker, emotion, vn);
+                    const { url, cropMs } = await ppFetchFaceCropUrl(seg.speaker, emotion, vn);
                     cont.innerHTML = `<div style="display:flex; gap:8px; align-items:flex-start;">
                         <img src="${url}" style="width:96px; height:96px; object-fit:cover; border-radius:6px; border:1px solid var(--border); background:#000;">
                         <div style="min-width:0; font-size:0.72rem; color:var(--text2,#999); line-height:1.5;">
                             <div style="word-break:break-all;">${escapeHtml(seg.speaker)}${emotion ? ' · ' + escapeHtml(emotion) : ''}</div>
                             <div>TOP ${vn.face_crop_top} · BOT ${vn.face_crop_bottom} · CONF ${vn.face_conf}</div>
-                            <div style="opacity:0.8;">합성과 동일한 YOLO 크롭 결과</div>
+                            <div>크롭 <b style="color:var(--text,#ddd);">${cropMs != null ? cropMs.toFixed(0) + 'ms' : '-'}</b> · 합성과 동일</div>
                         </div>
                     </div>`;
                 } catch (e) {
@@ -25319,23 +25353,33 @@
                     ppFetchFaceCropUrl(name, emo, vn)
                 ]);
                 const match = matchRes.status === 'fulfilled' ? matchRes.value : null;
-                const cropUrl = cropRes.status === 'fulfilled' ? cropRes.value : null;
+                const crop = cropRes.status === 'fulfilled' ? cropRes.value : null;  // {url, cropMs}
                 const matchErr = matchRes.status === 'rejected' ? (matchRes.reason._handled || matchRes.reason.message || String(matchRes.reason)) : null;
                 const cropErr = cropRes.status === 'rejected' ? (cropRes.reason._handled || cropRes.reason.message || String(cropRes.reason)) : null;
-                return { emo, match, cropUrl, matchErr, cropErr };
+                return { emo, match, crop, matchErr, cropErr };
             });
             const items = await Promise.all(tasks);
+            const cropTimes = items.map(it => it.crop && it.crop.cropMs).filter(v => v != null);
+            const avgMs = cropTimes.length ? (cropTimes.reduce((a, b) => a + b, 0) / cropTimes.length) : null;
+            const sumLine = cropTimes.length
+                ? `<span style="color:var(--text2,#999);"> · 크롭 평균 <b style="color:var(--text,#ddd);">${avgMs.toFixed(0)}ms</b> (${cropTimes.length}/${items.length} 성공) · 최대 ${Math.max(...cropTimes).toFixed(0)}ms</span>`
+                : '';
             results.innerHTML = items.map(it => `
                 <div style="display:flex; gap:8px; align-items:center; padding:6px; border:1px solid var(--border); border-radius:6px; margin-bottom:6px; background:var(--surface2);">
-                    ${it.cropUrl ? `<img src="${it.cropUrl}" style="width:72px; height:72px; flex:0 0 72px; border-radius:4px; border:1px solid var(--border); object-fit:cover; background:#000;" title="YOLO 크롭 결과">` : `<div style="width:72px; height:72px; flex:0 0 72px; border-radius:4px; border:1px dashed var(--border); display:flex; align-items:center; justify-content:center; font-size:0.6rem; color:var(--text2,#999); text-align:center;">크롭<br>없음</div>`}
+                    ${it.crop && it.crop.url ? `<img src="${it.crop.url}" style="width:72px; height:72px; flex:0 0 72px; border-radius:4px; border:1px solid var(--border); object-fit:cover; background:#000;" title="YOLO 크롭 결과">` : `<div style="width:72px; height:72px; flex:0 0 72px; border-radius:4px; border:1px dashed var(--border); display:flex; align-items:center; justify-content:center; font-size:0.6rem; color:var(--text2,#999); text-align:center;">크롭<br>없음</div>`}
                     <div style="flex:1; min-width:0;">
                         <code style="font-size:0.78rem; word-break:break-all;">${escapeHtml(name)}: "${escapeHtml(line)}" #${escapeHtml(it.emo)}</code>
+                        ${it.crop && it.crop.cropMs != null ? `<div style="font-size:0.7rem; color:var(--accent,#5b9); margin-top:2px;">크롭 <b>${it.crop.cropMs.toFixed(0)}ms</b></div>` : ''}
                         ${it.match
                             ? `<div style="font-size:0.72rem; color:var(--text2,#999); margin-top:2px;">${escapeHtml(it.match.filename)} [${escapeHtml(it.match.match)}${it.match.score != null ? ' ' + it.match.score : ''}]</div>`
                             : (it.matchErr ? `<div style="color:var(--error,#e74c3c); font-size:0.72rem; margin-top:2px;">매칭: ${escapeHtml(it.matchErr)}</div>` : '')}
                         ${it.cropErr ? `<div style="color:var(--error,#e74c3c); font-size:0.72rem; margin-top:2px;">크롭: ${escapeHtml(it.cropErr)}</div>` : ''}
                     </div>
                 </div>`).join('');
+            if (sumLine) {
+                results.insertAdjacentHTML('afterbegin',
+                    `<div style="font-size:0.74rem; color:var(--text2,#999); margin-bottom:8px; padding:6px 8px; background:var(--surface,#1e1e1e); border-radius:6px; border:1px solid var(--border);">요약${sumLine}</div>`);
+            }
         }
 
         async function runDebugWorkflow() {

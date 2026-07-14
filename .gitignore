@@ -53,5 +53,4 @@ notification_cache.json
 # Built-in WD Tagger downloaded model (362MB ONNX, regenerate at runtime)
 tagger_data/
 
-# YOLO face weight (auto-downloaded to models/yolov8n-face.pt at runtime)
-models/
+# YOLO face model (yolov8m-face.onnx) 은 배포를 위해 git에 직접 포함.
