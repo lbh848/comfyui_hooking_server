@@ -1737,35 +1737,6 @@ class BotMode:
             traceback.print_exc()
             return _json_error(str(e))
 
-    async def handle_get_emotion_rows(self, request):
-        """GET /api/bot_mode/emotion_rows?bot=X"""
-        try:
-            bot_name = request.query.get("bot", "").strip()
-            if not bot_name:
-                return _json_error("봇 이름이 필요합니다.")
-            data = _load_emotion_rows(bot_name)
-            return _json_ok(data)
-        except Exception as e:
-            print(f"[BOT_MODE] emotion_rows 로드 실패: {e}")
-            traceback.print_exc()
-            return _json_error(str(e))
-
-    async def handle_save_emotion_rows(self, request):
-        """POST /api/bot_mode/emotion_rows  body: {bot, rows, total}"""
-        try:
-            body = await request.json()
-            bot_name = body.get("bot", "").strip()
-            rows = body.get("rows", [])
-            total = int(body.get("total", 0) or 0)
-            if not bot_name:
-                return _json_error("봇 이름이 필요합니다.")
-            async with self._lock:
-                _save_emotion_rows(bot_name, rows, total)
-            return _json_ok({"saved": True, "count": len(rows)})
-        except Exception as e:
-            print(f"[BOT_MODE] emotion_rows 저장 실패: {e}")
-            traceback.print_exc()
-            return _json_error(str(e))
 
     async def handle_get_lb_extra(self, request):
         """GET /api/bot_mode/lb_extra - 저장된 분류 데이터(편집본) 로드"""
@@ -2191,9 +2162,6 @@ def _save_utility_settings(bot_name: str, char_name: str, settings: dict):
 
 
 # ─── 후처리 봇별 설정 (postprocess_vn) ─────────────────────
-EMOTION_ROWS_FILE = "_emotion_rows.json"
-
-
 def _backup_bot_json():
     """bot.json 덮어쓰기 전 요구사항/ 폴더에 백업 (CLAUDE.md 데이터 안전 규칙)."""
     backup_dir = os.path.join(BASE_DIR, "요구사항")
@@ -2204,19 +2172,6 @@ def _backup_bot_json():
             shutil.copy2(BOT_DATA_FILE, os.path.join(backup_dir, f"bot.json.bak_{ts}"))
     except Exception as e:
         print(f"[BOT_MODE] WARN: bot.json 백업 실패: {e}")
-
-
-def _backup_per_bot_file(bot_name: str, fname: str, path: str):
-    """봇별 파일 덮어쓰기 전 요구사항/ 폴더에 백업."""
-    if not os.path.isfile(path):
-        return
-    backup_dir = os.path.join(BASE_DIR, "요구사항")
-    try:
-        os.makedirs(backup_dir, exist_ok=True)
-        ts = time.strftime("%Y%m%d_%H%M%S")
-        shutil.copy2(path, os.path.join(backup_dir, f"{bot_name}_{fname}.bak_{ts}"))
-    except Exception as e:
-        print(f"[BOT_MODE] WARN: {bot_name}/{fname} 백업 실패: {e}")
 
 
 def _load_postprocess_vn(bot_name: str) -> dict:
@@ -2255,32 +2210,6 @@ def _save_postprocess_vn(bot_name: str, vn: dict):
     bot["postprocess_vn"] = clean
     _save_bot_data(data)
     print(f"[BOT_MODE] postprocess_vn 저장: bot={bot_name}")
-
-
-def _emotion_rows_path(bot_name: str) -> str:
-    return os.path.join(BOT_DIR, bot_name, EMOTION_ROWS_FILE)
-
-
-def _load_emotion_rows(bot_name: str) -> dict:
-    """봇의 감정 추출 결과(filename↔emotion 맵) 로드. {rows, total}."""
-    path = _emotion_rows_path(bot_name)
-    if os.path.isfile(path):
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                if isinstance(data, dict):
-                    return data
-        except Exception as e:
-            print(f"[BOT_MODE] emotion_rows 로드 실패({bot_name}): {e}")
-    return {"rows": [], "total": 0}
-
-
-def _save_emotion_rows(bot_name: str, rows: list, total: int):
-    path = _emotion_rows_path(bot_name)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    _backup_per_bot_file(bot_name, EMOTION_ROWS_FILE, path)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump({"rows": rows, "total": total}, f, indent=2, ensure_ascii=False)
 
 
 def _migrate_postprocess_vn(data: dict):

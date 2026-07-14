@@ -3563,9 +3563,8 @@ async def handle_api_postprocess_match_image(request: web.Request) -> web.Respon
 
     body: {bot_name, character(영문 NAME), emotion, prefix, suffix}
     토큰 = character + prefix + emotion + suffix 로 캐릭터 이미지 파일 매칭.
-      1) emotion_rows 정확 매칭(가속)
-      2) 토큰 base 정확 일치
-      3) Levenshtein 유사도 최대(fallback)
+      1) 토큰 base 정확 일치 / 포함
+      2) Levenshtein 유사도 최대(fallback)
     반환: {filename, url, match:"exact"|"fuzzy"} 또는 {error}.
     """
     try:
@@ -3588,19 +3587,8 @@ async def handle_api_postprocess_match_image(request: web.Request) -> web.Respon
         def _url(fname: str) -> str:
             return f"/api/bot_mode/image/{bot_name}/{character}/{fname}"
 
-        # 1) emotion_rows 정확 매칭
-        if emotion:
-            try:
-                from modes.bot_mode import _load_emotion_rows
-                er = _load_emotion_rows(bot_name)
-                for row in (er.get("rows") or []):
-                    if str(row.get("emotion", "")) == emotion and row.get("filename") in candidates:
-                        return web.json_response({"filename": row["filename"], "url": _url(row["filename"]), "match": "exact"})
-            except Exception as _e:
-                print(f"[POSTPROCESS_MATCH] emotion_rows 조회 실패(무시): {_e}")
-
         token = f"{character}{prefix}{emotion}{suffix}"
-        # 2) 토큰 base 정확 일치
+        # 토큰 base 정확 일치
         for f in candidates:
             if _base(f) == token:
                 return web.json_response({"filename": f, "url": _url(f), "match": "exact"})
@@ -5307,8 +5295,6 @@ app.router.add_get("/api/postprocess/emotion_char_counts", handle_api_postproces
 app.router.add_post("/api/postprocess/match_image", handle_api_postprocess_match_image)
 app.router.add_get("/api/bot_mode/postprocess_vn", bot_mode.handle_get_postprocess_vn)
 app.router.add_post("/api/bot_mode/postprocess_vn", bot_mode.handle_save_postprocess_vn)
-app.router.add_get("/api/bot_mode/emotion_rows", bot_mode.handle_get_emotion_rows)
-app.router.add_post("/api/bot_mode/emotion_rows", bot_mode.handle_save_emotion_rows)
 app.router.add_post("/api/llm_edit_prompt", handle_api_llm_edit_prompt)
 app.router.add_get("/api/llm_edit_prompt_template", handle_api_get_llm_edit_template)
 app.router.add_post("/api/llm_edit_prompt_template", handle_api_set_llm_edit_template)

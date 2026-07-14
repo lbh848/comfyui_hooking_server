@@ -6650,7 +6650,7 @@
                                         <div style="font-size:0.78rem; color:var(--text2, #999);">봇/캐릭터 이미지 파일명 → 규칙 → 감정 리스트 <span id="pp-vn-emotion-summary" style="font-variant-numeric:tabular-nums; color:var(--accent, #4c6ef5); font-weight:600;"></span></div>
                                         <button type="button" class="btn" style="padding:4px 10px; font-size:0.75rem;" onclick="ppOpenEmotionSelectModal()">감정 뽑아내기</button>
                                     </div>
-                                    <div class="pp-hint" style="margin-top:4px;">추출 결과는 봇별로 저장됩니다(저장 버튼 필요). 규칙 편집·복사는 뽑아내기 창 안에서.</div>
+                                    <div class="pp-hint" style="margin-top:4px;">추출 결과는 임시 — 모달을 닫았다 열으면 사라집니다. 규칙 편집·복사는 뽑아내기 창 안에서.</div>
                                 </div>
 
                                 <!-- 이미지 조회 prefix/suffix (봇별 1개) -->
@@ -24409,26 +24409,11 @@
                 const vn = _ppNormalizeVn(j);
                 ppWorking = { vn };
                 ppApplyVnToUI();
-                await ppLoadEmotionRows(botName);
                 renderPostprocessPreview();
                 ppRenderPreviewMatch();
             } catch (e) {
                 console.error('[POSTPROCESS] 봇 설정 로드 실패:', e);
                 showToast('봇 설정 로드 실패: ' + (e.message || e), 'error');
-            }
-        }
-
-        async function ppLoadEmotionRows(botName) {
-            try {
-                const resp = await fetch('/api/bot_mode/emotion_rows?bot=' + encodeURIComponent(botName));
-                if (!resp.ok) return;
-                const j = await resp.json();
-                ppWorking.vn.emotion_rows = Array.isArray(j.rows) ? j.rows : [];
-                ppWorking.vn.emotion_total = j.total || 0;
-                ppRecomputeEmotionDupFlags();
-                ppRenderEmotionList();
-            } catch (e) {
-                console.warn('[POSTPROCESS] emotion_rows 로드 실패:', e);
             }
         }
 
@@ -24978,10 +24963,8 @@
             if (!ppWorking) { closePostprocessModal(); return; }
             if (!ppCurrentBot) { showToast('봇을 먼저 선택하세요', 'error'); return; }
             collectPpVnSettings();
-            // 감정 추출 결과(emotion_rows/emotion_total)는 별도 파일로 저장 — vn에서는 제외.
+            // 감정 추출 결과(emotion_rows/emotion_total)는 임시 — 저장/재오픈 시 사라지도록 제외.
             const payload = JSON.parse(JSON.stringify(ppWorking));
-            const rows = (payload && payload.vn && Array.isArray(payload.vn.emotion_rows)) ? payload.vn.emotion_rows : [];
-            const total = (payload && payload.vn && payload.vn.emotion_total) || 0;
             if (payload && payload.vn) { delete payload.vn.emotion_rows; delete payload.vn.emotion_total; }
             try {
                 const resp = await fetch('/api/bot_mode/postprocess_vn', {
@@ -24993,16 +24976,6 @@
                     const txt = await resp.text().catch(() => '');
                     showToast('후처리 설정 저장 실패: ' + (txt || resp.status), 'error');
                     return;
-                }
-                // emotion_rows 별도 영속 저장
-                try {
-                    await fetch('/api/bot_mode/emotion_rows', {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({bot: ppCurrentBot, rows, total})
-                    });
-                } catch (e2) {
-                    console.warn('[POSTPROCESS] emotion_rows 저장 실패:', e2);
                 }
                 showToast('후처리 설정 저장 완료 (' + ppCurrentBot + ')');
             } catch (e) {
