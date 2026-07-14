@@ -3336,6 +3336,8 @@ async def handle_api_postprocess_preview(request: web.Request) -> web.Response:
             "face_enabled": bool(body.get("face_enabled", True)),
             "face_crop_top": body.get("face_crop_top", 1.8),
             "face_crop_bottom": body.get("face_crop_bottom", 1.0),
+            "face_conf": body.get("face_conf", 0.3),
+            "theme": body.get("theme", "sky"),
         }
         speak = body.get("speak", "") or ""
         bot_name = body.get("bot_name", "") or app_config.get("bot_selected", "") or ""
@@ -3427,6 +3429,76 @@ async def handle_api_postprocess_preview(request: web.Request) -> web.Response:
     except Exception as e:
         tb = traceback.format_exc()
         print(f"[ERROR] postprocess_preview 실패: {e}\n{tb}")
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def handle_api_postprocess_preview_face(request: web.Request) -> web.Response:
+    """POST /api/postprocess/preview_face
+
+    후처리 모달의 'YOLO 크롭 결과' 실시간 미리보기.
+    매칭된 캐릭터 이미지에서 face_detector.crop_face 로 크롭한 결과 PNG를 반환한다.
+    실제 합성(compose_postprocess)과 동일한 crop_face 단일 함수만 경유(CLAUDE.md: 동일 빌더).
+
+    요청: {bot_name, character, emotion, prefix, suffix, face_crop_top, face_crop_bottom, face_conf}
+    응답: image/png  (매칭/검출 실패 시 {"error": 사유} 와 status 400)
+    """
+    try:
+        body = await request.json()
+        bot_name = body.get("bot_name", "") or app_config.get("bot_selected", "") or ""
+        character = body.get("character", "") or ""
+        emotion = body.get("emotion", "") or ""
+        prefix = body.get("prefix", "") or ""
+        suffix = body.get("suffix", "") or ""
+        try:
+            face_crop_top = float(body.get("face_crop_top", 1.8) or 1.8)
+        except (TypeError, ValueError):
+            face_crop_top = 1.8
+        try:
+            face_crop_bottom = float(body.get("face_crop_bottom", 1.0) or 1.0)
+        except (TypeError, ValueError):
+            face_crop_bottom = 1.0
+        try:
+            face_conf = float(body.get("face_conf", 0.3) or 0.3)
+        except (TypeError, ValueError):
+            face_conf = 0.3
+
+        if not bot_name:
+            return web.json_response({"error": "봇이 선택되지 않았습니다."}, status=400)
+        if not character:
+            return web.json_response({"error": "대사에서 NAME을 찾을 수 없습니다."}, status=400)
+
+        from modes.postprocess import match_face_image_filename, load_face_image_bytes
+        from modes import face_detector
+
+        matched = match_face_image_filename(bot_name, character, emotion, prefix, suffix)
+        if not matched:
+            return web.json_response(
+                {"error": f"매칭 이미지 없음 (bot={bot_name}, char={character}, token={character}{prefix}{emotion}{suffix!r})"},
+                status=400)
+        raw = load_face_image_bytes(bot_name, character, matched[0])
+        if not raw:
+            return web.json_response({"error": f"이미지 로드 실패: {matched[0]}"}, status=400)
+
+        try:
+            base = Image.open(BytesIO(raw))
+        except Exception as e:
+            return web.json_response({"error": f"이미지 열기 실패: {e}"}, status=400)
+
+        # target_size는 미리보기 표시용으로 충분히 큰 고정값. 합성 결과와 크롭 영역은 동일.
+        crop = face_detector.crop_face(
+            base, top_mult=face_crop_top, bottom_mult=face_crop_bottom,
+            target_size=256, conf_thres=face_conf)
+        if crop is None:
+            return web.json_response(
+                {"error": f"얼굴 검출 실패(CONF>{face_conf} 박스 없음): {matched[0]}"},
+                status=400)
+
+        buf = BytesIO()
+        crop.save(buf, format="PNG")
+        return web.Response(body=buf.getvalue(), content_type="image/png")
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f"[ERROR] postprocess_preview_face 실패: {e}\n{tb}")
         return web.json_response({"error": str(e)}, status=500)
 
 
@@ -5286,6 +5358,7 @@ app.router.add_get("/api/reschedule", handle_api_reschedule)
 app.router.add_post("/api/reschedule", handle_api_reschedule)
 app.router.add_post("/api/reschedule_with_modified_prompt", handle_api_reschedule_with_modified_prompt)
 app.router.add_post("/api/postprocess/preview", handle_api_postprocess_preview)
+app.router.add_post("/api/postprocess/preview_face", handle_api_postprocess_preview_face)
 app.router.add_post("/api/postprocess/emotion_sources", handle_api_postprocess_emotion_sources)
 app.router.add_get("/api/postprocess/emotion_char_counts", handle_api_postprocess_emotion_char_counts)
 app.router.add_post("/api/postprocess/match_image", handle_api_postprocess_match_image)

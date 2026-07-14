@@ -7,8 +7,8 @@ face_detector - CPU 기반 YOLO 얼굴 검출 + 크롭
 - 모델: Ultralytics YOLO + yolov8n-face.pt (akanametov/yolov8-face 외부 가중치)
 - 최초 사용 시 models/yolov8n-face.pt 로 자동 다운로드(이미 존재하면 스킵)
 - device=cpu 고정
-- 크롭 단위: 감지된 얼굴 박스 높이의 배수(top_mult/bottom_mult)
-  - 기존 "데이터 패치 설정" face_crop_top/bottom 과 동일 규칙
+- 크롭 규칙: 데이터패치 워크플로우 노드(SoyaDetectAndCrop_mdsoya)와 동일.
+  top_mult/bottom_mult = 1.0 이면 검출 박스 그대로(raw). 클수록 박스 중심 기준 위/아래로 확장.
 """
 
 import os
@@ -88,8 +88,8 @@ def crop_face(image, top_mult: float = 1.8, bottom_mult: float = 1.0,
 
     Args:
         image: PIL.Image (RGB/RGBA 모두 가능)
-        top_mult: 얼굴 높이의 배수만큼 위로 확장(머리/머리카락 포함)
-        bottom_mult: 얼굴 높이의 배수만큼 아래로 확장(목/어깨 포함)
+        top_mult: 위쪽 크롭 계수. 1.0=검출 박스 위쪽 그대로, 클수록 박스 중심 기준 위로 확장
+        bottom_mult: 아래쪽 크롭 계수. 1.0=검출 박스 아래쪽 그대로, 클수록 아래로 확장
         target_size: 출력 정사각형 한 변(px)
         conf_thres: 신뢰도 임계치
 
@@ -131,17 +131,20 @@ def crop_face(image, top_mult: float = 1.8, bottom_mult: float = 1.0,
 
         x1, y1, x2, y2 = xyxy[best_idx]
         W, H = image.size
-        face_h = max(1.0, y2 - y1)
+        bw = max(1.0, x2 - x1)
+        bh = max(1.0, y2 - y1)
         cx = (x1 + x2) / 2.0
+        cy = (y1 + y2) / 2.0
 
-        # 세로 확장
-        top = y1 - top_mult * face_h
-        bottom = y2 + bottom_mult * face_h
-        side = bottom - top  # 정사각형 한 변(세로 기준)
-
-        # 가로는 얼굴 중심 기준 ±side/2
-        left = cx - side / 2.0
-        right = cx + side / 2.0
+        # 데이터패치 워크플로우 노드(SoyaDetectAndCrop_mdsoya)와 동일한 크롭 규칙.
+        # top_mult/bottom_mult = 1.0 이면 검출 박스 그대로(raw). 클수록 박스 중심 기준으로 위/아래 확장.
+        #   - 가로 폭 = bw × (top+bottom)/2 (중심 cx 기준 양면)
+        #   - 위쪽 = 중심에서 bh×top/2 만큼 위로, 아래쪽 = 중심에서 bh×bottom/2 만큼 아래로
+        side_factor = (top_mult + bottom_mult) / 2.0
+        left = cx - bw * side_factor / 2.0
+        right = cx + bw * side_factor / 2.0
+        top = cy - bh * top_mult / 2.0
+        bottom = cy + bh * bottom_mult / 2.0
 
         # 이미지 경계로 clamp
         left = max(0, left)

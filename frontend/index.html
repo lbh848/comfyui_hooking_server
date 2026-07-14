@@ -6604,11 +6604,26 @@
                                 </div>
                                 <div class="pp-row">
                                     <span class="pp-label">이름 / 감정 폰트</span>
-                                    <div class="pp-field-inline" style="gap:6px;">
-                                        <input type="number" id="pp-vn-name-font-size" class="input" style="width:110px;" step="1" min="0" value="0" oninput="collectPpVnSettings(); renderPostprocessPreview()" title="이름 폰트 px (0=자동: 대사*1.25)">
-                                        <span style="font-size:0.72rem; color:var(--text2, #888);">이름</span>
-                                        <input type="number" id="pp-vn-emotion-font-size" class="input" style="width:110px;" step="1" min="0" value="0" oninput="collectPpVnSettings(); renderPostprocessPreview()" title="감정 폰트 px (0=자동: 대사와 동일)">
-                                        <span style="font-size:0.72rem; color:var(--text2, #888);">감정 · 0 = 자동</span>
+                                    <div style="display:flex; flex-direction:column; gap:6px;">
+                                        <div class="pp-field-inline" style="gap:6px;">
+                                            <input type="number" id="pp-vn-name-font-size" class="input" style="width:110px;" step="1" min="0" value="0" oninput="collectPpVnSettings(); renderPostprocessPreview()" title="이름 폰트 px (0=자동: 대사*1.25)">
+                                            <span style="font-size:0.72rem; color:var(--text2, #888);">이름 px · 0 = 자동(대사×1.25)</span>
+                                        </div>
+                                        <div class="pp-field-inline" style="gap:6px;">
+                                            <input type="number" id="pp-vn-emotion-font-size" class="input" style="width:110px;" step="1" min="0" value="0" oninput="collectPpVnSettings(); renderPostprocessPreview()" title="감정 폰트 px (0=자동: 대사와 동일)">
+                                            <span style="font-size:0.72rem; color:var(--text2, #888);">감정 px · 0 = 자동(대사와 동일)</span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="pp-row">
+                                    <span class="pp-label">테마</span>
+                                    <div class="pp-field-inline">
+                                        <select id="pp-vn-theme" class="select" style="flex:1;" onchange="collectPpVnSettings(); renderPostprocessPreview()">
+                                            <option value="sky">하늘색 / 은색 (프리코네)</option>
+                                            <option value="ivory">아이보리 / 금색</option>
+                                            <option value="lavender">연보라 / 핑크</option>
+                                            <option value="classic">기존 검정 바</option>
+                                        </select>
                                     </div>
                                 </div>
                             </div>
@@ -6645,8 +6660,8 @@
                                 <div class="pp-card-title">감정</div>
                                 <div class="pp-switch-line">
                                     <div>
-                                        <div style="font-size:0.82rem;">대사 뒤 <code>#감정</code> 숨김</div>
-                                        <div class="pp-hint" style="margin-top:2px;">켜면 <code>NAME: "대사" #angry</code> 에서 <code>#angry</code> 를 잘라내고 <code>NAME: "대사"</code> 만 합성</div>
+                                        <div style="font-size:0.82rem;">감정 추출</div>
+                                        <div class="pp-hint" style="margin-top:2px;">ON: 대사 끝 <code>#감정</code>을 잘라내 이름 옆에 표시 · OFF: <code>#감정</code>이 있든 없든 원문 그대로 출력(이름 옆 표시·얼굴 감정 매칭 안 함)</div>
                                     </div>
                                     <label class="toggle-switch">
                                         <input type="checkbox" id="pp-vn-strip-emotion" onchange="renderPostprocessPreview()">
@@ -6666,38 +6681,53 @@
                                 <div style="margin-top:10px; border-top:1px solid var(--border); padding-top:10px;">
                                     <div style="font-size:0.78rem; color:var(--text2, #999); margin-bottom:4px;">이미지 조회 prefix / suffix (봇별)</div>
                                     <div class="pp-field-inline">
-                                        <input type="text" id="pp-vn-prefix" class="input" placeholder="prefix (예: _ 또는 .)" style="flex:1;" oninput="collectPpVnSettings(); ppRenderPreviewMatch();">
-                                        <input type="text" id="pp-vn-suffix" class="input" placeholder="suffix" style="flex:1;" oninput="collectPpVnSettings(); ppRenderPreviewMatch();">
+                                        <input type="text" id="pp-vn-prefix" class="input" placeholder="prefix (예: _ 또는 .)" style="flex:1;" oninput="collectPpVnSettings(); ppRenderPreviewMatch(); ppRenderFaceCrop();">
+                                        <input type="text" id="pp-vn-suffix" class="input" placeholder="suffix" style="flex:1;" oninput="collectPpVnSettings(); ppRenderPreviewMatch(); ppRenderFaceCrop();">
                                     </div>
                                     <div class="pp-hint" style="margin-top:4px;">조회 토큰 = <code>NAME + prefix + 감정 + suffix</code> (구분자는 prefix에 포함). 미리보기/병렬 테스트에서 이 토큰으로 캐릭터 이미지를 찾고, 일치 없으면 가장 유사한 파일.</div>
                                 </div>
 
                                 <!-- VN 얼굴 슬롯 (face_yolo 검출 + 크롭) -->
                                 <div style="margin-top:10px; border-top:1px solid var(--border); padding-top:10px;">
-                                    <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
-                                        <label style="display:flex; align-items:center; gap:6px; font-size:0.78rem; color:var(--text2, #999); cursor:pointer;">
+                                    <div class="pp-switch-line" style="margin-bottom:8px;">
+                                        <div>
+                                            <div style="font-size:0.82rem;">좌측 얼굴 슬롯 (face_yolo)</div>
+                                            <div class="pp-hint" style="margin-top:2px;">매칭된 캐릭터 이미지에서 YOLO로 얼굴을 검출해 좌측 슬롯에 크롭</div>
+                                        </div>
+                                        <label class="toggle-switch">
                                             <input type="checkbox" id="pp-vn-face-enabled" checked onchange="collectPpVnSettings(); renderPostprocessPreview();">
-                                            좌측 얼굴 슬롯 (face_yolo)
+                                            <span class="toggle-slider"></span>
                                         </label>
                                     </div>
                                     <div class="pp-field-inline">
                                         <div style="flex:1;">
-                                            <div style="font-size:0.7rem; color:var(--text2, #999); margin-bottom:2px;">FACE_CROP_TOP (얼굴 높이 배수)</div>
-                                            <input type="number" id="pp-vn-face-crop-top" value="1.8" step="0.1" min="0.1" class="input" style="width:100%;" oninput="collectPpVnSettings(); renderPostprocessPreview();">
+                                            <div style="font-size:0.7rem; color:var(--text2, #999); margin-bottom:2px;">FACE_CROP_TOP (1.0=검출박스 그대로)</div>
+                                            <input type="number" id="pp-vn-face-crop-top" value="1.8" step="0.1" min="1" max="10" class="input" style="width:100%;" oninput="collectPpVnSettings(); renderPostprocessPreview(); ppRenderFaceCrop();">
                                         </div>
                                         <div style="flex:1;">
-                                            <div style="font-size:0.7rem; color:var(--text2, #999); margin-bottom:2px;">FACE_CROP_BOTTOM (얼굴 높이 배수)</div>
-                                            <input type="number" id="pp-vn-face-crop-bottom" value="1.0" step="0.1" min="0.1" class="input" style="width:100%;" oninput="collectPpVnSettings(); renderPostprocessPreview();">
+                                            <div style="font-size:0.7rem; color:var(--text2, #999); margin-bottom:2px;">FACE_CROP_BOTTOM (1.0=검출박스 그대로)</div>
+                                            <input type="number" id="pp-vn-face-crop-bottom" value="1.0" step="0.1" min="1" max="10" class="input" style="width:100%;" oninput="collectPpVnSettings(); renderPostprocessPreview(); ppRenderFaceCrop();">
+                                        </div>
+                                        <div style="flex:1;">
+                                            <div style="font-size:0.7rem; color:var(--text2, #999); margin-bottom:2px;">FACE_CONF (신뢰도 임계치)</div>
+                                            <input type="number" id="pp-vn-face-conf" value="0.3" step="0.05" min="0" max="1" class="input" style="width:100%;" oninput="collectPpVnSettings(); renderPostprocessPreview(); ppRenderFaceCrop();">
                                         </div>
                                     </div>
-                                    <div class="pp-hint" style="margin-top:4px;">첫 화자의 캐릭터 이미지에서 얼굴을 검출(CPU YOLO)해 정사각형으로 크롭. 위쪽으로 TOP×, 아래쪽으로 BOTTOM× 얼굴 높이만큼 확장(데이터 패치 설정과 동일 규칙).</div>
+                                    <div class="pp-hint" style="margin-top:4px;">첫 화자의 캐릭터 이미지에서 얼굴을 검출(CPU YOLO)해 크롭. <b>1.0=검출 박스 그대로(raw)</b>, 클수록 박스 중심 기준 위·아래로 확장(데이터패치 노드와 동일 규칙). CONF 이하 신뢰도 박스는 무시.</div>
+                                    <!-- YOLO 크롭 결과 실시간 미리보기 -->
+                                    <div style="margin-top:8px; border-top:1px solid var(--border); padding-top:8px;">
+                                        <div style="font-size:0.74rem; color:var(--text2, #999); margin-bottom:4px;">YOLO 크롭 결과 (실시간)</div>
+                                        <div id="pp-face-crop-preview" style="display:flex; gap:8px; align-items:flex-start;">
+                                            <div style="font-size:0.74rem; color:var(--text2,#999);">대사에서 NAME을 찾을 수 없음</div>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
 
                             <!-- 미리보기 입력 -->
                             <div class="pp-card">
                                 <div class="pp-card-title">미리보기 대사 샘플</div>
-                                <textarea id="pp-vn-preview-speak" class="input" rows="2" style="width:100%; font-family:monospace; resize:vertical;" placeholder='kapri: "대사 예시"&#10;kapri: (생각 예시)' oninput="renderPostprocessPreview()">kapri: "달콤하고 다정하게 해주셔야 해요♡" #angry</textarea>
+                                <textarea id="pp-vn-preview-speak" class="input" rows="2" style="width:100%; font-family:monospace; resize:vertical;" placeholder='kapri: "대사 예시"&#10;kapri: (생각 예시)' oninput="renderPostprocessPreview(); ppRenderFaceCrop()">kapri: "달콤하고 다정하게 해주셔야 해요♡" #angry</textarea>
                                 <div class="pp-hint">형식:<br>- <code>NAME: "대사"</code><br>- <code>NAME: (생각)</code><br>- 대사 뒤 <code>#감정</code> (감정 토글 켜면 합성에서 숨김)</div>
                                 <div style="margin-top:8px; border-top:1px solid var(--border); padding-top:8px;">
                                     <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:4px;">
@@ -24384,6 +24414,8 @@
                     face_enabled: true,
                     face_crop_top: 1.8,
                     face_crop_bottom: 1.0,
+                    face_conf: 0.3,
+                    theme: 'sky',
                 }
             };
         }
@@ -24412,6 +24444,8 @@
             if (base.face_enabled === undefined) base.face_enabled = true;
             if (typeof base.face_crop_top !== 'number') base.face_crop_top = 1.8;
             if (typeof base.face_crop_bottom !== 'number') base.face_crop_bottom = 1.0;
+            if (typeof base.face_conf !== 'number') base.face_conf = 0.3;
+            if (typeof base.theme !== 'string') base.theme = 'sky';
             if (typeof base.name_font_size !== 'number') base.name_font_size = 0;
             if (typeof base.emotion_font_size !== 'number') base.emotion_font_size = 0;
             if (!Array.isArray(base.emotion_rows)) base.emotion_rows = [];
@@ -24445,6 +24479,10 @@
             if (_ftop) _ftop.value = (vn.face_crop_top === undefined ? 1.8 : vn.face_crop_top);
             const _fbot = document.getElementById('pp-vn-face-crop-bottom');
             if (_fbot) _fbot.value = (vn.face_crop_bottom === undefined ? 1.0 : vn.face_crop_bottom);
+            const _fconf = document.getElementById('pp-vn-face-conf');
+            if (_fconf) _fconf.value = (vn.face_conf === undefined ? 0.3 : vn.face_conf);
+            const _theme = document.getElementById('pp-vn-theme');
+            if (_theme) _theme.value = vn.theme || 'sky';
             renderNameReplaceList();
             ppEmotionResetSession();
             ppRenderEmotionRules();
@@ -24461,6 +24499,7 @@
                 ppApplyVnToUI();
                 renderPostprocessPreview();
                 ppRenderPreviewMatch();
+                ppRenderFaceCrop();
             } catch (e) {
                 console.error('[POSTPROCESS] 봇 설정 로드 실패:', e);
                 showToast('봇 설정 로드 실패: ' + (e.message || e), 'error');
@@ -24483,6 +24522,7 @@
             } else {
                 ppApplyVnToUI();
                 renderPostprocessPreview();
+                ppRenderFaceCrop();
             }
         }
 
@@ -24955,10 +24995,15 @@
             vn.face_enabled = _faceEl ? _faceEl.checked : (vn.face_enabled !== false);
             const _ftEl = document.getElementById('pp-vn-face-crop-top');
             const _ftRaw = _ftEl ? parseFloat(_ftEl.value) : NaN;
-            vn.face_crop_top = isNaN(_ftRaw) ? 1.8 : Math.max(0.1, _ftRaw);
+            vn.face_crop_top = isNaN(_ftRaw) ? 1.8 : Math.min(10, Math.max(1.0, _ftRaw));
             const _fbEl = document.getElementById('pp-vn-face-crop-bottom');
             const _fbRaw = _fbEl ? parseFloat(_fbEl.value) : NaN;
-            vn.face_crop_bottom = isNaN(_fbRaw) ? 1.0 : Math.max(0.1, _fbRaw);
+            vn.face_crop_bottom = isNaN(_fbRaw) ? 1.0 : Math.min(10, Math.max(1.0, _fbRaw));
+            const _fcEl = document.getElementById('pp-vn-face-conf');
+            const _fcRaw = _fcEl ? parseFloat(_fcEl.value) : NaN;
+            vn.face_conf = isNaN(_fcRaw) ? 0.3 : Math.min(1.0, Math.max(0.0, _fcRaw));
+            const _themeEl = document.getElementById('pp-vn-theme');
+            vn.theme = _themeEl ? (_themeEl.value || 'sky') : (vn.theme || 'sky');
             return vn;
         }
 
@@ -24999,11 +25044,13 @@
                             face_enabled: vn.face_enabled !== false,
                             face_crop_top: vn.face_crop_top,
                             face_crop_bottom: vn.face_crop_bottom,
+                            face_conf: vn.face_conf,
+                            theme: vn.theme || 'sky',
                             speak: document.getElementById('pp-vn-preview-speak').value,
                             // 현재 편집 중인 삽화 프로필의 저장된 HRF 설정을 서버가 읽어
                             // 미리보기 베이스 크기를 실제 생성 결과와 일치시키도록 전달
                             profile: (typeof _illustSettingsProfile !== 'undefined' && _illustSettingsProfile) ? _illustSettingsProfile : 'solo',
-                            bot_name: (typeof botCurrentBot !== 'undefined' && botCurrentBot) ? botCurrentBot : '',
+                            bot_name: (typeof ppCurrentBot !== 'undefined' && ppCurrentBot) ? ppCurrentBot : '',
                         })
                     });
                     if (!resp.ok) {
@@ -25141,6 +25188,59 @@
             } catch (e) {
                 cont.innerHTML = `<span style="font-size:0.74rem; color:var(--error,#e74c3c);">매칭 실패: ${escapeHtml(e._handled || e.message || e)}</span>`;
             }
+        }
+
+        let ppFaceCropTimer = null;
+        async function ppRenderFaceCrop() {
+            clearTimeout(ppFaceCropTimer);
+            ppFaceCropTimer = setTimeout(async () => {
+                const cont = document.getElementById('pp-face-crop-preview');
+                if (!cont) return;
+                if (!ppCurrentBot || !ppWorking) { cont.innerHTML = '<div style="font-size:0.74rem; color:var(--text2,#999);">봇을 선택하세요</div>'; return; }
+                const vn = collectPpVnSettings();
+                const speak = document.getElementById('pp-vn-preview-speak').value;
+                const seg = ppParseFirstSpeak(speak);
+                if (!seg || !seg.speaker) {
+                    cont.innerHTML = '<div style="font-size:0.74rem; color:var(--text2,#999);">대사에서 NAME을 찾을 수 없음</div>';
+                    return;
+                }
+                // 감정 추출 토글 OFF면 감정을 매칭에 쓰지 않는다(실제 합성 compose_postprocess와 동일).
+                const emotion = vn.strip_emotion ? (seg.emotion || '') : '';
+                cont.innerHTML = '<div style="font-size:0.74rem; color:var(--text2,#888);">크롭 중...</div>';
+                try {
+                    const resp = await fetch('/api/postprocess/preview_face', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({
+                            bot_name: ppCurrentBot,
+                            character: seg.speaker,
+                            emotion,
+                            prefix: vn.prefix || '',
+                            suffix: vn.suffix || '',
+                            face_crop_top: vn.face_crop_top,
+                            face_crop_bottom: vn.face_crop_bottom,
+                            face_conf: vn.face_conf,
+                        })
+                    });
+                    if (!resp.ok) {
+                        const j = await resp.json().catch(() => ({}));
+                        throw new Error(j.error || ('HTTP ' + resp.status));
+                    }
+                    const blob = await resp.blob();
+                    const url = URL.createObjectURL(blob);
+                    cont.innerHTML = `<div style="display:flex; gap:8px; align-items:flex-start;">
+                        <img src="${url}" style="width:96px; height:96px; object-fit:cover; border-radius:6px; border:1px solid var(--border); background:#000;">
+                        <div style="min-width:0; font-size:0.72rem; color:var(--text2,#999); line-height:1.5;">
+                            <div style="word-break:break-all;">${escapeHtml(seg.speaker)}${emotion ? ' · ' + escapeHtml(emotion) : ''}</div>
+                            <div>TOP ${vn.face_crop_top} · BOT ${vn.face_crop_bottom} · CONF ${vn.face_conf}</div>
+                            <div style="opacity:0.8;">합성과 동일한 YOLO 크롭 결과</div>
+                        </div>
+                    </div>`;
+                } catch (e) {
+                    console.error('[POSTPROCESS] 크롭 미리보기 실패:', e);
+                    cont.innerHTML = `<div style="font-size:0.74rem; color:var(--error,#e74c3c);">크롭 실패: ${escapeHtml(e.message || e)}</div>`;
+                }
+            }, 250);
         }
 
         // ─── 병렬 테스트 모달 ──────────────────────────────────
