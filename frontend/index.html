@@ -6539,6 +6539,12 @@
         <div class="modal-content pp-modal-content">
             <div class="modal-header">
                 <h3>후처리 설정</h3>
+                <div style="display:flex; gap:6px; align-items:center; margin-left:auto; flex-wrap:wrap;">
+                    <span style="font-size:0.74rem; color:var(--text2, #999);">봇</span>
+                    <select id="pp-bot-select" onchange="ppOnBotChange()" class="select" style="min-width:130px; max-width:200px;"></select>
+                    <button type="button" class="btn" style="padding:4px 10px; font-size:0.74rem;" onclick="ppSaveToCache()" title="현재 설정을 브라우저 캐시에 저장 (봇 간 복붙용)">캐시에 저장</button>
+                    <button type="button" class="btn" style="padding:4px 10px; font-size:0.74rem;" onclick="ppLoadFromCache()" title="브라우저 캐시에서 설정 불러오기">캐시에서 불러오기</button>
+                </div>
                 <button class="modal-close" onclick="closePostprocessModal()">&times;</button>
             </div>
             <div class="modal-body">
@@ -6644,7 +6650,17 @@
                                         <div style="font-size:0.78rem; color:var(--text2, #999);">봇/캐릭터 이미지 파일명 → 규칙 → 감정 리스트 <span id="pp-vn-emotion-summary" style="font-variant-numeric:tabular-nums; color:var(--accent, #4c6ef5); font-weight:600;"></span></div>
                                         <button type="button" class="btn" style="padding:4px 10px; font-size:0.75rem;" onclick="ppOpenEmotionSelectModal()">감정 뽑아내기</button>
                                     </div>
-                                    <div class="pp-hint" style="margin-top:4px;">추출 결과는 임시 — 모달을 닫았다 열으면 사라집니다. 규칙 편집·복사는 뽑아내기 창 안에서.</div>
+                                    <div class="pp-hint" style="margin-top:4px;">추출 결과는 봇별로 저장됩니다(저장 버튼 필요). 규칙 편집·복사는 뽑아내기 창 안에서.</div>
+                                </div>
+
+                                <!-- 이미지 조회 prefix/suffix (봇별 1개) -->
+                                <div style="margin-top:10px; border-top:1px solid var(--border); padding-top:10px;">
+                                    <div style="font-size:0.78rem; color:var(--text2, #999); margin-bottom:4px;">이미지 조회 prefix / suffix (봇별)</div>
+                                    <div class="pp-field-inline">
+                                        <input type="text" id="pp-vn-prefix" class="input" placeholder="prefix (예: _ 또는 .)" style="flex:1;" oninput="collectPpVnSettings(); ppRenderPreviewMatch();">
+                                        <input type="text" id="pp-vn-suffix" class="input" placeholder="suffix" style="flex:1;" oninput="collectPpVnSettings(); ppRenderPreviewMatch();">
+                                    </div>
+                                    <div class="pp-hint" style="margin-top:4px;">조회 토큰 = <code>NAME + prefix + 감정 + suffix</code> (구분자는 prefix에 포함). 미리보기/병렬 테스트에서 이 토큰으로 캐릭터 이미지를 찾고, 일치 없으면 가장 유사한 파일.</div>
                                 </div>
                             </div>
 
@@ -6653,6 +6669,13 @@
                                 <div class="pp-card-title">미리보기 대사 샘플</div>
                                 <textarea id="pp-vn-preview-speak" class="input" rows="2" style="width:100%; font-family:monospace; resize:vertical;" placeholder='kapri: "대사 예시"&#10;kapri: (생각 예시)' oninput="renderPostprocessPreview()">kapri: "달콤하고 다정하게 해주셔야 해요♡" #angry</textarea>
                                 <div class="pp-hint">형식:<br>- <code>NAME: "대사"</code><br>- <code>NAME: (생각)</code><br>- 대사 뒤 <code>#감정</code> (감정 토글 켜면 합성에서 숨김)</div>
+                                <div style="margin-top:8px; border-top:1px solid var(--border); padding-top:8px;">
+                                    <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:4px;">
+                                        <span style="font-size:0.74rem; color:var(--text2, #999);">매칭 캐릭터 이미지 (NAME + 감정)</span>
+                                        <button type="button" class="btn" style="padding:3px 10px; font-size:0.72rem;" onclick="ppOpenParallelTestModal()">병렬 테스트</button>
+                                    </div>
+                                    <div id="pp-preview-match" style="min-height:0;"></div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -24324,24 +24347,40 @@
                     name_replace_enabled: true,
                     strip_emotion: false,
                     emotion_extract_rules: [{ action: 'split_by', separator: '_', take: -1 }],
+                    prefix: '',
+                    suffix: '',
                 }
             };
         }
 
-        function openPostprocessModal() {
-            // 현재 config의 postprocess 객체를 작업 복사본으로 로드
-            const cur = (typeof currentConfig !== 'undefined' && currentConfig && currentConfig.postprocess) || defaultPpConfig();
-            ppWorking = JSON.parse(JSON.stringify(defaultPpConfig()));
-            if (cur && cur.vn) {
-                Object.assign(ppWorking.vn, cur.vn);
-                if (!ppWorking.vn.name_replace || typeof ppWorking.vn.name_replace !== 'object') ppWorking.vn.name_replace = {};
-                if (ppWorking.vn.name_replace_enabled === undefined) ppWorking.vn.name_replace_enabled = true;
-                if (!Array.isArray(ppWorking.vn.emotion_extract_rules)) ppWorking.vn.emotion_extract_rules = [{ action: 'split_by', separator: '_', take: -1 }];
-                // 감정 추출 결과는 임시 — 모달 오픈마다 항상 빈 상태로 시작(이전 세션/과거 저장값 무시).
-                ppWorking.vn.emotion_rows = [];
-                ppWorking.vn.emotion_total = 0;
-            }
-            // UI 반영
+        let ppCurrentBot = '';   // 후처리 모달에서 현재 편집 중인 봇
+
+        function ppFillBotSelect() {
+            const sel = document.getElementById('pp-bot-select');
+            if (!sel) return;
+            const bots = (typeof botData !== 'undefined' && botData && Array.isArray(botData.bots)) ? botData.bots : [];
+            sel.innerHTML = bots.length
+                ? bots.map(b => `<option value="${escapeAttr(b.name)}">${escapeHtml(b.name)}</option>`).join('')
+                : '<option value="">(봇 없음)</option>';
+            ppCurrentBot = (typeof botCurrentBot !== 'undefined' && botCurrentBot) || (bots[0] && bots[0].name) || '';
+            if (ppCurrentBot) sel.value = ppCurrentBot;
+        }
+
+        function _ppNormalizeVn(vn) {
+            const base = defaultPpConfig().vn;
+            Object.assign(base, vn || {});
+            if (!base.name_replace || typeof base.name_replace !== 'object') base.name_replace = {};
+            if (base.name_replace_enabled === undefined) base.name_replace_enabled = true;
+            if (!Array.isArray(base.emotion_extract_rules)) base.emotion_extract_rules = [{ action: 'split_by', separator: '_', take: -1 }];
+            if (typeof base.prefix !== 'string') base.prefix = '';
+            if (typeof base.suffix !== 'string') base.suffix = '';
+            if (!Array.isArray(base.emotion_rows)) base.emotion_rows = [];
+            if (typeof base.emotion_total !== 'number') base.emotion_total = 0;
+            return base;
+        }
+
+        function ppApplyVnToUI() {
+            if (!ppWorking || !ppWorking.vn) return;
             const vn = ppWorking.vn;
             document.getElementById('pp-vn-enabled').checked = !!vn.enabled;
             document.getElementById('pp-vn-placement').value = vn.placement || 'extend';
@@ -24352,12 +24391,64 @@
             document.getElementById('pp-vn-name-color').checked = !!vn.name_color;
             document.getElementById('pp-vn-name-replace-enabled').checked = !!vn.name_replace_enabled;
             document.getElementById('pp-vn-strip-emotion').checked = !!vn.strip_emotion;
+            const _pfx = document.getElementById('pp-vn-prefix');
+            const _sfx = document.getElementById('pp-vn-suffix');
+            if (_pfx) _pfx.value = vn.prefix || '';
+            if (_sfx) _sfx.value = vn.suffix || '';
             renderNameReplaceList();
             ppEmotionResetSession();
             ppRenderEmotionRules();
             ppRenderEmotionList();
+        }
+
+        async function ppLoadBotSettings(botName) {
+            try {
+                const resp = await fetch('/api/bot_mode/postprocess_vn?bot=' + encodeURIComponent(botName));
+                if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                const j = await resp.json();
+                const vn = _ppNormalizeVn(j);
+                ppWorking = { vn };
+                ppApplyVnToUI();
+                await ppLoadEmotionRows(botName);
+                renderPostprocessPreview();
+                ppRenderPreviewMatch();
+            } catch (e) {
+                console.error('[POSTPROCESS] 봇 설정 로드 실패:', e);
+                showToast('봇 설정 로드 실패: ' + (e.message || e), 'error');
+            }
+        }
+
+        async function ppLoadEmotionRows(botName) {
+            try {
+                const resp = await fetch('/api/bot_mode/emotion_rows?bot=' + encodeURIComponent(botName));
+                if (!resp.ok) return;
+                const j = await resp.json();
+                ppWorking.vn.emotion_rows = Array.isArray(j.rows) ? j.rows : [];
+                ppWorking.vn.emotion_total = j.total || 0;
+                ppRecomputeEmotionDupFlags();
+                ppRenderEmotionList();
+            } catch (e) {
+                console.warn('[POSTPROCESS] emotion_rows 로드 실패:', e);
+            }
+        }
+
+        async function ppOnBotChange() {
+            const newBot = document.getElementById('pp-bot-select').value;
+            if (!newBot || newBot === ppCurrentBot) return;
+            ppCurrentBot = newBot;
+            await ppLoadBotSettings(newBot);
+        }
+
+        function openPostprocessModal() {
+            ppWorking = JSON.parse(JSON.stringify(defaultPpConfig()));
+            ppFillBotSelect();
             document.getElementById('postprocess-modal').classList.add('visible');
-            renderPostprocessPreview();
+            if (ppCurrentBot) {
+                ppLoadBotSettings(ppCurrentBot);
+            } else {
+                ppApplyVnToUI();
+                renderPostprocessPreview();
+            }
         }
 
         function closePostprocessModal() {
@@ -24537,22 +24628,18 @@
                 document.body.appendChild(modal);
             }
             const bots = _ppEmotionBots();
-            const curBot = (typeof botCurrentBot !== 'undefined' && botCurrentBot) ? botCurrentBot : '';
-            ppEmotionSelectBot = curBot;
-            const botOptions = bots.length
-                ? bots.map(b => `<option value="${escapeAttr(b.name)}" ${b.name === curBot ? 'selected' : ''}>${escapeHtml(b.name)}</option>`).join('')
-                : '<option value="">(봇 없음)</option>';
+            // 봇은 후처리 설정 모달에서 선택한 봇(ppCurrentBot)을 그대로 사용 — 감정 뽑기 모달에서 별도 선택하지 않음.
+            ppEmotionSelectBot = (typeof ppCurrentBot !== 'undefined' && ppCurrentBot)
+                || (typeof botCurrentBot !== 'undefined' && botCurrentBot) || '';
             // 바깥 클릭 닫기 넣지 않음(모달 UI 규칙).
             modal.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:10001; display:flex; align-items:center; justify-content:center;';
             modal.innerHTML = `<div style="background:var(--surface, #1e1e1e); border-radius:10px; width:92vw; max-width:640px; max-height:88vh; display:flex; flex-direction:column; overflow:hidden;">
                 <div style="padding:12px 16px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
-                    <h3 style="margin:0; font-size:1rem;">감정 뽑아내기</h3>
+                    <h3 style="margin:0; font-size:1rem;">감정 뽑아내기 <span style="font-size:0.74rem; color:var(--text2,#999);">(${escapeHtml(ppEmotionSelectBot || '봇 없음')})</span></h3>
                     <button onclick="ppCloseEmotionSelectModal()" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer;">&times;</button>
                 </div>
                 <div style="overflow-y:auto; flex:1; padding:10px 16px;">
                     <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:8px;">
-                        <span style="font-size:0.8rem;">봇</span>
-                        <select id="pp-emotion-select-bot" onchange="ppEmotionSelectLoadChars(this.value)" style="flex:1; min-width:160px; padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface2); color:var(--text);">${botOptions}</select>
                         <button onclick="ppEmotionSelectToggleAll(true)" style="background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:3px 8px; border-radius:4px; cursor:pointer; font-size:0.72rem;">전체 선택</button>
                         <button onclick="ppEmotionSelectToggleAll(false)" style="background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:3px 8px; border-radius:4px; cursor:pointer; font-size:0.72rem;">전체 해제</button>
                     </div>
@@ -24640,6 +24727,8 @@
             const checked = document.querySelectorAll('.pp-emotion-char-check:checked').length;
             status.textContent = `선택 ${checked}/${total}`;
         }
+
+
 
         async function ppEmotionDoExtract() {
             const checks = document.querySelectorAll('.pp-emotion-char-check:checked');
@@ -24817,6 +24906,10 @@
             vn.name_color = document.getElementById('pp-vn-name-color').checked;
             vn.name_replace_enabled = document.getElementById('pp-vn-name-replace-enabled').checked;
             vn.strip_emotion = document.getElementById('pp-vn-strip-emotion').checked;
+            const _pfxEl = document.getElementById('pp-vn-prefix');
+            const _sfxEl = document.getElementById('pp-vn-suffix');
+            vn.prefix = _pfxEl ? _pfxEl.value : (vn.prefix || '');
+            vn.suffix = _sfxEl ? _sfxEl.value : (vn.suffix || '');
             return vn;
         }
 
@@ -24826,6 +24919,7 @@
                 const errEl = document.getElementById('pp-preview-error');
                 const imgEl = document.getElementById('pp-preview-img');
                 errEl.style.display = 'none'; errEl.textContent = '';
+                ppRenderPreviewMatch();
                 const vn = collectPpVnSettings();
                 const placeholderEl = document.getElementById('pp-preview-placeholder');
                 if (!vn || !vn.enabled) {
@@ -24882,28 +24976,187 @@
 
         async function savePostprocessSettings() {
             if (!ppWorking) { closePostprocessModal(); return; }
+            if (!ppCurrentBot) { showToast('봇을 먼저 선택하세요', 'error'); return; }
             collectPpVnSettings();
-            // 감정 추출 결과(emotion_rows/emotion_total)는 임시 — 저장/재오픈 시 사라지도록 제외.
+            // 감정 추출 결과(emotion_rows/emotion_total)는 별도 파일로 저장 — vn에서는 제외.
             const payload = JSON.parse(JSON.stringify(ppWorking));
+            const rows = (payload && payload.vn && Array.isArray(payload.vn.emotion_rows)) ? payload.vn.emotion_rows : [];
+            const total = (payload && payload.vn && payload.vn.emotion_total) || 0;
             if (payload && payload.vn) { delete payload.vn.emotion_rows; delete payload.vn.emotion_total; }
             try {
-                const resp = await fetch('/api/config', {
+                const resp = await fetch('/api/bot_mode/postprocess_vn', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({postprocess: payload})
+                    body: JSON.stringify({bot: ppCurrentBot, vn: payload.vn})
                 });
                 if (!resp.ok) {
                     const txt = await resp.text().catch(() => '');
-                    showToast('후처리 설정 저장 실패: ' + (txt || resp.status));
+                    showToast('후처리 설정 저장 실패: ' + (txt || resp.status), 'error');
                     return;
                 }
-                // 로컬 currentConfig에도 반영 — 임시 필드 제외(재오픈 시 빈 리스트 유지)
-                if (typeof currentConfig !== 'undefined' && currentConfig) currentConfig.postprocess = payload;
-                showToast('후처리 설정 저장 완료');
+                // emotion_rows 별도 영속 저장
+                try {
+                    await fetch('/api/bot_mode/emotion_rows', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({bot: ppCurrentBot, rows, total})
+                    });
+                } catch (e2) {
+                    console.warn('[POSTPROCESS] emotion_rows 저장 실패:', e2);
+                }
+                showToast('후처리 설정 저장 완료 (' + ppCurrentBot + ')');
             } catch (e) {
                 console.error('[POSTPROCESS] 저장 실패:', e);
-                showToast('후처리 설정 저장 실패: ' + (e.message || e));
+                showToast('후처리 설정 저장 실패: ' + (e.message || e), 'error');
             }
+        }
+
+        // ─── localStorage 캐시 (봇 간 설정 복붙용) ───────────────
+        const PP_CACHE_KEY = 'pp_vn_cache';
+
+        function _ppGetCache() {
+            try { return JSON.parse(localStorage.getItem(PP_CACHE_KEY) || '{}'); }
+            catch (e) { console.warn('[POSTPROCESS] 캐시 읽기 실패:', e); return {}; }
+        }
+
+        function ppSaveToCache() {
+            if (!ppWorking || !ppCurrentBot) { showToast('봇을 선택하세요', 'error'); return; }
+            collectPpVnSettings();
+            const cache = _ppGetCache();
+            cache[ppCurrentBot] = {
+                vn: JSON.parse(JSON.stringify(ppWorking.vn)),
+                ts: Date.now()
+            };
+            try {
+                localStorage.setItem(PP_CACHE_KEY, JSON.stringify(cache));
+                showToast('캐시에 저장: ' + ppCurrentBot);
+            } catch (e) {
+                showToast('캐시 저장 실패: ' + (e.message || e), 'error');
+            }
+        }
+
+        function ppLoadFromCache() {
+            if (!ppCurrentBot) { showToast('봇을 선택하세요', 'error'); return; }
+            const entry = _ppGetCache()[ppCurrentBot];
+            if (!entry || !entry.vn) { showToast('캐시에 ' + ppCurrentBot + ' 설정 없음', 'error'); return; }
+            ppWorking = { vn: _ppNormalizeVn(entry.vn) };
+            ppApplyVnToUI();
+            renderPostprocessPreview();
+            showToast('캐시에서 불러옴: ' + ppCurrentBot);
+        }
+
+        // ─── NAME + 감정 → 캐릭터 이미지 매칭 ───────────────────
+        function ppParseFirstSpeak(speak) {
+            // 첫 번째 비어있지 않은 줄에서 speaker(치환전 NAME)와 #감정 추출 (parse_speak 미러)
+            const lines = (speak || '').split('\n').map(l => l.trim()).filter(Boolean);
+            if (!lines.length) return null;
+            const line = lines[0];
+            const m = line.match(/^([A-Za-z0-9_]+)\s*:\s*["(].*[")]/);
+            const speaker = m ? m[1] : '';
+            const emoMatch = line.match(/\s+(#\S+)\s*$/);
+            const emotion = emoMatch ? emoMatch[1].replace(/^#/, '') : '';
+            return { speaker, emotion };
+        }
+
+        async function ppMatchImage(character, emotion) {
+            const prefix = (ppWorking && ppWorking.vn && ppWorking.vn.prefix) || '';
+            const suffix = (ppWorking && ppWorking.vn && ppWorking.vn.suffix) || '';
+            const resp = await fetch('/api/postprocess/match_image', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    bot_name: ppCurrentBot, character, emotion,
+                    prefix, suffix
+                })
+            });
+            const j = await resp.json();
+            if (!resp.ok || j.error) {
+                const err = new Error(j.error || ('HTTP ' + resp.status));
+                err._handled = j.error;
+                throw err;
+            }
+            return j;
+        }
+
+        async function ppRenderPreviewMatch() {
+            const cont = document.getElementById('pp-preview-match');
+            if (!cont) return;
+            if (!ppCurrentBot || !ppWorking) { cont.innerHTML = ''; return; }
+            const speak = document.getElementById('pp-vn-preview-speak').value;
+            const seg = ppParseFirstSpeak(speak);
+            if (!seg || !seg.speaker) { cont.innerHTML = '<span style="font-size:0.74rem; color:var(--text2,#999);">대사에서 NAME을 찾을 수 없음</span>'; return; }
+            try {
+                const j = await ppMatchImage(seg.speaker, seg.emotion);
+                cont.innerHTML = `<div style="display:flex; gap:8px; align-items:center;">
+                    <img src="${j.url}" style="max-height:84px; max-width:120px; border-radius:4px; border:1px solid var(--border); object-fit:contain; background:#000;">
+                    <div style="min-width:0;">
+                        <div style="font-size:0.76rem; word-break:break-all;">${escapeHtml(seg.speaker)}${seg.emotion ? ' · ' + escapeHtml(seg.emotion) : ''}</div>
+                        <div style="font-size:0.72rem; color:var(--text2,#999); word-break:break-all;">${escapeHtml(j.filename)} <span style="opacity:0.7;">[${escapeHtml(j.match)}${j.score != null ? ' ' + j.score : ''}]</span></div>
+                    </div>
+                </div>`;
+            } catch (e) {
+                cont.innerHTML = `<span style="font-size:0.74rem; color:var(--error,#e74c3c);">매칭 실패: ${escapeHtml(e._handled || e.message || e)}</span>`;
+            }
+        }
+
+        // ─── 병렬 테스트 모달 ──────────────────────────────────
+        function ppOpenParallelTestModal() {
+            if (!ppCurrentBot) { showToast('봇을 선택하세요', 'error'); return; }
+            let modal = document.getElementById('pp-parallel-test-modal');
+            if (!modal) { modal = document.createElement('div'); modal.id = 'pp-parallel-test-modal'; document.body.appendChild(modal); }
+            const defaultSpeak = document.getElementById('pp-vn-preview-speak').value;
+            const firstLine = (defaultSpeak.split('\n')[0] || '').replace(/\s*#\S+\s*$/, '').trim();
+            const rows = (ppWorking && ppWorking.vn && Array.isArray(ppWorking.vn.emotion_rows)) ? ppWorking.vn.emotion_rows : [];
+            const emotionsDefault = rows.filter(r => !r.dup).map(r => r.emotion).join(';');
+            // 바깥 클릭 닫기 금지(CLAUDE.md) — ✕/실행 버튼으로만 닫힘.
+            modal.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:10002; display:flex; align-items:center; justify-content:center;';
+            modal.innerHTML = `<div style="background:var(--surface,#1e1e1e); border-radius:10px; width:92vw; max-width:720px; max-height:88vh; display:flex; flex-direction:column; overflow:hidden;">
+                <div style="padding:12px 16px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
+                    <h3 style="margin:0; font-size:1rem;">병렬 테스트 <span style="font-size:0.74rem; color:var(--text2,#999);">(${escapeHtml(ppCurrentBot)})</span></h3>
+                    <button onclick="document.getElementById('pp-parallel-test-modal').style.display='none'" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer;">&times;</button>
+                </div>
+                <div style="overflow-y:auto; flex:1; padding:12px 16px;">
+                    <div style="font-size:0.78rem; margin-bottom:4px;">대사 1줄 (NAME 추출용, # 없이)</div>
+                    <textarea id="pp-pt-speak" class="input" rows="2" style="width:100%; font-family:monospace; resize:vertical;">${escapeHtml(firstLine)}</textarea>
+                    <div style="font-size:0.78rem; margin:8px 0 4px;">감정 리스트 (; 구분 · 감정 뽑아내기에서 복사한 텍스트)</div>
+                    <textarea id="pp-pt-emotions" class="input" rows="2" style="width:100%; font-family:monospace; resize:vertical;">${escapeHtml(emotionsDefault)}</textarea>
+                    <button onclick="ppRunParallelTest()" class="btn btn-primary" style="margin-top:8px;">실행</button>
+                    <div id="pp-pt-results" style="margin-top:10px;"></div>
+                </div>
+            </div>`;
+            modal.style.display = 'flex';
+        }
+
+        async function ppRunParallelTest() {
+            const speakLine = (document.getElementById('pp-pt-speak').value || '').trim();
+            const emotionsText = (document.getElementById('pp-pt-emotions').value || '').trim();
+            const nameMatch = speakLine.match(/^([A-Za-z0-9_]+)\s*:\s*["(](.*)[")]/);
+            if (!nameMatch) { showToast('대사 형식: NAME: "대사" 또는 NAME: (생각)', 'error'); return; }
+            const name = nameMatch[1];
+            const line = nameMatch[2];
+            const emotions = emotionsText.split(/[;\n]/).map(s => s.trim()).filter(Boolean);
+            if (!emotions.length) { showToast('감정을 1개 이상 입력하세요', 'error'); return; }
+            const results = document.getElementById('pp-pt-results');
+            results.innerHTML = '<div style="color:var(--text2,#888); font-size:0.8rem;">매칭 중... (' + emotions.length + '개)</div>';
+            const tasks = emotions.map(async (emo) => {
+                try {
+                    const j = await ppMatchImage(name, emo);
+                    return { emo, ok: true, ...j };
+                } catch (e) {
+                    return { emo, ok: false, error: e._handled || e.message || String(e) };
+                }
+            });
+            const items = await Promise.all(tasks);
+            results.innerHTML = items.map(it => `
+                <div style="display:flex; gap:8px; align-items:center; padding:6px; border:1px solid var(--border); border-radius:6px; margin-bottom:6px; background:var(--surface2);">
+                    <div style="flex:1; min-width:0;">
+                        <code style="font-size:0.78rem; word-break:break-all;">${escapeHtml(name)}: "${escapeHtml(line)}" #${escapeHtml(it.emo)}</code>
+                        ${!it.ok
+                            ? `<div style="color:var(--error,#e74c3c); font-size:0.72rem; margin-top:2px;">${escapeHtml(it.error)}</div>`
+                            : `<div style="font-size:0.72rem; color:var(--text2,#999); margin-top:2px;">${escapeHtml(it.filename)} [${escapeHtml(it.match)}${it.score != null ? ' ' + it.score : ''}]</div>`}
+                    </div>
+                    ${it.url ? `<img src="${it.url}" style="max-height:96px; max-width:130px; border-radius:4px; border:1px solid var(--border); object-fit:contain; background:#000;">` : ''}
+                </div>`).join('');
         }
 
         async function runDebugWorkflow() {

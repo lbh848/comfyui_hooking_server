@@ -1978,7 +1978,7 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
         _pp_settings = None
         try:
             from modes.postprocess import get_vn_settings
-            _pp_settings = get_vn_settings(app_config)
+            _pp_settings = get_vn_settings(app_config, bot_name=_backup_bot_name)
         except Exception as _e:
             print(f"[BACKUP] ⚠ 후처리 설정 조회 실패: {_e}")
         _backup_name, img_bytes = await save_backup(img_bytes, prompt_id, positive, negative, generation_time=elapsed_time, bot_name=_backup_bot_name, gen_method=_gen_method, postprocess_settings=_pp_settings, speak_text=_speak_text)
@@ -3537,6 +3537,87 @@ async def handle_api_postprocess_emotion_char_counts(request: web.Request) -> we
         tb = traceback.format_exc()
         print(f"[ERROR] postprocess_emotion_char_counts 실패: {e}\n{tb}")
         return web.json_response({"error": str(e)}, status=500)
+
+
+def _pp_image_similarity(a: str, b: str) -> float:
+    """Levenshtein 기반 0~1 유사도."""
+    if not a and not b:
+        return 1.0
+    if not a or not b:
+        return 0.0
+    m, n = len(a), len(b)
+    prev = list(range(n + 1))
+    cur = [0] * (n + 1)
+    for i in range(1, m + 1):
+        cur[0] = i
+        ca = a[i - 1]
+        for j in range(1, n + 1):
+            cost = 0 if ca == b[j - 1] else 1
+            cur[j] = min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost)
+        prev, cur = cur, prev
+    return 1.0 - prev[n] / max(m, n)
+
+
+async def handle_api_postprocess_match_image(request: web.Request) -> web.Response:
+    """POST /api/postprocess/match_image
+
+    body: {bot_name, character(영문 NAME), emotion, prefix, suffix}
+    토큰 = character + prefix + emotion + suffix 로 캐릭터 이미지 파일 매칭.
+      1) emotion_rows 정확 매칭(가속)
+      2) 토큰 base 정확 일치
+      3) Levenshtein 유사도 최대(fallback)
+    반환: {filename, url, match:"exact"|"fuzzy"} 또는 {error}.
+    """
+    try:
+        body = await request.json()
+        bot_name = (body.get("bot_name", "") or "").strip()
+        character = (body.get("character", "") or "").strip()
+        emotion = (body.get("emotion", "") or "").strip()
+        prefix = body.get("prefix", "") or ""
+        suffix = body.get("suffix", "") or ""
+        if not bot_name or not character:
+            return web.json_response({"error": "bot_name/character 필요"}, status=400)
+        candidates = list(bot_mode.iter_character_image_filenames(bot_name, character))
+        if not candidates:
+            print(f"[POSTPROCESS_MATCH] 이미지 없음: bot={bot_name}, char={character}")
+            return web.json_response({"error": f"이미지 없음: {character}"}, status=404)
+
+        def _base(fname: str) -> str:
+            return os.path.splitext(fname)[0]
+
+        def _url(fname: str) -> str:
+            return f"/api/bot_mode/image/{bot_name}/{character}/{fname}"
+
+        # 1) emotion_rows 정확 매칭
+        if emotion:
+            try:
+                from modes.bot_mode import _load_emotion_rows
+                er = _load_emotion_rows(bot_name)
+                for row in (er.get("rows") or []):
+                    if str(row.get("emotion", "")) == emotion and row.get("filename") in candidates:
+                        return web.json_response({"filename": row["filename"], "url": _url(row["filename"]), "match": "exact"})
+            except Exception as _e:
+                print(f"[POSTPROCESS_MATCH] emotion_rows 조회 실패(무시): {_e}")
+
+        token = f"{character}{prefix}{emotion}{suffix}"
+        # 2) 토큰 base 정확 일치
+        for f in candidates:
+            if _base(f) == token:
+                return web.json_response({"filename": f, "url": _url(f), "match": "exact"})
+        # 부분 포함 일치(토큰이 base에 포함되면)
+        for f in candidates:
+            if token and token in _base(f):
+                return web.json_response({"filename": f, "url": _url(f), "match": "exact"})
+        # 3) 유사도 fallback
+        best = max(candidates, key=lambda f: _pp_image_similarity(_base(f), token))
+        score = _pp_image_similarity(_base(best), token)
+        print(f"[POSTPROCESS_MATCH] fuzzy 매칭: bot={bot_name}, char={character}, token={token!r} -> {best} (sim={score:.2f})")
+        return web.json_response({"filename": best, "url": _url(best), "match": "fuzzy", "score": round(score, 3)})
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f"[ERROR] postprocess_match_image 실패: {e}\n{tb}")
+        return web.json_response({"error": str(e)}, status=500)
+
 
 
 async def handle_api_regenerate(request: web.Request) -> web.Response:
@@ -5223,6 +5304,11 @@ app.router.add_post("/api/reschedule_with_modified_prompt", handle_api_reschedul
 app.router.add_post("/api/postprocess/preview", handle_api_postprocess_preview)
 app.router.add_post("/api/postprocess/emotion_sources", handle_api_postprocess_emotion_sources)
 app.router.add_get("/api/postprocess/emotion_char_counts", handle_api_postprocess_emotion_char_counts)
+app.router.add_post("/api/postprocess/match_image", handle_api_postprocess_match_image)
+app.router.add_get("/api/bot_mode/postprocess_vn", bot_mode.handle_get_postprocess_vn)
+app.router.add_post("/api/bot_mode/postprocess_vn", bot_mode.handle_save_postprocess_vn)
+app.router.add_get("/api/bot_mode/emotion_rows", bot_mode.handle_get_emotion_rows)
+app.router.add_post("/api/bot_mode/emotion_rows", bot_mode.handle_save_emotion_rows)
 app.router.add_post("/api/llm_edit_prompt", handle_api_llm_edit_prompt)
 app.router.add_get("/api/llm_edit_prompt_template", handle_api_get_llm_edit_template)
 app.router.add_post("/api/llm_edit_prompt_template", handle_api_set_llm_edit_template)

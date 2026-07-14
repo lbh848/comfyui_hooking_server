@@ -482,22 +482,64 @@ def _to_output_bytes(canvas) -> bytes:
 
 
 def is_postprocess_active(config: dict) -> bool:
-    """후처리(미연시 모드)가 활성 상태인지 판별."""
+    """후처리 마스터 토글이 켜져 있는지 판별.
+
+    봇별 vn.enabled 검사는 get_vn_settings 내부에서 수행한다(봇별 설정 이관).
+    """
     if not config:
         return False
-    if not config.get("postprocess_enabled", False):
-        return False
-    pp = config.get("postprocess") or {}
-    vn = pp.get("vn") or {}
-    return bool(vn.get("enabled", False))
+    return bool(config.get("postprocess_enabled", False))
 
 
-def get_vn_settings(config: dict) -> Optional[dict]:
-    """활성 시 vn 설정(플랫 딕셔너리) 반환, 비활성 시 None."""
+def _default_vn() -> dict:
+    """봇별 postprocess_vn 기본값."""
+    return {
+        "enabled": False,
+        "placement": "extend",        # extend | overlay
+        "height_mode": "ratio",       # ratio | px
+        "height_value": 0.12,
+        "font_size": 0,               # px. 0=박스 높이 기반 자동
+        "name_color": False,
+        "name_replace": {},
+        "name_replace_enabled": True,
+        "strip_emotion": False,
+        "emotion_extract_rules": [{"action": "split_by", "separator": "_", "take": -1}],
+        "prefix": "",                  # 이미지 조회 토큰 prefix (봇별 1개)
+        "suffix": "",                  # 이미지 조회 토큰 suffix (봇별 1개)
+    }
+
+
+def _load_bot_vn(bot_name: str) -> dict:
+    """bot.json에서 해당 봇의 postprocess_vn 반환. 없으면 기본값."""
+    if not bot_name:
+        return _default_vn()
+    try:
+        from modes.bot_mode import _load_bot_data
+        data = _load_bot_data()
+        bot = next((b for b in data.get("bots", []) if b.get("name") == bot_name), None)
+        if bot and isinstance(bot.get("postprocess_vn"), dict):
+            vn = bot["postprocess_vn"]
+            # 누락 필드 보정
+            base = _default_vn()
+            base.update(vn)
+            return base
+    except Exception as e:
+        print(f"[POSTPROCESS] ⚠ 봇 vn 로드 실패({bot_name}): {e}")
+        traceback.print_exc()
+    return _default_vn()
+
+
+def get_vn_settings(config: dict, bot_name: str = "") -> Optional[dict]:
+    """활성 시 vn 설정(플랫 딕셔너리) 반환, 비활성 시 None.
+
+    bot_name이 주어지면 bot.json의 해당 봇 postprocess_vn에서 읽는다(봇별 설정).
+    마스터 토글(postprocess_enabled) + 봇별 vn.enabled 모두 켜져 있어야 활성.
+    """
     if not is_postprocess_active(config):
         return None
-    pp = config.get("postprocess") or {}
-    vn = pp.get("vn") or {}
+    vn = _load_bot_vn(bot_name) if bot_name else _default_vn()
+    if not bool(vn.get("enabled", False)):
+        return None
     return {
         "placement": vn.get("placement", "extend"),
         "height_mode": vn.get("height_mode", "ratio"),
@@ -505,6 +547,8 @@ def get_vn_settings(config: dict) -> Optional[dict]:
         "font_size": vn.get("font_size", 0) or 0,
         "name_color": bool(vn.get("name_color", False)),
         "name_replace": vn.get("name_replace") or {},
+        "name_replace_enabled": bool(vn.get("name_replace_enabled", True)),
+        "strip_emotion": bool(vn.get("strip_emotion", False)),
     }
 
 
