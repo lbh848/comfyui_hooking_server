@@ -6711,11 +6711,11 @@
                                     </div>
                                     <div class="pp-field-inline">
                                         <div style="flex:1;">
-                                            <div style="font-size:0.7rem; color:var(--text2, #999); margin-bottom:2px;">FACE_CROP_TOP (1.0=검출박스 그대로)</div>
+                                            <div style="font-size:0.7rem; color:var(--text2, #999); margin-bottom:2px;">FACE_CROP_TOP<br><span style="opacity:0.8;">(1.0=검출박스 그대로)</span></div>
                                             <input type="number" id="pp-vn-face-crop-top" value="1.8" step="0.1" min="1" max="10" class="input" style="width:100%;" oninput="collectPpVnSettings(); renderPostprocessPreview(); ppRenderFaceCrop();">
                                         </div>
                                         <div style="flex:1;">
-                                            <div style="font-size:0.7rem; color:var(--text2, #999); margin-bottom:2px;">FACE_CROP_BOTTOM (1.0=검출박스 그대로)</div>
+                                            <div style="font-size:0.7rem; color:var(--text2, #999); margin-bottom:2px;">FACE_CROP_BOTTOM<br><span style="opacity:0.8;">(1.0=검출박스 그대로)</span></div>
                                             <input type="number" id="pp-vn-face-crop-bottom" value="1.0" step="0.1" min="1" max="10" class="input" style="width:100%;" oninput="collectPpVnSettings(); renderPostprocessPreview(); ppRenderFaceCrop();">
                                         </div>
                                         <div style="flex:1;">
@@ -25191,6 +25191,32 @@
             return j;
         }
 
+        // YOLO 크롭 결과(합성과 동일)를 ObjectURL로 반환. 병렬 테스트/실시간 미리보기 공용.
+        async function ppFetchFaceCropUrl(character, emotion, vn) {
+            const resp = await fetch('/api/postprocess/preview_face', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    bot_name: ppCurrentBot,
+                    character,
+                    emotion,
+                    prefix: (vn && vn.prefix) || '',
+                    suffix: (vn && vn.suffix) || '',
+                    face_crop_top: vn && vn.face_crop_top,
+                    face_crop_bottom: vn && vn.face_crop_bottom,
+                    face_conf: vn && vn.face_conf,
+                })
+            });
+            if (!resp.ok) {
+                const j = await resp.json().catch(() => ({}));
+                const err = new Error(j.error || ('HTTP ' + resp.status));
+                err._handled = j.error;
+                throw err;
+            }
+            const blob = await resp.blob();
+            return URL.createObjectURL(blob);
+        }
+
         async function ppRenderPreviewMatch() {
             const cont = document.getElementById('pp-preview-match');
             if (!cont) return;
@@ -25230,26 +25256,7 @@
                 const emotion = vn.strip_emotion ? (seg.emotion || '') : '';
                 cont.innerHTML = '<div style="font-size:0.74rem; color:var(--text2,#888);">크롭 중...</div>';
                 try {
-                    const resp = await fetch('/api/postprocess/preview_face', {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({
-                            bot_name: ppCurrentBot,
-                            character: seg.speaker,
-                            emotion,
-                            prefix: vn.prefix || '',
-                            suffix: vn.suffix || '',
-                            face_crop_top: vn.face_crop_top,
-                            face_crop_bottom: vn.face_crop_bottom,
-                            face_conf: vn.face_conf,
-                        })
-                    });
-                    if (!resp.ok) {
-                        const j = await resp.json().catch(() => ({}));
-                        throw new Error(j.error || ('HTTP ' + resp.status));
-                    }
-                    const blob = await resp.blob();
-                    const url = URL.createObjectURL(blob);
+                    const url = await ppFetchFaceCropUrl(seg.speaker, emotion, vn);
                     cont.innerHTML = `<div style="display:flex; gap:8px; align-items:flex-start;">
                         <img src="${url}" style="width:96px; height:96px; object-fit:cover; border-radius:6px; border:1px solid var(--border); background:#000;">
                         <div style="min-width:0; font-size:0.72rem; color:var(--text2,#999); line-height:1.5;">
@@ -25260,7 +25267,7 @@
                     </div>`;
                 } catch (e) {
                     console.error('[POSTPROCESS] 크롭 미리보기 실패:', e);
-                    cont.innerHTML = `<div style="font-size:0.74rem; color:var(--error,#e74c3c);">크롭 실패: ${escapeHtml(e.message || e)}</div>`;
+                    cont.innerHTML = `<div style="font-size:0.74rem; color:var(--error,#e74c3c);">크롭 실패: ${escapeHtml(e._handled || e.message || e)}</div>`;
                 }
             }, 250);
         }
@@ -25304,24 +25311,30 @@
             if (!emotions.length) { showToast('감정을 1개 이상 입력하세요', 'error'); return; }
             const results = document.getElementById('pp-pt-results');
             results.innerHTML = '<div style="color:var(--text2,#888); font-size:0.8rem;">매칭 중... (' + emotions.length + '개)</div>';
+            const vn = collectPpVnSettings();
             const tasks = emotions.map(async (emo) => {
-                try {
-                    const j = await ppMatchImage(name, emo);
-                    return { emo, ok: true, ...j };
-                } catch (e) {
-                    return { emo, ok: false, error: e._handled || e.message || String(e) };
-                }
+                // 매칭 정보(filename/match/score)와 YOLO 크롭 결과를 병렬로 조회.
+                const [matchRes, cropRes] = await Promise.allSettled([
+                    ppMatchImage(name, emo),
+                    ppFetchFaceCropUrl(name, emo, vn)
+                ]);
+                const match = matchRes.status === 'fulfilled' ? matchRes.value : null;
+                const cropUrl = cropRes.status === 'fulfilled' ? cropRes.value : null;
+                const matchErr = matchRes.status === 'rejected' ? (matchRes.reason._handled || matchRes.reason.message || String(matchRes.reason)) : null;
+                const cropErr = cropRes.status === 'rejected' ? (cropRes.reason._handled || cropRes.reason.message || String(cropRes.reason)) : null;
+                return { emo, match, cropUrl, matchErr, cropErr };
             });
             const items = await Promise.all(tasks);
             results.innerHTML = items.map(it => `
                 <div style="display:flex; gap:8px; align-items:center; padding:6px; border:1px solid var(--border); border-radius:6px; margin-bottom:6px; background:var(--surface2);">
+                    ${it.cropUrl ? `<img src="${it.cropUrl}" style="width:72px; height:72px; flex:0 0 72px; border-radius:4px; border:1px solid var(--border); object-fit:cover; background:#000;" title="YOLO 크롭 결과">` : `<div style="width:72px; height:72px; flex:0 0 72px; border-radius:4px; border:1px dashed var(--border); display:flex; align-items:center; justify-content:center; font-size:0.6rem; color:var(--text2,#999); text-align:center;">크롭<br>없음</div>`}
                     <div style="flex:1; min-width:0;">
                         <code style="font-size:0.78rem; word-break:break-all;">${escapeHtml(name)}: "${escapeHtml(line)}" #${escapeHtml(it.emo)}</code>
-                        ${!it.ok
-                            ? `<div style="color:var(--error,#e74c3c); font-size:0.72rem; margin-top:2px;">${escapeHtml(it.error)}</div>`
-                            : `<div style="font-size:0.72rem; color:var(--text2,#999); margin-top:2px;">${escapeHtml(it.filename)} [${escapeHtml(it.match)}${it.score != null ? ' ' + it.score : ''}]</div>`}
+                        ${it.match
+                            ? `<div style="font-size:0.72rem; color:var(--text2,#999); margin-top:2px;">${escapeHtml(it.match.filename)} [${escapeHtml(it.match.match)}${it.match.score != null ? ' ' + it.match.score : ''}]</div>`
+                            : (it.matchErr ? `<div style="color:var(--error,#e74c3c); font-size:0.72rem; margin-top:2px;">매칭: ${escapeHtml(it.matchErr)}</div>` : '')}
+                        ${it.cropErr ? `<div style="color:var(--error,#e74c3c); font-size:0.72rem; margin-top:2px;">크롭: ${escapeHtml(it.cropErr)}</div>` : ''}
                     </div>
-                    ${it.url ? `<img src="${it.url}" style="max-height:96px; max-width:130px; border-radius:4px; border:1px solid var(--border); object-fit:contain; background:#000;">` : ''}
                 </div>`).join('');
         }
 
