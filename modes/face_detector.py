@@ -93,6 +93,9 @@ def crop_face(image, top_mult: float = 1.8, bottom_mult: float = 1.0,
         target_size: 출력 정사각형 한 변(px)
         conf_thres: 신뢰도 임계치
 
+    비정사각형 크롭 영역은 비율을 유지해 짧은 변을 target_size로 확대한 뒤,
+    긴 변을 중앙 기준으로 깎아(center-crop) 정사각형으로 만든다. 왜곡 없음.
+
     Returns:
         PIL.Image(target_size x target_size) 또는 None(검출 실패).
     """
@@ -157,7 +160,20 @@ def crop_face(image, top_mult: float = 1.8, bottom_mult: float = 1.0,
             return None
 
         crop = image.crop((int(left), int(top), int(right), int(bottom)))
-        crop = crop.resize((target_size, target_size), _PILImage.LANCZOS)
+
+        # 비정사각형 크롭 영역을 정사각형으로 맞춘다.
+        # - 가로세로 비율을 유지한 채 "짧은 변"이 target_size가 되도록 확대(cover)
+        # - 긴 변은 중앙 정렬해서 가장자리를 깎아 S×S 정사각형으로 만든다.
+        #   (강제 resize는 비율을 꺾어 왜곡이 생기므로 사용하지 않는다)
+        cw, ch = crop.size
+        scale = target_size / float(min(cw, ch)) if min(cw, ch) > 0 else 1.0
+        nw = max(target_size, int(round(cw * scale)))
+        nh = max(target_size, int(round(ch * scale)))
+        crop = crop.resize((nw, nh), _PILImage.LANCZOS)
+        # 중앙 기준 center-crop → 정사각형
+        px = (nw - target_size) // 2
+        py = (nh - target_size) // 2
+        crop = crop.crop((px, py, px + target_size, py + target_size))
         return crop
     except Exception as e:
         print(f"[FACE_DETECTOR] ⚠ crop_face 실패: {e}")

@@ -443,6 +443,31 @@ def load_face_image_bytes(bot_name: str, character: str, filename: str):
         return None
 
 
+def _center_crop_square(image, target_size: int):
+    """비정사각형 이미지를 target_size 정사각형으로 center-crop(왜곡 없이).
+
+    crop_face가 얼굴을 못 찾았을 때의 폴백용. crop_face와 동일한 cover 방식으로
+    비율을 유지해 짧은 변을 target_size로 확대한 뒤 긴 변을 중앙 기준으로 깎는다.
+    실패 시 None.
+    """
+    try:
+        img = image if image.mode in ("RGB", "RGBA") else image.convert("RGB")
+        w, h = img.size
+        side = min(w, h)
+        if side <= 0:
+            return None
+        scale = target_size / float(side)
+        nw = max(target_size, int(round(w * scale)))
+        nh = max(target_size, int(round(h * scale)))
+        img = img.resize((nw, nh), Image.LANCZOS)
+        px = (nw - target_size) // 2
+        py = (nh - target_size) // 2
+        return img.crop((px, py, px + target_size, py + target_size))
+    except Exception as e:
+        print(f"[POSTPROCESS] ⚠ center-crop 폴백 실패: {e}")
+        return None
+
+
 # ─── 카드 렌더링 헬퍸(프리코네 스타일 테마) ──────────────────
 def _vertical_gradient(size, top_rgba, bottom_rgba):
     """size(w,h) 세로 그라데이션 RGBA 이미지 반환."""
@@ -593,11 +618,15 @@ def compose_postprocess(image_bytes: bytes, speak_text: str,
                 try:
                     from modes import face_detector
                     base = Image.open(io.BytesIO(raw))
+                    _face_target = max(128, int(bar_h))
                     face_img = face_detector.crop_face(
                         base, top_mult=face_crop_top, bottom_mult=face_crop_bottom,
-                        target_size=max(128, int(bar_h)), conf_thres=face_conf)
+                        target_size=_face_target, conf_thres=face_conf)
                     if face_img is None:
-                        print(f"[POSTPROCESS] 얼굴 검출 실패 — 슬롯 비움(bot={bot_name}, char={speaker})")
+                        # 얼굴 검출 실패 시 매칭된 원본을 center-crop 정사각형으로 폴백.
+                        # 빈 슬롯보다는 나은 근사치(얼굴이 프레임 밖일 수 있음).
+                        print(f"[POSTPROCESS] 얼굴 검출 실패 — 원본 center-crop 폴백(bot={bot_name}, char={speaker})")
+                        face_img = _center_crop_square(base, _face_target)
                 except Exception as e:
                     print(f"[POSTPROCESS] ⚠ 얼굴 크롭 실패: {e}")
                     traceback.print_exc()
@@ -643,7 +672,7 @@ def compose_postprocess(image_bytes: bytes, speak_text: str,
                             segments, first_speaker_seg, face_img, face_enabled,
                             name_replace, use_name_replace, strip_emotion,
                             font, name_font, emotion_font, font_size, line_height,
-                            img_w, img_h)
+                            img_w, img_h, use_name_color, bot_name)
 
     # ===== classic: 기존 검정 바 렌더링 =====
     if layout["placement"] == "extend":
@@ -755,7 +784,7 @@ def _render_card(img, layout, pal, settings,
                  segments, first_seg, face_img, face_enabled,
                  name_replace, use_name_replace, strip_emotion,
                  font, name_font, emotion_font, font_size, line_height,
-                 img_w, img_h):
+                 img_w, img_h, use_name_color=False, bot_name=""):
     """프리코네 스타일 다중 레이어 카드 렌더러. RGBA PIL → PNG bytes.
 
     레이어: 배경(extend 어두운 그라데이션) → 드롭섀도우 → 외곽 은색 프레임 →
@@ -916,7 +945,13 @@ def _render_card(img, layout, pal, settings,
             _deco_diamond(draw, plate_x2 - 8, deco_y, 3, pal["accent"])
 
             name_y = plate_y1 + (plate_h - name_font.size) // 2 - 1
-            draw.text((plate_x1 + pad_x, name_y), display_name, font=name_font, fill=_rgba(pal["name"]))
+            # 이름 색상 규칙(name_color)이 켜져 있으면 classic과 동일하게
+            # 머리색 기반 이름 색상을 사용. 실패/미설정 시 테마 팔레트 색으로 폴백.
+            if use_name_color:
+                name_fill = resolve_name_color(sp, bot_name) or _rgba(pal["name"])
+            else:
+                name_fill = _rgba(pal["name"])
+            draw.text((plate_x1 + pad_x, name_y), display_name, font=name_font, fill=name_fill)
             if emo_text:
                 draw.text((plate_x1 + pad_x + int(name_w) + gap,
                            plate_y1 + (plate_h - emotion_font.size) // 2 - 1),
