@@ -1737,6 +1737,39 @@ class BotMode:
             traceback.print_exc()
             return _json_error(str(e))
 
+    async def handle_get_postprocess_bubble(self, request):
+        """GET /api/bot_mode/postprocess_bubble?bot=X"""
+        try:
+            bot_name = request.query.get("bot", "").strip()
+            if not bot_name:
+                return _json_error("봇 이름이 필요합니다.")
+            bubble = _load_postprocess_bubble(bot_name)
+            mode = _get_postprocess_mode(bot_name)
+            return _json_ok({"bubble": bubble, "mode": mode})
+        except Exception as e:
+            print(f"[BOT_MODE] postprocess_bubble 로드 실패: {e}")
+            traceback.print_exc()
+            return _json_error(str(e))
+
+    async def handle_save_postprocess_bubble(self, request):
+        """POST /api/bot_mode/postprocess_bubble  body: {bot, bubble, mode?}"""
+        try:
+            body = await request.json()
+            bot_name = body.get("bot", "").strip()
+            bubble = body.get("bubble", {})
+            mode = body.get("mode")  # 'vn' | 'bubble' (선택)
+            if not bot_name:
+                return _json_error("봇 이름이 필요합니다.")
+            async with self._lock:
+                _save_postprocess_bubble(bot_name, bubble)
+                if mode in ("vn", "bubble"):
+                    _set_postprocess_mode(bot_name, mode)
+            return _json_ok({"saved": True})
+        except Exception as e:
+            print(f"[BOT_MODE] postprocess_bubble 저장 실패: {e}")
+            traceback.print_exc()
+            return _json_error(str(e))
+
 
     async def handle_get_lb_extra(self, request):
         """GET /api/bot_mode/lb_extra - 저장된 분류 데이터(편집본) 로드"""
@@ -2210,6 +2243,73 @@ def _save_postprocess_vn(bot_name: str, vn: dict):
     bot["postprocess_vn"] = clean
     _save_bot_data(data)
     print(f"[BOT_MODE] postprocess_vn 저장: bot={bot_name}")
+
+
+# ─── 후처리 봇별 설정 (postprocess_bubble: 말풍선 모드) ─────────────
+def _load_postprocess_bubble(bot_name: str) -> dict:
+    """봇의 postprocess_bubble 반환. 없으면 기본값."""
+    if not bot_name:
+        from modes.postprocess import _default_bubble
+        return _default_bubble()
+    try:
+        data = _load_bot_data()
+        bot = next((b for b in data.get("bots", []) if b.get("name") == bot_name), None)
+        if bot and isinstance(bot.get("postprocess_bubble"), dict):
+            from modes.postprocess import _default_bubble
+            base = _default_bubble()
+            base.update(bot["postprocess_bubble"])
+            return base
+    except Exception as e:
+        print(f"[BOT_MODE] postprocess_bubble 로드 실패({bot_name}): {e}")
+        traceback.print_exc()
+    from modes.postprocess import _default_bubble
+    return _default_bubble()
+
+
+def _save_postprocess_bubble(bot_name: str, bubble: dict):
+    """봇의 postprocess_bubble 저장. 백업 후 bot.json 갱신."""
+    if not bot_name:
+        raise ValueError("봇 이름이 필요합니다.")
+    data = _load_bot_data()
+    bot = next((b for b in data.get("bots", []) if b.get("name") == bot_name), None)
+    if not bot:
+        raise ValueError(f"봇을 찾을 수 없음: {bot_name}")
+    _backup_bot_json()
+    bot["postprocess_bubble"] = dict(bubble or {})
+    _save_bot_data(data)
+    print(f"[BOT_MODE] postprocess_bubble 저장: bot={bot_name}")
+
+
+def _get_postprocess_mode(bot_name: str) -> str:
+    """봇의 활성 후처리 모드: 'vn' | 'bubble'. 기본 'vn' (기존 동작 유지)."""
+    if not bot_name:
+        return "vn"
+    try:
+        data = _load_bot_data()
+        bot = next((b for b in data.get("bots", []) if b.get("name") == bot_name), None)
+        if bot:
+            m = bot.get("postprocess_mode")
+            if m in ("vn", "bubble"):
+                return m
+    except Exception as e:
+        print(f"[BOT_MODE] postprocess_mode 로드 실패({bot_name}): {e}")
+    return "vn"
+
+
+def _set_postprocess_mode(bot_name: str, mode: str):
+    """봇의 활성 후처리 모드 저장('vn' | 'bubble'). 백업 후 갱신."""
+    if not bot_name:
+        raise ValueError("봇 이름이 필요합니다.")
+    if mode not in ("vn", "bubble"):
+        raise ValueError(f"잘못된 postprocess_mode: {mode}")
+    data = _load_bot_data()
+    bot = next((b for b in data.get("bots", []) if b.get("name") == bot_name), None)
+    if not bot:
+        raise ValueError(f"봇을 찾을 수 없음: {bot_name}")
+    _backup_bot_json()
+    bot["postprocess_mode"] = mode
+    _save_bot_data(data)
+    print(f"[BOT_MODE] postprocess_mode 저장: bot={bot_name} → {mode}")
 
 
 def _migrate_postprocess_vn(data: dict):

@@ -878,12 +878,19 @@ async def save_backup(image_bytes: bytes, prompt_id: str, positive: str, negativ
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     base_name = f"{ts}_{prompt_id[:8]}"
 
-    # 0) 후처리([SPEAK] 박스 합성) — 저장 전 이미지에 적용
+    # 0) 후처리([SPEAK] 합성) — 저장 전 이미지에 적용
+    #    postprocess_settings._mode == "bubble" 이면 말풍선 빌더, 아니면 vn 대사창 빌더.
     if postprocess_settings and speak_text:
         try:
-            from modes.postprocess import compose_postprocess
-            image_bytes = compose_postprocess(image_bytes, speak_text, postprocess_settings, bot_name)
-            print(f"[BACKUP] 후처리 합성 적용: placement={postprocess_settings.get('placement')}, speak_len={len(speak_text)}")
+            if postprocess_settings.get("_mode") == "bubble":
+                from modes.bubble_render import compose_bubble
+                _bs = {k: v for k, v in postprocess_settings.items() if k != "_mode"}
+                image_bytes = compose_bubble(image_bytes, speak_text, _bs, bot_name)
+                print(f"[BACKUP] 말풍선 합성 적용: speak_len={len(speak_text)}")
+            else:
+                from modes.postprocess import compose_postprocess
+                image_bytes = compose_postprocess(image_bytes, speak_text, postprocess_settings, bot_name)
+                print(f"[BACKUP] 후처리 합성 적용: placement={postprocess_settings.get('placement')}, speak_len={len(speak_text)}")
         except Exception as e:
             print(f"[BACKUP] ⚠ 후처리 합성 실패, 원본 이미지로 저장: {e}")
             traceback.print_exc()
@@ -1974,11 +1981,19 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
         _backup_bot_name = bot_name if (bot_name and app_config.get("bot_mode_enabled", False)) else ""
         # 수동 그리기(prompt_id 'manual-' 접두사)는 생성 방법 딱지 부여 (봇 딱지와 별개 차원)
         _gen_method = "수동 그리기" if str(prompt_id).startswith("manual-") else ""
-        # 후처리([SPEAK] 합성): 활성 시 vn 설정 스냅샷 + 이번 생성의 SPEAK 원문 전달
+        # 후처리([SPEAK] 합성): 활성 시 설정 스냅샷 + 이번 생성의 SPEAK 원문 전달
+        # 봇의 postprocess_mode(vn|bubble) 에 따라 어느 합성 빌더를 쓸지 결정.
         _pp_settings = None
         try:
-            from modes.postprocess import get_vn_settings
-            _pp_settings = get_vn_settings(app_config, bot_name=_backup_bot_name)
+            from modes.postprocess import get_vn_settings, get_bubble_settings
+            from modes.bot_mode import _get_postprocess_mode
+            _pp_mode = _get_postprocess_mode(_backup_bot_name)
+            if _pp_mode == "bubble":
+                _bb = get_bubble_settings(app_config, bot_name=_backup_bot_name)
+                if _bb:
+                    _pp_settings = {"_mode": "bubble", **_bb}
+            else:
+                _pp_settings = get_vn_settings(app_config, bot_name=_backup_bot_name)
         except Exception as _e:
             print(f"[BACKUP] ⚠ 후처리 설정 조회 실패: {_e}")
         _backup_name, img_bytes = await save_backup(img_bytes, prompt_id, positive, negative, generation_time=elapsed_time, bot_name=_backup_bot_name, gen_method=_gen_method, postprocess_settings=_pp_settings, speak_text=_speak_text)
@@ -3425,6 +3440,29 @@ async def handle_api_postprocess_preview(request: web.Request) -> web.Response:
         except Exception as _e:
             print(f"[POSTPROCESS_PREVIEW] ⚠ HRF 변환 실패, 원본 베이스 사용: {_e}")
             traceback.print_exc()
+
+        # 말풍선 모드 분기 — 미리보기도 실제 전송과 동일 빌더(compose_bubble) 경유 (CLAUDE.md).
+        mode = body.get("mode", "vn")
+        if mode == "bubble":
+            from modes.bubble_render import compose_bubble
+            bubble_settings = {
+                "font_path": body.get("font_path", ""),
+                "font_size": body.get("font_size", 36) or 36,
+                "text_color": body.get("text_color", "#111111"),
+                "bubble_fill": body.get("bubble_fill", "#FFFFFF"),
+                "bubble_border": body.get("bubble_border", "#333333"),
+                "border_width": body.get("border_width", 2),
+                "opacity": body.get("opacity", 1.0),
+                "padding": body.get("padding", 16),
+                "radius": body.get("radius", 22),
+                "tail_len": body.get("tail_len", 30),
+                "thought_circle_r": body.get("thought_circle_r", 18),
+                "max_width_ratio": body.get("max_width_ratio", 0.45),
+                "conf": body.get("conf", 0.3),
+                "match_thres": body.get("match_thres", 0.55),
+            }
+            composed = compose_bubble(base_bytes, speak, bubble_settings, bot_name)
+            return web.Response(body=composed, content_type="image/png")
 
         composed = compose_postprocess(base_bytes, speak, settings, bot_name)
         return web.Response(body=composed, content_type="image/png")
@@ -5400,6 +5438,8 @@ app.router.add_get("/api/postprocess/emotion_char_counts", handle_api_postproces
 app.router.add_post("/api/postprocess/match_image", handle_api_postprocess_match_image)
 app.router.add_get("/api/bot_mode/postprocess_vn", bot_mode.handle_get_postprocess_vn)
 app.router.add_post("/api/bot_mode/postprocess_vn", bot_mode.handle_save_postprocess_vn)
+app.router.add_get("/api/bot_mode/postprocess_bubble", bot_mode.handle_get_postprocess_bubble)
+app.router.add_post("/api/bot_mode/postprocess_bubble", bot_mode.handle_save_postprocess_bubble)
 app.router.add_post("/api/llm_edit_prompt", handle_api_llm_edit_prompt)
 app.router.add_get("/api/llm_edit_prompt_template", handle_api_get_llm_edit_template)
 app.router.add_post("/api/llm_edit_prompt_template", handle_api_set_llm_edit_template)

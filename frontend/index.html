@@ -6553,7 +6553,7 @@
                     <div class="pp-left">
                         <div class="pp-tab-bar">
                             <button class="pp-tab-btn active" onclick="switchPostprocessTab('vn')">💬 대사 모드</button>
-                            <!-- 추후 후처리 탭 추가 예정 -->
+                            <button class="pp-tab-btn" onclick="switchPostprocessTab('bubble')">💭 말풍선 모드</button>
                         </div>
 
                         <!-- 대사 모드 패널 -->
@@ -6761,6 +6761,73 @@
                                 </div>
                             </div>
                         </div>
+
+                        <!-- 말풍선 모드 패널 -->
+                        <div id="postprocess-tab-bubble" class="settings-tab-panel" style="display:none;">
+                            <div class="pp-card">
+                                <div class="pp-switch-line">
+                                    <div>
+                                        <div style="font-size:0.88rem; font-weight:600;">말풍선 모드</div>
+                                        <div class="pp-hint">감지된 얼굴 중 발화자(NAME)를 ViT-B/16 임베딩 매칭으로 식별 → 꼬리가 얼굴을 향하는 말풍선 렌더. 발화=일반, 생각=구름.</div>
+                                    </div>
+                                    <label class="switch"><input type="checkbox" id="pp-bubble-enabled" onchange="renderPostprocessPreview()"><span class="slider"></span></label>
+                                </div>
+                            </div>
+
+                            <div class="pp-card">
+                                <div class="pp-card-title">폰트 · 텍스트</div>
+                                <div class="pp-field-inline">
+                                    <div style="flex:2;">
+                                        <div style="font-size:0.7rem; color:var(--text2,#999);">폰트 경로 (빈 값=기본 폰트)</div>
+                                        <input id="pp-bubble-font-path" class="input" style="width:100%;" placeholder="C:/Windows/Fonts/malgun.ttf" oninput="renderPostprocessPreview()">
+                                    </div>
+                                    <div style="flex:1;">
+                                        <div style="font-size:0.7rem; color:var(--text2,#999);">폰트 크기(px)</div>
+                                        <input id="pp-bubble-font-size" type="number" class="input" min="8" max="200" oninput="renderPostprocessPreview()">
+                                    </div>
+                                </div>
+                                <div class="pp-field-inline" style="margin-top:6px;">
+                                    <div><div style="font-size:0.7rem; color:var(--text2,#999);">글자색</div><input id="pp-bubble-text-color" type="color" style="width:48px;height:28px;" oninput="renderPostprocessPreview()"></div>
+                                    <div><div style="font-size:0.7rem; color:var(--text2,#999);">말풍선 배경</div><input id="pp-bubble-fill" type="color" style="width:48px;height:28px;" oninput="renderPostprocessPreview()"></div>
+                                    <div><div style="font-size:0.7rem; color:var(--text2,#999);">테두리색</div><input id="pp-bubble-border" type="color" style="width:48px;height:28px;" oninput="renderPostprocessPreview()"></div>
+                                </div>
+                            </div>
+
+                            <div class="pp-card">
+                                <div class="pp-card-title">말풍선 형상</div>
+                                <div class="pp-field-inline">
+                                    <div><div style="font-size:0.7rem; color:var(--text2,#999);">테두리 두께</div><input id="pp-bubble-border-width" type="number" class="input" style="width:70px;" step="0.5" oninput="renderPostprocessPreview()"></div>
+                                    <div><div style="font-size:0.7rem; color:var(--text2,#999);">여백</div><input id="pp-bubble-padding" type="number" class="input" style="width:70px;" oninput="renderPostprocessPreview()"></div>
+                                    <div><div style="font-size:0.7rem; color:var(--text2,#999);">모서리 반경</div><input id="pp-bubble-radius" type="number" class="input" style="width:70px;" oninput="renderPostprocessPreview()"></div>
+                                </div>
+                                <div class="pp-field-inline" style="margin-top:6px;">
+                                    <div><div style="font-size:0.7rem; color:var(--text2,#999);">꼬리 길이</div><input id="pp-bubble-tail-len" type="number" class="input" style="width:70px;" oninput="renderPostprocessPreview()"></div>
+                                    <div><div style="font-size:0.7rem; color:var(--text2,#999);">구름 원 반경</div><input id="pp-bubble-thought-r" type="number" class="input" style="width:70px;" oninput="renderPostprocessPreview()"></div>
+                                    <div><div style="font-size:0.7rem; color:var(--text2,#999);">최대 폭 비율</div><input id="pp-bubble-max-width-ratio" type="number" class="input" style="width:70px;" step="0.05" oninput="renderPostprocessPreview()"></div>
+                                </div>
+                                <div class="pp-field-inline" style="margin-top:6px;">
+                                    <div><div style="font-size:0.7rem; color:var(--text2,#999);">배경 불투명도(0~1)</div><input id="pp-bubble-opacity" type="number" class="input" style="width:70px;" step="0.1" oninput="renderPostprocessPreview()"></div>
+                                    <div><div style="font-size:0.7rem; color:var(--text2,#999);">얼굴 검출 conf</div><input id="pp-bubble-conf" type="number" class="input" style="width:70px;" step="0.05" oninput="renderPostprocessPreview()"></div>
+                                    <div><div style="font-size:0.7rem; color:var(--text2,#999);">매칭 임계치</div><input id="pp-bubble-match-thres" type="number" class="input" style="width:70px;" step="0.05" oninput="renderPostprocessPreview()"></div>
+                                </div>
+                            </div>
+
+                            <div class="pp-card">
+                                <div class="pp-card-title">미리보기</div>
+                                <div class="pp-field-inline" style="align-items:flex-end;">
+                                    <div style="flex:1;">
+                                        <div style="font-size:0.7rem; color:var(--text2,#999);">베이스 이미지 (삽화 백업에서 선택)</div>
+                                        <div style="display:flex; gap:6px; align-items:center;">
+                                            <button type="button" class="btn" style="padding:4px 10px; font-size:0.74rem;" onclick="ppOpenBasePicker()">백업에서 선택</button>
+                                            <span id="pp-bubble-base-name" style="font-size:0.72rem; color:var(--text2,#999);">(없음 → 더미)</span>
+                                            <button type="button" class="btn" style="padding:4px 10px; font-size:0.72rem;" onclick="ppClearBase()">지우기</button>
+                                        </div>
+                                    </div>
+                                </div>
+                                <textarea id="pp-bubble-preview-speak" class="input" rows="2" style="width:100%; font-family:monospace; resize:vertical; margin-top:6px;" placeholder='NAME: "대사"&#10;NAME: (생각)' oninput="renderPostprocessPreview()">akane: "안녕하세요! 말풍선 테스트입니다."</textarea>
+                                <div class="pp-hint">NAME: 발화 형식. NAME 1개 & 얼굴 1개면 임베딩 생략 자동 배정.</div>
+                            </div>
+                        </div>
                     </div>
 
                     <!-- 오른쪽: 실시간 미리보기 -->
@@ -6777,6 +6844,22 @@
             <div class="modal-footer">
                 <button type="button" class="btn" onclick="closePostprocessModal()">취소</button>
                 <button type="button" class="btn btn-primary" onclick="savePostprocessSettings()">저장</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 말풍선 모드: 베이스 이미지 피커 (삽화 백업에서 선택) -->
+    <div class="modal" id="pp-bubble-base-modal">
+        <div class="modal-content" style="max-width:760px;">
+            <div class="modal-header">
+                <h2>베이스 이미지 선택 (삽화 백업)</h2>
+                <button class="modal-close" onclick="ppCloseBasePicker()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="pp-hint" style="margin-bottom:8px;">말풍선 미리보기에 사용할 삽화를 고르세요. (최근 80장)</div>
+                <div id="pp-bubble-base-grid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(110px, 1fr)); gap:8px; max-height:60vh; overflow:auto;">
+                    <div style="font-size:0.8rem; color:var(--text2,#999);">불러오는 중…</div>
+                </div>
             </div>
         </div>
     </div>
@@ -24441,7 +24524,25 @@
                     face_best_only: false,
                     theme: 'sky',
                     opacity: 100,
-                }
+                },
+                bubble: {
+                    enabled: false,
+                    font_path: '',
+                    font_size: 36,
+                    text_color: '#111111',
+                    bubble_fill: '#FFFFFF',
+                    bubble_border: '#333333',
+                    border_width: 2,
+                    opacity: 1.0,
+                    padding: 16,
+                    radius: 22,
+                    tail_len: 30,
+                    thought_circle_r: 18,
+                    max_width_ratio: 0.45,
+                    conf: 0.3,
+                    match_thres: 0.55,
+                },
+                mode: 'vn',  // 활성 후처리 모드: 'vn' | 'bubble'
             };
         }
 
@@ -24530,11 +24631,27 @@
                 if (!resp.ok) throw new Error('HTTP ' + resp.status);
                 const j = await resp.json();
                 const vn = _ppNormalizeVn(j);
-                ppWorking = { vn };
+                ppWorking = { vn, bubble: null, mode: 'vn' };
                 ppApplyVnToUI();
-                renderPostprocessPreview();
-                ppRenderPreviewMatch();
-                ppRefreshFaceDevices().then(() => ppRenderFaceCrop());
+                // 말풍선 모드 설정 + 활성 모드 로드
+                try {
+                    const rb = await fetch('/api/bot_mode/postprocess_bubble?bot=' + encodeURIComponent(botName));
+                    if (rb.ok) {
+                        const jb = await rb.json();
+                        ppWorking.bubble = _ppNormalizeBubble(jb.bubble);
+                        ppWorking.mode = (jb.mode === 'bubble') ? 'bubble' : 'vn';
+                        ppApplyBubbleToUI();
+                    } else {
+                        ppWorking.bubble = _ppNormalizeBubble(null);
+                        ppApplyBubbleToUI();
+                    }
+                } catch (be) {
+                    console.error('[POSTPROCESS] bubble 설정 로드 실패:', be);
+                    ppWorking.bubble = _ppNormalizeBubble(null);
+                    ppApplyBubbleToUI();
+                }
+                switchPostprocessTab(ppWorking.mode || 'vn');  // 저장된 활성 모드 탭으로
+                ppRefreshFaceDevices().then(() => ppRenderFaceCrop());  // vn 얼굴 크롭 미리보기
             } catch (e) {
                 console.error('[POSTPROCESS] 봇 설정 로드 실패:', e);
                 showToast('봇 설정 로드 실패: ' + (e.message || e), 'error');
@@ -24550,13 +24667,15 @@
 
         function openPostprocessModal() {
             ppWorking = JSON.parse(JSON.stringify(defaultPpConfig()));
+            ppBubbleBaseDataUrl = null;
             ppFillBotSelect();
             document.getElementById('postprocess-modal').classList.add('visible');
             if (ppCurrentBot) {
                 ppLoadBotSettings(ppCurrentBot);
             } else {
                 ppApplyVnToUI();
-                renderPostprocessPreview();
+                ppApplyBubbleToUI();
+                switchPostprocessTab('vn');
                 ppRefreshFaceDevices().then(() => ppRenderFaceCrop());
             }
         }
@@ -24567,14 +24686,19 @@
             ppEmotionResetSession();
         }
 
+        let ppActiveTab = 'vn';  // 후처리 모달 현재 활성 탭: 'vn' | 'bubble'
+
         function switchPostprocessTab(name) {
             // 범위 한정: 후처리 모달 내 탭만 토글
+            ppActiveTab = name;
             document.querySelectorAll('#postprocess-modal .pp-tab-btn').forEach(b => b.classList.remove('active'));
-            document.querySelectorAll('#postprocess-modal .settings-tab-panel').forEach(p => p.classList.remove('active'));
+            document.querySelectorAll('#postprocess-modal .settings-tab-panel').forEach(p => { p.classList.remove('active'); p.style.display = 'none'; });
             const btn = document.querySelector(`#postprocess-modal .pp-tab-btn[onclick*="'${name}'"]`);
             if (btn) btn.classList.add('active');
             const panel = document.getElementById('postprocess-tab-' + name);
             if (panel) { panel.classList.add('active'); panel.style.display = 'block'; }
+            // 탭 전환 시 해당 모드 미리보기 갱신 (vn 패널은 display:none 이면 입력값 안 읽히므로)
+            renderPostprocessPreview();
         }
 
         function onPpHeightModeChange() {
@@ -25062,6 +25186,8 @@
         function renderPostprocessPreview() {
             clearTimeout(ppPreviewTimer);
             ppPreviewTimer = setTimeout(async () => {
+                // 활성 탭에 따라 분기 — 미리보기는 실제 전송과 동일 빌더만 경유 (CLAUDE.md).
+                if (ppActiveTab === 'bubble') { await _renderBubblePreview(); return; }
                 const errEl = document.getElementById('pp-preview-error');
                 const imgEl = document.getElementById('pp-preview-img');
                 errEl.style.display = 'none'; errEl.textContent = '';
@@ -25131,10 +25257,180 @@
             }, 250);
         }
 
+        // ─── 말풍선 모드 (bubble) ────────────────────────────────
+        let ppBubbleBaseDataUrl = null;  // 삽화 백업에서 고른 베이스 이미지(data URL). null=더미.
+
+        function _ppNormalizeBubble(b) {
+            const base = defaultPpConfig().bubble;
+            Object.assign(base, b || {});
+            return base;
+        }
+
+        function _ppNum(id, dflt, min, max) {
+            const el = document.getElementById(id);
+            if (!el) return dflt;
+            const v = parseFloat(el.value);
+            if (isNaN(v)) return dflt;
+            if (min !== undefined && v < min) return min;
+            if (max !== undefined && v > max) return max;
+            return v;
+        }
+
+        function ppApplyBubbleToUI() {
+            if (!ppWorking || !ppWorking.bubble) {
+                if (ppWorking) ppWorking.bubble = _ppNormalizeBubble(null);
+            }
+            const b = ppWorking.bubble;
+            const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
+            document.getElementById('pp-bubble-enabled').checked = !!b.enabled;
+            set('pp-bubble-font-path', b.font_path || '');
+            set('pp-bubble-font-size', b.font_size ?? 36);
+            set('pp-bubble-text-color', b.text_color || '#111111');
+            set('pp-bubble-fill', b.bubble_fill || '#FFFFFF');
+            set('pp-bubble-border', b.bubble_border || '#333333');
+            set('pp-bubble-border-width', b.border_width ?? 2);
+            set('pp-bubble-padding', b.padding ?? 16);
+            set('pp-bubble-radius', b.radius ?? 22);
+            set('pp-bubble-tail-len', b.tail_len ?? 30);
+            set('pp-bubble-thought-r', b.thought_circle_r ?? 18);
+            set('pp-bubble-max-width-ratio', b.max_width_ratio ?? 0.45);
+            set('pp-bubble-opacity', b.opacity ?? 1.0);
+            set('pp-bubble-conf', b.conf ?? 0.3);
+            set('pp-bubble-match-thres', b.match_thres ?? 0.55);
+            ppClearBase();  // 베이스는 세션 전용(저장 안 함)
+        }
+
+        function collectPpBubbleSettings() {
+            if (!ppWorking) return null;
+            if (!ppWorking.bubble) ppWorking.bubble = _ppNormalizeBubble(null);
+            const b = ppWorking.bubble;
+            b.enabled = document.getElementById('pp-bubble-enabled').checked;
+            b.font_path = (document.getElementById('pp-bubble-font-path').value || '').trim();
+            b.font_size = _ppNum('pp-bubble-font-size', 36, 4, 400);
+            b.text_color = document.getElementById('pp-bubble-text-color').value;
+            b.bubble_fill = document.getElementById('pp-bubble-fill').value;
+            b.bubble_border = document.getElementById('pp-bubble-border').value;
+            b.border_width = _ppNum('pp-bubble-border-width', 2, 0, 20);
+            b.padding = _ppNum('pp-bubble-padding', 16, 0, 200);
+            b.radius = _ppNum('pp-bubble-radius', 22, 0, 200);
+            b.tail_len = _ppNum('pp-bubble-tail-len', 30, 0, 400);
+            b.thought_circle_r = _ppNum('pp-bubble-thought-r', 18, 2, 200);
+            b.max_width_ratio = _ppNum('pp-bubble-max-width-ratio', 0.45, 0.05, 1.0);
+            b.opacity = _ppNum('pp-bubble-opacity', 1.0, 0, 1);
+            b.conf = _ppNum('pp-bubble-conf', 0.3, 0, 1);
+            b.match_thres = _ppNum('pp-bubble-match-thres', 0.55, 0, 1);
+            return b;
+        }
+
+        async function _renderBubblePreview() {
+            const errEl = document.getElementById('pp-preview-error');
+            const imgEl = document.getElementById('pp-preview-img');
+            const placeholderEl = document.getElementById('pp-preview-placeholder');
+            errEl.style.display = 'none'; errEl.textContent = '';
+            const b = collectPpBubbleSettings();
+            if (!b || !b.enabled) {
+                imgEl.style.display = 'none'; imgEl.src = '';
+                if (placeholderEl) { placeholderEl.style.display = 'block'; placeholderEl.innerHTML = '말풍선 모드를 켜면<br>미리보기가 표시됩니다'; }
+                const _s = document.getElementById('pp-preview-size'); if (_s) _s.textContent = '';
+                return;
+            }
+            try {
+                const body = {
+                    mode: 'bubble',
+                    speak: document.getElementById('pp-bubble-preview-speak').value,
+                    bot_name: (typeof ppCurrentBot !== 'undefined' && ppCurrentBot) ? ppCurrentBot : '',
+                    profile: (typeof _illustSettingsProfile !== 'undefined' && _illustSettingsProfile) ? _illustSettingsProfile : 'solo',
+                    font_path: b.font_path, font_size: b.font_size,
+                    text_color: b.text_color, bubble_fill: b.bubble_fill, bubble_border: b.bubble_border,
+                    border_width: b.border_width, opacity: b.opacity, padding: b.padding, radius: b.radius,
+                    tail_len: b.tail_len, thought_circle_r: b.thought_circle_r,
+                    max_width_ratio: b.max_width_ratio, conf: b.conf, match_thres: b.match_thres,
+                };
+                if (ppBubbleBaseDataUrl) body.base = ppBubbleBaseDataUrl;
+                const resp = await fetch('/api/postprocess/preview', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(body)
+                });
+                if (!resp.ok) {
+                    const txt = await resp.text().catch(() => '');
+                    throw new Error('HTTP ' + resp.status + (txt ? ' - ' + txt.slice(0, 300) : ''));
+                }
+                const blob = await resp.blob();
+                const sizeEl = document.getElementById('pp-preview-size');
+                imgEl.onload = () => { if (sizeEl && imgEl.naturalWidth) sizeEl.textContent = `· ${imgEl.naturalWidth}×${imgEl.naturalHeight}`; };
+                imgEl.src = URL.createObjectURL(blob);
+                imgEl.style.display = 'block';
+                if (placeholderEl) placeholderEl.style.display = 'none';
+            } catch (e) {
+                console.error('[POSTPROCESS] 말풍선 미리보기 실패:', e);
+                errEl.textContent = '말풍선 미리보기 실패: ' + (e.message || e);
+                errEl.style.display = 'block';
+                const _s = document.getElementById('pp-preview-size'); if (_s) _s.textContent = '';
+            }
+        }
+
+        // 베이스 이미지 피커 (삽화 백업에서 선택)
+        async function ppOpenBasePicker() {
+            document.getElementById('pp-bubble-base-modal').classList.add('visible');
+            const grid = document.getElementById('pp-bubble-base-grid');
+            grid.innerHTML = '<div style="font-size:0.8rem; color:var(--text2,#999);">불러오는 중…</div>';
+            try {
+                const resp = await fetch('/api/backups?limit=80&offset=0');
+                if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                const j = await resp.json();
+                const items = (j && Array.isArray(j.backups)) ? j.backups : (Array.isArray(j) ? j : []);
+                if (!items.length) { grid.innerHTML = '<div style="font-size:0.8rem; color:var(--text2,#999);">백업 이미지가 없습니다.</div>'; return; }
+                grid.innerHTML = items.map(it => {
+                    const url = it.image_url || it.url || '';
+                    const name = escapeAttr(it.name || it.filename || it.base || '');
+                    return `<div style="cursor:pointer; border:1px solid var(--border); border-radius:6px; overflow:hidden;" onclick="ppPickBase('${url}','${name}')">`
+                        + `<img src="${url}" style="width:100%; height:120px; object-fit:cover; display:block;" loading="lazy"></div>`;
+                }).join('');
+            } catch (e) {
+                console.error('[POSTPROCESS] 백업 목록 로드 실패:', e);
+                grid.innerHTML = '<div style="font-size:0.8rem; color:var(--error,#e74c3c);">백업 목록 로드 실패: ' + escapeHtml(e.message || String(e)) + '</div>';
+            }
+        }
+
+        function ppCloseBasePicker() {
+            document.getElementById('pp-bubble-base-modal').classList.remove('visible');
+        }
+
+        async function ppPickBase(url, name) {
+            try {
+                const resp = await fetch(url);
+                if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                const blob = await resp.blob();
+                const reader = new FileReader();
+                reader.onload = () => {
+                    ppBubbleBaseDataUrl = reader.result;
+                    const nm = document.getElementById('pp-bubble-base-name');
+                    if (nm) nm.textContent = name;
+                    ppCloseBasePicker();
+                    renderPostprocessPreview();
+                };
+                reader.onerror = () => { showToast('이미지 변환 실패', 'error'); };
+                reader.readAsDataURL(blob);
+            } catch (e) {
+                console.error('[POSTPROCESS] 베이스 이미지 로드 실패:', e);
+                showToast('베이스 이미지 로드 실패: ' + (e.message || e), 'error');
+            }
+        }
+
+        function ppClearBase() {
+            ppBubbleBaseDataUrl = null;
+            const nm = document.getElementById('pp-bubble-base-name');
+            if (nm) nm.textContent = '(없음 → 더미)';
+            if (ppWorking) renderPostprocessPreview();
+        }
+
         async function savePostprocessSettings() {
             if (!ppWorking) { closePostprocessModal(); return; }
             if (!ppCurrentBot) { showToast('봇을 먼저 선택하세요', 'error'); return; }
             collectPpVnSettings();
+            collectPpBubbleSettings();
+            // 활성 탭 = 저장할 활성 모드(vn|bubble). 사용자가 마지막에 본 탭이 적용 모드.
+            ppWorking.mode = (ppActiveTab === 'bubble') ? 'bubble' : 'vn';
             // 감정 추출 결과(emotion_rows/emotion_total)는 임시 — 저장/재오픈 시 사라지도록 제외.
             const payload = JSON.parse(JSON.stringify(ppWorking));
             if (payload && payload.vn) { delete payload.vn.emotion_rows; delete payload.vn.emotion_total; }
@@ -25149,7 +25445,18 @@
                     showToast('후처리 설정 저장 실패: ' + (txt || resp.status), 'error');
                     return;
                 }
-                showToast('후처리 설정 저장 완료 (' + ppCurrentBot + ')');
+                // 말풍선 모드 설정 + 활성 모드 저장 (동일 봇)
+                const rb = await fetch('/api/bot_mode/postprocess_bubble', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({bot: ppCurrentBot, bubble: payload.bubble, mode: ppWorking.mode})
+                });
+                if (!rb.ok) {
+                    const txt = await rb.text().catch(() => '');
+                    showToast('말풍선 설정 저장 실패: ' + (txt || rb.status), 'error');
+                    return;
+                }
+                showToast('후처리 설정 저장 완료 (' + ppCurrentBot + ' · ' + ppWorking.mode + ')');
             } catch (e) {
                 console.error('[POSTPROCESS] 저장 실패:', e);
                 showToast('후처리 설정 저장 실패: ' + (e.message || e), 'error');

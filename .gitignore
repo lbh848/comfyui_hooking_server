@@ -54,3 +54,7 @@ notification_cache.json
 tagger_data/
 
 # YOLO face model (yolov8m-face.onnx) 은 배포를 위해 git에 직접 포함.
+
+# ViT-B/16 visual ONNX (말풍선 모드 얼굴 임베딩, ~165MB) — export_vitl14_onnx.py 로 재생성.
+models/vitl14_visual.onnx
+

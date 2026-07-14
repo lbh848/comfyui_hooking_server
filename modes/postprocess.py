@@ -1045,6 +1045,45 @@ def _default_vn() -> dict:
     }
 
 
+def _default_bubble() -> dict:
+    """봇별 postprocess_bubble 기본값 (말풍선 모드)."""
+    return {
+        "enabled": False,
+        "font_path": "",                  # 빈 값=시스템 기본 폰트
+        "font_size": 36,                  # 텍스트 폰트 px
+        "text_color": "#111111",
+        "bubble_fill": "#FFFFFF",
+        "bubble_border": "#333333",
+        "border_width": 2,
+        "opacity": 1.0,                   # 말풍선 배경 불투명도(0~1)
+        "padding": 16,                    # 몸통 내 텍스트 여백
+        "radius": 22,                     # 발화 말풍선 둥근 모서리 반경
+        "tail_len": 30,                   # 꼬리(얼굴→몸통) 길이
+        "thought_circle_r": 18,           # 생각 말풍선 구름 원 반경
+        "max_width_ratio": 0.45,          # 캔버스 폭 대비 말풍선 최대 폭 비율
+        "conf": 0.3,                      # YOLO 얼굴 검출 신뢰도 임계치
+        "match_thres": 0.55,              # 코사인 유사도 매칭 임계치(이하 미배정)
+    }
+
+
+def _load_bot_bubble(bot_name: str) -> dict:
+    """bot.json에서 해당 봇의 postprocess_bubble 반환. 없으면 기본값."""
+    if not bot_name:
+        return _default_bubble()
+    try:
+        from modes.bot_mode import _load_bot_data
+        data = _load_bot_data()
+        bot = next((b for b in data.get("bots", []) if b.get("name") == bot_name), None)
+        if bot and isinstance(bot.get("postprocess_bubble"), dict):
+            base = _default_bubble()
+            base.update(bot["postprocess_bubble"])
+            return base
+    except Exception as e:
+        print(f"[POSTPROCESS] ⚠ 봇 bubble 로드 실패({bot_name}): {e}")
+        traceback.print_exc()
+    return _default_bubble()
+
+
 def _load_bot_vn(bot_name: str) -> dict:
     """bot.json에서 해당 봇의 postprocess_vn 반환. 없으면 기본값."""
     if not bot_name:
@@ -1097,6 +1136,34 @@ def get_vn_settings(config: dict, bot_name: str = "") -> Optional[dict]:
         "face_device": str(vn.get("face_device", "auto") or "auto"),
         "theme": str(vn.get("theme", VN_THEME_DEFAULT) or VN_THEME_DEFAULT),
         "opacity": int(vn.get("opacity", 100) if vn.get("opacity", 100) is not None else 100),
+    }
+
+
+def get_bubble_settings(config: dict, bot_name: str = "") -> Optional[dict]:
+    """활성 시 bubble 설정(플랫 딕셔너리) 반환, 비활성 시 None.
+
+    마스터 토글(postprocess_enabled) + 봇별 bubble.enabled 모두 켜져 있어야 활성.
+    """
+    if not is_postprocess_active(config):
+        return None
+    bb = _load_bot_bubble(bot_name) if bot_name else _default_bubble()
+    if not bool(bb.get("enabled", False)):
+        return None
+    return {
+        "font_path": bb.get("font_path", "") or "",
+        "font_size": int(bb.get("font_size", 36) or 36),
+        "text_color": bb.get("text_color", "#111111"),
+        "bubble_fill": bb.get("bubble_fill", "#FFFFFF"),
+        "bubble_border": bb.get("bubble_border", "#333333"),
+        "border_width": float(bb.get("border_width", 2) or 2),
+        "opacity": float(bb.get("opacity", 1.0) or 1.0),
+        "padding": int(bb.get("padding", 16) or 16),
+        "radius": int(bb.get("radius", 22) or 22),
+        "tail_len": float(bb.get("tail_len", 30) or 30),
+        "thought_circle_r": float(bb.get("thought_circle_r", 18) or 18),
+        "max_width_ratio": float(bb.get("max_width_ratio", 0.45) or 0.45),
+        "conf": float(bb.get("conf", 0.3) or 0.3),
+        "match_thres": float(bb.get("match_thres", 0.55) or 0.55),
     }
 
 

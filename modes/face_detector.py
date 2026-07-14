@@ -219,6 +219,75 @@ def _detect(sess, image_rgb, conf_thres):
 
 
 
+# ─── 다중 얼굴 검출 (말풍선 모드용) ─────────────────────────────────
+def _nms(boxes, scores, iou_thres):
+    """greedy NMS. boxes/scores 는 numpy 배열. 남은 인덱스 리스트 반환."""
+    import numpy as _np
+    if len(boxes) == 0:
+        return []
+    x1 = boxes[:, 0]; y1 = boxes[:, 1]; x2 = boxes[:, 2]; y2 = boxes[:, 3]
+    areas = (x2 - x1) * (y2 - y1)
+    order = scores.argsort()[::-1]
+    keep = []
+    while order.size > 0:
+        i = int(order[0])
+        keep.append(i)
+        if order.size == 1:
+            break
+        xx1 = _np.maximum(x1[i], x1[order[1:]])
+        yy1 = _np.maximum(y1[i], y1[order[1:]])
+        xx2 = _np.minimum(x2[i], x2[order[1:]])
+        yy2 = _np.minimum(y2[i], y2[order[1:]])
+        w = _np.maximum(0.0, xx2 - xx1)
+        h = _np.maximum(0.0, yy2 - yy1)
+        inter = w * h
+        union = areas[i] + areas[order[1:]] - inter
+        iou = inter / _np.maximum(union, 1e-9)
+        order = order[1:][iou <= iou_thres]
+    return keep
+
+
+def _detect_multi(sess, image_rgb, conf_thres, iou_thres=_IOU_THRES):
+    """세션으로 얼굴 추론 → 임계치 통과 박스 전부 → NMS → (boxes, confs) 리스트 반환.
+
+    단일 검출 _detect 와 달리 모든 얼굴을 반환한다(말풍선 모드는 다인물 매칭 필요).
+    박스는 xyxy 원본 좌표.
+
+    Returns:
+        (boxes, confs):
+          - 검출 성공: boxes=[(x1,y1,x2,y2), ...], confs=[float, ...] (conf 내림차순 아님, NMS 순서).
+          - 미검출: ([], []).
+    """
+    import numpy as _np
+    arr, gain, pad_w, pad_h = _letterbox(image_rgb, _IMG_SIZE)
+    inp = sess.get_inputs()[0]
+    out = sess.run(None, {inp.name: arr})[0]          # [1,5,N]
+    pred = out[0].T                                    # [N,5] = cx,cy,w,h,conf
+    cx, cy, w, h, conf = pred[:, 0], pred[:, 1], pred[:, 2], pred[:, 3], pred[:, 4]
+
+    keep = conf >= conf_thres
+    if not keep.any():
+        return [], []
+
+    cx, cy, w, h, conf = cx[keep], cy[keep], w[keep], h[keep], conf[keep]
+    bx1 = cx - w / 2.0
+    by1 = cy - h / 2.0
+    bx2 = cx + w / 2.0
+    by2 = cy + h / 2.0
+    boxes_960 = _np.stack([bx1, by1, bx2, by2], axis=1)
+    keep_idx = _nms(boxes_960, conf, iou_thres)
+
+    boxes, confs = [], []
+    for i in keep_idx:
+        ox1 = (bx1[i] - pad_w) / gain
+        oy1 = (by1[i] - pad_h) / gain
+        ox2 = (bx2[i] - pad_w) / gain
+        oy2 = (by2[i] - pad_h) / gain
+        boxes.append((float(ox1), float(oy1), float(ox2), float(oy2)))
+        confs.append(float(conf[i]))
+    return boxes, confs
+
+
 # ─── 공용 API ───────────────────────────────────────────────────────
 def crop_face(image, top_mult: float = 1.8, bottom_mult: float = 1.0,
               target_size: int = 256, conf_thres: float = 0.3, device: str = None,
@@ -296,3 +365,35 @@ def crop_face(image, top_mult: float = 1.8, bottom_mult: float = 1.0,
         print(f"[FACE_DETECTOR] ⚠ crop_face 실패: {e}")
         traceback.print_exc()
         return (None, None) if return_conf else None
+
+
+def detect_faces(image, conf_thres: float = 0.3, device: str = None,
+                 iou_thres: float = _IOU_THRES):
+    """이미지에서 모든 얼굴을 검출해 xyxy 박스+신뢰도 리스트 반환 (말풍선 모드용).
+
+    crop_face(단일) 와 달리 NMS 후 모든 박스를 반환한다.
+
+    Args:
+        image: PIL.Image (RGB/RGBA)
+        conf_thres: 신뢰도 임계치
+        device: 디바이스 키(None/auto/cpu/cuda0/dml0). None=자동.
+        iou_thres: NMS IoU 임계치
+
+    Returns:
+        [{"box":(x1,y1,x2,y2), "conf":float}, ...]. 검출 실패 시 [].
+    """
+    sess = _preferred_session(device)
+    if sess is None:
+        print("[FACE_DETECTOR] 세션 사용 불가 — detect_faces 스킵")
+        return []
+    try:
+        if image.mode not in ("RGB", "L"):
+            image = image.convert("RGB")
+        boxes, confs = _detect_multi(sess, image, conf_thres, iou_thres)
+        out = [{"box": b, "conf": c} for b, c in zip(boxes, confs)]
+        print(f"[FACE_DETECTOR] 다중 검출: {len(out)}건 (conf>={conf_thres})")
+        return out
+    except Exception as e:
+        print(f"[FACE_DETECTOR] ⚠ detect_faces 실패: {e}")
+        traceback.print_exc()
+        return []
