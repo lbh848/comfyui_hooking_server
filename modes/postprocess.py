@@ -275,10 +275,23 @@ def compose_postprocess(image_bytes: bytes, speak_text: str,
     settings (vn 설정 플랫 딕셔너리):
         placement, height_mode, height_value, name_color(bool), name_replace(dict)
 
+    speak_text가 None/빈 문자열/공백-only면 합성할 내용이 없으므로 후처리를 돌리지 않고
+    원본 image_bytes를 그대로 반환한다 (검은 바도 붙이지 않음).
+
     실패 시 원본 image_bytes를 그대로 반환한다 (에러 로깅).
     """
     if not _HAS_PIL:
         print("[POSTPROCESS] PIL 미사용으로 후처리 스킵")
+        return image_bytes
+
+    # SPEAK 내용이 없으면 후처리 미실행 — 빈 바가 붙는 것을 방지.
+    # - 빈 문자열 / 공백·개행만 있는 경우
+    # - 업스트림에서 "내용 없음"을 뜻하는 리터럴 문자열("None", "null", "NIL")이 들어온 경우
+    #   (LLM 등이 [SPEAK] 결과로 "None"을 텍스트로 내보내면 파싱 단계에서
+    #    발화로 오인되어 "None" 대사가 합성되는 것을 원천 차단)
+    _speak_str = str(speak_text) if speak_text is not None else ""
+    if not _speak_str.strip() or _speak_str.strip().lower() in ("none", "null", "nil"):
+        print(f"[POSTPROCESS] SPEAK 내용 없음(speak={speak_text!r}), 후처리 스킵 — 원본 반환")
         return image_bytes
 
     try:
@@ -317,8 +330,9 @@ def compose_postprocess(image_bytes: bytes, speak_text: str,
 
     segments = parse_speak(speak_text)
     if not segments:
-        # 내용이 없으면 박스만 남기고 반환
-        return _to_output_bytes(canvas)
+        # 파싱 결과 대사/생각이 하나도 없으면 바만 남기지 않고 원본 반환
+        print(f"[POSTPROCESS] 파싱된 SPEAK 세그먼트 없음(speak={speak_text!r}), 후처리 스킵 — 원본 반환")
+        return image_bytes
 
     # 폰트 크기: 사용자 지정값 우선, 없으면 박스 높이 기반 자동 계산
     try:
