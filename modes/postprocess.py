@@ -601,6 +601,9 @@ def compose_postprocess(image_bytes: bytes, speak_text: str,
         face_conf = float(settings.get("face_conf", 0.3) or 0.3)
     except (TypeError, ValueError):
         face_conf = 0.3
+    # '최고 신뢰도 박스 고정': 임계치 0 강제 → 항상 최고 신뢰도 박스 반환(미리보기/실합성 동일).
+    if bool(settings.get("face_best_only", False)):
+        face_conf = 0.0
     prefix = settings.get("prefix", "") or ""
     suffix = settings.get("suffix", "") or ""
     face_device = (settings.get("face_device") or "auto").strip() or "auto"
@@ -1036,6 +1039,7 @@ def _default_vn() -> dict:
         "face_crop_top": 1.8,          # 위쪽 크롭 계수. 1.0=검출박스 그대로, 클수록 위로 확장(데이터패치 노드와 동일 규칙)
         "face_crop_bottom": 1.0,       # 아래쪽 크롭 계수. 1.0=검출박스 그대로, 클수록 아래로 확장
         "face_conf": 0.3,              # YOLO 얼굴 검출 신뢰도 임계치
+        "face_best_only": False,       # True면 CONF 무시, 검출 박스 중 최고 신뢰도 강제 사용
         "theme": VN_THEME_DEFAULT,     # 대사창 색 테마(sky/ivory/lavender/black/gray/classic)
         "opacity": 100,                # 카드 배경 반투명도(0~100). 100=불투명. 글자/얼굴은 그대로
     }
@@ -1089,6 +1093,7 @@ def get_vn_settings(config: dict, bot_name: str = "") -> Optional[dict]:
         "face_crop_top": float(vn.get("face_crop_top", 1.8) or 1.8),
         "face_crop_bottom": float(vn.get("face_crop_bottom", 1.0) or 1.0),
         "face_conf": float(vn.get("face_conf", 0.3) or 0.3),
+        "face_best_only": bool(vn.get("face_best_only", False)),
         "face_device": str(vn.get("face_device", "auto") or "auto"),
         "theme": str(vn.get("theme", VN_THEME_DEFAULT) or VN_THEME_DEFAULT),
         "opacity": int(vn.get("opacity", 100) if vn.get("opacity", 100) is not None else 100),

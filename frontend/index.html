@@ -6721,6 +6721,10 @@
                                         <div style="flex:1;">
                                             <div style="font-size:0.7rem; color:var(--text2, #999); margin-bottom:2px;">FACE_CONF (신뢰도 임계치)</div>
                                             <input type="number" id="pp-vn-face-conf" value="0.3" step="0.05" min="0" max="1" class="input" style="width:100%;" oninput="collectPpVnSettings(); renderPostprocessPreview(); ppRenderFaceCrop();">
+                                            <label style="display:flex; align-items:center; gap:4px; margin-top:4px; font-size:0.68rem; color:var(--text2,#999); cursor:pointer;">
+                                                <input type="checkbox" id="pp-vn-face-best-only" onchange="onPpFaceBestOnlyChange(); collectPpVnSettings(); renderPostprocessPreview(); ppRenderFaceCrop();" style="margin:0;">
+                                                최고 신뢰도 박스 고정
+                                            </label>
                                         </div>
                                     </div>
                                     <div class="pp-field-inline" style="margin-top:6px; align-items:flex-end;">
@@ -6732,7 +6736,7 @@
                                         </div>
                                         <button type="button" class="btn" style="padding:4px 10px; font-size:0.7rem; margin-left:6px;" onclick="ppRefreshFaceDevices()" title="설치된 onnxruntime 패키지 기준으로 사용 가능 디바이스를 다시 조회">새로고침</button>
                                     </div>
-                                    <div class="pp-hint" style="margin-top:4px;">첫 화자의 캐릭터 이미지에서 얼굴을 검출(ONNX Runtime)해 크롭. <b>1.0=검출 박스 그대로(raw)</b>, 클수록 박스 중심 기준 위·아래로 확장(데이터패치 노드와 동일 규칙). CONF 이하 신뢰도 박스는 무시. 디바이스: CUDA(NVIDIA)/DirectML(Windows AMD·Intel·NVIDIA)/CPU 자동 감지 — GPU provider 패키지(onnxruntime-gpu / onnxruntime-directml) 설치 시에만 GPU 항목이 노출됨.</div>
+                                    <div class="pp-hint" style="margin-top:4px;">첫 화자의 캐릭터 이미지에서 얼굴을 검출(ONNX Runtime)해 크롭. <b>1.0=검출 박스 그대로(raw)</b>, 클수록 박스 중심 기준 위·아래로 확장(데이터패치 노드와 동일 규칙). CONF 이하 신뢰도 박스는 무시. <b>최고 신뢰도 박스 고정</b>을 켜면 CONF 값을 무시하고 검출된 박스 중 신뢰도가 가장 높은 박스를 항상 사용(임계치로 인한 미검출 방지). 디바이스: CUDA(NVIDIA)/DirectML(Windows AMD·Intel·NVIDIA)/CPU 자동 감지 — GPU provider 패키지(onnxruntime-gpu / onnxruntime-directml) 설치 시에만 GPU 항목이 노출됨.</div>
                                     <!-- YOLO 크롭 결과 실시간 미리보기 -->
                                     <div style="margin-top:8px; border-top:1px solid var(--border); padding-top:8px;">
                                         <div style="font-size:0.74rem; color:var(--text2, #999); margin-bottom:4px;">YOLO 크롭 결과 (실시간)</div>
@@ -24434,6 +24438,7 @@
                     face_crop_top: 1.8,
                     face_crop_bottom: 1.0,
                     face_conf: 0.3,
+                    face_best_only: false,
                     theme: 'sky',
                     opacity: 100,
                 }
@@ -24465,6 +24470,7 @@
             if (typeof base.face_crop_top !== 'number') base.face_crop_top = 1.8;
             if (typeof base.face_crop_bottom !== 'number') base.face_crop_bottom = 1.0;
             if (typeof base.face_conf !== 'number') base.face_conf = 0.3;
+            if (typeof base.face_best_only !== 'boolean') base.face_best_only = false;
             if (typeof base.theme !== 'string') base.theme = 'sky';
             if (typeof base.opacity !== 'number') base.opacity = 100;
             if (typeof base.name_font_size !== 'number') base.name_font_size = 0;
@@ -24502,6 +24508,8 @@
             if (_fbot) _fbot.value = (vn.face_crop_bottom === undefined ? 1.0 : vn.face_crop_bottom);
             const _fconf = document.getElementById('pp-vn-face-conf');
             if (_fconf) _fconf.value = (vn.face_conf === undefined ? 0.3 : vn.face_conf);
+            const _fbest = document.getElementById('pp-vn-face-best-only');
+            if (_fbest) { _fbest.checked = !!vn.face_best_only; onPpFaceBestOnlyChange(); }
             const _theme = document.getElementById('pp-vn-theme');
             if (_theme) _theme.value = vn.theme || 'sky';
             const _opa = document.getElementById('pp-vn-opacity');
@@ -24994,6 +25002,16 @@
             }
         }
 
+        // '최고 신뢰도 박스 고정' 체크 시 FACE_CONF 입력을 비활성화(값 무시 표시).
+        function onPpFaceBestOnlyChange() {
+            const cb = document.getElementById('pp-vn-face-best-only');
+            const conf = document.getElementById('pp-vn-face-conf');
+            if (cb && conf) {
+                conf.disabled = cb.checked;
+                conf.style.opacity = cb.checked ? '0.4' : '1';
+            }
+        }
+
         function collectPpVnSettings() {
             // UI 입력값을 ppWorking.vn에 반영하고 반환 (미리보기/저장 공통)
             if (!ppWorking) return null;
@@ -25029,6 +25047,8 @@
             const _fcEl = document.getElementById('pp-vn-face-conf');
             const _fcRaw = _fcEl ? parseFloat(_fcEl.value) : NaN;
             vn.face_conf = isNaN(_fcRaw) ? 0.3 : Math.min(1.0, Math.max(0.0, _fcRaw));
+            const _fboEl = document.getElementById('pp-vn-face-best-only');
+            vn.face_best_only = _fboEl ? _fboEl.checked : false;
             const _fdEl = document.getElementById('pp-vn-face-device');
             vn.face_device = _fdEl ? (_fdEl.value || 'auto') : (vn.face_device || 'auto');
             const _themeEl = document.getElementById('pp-vn-theme');
@@ -25077,6 +25097,7 @@
                             face_crop_top: vn.face_crop_top,
                             face_crop_bottom: vn.face_crop_bottom,
                             face_conf: vn.face_conf,
+                            face_best_only: vn.face_best_only === true,
                             theme: vn.theme || 'sky',
                             opacity: vn.opacity,
                             speak: document.getElementById('pp-vn-preview-speak').value,
@@ -25203,7 +25224,7 @@
         }
 
         // YOLO 크롭 결과(합성과 동일)를 ObjectURL로 반환. 병렬 테스트/실시간 미리보기 공용.
-        // {url, cropMs} 반환 — cropMs는 서버 X-Crop-Ms 헤더(YOLO 추론+리사이즈 ms).
+        // {url, cropMs, conf} 반환 — cropMs는 X-Crop-Ms(추론+리사이즈 ms), conf는 X-Face-Conf(얼굴 신뢰도).
         async function ppFetchFaceCropUrl(character, emotion, vn) {
             const resp = await fetch('/api/postprocess/preview_face', {
                 method: 'POST',
@@ -25217,6 +25238,7 @@
                     face_crop_top: vn && vn.face_crop_top,
                     face_crop_bottom: vn && vn.face_crop_bottom,
                     face_conf: vn && vn.face_conf,
+                    face_best_only: !!(vn && vn.face_best_only),
                     device: (vn && vn.face_device) || 'auto',
                 })
             });
@@ -25227,8 +25249,13 @@
                 throw err;
             }
             const cropMsRaw = resp.headers.get('X-Crop-Ms');
+            const confRaw = resp.headers.get('X-Face-Conf');
             const blob = await resp.blob();
-            return { url: URL.createObjectURL(blob), cropMs: cropMsRaw ? parseFloat(cropMsRaw) : null };
+            return {
+                url: URL.createObjectURL(blob),
+                cropMs: cropMsRaw ? parseFloat(cropMsRaw) : null,
+                conf: confRaw ? parseFloat(confRaw) : null,
+            };
         }
 
         async function ppRenderPreviewMatch() {
@@ -25290,13 +25317,13 @@
                 const emotion = vn.strip_emotion ? (seg.emotion || '') : '';
                 cont.innerHTML = '<div style="font-size:0.74rem; color:var(--text2,#888);">크롭 중...</div>';
                 try {
-                    const { url, cropMs } = await ppFetchFaceCropUrl(seg.speaker, emotion, vn);
+                    const { url, cropMs, conf } = await ppFetchFaceCropUrl(seg.speaker, emotion, vn);
                     cont.innerHTML = `<div style="display:flex; gap:8px; align-items:flex-start;">
                         <img src="${url}" style="width:96px; height:96px; object-fit:cover; border-radius:6px; border:1px solid var(--border); background:#000;">
                         <div style="min-width:0; font-size:0.72rem; color:var(--text2,#999); line-height:1.5;">
                             <div style="word-break:break-all;">${escapeHtml(seg.speaker)}${emotion ? ' · ' + escapeHtml(emotion) : ''}</div>
-                            <div>TOP ${vn.face_crop_top} · BOT ${vn.face_crop_bottom} · CONF ${vn.face_conf}</div>
-                            <div>크롭 <b style="color:var(--text,#ddd);">${cropMs != null ? cropMs.toFixed(0) + 'ms' : '-'}</b> · 합성과 동일</div>
+                            <div>TOP ${vn.face_crop_top} · BOT ${vn.face_crop_bottom} · CONF ${vn.face_conf}${vn.face_best_only ? ' · <b style="color:var(--accent,#5b9);">최고박스고정</b>' : ''}</div>
+                            <div>크롭 <b style="color:var(--text,#ddd);">${cropMs != null ? cropMs.toFixed(0) + 'ms' : '-'}</b>${conf != null ? ' · 신뢰도 <b style="color:var(--accent,#5b9);">' + (conf * 100).toFixed(0) + '%</b>' : ''} · 합성과 동일</div>
                         </div>
                     </div>`;
                 } catch (e) {
@@ -25361,15 +25388,18 @@
             const items = await Promise.all(tasks);
             const cropTimes = items.map(it => it.crop && it.crop.cropMs).filter(v => v != null);
             const avgMs = cropTimes.length ? (cropTimes.reduce((a, b) => a + b, 0) / cropTimes.length) : null;
+            const confs = items.map(it => it.crop && it.crop.conf).filter(v => v != null);
+            const avgConf = confs.length ? (confs.reduce((a, b) => a + b, 0) / confs.length) : null;
+            const minConf = confs.length ? Math.min(...confs) : null;
             const sumLine = cropTimes.length
-                ? `<span style="color:var(--text2,#999);"> · 크롭 평균 <b style="color:var(--text,#ddd);">${avgMs.toFixed(0)}ms</b> (${cropTimes.length}/${items.length} 성공) · 최대 ${Math.max(...cropTimes).toFixed(0)}ms</span>`
+                ? `<span style="color:var(--text2,#999);"> · 크롭 평균 <b style="color:var(--text,#ddd);">${avgMs.toFixed(0)}ms</b> (${cropTimes.length}/${items.length} 성공) · 최대 ${Math.max(...cropTimes).toFixed(0)}ms${avgConf != null ? ' · 신뢰도 평균 <b style="color:var(--accent,#5b9);">' + (avgConf * 100).toFixed(0) + '%</b> · 최소 ' + (minConf * 100).toFixed(0) + '%' : ''}</span>`
                 : '';
             results.innerHTML = items.map(it => `
                 <div style="display:flex; gap:8px; align-items:center; padding:6px; border:1px solid var(--border); border-radius:6px; margin-bottom:6px; background:var(--surface2);">
                     ${it.crop && it.crop.url ? `<img src="${it.crop.url}" style="width:72px; height:72px; flex:0 0 72px; border-radius:4px; border:1px solid var(--border); object-fit:cover; background:#000;" title="YOLO 크롭 결과">` : `<div style="width:72px; height:72px; flex:0 0 72px; border-radius:4px; border:1px dashed var(--border); display:flex; align-items:center; justify-content:center; font-size:0.6rem; color:var(--text2,#999); text-align:center;">크롭<br>없음</div>`}
                     <div style="flex:1; min-width:0;">
                         <code style="font-size:0.78rem; word-break:break-all;">${escapeHtml(name)}: "${escapeHtml(line)}" #${escapeHtml(it.emo)}</code>
-                        ${it.crop && it.crop.cropMs != null ? `<div style="font-size:0.7rem; color:var(--accent,#5b9); margin-top:2px;">크롭 <b>${it.crop.cropMs.toFixed(0)}ms</b></div>` : ''}
+                        ${it.crop && (it.crop.cropMs != null || it.crop.conf != null) ? `<div style="font-size:0.7rem; color:var(--accent,#5b9); margin-top:2px;">크롭 <b>${it.crop.cropMs != null ? it.crop.cropMs.toFixed(0) + 'ms' : '-'}</b>${it.crop.conf != null ? ' · 신뢰도 <b>' + (it.crop.conf * 100).toFixed(0) + '%</b>' : ''}</div>` : ''}
                         ${it.match
                             ? `<div style="font-size:0.72rem; color:var(--text2,#999); margin-top:2px;">${escapeHtml(it.match.filename)} [${escapeHtml(it.match.match)}${it.match.score != null ? ' ' + it.match.score : ''}]</div>`
                             : (it.matchErr ? `<div style="color:var(--error,#e74c3c); font-size:0.72rem; margin-top:2px;">매칭: ${escapeHtml(it.matchErr)}</div>` : '')}

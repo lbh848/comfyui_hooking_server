@@ -173,13 +173,24 @@ def _letterbox(image, size=_IMG_SIZE):
 
 
 def _detect(sess, image_rgb, conf_thres):
-    """세션으로 얼굴 추론 → NMS → 신뢰도 최고 박스(xyxy, 원본 좌표) 반환. 없으면 None."""
+    """세션으로 얼굴 추론 → NMS → 신뢰도 최고 박스(xyxy, 원본 좌표) 반환.
+
+    Returns:
+        (box_or_None, conf): conf 는 항상 채워진다.
+          - 검출 성공: box=(x1,y1,x2,y2)(원본 좌표), conf=선택 박스 신뢰도.
+          - 임계치 미달/NMS 전멸: box=None, conf=이미지 내 전체 박스 중 최고 신뢰도.
+            (임계치 튜닝/디버그용 — 미검출이라도 어느 정도 신뢰도의 박스가 있었는지 노출)
+          - 추론 결과 자체에 박스가 없으면 conf=None.
+    """
     import numpy as _np
     arr, gain, pad_w, pad_h = _letterbox(image_rgb, _IMG_SIZE)
     inp = sess.get_inputs()[0]
     out = sess.run(None, {inp.name: arr})[0]          # [1,5,8400]
     pred = out[0].T                                    # [8400,5] = cx,cy,w,h,conf
     cx, cy, w, h, conf = pred[:, 0], pred[:, 1], pred[:, 2], pred[:, 3], pred[:, 4]
+
+    # 임계치 무관 전체 최고 신뢰도 — 미검출 시에도 반환(튜닝 단서).
+    max_conf_all = float(conf.max()) if conf.size else None
 
     x1 = cx - w / 2.0
     y1 = cy - h / 2.0
@@ -188,7 +199,7 @@ def _detect(sess, image_rgb, conf_thres):
 
     keep = conf >= conf_thres
     if not keep.any():
-        return None
+        return None, max_conf_all
     X = _np.stack([x1, y1, x2, y2], axis=1)[keep]
     C = conf[keep]
     # NMS (greedy, IoU 0.45)
@@ -212,7 +223,7 @@ def _detect(sess, image_rgb, conf_thres):
         iou = inter / _np.clip(a1 + a2 - inter, 1e-7, None)
         order = order[iou <= _IOU_THRES]
     if not kept:
-        return None
+        return None, max_conf_all
     best = kept[0]   # 신뢰도 최고
     bx = X[best]
     bconf = float(C[best])
@@ -224,9 +235,11 @@ def _detect(sess, image_rgb, conf_thres):
     return (float(ox1), float(oy1), float(ox2), float(oy2)), bconf
 
 
+
 # ─── 공용 API ───────────────────────────────────────────────────────
 def crop_face(image, top_mult: float = 1.8, bottom_mult: float = 1.0,
-              target_size: int = 256, conf_thres: float = 0.3, device: str = None):
+              target_size: int = 256, conf_thres: float = 0.3, device: str = None,
+              return_conf: bool = False):
     """이미지에서 얼굴을 검출해 정사각형으로 크롭한 PIL.Image 반환.
 
     Args:
@@ -236,28 +249,31 @@ def crop_face(image, top_mult: float = 1.8, bottom_mult: float = 1.0,
         target_size: 출력 정사각형 한 변(px)
         conf_thres: 신뢰도 임계치
         device: 디바이스 키(None/auto/cpu/cuda0/dml0 등). None=자동.
+        return_conf: True 면 (image, conf) 튜플 반환. conf=None 일 수 있음(검출 실패/예외).
 
     비정사각형 크롭 영역은 비율을 유지해 짧은 변을 target_size로 확대한 뒤,
     긴 변을 중앙 기준으로 깎아(center-crop) 정사각형으로 만든다. 왜곡 없음.
 
     Returns:
-        PIL.Image(target_size x target_size) 또는 None(검출 실패).
+        return_conf=False(기본): PIL.Image(target_size x target_size) 또는 None(검출 실패).
+        return_conf=True: (image_or_None, conf_or_None).
     """
     from PIL import Image as _PILImage
     sess = _preferred_session(device)
     if sess is None:
         print("[FACE_DETECTOR] 세션 사용 불가 — crop_face 스킵")
-        return None
+        return (None, None) if return_conf else None
 
     try:
         if image.mode not in ("RGB", "L"):
             image = image.convert("RGB")
 
         det = _detect(sess, image, conf_thres)
-        if det is None:
-            print("[FACE_DETECTOR] 얼굴 검출 0건 (conf>=%s)" % conf_thres)
-            return None
-        (x1, y1, x2, y2), bconf = det
+        box, bconf = det   # box=None 이면 임계치 미달; bconf는 전체 최고 신뢰도(튜닝 단서)
+        if box is None:
+            print("[FACE_DETECTOR] 얼굴 검출 0건 (conf>=%s, 최고=%.3f)" % (conf_thres, bconf if bconf is not None else -1))
+            return (None, bconf) if return_conf else None
+        (x1, y1, x2, y2) = box
         print(f"[FACE_DETECTOR] 선택 박스 conf={bconf:.3f} xyxy=({x1:.0f},{y1:.0f},{x2:.0f},{y2:.0f})")
 
         W, H = image.size
@@ -280,7 +296,7 @@ def crop_face(image, top_mult: float = 1.8, bottom_mult: float = 1.0,
 
         if right - left < 8 or bottom - top < 8:
             print(f"[FACE_DETECTOR] 크롭 영역 너무 작음 ({right-left:.0f}x{bottom-top:.0f})")
-            return None
+            return (None, bconf) if return_conf else None
 
         crop = image.crop((int(left), int(top), int(right), int(bottom)))
 
@@ -292,8 +308,8 @@ def crop_face(image, top_mult: float = 1.8, bottom_mult: float = 1.0,
         px = (nw - target_size) // 2
         py = (nh - target_size) // 2
         crop = crop.crop((px, py, px + target_size, py + target_size))
-        return crop
+        return (crop, bconf) if return_conf else crop
     except Exception as e:
         print(f"[FACE_DETECTOR] ⚠ crop_face 실패: {e}")
         traceback.print_exc()
-        return None
+        return (None, None) if return_conf else None

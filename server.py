@@ -3337,6 +3337,7 @@ async def handle_api_postprocess_preview(request: web.Request) -> web.Response:
             "face_crop_top": body.get("face_crop_top", 1.8),
             "face_crop_bottom": body.get("face_crop_bottom", 1.0),
             "face_conf": body.get("face_conf", 0.3),
+            "face_best_only": bool(body.get("face_best_only", False)),
             "theme": body.get("theme", "sky"),
             "opacity": body.get("opacity", 100),
         }
@@ -3462,7 +3463,12 @@ async def handle_api_postprocess_preview_face(request: web.Request) -> web.Respo
             face_conf = float(body.get("face_conf", 0.3) or 0.3)
         except (TypeError, ValueError):
             face_conf = 0.3
+        face_best_only = bool(body.get("face_best_only", False))
         device = (body.get("device") or "auto").strip() or "auto"
+
+        # '최고 신뢰도 박스 고정': 임계치를 0으로 강제 → 검출된 박스 중 신뢰도 최고를 항상 반환.
+        if face_best_only:
+            face_conf = 0.0
 
         if not bot_name:
             return web.json_response({"error": "봇이 선택되지 않았습니다."}, status=400)
@@ -3489,21 +3495,26 @@ async def handle_api_postprocess_preview_face(request: web.Request) -> web.Respo
         # target_size는 미리보기 표시용으로 충분히 큰 고정값. 합성 결과와 크롭 영역은 동일.
         # 크롭 실행 시간(YOLO 추론+리사이즈)만 측정 — 매칭/로드/IO 제외.
         _t0 = time.perf_counter()
-        crop = face_detector.crop_face(
+        crop, face_conf_val = face_detector.crop_face(
             base, top_mult=face_crop_top, bottom_mult=face_crop_bottom,
-            target_size=256, conf_thres=face_conf, device=device)
+            target_size=256, conf_thres=face_conf, device=device, return_conf=True)
         _crop_ms = (time.perf_counter() - _t0) * 1000.0
-        print(f"[FACE_DETECTOR] 크롭 {os.path.basename(matched[0])}: {_crop_ms:.0f}ms")
+        print(f"[FACE_DETECTOR] 크롭 {os.path.basename(matched[0])}: {_crop_ms:.0f}ms conf={face_conf_val}")
         if crop is None:
+            # 미검출이라도 서버가 본 '이미지 내 최고 신뢰도'를 노출(임계치 튜닝 단서).
+            conf_tag = f" · 최고 신뢰도 {face_conf_val*100:.0f}%" if face_conf_val is not None else ""
+            err_headers = {"X-Face-Conf": f"{face_conf_val:.3f}"} if face_conf_val is not None else {}
             return web.json_response(
-                {"error": f"얼굴 검출 실패(CONF>{face_conf} 박스 없음): {matched[0]}"},
-                status=400)
+                {"error": f"얼굴 검출 실패(CONF>{face_conf} 미달): {matched[0]}{conf_tag}",
+                 "max_conf": face_conf_val},
+                status=400, headers=err_headers)
 
         buf = BytesIO()
         crop.save(buf, format="PNG")
         return web.Response(
             body=buf.getvalue(), content_type="image/png",
-            headers={"X-Crop-Ms": f"{_crop_ms:.0f}"})
+            headers={"X-Crop-Ms": f"{_crop_ms:.0f}",
+                     "X-Face-Conf": f"{face_conf_val:.3f}"})
     except Exception as e:
         tb = traceback.format_exc()
         print(f"[ERROR] postprocess_preview_face 실패: {e}\n{tb}")
