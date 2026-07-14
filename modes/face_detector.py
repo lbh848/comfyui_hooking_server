@@ -4,16 +4,15 @@ face_detector - ONNX Runtime 기반 YOLO 얼굴 검출 + 크롭
 삽화 후처리 VN 대사창의 좌측 얼굴 슬롯용으로, 매칭된 캐릭터 이미지에서
 얼굴을 검출해 정사각형으로 크롭한다.
 
-- 모델: YOLOv8m-face (akanametov/yolov8-face) 를 ONNX 로 export 한 것(models/yolov8m-face.onnx).
-  · export 는 dev 머신에서 1회 수행(ultralytics+torch 필요). 배포 시엔 .onnx 파일 자체를 제공.
-  · .onnx 가 없고 .pt 만 있으면 ultralytics 로 1회 export(가능한 경우).
+- 모델: YOLOv8m-face (akanametov/yolov8-face) 를 imgsz=960 으로 ONNX export 한 것
+  (models/yolov8m-face.onnx). 모델 파일은 git 에 커밋되어 함께 배포된다.
 - 추론: onnxruntime. PyTorch 의존 없음 — 가볍고 범용.
 - 디바이스(Execution Provider) 런타임 자동 감지 + 드롭박스 수동 선택:
   · CUDAExecutionProvider  (NVIDIA — onnxruntime-gpu)
   · DmlExecutionProvider    (Windows NVIDIA/AMD/Intel — onnxruntime-directml)
   · CPUExecutionProvider    (항상, 폴백)
   어떤 환경에서든 동작. GPU provider 세션 생성/추론 실패 시 자동 CPU 폴백.
-- 디코드: export 출력 [1,5,8400] = (cx,cy,w,h) 절대 640px 좌표 + face conf(이미 sigmoid).
+- 디코드: export 출력 [1,5,N] (imgsz=960 → N=18900) = (cx,cy,w,h) 절대 960px 좌표 + face conf(이미 sigmoid).
   NMS(IoU 0.45) → 신뢰도 최고 박스 1개 → letterbox 역변환(원본 좌표).
 - 크롭 규칙: 데이터패치 워크플로우 노드(SoyaDetectAndCrop_mdsoya)와 동일.
   top_mult/bottom_mult = 1.0 이면 검출 박스 그대로(raw). 클수록 박스 중심 기준 위/아래로 확장.
@@ -27,11 +26,7 @@ from PIL import Image as _PILImage
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MODELS_DIR = os.path.join(BASE_DIR, "models")
 _MODEL_PATH = os.path.join(MODELS_DIR, "yolov8m-face.onnx")
-_PT_PATH = os.path.join(MODELS_DIR, "yolov8m-face.pt")  # export 폴백용
-# 배포용 ONNX 호스팅: 본 repo(lbh848/comfyui_hooking_server) GitHub Release.
-# models/ 디렉토리는 gitignore 되어 git에 모델이 없으므로, 최초 실행 시 이 URL에서 다운로드.
-_ONNX_URL = "https://github.com/lbh848/comfyui_hooking_server/releases/download/models-v1/yolov8m-face.onnx"
-_IMG_SIZE = 640  # export 시 고정 imgsz
+_IMG_SIZE = 960  # 학습 imgsz=960 (akanametov yolov8m-face). 640으로 돌리면 작은 얼굴(풀바디) 검출 붕괴.
 
 _CONF_THRES_DEFAULT = 0.3
 _IOU_THRES = 0.45
@@ -102,59 +97,12 @@ def list_devices():
 
 
 # ─── 모델 파일 준비 ─────────────────────────────────────────────────
-def _download_onnx():
-    """_ONNX_URL 에서 .onnx 를 models/ 로 다운로드. 성공 시 True."""
-    try:
-        os.makedirs(MODELS_DIR, exist_ok=True)
-    except Exception as e:
-        print(f"[FACE_DETECTOR] ⚠ models 디렉토리 생성 실패: {e}")
-        return False
-    print(f"[FACE_DETECTOR] 모델 다운로드: {_ONNX_URL} -> {_MODEL_PATH}")
-    try:
-        import urllib.request
-        urllib.request.urlretrieve(_ONNX_URL, _MODEL_PATH)
-        size = os.path.getsize(_MODEL_PATH)
-        if size < 1024 * 1024:  # < 1MB면 실패로 간주(에러 HTML 등)
-            print(f"[FACE_DETECTOR] ⚠ 다운로드 파일이 너무 작음({size}B) — URL/릴리스 확인 필요")
-            try:
-                os.remove(_MODEL_PATH)
-            except Exception:
-                pass
-            return False
-        print(f"[FACE_DETECTOR] 다운로드 완료: {size:,} bytes")
-        return True
-    except Exception as e:
-        print(f"[FACE_DETECTOR] ⚠ 모델 다운로드 실패: {e}")
-        traceback.print_exc()
-        try:
-            if os.path.isfile(_MODEL_PATH) and os.path.getsize(_MODEL_PATH) < 1024 * 1024:
-                os.remove(_MODEL_PATH)
-        except Exception:
-            pass
-        return False
-
-
 def _ensure_model():
-    """.onnx 존재 보장. 우선순위: 기존 파일 → GitHub Release 다운로드 → .pt export 폴백."""
+    """.onnx 존재 확인. 모델은 git 에 커밋되어 배포되므로 별도 다운로드/export 없음."""
     if os.path.isfile(_MODEL_PATH) and os.path.getsize(_MODEL_PATH) > 1024 * 1024:
         return True
-    # 1) GitHub Release에서 자동 다운로드 (배포/새 설치자용)
-    if _download_onnx():
-        return True
-    # 2) .pt 가 있으면 1회 export (dev/업데이터 폴백 — ultralytics 필요)
-    if os.path.isfile(_PT_PATH):
-        print(f"[FACE_DETECTOR] 다운로드 실패 → {_PT_PATH} 에서 export 시도")
-        try:
-            from ultralytics import YOLO
-            YOLO(_PT_PATH).export(format="onnx", imgsz=_IMG_SIZE, opset=12, simplify=True, dynamic=False)
-            if os.path.isfile(_MODEL_PATH) and os.path.getsize(_MODEL_PATH) > 1024 * 1024:
-                print(f"[FACE_DETECTOR] export 완료: {_MODEL_PATH}")
-                return True
-        except Exception as e:
-            print(f"[FACE_DETECTOR] ⚠ export 실패: {e}")
-            traceback.print_exc()
-    print(f"[FACE_DETECTOR] ⚠ 모델 확보 실패: {_MODEL_PATH}\n"
-          f"  GitHub Release({_ONNX_URL}) 확인 또는 수동 배치 필요.")
+    print(f"[FACE_DETECTOR] ⚠ 모델 파일 없음: {_MODEL_PATH}\n"
+          f"  git 으로 models/yolov8m-face.onnx 가 포함되어 있는지 확인 필요.")
     return False
 
 
