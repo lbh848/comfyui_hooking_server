@@ -3325,10 +3325,17 @@ async def handle_api_postprocess_preview(request: web.Request) -> web.Response:
             "height_mode": body.get("height_mode", "ratio"),
             "height_value": body.get("height_value", 0.12),
             "font_size": body.get("font_size", 0) or 0,
+            "name_font_size": body.get("name_font_size", 0) or 0,
+            "emotion_font_size": body.get("emotion_font_size", 0) or 0,
             "name_color": bool(body.get("name_color", False)),
             "name_replace": body.get("name_replace") or {},
             "name_replace_enabled": bool(body.get("name_replace_enabled", True)),
             "strip_emotion": bool(body.get("strip_emotion", False)),
+            "prefix": body.get("prefix", "") or "",
+            "suffix": body.get("suffix", "") or "",
+            "face_enabled": bool(body.get("face_enabled", True)),
+            "face_crop_top": body.get("face_crop_top", 1.8),
+            "face_crop_bottom": body.get("face_crop_bottom", 1.0),
         }
         speak = body.get("speak", "") or ""
         bot_name = body.get("bot_name", "") or app_config.get("bot_selected", "") or ""
@@ -3566,8 +3573,12 @@ async def handle_api_postprocess_match_image(request: web.Request) -> web.Respon
       1) 토큰 base 정확 일치 / 포함
       2) Levenshtein 유사도 최대(fallback)
     반환: {filename, url, match:"exact"|"fuzzy"} 또는 {error}.
+
+    매칭 로직은 modes.postprocess.match_face_image_filename 에 단일 구현되어 있으며,
+    후처리 합성(compose_postprocess)과 동일 함수를 경유한다 (미리보기=실제 전송 동일 빌더).
     """
     try:
+        from modes.postprocess import match_face_image_filename
         body = await request.json()
         bot_name = (body.get("bot_name", "") or "").strip()
         character = (body.get("character", "") or "").strip()
@@ -3576,31 +3587,16 @@ async def handle_api_postprocess_match_image(request: web.Request) -> web.Respon
         suffix = body.get("suffix", "") or ""
         if not bot_name or not character:
             return web.json_response({"error": "bot_name/character 필요"}, status=400)
-        candidates = list(bot_mode.iter_character_image_filenames(bot_name, character))
-        if not candidates:
-            print(f"[POSTPROCESS_MATCH] 이미지 없음: bot={bot_name}, char={character}")
+
+        matched = match_face_image_filename(bot_name, character, emotion, prefix, suffix)
+        if not matched:
             return web.json_response({"error": f"이미지 없음: {character}"}, status=404)
-
-        def _base(fname: str) -> str:
-            return os.path.splitext(fname)[0]
-
-        def _url(fname: str) -> str:
-            return f"/api/bot_mode/image/{bot_name}/{character}/{fname}"
-
-        token = f"{character}{prefix}{emotion}{suffix}"
-        # 토큰 base 정확 일치
-        for f in candidates:
-            if _base(f) == token:
-                return web.json_response({"filename": f, "url": _url(f), "match": "exact"})
-        # 부분 포함 일치(토큰이 base에 포함되면)
-        for f in candidates:
-            if token and token in _base(f):
-                return web.json_response({"filename": f, "url": _url(f), "match": "exact"})
-        # 3) 유사도 fallback
-        best = max(candidates, key=lambda f: _pp_image_similarity(_base(f), token))
-        score = _pp_image_similarity(_base(best), token)
-        print(f"[POSTPROCESS_MATCH] fuzzy 매칭: bot={bot_name}, char={character}, token={token!r} -> {best} (sim={score:.2f})")
-        return web.json_response({"filename": best, "url": _url(best), "match": "fuzzy", "score": round(score, 3)})
+        fname, match_type, score = matched
+        url = f"/api/bot_mode/image/{bot_name}/{character}/{fname}"
+        resp = {"filename": fname, "url": url, "match": match_type}
+        if match_type == "fuzzy":
+            resp["score"] = score
+        return web.json_response(resp)
     except Exception as e:
         tb = traceback.format_exc()
         print(f"[ERROR] postprocess_match_image 실패: {e}\n{tb}")

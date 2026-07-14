@@ -6598,8 +6598,17 @@
                                 <div class="pp-row">
                                     <span class="pp-label">폰트 크기</span>
                                     <div class="pp-field-inline">
-                                        <input type="number" id="pp-vn-font-size" class="input" style="width:120px;" step="1" min="0" value="0" oninput="renderPostprocessPreview()">
-                                        <span style="font-size:0.74rem; color:var(--text2, #888);">px · 0 = 박스 높이 기반 자동</span>
+                                        <input type="number" id="pp-vn-font-size" class="input" style="width:120px;" step="1" min="0" value="0" oninput="collectPpVnSettings(); renderPostprocessPreview()">
+                                        <span style="font-size:0.74rem; color:var(--text2, #888);">대사 px · 0 = 박스 높이 기반 자동</span>
+                                    </div>
+                                </div>
+                                <div class="pp-row">
+                                    <span class="pp-label">이름 / 감정 폰트</span>
+                                    <div class="pp-field-inline" style="gap:6px;">
+                                        <input type="number" id="pp-vn-name-font-size" class="input" style="width:110px;" step="1" min="0" value="0" oninput="collectPpVnSettings(); renderPostprocessPreview()" title="이름 폰트 px (0=자동: 대사*1.25)">
+                                        <span style="font-size:0.72rem; color:var(--text2, #888);">이름</span>
+                                        <input type="number" id="pp-vn-emotion-font-size" class="input" style="width:110px;" step="1" min="0" value="0" oninput="collectPpVnSettings(); renderPostprocessPreview()" title="감정 폰트 px (0=자동: 대사와 동일)">
+                                        <span style="font-size:0.72rem; color:var(--text2, #888);">감정 · 0 = 자동</span>
                                     </div>
                                 </div>
                             </div>
@@ -6661,6 +6670,27 @@
                                         <input type="text" id="pp-vn-suffix" class="input" placeholder="suffix" style="flex:1;" oninput="collectPpVnSettings(); ppRenderPreviewMatch();">
                                     </div>
                                     <div class="pp-hint" style="margin-top:4px;">조회 토큰 = <code>NAME + prefix + 감정 + suffix</code> (구분자는 prefix에 포함). 미리보기/병렬 테스트에서 이 토큰으로 캐릭터 이미지를 찾고, 일치 없으면 가장 유사한 파일.</div>
+                                </div>
+
+                                <!-- VN 얼굴 슬롯 (face_yolo 검출 + 크롭) -->
+                                <div style="margin-top:10px; border-top:1px solid var(--border); padding-top:10px;">
+                                    <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+                                        <label style="display:flex; align-items:center; gap:6px; font-size:0.78rem; color:var(--text2, #999); cursor:pointer;">
+                                            <input type="checkbox" id="pp-vn-face-enabled" checked onchange="collectPpVnSettings(); renderPostprocessPreview();">
+                                            좌측 얼굴 슬롯 (face_yolo)
+                                        </label>
+                                    </div>
+                                    <div class="pp-field-inline">
+                                        <div style="flex:1;">
+                                            <div style="font-size:0.7rem; color:var(--text2, #999); margin-bottom:2px;">FACE_CROP_TOP (얼굴 높이 배수)</div>
+                                            <input type="number" id="pp-vn-face-crop-top" value="1.8" step="0.1" min="0.1" class="input" style="width:100%;" oninput="collectPpVnSettings(); renderPostprocessPreview();">
+                                        </div>
+                                        <div style="flex:1;">
+                                            <div style="font-size:0.7rem; color:var(--text2, #999); margin-bottom:2px;">FACE_CROP_BOTTOM (얼굴 높이 배수)</div>
+                                            <input type="number" id="pp-vn-face-crop-bottom" value="1.0" step="0.1" min="0.1" class="input" style="width:100%;" oninput="collectPpVnSettings(); renderPostprocessPreview();">
+                                        </div>
+                                    </div>
+                                    <div class="pp-hint" style="margin-top:4px;">첫 화자의 캐릭터 이미지에서 얼굴을 검출(CPU YOLO)해 정사각형으로 크롭. 위쪽으로 TOP×, 아래쪽으로 BOTTOM× 얼굴 높이만큼 확장(데이터 패치 설정과 동일 규칙).</div>
                                 </div>
                             </div>
 
@@ -24342,6 +24372,8 @@
                     height_mode: 'ratio',
                     height_value: 0.12,
                     font_size: 0,
+                    name_font_size: 0,
+                    emotion_font_size: 0,
                     name_color: false,
                     name_replace: {},
                     name_replace_enabled: true,
@@ -24349,6 +24381,9 @@
                     emotion_extract_rules: [{ action: 'split_by', separator: '_', take: -1 }],
                     prefix: '',
                     suffix: '',
+                    face_enabled: true,
+                    face_crop_top: 1.8,
+                    face_crop_bottom: 1.0,
                 }
             };
         }
@@ -24374,6 +24409,11 @@
             if (!Array.isArray(base.emotion_extract_rules)) base.emotion_extract_rules = [{ action: 'split_by', separator: '_', take: -1 }];
             if (typeof base.prefix !== 'string') base.prefix = '';
             if (typeof base.suffix !== 'string') base.suffix = '';
+            if (base.face_enabled === undefined) base.face_enabled = true;
+            if (typeof base.face_crop_top !== 'number') base.face_crop_top = 1.8;
+            if (typeof base.face_crop_bottom !== 'number') base.face_crop_bottom = 1.0;
+            if (typeof base.name_font_size !== 'number') base.name_font_size = 0;
+            if (typeof base.emotion_font_size !== 'number') base.emotion_font_size = 0;
             if (!Array.isArray(base.emotion_rows)) base.emotion_rows = [];
             if (typeof base.emotion_total !== 'number') base.emotion_total = 0;
             return base;
@@ -24387,6 +24427,10 @@
             document.getElementById('pp-vn-height-mode').value = vn.height_mode || 'ratio';
             document.getElementById('pp-vn-height-value').value = vn.height_value;
             document.getElementById('pp-vn-font-size').value = vn.font_size || 0;
+            const _nfs = document.getElementById('pp-vn-name-font-size');
+            if (_nfs) _nfs.value = vn.name_font_size || 0;
+            const _efs = document.getElementById('pp-vn-emotion-font-size');
+            if (_efs) _efs.value = vn.emotion_font_size || 0;
             onPpHeightModeChange();
             document.getElementById('pp-vn-name-color').checked = !!vn.name_color;
             document.getElementById('pp-vn-name-replace-enabled').checked = !!vn.name_replace_enabled;
@@ -24395,6 +24439,12 @@
             const _sfx = document.getElementById('pp-vn-suffix');
             if (_pfx) _pfx.value = vn.prefix || '';
             if (_sfx) _sfx.value = vn.suffix || '';
+            const _face = document.getElementById('pp-vn-face-enabled');
+            if (_face) _face.checked = vn.face_enabled !== false;
+            const _ftop = document.getElementById('pp-vn-face-crop-top');
+            if (_ftop) _ftop.value = (vn.face_crop_top === undefined ? 1.8 : vn.face_crop_top);
+            const _fbot = document.getElementById('pp-vn-face-crop-bottom');
+            if (_fbot) _fbot.value = (vn.face_crop_bottom === undefined ? 1.0 : vn.face_crop_bottom);
             renderNameReplaceList();
             ppEmotionResetSession();
             ppRenderEmotionRules();
@@ -24888,6 +24938,12 @@
             vn.height_value = isNaN(raw) ? 0.12 : raw;
             const fs = parseInt(document.getElementById('pp-vn-font-size').value, 10);
             vn.font_size = isNaN(fs) ? 0 : Math.max(0, fs);
+            const _nfsEl = document.getElementById('pp-vn-name-font-size');
+            const nfs = _nfsEl ? parseInt(_nfsEl.value, 10) : 0;
+            vn.name_font_size = isNaN(nfs) ? 0 : Math.max(0, nfs);
+            const _efsEl = document.getElementById('pp-vn-emotion-font-size');
+            const efs = _efsEl ? parseInt(_efsEl.value, 10) : 0;
+            vn.emotion_font_size = isNaN(efs) ? 0 : Math.max(0, efs);
             vn.name_color = document.getElementById('pp-vn-name-color').checked;
             vn.name_replace_enabled = document.getElementById('pp-vn-name-replace-enabled').checked;
             vn.strip_emotion = document.getElementById('pp-vn-strip-emotion').checked;
@@ -24895,6 +24951,14 @@
             const _sfxEl = document.getElementById('pp-vn-suffix');
             vn.prefix = _pfxEl ? _pfxEl.value : (vn.prefix || '');
             vn.suffix = _sfxEl ? _sfxEl.value : (vn.suffix || '');
+            const _faceEl = document.getElementById('pp-vn-face-enabled');
+            vn.face_enabled = _faceEl ? _faceEl.checked : (vn.face_enabled !== false);
+            const _ftEl = document.getElementById('pp-vn-face-crop-top');
+            const _ftRaw = _ftEl ? parseFloat(_ftEl.value) : NaN;
+            vn.face_crop_top = isNaN(_ftRaw) ? 1.8 : Math.max(0.1, _ftRaw);
+            const _fbEl = document.getElementById('pp-vn-face-crop-bottom');
+            const _fbRaw = _fbEl ? parseFloat(_fbEl.value) : NaN;
+            vn.face_crop_bottom = isNaN(_fbRaw) ? 1.0 : Math.max(0.1, _fbRaw);
             return vn;
         }
 
@@ -24924,10 +24988,17 @@
                             height_mode: vn.height_mode,
                             height_value: vn.height_value,
                             font_size: vn.font_size || 0,
+                            name_font_size: vn.name_font_size || 0,
+                            emotion_font_size: vn.emotion_font_size || 0,
                             name_color: vn.name_color,
                             name_replace: vn.name_replace || {},
                             name_replace_enabled: vn.name_replace_enabled,
                             strip_emotion: vn.strip_emotion,
+                            prefix: vn.prefix || '',
+                            suffix: vn.suffix || '',
+                            face_enabled: vn.face_enabled !== false,
+                            face_crop_top: vn.face_crop_top,
+                            face_crop_bottom: vn.face_crop_bottom,
                             speak: document.getElementById('pp-vn-preview-speak').value,
                             // 현재 편집 중인 삽화 프로필의 저장된 HRF 설정을 서버가 읽어
                             // 미리보기 베이스 크기를 실제 생성 결과와 일치시키도록 전달

@@ -52,3 +52,6 @@ graphify-out/
 notification_cache.json
 # Built-in WD Tagger downloaded model (362MB ONNX, regenerate at runtime)
 tagger_data/
+
+# YOLO face weight (auto-downloaded to models/yolov8n-face.pt at runtime)
+models/

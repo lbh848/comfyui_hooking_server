@@ -15,6 +15,10 @@ import io
 import traceback
 from typing import Optional
 
+# modes/ 의 상위 = 프로젝트 루트. bot_mode.BOT_DIR 과 동일 경로.
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+BOT_DIR = os.path.join(BASE_DIR, "bot")
+
 try:
     from PIL import Image, ImageDraw, ImageFont
     _HAS_PIL = True
@@ -139,6 +143,7 @@ def parse_speak(speak_text: str, strip_emotion: bool = False) -> list:
                 "speaker": m.group(1),
                 "text": _with_emotion(m.group("text")),
                 "type": "speech",
+                "emotion": emotion,
             })
             continue
 
@@ -148,6 +153,7 @@ def parse_speak(speak_text: str, strip_emotion: bool = False) -> list:
                 "speaker": m.group(1),
                 "text": _with_emotion(m.group("text")),
                 "type": "thought",
+                "emotion": emotion,
             })
             continue
 
@@ -157,6 +163,7 @@ def parse_speak(speak_text: str, strip_emotion: bool = False) -> list:
                 "speaker": None,
                 "text": _with_emotion(m.group("text")),
                 "type": "thought",
+                "emotion": emotion,
             })
             continue
 
@@ -164,7 +171,7 @@ def parse_speak(speak_text: str, strip_emotion: bool = False) -> list:
         # 토글 OFF면 감정 유지(원본 line), ON이면 감정 제거(core).
         text = line.strip() if not strip_emotion else core.strip()
         if text:
-            segments.append({"speaker": None, "text": text, "type": "speech"})
+            segments.append({"speaker": None, "text": text, "type": "speech", "emotion": emotion})
 
     return segments
 
@@ -304,6 +311,81 @@ def _wrap_text(draw, text: str, font, max_width: int) -> list:
     return lines if lines else [""]
 
 
+def _pp_image_similarity(a: str, b: str) -> float:
+    """Levenshtein 기반 0~1 유사도."""
+    if not a and not b:
+        return 1.0
+    if not a or not b:
+        return 0.0
+    m, n = len(a), len(b)
+    prev = list(range(n + 1))
+    cur = [0] * (n + 1)
+    for i in range(1, m + 1):
+        cur[0] = i
+        ca = a[i - 1]
+        for j in range(1, n + 1):
+            cost = 0 if ca == b[j - 1] else 1
+            cur[j] = min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost)
+        prev, cur = cur, prev
+    return 1.0 - prev[n] / max(m, n)
+
+
+def match_face_image_filename(bot_name: str, character: str, emotion: str,
+                               prefix: str = "", suffix: str = ""):
+    """감정+이름으로 캐릭터 이미지 파일명을 매칭. (server.py match_image 엔드포인트와 동일 로직)
+
+    토큰 = character + prefix + emotion + suffix
+      1) base(확장자 제외) 정확 일치
+      2) 토큰이 base에 부분 포함
+      3) Levenshtein 유사도 최대(fallback)
+
+    Returns:
+        (filename, match_type, score) 또는 None(후보 없음).
+        match_type: "exact" | "fuzzy"
+    """
+    try:
+        from modes import bot_mode
+    except Exception as e:
+        print(f"[POSTPROCESS_MATCH] ⚠ bot_mode import 실패: {e}")
+        return None
+    candidates = list(bot_mode.iter_character_image_filenames(bot_name, character))
+    if not candidates:
+        print(f"[POSTPROCESS_MATCH] 이미지 없음: bot={bot_name}, char={character}")
+        return None
+
+    def _base(fname: str) -> str:
+        return os.path.splitext(fname)[0]
+
+    token = f"{character}{prefix}{emotion}{suffix}"
+    # 1) base 정확 일치
+    for f in candidates:
+        if _base(f) == token:
+            return (f, "exact", 1.0)
+    # 2) 부분 포함
+    for f in candidates:
+        if token and token in _base(f):
+            return (f, "exact", 1.0)
+    # 3) 유사도 fallback
+    best = max(candidates, key=lambda f: _pp_image_similarity(_base(f), token))
+    score = _pp_image_similarity(_base(best), token)
+    print(f"[POSTPROCESS_MATCH] fuzzy: bot={bot_name}, char={character}, token={token!r} -> {best} (sim={score:.2f})")
+    return (best, "fuzzy", round(score, 3))
+
+
+def load_face_image_bytes(bot_name: str, character: str, filename: str):
+    """bot/<bot>/<character>/<filename> 이미지 bytes 로드. 실패 시 None."""
+    try:
+        path = os.path.join(BOT_DIR, bot_name, character, filename)
+        if not os.path.isfile(path):
+            print(f"[POSTPROCESS_FACE] 이미지 파일 없음: {path}")
+            return None
+        with open(path, "rb") as f:
+            return f.read()
+    except Exception as e:
+        print(f"[POSTPROCESS_FACE] 이미지 로드 실패({bot_name}/{character}/{filename}): {e}")
+        return None
+
+
 def compose_postprocess(image_bytes: bytes, speak_text: str,
                         settings: dict, bot_name: str = "") -> bytes:
     """이미지 하단에 [SPEAK] 텍스트 박스를 합성한 이미지 bytes를 반환.
@@ -341,7 +423,56 @@ def compose_postprocess(image_bytes: bytes, speak_text: str,
     layout = compute_bar_layout(img_w, img_h, settings)
     bar_h = layout["bar_h"]
 
-    # 캔버스 구성
+    # --- 텍스트 파싱 ---
+    name_replace = settings.get("name_replace") or {}
+    use_name_replace = bool(settings.get("name_replace_enabled", True))
+    use_name_color = bool(settings.get("name_color", False))
+    strip_emotion = bool(settings.get("strip_emotion", False))
+
+    segments = parse_speak(speak_text, strip_emotion=strip_emotion)
+    if not segments:
+        # 파싱 결과 대사/생각이 하나도 없으면 바만 남기지 않고 원본 반환
+        print(f"[POSTPROCESS] 파싱된 SPEAK 세그먼트 없음(speak={speak_text!r}), 후처리 스킵 — 원본 반환")
+        return image_bytes
+
+    # --- 얼굴 이미지 준비 (첫 발화자 기준) ---
+    face_enabled = bool(settings.get("face_enabled", True))
+    try:
+        face_crop_top = float(settings.get("face_crop_top", 1.8) or 1.8)
+    except (TypeError, ValueError):
+        face_crop_top = 1.8
+    try:
+        face_crop_bottom = float(settings.get("face_crop_bottom", 1.0) or 1.0)
+    except (TypeError, ValueError):
+        face_crop_bottom = 1.0
+    prefix = settings.get("prefix", "") or ""
+    suffix = settings.get("suffix", "") or ""
+
+    first_speaker_seg = next((s for s in segments if s.get("speaker")), None)
+    face_img = None  # 정사각형 PIL.Image 또는 None
+    if face_enabled and bot_name and first_speaker_seg:
+        speaker = first_speaker_seg["speaker"]
+        emo_raw = first_speaker_seg.get("emotion") or ""
+        emotion = emo_raw.lstrip("#").strip()
+        matched = match_face_image_filename(bot_name, speaker, emotion, prefix, suffix)
+        if matched:
+            raw = load_face_image_bytes(bot_name, speaker, matched[0])
+            if raw:
+                try:
+                    from modes import face_detector
+                    base = Image.open(io.BytesIO(raw))
+                    face_img = face_detector.crop_face(
+                        base, top_mult=face_crop_top, bottom_mult=face_crop_bottom,
+                        target_size=max(128, int(bar_h)))
+                    if face_img is None:
+                        print(f"[POSTPROCESS] 얼굴 검출 실패 — 슬롯 비움(bot={bot_name}, char={speaker})")
+                except Exception as e:
+                    print(f"[POSTPROCESS] ⚠ 얼굴 크롭 실패: {e}")
+                    traceback.print_exc()
+        else:
+            print(f"[POSTPROCESS] 매칭 이미지 없음 — 얼굴 슬롯 비움(bot={bot_name}, char={speaker}, emo={emotion!r})")
+
+    # --- 캔버스 구성 ---
     if img.mode != "RGBA":
         img = img.convert("RGBA")
 
@@ -360,110 +491,94 @@ def compose_postprocess(image_bytes: bytes, speak_text: str,
         canvas = Image.alpha_composite(canvas, overlay)
         draw = ImageDraw.Draw(canvas)
 
-    # 텍스트 렌더
-    name_replace = settings.get("name_replace") or {}
-    use_name_replace = bool(settings.get("name_replace_enabled", True))
-    use_name_color = bool(settings.get("name_color", False))
-    strip_emotion = bool(settings.get("strip_emotion", False))
-
-    segments = parse_speak(speak_text, strip_emotion=strip_emotion)
-    if not segments:
-        # 파싱 결과 대사/생각이 하나도 없으면 바만 남기지 않고 원본 반환
-        print(f"[POSTPROCESS] 파싱된 SPEAK 세그먼트 없음(speak={speak_text!r}), 후처리 스킵 — 원본 반환")
-        return image_bytes
-
-    # 폰트 크기: 사용자 지정값 우선, 없으면 박스 높이 기반 자동 계산
+    # --- 폰트 (대사 / 이름 / 감정 각각 지정, 0=자동) ---
     try:
         user_font_size = int(settings.get("font_size", 0) or 0)
     except (TypeError, ValueError):
         user_font_size = 0
-    font_size = user_font_size if user_font_size > 0 else max(12, int(bar_h * 0.40))
+    # 대사 폰트. VN 레이아웃은 헤더(이름/감정) + 본문이 한 박스에 들어가므로 본문 폰트를 더 작게.
+    font_size = user_font_size if user_font_size > 0 else max(12, int(bar_h * 0.16))
     font = _load_font(font_size)
-    # 줄 간격
+    # 이름 폰트: 지정값 우선, 없으면 대사 폰트의 1.25배
+    try:
+        name_fs = int(settings.get("name_font_size", 0) or 0)
+    except (TypeError, ValueError):
+        name_fs = 0
+    name_font = _load_font(name_fs if name_fs > 0 else max(12, int(font_size * 1.25)))
+    # 감정 폰트: 지정값 우선, 없으면 대사 폰트와 동일
+    try:
+        emo_fs = int(settings.get("emotion_font_size", 0) or 0)
+    except (TypeError, ValueError):
+        emo_fs = 0
+    emotion_font = _load_font(emo_fs if emo_fs > 0 else font_size)
     try:
         ascent, descent = font.getmetrics()
-        line_height = int((ascent + descent) * 1.15)
+        line_height = int((ascent + descent) * 1.2)
     except Exception:
-        line_height = int(font_size * 1.25)
+        line_height = int(font_size * 1.3)
 
-    max_text_width = layout["canvas_w"] - layout["margin"] * 2
+    # --- 박스 내부 레이아웃(VN): 좌측 얼굴 / 우측 (헤더 + 본문) ---
+    P = layout["margin"]
+    face_side = max(0, bar_h - P * 2)
+    show_face = face_enabled and face_img is not None and face_side > 8
 
-    # 각 세그먼트 → (label, label_color, body_lines, body_color)
-    # label은 첫 줄에만 앞에 붙고, 본문은 들여쓰기 후 줄바꿈.
-    def _measure(s):
+    if show_face:
+        content_x = P + face_side + P
+    else:
+        content_x = P
+    content_w = layout["canvas_w"] - content_x - P
+    if content_w < 40:
+        content_w = max(40, layout["canvas_w"] - P * 2)
+
+    def _measure(s, fnt=None):
+        fnt = fnt or font
         try:
-            return draw.textlength(s, font=font)
+            return draw.textlength(s, font=fnt)
         except Exception:
-            return len(s) * (font.size if font else 12) * 0.6
+            return len(s) * (fnt.size if fnt else 12) * 0.6
 
-    rendered = []  # [{label, name_color, body:[lines], body_color}]
+    bar_top = layout["bar_y"]
+    bottom_limit = bar_top + bar_h - P // 2
+
+    # 얼굴 슬롯 그리기
+    if show_face:
+        fx = P
+        fy = bar_top + P
+        draw.rectangle([(fx - 1, fy - 1), (fx + face_side, fy + face_side)],
+                       outline=(144, 168, 255, 255), width=2)
+        canvas.paste(face_img.resize((face_side, face_side), Image.LANCZOS), (fx, fy))
+
+    # 헤더(이름 + 감정)
+    header_y = bar_top + P
+    if first_speaker_seg:
+        sp = first_speaker_seg["speaker"]
+        display_name = name_replace.get(sp, sp) if use_name_replace else sp
+        name_col = resolve_name_color(sp, bot_name) if use_name_color else DEFAULT_NAME_COLOR
+        draw.text((content_x, header_y), display_name, font=name_font, fill=name_col)
+        name_w = _measure(display_name, name_font)
+        emo_label = (first_speaker_seg.get("emotion") or "").lstrip("#").strip()
+        if emo_label:
+            draw.text((content_x + name_w + 16, header_y + max(0, int(font_size * 0.25))),
+                      f"# {emo_label}", font=emotion_font, fill="#ffd86a")
+
+    header_h = int(line_height * 1.6)
+    text_top = header_y + header_h
+
+    # 본문: 모든 세그먼트의 대사/속마음을 content_w 로 래핑. 이름은 헤더에만 표시.
+    cur_y = text_top
     for seg in segments:
-        speaker = seg.get("speaker")
         text = seg.get("text", "")
         is_thought = seg.get("type") == "thought"
-        if speaker:
-            display_name = name_replace.get(speaker, speaker) if use_name_replace else speaker
-            name_color = resolve_name_color(speaker, bot_name) if use_name_color else DEFAULT_NAME_COLOR
-            label = f"{display_name}: "
-        else:
-            label = ""
-            name_color = DEFAULT_NAME_COLOR
         body_color = THOUGHT_COLOR if is_thought else SPEECH_COLOR
         body_text = f"({text})" if is_thought else text
-        rendered.append({
-            "label": label,
-            "name_color": name_color,
-            "body": body_text,
-            "body_color": body_color,
-        })
-
-    # 전체 줄 수(세그먼트별 최소 1줄 + 본문 래핑)를 추정해 세로 중앙 정렬
-    # 정확한 줄 수를 위해 먼저 래핑 수행
-    x0 = layout["margin"]
-    label_w_of = {i: _measure(r["label"]) for i, r in enumerate(rendered)}
-
-    # 첫 줄 가용 폭 = 전체폭 - label폭, 이후 줄 = 전체폭
-    seg_lines = []  # [{seg_idx, parts:[(text,color,x_off)]}]
-    for i, r in enumerate(rendered):
-        first_w = max(40, max_text_width - label_w_of[i])
-        body_lines = _wrap_text(draw, r["body"], font, max_text_width)
-        # 첫 줄만 first_w 기준 재랩핑 보정: 첫 줄이 first_w 초과 시 분할
-        if body_lines:
-            first = body_lines[0]
-            if _measure(first) > first_w:
-                # 첫 줄을 first_w에 맞춰 자르고 나머지를 두 번째 줄 앞에 삽입
-                cur = ""
-                split_at = 0
-                for ch in first:
-                    if _measure(cur + ch) <= first_w or not cur:
-                        cur += ch
-                    else:
-                        break
-                    split_at += 1
-                if split_at < len(first):
-                    rest = first[split_at:]
-                    body_lines = [first[:split_at]] + _wrap_text(draw, rest + (body_lines[1] if len(body_lines) > 1 else ""), font, max_text_width) + body_lines[2:]
-        seg_lines.append({"seg_idx": i, "body_lines": body_lines})
-
-    total_lines = sum(max(1, len(s["body_lines"])) for s in seg_lines)
-    start_y = layout["bar_y"] + (bar_h - total_lines * line_height) // 2
-    if start_y < layout["bar_y"] + layout["margin"]:
-        start_y = layout["bar_y"] + layout["margin"]
-
-    cur_y = start_y
-    for s in seg_lines:
-        r = rendered[s["seg_idx"]]
-        body_lines = s["body_lines"] or [""]
-        for li, bl in enumerate(body_lines):
-            if cur_y + line_height > layout["bar_y"] + bar_h - layout["margin"] // 2:
-                # 박스 영역 초과 — 남은 세그먼트 중단
+        for wl in (_wrap_text(draw, body_text, font, content_w) or [""]):
+            if cur_y + line_height > bottom_limit:
                 return _to_output_bytes(canvas)
-            if li == 0 and r["label"]:
-                draw.text((x0, cur_y), r["label"], font=font, fill=r["name_color"])
-                draw.text((x0 + label_w_of[s["seg_idx"]], cur_y), bl, font=font, fill=r["body_color"])
-            else:
-                draw.text((x0, cur_y), bl, font=font, fill=r["body_color"])
+            draw.text((content_x, cur_y), wl, font=font, fill=body_color)
             cur_y += line_height
+        # 세그먼트 구분 빈 줄
+        if cur_y + line_height <= bottom_limit:
+            cur_y += line_height // 2
 
     return _to_output_bytes(canvas)
 
@@ -498,7 +613,9 @@ def _default_vn() -> dict:
         "placement": "extend",        # extend | overlay
         "height_mode": "ratio",       # ratio | px
         "height_value": 0.12,
-        "font_size": 0,               # px. 0=박스 높이 기반 자동
+        "font_size": 0,               # 대사 폰트 px. 0=박스 높이 기반 자동
+        "name_font_size": 0,          # 이름 폰트 px. 0=자동(대사 폰트*1.25)
+        "emotion_font_size": 0,       # 감정 폰트 px. 0=자동(대사 폰트와 동일)
         "name_color": False,
         "name_replace": {},
         "name_replace_enabled": True,
@@ -506,6 +623,9 @@ def _default_vn() -> dict:
         "emotion_extract_rules": [{"action": "split_by", "separator": "_", "take": -1}],
         "prefix": "",                  # 이미지 조회 토큰 prefix (봇별 1개)
         "suffix": "",                  # 이미지 조회 토큰 suffix (봇별 1개)
+        "face_enabled": True,          # VN 좌측 얼굴 슬롯 표시
+        "face_crop_top": 1.8,          # 얼굴 높이 배수만큼 위로 확장(데이터 패치 설정과 동일 규칙)
+        "face_crop_bottom": 1.0,       # 얼굴 높이 배수만큼 아래로 확장
     }
 
 
@@ -545,10 +665,17 @@ def get_vn_settings(config: dict, bot_name: str = "") -> Optional[dict]:
         "height_mode": vn.get("height_mode", "ratio"),
         "height_value": vn.get("height_value", 0.12),
         "font_size": vn.get("font_size", 0) or 0,
+        "name_font_size": vn.get("name_font_size", 0) or 0,
+        "emotion_font_size": vn.get("emotion_font_size", 0) or 0,
         "name_color": bool(vn.get("name_color", False)),
         "name_replace": vn.get("name_replace") or {},
         "name_replace_enabled": bool(vn.get("name_replace_enabled", True)),
         "strip_emotion": bool(vn.get("strip_emotion", False)),
+        "prefix": vn.get("prefix", "") or "",
+        "suffix": vn.get("suffix", "") or "",
+        "face_enabled": bool(vn.get("face_enabled", True)),
+        "face_crop_top": float(vn.get("face_crop_top", 1.8) or 1.8),
+        "face_crop_bottom": float(vn.get("face_crop_bottom", 1.0) or 1.0),
     }
 
 

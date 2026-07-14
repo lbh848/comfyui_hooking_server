@@ -22,6 +22,7 @@ dependencies = [
     "opencv-python",
     "mediapipe",
     "huggingface-hub",
+    "ultralytics>=8.4.95",
 ]
 
 [tool.uv]
