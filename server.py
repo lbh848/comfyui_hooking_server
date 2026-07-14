@@ -3327,6 +3327,7 @@ async def handle_api_postprocess_preview(request: web.Request) -> web.Response:
             "font_size": body.get("font_size", 0) or 0,
             "name_color": bool(body.get("name_color", False)),
             "name_replace": body.get("name_replace") or {},
+            "name_replace_enabled": bool(body.get("name_replace_enabled", True)),
             "strip_emotion": bool(body.get("strip_emotion", False)),
         }
         speak = body.get("speak", "") or ""

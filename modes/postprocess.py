@@ -74,12 +74,22 @@ _FONT_CANDIDATES = [
 
 # 줄 끝의 감정 리터럴(예: '... " #angry' 의 ' #angry') 매칭.
 # 대사/생각 본문 뒤에 붙은 #감정 태그를 잘라내 parse_speak 정규식이 정상 매칭하게 한다.
-_EMOTION_SUFFIX_RE = re.compile(r'\s+#\S+\s*$', re.UNICODE)
+# 감정 태그(#감정)를 캡처해 토글 OFF일 때 본문에 다시 결합할 수 있게 한다.
+_EMOTION_SUFFIX_RE = re.compile(r'\s+(#\S+)\s*$', re.UNICODE)
 
 
-def _strip_emotion_suffix(line: str) -> str:
-    """줄 끝의 ' #감정' 리터럴을 제거한 줄 반환. 없으면 그대로."""
-    return _EMOTION_SUFFIX_RE.sub('', line)
+def _split_emotion_suffix(line: str) -> tuple:
+    """줄 끝의 ' #감정' 리터럴을 (본문, 감정태그) 로 분리.
+
+    감정이 없으면 (line, None). 감정이 있으면 (감정 떼어낸 본문, '#감정').
+    발화자 파싱은 감정 토글과 무관하게 항상 이 분리 결과로 수행한다.
+    """
+    m = _EMOTION_SUFFIX_RE.search(line)
+    if not m:
+        return line, None
+    emotion = m.group(1)
+    core = line[:m.start()].rstrip()
+    return core, emotion
 
 
 def parse_speak(speak_text: str, strip_emotion: bool = False) -> list:
@@ -89,9 +99,12 @@ def parse_speak(speak_text: str, strip_emotion: bool = False) -> list:
       - 발화:  NAME: "대사내용"   (예: kapri: "달콤하게 해주세요♡")
       - 생각:  NAME: (생각내용)    또는  (독백 생각내용)
 
-    strip_emotion=True 면 각 줄의 끝에 붙은 ' #감정' 리터럴을 매칭 전에 제거한다.
-    예: 'kapri: "대사" #angry' -> 'kapri: "대사"' 로 정상 파싱(speaker=kapri, text=대사).
-    strip_emotion=False(기본)면 현재 동작 유지 — #가 붙은 줄은 정규식 불일치로 폴백 분기.
+    발화자(NAME) 파싱은 감정 토글과 무관하게 항상 수행한다 — 줄 끝 ' #감정' 을
+    분리해 core 에서 정규식 매칭하므로, 토글 OFF여도 speaker 가 인식되어 이름 스타일이 적용된다.
+    strip_emotion=True 면 본문에서 ' #감정' 을 제거하고, False(기본)면 본문에 ' #감정' 을 유지한다.
+    예: 'kapri: "대사" #angry'
+      - strip_emotion=True  -> speaker=kapri, text='대사'
+      - strip_emotion=False -> speaker=kapri, text='대사 #angry'
 
     Returns:
         [{"speaker": str|None, "text": str, "type": "speech"|"thought"}, ...]
@@ -112,41 +125,44 @@ def parse_speak(speak_text: str, strip_emotion: bool = False) -> list:
         if not line.strip():
             continue
 
-        # 감정 토글 ON: 줄 끝 ' #감정' 제거 후 매칭
-        if strip_emotion:
-            line = _strip_emotion_suffix(line)
-            if not line.strip():
-                continue
+        # 줄 끝 ' #감정' 분리 — 발화자 파싱은 토글과 무관하게 항상 core 로 매칭.
+        # 토글 OFF: 본문에 감정 유지(keep_emotion). 토글 ON: 본문에서 감정 제거.
+        core, emotion = _split_emotion_suffix(line)
+        keep_emotion = emotion if not strip_emotion else None
 
-        m = speech_re.match(line)
+        def _with_emotion(text: str) -> str:
+            return f"{text} {keep_emotion}" if keep_emotion else text
+
+        m = speech_re.match(core)
         if m:
             segments.append({
                 "speaker": m.group(1),
-                "text": m.group("text"),
+                "text": _with_emotion(m.group("text")),
                 "type": "speech",
             })
             continue
 
-        m = thought_named_re.match(line)
+        m = thought_named_re.match(core)
         if m:
             segments.append({
                 "speaker": m.group(1),
-                "text": m.group("text"),
+                "text": _with_emotion(m.group("text")),
                 "type": "thought",
             })
             continue
 
-        m = thought_bare_re.match(line)
+        m = thought_bare_re.match(core)
         if m:
             segments.append({
                 "speaker": None,
-                "text": m.group("text"),
+                "text": _with_emotion(m.group("text")),
                 "type": "thought",
             })
             continue
 
-        # 그 외: 이름 없는 일반 텍스트 줄은 발화로 취급
-        text = line.strip()
+        # 그 외: 이름 없는 일반 텍스트 줄은 발화로 취급.
+        # 토글 OFF면 감정 유지(원본 line), ON이면 감정 제거(core).
+        text = line.strip() if not strip_emotion else core.strip()
         if text:
             segments.append({"speaker": None, "text": text, "type": "speech"})
 
@@ -346,6 +362,7 @@ def compose_postprocess(image_bytes: bytes, speak_text: str,
 
     # 텍스트 렌더
     name_replace = settings.get("name_replace") or {}
+    use_name_replace = bool(settings.get("name_replace_enabled", True))
     use_name_color = bool(settings.get("name_color", False))
     strip_emotion = bool(settings.get("strip_emotion", False))
 
@@ -385,7 +402,7 @@ def compose_postprocess(image_bytes: bytes, speak_text: str,
         text = seg.get("text", "")
         is_thought = seg.get("type") == "thought"
         if speaker:
-            display_name = name_replace.get(speaker, speaker)
+            display_name = name_replace.get(speaker, speaker) if use_name_replace else speaker
             name_color = resolve_name_color(speaker, bot_name) if use_name_color else DEFAULT_NAME_COLOR
             label = f"{display_name}: "
         else:

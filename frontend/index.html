@@ -6608,8 +6608,14 @@
                                         <span class="toggle-slider"></span>
                                     </label>
                                 </div>
+                                <div class="pp-switch-line" style="margin-top:10px;">
+                                    <span style="font-size:0.82rem;">이름 치환 (영문 이름 → 표시 이름)</span>
+                                    <label class="toggle-switch">
+                                        <input type="checkbox" id="pp-vn-name-replace-enabled" onchange="renderPostprocessPreview()">
+                                        <span class="toggle-slider"></span>
+                                    </label>
+                                </div>
                                 <div style="margin-top:10px;">
-                                    <div style="font-size:0.78rem; color:var(--text2, #999); margin-bottom:5px;">이름 치환 (영문 이름 → 표시 이름)</div>
                                     <div id="pp-vn-name-replace-list" class="pp-replace-list"></div>
                                     <div class="pp-field-inline" style="margin-top:6px;">
                                         <input type="text" id="pp-vn-replace-key" class="input" placeholder="영문 이름 (kapri)" style="flex:1;">
@@ -24325,6 +24331,7 @@
                     font_size: 0,
                     name_color: false,
                     name_replace: {},
+                    name_replace_enabled: true,
                     strip_emotion: false,
                     emotion_extract_rules: [{ action: 'split_by', separator: '-', take: -2 }],
                     emotion_rows: [],
@@ -24339,6 +24346,7 @@
             if (cur && cur.vn) {
                 Object.assign(ppWorking.vn, cur.vn);
                 if (!ppWorking.vn.name_replace || typeof ppWorking.vn.name_replace !== 'object') ppWorking.vn.name_replace = {};
+                if (ppWorking.vn.name_replace_enabled === undefined) ppWorking.vn.name_replace_enabled = true;
                 if (!Array.isArray(ppWorking.vn.emotion_extract_rules)) ppWorking.vn.emotion_extract_rules = [{ action: 'split_by', separator: '-', take: -2 }];
                 if (!Array.isArray(ppWorking.vn.emotion_rows)) ppWorking.vn.emotion_rows = [];
             }
@@ -24351,6 +24359,7 @@
             document.getElementById('pp-vn-font-size').value = vn.font_size || 0;
             onPpHeightModeChange();
             document.getElementById('pp-vn-name-color').checked = !!vn.name_color;
+            document.getElementById('pp-vn-name-replace-enabled').checked = !!vn.name_replace_enabled;
             document.getElementById('pp-vn-strip-emotion').checked = !!vn.strip_emotion;
             renderNameReplaceList();
             ppEmotionResetSession();
@@ -24795,6 +24804,7 @@
             const fs = parseInt(document.getElementById('pp-vn-font-size').value, 10);
             vn.font_size = isNaN(fs) ? 0 : Math.max(0, fs);
             vn.name_color = document.getElementById('pp-vn-name-color').checked;
+            vn.name_replace_enabled = document.getElementById('pp-vn-name-replace-enabled').checked;
             vn.strip_emotion = document.getElementById('pp-vn-strip-emotion').checked;
             return vn;
         }
@@ -24826,6 +24836,7 @@
                             font_size: vn.font_size || 0,
                             name_color: vn.name_color,
                             name_replace: vn.name_replace || {},
+                            name_replace_enabled: vn.name_replace_enabled,
                             strip_emotion: vn.strip_emotion,
                             speak: document.getElementById('pp-vn-preview-speak').value,
                             // 현재 편집 중인 삽화 프로필의 저장된 HRF 설정을 서버가 읽어
@@ -24875,7 +24886,6 @@
                 // 로컬 currentConfig에도 반영
                 if (typeof currentConfig !== 'undefined' && currentConfig) currentConfig.postprocess = JSON.parse(JSON.stringify(ppWorking));
                 showToast('후처리 설정 저장 완료');
-                closePostprocessModal();
             } catch (e) {
                 console.error('[POSTPROCESS] 저장 실패:', e);
                 showToast('후처리 설정 저장 실패: ' + (e.message || e));
