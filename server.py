@@ -3754,7 +3754,16 @@ async def handle_api_llm_edit_prompt(request: web.Request) -> web.Response:
                 "parse_failed": True,
             })
 
-        # 8) 재조립
+        # 8) 단어 기반 규칙 적용 (정상 빌드 server.py:1835-1837 과 동일)
+        #    LLM 이 편집한 scene 필드에도 봇의 치환/제거 규칙을 동일하게 적용.
+        #    V1 은 bot_name 복원을 하지 않으므로 apply_word_replacements 가 no-op 이다.
+        for key in ("scene_setup", "scene_char", "scene_supplement"):
+            v = parsed.get(key)
+            if isinstance(v, str) and v.strip():
+                cleaned, _ = apply_word_replacements(v, "", bot_name)
+                parsed[key] = cleaned
+
+        # 9) 재조립
         if fmt == "v1":
             reassembled, scene = llm_prompt_edit.reassemble_v1(positive, v1_parsed, parsed)
         else:
