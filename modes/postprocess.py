@@ -101,6 +101,24 @@ VN_THEMES = {
         "shadow": (54, 36, 64), "backdrop_top": (44, 32, 52), "backdrop_bottom": (24, 16, 30),
         "face_frame": (255, 252, 255),
     },
+    "black": {
+        "fill_top": (34, 34, 38), "fill_bottom": (14, 14, 17),
+        "outer": (74, 74, 80), "outer2": (34, 34, 38),
+        "accent": (170, 170, 178),
+        "name": (242, 242, 246), "emotion": (245, 190, 74), "body": (236, 236, 240),
+        "header": (0, 0, 0, 210), "divider": (96, 96, 104),
+        "shadow": (0, 0, 0), "backdrop_top": (8, 8, 10), "backdrop_bottom": (0, 0, 0),
+        "face_frame": (44, 44, 50),
+    },
+    "gray": {
+        "fill_top": (78, 80, 88), "fill_bottom": (50, 52, 60),
+        "outer": (120, 122, 130), "outer2": (78, 80, 88),
+        "accent": (206, 208, 216),
+        "name": (246, 246, 250), "emotion": (245, 190, 74), "body": (240, 240, 244),
+        "header": (255, 255, 255, 212), "divider": (150, 152, 162),
+        "shadow": (16, 16, 22), "backdrop_top": (30, 30, 36), "backdrop_bottom": (12, 12, 16),
+        "face_frame": (96, 98, 106),
+    },
     "classic": None,  # 기존 검정 바 렌더링 사용(팔레트 없음)
 }
 VN_THEME_DEFAULT = "sky"
@@ -750,6 +768,14 @@ def _render_card(img, layout, pal, settings,
         bar_h = layout["bar_h"]
         placement = layout["placement"]
 
+        # 카드 배경 반투명도(0~100). 100=불투명. 배경 레이어(외곽/배경/하이라이트/이름표)에만 적용.
+        # 글자·얼굴·장식은 불투명 그대로라 가독성 유지.
+        try:
+            _opacity = float(settings.get("opacity", 100))
+        except (TypeError, ValueError):
+            _opacity = 100.0
+        opa = max(0.0, min(1.0, _opacity / 100.0))
+
         P = max(10, int(bar_h * 0.10))              # 카드 내부 패드
         margin_x = max(16, int(canvas_w * 0.025))   # 좌우 여백
         margin_b = max(14, int(bar_h * 0.10))       # 하단 여백
@@ -783,6 +809,8 @@ def _render_card(img, layout, pal, settings,
         # 3) 외곽 은색 프레임(세로 그라데이션)
         outer = _vertical_gradient((card_w, card_h), _rgba(pal["outer"]), _rgba(pal["outer2"]))
         outer_mask = _rounded_mask((card_w, card_h), radius)
+        if opa < 1.0:
+            outer_mask = outer_mask.point(lambda v: int(v * opa))
         canvas.paste(outer, (card_x1, card_y1), outer_mask)
 
         # 4) 카드 배경(흰→테마색 그라데이션) — 외곽에서 ft 만큼 inset
@@ -790,6 +818,8 @@ def _render_card(img, layout, pal, settings,
         bg_h = card_h - ft * 2
         bg = _vertical_gradient((bg_w, bg_h), _rgba(pal["fill_top"]), _rgba(pal["fill_bottom"]))
         bg_mask = _rounded_mask((bg_w, bg_h), max(6, radius - ft))
+        if opa < 1.0:
+            bg_mask = bg_mask.point(lambda v: int(v * opa))
         canvas.paste(bg, (card_x1 + ft, card_y1 + ft), bg_mask)
 
         # 5) 이너 액센트선
@@ -807,7 +837,7 @@ def _render_card(img, layout, pal, settings,
             hl = Image.new("RGBA", (bg_w, hl_h), (0, 0, 0, 0))
             ImageDraw.Draw(hl).rounded_rectangle(
                 [(0, 0), (bg_w - 1, hl_h - 1)],
-                radius=max(6, radius - ft), fill=(255, 255, 255, 70))
+                radius=max(6, radius - ft), fill=(255, 255, 255, int(70 * opa)))
             hl = hl.filter(ImageFilter.GaussianBlur(radius=3.0))
             canvas.alpha_composite(hl, (card_x1 + ft, card_y1 + ft))
         except Exception as e:
@@ -875,6 +905,9 @@ def _render_card(img, layout, pal, settings,
             plate_layer = Image.new("RGBA", (plate_x2 - plate_x1, plate_h), (0, 0, 0, 0))
             ImageDraw.Draw(plate_layer).rounded_rectangle(
                 [(0, 0), (plate_x2 - plate_x1 - 1, plate_h - 1)], radius=pr, fill=_rgba(pal["header"]))
+            if opa < 1.0:
+                plate_layer.putalpha(
+                    plate_layer.getchannel("A").point(lambda a: int(a * opa)))
             canvas.alpha_composite(plate_layer, (plate_x1, plate_y1))
             draw = ImageDraw.Draw(canvas)
 
@@ -967,7 +1000,8 @@ def _default_vn() -> dict:
         "face_crop_top": 1.8,          # 위쪽 크롭 계수. 1.0=검출박스 그대로, 클수록 위로 확장(데이터패치 노드와 동일 규칙)
         "face_crop_bottom": 1.0,       # 아래쪽 크롭 계수. 1.0=검출박스 그대로, 클수록 아래로 확장
         "face_conf": 0.3,              # YOLO 얼굴 검출 신뢰도 임계치
-        "theme": VN_THEME_DEFAULT,     # 대사창 색 테마(sky/ivory/lavender/classic)
+        "theme": VN_THEME_DEFAULT,     # 대사창 색 테마(sky/ivory/lavender/black/gray/classic)
+        "opacity": 100,                # 카드 배경 반투명도(0~100). 100=불투명. 글자/얼굴은 그대로
     }
 
 
@@ -1020,6 +1054,7 @@ def get_vn_settings(config: dict, bot_name: str = "") -> Optional[dict]:
         "face_crop_bottom": float(vn.get("face_crop_bottom", 1.0) or 1.0),
         "face_conf": float(vn.get("face_conf", 0.3) or 0.3),
         "theme": str(vn.get("theme", VN_THEME_DEFAULT) or VN_THEME_DEFAULT),
+        "opacity": int(vn.get("opacity", 100) if vn.get("opacity", 100) is not None else 100),
     }
 
 

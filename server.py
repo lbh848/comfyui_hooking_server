@@ -3338,6 +3338,7 @@ async def handle_api_postprocess_preview(request: web.Request) -> web.Response:
             "face_crop_bottom": body.get("face_crop_bottom", 1.0),
             "face_conf": body.get("face_conf", 0.3),
             "theme": body.get("theme", "sky"),
+            "opacity": body.get("opacity", 100),
         }
         speak = body.get("speak", "") or ""
         bot_name = body.get("bot_name", "") or app_config.get("bot_selected", "") or ""
