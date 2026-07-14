@@ -6619,11 +6619,44 @@
                                 </div>
                             </div>
 
+                            <!-- 감정 -->
+                            <div class="pp-card">
+                                <div class="pp-card-title">감정</div>
+                                <div class="pp-switch-line">
+                                    <div>
+                                        <div style="font-size:0.82rem;">대사 뒤 <code>#감정</code> 숨김</div>
+                                        <div class="pp-hint" style="margin-top:2px;">켜면 <code>NAME: "대사" #angry</code> 에서 <code>#angry</code> 를 잘라내고 <code>NAME: "대사"</code> 만 합성</div>
+                                    </div>
+                                    <label class="toggle-switch">
+                                        <input type="checkbox" id="pp-vn-strip-emotion" onchange="renderPostprocessPreview()">
+                                        <span class="toggle-slider"></span>
+                                    </label>
+                                </div>
+
+                                <div style="margin-top:10px; border-top:1px solid var(--border); padding-top:10px;">
+                                    <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:6px;">
+                                        <div style="font-size:0.78rem; color:var(--text2, #999);">봇 → 캐릭터 선택 → 이미지 파일명 → 규칙 적용 → 감정 리스트</div>
+                                        <button type="button" class="btn" style="padding:4px 10px; font-size:0.75rem;" onclick="ppOpenEmotionSelectModal()">감정 뽑아내기</button>
+                                    </div>
+
+                                    <div style="font-size:0.74rem; color:var(--text2, #999); margin-bottom:4px;">추출 규칙 (위에서 아래로 순차 적용)</div>
+                                    <div id="pp-vn-emotion-rules" style="margin-bottom:4px;"></div>
+                                    <button type="button" class="btn" style="padding:3px 10px; font-size:0.72rem;" onclick="ppEmotionAddRule()">+ 규칙 추가</button>
+
+                                    <div style="font-size:0.74rem; color:var(--text2, #999); margin-top:10px; margin-bottom:4px;">결과 감정 리스트 <span style="opacity:0.7;">(원본 파일명 → 감정)</span> <span id="pp-vn-emotion-summary" style="font-variant-numeric:tabular-nums; color:var(--accent, #4c6ef5); font-weight:600;"></span></div>
+                                    <div id="pp-vn-emotion-list" class="pp-replace-list" style="max-height:240px; overflow-y:auto;"></div>
+                                    <div class="pp-field-inline" style="margin-top:6px;">
+                                        <button type="button" class="btn" style="padding:4px 10px; font-size:0.75rem;" onclick="ppOpenEmotionCopy()">복사용 창 띄우기</button>
+                                        <span style="font-size:0.72rem; color:var(--text2, #999);">; 로 구분된 감정 리스트 출력</span>
+                                    </div>
+                                </div>
+                            </div>
+
                             <!-- 미리보기 입력 -->
                             <div class="pp-card">
                                 <div class="pp-card-title">미리보기 대사 샘플</div>
-                                <textarea id="pp-vn-preview-speak" class="input" rows="2" style="width:100%; font-family:monospace; resize:vertical;" placeholder='kapri: "대사 예시"&#10;kapri: (생각 예시)' oninput="renderPostprocessPreview()">kapri: "달콤하고 다정하게 해주셔야 해요♡"</textarea>
-                                <div class="pp-hint">형식:<br>- <code>NAME: "대사"</code><br>- <code>NAME: (생각)</code></div>
+                                <textarea id="pp-vn-preview-speak" class="input" rows="2" style="width:100%; font-family:monospace; resize:vertical;" placeholder='kapri: "대사 예시"&#10;kapri: (생각 예시)' oninput="renderPostprocessPreview()">kapri: "달콤하고 다정하게 해주셔야 해요♡" #angry</textarea>
+                                <div class="pp-hint">형식:<br>- <code>NAME: "대사"</code><br>- <code>NAME: (생각)</code><br>- 대사 뒤 <code>#감정</code> (감정 토글 켜면 합성에서 숨김)</div>
                             </div>
                         </div>
                     </div>
@@ -24280,6 +24313,7 @@
         // ─── 후처리 설정 모달 ─────────────────────────────────
         let ppWorking = null;        // 모달 작업용 postprocess 객체 복사본
         let ppPreviewTimer = null;
+        let ppEmotionLastItems = null;  // 감정 뽑기: 최근 조회한 {character, filename} 원본(규칙 변경 시 재적용용)
 
         function defaultPpConfig() {
             return {
@@ -24291,6 +24325,9 @@
                     font_size: 0,
                     name_color: false,
                     name_replace: {},
+                    strip_emotion: false,
+                    emotion_extract_rules: [{ action: 'split_by', separator: '-', take: -2 }],
+                    emotion_rows: [],
                 }
             };
         }
@@ -24302,6 +24339,8 @@
             if (cur && cur.vn) {
                 Object.assign(ppWorking.vn, cur.vn);
                 if (!ppWorking.vn.name_replace || typeof ppWorking.vn.name_replace !== 'object') ppWorking.vn.name_replace = {};
+                if (!Array.isArray(ppWorking.vn.emotion_extract_rules)) ppWorking.vn.emotion_extract_rules = [{ action: 'split_by', separator: '-', take: -2 }];
+                if (!Array.isArray(ppWorking.vn.emotion_rows)) ppWorking.vn.emotion_rows = [];
             }
             // UI 반영
             const vn = ppWorking.vn;
@@ -24312,7 +24351,11 @@
             document.getElementById('pp-vn-font-size').value = vn.font_size || 0;
             onPpHeightModeChange();
             document.getElementById('pp-vn-name-color').checked = !!vn.name_color;
+            document.getElementById('pp-vn-strip-emotion').checked = !!vn.strip_emotion;
             renderNameReplaceList();
+            ppEmotionResetSession();
+            ppRenderEmotionRules();
+            ppRenderEmotionList();
             document.getElementById('postprocess-modal').classList.add('visible');
             renderPostprocessPreview();
         }
@@ -24320,6 +24363,7 @@
         function closePostprocessModal() {
             document.getElementById('postprocess-modal').classList.remove('visible');
             ppWorking = null;
+            ppEmotionResetSession();
         }
 
         function switchPostprocessTab(name) {
@@ -24383,6 +24427,362 @@
             renderPostprocessPreview();
         }
 
+        // ── 감정 뽑아내기 (봇 캐릭터 이미지 파일명 → 규칙 적용 → 감정 리스트) ──
+        // 규칙 적용은 기존 atCleanNameBySteps/atParseTake/atApplyTake 미러 함수를 그대로 재사용.
+        function ppEmotionResetSession() {
+            ppEmotionLastItems = null;
+        }
+
+        function ppEmotionRules() {
+            if (!ppWorking || !ppWorking.vn) return [];
+            if (!Array.isArray(ppWorking.vn.emotion_extract_rules)) ppWorking.vn.emotion_extract_rules = [{ action: 'split_by', separator: '_', take: -1 }];
+            return ppWorking.vn.emotion_extract_rules;
+        }
+
+        // 파일명 → 감정 문자열 추출(확장자 제거 후 규칙 적용)
+        function ppEmotionFromFilename(fname) {
+            if (!fname) return '';
+            const dot = fname.lastIndexOf('.');
+            const base = dot > 0 ? fname.substring(0, dot) : fname;
+            const cleaned = atCleanNameBySteps(base, ppEmotionRules());
+            return cleaned || '';
+        }
+
+        // ppEmotionLastItems 로부터 {filename, emotion, dup} 행 리스트를 생성.
+        // 중복제거하지 않고 모든 원본을 행으로 만든 뒤, 같은 감정이 두 번째 이후 나오는 행에 dup=true 표시.
+        // (규칙에 따라 중복이 맞을 수도 아닐 수도 있으므로 사용자가 눈으로 판단 — dup 행은 음영처리해 아래에 모음)
+        function ppApplyEmotionRules() {
+            if (!ppWorking || !ppWorking.vn) return;
+            if (!ppEmotionLastItems) { ppRenderEmotionList(); return; }
+            const rows = [];
+            for (const it of ppEmotionLastItems) {
+                const emo = ppEmotionFromFilename(it.filename).trim();
+                if (!emo) continue;  // 규칙 결과가 빈 값이면 감정이 아니므로 제외
+                rows.push({ filename: it.filename, emotion: emo, dup: false });
+            }
+            ppWorking.vn.emotion_rows = rows;
+            ppWorking.vn.emotion_total = ppEmotionLastItems.length;  // 전체 이미지수(재오픈 시 표시용 저장)
+            ppRecomputeEmotionDupFlags();
+            ppRenderEmotionList();
+        }
+
+        // 행 순서대로 순회하며 같은 감정의 두 번째 이후 행을 dup=true 로 표시.
+        // 행 삭제 후에도 남은 행 기준으로 다시 표시(첫 등장이 primary 가 됨).
+        function ppRecomputeEmotionDupFlags() {
+            if (!ppWorking || !ppWorking.vn || !Array.isArray(ppWorking.vn.emotion_rows)) return;
+            const seen = new Set();
+            for (const r of ppWorking.vn.emotion_rows) {
+                if (seen.has(r.emotion)) r.dup = true;
+                else { seen.add(r.emotion); r.dup = false; }
+            }
+        }
+
+        // 선택 모달에서 캐릭터 목록을 받아 서버에 POST → 파일명 수집 → 규칙 적용 → 감정 리스트.
+        async function ppEmotionExtract(characters, botName) {
+            if (!ppWorking) return;
+            const listEl = document.getElementById('pp-vn-emotion-list');
+            if (listEl) listEl.innerHTML = '<div class="pp-replace-empty">불러오는 중...</div>';
+            try {
+                const resp = await fetch('/api/postprocess/emotion_sources', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ bot_name: botName || '', characters: characters || [] })
+                });
+                if (!resp.ok) {
+                    const txt = await resp.text().catch(() => '');
+                    throw new Error('HTTP ' + resp.status + (txt ? ' - ' + txt.slice(0, 200) : ''));
+                }
+                const j = await resp.json();
+                const items = j.items || [];
+                if (!items.length) {
+                    ppEmotionLastItems = null;
+                    ppWorking.vn.emotion_rows = [];
+                    ppWorking.vn.emotion_total = 0;
+                    ppRenderEmotionList();
+                    const per = j.per_char_count || {};
+                    const empties = Object.keys(per).filter(k => per[k] === 0);
+                    let msg = '뽑을 감정 원본(이미지 파일명)이 없습니다';
+                    if (empties.length && empties.length === (characters || []).length) {
+                        msg += ` — 선택한 캐릭터(${empties.length}개)에 봇 이미지가 없습니다`;
+                    }
+                    showToast(msg, 'error');
+                    return;
+                }
+                ppEmotionLastItems = items;
+                ppApplyEmotionRules();
+                const _rows = ppWorking.vn.emotion_rows || [];
+                const _uniq = _rows.filter(r => !r.dup).length;
+                const _dup = _rows.length - _uniq;
+                showToast(`감정 ${_uniq}개 추출 (원본 파일 ${items.length}, 중복 ${_dup})`);
+            } catch (e) {
+                console.error('[POSTPROCESS] 감정 뽑기 실패:', e);
+                if (listEl) listEl.innerHTML = '<div class="pp-replace-empty">뽑기 실패</div>';
+                showToast('감정 뽑기 실패: ' + (e.message || e), 'error');
+            }
+        }
+
+        // ── 봇 → 캐릭터 선택 모달 ──
+        let ppEmotionSelectBot = '';
+
+        function _ppEmotionBots() {
+            if (typeof botData === 'undefined' || !botData || !Array.isArray(botData.bots)) return [];
+            return botData.bots;
+        }
+
+        function ppOpenEmotionSelectModal() {
+            let modal = document.getElementById('pp-emotion-select-modal');
+            if (!modal) {
+                modal = document.createElement('div');
+                modal.id = 'pp-emotion-select-modal';
+                document.body.appendChild(modal);
+            }
+            const bots = _ppEmotionBots();
+            const curBot = (typeof botCurrentBot !== 'undefined' && botCurrentBot) ? botCurrentBot : '';
+            ppEmotionSelectBot = curBot;
+            const botOptions = bots.length
+                ? bots.map(b => `<option value="${escapeAttr(b.name)}" ${b.name === curBot ? 'selected' : ''}>${escapeHtml(b.name)}</option>`).join('')
+                : '<option value="">(봇 없음)</option>';
+            // 바깥 클릭 닫기 넣지 않음(모달 UI 규칙).
+            modal.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:10001; display:flex; align-items:center; justify-content:center;';
+            modal.innerHTML = `<div style="background:var(--surface, #1e1e1e); border-radius:10px; width:90vw; max-width:560px; max-height:80vh; display:flex; flex-direction:column; overflow:hidden;">
+                <div style="padding:12px 16px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
+                    <h3 style="margin:0; font-size:1rem;">감정 뽑아내기 — 봇/캐릭터 선택</h3>
+                    <button onclick="document.getElementById('pp-emotion-select-modal').style.display='none'" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer;">&times;</button>
+                </div>
+                <div style="padding:10px 16px; border-bottom:1px solid var(--border); display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                    <span style="font-size:0.8rem;">봇</span>
+                    <select id="pp-emotion-select-bot" onchange="ppEmotionSelectLoadChars(this.value)" style="flex:1; min-width:160px; padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface2); color:var(--text);">${botOptions}</select>
+                    <button onclick="ppEmotionSelectToggleAll(true)" style="background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:3px 8px; border-radius:4px; cursor:pointer; font-size:0.72rem;">전체 선택</button>
+                    <button onclick="ppEmotionSelectToggleAll(false)" style="background:var(--surface2); border:1px solid var(--border); color:var(--text); padding:3px 8px; border-radius:4px; cursor:pointer; font-size:0.72rem;">전체 해제</button>
+                </div>
+                <div id="pp-emotion-select-list" style="padding:8px 16px; overflow-y:auto; flex:1; display:flex; flex-direction:column; gap:6px;">
+                    <div style="color:var(--text2, #888); text-align:center; padding:16px;">로드 중...</div>
+                </div>
+                <div style="padding:10px 16px; border-top:1px solid var(--border); display:flex; justify-content:flex-end; gap:8px;">
+                    <span id="pp-emotion-select-status" style="flex:1; font-size:0.74rem; color:var(--text2, #999); align-self:center;"></span>
+                    <button onclick="document.getElementById('pp-emotion-select-modal').style.display='none'" style="padding:6px 14px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); cursor:pointer;">취소</button>
+                    <button id="pp-emotion-do-btn" onclick="ppEmotionDoExtract()" style="padding:6px 14px; border-radius:6px; border:none; background:var(--accent, #4c6ef5); color:#fff; cursor:pointer; font-weight:600;">감정 뽑기</button>
+                </div>
+            </div>`;
+            modal.style.display = 'flex';
+            ppEmotionSelectLoadChars(ppEmotionSelectBot);
+        }
+
+        async function ppEmotionSelectLoadChars(botName) {
+            ppEmotionSelectBot = botName || '';
+            const list = document.getElementById('pp-emotion-select-list');
+            const status = document.getElementById('pp-emotion-select-status');
+            if (!list) return;
+            const bots = _ppEmotionBots();
+            const bot = bots.find(b => b.name === ppEmotionSelectBot);
+            const chars = (bot && Array.isArray(bot.characters)) ? bot.characters.map(c => (typeof c === 'object' ? c.name : c)).filter(Boolean) : [];
+            if (!chars.length) {
+                list.innerHTML = '<div style="color:var(--text2, #888); text-align:center; padding:16px;">이 봇에 캐릭터가 없습니다</div>';
+                if (status) status.textContent = bots.length ? '' : '봇 데이터가 없습니다 — 봇을 먼저 로드하세요';
+                return;
+            }
+            list.innerHTML = '<div style="color:var(--text2, #888); text-align:center; padding:12px;">이미지 장 수 조회 중...</div>';
+            // 봇의 각 캐릭터 보유 이미지 장 수 조회 (이미지 없는 캐릭터 회피 표시용)
+            let counts = {};
+            try {
+                const resp = await fetch('/api/postprocess/emotion_char_counts?bot_name=' + encodeURIComponent(ppEmotionSelectBot));
+                if (resp.ok) { const j = await resp.json(); counts = j.counts || {}; }
+                else { const txt = await resp.text().catch(() => ''); console.warn('[POSTPROCESS] char_counts 조회 실패:', resp.status, txt); }
+            } catch (e) { console.warn('[POSTPROCESS] char_counts 조회 오류:', e); }
+            // 기본 선택 해제 — 사용자가 직접 고르도록
+            list.innerHTML = chars.map(c => {
+                const n = counts[c] != null ? counts[c] : -1;  // -1 = 조회 실패(알수없음)
+                const empty = n === 0;
+                const countLabel = n >= 0 ? (empty ? '<span style="color:var(--error, #e74c3c); font-size:0.72rem;">(이미지 없음)</span>' : `<span style="color:var(--text2, #999); font-size:0.72rem;">${n}장</span>`) : '';
+                const opa = empty ? 'opacity:0.5;' : '';
+                return `
+                <label style="display:flex; align-items:center; gap:8px; padding:6px 8px; border:1px solid var(--border); border-radius:6px; background:var(--surface2); cursor:pointer; ${opa}">
+                    <input type="checkbox" class="pp-emotion-char-check" value="${escapeAttr(c)}" style="width:18px; height:18px; cursor:pointer;" onchange="ppEmotionSelectUpdateStatus()">
+                    <span style="flex:1; font-size:0.84rem;">${escapeHtml(c)}</span>
+                    ${countLabel}
+                </label>`;
+            }).join('');
+            ppEmotionSelectUpdateStatus();
+        }
+
+        function ppEmotionSelectToggleAll(on) {
+            document.querySelectorAll('.pp-emotion-char-check').forEach(cb => { cb.checked = on; });
+            ppEmotionSelectUpdateStatus();
+        }
+
+        function ppEmotionSelectUpdateStatus() {
+            const status = document.getElementById('pp-emotion-select-status');
+            if (!status) return;
+            const total = document.querySelectorAll('.pp-emotion-char-check').length;
+            const checked = document.querySelectorAll('.pp-emotion-char-check:checked').length;
+            status.textContent = `선택 ${checked}/${total}`;
+        }
+
+        async function ppEmotionDoExtract() {
+            const checks = document.querySelectorAll('.pp-emotion-char-check:checked');
+            const selected = [...checks].map(c => c.value);
+            if (!selected.length) { showToast('캐릭터를 선택하세요', 'error'); return; }
+            const btn = document.getElementById('pp-emotion-do-btn');
+            if (btn) { btn.disabled = true; btn.textContent = '뽑는 중...'; }
+            await ppEmotionExtract(selected, ppEmotionSelectBot);
+            if (btn) { btn.disabled = false; btn.textContent = '감정 뽑기'; }
+            // 성공 시에만 모달 닫기 — ppWorking.emotion_rows 가 채워졌으면 닫는다
+            if (ppWorking && ppWorking.vn && Array.isArray(ppWorking.vn.emotion_rows) && ppWorking.vn.emotion_rows.length) {
+                const m = document.getElementById('pp-emotion-select-modal');
+                if (m) m.style.display = 'none';
+            }
+        }
+
+        function ppRenderEmotionRules() {
+            const container = document.getElementById('pp-vn-emotion-rules');
+            if (!container) return;
+            const rules = ppEmotionRules();
+            container.innerHTML = '';
+            const maxRows = Math.max(rules.length, 1);
+            for (let i = 0; i < maxRows; i++) {
+                const step = rules[i] || {};
+                let paramsHtml = '';
+                if (step.action === 'split_by') {
+                    paramsHtml = `<input type="text" value="${escapeHtml(step.separator || '_')}" placeholder="구분자" oninput="ppWorking.vn.emotion_extract_rules[${i}].separator=this.value; ppApplyEmotionRules();" style="width:50px; padding:2px 4px; font-size:0.75rem; border:1px solid var(--border); border-radius:3px; background:var(--surface2); color:var(--text);">
+                        <input type="text" value="${escapeHtml(String(step.take ?? -1))}" placeholder="인덱스(-1/0/1:)" oninput="ppWorking.vn.emotion_extract_rules[${i}].take=this.value.trim().match(/^-?\d+$/)?parseInt(this.value.trim()):this.value.trim(); ppApplyEmotionRules();" style="width:60px; padding:2px 4px; font-size:0.75rem; border:1px solid var(--border); border-radius:3px; background:var(--surface2); color:var(--text);">`;
+                } else if (step.action === 'strip_suffix' || step.action === 'strip_prefix') {
+                    paramsHtml = `<input type="text" value="${escapeHtml(step.pattern || '')}" placeholder="패턴(정규식)" oninput="ppWorking.vn.emotion_extract_rules[${i}].pattern=this.value; ppApplyEmotionRules();" style="width:140px; padding:2px 4px; font-size:0.75rem; border:1px solid var(--border); border-radius:3px; background:var(--surface2); color:var(--text);">`;
+                } else if (step.action === 'replace') {
+                    paramsHtml = `<input type="text" value="${escapeHtml(step.from || '')}" placeholder="찾을값" oninput="ppWorking.vn.emotion_extract_rules[${i}].from=this.value; ppApplyEmotionRules();" style="width:70px; padding:2px 4px; font-size:0.75rem; border:1px solid var(--border); border-radius:3px; background:var(--surface2); color:var(--text);">
+                        <input type="text" value="${escapeHtml(step.to != null ? step.to : ' ')}" placeholder="바꿀값" oninput="ppWorking.vn.emotion_extract_rules[${i}].to=this.value; ppApplyEmotionRules();" style="width:70px; padding:2px 4px; font-size:0.75rem; border:1px solid var(--border); border-radius:3px; background:var(--surface2); color:var(--text);">`;
+                }
+                const row = document.createElement('div');
+                row.style.cssText = 'display:flex; gap:4px; margin-bottom:4px; align-items:center; flex-wrap:wrap;';
+                row.innerHTML = `
+                    <select onchange="ppWorking.vn.emotion_extract_rules[${i}]={action:this.value}; ppRenderEmotionRules(); ppApplyEmotionRules();" style="padding:2px 4px; font-size:0.75rem; border:1px solid var(--border); border-radius:3px; background:var(--surface2); color:var(--text);">
+                        <option value="split_by" ${step.action==='split_by'?'selected':''}>구분자로 분리</option>
+                        <option value="strip_suffix" ${step.action==='strip_suffix'?'selected':''}>접미사 제거</option>
+                        <option value="strip_prefix" ${step.action==='strip_prefix'?'selected':''}>접두사 제거</option>
+                        <option value="replace" ${step.action==='replace'?'selected':''}>치환</option>
+                        <option value="strip" ${step.action==='strip'?'selected':''}>공백 제거</option>
+                        <option value="lower" ${step.action==='lower'?'selected':''}>소문자화</option>
+                    </select>
+                    ${paramsHtml}
+                    <button onclick="ppEmotionRemoveRule(${i})" style="background:var(--error, #e74c3c); color:#fff; border:none; padding:2px 6px; border-radius:3px; cursor:pointer; font-size:0.7rem;">✕</button>
+                `;
+                container.appendChild(row);
+            }
+        }
+
+        function ppEmotionAddRule() {
+            if (!ppWorking) return;
+            ppEmotionRules().push({ action: 'replace', from: '_', to: ' ' });
+            ppRenderEmotionRules();
+            ppApplyEmotionRules();
+        }
+
+        function ppEmotionRemoveRule(i) {
+            if (!ppWorking) return;
+            const rules = ppEmotionRules();
+            rules.splice(i, 1);
+            ppRenderEmotionRules();
+            ppApplyEmotionRules();
+        }
+
+        function _ppEmotionRowHtml(r, i, shaded) {
+            const shade = shaded ? 'opacity:0.5; background:var(--surface, #2a2a2a);' : '';
+            return `
+                <div class="pp-replace-row" style="align-items:flex-start; gap:6px; ${shade}">
+                    <span style="flex:1; min-width:0; color:var(--text2, #999); font-size:0.74rem; word-break:break-all;">${escapeHtml(r.filename)}</span>
+                    <span class="arrow" style="flex-shrink:0;">→</span>
+                    <span style="flex:1; min-width:0; color:var(--accent, #4c6ef5); font-weight:600; word-break:break-all;">${escapeHtml(r.emotion)}</span>
+                    <button type="button" class="btn" style="padding:2px 8px; flex-shrink:0;" onclick="ppEmotionRemove(${i})">✕</button>
+                </div>`;
+        }
+
+        function ppRenderEmotionList() {
+            const container = document.getElementById('pp-vn-emotion-list');
+            if (!container) return;
+            const rows = (ppWorking && ppWorking.vn && Array.isArray(ppWorking.vn.emotion_rows)) ? ppWorking.vn.emotion_rows : [];
+            const summaryEl = document.getElementById('pp-vn-emotion-summary');
+            const totalImages = (ppEmotionLastItems && Array.isArray(ppEmotionLastItems))
+                ? ppEmotionLastItems.length
+                : ((ppWorking && ppWorking.vn && ppWorking.vn.emotion_total) || 0);
+            const validEmotions = rows.filter(r => !r.dup).length;  // 유효(고유) 감정 수
+            if (summaryEl) summaryEl.textContent = rows.length ? `· 유효 ${validEmotions} / 전체 ${totalImages}` : '';
+            if (!rows.length) {
+                container.innerHTML = '<div class="pp-replace-empty">감정 없음 — 감정 뽑아내기 클릭</div>';
+                return;
+            }
+            // primary(고유 감정, 첫 등장) 행 먼저, 그 아래에 중복 행을 음영처리해 모음.
+            const primary = [], dups = [];
+            rows.forEach((r, i) => { (r.dup ? dups : primary).push({ r, i }); });
+            let html = primary.map(x => _ppEmotionRowHtml(x.r, x.i, false)).join('');
+            if (dups.length) {
+                html += `<div style="margin:6px 0 4px; font-size:0.72rem; color:var(--text2, #999); border-top:1px dashed var(--border); padding-top:6px;">중복 ${dups.length}개 (같은 감정, 음영) — 필요 없으면 ✕</div>`;
+                html += dups.map(x => _ppEmotionRowHtml(x.r, x.i, true)).join('');
+            }
+            container.innerHTML = html;
+        }
+
+        function ppEmotionRemove(i) {
+            if (!ppWorking || !Array.isArray(ppWorking.vn.emotion_rows)) return;
+            const target = ppWorking.vn.emotion_rows[i];
+            if (!target) return;
+            const emo = target.emotion;
+            // 같은 감정의 행을 모두 제거(음영 중복 포함) — 한 감정을 통째로 리스트에서 뺀다.
+            const before = ppWorking.vn.emotion_rows.length;
+            ppWorking.vn.emotion_rows = ppWorking.vn.emotion_rows.filter(r => r.emotion !== emo);
+            if (ppWorking.vn.emotion_rows.length === before) return;
+            ppRecomputeEmotionDupFlags();  // 남은 행 기준으로 중복 표시 재계산
+            ppRenderEmotionList();
+        }
+
+        function ppOpenEmotionCopy() {
+            const rows = (ppWorking && ppWorking.vn && Array.isArray(ppWorking.vn.emotion_rows)) ? ppWorking.vn.emotion_rows : [];
+            // 고유 감정만 = dup 표시가 없는(primary) 행의 감정.
+            const uniqRows = rows.filter(r => !r.dup);
+            const text = uniqRows.map(r => r.emotion).join(';');
+            let modal = document.getElementById('pp-emotion-copy-modal');
+            if (!modal) {
+                modal = document.createElement('div');
+                modal.id = 'pp-emotion-copy-modal';
+                modal.className = 'modal';
+                modal.style.display = 'flex';
+                document.body.appendChild(modal);
+            }
+            // 바깥 클릭으로 닫기 넣지 않음(모달 UI 규칙) — ✕/복사/닫기 버튼으로만 닫힘.
+            modal.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:10001; display:flex; align-items:center; justify-content:center;';
+            modal.innerHTML = `<div style="background:var(--surface, #1e1e1e); border-radius:10px; width:80vw; max-width:640px; max-height:80vh; display:flex; flex-direction:column; overflow:hidden;">
+                <div style="padding:12px 16px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
+                    <h3 style="margin:0; font-size:1rem;">감정 리스트 복사 (${uniqRows.length}개 고유 · 원본 ${rows.length})</h3>
+                    <button onclick="document.getElementById('pp-emotion-copy-modal').style.display='none'" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer;">&times;</button>
+                </div>
+                <div style="padding:12px 16px; overflow-y:auto; flex:1;">
+                    <textarea id="pp-emotion-copy-text" class="input" readonly style="width:100%; min-height:120px; font-family:monospace; resize:vertical; word-break:break-all;">${escapeHtml(text)}</textarea>
+                </div>
+                <div style="padding:10px 16px; border-top:1px solid var(--border); display:flex; justify-content:flex-end; gap:8px;">
+                    <button onclick="document.getElementById('pp-emotion-copy-modal').style.display='none'" style="padding:6px 14px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); cursor:pointer;">닫기</button>
+                    <button onclick="ppCopyEmotionList()" style="padding:6px 14px; border-radius:6px; border:none; background:var(--accent, #4c6ef5); color:#fff; cursor:pointer; font-weight:600;">복사</button>
+                </div>
+            </div>`;
+            modal.style.display = 'flex';
+        }
+
+        function ppCopyEmotionList() {
+            const el = document.getElementById('pp-emotion-copy-text');
+            if (!el) return;
+            const text = el.value;
+            const done = () => showToast('감정 리스트 복사됨 (' + text.split(';').filter(Boolean).length + '개)');
+            try {
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(text).then(done).catch(() => {
+                        el.select(); document.execCommand('copy'); done();
+                    });
+                } else {
+                    el.select(); document.execCommand('copy'); done();
+                }
+            } catch (e) {
+                console.error('[POSTPROCESS] 감정 리스트 복사 실패:', e);
+                showToast('복사 실패: ' + (e.message || e), 'error');
+            }
+        }
+
         function collectPpVnSettings() {
             // UI 입력값을 ppWorking.vn에 반영하고 반환 (미리보기/저장 공통)
             if (!ppWorking) return null;
@@ -24395,6 +24795,7 @@
             const fs = parseInt(document.getElementById('pp-vn-font-size').value, 10);
             vn.font_size = isNaN(fs) ? 0 : Math.max(0, fs);
             vn.name_color = document.getElementById('pp-vn-name-color').checked;
+            vn.strip_emotion = document.getElementById('pp-vn-strip-emotion').checked;
             return vn;
         }
 
@@ -24425,6 +24826,7 @@
                             font_size: vn.font_size || 0,
                             name_color: vn.name_color,
                             name_replace: vn.name_replace || {},
+                            strip_emotion: vn.strip_emotion,
                             speak: document.getElementById('pp-vn-preview-speak').value,
                             // 현재 편집 중인 삽화 프로필의 저장된 HRF 설정을 서버가 읽어
                             // 미리보기 베이스 크기를 실제 생성 결과와 일치시키도록 전달

@@ -72,12 +72,26 @@ _FONT_CANDIDATES = [
 ]
 
 
-def parse_speak(speak_text: str) -> list:
+# 줄 끝의 감정 리터럴(예: '... " #angry' 의 ' #angry') 매칭.
+# 대사/생각 본문 뒤에 붙은 #감정 태그를 잘라내 parse_speak 정규식이 정상 매칭하게 한다.
+_EMOTION_SUFFIX_RE = re.compile(r'\s+#\S+\s*$', re.UNICODE)
+
+
+def _strip_emotion_suffix(line: str) -> str:
+    """줄 끝의 ' #감정' 리터럴을 제거한 줄 반환. 없으면 그대로."""
+    return _EMOTION_SUFFIX_RE.sub('', line)
+
+
+def parse_speak(speak_text: str, strip_emotion: bool = False) -> list:
     """[SPEAK] 섹션 원문을 발화/생각 세그먼트로 파싱.
 
     지원 포맷:
       - 발화:  NAME: "대사내용"   (예: kapri: "달콤하게 해주세요♡")
       - 생각:  NAME: (생각내용)    또는  (독백 생각내용)
+
+    strip_emotion=True 면 각 줄의 끝에 붙은 ' #감정' 리터럴을 매칭 전에 제거한다.
+    예: 'kapri: "대사" #angry' -> 'kapri: "대사"' 로 정상 파싱(speaker=kapri, text=대사).
+    strip_emotion=False(기본)면 현재 동작 유지 — #가 붙은 줄은 정규식 불일치로 폴백 분기.
 
     Returns:
         [{"speaker": str|None, "text": str, "type": "speech"|"thought"}, ...]
@@ -97,6 +111,12 @@ def parse_speak(speak_text: str) -> list:
         line = raw_line.rstrip()
         if not line.strip():
             continue
+
+        # 감정 토글 ON: 줄 끝 ' #감정' 제거 후 매칭
+        if strip_emotion:
+            line = _strip_emotion_suffix(line)
+            if not line.strip():
+                continue
 
         m = speech_re.match(line)
         if m:
@@ -327,8 +347,9 @@ def compose_postprocess(image_bytes: bytes, speak_text: str,
     # 텍스트 렌더
     name_replace = settings.get("name_replace") or {}
     use_name_color = bool(settings.get("name_color", False))
+    strip_emotion = bool(settings.get("strip_emotion", False))
 
-    segments = parse_speak(speak_text)
+    segments = parse_speak(speak_text, strip_emotion=strip_emotion)
     if not segments:
         # 파싱 결과 대사/생각이 하나도 없으면 바만 남기지 않고 원본 반환
         print(f"[POSTPROCESS] 파싱된 SPEAK 세그먼트 없음(speak={speak_text!r}), 후처리 스킵 — 원본 반환")

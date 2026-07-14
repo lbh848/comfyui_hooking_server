@@ -653,6 +653,50 @@ class BotMode:
         return _json_ok({"images": images})
 
     # ─── 이미지 파일 서빙 ────────────────────────────────
+    def iter_character_image_filenames(self, bot_name: str, char_name: str):
+        """봇 캐릭터 디렉토리(BOT_DIR/<bot>/<character>)의 이미지 파일명을 yield.
+
+        봇으로 가져온 이미지는 '<캐릭터>-<의상>-<표정>-<해시>.<ext>' 평면 구조로 저장되므로
+        표정(감정)이 파일명에 인코딩되어 있다. 후처리 감정 뽑아내기 원본으로 사용.
+        """
+        if not bot_name or not char_name:
+            return
+        char_dir = os.path.join(BOT_DIR, bot_name, char_name)
+        if not os.path.isdir(char_dir):
+            return
+        for fname in sorted(os.listdir(char_dir)):
+            if fname.startswith("_"):
+                continue  # _face_image 등 특수 파일 제외
+            ext = os.path.splitext(fname)[1].lower()
+            if ext not in IMAGE_EXTENSIONS:
+                continue
+            yield fname
+
+    def character_image_counts(self, bot_name: str) -> dict:
+        """봇의 각 캐릭터별 보유 이미지 장 수 반환. {char_name: int}.
+
+        감정 뽑기 선택 모달에서 이미지가 없는 캐릭터를 미리 식별하기 위해 사용.
+        iter_character_image_filenames 과 동일 조건(_ 프리픽스 제외)으로 집계.
+        """
+        counts = {}
+        if not bot_name:
+            return counts
+        bot_dir = os.path.join(BOT_DIR, bot_name)
+        if not os.path.isdir(bot_dir):
+            return counts
+        for cname in sorted(os.listdir(bot_dir)):
+            cpath = os.path.join(bot_dir, cname)
+            if not os.path.isdir(cpath):
+                continue
+            n = 0
+            for fname in os.listdir(cpath):
+                if fname.startswith("_"):
+                    continue
+                if os.path.splitext(fname)[1].lower() in IMAGE_EXTENSIONS:
+                    n += 1
+            counts[cname] = n
+        return counts
+
     async def handle_get_image(self, request):
         """GET /api/bot_mode/image/{bot}/{character}/{filename}"""
         bot_name = request.match_info.get("bot", "")

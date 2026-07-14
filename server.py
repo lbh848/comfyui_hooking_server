@@ -3327,6 +3327,7 @@ async def handle_api_postprocess_preview(request: web.Request) -> web.Response:
             "font_size": body.get("font_size", 0) or 0,
             "name_color": bool(body.get("name_color", False)),
             "name_replace": body.get("name_replace") or {},
+            "strip_emotion": bool(body.get("strip_emotion", False)),
         }
         speak = body.get("speak", "") or ""
         bot_name = body.get("bot_name", "") or app_config.get("bot_selected", "") or ""
@@ -3418,6 +3419,122 @@ async def handle_api_postprocess_preview(request: web.Request) -> web.Response:
     except Exception as e:
         tb = traceback.format_exc()
         print(f"[ERROR] postprocess_preview 실패: {e}\n{tb}")
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def handle_api_postprocess_emotion_sources(request: web.Request) -> web.Response:
+    """POST /api/postprocess/emotion_sources
+
+    후처리(대사모드) 감정 뽑아내기용 원본.
+    요청 body: {"bot_name": str, "characters": [str, ...]}
+    - characters 가 비어있지 않으면 그 캐릭터들만 수집(사용자가 봇→캐릭터 선택).
+    - characters 가 비어있으면 bot_name 의 모든 캐릭터 fallback.
+
+    봇 캐릭터 이미지는 BOT_DIR/<bot>/<character>/ 에
+    '<캐릭터>-<의상>-<표정>-<해시>.<ext>' 평면 구조로 저장되므로 표정(감정)이 파일명에 인코딩.
+    반환: {"items": [{"character": str, "filename": str}, ...], "count": int, "per_char_count": {...}}
+    규칙 적용(치환/문자열 자르기)은 프론트엔드의 atCleanNameBySteps 미러로 수행한다.
+    """
+    try:
+        try:
+            body = await request.json()
+        except Exception as e:
+            print(f"[POSTPROCESS_EMOTION_SOURCES] ⚡ JSON body 파싱 실패: {e}")
+            return web.json_response({"error": f"요청 본문 파싱 실패: {e}"}, status=400)
+
+        bot_name = (body.get("bot_name", "") or "").strip()
+        characters = body.get("characters", []) or []
+        if not isinstance(characters, list):
+            characters = []
+
+        # characters 가 명시된 경우: 그대로 사용(중복 제거, 순서 유지)
+        if characters:
+            char_names = []
+            seen = set()
+            for cn in characters:
+                cn = str(cn or "").strip()
+                if cn and cn not in seen:
+                    seen.add(cn)
+                    char_names.append(cn)
+        else:
+            # fallback: bot_name 의 모든 캐릭터
+            if not bot_name:
+                print("[POSTPROCESS_EMOTION_SOURCES] ⚡ bot_name 비어있음 — 빈 결과")
+                return web.json_response({"items": [], "count": 0, "per_char_count": {}})
+            try:
+                from modes.bot_mode import _load_bot_data
+                bot_data = _load_bot_data()
+            except Exception as e:
+                print(f"[POSTPROCESS_EMOTION_SOURCES] ⚠ bot 데이터 로드 실패: {e}")
+                traceback.print_exc()
+                return web.json_response({"error": f"봇 데이터 로드 실패: {e}"}, status=500)
+
+            bots = bot_data.get("bots", []) if isinstance(bot_data, dict) else []
+            target_bot = next((b for b in bots if b.get("name") == bot_name), None)
+            if not target_bot:
+                print(f"[POSTPROCESS_EMOTION_SOURCES] ⚡ 봇을 찾을 수 없음(bot_name={bot_name!r})")
+                return web.json_response({"items": [], "count": 0, "per_char_count": {}})
+
+            char_names = []
+            seen = set()
+            for c in target_bot.get("characters", []):
+                if not isinstance(c, dict):
+                    continue
+                cname = c.get("name", "")
+                if cname and cname not in seen:
+                    seen.add(cname)
+                    char_names.append(cname)
+
+        if not char_names:
+            print(f"[POSTPROCESS_EMOTION_SOURCES] ⚡ 캐릭터 없음(bot_name={bot_name!r}, selected={len(characters)})")
+            return web.json_response({"items": [], "count": 0, "per_char_count": {}})
+
+        items = []
+        per_char_count = {}
+        try:
+            for cname in char_names:
+                cnt = 0
+                try:
+                    for fname in bot_mode.iter_character_image_filenames(bot_name, cname):
+                        items.append({"character": cname, "filename": fname})
+                        cnt += 1
+                except Exception as ce:
+                    print(f"[POSTPROCESS_EMOTION_SOURCES] ⚠ 캐릭터 파일명 수집 실패({cname}): {ce}")
+                    traceback.print_exc()
+                per_char_count[cname] = cnt
+        except Exception as e:
+            print(f"[POSTPROCESS_EMOTION_SOURCES] ⚠ 파일명 수집 전체 실패: {e}")
+            traceback.print_exc()
+            return web.json_response({"error": f"이미지 파일명 수집 실패: {e}"}, status=500)
+
+        empty_chars = [c for c, n in per_char_count.items() if n == 0]
+        if empty_chars:
+            print(f"[POSTPROCESS_EMOTION_SOURCES] ⚡ 이미지 없는 캐릭터 {len(empty_chars)}/{len(char_names)}: {empty_chars[:10]}")
+        print(f"[POSTPROCESS_EMOTION_SOURCES] 완료: bot={bot_name!r}, 캐릭터={len(char_names)}, 파일명={len(items)}")
+        return web.json_response({"items": items, "count": len(items), "per_char_count": per_char_count})
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f"[ERROR] postprocess_emotion_sources 실패: {e}\n{tb}")
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def handle_api_postprocess_emotion_char_counts(request: web.Request) -> web.Response:
+    """GET /api/postprocess/emotion_char_counts?bot_name=...
+
+    봇의 각 캐릭터별 보유 이미지 장 수 반환. {counts: {char_name: int}}.
+    감정 뽑기 선택 모달에서 이미지가 없는 캐릭터를 미리 식별·회피하기 위해 사용.
+    """
+    try:
+        bot_name = (request.query.get("bot_name", "") or "").strip()
+        if not bot_name:
+            print("[POSTPROCESS_EMOTION_CHAR_COUNTS] ⚡ bot_name 비어있음")
+            return web.json_response({"counts": {}})
+        counts = bot_mode.character_image_counts(bot_name)
+        print(f"[POSTPROCESS_EMOTION_CHAR_COUNTS] bot={bot_name!r}, 캐릭터={len(counts)}, 이미지 있는={sum(1 for n in counts.values() if n>0)}")
+        return web.json_response({"counts": counts})
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f"[ERROR] postprocess_emotion_char_counts 실패: {e}\n{tb}")
         return web.json_response({"error": str(e)}, status=500)
 
 
@@ -5103,6 +5220,8 @@ app.router.add_get("/api/reschedule", handle_api_reschedule)
 app.router.add_post("/api/reschedule", handle_api_reschedule)
 app.router.add_post("/api/reschedule_with_modified_prompt", handle_api_reschedule_with_modified_prompt)
 app.router.add_post("/api/postprocess/preview", handle_api_postprocess_preview)
+app.router.add_post("/api/postprocess/emotion_sources", handle_api_postprocess_emotion_sources)
+app.router.add_get("/api/postprocess/emotion_char_counts", handle_api_postprocess_emotion_char_counts)
 app.router.add_post("/api/llm_edit_prompt", handle_api_llm_edit_prompt)
 app.router.add_get("/api/llm_edit_prompt_template", handle_api_get_llm_edit_template)
 app.router.add_post("/api/llm_edit_prompt_template", handle_api_set_llm_edit_template)
