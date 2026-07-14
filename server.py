@@ -893,7 +893,7 @@ async def save_backup(image_bytes: bytes, prompt_id: str, positive: str, negativ
         img = Image.open(BytesIO(image_bytes))
     except Exception as e:
         print(f"[BACKUP] ✗ 이미지 로드 실패: {e}")
-        return
+        return None, image_bytes  # 합성(또는 원본) 이미지를 호출자에게 반환 (risu 전송 등)
 
     webp_path = os.path.join(WORKFLOW_BACKUP_DIR, f"{base_name}.webp")
 
@@ -993,7 +993,7 @@ async def save_backup(image_bytes: bytes, prompt_id: str, positive: str, negativ
     # 5) 프론트엔드에 새 백업 생성 알림
     await notify_frontend("backup_created", {"name": base_name})
 
-    return base_name  # 저장된 파일명 반환 (확장자 제외)
+    return base_name, image_bytes  # 저장된 파일명(확장자 제외) + 합성 적용된 이미지 bytes (후처리 비활성 시 원본)
 
 
 def cleanup_backups():
@@ -1981,7 +1981,7 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
             _pp_settings = get_vn_settings(app_config)
         except Exception as _e:
             print(f"[BACKUP] ⚠ 후처리 설정 조회 실패: {_e}")
-        await save_backup(img_bytes, prompt_id, positive, negative, generation_time=elapsed_time, bot_name=_backup_bot_name, gen_method=_gen_method, postprocess_settings=_pp_settings, speak_text=_speak_text)
+        _backup_name, img_bytes = await save_backup(img_bytes, prompt_id, positive, negative, generation_time=elapsed_time, bot_name=_backup_bot_name, gen_method=_gen_method, postprocess_settings=_pp_settings, speak_text=_speak_text)
 
         # 프록시 응답 설정
         our_filename = f"ComfyUI_{prompt_id[:8]}.png"
