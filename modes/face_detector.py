@@ -173,12 +173,18 @@ def _letterbox(image, size=_IMG_SIZE):
 
 
 def _detect(sess, image_rgb, conf_thres):
-    """세션으로 얼굴 추론 → NMS → 신뢰도 최고 박스(xyxy, 원본 좌표) 반환.
+    """세션으로 얼굴 추론 → 임계치 통과 박스 중 신뢰도 최고 1개(xyxy, 원본 좌표) 반환.
+
+    NMS 는 생략한다: 본 함수는 항상 박스 1개만 반환하며, 그 1개는
+    '통과 박스 중 신뢰도 최고' = argmax(conf) 이다. NMS 가 바꾸는 것은
+    kept[1:] (중복 제거 결과) 뿐이고 kept[0] == argsort[::-1][0] == argmax 이므로
+    반환값에 NMS 는 영향을 주지 않는다. conf 임계치 0('최고 박스 고정')일 때
+    8400개 전부 NMS 하는 O(n²) 비용을 피하기 위해 argmax 한 번(O(n))으로 대체.
 
     Returns:
         (box_or_None, conf): conf 는 항상 채워진다.
           - 검출 성공: box=(x1,y1,x2,y2)(원본 좌표), conf=선택 박스 신뢰도.
-          - 임계치 미달/NMS 전멸: box=None, conf=이미지 내 전체 박스 중 최고 신뢰도.
+          - 임계치 미달: box=None, conf=이미지 내 전체 박스 중 최고 신뢰도.
             (임계치 튜닝/디버그용 — 미검출이라도 어느 정도 신뢰도의 박스가 있었는지 노출)
           - 추론 결과 자체에 박스가 없으면 conf=None.
     """
@@ -192,46 +198,23 @@ def _detect(sess, image_rgb, conf_thres):
     # 임계치 무관 전체 최고 신뢰도 — 미검출 시에도 반환(튜닝 단서).
     max_conf_all = float(conf.max()) if conf.size else None
 
-    x1 = cx - w / 2.0
-    y1 = cy - h / 2.0
-    x2 = cx + w / 2.0
-    y2 = cy + h / 2.0
-
     keep = conf >= conf_thres
     if not keep.any():
         return None, max_conf_all
-    X = _np.stack([x1, y1, x2, y2], axis=1)[keep]
+
+    # 통과 박스 중 신뢰도 최고 1개 (NMS 생략 — 박스 1개만 반환하므로 불필요).
     C = conf[keep]
-    # NMS (greedy, IoU 0.45)
-    order = C.argsort()[::-1]
-    kept = []
-    while order.size:
-        i = order[0]
-        kept.append(i)
-        order = order[1:]
-        if order.size == 0:
-            break
-        xx1 = _np.maximum(X[i, 0], X[order, 0])
-        yy1 = _np.maximum(X[i, 1], X[order, 1])
-        xx2 = _np.minimum(X[i, 2], X[order, 2])
-        yy2 = _np.minimum(X[i, 3], X[order, 3])
-        iw = _np.clip(xx2 - xx1, 0, None)
-        ih = _np.clip(yy2 - yy1, 0, None)
-        inter = iw * ih
-        a1 = (X[i, 2] - X[i, 0]) * (X[i, 3] - X[i, 1])
-        a2 = (X[order, 2] - X[order, 0]) * (X[order, 3] - X[order, 1])
-        iou = inter / _np.clip(a1 + a2 - inter, 1e-7, None)
-        order = order[iou <= _IOU_THRES]
-    if not kept:
-        return None, max_conf_all
-    best = kept[0]   # 신뢰도 최고
-    bx = X[best]
+    best = int(C.argmax())
+    bx1 = (cx[keep][best] - w[keep][best] / 2.0)
+    by1 = (cy[keep][best] - h[keep][best] / 2.0)
+    bx2 = (cx[keep][best] + w[keep][best] / 2.0)
+    by2 = (cy[keep][best] + h[keep][best] / 2.0)
     bconf = float(C[best])
     # letterbox 역변환 → 원본 좌표
-    ox1 = (bx[0] - pad_w) / gain
-    oy1 = (bx[1] - pad_h) / gain
-    ox2 = (bx[2] - pad_w) / gain
-    oy2 = (bx[3] - pad_h) / gain
+    ox1 = (bx1 - pad_w) / gain
+    oy1 = (by1 - pad_h) / gain
+    ox2 = (bx2 - pad_w) / gain
+    oy2 = (by2 - pad_h) / gain
     return (float(ox1), float(oy1), float(ox2), float(oy2)), bconf
 
 

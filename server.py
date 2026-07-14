@@ -3466,7 +3466,7 @@ async def handle_api_postprocess_preview_face(request: web.Request) -> web.Respo
         face_best_only = bool(body.get("face_best_only", False))
         device = (body.get("device") or "auto").strip() or "auto"
 
-        # '최고 신뢰도 박스 고정': 임계치를 0으로 강제 → 검출된 박스 중 신뢰도 최고를 항상 반환.
+        # '최고 신뢰도 박스 하나만': 임계치를 0으로 강제 → 검출된 박스 중 신뢰도 최고를 항상 반환.
         if face_best_only:
             face_conf = 0.0
 

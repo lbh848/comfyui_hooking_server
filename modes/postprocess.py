@@ -601,7 +601,7 @@ def compose_postprocess(image_bytes: bytes, speak_text: str,
         face_conf = float(settings.get("face_conf", 0.3) or 0.3)
     except (TypeError, ValueError):
         face_conf = 0.3
-    # '최고 신뢰도 박스 고정': 임계치 0 강제 → 항상 최고 신뢰도 박스 반환(미리보기/실합성 동일).
+    # '최고 신뢰도 박스 하나만': 임계치 0 강제 → 항상 최고 신뢰도 박스 반환(미리보기/실합성 동일).
     if bool(settings.get("face_best_only", False)):
         face_conf = 0.0
     prefix = settings.get("prefix", "") or ""
