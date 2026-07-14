@@ -3333,6 +3333,28 @@ async def handle_api_postprocess_preview(request: web.Request) -> web.Response:
 
         from modes.postprocess import compose_postprocess
 
+        # 현재 봇/프로필의 저장된 삽화 설정(HRF + img_w/img_h)을 한 번 읽는다.
+        # 더미 베이스 크기와 HRF 변환 모두 이 저장값을 공용으로 사용해서
+        # 미리보기 최종 크기를 실제 생성 결과와 완전히 일치시킨다.
+        profile = body.get("profile", "solo")
+        if profile not in ("solo", "group"):
+            profile = "solo"
+        _is = {}
+        try:
+            if bot_name:
+                from modes.bot_mode import _load_bot_data
+                _bd = _load_bot_data()
+                _bot = next((b for b in _bd.get("bots", []) if b.get("name") == bot_name), None)
+                if _bot:
+                    _is = _bot.get(f"illust_settings_{profile}", _bot.get("illust_settings", {})) or {}
+                else:
+                    print(f"[POSTPROCESS_PREVIEW] ⚠ 봇을 찾을 수 없어 저장값 대신 기본값 사용: {bot_name}")
+            else:
+                print("[POSTPROCESS_PREVIEW] ⚠ bot_name/app_config.bot_selected 비어있어 저장값 대신 기본값 사용")
+        except Exception as _e:
+            print(f"[POSTPROCESS_PREVIEW] ⚠ 삽화 설정 조회 실패, 기본값 사용: {_e}")
+            traceback.print_exc()
+
         # 베이스 이미지 준비
         base = body.get("base")
         base_bytes = None
@@ -3347,12 +3369,49 @@ async def handle_api_postprocess_preview(request: web.Request) -> web.Response:
                 print(f"[POSTPROCESS_PREVIEW] ⚠ base 이미지 디코딩 실패, 더미 사용: {e}")
                 base_bytes = None
         if base_bytes is None:
-            # 표준 삽화 비율 더미 이미지 생성
+            # 저장된 img_w/img_h로 더미 생성 (없으면 표준 삽화 비율 832x1216)
             from PIL import Image as _PILImage
-            dummy = _PILImage.new("RGB", (832, 1216), (60, 60, 90))
+            try:
+                _dw = max(64, int(_is.get("img_w", 832) or 832))
+                _dh = max(64, int(_is.get("img_h", 1216) or 1216))
+            except (TypeError, ValueError):
+                _dw, _dh = 832, 1216
+            dummy = _PILImage.new("RGB", (_dw, _dh), (60, 60, 90))
             _dbuf = BytesIO()
             dummy.save(_dbuf, format="PNG")
             base_bytes = _dbuf.getvalue()
+            print(f"[POSTPROCESS_PREVIEW] 더미 베이스 생성: {_dw}x{_dh} (profile={profile})")
+
+        # HRF(업스케일/원본복원) 사이즈 변환을 베이스에 적용 —
+        # 실제 생성은 ComfyUI가 base → hrf_size배 업스케일 → (restore 시 원본 복원) 순으로 처리하고,
+        # 그 최종 이미지에 대사 합성이 들어간다. 미리보기도 동일한 최종 크기를 재현해야
+        # 실제 전송 결과와 일치한다 (박스 높이/폰트를 px 고정 모드로 쓸 때 특히 민감).
+        # - HRF OFF 이거나 restore ON → 최종 크기 = 원본 (변환 없음, 실제도 동일)
+        # - HRF ON & restore OFF → base를 hrf_size 배로 업스케일
+        try:
+            hrf_apply = bool(_is.get("hrf_activate", False))
+            try:
+                hrf_size = float(_is.get("hrf_size", 1.0) or 1.0)
+            except (TypeError, ValueError):
+                hrf_size = 1.0
+            hrf_restore = bool(_is.get("hrf_restore_size", False))
+
+            if hrf_apply and hrf_size > 1.0 and not hrf_restore:
+                _bimg = Image.open(BytesIO(base_bytes))
+                _ow, _oh = _bimg.size
+                _bimg = _bimg.resize(
+                    (max(1, int(round(_ow * hrf_size))), max(1, int(round(_oh * hrf_size)))),
+                    Image.LANCZOS,
+                )
+                _ub = BytesIO()
+                _bimg.save(_ub, format="PNG")
+                base_bytes = _ub.getvalue()
+                print(f"[POSTPROCESS_PREVIEW] HRF 업스케일 적용: {_ow}x{_oh} → {_bimg.size[0]}x{_bimg.size[1]} (size={hrf_size}, restore=False, profile={profile})")
+            else:
+                print(f"[POSTPROCESS_PREVIEW] HRF 크기 변환 없음 (apply={hrf_apply}, size={hrf_size}, restore={hrf_restore}, profile={profile})")
+        except Exception as _e:
+            print(f"[POSTPROCESS_PREVIEW] ⚠ HRF 변환 실패, 원본 베이스 사용: {_e}")
+            traceback.print_exc()
 
         composed = compose_postprocess(base_bytes, speak, settings, bot_name)
         return web.Response(body=composed, content_type="image/png")

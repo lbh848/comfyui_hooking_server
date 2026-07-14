@@ -6630,7 +6630,7 @@
 
                     <!-- 오른쪽: 실시간 미리보기 -->
                     <div class="pp-right">
-                        <div style="font-size:0.78rem; color:var(--text2, #999);">실시간 미리보기 <span style="opacity:0.7;">(저장 후 실제 합성과 동일)</span></div>
+                        <div style="font-size:0.78rem; color:var(--text2, #999);">실시간 미리보기 <span style="opacity:0.7;">(저장 후 실제 합성과 동일)</span> <span id="pp-preview-size" style="opacity:0.85; font-variant-numeric:tabular-nums;"></span></div>
                         <div class="pp-preview-box">
                             <img id="pp-preview-img" alt="미리보기" style="display:none;">
                             <div id="pp-preview-placeholder" class="pp-preview-placeholder">대사 모드를 켜면<br>미리보기가 표시됩니다</div>
@@ -24410,6 +24410,8 @@
                     imgEl.style.display = 'none';
                     imgEl.src = '';
                     if (placeholderEl) placeholderEl.style.display = 'block';
+                    const _sizeEl = document.getElementById('pp-preview-size');
+                    if (_sizeEl) _sizeEl.textContent = '';
                     return;
                 }
                 try {
@@ -24424,6 +24426,10 @@
                             name_color: vn.name_color,
                             name_replace: vn.name_replace || {},
                             speak: document.getElementById('pp-vn-preview-speak').value,
+                            // 현재 편집 중인 삽화 프로필의 저장된 HRF 설정을 서버가 읽어
+                            // 미리보기 베이스 크기를 실제 생성 결과와 일치시키도록 전달
+                            profile: (typeof _illustSettingsProfile !== 'undefined' && _illustSettingsProfile) ? _illustSettingsProfile : 'solo',
+                            bot_name: (typeof botCurrentBot !== 'undefined' && botCurrentBot) ? botCurrentBot : '',
                         })
                     });
                     if (!resp.ok) {
@@ -24431,6 +24437,12 @@
                         throw new Error('HTTP ' + resp.status + (txt ? ' - ' + txt.slice(0,200) : ''));
                     }
                     const blob = await resp.blob();
+                    const sizeEl = document.getElementById('pp-preview-size');
+                    imgEl.onload = () => {
+                        if (sizeEl && imgEl.naturalWidth && imgEl.naturalHeight) {
+                            sizeEl.textContent = `· ${imgEl.naturalWidth}×${imgEl.naturalHeight}`;
+                        }
+                    };
                     imgEl.src = URL.createObjectURL(blob);
                     imgEl.style.display = 'block';
                     if (placeholderEl) placeholderEl.style.display = 'none';
@@ -24438,6 +24450,8 @@
                     console.error('[POSTPROCESS] 미리보기 실패:', e);
                     errEl.textContent = '미리보기 실패: ' + (e.message || e);
                     errEl.style.display = 'block';
+                    const _sizeEl = document.getElementById('pp-preview-size');
+                    if (_sizeEl) _sizeEl.textContent = '';
                 }
             }, 250);
         }
