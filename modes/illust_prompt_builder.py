@@ -64,15 +64,15 @@ class IllustPromptBuilder:
         캐릭터 이름을 삽입한다 (_insert_character_names 참고).
 
         Returns:
-            {"name": str, "setup": str, "char": str, "supplement": str}
+            {"name": str, "speak": str, "setup": str, "char": str, "supplement": str}
         """
         if not positive:
-            return {"name": "", "setup": "", "char": "", "supplement": ""}
+            return {"name": "", "speak": "", "setup": "", "char": "", "supplement": ""}
 
-        sections = {"name": "", "setup": "", "char": "", "supplement": ""}
+        sections = {"name": "", "speak": "", "setup": "", "char": "", "supplement": ""}
 
         # 섹션 태그 위치 찾기 (대소문자 무관, 줄 시작 위치)
-        section_names = ["NAME", "SETUP", "CHAR", "SUPPLEMENT"]
+        section_names = ["SPEAK", "NAME", "SETUP", "CHAR", "SUPPLEMENT"]
         markers = []
         for name in section_names:
             for m in re.finditer(rf'^\[{name}\]', positive, re.IGNORECASE | re.MULTILINE):
@@ -98,6 +98,8 @@ class IllustPromptBuilder:
             key = name.lower()
             if key == "name":
                 sections["name"] = content
+            elif key == "speak":
+                sections["speak"] = content
             elif key == "setup":
                 sections["setup"] = content
             elif key == "char":

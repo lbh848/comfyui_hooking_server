@@ -97,6 +97,18 @@ DEFAULT_CONFIG = {
     "utility_workflow_source_path": "",  # 삽화 유틸리티 워크플로우 전체 경로
     "bot_mode_enabled": False,  # 삽화 모드 활성화 여부
     "debug_mode_enabled": False,  # 디버깅 모드 (ComfyUI 전송만 중단)
+    "postprocess_enabled": False,  # 삽화 후처리([SPEAK] 합성) 마스터 스위치
+    "postprocess": {  # 후처리 상세 설정 (탭별 모드)
+        "vn": {  # 미연시 모드
+            "enabled": False,
+            "placement": "extend",      # extend(하단 확장) | overlay(반투명 박스)
+            "height_mode": "ratio",     # ratio | px
+            "height_value": 0.12,       # ratio(0~1) 또는 px
+            "font_size": 0,             # 폰트 크기(px). 0=박스 높이 기반 자동
+            "name_color": False,        # 이름 머리색 색상화
+            "name_replace": {},         # 영문이름 → 표시이름 치환 맵
+        }
+    },
     "bot_selected": "",  # 삽화 모드에서 선택된 봇 이름
     "batch_mode_enabled": False,  # 배치 모드 활성화 여부
     "batch_timeout_seconds": 5.0,  # 배치 모드 타임아웃 (초)
@@ -857,12 +869,24 @@ def create_placeholder_png() -> bytes:
 
 
 # ─── 백업 관리 ────────────────────────────────────────────
-async def save_backup(image_bytes: bytes, prompt_id: str, positive: str, negative: str, generation_time: float = None, chat_content: str = "", enhanced_positive: str = "", wildcard_info: dict = None, bot_name: str = "", gen_method: str = ""):
+async def save_backup(image_bytes: bytes, prompt_id: str, positive: str, negative: str, generation_time: float = None, chat_content: str = "", enhanced_positive: str = "", wildcard_info: dict = None, bot_name: str = "", gen_method: str = "", postprocess_settings: dict = None, speak_text: str = ""):
     """이미지(WebP q80 + 원본 워크플로우 메타데이터)와 원본 워크플로우를 백업한다.
     bot_name: 봇/워크플로우 컨텍스트 딱지 (bot 모드일 때 봇 이름).
-    gen_method: 생성 방법 딱지 (수동 그리기 / 자동 복원 등). 일반 생성·재생성은 빈칸."""
+    gen_method: 생성 방법 딱지 (수동 그리기 / 자동 복원 등). 일반 생성·재생성은 빈칸.
+    postprocess_settings: 후처리(vn) 설정 스냅샷. dict이면 [SPEAK] 합성을 이미지에 적용.
+    speak_text: 후처리에 쓸 [SPEAK] 원문 (postprocess_settings 있을 때만 의미)."""
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     base_name = f"{ts}_{prompt_id[:8]}"
+
+    # 0) 후처리([SPEAK] 박스 합성) — 저장 전 이미지에 적용
+    if postprocess_settings and speak_text:
+        try:
+            from modes.postprocess import compose_postprocess
+            image_bytes = compose_postprocess(image_bytes, speak_text, postprocess_settings, bot_name)
+            print(f"[BACKUP] 후처리 합성 적용: placement={postprocess_settings.get('placement')}, speak_len={len(speak_text)}")
+        except Exception as e:
+            print(f"[BACKUP] ⚠ 후처리 합성 실패, 원본 이미지로 저장: {e}")
+            traceback.print_exc()
 
     # 1) 이미지를 WebP로 변환 (quality=80, 원본 워크플로우 EXIF 메타데이터 포함)
     try:
@@ -951,6 +975,11 @@ async def save_backup(image_bytes: bytes, prompt_id: str, positive: str, negativ
         info_to_save["bot_name"] = bot_name
     if gen_method:
         info_to_save["gen_method"] = gen_method
+    # 후처리 설정 스냅샷 + SPEAK 원문 저장 (재생성 시 동일하게 재적용하기 위함)
+    if postprocess_settings:
+        info_to_save["postprocess_settings"] = postprocess_settings
+    if speak_text:
+        info_to_save["speak_text"] = speak_text
 
     info_path = os.path.join(WORKFLOW_BACKUP_DIR, f"{base_name}_info.json")
     with open(info_path, "w", encoding="utf-8") as f:
@@ -1817,6 +1846,7 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
 
         # 단어 기반 규칙 적용 / 삽화 모드 프롬프트 빌딩
         bot_name = app_config.get("bot_selected", "")
+        _speak_text = ""  # [SPEAK] 섹션 원문 (후처리 합성용)
         if bot_name and app_config.get("bot_mode_enabled", False):
             # 삽화 모드: 프롬프트 파싱 → 치환 → 캐릭터 감지 → 빌드
             builder = IllustPromptBuilder()
@@ -1830,6 +1860,9 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
             bot = next((b for b in bot_data["bots"] if b["name"] == bot_name), None)
             characters_for_parse = (bot.get("characters", []) if bot else [])
             sections = builder.parse_sections(positive, lb_extra=lb_extra_data, characters=characters_for_parse)
+
+            # [SPEAK] 섹션 원문 추출 (후처리 합성에 사용)
+            _speak_text = sections.get("speak", "") or ""
 
             # 2. 각 섹션에 단어 기반 규칙(치환/제거) 적용
             setup_replaced = apply_word_replacements(sections["setup"], "", bot_name)[0]
@@ -1941,7 +1974,14 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
         _backup_bot_name = bot_name if (bot_name and app_config.get("bot_mode_enabled", False)) else ""
         # 수동 그리기(prompt_id 'manual-' 접두사)는 생성 방법 딱지 부여 (봇 딱지와 별개 차원)
         _gen_method = "수동 그리기" if str(prompt_id).startswith("manual-") else ""
-        await save_backup(img_bytes, prompt_id, positive, negative, generation_time=elapsed_time, bot_name=_backup_bot_name, gen_method=_gen_method)
+        # 후처리([SPEAK] 합성): 활성 시 vn 설정 스냅샷 + 이번 생성의 SPEAK 원문 전달
+        _pp_settings = None
+        try:
+            from modes.postprocess import get_vn_settings
+            _pp_settings = get_vn_settings(app_config)
+        except Exception as _e:
+            print(f"[BACKUP] ⚠ 후처리 설정 조회 실패: {_e}")
+        await save_backup(img_bytes, prompt_id, positive, negative, generation_time=elapsed_time, bot_name=_backup_bot_name, gen_method=_gen_method, postprocess_settings=_pp_settings, speak_text=_speak_text)
 
         # 프록시 응답 설정
         our_filename = f"ComfyUI_{prompt_id[:8]}.png"
@@ -2948,6 +2988,28 @@ def _read_backup_bot_name(backup_name: str) -> str:
         return ""
 
 
+def _read_backup_postprocess(backup_name: str) -> tuple:
+    """백업의 후처리 설정 스냅샷과 SPEAK 원문을 읽어 (settings, speak_text) 반환.
+
+    재생성 시 원본 백업 생성 당시의 후처리 설정을 그대로 다시 적용하기 위함.
+    없으면 (None, "") 반환.
+    """
+    info_path = os.path.join(WORKFLOW_BACKUP_DIR, f"{backup_name}_info.json")
+    if not os.path.exists(info_path):
+        return None, ""
+    try:
+        with open(info_path, "r", encoding="utf-8") as f:
+            info = json.load(f)
+        settings = info.get("postprocess_settings")
+        speak_text = info.get("speak_text", "") or ""
+        if not isinstance(settings, dict):
+            settings = None
+        return settings, speak_text
+    except Exception as e:
+        print(f"[BACKUP] ⚠ 원본 후처리 설정 읽기 실패 {backup_name}: {e}")
+        return None, ""
+
+
 def _ensure_backup_filter_cache(backup_dir: str) -> dict:
     """bot_name 인덱스 캐시를 (필요시) 구축하여 반환한다."""
     global _backup_filter_cache
@@ -3248,6 +3310,58 @@ async def handle_api_conversion_info(request: web.Request) -> web.Response:
     return web.json_response(current_conversion_info)
 
 
+async def handle_api_postprocess_preview(request: web.Request) -> web.Response:
+    """후처리 설정 미리보기 — 전달된 vn 설정 + SPEAK 샘플로 합성한 이미지를 반환.
+
+    모달의 실시간 미리보기는 실제 합성(compose_postprocess)과 동일한 함수를 경유한다
+    (CLAUDE.md: 미리보기와 실제 전송은 동일 빌더).
+    요청: {placement, height_mode, height_value, name_color, name_replace, speak, bot_name, base?}
+    base(선택): data URL 또는 base64 PNG. 없으면 표준 삽화 비율(832x1216) 더미 이미지 사용.
+    """
+    try:
+        body = await request.json()
+        settings = {
+            "placement": body.get("placement", "extend"),
+            "height_mode": body.get("height_mode", "ratio"),
+            "height_value": body.get("height_value", 0.12),
+            "font_size": body.get("font_size", 0) or 0,
+            "name_color": bool(body.get("name_color", False)),
+            "name_replace": body.get("name_replace") or {},
+        }
+        speak = body.get("speak", "") or ""
+        bot_name = body.get("bot_name", "") or app_config.get("bot_selected", "") or ""
+
+        from modes.postprocess import compose_postprocess
+
+        # 베이스 이미지 준비
+        base = body.get("base")
+        base_bytes = None
+        if base:
+            try:
+                if "," in base:
+                    base = base.split(",", 1)[1]
+                import base64 as _b64
+                base_bytes = _b64.b64decode(base)
+                Image.open(BytesIO(base_bytes))  # 유효성 검증
+            except Exception as e:
+                print(f"[POSTPROCESS_PREVIEW] ⚠ base 이미지 디코딩 실패, 더미 사용: {e}")
+                base_bytes = None
+        if base_bytes is None:
+            # 표준 삽화 비율 더미 이미지 생성
+            from PIL import Image as _PILImage
+            dummy = _PILImage.new("RGB", (832, 1216), (60, 60, 90))
+            _dbuf = BytesIO()
+            dummy.save(_dbuf, format="PNG")
+            base_bytes = _dbuf.getvalue()
+
+        composed = compose_postprocess(base_bytes, speak, settings, bot_name)
+        return web.Response(body=composed, content_type="image/png")
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f"[ERROR] postprocess_preview 실패: {e}\n{tb}")
+        return web.json_response({"error": str(e)}, status=500)
+
+
 async def handle_api_regenerate(request: web.Request) -> web.Response:
     """백업의 프롬프트 + 현재 워크플로우로 이미지를 재생성해 반환한다.
 
@@ -3286,6 +3400,8 @@ async def handle_api_regenerate(request: web.Request) -> web.Response:
 
         # 원본 백업의 bot_name 상속 (같은 봇 딱지)
         src_bot_name = _read_backup_bot_name(backup_name)
+        # 원본 백업의 후처리 설정 스냅샷 + SPEAK 원문 상속 (재생성에 동일 적용)
+        src_pp_settings, src_speak_text = _read_backup_postprocess(backup_name)
 
         print(f"[REGEN] 재생성 큐 등록: {backup_name}")
         print(f"[REGEN] 긍정: {positive[:60]}...")
@@ -3298,6 +3414,8 @@ async def handle_api_regenerate(request: web.Request) -> web.Response:
                 "positive": positive,
                 "negative": negative,
                 "bot_name": src_bot_name or "",
+                "postprocess_settings": src_pp_settings,
+                "speak_text": src_speak_text,
             },
             priority=0,
         )
@@ -3510,6 +3628,8 @@ async def handle_api_reschedule_with_modified_prompt(request: web.Request) -> we
 
         # 원본 백업의 bot_name 상속 (같은 봇 딱지)
         src_bot_name = _read_backup_bot_name(backup_name)
+        # 원본 백업의 후처리 설정 스냅샷 + SPEAK 원문 상속 (재생성에 동일 적용)
+        src_pp_settings, src_speak_text = _read_backup_postprocess(backup_name)
 
         print(f"[RESCHEDULE_MOD] 수정 재생성 큐 등록: {backup_name}")
         print(f"[RESCHEDULE_MOD] Modified positive: {modified_positive[:60]}...")
@@ -3523,6 +3643,8 @@ async def handle_api_reschedule_with_modified_prompt(request: web.Request) -> we
                 "positive": modified_positive,
                 "negative": modified_negative,
                 "bot_name": src_bot_name or "",
+                "postprocess_settings": src_pp_settings,
+                "speak_text": src_speak_text,
             },
             priority=0,
         )
@@ -4921,6 +5043,7 @@ app.router.add_post("/api/llm/test_stream", handle_api_llm_test_stream)
 app.router.add_get("/api/reschedule", handle_api_reschedule)
 app.router.add_post("/api/reschedule", handle_api_reschedule)
 app.router.add_post("/api/reschedule_with_modified_prompt", handle_api_reschedule_with_modified_prompt)
+app.router.add_post("/api/postprocess/preview", handle_api_postprocess_preview)
 app.router.add_post("/api/llm_edit_prompt", handle_api_llm_edit_prompt)
 app.router.add_get("/api/llm_edit_prompt_template", handle_api_get_llm_edit_template)
 app.router.add_post("/api/llm_edit_prompt_template", handle_api_set_llm_edit_template)

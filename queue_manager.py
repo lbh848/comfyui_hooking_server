@@ -589,6 +589,8 @@ class QueueManager:
         negative = params.get("negative", "")
         bot_name = params.get("bot_name", "")
         backup_name = params.get("backup_name", "")
+        postprocess_settings = params.get("postprocess_settings")
+        speak_text = params.get("speak_text", "") or ""
 
         if not self.generate_image_with_prompt:
             raise RuntimeError("generate_image_with_prompt 콜백이 설정되지 않았습니다")
@@ -610,11 +612,14 @@ class QueueManager:
             raise RuntimeError(f"재생성 실패: {error}")
 
         # 재생성 이미지 백업 저장 — 원본 백업의 bot_name 상속 (같은 봇 딱지)
+        # 후처리 설정 스냅샷 + SPEAK 원문도 상속 → 재생성 결과에 동일 후처리 적용
         regen_id = uuid.uuid4().hex
         if self.save_backup:
             await self.save_backup(
                 img_bytes, regen_id, positive, negative,
                 generation_time=elapsed_time, bot_name=bot_name,
+                postprocess_settings=postprocess_settings,
+                speak_text=speak_text,
             )
         print(
             f"[QUEUE:regenerate] 완료: backup={backup_name} ({len(img_bytes):,}B, {elapsed_time:.1f}s)"

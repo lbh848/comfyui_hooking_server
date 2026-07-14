@@ -3,6 +3,8 @@
 {chat}
 [SLOT]
 {slot}
+[SPEAK]
+{speak}
 [Name]
 {name}
 [SETUP]

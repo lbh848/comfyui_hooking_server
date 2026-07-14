@@ -1188,6 +1188,73 @@
         }
         .settings-tab-arrow:hover { color: var(--accent); }
         .settings-tab-arrow:disabled { opacity: 0.3; cursor: default; }
+
+        /* ─── 후처리 설정 모달 전용 스타일 ───────────────────── */
+        .pp-modal-content { max-width: 1120px; width: calc(100vw - 60px); }
+        .pp-layout { display: flex; gap: 18px; align-items: stretch; }
+        .pp-left { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+        .pp-right {
+            width: 420px; flex-shrink: 0;
+            display: flex; flex-direction: column; gap: 8px;
+        }
+        .pp-tab-bar {
+            display: flex; gap: 6px;
+            padding: 6px; background: var(--surface2, #0f3460);
+            border-radius: 8px; margin-bottom: 14px;
+            border: 1px solid var(--border);
+        }
+        .pp-tab-btn {
+            flex: 1; padding: 9px 14px; font-size: 0.85rem;
+            background: transparent; color: var(--text2, #bbb);
+            border: 1px solid transparent; border-radius: 6px;
+            cursor: pointer; transition: all 0.18s; white-space: nowrap;
+            font-weight: 500;
+        }
+        .pp-tab-btn:hover { color: var(--text, #eee); background: rgba(255,255,255,0.04); }
+        .pp-tab-btn.active {
+            background: var(--accent, #e94560); color: #fff;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+        }
+        .pp-card {
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 12px 14px;
+            margin-bottom: 12px;
+            background: rgba(255,255,255,0.015);
+        }
+        .pp-card-title {
+            font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em;
+            color: var(--text2, #999); margin-bottom: 10px; font-weight: 600;
+        }
+        .pp-row { display: flex; align-items: center; gap: 10px; }
+        .pp-row + .pp-row { margin-top: 10px; }
+        .pp-label { font-size: 0.82rem; color: var(--text, #eee); flex-shrink: 0; min-width: 88px; }
+        .pp-field-inline { display: flex; gap: 8px; align-items: center; flex: 1; }
+        .pp-hint { font-size: 0.72rem; color: var(--text2, #888); margin-top: 6px; }
+        .pp-switch-line {
+            display: flex; align-items: center; justify-content: space-between; gap: 10px;
+        }
+        .pp-replace-list {
+            display: flex; flex-direction: column; gap: 5px;
+            max-height: 150px; overflow: auto;
+            padding: 6px; border: 1px solid var(--border); border-radius: 6px;
+            background: rgba(0,0,0,0.15);
+        }
+        .pp-replace-row {
+            display: flex; gap: 8px; align-items: center;
+            padding: 5px 8px; border-radius: 5px; background: rgba(255,255,255,0.03);
+            font-size: 0.8rem;
+        }
+        .pp-replace-row .arrow { color: var(--text2, #888); }
+        .pp-replace-empty { color: var(--text2, #777); font-size: 0.78rem; padding: 6px; text-align: center; }
+        .pp-preview-box {
+            border: 1px solid var(--border); border-radius: 8px;
+            background: #000; flex: 1; min-height: 320px;
+            display: flex; align-items: center; justify-content: center;
+            padding: 8px; position: relative;
+        }
+        .pp-preview-box img { max-width: 100%; max-height: 560px; display: block; border-radius: 4px; }
+        .pp-preview-placeholder { color: var(--text2, #777); font-size: 0.82rem; text-align: center; padding: 20px; }
         .settings-tab-btn:hover { color: var(--text); }
         .settings-tab-btn.active {
             color: var(--accent);
@@ -3388,6 +3455,7 @@
         <button id="tab-btn-bot" class="tab-btn" onclick="switchTab('bot')">
             <span class="tab-status-badges">
                 <span id="bot-mode-chip" class="status-chip off">삽화</span>
+                <span id="postprocess-chip" class="status-chip off">후처리</span>
                 <span id="debug-mode-chip" class="status-chip off">디버그</span>
             </span>
             삽화 모드
@@ -3526,6 +3594,14 @@
                 </label>
                 <span style="font-size:0.85rem;">삽화 모드 활성화</span>
                 <span id="bot-mode-status" class="toggle-status off">OFF</span>
+                <span style="width:12px;"></span>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="postprocess-toggle" onchange="onPostprocessToggle()">
+                    <span class="toggle-slider"></span>
+                </label>
+                <span style="font-size:0.85rem;">후처리 ([SPEAK])</span>
+                <span id="postprocess-status" class="toggle-status off">OFF</span>
+                <button type="button" id="postprocess-settings-btn" class="btn" style="padding:2px 10px; font-size:0.78rem;" onclick="openPostprocessModal()">⚙️ 후처리 설정</button>
                 <span style="width:12px;"></span>
                 <label class="toggle-switch">
                     <input type="checkbox" id="debug-mode-toggle" onchange="onDebugModeToggle()">
@@ -6454,6 +6530,118 @@
             <div id="style-lora-trained-breadcrumb" style="padding:4px 16px 8px; font-size:0.82rem; color:var(--text-secondary);"></div>
             <div class="modal-body" id="style-lora-trained-body" style="min-height:200px;">
                 <div style="text-align:center; padding:32px; color:var(--text-secondary);">로딩 중...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 후처리 설정 모달 (CLAUDE.md: ✕/저장/취소 버튼으로만 닫힘, 바깥 클릭 닫기 금지) -->
+    <div class="modal" id="postprocess-modal">
+        <div class="modal-content pp-modal-content">
+            <div class="modal-header">
+                <h3>후처리 설정</h3>
+                <button class="modal-close" onclick="closePostprocessModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="pp-layout">
+                    <!-- 왼쪽: 탭 + 옵션 -->
+                    <div class="pp-left">
+                        <div class="pp-tab-bar">
+                            <button class="pp-tab-btn active" onclick="switchPostprocessTab('vn')">💬 대사 모드</button>
+                            <!-- 추후 후처리 탭 추가 예정 -->
+                        </div>
+
+                        <!-- 대사 모드 패널 -->
+                        <div id="postprocess-tab-vn" class="settings-tab-panel active" style="display:block;">
+                            <!-- 활성화 -->
+                            <div class="pp-card">
+                                <div class="pp-switch-line">
+                                    <div>
+                                        <div style="font-size:0.88rem; font-weight:600;">대사 모드</div>
+                                        <div class="pp-hint" style="margin-top:2px;">[SPEAK] 대사/생각을 이미지 하단 박스에 합성</div>
+                                    </div>
+                                    <label class="toggle-switch">
+                                        <input type="checkbox" id="pp-vn-enabled" onchange="renderPostprocessPreview()">
+                                        <span class="toggle-slider"></span>
+                                    </label>
+                                </div>
+                            </div>
+
+                            <!-- 배치 / 크기 -->
+                            <div class="pp-card">
+                                <div class="pp-card-title">배치 · 크기</div>
+                                <div class="pp-row">
+                                    <span class="pp-label">배치</span>
+                                    <div class="pp-field-inline">
+                                        <select id="pp-vn-placement" class="select" style="flex:1;" onchange="renderPostprocessPreview()">
+                                            <option value="extend">하단 확장 (검은 바 추가)</option>
+                                            <option value="overlay">하단 반투명 박스</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="pp-row">
+                                    <span class="pp-label">박스 높이</span>
+                                    <div class="pp-field-inline">
+                                        <select id="pp-vn-height-mode" class="select" style="width:120px;" onchange="onPpHeightModeChange(); renderPostprocessPreview();">
+                                            <option value="ratio">비율 (0~1)</option>
+                                            <option value="px">고정 (px)</option>
+                                        </select>
+                                        <input type="number" id="pp-vn-height-value" class="input" style="flex:1;" step="0.01" min="0.02" value="0.12" oninput="renderPostprocessPreview()">
+                                        <span id="pp-vn-height-unit" style="font-size:0.78rem; color:var(--text2, #888); min-width:34px;">ratio</span>
+                                    </div>
+                                </div>
+                                <div class="pp-row">
+                                    <span class="pp-label">폰트 크기</span>
+                                    <div class="pp-field-inline">
+                                        <input type="number" id="pp-vn-font-size" class="input" style="width:120px;" step="1" min="0" value="0" oninput="renderPostprocessPreview()">
+                                        <span style="font-size:0.74rem; color:var(--text2, #888);">px · 0 = 박스 높이 기반 자동</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- 이름 스타일 -->
+                            <div class="pp-card">
+                                <div class="pp-card-title">이름 스타일</div>
+                                <div class="pp-switch-line">
+                                    <span style="font-size:0.82rem;">이름 색상화 (캐릭터 머리색)</span>
+                                    <label class="toggle-switch">
+                                        <input type="checkbox" id="pp-vn-name-color" onchange="renderPostprocessPreview()">
+                                        <span class="toggle-slider"></span>
+                                    </label>
+                                </div>
+                                <div style="margin-top:10px;">
+                                    <div style="font-size:0.78rem; color:var(--text2, #999); margin-bottom:5px;">이름 치환 (영문 이름 → 표시 이름)</div>
+                                    <div id="pp-vn-name-replace-list" class="pp-replace-list"></div>
+                                    <div class="pp-field-inline" style="margin-top:6px;">
+                                        <input type="text" id="pp-vn-replace-key" class="input" placeholder="영문 이름 (kapri)" style="flex:1;">
+                                        <input type="text" id="pp-vn-replace-val" class="input" placeholder="표시 이름 (카프리)" style="flex:1;">
+                                        <button type="button" class="btn" style="padding:5px 12px;" onclick="ppAddNameReplace()">추가</button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- 미리보기 입력 -->
+                            <div class="pp-card">
+                                <div class="pp-card-title">미리보기 대사 샘플</div>
+                                <textarea id="pp-vn-preview-speak" class="input" rows="2" style="width:100%; font-family:monospace; resize:vertical;" placeholder='kapri: "대사 예시"&#10;kapri: (생각 예시)' oninput="renderPostprocessPreview()">kapri: "달콤하고 다정하게 해주셔야 해요♡"</textarea>
+                                <div class="pp-hint">형식: <code>NAME: "대사"</code> · <code>NAME: (생각)</code></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 오른쪽: 실시간 미리보기 -->
+                    <div class="pp-right">
+                        <div style="font-size:0.78rem; color:var(--text2, #999);">실시간 미리보기 <span style="opacity:0.7;">(저장 후 실제 합성과 동일)</span></div>
+                        <div class="pp-preview-box">
+                            <img id="pp-preview-img" alt="미리보기" style="display:none;">
+                            <div id="pp-preview-placeholder" class="pp-preview-placeholder">대사 모드를 켜면<br>미리보기가 표시됩니다</div>
+                        </div>
+                        <div id="pp-preview-error" style="color:var(--error, #e74c3c); font-size:0.76rem; display:none;"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn" onclick="closePostprocessModal()">취소</button>
+                <button type="button" class="btn btn-primary" onclick="savePostprocessSettings()">저장</button>
             </div>
         </div>
     </div>
@@ -9665,6 +9853,11 @@
             const debugModeEnabled = currentConfig.debug_mode_enabled || false;
             document.getElementById('debug-mode-toggle').checked = debugModeEnabled;
             updateDebugModeStatus(debugModeEnabled);
+            // 후처리([SPEAK]) 모드 설정
+            const postprocessEnabled = currentConfig.postprocess_enabled || false;
+            const ppToggle = document.getElementById('postprocess-toggle');
+            if (ppToggle) ppToggle.checked = postprocessEnabled;
+            updatePostprocessStatus(postprocessEnabled);
             // 삽화 모드 선택 봇 복원
             const botSelected = currentConfig.bot_selected || '';
             if (botSelected) {
@@ -12704,6 +12897,10 @@
                 const botModeOn = cfg.bot_mode_enabled || false;
                 document.getElementById('bot-mode-toggle').checked = botModeOn;
                 updateBotModeStatus(botModeOn);
+                const postprocessOn = cfg.postprocess_enabled || false;
+                const ppToggleEl = document.getElementById('postprocess-toggle');
+                if (ppToggleEl) ppToggleEl.checked = postprocessOn;
+                updatePostprocessStatus(postprocessOn);
                 updateHeaderButtonsVisibility();
             } catch (e) { /* 무시 */ }
         })();
@@ -24042,6 +24239,230 @@
                 console.error('[DEBUG] 디버깅 모드 토글 저장 실패:', e);
                 document.getElementById('debug-mode-toggle').checked = !checked;
                 updateDebugModeStatus(!checked);
+            }
+        }
+
+        function updatePostprocessStatus(on) {
+            const el = document.getElementById('postprocess-status');
+            if (el) {
+                el.textContent = on ? 'ON' : 'OFF';
+                el.className = 'toggle-status ' + (on ? 'on' : 'off');
+            }
+            const chip = document.getElementById('postprocess-chip');
+            if (chip) {
+                chip.className = 'status-chip ' + (on ? 'on' : 'off');
+            }
+        }
+
+        async function onPostprocessToggle() {
+            const checked = document.getElementById('postprocess-toggle').checked;
+            updatePostprocessStatus(checked);
+            try {
+                const resp = await fetch('/api/config', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({postprocess_enabled: checked})
+                });
+                if (!resp.ok) {
+                    const txt = await resp.text().catch(() => '');
+                    document.getElementById('postprocess-toggle').checked = !checked;
+                    updatePostprocessStatus(!checked);
+                    showToast('후처리 설정 저장 실패: ' + (txt || resp.status));
+                }
+            } catch (e) {
+                console.error('[POSTPROCESS] 토글 저장 실패:', e);
+                document.getElementById('postprocess-toggle').checked = !checked;
+                updatePostprocessStatus(!checked);
+                showToast('후처리 설정 저장 실패: ' + (e.message || e));
+            }
+        }
+
+        // ─── 후처리 설정 모달 ─────────────────────────────────
+        let ppWorking = null;        // 모달 작업용 postprocess 객체 복사본
+        let ppPreviewTimer = null;
+
+        function defaultPpConfig() {
+            return {
+                vn: {
+                    enabled: false,
+                    placement: 'extend',
+                    height_mode: 'ratio',
+                    height_value: 0.12,
+                    font_size: 0,
+                    name_color: false,
+                    name_replace: {},
+                }
+            };
+        }
+
+        function openPostprocessModal() {
+            // 현재 config의 postprocess 객체를 작업 복사본으로 로드
+            const cur = (typeof currentConfig !== 'undefined' && currentConfig && currentConfig.postprocess) || defaultPpConfig();
+            ppWorking = JSON.parse(JSON.stringify(defaultPpConfig()));
+            if (cur && cur.vn) {
+                Object.assign(ppWorking.vn, cur.vn);
+                if (!ppWorking.vn.name_replace || typeof ppWorking.vn.name_replace !== 'object') ppWorking.vn.name_replace = {};
+            }
+            // UI 반영
+            const vn = ppWorking.vn;
+            document.getElementById('pp-vn-enabled').checked = !!vn.enabled;
+            document.getElementById('pp-vn-placement').value = vn.placement || 'extend';
+            document.getElementById('pp-vn-height-mode').value = vn.height_mode || 'ratio';
+            document.getElementById('pp-vn-height-value').value = vn.height_value;
+            document.getElementById('pp-vn-font-size').value = vn.font_size || 0;
+            onPpHeightModeChange();
+            document.getElementById('pp-vn-name-color').checked = !!vn.name_color;
+            renderNameReplaceList();
+            document.getElementById('postprocess-modal').classList.add('visible');
+            renderPostprocessPreview();
+        }
+
+        function closePostprocessModal() {
+            document.getElementById('postprocess-modal').classList.remove('visible');
+            ppWorking = null;
+        }
+
+        function switchPostprocessTab(name) {
+            // 범위 한정: 후처리 모달 내 탭만 토글
+            document.querySelectorAll('#postprocess-modal .pp-tab-btn').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('#postprocess-modal .settings-tab-panel').forEach(p => p.classList.remove('active'));
+            const btn = document.querySelector(`#postprocess-modal .pp-tab-btn[onclick*="'${name}'"]`);
+            if (btn) btn.classList.add('active');
+            const panel = document.getElementById('postprocess-tab-' + name);
+            if (panel) { panel.classList.add('active'); panel.style.display = 'block'; }
+        }
+
+        function onPpHeightModeChange() {
+            const mode = document.getElementById('pp-vn-height-mode').value;
+            const valInput = document.getElementById('pp-vn-height-value');
+            const unit = document.getElementById('pp-vn-height-unit');
+            if (mode === 'px') {
+                valInput.step = '1'; valInput.min = '20';
+                unit.textContent = 'px';
+            } else {
+                valInput.step = '0.01'; valInput.min = '0.02';
+                unit.textContent = 'ratio';
+            }
+        }
+
+        function renderNameReplaceList() {
+            const container = document.getElementById('pp-vn-name-replace-list');
+            const map = (ppWorking && ppWorking.vn && ppWorking.vn.name_replace) || {};
+            const keys = Object.keys(map);
+            if (!keys.length) {
+                container.innerHTML = '<div class="pp-replace-empty">치환 항목 없음</div>';
+                return;
+            }
+            container.innerHTML = keys.map(k => `
+                <div class="pp-replace-row">
+                    <span style="flex:1;">${escapeHtml(k)}</span>
+                    <span class="arrow">→</span>
+                    <span style="flex:1;">${escapeHtml(map[k])}</span>
+                    <button type="button" class="btn" style="padding:2px 8px;" onclick="ppRemoveNameReplace('${escapeAttr(k)}')">✕</button>
+                </div>
+            `).join('');
+        }
+
+        function ppAddNameReplace() {
+            if (!ppWorking) return;
+            const k = document.getElementById('pp-vn-replace-key').value.trim();
+            const v = document.getElementById('pp-vn-replace-val').value.trim();
+            if (!k) { showToast('영문 이름을 입력하세요'); return; }
+            if (!ppWorking.vn.name_replace) ppWorking.vn.name_replace = {};
+            ppWorking.vn.name_replace[k] = v || k;
+            document.getElementById('pp-vn-replace-key').value = '';
+            document.getElementById('pp-vn-replace-val').value = '';
+            renderNameReplaceList();
+            renderPostprocessPreview();
+        }
+
+        function ppRemoveNameReplace(k) {
+            if (!ppWorking || !ppWorking.vn.name_replace) return;
+            delete ppWorking.vn.name_replace[k];
+            renderNameReplaceList();
+            renderPostprocessPreview();
+        }
+
+        function collectPpVnSettings() {
+            // UI 입력값을 ppWorking.vn에 반영하고 반환 (미리보기/저장 공통)
+            if (!ppWorking) return null;
+            const vn = ppWorking.vn;
+            vn.enabled = document.getElementById('pp-vn-enabled').checked;
+            vn.placement = document.getElementById('pp-vn-placement').value;
+            vn.height_mode = document.getElementById('pp-vn-height-mode').value;
+            const raw = parseFloat(document.getElementById('pp-vn-height-value').value);
+            vn.height_value = isNaN(raw) ? 0.12 : raw;
+            const fs = parseInt(document.getElementById('pp-vn-font-size').value, 10);
+            vn.font_size = isNaN(fs) ? 0 : Math.max(0, fs);
+            vn.name_color = document.getElementById('pp-vn-name-color').checked;
+            return vn;
+        }
+
+        function renderPostprocessPreview() {
+            clearTimeout(ppPreviewTimer);
+            ppPreviewTimer = setTimeout(async () => {
+                const errEl = document.getElementById('pp-preview-error');
+                const imgEl = document.getElementById('pp-preview-img');
+                errEl.style.display = 'none'; errEl.textContent = '';
+                const vn = collectPpVnSettings();
+                const placeholderEl = document.getElementById('pp-preview-placeholder');
+                if (!vn || !vn.enabled) {
+                    imgEl.style.display = 'none';
+                    imgEl.src = '';
+                    if (placeholderEl) placeholderEl.style.display = 'block';
+                    return;
+                }
+                try {
+                    const resp = await fetch('/api/postprocess/preview', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({
+                            placement: vn.placement,
+                            height_mode: vn.height_mode,
+                            height_value: vn.height_value,
+                            font_size: vn.font_size || 0,
+                            name_color: vn.name_color,
+                            name_replace: vn.name_replace || {},
+                            speak: document.getElementById('pp-vn-preview-speak').value,
+                        })
+                    });
+                    if (!resp.ok) {
+                        const txt = await resp.text().catch(() => '');
+                        throw new Error('HTTP ' + resp.status + (txt ? ' - ' + txt.slice(0,200) : ''));
+                    }
+                    const blob = await resp.blob();
+                    imgEl.src = URL.createObjectURL(blob);
+                    imgEl.style.display = 'block';
+                    if (placeholderEl) placeholderEl.style.display = 'none';
+                } catch (e) {
+                    console.error('[POSTPROCESS] 미리보기 실패:', e);
+                    errEl.textContent = '미리보기 실패: ' + (e.message || e);
+                    errEl.style.display = 'block';
+                }
+            }, 250);
+        }
+
+        async function savePostprocessSettings() {
+            if (!ppWorking) { closePostprocessModal(); return; }
+            collectPpVnSettings();
+            try {
+                const resp = await fetch('/api/config', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({postprocess: ppWorking})
+                });
+                if (!resp.ok) {
+                    const txt = await resp.text().catch(() => '');
+                    showToast('후처리 설정 저장 실패: ' + (txt || resp.status));
+                    return;
+                }
+                // 로컬 currentConfig에도 반영
+                if (typeof currentConfig !== 'undefined' && currentConfig) currentConfig.postprocess = JSON.parse(JSON.stringify(ppWorking));
+                showToast('후처리 설정 저장 완료');
+                closePostprocessModal();
+            } catch (e) {
+                console.error('[POSTPROCESS] 저장 실패:', e);
+                showToast('후처리 설정 저장 실패: ' + (e.message || e));
             }
         }
 

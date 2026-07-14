@@ -384,10 +384,13 @@ def build_preset_prompt(preset_content: str, desc: dict, body_text: str) -> tupl
     # {chat} = body_text, {slot} = '' (프로젝트 결정: Python 포트에선 fullChat 발췌 불가)
     chat_text = body_text or ""
     slot_text = ""
+    # {speak} = '' (lighbd 내부 경로에선 SPEAK 발췌 불가; 외부 RAW 경로로 [SPEAK]가 채워져 들어옴)
+    speak_text = ""
 
     positive = positive_tmpl
     positive = positive.replace("{chat}", chat_text)
     positive = positive.replace("{slot}", slot_text)
+    positive = positive.replace("{speak}", speak_text)
     positive = positive.replace("{name}", name_text)
 
     # comfy non-{prompt} 분기 (사용자 preset엔 {prompt} 없음)
