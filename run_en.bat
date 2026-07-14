@@ -38,22 +38,9 @@ if errorlevel 1 (
     goto :end
 )
 
-:: Windows GPU 가속: onnxruntime(CPU)을 onnxruntime-directml 로 교체.
-:: DirectML = Windows에서 NVIDIA/AMD/Intel 가리지 않고 GPU 사용. GPU 없으면 자동 CPU 폴백.
-:: 이미 directml provider가 있으면 스킵(재설치 방지). uv run --no-sync 로 sync 재반영 차단.
-echo       Checking DirectML (GPU) provider...
-uv run --no-sync python -c "import onnxruntime,sys; sys.exit(0 if 'DmlExecutionProvider' in onnxruntime.get_available_providers() else 1)" >nul 2>&1
-if errorlevel 1 (
-    echo       DirectML not found - installing onnxruntime-directml for GPU acceleration...
-    uv pip install --quiet onnxruntime-directml
-    if errorlevel 1 (
-        echo       [WARN] onnxruntime-directml install failed - falling back to CPU onnxruntime.
-    ) else (
-        echo       DirectML installed.
-    )
-) else (
-    echo       DirectML OK.
-)
+:: Windows GPU 가속: onnxruntime-directml 은 pyproject.toml 에 선언되어
+:: uv sync 로 함께 설치됨(DirectML = NVIDIA/AMD/Intel 공통 GPU, 없으면 자동 CPU 폴백).
+:: 별도 runtime 설치 분기는 의존성 충돌(onnxruntime vs -directml)을 유발해 제거.
 
 echo [3/4] Packages installed.
 

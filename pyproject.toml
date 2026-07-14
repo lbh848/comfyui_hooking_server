@@ -18,7 +18,7 @@ dependencies = [
     "google-cloud-storage",
     "google-cloud-bigquery",
     "numpy",
-    "onnxruntime",
+    "onnxruntime-directml",
     "opencv-python",
     "mediapipe",
     "huggingface-hub",
