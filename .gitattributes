@@ -1,0 +1,2 @@
+# Windows 배치 파일은 항상 CRLF로 체크아웃 (cmd.exe 파싱 깨짐 방지)
+*.bat text eol=crlf
