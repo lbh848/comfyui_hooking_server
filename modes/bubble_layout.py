@@ -831,6 +831,7 @@ def choose_scaled_layout(
     font_path: str | os.PathLike | None = None,
     *,
     font_scale: float = 2.0,
+    force_shape: str | None = None,
     max_lines: int = 7,
     top_k: int = 5,
 ) -> tuple[LayoutCandidate, list[LayoutCandidate]]:
@@ -839,11 +840,15 @@ def choose_scaled_layout(
     글자만 사후 확대하지 않고, 기본 모델이 결정한 버블 종류를 유지한 채 목표
     크기 주변에서 줄바꿈과 몸통 치수를 다시 계산한다. 정확한 배율이 캔버스에
     들어가지 않으면 10%씩 낮춰 가장 큰 ``fits=True`` 후보를 사용한다.
+
+    ``force_shape``를 주면 모델이 고를 형상을 해당 종류(예: "cloud")로 강제한다.
+    thought 대사(괄호 ``()`` 감싸짐)를 항상 구름으로 그릴 때 사용한다.
     """
     base, base_top = choose_layout(
         text,
         canvas_size,
         font_path,
+        shape_hint=force_shape,
         max_lines=max_lines,
         top_k=top_k,
     )
@@ -852,6 +857,10 @@ def choose_scaled_layout(
         if not base.fits:
             print("[BUBBLE_LAYOUT] 기본 레이아웃도 맞지 않아 글자 확대를 건너뜀")
         return base, base_top
+
+    # 재레이아웃에도 같은 형상을 유지한다. 강제 형상이 있으면 그것을,
+    # 없으면 기본 선택의 형상을 따른다.
+    keep_shape = force_shape or base.shape
 
     # 2.0 요청이면 2.0 → 1.8 → 1.6 → 1.4 → 1.2 순으로 후퇴한다.
     attempts = []
@@ -870,7 +879,7 @@ def choose_scaled_layout(
             text,
             canvas_size,
             font_path,
-            shape_hint=base.shape,
+            shape_hint=keep_shape,
             min_font_size=min_font,
             max_font_size=max_font,
             max_lines=max_lines,
@@ -881,7 +890,7 @@ def choose_scaled_layout(
             print(
                 f"[BUBBLE_LAYOUT] 글자 확대 재레이아웃: "
                 f"{base.font_size}px → {selected.font_size}px "
-                f"(요청={scale:.2f}x, 실제={actual_scale:.2f}x, shape={base.shape})"
+                f"(요청={scale:.2f}x, 실제={actual_scale:.2f}x, shape={keep_shape})"
             )
             return selected, alternatives
         print(

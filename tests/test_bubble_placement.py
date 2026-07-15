@@ -65,6 +65,16 @@ class BubblePlacementTest(unittest.TestCase):
         selected, _ = choose_scaled_layout(text, (1056, 1536), font_scale=1.5)
         self.assertLessEqual(selected.font_size, int(base.font_size * 1.5))
 
+    def test_force_shape_cloud_overrides_model_choice(self):
+        # force_shape="cloud"면 모델 기본 선택과 무관하게 항상 cloud가 나온다.
+        selected, _ = choose_scaled_layout(
+            "짧은 한마디",
+            (1056, 1536),
+            font_scale=1.0,
+            force_shape="cloud",
+        )
+        self.assertEqual(selected.shape, "cloud")
+
     def test_candidate_uses_distance_before_confidence(self):
         face = (100, 100, 160, 160)
         candidates = [

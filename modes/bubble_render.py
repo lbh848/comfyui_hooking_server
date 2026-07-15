@@ -464,12 +464,15 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
             continue
         text = seg.get("text", "")
         btype = seg.get("type", "speech")
+        # thought 대사(괄호 () 감싸짐)는 모델 선택과 무관하게 구름(cloud)으로 강제.
+        force_shape = "cloud" if btype == "thought" else None
         try:
             layout, _layout_alternatives = choose_scaled_layout(
                 text,
                 (canvas_w, canvas_h),
                 s.get("font_path") or None,
                 font_scale=layout_font_scale,
+                force_shape=force_shape,
                 max_lines=7,
                 top_k=5,
             )
