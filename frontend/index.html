@@ -1191,60 +1191,9 @@
 
         /* ─── 후처리 설정 모달 전용 스타일 ───────────────────── */
         .pp-modal-content { max-width: 1120px; width: calc(100vw - 60px); }
-        .pp-layout { display: flex; gap: 18px; align-items: stretch; }
-        .pp-left { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-        .pp-right {
-            width: 420px; flex-shrink: 0;
-            display: flex; flex-direction: column; gap: 8px;
-        }
-        .pp-tab-bar {
-            display: flex; gap: 6px;
-            padding: 6px; background: var(--surface2, #0f3460);
-            border-radius: 8px; margin-bottom: 14px;
-            border: 1px solid var(--border);
-        }
-        .pp-tab-btn {
-            flex: 1; padding: 9px 14px; font-size: 0.85rem;
-            background: transparent; color: var(--text2, #bbb);
-            border: 1px solid transparent; border-radius: 6px;
-            cursor: pointer; transition: all 0.18s; white-space: nowrap;
-            font-weight: 500;
-            display: flex; align-items: center; justify-content: center; gap: 7px;
-        }
-        .pp-tab-btn:hover { color: var(--text, #eee); background: rgba(255,255,255,0.04); }
-        .pp-tab-btn.active {
-            background: var(--accent, #e94560); color: #fff;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-        }
-        /* 후처리 모드 딱지: 적용중 모드=초록, 비활성=회색. 적용 모드(ppWorking.mode) 기준. */
-        .pp-mode-badge {
-            font-size: 0.62rem; font-weight: 700; line-height: 1;
-            padding: 2px 6px; border-radius: 4px; letter-spacing: 0.02em;
-            white-space: nowrap;
-        }
-        .pp-mode-badge.applied { background: #2e7d32; color: #fff; }
-        .pp-mode-badge.inactive { background: rgba(255,255,255,0.12); color: var(--text2, #bbb); }
-        /* 적용중 딱지가 비활성(보고만 있는) 탭에 있을 때 강조를 위해 약간 어둡게 */
-        .pp-tab-btn:not(.active) .pp-mode-badge.applied { box-shadow: 0 0 0 1px rgba(46,125,50,0.5); }
-        .pp-card {
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            padding: 12px 14px;
-            margin-bottom: 12px;
-            background: rgba(255,255,255,0.015);
-        }
-        .pp-card-title {
-            font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em;
-            color: var(--text2, #999); margin-bottom: 10px; font-weight: 600;
-        }
-        .pp-row { display: flex; align-items: center; gap: 10px; }
-        .pp-row + .pp-row { margin-top: 10px; }
-        .pp-label { font-size: 0.82rem; color: var(--text, #eee); flex-shrink: 0; min-width: 88px; }
-        .pp-field-inline { display: flex; gap: 8px; align-items: center; flex: 1; }
+        /* 레이아웃/카드/탭/딱지/행/라벨 등은 모달 본문 <style>(.postprocess-ui 스코프)에서 재정의.
+           아래는 감정 뽑기/베이스 피커 등 다른 모달에서도 공통 쓰이는 클래스만 남긴다. */
         .pp-hint { font-size: 0.72rem; color: var(--text2, #888); margin-top: 6px; }
-        .pp-switch-line {
-            display: flex; align-items: center; justify-content: space-between; gap: 10px;
-        }
         .pp-replace-list {
             display: flex; flex-direction: column; gap: 5px;
             max-height: 150px; overflow: auto;
@@ -6559,24 +6508,741 @@
                 <button class="modal-close" onclick="closePostprocessModal()">&times;</button>
             </div>
             <div class="modal-body">
+             <div class="postprocess-ui">
+              <style>
+/* Post-process modal visual refresh
+   Scoped under .postprocess-ui so it does not leak into the rest of the app. */
+.postprocess-ui {
+  --pp-accent: var(--accent, #7c8cff);
+  --pp-accent-strong: #6675ff;
+  --pp-accent-soft: color-mix(in srgb, var(--pp-accent) 16%, transparent);
+  --pp-bg: var(--background, #0f1117);
+  --pp-panel: color-mix(in srgb, var(--background2, #171a22) 92%, #ffffff 8%);
+  --pp-panel-2: color-mix(in srgb, var(--background2, #171a22) 96%, #ffffff 4%);
+  --pp-field: color-mix(in srgb, var(--background, #0f1117) 86%, #ffffff 14%);
+  --pp-border: color-mix(in srgb, var(--border, #303544) 82%, #ffffff 18%);
+  --pp-border-soft: color-mix(in srgb, var(--border, #303544) 72%, transparent);
+  --pp-text: var(--text, #edf0f7);
+  --pp-muted: var(--text2, #9aa2b3);
+  --pp-success: #55d68b;
+  --pp-danger: var(--error, #ff6b6b);
+  color: var(--pp-text);
+  font-family: Inter, Pretendard, "Noto Sans KR", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.postprocess-ui *,
+.postprocess-ui *::before,
+.postprocess-ui *::after {
+  box-sizing: border-box;
+}
+
+.postprocess-ui .modal-body {
+  padding: 18px !important;
+  background:
+    radial-gradient(circle at 15% 0%, color-mix(in srgb, var(--pp-accent) 10%, transparent), transparent 32%),
+    var(--pp-bg);
+}
+
+.postprocess-ui .pp-shell-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 16px;
+  padding: 2px 2px 0;
+}
+
+.postprocess-ui .pp-kicker {
+  margin-bottom: 5px;
+  color: var(--pp-accent);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.15em;
+}
+
+.postprocess-ui .pp-shell-title {
+  margin: 0;
+  font-size: clamp(1.05rem, 1.7vw, 1.35rem);
+  font-weight: 800;
+  letter-spacing: -0.025em;
+}
+
+.postprocess-ui .pp-shell-desc {
+  margin-top: 5px;
+  color: var(--pp-muted);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.postprocess-ui .pp-live-status {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 11px;
+  border: 1px solid color-mix(in srgb, var(--pp-success) 38%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--pp-success) 10%, transparent);
+  color: color-mix(in srgb, var(--pp-success) 86%, white 14%);
+  font-size: 0.72rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.postprocess-ui .pp-live-status::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--pp-success) 14%, transparent);
+}
+
+.postprocess-ui .pp-layout {
+  display: grid !important;
+  grid-template-columns: minmax(480px, 1fr) minmax(300px, 42%);
+  align-items: stretch;
+  gap: 18px !important;
+  width: 100%;
+  min-width: 0;
+  height: clamp(540px, calc(100vh - 180px), 840px);
+  overflow: hidden;
+}
+
+.postprocess-ui .pp-left,
+.postprocess-ui .pp-right {
+  min-width: 0;
+}
+
+.postprocess-ui .pp-left {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  padding-right: 5px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.postprocess-ui .pp-tab-bar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px !important;
+  padding: 6px;
+  border: 1px solid var(--pp-border);
+  border-radius: 15px;
+  background: color-mix(in srgb, var(--pp-panel) 86%, transparent);
+  box-shadow: 0 10px 30px rgb(0 0 0 / 0.18);
+  backdrop-filter: blur(16px);
+}
+
+.postprocess-ui .pp-tab-btn {
+  position: relative;
+  display: flex !important;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  min-height: 48px;
+  padding: 9px 11px !important;
+  border: 1px solid transparent !important;
+  border-radius: 11px !important;
+  background: transparent !important;
+  color: var(--pp-muted) !important;
+  font: inherit;
+  font-size: 0.8rem !important;
+  font-weight: 700 !important;
+  cursor: pointer;
+  transition: transform 140ms ease, border-color 140ms ease, background 140ms ease, color 140ms ease;
+}
+
+.postprocess-ui .pp-tab-btn:hover {
+  background: color-mix(in srgb, var(--pp-field) 82%, transparent) !important;
+  color: var(--pp-text) !important;
+}
+
+.postprocess-ui .pp-tab-btn.active {
+  border-color: color-mix(in srgb, var(--pp-accent) 42%, var(--pp-border)) !important;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--pp-accent) 22%, var(--pp-panel)), color-mix(in srgb, var(--pp-accent) 8%, var(--pp-panel))) !important;
+  color: #fff !important;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.08), 0 7px 20px color-mix(in srgb, var(--pp-accent) 14%, transparent);
+}
+
+.postprocess-ui .pp-tab-btn:active {
+  transform: translateY(1px);
+}
+
+.postprocess-ui .pp-mode-badge {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 22px;
+  padding: 3px 7px;
+  border-radius: 999px;
+  font-size: 0.63rem !important;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+.postprocess-ui .pp-mode-badge.applied {
+  background: color-mix(in srgb, var(--pp-success) 16%, transparent);
+  color: #7ce3aa;
+}
+
+.postprocess-ui .pp-mode-badge.inactive {
+  background: color-mix(in srgb, var(--pp-muted) 12%, transparent);
+  color: var(--pp-muted);
+}
+
+.postprocess-ui .settings-tab-panel {
+  min-width: 0;
+}
+
+.postprocess-ui .settings-tab-panel.active,
+.postprocess-ui .settings-tab-panel[style*="display: block"] {
+  animation: pp-panel-in 170ms ease-out;
+}
+
+@keyframes pp-panel-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.postprocess-ui .pp-card {
+  position: relative;
+  margin: 0 0 12px !important;
+  padding: 15px !important;
+  overflow: hidden;
+  border: 1px solid var(--pp-border-soft) !important;
+  border-radius: 16px !important;
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 0.025), transparent 38%),
+    var(--pp-panel) !important;
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.13), inset 0 1px 0 rgb(255 255 255 / 0.035);
+  transition: border-color 150ms ease, transform 150ms ease, box-shadow 150ms ease;
+}
+
+.postprocess-ui .pp-card:hover {
+  border-color: var(--pp-border) !important;
+}
+
+.postprocess-ui .pp-card.pp-card-primary {
+  border-color: color-mix(in srgb, var(--pp-accent) 42%, var(--pp-border)) !important;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--pp-accent) 13%, var(--pp-panel)), transparent 55%),
+    var(--pp-panel) !important;
+}
+
+.postprocess-ui .pp-card.pp-card-advanced {
+  background: var(--pp-panel-2) !important;
+}
+
+.postprocess-ui .pp-card-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px !important;
+  color: var(--pp-text) !important;
+  font-size: 0.78rem !important;
+  font-weight: 800 !important;
+  letter-spacing: -0.015em;
+}
+
+.postprocess-ui .pp-card-title::before {
+  content: "";
+  width: 4px;
+  height: 14px;
+  border-radius: 99px;
+  background: linear-gradient(var(--pp-accent), color-mix(in srgb, var(--pp-accent) 45%, transparent));
+  box-shadow: 0 0 14px color-mix(in srgb, var(--pp-accent) 28%, transparent);
+}
+
+.postprocess-ui .pp-switch-line {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  gap: 16px !important;
+  min-width: 0;
+}
+
+.postprocess-ui .pp-switch-line > :first-child {
+  min-width: 0;
+}
+
+.postprocess-ui .pp-row {
+  display: grid !important;
+  grid-template-columns: 138px minmax(0, 1fr);
+  align-items: start !important;
+  gap: 14px !important;
+  padding: 10px 0 !important;
+  border-bottom: 1px solid color-mix(in srgb, var(--pp-border) 54%, transparent);
+}
+
+.postprocess-ui .pp-row:last-child {
+  padding-bottom: 0 !important;
+  border-bottom: 0;
+}
+
+.postprocess-ui .pp-label {
+  padding-top: 9px;
+  color: var(--pp-muted) !important;
+  font-size: 0.74rem !important;
+  font-weight: 650;
+  line-height: 1.3;
+}
+
+.postprocess-ui .pp-field-inline {
+  display: flex !important;
+  align-items: center;
+  gap: 8px !important;
+  min-width: 0;
+}
+
+.postprocess-ui .input,
+.postprocess-ui .select,
+.postprocess-ui input[type="text"],
+.postprocess-ui input[type="number"],
+.postprocess-ui textarea,
+.postprocess-ui select {
+  min-width: 0;
+  min-height: 38px;
+  border: 1px solid var(--pp-border) !important;
+  border-radius: 10px !important;
+  outline: none;
+  background: var(--pp-field) !important;
+  color: var(--pp-text) !important;
+  font: inherit;
+  font-size: 0.78rem !important;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.025);
+  transition: border-color 140ms ease, box-shadow 140ms ease, background 140ms ease;
+}
+
+.postprocess-ui .input:not(textarea),
+.postprocess-ui .select,
+.postprocess-ui input[type="text"],
+.postprocess-ui input[type="number"],
+.postprocess-ui select {
+  padding: 7px 10px !important;
+}
+
+.postprocess-ui textarea.input,
+.postprocess-ui textarea {
+  padding: 10px 11px !important;
+  line-height: 1.55;
+}
+
+.postprocess-ui .input:hover,
+.postprocess-ui .select:hover,
+.postprocess-ui input[type="text"]:hover,
+.postprocess-ui input[type="number"]:hover,
+.postprocess-ui textarea:hover,
+.postprocess-ui select:hover {
+  border-color: color-mix(in srgb, var(--pp-accent) 35%, var(--pp-border)) !important;
+}
+
+.postprocess-ui .input:focus,
+.postprocess-ui .select:focus,
+.postprocess-ui input[type="text"]:focus,
+.postprocess-ui input[type="number"]:focus,
+.postprocess-ui textarea:focus,
+.postprocess-ui select:focus {
+  border-color: var(--pp-accent) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--pp-accent) 16%, transparent) !important;
+  background: color-mix(in srgb, var(--pp-field) 92%, var(--pp-accent) 8%) !important;
+}
+
+.postprocess-ui input:disabled,
+.postprocess-ui select:disabled,
+.postprocess-ui textarea:disabled {
+  cursor: not-allowed;
+  opacity: 0.45 !important;
+}
+
+.postprocess-ui input::placeholder,
+.postprocess-ui textarea::placeholder {
+  color: color-mix(in srgb, var(--pp-muted) 72%, transparent);
+}
+
+.postprocess-ui .btn {
+  min-height: 34px;
+  padding: 6px 11px !important;
+  border: 1px solid var(--pp-border) !important;
+  border-radius: 9px !important;
+  background: color-mix(in srgb, var(--pp-field) 92%, #ffffff 8%) !important;
+  color: var(--pp-text) !important;
+  font: inherit;
+  font-size: 0.74rem !important;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.04);
+  transition: transform 130ms ease, border-color 130ms ease, background 130ms ease;
+}
+
+.postprocess-ui .btn:hover {
+  border-color: color-mix(in srgb, var(--pp-accent) 48%, var(--pp-border)) !important;
+  background: color-mix(in srgb, var(--pp-accent) 12%, var(--pp-field)) !important;
+}
+
+.postprocess-ui .btn:active {
+  transform: translateY(1px);
+}
+
+.postprocess-ui .pp-hint {
+  color: var(--pp-muted) !important;
+  font-size: 0.7rem !important;
+  line-height: 1.58 !important;
+}
+
+.postprocess-ui .pp-hint code,
+.postprocess-ui code {
+  padding: 1px 5px;
+  border: 1px solid color-mix(in srgb, var(--pp-accent) 20%, var(--pp-border));
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--pp-accent) 8%, var(--pp-field));
+  color: color-mix(in srgb, var(--pp-accent) 72%, white 28%);
+  font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 0.92em;
+}
+
+.postprocess-ui .pp-subsection {
+  margin-top: 12px !important;
+  padding: 12px !important;
+  border: 1px solid color-mix(in srgb, var(--pp-border) 72%, transparent) !important;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--pp-bg) 38%, transparent);
+}
+
+.postprocess-ui .pp-subsection + .pp-subsection {
+  margin-top: 9px !important;
+}
+
+.postprocess-ui .pp-replace-list {
+  min-height: 42px;
+  padding: 8px;
+  border: 1px dashed var(--pp-border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--pp-bg) 30%, transparent);
+}
+
+.postprocess-ui .pp-replace-empty {
+  display: grid;
+  min-height: 24px;
+  place-items: center;
+  color: var(--pp-muted);
+  font-size: 0.72rem;
+}
+
+.postprocess-ui input[type="range"] {
+  min-height: auto !important;
+  height: 22px;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 999px !important;
+  background: transparent !important;
+  accent-color: var(--pp-accent);
+  box-shadow: none !important;
+}
+
+.postprocess-ui input[type="color"] {
+  width: 46px !important;
+  height: 34px !important;
+  padding: 4px !important;
+  overflow: hidden;
+  border: 1px solid var(--pp-border) !important;
+  border-radius: 9px !important;
+  background: var(--pp-field);
+  cursor: pointer;
+}
+
+.postprocess-ui input[type="color"]::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.postprocess-ui input[type="color"]::-webkit-color-swatch {
+  border: 0;
+  border-radius: 6px;
+}
+
+.postprocess-ui .toggle-switch,
+.postprocess-ui .switch {
+  position: relative;
+  flex: 0 0 auto;
+  display: inline-flex;
+  width: 42px;
+  height: 24px;
+  cursor: pointer;
+}
+
+.postprocess-ui .toggle-switch input,
+.postprocess-ui .switch input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.postprocess-ui .toggle-slider,
+.postprocess-ui .slider {
+  position: absolute;
+  inset: 0;
+  border: 1px solid var(--pp-border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--pp-muted) 20%, var(--pp-field));
+  transition: background 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.postprocess-ui .toggle-slider::before,
+.postprocess-ui .slider::before {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 2px 7px rgb(0 0 0 / 0.32);
+  transition: transform 160ms cubic-bezier(.2, .8, .2, 1);
+}
+
+.postprocess-ui .toggle-switch input:checked + .toggle-slider,
+.postprocess-ui .switch input:checked + .slider {
+  border-color: color-mix(in srgb, var(--pp-accent) 75%, white 10%);
+  background: var(--pp-accent-strong);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--pp-accent) 12%, transparent);
+}
+
+.postprocess-ui .toggle-switch input:checked + .toggle-slider::before,
+.postprocess-ui .switch input:checked + .slider::before {
+  transform: translateX(18px);
+}
+
+.postprocess-ui .pp-right {
+  position: relative;
+  top: auto;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  padding: 14px !important;
+  border: 1px solid var(--pp-border-soft);
+  border-radius: 17px;
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 0.025), transparent 28%),
+    var(--pp-panel);
+  box-shadow: 0 16px 38px rgb(0 0 0 / 0.18), inset 0 1px 0 rgb(255 255 255 / 0.035);
+}
+
+.postprocess-ui .pp-preview-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+  color: var(--pp-text) !important;
+  font-size: 0.76rem !important;
+  font-weight: 750;
+}
+
+.postprocess-ui .pp-preview-head > span:first-child::before {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 7px;
+  border-radius: 50%;
+  background: var(--pp-success);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--pp-success) 13%, transparent);
+  vertical-align: 1px;
+}
+
+.postprocess-ui #pp-preview-size {
+  display: inline-flex;
+  padding: 4px 7px;
+  border: 1px solid var(--pp-border-soft);
+  border-radius: 7px;
+  background: var(--pp-field);
+  color: var(--pp-muted);
+  font-size: 0.66rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.postprocess-ui .pp-preview-box {
+  position: relative;
+  display: grid !important;
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid var(--pp-border) !important;
+  border-radius: 13px !important;
+  background-color: #0a0c11 !important;
+  background-image:
+    linear-gradient(45deg, rgb(255 255 255 / 0.035) 25%, transparent 25%),
+    linear-gradient(-45deg, rgb(255 255 255 / 0.035) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgb(255 255 255 / 0.035) 75%),
+    linear-gradient(-45deg, transparent 75%, rgb(255 255 255 / 0.035) 75%) !important;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0 !important;
+  background-size: 16px 16px !important;
+  box-shadow: inset 0 0 50px rgb(0 0 0 / 0.4);
+}
+
+.postprocess-ui .pp-preview-box::after {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.025);
+}
+
+.postprocess-ui #pp-preview-img {
+  display: block;
+  max-width: 100% !important;
+  max-height: 100% !important;
+  object-fit: contain;
+}
+
+.postprocess-ui .pp-preview-placeholder {
+  color: var(--pp-muted);
+  font-size: 0.78rem;
+  line-height: 1.6;
+  text-align: center;
+}
+
+.postprocess-ui #pp-preview-error {
+  margin-top: 9px;
+  padding: 9px 10px;
+  border: 1px solid color-mix(in srgb, var(--pp-danger) 35%, transparent);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--pp-danger) 9%, transparent);
+  color: var(--pp-danger) !important;
+}
+
+.postprocess-ui #pp-face-crop-preview,
+.postprocess-ui #pp-preview-match {
+  overflow: hidden;
+  border-radius: 10px;
+}
+
+.postprocess-ui #pp-face-crop-preview img,
+.postprocess-ui #pp-preview-match img {
+  border-color: var(--pp-border) !important;
+  box-shadow: 0 7px 18px rgb(0 0 0 / 0.18);
+}
+
+.postprocess-ui ::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.postprocess-ui ::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--pp-muted) 34%, transparent);
+  background-clip: padding-box;
+}
+
+.postprocess-ui ::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--pp-muted) 50%, transparent);
+  background-clip: padding-box;
+}
+
+@media (max-width: 1120px) {
+  .postprocess-ui .pp-layout {
+    grid-template-columns: minmax(420px, 1.15fr) minmax(280px, 0.85fr);
+  }
+
+  .postprocess-ui .pp-row {
+    grid-template-columns: 118px minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 880px) {
+  .postprocess-ui .modal-body {
+    overflow-x: auto;
+  }
+
+  .postprocess-ui .pp-layout {
+    grid-template-columns: minmax(380px, 1.15fr) minmax(260px, 0.85fr);
+    min-width: 680px;
+  }
+}
+
+@media (max-width: 620px) {
+  .postprocess-ui .modal-body {
+    padding: 12px !important;
+  }
+
+  .postprocess-ui .pp-shell-header {
+    align-items: flex-start;
+  }
+
+  .postprocess-ui .pp-live-status {
+    display: none;
+  }
+
+  .postprocess-ui .pp-row {
+    grid-template-columns: 1fr;
+    gap: 5px !important;
+  }
+
+  .postprocess-ui .pp-label {
+    padding-top: 0;
+  }
+
+  .postprocess-ui .pp-field-inline {
+    flex-wrap: wrap;
+  }
+
+  .postprocess-ui .pp-field-inline > * {
+    min-width: min(100%, 140px);
+  }
+
+  .postprocess-ui .pp-tab-btn {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+}
+
+              </style>
+                <div class="pp-shell-header">
+                    <div>
+                        <div class="pp-kicker">POST PROCESS</div>
+                        <h2 class="pp-shell-title">대사 합성 설정</h2>
+                        <div class="pp-shell-desc">대사창과 말풍선 렌더링을 조정하고 결과를 즉시 확인합니다.</div>
+                    </div>
+                    <div class="pp-live-status">실시간 반영</div>
+                </div>
                 <div class="pp-layout">
                     <!-- 왼쪽: 탭 + 옵션 -->
                     <div class="pp-left">
                         <div class="pp-tab-bar">
-                            <button class="pp-tab-btn active" onclick="switchPostprocessTab('vn')">
+                            <button type="button" class="pp-tab-btn active" onclick="switchPostprocessTab('vn')">
                                 <span>💬 대사 모드</span>
-                                <span class="pp-mode-badge" data-mode="vn"></span>
+                                <span class="pp-mode-badge applied" data-mode="vn">적용중</span>
                             </button>
-                            <button class="pp-tab-btn" onclick="switchPostprocessTab('bubble')">
+                            <button type="button" class="pp-tab-btn" onclick="switchPostprocessTab('bubble')">
                                 <span>💭 말풍선 모드</span>
-                                <span class="pp-mode-badge" data-mode="bubble"></span>
+                                <span class="pp-mode-badge inactive" data-mode="bubble">비활성</span>
                             </button>
                         </div>
 
                         <!-- 대사 모드 패널 -->
                         <div id="postprocess-tab-vn" class="settings-tab-panel active" style="display:block;">
                             <!-- 활성화 -->
-                            <div class="pp-card">
+                            <div class="pp-card pp-card-primary">
                                 <div class="pp-switch-line">
                                     <div>
                                         <div style="font-size:0.88rem; font-weight:600;">대사 모드</div>
@@ -6673,7 +7339,7 @@
                                     </label>
                                 </div>
                                 <div style="margin-top:10px;">
-                                    <div id="pp-vn-name-replace-list" class="pp-replace-list"></div>
+                                    <div id="pp-vn-name-replace-list" class="pp-replace-list"><div class="pp-replace-empty">치환 항목 없음</div></div>
                                     <div class="pp-field-inline" style="margin-top:6px;">
                                         <input type="text" id="pp-vn-replace-key" class="input" placeholder="영문 이름 (kapri)" style="flex:1;">
                                         <input type="text" id="pp-vn-replace-val" class="input" placeholder="표시 이름 (카프리)" style="flex:1;">
@@ -6683,7 +7349,7 @@
                             </div>
 
                             <!-- 감정 -->
-                            <div class="pp-card">
+                            <div class="pp-card pp-card-advanced">
                                 <div class="pp-card-title">감정</div>
                                 <div class="pp-switch-line">
                                     <div>
@@ -6696,7 +7362,7 @@
                                     </label>
                                 </div>
 
-                                <div style="margin-top:10px; border-top:1px solid var(--border); padding-top:10px;">
+                                <div class="pp-subsection">
                                     <div style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
                                         <div style="font-size:0.78rem; color:var(--text2, #999);">봇/캐릭터 이미지 파일명 → 규칙 → 감정 리스트 <span id="pp-vn-emotion-summary" style="font-variant-numeric:tabular-nums; color:var(--accent, #4c6ef5); font-weight:600;"></span></div>
                                         <button type="button" class="btn" style="padding:4px 10px; font-size:0.75rem;" onclick="ppOpenEmotionSelectModal()">감정 뽑아내기</button>
@@ -6705,7 +7371,7 @@
                                 </div>
 
                                 <!-- 이미지 조회 prefix/suffix (봇별 1개) -->
-                                <div style="margin-top:10px; border-top:1px solid var(--border); padding-top:10px;">
+                                <div class="pp-subsection">
                                     <div style="font-size:0.78rem; color:var(--text2, #999); margin-bottom:4px;">이미지 조회 prefix / suffix (봇별)</div>
                                     <div class="pp-field-inline">
                                         <input type="text" id="pp-vn-prefix" class="input" placeholder="prefix (예: _ 또는 .)" style="flex:1;" oninput="collectPpVnSettings(); ppRenderPreviewMatch(); ppRenderFaceCrop();">
@@ -6715,7 +7381,7 @@
                                 </div>
 
                                 <!-- VN 얼굴 슬롯 (face_yolo 검출 + 크롭) -->
-                                <div style="margin-top:10px; border-top:1px solid var(--border); padding-top:10px;">
+                                <div class="pp-subsection">
                                     <div class="pp-switch-line" style="margin-bottom:8px;">
                                         <div>
                                             <div style="font-size:0.82rem;">좌측 얼굴 슬롯 (face_yolo)</div>
@@ -6749,13 +7415,15 @@
                                             <div style="font-size:0.7rem; color:var(--text2, #999); margin-bottom:2px;">추론 디바이스 (GPU 가속)</div>
                                             <select id="pp-vn-face-device" class="select" style="width:100%;" onchange="collectPpVnSettings(); ppRenderFaceCrop();">
                                                 <option value="auto">자동 (권장)</option>
+                                                <option value="cpu">CPU</option>
+                                                <option value="dml0">DirectML · GPU (Windows)</option>
                                             </select>
                                         </div>
                                         <button type="button" class="btn" style="padding:4px 10px; font-size:0.7rem; margin-left:6px;" onclick="ppRefreshFaceDevices()" title="설치된 onnxruntime 패키지 기준으로 사용 가능 디바이스를 다시 조회">새로고침</button>
                                     </div>
                                     <div class="pp-hint" style="margin-top:4px;">첫 화자의 캐릭터 이미지에서 얼굴을 검출(ONNX Runtime)해 크롭. <b>1.0=검출 박스 그대로(raw)</b>, 클수록 박스 중심 기준 위·아래로 확장(데이터패치 노드와 동일 규칙). CONF 이하 신뢰도 박스는 무시. <b>최고 신뢰도 박스 하나만</b>을 켜면 CONF 값을 무시하고 검출된 박스 중 신뢰도가 가장 높은 박스를 항상 사용(임계치로 인한 미검출 방지). 디바이스: CUDA(NVIDIA)/DirectML(Windows AMD·Intel·NVIDIA)/CPU 자동 감지 — GPU provider 패키지(onnxruntime-gpu / onnxruntime-directml) 설치 시에만 GPU 항목이 노출됨.</div>
                                     <!-- YOLO 크롭 결과 실시간 미리보기 -->
-                                    <div style="margin-top:8px; border-top:1px solid var(--border); padding-top:8px;">
+                                    <div class="pp-subsection">
                                         <div style="font-size:0.74rem; color:var(--text2, #999); margin-bottom:4px;">YOLO 크롭 결과 (실시간)</div>
                                         <div id="pp-face-crop-preview" style="display:flex; gap:8px; align-items:flex-start;">
                                             <div style="font-size:0.74rem; color:var(--text2,#999);">대사에서 NAME을 찾을 수 없음</div>
@@ -6769,7 +7437,7 @@
                                 <div class="pp-card-title">미리보기 대사 샘플</div>
                                 <textarea id="pp-vn-preview-speak" class="input" rows="2" style="width:100%; font-family:monospace; resize:vertical;" placeholder='kapri: "대사 예시"&#10;kapri: (생각 예시)' oninput="renderPostprocessPreview(); ppRenderFaceCrop()">kapri: "달콤하고 다정하게 해주셔야 해요♡" #angry</textarea>
                                 <div class="pp-hint">형식:<br>- <code>NAME: "대사"</code><br>- <code>NAME: (생각)</code><br>- 대사 뒤 <code>#감정</code> (감정 토글 켜면 합성에서 숨김)</div>
-                                <div style="margin-top:8px; border-top:1px solid var(--border); padding-top:8px;">
+                                <div class="pp-subsection">
                                     <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:4px;">
                                         <span style="font-size:0.74rem; color:var(--text2, #999);">매칭 캐릭터 이미지 (NAME + 감정)</span>
                                         <button type="button" class="btn" style="padding:3px 10px; font-size:0.72rem;" onclick="ppOpenParallelTestModal()">병렬 테스트</button>
@@ -6781,7 +7449,7 @@
 
                         <!-- 말풍선 모드 패널 -->
                         <div id="postprocess-tab-bubble" class="settings-tab-panel" style="display:none;">
-                            <div class="pp-card">
+                            <div class="pp-card pp-card-primary">
                                 <div class="pp-switch-line">
                                     <div>
                                         <div style="font-size:0.88rem; font-weight:600;">말풍선 모드</div>
@@ -6810,7 +7478,7 @@
                                 </div>
                             </div>
 
-                            <div class="pp-card">
+                            <div class="pp-card pp-card-advanced">
                                 <div class="pp-card-title">말풍선 형상</div>
                                 <div class="pp-field-inline">
                                     <div><div style="font-size:0.7rem; color:var(--text2,#999);">테두리 두께</div><input id="pp-bubble-border-width" type="number" class="input" style="width:70px;" step="0.5" oninput="renderPostprocessPreview()"></div>
@@ -6849,14 +7517,15 @@
 
                     <!-- 오른쪽: 실시간 미리보기 -->
                     <div class="pp-right">
-                        <div style="font-size:0.78rem; color:var(--text2, #999);">실시간 미리보기 <span style="opacity:0.7;">(저장 후 실제 합성과 동일)</span> <span id="pp-preview-size" style="opacity:0.85; font-variant-numeric:tabular-nums;"></span></div>
+                        <div class="pp-preview-head"><span>실시간 미리보기 <small style="opacity:.62; font-weight:500;">저장 후 실제 합성과 동일</small></span><span id="pp-preview-size"></span></div>
                         <div class="pp-preview-box">
                             <img id="pp-preview-img" alt="미리보기" style="display:none;">
                             <div id="pp-preview-placeholder" class="pp-preview-placeholder">대사 모드를 켜면<br>미리보기가 표시됩니다</div>
                         </div>
-                        <div id="pp-preview-error" style="color:var(--error, #e74c3c); font-size:0.76rem; display:none;"></div>
+                        <div id="pp-preview-error" style="display:none;"></div>
                     </div>
                 </div>
+             </div>
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn" onclick="closePostprocessModal()">닫기</button>
