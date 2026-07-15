@@ -7467,8 +7467,9 @@
                                         <input id="pp-bubble-font-path" class="input" style="width:100%;" placeholder="C:/Windows/Fonts/malgun.ttf" oninput="renderPostprocessPreview()">
                                     </div>
                                     <div style="flex:1;">
-                                        <div style="font-size:0.7rem; color:var(--text2,#999);">폰트 크기 — 모델 자동</div>
-                                        <input id="pp-bubble-font-size" type="number" class="input" min="8" max="200" disabled title="내용량과 캔버스 크기로 레이아웃 ONNX가 자동 결정합니다">
+                                        <div style="font-size:0.7rem; color:var(--text2,#999);">글자 확대 상한(x)</div>
+                                        <input id="pp-bubble-font-size" type="hidden">
+                                        <input id="pp-bubble-font-scale" type="number" class="input" min="1" max="4" step="0.1" oninput="renderPostprocessPreview()" title="모델 기본 글자 크기의 최대 확대 배율입니다. 들어가지 않으면 자동으로 낮춥니다.">
                                     </div>
                                 </div>
                                 <div class="pp-field-inline" style="margin-top:6px;">
@@ -25217,6 +25218,7 @@
                     enabled: false,
                     font_path: '',
                     font_size: 36,
+                    layout_font_scale: 2.0,
                     text_color: '#111111',
                     bubble_fill: '#FFFFFF',
                     bubble_border: '#333333',
@@ -25990,6 +25992,7 @@
             document.getElementById('pp-bubble-enabled').checked = !!b.enabled;
             set('pp-bubble-font-path', b.font_path || '');
             set('pp-bubble-font-size', b.font_size ?? 36);
+            set('pp-bubble-font-scale', b.layout_font_scale ?? 2.0);
             set('pp-bubble-text-color', b.text_color || '#111111');
             set('pp-bubble-fill', b.bubble_fill || '#FFFFFF');
             set('pp-bubble-border', b.bubble_border || '#333333');
@@ -26012,6 +26015,7 @@
             b.enabled = document.getElementById('pp-bubble-enabled').checked;
             b.font_path = (document.getElementById('pp-bubble-font-path').value || '').trim();
             b.font_size = _ppNum('pp-bubble-font-size', 36, 4, 400);
+            b.layout_font_scale = _ppNum('pp-bubble-font-scale', 2.0, 1.0, 4.0);
             b.text_color = document.getElementById('pp-bubble-text-color').value;
             b.bubble_fill = document.getElementById('pp-bubble-fill').value;
             b.bubble_border = document.getElementById('pp-bubble-border').value;
@@ -26048,6 +26052,7 @@
                     bot_name: (typeof ppCurrentBot !== 'undefined' && ppCurrentBot) ? ppCurrentBot : '',
                     profile: (typeof _illustSettingsProfile !== 'undefined' && _illustSettingsProfile) ? _illustSettingsProfile : 'solo',
                     font_path: b.font_path, font_size: b.font_size,
+                    layout_font_scale: b.layout_font_scale,
                     text_color: b.text_color, bubble_fill: b.bubble_fill, bubble_border: b.bubble_border,
                     border_width: b.border_width, opacity: b.opacity,
                     speech_opacity: b.speech_opacity, thought_opacity: b.thought_opacity,

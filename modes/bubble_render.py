@@ -113,6 +113,31 @@ def _overlap(a, boxes, pad=0):
     return False
 
 
+def _protected_face_box(face_box, canvas_size):
+    """검출 박스 밖의 턱/머리 윤곽까지 보호하도록 안전 여백을 확장한다."""
+    x1, y1, x2, y2 = [float(v) for v in face_box]
+    canvas_w, canvas_h = [float(v) for v in canvas_size]
+    face_size = max(x2 - x1, y2 - y1)
+    pad = max(8.0, min(canvas_w, canvas_h) * 0.012, face_size * 0.08)
+    return (
+        max(0.0, x1 - pad),
+        max(0.0, y1 - pad),
+        min(canvas_w, x2 + pad),
+        min(canvas_h, y2 + pad),
+    )
+
+
+def _resolve_layout_font_scale(settings):
+    """저장/API 입력과 무관하게 실제 합성 배율을 1.0~4.0으로 제한한다."""
+    value = (settings or {}).get("layout_font_scale", 2.0)
+    try:
+        scale = float(value)
+    except (TypeError, ValueError):
+        print(f"[BUBBLE_RENDER] ⚠ layout_font_scale 변환 실패({value!r}), 2.0 사용")
+        scale = 2.0
+    return max(1.0, min(4.0, scale))
+
+
 def _place_body(face_box, body_w, body_h, protected_boxes, canvas_w, canvas_h, tail_len):
     """ONNX 후보가 없을 때 얼굴을 가리지 않는 근접 위치를 탐색한다.
 
@@ -377,7 +402,7 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
         from modes.face_detector import detect_faces
         from modes.bubble_match import match_speakers_to_faces
         from modes.bubble_predictor import predict_for_face_candidates, select_candidate
-        from modes.bubble_layout import choose_layout
+        from modes.bubble_layout import choose_scaled_layout
     except Exception as e:
         print(f"[BUBBLE_RENDER] 의존 로드 실패: {e}")
         traceback.print_exc()
@@ -420,12 +445,12 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
     border_w = float(s.get("border_width", 2))
     tail_len = float(s.get("tail_len", 28))
     radius = int(s.get("radius", 20))
-    # 기존 font_size는 고정 크기 렌더러의 호환 필드로만 남긴다. 새 모델은
-    # 캔버스와 내용량으로 크기를 결정해야 학습 시와 같은 후보 분포를 사용한다.
-    layout_font_cap = int(s.get("layout_max_font_size", 0) or 0)
-    max_font_size = layout_font_cap if layout_font_cap > 0 else None
+    # 사용자가 정한 상한까지 키운 뒤 줄바꿈/몸통을 다시 계산한다.
+    layout_font_scale = _resolve_layout_font_scale(s)
     # 모든 얼굴을 보호한다. 모델 추론은 같은 얼굴에 대해 한 번만 수행한다.
-    all_boxes = [f["box"] for f in faces]
+    all_boxes = [
+        _protected_face_box(f["box"], (canvas_w, canvas_h)) for f in faces
+    ]
     placed_boxes = []
     candidate_cache = {}
     page_rgb = base.convert("RGB")
@@ -440,11 +465,11 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
         text = seg.get("text", "")
         btype = seg.get("type", "speech")
         try:
-            layout, _layout_alternatives = choose_layout(
+            layout, _layout_alternatives = choose_scaled_layout(
                 text,
                 (canvas_w, canvas_h),
                 s.get("font_path") or None,
-                max_font_size=max_font_size,
+                font_scale=layout_font_scale,
                 max_lines=7,
                 top_k=5,
             )

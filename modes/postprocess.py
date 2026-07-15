@@ -1074,12 +1074,23 @@ def _default_vn() -> dict:
     }
 
 
+def normalize_layout_font_scale(value, default: float = 2.0) -> float:
+    """말풍선 글자 확대 상한을 안전 범위 1.0~4.0으로 정규화한다."""
+    try:
+        scale = float(value)
+    except (TypeError, ValueError):
+        print(f"[POSTPROCESS] ⚠ layout_font_scale 변환 실패({value!r}), 기본값 {default} 사용")
+        scale = float(default)
+    return max(1.0, min(4.0, scale))
+
+
 def _default_bubble() -> dict:
     """봇별 postprocess_bubble 기본값 (말풍선 모드)."""
     return {
         "enabled": False,
         "font_path": "",                  # 빈 값=시스템 기본 폰트
         "font_size": 36,                  # 텍스트 폰트 px
+        "layout_font_scale": 2.0,         # 모델 기본 글자 크기의 최대 확대 배율(1.0~4.0)
         "text_color": "#111111",
         "bubble_fill": "#FFFFFF",
         "bubble_border": "#333333",
@@ -1182,6 +1193,7 @@ def get_bubble_settings(config: dict, bot_name: str = "") -> Optional[dict]:
     return {
         "font_path": bb.get("font_path", "") or "",
         "font_size": int(bb.get("font_size", 36) or 36),
+        "layout_font_scale": normalize_layout_font_scale(bb.get("layout_font_scale", 2.0)),
         "text_color": bb.get("text_color", "#111111"),
         "bubble_fill": bb.get("bubble_fill", "#FFFFFF"),
         "bubble_border": bb.get("bubble_border", "#333333"),

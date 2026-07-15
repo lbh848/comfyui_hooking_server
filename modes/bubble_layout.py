@@ -825,6 +825,76 @@ def choose_layout(
     return ranked[0], ranked[: max(1, top_k)]
 
 
+def choose_scaled_layout(
+    text: str,
+    canvas_size: tuple[int, int],
+    font_path: str | os.PathLike | None = None,
+    *,
+    font_scale: float = 2.0,
+    max_lines: int = 7,
+    top_k: int = 5,
+) -> tuple[LayoutCandidate, list[LayoutCandidate]]:
+    """모델의 기본 선택을 기준으로 더 큰 글자에서 안전하게 재레이아웃한다.
+
+    글자만 사후 확대하지 않고, 기본 모델이 결정한 버블 종류를 유지한 채 목표
+    크기 주변에서 줄바꿈과 몸통 치수를 다시 계산한다. 정확한 배율이 캔버스에
+    들어가지 않으면 10%씩 낮춰 가장 큰 ``fits=True`` 후보를 사용한다.
+    """
+    base, base_top = choose_layout(
+        text,
+        canvas_size,
+        font_path,
+        max_lines=max_lines,
+        top_k=top_k,
+    )
+    scale = max(1.0, float(font_scale))
+    if scale <= 1.0 + 1e-6 or not base.fits:
+        if not base.fits:
+            print("[BUBBLE_LAYOUT] 기본 레이아웃도 맞지 않아 글자 확대를 건너뜀")
+        return base, base_top
+
+    # 2.0 요청이면 2.0 → 1.8 → 1.6 → 1.4 → 1.2 순으로 후퇴한다.
+    attempts = []
+    factor = scale
+    while factor > 1.05:
+        attempts.append(factor)
+        factor -= max(0.1, scale * 0.1)
+
+    for factor in attempts:
+        # 사용자 값은 '목표'가 아니라 상한이다. 내림을 사용해 선택 글자가
+        # 요청 배율을 소수점 반올림 때문에라도 넘지 않게 한다.
+        target_font = max(base.font_size + 1, int(math.floor(base.font_size * factor)))
+        min_font = max(base.font_size + 1, int(round(target_font * 0.90)))
+        max_font = max(min_font, target_font)
+        selected, alternatives = choose_layout(
+            text,
+            canvas_size,
+            font_path,
+            shape_hint=base.shape,
+            min_font_size=min_font,
+            max_font_size=max_font,
+            max_lines=max_lines,
+            top_k=top_k,
+        )
+        if selected.fits:
+            actual_scale = selected.font_size / max(base.font_size, 1)
+            print(
+                f"[BUBBLE_LAYOUT] 글자 확대 재레이아웃: "
+                f"{base.font_size}px → {selected.font_size}px "
+                f"(요청={scale:.2f}x, 실제={actual_scale:.2f}x, shape={base.shape})"
+            )
+            return selected, alternatives
+        print(
+            f"[BUBBLE_LAYOUT] {factor:.2f}x 후보가 캔버스에 맞지 않아 축소 재시도: "
+            f"font={selected.font_size}, overflow={selected.overflow_ratio:.4f}"
+        )
+
+    print(
+        f"[BUBBLE_LAYOUT] 확대 가능한 적합 후보 없음 → 기본 {base.font_size}px 유지"
+    )
+    return base, base_top
+
+
 def layout_metadata() -> dict:
     return {
         "format": "sbp-bubble-layout-ranker",

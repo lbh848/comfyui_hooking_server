@@ -2275,7 +2275,12 @@ def _save_postprocess_bubble(bot_name: str, bubble: dict):
     if not bot:
         raise ValueError(f"봇을 찾을 수 없음: {bot_name}")
     _backup_bot_json()
-    bot["postprocess_bubble"] = dict(bubble or {})
+    from modes.postprocess import normalize_layout_font_scale
+    clean = dict(bubble or {})
+    clean["layout_font_scale"] = normalize_layout_font_scale(
+        clean.get("layout_font_scale", 2.0)
+    )
+    bot["postprocess_bubble"] = clean
     _save_bot_data(data)
     print(f"[BOT_MODE] postprocess_bubble 저장: bot={bot_name}")
 

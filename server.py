@@ -3448,6 +3448,7 @@ async def handle_api_postprocess_preview(request: web.Request) -> web.Response:
             bubble_settings = {
                 "font_path": body.get("font_path", ""),
                 "font_size": body.get("font_size", 36) or 36,
+                "layout_font_scale": body.get("layout_font_scale", 2.0),
                 "text_color": body.get("text_color", "#111111"),
                 "bubble_fill": body.get("bubble_fill", "#FFFFFF"),
                 "bubble_border": body.get("bubble_border", "#333333"),
@@ -11065,6 +11066,5 @@ if __name__ == "__main__":
     max_bk = app_config.get("backup_max_count", DEFAULT_MAX_BACKUP_IMAGES)
     print(f"백업 폴더: {WORKFLOW_BACKUP_DIR} (최대 {max_bk}개)")
     web.run_app(app, host=HOST, port=PORT)
-
 
 

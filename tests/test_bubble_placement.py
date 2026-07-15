@@ -2,13 +2,16 @@ import unittest
 
 from PIL import Image, ImageDraw
 
-from modes.bubble_layout import choose_layout
+from modes.bubble_layout import choose_layout, choose_scaled_layout
 from modes.bubble_predictor import select_candidate
+from modes.postprocess import normalize_layout_font_scale
 from modes.bubble_render import (
     _bubble_is_above_face,
     _draw_layout_bubble,
     _draw_speech,
     _place_body,
+    _protected_face_box,
+    _resolve_layout_font_scale,
     _tail_side,
 )
 
@@ -18,6 +21,17 @@ def _overlaps(a, b):
 
 
 class BubblePlacementTest(unittest.TestCase):
+    def test_layout_font_scale_is_user_configurable_and_clamped(self):
+        self.assertEqual(normalize_layout_font_scale(1.7), 1.7)
+        self.assertEqual(normalize_layout_font_scale(9), 4.0)
+        self.assertEqual(normalize_layout_font_scale(0.2), 1.0)
+        self.assertEqual(_resolve_layout_font_scale({"layout_font_scale": "3.5"}), 3.5)
+        self.assertEqual(_resolve_layout_font_scale({"layout_font_scale": 99}), 4.0)
+
+    def test_face_protection_adds_safety_margin(self):
+        protected = _protected_face_box((100, 100, 160, 160), (500, 500))
+        self.assertEqual(protected, (92.0, 92.0, 168.0, 168.0))
+
     def test_layout_onnx_selects_font_wrap_ratio_and_shape(self):
         selected, _ = choose_layout(
             "잠깐… 이게 정말 맞는 선택일까? 조금 더 생각해 보자…",
@@ -32,6 +46,24 @@ class BubblePlacementTest(unittest.TestCase):
             selected.lines,
             ("잠깐…", "이게 정말 맞는 선택일까?", "조금 더 생각해 보자…"),
         )
+
+    def test_scaled_layout_nearly_doubles_font_and_reflows(self):
+        selected, _ = choose_scaled_layout(
+            "잠깐… 이게 정말 맞는 선택일까? 조금 더 생각해 보자…",
+            (1056, 1536),
+            font_scale=2.0,
+        )
+        self.assertTrue(selected.fits)
+        self.assertEqual(selected.shape, "cloud")
+        self.assertGreaterEqual(selected.font_size, 52)
+        self.assertLessEqual(selected.font_size, 64)
+        self.assertGreater(len(selected.lines), 3)
+
+    def test_scaled_layout_never_exceeds_user_limit(self):
+        text = "잠깐… 이게 정말 맞는 선택일까? 조금 더 생각해 보자…"
+        base, _ = choose_layout(text, (1056, 1536))
+        selected, _ = choose_scaled_layout(text, (1056, 1536), font_scale=1.5)
+        self.assertLessEqual(selected.font_size, int(base.font_size * 1.5))
 
     def test_candidate_uses_distance_before_confidence(self):
         face = (100, 100, 160, 160)
