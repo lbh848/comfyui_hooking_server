@@ -384,13 +384,20 @@ def _pp_image_similarity(a: str, b: str) -> float:
 
 
 def match_face_image_filename(bot_name: str, character: str, emotion: str,
-                               prefix: str = "", suffix: str = ""):
+                               prefix: str = "", suffix: str = "",
+                               emotion_extract_rules: Optional[list] = None):
     """감정+이름으로 캐릭터 이미지 파일명을 매칭. (server.py match_image 엔드포인트와 동일 로직)
 
-    토큰 = character + prefix + emotion + suffix
-      1) base(확장자 제외) 정확 일치
-      2) 토큰이 base에 부분 포함
-      3) Levenshtein 유사도 최대(fallback)
+    두 매칭 기준을 함께 쓴다(둘 다 UI 설정이 실제 합성에 반영되도록):
+      A) 토큰 매칭 — token = character + prefix + emotion + suffix
+         1) base(확장자 제외) 정확 일치
+         2) 토큰이 base에 부분 포함
+      B) 규칙 매칭 — emotion_extract_rules 로 각 파일명 base에서 감정을 추출해
+         입력 emotion 과 비교. 프론트 ppEmotionFromFilename 과 동일 규칙/동일 엔진
+         (modes.embedding_service.clean_name_by_steps) 을 써서 미리보기=실전송 일치.
+         1) 추출 감정 == emotion 정확 일치
+         2) emotion 이 추출 감정에 부분 포함
+      3) Levenshtein 유사도 최대(fallback) — 토큰 유사도와 규칙 추출 유사도 중 최대.
 
     Returns:
         (filename, match_type, score) 또는 None(후보 없음).
@@ -409,19 +416,43 @@ def match_face_image_filename(bot_name: str, character: str, emotion: str,
     def _base(fname: str) -> str:
         return os.path.splitext(fname)[0]
 
+    bases = {f: _base(f) for f in candidates}
+
+    # 규칙 기반 감정 추출(옵션). 실패 시 규칙 경로를 건너뛰고 토큰 매칭만 동작.
+    extracted: dict = {}
+    rules = emotion_extract_rules or []
+    if rules:
+        try:
+            from modes.embedding_service import clean_name_by_steps
+            extracted = {f: clean_name_by_steps(bases[f], rules) for f in candidates}
+        except Exception as e:
+            print(f"[POSTPROCESS_MATCH] ⚠ emotion_extract_rules 적용 실패(규칙 무시): {e}")
+            traceback.print_exc()
+            extracted = {}
+
+    emo = (emotion or "").strip()
     token = f"{character}{prefix}{emotion}{suffix}"
-    # 1) base 정확 일치
+
+    # 1) 정확 일치 — 토큰(base==token) 또는 규칙 추출 감정(==emo)
     for f in candidates:
-        if _base(f) == token:
+        if bases[f] == token or (extracted and emo and extracted[f] == emo):
             return (f, "exact", 1.0)
-    # 2) 부분 포함
+    # 2) 부분 포함 — 토큰이 base에 포함되거나 emo 가 추출 감정에 포함
     for f in candidates:
-        if token and token in _base(f):
+        if token and token in bases[f]:
             return (f, "exact", 1.0)
-    # 3) 유사도 fallback
-    best = max(candidates, key=lambda f: _pp_image_similarity(_base(f), token))
-    score = _pp_image_similarity(_base(best), token)
-    print(f"[POSTPROCESS_MATCH] fuzzy: bot={bot_name}, char={character}, token={token!r} -> {best} (sim={score:.2f})")
+    for f in candidates:
+        if extracted and emo and emo in extracted[f]:
+            return (f, "exact", 1.0)
+    # 3) 유사도 fallback — 토큰 유사도와 규칙 추출 유사도 중 최대
+    def _score(f: str) -> float:
+        s = _pp_image_similarity(bases[f], token)
+        if extracted and emo:
+            s = max(s, _pp_image_similarity(extracted[f], emo))
+        return s
+    best = max(candidates, key=_score)
+    score = _score(best)
+    print(f"[POSTPROCESS_MATCH] fuzzy: bot={bot_name}, char={character}, token={token!r}, emo={emo!r} -> {best} (sim={score:.2f})")
     return (best, "fuzzy", round(score, 3))
 
 
@@ -611,7 +642,9 @@ def compose_postprocess(image_bytes: bytes, speak_text: str,
         emo_raw = first_speaker_seg.get("emotion") or ""
         # 감정 추출 토글 OFF(strip_emotion=False)면 감정을 매칭에 쓰지 않는다(완전 verbatim).
         emotion = emo_raw.lstrip("#").strip() if strip_emotion else ""
-        matched = match_face_image_filename(bot_name, speaker, emotion, prefix, suffix)
+        emotion_extract_rules = settings.get("emotion_extract_rules") or []
+        matched = match_face_image_filename(bot_name, speaker, emotion, prefix, suffix,
+                                            emotion_extract_rules=emotion_extract_rules)
         if matched:
             raw = load_face_image_bytes(bot_name, speaker, matched[0])
             if raw:

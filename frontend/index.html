@@ -25553,12 +25553,13 @@
         async function ppMatchImage(character, emotion) {
             const prefix = (ppWorking && ppWorking.vn && ppWorking.vn.prefix) || '';
             const suffix = (ppWorking && ppWorking.vn && ppWorking.vn.suffix) || '';
+            const emotion_extract_rules = (ppWorking && ppWorking.vn && ppWorking.vn.emotion_extract_rules) || [];
             const resp = await fetch('/api/postprocess/match_image', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({
                     bot_name: ppCurrentBot, character, emotion,
-                    prefix, suffix
+                    prefix, suffix, emotion_extract_rules
                 })
             });
             const j = await resp.json();
@@ -25582,6 +25583,7 @@
                     emotion,
                     prefix: (vn && vn.prefix) || '',
                     suffix: (vn && vn.suffix) || '',
+                    emotion_extract_rules: (vn && vn.emotion_extract_rules) || [],
                     face_crop_top: vn && vn.face_crop_top,
                     face_crop_bottom: vn && vn.face_crop_bottom,
                     face_conf: vn && vn.face_conf,

@@ -3489,6 +3489,7 @@ async def handle_api_postprocess_preview_face(request: web.Request) -> web.Respo
         emotion = body.get("emotion", "") or ""
         prefix = body.get("prefix", "") or ""
         suffix = body.get("suffix", "") or ""
+        emotion_extract_rules = body.get("emotion_extract_rules") or []
         try:
             face_crop_top = float(body.get("face_crop_top", 1.8) or 1.8)
         except (TypeError, ValueError):
@@ -3516,7 +3517,8 @@ async def handle_api_postprocess_preview_face(request: web.Request) -> web.Respo
         from modes.postprocess import match_face_image_filename, load_face_image_bytes
         from modes import face_detector
 
-        matched = match_face_image_filename(bot_name, character, emotion, prefix, suffix)
+        matched = match_face_image_filename(bot_name, character, emotion, prefix, suffix,
+                                            emotion_extract_rules=emotion_extract_rules)
         if not matched:
             return web.json_response(
                 {"error": f"매칭 이미지 없음 (bot={bot_name}, char={character}, token={character}{prefix}{emotion}{suffix!r})"},
@@ -3730,10 +3732,12 @@ async def handle_api_postprocess_match_image(request: web.Request) -> web.Respon
         emotion = (body.get("emotion", "") or "").strip()
         prefix = body.get("prefix", "") or ""
         suffix = body.get("suffix", "") or ""
+        emotion_extract_rules = body.get("emotion_extract_rules") or []
         if not bot_name or not character:
             return web.json_response({"error": "bot_name/character 필요"}, status=400)
 
-        matched = match_face_image_filename(bot_name, character, emotion, prefix, suffix)
+        matched = match_face_image_filename(bot_name, character, emotion, prefix, suffix,
+                                            emotion_extract_rules=emotion_extract_rules)
         if not matched:
             return web.json_response({"error": f"이미지 없음: {character}"}, status=404)
         fname, match_type, score = matched
