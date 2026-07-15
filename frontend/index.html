@@ -1209,12 +1209,23 @@
             border: 1px solid transparent; border-radius: 6px;
             cursor: pointer; transition: all 0.18s; white-space: nowrap;
             font-weight: 500;
+            display: flex; align-items: center; justify-content: center; gap: 7px;
         }
         .pp-tab-btn:hover { color: var(--text, #eee); background: rgba(255,255,255,0.04); }
         .pp-tab-btn.active {
             background: var(--accent, #e94560); color: #fff;
             box-shadow: 0 2px 8px rgba(0,0,0,0.3);
         }
+        /* 후처리 모드 딱지: 적용중 모드=초록, 비활성=회색. 적용 모드(ppWorking.mode) 기준. */
+        .pp-mode-badge {
+            font-size: 0.62rem; font-weight: 700; line-height: 1;
+            padding: 2px 6px; border-radius: 4px; letter-spacing: 0.02em;
+            white-space: nowrap;
+        }
+        .pp-mode-badge.applied { background: #2e7d32; color: #fff; }
+        .pp-mode-badge.inactive { background: rgba(255,255,255,0.12); color: var(--text2, #bbb); }
+        /* 적용중 딱지가 비활성(보고만 있는) 탭에 있을 때 강조를 위해 약간 어둡게 */
+        .pp-tab-btn:not(.active) .pp-mode-badge.applied { box-shadow: 0 0 0 1px rgba(46,125,50,0.5); }
         .pp-card {
             border: 1px solid var(--border);
             border-radius: 8px;
@@ -6534,7 +6545,7 @@
         </div>
     </div>
 
-    <!-- 후처리 설정 모달 (CLAUDE.md: ✕/저장/취소 버튼으로만 닫힘, 바깥 클릭 닫기 금지) -->
+    <!-- 후처리 설정 모달 (CLAUDE.md: ✕/저장/닫기 버튼으로만 닫힘, 바깥 클릭 닫기 금지) -->
     <div class="modal" id="postprocess-modal">
         <div class="modal-content pp-modal-content">
             <div class="modal-header">
@@ -6552,8 +6563,14 @@
                     <!-- 왼쪽: 탭 + 옵션 -->
                     <div class="pp-left">
                         <div class="pp-tab-bar">
-                            <button class="pp-tab-btn active" onclick="switchPostprocessTab('vn')">💬 대사 모드</button>
-                            <button class="pp-tab-btn" onclick="switchPostprocessTab('bubble')">💭 말풍선 모드</button>
+                            <button class="pp-tab-btn active" onclick="switchPostprocessTab('vn')">
+                                <span>💬 대사 모드</span>
+                                <span class="pp-mode-badge" data-mode="vn"></span>
+                            </button>
+                            <button class="pp-tab-btn" onclick="switchPostprocessTab('bubble')">
+                                <span>💭 말풍선 모드</span>
+                                <span class="pp-mode-badge" data-mode="bubble"></span>
+                            </button>
                         </div>
 
                         <!-- 대사 모드 패널 -->
@@ -6842,7 +6859,7 @@
                 </div>
             </div>
             <div class="modal-footer">
-                <button type="button" class="btn" onclick="closePostprocessModal()">취소</button>
+                <button type="button" class="btn" onclick="closePostprocessModal()">닫기</button>
                 <button type="button" class="btn btn-primary" onclick="savePostprocessSettings()">저장</button>
             </div>
         </div>
@@ -24651,6 +24668,7 @@
                     ppApplyBubbleToUI();
                 }
                 switchPostprocessTab(ppWorking.mode || 'vn');  // 저장된 활성 모드 탭으로
+                renderPpModeBadges();  // 적용중 모드 딱지
                 ppRefreshFaceDevices().then(() => ppRenderFaceCrop());  // vn 얼굴 크롭 미리보기
             } catch (e) {
                 console.error('[POSTPROCESS] 봇 설정 로드 실패:', e);
@@ -24687,6 +24705,17 @@
         }
 
         let ppActiveTab = 'vn';  // 후처리 모달 현재 활성 탭: 'vn' | 'bubble'
+
+        // 적용중 모드(ppWorking.mode) 기준 딱지 렌더: 적용 탭=초록(적용중), 나머지=회색(비활성)
+        // 저장해야 ppWorking.mode가 바뀌므로, 탭을 눌러보기만 한 동안에는 딱지가 안 움직임.
+        function renderPpModeBadges() {
+            const applied = (ppWorking && ppWorking.mode === 'bubble') ? 'bubble' : 'vn';
+            document.querySelectorAll('#postprocess-modal .pp-mode-badge').forEach(b => {
+                const m = b.getAttribute('data-mode');
+                if (m === applied) { b.className = 'pp-mode-badge applied'; b.textContent = '적용중'; }
+                else { b.className = 'pp-mode-badge inactive'; b.textContent = '비활성'; }
+            });
+        }
 
         function switchPostprocessTab(name) {
             // 범위 한정: 후처리 모달 내 탭만 토글
@@ -25431,6 +25460,7 @@
             collectPpBubbleSettings();
             // 활성 탭 = 저장할 활성 모드(vn|bubble). 사용자가 마지막에 본 탭이 적용 모드.
             ppWorking.mode = (ppActiveTab === 'bubble') ? 'bubble' : 'vn';
+            renderPpModeBadges();  // 저장 직후 딱지 이동(적용 모드 = 현재 탭)
             // 감정 추출 결과(emotion_rows/emotion_total)는 임시 — 저장/재오픈 시 사라지도록 제외.
             const payload = JSON.parse(JSON.stringify(ppWorking));
             if (payload && payload.vn) { delete payload.vn.emotion_rows; delete payload.vn.emotion_total; }
