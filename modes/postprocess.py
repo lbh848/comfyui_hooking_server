@@ -1084,9 +1084,11 @@ def _default_bubble() -> dict:
         "bubble_fill": "#FFFFFF",
         "bubble_border": "#333333",
         "border_width": 2,
-        "opacity": 1.0,                   # 말풍선 배경 불투명도(0~1)
+        "opacity": 1.0,                   # 말풍선 배경 불투명도(0~1) — 구형 폴백
+        "speech_opacity": 1.0,            # 대사(발화) 말풍선 배경 불투명도(0~1)
+        "thought_opacity": 1.0,           # 생각 말풍선 배경 불투명도(0~1)
         "padding": 16,                    # 몸통 내 텍스트 여백
-        "radius": 22,                     # 발화 말풍선 둥근 모서리 반경
+        "radius": 22,                     # 발화 말풍선 모서리 반경(타원화 후 미사용, 호환 유지)
         "tail_len": 30,                   # 꼬리(얼굴→몸통) 길이
         "max_width_ratio": 0.45,          # 캔버스 폭 대비 말풍선 최대 폭 비율
         "conf": 0.3,                      # YOLO 얼굴 검출 신뢰도 임계치
@@ -1185,6 +1187,8 @@ def get_bubble_settings(config: dict, bot_name: str = "") -> Optional[dict]:
         "bubble_border": bb.get("bubble_border", "#333333"),
         "border_width": float(bb.get("border_width", 2) or 2),
         "opacity": float(bb.get("opacity", 1.0) or 1.0),
+        "speech_opacity": float(bb.get("speech_opacity", bb.get("opacity", 1.0)) or 1.0),
+        "thought_opacity": float(bb.get("thought_opacity", bb.get("opacity", 1.0)) or 1.0),
         "padding": int(bb.get("padding", 16) or 16),
         "radius": int(bb.get("radius", 22) or 22),
         "tail_len": float(bb.get("tail_len", 30) or 30),

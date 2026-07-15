@@ -6,9 +6,9 @@ compose_bubble() 하나만이 말풍선 렌더의 단일 소스다. 미리보기
 
 파이프라인:
   base 이미지 → parse_speak() → detect_faces() → match_speakers_to_faces()
-  → ONNX가 얼굴별 중심 후보 생성 → 얼굴을 가리지 않는 가장 가까운 후보 선택
-  → 발화: 얼굴보다 위면 둥근 사각형 + 삼각 꼬리, 아니면 꼬리 없는 둥근 사각형
-  → 생각: 꼬리 없는 사각형 박스
+  → 레이아웃 ONNX가 글자 크기/줄바꿈/버블 종류·비율 결정
+  → 위치 ONNX가 얼굴별 중심 후보 생성 → 얼굴을 가리지 않는 가장 가까운 후보 선택
+  → 버블 중심이 얼굴 중심보다 높을 때만 꼬리 표시
   → PNG bytes
 
 텍스트는 폰트로 측정해 줄바꿈, 말줄임 금지(MEMORY no-truncation) — 길면 몸통 확장/줄바꿈.
@@ -19,7 +19,7 @@ import io
 import os
 import traceback
 
-from PIL import Image, ImageDraw, ImageFont, ImageColor
+from PIL import Image, ImageDraw, ImageFont, ImageColor, ImageFilter
 
 # 캔버스 폭 대비 말풍선 최대 폭 비율 기본값
 _MAX_WIDTH_RATIO_DEFAULT = 0.45
@@ -203,41 +203,149 @@ def _place_body(face_box, body_w, body_h, protected_boxes, canvas_w, canvas_h, t
 
 
 # ─── 말풍선 그리기 ──────────────────────────────────────────────────
-def _body_edge_point(rect, anchor, side):
-    """몸통 rect 에서 anchor 방향의 가장자리 점(꼬리 시작점)."""
+def _ellipse_edge_point(rect, anchor):
+    """타원 rect 에서 anchor 방향의 경계점(꼬리 시작점).
+
+    사각형 모서리가 아니라 타원 곡면 위의 점을 구해 꼬리가 몸통에 자연스럽게 붙게 한다.
+    """
     x1, y1, x2, y2 = rect
-    cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
-    if side == "top":
-        return (max(x1, min(anchor[0], x2)), y2)
-    if side == "bottom":
-        return (max(x1, min(anchor[0], x2)), y1)
-    if side == "left":
-        return (x2, max(y1, min(anchor[1], y2)))
-    return (x1, max(y1, min(anchor[1], y2)))
+    cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
+    rx = max(1.0, (x2 - x1) / 2.0)
+    ry = max(1.0, (y2 - y1) / 2.0)
+    dx, dy = float(anchor[0]) - cx, float(anchor[1]) - cy
+    if abs(dx) + abs(dy) < 1e-6:
+        return cx, y1  # anchor가 중심이면 위쪽 경계
+    denom = ((dx / rx) ** 2 + (dy / ry) ** 2) ** 0.5
+    t = 1.0 / denom if denom > 1e-6 else 0.0
+    return cx + dx * t, cy + dy * t
 
 
-def _draw_speech(draw, rect, anchor, side, fill, border, border_w, radius, with_tail=True):
-    """발화 말풍선. 얼굴보다 위에 있을 때만 삼각 꼬리를 붙인다."""
+def _draw_speech(draw, rect, anchor, side, fill, border, border_w, with_tail=True):
+    """발화 말풍선. 몸통은 타원, 얼굴보다 위에 있을 때만 삼각 꼬리를 붙인다."""
     x1, y1, x2, y2 = rect
-    draw.rounded_rectangle([x1, y1, x2, y2], radius=radius, fill=fill,
-                           outline=border, width=max(1, int(border_w)))
-    if not with_tail:
-        return
-    p1 = _body_edge_point(rect, anchor, side)
-    # 꼬리 삼각형: 몸통 가장자리 점 양옆으로 폭, 끝이 얼굴 경계 anchor.
+    if with_tail:
+        _draw_triangle_tail(draw, rect, anchor, side, fill, border, border_w)
+    # 몸통을 마지막에 그려 꼬리와 몸통 사이의 내부 이음선을 가린다.
+    draw.ellipse(
+        [x1, y1, x2, y2],
+        fill=fill,
+        outline=border,
+        width=max(1, int(round(border_w))),
+    )
+
+
+def _draw_triangle_tail(draw, rect, anchor, side, fill, border, border_w):
+    """ellipse/rounded 말풍선용 삼각 꼬리를 몸통 뒤에 그린다."""
+    x1, y1, x2, y2 = rect
+    p1 = _ellipse_edge_point(rect, anchor)
     tail_w = min(18, (x2 - x1) * 0.25, (y2 - y1) * 0.4)
     if side in ("top", "bottom"):
-        a = (p1[0] - tail_w, p1[1]); b = (p1[0] + tail_w, p1[1]); c = anchor
+        a = (p1[0] - tail_w, p1[1])
+        b = (p1[0] + tail_w, p1[1])
     else:
-        a = (p1[0], p1[1] - tail_w); b = (p1[0], p1[1] + tail_w); c = anchor
-    draw.polygon([a, b, c], fill=fill, outline=border)
+        a = (p1[0], p1[1] - tail_w)
+        b = (p1[0], p1[1] + tail_w)
+    draw.polygon([a, b, anchor], fill=fill)
+    draw.line(
+        [a, anchor, b],
+        fill=border,
+        width=max(1, int(round(border_w))),
+        joint="curve",
+    )
 
 
-def _draw_thought(draw, rect, fill, border, border_w):
-    """생각을 꼬리 없는 사각형 박스로 그린다."""
-    x1, y1, x2, y2 = rect
-    draw.rectangle([x1, y1, x2, y2], fill=fill, outline=border,
-                   width=max(1, int(round(border_w))))
+def _draw_cloud(overlay, rect, anchor, fill, border, border_w, with_tail):
+    """굴곡진 cloud 몸통과 조건부 원형 생각 꼬리를 그린다."""
+    x1, y1, x2, y2 = [float(v) for v in rect]
+    cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
+    rx, ry = (x2 - x1) / 2.0, (y2 - y1) / 2.0
+    mask = Image.new("L", overlay.size, 0)
+    cloud = ImageDraw.Draw(mask)
+    cloud.ellipse(
+        [cx - rx * 0.92, cy - ry * 0.84, cx + rx * 0.92, cy + ry * 0.84],
+        fill=255,
+    )
+    for ox, oy, scale_x, scale_y in (
+        (-0.76, -0.12, 0.24, 0.31),
+        (-0.60, -0.56, 0.31, 0.33),
+        (-0.26, -0.72, 0.34, 0.28),
+        (0.14, -0.74, 0.34, 0.27),
+        (0.52, -0.58, 0.31, 0.33),
+        (0.76, -0.18, 0.24, 0.31),
+        (0.77, 0.22, 0.23, 0.31),
+        (0.55, 0.58, 0.31, 0.32),
+        (0.18, 0.73, 0.35, 0.27),
+        (-0.24, 0.72, 0.34, 0.28),
+        (-0.59, 0.55, 0.31, 0.33),
+        (-0.77, 0.20, 0.23, 0.31),
+    ):
+        lobe_x, lobe_y = cx + ox * rx, cy + oy * ry
+        lobe_rx, lobe_ry = rx * scale_x, ry * scale_y
+        cloud.ellipse(
+            [lobe_x - lobe_rx, lobe_y - lobe_ry, lobe_x + lobe_rx, lobe_y + lobe_ry],
+            fill=255,
+        )
+    outline_w = max(1, int(round(border_w)))
+    filter_size = max(3, outline_w * 2 + 1)
+    if filter_size % 2 == 0:
+        filter_size += 1
+    outline = mask.filter(ImageFilter.MaxFilter(filter_size))
+    overlay.paste(border, mask=outline)
+    overlay.paste(fill, mask=mask)
+
+    if with_tail:
+        draw = ImageDraw.Draw(overlay)
+        base_x, base_y = _ellipse_edge_point(rect, anchor)
+        dot_base = min(rx, ry)
+        for fraction, scale in ((0.12, 0.13), (0.39, 0.09), (0.68, 0.055)):
+            dot_x = base_x + (anchor[0] - base_x) * fraction
+            dot_y = base_y + (anchor[1] - base_y) * fraction
+            dot_radius = max(outline_w * 1.35, dot_base * scale)
+            draw.ellipse(
+                [
+                    dot_x - dot_radius,
+                    dot_y - dot_radius,
+                    dot_x + dot_radius,
+                    dot_y + dot_radius,
+                ],
+                fill=fill,
+                outline=border,
+                width=outline_w,
+            )
+
+
+def _draw_layout_bubble(
+    overlay,
+    rect,
+    anchor,
+    shape,
+    fill,
+    border,
+    border_w,
+    radius,
+    with_tail,
+):
+    """레이아웃 ONNX가 선택한 버블 종류를 조건부 꼬리와 함께 그린다."""
+    shape = shape if shape in ("ellipse", "rounded", "cloud") else "ellipse"
+    if shape == "cloud":
+        _draw_cloud(overlay, rect, anchor, fill, border, border_w, with_tail)
+        return
+    draw = ImageDraw.Draw(overlay)
+    side = _tail_side(rect, anchor)
+    if shape == "rounded":
+        if with_tail:
+            _draw_triangle_tail(draw, rect, anchor, side, fill, border, border_w)
+        x1, y1, x2, y2 = rect
+        safe_radius = min(float(radius), (x2 - x1) * 0.28, (y2 - y1) * 0.42)
+        draw.rounded_rectangle(
+            rect,
+            radius=max(1, int(round(safe_radius))),
+            fill=fill,
+            outline=border,
+            width=max(1, int(round(border_w))),
+        )
+        return
+    _draw_speech(draw, rect, anchor, side, fill, border, border_w, with_tail=with_tail)
 
 
 def _bubble_is_above_face(rect, face_box):
@@ -269,6 +377,7 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
         from modes.face_detector import detect_faces
         from modes.bubble_match import match_speakers_to_faces
         from modes.bubble_predictor import predict_for_face_candidates, select_candidate
+        from modes.bubble_layout import choose_layout
     except Exception as e:
         print(f"[BUBBLE_RENDER] 의존 로드 실패: {e}")
         traceback.print_exc()
@@ -299,16 +408,22 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
     match_thres = float(s.get("match_thres", 0.55))
     matched = match_speakers_to_faces(segments, faces, bot_name, match_thres=match_thres)
 
-    font = _load_font(s.get("font_path"), s.get("font_size") or 28)
-    fill = ImageColor.getrgb(s.get("bubble_fill", "#FFFFFF")) + (int(255 * float(s.get("opacity", 1.0))),)
+    # 대사/생각 투명도 분리. 구형 opacity 키는 폴백(기존 bot.json 깨짐 방지).
+    base_op = float(s.get("opacity", 1.0) or 1.0)
+    speech_op = float(s.get("speech_opacity", base_op) if s.get("speech_opacity") is not None else base_op)
+    thought_op = float(s.get("thought_opacity", base_op) if s.get("thought_opacity") is not None else base_op)
+    base_rgb = ImageColor.getrgb(s.get("bubble_fill", "#FFFFFF"))
+    speech_fill = base_rgb + (int(255 * max(0.0, min(1.0, speech_op))),)
+    thought_fill = base_rgb + (int(255 * max(0.0, min(1.0, thought_op))),)
     border = ImageColor.getrgb(s.get("bubble_border", "#333333")) + (255,)
     text_color = ImageColor.getrgb(s.get("text_color", "#111111")) + (255,)
     border_w = float(s.get("border_width", 2))
-    padding = int(s.get("padding", 14))
     tail_len = float(s.get("tail_len", 28))
-    max_w_ratio = float(s.get("max_width_ratio", _MAX_WIDTH_RATIO_DEFAULT))
     radius = int(s.get("radius", 20))
-    max_text_w = max(40, canvas_w * max_w_ratio - 2 * padding)
+    # 기존 font_size는 고정 크기 렌더러의 호환 필드로만 남긴다. 새 모델은
+    # 캔버스와 내용량으로 크기를 결정해야 학습 시와 같은 후보 분포를 사용한다.
+    layout_font_cap = int(s.get("layout_max_font_size", 0) or 0)
+    max_font_size = layout_font_cap if layout_font_cap > 0 else None
     # 모든 얼굴을 보호한다. 모델 추론은 같은 얼굴에 대해 한 번만 수행한다.
     all_boxes = [f["box"] for f in faces]
     placed_boxes = []
@@ -324,17 +439,42 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
             continue
         text = seg.get("text", "")
         btype = seg.get("type", "speech")
-        lines = _wrap_text(text, font, max_text_w, draw)
-        # 줄 높이/폭 측정
-        line_h = (_text_size(draw, "Ag", font)[1] or int(s.get("font_size", 28))) + 4
-        text_w = max((_text_size(draw, ln, font)[0] for ln in lines), default=0)
-        text_h = line_h * len(lines)
-        body_w = text_w + 2 * padding
-        body_h = text_h + 2 * padding
+        try:
+            layout, _layout_alternatives = choose_layout(
+                text,
+                (canvas_w, canvas_h),
+                s.get("font_path") or None,
+                max_font_size=max_font_size,
+                max_lines=7,
+                top_k=5,
+            )
+        except Exception as e:
+            print(
+                f"[BUBBLE_RENDER] 레이아웃 선택 실패 — 세그먼트 스킵: "
+                f"speaker={seg.get('speaker')}, error={e}"
+            )
+            traceback.print_exc()
+            continue
+        if not layout.fits:
+            print(
+                f"[BUBBLE_RENDER] ⚠ 최소 글자/최대 줄 조건 내 적합 후보 없음: "
+                f"speaker={seg.get('speaker')}, overflow={layout.overflow_ratio:.4f}"
+            )
+        font = _load_font(s.get("font_path"), layout.font_size)
+        if font is None:
+            print(
+                f"[BUBBLE_RENDER] 사용할 폰트 없음 — 세그먼트 스킵: "
+                f"speaker={seg.get('speaker')}"
+            )
+            continue
+        body_w = float(layout.bubble_width)
+        body_h = float(layout.bubble_height)
 
         box_key = tuple(float(v) for v in box)
         if box_key not in candidate_cache:
-            candidate_cache[box_key] = predict_for_face_candidates(page_rgb, box, top_k=20)
+            # 넉넉한 후보 풀에서 얼굴 비가림 조건을 먼저 적용한 뒤 거리 최우선으로
+            # 고른다. confidence는 거리가 같은 후보의 보조 정렬에만 사용된다.
+            candidate_cache[box_key] = predict_for_face_candidates(page_rgb, box, top_k=48)
         chosen = select_candidate(
             candidate_cache[box_key],
             (body_w, body_h),
@@ -362,21 +502,47 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
                 continue
             rect, anchor, side = fallback
 
-        if btype == "thought":
-            _draw_thought(draw, rect, fill, border, border_w)
-        else:
-            with_tail = _bubble_is_above_face(rect, box)
-            _draw_speech(
-                draw, rect, anchor, side, fill, border, border_w, radius,
-                with_tail=with_tail,
-            )
+        fill = thought_fill if btype == "thought" else speech_fill
+        with_tail = _bubble_is_above_face(rect, box)
+        _draw_layout_bubble(
+            overlay,
+            rect,
+            anchor,
+            layout.shape,
+            fill,
+            border,
+            border_w,
+            radius,
+            with_tail,
+        )
 
-        # 텍스트 그리기(몸통 내 중앙 정렬)
-        tx = rect[0] + (body_w - text_w) / 2
-        ty = rect[1] + padding
-        for ln in lines:
-            draw.text((tx, ty), ln, font=font, fill=text_color)
-            ty += line_h
+        # 모델이 선택한 줄과 행간을 실제 폰트로 중앙 정렬해 그린다.
+        text_draw = ImageDraw.Draw(overlay)
+        layout_text = layout.text
+        text_box = text_draw.multiline_textbbox(
+            (0, 0),
+            layout_text,
+            font=font,
+            spacing=layout.spacing,
+            align="center",
+        )
+        rect_cx = (rect[0] + rect[2]) / 2.0
+        rect_cy = (rect[1] + rect[3]) / 2.0
+        tx = rect_cx - (text_box[0] + text_box[2]) / 2.0
+        ty = rect_cy - (text_box[1] + text_box[3]) / 2.0
+        text_draw.multiline_text(
+            (tx, ty),
+            layout_text,
+            font=font,
+            fill=text_color,
+            spacing=layout.spacing,
+            align="center",
+        )
+        print(
+            f"[BUBBLE_RENDER] 레이아웃 적용: speaker={seg.get('speaker')}, "
+            f"shape={layout.shape}, font={layout.font_size}, lines={len(layout.lines)}, "
+            f"body=({body_w:.1f},{body_h:.1f}), tail={with_tail}, fits={layout.fits}"
+        )
         placed_boxes.append(rect)
         drawn += 1
 
