@@ -7453,7 +7453,7 @@
                                 <div class="pp-switch-line">
                                     <div>
                                         <div style="font-size:0.88rem; font-weight:600;">말풍선 모드</div>
-                                        <div class="pp-hint">감지된 얼굴 중 발화자(NAME)를 ViT-B/16 임베딩 매칭으로 식별 → 꼬리가 얼굴을 향하는 말풍선 렌더. 발화=일반, 생각=구름.</div>
+                                        <div class="pp-hint">감지된 얼굴 중 발화자(NAME)를 ViT-B/16 임베딩 매칭으로 식별 → ONNX 위치 후보 중 얼굴을 가리지 않는 가까운 곳에 렌더. 발화=일반, 생각=꼬리 없는 사각형.</div>
                                     </div>
                                     <label class="switch"><input type="checkbox" id="pp-bubble-enabled" onchange="renderPostprocessPreview()"><span class="slider"></span></label>
                                 </div>
@@ -7487,7 +7487,6 @@
                                 </div>
                                 <div class="pp-field-inline" style="margin-top:6px;">
                                     <div><div style="font-size:0.7rem; color:var(--text2,#999);">꼬리 길이</div><input id="pp-bubble-tail-len" type="number" class="input" style="width:70px;" oninput="renderPostprocessPreview()"></div>
-                                    <div><div style="font-size:0.7rem; color:var(--text2,#999);">구름 원 반경</div><input id="pp-bubble-thought-r" type="number" class="input" style="width:70px;" oninput="renderPostprocessPreview()"></div>
                                     <div><div style="font-size:0.7rem; color:var(--text2,#999);">최대 폭 비율</div><input id="pp-bubble-max-width-ratio" type="number" class="input" style="width:70px;" step="0.05" oninput="renderPostprocessPreview()"></div>
                                 </div>
                                 <div class="pp-field-inline" style="margin-top:6px;">
@@ -25223,7 +25222,6 @@
                     padding: 16,
                     radius: 22,
                     tail_len: 30,
-                    thought_circle_r: 18,
                     max_width_ratio: 0.45,
                     conf: 0.3,
                     match_thres: 0.55,
@@ -25961,6 +25959,7 @@
         function _ppNormalizeBubble(b) {
             const base = defaultPpConfig().bubble;
             Object.assign(base, b || {});
+            delete base.thought_circle_r;  // 구름형 생각 말풍선의 폐기된 설정
             return base;
         }
 
@@ -25990,7 +25989,6 @@
             set('pp-bubble-padding', b.padding ?? 16);
             set('pp-bubble-radius', b.radius ?? 22);
             set('pp-bubble-tail-len', b.tail_len ?? 30);
-            set('pp-bubble-thought-r', b.thought_circle_r ?? 18);
             set('pp-bubble-max-width-ratio', b.max_width_ratio ?? 0.45);
             set('pp-bubble-opacity', b.opacity ?? 1.0);
             set('pp-bubble-conf', b.conf ?? 0.3);
@@ -26012,7 +26010,7 @@
             b.padding = _ppNum('pp-bubble-padding', 16, 0, 200);
             b.radius = _ppNum('pp-bubble-radius', 22, 0, 200);
             b.tail_len = _ppNum('pp-bubble-tail-len', 30, 0, 400);
-            b.thought_circle_r = _ppNum('pp-bubble-thought-r', 18, 2, 200);
+            delete b.thought_circle_r;
             b.max_width_ratio = _ppNum('pp-bubble-max-width-ratio', 0.45, 0.05, 1.0);
             b.opacity = _ppNum('pp-bubble-opacity', 1.0, 0, 1);
             b.conf = _ppNum('pp-bubble-conf', 0.3, 0, 1);
@@ -26041,7 +26039,7 @@
                     font_path: b.font_path, font_size: b.font_size,
                     text_color: b.text_color, bubble_fill: b.bubble_fill, bubble_border: b.bubble_border,
                     border_width: b.border_width, opacity: b.opacity, padding: b.padding, radius: b.radius,
-                    tail_len: b.tail_len, thought_circle_r: b.thought_circle_r,
+                    tail_len: b.tail_len,
                     max_width_ratio: b.max_width_ratio, conf: b.conf, match_thres: b.match_thres,
                 };
                 if (ppBubbleBaseDataUrl) body.base = ppBubbleBaseDataUrl;

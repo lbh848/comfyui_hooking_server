@@ -6,8 +6,9 @@ compose_bubble() 하나만이 말풍선 렌더의 단일 소스다. 미리보기
 
 파이프라인:
   base 이미지 → parse_speak() → detect_faces() → match_speakers_to_faces()
-  → 각 세그먼트별 말풍선 렌더(꼬리=매칭 얼굴, 몸통=얼굴 인근, 다른 얼굴 충돌 시 밀어냄)
-  → 발화: 둥근 사각형 + 삼각 꼬리 / 생각: 구름(겹치는 원) + 작은 원 꼬리
+  → ONNX가 얼굴별 중심 후보 생성 → 얼굴을 가리지 않는 가장 가까운 후보 선택
+  → 발화: 얼굴보다 위면 둥근 사각형 + 삼각 꼬리, 아니면 꼬리 없는 둥근 사각형
+  → 생각: 꼬리 없는 사각형 박스
   → PNG bytes
 
 텍스트는 폰트로 측정해 줄바꿈, 말줄임 금지(MEMORY no-truncation) — 길면 몸통 확장/줄바꿈.
@@ -112,55 +113,93 @@ def _overlap(a, boxes, pad=0):
     return False
 
 
-def _place_body(face_box, body_w, body_h, other_boxes, canvas_w, canvas_h, tail_len):
-    """매칭 얼굴 인근에 몸통 위치 탐색. 다른 얼굴 박스 충돌 시 밀어냄.
+def _place_body(face_box, body_w, body_h, protected_boxes, canvas_w, canvas_h, tail_len):
+    """ONNX 후보가 없을 때 얼굴을 가리지 않는 근접 위치를 탐색한다.
 
-    Returns: (body_rect (x1,y1,x2,y2), anchor_point (꼬리 끝=얼굴쪽), side('top'|'bottom'|'left'|'right'))
+    얼굴 주변 후보를 먼저 보고, 막혀 있으면 캔버스 전체를 훑는다. 충돌 없는
+    위치가 전혀 없으면 ``None``을 반환해 얼굴 위에 말풍선을 그리지 않는다.
     """
     fx1, fy1, fx2, fy2 = face_box
     fcx = (fx1 + fx2) / 2.0
     fcy = (fy1 + fy2) / 2.0
+    if body_w > canvas_w or body_h > canvas_h:
+        print(
+            f"[BUBBLE_RENDER] 말풍선이 캔버스보다 커서 배치 불가: "
+            f"body={body_w}x{body_h}, canvas={canvas_w}x{canvas_h}"
+        )
+        return None
 
-    # 후보: 위(기본) → 아래 → 왼 → 오른 순, 각각 좌/우/상/하 미세 이동 시도
+    # 몸통과 얼굴은 가능한 가깝게 두되 최소 여백을 확보한다.
+    gap = max(2.0, min(float(tail_len), 6.0))
+
+    def face_anchor(center):
+        dx, dy = center[0] - fcx, center[1] - fcy
+        if abs(dx) + abs(dy) < 1e-6:
+            return fcx, fcy
+        rx = max((fx2 - fx1) / 2.0, 1.0)
+        ry = max((fy2 - fy1) / 2.0, 1.0)
+        tx = rx / abs(dx) if abs(dx) > 1e-6 else float("inf")
+        ty = ry / abs(dy) if abs(dy) > 1e-6 else float("inf")
+        scale = min(tx, ty)
+        return fcx + dx * scale, fcy + dy * scale
+
+    # 후보: 위 → 아래 → 왼 → 오른, 각 방향에서 가까운 위치부터 미세 이동한다.
     def make_candidates():
-        # 위: 몸통이 얼굴 위, 꼬리가 아래로
-        top_y2 = fy1 - tail_len
+        top_y2 = fy1 - gap
         top_y1 = top_y2 - body_h
-        for dx in (0, -1, 1, -2, 2):
+        for dx in (0, -1, 1, -2, 2, -3, 3):
             cx = fcx + dx * body_w * 0.25
             x1 = cx - body_w / 2
-            yield (x1, top_y1, x1 + body_w, top_y2, "top", (fcx, fy1))
-        # 아래
-        bot_y1 = fy2 + tail_len
-        for dx in (0, -1, 1, -2, 2):
+            yield (x1, top_y1, x1 + body_w, top_y2, "top")
+        bot_y1 = fy2 + gap
+        for dx in (0, -1, 1, -2, 2, -3, 3):
             cx = fcx + dx * body_w * 0.25
             x1 = cx - body_w / 2
-            yield (x1, bot_y1, x1 + body_w, bot_y1 + body_h, "bottom", (fcx, fy2))
-        # 왼
-        for dy in (0, -1, 1):
+            yield (x1, bot_y1, x1 + body_w, bot_y1 + body_h, "bottom")
+        for dy in (0, -1, 1, -2, 2):
             cy = fcy + dy * body_h * 0.25
             y1 = cy - body_h / 2
-            yield (fx1 - tail_len - body_w, y1, fx1 - tail_len, y1 + body_h, "left", (fx1, fcy))
-        # 오른
-        for dy in (0, -1, 1):
+            yield (fx1 - gap - body_w, y1, fx1 - gap, y1 + body_h, "left")
+        for dy in (0, -1, 1, -2, 2):
             cy = fcy + dy * body_h * 0.25
             y1 = cy - body_h / 2
-            yield (fx2 + tail_len, y1, fx2 + tail_len + body_w, y1 + body_h, "right", (fx2, fcy))
+            yield (fx2 + gap, y1, fx2 + gap + body_w, y1 + body_h, "right")
 
-    best = None
-    for x1, y1, x2, y2, side, anchor in make_candidates():
+    for x1, y1, x2, y2, side in make_candidates():
         # 캔버스 경계 클램프
         x1 = max(0, min(x1, canvas_w - body_w))
         y1 = max(0, min(y1, canvas_h - body_h))
         x2, y2 = x1 + body_w, y1 + body_h
         rect = (x1, y1, x2, y2)
-        if not _overlap(rect, other_boxes, pad=tail_len * 0.5):
-            return rect, anchor, side
-        if best is None:
-            best = (rect, anchor, side)
-    # 전부 충돌 → 첫 후보 사용(어차피 그려야 함)
-    return best if best else ((fcx - body_w / 2, max(0, fy1 - tail_len - body_h),
-                               fcx + body_w / 2, max(0, fy1 - tail_len)), (fcx, fy1), "top")
+        if not _overlap(rect, protected_boxes, pad=2):
+            return rect, face_anchor(((x1 + x2) / 2.0, (y1 + y2) / 2.0)), side
+
+    # 얼굴 주변이 막힌 경우 캔버스 전체의 빈 공간 중 얼굴과 가까운 곳을 찾는다.
+    step_x = max(8.0, body_w * 0.25)
+    step_y = max(8.0, body_h * 0.25)
+    candidates = []
+    y1 = 0.0
+    while y1 <= max(0.0, canvas_h - body_h):
+        x1 = 0.0
+        while x1 <= max(0.0, canvas_w - body_w):
+            rect = (x1, y1, x1 + body_w, y1 + body_h)
+            if not _overlap(rect, protected_boxes, pad=2):
+                cx, cy = x1 + body_w / 2.0, y1 + body_h / 2.0
+                distance = ((cx - fcx) ** 2 + (cy - fcy) ** 2) ** 0.5
+                candidates.append((distance, rect))
+            x1 += step_x
+        y1 += step_y
+    if not candidates:
+        print(f"[BUBBLE_RENDER] 얼굴 비가림 배치 불가: face_box={face_box}, body={body_w}x{body_h}")
+        return None
+    _, rect = min(candidates, key=lambda item: item[0])
+    center = ((rect[0] + rect[2]) / 2.0, (rect[1] + rect[3]) / 2.0)
+    anchor = face_anchor(center)
+    dx, dy = center[0] - fcx, center[1] - fcy
+    side = "top" if dy < 0 and abs(dy) >= abs(dx) else "bottom"
+    if abs(dx) > abs(dy):
+        side = "left" if dx < 0 else "right"
+    return rect, anchor, side
 
 
 # ─── 말풍선 그리기 ──────────────────────────────────────────────────
@@ -177,84 +216,45 @@ def _body_edge_point(rect, anchor, side):
     return (x1, max(y1, min(anchor[1], y2)))
 
 
-def _draw_speech(draw, rect, anchor, side, fill, border, border_w, radius):
-    """발화 말풍선: 둥근 사각형 + 삼각 꼬리."""
+def _draw_speech(draw, rect, anchor, side, fill, border, border_w, radius, with_tail=True):
+    """발화 말풍선. 얼굴보다 위에 있을 때만 삼각 꼬리를 붙인다."""
     x1, y1, x2, y2 = rect
+    draw.rounded_rectangle([x1, y1, x2, y2], radius=radius, fill=fill,
+                           outline=border, width=max(1, int(border_w)))
+    if not with_tail:
+        return
     p1 = _body_edge_point(rect, anchor, side)
-    # 꼬리 삼각형: 몸통 가장자리 점 양옆으로 폭, 끝이 anchor
+    # 꼬리 삼각형: 몸통 가장자리 점 양옆으로 폭, 끝이 얼굴 경계 anchor.
     tail_w = min(18, (x2 - x1) * 0.25, (y2 - y1) * 0.4)
     if side in ("top", "bottom"):
         a = (p1[0] - tail_w, p1[1]); b = (p1[0] + tail_w, p1[1]); c = anchor
     else:
         a = (p1[0], p1[1] - tail_w); b = (p1[0], p1[1] + tail_w); c = anchor
-    # 몸통 먼저(꼬리 위에)
-    draw.rounded_rectangle([x1, y1, x2, y2], radius=radius, fill=fill,
-                           outline=border, width=max(1, int(border_w)))
     draw.polygon([a, b, c], fill=fill, outline=border)
-    # 꼬리/몸통 경계선 가리기(몸통 테두리 위에 꼬리 fill 로 덮음) — 단순화: 꼬리 테두리는 생략
 
 
-def _draw_thought(draw, rect, anchor, side, fill, border, border_w, circle_r, overlay):
-    """생각 말풍선: 구름(겹치는 원들의 합집합) 몸통 + 작은 원 꼬리 2~3개.
-
-    구름 내부의 겹친 원 테두리가 안 보이게, 몸통은 마스크 합집합으로 만들어
-    외곽선만 한 번에 표시한다(개별 원 outline 으로 지저분해지는 것 방지).
-    overlay: 말풍선을 그릴 RGBA 오버레이 이미지(알파 합성용).
-    """
-    import math
-    from PIL import ImageChops, ImageFilter
-
+def _draw_thought(draw, rect, fill, border, border_w):
+    """생각을 꼬리 없는 사각형 박스로 그린다."""
     x1, y1, x2, y2 = rect
-    cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
-    rw = max(1.0, x2 - x1); rh = max(1.0, y2 - y1)
-    rx, ry = rw / 2.0, rh / 2.0
+    draw.rectangle([x1, y1, x2, y2], fill=fill, outline=border,
+                   width=max(1, int(round(border_w))))
 
-    W, H = overlay.size
-    bw = max(1, int(round(border_w)))
 
-    # 몸통 합집합 마스크: 중앙 타원 + 둘레를 따라 빽빽한 범프 → 푹신한 구름.
-    mask = Image.new("L", (W, H), 0)
-    md = ImageDraw.Draw(mask)
-    md.ellipse([x1, y1, x2, y2], fill=255)                       # 중앙 타원(텍스트 영역)
-    bump_r = min(rw, rh) * 0.36
-    # 범프 개수: 타원 둘레 길이 기반으로 빽빽히
-    perim = math.pi * (3 * (rx + ry) - math.sqrt((3 * rx + ry) * (rx + 3 * ry)))
-    n_bump = max(10, int(perim / (bump_r * 0.95)))
-    for i in range(n_bump):
-        ang = 2 * math.pi * i / n_bump
-        bx = cx + rx * math.cos(ang)
-        by = cy + ry * math.sin(ang)
-        # 범프 반지름에 약간의 변화를 줘 자연스럽게
-        r = bump_r * (0.82 + 0.18 * ((i * 7) % 5) / 4.0)
-        md.ellipse([bx - r, by - r, bx + r, by + r], fill=255)
+def _bubble_is_above_face(rect, face_box):
+    """꼬리 표시 규칙: 말풍선 중심이 얼굴 중심보다 높은지 반환한다."""
+    bubble_center_y = (rect[1] + rect[3]) / 2.0
+    face_center_y = (face_box[1] + face_box[3]) / 2.0
+    return bubble_center_y < face_center_y
 
-    big = mask.filter(ImageFilter.MaxFilter(2 * bw + 1))      # bw px 팽창
-    ring = ImageChops.subtract(big, mask)                      # 외곽 링
 
-    bl = Image.new("RGBA", (W, H), border); bl.putalpha(ring)  # 외곽선 색
-    fl = Image.new("RGBA", (W, H), fill); fl.putalpha(mask)    # 내부 색
-    overlay.alpha_composite(bl)
-    overlay.alpha_composite(fl)
-
-    # 꼬리: 3개의 작고 분리된 원이 몸통 → anchor 방향으로 점점 작아짐(만화식 생각구름).
-    p1 = _body_edge_point(rect, anchor, side)
-    dx, dy = anchor[0] - p1[0], anchor[1] - p1[1]
-    dist = math.hypot(dx, dy) or 1.0
-    ux, uy = dx / dist, dy / dist
-    base_r = min(circle_r, dist * 0.30, min(rw, rh) * 0.20)   # 몸통 범프보다 작게
-    base_r = max(base_r, 4.0)
-    radii = [base_r, base_r * 0.66, base_r * 0.40]
-    # 몸통 바깥부터 시작해 균등 간격(원들 사이에 gap) 배치
-    start = base_r * 0.9
-    total = dist - base_r  # anchor 직전까지
-    if total < base_r:
-        total = base_r * 3
-    fracs = [0.18, 0.50, 0.82]
-    for r, f in zip(radii, fracs):
-        d = start + (total - start) * f
-        px = p1[0] + ux * d
-        py = p1[1] + uy * d
-        draw.ellipse([px - r, py - r, px + r, py + r], fill=fill, outline=border, width=bw)
+def _tail_side(rect, anchor):
+    """말풍선에서 얼굴 anchor와 가장 가까운 방향의 변을 고른다."""
+    center_x = (rect[0] + rect[2]) / 2.0
+    center_y = (rect[1] + rect[3]) / 2.0
+    dx, dy = anchor[0] - center_x, anchor[1] - center_y
+    if abs(dx) > abs(dy):
+        return "left" if dx > 0 else "right"
+    return "top" if dy > 0 else "bottom"
 
 
 
@@ -268,6 +268,7 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
         from modes.postprocess import parse_speak
         from modes.face_detector import detect_faces
         from modes.bubble_match import match_speakers_to_faces
+        from modes.bubble_predictor import predict_for_face_candidates, select_candidate
     except Exception as e:
         print(f"[BUBBLE_RENDER] 의존 로드 실패: {e}")
         traceback.print_exc()
@@ -307,11 +308,12 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
     tail_len = float(s.get("tail_len", 28))
     max_w_ratio = float(s.get("max_width_ratio", _MAX_WIDTH_RATIO_DEFAULT))
     radius = int(s.get("radius", 20))
-    thought_r = float(s.get("thought_circle_r", 18))
-
     max_text_w = max(40, canvas_w * max_w_ratio - 2 * padding)
-    # 모든 얼굴 박스(충돌 회피용). matched 된 박스는 본인 것 제외.
+    # 모든 얼굴을 보호한다. 모델 추론은 같은 얼굴에 대해 한 번만 수행한다.
     all_boxes = [f["box"] for f in faces]
+    placed_boxes = []
+    candidate_cache = {}
+    page_rgb = base.convert("RGB")
 
     drawn = 0
     for m in matched:
@@ -330,15 +332,44 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
         body_w = text_w + 2 * padding
         body_h = text_h + 2 * padding
 
-        # 충돌 회피용 other_boxes = 전체 얼굴 중 본인 박스 제외
-        others = [b for b in all_boxes if not (b == box)]
-        rect, anchor, side = _place_body(box, body_w, body_h, others,
-                                         canvas_w, canvas_h, tail_len)
+        box_key = tuple(float(v) for v in box)
+        if box_key not in candidate_cache:
+            candidate_cache[box_key] = predict_for_face_candidates(page_rgb, box, top_k=20)
+        chosen = select_candidate(
+            candidate_cache[box_key],
+            (body_w, body_h),
+            box,
+            (canvas_w, canvas_h),
+            forbidden_boxes=all_boxes,
+            occupied_boxes=placed_boxes,
+        )
+        if chosen is not None:
+            rect = chosen["rect"]
+            anchor = chosen["anchor"]
+            side = _tail_side(rect, anchor)
+            print(
+                f"[BUBBLE_RENDER] ONNX 후보 선택: speaker={seg.get('speaker')}, "
+                f"center={chosen['center']}, confidence={chosen.get('confidence', 0.0):.6f}"
+            )
+        else:
+            print(f"[BUBBLE_RENDER] ONNX 유효 후보 없음 → 안전 근접 배치: speaker={seg.get('speaker')}")
+            fallback = _place_body(
+                box, body_w, body_h, all_boxes + placed_boxes,
+                canvas_w, canvas_h, tail_len,
+            )
+            if fallback is None:
+                print(f"[BUBBLE_RENDER] 얼굴을 가리지 않는 위치 없음 — 스킵: speaker={seg.get('speaker')}")
+                continue
+            rect, anchor, side = fallback
 
         if btype == "thought":
-            _draw_thought(draw, rect, anchor, side, fill, border, border_w, thought_r, overlay)
+            _draw_thought(draw, rect, fill, border, border_w)
         else:
-            _draw_speech(draw, rect, anchor, side, fill, border, border_w, radius)
+            with_tail = _bubble_is_above_face(rect, box)
+            _draw_speech(
+                draw, rect, anchor, side, fill, border, border_w, radius,
+                with_tail=with_tail,
+            )
 
         # 텍스트 그리기(몸통 내 중앙 정렬)
         tx = rect[0] + (body_w - text_w) / 2
@@ -346,6 +377,7 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
         for ln in lines:
             draw.text((tx, ty), ln, font=font, fill=text_color)
             ty += line_h
+        placed_boxes.append(rect)
         drawn += 1
 
     print(f"[BUBBLE_RENDER] 말풍선 {drawn}/{len(matched)}건 렌더 완료")

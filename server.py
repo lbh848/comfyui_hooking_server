@@ -3456,7 +3456,6 @@ async def handle_api_postprocess_preview(request: web.Request) -> web.Response:
                 "padding": body.get("padding", 16),
                 "radius": body.get("radius", 22),
                 "tail_len": body.get("tail_len", 30),
-                "thought_circle_r": body.get("thought_circle_r", 18),
                 "max_width_ratio": body.get("max_width_ratio", 0.45),
                 "conf": body.get("conf", 0.3),
                 "match_thres": body.get("match_thres", 0.55),
@@ -11064,7 +11063,6 @@ if __name__ == "__main__":
     max_bk = app_config.get("backup_max_count", DEFAULT_MAX_BACKUP_IMAGES)
     print(f"백업 폴더: {WORKFLOW_BACKUP_DIR} (최대 {max_bk}개)")
     web.run_app(app, host=HOST, port=PORT)
-
 
 
 

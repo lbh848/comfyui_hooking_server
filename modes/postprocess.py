@@ -1088,7 +1088,6 @@ def _default_bubble() -> dict:
         "padding": 16,                    # 몸통 내 텍스트 여백
         "radius": 22,                     # 발화 말풍선 둥근 모서리 반경
         "tail_len": 30,                   # 꼬리(얼굴→몸통) 길이
-        "thought_circle_r": 18,           # 생각 말풍선 구름 원 반경
         "max_width_ratio": 0.45,          # 캔버스 폭 대비 말풍선 최대 폭 비율
         "conf": 0.3,                      # YOLO 얼굴 검출 신뢰도 임계치
         "match_thres": 0.55,              # 코사인 유사도 매칭 임계치(이하 미배정)
@@ -1189,7 +1188,6 @@ def get_bubble_settings(config: dict, bot_name: str = "") -> Optional[dict]:
         "padding": int(bb.get("padding", 16) or 16),
         "radius": int(bb.get("radius", 22) or 22),
         "tail_len": float(bb.get("tail_len", 30) or 30),
-        "thought_circle_r": float(bb.get("thought_circle_r", 18) or 18),
         "max_width_ratio": float(bb.get("max_width_ratio", 0.45) or 0.45),
         "conf": float(bb.get("conf", 0.3) or 0.3),
         "match_thres": float(bb.get("match_thres", 0.55) or 0.55),
