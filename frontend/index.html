@@ -25529,15 +25529,25 @@
 
         // ─── NAME + 감정 → 캐릭터 이미지 매칭 ───────────────────
         function ppParseFirstSpeak(speak) {
-            // 첫 번째 비어있지 않은 줄에서 speaker(치환전 NAME)와 #감정 추출 (parse_speak 미러)
+            // 첫 번째 비어있지 않은 줄에서 speaker(치환전 NAME)와 #감정 추출 (parse_speak 미러).
+            // 닫는 따옴표/괄호 뒤의 ' #감정'(공백 포함 다단어 허용) 을 구조화 정규식으로 동시 캡처한다.
+            // 본문 안의 '#' 은 닫는 구분자 안쪽이므로 감정으로 오인되지 않는다(백엔드 parse_speak과 동일).
             const lines = (speak || '').split('\n').map(l => l.trim()).filter(Boolean);
             if (!lines.length) return null;
             const line = lines[0];
-            const m = line.match(/^([A-Za-z0-9_]+)\s*:\s*["(].*[")]/);
-            const speaker = m ? m[1] : '';
-            const emoMatch = line.match(/\s+(#\S+)\s*$/);
+            // 발화: NAME: "..."  /  생각: NAME: (...)  /  독백: (...)
+            let m = line.match(/^([A-Za-z0-9_]+)\s*:\s*"(.*)"(?:\s+#(\S.*?))?\s*$/);
+            if (!m) m = line.match(/^([A-Za-z0-9_]+)\s*:\s*\((.*)\)(?:\s+#(\S.*?))?\s*$/);
+            if (!m) m = line.match(/^\((.*)\)(?:\s+#(\S.*?))?\s*$/);
+            if (m) {
+                const speaker = m[1] || '';
+                const emotion = m[3] || '';
+                return { speaker, emotion };
+            }
+            // 폴백: NAME 없는 줄 — 끝의 ' #감정'(공백 포함 다단어) 만 분리.
+            const emoMatch = line.match(/\s+(#\S.*?)\s*$/);
             const emotion = emoMatch ? emoMatch[1].replace(/^#/, '') : '';
-            return { speaker, emotion };
+            return { speaker: '', emotion };
         }
 
         async function ppMatchImage(character, emotion) {

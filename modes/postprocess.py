@@ -133,16 +133,19 @@ _FONT_CANDIDATES = [
 ]
 
 
-# 줄 끝의 감정 리터럴(예: '... " #angry' 의 ' #angry') 매칭.
+# 줄 끝의 감정 리터럴(예: '... " #angry' 의 ' #angry', '... " #happy smile' 의 ' #happy smile') 매칭.
 # 대사/생각 본문 뒤에 붙은 #감정 태그를 잘라내 parse_speak 정규식이 정상 매칭하게 한다.
 # 감정 태그(#감정)를 캡처해 토글 OFF일 때 본문에 다시 결합할 수 있게 한다.
-_EMOTION_SUFFIX_RE = re.compile(r'\s+(#\S+)\s*$', re.UNICODE)
+# '#\S.*?' 는 '#' 뒤 공백을 포함한 다단어 감정(happy smile 등)까지 끝까지 캡처한다.
+# (구조화 매칭이 닫는 따옴표/괄호 뒤의 #만 인식하므로, 본 함수는 이름 없는 폴백 줄에만 쓰인다.)
+_EMOTION_SUFFIX_RE = re.compile(r'\s+(#\S.*?)\s*$', re.UNICODE)
 
 
 def _split_emotion_suffix(line: str) -> tuple:
     """줄 끝의 ' #감정' 리터럴을 (본문, 감정태그) 로 분리.
 
     감정이 없으면 (line, None). 감정이 있으면 (감정 떼어낸 본문, '#감정').
+    감정은 공백을 포함한 다단어('#happy smile' 등)도 캡처한다.
     발화자 파싱은 감정 토글과 무관하게 항상 이 분리 결과로 수행한다.
     """
     m = _EMOTION_SUFFIX_RE.search(line)
@@ -160,72 +163,65 @@ def parse_speak(speak_text: str, strip_emotion: bool = False) -> list:
       - 발화:  NAME: "대사내용"   (예: kapri: "달콤하게 해주세요♡")
       - 생각:  NAME: (생각내용)    또는  (독백 생각내용)
 
-    발화자(NAME) 파싱은 감정 토글과 무관하게 항상 수행한다 — 줄 끝 ' #감정' 을
-    분리해 core 에서 정규식 매칭하므로, 토글 OFF여도 speaker 가 인식되어 이름 스타일이 적용된다.
+    발화자(NAME) 파싱은 감정 토글과 무관하게 항상 수행한다 — 닫는 따옴표/괄호 뒤의 ' #감정' 을
+    구조화 정규식 안에서 동시에 캡처하므로, 토글 OFF여도 speaker 가 인식되어 이름 스타일이 적용된다.
+    감정은 공백을 포함한 다단어('#happy smile' 등)도 지원한다. 본문 안의 '#' 은 닫는 구분자
+    안쪽이므로 감정으로 오인되지 않는다.
     strip_emotion=True 면 본문에서 ' #감정' 을 제거하고, False(기본)면 본문에 ' #감정' 을 유지한다.
-    예: 'kapri: "대사" #angry'
-      - strip_emotion=True  -> speaker=kapri, text='대사'
-      - strip_emotion=False -> speaker=kapri, text='대사 #angry'
+    예: 'kapri: "대사" #happy smile'
+      - strip_emotion=True  -> speaker=kapri, text='대사', emotion='#happy smile'
+      - strip_emotion=False -> speaker=kapri, text='대사 #happy smile', emotion='#happy smile'
 
     Returns:
-        [{"speaker": str|None, "text": str, "type": "speech"|"thought"}, ...]
+        [{"speaker": str|None, "text": str, "type": "speech"|"thought", "emotion": str|None}, ...]
     """
     if not speak_text:
         return []
 
     segments = []
-    # 발화: NAME: "..."
-    speech_re = re.compile(r'^\s*([A-Za-z0-9_]+)\s*:\s*"(?P<text>.*)"\s*$', re.UNICODE)
+    # 발화: NAME: "..."  — 닫는 따옴표(") 뒤에만 ' #감정'(공백 포함 다단어 허용) 을 인식한다.
+    # 따라서 따옴표 안의 '#' 은 대사의 일부로 취급되어 감정으로 잘리지 않는다.
+    speech_re = re.compile(
+        r'^\s*(?P<speaker>[A-Za-z0-9_]+)\s*:\s*"(?P<text>.*)"(?:\s+#(?P<emotion>\S.*?))?\s*$',
+        re.UNICODE)
     # 생각(NAME 있음): NAME: (...)
-    thought_named_re = re.compile(r'^\s*([A-Za-z0-9_]+)\s*:\s*\((?P<text>.*)\)\s*$', re.UNICODE)
+    thought_named_re = re.compile(
+        r'^\s*(?P<speaker>[A-Za-z0-9_]+)\s*:\s*\((?P<text>.*)\)(?:\s+#(?P<emotion>\S.*?))?\s*$',
+        re.UNICODE)
     # 생각(독백): (...)
-    thought_bare_re = re.compile(r'^\s*\((?P<text>.*)\)\s*$', re.UNICODE)
+    thought_bare_re = re.compile(
+        r'^\s*\((?P<text>.*)\)(?:\s+#(?P<emotion>\S.*?))?\s*$',
+        re.UNICODE)
 
     for raw_line in speak_text.splitlines():
         line = raw_line.rstrip()
         if not line.strip():
             continue
 
-        # 줄 끝 ' #감정' 분리 — 발화자 파싱은 토글과 무관하게 항상 core 로 매칭.
-        # 토글 OFF: 본문에 감정 유지(keep_emotion). 토글 ON: 본문에서 감정 제거.
-        core, emotion = _split_emotion_suffix(line)
-        keep_emotion = emotion if not strip_emotion else None
-
-        def _with_emotion(text: str) -> str:
-            return f"{text} {keep_emotion}" if keep_emotion else text
-
-        m = speech_re.match(core)
+        # 구조화 매칭이 잡히면 text 와 #감정을 한 번에 추출.
+        # 감정 그룹(emotion) 은 '#' 뒤 내용(공백 허용) 이고, 저장 시 '#'+값 으로 보존해
+        # 기존 lstrip("#") 해석 및 keep_emotion 결합이 그대로 동작하게 한다.
+        m = speech_re.match(line) or thought_named_re.match(line) or thought_bare_re.match(line)
         if m:
+            emo_grp = m.group("emotion")
+            emotion = f"#{emo_grp}" if emo_grp else None
+            keep_emotion = emotion if not strip_emotion else None
+            text = m.group("text")
+            if keep_emotion:
+                text = f"{text} {keep_emotion}"
+            speaker = m.groupdict().get("speaker")
+            seg_type = "thought" if (m.re is thought_named_re or m.re is thought_bare_re) else "speech"
             segments.append({
-                "speaker": m.group(1),
-                "text": _with_emotion(m.group("text")),
-                "type": "speech",
-                "emotion": emotion,
-            })
-            continue
-
-        m = thought_named_re.match(core)
-        if m:
-            segments.append({
-                "speaker": m.group(1),
-                "text": _with_emotion(m.group("text")),
-                "type": "thought",
-                "emotion": emotion,
-            })
-            continue
-
-        m = thought_bare_re.match(core)
-        if m:
-            segments.append({
-                "speaker": None,
-                "text": _with_emotion(m.group("text")),
-                "type": "thought",
+                "speaker": speaker,
+                "text": text,
+                "type": seg_type,
                 "emotion": emotion,
             })
             continue
 
         # 그 외: 이름 없는 일반 텍스트 줄은 발화로 취급.
         # 토글 OFF면 감정 유지(원본 line), ON이면 감정 제거(core).
+        core, emotion = _split_emotion_suffix(line)
         text = line.strip() if not strip_emotion else core.strip()
         if text:
             segments.append({"speaker": None, "text": text, "type": "speech", "emotion": emotion})
