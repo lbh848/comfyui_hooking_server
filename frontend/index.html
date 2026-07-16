@@ -1351,9 +1351,11 @@
         /* ─── 탭 시스템 ─── */
         .tab-bar {
             display: flex;
+            align-items: center;
             background: var(--surface);
             border-bottom: 2px solid var(--border);
-            padding: 0 24px;
+            padding: 6px 24px;
+            overflow-x: auto;
         }
         .tab-btn {
             background: transparent;
@@ -1363,7 +1365,7 @@
             font-size: 0.9rem;
             cursor: pointer;
             border-bottom: 2px solid transparent;
-            margin-bottom: -2px;
+            flex: 0 0 auto;
             transition: all 0.2s;
         }
         .tab-btn:hover { color: var(--text); }
@@ -1379,33 +1381,61 @@
         #tab-btn-bot {
             background: var(--surface2);
             border-radius: 6px;
-            position: relative;
-            padding-top: 22px;
-        }
-        /* 삽화/디버그 상태 딱지 (탭 버튼 우상단) */
-        .tab-status-badges {
-            position: absolute;
-            top: 3px;
-            left: 50%;
-            transform: translateX(-50%);
+            border: 1px solid var(--border);
+            border-bottom: 2px solid transparent;
+            min-width: 248px;
+            padding: 7px 14px 6px;
             display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
             gap: 4px;
+        }
+        #tab-btn-bot.active {
+            color: var(--text);
+            border-color: var(--accent);
+            border-bottom-color: var(--accent);
+        }
+        .tab-title {
+            font-weight: 600;
+            line-height: 1.2;
+        }
+        /* 삽화 모드 상태 표시 (카드 하단) */
+        .tab-status-badges {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
             pointer-events: none;
             white-space: nowrap;
         }
         .status-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 3px;
             font-size: 0.6rem;
-            font-weight: 700;
-            padding: 1px 6px;
-            border-radius: 8px;
+            font-weight: 500;
             line-height: 1.4;
-            color: #fff;
+            color: var(--text2);
         }
-        .status-chip.on {
-            background: #4caf50;
+        .status-chip::before {
+            content: '';
+            width: 5px;
+            height: 5px;
+            border-radius: 50%;
+            background: #777;
+            flex: 0 0 auto;
         }
-        .status-chip.off {
-            background: #888;
+        .status-chip-value {
+            color: #888;
+            font-weight: 700;
+        }
+        .status-chip.on::before {
+            background: var(--success);
+            box-shadow: 0 0 5px rgba(76, 175, 80, 0.55);
+        }
+        .status-chip.on .status-chip-value {
+            color: var(--success);
         }
         .tab-btn[onclick*="'asset'"],
         .tab-btn[onclick*="'asset-upload'"],
@@ -1424,12 +1454,19 @@
             border-radius: 6px;
         }
         .tab-divider {
-            display: inline-block;
-            width: 1px;
-            height: 24px;
-            background: var(--border);
-            margin: 0 6px;
-            vertical-align: middle;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            align-self: stretch;
+            margin: 0 8px;
+            color: var(--text2);
+            font-size: 1.25rem;
+            font-weight: 300;
+            line-height: 1;
+            opacity: 0.45;
+        }
+        .tab-divider::before {
+            content: '|';
         }
         .tab-content { display: none; }
         .tab-content.active { display: block; }
@@ -3413,12 +3450,12 @@
     <div class="tab-bar">
         <button id="tab-btn-backup" class="tab-btn active" onclick="switchTab('backup')">삽화 백업</button>
         <button id="tab-btn-bot" class="tab-btn" onclick="switchTab('bot')">
+            <span class="tab-title">삽화 모드</span>
             <span class="tab-status-badges">
-                <span id="bot-mode-chip" class="status-chip off">삽화</span>
-                <span id="postprocess-chip" class="status-chip off">후처리</span>
-                <span id="debug-mode-chip" class="status-chip off">디버그</span>
+                <span id="bot-mode-chip" class="status-chip off">모드 <span class="status-chip-value">OFF</span></span>
+                <span id="postprocess-chip" class="status-chip off">후처리 <span class="status-chip-value">OFF</span></span>
+                <span id="debug-mode-chip" class="status-chip off">디버그 <span class="status-chip-value">OFF</span></span>
             </span>
-            삽화 모드
         </button>
         <span class="tab-divider"></span>
         <button class="tab-btn" onclick="switchTab('asset')">에셋 생성</button>
@@ -25116,6 +25153,8 @@
             const chip = document.getElementById('bot-mode-chip');
             if (chip) {
                 chip.className = 'status-chip ' + (checked ? 'on' : 'off');
+                const value = chip.querySelector('.status-chip-value');
+                if (value) value.textContent = checked ? 'ON' : 'OFF';
             }
         }
 
@@ -25128,6 +25167,8 @@
             const chip = document.getElementById('debug-mode-chip');
             if (chip) {
                 chip.className = 'status-chip ' + (on ? 'on' : 'off');
+                const value = chip.querySelector('.status-chip-value');
+                if (value) value.textContent = on ? 'ON' : 'OFF';
             }
         }
 
@@ -25161,6 +25202,8 @@
             const chip = document.getElementById('postprocess-chip');
             if (chip) {
                 chip.className = 'status-chip ' + (on ? 'on' : 'off');
+                const value = chip.querySelector('.status-chip-value');
+                if (value) value.textContent = on ? 'ON' : 'OFF';
             }
         }
 
