@@ -7371,6 +7371,27 @@
                                     </div>
                                 </div>
                                 <div class="pp-row">
+                                    <span class="pp-label">글자 외곽 배경 두께</span>
+                                    <div class="pp-field-inline">
+                                        <select id="pp-vn-text-outline-width" class="select" style="flex:1;" onchange="collectPpVnSettings(); renderPostprocessPreview()">
+                                            <option value="-1">자동 (글자 크기 기반)</option>
+                                            <option value="0">0px (외곽 없음)</option>
+                                            <option value="1">1px</option>
+                                            <option value="2">2px</option>
+                                            <option value="3">3px</option>
+                                            <option value="4">4px</option>
+                                            <option value="5">5px</option>
+                                            <option value="6">6px</option>
+                                            <option value="7">7px</option>
+                                            <option value="8">8px</option>
+                                            <option value="9">9px</option>
+                                            <option value="10">10px</option>
+                                            <option value="11">11px</option>
+                                            <option value="12">12px</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="pp-row">
                                     <span class="pp-label">테마</span>
                                     <div class="pp-field-inline">
                                         <select id="pp-vn-theme" class="select" style="flex:1;" onchange="collectPpVnSettings(); renderPostprocessPreview()">
@@ -7380,6 +7401,14 @@
                                             <option value="black">검정 / 은회색</option>
                                             <option value="gray">회색 / 밝은 글자</option>
                                             <option value="classic">기존 검정 바</option>
+                                            <optgroup label="좌측 대각선 썸네일">
+                                                <option value="sky_diagonal">하늘색 / 은색 + 좌측 대각선</option>
+                                                <option value="ivory_diagonal">아이보리 / 금색 + 좌측 대각선</option>
+                                                <option value="lavender_diagonal">연보라 / 핑크 + 좌측 대각선</option>
+                                                <option value="black_diagonal">검정 / 은회색 + 좌측 대각선</option>
+                                                <option value="gray_diagonal">회색 / 밝은 글자 + 좌측 대각선</option>
+                                                <option value="classic_diagonal">기존 검정 바 + 좌측 대각선</option>
+                                            </optgroup>
                                         </select>
                                     </div>
                                 </div>
@@ -7426,7 +7455,7 @@
                                 <div class="pp-switch-line">
                                     <div>
                                         <div style="font-size:0.82rem;">대사 색상화 (발화자 머리색)</div>
-                                        <div class="pp-hint" style="margin-top:2px;">단일·다중 인물 공통 · 색상이 적용되면 대비 배경도 자동 적용</div>
+                                        <div class="pp-hint" style="margin-top:2px;">단일·다중 인물 공통 · 색상이 적용되면 글자 모양보다 조금 큰 대비 외곽 배경을 자동 적용</div>
                                     </div>
                                     <label class="toggle-switch">
                                         <input type="checkbox" id="pp-vn-dialogue-color" onchange="collectPpVnSettings(); renderPostprocessPreview()">
@@ -7434,16 +7463,15 @@
                                     </label>
                                 </div>
                                 <div class="pp-row" style="margin-top:10px;">
-                                    <span class="pp-label">다중 인물 배치</span>
+                                    <span class="pp-label">일반 테마 다중 배치</span>
                                     <div class="pp-field-inline">
                                         <select id="pp-vn-multi-speaker-layout" class="select" style="flex:1;" onchange="collectPpVnSettings(); renderPostprocessPreview()">
-                                            <option value="diagonal">우측 대각선 썸네일</option>
-                                            <option value="split">인물 1 우측·상단 / 인물 2 좌측·하단</option>
+                                            <option value="split">인물 1 좌측·상단 / 인물 2 우측·하단</option>
                                             <option value="stack">대사별 박스 쌓기</option>
                                         </select>
                                     </div>
                                 </div>
-                                <div class="pp-hint" style="margin-top:6px;">박스 쌓기는 하단 확장에서 실제 대사 높이만큼 캔버스를 늘립니다. 대각선·분리 모드는 3명 이상이면 박스 쌓기로 자동 전환합니다.</div>
+                                <div class="pp-hint" style="margin-top:6px;">좌측 대각선은 위의 테마에서 색상별로 선택합니다. 박스 쌓기는 실제 대사 높이만큼 캔버스를 늘리며, 대각선·분리 모드는 3명 이상이면 박스 쌓기로 자동 전환합니다.</div>
                             </div>
 
                             <!-- 감정 -->
@@ -25577,7 +25605,8 @@
                     emotion_font_size: 0,
                     name_color: false,
                     dialogue_color: false,
-                    multi_speaker_layout: 'diagonal',
+                    text_outline_width: -1,
+                    multi_speaker_layout: 'split',
                     name_replace: {},
                     name_replace_enabled: true,
                     strip_emotion: false,
@@ -25651,11 +25680,24 @@
             if (typeof base.face_device !== 'string') base.face_device = 'auto';
             if (!Number.isInteger(base.face_cpu_threads) || base.face_cpu_threads < 0) base.face_cpu_threads = 0;
             if (typeof base.theme !== 'string') base.theme = 'sky';
+            const _vnThemeBases = ['sky', 'ivory', 'lavender', 'black', 'gray', 'classic'];
+            const _vnThemeValues = new Set([
+                ..._vnThemeBases,
+                ..._vnThemeBases.map(theme => theme + '_diagonal'),
+            ]);
+            if (!_vnThemeValues.has(base.theme)) base.theme = 'sky';
             if (typeof base.opacity !== 'number') base.opacity = 100;
             if (typeof base.name_font_size !== 'number') base.name_font_size = 0;
             if (typeof base.emotion_font_size !== 'number') base.emotion_font_size = 0;
             if (typeof base.dialogue_color !== 'boolean') base.dialogue_color = false;
-            if (!['diagonal', 'split', 'stack'].includes(base.multi_speaker_layout)) base.multi_speaker_layout = 'diagonal';
+            if (!Number.isInteger(base.text_outline_width)) base.text_outline_width = -1;
+            base.text_outline_width = Math.min(12, Math.max(-1, base.text_outline_width));
+            // 구버전의 배치형 diagonal 설정을 같은 팔레트의 테마 변형으로 이관.
+            if (base.multi_speaker_layout === 'diagonal') {
+                if (!base.theme.endsWith('_diagonal')) base.theme += '_diagonal';
+                base.multi_speaker_layout = 'split';
+            }
+            if (!['split', 'stack'].includes(base.multi_speaker_layout)) base.multi_speaker_layout = 'split';
             if (!Array.isArray(base.emotion_rows)) base.emotion_rows = [];
             if (typeof base.emotion_total !== 'number') base.emotion_total = 0;
             return base;
@@ -25677,8 +25719,10 @@
             document.getElementById('pp-vn-name-color').checked = !!vn.name_color;
             const _dialogueColor = document.getElementById('pp-vn-dialogue-color');
             if (_dialogueColor) _dialogueColor.checked = !!vn.dialogue_color;
+            const _textOutlineWidth = document.getElementById('pp-vn-text-outline-width');
+            if (_textOutlineWidth) _textOutlineWidth.value = String(vn.text_outline_width ?? -1);
             const _multiLayout = document.getElementById('pp-vn-multi-speaker-layout');
-            if (_multiLayout) _multiLayout.value = vn.multi_speaker_layout || 'diagonal';
+            if (_multiLayout) _multiLayout.value = vn.multi_speaker_layout || 'split';
             document.getElementById('pp-vn-name-replace-enabled').checked = !!vn.name_replace_enabled;
             document.getElementById('pp-vn-strip-emotion').checked = !!vn.strip_emotion;
             const _pfx = document.getElementById('pp-vn-prefix');
@@ -26256,8 +26300,12 @@
             vn.name_color = document.getElementById('pp-vn-name-color').checked;
             const _dialogueColorEl = document.getElementById('pp-vn-dialogue-color');
             vn.dialogue_color = _dialogueColorEl ? _dialogueColorEl.checked : false;
+            const _textOutlineWidthEl = document.getElementById('pp-vn-text-outline-width');
+            const _textOutlineWidthRaw = _textOutlineWidthEl ? parseInt(_textOutlineWidthEl.value, 10) : -1;
+            vn.text_outline_width = Number.isInteger(_textOutlineWidthRaw)
+                ? Math.min(12, Math.max(-1, _textOutlineWidthRaw)) : -1;
             const _multiLayoutEl = document.getElementById('pp-vn-multi-speaker-layout');
-            vn.multi_speaker_layout = _multiLayoutEl ? (_multiLayoutEl.value || 'diagonal') : 'diagonal';
+            vn.multi_speaker_layout = _multiLayoutEl ? (_multiLayoutEl.value || 'split') : 'split';
             vn.name_replace_enabled = document.getElementById('pp-vn-name-replace-enabled').checked;
             vn.strip_emotion = document.getElementById('pp-vn-strip-emotion').checked;
             const _pfxEl = document.getElementById('pp-vn-prefix');
@@ -26322,7 +26370,8 @@
                             emotion_font_size: vn.emotion_font_size || 0,
                             name_color: vn.name_color,
                             dialogue_color: vn.dialogue_color,
-                            multi_speaker_layout: vn.multi_speaker_layout || 'diagonal',
+                            text_outline_width: vn.text_outline_width ?? -1,
+                            multi_speaker_layout: vn.multi_speaker_layout || 'split',
                             name_replace: vn.name_replace || {},
                             name_replace_enabled: vn.name_replace_enabled,
                             strip_emotion: vn.strip_emotion,

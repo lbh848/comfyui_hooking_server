@@ -124,6 +124,23 @@ VN_THEMES = {
     "classic": None,  # 기존 검정 바 렌더링 사용(팔레트 없음)
 }
 VN_THEME_DEFAULT = "sky"
+VN_DIAGONAL_THEME_SUFFIX = "_diagonal"
+
+
+def _resolve_vn_theme(theme_value) -> tuple:
+    """(팔레트 테마 키, 좌측 대각선 변형 여부)를 반환한다."""
+    theme = str(theme_value or VN_THEME_DEFAULT).strip().lower()
+    diagonal = theme.endswith(VN_DIAGONAL_THEME_SUFFIX)
+    palette_theme = (
+        theme[:-len(VN_DIAGONAL_THEME_SUFFIX)] if diagonal else theme
+    )
+    if palette_theme not in VN_THEMES:
+        print(
+            f"[POSTPROCESS] 알 수 없는 VN 테마({theme!r}), "
+            f"{VN_THEME_DEFAULT!r} 사용"
+        )
+        palette_theme = VN_THEME_DEFAULT
+    return palette_theme, diagonal
 
 # Windows 폰트 후보
 _FONT_CANDIDATES = [
@@ -627,10 +644,11 @@ def _prepare_face_images(segments: list, settings: dict, bot_name: str,
         try:
             from modes import face_detector
             base = Image.open(io.BytesIO(raw))
-            face_img = face_detector.crop_face(
+            face_img, _face_confidence, face_center = face_detector.crop_face(
                 base, top_mult=face_crop_top, bottom_mult=face_crop_bottom,
                 target_size=max(64, int(target_size)), conf_thres=face_conf,
                 device=face_device, cpu_threads=face_cpu_threads,
+                return_conf=True, return_center=True,
             )
             if face_img is None:
                 print(
@@ -638,12 +656,23 @@ def _prepare_face_images(segments: list, settings: dict, bot_name: str,
                     f"bot={bot_name}, speaker={speaker}"
                 )
                 face_img = _center_crop_square(base, max(64, int(target_size)))
+                face_center = (0.5, 0.5)
             if face_img is None:
                 print(
                     f"[POSTPROCESS] 얼굴 폴백도 실패: bot={bot_name}, "
                     f"speaker={speaker}, filename={matched[0]!r}"
                 )
                 continue
+            try:
+                face_img.info["postprocess_face_center"] = tuple(
+                    face_center or (0.5, 0.5)
+                )
+            except Exception as e:
+                print(
+                    f"[POSTPROCESS] 얼굴 중심 메타데이터 저장 실패: "
+                    f"bot={bot_name}, speaker={speaker}, error={e}"
+                )
+                traceback.print_exc()
             speaker_key = speaker.casefold()
             result[(speaker_key, emotion.casefold())] = face_img
             # 대각선/분리/단일 모드는 해당 발화자의 첫 감정 이미지를 대표 썸네일로 사용.
@@ -736,32 +765,69 @@ def _text_width(draw, text: str, font) -> float:
         return len(str(text)) * size * 0.6
 
 
-def _contrast_backplate(text_color) -> tuple:
-    """글자색 밝기에 따라 자동 대비 배경색을 반환한다."""
+def _contrast_outline(text_color) -> tuple:
+    """글자색 밝기에 따라 글리프 외곽에 쓸 자동 대비색을 반환한다."""
     color = _rgba(text_color)
     luminance = 0.2126 * color[0] + 0.7152 * color[1] + 0.0722 * color[2]
-    return (0, 0, 0, 190) if luminance >= 145 else (255, 255, 255, 215)
+    return (0, 0, 0, 255) if luminance >= 145 else (255, 255, 255, 255)
 
 
-def _draw_text_with_backplate(draw, xy, text: str, font, fill,
-                              enabled: bool, pad_x: int = 6, pad_y: int = 3) -> float:
-    """텍스트를 그리고, 색상화가 켜진 경우에만 대비 배경을 자동으로 붙인다."""
+def normalize_text_outline_width(value, default: int = -1) -> int:
+    """색상 글자 외곽 두께를 -1(자동) 또는 0~12px로 정규화한다."""
+    try:
+        width = int(value)
+    except (TypeError, ValueError):
+        print(
+            f"[POSTPROCESS] text_outline_width 변환 실패({value!r}), "
+            f"기본값 {default} 사용"
+        )
+        width = int(default)
+    if width < -1:
+        print(f"[POSTPROCESS] text_outline_width 하한 미만({width}), 자동(-1) 사용")
+        return -1
+    if width > 12:
+        print(f"[POSTPROCESS] text_outline_width 상한 초과({width}), 12 사용")
+        return 12
+    return width
+
+
+def _draw_colorized_text(draw, xy, text: str, font, fill,
+                         enabled: bool, outline_width: int = -1) -> float:
+    """색상 글자보다 조금 큰 글리프형 대비 외곽 배경을 자동으로 그린다.
+
+    사각형 하이라이트를 두는 것이 아니라 PIL의 text stroke를 사용하므로
+    배경은 각 글자의 윤곽만 따라간다.
+    """
     x, y = int(xy[0]), int(xy[1])
     value = str(text)
     width = _text_width(draw, value, font)
-    if enabled and value:
+    if not enabled or not value:
+        draw.text((x, y), value, font=font, fill=fill)
+        return width
+    try:
+        font_size = int(getattr(font, "size", 12) or 12)
+        requested_width = normalize_text_outline_width(outline_width)
+        stroke_width = (
+            requested_width
+            if requested_width >= 0
+            else max(1, min(4, int(round(font_size * 0.10))))
+        )
+        draw.text(
+            (x, y), value, font=font, fill=fill,
+            stroke_width=stroke_width,
+            stroke_fill=_contrast_outline(fill),
+        )
+    except Exception as e:
+        print(f"[POSTPROCESS] 자동 글자 외곽 배경 렌더링 실패(text={value!r}): {e}")
+        traceback.print_exc()
         try:
-            bbox = draw.textbbox((x, y), value, font=font)
-            rect = (
-                int(bbox[0] - pad_x), int(bbox[1] - pad_y),
-                int(bbox[2] + pad_x), int(bbox[3] + pad_y),
+            draw.text((x, y), value, font=font, fill=fill)
+        except Exception as fallback_error:
+            print(
+                f"[POSTPROCESS] 글자 외곽 배경 폴백 렌더링도 실패"
+                f"(text={value!r}): {fallback_error}"
             )
-            radius = max(3, min(10, (rect[3] - rect[1]) // 3))
-            draw.rounded_rectangle(rect, radius=radius, fill=_contrast_backplate(fill))
-        except Exception as e:
-            print(f"[POSTPROCESS] 자동 글자 배경 렌더링 실패(text={value!r}): {e}")
             traceback.print_exc()
-    draw.text((x, y), value, font=font, fill=fill)
     return width
 
 
@@ -866,26 +932,82 @@ def _paste_face_slot(canvas, face_img, box, pal):
 
 
 def _paste_diagonal_faces(canvas, first_face, second_face, box, pal):
-    """정사각 썸네일을 대각선으로 나눠 두 얼굴을 합성한다."""
+    """좌상단=인물 1, 우하단=인물 2로 '/' 대각선 썸네일을 합성한다.
+
+    각 얼굴 이미지의 중심을 단순 정사각형 중심에 두지 않고 해당 삼각형의
+    무게중심으로 옮긴다. 확대 여유를 둬 이동 후에도 빈 가장자리가 보이지 않게 한다.
+    """
     try:
         x1, y1, x2, y2 = [int(v) for v in box]
         size = min(x2 - x1, y2 - y1)
         if size <= 0:
             print(f"[POSTPROCESS] 대각선 썸네일 크기 오류: box={box}")
             return
-        first = _face_tile(first_face, size, (58, 62, 82, 255))
-        second = _face_tile(second_face, size, (32, 36, 52, 255))
+
+        def _face_centered_in_triangle(face_img, center, placeholder_color):
+            if face_img is None:
+                return Image.new("RGBA", (size, size), placeholder_color)
+            try:
+                raw_face_center = face_img.info.get(
+                    "postprocess_face_center", (0.5, 0.5)
+                )
+                try:
+                    face_center_x = max(0.05, min(0.95, float(raw_face_center[0])))
+                    face_center_y = max(0.05, min(0.95, float(raw_face_center[1])))
+                except (TypeError, ValueError, IndexError) as e:
+                    print(
+                        f"[POSTPROCESS] 대각선 얼굴 중심값 오류"
+                        f"(center={raw_face_center!r}), 이미지 중앙 사용: {e}"
+                    )
+                    face_center_x, face_center_y = 0.5, 0.5
+
+                # 실제 얼굴 중심을 목표 무게중심에 둔 상태에서도 네 변이 비지 않는
+                # 최소 확대율을 계산한다. 과도한 확대는 2.2배에서 제한한다.
+                min_zoom = max(
+                    center[0] / face_center_x,
+                    (1.0 - center[0]) / (1.0 - face_center_x),
+                    center[1] / face_center_y,
+                    (1.0 - center[1]) / (1.0 - face_center_y),
+                )
+                zoom = max(1.38, min(2.2, min_zoom + 0.04))
+                tile_size = max(size, int(round(size * zoom)))
+                tile = face_img.convert("RGBA").resize(
+                    (tile_size, tile_size), Image.LANCZOS,
+                )
+                layer = Image.new("RGBA", (size, size), placeholder_color)
+                target_x = int(round(size * center[0]))
+                target_y = int(round(size * center[1]))
+                paste_x = target_x - int(round(tile_size * face_center_x))
+                paste_y = target_y - int(round(tile_size * face_center_y))
+                layer.alpha_composite(tile, (paste_x, paste_y))
+                return layer
+            except Exception as e:
+                print(
+                    f"[POSTPROCESS] 대각선 얼굴 중심 이동 실패"
+                    f"(center={center}, size={size}): {e}"
+                )
+                traceback.print_exc()
+                return _face_tile(face_img, size, placeholder_color)
+
+        # 우상단→좌하단 '/' 대각선 기준 좌상단 삼각형 무게중심=(1/3, 1/3),
+        # 우하단 삼각형 무게중심=(2/3, 2/3).
+        first = _face_centered_in_triangle(
+            first_face, (1.0 / 3.0, 1.0 / 3.0), (58, 62, 82, 255),
+        )
+        second = _face_centered_in_triangle(
+            second_face, (2.0 / 3.0, 2.0 / 3.0), (32, 36, 52, 255),
+        )
         merged = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-        first_mask = Image.new("L", (size, size), 0)
-        ImageDraw.Draw(first_mask).polygon(
-            [(0, 0), (size - 1, 0), (size - 1, size - 1)], fill=255,
+        first_top_left_mask = Image.new("L", (size, size), 0)
+        ImageDraw.Draw(first_top_left_mask).polygon(
+            [(0, 0), (size - 1, 0), (0, size - 1)], fill=255,
         )
-        second_mask = Image.new("L", (size, size), 0)
-        ImageDraw.Draw(second_mask).polygon(
-            [(0, 0), (size - 1, size - 1), (0, size - 1)], fill=255,
+        second_bottom_right_mask = Image.new("L", (size, size), 0)
+        ImageDraw.Draw(second_bottom_right_mask).polygon(
+            [(size - 1, 0), (size - 1, size - 1), (0, size - 1)], fill=255,
         )
-        merged.paste(first, (0, 0), first_mask)
-        merged.paste(second, (0, 0), second_mask)
+        merged.paste(first, (0, 0), first_top_left_mask)
+        merged.paste(second, (0, 0), second_bottom_right_mask)
         radius = max(8, size // 7)
         canvas.paste(merged, (x1, y1), _rounded_mask((size, size), radius))
         theme = _multi_palette(pal)
@@ -895,7 +1017,7 @@ def _paste_diagonal_faces(canvas, first_face, second_face, box, pal):
             outline=_rgba(theme["face_frame"]), width=max(2, size // 28),
         )
         draw.line(
-            [(x1, y1), (x1 + size, y1 + size)],
+            [(x1 + size, y1), (x1, y1 + size)],
             fill=_rgba(theme["accent"]), width=max(2, size // 40),
         )
     except Exception as e:
@@ -921,10 +1043,36 @@ def _segments_height(draw, segments: list, font, max_width: int,
     return total
 
 
+def _speaker_group_width(draw, speaker: str, segments: list,
+                         name_replace: dict, use_name_replace: bool,
+                         name_font, emotion_font, emotion: str,
+                         body_font, max_width: int,
+                         outline_width: int = -1) -> int:
+    """이름과 래핑된 대사 줄을 담는 최소 좌측 정렬 블록 폭을 계산한다."""
+    try:
+        display_name = _display_name(speaker, name_replace, use_name_replace)
+        header_width = _text_width(draw, display_name, name_font)
+        if emotion:
+            header_width += 16 + _text_width(draw, f"# {emotion}", emotion_font)
+        body_width = 0.0
+        for seg in segments:
+            for line in _segment_lines(draw, seg, body_font, max_width):
+                body_width = max(body_width, _text_width(draw, line, body_font))
+        stroke_margin = max(0, normalize_text_outline_width(outline_width)) * 2
+        return max(20, min(int(max_width), int(max(header_width, body_width)) + stroke_margin))
+    except Exception as e:
+        print(
+            f"[POSTPROCESS] 발화자 글 블록 폭 계산 실패"
+            f"(speaker={speaker!r}, max_width={max_width}): {e}"
+        )
+        traceback.print_exc()
+        return max(20, int(max_width))
+
+
 def _draw_segment_group(draw, x: int, y: int, segments: list, font,
                         max_width: int, line_height: int, gap: int,
                         body_color, dialogue_color: bool,
-                        bot_name: str) -> int:
+                        bot_name: str, outline_width: int = -1) -> int:
     cur_y = int(y)
     for seg_index, seg in enumerate(segments):
         speaker = str(seg.get("speaker") or "").strip()
@@ -936,10 +1084,8 @@ def _draw_segment_group(draw, x: int, y: int, segments: list, font,
         else:
             fill = body_color
         for line in _segment_lines(draw, seg, font, max_width):
-            _draw_text_with_backplate(
-                draw, (x, cur_y), line, font, fill, colorized,
-                pad_x=max(4, getattr(font, "size", 12) // 5),
-                pad_y=max(2, getattr(font, "size", 12) // 10),
+            _draw_colorized_text(
+                draw, (x, cur_y), line, font, fill, colorized, outline_width,
             )
             cur_y += line_height
         if seg_index + 1 < len(segments):
@@ -951,13 +1097,11 @@ def _draw_speaker_header(draw, x: int, y: int, speaker: str,
                          name_replace: dict, use_name_replace: bool,
                          use_name_color: bool, bot_name: str,
                          name_font, emotion_font, emotion: str,
-                         name_fill, emotion_fill) -> int:
+                         name_fill, emotion_fill, outline_width: int = -1) -> int:
     display = _display_name(speaker, name_replace, use_name_replace)
     fill = resolve_name_color(speaker, bot_name) if use_name_color else name_fill
-    name_width = _draw_text_with_backplate(
-        draw, (x, y), display, name_font, fill, use_name_color,
-        pad_x=max(5, getattr(name_font, "size", 12) // 5),
-        pad_y=max(2, getattr(name_font, "size", 12) // 10),
+    name_width = _draw_colorized_text(
+        draw, (x, y), display, name_font, fill, use_name_color, outline_width,
     )
     if emotion:
         draw.text(
@@ -970,19 +1114,19 @@ def _draw_speaker_header(draw, x: int, y: int, speaker: str,
 def _draw_combined_header(draw, x: int, y: int, speakers: list,
                           name_replace: dict, use_name_replace: bool,
                           use_name_color: bool, bot_name: str,
-                          name_font, default_fill) -> int:
+                          name_font, default_fill,
+                          outline_width: int = -1) -> int:
     cur_x = int(x)
     for index, speaker in enumerate(speakers):
         if index:
-            separator = " * "
+            separator = " / "
             draw.text((cur_x, y), separator, font=name_font, fill=default_fill)
             cur_x += int(_text_width(draw, separator, name_font))
         display = _display_name(speaker, name_replace, use_name_replace)
         fill = resolve_name_color(speaker, bot_name) if use_name_color else default_fill
-        cur_x += int(_draw_text_with_backplate(
+        cur_x += int(_draw_colorized_text(
             draw, (cur_x, y), display, name_font, fill, use_name_color,
-            pad_x=max(5, getattr(name_font, "size", 12) // 5),
-            pad_y=max(2, getattr(name_font, "size", 12) // 10),
+            outline_width,
         ))
     return cur_x
 
@@ -1013,6 +1157,9 @@ def _render_multi_dialogue(img, layout, pal, settings, segments, speakers,
         body_fill = _rgba(theme["body"])
         name_fill = _rgba(theme["name"])
         emotion_fill = _rgba(theme["emotion"])
+        outline_width = normalize_text_outline_width(
+            settings.get("text_outline_width", -1)
+        )
         measure_draw = ImageDraw.Draw(Image.new("RGBA", (max(1, img_w), 32), (0, 0, 0, 0)))
 
         if mode not in ("diagonal", "split", "stack"):
@@ -1132,18 +1279,19 @@ def _render_multi_dialogue(img, layout, pal, settings, segments, speakers,
 
             if spec["kind"] == "diagonal":
                 show_faces = face_enabled and len(speakers) >= 2
-                content_x = x1 + pad
+                content_x = x1 + pad + (face_side + pad if show_faces else 0)
                 _draw_combined_header(
                     draw, content_x, y1 + pad, speakers[:2], name_replace,
                     use_name_replace, use_name_color, bot_name, name_font, name_fill,
+                    outline_width,
                 )
                 _draw_segment_group(
                     draw, content_x, y1 + pad + header_h + header_gap,
                     segments, font, spec["content_w"], line_height, segment_gap,
-                    body_fill, use_dialogue_color, bot_name,
+                    body_fill, use_dialogue_color, bot_name, outline_width,
                 )
                 if show_faces:
-                    fx = x2 - pad - face_side
+                    fx = x1 + pad
                     fy = y1 + (card_h - face_side) // 2
                     _paste_diagonal_faces(
                         canvas,
@@ -1155,8 +1303,8 @@ def _render_multi_dialogue(img, layout, pal, settings, segments, speakers,
             elif spec["kind"] == "split":
                 first_speaker, second_speaker = speakers[0], speakers[1]
                 first_content_y = y1 + pad
-                first_face_x = x2 - pad - face_side
-                first_text_x = x1 + pad
+                first_face_x = x1 + pad
+                first_text_x = first_face_x + (face_side + pad if face_enabled else 0)
                 if face_enabled:
                     _paste_face_slot(
                         canvas, face_images.get(first_speaker.casefold()),
@@ -1171,11 +1319,13 @@ def _render_multi_dialogue(img, layout, pal, settings, segments, speakers,
                     draw, first_text_x, first_content_y, first_speaker,
                     name_replace, use_name_replace, use_name_color, bot_name,
                     name_font, emotion_font, first_emo, name_fill, emotion_fill,
+                    outline_width,
                 )
                 _draw_segment_group(
                     draw, first_text_x, first_content_y + header_h + header_gap,
                     spec["first_segments"], font, spec["content_w"], line_height,
                     segment_gap, body_fill, use_dialogue_color, bot_name,
+                    outline_width,
                 )
 
                 divider_y = y1 + spec["first_zone_h"] + panel_gap // 2
@@ -1184,8 +1334,7 @@ def _render_multi_dialogue(img, layout, pal, settings, segments, speakers,
                     fill=_rgba(theme["divider"]), width=2,
                 )
                 second_content_y = y1 + spec["first_zone_h"] + panel_gap + pad
-                second_face_x = x1 + pad
-                second_text_x = second_face_x + (face_side + pad if face_enabled else 0)
+                second_face_x = x2 - pad - face_side
                 if face_enabled:
                     _paste_face_slot(
                         canvas, face_images.get(second_speaker.casefold()),
@@ -1196,22 +1345,35 @@ def _render_multi_dialogue(img, layout, pal, settings, segments, speakers,
                 second_emo = ""
                 if strip_emotion and second_seg:
                     second_emo = (second_seg.get("emotion") or "").lstrip("#").strip()
+                second_block_w = _speaker_group_width(
+                    draw, second_speaker, spec["second_segments"],
+                    name_replace, use_name_replace, name_font, emotion_font,
+                    second_emo, font, spec["content_w"], outline_width,
+                )
+                # 글은 좌측 정렬을 유지하되, 블록의 우측 끝을 우측 썸네일 바로
+                # 옆에 붙인다. 짧은 이름/대사가 카드 맨 왼쪽에 고립되지 않는다.
+                second_text_x = max(
+                    x1 + pad,
+                    second_face_x - pad - second_block_w,
+                ) if face_enabled else x1 + pad
                 _draw_speaker_header(
                     draw, second_text_x, second_content_y, second_speaker,
                     name_replace, use_name_replace, use_name_color, bot_name,
                     name_font, emotion_font, second_emo, name_fill, emotion_fill,
+                    outline_width,
                 )
                 _draw_segment_group(
                     draw, second_text_x, second_content_y + header_h + header_gap,
                     spec["second_segments"], font, spec["content_w"], line_height,
                     segment_gap, body_fill, use_dialogue_color, bot_name,
+                    outline_width,
                 )
 
             else:
                 seg = spec["segment"]
                 speaker = str(seg.get("speaker") or "").strip()
                 index = speaker_index.get(speaker.casefold(), 0) if speaker else 0
-                face_on_left = bool(index % 2)
+                face_on_left = (index % 2 == 0)
                 content_x = x1 + pad
                 if spec["show_face"]:
                     if face_on_left:
@@ -1242,11 +1404,13 @@ def _render_multi_dialogue(img, layout, pal, settings, segments, speakers,
                         draw, content_x, body_y, speaker, name_replace,
                         use_name_replace, use_name_color, bot_name, name_font,
                         emotion_font, emotion, name_fill, emotion_fill,
+                        outline_width,
                     )
                     body_y += header_h + header_gap
                 _draw_segment_group(
                     draw, content_x, body_y, [seg], font, spec["content_w"],
                     line_height, segment_gap, body_fill, use_dialogue_color, bot_name,
+                    outline_width,
                 )
 
             current_y += card_h + panel_gap
@@ -1378,14 +1542,22 @@ def compose_postprocess(image_bytes: bytes, speak_text: str,
     use_name_replace = bool(settings.get("name_replace_enabled", True))
     use_name_color = bool(settings.get("name_color", False))
     use_dialogue_color = bool(settings.get("dialogue_color", False))
+    text_outline_width = normalize_text_outline_width(
+        settings.get("text_outline_width", -1)
+    )
+    palette_theme_key, diagonal_theme = _resolve_vn_theme(
+        settings.get("theme", VN_THEME_DEFAULT)
+    )
     multi_speaker_layout = str(
-        settings.get("multi_speaker_layout", "diagonal") or "diagonal"
+        settings.get("multi_speaker_layout", "split") or "split"
     ).strip().lower()
     if multi_speaker_layout not in ("diagonal", "split", "stack"):
         print(
             f"[POSTPROCESS] multi_speaker_layout 값 오류({multi_speaker_layout!r}), "
-            "diagonal 사용"
+            "split 사용"
         )
+        multi_speaker_layout = "split"
+    if diagonal_theme:
         multi_speaker_layout = "diagonal"
     strip_emotion = bool(settings.get("strip_emotion", False))
 
@@ -1411,8 +1583,7 @@ def compose_postprocess(image_bytes: bytes, speak_text: str,
     if img.mode != "RGBA":
         img = img.convert("RGBA")
 
-    theme_key = str(settings.get("theme", VN_THEME_DEFAULT) or VN_THEME_DEFAULT)
-    palette = VN_THEMES.get(theme_key)  # classic/unknown → None
+    palette = VN_THEMES.get(palette_theme_key)  # classic → None
 
     # --- 폰트 (대사/이름/감정, 0=자동) ---
     try:
@@ -1467,7 +1638,7 @@ def compose_postprocess(image_bytes: bytes, speak_text: str,
                             name_replace, use_name_replace, strip_emotion,
                             font, name_font, emotion_font, font_size, line_height,
                             img_w, img_h, use_name_color, use_dialogue_color,
-                            bot_name)
+                            text_outline_width, bot_name)
 
     # ===== classic: 기존 검정 바 렌더링 =====
     if layout["placement"] == "extend":
@@ -1519,11 +1690,9 @@ def compose_postprocess(image_bytes: bytes, speak_text: str,
         sp = first_speaker_seg["speaker"]
         display_name = name_replace.get(sp, sp) if use_name_replace else sp
         name_col = resolve_name_color(sp, bot_name) if use_name_color else DEFAULT_NAME_COLOR
-        _draw_text_with_backplate(
+        _draw_colorized_text(
             draw, (content_x, header_y), display_name, name_font, name_col,
-            use_name_color,
-            pad_x=max(5, getattr(name_font, "size", 12) // 5),
-            pad_y=max(2, getattr(name_font, "size", 12) // 10),
+            use_name_color, text_outline_width,
         )
         name_w = _measure(display_name, name_font)
         emo_label = (first_speaker_seg.get("emotion") or "").lstrip("#").strip()
@@ -1554,10 +1723,9 @@ def compose_postprocess(image_bytes: bytes, speak_text: str,
                     f"cur_y={cur_y}, bottom={bottom_limit}"
                 )
                 return _to_output_bytes(canvas)
-            _draw_text_with_backplate(
+            _draw_colorized_text(
                 draw, (content_x, cur_y), wl, font, body_color, colorized,
-                pad_x=max(4, getattr(font, "size", 12) // 5),
-                pad_y=max(2, getattr(font, "size", 12) // 10),
+                text_outline_width,
             )
             cur_y += line_height
         # 세그먼트 구분 빈 줄
@@ -1599,7 +1767,7 @@ def _render_card(img, layout, pal, settings,
                  name_replace, use_name_replace, strip_emotion,
                  font, name_font, emotion_font, font_size, line_height,
                  img_w, img_h, use_name_color=False,
-                 use_dialogue_color=False, bot_name=""):
+                 use_dialogue_color=False, text_outline_width=-1, bot_name=""):
     """프리코네 스타일 다중 레이어 카드 렌더러. RGBA PIL → PNG bytes.
 
     레이어: 배경(extend 어두운 그라데이션) → 드롭섀도우 → 외곽 은색 프레임 →
@@ -1778,11 +1946,9 @@ def _render_card(img, layout, pal, settings,
                 name_fill = resolve_name_color(sp, bot_name) or _rgba(pal["name"])
             else:
                 name_fill = _rgba(pal["name"])
-            _draw_text_with_backplate(
+            _draw_colorized_text(
                 draw, (plate_x1 + pad_x, name_y), display_name, name_font,
-                name_fill, use_name_color,
-                pad_x=max(5, getattr(name_font, "size", 12) // 5),
-                pad_y=max(2, getattr(name_font, "size", 12) // 10),
+                name_fill, use_name_color, text_outline_width,
             )
             if emo_text:
                 draw.text((plate_x1 + pad_x + int(name_w) + gap,
@@ -1817,10 +1983,9 @@ def _render_card(img, layout, pal, settings,
                         f"cur_y={cur_y}, bottom={bottom_limit}"
                     )
                     break
-                _draw_text_with_backplate(
+                _draw_colorized_text(
                     draw, (content_x, cur_y), wl, font, seg_body_col, colorized,
-                    pad_x=max(4, getattr(font, "size", 12) // 5),
-                    pad_y=max(2, getattr(font, "size", 12) // 10),
+                    text_outline_width,
                 )
                 cur_y += line_height
             else:
@@ -1871,7 +2036,8 @@ def _default_vn() -> dict:
         "emotion_font_size": 0,       # 감정 폰트 px. 0=자동(대사 폰트와 동일)
         "name_color": False,
         "dialogue_color": False,      # 발화자 머리색으로 대사 색상화(배경은 자동)
-        "multi_speaker_layout": "diagonal",  # diagonal | split | stack
+        "text_outline_width": -1,     # 색상 글자 외곽 배경 px. -1=자동, 0=없음
+        "multi_speaker_layout": "split",     # split | stack (diagonal은 테마 변형)
         "name_replace": {},
         "name_replace_enabled": True,
         "strip_emotion": False,
@@ -1987,8 +2153,11 @@ def get_vn_settings(config: dict, bot_name: str = "") -> Optional[dict]:
         "emotion_font_size": vn.get("emotion_font_size", 0) or 0,
         "name_color": bool(vn.get("name_color", False)),
         "dialogue_color": bool(vn.get("dialogue_color", False)),
+        "text_outline_width": normalize_text_outline_width(
+            vn.get("text_outline_width", -1)
+        ),
         "multi_speaker_layout": str(
-            vn.get("multi_speaker_layout", "diagonal") or "diagonal"
+            vn.get("multi_speaker_layout", "split") or "split"
         ),
         "name_replace": vn.get("name_replace") or {},
         "name_replace_enabled": bool(vn.get("name_replace_enabled", True)),

@@ -365,7 +365,8 @@ def _detect_multi(sess, image_rgb, conf_thres, iou_thres=_IOU_THRES,
 # ─── 공용 API ───────────────────────────────────────────────────────
 def crop_face(image, top_mult: float = 1.8, bottom_mult: float = 1.0,
               target_size: int = 256, conf_thres: float = 0.3, device: str = None,
-              return_conf: bool = False, cpu_threads: int = 0):
+              return_conf: bool = False, cpu_threads: int = 0,
+              return_center: bool = False):
     """이미지에서 얼굴을 검출해 정사각형으로 크롭한 PIL.Image 반환.
 
     Args:
@@ -377,6 +378,8 @@ def crop_face(image, top_mult: float = 1.8, bottom_mult: float = 1.0,
         device: 디바이스 키(None/auto/cpu/cuda0/dml0 등). None=자동.
         cpu_threads: CPU intra-op 스레드 수. 0=ONNX Runtime 자동.
         return_conf: True 면 (image, conf) 튜플 반환. conf=None 일 수 있음(검출 실패/예외).
+        return_center: True 면 최종 정사각 크롭 안의 실제 얼굴 중심 정규좌표(x, y)를
+            함께 반환. return_conf도 True면 (image, conf, center), 아니면 (image, center).
 
     비정사각형 크롭 영역은 비율을 유지해 짧은 변을 target_size로 확대한 뒤,
     긴 변을 중앙 기준으로 깎아(center-crop) 정사각형으로 만든다. 왜곡 없음.
@@ -386,10 +389,20 @@ def crop_face(image, top_mult: float = 1.8, bottom_mult: float = 1.0,
         return_conf=True: (image_or_None, conf_or_None).
     """
     from PIL import Image as _PILImage
+
+    def _result(face_image, confidence=None, center=None):
+        if return_conf and return_center:
+            return face_image, confidence, center
+        if return_conf:
+            return face_image, confidence
+        if return_center:
+            return face_image, center
+        return face_image
+
     sess = _preferred_session(device, cpu_threads=cpu_threads)
     if sess is None:
         print("[FACE_DETECTOR] 세션 사용 불가 — crop_face 스킵")
-        return (None, None) if return_conf else None
+        return _result(None, None, None)
 
     try:
         if image.mode not in ("RGB", "L"):
@@ -415,7 +428,7 @@ def crop_face(image, top_mult: float = 1.8, bottom_mult: float = 1.0,
         box, bconf = det   # box=None 이면 임계치 미달; bconf는 전체 최고 신뢰도(튜닝 단서)
         if box is None:
             print("[FACE_DETECTOR] 얼굴 검출 0건 (conf>=%s, 최고=%.3f)" % (conf_thres, bconf if bconf is not None else -1))
-            return (None, bconf) if return_conf else None
+            return _result(None, bconf, None)
         (x1, y1, x2, y2) = box
         print(f"[FACE_DETECTOR] 선택 박스 conf={bconf:.3f} xyxy=({x1:.0f},{y1:.0f},{x2:.0f},{y2:.0f})")
 
@@ -439,9 +452,11 @@ def crop_face(image, top_mult: float = 1.8, bottom_mult: float = 1.0,
 
         if right - left < 8 or bottom - top < 8:
             print(f"[FACE_DETECTOR] 크롭 영역 너무 작음 ({right-left:.0f}x{bottom-top:.0f})")
-            return (None, bconf) if return_conf else None
+            return _result(None, bconf, None)
 
-        crop = image.crop((int(left), int(top), int(right), int(bottom)))
+        crop_left, crop_top = int(left), int(top)
+        crop_right, crop_bottom = int(right), int(bottom)
+        crop = image.crop((crop_left, crop_top, crop_right, crop_bottom))
 
         cw, ch = crop.size
         scale = target_size / float(min(cw, ch)) if min(cw, ch) > 0 else 1.0
@@ -451,11 +466,17 @@ def crop_face(image, top_mult: float = 1.8, bottom_mult: float = 1.0,
         px = (nw - target_size) // 2
         py = (nh - target_size) // 2
         crop = crop.crop((px, py, px + target_size, py + target_size))
-        return (crop, bconf) if return_conf else crop
+        center_x = ((cx - crop_left) * scale - px) / max(1.0, float(target_size))
+        center_y = ((cy - crop_top) * scale - py) / max(1.0, float(target_size))
+        face_center = (
+            max(0.0, min(1.0, center_x)),
+            max(0.0, min(1.0, center_y)),
+        )
+        return _result(crop, bconf, face_center)
     except Exception as e:
         print(f"[FACE_DETECTOR] ⚠ crop_face 실패: {e}")
         traceback.print_exc()
-        return (None, None) if return_conf else None
+        return _result(None, None, None)
 
 
 def detect_faces(image, conf_thres: float = 0.3, device: str = None,
