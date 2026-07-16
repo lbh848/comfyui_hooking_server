@@ -7484,20 +7484,19 @@
                                 <div class="pp-field-inline">
                                     <div><div style="font-size:0.7rem; color:var(--text2,#999);">테두리 두께</div><input id="pp-bubble-border-width" type="number" class="input" style="width:70px;" step="0.5" oninput="renderPostprocessPreview()"></div>
                                     <div><div style="font-size:0.7rem; color:var(--text2,#999);">여백 — 모델 자동</div><input id="pp-bubble-padding" type="number" class="input" style="width:70px;" disabled title="선택된 버블 종류에 맞춰 레이아웃 ONNX가 자동 결정합니다"></div>
-                                    <div><div style="font-size:0.7rem; color:var(--text2,#999);">모서리 반경</div><input id="pp-bubble-radius" type="number" class="input" style="width:70px;" oninput="renderPostprocessPreview()"></div>
+                                    <div><div style="font-size:0.7rem; color:var(--text2,#999);">코믹 모서리 크기</div><input id="pp-bubble-radius" type="number" class="input" style="width:70px;" min="0" oninput="renderPostprocessPreview()"></div>
                                 </div>
                                 <div class="pp-field-inline" style="margin-top:6px;">
-                                    <div><div style="font-size:0.7rem; color:var(--text2,#999);">꼬리 길이</div><input id="pp-bubble-tail-len" type="number" class="input" style="width:70px;" oninput="renderPostprocessPreview()"></div>
+                                    <div><div style="font-size:0.7rem; color:var(--text2,#999);">꼬리 생성 기준 (얼굴 크기 배)</div><input id="pp-bubble-tail-threshold" type="number" class="input" style="width:90px;" min="0" max="5" step="0.1" oninput="renderPostprocessPreview()" title="풍선과 얼굴 경계의 거리가 얼굴 최대 크기×이 값 이내일 때만 꼬리를 만듭니다. 0이면 꼬리를 끕니다."></div>
+                                    <div><div style="font-size:0.7rem; color:var(--text2,#999);">생각 형상</div><select id="pp-bubble-thought-shape" class="select" style="width:130px;" onchange="renderPostprocessPreview()"><option value="cloud">구름형</option><option value="box">생각 박스</option></select></div>
                                     <div><div style="font-size:0.7rem; color:var(--text2,#999);">가로·세로 비율 — 모델 자동</div><input id="pp-bubble-max-width-ratio" type="number" class="input" style="width:70px;" step="0.05" disabled title="텍스트와 버블 종류에 맞춰 레이아웃 ONNX가 자동 결정합니다"></div>
                                 </div>
                                 <div class="pp-field-inline" style="margin-top:6px;">
                                     <div><div style="font-size:0.7rem; color:var(--text2,#999);">대사 불투명도(0~1)</div><input id="pp-bubble-speech-opacity" type="number" class="input" style="width:70px;" step="0.1" min="0" max="1" oninput="renderPostprocessPreview()"></div>
                                     <div><div style="font-size:0.7rem; color:var(--text2,#999);">생각 불투명도(0~1)</div><input id="pp-bubble-thought-opacity" type="number" class="input" style="width:70px;" step="0.1" min="0" max="1" oninput="renderPostprocessPreview()"></div>
-                                    <div><div style="font-size:0.7rem; color:var(--text2,#999);">얼굴 검출 conf</div><input id="pp-bubble-conf" type="number" class="input" style="width:70px;" step="0.05" oninput="renderPostprocessPreview()"></div>
+                                    <div><div style="font-size:0.7rem; color:var(--text2,#999);">매칭 임계치</div><input id="pp-bubble-match-thres" type="number" class="input" style="width:70px;" min="0" max="1" step="0.05" oninput="renderPostprocessPreview()" title="NAME 캐릭터 임베딩과 감지 얼굴의 코사인 유사도가 이 값 이상일 때만 배정합니다."></div>
                                 </div>
-                                <div class="pp-field-inline" style="margin-top:6px;">
-                                    <div><div style="font-size:0.7rem; color:var(--text2,#999);">매칭 임계치</div><input id="pp-bubble-match-thres" type="number" class="input" style="width:70px;" step="0.05" oninput="renderPostprocessPreview()"></div>
-                                </div>
+                                <div class="pp-hint">대사는 레이아웃 모델이 타원형/코믹 각진형을 자동 선택합니다. 얼굴 검출은 conf 0에서 고유 NAME 수만큼 신뢰도 상위 박스를 사용합니다.</div>
                             </div>
 
                             <div class="pp-card">
@@ -7513,7 +7512,11 @@
                                     </div>
                                 </div>
                                 <textarea id="pp-bubble-preview-speak" class="input" rows="2" style="width:100%; font-family:monospace; resize:vertical; margin-top:6px;" placeholder='NAME: "대사"&#10;NAME: (생각)' oninput="renderPostprocessPreview()">akane: "안녕하세요! 말풍선 테스트입니다."</textarea>
-                                <div class="pp-hint">NAME: 발화 형식. NAME 1개 & 얼굴 1개면 임베딩 생략 자동 배정.</div>
+                                <div class="pp-field-inline" style="margin-top:6px; gap:12px;">
+                                    <label style="font-size:0.72rem; color:var(--text2,#999); display:flex; align-items:center; gap:5px;"><input id="pp-bubble-debug-mask" type="checkbox" onchange="renderPostprocessPreview()"> 배경/보호 마스크</label>
+                                    <label style="font-size:0.72rem; color:var(--text2,#999); display:flex; align-items:center; gap:5px;"><input id="pp-bubble-debug-candidates" type="checkbox" onchange="renderPostprocessPreview()"> 후보 위치·연결선 (최대 20)</label>
+                                </div>
+                                <div class="pp-hint">NAME: 발화 형식. 같은 NAME의 대사/생각은 한 명으로 세며, 모든 배정에 임베딩 매칭 임계치를 적용합니다. 마스크와 후보 가이드는 이 미리보기에만 표시됩니다.</div>
                             </div>
                         </div>
                     </div>
@@ -25228,9 +25231,9 @@
                     thought_opacity: 1.0,
                     padding: 16,
                     radius: 22,
-                    tail_len: 30,
+                    thought_shape: 'cloud',
+                    tail_threshold: 1.0,
                     max_width_ratio: 0.45,
-                    conf: 0.3,
                     match_thres: 0.55,
                 },
                 mode: 'vn',  // 활성 후처리 모드: 'vn' | 'bubble'
@@ -25967,6 +25970,8 @@
             const base = defaultPpConfig().bubble;
             Object.assign(base, b || {});
             delete base.thought_circle_r;  // 구름형 생각 말풍선의 폐기된 설정
+            delete base.tail_len;          // 폐기: 실제 꼬리 도형 길이에 연결되지 않던 값
+            delete base.conf;              // 폐기: 얼굴은 conf=0 + NAME 수 상위 N개
             // 구형 opacity만 저장된 구성 호환: 분리값이 없으면 opacity 로 보간.
             if (base.speech_opacity == null) base.speech_opacity = base.opacity ?? 1.0;
             if (base.thought_opacity == null) base.thought_opacity = base.opacity ?? 1.0;
@@ -25999,12 +26004,16 @@
             set('pp-bubble-border-width', b.border_width ?? 2);
             set('pp-bubble-padding', b.padding ?? 16);
             set('pp-bubble-radius', b.radius ?? 22);
-            set('pp-bubble-tail-len', b.tail_len ?? 30);
+            set('pp-bubble-tail-threshold', b.tail_threshold ?? 1.0);
+            set('pp-bubble-thought-shape', b.thought_shape || 'cloud');
             set('pp-bubble-max-width-ratio', b.max_width_ratio ?? 0.45);
             set('pp-bubble-speech-opacity', b.speech_opacity ?? b.opacity ?? 1.0);
             set('pp-bubble-thought-opacity', b.thought_opacity ?? b.opacity ?? 1.0);
-            set('pp-bubble-conf', b.conf ?? 0.3);
             set('pp-bubble-match-thres', b.match_thres ?? 0.55);
+            const debugMask = document.getElementById('pp-bubble-debug-mask');
+            const debugCandidates = document.getElementById('pp-bubble-debug-candidates');
+            if (debugMask) debugMask.checked = false;
+            if (debugCandidates) debugCandidates.checked = false;
             ppClearBase();  // 베이스는 세션 전용(저장 안 함)
         }
 
@@ -26022,13 +26031,15 @@
             b.border_width = _ppNum('pp-bubble-border-width', 2, 0, 20);
             b.padding = _ppNum('pp-bubble-padding', 16, 0, 200);
             b.radius = _ppNum('pp-bubble-radius', 22, 0, 200);
-            b.tail_len = _ppNum('pp-bubble-tail-len', 30, 0, 400);
+            b.tail_threshold = _ppNum('pp-bubble-tail-threshold', 1.0, 0, 5);
+            b.thought_shape = document.getElementById('pp-bubble-thought-shape').value === 'box' ? 'box' : 'cloud';
             delete b.thought_circle_r;
+            delete b.tail_len;
+            delete b.conf;
             b.max_width_ratio = _ppNum('pp-bubble-max-width-ratio', 0.45, 0.05, 1.0);
             b.speech_opacity = _ppNum('pp-bubble-speech-opacity', 1.0, 0, 1);
             b.thought_opacity = _ppNum('pp-bubble-thought-opacity', 1.0, 0, 1);
             b.opacity = b.speech_opacity;  // 구형 키 동기화(하위호환)
-            b.conf = _ppNum('pp-bubble-conf', 0.3, 0, 1);
             b.match_thres = _ppNum('pp-bubble-match-thres', 0.55, 0, 1);
             return b;
         }
@@ -26057,8 +26068,10 @@
                     border_width: b.border_width, opacity: b.opacity,
                     speech_opacity: b.speech_opacity, thought_opacity: b.thought_opacity,
                     padding: b.padding, radius: b.radius,
-                    tail_len: b.tail_len,
-                    max_width_ratio: b.max_width_ratio, conf: b.conf, match_thres: b.match_thres,
+                    thought_shape: b.thought_shape, tail_threshold: b.tail_threshold,
+                    max_width_ratio: b.max_width_ratio, match_thres: b.match_thres,
+                    preview_debug_mask: !!document.getElementById('pp-bubble-debug-mask')?.checked,
+                    preview_debug_candidates: !!document.getElementById('pp-bubble-debug-candidates')?.checked,
                 };
                 if (ppBubbleBaseDataUrl) body.base = ppBubbleBaseDataUrl;
                 const resp = await fetch('/api/postprocess/preview', {

@@ -1099,10 +1099,10 @@ def _default_bubble() -> dict:
         "speech_opacity": 1.0,            # 대사(발화) 말풍선 배경 불투명도(0~1)
         "thought_opacity": 1.0,           # 생각 말풍선 배경 불투명도(0~1)
         "padding": 16,                    # 몸통 내 텍스트 여백
-        "radius": 22,                     # 발화 말풍선 모서리 반경(타원화 후 미사용, 호환 유지)
-        "tail_len": 30,                   # 꼬리(얼굴→몸통) 길이
+        "radius": 22,                     # 코믹 각진형의 모서리 절삭 크기
+        "thought_shape": "cloud",         # 생각 표현: cloud | box(무라운드/무꼬리)
+        "tail_threshold": 1.0,             # 꼬리 생성 최대 거리(얼굴 최대 크기의 배율)
         "max_width_ratio": 0.45,          # 캔버스 폭 대비 말풍선 최대 폭 비율
-        "conf": 0.3,                      # YOLO 얼굴 검출 신뢰도 임계치
         "match_thres": 0.55,              # 코사인 유사도 매칭 임계치(이하 미배정)
     }
 
@@ -1203,10 +1203,16 @@ def get_bubble_settings(config: dict, bot_name: str = "") -> Optional[dict]:
         "thought_opacity": float(bb.get("thought_opacity", bb.get("opacity", 1.0)) or 1.0),
         "padding": int(bb.get("padding", 16) or 16),
         "radius": int(bb.get("radius", 22) or 22),
-        "tail_len": float(bb.get("tail_len", 30) or 30),
+        "thought_shape": str(bb.get("thought_shape", "cloud") or "cloud"),
+        "tail_threshold": float(
+            bb.get("tail_threshold", 1.0)
+            if bb.get("tail_threshold", 1.0) is not None else 1.0
+        ),
         "max_width_ratio": float(bb.get("max_width_ratio", 0.45) or 0.45),
-        "conf": float(bb.get("conf", 0.3) or 0.3),
-        "match_thres": float(bb.get("match_thres", 0.55) or 0.55),
+        "match_thres": float(
+            bb.get("match_thres", 0.55)
+            if bb.get("match_thres", 0.55) is not None else 0.55
+        ),
     }
 
 

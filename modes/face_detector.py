@@ -220,8 +220,8 @@ def _detect(sess, image_rgb, conf_thres):
 
 
 # ─── 다중 얼굴 검출 (말풍선 모드용) ─────────────────────────────────
-def _nms(boxes, scores, iou_thres):
-    """greedy NMS. boxes/scores 는 numpy 배열. 남은 인덱스 리스트 반환."""
+def _nms(boxes, scores, iou_thres, max_keep=None):
+    """greedy NMS. 신뢰도 순으로 ``max_keep``개가 모이면 즉시 종료한다."""
     import numpy as _np
     if len(boxes) == 0:
         return []
@@ -232,6 +232,8 @@ def _nms(boxes, scores, iou_thres):
     while order.size > 0:
         i = int(order[0])
         keep.append(i)
+        if max_keep is not None and len(keep) >= max(1, int(max_keep)):
+            break
         if order.size == 1:
             break
         xx1 = _np.maximum(x1[i], x1[order[1:]])
@@ -300,10 +302,12 @@ def _detect_multi(sess, image_rgb, conf_thres, iou_thres=_IOU_THRES,
         [ox1[valid], oy1[valid], ox2[valid], oy2[valid]], axis=1
     )
     conf = conf[valid]
-    keep_idx = _nms(boxes_original, conf, iou_thres)
-    if max_faces is not None:
-        max_faces = max(1, int(max_faces))
-        keep_idx = keep_idx[:max_faces]
+    keep_idx = _nms(
+        boxes_original,
+        conf,
+        iou_thres,
+        max_keep=max_faces,
+    )
 
     boxes = [tuple(float(v) for v in boxes_original[i]) for i in keep_idx]
     confs = [float(conf[i]) for i in keep_idx]

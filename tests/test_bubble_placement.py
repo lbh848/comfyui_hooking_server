@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 from PIL import Image, ImageDraw
@@ -6,16 +7,18 @@ from PIL import Image, ImageDraw
 from modes.background_segmenter import background_ratio
 from modes.face_detector import _detect_multi
 from modes.bubble_layout import choose_layout, choose_scaled_layout
+from modes.bubble_match import match_speakers_to_faces
 from modes.bubble_predictor import select_candidate
 from modes.postprocess import normalize_layout_font_scale
 from modes.bubble_render import (
-    _bubble_is_above_face,
     _draw_layout_bubble,
+    _draw_preview_debug,
     _face_candidate_limit,
     _draw_speech,
     _place_body,
     _protected_face_box,
     _resolve_layout_font_scale,
+    _tail_within_threshold,
     _tail_side,
 )
 
@@ -51,7 +54,7 @@ class BubblePlacementTest(unittest.TestCase):
         self.assertEqual(protected, (92.0, 92.0, 168.0, 168.0))
 
     def test_face_candidate_limit_tracks_unique_speaker_names(self):
-        self.assertEqual(_face_candidate_limit([]), 1)
+        self.assertEqual(_face_candidate_limit([]), 0)
         self.assertEqual(
             _face_candidate_limit([
                 {"speaker": "alice"},
@@ -64,6 +67,16 @@ class BubblePlacementTest(unittest.TestCase):
                 {"speaker": "alice"},
                 {"speaker": "bob"},
                 {"speaker": "carol"},
+            ]),
+            3,
+        )
+
+    def test_face_candidate_limit_ignores_repeated_speech_and_thought(self):
+        self.assertEqual(
+            _face_candidate_limit([
+                {"speaker": "alice", "type": "speech"},
+                {"speaker": "alice", "type": "thought"},
+                {"speaker": "bob", "type": "speech"},
             ]),
             2,
         )
@@ -130,6 +143,26 @@ class BubblePlacementTest(unittest.TestCase):
         )
         self.assertEqual(selected.shape, "cloud")
 
+    def test_speech_layout_is_limited_to_ellipse_or_comic_source_shape(self):
+        selected, _ = choose_scaled_layout(
+            "잠깐… 이게 정말 맞는 선택일까? 조금 더 생각해 보자…",
+            (1056, 1536),
+            font_scale=1.0,
+            allowed_shapes=("ellipse", "rounded"),
+        )
+        self.assertIn(selected.shape, ("ellipse", "rounded"))
+
+    def test_wrap_never_splits_inside_space_delimited_words(self):
+        text = "안녕하세요 반갑습니다 다시 만나요"
+        selected, _ = choose_layout(
+            text,
+            (240, 320),
+            min_font_size=20,
+            max_font_size=20,
+            allowed_shapes=("ellipse",),
+        )
+        self.assertEqual(" ".join(selected.lines), text)
+
     def test_candidate_uses_distance_before_confidence(self):
         face = (100, 100, 160, 160)
         candidates = [
@@ -193,16 +226,34 @@ class BubblePlacementTest(unittest.TestCase):
 
     def test_safe_fallback_never_covers_face(self):
         face = (200, 200, 260, 260)
-        placed = _place_body(face, 100, 50, [face], 500, 500, 30)
+        placed = _place_body(face, 100, 50, [face], 500, 500)
         self.assertIsNotNone(placed)
         rect, _, _ = placed
         self.assertFalse(_overlaps(rect, face))
 
-    def test_tail_only_when_bubble_center_is_above_face_center(self):
+    def test_tail_uses_distance_regardless_of_vertical_direction(self):
         face = (100, 100, 160, 160)
-        self.assertTrue(_bubble_is_above_face((80, 20, 180, 80), face))
-        self.assertFalse(_bubble_is_above_face((80, 110, 180, 150), face))
-        self.assertFalse(_bubble_is_above_face((80, 130, 180, 170), face))
+        above = _tail_within_threshold(
+            (80, 20, 180, 80), (130, 100), face, 1.0, "ellipse"
+        )
+        below = _tail_within_threshold(
+            (80, 180, 180, 240), (130, 160), face, 1.0, "ellipse"
+        )
+        far = _tail_within_threshold(
+            (80, 300, 180, 360), (130, 160), face, 1.0, "ellipse"
+        )
+        self.assertTrue(above[0])
+        self.assertTrue(below[0])
+        self.assertFalse(far[0])
+
+    def test_zero_tail_threshold_disables_tail(self):
+        visible, gap, limit = _tail_within_threshold(
+            (80, 20, 180, 80), (130, 100), (100, 100, 160, 160),
+            0.0, "ellipse",
+        )
+        self.assertFalse(visible)
+        self.assertGreater(gap, 0)
+        self.assertEqual(limit, 0)
 
     def test_speech_renderer_obeys_tail_flag(self):
         without_tail = Image.new("RGBA", (100, 100), (0, 0, 0, 0))
@@ -223,6 +274,37 @@ class BubblePlacementTest(unittest.TestCase):
         rect = (20, 20, 80, 50)
         self.assertEqual(_tail_side(rect, (50, 90)), "top")
         self.assertEqual(_tail_side(rect, (95, 35)), "left")
+
+    def test_body_and_curved_tail_have_no_internal_border_seam(self):
+        image = Image.new("RGBA", (120, 120), (0, 0, 0, 0))
+        _draw_layout_bubble(
+            image,
+            (20, 20, 80, 50),
+            (50, 90),
+            "ellipse",
+            (255, 255, 255, 255),
+            (0, 0, 0, 255),
+            3,
+            12,
+            True,
+        )
+        self.assertEqual(image.getpixel((50, 50)), (255, 255, 255, 255))
+
+    def test_thought_box_is_square_cornered_and_never_draws_tail(self):
+        image = Image.new("RGBA", (120, 120), (0, 0, 0, 0))
+        _draw_layout_bubble(
+            image,
+            (20, 20, 80, 60),
+            (50, 100),
+            "box",
+            (255, 255, 255, 255),
+            (0, 0, 0, 255),
+            2,
+            20,
+            True,
+        )
+        self.assertNotEqual(image.getpixel((20, 20)), (0, 0, 0, 0))
+        self.assertEqual(image.getpixel((50, 85)), (0, 0, 0, 0))
 
     def test_cloud_tail_is_drawn_only_when_requested(self):
         rect = (20, 20, 80, 60)
@@ -254,6 +336,41 @@ class BubblePlacementTest(unittest.TestCase):
             True,
         )
         self.assertNotEqual(with_tail.getpixel((50, 84)), (0, 0, 0, 0))
+
+    def test_single_name_single_face_still_obeys_embedding_threshold(self):
+        segments = [{"speaker": "alice", "text": "hello", "type": "speech"}]
+        image = Image.new("RGB", (100, 100), "white")
+        faces = [{"box": (20, 20, 60, 60), "conf": 0.9, "image": image}]
+        char_embedding = np.asarray([1.0, 0.0], dtype=np.float32)
+        face_embedding = np.asarray([0.8, 0.6], dtype=np.float32)
+        with patch("modes.face_embedder.get_char_embedding", return_value=char_embedding), patch(
+            "modes.face_embedder.embed_face_crop", return_value=face_embedding
+        ):
+            rejected = match_speakers_to_faces(
+                segments, faces, "bot", match_thres=0.85
+            )
+            accepted = match_speakers_to_faces(
+                segments, faces, "bot", match_thres=0.75
+            )
+        self.assertIsNone(rejected[0]["face_box"])
+        self.assertEqual(accepted[0]["face_box"], faces[0]["box"])
+        self.assertAlmostEqual(accepted[0]["sim"], 0.8, places=5)
+
+    def test_preview_debug_draws_mask_and_candidate_guides(self):
+        base = Image.new("RGBA", (100, 100), (40, 40, 40, 255))
+        protected = np.zeros((100, 100), dtype=np.uint8)
+        protected[:, :50] = 1
+        candidates = [{
+            "rect": (55, 10, 90, 35),
+            "center": (72.5, 22.5),
+            "anchor": (50, 40),
+            "face_box": (30, 30, 50, 50),
+            "valid": True,
+            "selected": True,
+        }]
+        debugged = _draw_preview_debug(base, protected, candidates, True, True)
+        self.assertNotEqual(debugged.getpixel((10, 10)), base.getpixel((10, 10)))
+        self.assertNotEqual(debugged.getpixel((70, 20)), base.getpixel((70, 20)))
 
 
 if __name__ == "__main__":

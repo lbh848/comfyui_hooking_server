@@ -2277,6 +2277,9 @@ def _save_postprocess_bubble(bot_name: str, bubble: dict):
     _backup_bot_json()
     from modes.postprocess import normalize_layout_font_scale
     clean = dict(bubble or {})
+    # 폐기된 말풍선 옵션은 기존 클라이언트가 보내더라도 다시 저장하지 않는다.
+    clean.pop("tail_len", None)
+    clean.pop("conf", None)
     clean["layout_font_scale"] = normalize_layout_font_scale(
         clean.get("layout_font_scale", 2.0)
     )

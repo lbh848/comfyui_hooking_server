@@ -217,40 +217,102 @@ def _rect_distance(a, b):
     return math.hypot(dx, dy)
 
 
+def evaluate_candidates(candidates, body_size, face_box, canvas_size, forbidden_boxes=(),
+                        occupied_boxes=(), margin=4, face_gap=2, bubble_gap=4,
+                        protected_foreground_mask=None, min_background_ratio=0.90):
+    """후보별 실제 배치 사각형과 통과 여부를 원래 순서대로 반환한다.
+
+    실시간 미리보기의 후보 오버레이와 최종 선택이 완전히 같은 판정 경로를
+    사용하도록 평가 결과를 구조화한다.
+    """
+    evaluated = []
+    for item in candidates or []:
+        record = dict(item)
+        record.update({"rect": None, "valid": False, "reason": "unknown"})
+        center = item.get("center")
+        try:
+            valid_center = bool(center) and all(math.isfinite(float(v)) for v in center)
+        except Exception as e:
+            print(f"[BUBBLE_PREDICTOR] 후보 중심 검사 실패({center!r}): {e}")
+            traceback.print_exc()
+            valid_center = False
+        if not valid_center:
+            record["reason"] = "invalid_center"
+            print(f"[BUBBLE_PREDICTOR] 잘못된 후보 중심 제외: {center}")
+            evaluated.append(record)
+            continue
+        rect = _clamped_rect(center, body_size, canvas_size, margin)
+        if rect is None:
+            record["reason"] = "outside_canvas"
+            evaluated.append(record)
+            continue
+        record["rect"] = rect
+        record["center"] = ((rect[0] + rect[2]) / 2.0, (rect[1] + rect[3]) / 2.0)
+        record["anchor"] = _face_boundary_anchor(record["center"], face_box)
+        if any(_rects_overlap(rect, box, gap=face_gap) for box in forbidden_boxes):
+            record["reason"] = "face_overlap"
+            evaluated.append(record)
+            continue
+        if any(_rects_overlap(rect, box, gap=bubble_gap) for box in occupied_boxes):
+            record["reason"] = "bubble_overlap"
+            evaluated.append(record)
+            continue
+        bg_ratio = background_ratio(protected_foreground_mask, rect)
+        record["background_ratio"] = bg_ratio
+        if bg_ratio + 1e-9 < float(min_background_ratio):
+            record["reason"] = "foreground_overlap"
+            evaluated.append(record)
+            continue
+        record["distance"] = _rect_distance(rect, face_box)
+        record["valid"] = True
+        record["reason"] = "valid"
+        evaluated.append(record)
+    return evaluated
+
+
 def select_candidate(candidates, body_size, face_box, canvas_size, forbidden_boxes=(),
                      occupied_boxes=(), margin=4, face_gap=2, bubble_gap=4,
-                     protected_foreground_mask=None, min_background_ratio=0.90):
+                     protected_foreground_mask=None, min_background_ratio=0.90,
+                     evaluated_candidates=None):
     """배경에 놓이고 얼굴을 가리지 않는 ONNX 후보 중 가까운 것을 선택한다.
 
     foreground 마스크가 있을 때 말풍선 사각 몸통의 배경 비율이 임계값보다 낮은
     후보는 제외한다. 통과 후보에서는 얼굴 거리, 배경 비율, 모델 confidence 순으로
     정렬한다. 마스크가 ``None``이면 기존 거리 우선 동작과 같다.
     """
+    evaluated = evaluated_candidates
+    if evaluated is None:
+        evaluated = evaluate_candidates(
+            candidates,
+            body_size,
+            face_box,
+            canvas_size,
+            forbidden_boxes=forbidden_boxes,
+            occupied_boxes=occupied_boxes,
+            margin=margin,
+            face_gap=face_gap,
+            bubble_gap=bubble_gap,
+            protected_foreground_mask=protected_foreground_mask,
+            min_background_ratio=min_background_ratio,
+        )
     ranked = []
-    for item in candidates or []:
-        center = item.get("center")
-        if not center or not all(math.isfinite(float(v)) for v in center):
-            print(f"[BUBBLE_PREDICTOR] 잘못된 후보 중심 제외: {center}")
+    for item in evaluated:
+        if not item.get("valid"):
             continue
-        rect = _clamped_rect(center, body_size, canvas_size, margin)
-        if rect is None:
-            print(f"[BUBBLE_PREDICTOR] 말풍선이 캔버스보다 커서 후보 제외: body_size={body_size}")
-            return None
-        if any(_rects_overlap(rect, box, gap=face_gap) for box in forbidden_boxes):
-            continue
-        if any(_rects_overlap(rect, box, gap=bubble_gap) for box in occupied_boxes):
-            continue
-        bg_ratio = background_ratio(protected_foreground_mask, rect)
-        if bg_ratio + 1e-9 < float(min_background_ratio):
-            continue
-        distance = _rect_distance(rect, face_box)
+        rect = item["rect"]
+        bg_ratio = float(item.get("background_ratio", 1.0))
+        distance = float(item.get("distance", _rect_distance(rect, face_box)))
         confidence = float(item.get("confidence", 0.0))
         ranked.append((distance, -bg_ratio, -confidence, rect, item))
 
     if not ranked:
+        reasons = {}
+        for item in evaluated:
+            reason = str(item.get("reason", "unknown"))
+            reasons[reason] = reasons.get(reason, 0) + 1
         print(
             "[BUBBLE_PREDICTOR] 얼굴/배경 조건을 만족하는 ONNX 후보 없음: "
-            f"min_background_ratio={float(min_background_ratio):.2f}"
+            f"min_background_ratio={float(min_background_ratio):.2f}, reasons={reasons}"
         )
         return None
     _, neg_bg_ratio, _, rect, item = min(

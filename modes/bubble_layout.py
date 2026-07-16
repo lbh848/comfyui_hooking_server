@@ -253,15 +253,10 @@ def _wrap_paragraph(
                         or previous in GOOD_BREAK_PUNCTUATION
                     )
                     if not at_natural_boundary:
-                        token_start = text.rfind(" ", 0, end) + 1
-                        token_end = text.find(" ", end)
-                        if token_end < 0:
-                            token_end = n
-                        # Split inside a word only when that word cannot fit on
-                        # an empty line.  This prevents Korean endings such as
-                        # "밖으/로" while retaining a fallback for long URLs.
-                        if width(text[token_start:token_end]) <= max_width + 1e-6:
-                            continue
+                        # 띄어쓰기 안쪽에서는 절대 줄을 끊지 않는다. 한 단어가
+                        # 현재 폭보다 길면 더 넓은 몸통/더 작은 폰트 후보가 고르게
+                        # 하고, 여기서 글자 단위로 잘라 "안/녕하/세요"를 만들지 않는다.
+                        continue
                 penalty = _boundary_penalty(text, end, next_start)
                 slack = max(0.0, 1.0 - line_width / max(max_width, 1.0))
                 punctuation = _punctuation_violations((line, text[next_start:]))
@@ -350,7 +345,11 @@ def _greedy_wrap_text(
     font: ImageFont.ImageFont,
     max_width: float,
 ) -> WrapResult:
-    """Unlimited-line fallback used to report a clean ``fits=False`` result."""
+    """공백 단위 전용 무제한 줄바꿈 폴백.
+
+    한 단어가 max_width보다 길어도 단어 자체를 보존한다. 이 후보는 overflow로
+    표시되어 호출자가 몸통 확장/폰트 축소 또는 렌더 스킵을 결정할 수 있다.
+    """
     lines: list[str] = []
     penalties: list[float] = []
     for paragraph in text.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
@@ -358,24 +357,19 @@ def _greedy_wrap_text(
         if not paragraph:
             lines.append("")
             continue
-        start = 0
-        while start < len(paragraph):
-            last_fit = start + 1
-            preferred_end = None
-            for end in range(start + 1, len(paragraph) + 1):
-                line = paragraph[start:end].rstrip()
-                if float(draw.textlength(line, font=font)) > max_width and end > start + 1:
-                    break
-                last_fit = end
-                next_start = _next_non_space(paragraph, end)
-                if _boundary_penalty(paragraph, end, next_start) <= 0.05:
-                    preferred_end = end
-            end = preferred_end if preferred_end and preferred_end > start else last_fit
-            next_start = _next_non_space(paragraph, end)
-            line = paragraph[start:end].rstrip()
-            lines.append(line)
-            penalties.append(_boundary_penalty(paragraph, end, next_start))
-            start = next_start
+        words = paragraph.split()
+        current = ""
+        for word in words:
+            trial = word if not current else f"{current} {word}"
+            if current and float(draw.textlength(trial, font=font)) > max_width:
+                lines.append(current)
+                penalties.append(0.24)
+                current = word
+            else:
+                current = trial
+        if current:
+            lines.append(current)
+            penalties.append(0.0)
     boundary_penalties = penalties[:-1]
     return WrapResult(
         tuple(lines),
@@ -775,15 +769,26 @@ def choose_layout(
     *,
     onnx_path: str | os.PathLike | None = None,
     shape_hint: str | None = None,
+    allowed_shapes: tuple[str, ...] | None = None,
     min_font_size: int | None = None,
     max_font_size: int | None = None,
     max_lines: int = 7,
     top_k: int = 5,
 ) -> tuple[LayoutCandidate, list[LayoutCandidate]]:
+    shapes = DEFAULT_SHAPES
+    if allowed_shapes is not None:
+        allowed = set(allowed_shapes)
+        shapes = tuple(shape for shape in DEFAULT_SHAPES if shape.name in allowed)
+        unknown = allowed.difference(shape.name for shape in DEFAULT_SHAPES)
+        if unknown:
+            raise ValueError(f"unknown allowed_shapes: {sorted(unknown)}")
+        if not shapes:
+            raise ValueError("allowed_shapes must contain at least one known shape")
     candidates = generate_layout_candidates(
         text,
         canvas_size,
         font_path,
+        shapes=shapes,
         shape_hint=shape_hint,
         min_font_size=min_font_size,
         max_font_size=max_font_size,
@@ -832,6 +837,7 @@ def choose_scaled_layout(
     *,
     font_scale: float = 2.0,
     force_shape: str | None = None,
+    allowed_shapes: tuple[str, ...] | None = None,
     max_lines: int = 7,
     top_k: int = 5,
 ) -> tuple[LayoutCandidate, list[LayoutCandidate]]:
@@ -849,6 +855,7 @@ def choose_scaled_layout(
         canvas_size,
         font_path,
         shape_hint=force_shape,
+        allowed_shapes=allowed_shapes,
         max_lines=max_lines,
         top_k=top_k,
     )
@@ -880,6 +887,7 @@ def choose_scaled_layout(
             canvas_size,
             font_path,
             shape_hint=keep_shape,
+            allowed_shapes=allowed_shapes,
             min_font_size=min_font,
             max_font_size=max_font,
             max_lines=max_lines,

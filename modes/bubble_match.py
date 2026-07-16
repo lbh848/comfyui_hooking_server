@@ -3,10 +3,9 @@ bubble_match - 말풍선 모드: 발화자(NAME) ↔ 감지된 얼굴 매칭
 
 speak 텍스트의 NAME 들과 삽화에서 감지된 얼굴들을 ViT-L/14 임베딩 코사인 유사도로 매칭한다.
 
-최적화:
-  - NAME 1개 & 감지된 얼굴 1개 → 임베딩/매칭 생략, 1:1 배정.
-  - 그 외 → 각 얼굴 임베딩 ↔ 각 NAME 캐릭터 임베딩 코사인 유사도, 그리디 배정(중복 방지).
-  - 임계치 미달 시 미배정(로그).
+모든 경우에 각 얼굴 임베딩 ↔ 각 NAME 캐릭터 임베딩 코사인 유사도를
+계산하고 그리디 배정한다(중복 방지). NAME/얼굴이 각각 하나뿐이어도 임계치를
+우회하지 않으며, 임계치 미달 시 미배정하고 사유를 로그에 남긴다.
 
 매칭 풀은 speak 에 등장한 NAME 들로 한정한다(NAME: 발화 형식이므로 주어진 NAME 만 사용).
 """
@@ -39,7 +38,6 @@ def match_speakers_to_faces(segments, faces, bot_name, match_thres=_MATCH_THRES_
     """
     try:
         from modes.face_embedder import embed_face_crop, get_char_embedding
-        from PIL import Image
     except Exception as e:
         print(f"[BUBBLE_MATCH] 의존 모듈 로드 실패: {e}")
         traceback.print_exc()
@@ -52,22 +50,16 @@ def match_speakers_to_faces(segments, faces, bot_name, match_thres=_MATCH_THRES_
         if sp and sp not in names:
             names.append(sp)
 
+    if not names:
+        print("[BUBBLE_MATCH] SPEAK에 NAME 형식의 발화자가 없어 전부 미배정")
+        return [{"segment": s, "face_box": None, "char_name": None, "sim": None} for s in segments]
+
     # 얼굴이 하나도 없으면 전부 미배정
     if not faces:
         print("[BUBBLE_MATCH] 감지된 얼굴 0건 — 전부 미배정")
         return [{"segment": s, "face_box": None, "char_name": None, "sim": None} for s in segments]
 
-    # ── 최적화: NAME 1 & 얼굴 1 → 임베딩 생략 ──
-    if len(names) == 1 and len(faces) == 1:
-        n0 = names[0]
-        box = faces[0]["box"]
-        print(f"[BUBBLE_MATCH] NAME 1 & 얼굴 1 → 임베딩 생략 배정: {n0} ↔ {box}")
-        return [{"segment": s,
-                 "face_box": box if (s or {}).get("speaker") == n0 else None,
-                 "char_name": n0 if (s or {}).get("speaker") == n0 else None,
-                 "sim": None} for s in segments]
-
-    # ── 일반 매칭: 각 NAME 의 캐릭터 임베딩 ──
+    # ── 각 NAME 의 캐릭터 임베딩 ──
     name_embs = {}
     for n in names:
         emb = get_char_embedding(bot_name, n)
@@ -110,14 +102,14 @@ def match_speakers_to_faces(segments, faces, bot_name, match_thres=_MATCH_THRES_
             cands.append((_cosine(ne, fe), n, fi))
     cands.sort(key=lambda x: x[0], reverse=True)
 
-    name_to_face = {}   # name -> face_idx
+    name_to_face = {}   # name -> (face_idx, similarity)
     used_faces = set()
     for sim, n, fi in cands:
         if n in name_to_face or fi in used_faces:
             continue
         if sim < match_thres:
             continue
-        name_to_face[n] = fi
+        name_to_face[n] = (fi, sim)
         used_faces.add(fi)
         print(f"[BUBBLE_MATCH] 배정: {n} ↔ 얼굴{fi} (box={faces[fi]['box']}, sim={sim:.3f})")
 
@@ -130,9 +122,9 @@ def match_speakers_to_faces(segments, faces, bot_name, match_thres=_MATCH_THRES_
     for s in segments:
         sp = (s or {}).get("speaker")
         if sp and sp in name_to_face:
-            fi = name_to_face[sp]
+            fi, sim = name_to_face[sp]
             results.append({"segment": s, "face_box": faces[fi]["box"],
-                            "char_name": sp, "sim": None})
+                            "char_name": sp, "sim": sim})
         else:
             results.append({"segment": s, "face_box": None, "char_name": sp, "sim": None})
     return results
