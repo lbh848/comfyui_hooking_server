@@ -53,9 +53,11 @@ class ChansubPromptBuilderTest(unittest.TestCase):
         )
         self.assertEqual(result["width"], 832)
         self.assertEqual(result["height"], 1216)
+        self.assertEqual(result["quality_tag_start"], 1)
+        self.assertEqual(result["quality_tag_count"], 2)
         self.assertEqual(
             result["positive"],
-            r"best quality, amazing quality, artist:sample, night, (dramatic lighting), "
+            r"artist:sample, best quality, amazing quality, night, (dramatic lighting), "
             r"shifty \(nikke\), standing, rain",
         )
         self.assertEqual(result["negative"], "bad anatomy, lowres")
@@ -82,7 +84,7 @@ class ChansubPromptBuilderTest(unittest.TestCase):
 
         self.assertEqual(
             result["positive"],
-            "sdxl quality, artist:sdxl, outdoors, 1girl",
+            "artist:sdxl, sdxl quality, outdoors, 1girl",
         )
         self.assertEqual(result["negative"], "sdxl negative")
         self.assertNotIn("artist:sample", result["positive"])
@@ -147,18 +149,32 @@ class ChansubServiceTest(unittest.TestCase):
         self.assertFalse(chansub_service._is_retryable_http_status(400))
         self.assertFalse(chansub_service._is_retryable_http_status(401))
 
-    def test_retry_reorders_only_top_level_negative_tags(self):
-        negative = r"lowres, (bad hands, extra fingers), blurry, text\, logo"
+    def test_retry_reorders_only_quality_area_of_positive_prompt(self):
+        positive = r"artist:name, best quality, amazing quality, 1girl, (red dress, blue ribbon)"
 
-        retry_negative, swapped = chansub_service.reorder_negative_prompt_for_retry(
-            negative, 1
+        retry_positive, swapped = chansub_service.reorder_positive_prompt_for_retry(
+            positive, 1, quality_tag_start=1, quality_tag_count=2
         )
 
-        self.assertEqual(swapped, (0, 1))
+        self.assertEqual(swapped, (1, 2))
         self.assertEqual(
-            retry_negative,
-            r"(bad hands, extra fingers), lowres, blurry, text\, logo",
+            retry_positive,
+            r"artist:name, amazing quality, best quality, 1girl, (red dress, blue ribbon)",
         )
+
+    def test_first_ten_retries_use_distinct_quality_orders(self):
+        positive = "artist:name, q1, q2, q3, q4, q5, 1girl"
+
+        retries = [
+            chansub_service.reorder_positive_prompt_for_retry(
+                positive, retry_number, quality_tag_start=1, quality_tag_count=5
+            )[0]
+            for retry_number in range(1, 11)
+        ]
+
+        self.assertEqual(len(set(retries)), 10)
+        self.assertTrue(all(value.startswith("artist:name, ") for value in retries))
+        self.assertTrue(all(value.endswith(", 1girl") for value in retries))
 
 
 class ChansubRetryTest(unittest.IsolatedAsyncioTestCase):
@@ -232,7 +248,7 @@ class ChansubRetryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sleep_mock.await_count, 2)
         sleep_mock.assert_awaited_with(1.5)
 
-    async def test_retry_updates_both_negative_prompt_fields_only_after_failure(self):
+    async def test_retry_updates_both_positive_prompt_fields_only_after_failure(self):
         captured_bodies = []
 
         async def capture_request(body, headers):
@@ -247,22 +263,32 @@ class ChansubRetryTest(unittest.IsolatedAsyncioTestCase):
             chansub_service, "_post_generate_request", side_effect=capture_request
         ), patch.object(chansub_service.asyncio, "sleep", new=AsyncMock()):
             image, result = await chansub_service.generate_image(
-                "positive",
+                "artist:name, best quality, amazing quality, 1girl, outdoors",
                 "lowres, bad hands, blurry",
                 640,
                 960,
                 max_retries=1,
                 retry_delay_sec=0,
+                quality_tag_start=1,
+                quality_tag_count=2,
             )
 
         first_params = captured_bodies[0]["parameters"]
         retry_params = captured_bodies[1]["parameters"]
-        self.assertEqual(first_params["negative_prompt"], "lowres, bad hands, blurry")
-        self.assertEqual(retry_params["negative_prompt"], "bad hands, lowres, blurry")
         self.assertEqual(
-            retry_params["v4_negative_prompt"]["caption"]["base_caption"],
-            "bad hands, lowres, blurry",
+            captured_bodies[0]["input"],
+            "artist:name, best quality, amazing quality, 1girl, outdoors",
         )
+        self.assertEqual(
+            captured_bodies[1]["input"],
+            "artist:name, amazing quality, best quality, 1girl, outdoors",
+        )
+        self.assertEqual(
+            retry_params["v4_prompt"]["caption"]["base_caption"],
+            "artist:name, amazing quality, best quality, 1girl, outdoors",
+        )
+        self.assertEqual(first_params["negative_prompt"], "lowres, bad hands, blurry")
+        self.assertEqual(retry_params["negative_prompt"], "lowres, bad hands, blurry")
         self.assertEqual(first_params["seed"], retry_params["seed"])
         self.assertEqual(image, b"image-data")
         self.assertEqual(result["attempts"], 2)

@@ -34,6 +34,25 @@ def _get_workflow_type(settings: dict) -> str:
     return workflow_type
 
 
+def _get_quality_tags(tags: dict, settings: dict) -> list[str]:
+    """현재 챈섭 워크플로우와 프리셋에 해당하는 품질 태그를 반환한다."""
+    quality_presets = tags.get("quality_presets", {}) or {}
+    workflow_type = _get_workflow_type(settings)
+    quality_name = settings.get(f"{workflow_type}_quality_preset", "")
+    if quality_name and quality_name in quality_presets:
+        return _as_tags(quality_presets.get(quality_name, []))
+    quality_key = "anima_quality" if workflow_type == "anima" else "quality"
+    return _as_tags(tags.get(quality_key, []))
+
+
+def _get_artist_tags(tags: dict, settings: dict) -> list[str]:
+    """현재 챈섭 워크플로우와 프리셋에 해당하는 아티스트 태그를 반환한다."""
+    artist_presets = tags.get("artist_presets", {}) or {}
+    workflow_type = _get_workflow_type(settings)
+    artist_name = settings.get(f"{workflow_type}_artist_preset", "")
+    return _as_tags(artist_presets.get(artist_name, []))
+
+
 class ChansubPromptBuilder:
     """삽화 설정을 Comfy 문법의 POSITIVE/NEGATIVE로 평탄화한다."""
 
@@ -45,25 +64,16 @@ class ChansubPromptBuilder:
         tags: dict,
         settings: dict,
     ) -> str:
-        artist_presets = tags.get("artist_presets", {}) or {}
-        quality_presets = tags.get("quality_presets", {}) or {}
-
         workflow_type = _get_workflow_type(settings)
-        artist_name = settings.get(f"{workflow_type}_artist_preset", "")
-        quality_name = settings.get(f"{workflow_type}_quality_preset", "")
 
-        artist_tags = _as_tags(artist_presets.get(artist_name, []))
-        if quality_name and quality_name in quality_presets:
-            quality_tags = _as_tags(quality_presets.get(quality_name, []))
-        else:
-            quality_key = "anima_quality" if workflow_type == "anima" else "quality"
-            quality_tags = _as_tags(tags.get(quality_key, []))
+        artist_tags = _get_artist_tags(tags, settings)
+        quality_tags = _get_quality_tags(tags, settings)
 
         scene_supplement = supplement if workflow_type == "anima" else ""
 
         positive = _join_parts(
-            ", ".join(quality_tags),
             ", ".join(artist_tags),
+            ", ".join(quality_tags),
             setup,
             char,
             scene_supplement,
@@ -90,9 +100,13 @@ class ChansubPromptBuilder:
         tags: dict,
         settings: dict,
     ) -> dict:
+        artist_tags = _get_artist_tags(tags, settings)
+        quality_tags = _get_quality_tags(tags, settings)
         return {
             "positive": self.build_positive_prompt(setup, char, supplement, tags, settings),
             "negative": self.build_negative_prompt(tags, settings),
             "width": int(settings.get("img_w", 756) or 756),
             "height": int(settings.get("img_h", 756) or 756),
+            "quality_tag_start": len(artist_tags),
+            "quality_tag_count": len(quality_tags),
         }

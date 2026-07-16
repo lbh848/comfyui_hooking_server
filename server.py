@@ -1224,6 +1224,8 @@ async def generate_image_with_prompt(
     provider: str = "comfy",
     width: int | None = None,
     height: int | None = None,
+    chansub_quality_tag_start: int = 0,
+    chansub_quality_tag_count: int = 0,
 ):
     """선택 공급자로 이미지를 생성한다.
 
@@ -1249,6 +1251,8 @@ async def generate_image_with_prompt(
             request_height,
             max_retries=app_config.get("chansub_max_retries", 2),
             retry_delay_sec=app_config.get("chansub_retry_delay_sec", 3.0),
+            quality_tag_start=chansub_quality_tag_start,
+            quality_tag_count=chansub_quality_tag_count,
         )
         if progress_callback and image_bytes:
             try:
@@ -1914,6 +1918,8 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
             chansub_workflow_type = "anima"
         generation_width = 756 if illustration_provider == "chansub" else None
         generation_height = 756 if illustration_provider == "chansub" else None
+        chansub_quality_tag_start = 0
+        chansub_quality_tag_count = 0
         _speak_text = ""  # [SPEAK] 섹션 원문 (후처리 합성용)
         if bot_name and app_config.get("bot_mode_enabled", False):
             # 삽화 모드: RAW 규칙 선처리 → 파싱 → 캐릭터 감지 → 빌드
@@ -1983,6 +1989,8 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                     negative = chansub_built["negative"]
                     generation_width = chansub_built["width"]
                     generation_height = chansub_built["height"]
+                    chansub_quality_tag_start = chansub_built["quality_tag_start"]
+                    chansub_quality_tag_count = chansub_built["quality_tag_count"]
                     print(
                         f"[ILLUST:CHANSUB] Comfy 프롬프트 빌드 완료: "
                         f"profile={'group' if is_multi else 'solo'}, "
@@ -2063,6 +2071,8 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
             provider=illustration_provider,
             width=generation_width,
             height=generation_height,
+            chansub_quality_tag_start=chansub_quality_tag_start,
+            chansub_quality_tag_count=chansub_quality_tag_count,
         )
         elapsed_time = time.time() - start_time
 

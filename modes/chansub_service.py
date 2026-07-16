@@ -166,19 +166,36 @@ def _split_top_level_prompt_tags(prompt: str) -> list[str]:
     return tags
 
 
-def reorder_negative_prompt_for_retry(negative: str, retry_number: int) -> tuple[str, tuple[int, int] | None]:
-    """챈섭 재시도 본문이 달라지도록 최상위 인접 태그 한 쌍을 교환한다."""
-    tags = _split_top_level_prompt_tags(negative)
-    if len(tags) < 2:
+def reorder_positive_prompt_for_retry(
+    positive: str,
+    retry_number: int,
+    quality_tag_start: int,
+    quality_tag_count: int,
+) -> tuple[str, tuple[int, int] | None]:
+    """챈섭 재시도 시 긍정 프롬프트의 품질 태그 영역 안에서만 순서를 바꾼다."""
+    tags = _split_top_level_prompt_tags(positive)
+    quality_start = min(max(0, int(quality_tag_start)), len(tags))
+    quality_end = min(quality_start + max(0, int(quality_tag_count)), len(tags))
+    reorderable_count = quality_end - quality_start
+    candidate_pairs = [
+        (left, right)
+        for left in range(quality_start, quality_end - 1)
+        for right in range(left + 1, quality_end)
+        if tags[left] != tags[right]
+    ]
+    if not candidate_pairs:
         print(
-            f"[CHANSUB] 부정 프롬프트 태그 순서 변경 생략: "
-            f"retry={retry_number}, tag_count={len(tags)}"
+            f"[CHANSUB] 긍정 품질 태그 순서 변경 생략: "
+            f"retry={retry_number}, quality_tag_start={quality_start}, "
+            f"quality_tag_count={reorderable_count}, "
+            f"total_tag_count={len(tags)}"
         )
-        return negative, None
+        return positive, None
 
-    pair_start = max(0, int(retry_number) - 1) % (len(tags) - 1)
-    tags[pair_start], tags[pair_start + 1] = tags[pair_start + 1], tags[pair_start]
-    return ", ".join(tags), (pair_start, pair_start + 1)
+    pair_index = max(0, int(retry_number) - 1) % len(candidate_pairs)
+    left, right = candidate_pairs[pair_index]
+    tags[left], tags[right] = tags[right], tags[left]
+    return ", ".join(tags), (left, right)
 
 
 async def _post_generate_request(body: dict, headers: dict[str, str]) -> bytes:
@@ -227,6 +244,8 @@ async def generate_image(
     *,
     max_retries: int = 2,
     retry_delay_sec: float = 3.0,
+    quality_tag_start: int = 0,
+    quality_tag_count: int = 0,
 ) -> tuple[bytes | None, str | dict]:
     if not _api_key:
         message = "챈섭 API 키가 설정되지 않았습니다."
@@ -260,16 +279,16 @@ async def generate_image(
 
     for attempt in range(1, total_attempts + 1):
         if attempt > 1:
-            retry_negative, swapped_indexes = reorder_negative_prompt_for_retry(
-                negative, attempt - 1
+            retry_positive, swapped_indexes = reorder_positive_prompt_for_retry(
+                positive, attempt - 1, quality_tag_start, quality_tag_count
             )
-            body["parameters"]["negative_prompt"] = retry_negative
-            body["parameters"]["v4_negative_prompt"]["caption"]["base_caption"] = retry_negative
+            body["input"] = retry_positive
+            body["parameters"]["v4_prompt"]["caption"]["base_caption"] = retry_positive
             if swapped_indexes is not None:
                 print(
-                    f"[CHANSUB] 재시도 부정 프롬프트 순서 변경: "
+                    f"[CHANSUB] 재시도 긍정 품질 태그 순서 변경: "
                     f"retry={attempt - 1}, swapped={swapped_indexes[0]}<->{swapped_indexes[1]}, "
-                    f"negative_len={len(retry_negative)}"
+                    f"positive_len={len(retry_positive)}"
                 )
         print(
             f"[CHANSUB] → POST {CHANSUB_URL} model={CHANSUB_MODEL} "
