@@ -2,7 +2,7 @@
 face_embedder - ONNX Runtime 기반 CLIP ViT-L/14 시각 임베딩 (CPU)
 
 말풍선 모드의 얼굴 매칭용. 삽화에서 감지된 얼굴과 캐릭터의 _face_image.webp 를
-**동일한 로컬 ONNX 모델**로 768-d 임베딩해 코사인 유사도로 매칭한다.
+**동일한 로컬 ONNX 모델**로 임베딩해 코사인 유사도로 매칭한다.
 
 - 모델: CLIP ViT-B/16 시각 인코더만 잘라낸 ONNX (models/vitl14_visual.onnx).
   export 는 export_vitl14_onnx.py 로 수행. 파일이 없으면 여기서 에러 로그 후 None 반환.
@@ -16,7 +16,10 @@ face_embedder - ONNX Runtime 기반 CLIP ViT-L/14 시각 임베딩 (CPU)
 
 import hashlib
 import os
+import shutil
+import time
 import traceback
+import uuid
 
 import numpy as np
 from PIL import Image as _PILImage
@@ -108,7 +111,7 @@ def _l2_normalize(v):
 
 
 def embed_image(image) -> np.ndarray:
-    """PIL.Image → 768-d L2 정규화 임베딩. 실패 시 None."""
+    """PIL.Image → L2 정규화 임베딩. 실패 시 None."""
     sess = _get_session()
     if sess is None:
         print("[FACE_EMBEDDER] 세션 사용 불가 — embed_image 스킵")
@@ -126,7 +129,7 @@ def embed_image(image) -> np.ndarray:
 
 
 def embed_face_crop(image, box):
-    """PIL.Image 의 box(x1,y1,x2,y2) 영역 크롭 → 768-d 임베딩. 실패 시 None."""
+    """PIL.Image 의 box(x1,y1,x2,y2) 영역 크롭 → 임베딩. 실패 시 None."""
     try:
         x1, y1, x2, y2 = box
         W, H = image.size
@@ -153,35 +156,91 @@ def _sha256_file(path):
 
 
 def _char_face_image_path(bot_name, char_name):
-    """캐릭터 정규화 얼굴 이미지 경로. _face_image.webp 우선, 없으면 rep_images 첫 이미지 fallback."""
+    """사용자가 확정한 캐릭터 FACE 경로. 대표이미지를 직접 임베딩하지 않는다."""
     char_dir = os.path.join(BOT_DIR, bot_name, char_name)
     face = os.path.join(char_dir, "_face_image.webp")
     if os.path.isfile(face):
         return face, True
-    # fallback: bot.json rep_images 첫 이미지
-    try:
-        from modes.bot_mode import _load_bot_data
-        data = _load_bot_data()
-        bot = next((b for b in data["bots"] if b["name"] == bot_name), None)
-        if bot:
-            char = next((c for c in bot.get("characters", []) if c["name"] == char_name), None)
-            if char and char.get("rep_images"):
-                rep = os.path.join(char_dir, char["rep_images"][0])
-                if os.path.isfile(rep):
-                    print(f"[FACE_EMBEDDER] _face_image.webp 없음 → rep_images fallback: {rep}")
-                    return rep, False
-    except Exception as e:
-        print(f"[FACE_EMBEDDER] rep_images fallback 조회 실패: {e}")
     return None, False
 
 
+def build_embedding_from_path(image_path):
+    """이미지 파일을 임베딩하고 ``(float32 emb, sha256)``를 반환한다."""
+    if not image_path or not os.path.isfile(image_path):
+        print(f"[FACE_EMBEDDER] 임베딩 소스 이미지 없음: {image_path}")
+        return None
+    try:
+        source_hash = _sha256_file(image_path)
+        with _PILImage.open(image_path) as img:
+            emb = embed_image(img)
+        if emb is None:
+            print(f"[FACE_EMBEDDER] 파일 임베딩 실패: {image_path}")
+            return None
+        return np.asarray(emb, dtype=np.float32).reshape(-1), source_hash
+    except Exception as e:
+        print(f"[FACE_EMBEDDER] 파일 임베딩 예외({image_path}): {e}")
+        traceback.print_exc()
+        return None
+
+
+def _backup_embedding_cache(cache_path, backup_dir=None):
+    """기존 임베딩 캐시를 요구사항/ 또는 지정 폴더에 백업한다."""
+    if not os.path.isfile(cache_path):
+        return None
+    try:
+        if backup_dir is None:
+            stamp = time.strftime("%Y%m%d_%H%M%S")
+            backup_dir = os.path.join(
+                BASE_DIR,
+                "요구사항",
+                f"face_embedding_cache_backup_{stamp}_{uuid.uuid4().hex[:8]}",
+            )
+        os.makedirs(backup_dir, exist_ok=True)
+        backup_path = os.path.join(backup_dir, os.path.basename(cache_path))
+        shutil.copy2(cache_path, backup_path)
+        print(f"[FACE_EMBEDDER] 기존 캐시 백업: {cache_path} → {backup_path}")
+        return backup_path
+    except Exception as e:
+        print(f"[FACE_EMBEDDER] 캐시 백업 실패({cache_path}): {e}")
+        traceback.print_exc()
+        raise
+
+
+def write_embedding_cache(cache_path, emb, source_hash, backup_dir=None):
+    """임베딩 캐시를 백업 후 원자적으로 저장한다."""
+    tmp_path = f"{cache_path}.tmp-{uuid.uuid4().hex}"
+    try:
+        if os.path.isfile(cache_path):
+            _backup_embedding_cache(cache_path, backup_dir=backup_dir)
+        os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+        emb32 = np.asarray(emb, dtype=np.float32).reshape(-1)
+        with open(tmp_path, "wb") as f:
+            np.savez(f, emb=emb32, sha256=np.array(str(source_hash)))
+        os.replace(tmp_path, cache_path)
+        print(f"[FACE_EMBEDDER] 임베딩 캐싱: {cache_path} (sha256={str(source_hash)[:12]}…)")
+        return _l2_normalize(emb32)
+    except Exception as e:
+        print(f"[FACE_EMBEDDER] 임베딩 캐시 저장 실패({cache_path}): {e}")
+        traceback.print_exc()
+        if os.path.isfile(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except Exception as cleanup_error:
+                print(f"[FACE_EMBEDDER] 임시 캐시 삭제 실패({tmp_path}): {cleanup_error}")
+                traceback.print_exc()
+        return None
+
+
 def get_char_embedding(bot_name, char_name):
-    """캐릭터 얼굴 768-d 임베딩 (lazy + SHA-256 캐시).
+    """캐릭터 얼굴 임베딩 (lazy + SHA-256 캐시).
 
     bot/<봇>/<캐릭>/_face_image.l14.npz 에 {emb, sha256} 저장.
     webp SHA-256 불일치/무캐시면 재임베딩.
 
-    Returns: np.ndarray(768,) 또는 None (이미지 없음/임베딩 실패).
+    대표이미지는 직접 임베딩하지 않는다. 프로그램용 embedding UI에서 사용자가
+    ONNX 얼굴 크롭을 확인하고 ``_face_image.webp``로 확정한 뒤 사용한다.
+
+    Returns: 1차원 np.ndarray 또는 None (FACE 이미지 없음/임베딩 실패).
     """
     src_path, _ = _char_face_image_path(bot_name, char_name)
     if not src_path:
@@ -206,15 +265,16 @@ def get_char_embedding(bot_name, char_name):
 
     # 임베딩 수행
     try:
-        img = _PILImage.open(src_path)
-        emb = embed_image(img)
-        if emb is None:
+        built = build_embedding_from_path(src_path)
+        if built is None:
             print(f"[FACE_EMBEDDER] 임베딩 실패: {bot_name}/{char_name}")
             return None
-        emb32 = np.asarray(emb, dtype=np.float32)
-        np.savez(cache_path, emb=emb32, sha256=np.array(cur_hash))
-        print(f"[FACE_EMBEDDER] 임베딩 캐싱: {cache_path} (sha256={cur_hash[:12]}…)")
-        return _l2_normalize(emb32)
+        emb32, built_hash = built
+        saved = write_embedding_cache(cache_path, emb32, built_hash)
+        if saved is None:
+            print(f"[FACE_EMBEDDER] 임베딩 캐시 저장 실패: {bot_name}/{char_name}")
+            return None
+        return saved
     except Exception as e:
         print(f"[FACE_EMBEDDER] ⚠ get_char_embedding 실패({bot_name}/{char_name}): {e}")
         traceback.print_exc()

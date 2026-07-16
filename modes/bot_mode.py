@@ -6,14 +6,18 @@ BotMode - 삽화 설정 모드
 """
 
 import asyncio
+import hashlib
 import json
+import math
 import os
 import re
+import threading
 import time
 import uuid
 import shutil
 import traceback
 from typing import Optional
+from urllib.parse import quote
 from aiohttp import web
 
 
@@ -2368,6 +2372,11 @@ class BotDataPatcher:
     def __init__(self):
         self._workflow_api = None
         self._workflow_hash = None
+        self._program_embedding_previews = {}
+        self._program_embedding_preview_lock = threading.RLock()
+        self._program_embedding_preview_root = os.path.join(
+            BASE_DIR, "current_work", "program_embedding_previews"
+        )
 
     async def _load_utility_workflow(self) -> tuple[dict | None, str | None]:
         """utility_workflow_source_path에서 워크플로우를 로드한다.
@@ -2410,6 +2419,549 @@ class BotDataPatcher:
 
         self._workflow_hash = current_hash
         return self._workflow_api, None
+
+    # ─── 프로그램용 FACE embedding ──────────────────────────
+    @staticmethod
+    def _program_embedding_float(body, key, default, minimum, maximum):
+        raw = body.get(key, default)
+        try:
+            value = float(raw)
+        except (TypeError, ValueError) as e:
+            print(f"[PROGRAM_EMBEDDING] 숫자 변환 실패: {key}={raw!r}")
+            raise ValueError(f"{key} 값이 숫자가 아닙니다: {raw!r}") from e
+        if not math.isfinite(value) or value < minimum or value > maximum:
+            print(
+                f"[PROGRAM_EMBEDDING] 설정 범위 오류: {key}={value}, "
+                f"허용={minimum}~{maximum}"
+            )
+            raise ValueError(f"{key} 값은 {minimum}~{maximum} 범위여야 합니다.")
+        return value
+
+    @staticmethod
+    def _program_embedding_hash(path):
+        h = hashlib.sha256()
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(65536), b""):
+                h.update(chunk)
+        return h.hexdigest()
+
+    @staticmethod
+    def _program_embedding_safe_component(value):
+        safe = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", str(value)).strip(". ")
+        return safe or "_"
+
+    def _program_embedding_remove_dir(self, path):
+        if not path or not os.path.isdir(path):
+            return
+        try:
+            root = os.path.abspath(self._program_embedding_preview_root)
+            target = os.path.abspath(path)
+            if os.path.commonpath([root, target]) != root or target == root:
+                print(f"[PROGRAM_EMBEDDING] 임시 폴더 삭제 거부(범위 밖): {target}")
+                return
+            shutil.rmtree(target)
+            print(f"[PROGRAM_EMBEDDING] 임시 미리보기 삭제: {target}")
+        except Exception as e:
+            print(f"[PROGRAM_EMBEDDING] 임시 미리보기 삭제 실패({path}): {e}")
+            traceback.print_exc()
+
+    def _program_embedding_cleanup_expired(self):
+        cutoff = time.time() - 30 * 60
+        expired = []
+        with self._program_embedding_preview_lock:
+            for preview_id, session in self._program_embedding_previews.items():
+                if float(session.get("created_at", 0)) < cutoff:
+                    expired.append(preview_id)
+            sessions = [
+                self._program_embedding_previews.pop(preview_id)
+                for preview_id in expired
+            ]
+        for session in sessions:
+            print(f"[PROGRAM_EMBEDDING] 만료된 미리보기 정리: {session.get('preview_id')}")
+            self._program_embedding_remove_dir(session.get("session_dir"))
+        try:
+            if not os.path.isdir(self._program_embedding_preview_root):
+                return
+            with self._program_embedding_preview_lock:
+                active_dirs = {
+                    os.path.abspath(session.get("session_dir", ""))
+                    for session in self._program_embedding_previews.values()
+                }
+            for name in os.listdir(self._program_embedding_preview_root):
+                path = os.path.join(self._program_embedding_preview_root, name)
+                if not os.path.isdir(path) or os.path.abspath(path) in active_dirs:
+                    continue
+                if os.path.getmtime(path) < cutoff:
+                    print(f"[PROGRAM_EMBEDDING] 재시작 전 만료 미리보기 정리: {path}")
+                    self._program_embedding_remove_dir(path)
+        except Exception as e:
+            print(f"[PROGRAM_EMBEDDING] 만료 미리보기 스캔 실패: {e}")
+            traceback.print_exc()
+
+    def _program_embedding_take_session(self, preview_id):
+        with self._program_embedding_preview_lock:
+            return self._program_embedding_previews.pop(preview_id, None)
+
+    def _program_embedding_get_session(self, preview_id):
+        with self._program_embedding_preview_lock:
+            return self._program_embedding_previews.get(preview_id)
+
+    def _create_program_embedding_preview(self, body):
+        """FACE 추출 결과를 임시 폴더에 만들고 저장 전 검토 세션을 반환한다."""
+        self._program_embedding_cleanup_expired()
+        bot_name = str(body.get("bot_name", "")).strip()
+        raw_names = body.get("char_names", [])
+        if not bot_name:
+            raise ValueError("봇 이름이 비어있습니다.")
+        if not isinstance(raw_names, list):
+            print(f"[PROGRAM_EMBEDDING] char_names가 리스트가 아님: {type(raw_names)}")
+            raise ValueError("char_names는 리스트여야 합니다.")
+        char_names = []
+        for raw_name in raw_names:
+            name = str(raw_name).strip()
+            if name and name not in char_names:
+                char_names.append(name)
+        if not char_names:
+            raise ValueError("선택된 캐릭터가 없습니다.")
+
+        crop_top = self._program_embedding_float(body, "crop_top", 1.0, 0.1, 10.0)
+        crop_bottom = self._program_embedding_float(body, "crop_bottom", 1.0, 0.1, 10.0)
+        confidence = self._program_embedding_float(body, "confidence", 0.3, 0.0, 1.0)
+        overwrite = bool(body.get("overwrite", False))
+
+        data = _load_bot_data()
+        bot = next((b for b in data.get("bots", []) if b.get("name") == bot_name), None)
+        if not bot:
+            raise ValueError(f"봇을 찾을 수 없습니다: {bot_name}")
+        char_by_name = {c.get("name"): c for c in bot.get("characters", [])}
+        missing = [name for name in char_names if name not in char_by_name]
+        if missing:
+            print(f"[PROGRAM_EMBEDDING] 존재하지 않는 캐릭터: {missing}")
+            raise ValueError(f"캐릭터를 찾을 수 없습니다: {', '.join(missing)}")
+
+        preview_id = uuid.uuid4().hex
+        session_dir = os.path.join(self._program_embedding_preview_root, preview_id)
+        os.makedirs(session_dir, exist_ok=False)
+        session_items = []
+        response_items = []
+
+        try:
+            from PIL import Image
+            from modes import face_detector
+
+            for index, char_name in enumerate(char_names):
+                char = char_by_name[char_name]
+                char_dir = os.path.join(BOT_DIR, bot_name, char_name)
+                face_path = os.path.join(char_dir, "_face_image.webp")
+                existing_face = os.path.isfile(face_path)
+                face_url = (
+                    f"/api/bot_mode/image/{quote(bot_name, safe='')}/"
+                    f"{quote(char_name, safe='')}/_face_image.webp"
+                    if existing_face else ""
+                )
+                rep_images = char.get("rep_images") or []
+                rep_name = str(rep_images[0]) if rep_images else ""
+                rep_path = os.path.join(char_dir, rep_name) if rep_name else ""
+                rep_exists = bool(rep_path and os.path.isfile(rep_path))
+                rep_url = (
+                    f"/api/bot_mode/image/{quote(bot_name, safe='')}/"
+                    f"{quote(char_name, safe='')}/{quote(rep_name, safe='')}"
+                    if rep_exists else ""
+                )
+
+                item = {
+                    "char_name": char_name,
+                    "face_path": None,
+                    "confirmed_sha256": "",
+                    "save_new_face": False,
+                    "preview_path": "",
+                }
+                response = {
+                    "char_name": char_name,
+                    "status": "failed",
+                    "source_label": "추출 실패",
+                    "display_url": rep_url,
+                    "existing_url": face_url,
+                    "representative_url": rep_url,
+                    "detected_confidence": None,
+                    "can_continue": False,
+                    "message": "",
+                }
+
+                if existing_face and not overwrite:
+                    source_hash = self._program_embedding_hash(face_path)
+                    item.update({
+                        "face_path": face_path,
+                        "confirmed_sha256": source_hash,
+                    })
+                    response.update({
+                        "status": "existing",
+                        "source_label": "기존 데이터 패치 FACE",
+                        "display_url": face_url,
+                        "can_continue": True,
+                        "message": "기존 FACE를 유지하고 임베딩합니다.",
+                    })
+                    print(f"[PROGRAM_EMBEDDING] 기존 FACE 우선 사용: {bot_name}/{char_name}")
+                elif not rep_exists:
+                    response["message"] = "대표 이미지 파일이 없어 ONNX 얼굴 추출을 할 수 없습니다."
+                    print(
+                        f"[PROGRAM_EMBEDDING] 대표 이미지 없음: {bot_name}/{char_name}, "
+                        f"rep={rep_name!r}"
+                    )
+                else:
+                    try:
+                        with Image.open(rep_path) as opened:
+                            source_image = opened.convert("RGB")
+                        crop, detected_confidence = face_detector.crop_face(
+                            source_image,
+                            top_mult=crop_top,
+                            bottom_mult=crop_bottom,
+                            target_size=512,
+                            conf_thres=confidence,
+                            device="auto",
+                            return_conf=True,
+                        )
+                        response["detected_confidence"] = detected_confidence
+                        if crop is None:
+                            if existing_face:
+                                source_hash = self._program_embedding_hash(face_path)
+                                item.update({
+                                    "face_path": face_path,
+                                    "confirmed_sha256": source_hash,
+                                })
+                                response.update({
+                                    "status": "failed_existing",
+                                    "source_label": "추출 실패 · 기존 FACE 유지",
+                                    "display_url": face_url,
+                                    "can_continue": True,
+                                    "message": (
+                                        "설정 임계치에서 얼굴을 찾지 못해 기존 FACE를 유지합니다."
+                                    ),
+                                })
+                            else:
+                                response["message"] = "설정 임계치에서 얼굴을 찾지 못했습니다."
+                            print(
+                                f"[PROGRAM_EMBEDDING] 얼굴 추출 실패: {bot_name}/{char_name}, "
+                                f"confidence={confidence}, 최고={detected_confidence}"
+                            )
+                        else:
+                            preview_path = os.path.join(session_dir, f"{index}.webp")
+                            crop.save(preview_path, format="WEBP", quality=95, method=6)
+                            source_hash = self._program_embedding_hash(preview_path)
+                            item.update({
+                                "face_path": preview_path,
+                                "confirmed_sha256": source_hash,
+                                "save_new_face": True,
+                                "preview_path": preview_path,
+                            })
+                            response.update({
+                                "status": "extracted",
+                                "source_label": "ONNX 추출 결과",
+                                "display_url": (
+                                    f"/api/bot_mode/program_embedding/preview_image/"
+                                    f"{preview_id}/{index}"
+                                ),
+                                "can_continue": True,
+                                "message": "계속을 누르면 이 이미지를 FACE로 저장합니다.",
+                            })
+                            print(
+                                f"[PROGRAM_EMBEDDING] ONNX 미리보기 생성: "
+                                f"{bot_name}/{char_name}, conf={detected_confidence}"
+                            )
+                    except Exception as e:
+                        print(f"[PROGRAM_EMBEDDING] ONNX 추출 예외({bot_name}/{char_name}): {e}")
+                        traceback.print_exc()
+                        if existing_face:
+                            source_hash = self._program_embedding_hash(face_path)
+                            item.update({
+                                "face_path": face_path,
+                                "confirmed_sha256": source_hash,
+                            })
+                            response.update({
+                                "status": "failed_existing",
+                                "source_label": "추출 실패 · 기존 FACE 유지",
+                                "display_url": face_url,
+                                "can_continue": True,
+                                "message": f"ONNX 추출 오류로 기존 FACE를 유지합니다: {e}",
+                            })
+                        else:
+                            response["message"] = f"ONNX 얼굴 추출 오류: {e}"
+
+                session_items.append(item)
+                response_items.append(response)
+
+            session = {
+                "preview_id": preview_id,
+                "created_at": time.time(),
+                "session_dir": session_dir,
+                "bot_name": bot_name,
+                "settings": {
+                    "crop_top": crop_top,
+                    "crop_bottom": crop_bottom,
+                    "confidence": confidence,
+                    "overwrite": overwrite,
+                },
+                "items": session_items,
+            }
+            with self._program_embedding_preview_lock:
+                self._program_embedding_previews[preview_id] = session
+
+            ready_count = sum(1 for item in response_items if item["can_continue"])
+            extracted_count = sum(1 for item in response_items if item["status"] == "extracted")
+            failed_count = sum(1 for item in response_items if item["status"] == "failed")
+            return {
+                "success": True,
+                "preview_id": preview_id,
+                "items": response_items,
+                "ready_count": ready_count,
+                "extracted_count": extracted_count,
+                "failed_count": failed_count,
+                "settings": session["settings"],
+            }
+        except Exception:
+            self._program_embedding_remove_dir(session_dir)
+            raise
+
+    def _program_embedding_backup_file(self, source_path, backup_char_dir):
+        if not os.path.isfile(source_path):
+            return ""
+        os.makedirs(backup_char_dir, exist_ok=True)
+        backup_path = os.path.join(backup_char_dir, os.path.basename(source_path))
+        shutil.copy2(source_path, backup_path)
+        print(f"[PROGRAM_EMBEDDING] 기존 파일 백업: {source_path} → {backup_path}")
+        return backup_path
+
+    def _commit_program_embedding_preview(self, preview_id):
+        """검토가 끝난 FACE를 저장하고 선택 캐릭터 임베딩을 생성한다."""
+        session = self._program_embedding_take_session(preview_id)
+        if not session:
+            print(f"[PROGRAM_EMBEDDING] 확정할 미리보기 세션 없음: {preview_id}")
+            raise ValueError("미리보기 세션이 없거나 만료되었습니다. 다시 미리보기를 생성하세요.")
+
+        bot_name = session["bot_name"]
+        backup_root = os.path.join(
+            BASE_DIR,
+            "요구사항",
+            f"program_embedding_backup_{time.strftime('%Y%m%d_%H%M%S')}_{preview_id[:8]}",
+        )
+        results = []
+        success_count = 0
+        face_saved_count = 0
+        failed_count = 0
+
+        try:
+            from modes import face_embedder
+
+            for item in session["items"]:
+                char_name = item["char_name"]
+                source_path = item.get("face_path") or ""
+                if not source_path:
+                    print(f"[PROGRAM_EMBEDDING] 확정 스킵(FACE 없음): {bot_name}/{char_name}")
+                    results.append({
+                        "char_name": char_name,
+                        "success": False,
+                        "message": "확정 가능한 FACE가 없습니다.",
+                    })
+                    failed_count += 1
+                    continue
+
+                char_dir = os.path.join(BOT_DIR, bot_name, char_name)
+                face_path = os.path.join(char_dir, "_face_image.webp")
+                prompt_path = os.path.join(char_dir, "_face_image_prompt.json")
+                cache_path = os.path.join(char_dir, "_face_image.l14.npz")
+                backup_char_dir = os.path.join(
+                    backup_root,
+                    self._program_embedding_safe_component(bot_name),
+                    self._program_embedding_safe_component(char_name),
+                )
+                save_new_face = bool(item.get("save_new_face"))
+                face_existed = os.path.isfile(face_path)
+                prompt_existed = os.path.isfile(prompt_path)
+                cache_existed = os.path.isfile(cache_path)
+                face_backup = ""
+                prompt_backup = ""
+                tmp_face_path = f"{face_path}.tmp-{uuid.uuid4().hex}"
+
+                try:
+                    current_hash = self._program_embedding_hash(source_path)
+                    if current_hash != item.get("confirmed_sha256"):
+                        raise RuntimeError("미리보기 이후 FACE 파일이 변경되었습니다.")
+
+                    built = face_embedder.build_embedding_from_path(source_path)
+                    if built is None:
+                        raise RuntimeError("ONNX 임베딩 생성에 실패했습니다.")
+                    emb, source_hash = built
+
+                    if save_new_face:
+                        face_backup = self._program_embedding_backup_file(face_path, backup_char_dir)
+                        prompt_backup = self._program_embedding_backup_file(prompt_path, backup_char_dir)
+                        os.makedirs(char_dir, exist_ok=True)
+                        shutil.copy2(source_path, tmp_face_path)
+                        os.replace(tmp_face_path, face_path)
+                        if prompt_existed:
+                            os.remove(prompt_path)
+                            print(f"[PROGRAM_EMBEDDING] 오래된 FACE 프롬프트 제거: {prompt_path}")
+                        source_hash = self._program_embedding_hash(face_path)
+
+                    saved = face_embedder.write_embedding_cache(
+                        cache_path,
+                        emb,
+                        source_hash,
+                        backup_dir=backup_char_dir,
+                    )
+                    if saved is None:
+                        raise RuntimeError("임베딩 캐시 저장에 실패했습니다.")
+
+                    success_count += 1
+                    if save_new_face:
+                        face_saved_count += 1
+                    results.append({
+                        "char_name": char_name,
+                        "success": True,
+                        "face_saved": save_new_face,
+                        "message": (
+                            "ONNX FACE 저장 + 임베딩 완료"
+                            if save_new_face else "기존 FACE 임베딩 완료"
+                        ),
+                    })
+                    print(
+                        f"[PROGRAM_EMBEDDING] 확정 완료: {bot_name}/{char_name}, "
+                        f"face_saved={save_new_face}"
+                    )
+                except Exception as e:
+                    print(f"[PROGRAM_EMBEDDING] 확정 실패({bot_name}/{char_name}): {e}")
+                    traceback.print_exc()
+                    if os.path.isfile(tmp_face_path):
+                        try:
+                            os.remove(tmp_face_path)
+                        except Exception as cleanup_error:
+                            print(
+                                f"[PROGRAM_EMBEDDING] 임시 FACE 삭제 실패({tmp_face_path}): "
+                                f"{cleanup_error}"
+                            )
+                            traceback.print_exc()
+                    if save_new_face:
+                        try:
+                            if face_existed and face_backup:
+                                shutil.copy2(face_backup, face_path)
+                            elif not face_existed and os.path.isfile(face_path):
+                                os.remove(face_path)
+                            if prompt_existed and prompt_backup:
+                                shutil.copy2(prompt_backup, prompt_path)
+                        except Exception as rollback_error:
+                            print(
+                                f"[PROGRAM_EMBEDDING] FACE 롤백 실패({bot_name}/{char_name}): "
+                                f"{rollback_error}"
+                            )
+                            traceback.print_exc()
+                    cache_backup = os.path.join(backup_char_dir, os.path.basename(cache_path))
+                    try:
+                        if cache_existed and os.path.isfile(cache_backup):
+                            shutil.copy2(cache_backup, cache_path)
+                        elif not cache_existed and os.path.isfile(cache_path):
+                            os.remove(cache_path)
+                    except Exception as rollback_error:
+                        print(
+                            f"[PROGRAM_EMBEDDING] 캐시 롤백 실패({bot_name}/{char_name}): "
+                            f"{rollback_error}"
+                        )
+                        traceback.print_exc()
+                    results.append({
+                        "char_name": char_name,
+                        "success": False,
+                        "message": str(e),
+                    })
+                    failed_count += 1
+
+            backup_created = os.path.isdir(backup_root)
+            return {
+                "success": success_count > 0,
+                "message": (
+                    f"임베딩 {success_count}건 완료, FACE 저장 {face_saved_count}건, "
+                    f"실패 {failed_count}건"
+                ),
+                "success_count": success_count,
+                "face_saved_count": face_saved_count,
+                "failed_count": failed_count,
+                "backup_dir": backup_root if backup_created else "",
+                "results": results,
+            }
+        finally:
+            self._program_embedding_remove_dir(session.get("session_dir"))
+
+    async def handle_program_embedding_preview(self, request):
+        try:
+            body = await request.json()
+            result = await asyncio.to_thread(self._create_program_embedding_preview, body)
+            return _json_ok(result)
+        except ValueError as e:
+            print(f"[PROGRAM_EMBEDDING] 미리보기 요청 오류: {e}")
+            return _json_error(str(e))
+        except Exception as e:
+            print(f"[PROGRAM_EMBEDDING] 미리보기 생성 실패: {e}")
+            traceback.print_exc()
+            return _json_error(str(e), status=500)
+
+    async def handle_program_embedding_preview_image(self, request):
+        try:
+            self._program_embedding_cleanup_expired()
+            preview_id = request.match_info.get("preview_id", "")
+            index_raw = request.match_info.get("index", "")
+            session = self._program_embedding_get_session(preview_id)
+            if not session:
+                return _json_error("미리보기 세션이 없거나 만료되었습니다.", status=404)
+            try:
+                index = int(index_raw)
+            except ValueError:
+                print(f"[PROGRAM_EMBEDDING] 잘못된 미리보기 인덱스: {index_raw!r}")
+                return _json_error("잘못된 미리보기 인덱스입니다.")
+            if index < 0 or index >= len(session["items"]):
+                print(f"[PROGRAM_EMBEDDING] 미리보기 인덱스 범위 오류: {index}")
+                return _json_error("미리보기 인덱스 범위를 벗어났습니다.", status=404)
+            path = session["items"][index].get("preview_path") or ""
+            if not path or not os.path.isfile(path):
+                print(f"[PROGRAM_EMBEDDING] 미리보기 이미지 없음: {preview_id}/{index}")
+                return _json_error("미리보기 이미지를 찾을 수 없습니다.", status=404)
+            return web.FileResponse(path, headers={"Content-Type": "image/webp"})
+        except Exception as e:
+            print(f"[PROGRAM_EMBEDDING] 미리보기 이미지 제공 실패: {e}")
+            traceback.print_exc()
+            return _json_error(str(e), status=500)
+
+    async def handle_program_embedding_commit(self, request):
+        try:
+            body = await request.json()
+            preview_id = str(body.get("preview_id", "")).strip()
+            if not preview_id:
+                return _json_error("preview_id가 비어있습니다.")
+            result = await asyncio.to_thread(
+                self._commit_program_embedding_preview, preview_id
+            )
+            return _json_ok(result)
+        except ValueError as e:
+            print(f"[PROGRAM_EMBEDDING] 확정 요청 오류: {e}")
+            return _json_error(str(e))
+        except Exception as e:
+            print(f"[PROGRAM_EMBEDDING] 확정 처리 실패: {e}")
+            traceback.print_exc()
+            return _json_error(str(e), status=500)
+
+    async def handle_program_embedding_cancel(self, request):
+        try:
+            body = await request.json()
+            preview_id = str(body.get("preview_id", "")).strip()
+            if not preview_id:
+                return _json_error("preview_id가 비어있습니다.")
+            session = self._program_embedding_take_session(preview_id)
+            if not session:
+                print(f"[PROGRAM_EMBEDDING] 취소할 세션 없음: {preview_id}")
+                return _json_ok({"success": True, "message": "이미 정리된 미리보기입니다."})
+            self._program_embedding_remove_dir(session.get("session_dir"))
+            return _json_ok({"success": True, "message": "미리보기를 취소했습니다."})
+        except Exception as e:
+            print(f"[PROGRAM_EMBEDDING] 미리보기 취소 실패: {e}")
+            traceback.print_exc()
+            return _json_error(str(e), status=500)
 
     async def handle_data_patch(self, request):
         """POST /api/bot_mode/data_patch - 선택된 봇의 캐릭터 폴더 + 대표 이미지를 soya_bot/에 복사"""

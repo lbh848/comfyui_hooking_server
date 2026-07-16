@@ -3703,6 +3703,11 @@
                             <button id="btn-data-patch-selected" onclick="dataPatchStartSelected()" style="width:100%; margin-top:4px; background:#00695C; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">선택캐릭터만 데이터 패치 시작</button>
                             <div id="data-patch-status" style="font-size:0.7rem; color:var(--text2); margin-top:4px; display:none;"></div>
                         </div>
+                        <div style="background:rgba(0,121,107,0.10); border-radius:8px; padding:10px; margin-top:8px;">
+                            <div class="section-title">프로그램용 embedding</div>
+                            <button id="btn-program-embedding" onclick="openProgramEmbeddingModal()" style="width:100%; background:#00796B; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">선택 캐릭터 FACE embedding</button>
+                            <div id="program-embedding-status" style="font-size:0.7rem; color:var(--text2); margin-top:4px; display:none;"></div>
+                        </div>
                         <div style="background:rgba(255,152,0,0.08); border-radius:8px; padding:10px; margin-top:8px;">
                             <div class="section-title">얼굴 이미지 일괄 작업</div>
                             <button id="btn-bot-util-analyze" onclick="botUtilityBatchAnalyze()" style="width:100%; background:#E65100; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">얼굴 태그 일괄 분석</button>
@@ -36053,6 +36058,325 @@
                 const rules = (data.rules || []).filter(r => r.enabled);
                 el.textContent = rules.length > 0 ? `활성 규칙 ${rules.length}개` : '';
             } catch (e) { el.textContent = ''; }
+        }
+
+        // ─── 프로그램용 FACE embedding ──────────────────────
+        let _programEmbeddingPreviewId = '';
+        let _programEmbeddingFormState = null;
+
+        function _programEmbeddingCharacters() {
+            const bot = (botData?.bots || []).find(b => b.name === botCurrentBot);
+            return bot?.characters || [];
+        }
+
+        async function _cancelProgramEmbeddingPreview() {
+            const previewId = _programEmbeddingPreviewId;
+            _programEmbeddingPreviewId = '';
+            if (!previewId) return;
+            try {
+                await fetchJSON('/api/bot_mode/program_embedding/cancel', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({preview_id: previewId}),
+                });
+            } catch (e) {
+                console.error('[PROGRAM_EMBEDDING] 미리보기 취소 실패:', previewId, e);
+            }
+        }
+
+        async function closeProgramEmbeddingModal() {
+            await _cancelProgramEmbeddingPreview();
+            const modal = document.getElementById('program-embedding-modal');
+            if (modal) modal.remove();
+        }
+
+        function openProgramEmbeddingModal() {
+            if (!botCurrentBot) {
+                showToast('봇을 먼저 선택하세요.', 'error');
+                return;
+            }
+            const chars = _programEmbeddingCharacters();
+            if (!chars.length) {
+                showToast('선택할 캐릭터가 없습니다.', 'error');
+                return;
+            }
+            const old = document.getElementById('program-embedding-modal');
+            if (old) old.remove();
+
+            _programEmbeddingPreviewId = '';
+            _programEmbeddingFormState = {
+                selected: botCurrentChar ? [botCurrentChar] : [],
+                crop_top: 1.0,
+                crop_bottom: 1.0,
+                confidence: 0.3,
+                overwrite: false,
+            };
+
+            const modal = document.createElement('div');
+            modal.id = 'program-embedding-modal';
+            modal.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.72); z-index:10020; display:flex; align-items:center; justify-content:center; padding:20px;';
+            document.body.appendChild(modal);
+            renderProgramEmbeddingSelection();
+        }
+
+        function renderProgramEmbeddingSelection() {
+            const modal = document.getElementById('program-embedding-modal');
+            if (!modal) return;
+            const chars = _programEmbeddingCharacters();
+            const state = _programEmbeddingFormState || {
+                selected: [], crop_top: 1.0, crop_bottom: 1.0, confidence: 0.3, overwrite: false,
+            };
+            const selected = new Set(state.selected || []);
+            const rowsHtml = chars.map(char => {
+                const repCount = (char.rep_images || []).length;
+                return `<label style="display:flex; align-items:center; gap:10px; padding:7px 9px; border:1px solid var(--border); border-radius:6px; background:var(--surface2); cursor:pointer;">
+                    <input type="checkbox" class="program-embedding-char-check" data-name="${escAttr(char.name)}" ${selected.has(char.name) ? 'checked' : ''}
+                        style="width:17px; height:17px; cursor:pointer;">
+                    <div class="program-embedding-select-thumb" data-name="${escAttr(char.name)}"
+                        style="width:52px; height:52px; border-radius:5px; border:1px solid var(--border); display:flex; align-items:center; justify-content:center; flex-shrink:0; overflow:hidden; color:var(--text2); font-size:0.65rem;">로딩</div>
+                    <div style="min-width:0;">
+                        <div style="font-size:0.83rem; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escHtml(char.name)}</div>
+                        <div style="font-size:0.68rem; color:var(--text2); margin-top:2px;">대표 이미지 ${repCount}장</div>
+                    </div>
+                </label>`;
+            }).join('');
+
+            modal.innerHTML = `<div style="background:var(--surface); border:1px solid var(--border); border-radius:12px; width:min(920px, 94vw); max-height:90vh; display:flex; flex-direction:column; overflow:hidden; box-shadow:0 14px 50px rgba(0,0,0,0.5);">
+                <div style="padding:15px 18px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
+                    <div>
+                        <div style="font-size:1rem; font-weight:700;">프로그램용 FACE embedding</div>
+                        <div style="font-size:0.72rem; color:var(--text2); margin-top:3px;">캐릭터를 선택한 뒤 ONNX FACE 결과를 확인합니다.</div>
+                    </div>
+                    <button onclick="closeProgramEmbeddingModal()" style="background:none; border:none; color:var(--text); font-size:1.3rem; cursor:pointer;">&times;</button>
+                </div>
+                <div style="padding:14px 18px; overflow-y:auto; flex:1;">
+                    <div style="display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:9px; margin-bottom:12px;">
+                        <label style="display:flex; flex-direction:column; gap:4px;">
+                            <span style="font-size:0.74rem; color:var(--text2);">CROP_TOP</span>
+                            <input id="program-embedding-crop-top" type="number" min="0.1" max="10" step="0.1" value="${state.crop_top}"
+                                style="padding:7px 8px; border:1px solid var(--border); border-radius:5px; background:var(--surface2); color:var(--text);">
+                        </label>
+                        <label style="display:flex; flex-direction:column; gap:4px;">
+                            <span style="font-size:0.74rem; color:var(--text2);">CROP_BOTTOM</span>
+                            <input id="program-embedding-crop-bottom" type="number" min="0.1" max="10" step="0.1" value="${state.crop_bottom}"
+                                style="padding:7px 8px; border:1px solid var(--border); border-radius:5px; background:var(--surface2); color:var(--text);">
+                        </label>
+                        <label style="display:flex; flex-direction:column; gap:4px;">
+                            <span style="font-size:0.74rem; color:var(--text2);">confidence</span>
+                            <input id="program-embedding-confidence" type="number" min="0" max="1" step="0.05" value="${state.confidence}"
+                                style="padding:7px 8px; border:1px solid var(--border); border-radius:5px; background:var(--surface2); color:var(--text);">
+                        </label>
+                    </div>
+                    <label style="display:flex; align-items:flex-start; gap:8px; padding:9px 10px; margin-bottom:12px; background:rgba(229,57,53,0.08); border:1px solid rgba(229,57,53,0.28); border-radius:6px; cursor:pointer;">
+                        <input id="program-embedding-overwrite" type="checkbox" ${state.overwrite ? 'checked' : ''} style="margin-top:2px; cursor:pointer;">
+                        <span>
+                            <span style="display:block; font-size:0.78rem; font-weight:600;">기존 FACE 덮어쓰기</span>
+                            <span style="display:block; font-size:0.68rem; color:var(--text2); margin-top:2px;">OFF면 기존 데이터 패치 FACE를 우선 사용합니다. ON이면 선택 캐릭터를 모두 새로 추출합니다.</span>
+                        </span>
+                    </label>
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                        <div style="font-size:0.78rem; font-weight:600;">선택 캐릭터</div>
+                        <div style="display:flex; gap:6px;">
+                            <button onclick="document.querySelectorAll('.program-embedding-char-check').forEach(c=>c.checked=true)" style="padding:3px 9px; border:1px solid var(--border); border-radius:4px; background:var(--surface2); color:var(--text); cursor:pointer; font-size:0.7rem;">전체 선택</button>
+                            <button onclick="document.querySelectorAll('.program-embedding-char-check').forEach(c=>c.checked=false)" style="padding:3px 9px; border:1px solid var(--border); border-radius:4px; background:var(--surface2); color:var(--text); cursor:pointer; font-size:0.7rem;">전체 해제</button>
+                        </div>
+                    </div>
+                    <div style="display:grid; grid-template-columns:repeat(auto-fill,minmax(210px,1fr)); gap:7px;">${rowsHtml}</div>
+                    <div id="program-embedding-modal-status" style="display:none; margin-top:10px; padding:8px 10px; border-radius:5px; background:var(--surface2); color:var(--text2); font-size:0.74rem;"></div>
+                </div>
+                <div style="padding:12px 18px; border-top:1px solid var(--border); display:flex; justify-content:flex-end; gap:8px;">
+                    <button onclick="closeProgramEmbeddingModal()" style="padding:7px 15px; border:1px solid var(--border); border-radius:6px; background:var(--surface2); color:var(--text); cursor:pointer;">취소</button>
+                    <button id="program-embedding-preview-btn" onclick="createProgramEmbeddingPreview()" style="padding:7px 15px; border:none; border-radius:6px; background:#00796B; color:#fff; cursor:pointer; font-weight:600;">ONNX 미리보기 생성</button>
+                </div>
+            </div>`;
+            loadProgramEmbeddingSelectionThumbs(chars);
+        }
+
+        async function loadProgramEmbeddingSelectionThumbs(chars) {
+            for (const char of chars) {
+                try {
+                    const data = await fetchJSON(`/api/bot_mode/images?bot=${encodeURIComponent(botCurrentBot)}&character=${encodeURIComponent(char.name)}`);
+                    const images = data.images || [];
+                    const face = images.find(img => img.filename === '_face_image.webp');
+                    const repName = (char.rep_images || [])[0];
+                    const representative = images.find(img => img.filename === repName) || images.find(img => !img.filename.startsWith('_'));
+                    const selected = face || representative;
+                    const thumb = document.querySelector(`.program-embedding-select-thumb[data-name="${CSS.escape(char.name)}"]`);
+                    if (!thumb) continue;
+                    if (!selected?.url) {
+                        thumb.textContent = '이미지 없음';
+                        continue;
+                    }
+                    thumb.innerHTML = `<img src="${escAttr(selected.url)}?t=${Date.now()}" loading="lazy" style="width:100%; height:100%; object-fit:cover;">`;
+                    thumb.title = face ? '기존 FACE' : '대표 이미지';
+                } catch (e) {
+                    console.error('[PROGRAM_EMBEDDING] 선택 썸네일 로드 실패:', char.name, e);
+                    const thumb = document.querySelector(`.program-embedding-select-thumb[data-name="${CSS.escape(char.name)}"]`);
+                    if (thumb) thumb.textContent = '로드 실패';
+                }
+            }
+        }
+
+        async function createProgramEmbeddingPreview() {
+            const checks = Array.from(document.querySelectorAll('.program-embedding-char-check:checked'));
+            const charNames = checks.map(check => check.dataset.name).filter(Boolean);
+            if (!charNames.length) {
+                showToast('최소 한 명의 캐릭터를 선택하세요.', 'error');
+                return;
+            }
+            const state = {
+                selected: charNames,
+                crop_top: parseFloat(document.getElementById('program-embedding-crop-top').value),
+                crop_bottom: parseFloat(document.getElementById('program-embedding-crop-bottom').value),
+                confidence: parseFloat(document.getElementById('program-embedding-confidence').value),
+                overwrite: document.getElementById('program-embedding-overwrite').checked,
+            };
+            _programEmbeddingFormState = state;
+            const btn = document.getElementById('program-embedding-preview-btn');
+            const status = document.getElementById('program-embedding-modal-status');
+            btn.disabled = true;
+            btn.textContent = 'ONNX 추출 중…';
+            status.style.display = 'block';
+            status.textContent = `선택 캐릭터 ${charNames.length}명의 FACE를 확인 중입니다…`;
+            try {
+                const data = await fetchJSON('/api/bot_mode/program_embedding/preview', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        bot_name: botCurrentBot,
+                        char_names: charNames,
+                        crop_top: state.crop_top,
+                        crop_bottom: state.crop_bottom,
+                        confidence: state.confidence,
+                        overwrite: state.overwrite,
+                    }),
+                });
+                _programEmbeddingPreviewId = data.preview_id || '';
+                renderProgramEmbeddingPreview(data);
+            } catch (e) {
+                console.error('[PROGRAM_EMBEDDING] 미리보기 생성 실패:', e);
+                status.textContent = '미리보기 생성 실패: ' + (e.message || e);
+                showToast('FACE 미리보기 생성 실패: ' + (e.message || e), 'error');
+                btn.disabled = false;
+                btn.textContent = 'ONNX 미리보기 생성';
+            }
+        }
+
+        function renderProgramEmbeddingPreview(data) {
+            const modal = document.getElementById('program-embedding-modal');
+            if (!modal) return;
+            const cards = (data.items || []).map(item => {
+                const confidence = typeof item.detected_confidence === 'number'
+                    ? `<div style="font-size:0.66rem; color:var(--text2); margin-top:3px;">검출 confidence: ${item.detected_confidence.toFixed(3)}</div>` : '';
+                const borderColor = item.status === 'extracted' ? '#00A896'
+                    : item.status === 'existing' ? '#1976D2'
+                    : item.status === 'failed_existing' ? '#EF6C00' : '#C62828';
+                const image = item.display_url
+                    ? `<img src="${escAttr(item.display_url)}?t=${Date.now()}" onclick="openLightbox(this.src)" style="width:100%; aspect-ratio:1; object-fit:cover; cursor:zoom-in; display:block;">`
+                    : '<div style="width:100%; aspect-ratio:1; display:flex; align-items:center; justify-content:center; color:var(--text2); background:var(--surface2);">이미지 없음</div>';
+                return `<div style="border:2px solid ${borderColor}; border-radius:8px; overflow:hidden; background:var(--surface2);">
+                    ${image}
+                    <div style="padding:8px 9px;">
+                        <div style="font-size:0.8rem; font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escHtml(item.char_name)}</div>
+                        <div style="font-size:0.69rem; color:${borderColor}; font-weight:600; margin-top:3px;">${escHtml(item.source_label)}</div>
+                        ${confidence}
+                        <div style="font-size:0.66rem; color:var(--text2); line-height:1.35; margin-top:4px;">${escHtml(item.message)}</div>
+                    </div>
+                </div>`;
+            }).join('');
+            const ready = Number(data.ready_count || 0);
+            const extracted = Number(data.extracted_count || 0);
+            const failed = Number(data.failed_count || 0);
+            modal.innerHTML = `<div style="background:var(--surface); border:1px solid var(--border); border-radius:12px; width:min(980px, 94vw); max-height:90vh; display:flex; flex-direction:column; overflow:hidden; box-shadow:0 14px 50px rgba(0,0,0,0.5);">
+                <div style="padding:15px 18px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
+                    <div>
+                        <div style="font-size:1rem; font-weight:700;">FACE 결과 확인</div>
+                        <div style="font-size:0.72rem; color:var(--text2); margin-top:3px;">기존 FACE와 새 ONNX 추출 결과를 모두 확인한 뒤 계속하세요.</div>
+                    </div>
+                    <button onclick="closeProgramEmbeddingModal()" style="background:none; border:none; color:var(--text); font-size:1.3rem; cursor:pointer;">&times;</button>
+                </div>
+                <div style="padding:12px 18px; border-bottom:1px solid var(--border); font-size:0.73rem; color:var(--text2);">
+                    확정 가능 ${ready}건 · 새 FACE ${extracted}건 · FACE 없음 ${failed}건
+                    <span style="margin-left:8px;">CROP ${data.settings?.crop_top}/${data.settings?.crop_bottom}, confidence ${data.settings?.confidence}, 덮어쓰기 ${data.settings?.overwrite ? 'ON' : 'OFF'}</span>
+                </div>
+                <div style="padding:15px 18px; overflow-y:auto; flex:1; display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:12px; align-content:start;">${cards}</div>
+                <div style="padding:12px 18px; border-top:1px solid var(--border); display:flex; justify-content:space-between; gap:8px;">
+                    <button onclick="backToProgramEmbeddingSettings()" style="padding:7px 15px; border:1px solid var(--border); border-radius:6px; background:var(--surface2); color:var(--text); cursor:pointer;">설정으로 돌아가기</button>
+                    <div style="display:flex; gap:8px;">
+                        <button onclick="closeProgramEmbeddingModal()" style="padding:7px 15px; border:1px solid var(--border); border-radius:6px; background:var(--surface2); color:var(--text); cursor:pointer;">취소</button>
+                        <button id="program-embedding-commit-btn" onclick="commitProgramEmbedding()" ${ready === 0 ? 'disabled' : ''}
+                            style="padding:7px 17px; border:none; border-radius:6px; background:${ready === 0 ? '#777' : '#00796B'}; color:#fff; cursor:${ready === 0 ? 'not-allowed' : 'pointer'}; font-weight:700;">계속</button>
+                    </div>
+                </div>
+            </div>`;
+        }
+
+        async function backToProgramEmbeddingSettings() {
+            await _cancelProgramEmbeddingPreview();
+            renderProgramEmbeddingSelection();
+        }
+
+        async function commitProgramEmbedding() {
+            if (!_programEmbeddingPreviewId) {
+                showToast('확정할 미리보기가 없습니다.', 'error');
+                return;
+            }
+            const btn = document.getElementById('program-embedding-commit-btn');
+            if (btn) {
+                btn.disabled = true;
+                btn.textContent = '저장 및 임베딩 중…';
+            }
+            const status = document.getElementById('program-embedding-status');
+            if (status) {
+                status.style.display = 'block';
+                status.textContent = 'FACE 저장 및 ONNX 임베딩 중…';
+            }
+            const previewId = _programEmbeddingPreviewId;
+            try {
+                const data = await fetchJSON('/api/bot_mode/program_embedding/commit', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({preview_id: previewId}),
+                });
+                _programEmbeddingPreviewId = '';
+                if (status) status.textContent = data.message || '프로그램용 embedding 완료';
+                if (data.success) {
+                    showToast(data.message || '프로그램용 embedding 완료', data.failed_count ? 'warning' : 'success');
+                } else {
+                    showToast(data.message || '생성된 embedding이 없습니다.', 'error');
+                }
+                renderProgramEmbeddingCommitResult(data);
+                if (typeof renderBotCharacters === 'function') renderBotCharacters();
+            } catch (e) {
+                console.error('[PROGRAM_EMBEDDING] 확정 실패:', e);
+                if (status) status.textContent = '확정 실패: ' + (e.message || e);
+                showToast('FACE 저장/임베딩 실패: ' + (e.message || e), 'error');
+                _programEmbeddingPreviewId = '';
+                if (btn) {
+                    btn.disabled = true;
+                    btn.textContent = '세션 만료 · 다시 설정하세요';
+                }
+            }
+        }
+
+        function renderProgramEmbeddingCommitResult(data) {
+            const modal = document.getElementById('program-embedding-modal');
+            if (!modal) return;
+            const rows = (data.results || []).map(result => `<div style="display:flex; justify-content:space-between; gap:12px; padding:8px 10px; border:1px solid var(--border); border-radius:6px; background:var(--surface2);">
+                <span style="font-size:0.78rem; font-weight:600;">${escHtml(result.char_name)}</span>
+                <span style="font-size:0.72rem; color:${result.success ? '#22c55e' : '#ef5350'}; text-align:right;">${escHtml(result.message)}</span>
+            </div>`).join('');
+            modal.innerHTML = `<div style="background:var(--surface); border:1px solid var(--border); border-radius:12px; width:min(680px, 92vw); max-height:85vh; display:flex; flex-direction:column; overflow:hidden;">
+                <div style="padding:15px 18px; border-bottom:1px solid var(--border); font-size:1rem; font-weight:700;">프로그램용 embedding 결과</div>
+                <div style="padding:15px 18px; overflow-y:auto; display:flex; flex-direction:column; gap:7px;">
+                    <div style="font-size:0.78rem; color:var(--text2); margin-bottom:4px;">${escHtml(data.message || '')}</div>
+                    ${rows}
+                    ${data.backup_dir ? `<div style="font-size:0.66rem; color:var(--text2); margin-top:5px; word-break:break-all;">백업: ${escHtml(data.backup_dir)}</div>` : ''}
+                </div>
+                <div style="padding:12px 18px; border-top:1px solid var(--border); display:flex; justify-content:flex-end;">
+                    <button onclick="closeProgramEmbeddingModal()" style="padding:7px 17px; border:none; border-radius:6px; background:#00796B; color:#fff; cursor:pointer; font-weight:600;">닫기</button>
+                </div>
+            </div>`;
         }
 
         // 선택캐릭터 데이터 패치: 패치할 캐릭터 목록 (다중 선택)
