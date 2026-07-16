@@ -6,9 +6,9 @@ IllustPromptBuilder - 삽화 모드 프롬프트 빌더
 최종 프롬프트를 빌드한다.
 
 처리 순서:
-1. 파싱: raw 긍정 프롬프트 → [SETUP], [CHAR], [SUPPLEMENT] 섹션 분리
-2. 단어 기반 규칙: 각 섹션에 봇의 단어 기반 규칙(치환/제거) 적용 (server.py에서 수행)
-3. 캐릭터 감지: 모든 섹션에서 bot.json의 캐릭터 이름과 매칭
+1. RAW 선처리: 섹션 범위에 맞춰 단어 기반 규칙 적용 (server.py에서 수행)
+2. 파싱: 선처리된 RAW → [NAME], [SPEAK], [SETUP], [CHAR], [SUPPLEMENT] 분리
+3. 캐릭터 감지: 선처리된 NAME/장면 섹션에서 bot.json 캐릭터 이름과 매칭
 4. 프롬프트 빌드: 감지된 캐릭터 정보 + 봇 설정 + tags.json → 최종 프롬프트 조립
 """
 
@@ -27,12 +27,14 @@ def get_illust_logs() -> list:
     return list(_illust_build_logs)
 
 
-def log_illust_build(raw_positive: str, sections: dict, detected: list,
+def log_illust_build(raw_positive: str, word_replaced_raw: str,
+                     sections: dict, detected: list,
                      word_replaced: dict, final_positive: str, final_negative: str):
     """삽화 모드 프롬프트 빌드 로그 기록."""
     log_entry = {
         "timestamp": time.time(),
         "raw_positive": raw_positive,
+        "word_replaced_raw": word_replaced_raw,
         "parsed_setup": sections.get("setup", ""),
         "parsed_char": sections.get("char", ""),
         "parsed_supplement": sections.get("supplement", ""),

@@ -35805,6 +35805,10 @@
                             <div style="font-size:0.8rem; font-weight:700; margin-bottom:6px; color:var(--accent);">Raw 프롬프트</div>
                             <pre style="font-size:0.7rem; white-space:pre-wrap; color:var(--text); max-height:200px; overflow-y:auto; background:rgba(0,0,0,0.04); padding:6px; border-radius:4px; margin:0;">${escapeHtml(log.raw_positive || '')}</pre>
                         </div>
+                        <div style="margin-bottom:10px; padding:8px; background:rgba(156,39,176,0.08); border-radius:6px; border-left:3px solid #9C27B0;">
+                            <div style="font-size:0.8rem; font-weight:700; margin-bottom:6px; color:#9C27B0;">치환 후 Raw 프롬프트</div>
+                            <pre style="font-size:0.7rem; white-space:pre-wrap; color:var(--text); max-height:200px; overflow-y:auto; background:rgba(0,0,0,0.04); padding:6px; border-radius:4px; margin:0;">${escapeHtml(log.word_replaced_raw ?? log.raw_positive ?? '')}</pre>
+                        </div>
                         <div style="margin-bottom:10px; padding:8px; background:rgba(33,150,243,0.08); border-radius:6px; border-left:3px solid #2196F3;">
                             <div style="font-size:0.8rem; font-weight:700; margin-bottom:6px; color:#2196F3;">파싱 결과</div>
                             <div style="font-size:0.7rem; padding:4px;">

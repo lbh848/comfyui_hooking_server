@@ -64,6 +64,11 @@ from modes.instance_lora_mode import handle_get_auto_lora_prompt, handle_set_aut
 from modes import embedding_service
 from modes.illust_prompt_builder import IllustPromptBuilder, log_illust_build, get_illust_logs
 from modes.chansub_prompt_builder import ChansubPromptBuilder
+from modes.word_rules import (
+    apply_prompt_rules as _apply_prompt_word_rules,
+    apply_raw_prompt_rules as _apply_raw_prompt_word_rules,
+    apply_remove_rule as _apply_remove_word_rule,
+)
 from modes import chansub_service
 import importlib.util
 
@@ -687,48 +692,8 @@ def clamp_weights(prompt: str, clamp_value: float) -> str:
 
 
 def _apply_remove_rule(text: str, rule: dict) -> tuple:
-    """제거 모드 규칙을 적용한다. 반환: (새 텍스트, 적용여부).
-
-    - trigger가 있으면 해당 텍스트에 trigger가 존재할 때만 발동한다.
-    - 쉼표 단위 세그먼트로 분리하여 pattern(* → 임의 문자열)에 fullmatch되는
-      세그먼트를 제거한다. remove_trigger=false면 trigger와 동일한 세그먼트는 보존한다.
-    """
-    if not text:
-        return text, False
-    pattern_str = (rule.get("pattern") or "").strip()
-    if not pattern_str:
-        print("[WORD_RULE] 제거 모드 규칙에 pattern이 없어 스킵합니다.")
-        return text, False
-    trigger = (rule.get("trigger") or "").strip()
-    remove_trigger = bool(rule.get("remove_trigger", False))
-    # trigger 조건: trigger가 지정된 경우 텍스트에 존재해야 발동
-    if trigger and not re.search(re.escape(trigger), text, flags=re.IGNORECASE):
-        return text, False
-    # 와일드카드 패턴 → 정규식 (세그먼트 단위 fullmatch). * 는 임의 문자열.
-    parts = pattern_str.split("*")
-    regex = ".*".join(re.escape(p) for p in parts)
-    try:
-        rx = re.compile(regex, flags=re.IGNORECASE)
-    except re.error as e:
-        print(f"[WORD_RULE] 제거 패턴 컴파일 실패(pattern={pattern_str!r}): {e}")
-        return text, False
-    trig_low = trigger.lower()
-    segs = [s.strip() for s in text.split(",")]
-    out = []
-    removed = 0
-    for seg in segs:
-        if seg and rx.fullmatch(seg):
-            # trigger 보존: trigger와 동일 세그먼트는 remove_trigger=true일 때만 제거
-            if trigger and not remove_trigger and seg.lower() == trig_low:
-                out.append(seg)
-                continue
-            removed += 1
-            continue
-        out.append(seg)
-    if removed == 0:
-        return text, False
-    print(f"[WORD_RULE] 제거 모드 적용: pattern={pattern_str!r}, trigger={trigger!r}, {removed}개 세그먼트 제거")
-    return ", ".join(s for s in out if s), True
+    """하위 호환용 제거 규칙 진입점."""
+    return _apply_remove_word_rule(text, rule)
 
 
 def apply_word_replacements(positive: str, negative: str, bot_name: str) -> tuple:
@@ -740,29 +705,25 @@ def apply_word_replacements(positive: str, negative: str, bot_name: str) -> tupl
     rules = data.get("rules", [])
     if not rules:
         return positive, negative
-    applied = 0
-    for rule in rules:
-        if not rule.get("enabled", True):
-            continue
-        rtype = (rule.get("type") or "replace").strip().lower()
-        if rtype == "remove":
-            positive, did_p = _apply_remove_rule(positive, rule)
-            negative, did_n = _apply_remove_rule(negative, rule)
-            if did_p or did_n:
-                applied += 1
-            continue
-        # 치환 모드 (기본)
-        source = rule.get("source", "").strip()
-        target = rule.get("target", "").strip()
-        if not source:
-            continue
-        pattern = re.escape(source)
-        positive = re.sub(pattern, target, positive, flags=re.IGNORECASE)
-        negative = re.sub(pattern, target, negative, flags=re.IGNORECASE)
-        applied += 1
+    positive, negative, applied = _apply_prompt_word_rules(positive, negative, rules)
     if applied > 0:
         print(f"[WORD_RULE] 단어 기반 규칙 적용: bot={bot_name}, {applied}개 규칙")
     return positive, negative
+
+
+def apply_raw_prompt_word_replacements(raw_prompt: str, bot_name: str) -> str:
+    """삽화 RAW 프롬프트에 섹션 범위를 지키며 단어 규칙을 선적용한다."""
+    if not bot_name:
+        return raw_prompt
+    from modes.bot_mode import _load_word_replacements
+    data = _load_word_replacements(bot_name)
+    rules = data.get("rules", [])
+    if not rules:
+        return raw_prompt
+    transformed, applied = _apply_raw_prompt_word_rules(raw_prompt, rules)
+    if applied > 0:
+        print(f"[WORD_RULE] RAW 프롬프트 선처리 적용: bot={bot_name}, {applied}개 섹션별 규칙")
+    return transformed
 
 
 def split_prompt_chat(text: str) -> tuple[str, str]:
@@ -1948,11 +1909,15 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
         generation_height = 756 if illustration_provider == "chansub" else None
         _speak_text = ""  # [SPEAK] 섹션 원문 (후처리 합성용)
         if bot_name and app_config.get("bot_mode_enabled", False):
-            # 삽화 모드: 프롬프트 파싱 → 치환 → 캐릭터 감지 → 빌드
+            # 삽화 모드: RAW 규칙 선처리 → 파싱 → 캐릭터 감지 → 빌드
             builder = IllustPromptBuilder()
             raw_positive = positive
 
-            # 1. 섹션 파싱 (lb_extra 전달 → Name 기반 CHAR 이름 삽입 수행)
+            # 1. 원본 섹션은 로그용으로 보존하고, 실제 처리는 규칙 적용 후 RAW만 사용한다.
+            parsed_raw_sections = builder.parse_sections(raw_positive)
+            word_replaced_raw = apply_raw_prompt_word_replacements(raw_positive, bot_name)
+
+            # 2. 선처리된 RAW 파싱 (lb_extra 전달 → 치환된 NAME 기반 CHAR 이름 삽입)
             from modes.bot_mode import _load_lb_extra as _load_lb_extra_local
             from modes.bot_mode import _load_bot_data as _load_bot_data_local
             lb_extra_data = _load_lb_extra_local(bot_name) or []
@@ -1961,26 +1926,25 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
             characters_for_parse = (bot.get("characters", []) if bot else [])
             if illustration_provider == "chansub":
                 # 챈섭에는 로컬 LoRA 트리거/캐릭터명 자동 삽입을 하지 않는다.
-                sections = builder.parse_sections(positive)
+                sections = builder.parse_sections(word_replaced_raw)
             else:
                 sections = builder.parse_sections(
-                    positive, lb_extra=lb_extra_data, characters=characters_for_parse
+                    word_replaced_raw, lb_extra=lb_extra_data, characters=characters_for_parse
                 )
 
-            # [SPEAK] 섹션 원문 추출 (후처리 합성에 사용)
+            # [SPEAK]는 발화자 NAME만 치환된 결과를 후처리/말풍선 합성에 사용한다.
             _speak_text = sections.get("speak", "") or ""
 
-            # 2. 각 섹션에 단어 기반 규칙(치환/제거) 적용
-            setup_replaced = apply_word_replacements(sections["setup"], "", bot_name)[0]
-            char_replaced = apply_word_replacements(sections["char"], "", bot_name)[0]
-            supplement_replaced = apply_word_replacements(sections["supplement"], "", bot_name)[0]
+            setup_replaced = sections["setup"]
+            char_replaced = sections["char"]
+            supplement_replaced = sections["supplement"]
 
-            # 3. 캐릭터 감지 (모든 섹션에서)
+            # 3. 캐릭터 감지: 치환된 NAME도 직접 포함하여 LoRA/프로필 선택에 반영한다.
             if bot:
                 char_names = [c["name"] for c in bot.get("characters", [])]
                 detection_sections = [setup_replaced, char_replaced, supplement_replaced]
-                if illustration_provider == "chansub" and sections.get("name"):
-                    # NAME은 solo/group 선택에만 사용하고 챈섭 POSITIVE에는 삽입하지 않는다.
+                if sections.get("name"):
+                    # NAME은 감지/solo-group/LoRA 선택에 사용하되 챈섭 POSITIVE에는 삽입하지 않는다.
                     detection_sections.append(sections["name"])
                 detected = builder.detect_characters(detection_sections, char_names)
                 print(f"[ILLUST] 감지된 캐릭터: {detected}")
@@ -2057,12 +2021,13 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                     "supplement": supplement_replaced,
                 }
                 log_illust_build(
-                    raw_positive, sections, detected,
+                    raw_positive, word_replaced_raw, parsed_raw_sections, detected,
                     word_replaced, positive, negative
                 )
             else:
-                print(f"[ILLUST] 봇을 찾을 수 없음: {bot_name}, 기존 치환 로직 사용")
-                positive, negative = apply_word_replacements(positive, negative, bot_name)
+                print(f"[ILLUST] 봇을 찾을 수 없음: {bot_name}, RAW 선처리 결과를 사용")
+                positive = word_replaced_raw
+                negative = apply_word_replacements("", negative, bot_name)[1]
         else:
             # 비삽화 모드: 단어 기반 규칙만 적용
             if bot_name and app_config.get("bot_mode_enabled", False):
