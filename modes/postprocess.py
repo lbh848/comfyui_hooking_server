@@ -182,11 +182,11 @@ def parse_speak(speak_text: str, strip_emotion: bool = False) -> list:
     # 발화: NAME: "..."  — 닫는 따옴표(") 뒤에만 ' #감정'(공백 포함 다단어 허용) 을 인식한다.
     # 따라서 따옴표 안의 '#' 은 대사의 일부로 취급되어 감정으로 잘리지 않는다.
     speech_re = re.compile(
-        r'^\s*(?P<speaker>[A-Za-z0-9_]+)\s*:\s*"(?P<text>.*)"(?:\s+#(?P<emotion>\S.*?))?\s*$',
+        r'^\s*(?P<speaker>[^:\r\n]+?)\s*:\s*"(?P<text>.*)"(?:\s+#(?P<emotion>\S.*?))?\s*$',
         re.UNICODE)
     # 생각(NAME 있음): NAME: (...)
     thought_named_re = re.compile(
-        r'^\s*(?P<speaker>[A-Za-z0-9_]+)\s*:\s*\((?P<text>.*)\)(?:\s+#(?P<emotion>\S.*?))?\s*$',
+        r'^\s*(?P<speaker>[^:\r\n]+?)\s*:\s*\((?P<text>.*)\)(?:\s+#(?P<emotion>\S.*?))?\s*$',
         re.UNICODE)
     # 생각(독백): (...)
     thought_bare_re = re.compile(
@@ -210,6 +210,8 @@ def parse_speak(speak_text: str, strip_emotion: bool = False) -> list:
             if keep_emotion:
                 text = f"{text} {keep_emotion}"
             speaker = m.groupdict().get("speaker")
+            if speaker:
+                speaker = speaker.strip()
             seg_type = "thought" if (m.re is thought_named_re or m.re is thought_bare_re) else "speech"
             segments.append({
                 "speaker": speaker,

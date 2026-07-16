@@ -26523,11 +26523,11 @@
             if (!lines.length) return null;
             const line = lines[0];
             // 발화: NAME: "..."  /  생각: NAME: (...)  /  독백: (...)
-            let m = line.match(/^([A-Za-z0-9_]+)\s*:\s*"(.*)"(?:\s+#(\S.*?))?\s*$/);
-            if (!m) m = line.match(/^([A-Za-z0-9_]+)\s*:\s*\((.*)\)(?:\s+#(\S.*?))?\s*$/);
+            let m = line.match(/^([^:\r\n]+?)\s*:\s*"(.*)"(?:\s+#(\S.*?))?\s*$/);
+            if (!m) m = line.match(/^([^:\r\n]+?)\s*:\s*\((.*)\)(?:\s+#(\S.*?))?\s*$/);
             if (!m) m = line.match(/^\((.*)\)(?:\s+#(\S.*?))?\s*$/);
             if (m) {
-                const speaker = m[1] || '';
+                const speaker = (m[1] || '').trim();
                 const emotion = m[3] || '';
                 return { speaker, emotion };
             }
@@ -26700,9 +26700,9 @@
         async function ppRunParallelTest() {
             const speakLine = (document.getElementById('pp-pt-speak').value || '').trim();
             const emotionsText = (document.getElementById('pp-pt-emotions').value || '').trim();
-            const nameMatch = speakLine.match(/^([A-Za-z0-9_]+)\s*:\s*["(](.*)[")]/);
+            const nameMatch = speakLine.match(/^([^:\r\n]+?)\s*:\s*["(](.*)[")]/);
             if (!nameMatch) { showToast('대사 형식: NAME: "대사" 또는 NAME: (생각)', 'error'); return; }
-            const name = nameMatch[1];
+            const name = nameMatch[1].trim();
             const line = nameMatch[2];
             const emotions = emotionsText.split(/[;\n]/).map(s => s.trim()).filter(Boolean);
             if (!emotions.length) { showToast('감정을 1개 이상 입력하세요', 'error'); return; }

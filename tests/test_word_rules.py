@@ -149,6 +149,46 @@ class RawPromptWordRulesTest(unittest.TestCase):
 
         self.assertEqual(get_illust_logs()[-1]["word_replaced_raw"], "[NAME]\nalice")
 
+    def test_spaced_speaker_name_is_replaced_without_touching_dialogue(self):
+        rules = [{
+            "type": "replace",
+            "source": "mariya mikhailovna kujou",
+            "target": "Maria",
+            "enabled": True,
+        }]
+        raw = (
+            "[SPEAK]\n"
+            'mariya mikhailovna kujou: "mariya mikhailovna kujou stays in dialogue" #smile\n'
+            "[NAME]\n"
+            "mariya mikhailovna kujou\n"
+            "[CHAR]\n"
+            "mariya mikhailovna kujou, brown hair"
+        )
+
+        transformed, _applied = apply_raw_prompt_rules(raw, rules)
+        sections = IllustPromptBuilder.parse_sections(transformed)
+        speak_segments = parse_speak(sections["speak"], strip_emotion=True)
+
+        self.assertIn(
+            'Maria: "mariya mikhailovna kujou stays in dialogue" #smile',
+            transformed,
+        )
+        self.assertEqual(sections["name"], "Maria")
+        self.assertEqual(sections["char"], "Maria, brown hair")
+        self.assertEqual(speak_segments[0]["speaker"], "Maria")
+        self.assertEqual(
+            speak_segments[0]["text"],
+            "mariya mikhailovna kujou stays in dialogue",
+        )
+
+    def test_postprocess_parser_accepts_spaced_target_name(self):
+        segments = parse_speak(
+            'Maria Kujou: "hello"\nMaria Kujou: (thinking)',
+            strip_emotion=True,
+        )
+
+        self.assertEqual([segment["speaker"] for segment in segments], ["Maria Kujou", "Maria Kujou"])
+
 
 if __name__ == "__main__":
     unittest.main()

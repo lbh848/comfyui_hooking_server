@@ -130,7 +130,11 @@ def apply_speak_name_replacements(speak_text: str, rules: list[dict]) -> tuple[s
 
     applied_total = 0
     output_lines = []
-    speaker_re = re.compile(r'^(?P<indent>\s*)(?P<speaker>[A-Za-z0-9_]+)(?P<separator>\s*:\s*)(?=["(])')
+    # 콜론 앞의 비어 있지 않은 전체 문자열을 NAME으로 본다. 영문 한 단어로
+    # 제한하면 ``mariya mikhailovna kujou: "..."`` 같은 이름을 놓친다.
+    speaker_re = re.compile(
+        r'^(?P<indent>\s*)(?P<speaker>[^:\r\n]+?)(?P<separator>\s*:\s*)(?=["(])'
+    )
 
     for line in speak_text.splitlines(keepends=True):
         match = speaker_re.match(line)
@@ -138,7 +142,9 @@ def apply_speak_name_replacements(speak_text: str, rules: list[dict]) -> tuple[s
             output_lines.append(line)
             continue
 
-        replaced_speaker, applied = apply_replacement_rules(match.group("speaker"), rules)
+        replaced_speaker, applied = apply_replacement_rules(
+            match.group("speaker").strip(), rules
+        )
         applied_total += applied
         output_lines.append(
             line[:match.start("speaker")] + replaced_speaker + line[match.end("speaker"):]
