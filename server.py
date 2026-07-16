@@ -97,6 +97,7 @@ DEFAULT_CONFIG = {
     "comfy_input_dir": "",  # ComfyUI input 폴더 경로 (빈값=기본경로)
     "workflow_filename": "",  # 빈 값이면 workflow 폴더의 첫 번째 json 사용
     "illustration_provider": "comfy",  # 삽화 공급자: comfy | chansub
+    "chansub_workflow_type": "anima",  # 챈섭 삽화 프롬프트 계열: anima | sdxl
     "utility_workflow_source_path": "",  # 삽화 유틸리티 워크플로우 전체 경로
     "bot_mode_enabled": False,  # 삽화 모드 활성화 여부
     "debug_mode_enabled": False,  # 디버깅 모드 (ComfyUI 전송만 중단)
@@ -1934,6 +1935,15 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
         if illustration_provider not in ("comfy", "chansub"):
             print(f"[ILLUST] 알 수 없는 공급자 {illustration_provider!r}, comfy로 폴백")
             illustration_provider = "comfy"
+        chansub_workflow_type = str(
+            app_config.get("chansub_workflow_type", "anima") or "anima"
+        ).strip().lower()
+        if chansub_workflow_type not in ("anima", "sdxl"):
+            print(
+                f"[ILLUST:CHANSUB] 알 수 없는 워크플로우 계열 "
+                f"{chansub_workflow_type!r}, anima로 폴백"
+            )
+            chansub_workflow_type = "anima"
         generation_width = 756 if illustration_provider == "chansub" else None
         generation_height = 756 if illustration_provider == "chansub" else None
         _speak_text = ""  # [SPEAK] 섹션 원문 (후처리 합성용)
@@ -1970,7 +1980,7 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                 char_names = [c["name"] for c in bot.get("characters", [])]
                 detection_sections = [setup_replaced, char_replaced, supplement_replaced]
                 if illustration_provider == "chansub" and sections.get("name"):
-                    # NAME은 solo/group 선택에만 사용하고 NAI POSITIVE에는 삽입하지 않는다.
+                    # NAME은 solo/group 선택에만 사용하고 챈섭 POSITIVE에는 삽입하지 않는다.
                     detection_sections.append(sections["name"])
                 detected = builder.detect_characters(detection_sections, char_names)
                 print(f"[ILLUST] 감지된 캐릭터: {detected}")
@@ -1990,6 +2000,7 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                 settings["positive_whitelist"] = bot_data.get("positive_whitelist", [])
                 settings["positive_blacklist"] = bot_data.get("positive_blacklist", [])
                 if illustration_provider == "chansub":
+                    settings["chansub_workflow_type"] = chansub_workflow_type
                     chansub_built = ChansubPromptBuilder().build(
                         setup_replaced,
                         char_replaced,
@@ -2002,8 +2013,9 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                     generation_width = chansub_built["width"]
                     generation_height = chansub_built["height"]
                     print(
-                        f"[ILLUST:CHANSUB] NAI 프롬프트 빌드 완료: "
+                        f"[ILLUST:CHANSUB] Comfy 프롬프트 빌드 완료: "
                         f"profile={'group' if is_multi else 'solo'}, "
+                        f"workflow={chansub_workflow_type.upper()}, "
                         f"size={generation_width}x{generation_height}, "
                         f"detected={detected} (LoRA 트리거 미추가)"
                     )
@@ -3664,13 +3676,24 @@ async def handle_api_postprocess_preview(request: web.Request) -> web.Response:
             base_bytes = _dbuf.getvalue()
             print(f"[POSTPROCESS_PREVIEW] 더미 베이스 생성: {_dw}x{_dh} (profile={profile})")
 
-        # HRF(업스케일/원본복원) 사이즈 변환을 베이스에 적용 —
+        # 로컬 ComfyUI에서만 HRF(업스케일/원본복원) 사이즈 변환을 베이스에 적용 —
         # 실제 생성은 ComfyUI가 base → hrf_size배 업스케일 → (restore 시 원본 복원) 순으로 처리하고,
         # 그 최종 이미지에 대사 합성이 들어간다. 미리보기도 동일한 최종 크기를 재현해야
         # 실제 전송 결과와 일치한다 (박스 높이/폰트를 px 고정 모드로 쓸 때 특히 민감).
+        # 챈섭은 로컬 워크플로우의 HRF 제어 블럭을 사용하지 않으므로 저장된 토글이 켜져
+        # 있어도 미리보기 확대를 적용하지 않는다. 설정값 자체는 로컬 복귀를 위해 보존한다.
         # - HRF OFF 이거나 restore ON → 최종 크기 = 원본 (변환 없음, 실제도 동일)
         # - HRF ON & restore OFF → base를 hrf_size 배로 업스케일
         try:
+            illustration_provider = str(
+                app_config.get("illustration_provider", "comfy") or "comfy"
+            ).strip().lower()
+            if illustration_provider not in ("comfy", "chansub"):
+                print(
+                    f"[POSTPROCESS_PREVIEW] 알 수 없는 삽화 공급자 "
+                    f"{illustration_provider!r}, comfy로 처리"
+                )
+                illustration_provider = "comfy"
             hrf_apply = bool(_is.get("hrf_activate", False))
             try:
                 hrf_size = float(_is.get("hrf_size", 1.0) or 1.0)
@@ -3678,7 +3701,12 @@ async def handle_api_postprocess_preview(request: web.Request) -> web.Response:
                 hrf_size = 1.0
             hrf_restore = bool(_is.get("hrf_restore_size", False))
 
-            if hrf_apply and hrf_size > 1.0 and not hrf_restore:
+            if illustration_provider == "chansub" and hrf_apply:
+                print(
+                    f"[POSTPROCESS_PREVIEW] 챈섭 공급자이므로 HRF 업스케일 무시: "
+                    f"size={hrf_size}, restore={hrf_restore}, profile={profile}"
+                )
+            elif hrf_apply and hrf_size > 1.0 and not hrf_restore:
                 _bimg = Image.open(BytesIO(base_bytes))
                 _ow, _oh = _bimg.size
                 _bimg = _bimg.resize(
@@ -3690,7 +3718,11 @@ async def handle_api_postprocess_preview(request: web.Request) -> web.Response:
                 base_bytes = _ub.getvalue()
                 print(f"[POSTPROCESS_PREVIEW] HRF 업스케일 적용: {_ow}x{_oh} → {_bimg.size[0]}x{_bimg.size[1]} (size={hrf_size}, restore=False, profile={profile})")
             else:
-                print(f"[POSTPROCESS_PREVIEW] HRF 크기 변환 없음 (apply={hrf_apply}, size={hrf_size}, restore={hrf_restore}, profile={profile})")
+                print(
+                    f"[POSTPROCESS_PREVIEW] HRF 크기 변환 없음 "
+                    f"(provider={illustration_provider}, apply={hrf_apply}, "
+                    f"size={hrf_size}, restore={hrf_restore}, profile={profile})"
+                )
         except Exception as _e:
             print(f"[POSTPROCESS_PREVIEW] ⚠ HRF 변환 실패, 원본 베이스 사용: {_e}")
             traceback.print_exc()
@@ -4356,7 +4388,7 @@ async def handle_api_llm_edit_prompt(request: web.Request) -> web.Response:
             return web.json_response({
                 "error": "이 백업은 지원 형식이 아닙니다. "
                          "LLM과 함께 수정은 삽화 빌드본(V3: ANIMA_CONTENT/SDXL 등) 또는 "
-                         "V1(ILXL/UPSCALE) 또는 챈섭 NAI 프롬프트에서만 동작합니다."
+                         "V1(ILXL/UPSCALE) 또는 챈섭 Comfy 프롬프트에서만 동작합니다."
             }, status=400)
 
         print(f"[LLM_EDIT] 감지된 포맷: {fmt} name={backup_name}")
@@ -5017,6 +5049,21 @@ async def handle_api_config(request: web.Request) -> web.Response:
         # 설정 저장
         try:
             body = await request.json()
+
+            if "chansub_workflow_type" in body:
+                chansub_workflow_type = str(
+                    body.get("chansub_workflow_type") or ""
+                ).strip().lower()
+                if chansub_workflow_type not in ("anima", "sdxl"):
+                    print(
+                        f"[CONFIG] 챈섭 워크플로우 계열 저장 거부: "
+                        f"{body.get('chansub_workflow_type')!r}"
+                    )
+                    return web.json_response(
+                        {"error": "챈섭 워크플로우는 ANIMA 또는 SDXL만 선택할 수 있습니다."},
+                        status=400,
+                    )
+                body["chansub_workflow_type"] = chansub_workflow_type
 
             # 설정 업데이트
             for key in body:

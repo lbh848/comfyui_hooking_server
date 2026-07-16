@@ -2,7 +2,7 @@ import io
 import unittest
 import zipfile
 
-from modes.chansub_prompt_builder import ChansubPromptBuilder, convert_to_nai_syntax
+from modes.chansub_prompt_builder import ChansubPromptBuilder
 from modes.chansub_service import build_request_body, extract_image_from_response
 from modes import llm_prompt_edit
 
@@ -10,16 +10,30 @@ from modes import llm_prompt_edit
 class ChansubPromptBuilderTest(unittest.TestCase):
     def setUp(self):
         self.tags = {
-            "artist_presets": {"artist-a": ["artist:sample"]},
-            "quality_presets": {"quality-a": ["best quality", "amazing quality"]},
-            "negative_presets": {"negative-a": ["bad anatomy", "lowres"]},
+            "artist_presets": {
+                "artist-a": ["artist:sample"],
+                "artist-sdxl": ["artist:sdxl"],
+            },
+            "quality_presets": {
+                "quality-a": ["best quality", "amazing quality"],
+                "quality-sdxl": ["sdxl quality"],
+            },
+            "negative_presets": {
+                "negative-a": ["bad anatomy", "lowres"],
+                "negative-sdxl": ["sdxl negative"],
+            },
             "anima_quality": ["default quality"],
             "anima_negative": ["default negative"],
+            "quality": ["default sdxl quality"],
+            "negative": ["default sdxl negative"],
         }
         self.settings = {
             "anima_artist_preset": "artist-a",
             "anima_quality_preset": "quality-a",
             "anima_negative_preset": "negative-a",
+            "sdxl_artist_preset": "artist-sdxl",
+            "sdxl_quality_preset": "quality-sdxl",
+            "sdxl_negative_preset": "negative-sdxl",
             "img_w": 832,
             "img_h": 1216,
         }
@@ -36,18 +50,64 @@ class ChansubPromptBuilderTest(unittest.TestCase):
         self.assertEqual(result["height"], 1216)
         self.assertEqual(
             result["positive"],
-            "best quality, amazing quality, artist:sample, night, {dramatic lighting}, "
-            "shifty (nikke), standing, rain",
+            r"best quality, amazing quality, artist:sample, night, (dramatic lighting), "
+            r"shifty \(nikke\), standing, rain",
         )
         self.assertEqual(result["negative"], "bad anatomy, lowres")
         self.assertNotIn("[LORA", result["positive"])
         self.assertNotIn("[ANIMA", result["positive"])
 
-    def test_nai_syntax_preserves_escaped_parentheses(self):
-        self.assertEqual(
-            convert_to_nai_syntax(r"(strong), name \(series\) | second character"),
-            "{strong}, name (series), second character",
+    def test_build_preserves_comfy_weight_and_character_separator_syntax(self):
+        result = ChansubPromptBuilder().build(
+            "(dramatic lighting:1.2)",
+            r"alice \(series\) | bob \(series\)",
+            "",
+            self.tags,
+            self.settings,
         )
+        self.assertIn("(dramatic lighting:1.2)", result["positive"])
+        self.assertIn(r"alice \(series\) | bob \(series\)", result["positive"])
+
+    def test_build_uses_selected_sdxl_presets(self):
+        self.settings["chansub_workflow_type"] = "sdxl"
+
+        result = ChansubPromptBuilder().build(
+            "outdoors", "1girl", "sunlight", self.tags, self.settings
+        )
+
+        self.assertEqual(
+            result["positive"],
+            "sdxl quality, artist:sdxl, outdoors, 1girl",
+        )
+        self.assertEqual(result["negative"], "sdxl negative")
+        self.assertNotIn("artist:sample", result["positive"])
+        self.assertNotIn("sunlight", result["positive"])
+
+    def test_sdxl_without_presets_uses_existing_default_tags(self):
+        self.settings.update(
+            {
+                "chansub_workflow_type": "sdxl",
+                "sdxl_quality_preset": "",
+                "sdxl_negative_preset": "",
+            }
+        )
+
+        result = ChansubPromptBuilder().build(
+            "outdoors", "1girl", "", self.tags, self.settings
+        )
+
+        self.assertIn("default sdxl quality", result["positive"])
+        self.assertEqual(result["negative"], "default sdxl negative")
+
+    def test_invalid_workflow_type_falls_back_to_anima(self):
+        self.settings["chansub_workflow_type"] = "unknown"
+
+        result = ChansubPromptBuilder().build(
+            "outdoors", "1girl", "", self.tags, self.settings
+        )
+
+        self.assertIn("best quality, amazing quality", result["positive"])
+        self.assertEqual(result["negative"], "bad anatomy, lowres")
 
 
 class ChansubServiceTest(unittest.TestCase):

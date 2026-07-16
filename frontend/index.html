@@ -955,6 +955,14 @@
         }
         .external-api-group .setting-row { padding-left: 12px; padding-right: 12px; }
 
+        .illust-workflow-option {
+            transition: opacity 0.18s ease, filter 0.18s ease;
+        }
+        .illust-workflow-option.disabled {
+            opacity: 0.38;
+            filter: grayscale(1);
+        }
+
         #settings-tab-common .setting-row {
             border-bottom: none;
         }
@@ -3740,28 +3748,28 @@
                                 </div>
                                 <button onclick="openIllustTagEditorModal()" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:3px 10px; border-radius:4px; cursor:pointer; font-size:0.7rem;">태그 편집</button>
                             </div>
-                            <div style="margin-top:6px;">
+                            <div class="illust-workflow-option" data-chansub-workflow="sdxl" style="margin-top:6px;">
                                 <div style="font-size:0.7rem; color:var(--text2); margin-bottom:2px;">SDXL 아티스트 프리셋</div>
                                 <select id="illust-sdxl-artist-preset" onchange="saveIllustSettings(); renderIllustPresetTags('illust-sdxl-artist-preset','illust-sdxl-artist-tags','artist_presets')" style="width:100%; padding:3px 6px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.8rem;">
                                     <option value="">-- 없음 --</option>
                                 </select>
                                 <div id="illust-sdxl-artist-tags" style="display:flex; flex-wrap:wrap; gap:3px; margin-top:4px;"></div>
                             </div>
-                            <div style="margin-top:6px;">
+                            <div class="illust-workflow-option" data-chansub-workflow="sdxl" style="margin-top:6px;">
                                 <div style="font-size:0.7rem; color:var(--text2); margin-bottom:2px;">SDXL 품질 프리셋</div>
                                 <select id="illust-sdxl-quality-preset" onchange="saveIllustSettings(); renderIllustPresetTags('illust-sdxl-quality-preset','illust-sdxl-quality-tags','quality_presets')" style="width:100%; padding:3px 6px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.8rem;">
                                     <option value="">-- 없음 --</option>
                                 </select>
                                 <div id="illust-sdxl-quality-tags" style="display:flex; flex-wrap:wrap; gap:3px; margin-top:4px;"></div>
                             </div>
-                            <div style="margin-top:6px;">
+                            <div class="illust-workflow-option" data-chansub-workflow="anima" style="margin-top:6px;">
                                 <div style="font-size:0.7rem; color:var(--text2); margin-bottom:2px;">ANIMA 아티스트 프리셋</div>
                                 <select id="illust-anima-artist-preset" onchange="saveIllustSettings(); renderIllustPresetTags('illust-anima-artist-preset','illust-anima-artist-tags','artist_presets')" style="width:100%; padding:3px 6px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.8rem;">
                                     <option value="">-- 없음 --</option>
                                 </select>
                                 <div id="illust-anima-artist-tags" style="display:flex; flex-wrap:wrap; gap:3px; margin-top:4px;"></div>
                             </div>
-                            <div style="margin-top:6px;">
+                            <div class="illust-workflow-option" data-chansub-workflow="anima" style="margin-top:6px;">
                                 <div style="font-size:0.7rem; color:var(--text2); margin-bottom:2px;">ANIMA 품질 프리셋</div>
                                 <select id="illust-anima-quality-preset" onchange="saveIllustSettings(); renderIllustPresetTags('illust-anima-quality-preset','illust-anima-quality-tags','quality_presets')" style="width:100%; padding:3px 6px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.8rem;">
                                     <option value="">-- 없음 --</option>
@@ -3769,14 +3777,14 @@
                                 <div id="illust-anima-quality-tags" style="display:flex; flex-wrap:wrap; gap:3px; margin-top:4px;"></div>
                             </div>
                             <hr style="border:none; border-top:1px dashed var(--border); margin:8px 0;">
-                            <div style="margin-top:6px;">
+                            <div class="illust-workflow-option" data-chansub-workflow="sdxl" style="margin-top:6px;">
                                 <div style="font-size:0.7rem; color:var(--text2); margin-bottom:2px;">SDXL 부정 프리셋</div>
                                 <select id="illust-sdxl-negative-preset" onchange="saveIllustSettings(); renderIllustPresetTags('illust-sdxl-negative-preset','illust-sdxl-negative-tags','negative_presets')" style="width:100%; padding:3px 6px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.8rem;">
                                     <option value="">-- 없음 --</option>
                                 </select>
                                 <div id="illust-sdxl-negative-tags" style="display:flex; flex-wrap:wrap; gap:3px; margin-top:4px;"></div>
                             </div>
-                            <div style="margin-top:6px;">
+                            <div class="illust-workflow-option" data-chansub-workflow="anima" style="margin-top:6px;">
                                 <div style="font-size:0.7rem; color:var(--text2); margin-bottom:2px;">ANIMA 부정 프리셋</div>
                                 <select id="illust-anima-negative-preset" onchange="saveIllustSettings(); renderIllustPresetTags('illust-anima-negative-preset','illust-anima-negative-tags','negative_presets')" style="width:100%; padding:3px 6px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.8rem;">
                                     <option value="">-- 없음 --</option>
@@ -8076,6 +8084,19 @@
                                         style="padding:6px 10px; border:1px solid var(--border); border-radius:6px; background:var(--surface2); color:var(--text); cursor:pointer;">삭제</button>
                             </div>
                         </div>
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="title">삽화 워크플로우</div>
+                                <div class="desc">챈섭 삽화에 적용할 프롬프트 및 프리셋 계열</div>
+                            </div>
+                            <div class="setting-control">
+                                <select id="setting-chansub-workflow-type" onchange="onChansubWorkflowTypeChange()"
+                                        style="width:140px; padding:6px 10px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.85rem;">
+                                    <option value="anima">ANIMA</option>
+                                    <option value="sdxl">SDXL</option>
+                                </select>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -8991,6 +9012,37 @@
         
         // 설정 상태
         let currentConfig = {};
+        let currentConfigLoadPromise = null;
+
+        function loadCurrentConfig(forceRefresh = false) {
+            if (!forceRefresh && currentConfigLoadPromise) {
+                return currentConfigLoadPromise;
+            }
+
+            const requestPromise = fetchJSON('/api/config')
+                .then(config => {
+                    if (!config || typeof config !== 'object') {
+                        console.error('[CONFIG] 설정 응답 형식 오류:', config);
+                        throw new Error('설정 응답 형식이 올바르지 않습니다.');
+                    }
+                    currentConfig = config;
+                    return config;
+                })
+                .catch(error => {
+                    console.error('[CONFIG] 설정 로드 실패:', error);
+                    if (currentConfigLoadPromise === requestPromise) {
+                        currentConfigLoadPromise = null;
+                    }
+                    throw error;
+                });
+
+            currentConfigLoadPromise = requestPromise;
+            return requestPromise;
+        }
+
+        // 페이지 스크립트가 준비되는 즉시 설정 로드를 시작한다. 삽화 탭과 설정 모달은
+        // 이 Promise를 공유하므로 시작 직후 탭을 눌러도 동일 요청의 완료를 기다린다.
+        loadCurrentConfig().catch(() => {});
 
         // ─── 터널 공유 ──────────────────────────────────────
         let tunnelActive = false;
@@ -10353,7 +10405,7 @@
             const fmt = detectPromptFormat(positive, provider);
             const supported = !!fmt;
             llmBtn.disabled = !supported;
-            llmBtn.title = supported ? '' : '삽화 V3, V1 또는 챈섭 NAI 프롬프트에서만 동작합니다.';
+            llmBtn.title = supported ? '' : '삽화 V3, V1 또는 챈섭 Comfy 프롬프트에서만 동작합니다.';
             // 계획 영역 초기화
             document.getElementById('modal-llm-plan').style.display = 'none';
             document.getElementById('modal-llm-plan-text').textContent = '';
@@ -10377,14 +10429,14 @@
             const provider = ((promptData.conversion_info || {}).provider || 'comfy');
             const fmt = detectPromptFormat(positive, provider);
             if (!fmt) {
-                alert('삽화 V3, V1 또는 챈섭 NAI 프롬프트에서만 동작합니다.');
+                alert('삽화 V3, V1 또는 챈섭 Comfy 프롬프트에서만 동작합니다.');
                 return;
             }
             // 감지된 형식 배지 표시
             const badge = document.getElementById('llm-edit-format-badge');
             if (badge) {
                 const label = fmt === 'chansub'
-                    ? '챈섭 (NAI POSITIVE/NEGATIVE)'
+                    ? '챈섭 (NAI 요청 · Comfy 프롬프트)'
                     : (fmt === 'v1' ? 'V1 (ILXL/UPSCALE)' : 'V3 (삽화 빌드본)');
                 badge.textContent = '감지된 형식: ' + label;
             }
@@ -10487,10 +10539,10 @@
                             <label for="llm-tpl-slot" style="font-size:0.78rem; font-weight:600; color:var(--text);">편집 대상</label>
                             <select id="llm-tpl-slot" onchange="_llmTplSwitchSlot(this)" style="flex:1; padding:4px 8px; border:1px solid var(--border); border-radius:6px; background:var(--surface); color:var(--text); font-size:0.8rem; cursor:pointer;">
                                 <option value="system">System 역할 (V3·V1 공통)</option>
-                                <option value="system_chansub">System 역할 — 챈섭 (NAI)</option>
+                                <option value="system_chansub">System 역할 — 챈섭 (Comfy)</option>
                                 <option value="user_v3">User 지시 — V3 (삽화 빌드본)</option>
                                 <option value="user_v1">User 지시 — V1 (ILXL·UPSCALE)</option>
-                                <option value="user_chansub">User 지시 — 챈섭 (NAI)</option>
+                                <option value="user_chansub">User 지시 — 챈섭 (Comfy)</option>
                             </select>
                             <div id="llm-tpl-badge" style="font-size:0.68rem; padding:1px 6px; border-radius:4px; background:var(--surface2); color:var(--text2); white-space:nowrap;">이 슬롯: 글로벌</div>
                         </div>
@@ -10523,10 +10575,10 @@
             // 슬롯 메타데이터(라벨/힌트)
             const LLM_TPL_SLOTS = {
                 system:  { hint: 'LLM의 역할·출력 형식(JSON only)을 정의. 모든 포맷에 공통 적용.' },
-                system_chansub: { hint: '챈섭 NAI 편집 전용 system 역할과 positive/negative JSON 출력 규칙.' },
+                system_chansub: { hint: '챈섭 Comfy 프롬프트 편집 전용 system 역할과 positive/negative JSON 출력 규칙.' },
                 user_v3: { hint: '삽화 빌드본(ANIMA/SDXL)용 user 지시. 플레이스홀더 {direction} {scene_current} {scene_sdxl} 은 자동 치환됨.' },
                 user_v1: { hint: 'ILXL/UPSCALE(V1)용 user 지시. 플레이스홀더 {direction} {setup} {char} {supplement} 은 자동 치환됨.' },
-                user_chansub: { hint: '챈섭 NAI용 user 지시. 플레이스홀더 {direction} {positive} {negative} 는 자동 치환됨.' },
+                user_chansub: { hint: '챈섭 Comfy 프롬프트용 user 지시. 플레이스홀더 {direction} {positive} {negative} 는 자동 치환됨.' },
             };
 
             // 데이터 로드 → 3슬롯 상태 구성
@@ -10755,7 +10807,7 @@
         async function openSettingsModal() {
             // 현재 설정 로드
             try {
-                currentConfig = await fetchJSON('/api/config');
+                currentConfig = await loadCurrentConfig(true);
             } catch (e) {
                 console.error('설정 로드 실패:', e);
                 currentConfig = {};
@@ -10787,9 +10839,7 @@
             document.getElementById('setting-workflow-base-dir').value = pathParts.baseDir;
             document.getElementById('setting-workflow-filename').value = pathParts.filename;
             document.getElementById('setting-workflow-path').value = workflowPath;
-            const chansubEnabled = (currentConfig.illustration_provider || 'comfy') === 'chansub';
-            document.getElementById('setting-illustration-provider-chansub').checked = chansubEnabled;
-            onIllustrationProviderChange();
+            applyIllustrationProviderConfig(currentConfig);
 
             // 삽화 유틸리티 워크플로우 경로를 파일명으로 분리
             const utilityPath = currentConfig.utility_workflow_source_path || '';
@@ -11664,6 +11714,7 @@
                 backup_webp_lossless: document.getElementById('setting-backup-webp-lossless').checked,
                 comfy_workflow_source_path: document.getElementById('setting-workflow-path').value,
                 illustration_provider: document.getElementById('setting-illustration-provider-chansub').checked ? 'chansub' : 'comfy',
+                chansub_workflow_type: document.getElementById('setting-chansub-workflow-type').value || 'anima',
                 comfy_input_dir: document.getElementById('setting-comfy-input-dir').value,
                 backup_base_dir: document.getElementById('setting-backup-dir').value,
                 backup_max_count: parseInt(document.getElementById('setting-backup-max-count').value) || 500,
@@ -11743,6 +11794,8 @@
                 if (result.success) {
                     showToast('설정이 저장되었습니다', 'success');
                     currentConfig = result.config;
+                    currentConfigLoadPromise = Promise.resolve(currentConfig);
+                    applyIllustrationProviderConfig(currentConfig);
                     // ANIMA UI 가시성 업데이트
                     updateAnimaUIVisibility();
                     // 배치 모드 상태 갱신
@@ -13103,6 +13156,31 @@
             }
         }
 
+        function applyIllustrationProviderConfig(config = {}) {
+            const providerToggle = document.getElementById('setting-illustration-provider-chansub');
+            const workflowSelect = document.getElementById('setting-chansub-workflow-type');
+            if (!providerToggle || !workflowSelect) {
+                console.error('[ILLUST] 챈섭 공급자 UI 요소를 찾을 수 없습니다.');
+                return;
+            }
+
+            let provider = String(config.illustration_provider || 'comfy').trim().toLowerCase();
+            if (provider !== 'comfy' && provider !== 'chansub') {
+                console.error('[ILLUST] 알 수 없는 삽화 공급자, ComfyUI로 표시:', provider);
+                provider = 'comfy';
+            }
+
+            let workflowType = String(config.chansub_workflow_type || 'anima').trim().toLowerCase();
+            if (workflowType !== 'anima' && workflowType !== 'sdxl') {
+                console.error('[ILLUST] 알 수 없는 챈섭 워크플로우, ANIMA로 표시:', workflowType);
+                workflowType = 'anima';
+            }
+
+            providerToggle.checked = provider === 'chansub';
+            workflowSelect.value = workflowType;
+            onIllustrationProviderChange();
+        }
+
         function onIllustrationProviderChange() {
             const toggle = document.getElementById('setting-illustration-provider-chansub');
             const enabled = !!(toggle && toggle.checked);
@@ -13121,6 +13199,10 @@
             const wfAutocomplete = document.getElementById('workflow-autocomplete');
             if (wfAutocomplete) wfAutocomplete.style.display = enabled ? 'none' : '';
             updateChansubAdvancedOptions();
+        }
+
+        function onChansubWorkflowTypeChange() {
+            updateChansubWorkflowOptions();
         }
 
         // ─── Vertex JSON key 핸들러 ───
@@ -13974,8 +14056,8 @@
             await loadBatchModeStatus();
 
             try {
-                const cfg = await fetchJSON('/api/config');
-                currentConfig = cfg;  // 전역 설정 동기화 (알림/자동재예약 등)
+                const cfg = await loadCurrentConfig();
+                applyIllustrationProviderConfig(cfg);
                 const outfitOn = cfg.outfit_mode_enabled || false;
                 document.getElementById('setting-outfit-enabled').checked = outfitOn;
                 updateOutfitStatus(outfitOn);
@@ -20024,6 +20106,15 @@
         let assetNavExpression = '';
 
         async function switchTab(name) {
+            if (name === 'bot') {
+                try {
+                    const config = await loadCurrentConfig();
+                    applyIllustrationProviderConfig(config);
+                } catch (e) {
+                    console.error('[ILLUST] 삽화 탭 진입 전 설정 동기화 실패:', e);
+                }
+            }
+
             document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
             document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
             if (name === 'backup') {
@@ -34772,6 +34863,23 @@
             }
             const notice = document.getElementById('illust-chansub-advanced-notice');
             if (notice) notice.style.display = enabled ? 'block' : 'none';
+            updateChansubWorkflowOptions();
+        }
+
+        function updateChansubWorkflowOptions() {
+            const providerToggle = document.getElementById('setting-illustration-provider-chansub');
+            const workflowSelect = document.getElementById('setting-chansub-workflow-type');
+            const isChansub = !!(providerToggle && providerToggle.checked);
+            const workflowType = workflowSelect && workflowSelect.value === 'sdxl' ? 'sdxl' : 'anima';
+
+            document.querySelectorAll('[data-chansub-workflow]').forEach(group => {
+                const disabled = isChansub && group.dataset.chansubWorkflow !== workflowType;
+                group.classList.toggle('disabled', disabled);
+                group.setAttribute('aria-disabled', disabled ? 'true' : 'false');
+                group.querySelectorAll('input, select, button').forEach(control => {
+                    control.disabled = disabled;
+                });
+            });
         }
 
         function switchIllustSettingsProfile(profile) {

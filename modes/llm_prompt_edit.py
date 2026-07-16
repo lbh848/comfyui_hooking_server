@@ -53,9 +53,10 @@ DEFAULT_SYSTEM_PROMPT = (
 )
 
 DEFAULT_SYSTEM_CHANSUB_PROMPT = (
-    "You are an expert editor for NovelAI-compatible image prompts. Analyze the user's "
-    "direction, image, and complete POSITIVE/NEGATIVE prompts. Return only valid JSON with "
-    "plan, positive, and negative fields. Never add LoRA syntax or workflow control blocks."
+    "You are an expert editor for ComfyUI image prompts sent through an NAI-shaped HTTP API. "
+    "Analyze the user's direction, image, and complete POSITIVE/NEGATIVE prompts. Preserve "
+    "ComfyUI parenthesized weight syntax. Return only valid JSON with plan, positive, and "
+    "negative fields. Never add LoRA syntax or workflow control blocks."
 )
 
 DEFAULT_USER_V3_TEMPLATE = (
@@ -106,9 +107,9 @@ DEFAULT_USER_V1_TEMPLATE = (
 
 DEFAULT_USER_CHANSUB_TEMPLATE = (
     "## User edit direction\n{direction}\n\n"
-    "## Current NAI POSITIVE\n{positive}\n\n"
-    "## Current NAI NEGATIVE\n{negative}\n\n"
-    "Edit the complete NAI-compatible POSITIVE and NEGATIVE prompts. Preserve unaffected "
+    "## Current ComfyUI POSITIVE\n{positive}\n\n"
+    "## Current ComfyUI NEGATIVE\n{negative}\n\n"
+    "Edit the complete ComfyUI-compatible POSITIVE and NEGATIVE prompts. Preserve unaffected "
     "character identity, artist/style, and quality tags. Never add LoRA syntax or workflow "
     "control blocks. Return only JSON with Korean plan and English positive/negative fields."
 )
@@ -142,7 +143,7 @@ def _load_llm_edit_builtin() -> str:
 
 
 def _load_system_chansub_builtin() -> str:
-    """챈섭 NAI system 역할 builtin 템플릿 로드."""
+    """챈섭 Comfy system 역할 builtin 템플릿 로드."""
     return _load_builtin_text(
         LLM_EDIT_BUILTIN_SYSTEM_CHANSUB_FILE, DEFAULT_SYSTEM_CHANSUB_PROMPT
     )
@@ -159,7 +160,7 @@ def _load_user_v1_builtin() -> str:
 
 
 def _load_user_chansub_builtin() -> str:
-    """챈섭 NAI user 지시 builtin 템플릿 로드."""
+    """챈섭 Comfy user 지시 builtin 템플릿 로드."""
     return _load_builtin_text(
         LLM_EDIT_BUILTIN_USER_CHANSUB_FILE, DEFAULT_USER_CHANSUB_TEMPLATE
     )
@@ -299,7 +300,7 @@ def get_effective_system_prompt() -> str:
 
 
 def get_effective_system_prompt_chansub() -> str:
-    """챈섭 NAI 편집에 사용할 system 프롬프트."""
+    """챈섭 Comfy 프롬프트 편집에 사용할 system 프롬프트."""
     return _effective_text("system_chansub")
 
 
@@ -314,7 +315,7 @@ def get_effective_user_template_v1() -> str:
 
 
 def get_effective_user_template_chansub() -> str:
-    """실제 LLM 호출에 사용할 챈섭 NAI user 지시 템플릿."""
+    """실제 LLM 호출에 사용할 챈섭 Comfy user 지시 템플릿."""
     return _effective_text("user_chansub")
 
 # 빌드본 포맷 감지에 필요한 블럭 헤더들
@@ -751,7 +752,7 @@ def detect_format(positive: str, provider: str = "") -> str:
 
 
 def build_chansub_llm_messages(direction: str, positive: str, negative: str) -> list:
-    """챈섭 NAI POSITIVE/NEGATIVE 편집용 LLM messages를 만든다."""
+    """챈섭 Comfy POSITIVE/NEGATIVE 편집용 LLM messages를 만든다."""
     system = get_effective_system_prompt_chansub()
     template = get_effective_user_template_chansub()
     user = _substitute_placeholders(template, {
