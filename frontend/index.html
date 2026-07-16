@@ -13111,6 +13111,15 @@
                 status.textContent = enabled ? '챈섭' : 'ComfyUI';
                 status.className = enabled ? 'toggle-status on' : 'toggle-status off';
             }
+            // 챈섭 공급자일 때 삽화 워크플로우 파일명 입력란 비활성 + 회색 처리
+            const wfInput = document.getElementById('setting-workflow-filename');
+            if (wfInput) {
+                wfInput.disabled = enabled;
+                wfInput.style.opacity = enabled ? '0.38' : '1';
+                wfInput.style.filter = enabled ? 'grayscale(1)' : 'none';
+            }
+            const wfAutocomplete = document.getElementById('workflow-autocomplete');
+            if (wfAutocomplete) wfAutocomplete.style.display = enabled ? 'none' : '';
             updateChansubAdvancedOptions();
         }
 
