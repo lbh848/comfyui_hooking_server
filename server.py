@@ -3591,6 +3591,8 @@ async def handle_api_postprocess_preview(request: web.Request) -> web.Response:
             "name_font_size": body.get("name_font_size", 0) or 0,
             "emotion_font_size": body.get("emotion_font_size", 0) or 0,
             "name_color": bool(body.get("name_color", False)),
+            "dialogue_color": bool(body.get("dialogue_color", False)),
+            "multi_speaker_layout": body.get("multi_speaker_layout", "diagonal") or "diagonal",
             "name_replace": body.get("name_replace") or {},
             "name_replace_enabled": bool(body.get("name_replace_enabled", True)),
             "strip_emotion": bool(body.get("strip_emotion", False)),

@@ -7420,6 +7420,32 @@
                                 </div>
                             </div>
 
+                            <!-- 대사 / 다중 인물 스타일 -->
+                            <div class="pp-card">
+                                <div class="pp-card-title">대사 · 다중 인물</div>
+                                <div class="pp-switch-line">
+                                    <div>
+                                        <div style="font-size:0.82rem;">대사 색상화 (발화자 머리색)</div>
+                                        <div class="pp-hint" style="margin-top:2px;">단일·다중 인물 공통 · 색상이 적용되면 대비 배경도 자동 적용</div>
+                                    </div>
+                                    <label class="toggle-switch">
+                                        <input type="checkbox" id="pp-vn-dialogue-color" onchange="collectPpVnSettings(); renderPostprocessPreview()">
+                                        <span class="toggle-slider"></span>
+                                    </label>
+                                </div>
+                                <div class="pp-row" style="margin-top:10px;">
+                                    <span class="pp-label">다중 인물 배치</span>
+                                    <div class="pp-field-inline">
+                                        <select id="pp-vn-multi-speaker-layout" class="select" style="flex:1;" onchange="collectPpVnSettings(); renderPostprocessPreview()">
+                                            <option value="diagonal">우측 대각선 썸네일</option>
+                                            <option value="split">인물 1 우측·상단 / 인물 2 좌측·하단</option>
+                                            <option value="stack">대사별 박스 쌓기</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="pp-hint" style="margin-top:6px;">박스 쌓기는 하단 확장에서 실제 대사 높이만큼 캔버스를 늘립니다. 대각선·분리 모드는 3명 이상이면 박스 쌓기로 자동 전환합니다.</div>
+                            </div>
+
                             <!-- 감정 -->
                             <div class="pp-card pp-card-advanced">
                                 <div class="pp-card-title">감정</div>
@@ -7456,8 +7482,8 @@
                                 <div class="pp-subsection">
                                     <div class="pp-switch-line" style="margin-bottom:8px;">
                                         <div>
-                                            <div style="font-size:0.82rem;">좌측 얼굴 슬롯 (face_yolo)</div>
-                                            <div class="pp-hint" style="margin-top:2px;">매칭된 캐릭터 이미지에서 YOLO로 얼굴을 검출해 좌측 슬롯에 크롭</div>
+                                            <div style="font-size:0.82rem;">얼굴 썸네일 (face_yolo)</div>
+                                            <div class="pp-hint" style="margin-top:2px;">매칭 이미지의 얼굴을 크롭해 단일 인물은 좌측, 다중 인물은 선택한 배치 위치에 표시</div>
                                         </div>
                                         <label class="toggle-switch">
                                             <input type="checkbox" id="pp-vn-face-enabled" checked onchange="collectPpVnSettings(); renderPostprocessPreview();">
@@ -25550,6 +25576,8 @@
                     name_font_size: 0,
                     emotion_font_size: 0,
                     name_color: false,
+                    dialogue_color: false,
+                    multi_speaker_layout: 'diagonal',
                     name_replace: {},
                     name_replace_enabled: true,
                     strip_emotion: false,
@@ -25626,6 +25654,8 @@
             if (typeof base.opacity !== 'number') base.opacity = 100;
             if (typeof base.name_font_size !== 'number') base.name_font_size = 0;
             if (typeof base.emotion_font_size !== 'number') base.emotion_font_size = 0;
+            if (typeof base.dialogue_color !== 'boolean') base.dialogue_color = false;
+            if (!['diagonal', 'split', 'stack'].includes(base.multi_speaker_layout)) base.multi_speaker_layout = 'diagonal';
             if (!Array.isArray(base.emotion_rows)) base.emotion_rows = [];
             if (typeof base.emotion_total !== 'number') base.emotion_total = 0;
             return base;
@@ -25645,6 +25675,10 @@
             if (_efs) _efs.value = vn.emotion_font_size || 0;
             onPpHeightModeChange();
             document.getElementById('pp-vn-name-color').checked = !!vn.name_color;
+            const _dialogueColor = document.getElementById('pp-vn-dialogue-color');
+            if (_dialogueColor) _dialogueColor.checked = !!vn.dialogue_color;
+            const _multiLayout = document.getElementById('pp-vn-multi-speaker-layout');
+            if (_multiLayout) _multiLayout.value = vn.multi_speaker_layout || 'diagonal';
             document.getElementById('pp-vn-name-replace-enabled').checked = !!vn.name_replace_enabled;
             document.getElementById('pp-vn-strip-emotion').checked = !!vn.strip_emotion;
             const _pfx = document.getElementById('pp-vn-prefix');
@@ -26220,6 +26254,10 @@
             const efs = _efsEl ? parseInt(_efsEl.value, 10) : 0;
             vn.emotion_font_size = isNaN(efs) ? 0 : Math.max(0, efs);
             vn.name_color = document.getElementById('pp-vn-name-color').checked;
+            const _dialogueColorEl = document.getElementById('pp-vn-dialogue-color');
+            vn.dialogue_color = _dialogueColorEl ? _dialogueColorEl.checked : false;
+            const _multiLayoutEl = document.getElementById('pp-vn-multi-speaker-layout');
+            vn.multi_speaker_layout = _multiLayoutEl ? (_multiLayoutEl.value || 'diagonal') : 'diagonal';
             vn.name_replace_enabled = document.getElementById('pp-vn-name-replace-enabled').checked;
             vn.strip_emotion = document.getElementById('pp-vn-strip-emotion').checked;
             const _pfxEl = document.getElementById('pp-vn-prefix');
@@ -26283,6 +26321,8 @@
                             name_font_size: vn.name_font_size || 0,
                             emotion_font_size: vn.emotion_font_size || 0,
                             name_color: vn.name_color,
+                            dialogue_color: vn.dialogue_color,
+                            multi_speaker_layout: vn.multi_speaker_layout || 'diagonal',
                             name_replace: vn.name_replace || {},
                             name_replace_enabled: vn.name_replace_enabled,
                             strip_emotion: vn.strip_emotion,
