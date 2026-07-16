@@ -103,6 +103,8 @@ DEFAULT_CONFIG = {
     "workflow_filename": "",  # 빈 값이면 workflow 폴더의 첫 번째 json 사용
     "illustration_provider": "comfy",  # 삽화 공급자: comfy | chansub
     "chansub_workflow_type": "anima",  # 챈섭 삽화 프롬프트 계열: anima | sdxl
+    "chansub_max_retries": 2,  # 챈섭 일시적 실패 시 재시도 횟수 (최초 요청 제외)
+    "chansub_retry_delay_sec": 3.0,  # 챈섭 재시도 사이의 설정 대기 시간(초)
     "utility_workflow_source_path": "",  # 삽화 유틸리티 워크플로우 전체 경로
     "bot_mode_enabled": False,  # 삽화 모드 활성화 여부
     "debug_mode_enabled": False,  # 디버깅 모드 (ComfyUI 전송만 중단)
@@ -1241,7 +1243,12 @@ async def generate_image_with_prompt(
                 print(f"[CHANSUB] 시작 진행률 콜백 실패: {e}")
                 traceback.print_exc()
         image_bytes, result = await chansub_service.generate_image(
-            positive, negative, request_width, request_height
+            positive,
+            negative,
+            request_width,
+            request_height,
+            max_retries=app_config.get("chansub_max_retries", 2),
+            retry_delay_sec=app_config.get("chansub_retry_delay_sec", 3.0),
         )
         if progress_callback and image_bytes:
             try:
@@ -5036,6 +5043,54 @@ async def handle_api_config(request: web.Request) -> web.Response:
                         status=400,
                     )
                 body["chansub_workflow_type"] = chansub_workflow_type
+
+            if "chansub_max_retries" in body:
+                try:
+                    chansub_max_retries = int(body["chansub_max_retries"])
+                except (TypeError, ValueError):
+                    print(
+                        f"[CONFIG] 챈섭 재시도 횟수 저장 거부: "
+                        f"{body.get('chansub_max_retries')!r}"
+                    )
+                    traceback.print_exc()
+                    return web.json_response(
+                        {"error": "챈섭 재시도 횟수는 0~10 사이의 정수여야 합니다."},
+                        status=400,
+                    )
+                if not 0 <= chansub_max_retries <= 10:
+                    print(
+                        f"[CONFIG] 챈섭 재시도 횟수 범위 오류: "
+                        f"{chansub_max_retries}"
+                    )
+                    return web.json_response(
+                        {"error": "챈섭 재시도 횟수는 0~10 사이여야 합니다."},
+                        status=400,
+                    )
+                body["chansub_max_retries"] = chansub_max_retries
+
+            if "chansub_retry_delay_sec" in body:
+                try:
+                    chansub_retry_delay_sec = float(body["chansub_retry_delay_sec"])
+                except (TypeError, ValueError):
+                    print(
+                        f"[CONFIG] 챈섭 재시도 주기 저장 거부: "
+                        f"{body.get('chansub_retry_delay_sec')!r}"
+                    )
+                    traceback.print_exc()
+                    return web.json_response(
+                        {"error": "챈섭 재시도 주기는 0~300 사이의 숫자여야 합니다."},
+                        status=400,
+                    )
+                if not 0 <= chansub_retry_delay_sec <= 300:
+                    print(
+                        f"[CONFIG] 챈섭 재시도 주기 범위 오류: "
+                        f"{chansub_retry_delay_sec}"
+                    )
+                    return web.json_response(
+                        {"error": "챈섭 재시도 주기는 0~300초 사이여야 합니다."},
+                        status=400,
+                    )
+                body["chansub_retry_delay_sec"] = chansub_retry_delay_sec
 
             # 설정 업데이트
             for key in body:

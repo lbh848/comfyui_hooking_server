@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import io
 import random
 import traceback
@@ -14,6 +15,14 @@ CHANSUB_URL = "https://wellspring.encrypt.gay/v1/images/nai/generate-image"
 CHANSUB_MODEL = "nai-diffusion-4-5-full"
 
 _api_key = ""
+
+
+class ChansubRequestError(RuntimeError):
+    """재시도 가능 여부를 포함한 챈섭 요청 실패."""
+
+    def __init__(self, message: str, *, retryable: bool) -> None:
+        super().__init__(message)
+        self.retryable = retryable
 
 
 def update_api_key(api_key: str) -> None:
@@ -83,6 +92,9 @@ def build_request_body(positive: str, negative: str, width: int, height: int) ->
 
 def extract_image_from_response(data: bytes, content_type: str = "") -> bytes:
     """NAI ZIP 응답에서 첫 이미지를 꺼낸다. 직접 이미지 응답도 허용한다."""
+    if not data:
+        print(f"[CHANSUB] 응답 본문이 비어 있음: content_type={content_type!r}")
+        raise RuntimeError("챈섭 응답 본문이 비어 있습니다.")
     if data.startswith(b"\x89PNG\r\n\x1a\n") or data.startswith(b"\xff\xd8\xff"):
         return data
     if data.startswith((b"RIFF", b"\x00\x00\x00\x1cftypavif")) or content_type.startswith("image/"):
@@ -111,7 +123,57 @@ def extract_image_from_response(data: bytes, content_type: str = "") -> bytes:
         raise RuntimeError("챈섭 응답이 이미지 또는 유효한 ZIP이 아닙니다.") from exc
 
 
-async def generate_image(positive: str, negative: str, width: int, height: int) -> tuple[bytes | None, str | dict]:
+def _is_retryable_http_status(status: int) -> bool:
+    return status in (408, 429) or status >= 500
+
+
+async def _post_generate_request(body: dict, headers: dict[str, str]) -> bytes:
+    """챈섭에 한 번 요청하고, 성공한 이미지 바이트를 반환한다."""
+    timeout = aiohttp.ClientTimeout(total=300, connect=30)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with session.post(CHANSUB_URL, headers=headers, json=body) as response:
+            data = await response.read()
+            content_type = response.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+            if response.status < 200 or response.status >= 300:
+                detail = data[:1000].decode("utf-8", errors="replace")
+                retryable = _is_retryable_http_status(response.status)
+                print(
+                    f"[CHANSUB] HTTP 실패: status={response.status}, "
+                    f"retryable={retryable}, content_type={content_type!r}, body={detail!r}"
+                )
+                raise ChansubRequestError(
+                    f"챈섭 HTTP {response.status}: {detail}", retryable=retryable
+                )
+
+            try:
+                image_bytes = extract_image_from_response(data, content_type)
+            except Exception as exc:
+                print(
+                    f"[CHANSUB] 성공 응답 이미지 해석 실패: "
+                    f"content_type={content_type!r}, response_size={len(data)}"
+                )
+                traceback.print_exc()
+                raise ChansubRequestError(
+                    f"챈섭 응답 이미지 해석 실패: {type(exc).__name__}: {exc}",
+                    retryable=True,
+                ) from exc
+
+            print(
+                f"[CHANSUB] 이미지 수신 완료: response={len(data):,}B, "
+                f"image={len(image_bytes):,}B, content_type={content_type!r}"
+            )
+            return image_bytes
+
+
+async def generate_image(
+    positive: str,
+    negative: str,
+    width: int,
+    height: int,
+    *,
+    max_retries: int = 2,
+    retry_delay_sec: float = 3.0,
+) -> tuple[bytes | None, str | dict]:
     if not _api_key:
         message = "챈섭 API 키가 설정되지 않았습니다."
         print(f"[CHANSUB] 생성 중단: {message}")
@@ -127,36 +189,76 @@ async def generate_image(positive: str, negative: str, width: int, height: int) 
         "Content-Type": "application/json",
         "Accept": "application/zip, image/*, application/octet-stream",
     }
-    print(
-        f"[CHANSUB] → POST {CHANSUB_URL} model={CHANSUB_MODEL} "
-        f"size={width}x{height} positive_len={len(positive)} negative_len={len(negative)}"
-    )
 
     try:
-        timeout = aiohttp.ClientTimeout(total=300, connect=30)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.post(CHANSUB_URL, headers=headers, json=body) as response:
-                data = await response.read()
-                content_type = response.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
-                if response.status < 200 or response.status >= 300:
-                    detail = data[:1000].decode("utf-8", errors="replace")
-                    print(
-                        f"[CHANSUB] HTTP 실패: status={response.status}, "
-                        f"content_type={content_type!r}, body={detail!r}"
-                    )
-                    return None, f"챈섭 HTTP {response.status}: {detail}"
-                image_bytes = extract_image_from_response(data, content_type)
-                print(
-                    f"[CHANSUB] 이미지 수신 완료: response={len(data):,}B, "
-                    f"image={len(image_bytes):,}B, content_type={content_type!r}"
-                )
-                return image_bytes, {
-                    "provider": "chansub",
-                    "model": CHANSUB_MODEL,
-                    "width": int(width),
-                    "height": int(height),
-                }
-    except Exception as exc:
-        print(f"[CHANSUB] 생성 예외: {type(exc).__name__}: {exc}")
+        retries = max(0, int(max_retries))
+        retry_delay = max(0.0, float(retry_delay_sec))
+    except (TypeError, ValueError) as exc:
+        print(
+            f"[CHANSUB] 재시도 설정값 오류: max_retries={max_retries!r}, "
+            f"retry_delay_sec={retry_delay_sec!r}"
+        )
         traceback.print_exc()
-        return None, f"챈섭 생성 예외: {type(exc).__name__}: {exc}"
+        return None, f"챈섭 재시도 설정값 오류: {type(exc).__name__}: {exc}"
+
+    total_attempts = retries + 1
+    last_error = "알 수 없는 실패"
+
+    for attempt in range(1, total_attempts + 1):
+        print(
+            f"[CHANSUB] → POST {CHANSUB_URL} model={CHANSUB_MODEL} "
+            f"size={width}x{height} positive_len={len(positive)} negative_len={len(negative)} "
+            f"attempt={attempt}/{total_attempts}"
+        )
+        retryable = False
+        try:
+            image_bytes = await _post_generate_request(body, headers)
+            return image_bytes, {
+                "provider": "chansub",
+                "model": CHANSUB_MODEL,
+                "width": int(width),
+                "height": int(height),
+                "attempts": attempt,
+            }
+        except ChansubRequestError as exc:
+            last_error = str(exc)
+            retryable = exc.retryable
+            print(
+                f"[CHANSUB] 요청 실패: attempt={attempt}/{total_attempts}, "
+                f"retryable={retryable}, error={last_error}"
+            )
+        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            last_error = f"챈섭 생성 예외: {type(exc).__name__}: {exc}"
+            retryable = True
+            print(
+                f"[CHANSUB] 네트워크/타임아웃 실패: attempt={attempt}/{total_attempts}, "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+        except Exception as exc:
+            last_error = f"챈섭 생성 예외: {type(exc).__name__}: {exc}"
+            print(
+                f"[CHANSUB] 재시도하지 않는 생성 예외: attempt={attempt}/{total_attempts}, "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            return None, last_error
+
+        if not retryable:
+            print(f"[CHANSUB] 재시도 불가 실패로 종료: {last_error}")
+            return None, last_error
+        if attempt >= total_attempts:
+            print(
+                f"[CHANSUB] 재시도 소진: retries={retries}, "
+                f"attempts={total_attempts}, last_error={last_error}"
+            )
+            return None, last_error
+
+        print(
+            f"[CHANSUB] 재시도 대기: next_attempt={attempt + 1}/{total_attempts}, "
+            f"delay={retry_delay}초, last_error={last_error}"
+        )
+        await asyncio.sleep(retry_delay)
+
+    print(f"[CHANSUB] 비정상 반복 종료: last_error={last_error}")
+    return None, last_error

@@ -1,8 +1,12 @@
 import io
 import unittest
 import zipfile
+from unittest.mock import AsyncMock, patch
+
+import aiohttp
 
 from modes.chansub_prompt_builder import ChansubPromptBuilder
+from modes import chansub_service
 from modes.chansub_service import build_request_body, extract_image_from_response
 from modes import llm_prompt_edit
 
@@ -130,6 +134,89 @@ class ChansubServiceTest(unittest.TestCase):
         self.assertEqual(
             extract_image_from_response(buffer.getvalue(), "application/zip"), png
         )
+
+    def test_empty_image_response_is_rejected(self):
+        with self.assertRaisesRegex(RuntimeError, "비어 있습니다"):
+            extract_image_from_response(b"", "image/png")
+
+    def test_retryable_http_statuses(self):
+        self.assertTrue(chansub_service._is_retryable_http_status(408))
+        self.assertTrue(chansub_service._is_retryable_http_status(429))
+        self.assertTrue(chansub_service._is_retryable_http_status(500))
+        self.assertFalse(chansub_service._is_retryable_http_status(400))
+        self.assertFalse(chansub_service._is_retryable_http_status(401))
+
+
+class ChansubRetryTest(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        chansub_service.update_api_key("test-key")
+
+    def tearDown(self):
+        chansub_service.update_api_key("")
+
+    async def test_transient_failure_retries_until_success(self):
+        request_mock = AsyncMock(
+            side_effect=[
+                aiohttp.ClientConnectionError("temporary-1"),
+                aiohttp.ClientConnectionError("temporary-2"),
+                b"image-data",
+            ]
+        )
+        sleep_mock = AsyncMock()
+
+        with patch.object(chansub_service, "_post_generate_request", request_mock), patch.object(
+            chansub_service.asyncio, "sleep", sleep_mock
+        ):
+            image, result = await chansub_service.generate_image(
+                "positive", "negative", 640, 960, max_retries=2, retry_delay_sec=3
+            )
+
+        self.assertEqual(image, b"image-data")
+        self.assertEqual(result["attempts"], 3)
+        self.assertEqual(request_mock.await_count, 3)
+        self.assertEqual(sleep_mock.await_count, 2)
+        sleep_mock.assert_awaited_with(3.0)
+
+    async def test_non_retryable_http_failure_stops_immediately(self):
+        request_mock = AsyncMock(
+            side_effect=chansub_service.ChansubRequestError(
+                "챈섭 HTTP 401: unauthorized", retryable=False
+            )
+        )
+        sleep_mock = AsyncMock()
+
+        with patch.object(chansub_service, "_post_generate_request", request_mock), patch.object(
+            chansub_service.asyncio, "sleep", sleep_mock
+        ):
+            image, error = await chansub_service.generate_image(
+                "positive", "negative", 640, 960, max_retries=2, retry_delay_sec=3
+            )
+
+        self.assertIsNone(image)
+        self.assertIn("HTTP 401", error)
+        self.assertEqual(request_mock.await_count, 1)
+        sleep_mock.assert_not_awaited()
+
+    async def test_retryable_failure_stops_after_configured_retries(self):
+        request_mock = AsyncMock(
+            side_effect=chansub_service.ChansubRequestError(
+                "챈섭 HTTP 503: unavailable", retryable=True
+            )
+        )
+        sleep_mock = AsyncMock()
+
+        with patch.object(chansub_service, "_post_generate_request", request_mock), patch.object(
+            chansub_service.asyncio, "sleep", sleep_mock
+        ):
+            image, error = await chansub_service.generate_image(
+                "positive", "negative", 640, 960, max_retries=2, retry_delay_sec=1.5
+            )
+
+        self.assertIsNone(image)
+        self.assertIn("HTTP 503", error)
+        self.assertEqual(request_mock.await_count, 3)
+        self.assertEqual(sleep_mock.await_count, 2)
+        sleep_mock.assert_awaited_with(1.5)
 
 
 class ChansubLlmEditTest(unittest.TestCase):

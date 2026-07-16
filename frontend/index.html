@@ -8107,6 +8107,26 @@
                                 </select>
                             </div>
                         </div>
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="title">실패 시 재시도 횟수</div>
+                                <div class="desc">최초 요청을 제외한 추가 시도 횟수. 네트워크·타임아웃, HTTP 408/429/5xx, 이미지 응답 해석 실패에만 적용됩니다.</div>
+                            </div>
+                            <div class="setting-control">
+                                <input type="number" id="setting-chansub-max-retries" min="0" max="10" step="1" value="2"
+                                       style="width:100px; padding:6px 10px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); color:var(--text);">
+                            </div>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="title">재시도 주기(초)</div>
+                                <div class="desc">재시도 사이에 설정한 시간만큼 대기합니다. 0이면 즉시 재시도합니다.</div>
+                            </div>
+                            <div class="setting-control">
+                                <input type="number" id="setting-chansub-retry-delay" min="0" max="300" step="0.5" value="3"
+                                       style="width:100px; padding:6px 10px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); color:var(--text);">
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -10880,6 +10900,10 @@
             if (aftRetriesEl) aftRetriesEl.value = (currentConfig.auto_face_tag_max_retries ?? 2);
             const aftDelayEl = document.getElementById('setting-auto-llm-retry-delay');
             if (aftDelayEl) aftDelayEl.value = (currentConfig.auto_llm_retry_delay_sec ?? 1.0);
+            const chansubRetriesEl = document.getElementById('setting-chansub-max-retries');
+            if (chansubRetriesEl) chansubRetriesEl.value = (currentConfig.chansub_max_retries ?? 2);
+            const chansubRetryDelayEl = document.getElementById('setting-chansub-retry-delay');
+            if (chansubRetryDelayEl) chansubRetryDelayEl.value = (currentConfig.chansub_retry_delay_sec ?? 3.0);
             const llmConcEl = document.getElementById('setting-llm-max-concurrency');
             if (llmConcEl) llmConcEl.value = (currentConfig.llm_max_concurrency ?? 1);
             const llmPresetEl = document.getElementById('setting-llm-reasoning-preset');
@@ -11725,6 +11749,8 @@
                 comfy_workflow_source_path: document.getElementById('setting-workflow-path').value,
                 illustration_provider: document.getElementById('setting-illustration-provider-chansub').checked ? 'chansub' : 'comfy',
                 chansub_workflow_type: document.getElementById('setting-chansub-workflow-type').value || 'anima',
+                chansub_max_retries: parseInt(document.getElementById('setting-chansub-max-retries').value) || 0,
+                chansub_retry_delay_sec: parseFloat(document.getElementById('setting-chansub-retry-delay').value) || 0,
                 comfy_input_dir: document.getElementById('setting-comfy-input-dir').value,
                 backup_base_dir: document.getElementById('setting-backup-dir').value,
                 backup_max_count: parseInt(document.getElementById('setting-backup-max-count').value) || 500,
