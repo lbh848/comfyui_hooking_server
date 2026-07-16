@@ -33304,9 +33304,11 @@
                 const chars = pd.characters || [];
                 html += `<div style="font-size:0.72rem; color:var(--text2); margin-bottom:6px;">선택 프로젝트 BASE: <b>${escHtml(prof)}</b></div>`;
                 html += targets.map(cn => {
+                    // 토큰 경계 매칭(인스턴스 탭 _isInstanceLoraRecommended와 동일 방향: 타겟 토큰 ⊆ 프로젝트 캐릭터 토큰).
+                    // → "Tokkigongju_reallife" 타겟이 "Tokkigongju" 프로젝트 캐릭터에 부분문자열로 잘못 걸리는 것을 차단.
                     const mch = chars.find(ch => {
-                        const a = _normCharMatch(ch.name), b = _normCharMatch(cn);
-                        return a && b && (a.includes(b) || b.includes(a));
+                        const cnTok = _normTokens(cn), chTok = _normTokens(ch.name);
+                        return cnTok.length > 0 && chTok.length > 0 && _tokensContainAll(chTok, cnTok);
                     });
                     let body;
                     if (!mch) {
@@ -33415,9 +33417,11 @@
                     } else {
                         // 봇: 체크된 representative만
                         const chars = (botProject && botProject.characters) || [];
+                        // 토큰 경계 매칭(미리보기 _renderAutoLoraBot와 동일 로직: 타겟 토큰 ⊆ 프로젝트 캐릭터 토큰).
+                        // 미리보기와 실제 전송이 다르게 매칭되는 버그 방지(CLAUDE.md: 동일 빌더 사용).
                         const mch = chars.find(ch => {
-                            const a = _normCharMatch(ch.name), b = _normCharMatch(cn);
-                            return a && b && (a.includes(b) || b.includes(a));
+                            const cnTok = _normTokens(cn), chTok = _normTokens(ch.name);
+                            return cnTok.length > 0 && chTok.length > 0 && _tokensContainAll(chTok, cnTok);
                         });
                         if (mch) {
                             const sessions = (mch.trained_sessions || []).filter(s => !!s.representative);
