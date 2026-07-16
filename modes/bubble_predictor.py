@@ -217,6 +217,208 @@ def _rect_distance(a, b):
     return math.hypot(dx, dy)
 
 
+def _rect_iou(a, b):
+    """두 xyxy 사각형의 IoU를 반환한다."""
+    ax1, ay1, ax2, ay2 = [float(v) for v in a]
+    bx1, by1, bx2, by2 = [float(v) for v in b]
+    inter_w = max(0.0, min(ax2, bx2) - max(ax1, bx1))
+    inter_h = max(0.0, min(ay2, by2) - max(ay1, by1))
+    intersection = inter_w * inter_h
+    area_a = max(0.0, ax2 - ax1) * max(0.0, ay2 - ay1)
+    area_b = max(0.0, bx2 - bx1) * max(0.0, by2 - by1)
+    union = area_a + area_b - intersection
+    return intersection / union if union > 1e-9 else 0.0
+
+
+def _foreground_overlap_metrics(mask, rect, foreground_total):
+    """풍선 rect와 foreground 픽셀 마스크의 (IoU, 풍선 점유율)을 반환한다."""
+    height, width = mask.shape
+    x1, y1, x2, y2 = [float(v) for v in rect]
+    left = max(0, min(width, int(math.floor(x1))))
+    top = max(0, min(height, int(math.floor(y1))))
+    right = max(0, min(width, int(math.ceil(x2))))
+    bottom = max(0, min(height, int(math.ceil(y2))))
+    rect_area = max(0, right - left) * max(0, bottom - top)
+    if rect_area <= 0:
+        return 1.0, 1.0
+    intersection = int(np.count_nonzero(mask[top:bottom, left:right]))
+    union = int(foreground_total) + rect_area - intersection
+    foreground_iou = intersection / union if union > 0 else 0.0
+    foreground_overlap = intersection / rect_area
+    return float(foreground_iou), float(foreground_overlap)
+
+
+def generate_grid_candidates(body_size, face_box, canvas_size, margin=4):
+    """엄격 배치 실패 시 사용할 얼굴 주변+전체 화면 격자 중심 후보를 만든다."""
+    body_w, body_h = [float(v) for v in body_size]
+    canvas_w, canvas_h = [float(v) for v in canvas_size]
+    margin = max(0.0, float(margin))
+    if body_w > canvas_w - 2 * margin or body_h > canvas_h - 2 * margin:
+        print(
+            f"[BUBBLE_PREDICTOR] 격자 후보 생성 불가: "
+            f"body={body_size}, canvas={canvas_size}, margin={margin}"
+        )
+        return []
+
+    fx1, fy1, fx2, fy2 = [float(v) for v in face_box]
+    fcx, fcy = (fx1 + fx2) / 2.0, (fy1 + fy2) / 2.0
+    centers = []
+
+    # 얼굴 주변은 전체 격자보다 먼저 넣어 동률일 때 자연스러운 근접 위치를 쓴다.
+    gap = 6.0
+    for offset in (0.0, -0.25, 0.25, -0.5, 0.5, -0.75, 0.75):
+        centers.append((fcx + body_w * offset, fy1 - gap - body_h / 2.0))
+        centers.append((fcx + body_w * offset, fy2 + gap + body_h / 2.0))
+    for offset in (0.0, -0.25, 0.25, -0.5, 0.5):
+        centers.append((fx1 - gap - body_w / 2.0, fcy + body_h * offset))
+        centers.append((fx2 + gap + body_w / 2.0, fcy + body_h * offset))
+
+    def axis_positions(body, canvas):
+        start = margin + body / 2.0
+        end = canvas - margin - body / 2.0
+        step = max(8.0, body * 0.22)
+        values = []
+        value = start
+        while value <= end + 1e-6:
+            values.append(value)
+            value += step
+        if not values or abs(values[-1] - end) > 1e-6:
+            values.append(end)
+        return values
+
+    for center_y in axis_positions(body_h, canvas_h):
+        for center_x in axis_positions(body_w, canvas_w):
+            centers.append((center_x, center_y))
+
+    result = []
+    seen = set()
+    for center in centers:
+        rect = _clamped_rect(center, body_size, canvas_size, margin)
+        if rect is None:
+            continue
+        corrected = ((rect[0] + rect[2]) / 2.0, (rect[1] + rect[3]) / 2.0)
+        key = (round(corrected[0], 3), round(corrected[1], 3))
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append({"center": corrected, "confidence": 0.0, "source": "grid"})
+    return result
+
+
+def select_relaxed_candidate(candidates, body_size, face_box, canvas_size,
+                             face_boxes=(), occupied_boxes=(), margin=4,
+                             protected_foreground_mask=None):
+    """완전 비겹침이 불가능할 때 가중 IoU가 가장 낮은 후보를 선택한다.
+
+    우선순위는 얼굴 > 기존 풍선 > foreground 픽셀 > 화자 얼굴 거리다.
+    얼굴/풍선과 전혀 겹치지 않는 후보는 작은 IoU 차이와 무관하게 항상 우선한다.
+    """
+    mask = None
+    foreground_total = 0
+    if protected_foreground_mask is not None:
+        candidate_mask = np.asarray(protected_foreground_mask)
+        expected_shape = (int(canvas_size[1]), int(canvas_size[0]))
+        if (
+            candidate_mask.ndim == 2
+            and candidate_mask.size > 0
+            and candidate_mask.shape == expected_shape
+        ):
+            mask = candidate_mask
+            foreground_total = int(np.count_nonzero(mask))
+        else:
+            print(
+                f"[BUBBLE_PREDICTOR] 완화 배치에서 잘못된 foreground 마스크 제외: "
+                f"shape={candidate_mask.shape}, expected={expected_shape}"
+            )
+
+    canvas_diagonal = max(math.hypot(float(canvas_size[0]), float(canvas_size[1])), 1.0)
+    ranked = []
+    seen_rects = set()
+    for item in candidates or []:
+        center = item.get("center")
+        try:
+            valid_center = bool(center) and all(math.isfinite(float(v)) for v in center)
+        except Exception as e:
+            print(f"[BUBBLE_PREDICTOR] 완화 후보 중심 검사 실패({center!r}): {e}")
+            traceback.print_exc()
+            valid_center = False
+        if not valid_center:
+            print(f"[BUBBLE_PREDICTOR] 완화 배치의 잘못된 후보 중심 제외: {center}")
+            continue
+        rect = _clamped_rect(center, body_size, canvas_size, margin)
+        if rect is None:
+            continue
+        rect_key = tuple(round(float(value), 3) for value in rect)
+        if rect_key in seen_rects:
+            continue
+        seen_rects.add(rect_key)
+
+        face_iou = max((_rect_iou(rect, obstacle) for obstacle in face_boxes), default=0.0)
+        bubble_iou = min(
+            1.0,
+            sum(_rect_iou(rect, obstacle) for obstacle in occupied_boxes),
+        )
+        if mask is None:
+            foreground_iou, foreground_overlap = 0.0, 0.0
+        else:
+            foreground_iou, foreground_overlap = _foreground_overlap_metrics(
+                mask, rect, foreground_total
+            )
+        distance = _rect_distance(rect, face_box)
+        distance_normalized = distance / canvas_diagonal
+
+        # 존재 벌점을 따로 둬서 얼굴/기존 풍선과 0 IoU인 후보가 항상 우선한다.
+        weighted_score = (
+            (1.0e12 if face_iou > 1e-9 else 0.0)
+            + face_iou * 1.0e9
+            + (1.0e7 if bubble_iou > 1e-9 else 0.0)
+            + bubble_iou * 1.0e6
+            + foreground_iou * 1.0e4
+            + foreground_overlap * 1.0e2
+            + distance_normalized
+        )
+        record = dict(item)
+        record.update({
+            "rect": rect,
+            "center": ((rect[0] + rect[2]) / 2.0, (rect[1] + rect[3]) / 2.0),
+            "anchor": _face_boundary_anchor(
+                ((rect[0] + rect[2]) / 2.0, (rect[1] + rect[3]) / 2.0),
+                face_box,
+            ),
+            "valid": True,
+            "relaxed": True,
+            "reason": "relaxed_iou",
+            "face_iou": face_iou,
+            "bubble_iou": bubble_iou,
+            "foreground_iou": foreground_iou,
+            "foreground_overlap": foreground_overlap,
+            "distance": distance,
+            "weighted_score": weighted_score,
+        })
+        confidence = float(item.get("confidence", 0.0))
+        ranked.append((weighted_score, distance, -confidence, record))
+
+    if not ranked:
+        print(
+            f"[BUBBLE_PREDICTOR] 가중 IoU 완화 후보 없음: "
+            f"body={body_size}, canvas={canvas_size}"
+        )
+        return None
+    _score, _distance, _confidence, chosen = min(
+        ranked, key=lambda value: (value[0], value[1], value[2])
+    )
+    print(
+        "[BUBBLE_PREDICTOR] 가중 IoU 완화 후보 선택: "
+        f"source={chosen.get('source', 'onnx')}, "
+        f"face_iou={chosen['face_iou']:.5f}, "
+        f"bubble_iou={chosen['bubble_iou']:.5f}, "
+        f"foreground_iou={chosen['foreground_iou']:.5f}, "
+        f"foreground_overlap={chosen['foreground_overlap']:.3f}, "
+        f"distance={chosen['distance']:.1f}, score={chosen['weighted_score']:.3e}"
+    )
+    return chosen
+
+
 def evaluate_candidates(candidates, body_size, face_box, canvas_size, forbidden_boxes=(),
                         occupied_boxes=(), margin=4, face_gap=2, bubble_gap=4,
                         protected_foreground_mask=None, min_background_ratio=0.90):

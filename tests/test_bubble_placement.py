@@ -8,7 +8,12 @@ from modes.background_segmenter import background_ratio
 from modes.face_detector import _detect_multi
 from modes.bubble_layout import choose_layout, choose_scaled_layout
 from modes.bubble_match import match_speakers_to_faces
-from modes.bubble_predictor import select_candidate
+from modes.bubble_predictor import (
+    _rect_iou,
+    generate_grid_candidates,
+    select_candidate,
+    select_relaxed_candidate,
+)
 from modes.postprocess import normalize_layout_font_scale
 from modes.bubble_render import (
     _draw_layout_bubble,
@@ -215,6 +220,97 @@ class BubblePlacementTest(unittest.TestCase):
         self.assertIsNotNone(chosen)
         self.assertEqual(chosen["center"], (350.0, 70.0))
         self.assertEqual(chosen["background_ratio"], 1.0)
+
+    def test_rect_iou(self):
+        self.assertEqual(_rect_iou((0, 0, 10, 10), (20, 20, 30, 30)), 0.0)
+        self.assertAlmostEqual(
+            _rect_iou((0, 0, 10, 10), (5, 0, 15, 10)),
+            1.0 / 3.0,
+        )
+
+    def test_relaxed_candidate_prefers_zero_face_iou_over_clean_background(self):
+        face = (90, 90, 170, 170)
+        candidates = [
+            {"center": (130, 130), "confidence": 0.9, "source": "onnx"},
+            {"center": (245, 245), "confidence": 0.1, "source": "grid"},
+        ]
+        protected = np.zeros((300, 300), dtype=np.uint8)
+        protected[200:300, 190:300] = 1
+        strict = select_candidate(
+            candidates,
+            body_size=(90, 70),
+            face_box=face,
+            canvas_size=(300, 300),
+            forbidden_boxes=[face],
+            protected_foreground_mask=protected,
+        )
+        relaxed = select_relaxed_candidate(
+            candidates,
+            body_size=(90, 70),
+            face_box=face,
+            canvas_size=(300, 300),
+            face_boxes=[face],
+            protected_foreground_mask=protected,
+        )
+        self.assertIsNone(strict)
+        self.assertIsNotNone(relaxed)
+        self.assertEqual(relaxed["source"], "grid")
+        self.assertEqual(relaxed["face_iou"], 0.0)
+        self.assertGreater(relaxed["foreground_overlap"], 0.0)
+
+    def test_relaxed_candidate_chooses_lowest_face_iou_when_all_overlap(self):
+        face = (40, 40, 260, 260)
+        candidates = [
+            {"center": (130, 130), "confidence": 0.9},
+            {"center": (54, 54), "confidence": 0.1},
+        ]
+        relaxed = select_relaxed_candidate(
+            candidates,
+            body_size=(100, 100),
+            face_box=face,
+            canvas_size=(300, 300),
+            face_boxes=[face],
+        )
+        self.assertIsNotNone(relaxed)
+        ious = [
+            _rect_iou((80, 80, 180, 180), face),
+            _rect_iou((4, 4, 104, 104), face),
+        ]
+        self.assertAlmostEqual(relaxed["face_iou"], min(ious), places=6)
+
+    def test_relaxed_candidate_prefers_zero_bubble_iou_over_clean_background(self):
+        candidates = [
+            {"center": (55, 50), "confidence": 0.9, "source": "onnx"},
+            {"center": (245, 250), "confidence": 0.1, "source": "grid"},
+        ]
+        protected = np.zeros((300, 300), dtype=np.uint8)
+        protected[210:300, 200:300] = 1
+        relaxed = select_relaxed_candidate(
+            candidates,
+            body_size=(80, 60),
+            face_box=(130, 120, 170, 160),
+            canvas_size=(300, 300),
+            occupied_boxes=[(15, 20, 95, 80)],
+            protected_foreground_mask=protected,
+        )
+        self.assertIsNotNone(relaxed)
+        self.assertEqual(relaxed["source"], "grid")
+        self.assertEqual(relaxed["bubble_iou"], 0.0)
+        self.assertGreater(relaxed["foreground_overlap"], 0.0)
+
+    def test_grid_candidates_cover_canvas_edges(self):
+        candidates = generate_grid_candidates(
+            (80, 60),
+            (120, 120, 180, 180),
+            (300, 300),
+        )
+        self.assertGreater(len(candidates), 4)
+        xs = [item["center"][0] for item in candidates]
+        ys = [item["center"][1] for item in candidates]
+        self.assertAlmostEqual(min(xs), 44.0)
+        self.assertAlmostEqual(max(xs), 256.0)
+        self.assertAlmostEqual(min(ys), 34.0)
+        self.assertAlmostEqual(max(ys), 266.0)
 
     def test_background_ratio_uses_rect_pixels(self):
         protected_foreground = np.zeros((20, 20), dtype=np.uint8)

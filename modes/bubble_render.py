@@ -10,6 +10,7 @@ compose_bubble() 하나만이 말풍선 렌더의 단일 소스다. 미리보기
   → 레이아웃 ONNX가 글자 크기/줄바꿈/버블 종류·비율 결정
   → anime-seg ONNX가 foreground 보호 마스크 생성(페이지당 1회)
   → 위치 ONNX가 얼굴별 중심 후보 생성 → 배경에 놓이는 가장 가까운 후보 선택
+  → 순수 배경 후보가 없으면 ONNX+전체 격자 후보의 가중 IoU를 최소화
   → 풍선/얼굴 경계 거리가 설정 기준 이내일 때만 곡선 꼬리 표시
   → PNG bytes
 
@@ -615,8 +616,10 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
         from modes.bubble_match import match_speakers_to_faces
         from modes.bubble_predictor import (
             evaluate_candidates,
+            generate_grid_candidates,
             predict_for_face_candidates,
             select_candidate,
+            select_relaxed_candidate,
         )
         from modes.bubble_layout import choose_scaled_layout
         from modes.background_segmenter import predict_protected_foreground_mask
@@ -776,23 +779,66 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
                 f"background={chosen.get('background_ratio', 1.0):.3f}"
             )
         else:
-            print(f"[BUBBLE_RENDER] ONNX 유효 후보 없음 → 안전 근접 배치: speaker={seg.get('speaker')}")
+            print(f"[BUBBLE_RENDER] ONNX 유효 후보 없음 → 엄격 배경 격자 탐색: speaker={seg.get('speaker')}")
             fallback = _place_body(
                 box, body_w, body_h, all_boxes + placed_boxes,
                 canvas_w, canvas_h,
                 protected_foreground_mask=protected_foreground_mask,
             )
-            if fallback is None and protected_foreground_mask is not None:
+            if fallback is None:
                 print(
-                    f"[BUBBLE_RENDER] 충분한 배경 영역 없음 → 기존 안전 배치 폴백: "
+                    f"[BUBBLE_RENDER] 순수 배경 배치 포기 → 가중 IoU 최소화 폴백: "
                     f"speaker={seg.get('speaker')}"
                 )
-                fallback = _place_body(
-                    box, body_w, body_h, all_boxes + placed_boxes,
-                    canvas_w, canvas_h,
+                relaxed_pool = list(candidate_cache[box_key])
+                relaxed_pool.extend(generate_grid_candidates(
+                    (body_w, body_h),
+                    box,
+                    (canvas_w, canvas_h),
+                ))
+                chosen = select_relaxed_candidate(
+                    relaxed_pool,
+                    (body_w, body_h),
+                    box,
+                    (canvas_w, canvas_h),
+                    face_boxes=all_boxes,
+                    occupied_boxes=placed_boxes,
+                    protected_foreground_mask=protected_foreground_mask,
                 )
+                if (
+                    chosen is None
+                    and body_w <= canvas_w
+                    and body_h <= canvas_h
+                ):
+                    print(
+                        f"[BUBBLE_RENDER] 테두리 여백까지 확보할 수 없어 캔버스 경계 허용 재시도: "
+                        f"speaker={seg.get('speaker')}"
+                    )
+                    edge_pool = list(candidate_cache[box_key])
+                    edge_pool.extend(generate_grid_candidates(
+                        (body_w, body_h),
+                        box,
+                        (canvas_w, canvas_h),
+                        margin=0,
+                    ))
+                    chosen = select_relaxed_candidate(
+                        edge_pool,
+                        (body_w, body_h),
+                        box,
+                        (canvas_w, canvas_h),
+                        face_boxes=all_boxes,
+                        occupied_boxes=placed_boxes,
+                        margin=0,
+                        protected_foreground_mask=protected_foreground_mask,
+                    )
+                if chosen is not None:
+                    fallback = (chosen["rect"], chosen["anchor"], "relaxed")
             if fallback is None:
-                print(f"[BUBBLE_RENDER] 얼굴을 가리지 않는 위치 없음 — 스킵: speaker={seg.get('speaker')}")
+                print(
+                    f"[BUBBLE_RENDER] 말풍선이 캔버스에 들어가지 않아 배치 불가 — 스킵: "
+                    f"speaker={seg.get('speaker')}, body=({body_w:.1f},{body_h:.1f}), "
+                    f"canvas=({canvas_w},{canvas_h})"
+                )
                 continue
             rect, anchor, _side = fallback
             used_fallback = True
@@ -806,19 +852,30 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
                 record = dict(item)
                 record["face_box"] = box
                 if chosen is not None and record.get("rect") == chosen.get("rect"):
+                    if chosen.get("relaxed"):
+                        record.update(chosen)
+                        record["face_box"] = box
                     record["selected"] = True
                     selected_record = record
                 records.append(record)
-            if used_fallback:
+            if used_fallback and selected_record is None:
                 selected_record = {
                     "rect": rect,
                     "center": ((rect[0] + rect[2]) / 2.0, (rect[1] + rect[3]) / 2.0),
                     "anchor": anchor,
                     "face_box": box,
                     "valid": True,
-                    "reason": "fallback",
+                    "reason": "relaxed_iou" if chosen is not None and chosen.get("relaxed") else "strict_grid",
                     "selected": True,
                 }
+                if chosen is not None and chosen.get("relaxed"):
+                    selected_record.update({
+                        key: chosen.get(key)
+                        for key in (
+                            "face_iou", "bubble_iou", "foreground_iou",
+                            "foreground_overlap", "weighted_score", "source",
+                        )
+                    })
                 records.append(selected_record)
             remaining = 20 - len(preview_candidates)
             visible = records[:remaining]
