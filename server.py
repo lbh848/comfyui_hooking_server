@@ -63,6 +63,8 @@ from modes.bot_mode import handle_get_illust_settings, handle_update_illust_sett
 from modes.instance_lora_mode import handle_get_auto_lora_prompt, handle_set_auto_lora_prompt, handle_auto_refine_enqueue, handle_resolve_gender_tag, handle_get_bot_test_setup_prompt, handle_set_bot_test_setup_prompt
 from modes import embedding_service
 from modes.illust_prompt_builder import IllustPromptBuilder, log_illust_build, get_illust_logs
+from modes.chansub_prompt_builder import ChansubPromptBuilder
+from modes import chansub_service
 import importlib.util
 
 # ─── 설정 ───────────────────────────────────────────────
@@ -94,6 +96,7 @@ DEFAULT_CONFIG = {
     "backup_base_dir": "",  # 빈 값이면 WORKFLOW_BACKUP_DIR 사용
     "comfy_input_dir": "",  # ComfyUI input 폴더 경로 (빈값=기본경로)
     "workflow_filename": "",  # 빈 값이면 workflow 폴더의 첫 번째 json 사용
+    "illustration_provider": "comfy",  # 삽화 공급자: comfy | chansub
     "utility_workflow_source_path": "",  # 삽화 유틸리티 워크플로우 전체 경로
     "bot_mode_enabled": False,  # 삽화 모드 활성화 여부
     "debug_mode_enabled": False,  # 디버깅 모드 (ComfyUI 전송만 중단)
@@ -238,11 +241,20 @@ def load_config() -> dict:
 def save_config(config: dict):
     """설정 파일을 저장한다."""
     try:
+        if os.path.isfile(CONFIG_FILE):
+            requirements_dir = os.path.join(BASE_DIR, "요구사항")
+            os.makedirs(requirements_dir, exist_ok=True)
+            stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            backup_path = os.path.join(requirements_dir, f"config_before_save_{stamp}.json")
+            shutil.copy2(CONFIG_FILE, backup_path)
+            print(f"[CONFIG] 기존 설정 백업 완료: {backup_path}")
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(config, f, indent=2, ensure_ascii=False)
         print(f"[CONFIG] 설정 저장 완료")
     except Exception as e:
         print(f"[CONFIG] 설정 파일 저장 실패: {e}")
+        traceback.print_exc()
+        raise
 
 
 # 전역 설정 로드
@@ -869,7 +881,22 @@ def create_placeholder_png() -> bytes:
 
 
 # ─── 백업 관리 ────────────────────────────────────────────
-async def save_backup(image_bytes: bytes, prompt_id: str, positive: str, negative: str, generation_time: float = None, chat_content: str = "", enhanced_positive: str = "", wildcard_info: dict = None, bot_name: str = "", gen_method: str = "", postprocess_settings: dict = None, speak_text: str = ""):
+async def save_backup(
+    image_bytes: bytes,
+    prompt_id: str,
+    positive: str,
+    negative: str,
+    generation_time: float = None,
+    chat_content: str = "",
+    enhanced_positive: str = "",
+    wildcard_info: dict = None,
+    bot_name: str = "",
+    gen_method: str = "",
+    postprocess_settings: dict = None,
+    speak_text: str = "",
+    provider: str = "comfy",
+    generation_params: dict = None,
+):
     """이미지(WebP q80 + 원본 워크플로우 메타데이터)와 원본 워크플로우를 백업한다.
     bot_name: 봇/워크플로우 컨텍스트 딱지 (bot 모드일 때 봇 이름).
     gen_method: 생성 방법 딱지 (수동 그리기 / 자동 복원 등). 일반 생성·재생성은 빈칸.
@@ -945,7 +972,17 @@ async def save_backup(image_bytes: bytes, prompt_id: str, positive: str, negativ
 
     # 2) 원본 워크플로우 JSON 저장 (긍정/부정 프롬프트만 실제 사용값으로 덮어씌움)
     workflow_path = os.path.join(WORKFLOW_BACKUP_DIR, f"{base_name}.json")
-    if current_original_workflow:
+    if provider == "chansub":
+        # 챈섭 백업은 로컬 워크플로우 블럭 없이 실제 사용한 두 프롬프트만 저장한다.
+        with open(workflow_path, "w", encoding="utf-8") as f:
+            json.dump(
+                {"provider": "chansub", "positive": positive, "negative": negative},
+                f,
+                indent=2,
+                ensure_ascii=False,
+            )
+        print(f"[BACKUP] 챈섭 프롬프트 저장: {base_name}.json")
+    elif current_original_workflow:
         wf_copy = copy.deepcopy(current_original_workflow)
         if "nodes" in wf_copy:
             for node in wf_copy["nodes"]:
@@ -982,6 +1019,9 @@ async def save_backup(image_bytes: bytes, prompt_id: str, positive: str, negativ
         info_to_save["bot_name"] = bot_name
     if gen_method:
         info_to_save["gen_method"] = gen_method
+    info_to_save["provider"] = provider or "comfy"
+    if generation_params:
+        info_to_save["generation_params"] = generation_params
     # 후처리 설정 스냅샷 + SPEAK 원문 저장 (재생성 시 동일하게 재적용하기 위함)
     if postprocess_settings:
         info_to_save["postprocess_settings"] = postprocess_settings
@@ -1213,11 +1253,46 @@ async def fetch_real_image(
 
 
 # ─── 이미지 생성 공통 로직 ────────────────────────────────
-async def generate_image_with_prompt(positive: str, negative: str, progress_callback=None):
-    """현재 워크플로우에 프롬프트를 주입하고 삽화 포트에서 이미지를 생성한다.
+async def generate_image_with_prompt(
+    positive: str,
+    negative: str,
+    progress_callback=None,
+    provider: str = "comfy",
+    width: int | None = None,
+    height: int | None = None,
+):
+    """선택 공급자로 이미지를 생성한다.
+
+    provider="comfy"는 현재 워크플로우와 삽화 포트를 사용하고,
+    provider="chansub"은 NAI 호환 원격 API에 POSITIVE/NEGATIVE와 크기만 전달한다.
     삽화 포트가 설정되어 있으면 해당 포트를, 아니면 메인 포트를 사용한다.
     반환: (image_bytes, node_errors_or_error_msg)
     """
+    provider = (provider or "comfy").strip().lower()
+    if provider == "chansub":
+        request_width = int(width or 756)
+        request_height = int(height or 756)
+        if progress_callback:
+            try:
+                await progress_callback(0, 1)
+            except Exception as e:
+                print(f"[CHANSUB] 시작 진행률 콜백 실패: {e}")
+                traceback.print_exc()
+        image_bytes, result = await chansub_service.generate_image(
+            positive, negative, request_width, request_height
+        )
+        if progress_callback and image_bytes:
+            try:
+                await progress_callback(1, 1)
+            except Exception as e:
+                print(f"[CHANSUB] 완료 진행률 콜백 실패: {e}")
+                traceback.print_exc()
+        return image_bytes, result
+    if provider != "comfy":
+        message = f"지원하지 않는 삽화 공급자입니다: {provider}"
+        print(f"[GEN] 공급자 선택 실패: {message}")
+        return None, message
+
     await update_workflow_if_needed()
     if current_api_workflow is None:
         return None, "API 워크플로우 없음"
@@ -1853,6 +1928,14 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
 
         # 단어 기반 규칙 적용 / 삽화 모드 프롬프트 빌딩
         bot_name = app_config.get("bot_selected", "")
+        illustration_provider = (app_config.get("illustration_provider", "comfy") or "comfy").strip().lower()
+        if not (bot_name and app_config.get("bot_mode_enabled", False)):
+            illustration_provider = "comfy"
+        if illustration_provider not in ("comfy", "chansub"):
+            print(f"[ILLUST] 알 수 없는 공급자 {illustration_provider!r}, comfy로 폴백")
+            illustration_provider = "comfy"
+        generation_width = 756 if illustration_provider == "chansub" else None
+        generation_height = 756 if illustration_provider == "chansub" else None
         _speak_text = ""  # [SPEAK] 섹션 원문 (후처리 합성용)
         if bot_name and app_config.get("bot_mode_enabled", False):
             # 삽화 모드: 프롬프트 파싱 → 치환 → 캐릭터 감지 → 빌드
@@ -1866,7 +1949,13 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
             bot_data = _load_bot_data_local()
             bot = next((b for b in bot_data["bots"] if b["name"] == bot_name), None)
             characters_for_parse = (bot.get("characters", []) if bot else [])
-            sections = builder.parse_sections(positive, lb_extra=lb_extra_data, characters=characters_for_parse)
+            if illustration_provider == "chansub":
+                # 챈섭에는 로컬 LoRA 트리거/캐릭터명 자동 삽입을 하지 않는다.
+                sections = builder.parse_sections(positive)
+            else:
+                sections = builder.parse_sections(
+                    positive, lb_extra=lb_extra_data, characters=characters_for_parse
+                )
 
             # [SPEAK] 섹션 원문 추출 (후처리 합성에 사용)
             _speak_text = sections.get("speak", "") or ""
@@ -1879,9 +1968,11 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
             # 3. 캐릭터 감지 (모든 섹션에서)
             if bot:
                 char_names = [c["name"] for c in bot.get("characters", [])]
-                detected = builder.detect_characters(
-                    [setup_replaced, char_replaced, supplement_replaced], char_names
-                )
+                detection_sections = [setup_replaced, char_replaced, supplement_replaced]
+                if illustration_provider == "chansub" and sections.get("name"):
+                    # NAME은 solo/group 선택에만 사용하고 NAI POSITIVE에는 삽입하지 않는다.
+                    detection_sections.append(sections["name"])
+                detected = builder.detect_characters(detection_sections, char_names)
                 print(f"[ILLUST] 감지된 캐릭터: {detected}")
 
                 # 4. 캐릭터 수에 따라 solo/group 프로필 선택
@@ -1898,18 +1989,37 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                 bot_data = _load_bot_data()
                 settings["positive_whitelist"] = bot_data.get("positive_whitelist", [])
                 settings["positive_blacklist"] = bot_data.get("positive_blacklist", [])
-                positive = builder.build_positive_prompt(
-                    setup_replaced, char_replaced, supplement_replaced,
-                    detected, bot, tags, settings, bot_name
-                )
-                negative = builder.build_negative_prompt(tags, settings, detected, bot)
+                if illustration_provider == "chansub":
+                    chansub_built = ChansubPromptBuilder().build(
+                        setup_replaced,
+                        char_replaced,
+                        supplement_replaced,
+                        tags,
+                        settings,
+                    )
+                    positive = chansub_built["positive"]
+                    negative = chansub_built["negative"]
+                    generation_width = chansub_built["width"]
+                    generation_height = chansub_built["height"]
+                    print(
+                        f"[ILLUST:CHANSUB] NAI 프롬프트 빌드 완료: "
+                        f"profile={'group' if is_multi else 'solo'}, "
+                        f"size={generation_width}x{generation_height}, "
+                        f"detected={detected} (LoRA 트리거 미추가)"
+                    )
+                else:
+                    positive = builder.build_positive_prompt(
+                        setup_replaced, char_replaced, supplement_replaced,
+                        detected, bot, tags, settings, bot_name
+                    )
+                    negative = builder.build_negative_prompt(tags, settings, detected, bot)
 
                 # 4-1. 인스턴스 LoRA 사용 횟수 증가
                 from modes.instance_lora_mode import increment_usage as _increment_instance_lora_usage
                 characters_list = bot.get("characters", [])
                 _lora_key = "loras_group" if is_multi else "loras_solo"
                 _incremented = set()
-                for _cn in detected:
+                for _cn in (detected if illustration_provider == "comfy" else []):
                     _cd = next((c for c in characters_list if c["name"] == _cn), None)
                     if not _cd:
                         continue
@@ -1962,7 +2072,14 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
 
         # 이미지 생성
         start_time = time.time()
-        img_bytes, node_errors = await generate_image_with_prompt(positive, negative, progress_callback=queue_progress_callback)
+        img_bytes, node_errors = await generate_image_with_prompt(
+            positive,
+            negative,
+            progress_callback=queue_progress_callback,
+            provider=illustration_provider,
+            width=generation_width,
+            height=generation_height,
+        )
         elapsed_time = time.time() - start_time
 
         if img_bytes is None:
@@ -1972,7 +2089,7 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
             return
 
         # node_errors 기록
-        if isinstance(node_errors, dict) and node_errors:
+        if illustration_provider == "comfy" and isinstance(node_errors, dict) and node_errors:
             current_conversion_info["submit_node_errors"] = node_errors
 
         print(f"[INFO] 이미지 수신 완료: {len(img_bytes):,} bytes ({elapsed_time:.1f}s)")
@@ -1996,7 +2113,23 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                 _pp_settings = get_vn_settings(app_config, bot_name=_backup_bot_name)
         except Exception as _e:
             print(f"[BACKUP] ⚠ 후처리 설정 조회 실패: {_e}")
-        _backup_name, img_bytes = await save_backup(img_bytes, prompt_id, positive, negative, generation_time=elapsed_time, bot_name=_backup_bot_name, gen_method=_gen_method, postprocess_settings=_pp_settings, speak_text=_speak_text)
+        _backup_name, img_bytes = await save_backup(
+            img_bytes,
+            prompt_id,
+            positive,
+            negative,
+            generation_time=elapsed_time,
+            bot_name=_backup_bot_name,
+            gen_method=_gen_method,
+            postprocess_settings=_pp_settings,
+            speak_text=_speak_text,
+            provider=illustration_provider,
+            generation_params={
+                "width": generation_width,
+                "height": generation_height,
+                "model": chansub_service.CHANSUB_MODEL if illustration_provider == "chansub" else "",
+            } if illustration_provider == "chansub" else None,
+        )
 
         # 프록시 응답 설정
         our_filename = f"ComfyUI_{prompt_id[:8]}.png"
@@ -2256,6 +2389,90 @@ async def handle_api_llm_keys(request: web.Request) -> web.Response:
         tb = traceback.format_exc()
         print(f"[LLM_KEY] error: {e}\n{tb}")
         return web.json_response({"error": str(e)}, status=500)
+
+
+def _backup_chansub_key_file(path: str, operation: str) -> None:
+    """챈섭 키 파일 변경 전 요구사항/에 백업한다."""
+    if not os.path.isfile(path):
+        return
+    requirements_dir = os.path.join(BASE_DIR, "요구사항")
+    os.makedirs(requirements_dir, exist_ok=True)
+    stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    backup_path = os.path.join(
+        requirements_dir, f"chansub_key_before_{operation}_{stamp}.json"
+    )
+    shutil.copy2(path, backup_path)
+    print(f"[CHANSUB_KEY] 기존 키 파일 백업 완료: {backup_path}")
+
+
+async def handle_api_chansub_key(request: web.Request) -> web.Response:
+    """챈섭 API 키 조회/저장/삭제. key/chansub_key.json에 원문 저장한다."""
+    key_dir = os.path.join(BASE_DIR, "key")
+    key_path = os.path.join(key_dir, "chansub_key.json")
+    try:
+        if request.method == "POST":
+            body = await request.json()
+            api_key = body.get("api_key", "")
+            if not isinstance(api_key, str):
+                print(f"[CHANSUB_KEY] 저장 실패: api_key 타입={type(api_key).__name__}")
+                return web.json_response({"error": "api_key must be a string"}, status=400)
+            api_key = api_key.strip()
+            _backup_chansub_key_file(key_path, "save")
+            os.makedirs(key_dir, exist_ok=True)
+            with open(key_path, "w", encoding="utf-8") as file:
+                json.dump({"api_key": api_key}, file, ensure_ascii=False, indent=2)
+            chansub_service.update_api_key(api_key)
+            print(f"[CHANSUB_KEY] 키 저장 완료: {'set' if api_key else 'empty'}")
+            return web.json_response({"success": True, "api_key": api_key, "set": bool(api_key)})
+
+        if request.method == "DELETE":
+            if os.path.isfile(key_path):
+                _backup_chansub_key_file(key_path, "delete")
+                os.remove(key_path)
+                print("[CHANSUB_KEY] 키 파일 삭제 완료")
+            else:
+                print("[CHANSUB_KEY] 삭제 스킵: 키 파일 없음")
+            chansub_service.update_api_key("")
+            return web.json_response({"success": True, "api_key": "", "set": False})
+
+        if not os.path.isfile(key_path):
+            print("[CHANSUB_KEY] 조회: 키 파일 없음")
+            return web.json_response({"api_key": "", "set": False})
+        with open(key_path, "r", encoding="utf-8") as file:
+            data = json.load(file)
+        api_key = data.get("api_key", "")
+        if not isinstance(api_key, str):
+            print(f"[CHANSUB_KEY] 조회 실패: 저장된 api_key 타입={type(api_key).__name__}")
+            return web.json_response({"error": "저장된 챈섭 API 키 형식이 잘못되었습니다."}, status=500)
+        chansub_service.update_api_key(api_key)
+        return web.json_response({"api_key": api_key, "set": bool(api_key)})
+    except Exception as e:
+        print(f"[CHANSUB_KEY] 처리 실패: {type(e).__name__}: {e}")
+        traceback.print_exc()
+        return web.json_response({"error": str(e)}, status=500)
+
+
+def _load_chansub_key() -> None:
+    """서버 시작 시 key/chansub_key.json을 챈섭 클라이언트에 반영한다."""
+    key_path = os.path.join(BASE_DIR, "key", "chansub_key.json")
+    if not os.path.isfile(key_path):
+        print("[CHANSUB_KEY] 시작 로드 스킵: 키 파일 없음")
+        chansub_service.update_api_key("")
+        return
+    try:
+        with open(key_path, "r", encoding="utf-8") as file:
+            data = json.load(file)
+        api_key = data.get("api_key", "")
+        if not isinstance(api_key, str):
+            print(f"[CHANSUB_KEY] 시작 로드 실패: api_key 타입={type(api_key).__name__}")
+            chansub_service.update_api_key("")
+            return
+        chansub_service.update_api_key(api_key)
+        print(f"[CHANSUB_KEY] 시작 로드 완료: {'set' if api_key else 'empty'}")
+    except Exception as e:
+        print(f"[CHANSUB_KEY] 시작 로드 실패: {type(e).__name__}: {e}")
+        traceback.print_exc()
+        chansub_service.update_api_key("")
 
 
 async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse:
@@ -2972,8 +3189,18 @@ def _extract_prompts_from_backup(filepath: str) -> tuple[str, str]:
                     positive = ninfo.get("inputs", {}).get("value", "") or ninfo.get("inputs", {}).get("text", "")
                 elif title == "부정프롬프트":
                     negative = ninfo.get("inputs", {}).get("value", "") or ninfo.get("inputs", {}).get("text", "")
-    except Exception:
-        pass
+        elif data.get("provider") == "chansub":
+            positive = data.get("positive", "")
+            negative = data.get("negative", "")
+            if not isinstance(positive, str) or not isinstance(negative, str):
+                print(
+                    f"[BACKUP] 챈섭 프롬프트 형식 오류: file={filepath}, "
+                    f"positive_type={type(positive).__name__}, negative_type={type(negative).__name__}"
+                )
+                return "", ""
+    except Exception as e:
+        print(f"[BACKUP] 프롬프트 추출 실패: file={filepath}, error={e}")
+        traceback.print_exc()
     return positive, negative
 
 
@@ -3023,6 +3250,33 @@ def _read_backup_postprocess(backup_name: str) -> tuple:
     except Exception as e:
         print(f"[BACKUP] ⚠ 원본 후처리 설정 읽기 실패 {backup_name}: {e}")
         return None, ""
+
+
+def _read_backup_generation(backup_name: str) -> tuple[str, dict]:
+    """백업의 생성 공급자와 공급자별 파라미터를 반환한다.
+
+    구버전 백업은 provider 메타데이터가 없으므로 comfy로 호환한다.
+    """
+    info_path = os.path.join(WORKFLOW_BACKUP_DIR, f"{backup_name}_info.json")
+    if not os.path.isfile(info_path):
+        print(f"[BACKUP] 생성 공급자 메타 없음, comfy 사용: {backup_name}")
+        return "comfy", {}
+    try:
+        with open(info_path, "r", encoding="utf-8") as f:
+            info = json.load(f)
+        provider = (info.get("provider", "comfy") or "comfy").strip().lower()
+        if provider not in ("comfy", "chansub"):
+            print(f"[BACKUP] 알 수 없는 공급자 {provider!r}, comfy 사용: {backup_name}")
+            provider = "comfy"
+        params = info.get("generation_params") or {}
+        if not isinstance(params, dict):
+            print(f"[BACKUP] generation_params 형식 오류, 빈 값 사용: {backup_name}")
+            params = {}
+        return provider, params
+    except Exception as e:
+        print(f"[BACKUP] 생성 공급자 읽기 실패 {backup_name}: {e}")
+        traceback.print_exc()
+        return "comfy", {}
 
 
 def _ensure_backup_filter_cache(backup_dir: str) -> dict:
@@ -3799,6 +4053,7 @@ async def handle_api_regenerate(request: web.Request) -> web.Response:
         src_bot_name = _read_backup_bot_name(backup_name)
         # 원본 백업의 후처리 설정 스냅샷 + SPEAK 원문 상속 (재생성에 동일 적용)
         src_pp_settings, src_speak_text = _read_backup_postprocess(backup_name)
+        src_provider, src_generation_params = _read_backup_generation(backup_name)
 
         print(f"[REGEN] 재생성 큐 등록: {backup_name}")
         print(f"[REGEN] 긍정: {positive[:60]}...")
@@ -3813,6 +4068,8 @@ async def handle_api_regenerate(request: web.Request) -> web.Response:
                 "bot_name": src_bot_name or "",
                 "postprocess_settings": src_pp_settings,
                 "speak_text": src_speak_text,
+                "provider": src_provider,
+                "generation_params": src_generation_params,
             },
             priority=0,
         )
@@ -4027,6 +4284,7 @@ async def handle_api_reschedule_with_modified_prompt(request: web.Request) -> we
         src_bot_name = _read_backup_bot_name(backup_name)
         # 원본 백업의 후처리 설정 스냅샷 + SPEAK 원문 상속 (재생성에 동일 적용)
         src_pp_settings, src_speak_text = _read_backup_postprocess(backup_name)
+        src_provider, src_generation_params = _read_backup_generation(backup_name)
 
         print(f"[RESCHEDULE_MOD] 수정 재생성 큐 등록: {backup_name}")
         print(f"[RESCHEDULE_MOD] Modified positive: {modified_positive[:60]}...")
@@ -4042,6 +4300,8 @@ async def handle_api_reschedule_with_modified_prompt(request: web.Request) -> we
                 "bot_name": src_bot_name or "",
                 "postprocess_settings": src_pp_settings,
                 "speak_text": src_speak_text,
+                "provider": src_provider,
+                "generation_params": src_generation_params,
             },
             priority=0,
         )
@@ -4088,14 +4348,15 @@ async def handle_api_llm_edit_prompt(request: web.Request) -> web.Response:
             print(f"[LLM_EDIT] direction 비어 있음 name={backup_name}")
             return web.json_response({"error": "수정 방향을 입력해주세요."}, status=400)
 
-        # 1) 포맷 자동 감지 — V3(삽화 빌드본) / V1(ILXL-UPSCALE)
-        fmt = llm_prompt_edit.detect_format(positive)
+        # 1) 포맷 자동 감지 — 챈섭은 프롬프트 키워드가 아닌 백업 메타데이터로 감지한다.
+        backup_provider, _backup_generation_params = _read_backup_generation(backup_name)
+        fmt = llm_prompt_edit.detect_format(positive, provider=backup_provider)
         if not fmt:
             print(f"[LLM_EDIT] format mismatch (지원 불가) name={backup_name}")
             return web.json_response({
                 "error": "이 백업은 지원 형식이 아닙니다. "
                          "LLM과 함께 수정은 삽화 빌드본(V3: ANIMA_CONTENT/SDXL 등) 또는 "
-                         "V1(ILXL/UPSCALE) 프롬프트에서만 동작합니다."
+                         "V1(ILXL/UPSCALE) 또는 챈섭 NAI 프롬프트에서만 동작합니다."
             }, status=400)
 
         print(f"[LLM_EDIT] 감지된 포맷: {fmt} name={backup_name}")
@@ -4112,8 +4373,13 @@ async def handle_api_llm_edit_prompt(request: web.Request) -> web.Response:
         v1_char = ""
         v1_setup = ""
         v1_supplement = ""
+        bot_name = _read_backup_bot_name(backup_name) if fmt == "chansub" else ""
 
-        if fmt == "v1":
+        if fmt == "chansub":
+            if not positive.strip():
+                print(f"[LLM_EDIT:CHANSUB] POSITIVE 비어 있음 name={backup_name}")
+                return web.json_response({"error": "챈섭 POSITIVE가 비어 있습니다."}, status=400)
+        elif fmt == "v1":
             v1_parsed = llm_prompt_edit.parse_v1_sections(positive)
             v1_char = v1_parsed.get("char", "")
             v1_setup = v1_parsed.get("setup", "")
@@ -4130,7 +4396,6 @@ async def handle_api_llm_edit_prompt(request: web.Request) -> web.Response:
             blocks = llm_prompt_edit.parse_blocks(positive)
 
             # 3) bot_name 복원({name}_info.json) → 트리거 복원
-            bot_name = ""
             info_path = os.path.join(WORKFLOW_BACKUP_DIR, f"{backup_name}_info.json")
             try:
                 if os.path.isfile(info_path):
@@ -4174,7 +4439,11 @@ async def handle_api_llm_edit_prompt(request: web.Request) -> web.Response:
             fallback_note = " (백업 이미지가 없어 프롬프트 텍스트만으로 분석했습니다)"
 
         # 6) LLM 호출 (외부 API 분기: edit_illustration_prompt task_key 라우팅)
-        if fmt == "v1":
+        if fmt == "chansub":
+            messages = llm_prompt_edit.build_chansub_llm_messages(
+                direction, positive, negative
+            )
+        elif fmt == "v1":
             messages = llm_prompt_edit.build_v1_llm_messages(
                 direction, v1_char, v1_setup, v1_supplement)
         else:
@@ -4276,24 +4545,46 @@ async def handle_api_llm_edit_prompt(request: web.Request) -> web.Response:
         # 8) 단어 기반 규칙 적용 (정상 빌드 server.py:1835-1837 과 동일)
         #    LLM 이 편집한 scene 필드에도 봇의 치환/제거 규칙을 동일하게 적용.
         #    V1 은 bot_name 복원을 하지 않으므로 apply_word_replacements 가 no-op 이다.
-        for key in ("scene_setup", "scene_char", "scene_supplement"):
-            v = parsed.get(key)
-            if isinstance(v, str) and v.strip():
-                cleaned, _ = apply_word_replacements(v, "", bot_name)
-                parsed[key] = cleaned
+        if fmt == "chansub":
+            edited_positive = parsed.get("positive", "")
+            edited_negative = parsed.get("negative", "")
+            if isinstance(edited_positive, str) and isinstance(edited_negative, str):
+                edited_positive, edited_negative = apply_word_replacements(
+                    edited_positive, edited_negative, bot_name
+                )
+                parsed["positive"] = edited_positive
+                parsed["negative"] = edited_negative
+            else:
+                print(
+                    f"[LLM_EDIT:CHANSUB] 단어 규칙 스킵: "
+                    f"positive_type={type(edited_positive).__name__}, "
+                    f"negative_type={type(edited_negative).__name__}"
+                )
+        else:
+            for key in ("scene_setup", "scene_char", "scene_supplement"):
+                v = parsed.get(key)
+                if isinstance(v, str) and v.strip():
+                    cleaned, _ = apply_word_replacements(v, "", bot_name)
+                    parsed[key] = cleaned
 
         # 9) 재조립
-        if fmt == "v1":
+        if fmt == "chansub":
+            reassembled, reassembled_negative, scene = llm_prompt_edit.reassemble_chansub(
+                positive, negative, parsed
+            )
+        elif fmt == "v1":
             reassembled, scene = llm_prompt_edit.reassemble_v1(positive, v1_parsed, parsed)
+            reassembled_negative = negative
         else:
             reassembled, scene = llm_prompt_edit.reassemble(positive, blocks, triggers, parsed)
+            reassembled_negative = negative
         plan_text = (scene.get("plan", "") or "장면 태그를 수정했습니다.") + fallback_note
 
         print(f"[LLM_EDIT] 완료 name={backup_name} plan={plan_text[:80]!r}")
         return web.json_response({
             "plan": plan_text,
             "positive": reassembled,
-            "negative": negative,
+            "negative": reassembled_negative,
         })
 
     except Exception as e:
@@ -4303,11 +4594,11 @@ async def handle_api_llm_edit_prompt(request: web.Request) -> web.Response:
 
 
 async def handle_api_get_llm_edit_template(request: web.Request) -> web.Response:
-    """GET /api/llm_edit_prompt_template — LLM 보조 프롬프트 3종 슬롯 조회.
+    """GET /api/llm_edit_prompt_template — LLM 보조 프롬프트 5종 슬롯 조회.
 
     반환 data:
       use_custom: bool (단일 글로벌 스위치)
-      templates: { system / user_v3 / user_v1: {builtin, custom} }
+      templates: { system / system_chansub / user_v3 / user_v1 / user_chansub: {builtin, custom} }
     """
     try:
         customs, use_custom = llm_prompt_edit._load_llm_edit_custom()
@@ -4331,7 +4622,7 @@ async def handle_api_get_llm_edit_template(request: web.Request) -> web.Response
 
 
 async def handle_api_set_llm_edit_template(request: web.Request) -> web.Response:
-    """POST /api/llm_edit_prompt_template — LLM 보조 프롬프트 커스텀 3종 슬롯 저장.
+    """POST /api/llm_edit_prompt_template — LLM 보조 프롬프트 커스텀 5종 슬롯 저장.
 
     요청: {
         use_custom: bool,
@@ -4857,6 +5148,7 @@ async def handle_api_config(request: web.Request) -> web.Response:
             return web.json_response({"success": True, "config": app_config})
         except Exception as e:
             print(f"[ERROR] 설정 저장 실패: {e}")
+            traceback.print_exc()
             return web.json_response({"error": str(e)}, status=500)
 
 
@@ -5436,6 +5728,9 @@ app.router.add_delete("/api/llm/vertex_key", handle_api_lighbd_vertex_key)
 app.router.add_post("/api/llm/keys", handle_api_llm_keys)
 app.router.add_get("/api/llm/keys", handle_api_llm_keys)
 app.router.add_delete("/api/llm/keys", handle_api_llm_keys)
+app.router.add_post("/api/chansub/key", handle_api_chansub_key)
+app.router.add_get("/api/chansub/key", handle_api_chansub_key)
+app.router.add_delete("/api/chansub/key", handle_api_chansub_key)
 app.router.add_post("/api/llm/test_stream", handle_api_llm_test_stream)
 app.router.add_get("/api/reschedule", handle_api_reschedule)
 app.router.add_post("/api/reschedule", handle_api_reschedule)
@@ -11036,6 +11331,8 @@ async def on_startup(app):
     })
     # API 키는 config.json 이 아닌 key/llm_keys.json 에서 로드
     _load_llm_keys_into_config()
+    # 챈섭 키도 config.json과 분리된 key/chansub_key.json에서 로드
+    _load_chansub_key()
     # 임베딩 서비스 설정 초기화
     embedding_service.update_config({
         "embedding_provider": app_config.get("embedding_provider", "voyage"),
@@ -11070,4 +11367,3 @@ if __name__ == "__main__":
     max_bk = app_config.get("backup_max_count", DEFAULT_MAX_BACKUP_IMAGES)
     print(f"백업 폴더: {WORKFLOW_BACKUP_DIR} (최대 {max_bk}개)")
     web.run_app(app, host=HOST, port=PORT)
-

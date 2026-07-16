@@ -22,6 +22,7 @@ AGENTS.md
 
 # Key files (보안상 git에 포함하지 않음)
 key/
+요구사항/chansub_key_before_*.json
 
 # Config (사용자별 설정)
 config.json

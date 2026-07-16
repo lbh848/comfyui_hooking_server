@@ -1,0 +1,24 @@
+## User edit direction
+{direction}
+
+## Current NAI POSITIVE
+{positive}
+
+## Current NAI NEGATIVE
+{negative}
+
+## Instructions
+1. Look at the provided image (if any) and the current NAI prompts to understand the scene.
+2. Apply the user's direction directly to the complete POSITIVE and NEGATIVE prompts.
+3. Preserve character identity, important appearance traits, artist/style tags, and quality tags unless the user explicitly asks to change them.
+4. Keep all unaffected tags to avoid unnecessary drift.
+5. Use NAI-compatible English tags separated by comma+space (", "). Preserve meaningful NAI curly-brace emphasis syntax.
+6. Do not add LoRA syntax, workflow control blocks, section headers, or explanations inside the prompt fields.
+7. Write the "plan" field in Korean; write POSITIVE and NEGATIVE in English.
+
+## Output (JSON schema - return ONLY a JSON object in this form)
+{
+  "plan": "수정 계획과 추가·제거한 태그를 한국어로 간단히 설명",
+  "positive": "complete edited NAI positive prompt",
+  "negative": "complete edited NAI negative prompt"
+}

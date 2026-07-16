@@ -16,6 +16,7 @@ import os
 import re
 import shutil
 import traceback
+import datetime
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ASSET_DATA_DIR = os.path.join(BASE_DIR, "asset_data")
@@ -28,13 +29,17 @@ LLM_EDIT_PROMPT_DIR = os.path.join(BASE_DIR, "prompts", "llm_prompt_edit")
 
 # builtin(배포용·읽기전용) 템플릿 — system 역할 / user 지시 V3 / user 지시 V1
 LLM_EDIT_BUILTIN_FILE = os.path.join(LLM_EDIT_PROMPT_DIR, "system.txt")
+LLM_EDIT_BUILTIN_SYSTEM_CHANSUB_FILE = os.path.join(LLM_EDIT_PROMPT_DIR, "system_chansub.txt")
 LLM_EDIT_BUILTIN_USER_V3_FILE = os.path.join(LLM_EDIT_PROMPT_DIR, "user_template.txt")
 LLM_EDIT_BUILTIN_USER_V1_FILE = os.path.join(LLM_EDIT_PROMPT_DIR, "user_template_v1.txt")
+LLM_EDIT_BUILTIN_USER_CHANSUB_FILE = os.path.join(LLM_EDIT_PROMPT_DIR, "user_template_chansub.txt")
 
 # custom(이 PC 전용·편집가능) 템플릿 — 슬롯별 파일. 빈 칸이면 해당 슬롯은 builtin 폴백.
 LLM_EDIT_CUSTOM_FILE = os.path.join(ASSET_DATA_DIR, "llm_prompt_edit_custom.txt")  # system
+LLM_EDIT_CUSTOM_SYSTEM_CHANSUB_FILE = os.path.join(ASSET_DATA_DIR, "llm_prompt_edit_custom_system_chansub.txt")
 LLM_EDIT_CUSTOM_USER_V3_FILE = os.path.join(ASSET_DATA_DIR, "llm_prompt_edit_custom_user_v3.txt")
 LLM_EDIT_CUSTOM_USER_V1_FILE = os.path.join(ASSET_DATA_DIR, "llm_prompt_edit_custom_user_v1.txt")
+LLM_EDIT_CUSTOM_USER_CHANSUB_FILE = os.path.join(ASSET_DATA_DIR, "llm_prompt_edit_custom_user_chansub.txt")
 
 LLM_EDIT_META_FILE = os.path.join(ASSET_DATA_DIR, "llm_prompt_edit_meta.json")
 
@@ -45,6 +50,12 @@ DEFAULT_SYSTEM_PROMPT = (
     "Analyze the user's 'edit direction', the generated image (if provided), and the current scene tags, "
     "then modify ONLY the scene description (setup/char/supplement). "
     "Return ONLY a valid JSON object - no other text, no markdown code fences, no explanations."
+)
+
+DEFAULT_SYSTEM_CHANSUB_PROMPT = (
+    "You are an expert editor for NovelAI-compatible image prompts. Analyze the user's "
+    "direction, image, and complete POSITIVE/NEGATIVE prompts. Return only valid JSON with "
+    "plan, positive, and negative fields. Never add LoRA syntax or workflow control blocks."
 )
 
 DEFAULT_USER_V3_TEMPLATE = (
@@ -93,6 +104,15 @@ DEFAULT_USER_V1_TEMPLATE = (
     "}"
 )
 
+DEFAULT_USER_CHANSUB_TEMPLATE = (
+    "## User edit direction\n{direction}\n\n"
+    "## Current NAI POSITIVE\n{positive}\n\n"
+    "## Current NAI NEGATIVE\n{negative}\n\n"
+    "Edit the complete NAI-compatible POSITIVE and NEGATIVE prompts. Preserve unaffected "
+    "character identity, artist/style, and quality tags. Never add LoRA syntax or workflow "
+    "control blocks. Return only JSON with Korean plan and English positive/negative fields."
+)
+
 # builtin 텍스트 로드 캐시 — 경로별 mtime 기반
 _builtin_cache = {}  # path -> (mtime, text)
 
@@ -121,6 +141,13 @@ def _load_llm_edit_builtin() -> str:
     return _load_builtin_text(LLM_EDIT_BUILTIN_FILE, DEFAULT_SYSTEM_PROMPT)
 
 
+def _load_system_chansub_builtin() -> str:
+    """챈섭 NAI system 역할 builtin 템플릿 로드."""
+    return _load_builtin_text(
+        LLM_EDIT_BUILTIN_SYSTEM_CHANSUB_FILE, DEFAULT_SYSTEM_CHANSUB_PROMPT
+    )
+
+
 def _load_user_v3_builtin() -> str:
     """user 지시 V3 builtin 템플릿 로드."""
     return _load_builtin_text(LLM_EDIT_BUILTIN_USER_V3_FILE, DEFAULT_USER_V3_TEMPLATE)
@@ -131,11 +158,26 @@ def _load_user_v1_builtin() -> str:
     return _load_builtin_text(LLM_EDIT_BUILTIN_USER_V1_FILE, DEFAULT_USER_V1_TEMPLATE)
 
 
-# 슬롯 정의 — builtin 로더 / custom 경로 매핑. 드롭다운 편집 대상 3종.
+def _load_user_chansub_builtin() -> str:
+    """챈섭 NAI user 지시 builtin 템플릿 로드."""
+    return _load_builtin_text(
+        LLM_EDIT_BUILTIN_USER_CHANSUB_FILE, DEFAULT_USER_CHANSUB_TEMPLATE
+    )
+
+
+# 슬롯 정의 — builtin 로더 / custom 경로 매핑. 드롭다운 편집 대상 5종.
 SLOTS = {
     "system": {"builtin": _load_llm_edit_builtin, "custom_file": LLM_EDIT_CUSTOM_FILE},
+    "system_chansub": {
+        "builtin": _load_system_chansub_builtin,
+        "custom_file": LLM_EDIT_CUSTOM_SYSTEM_CHANSUB_FILE,
+    },
     "user_v3": {"builtin": _load_user_v3_builtin, "custom_file": LLM_EDIT_CUSTOM_USER_V3_FILE},
     "user_v1": {"builtin": _load_user_v1_builtin, "custom_file": LLM_EDIT_CUSTOM_USER_V1_FILE},
+    "user_chansub": {
+        "builtin": _load_user_chansub_builtin,
+        "custom_file": LLM_EDIT_CUSTOM_USER_CHANSUB_FILE,
+    },
 }
 
 
@@ -177,9 +219,22 @@ def _load_llm_edit_custom() -> tuple:
 def _save_llm_edit_custom(customs: dict, use_custom: bool) -> None:
     """3종 custom 텍스트 + use_custom 저장. 기존 파일은 .bak 로 백업.
 
-    customs = {"system": str, "user_v3": str, "user_v1": str}. 누락 슬롯은 '' 취급.
+    customs 는 SLOTS의 5개 슬롯 문자열을 담는다. 누락 슬롯은 '' 취급.
     """
     os.makedirs(ASSET_DATA_DIR, exist_ok=True)
+    requirements_dir = os.path.join(BASE_DIR, "요구사항")
+    os.makedirs(requirements_dir, exist_ok=True)
+
+    def _backup_required(path: str, slot: str) -> None:
+        if not os.path.isfile(path):
+            return
+        stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        backup_path = os.path.join(
+            requirements_dir,
+            f"llm_prompt_edit_{slot}_before_save_{stamp}{os.path.splitext(path)[1]}",
+        )
+        shutil.copy2(path, backup_path)
+        print(f"[LLM_EDIT] {slot} 기존 파일 요구사항 백업 완료: {backup_path}")
 
     for slot, text in customs.items():
         path = SLOTS.get(slot, {}).get("custom_file")
@@ -189,9 +244,12 @@ def _save_llm_edit_custom(customs: dict, use_custom: bool) -> None:
         text = text or ""
         if os.path.isfile(path):
             try:
+                _backup_required(path, slot)
                 shutil.copy2(path, path + ".bak")
             except Exception as e:
                 print(f"[LLM_EDIT] {slot} 백업 실패: {e}")
+                traceback.print_exc()
+                raise
         try:
             with open(path, "w", encoding="utf-8") as f:
                 f.write(text)
@@ -202,9 +260,12 @@ def _save_llm_edit_custom(customs: dict, use_custom: bool) -> None:
 
     if os.path.isfile(LLM_EDIT_META_FILE):
         try:
+            _backup_required(LLM_EDIT_META_FILE, "meta")
             shutil.copy2(LLM_EDIT_META_FILE, LLM_EDIT_META_FILE + ".bak")
         except Exception as e:
             print(f"[LLM_EDIT] meta 백업 실패: {e}")
+            traceback.print_exc()
+            raise
 
     try:
         with open(LLM_EDIT_META_FILE, "w", encoding="utf-8") as f:
@@ -237,6 +298,11 @@ def get_effective_system_prompt() -> str:
     return _effective_text("system")
 
 
+def get_effective_system_prompt_chansub() -> str:
+    """챈섭 NAI 편집에 사용할 system 프롬프트."""
+    return _effective_text("system_chansub")
+
+
 def get_effective_user_template_v3() -> str:
     """실제 LLM 호출에 사용할 user 지시(V3) 템플릿."""
     return _effective_text("user_v3")
@@ -245,6 +311,11 @@ def get_effective_user_template_v3() -> str:
 def get_effective_user_template_v1() -> str:
     """실제 LLM 호출에 사용할 user 지시(V1) 템플릿."""
     return _effective_text("user_v1")
+
+
+def get_effective_user_template_chansub() -> str:
+    """실제 LLM 호출에 사용할 챈섭 NAI user 지시 템플릿."""
+    return _effective_text("user_chansub")
 
 # 빌드본 포맷 감지에 필요한 블럭 헤더들
 REQUIRED_HEADERS = [
@@ -663,18 +734,58 @@ def detect_v1_format(positive: str) -> bool:
     return True
 
 
-def detect_format(positive: str) -> str:
+def detect_format(positive: str, provider: str = "") -> str:
     """빌드본 프롬프트 포맷 자동 감지.
 
-    반환: "v3" | "v1" | ""(지원 불가)
+    반환: "v3" | "v1" | "chansub" | ""(지원 불가)
     - v3: 삽화 빌드본(ANIMA_CONTENT/ANIMA_ALL/SDXL 등 8개 헤더)
     - v1: ILXL/UPSCALE 스타일(배치/비삽화 백업 V1)
     """
+    if (provider or "").strip().lower() == "chansub":
+        return "chansub"
     if detect_build_format(positive):
         return "v3"
     if detect_v1_format(positive):
         return "v1"
     return ""
+
+
+def build_chansub_llm_messages(direction: str, positive: str, negative: str) -> list:
+    """챈섭 NAI POSITIVE/NEGATIVE 편집용 LLM messages를 만든다."""
+    system = get_effective_system_prompt_chansub()
+    template = get_effective_user_template_chansub()
+    user = _substitute_placeholders(template, {
+        "direction": direction,
+        "positive": positive,
+        "negative": negative,
+    })
+    return [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ]
+
+
+def reassemble_chansub(original_positive: str, original_negative: str, parsed: dict) -> tuple:
+    """LLM 결과에서 완전한 챈섭 POSITIVE/NEGATIVE를 안전하게 꺼낸다."""
+    if not isinstance(parsed, dict):
+        print("[LLM_EDIT:CHANSUB] 응답이 객체가 아니어서 원본 유지")
+        return original_positive, original_negative, {"plan": ""}
+
+    plan = parsed.get("plan", "")
+    positive = parsed.get("positive", "")
+    negative = parsed.get("negative", "")
+    plan = str(plan).strip() if plan is not None else ""
+    if not isinstance(positive, str) or not positive.strip():
+        print("[LLM_EDIT:CHANSUB] positive가 비었거나 문자열이 아니어서 원본 유지")
+        positive = original_positive
+    else:
+        positive = positive.strip()
+    if not isinstance(negative, str):
+        print("[LLM_EDIT:CHANSUB] negative가 문자열이 아니어서 원본 유지")
+        negative = original_negative
+    else:
+        negative = negative.strip()
+    return positive, negative, {"plan": plan}
 
 
 def _split_char_blocks(text: str) -> list:

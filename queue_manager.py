@@ -591,6 +591,8 @@ class QueueManager:
         backup_name = params.get("backup_name", "")
         postprocess_settings = params.get("postprocess_settings")
         speak_text = params.get("speak_text", "") or ""
+        provider = (params.get("provider", "comfy") or "comfy").strip().lower()
+        generation_params = params.get("generation_params") or {}
 
         if not self.generate_image_with_prompt:
             raise RuntimeError("generate_image_with_prompt 콜백이 설정되지 않았습니다")
@@ -605,7 +607,14 @@ class QueueManager:
             })
 
         start_time = time.time()
-        img_bytes, error = await self.generate_image_with_prompt(positive, negative, progress_callback=_on_regen_progress)
+        img_bytes, error = await self.generate_image_with_prompt(
+            positive,
+            negative,
+            progress_callback=_on_regen_progress,
+            provider=provider,
+            width=generation_params.get("width"),
+            height=generation_params.get("height"),
+        )
         elapsed_time = time.time() - start_time
 
         if not img_bytes:
@@ -620,10 +629,13 @@ class QueueManager:
                 generation_time=elapsed_time, bot_name=bot_name,
                 postprocess_settings=postprocess_settings,
                 speak_text=speak_text,
+                provider=provider,
+                generation_params=generation_params,
             )
         print(
             f"[QUEUE:regenerate] 완료: backup={backup_name} ({len(img_bytes):,}B, {elapsed_time:.1f}s)"
             + (f" (bot={bot_name})" if bot_name else "")
+            + f" (provider={provider})"
         )
         return {
             "success": True,
