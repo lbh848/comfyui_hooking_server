@@ -7392,22 +7392,37 @@
                                     </div>
                                 </div>
                                 <div class="pp-row">
-                                    <span class="pp-label">테마</span>
+                                    <span class="pp-label">1인 테마</span>
                                     <div class="pp-field-inline">
-                                        <select id="pp-vn-theme" class="select" style="flex:1;" onchange="collectPpVnSettings(); renderPostprocessPreview()">
+                                        <select id="pp-vn-theme-single" class="select" style="flex:1;" onchange="collectPpVnSettings(); renderPostprocessPreview()">
                                             <option value="sky">하늘색 / 은색 (프리코네)</option>
                                             <option value="ivory">아이보리 / 금색</option>
                                             <option value="lavender">연보라 / 핑크</option>
                                             <option value="black">검정 / 은회색</option>
                                             <option value="gray">회색 / 밝은 글자</option>
                                             <option value="classic">기존 검정 바</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="pp-row">
+                                    <span class="pp-label">2인 테마</span>
+                                    <div class="pp-field-inline">
+                                        <select id="pp-vn-theme-dual" class="select" style="flex:1;" onchange="collectPpVnSettings(); renderPostprocessPreview()">
+                                            <optgroup label="일반 2인 배치">
+                                                <option value="sky">하늘색 / 은색</option>
+                                                <option value="ivory">아이보리 / 금색</option>
+                                                <option value="lavender">연보라 / 핑크</option>
+                                                <option value="black">검정 / 은회색</option>
+                                                <option value="gray">회색 / 밝은 글자</option>
+                                                <option value="classic">기존 검정 바</option>
+                                            </optgroup>
                                             <optgroup label="좌측 대각선 썸네일">
-                                                <option value="sky_diagonal">하늘색 / 은색 + 좌측 대각선</option>
-                                                <option value="ivory_diagonal">아이보리 / 금색 + 좌측 대각선</option>
-                                                <option value="lavender_diagonal">연보라 / 핑크 + 좌측 대각선</option>
-                                                <option value="black_diagonal">검정 / 은회색 + 좌측 대각선</option>
-                                                <option value="gray_diagonal">회색 / 밝은 글자 + 좌측 대각선</option>
-                                                <option value="classic_diagonal">기존 검정 바 + 좌측 대각선</option>
+                                                <option value="sky_diagonal">하늘색 / 은색</option>
+                                                <option value="ivory_diagonal">아이보리 / 금색</option>
+                                                <option value="lavender_diagonal">연보라 / 핑크</option>
+                                                <option value="black_diagonal">검정 / 은회색</option>
+                                                <option value="gray_diagonal">회색 / 밝은 글자</option>
+                                                <option value="classic_diagonal">기존 검정 바</option>
                                             </optgroup>
                                         </select>
                                     </div>
@@ -7616,8 +7631,15 @@
                                 <div class="pp-card-title">폰트 · 텍스트</div>
                                 <div class="pp-field-inline">
                                     <div style="flex:2;">
-                                        <div style="font-size:0.7rem; color:var(--text2,#999);">폰트 경로 (빈 값=기본 폰트)</div>
-                                        <input id="pp-bubble-font-path" class="input" style="width:100%;" placeholder="C:/Windows/Fonts/malgun.ttf" oninput="renderPostprocessPreview()">
+                                        <div style="font-size:0.7rem; color:var(--text2,#999);">폰트 (fonts/ 폴더에 다운로드/업로드)</div>
+                                        <div style="display:flex; gap:6px; align-items:center;">
+                                            <select id="pp-bubble-font" class="select" style="flex:1;" onchange="onPpBubbleFontChange()"></select>
+                                            <button type="button" class="btn" style="padding:4px 10px; font-size:0.72rem;" onclick="ppRefreshFontList()" title="폰트 목록 새로고침(번들 자동 다운로드)">새로고침</button>
+                                            <label class="btn" style="padding:4px 10px; font-size:0.72rem; cursor:pointer;" title="폰트 파일(.ttf/.otf/.ttc)을 fonts/ 폴더에 업로드">
+                                                업로드<input type="file" id="pp-bubble-font-file" accept=".ttf,.otf,.ttc" style="display:none;" onchange="ppUploadFont(event)">
+                                            </label>
+                                            <button type="button" class="btn" style="padding:4px 10px; font-size:0.72rem;" onclick="ppDeleteFont()" title="선택한 업로드 폰트 삭제(번들/기본은 삭제 불가)">삭제</button>
+                                        </div>
                                     </div>
                                     <div style="flex:1;">
                                         <div style="font-size:0.7rem; color:var(--text2,#999);">글자 확대 상한(x)</div>
@@ -7626,10 +7648,16 @@
                                     </div>
                                 </div>
                                 <div class="pp-field-inline" style="margin-top:6px;">
+                                    <div><div style="font-size:0.7rem; color:var(--text2,#999);">자간(em, -4%~-2%)</div><input id="pp-bubble-letter-spacing" type="number" class="input" style="width:80px;" min="-0.08" max="0.02" step="0.005" oninput="renderPostprocessPreview()" title="글자 크기 대비 자간. 음수=글자가 붙음. -0.04~-0.02 권장"></div>
+                                    <div><div style="font-size:0.7rem; color:var(--text2,#999);">행간(글자×, 1.10~1.20)</div><input id="pp-bubble-line-height" type="number" class="input" style="width:80px;" min="1.05" max="1.30" step="0.01" oninput="renderPostprocessPreview()" title="줄 전체 높이 = 글자 크기 × 이 값. 1.10~1.20 권장"></div>
+                                    <div><div style="font-size:0.7rem; color:var(--text2,#999);">가로 비율(0.94~0.97)</div><input id="pp-bubble-text-width-scale" type="number" class="input" style="width:80px;" min="0.80" max="1.00" step="0.01" oninput="renderPostprocessPreview()" title="글자 가로 축소비. 1.0=축소 없음, 0.94~0.97 권장"></div>
+                                </div>
+                                <div class="pp-field-inline" style="margin-top:6px;">
                                     <div><div style="font-size:0.7rem; color:var(--text2,#999);">글자색</div><input id="pp-bubble-text-color" type="color" style="width:48px;height:28px;" oninput="renderPostprocessPreview()"></div>
                                     <div><div style="font-size:0.7rem; color:var(--text2,#999);">말풍선 배경</div><input id="pp-bubble-fill" type="color" style="width:48px;height:28px;" oninput="renderPostprocessPreview()"></div>
                                     <div><div style="font-size:0.7rem; color:var(--text2,#999);">테두리색</div><input id="pp-bubble-border" type="color" style="width:48px;height:28px;" oninput="renderPostprocessPreview()"></div>
                                 </div>
+                                <div class="pp-hint">폰트는 fonts/ 폴더(배포 제외)에 보관. 기본은 시스템 폰트, Noto Sans KR Medium은 최초 선택 시 자동 다운로드. 자간·행간·가로 비율은 텍스트 기하(줄바꿈/풍선폭)에도 동일 반영됩니다.</div>
                             </div>
 
                             <div class="pp-card pp-card-advanced">
@@ -7641,7 +7669,7 @@
                                 </div>
                                 <div class="pp-field-inline" style="margin-top:6px;">
                                     <div><div style="font-size:0.7rem; color:var(--text2,#999);">꼬리 생성 기준 (얼굴 크기 배)</div><input id="pp-bubble-tail-threshold" type="number" class="input" style="width:90px;" min="0" max="5" step="0.1" oninput="renderPostprocessPreview()" title="풍선과 얼굴 경계의 거리가 얼굴 최대 크기×이 값 이내일 때만 꼬리를 만듭니다. 0이면 꼬리를 끕니다."></div>
-                                    <div><div style="font-size:0.7rem; color:var(--text2,#999);">생각 형상</div><select id="pp-bubble-thought-shape" class="select" style="width:130px;" onchange="renderPostprocessPreview()"><option value="cloud">구름형</option><option value="box">생각 박스</option></select></div>
+                                    <div><div style="font-size:0.7rem; color:var(--text2,#999);">생각 형상</div><select id="pp-bubble-thought-shape" class="select" style="width:130px;" onchange="renderPostprocessPreview()"><option value="cloud">구름형</option><option value="box">생각 박스</option><option value="auto">1인 박스·2인 구름</option></select></div>
                                     <div><div style="font-size:0.7rem; color:var(--text2,#999);">가로·세로 비율 — 모델 자동</div><input id="pp-bubble-max-width-ratio" type="number" class="input" style="width:70px;" step="0.05" disabled title="텍스트와 버블 종류에 맞춰 레이아웃 ONNX가 자동 결정합니다"></div>
                                 </div>
                                 <div class="pp-field-inline" style="margin-top:6px;">
@@ -25621,12 +25649,18 @@
                     face_device: 'auto',
                     face_cpu_threads: 0,
                     theme: 'sky',
+                    theme_single: 'sky',
+                    theme_dual: 'sky_diagonal',
                     opacity: 100,
                 },
                 bubble: {
                     enabled: false,
+                    font_id: 'system',
                     font_path: '',
                     font_size: 36,
+                    letter_spacing: -0.03,
+                    line_height_ratio: 1.15,
+                    text_width_scale: 1.0,
                     layout_font_scale: 2.0,
                     text_color: '#111111',
                     bubble_fill: '#FFFFFF',
@@ -25665,8 +25699,9 @@
         }
 
         function _ppNormalizeVn(vn) {
+            const source = (vn && typeof vn === 'object') ? vn : {};
             const base = defaultPpConfig().vn;
-            Object.assign(base, vn || {});
+            Object.assign(base, source);
             if (!base.name_replace || typeof base.name_replace !== 'object') base.name_replace = {};
             if (base.name_replace_enabled === undefined) base.name_replace_enabled = true;
             if (!Array.isArray(base.emotion_extract_rules)) base.emotion_extract_rules = [{ action: 'split_by', separator: '_', take: -1 }];
@@ -25679,13 +25714,23 @@
             if (typeof base.face_best_only !== 'boolean') base.face_best_only = false;
             if (typeof base.face_device !== 'string') base.face_device = 'auto';
             if (!Number.isInteger(base.face_cpu_threads) || base.face_cpu_threads < 0) base.face_cpu_threads = 0;
-            if (typeof base.theme !== 'string') base.theme = 'sky';
             const _vnThemeBases = ['sky', 'ivory', 'lavender', 'black', 'gray', 'classic'];
-            const _vnThemeValues = new Set([
+            const _legacyTheme = (typeof source.theme === 'string') ? source.theme : 'sky';
+            const _legacyBase = _legacyTheme.endsWith('_diagonal')
+                ? _legacyTheme.slice(0, -'_diagonal'.length) : _legacyTheme;
+            const _safeLegacyBase = _vnThemeBases.includes(_legacyBase) ? _legacyBase : 'sky';
+            base.theme_single = (typeof source.theme_single === 'string' && _vnThemeBases.includes(source.theme_single))
+                ? source.theme_single : _safeLegacyBase;
+            const _dualThemes = [
                 ..._vnThemeBases,
                 ..._vnThemeBases.map(theme => theme + '_diagonal'),
-            ]);
-            if (!_vnThemeValues.has(base.theme)) base.theme = 'sky';
+            ];
+            const _legacyDual = _legacyTheme.endsWith('_diagonal')
+                ? _legacyTheme : _safeLegacyBase + '_diagonal';
+            base.theme_dual = (typeof source.theme_dual === 'string' && _dualThemes.includes(source.theme_dual))
+                ? source.theme_dual : _legacyDual;
+            // theme은 구버전 호환용으로 1인 선택값을 유지한다.
+            base.theme = base.theme_single;
             if (typeof base.opacity !== 'number') base.opacity = 100;
             if (typeof base.name_font_size !== 'number') base.name_font_size = 0;
             if (typeof base.emotion_font_size !== 'number') base.emotion_font_size = 0;
@@ -25694,7 +25739,7 @@
             base.text_outline_width = Math.min(12, Math.max(-1, base.text_outline_width));
             // 구버전의 배치형 diagonal 설정을 같은 팔레트의 테마 변형으로 이관.
             if (base.multi_speaker_layout === 'diagonal') {
-                if (!base.theme.endsWith('_diagonal')) base.theme += '_diagonal';
+                base.theme_dual = _safeLegacyBase + '_diagonal';
                 base.multi_speaker_layout = 'split';
             }
             if (!['split', 'stack'].includes(base.multi_speaker_layout)) base.multi_speaker_layout = 'split';
@@ -25743,8 +25788,10 @@
             if (_fdevice) _fdevice.value = vn.face_device || 'auto';
             const _fthreads = document.getElementById('pp-vn-face-cpu-threads');
             if (_fthreads) _fthreads.value = String(vn.face_cpu_threads ?? 0);
-            const _theme = document.getElementById('pp-vn-theme');
-            if (_theme) _theme.value = vn.theme || 'sky';
+            const _themeSingle = document.getElementById('pp-vn-theme-single');
+            if (_themeSingle) _themeSingle.value = vn.theme_single || 'sky';
+            const _themeDual = document.getElementById('pp-vn-theme-dual');
+            if (_themeDual) _themeDual.value = vn.theme_dual || 'sky_diagonal';
             const _opa = document.getElementById('pp-vn-opacity');
             if (_opa) {
                 _opa.value = (vn.opacity === undefined ? 100 : vn.opacity);
@@ -26330,8 +26377,11 @@
             const _fctEl = document.getElementById('pp-vn-face-cpu-threads');
             const _fctRaw = _fctEl ? parseInt(_fctEl.value, 10) : 0;
             vn.face_cpu_threads = Number.isInteger(_fctRaw) && _fctRaw >= 0 ? _fctRaw : 0;
-            const _themeEl = document.getElementById('pp-vn-theme');
-            vn.theme = _themeEl ? (_themeEl.value || 'sky') : (vn.theme || 'sky');
+            const _themeSingleEl = document.getElementById('pp-vn-theme-single');
+            vn.theme_single = _themeSingleEl ? (_themeSingleEl.value || 'sky') : (vn.theme_single || 'sky');
+            const _themeDualEl = document.getElementById('pp-vn-theme-dual');
+            vn.theme_dual = _themeDualEl ? (_themeDualEl.value || 'sky_diagonal') : (vn.theme_dual || 'sky_diagonal');
+            vn.theme = vn.theme_single;  // 구버전 호환
             const _opaEl = document.getElementById('pp-vn-opacity');
             const _opaRaw = _opaEl ? parseFloat(_opaEl.value) : NaN;
             vn.opacity = isNaN(_opaRaw) ? 100 : Math.min(100, Math.max(0, _opaRaw));
@@ -26384,7 +26434,9 @@
                             face_best_only: vn.face_best_only === true,
                             face_device: vn.face_device || 'auto',
                             face_cpu_threads: vn.face_cpu_threads || 0,
-                            theme: vn.theme || 'sky',
+                            theme: vn.theme_single || 'sky',
+                            theme_single: vn.theme_single || 'sky',
+                            theme_dual: vn.theme_dual || 'sky_diagonal',
                             opacity: vn.opacity,
                             speak: document.getElementById('pp-vn-preview-speak').value,
                             // 현재 편집 중인 삽화 프로필의 저장된 HRF 설정을 서버가 읽어
@@ -26431,7 +26483,117 @@
             if (base.thought_opacity == null) base.thought_opacity = base.opacity ?? 1.0;
             if (typeof base.onnx_device !== 'string') base.onnx_device = 'auto';
             if (!Number.isInteger(base.cpu_threads) || base.cpu_threads < 0) base.cpu_threads = 0;
+            // 폰트 id(드롭박스). 구형 font_path 만 있으면 system 기본으로 두고 선택시 사용자 판단.
+            if (typeof base.font_id !== 'string' || !base.font_id) {
+                base.font_id = base.font_path ? 'system' : 'system';
+            }
+            if (base.letter_spacing == null || isNaN(Number(base.letter_spacing))) base.letter_spacing = -0.03;
+            if (base.line_height_ratio == null || isNaN(Number(base.line_height_ratio))) base.line_height_ratio = 1.15;
+            if (base.text_width_scale == null || isNaN(Number(base.text_width_scale))) base.text_width_scale = 1.0;
             return base;
+        }
+
+        // 폰트 드롭박스를 서버 목록으로 채운다. selectedId 유지.
+        let _ppFontListCache = [];
+        async function ppPopulateFontDropdown(selectedId) {
+            const sel = document.getElementById('pp-bubble-font');
+            if (!sel) return;
+            let fonts = _ppFontListCache;
+            try {
+                const resp = await fetch('/api/postprocess/fonts');
+                if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                const j = await resp.json();
+                fonts = j.fonts || [];
+                _ppFontListCache = fonts;
+            } catch (e) {
+                console.error('[POSTPROCESS] 폰트 목록 로드 실패:', e);
+                fonts = [{ id: 'system', name: '기본 (시스템 폰트)', source: 'system', installed: true }];
+            }
+            sel.innerHTML = '';
+            for (const f of fonts) {
+                const opt = document.createElement('option');
+                opt.value = f.id;
+                let label = f.name;
+                if (f.source === 'builtin' && f.installed === false) label += ' (다운로드 필요)';
+                if (f.source === 'upload') label += ' (업로드)';
+                opt.textContent = label;
+                opt.dataset.source = f.source || '';
+                sel.appendChild(opt);
+            }
+            // selectedId 가 목록에 없으면 system 폴백(구형 font_path 는 무시)
+            const ids = fonts.map(f => f.id);
+            const target = (selectedId && ids.includes(selectedId)) ? selectedId : 'system';
+            sel.value = target;
+        }
+
+        function onPpBubbleFontChange() {
+            // 번들 폰트를 처음 선택하면 서버가 자동 다운로드 → 목록 새로고침 후 미리보기.
+            const sel = document.getElementById('pp-bubble-font');
+            const opt = sel && sel.selectedOptions[0];
+            if (opt && opt.dataset.source === 'builtin') {
+                ppRefreshFontList(true).finally(() => renderPostprocessPreview());
+            } else {
+                renderPostprocessPreview();
+            }
+        }
+
+        async function ppRefreshFontList(keepSelection) {
+            const sel = document.getElementById('pp-bubble-font');
+            const prev = sel ? sel.value : 'system';
+            _ppFontListCache = [];
+            await ppPopulateFontDropdown(keepSelection ? prev : null);
+            if (window.showToast) showToast('폰트 목록을 새로고침했습니다.');
+        }
+
+        async function ppUploadFont(event) {
+            const file = event.target.files && event.target.files[0];
+            event.target.value = '';
+            if (!file) return;
+            try {
+                const fd = new FormData();
+                fd.append('font', file);
+                const resp = await fetch('/api/postprocess/font/upload', { method: 'POST', body: fd });
+                const txt = await resp.text();
+                let j = null; try { j = JSON.parse(txt); } catch (_) {}
+                if (!resp.ok) {
+                    throw new Error((j && j.error) || txt || ('HTTP ' + resp.status));
+                }
+                _ppFontListCache = (j && j.fonts) || [];
+                await ppPopulateFontDropdown(file.name);
+                if (window.showToast) showToast('폰트 업로드 완료: ' + file.name);
+                renderPostprocessPreview();
+            } catch (e) {
+                console.error('[POSTPROCESS] 폰트 업로드 실패:', e);
+                if (window.showToast) showToast('폰트 업로드 실패: ' + (e.message || e), 'error');
+            }
+        }
+
+        async function ppDeleteFont() {
+            const sel = document.getElementById('pp-bubble-font');
+            if (!sel) return;
+            const fontId = sel.value;
+            const opt = sel.selectedOptions[0];
+            if (!opt || opt.dataset.source !== 'upload') {
+                if (window.showToast) showToast('업로드한 폰트만 삭제할 수 있습니다.', 'error');
+                return;
+            }
+            if (!confirm('업로드 폰트를 삭제할까요? (' + fontId + ')')) return;
+            try {
+                const resp = await fetch('/api/postprocess/font/delete', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ font_id: fontId }),
+                });
+                const txt = await resp.text();
+                let j = null; try { j = JSON.parse(txt); } catch (_) {}
+                if (!resp.ok) throw new Error((j && j.error) || txt || ('HTTP ' + resp.status));
+                _ppFontListCache = (j && j.fonts) || [];
+                await ppPopulateFontDropdown('system');
+                if (window.showToast) showToast('폰트를 삭제했습니다.');
+                renderPostprocessPreview();
+            } catch (e) {
+                console.error('[POSTPROCESS] 폰트 삭제 실패:', e);
+                if (window.showToast) showToast('폰트 삭제 실패: ' + (e.message || e), 'error');
+            }
         }
 
         function _ppNum(id, dflt, min, max) {
@@ -26451,9 +26613,12 @@
             const b = ppWorking.bubble;
             const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
             document.getElementById('pp-bubble-enabled').checked = !!b.enabled;
-            set('pp-bubble-font-path', b.font_path || '');
+            ppPopulateFontDropdown(b.font_id || 'system');  // 비동기 목록 로드
             set('pp-bubble-font-size', b.font_size ?? 36);
             set('pp-bubble-font-scale', b.layout_font_scale ?? 2.0);
+            set('pp-bubble-letter-spacing', b.letter_spacing ?? -0.03);
+            set('pp-bubble-line-height', b.line_height_ratio ?? 1.15);
+            set('pp-bubble-text-width-scale', b.text_width_scale ?? 1.0);
             set('pp-bubble-text-color', b.text_color || '#111111');
             set('pp-bubble-fill', b.bubble_fill || '#FFFFFF');
             set('pp-bubble-border', b.bubble_border || '#333333');
@@ -26483,9 +26648,14 @@
             if (!ppWorking.bubble) ppWorking.bubble = _ppNormalizeBubble(null);
             const b = ppWorking.bubble;
             b.enabled = document.getElementById('pp-bubble-enabled').checked;
-            b.font_path = (document.getElementById('pp-bubble-font-path').value || '').trim();
+            const fontSel = document.getElementById('pp-bubble-font');
+            b.font_id = fontSel ? (fontSel.value || 'system') : 'system';
+            b.font_path = '';  // 드롭박스 기반 전환. font_id 가 서버에서 경로로 해석.
             b.font_size = _ppNum('pp-bubble-font-size', 36, 4, 400);
             b.layout_font_scale = _ppNum('pp-bubble-font-scale', 2.0, 1.0, 4.0);
+            b.letter_spacing = _ppNum('pp-bubble-letter-spacing', -0.03, -0.08, 0.02);
+            b.line_height_ratio = _ppNum('pp-bubble-line-height', 1.15, 1.05, 1.30);
+            b.text_width_scale = _ppNum('pp-bubble-text-width-scale', 1.0, 0.80, 1.00);
             b.text_color = document.getElementById('pp-bubble-text-color').value;
             b.bubble_fill = document.getElementById('pp-bubble-fill').value;
             b.bubble_border = document.getElementById('pp-bubble-border').value;
@@ -26493,7 +26663,8 @@
             b.padding = _ppNum('pp-bubble-padding', 16, 0, 200);
             b.radius = _ppNum('pp-bubble-radius', 22, 0, 200);
             b.tail_threshold = _ppNum('pp-bubble-tail-threshold', 1.0, 0, 5);
-            b.thought_shape = document.getElementById('pp-bubble-thought-shape').value === 'box' ? 'box' : 'cloud';
+            const _ppThoughtShape = document.getElementById('pp-bubble-thought-shape').value;
+            b.thought_shape = (_ppThoughtShape === 'box' || _ppThoughtShape === 'auto') ? _ppThoughtShape : 'cloud';
             delete b.thought_circle_r;
             delete b.tail_len;
             delete b.conf;
@@ -26529,7 +26700,9 @@
                     speak: document.getElementById('pp-bubble-preview-speak').value,
                     bot_name: (typeof ppCurrentBot !== 'undefined' && ppCurrentBot) ? ppCurrentBot : '',
                     profile: (typeof _illustSettingsProfile !== 'undefined' && _illustSettingsProfile) ? _illustSettingsProfile : 'solo',
-                    font_path: b.font_path, font_size: b.font_size,
+                    font_id: b.font_id, font_path: b.font_path, font_size: b.font_size,
+                    letter_spacing: b.letter_spacing, line_height_ratio: b.line_height_ratio,
+                    text_width_scale: b.text_width_scale,
                     layout_font_scale: b.layout_font_scale,
                     text_color: b.text_color, bubble_fill: b.bubble_fill, bubble_border: b.bubble_border,
                     border_width: b.border_width, opacity: b.opacity,
@@ -32518,11 +32691,22 @@
         function _normCharMatch(s) {
             return String(s || '').toLowerCase().replace(/[\s_-]+/g, '');
         }
+        // 토큰 경계 매칭: 구분자(공백/_/-)를 기준으로 토큰을 나눠 비교.
+        // 캐릭터 이름의 모든 토큰이 로라id(또는 trigger)의 토큰 집합에 포함될 때만 매칭.
+        // → "Tokkigongju" 로라가 "Tokkigongju_reallife" 캐릭터에 중간 부분문자열로 잘못 걸리는 것을 차단.
+        function _normTokens(s) {
+            return String(s || '').toLowerCase().split(/[\s_-]+/).filter(t => t.length > 0);
+        }
+        function _tokensContainAll(haystack, needles) {
+            return needles.every(t => haystack.includes(t));
+        }
         function _isInstanceLoraRecommended(item, charName) {
-            const cn = _normCharMatch(charName);
-            if (!cn) return false;
-            const idHit = _normCharMatch(item.lora_id).includes(cn) || cn.includes(_normCharMatch(item.lora_id)) && _normCharMatch(item.lora_id).length > 0;
-            const trigHit = _normCharMatch(item.trigger).includes(cn) || (cn.includes(_normCharMatch(item.trigger)) && _normCharMatch(item.trigger).length > 0);
+            const cn = _normTokens(charName);
+            if (cn.length === 0) return false;
+            const idTok = _normTokens(item.lora_id);
+            const trigTok = _normTokens(item.trigger);
+            const idHit = idTok.length > 0 && _tokensContainAll(idTok, cn);
+            const trigHit = trigTok.length > 0 && _tokensContainAll(trigTok, cn);
             return idHit || trigHit;
         }
         function renderBclpInstanceLoras() {
@@ -32931,9 +33115,9 @@
                                 <label style="font-size:0.76rem;"><input type="radio" name="alr-profile" value="face" onchange="_botAutoLoraState.profile=this.value"> face</label>
                             </div>
                             <div style="background:var(--surface2); border-radius:8px; padding:6px 10px;">
-                                <div style="font-size:0.7rem; color:var(--text2); margin-bottom:3px;">기존 로라 충돌 시</div>
-                                <label style="font-size:0.76rem; margin-right:6px;"><input type="radio" name="alr-conflict" value="add" checked onchange="_botAutoLoraState.conflict=this.value"> 추가(중복 제거)</label>
-                                <label style="font-size:0.76rem;"><input type="radio" name="alr-conflict" value="overwrite" onchange="_botAutoLoraState.conflict=this.value"> 덮어쓰기</label>
+                                <div style="font-size:0.7rem; color:var(--text2); margin-bottom:3px;">로라 추가 동작</div>
+                                <label style="font-size:0.76rem; margin-right:6px;"><input type="radio" name="alr-conflict" value="add" checked onchange="_botAutoLoraState.conflict=this.value"> 추가</label>
+                                <label style="font-size:0.76rem;"><input type="radio" name="alr-conflict" value="overwrite" onchange="_botAutoLoraState.conflict=this.value"> 이미 세팅된 로라를 버리고 추가</label>
                             </div>
                             <div style="background:var(--surface2); border-radius:8px; padding:6px 10px; min-width:150px;">
                                 <div style="font-size:0.7rem; color:var(--text2); margin-bottom:3px;">임포트 강도: <span id="alr-strength-val">0.5</span></div>

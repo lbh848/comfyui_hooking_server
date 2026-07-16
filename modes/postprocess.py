@@ -142,6 +142,22 @@ def _resolve_vn_theme(theme_value) -> tuple:
         palette_theme = VN_THEME_DEFAULT
     return palette_theme, diagonal
 
+
+def _select_vn_theme(settings: dict, speaker_count: int) -> tuple:
+    """발화자 수에 따라 독립 저장된 1인/2인 테마를 선택한다."""
+    legacy_theme = str(settings.get("theme", VN_THEME_DEFAULT) or VN_THEME_DEFAULT)
+    legacy_base, legacy_diagonal = _resolve_vn_theme(legacy_theme)
+    if speaker_count >= 2:
+        fallback = (
+            legacy_theme
+            if legacy_diagonal
+            else legacy_base + VN_DIAGONAL_THEME_SUFFIX
+        )
+        selected = settings.get("theme_dual", fallback)
+    else:
+        selected = settings.get("theme_single", legacy_base)
+    return _resolve_vn_theme(selected)
+
 # Windows 폰트 후보
 _FONT_CANDIDATES = [
     "C:/Windows/Fonts/malgun.ttf",
@@ -1545,9 +1561,6 @@ def compose_postprocess(image_bytes: bytes, speak_text: str,
     text_outline_width = normalize_text_outline_width(
         settings.get("text_outline_width", -1)
     )
-    palette_theme_key, diagonal_theme = _resolve_vn_theme(
-        settings.get("theme", VN_THEME_DEFAULT)
-    )
     multi_speaker_layout = str(
         settings.get("multi_speaker_layout", "split") or "split"
     ).strip().lower()
@@ -1557,8 +1570,6 @@ def compose_postprocess(image_bytes: bytes, speak_text: str,
             "split 사용"
         )
         multi_speaker_layout = "split"
-    if diagonal_theme:
-        multi_speaker_layout = "diagonal"
     strip_emotion = bool(settings.get("strip_emotion", False))
 
     segments = parse_speak(speak_text, strip_emotion=strip_emotion)
@@ -1570,6 +1581,9 @@ def compose_postprocess(image_bytes: bytes, speak_text: str,
     # --- 얼굴 이미지 준비 (구조화된 각 발화자 기준) ---
     face_enabled = bool(settings.get("face_enabled", True))
     speakers = _speaker_order(segments)
+    palette_theme_key, diagonal_theme = _select_vn_theme(settings, len(speakers))
+    if diagonal_theme and multi_speaker_layout != "stack":
+        multi_speaker_layout = "diagonal"
     first_speaker_seg = next((s for s in segments if s.get("speaker")), None)
     face_images = _prepare_face_images(
         segments, settings, bot_name, max(128, int(bar_h)),
@@ -2052,8 +2066,28 @@ def _default_vn() -> dict:
         "face_device": "auto",         # 자동 | cpu | cuda0 | dml0
         "face_cpu_threads": 0,         # CPU intra-op 스레드. 0=ONNX Runtime 자동
         "theme": VN_THEME_DEFAULT,     # 대사창 색 테마(sky/ivory/lavender/black/gray/classic)
+        "theme_single": VN_THEME_DEFAULT,  # 1인 테마 팔레트
+        "theme_dual": f"{VN_THEME_DEFAULT}{VN_DIAGONAL_THEME_SUFFIX}",  # 2인 대각선 테마
         "opacity": 100,                # 카드 배경 반투명도(0~100). 100=불투명. 글자/얼굴은 그대로
     }
+
+
+def _merge_vn_defaults(stored: Optional[dict]) -> dict:
+    """누락 필드를 채우고 구형 단일 theme 값을 1인/2인 테마로 이관한다."""
+    source = stored if isinstance(stored, dict) else {}
+    merged = _default_vn()
+    merged.update(source)
+    legacy_theme = str(source.get("theme", VN_THEME_DEFAULT) or VN_THEME_DEFAULT)
+    legacy_base, legacy_diagonal = _resolve_vn_theme(legacy_theme)
+    if "theme_single" not in source:
+        merged["theme_single"] = legacy_base
+    if "theme_dual" not in source:
+        merged["theme_dual"] = (
+            legacy_theme
+            if legacy_diagonal
+            else legacy_base + VN_DIAGONAL_THEME_SUFFIX
+        )
+    return merged
 
 
 def normalize_layout_font_scale(value, default: float = 2.0) -> float:
@@ -2070,8 +2104,12 @@ def _default_bubble() -> dict:
     """봇별 postprocess_bubble 기본값 (말풍선 모드)."""
     return {
         "enabled": False,
-        "font_path": "",                  # 빈 값=시스템 기본 폰트
+        "font_id": "system",              # 폰트 드롭박스 식별자. system=시스템 폰트
+        "font_path": "",                  # 하위호환: 빈 값=시스템 기본 폰트(font_id 우선)
         "font_size": 36,                  # 텍스트 폰트 px
+        "letter_spacing": -0.03,          # 자간(em, font_size 대비). 음수=글자가 붙음. -0.04~-0.02 권장
+        "line_height_ratio": 1.15,        # 행간(글자 크기 배수). 줄 전체 높이=font_size×이 값. 1.10~1.20 권장
+        "text_width_scale": 1.0,           # 글자 가로 축소비(0.94~0.97 권장). 1.0=축소 없음
         "layout_font_scale": 2.0,         # 모델 기본 글자 크기의 최대 확대 배율(1.0~4.0)
         "text_color": "#111111",
         "bubble_fill": "#FFFFFF",
@@ -2082,7 +2120,7 @@ def _default_bubble() -> dict:
         "thought_opacity": 1.0,           # 생각 말풍선 배경 불투명도(0~1)
         "padding": 16,                    # 몸통 내 텍스트 여백
         "radius": 22,                     # 코믹 각진형의 모서리 절삭 크기
-        "thought_shape": "cloud",         # 생각 표현: cloud | box(무라운드/무꼬리)
+        "thought_shape": "cloud",         # 생각 표현: cloud | box(무라운드/무꼬리) | auto(1인 박스/2인 구름)
         "tail_threshold": 1.0,             # 꼬리 생성 최대 거리(얼굴 최대 크기의 배율)
         "max_width_ratio": 0.45,          # 캔버스 폭 대비 말풍선 최대 폭 비율
         "match_thres": 0.55,              # 코사인 유사도 매칭 임계치(이하 미배정)
@@ -2121,11 +2159,7 @@ def _load_bot_vn(bot_name: str) -> dict:
         data = _load_bot_data()
         bot = next((b for b in data.get("bots", []) if b.get("name") == bot_name), None)
         if bot and isinstance(bot.get("postprocess_vn"), dict):
-            vn = bot["postprocess_vn"]
-            # 누락 필드 보정
-            base = _default_vn()
-            base.update(vn)
-            return base
+            return _merge_vn_defaults(bot["postprocess_vn"])
     except Exception as e:
         print(f"[POSTPROCESS] ⚠ 봇 vn 로드 실패({bot_name}): {e}")
         traceback.print_exc()
@@ -2172,6 +2206,16 @@ def get_vn_settings(config: dict, bot_name: str = "") -> Optional[dict]:
         "face_device": normalize_device_key(vn.get("face_device", "auto")),
         "face_cpu_threads": normalize_cpu_threads(vn.get("face_cpu_threads", 0)),
         "theme": str(vn.get("theme", VN_THEME_DEFAULT) or VN_THEME_DEFAULT),
+        "theme_single": str(
+            vn.get("theme_single", vn.get("theme", VN_THEME_DEFAULT))
+            or VN_THEME_DEFAULT
+        ),
+        "theme_dual": str(
+            vn.get(
+                "theme_dual",
+                f"{VN_THEME_DEFAULT}{VN_DIAGONAL_THEME_SUFFIX}",
+            ) or f"{VN_THEME_DEFAULT}{VN_DIAGONAL_THEME_SUFFIX}"
+        ),
         "opacity": int(vn.get("opacity", 100) if vn.get("opacity", 100) is not None else 100),
     }
 
@@ -2199,9 +2243,24 @@ def get_bubble_settings(config: dict, bot_name: str = "") -> Optional[dict]:
         except Exception as e:
             print(f"[POSTPROCESS] bubble FACE_CROP 설정 조회 실패({bot_name}): {e}")
             traceback.print_exc()
+    # 폰트 id → 경로 해석(번들 미설치 시 자동 다운로드). 렌더는 font_path 를 읽는다.
+    font_id = str(bb.get("font_id", "") or "")
+    font_path = str(bb.get("font_path", "") or "")
+    try:
+        from modes.font_assets import resolve_font
+
+        resolved_path, _variation = resolve_font(font_id, font_path)
+        font_path = resolved_path or ""
+    except Exception as e:
+        print(f"[POSTPROCESS] bubble 폰트 해석 실패, font_path 원본 사용: {e}")
+        traceback.print_exc()
     return {
-        "font_path": bb.get("font_path", "") or "",
+        "font_id": font_id,
+        "font_path": font_path,
         "font_size": int(bb.get("font_size", 36) or 36),
+        "letter_spacing": float(bb.get("letter_spacing", -0.03) if bb.get("letter_spacing", -0.03) is not None else -0.03),
+        "line_height_ratio": float(bb.get("line_height_ratio", 1.15) if bb.get("line_height_ratio", 1.15) is not None else 1.15),
+        "text_width_scale": float(bb.get("text_width_scale", 1.0) if bb.get("text_width_scale", 1.0) is not None else 1.0),
         "layout_font_scale": normalize_layout_font_scale(bb.get("layout_font_scale", 2.0)),
         "text_color": bb.get("text_color", "#111111"),
         "bubble_fill": bb.get("bubble_fill", "#FFFFFF"),

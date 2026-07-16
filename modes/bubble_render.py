@@ -48,13 +48,25 @@ _SYSTEM_FONT_CANDIDATES = [
 
 
 # ─── 폰트/텍스트 ────────────────────────────────────────────────────
-def _load_font(font_path, font_size):
+def _load_font(font_path, font_size, font_id=None):
     """폰트 로드. font_size 가 항상 반영되도록 비트맵 기본 폰트는 최후의 수단.
 
-    빈 font_path 면 시스템 TTF 후보를 순회해 한글 지정 폰트를 사용한다.
+    font_id(드롭박스 식별자)가 주어지면 font_assets 로 로드(번들 자동 다운로드,
+    변수폰트 variation). 빈 값이면 시스템 TTF 후보를 순회해 한글 지정 폰트를 쓴다.
     (ImageFont.load_default() 는 font_size 를 무시하는 고정 크기 비트맵이라 사용 지양.)
     """
     fs = int(font_size) if font_size else 28
+    if font_id and font_id != "system":
+        try:
+            from modes.font_assets import load_font as _fa_load
+
+            font = _fa_load(fs, font_id=font_id, legacy_path=font_path)
+            if font is not None:
+                return font
+            print(f"[BUBBLE_RENDER] font_assets 로드 결과 없음 → 경로/시스템 폴백: {font_id}")
+        except Exception as e:
+            print(f"[BUBBLE_RENDER] font_assets 로드 실패, 경로 폴백: {e}")
+            traceback.print_exc()
     if font_path and os.path.isfile(font_path):
         try:
             return ImageFont.truetype(font_path, fs)
@@ -112,6 +124,59 @@ def _wrap_text(text, font, max_width, draw):
                 cur = w
         lines.append(cur)
     return lines or [""]
+
+
+def _render_line_strip(line, font, fill, tracking_px):
+    """한 줄을 글자별 수동 x 전진(tracking)으로 투명 스트립에 그린다.
+
+    반환: (strip 이미지, 자연폭+tracking=strip_w, line_h=ascent+descent).
+    호출자는 strip 을 가로로 리사이즈(h_scale)한 뒤 풍선에 중앙 정렬해 붙인다.
+    측정(bubble_layout._rendered_width)과 동일 기하: (textlength + tracking×(len-1)) × h_scale.
+    """
+    if not line:
+        return None, 0.0, 0.0
+    probe = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+    char_w = [float(probe.textlength(ch, font=font)) for ch in line]
+    natural_w = sum(char_w)
+    n = len(line)
+    strip_w = natural_w + tracking_px * max(0, n - 1)
+    ascent, descent = font.getmetrics()
+    line_h = float(ascent + descent)
+    width_px = max(1, int(math.ceil(strip_w)))
+    height_px = max(1, int(math.ceil(line_h)))
+    img = Image.new("RGBA", (width_px, height_px), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    x = 0.0
+    for ch, w in zip(line, char_w):
+        d.text((x, 0), ch, font=font, fill=fill)
+        x += w + tracking_px
+    return img, strip_w, line_h
+
+
+def _draw_typo_text(overlay, lines, font, fill, rect_cx, rect_cy,
+                    tracking_px, h_scale, line_advance):
+    """자간/가로축소/행간을 적용해 여러 줄을 풍선 중앙에 그린다(줄별 스트립 렌더).
+
+    - 각 줄을 _render_line_strip 으로 그리고 가로 리사이즈(h_scale) → 좌우 중앙 정렬.
+    - 세로: 줄 전체 높이(line_advance) 기준 블록을 rect_cy 기준 중앙 정렬, 줄 상단 top 정렬.
+      line_advance = max(ascent+descent, font_size×ratio) 이며 측정과 일치.
+    """
+    if not lines:
+        return
+    n = max(1, len(lines))
+    block_h = line_advance * n
+    y_top = rect_cy - block_h / 2.0
+    for i, line in enumerate(lines):
+        strip, strip_w, line_h = _render_line_strip(line, font, fill, tracking_px)
+        if strip is None:
+            continue
+        if abs(h_scale - 1.0) > 1e-3:
+            new_w = max(1, int(round(strip_w * h_scale)))
+            strip = strip.resize((new_w, strip.height), Image.BICUBIC)
+            strip_w = float(new_w)
+        px = rect_cx - strip_w / 2.0
+        py = y_top + i * line_advance
+        overlay.alpha_composite(strip, (int(round(px)), int(round(py))))
 
 
 # ─── 배치(몸통 위치) ─────────────────────────────────────────────────
@@ -993,11 +1058,44 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
     tail_threshold = s.get("tail_threshold", 1.0)
     radius = int(s.get("radius", 20))
     thought_shape = str(s.get("thought_shape", "cloud") or "cloud").strip().lower()
+    # auto: 대사 고유 화자 수로 형상을 자동 결정(1인→박스, 2인 이상→구름).
+    # 미리보기와 실제 전송이 모두 이 분기를 지나므로 양쪽 결과가 일치한다.
+    if thought_shape == "auto":
+        thought_shape = "box" if speaker_count == 1 else "cloud"
+        print(
+            f"[BUBBLE_RENDER] 생각 형상 자동(1인 박스/2인 구름): "
+            f"speakers={speaker_count} → {thought_shape}"
+        )
     if thought_shape not in ("cloud", "box"):
         print(f"[BUBBLE_RENDER] ⚠ 알 수 없는 생각 형상({thought_shape!r}), cloud 사용")
         thought_shape = "cloud"
     preview_debug_mask = bool(s.get("preview_debug_mask", False))
     preview_debug_candidates = bool(s.get("preview_debug_candidates", False))
+    # 타이포그래피: 자간(em), 행간(글자 크기 배수), 글자 가로 축소비.
+    # 기본(0/1.0/None)이면 기존 multiline_text 렌더와 동일(회귀 방지).
+    try:
+        letter_spacing = float(s.get("letter_spacing", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        letter_spacing = 0.0
+    try:
+        text_width_scale = float(s.get("text_width_scale", 1.0) or 1.0)
+    except (TypeError, ValueError):
+        text_width_scale = 1.0
+    text_width_scale = max(0.5, min(1.5, text_width_scale))
+    _lh_raw = s.get("line_height_ratio", None)
+    line_height_ratio = None
+    if _lh_raw is not None:
+        try:
+            line_height_ratio = float(_lh_raw)
+        except (TypeError, ValueError):
+            line_height_ratio = None
+    font_id = str(s.get("font_id", "") or "")
+    # 새 타이포그래피가 하나라도 켜져 있으면 줄별 스트립 렌더 경로를 쓴다.
+    use_typo_render = (
+        abs(letter_spacing) > 1e-6
+        or abs(text_width_scale - 1.0) > 1e-6
+        or line_height_ratio is not None
+    )
     # 사용자가 정한 상한까지 키운 뒤 줄바꿈/몸통을 다시 계산한다.
     layout_font_scale = _resolve_layout_font_scale(s)
     # 넓힌 후보 풀의 오검출이 말풍선 배치를 막지 않도록 최종 매칭된 얼굴만 보호한다.
@@ -1058,6 +1156,10 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
                 top_k=5,
                 onnx_device=onnx_device,
                 cpu_threads=cpu_threads,
+                font_id=font_id or None,
+                letter_spacing=letter_spacing,
+                text_width_scale=text_width_scale,
+                line_height_ratio=line_height_ratio,
             )
         except Exception as e:
             print(
@@ -1071,7 +1173,7 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
                 f"[BUBBLE_RENDER] ⚠ 최소 글자/최대 줄 조건 내 적합 후보 없음: "
                 f"speaker={seg.get('speaker')}, overflow={layout.overflow_ratio:.4f}"
             )
-        font = _load_font(s.get("font_path"), layout.font_size)
+        font = _load_font(s.get("font_path"), layout.font_size, font_id=font_id or None)
         if font is None:
             print(
                 f"[BUBBLE_RENDER] 사용할 폰트 없음 — 세그먼트 스킵: "
@@ -1284,27 +1386,41 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
         )
 
         # 모델이 선택한 줄과 행간을 실제 폰트로 중앙 정렬해 그린다.
-        text_draw = ImageDraw.Draw(overlay)
-        layout_text = layout.text
-        text_box = text_draw.multiline_textbbox(
-            (0, 0),
-            layout_text,
-            font=font,
-            spacing=layout.spacing,
-            align="center",
-        )
         rect_cx = (rect[0] + rect[2]) / 2.0
         rect_cy = (rect[1] + rect[3]) / 2.0
-        tx = rect_cx - (text_box[0] + text_box[2]) / 2.0
-        ty = rect_cy - (text_box[1] + text_box[3]) / 2.0
-        text_draw.multiline_text(
-            (tx, ty),
-            layout_text,
-            font=font,
-            fill=text_color,
-            spacing=layout.spacing,
-            align="center",
-        )
+        if use_typo_render:
+            # 자간/가로축소/행간 적용 — 측정과 동일한 줄별 스트립 렌더.
+            ascent, descent = font.getmetrics()
+            natural_lh = float(ascent + descent)
+            if line_height_ratio is not None:
+                line_advance = max(natural_lh, float(layout.font_size) * line_height_ratio)
+            else:
+                line_advance = natural_lh + float(layout.spacing)
+            tracking_px = float(layout.font_size) * letter_spacing
+            _draw_typo_text(
+                overlay, list(layout.lines), font, text_color,
+                rect_cx, rect_cy, tracking_px, text_width_scale, line_advance,
+            )
+        else:
+            text_draw = ImageDraw.Draw(overlay)
+            layout_text = layout.text
+            text_box = text_draw.multiline_textbbox(
+                (0, 0),
+                layout_text,
+                font=font,
+                spacing=layout.spacing,
+                align="center",
+            )
+            tx = rect_cx - (text_box[0] + text_box[2]) / 2.0
+            ty = rect_cy - (text_box[1] + text_box[3]) / 2.0
+            text_draw.multiline_text(
+                (tx, ty),
+                layout_text,
+                font=font,
+                fill=text_color,
+                spacing=layout.spacing,
+                align="center",
+            )
         print(
             f"[BUBBLE_RENDER] 레이아웃 적용: speaker={seg.get('speaker')}, "
             f"shape={render_shape}(layout={layout.shape}), font={layout.font_size}, "

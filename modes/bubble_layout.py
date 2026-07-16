@@ -160,7 +160,30 @@ def _clamp(value: float, low: float, high: float) -> float:
     return max(low, min(value, high))
 
 
-def load_font(size: int, font_path: str | os.PathLike | None = None) -> ImageFont.ImageFont:
+def load_font(
+    size: int,
+    font_path: str | os.PathLike | None = None,
+    *,
+    font_id: str | None = None,
+) -> ImageFont.ImageFont:
+    # font_id(드롭박스 식별자)가 주어지면 font_assets 로 로드(번들 자동 다운로드,
+    # 변수폰트 variation 적용). 렌더(bubble_render)와 동일 로더를 써야 측정과
+    # 그리기가 일치한다(CLAUDE.md: 미리보기=실제 동일 빌더).
+    if font_id and font_id != "system":
+        try:
+            from modes.font_assets import load_font as _fa_load
+
+            font = _fa_load(
+                size,
+                font_id=font_id,
+                legacy_path=str(font_path) if font_path else None,
+            )
+            if font is not None:
+                return font
+            print(f"[BUBBLE_LAYOUT] font_assets 로드 결과 없음 → 경로 폴백: {font_id}")
+        except Exception as e:
+            print(f"[BUBBLE_LAYOUT] font_assets 로드 실패, 경로 폴백: {e}")
+            traceback.print_exc()
     candidates = (
         str(font_path) if font_path else None,
         r"C:\Windows\Fonts\malgun.ttf",
@@ -175,6 +198,43 @@ def load_font(size: int, font_path: str | os.PathLike | None = None) -> ImageFon
         return ImageFont.load_default(size=size)
     except TypeError:  # Pillow < 10 compatibility
         return ImageFont.load_default()
+
+
+def _rendered_width(
+    draw: ImageDraw.ImageDraw,
+    s: str,
+    font: ImageFont.ImageFont,
+    tracking_px: float,
+    h_scale: float,
+) -> float:
+    """자간(tracking)·가로축소(h_scale) 적용 후 폭.
+
+    그리기(줄 스트립 → 가로 리사이즈)와 동일 기하: (자연폭 + tracking×(len-1)) × h_scale.
+    tracking_px=0, h_scale=1.0 이면 textlength 와 동일(기본값에서 기존 동작 유지).
+    """
+    if not s:
+        return 0.0
+    base = float(draw.textlength(s, font=font))
+    gaps = tracking_px * max(0, len(s) - 1)
+    return (base + gaps) * h_scale
+
+
+def _line_metrics(
+    font: ImageFont.ImageFont, font_size: int, line_height_ratio: float | None
+) -> tuple:
+    """(spacing, line_advance). line_advance=None 이면 호출자가 기존 multiline_textbbox 를 쓴다.
+
+    line_height_ratio=None → 기존 동작(spacing=font_size×0.27, line_advance=None).
+    line_height_ratio 주어지면 줄 전체 높이=font_size×ratio, line_gap=max(0, ratio×fs-(ascent+descent)).
+    """
+    if line_height_ratio is None:
+        return max(2, int(round(font_size * 0.27))), None
+    ascent, descent = font.getmetrics()
+    natural = float(ascent + descent)
+    target = float(font_size) * float(line_height_ratio)
+    line_gap = max(0.0, target - natural)
+    line_advance = max(natural, target)
+    return int(round(line_gap)), line_advance
 
 
 def _next_non_space(text: str, index: int) -> int:
@@ -218,6 +278,9 @@ def _wrap_paragraph(
     max_width: float,
     max_lines: int,
     width_cache: dict[str, float],
+    *,
+    tracking_px: float = 0.0,
+    h_scale: float = 1.0,
 ) -> WrapResult | None:
     text = text.strip()
     if not text:
@@ -228,7 +291,7 @@ def _wrap_paragraph(
     def width(value: str) -> float:
         cached = width_cache.get(value)
         if cached is None:
-            cached = float(draw.textlength(value, font=font))
+            cached = _rendered_width(draw, value, font, tracking_px, h_scale)
             width_cache[value] = cached
         return cached
 
@@ -314,13 +377,18 @@ def _wrap_text(
     max_width: float,
     max_lines: int,
     width_cache: dict[str, float],
+    *,
+    tracking_px: float = 0.0,
+    h_scale: float = 1.0,
 ) -> WrapResult | None:
     paragraphs = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
     # Fast impossibility check.  It avoids running the dynamic program for
     # every candidate when a very long text cannot fit within max_lines.
     minimum_lines = 0
     for paragraph in paragraphs:
-        paragraph_width = float(draw.textlength(paragraph.strip() or " ", font=font))
+        paragraph_width = _rendered_width(
+            draw, paragraph.strip() or " ", font, tracking_px, h_scale
+        )
         minimum_lines += max(1, math.ceil(paragraph_width / max(max_width, 1.0)))
     if minimum_lines > max_lines:
         return None
@@ -329,7 +397,10 @@ def _wrap_text(
     punctuation_scores: list[float] = []
     remaining = max_lines
     for paragraph in paragraphs:
-        wrapped = _wrap_paragraph(paragraph, draw, font, max_width, remaining, width_cache)
+        wrapped = _wrap_paragraph(
+            paragraph, draw, font, max_width, remaining, width_cache,
+            tracking_px=tracking_px, h_scale=h_scale,
+        )
         if wrapped is None:
             return None
         all_lines.extend(wrapped.lines)
@@ -350,6 +421,9 @@ def _greedy_wrap_text(
     draw: ImageDraw.ImageDraw,
     font: ImageFont.ImageFont,
     max_width: float,
+    *,
+    tracking_px: float = 0.0,
+    h_scale: float = 1.0,
 ) -> WrapResult:
     """공백 단위 전용 무제한 줄바꿈 폴백.
 
@@ -367,7 +441,7 @@ def _greedy_wrap_text(
         current = ""
         for word in words:
             trial = word if not current else f"{current} {word}"
-            if current and float(draw.textlength(trial, font=font)) > max_width:
+            if current and _rendered_width(draw, trial, font, tracking_px, h_scale) > max_width:
                 lines.append(current)
                 penalties.append(0.24)
                 current = word
@@ -397,11 +471,24 @@ def _measure_lines(
     draw: ImageDraw.ImageDraw,
     font: ImageFont.ImageFont,
     spacing: int,
+    *,
+    tracking_px: float = 0.0,
+    h_scale: float = 1.0,
+    line_advance: float | None = None,
 ) -> tuple[list[float], float, float]:
-    widths = [float(draw.textlength(line or " ", font=font)) for line in lines]
-    text = "\n".join(lines)
-    box = draw.multiline_textbbox((0, 0), text or " ", font=font, spacing=spacing, align="center")
-    return widths, float(box[2] - box[0]), float(box[3] - box[1])
+    widths = [
+        _rendered_width(draw, line or " ", font, tracking_px, h_scale) for line in lines
+    ]
+    text_width = max(widths) if widths else 0.0
+    if line_advance is not None:
+        # 그리기(줄별 y 전진=line_advance)와 동일 기하. 줄 전체 높이=font_size×ratio.
+        text_height = line_advance * max(len(lines), 1)
+    else:
+        text = "\n".join(lines)
+        box = draw.multiline_textbbox((0, 0), text or " ", font=font, spacing=spacing, align="center")
+        text_width = max(text_width, float(box[2] - box[0]))
+        text_height = float(box[3] - box[1])
+    return widths, text_width, text_height
 
 
 def _shape_text_match(shape: str, text: str) -> float:
@@ -544,6 +631,10 @@ def generate_layout_candidates(
     min_font_size: int | None = None,
     max_font_size: int | None = None,
     max_lines: int = 7,
+    font_id: str | None = None,
+    letter_spacing: float = 0.0,
+    text_width_scale: float = 1.0,
+    line_height_ratio: float | None = None,
 ) -> list[LayoutCandidate]:
     """Generate measured candidates; valid and overflow candidates are retained."""
     text = text.strip()
@@ -575,8 +666,9 @@ def generate_layout_candidates(
     seen: set[tuple] = set()
 
     for font_size in font_sizes:
-        font = load_font(font_size, font_path)
-        spacing = max(2, int(round(font_size * 0.27)))
+        font = load_font(font_size, font_path, font_id=font_id)
+        spacing, line_advance = _line_metrics(font, font_size, line_height_ratio)
+        tracking_px = float(font_size) * float(letter_spacing)
         width_cache: dict[str, float] = {}
         for shape in shapes:
             fractions = np.linspace(
@@ -587,12 +679,15 @@ def generate_layout_candidates(
                 if max_text_width <= font_size:
                     continue
                 wrapped = _wrap_text(
-                    text, draw, font, float(max_text_width), max_lines, width_cache
+                    text, draw, font, float(max_text_width), max_lines, width_cache,
+                    tracking_px=tracking_px, h_scale=text_width_scale,
                 )
                 if wrapped is None:
                     continue
                 line_widths, text_width, text_height = _measure_lines(
-                    wrapped.lines, draw, font, spacing
+                    wrapped.lines, draw, font, spacing,
+                    tracking_px=tracking_px, h_scale=text_width_scale,
+                    line_advance=line_advance,
                 )
                 raw_width = text_width + 2.0 * shape.padding_x_em * font_size
                 raw_height = text_height + 2.0 * shape.padding_y_em * font_size
@@ -664,15 +759,21 @@ def generate_layout_candidates(
         # bubble.  Return measured overflow candidates instead of throwing;
         # callers can surface ``fits=False`` and ask for a shorter text.
         font_size = min_font_size
-        font = load_font(font_size, font_path)
-        spacing = max(2, int(round(font_size * 0.27)))
+        font = load_font(font_size, font_path, font_id=font_id)
+        spacing, line_advance = _line_metrics(font, font_size, line_height_ratio)
+        tracking_px = float(font_size) * float(letter_spacing)
         for shape in shapes:
             max_text_width = (
                 shape.max_width_frac * canvas_width - 2.0 * shape.padding_x_em * font_size
             )
-            wrapped = _greedy_wrap_text(text, draw, font, max(max_text_width, 1.0))
+            wrapped = _greedy_wrap_text(
+                text, draw, font, max(max_text_width, 1.0),
+                tracking_px=tracking_px, h_scale=text_width_scale,
+            )
             line_widths, text_width, text_height = _measure_lines(
-                wrapped.lines, draw, font, spacing
+                wrapped.lines, draw, font, spacing,
+                tracking_px=tracking_px, h_scale=text_width_scale,
+                line_advance=line_advance,
             )
             bubble_width = max(
                 text_width + 2.0 * shape.padding_x_em * font_size,
@@ -811,6 +912,10 @@ def choose_layout(
     top_k: int = 5,
     onnx_device: str = "auto",
     cpu_threads: int = 0,
+    font_id: str | None = None,
+    letter_spacing: float = 0.0,
+    text_width_scale: float = 1.0,
+    line_height_ratio: float | None = None,
 ) -> tuple[LayoutCandidate, list[LayoutCandidate]]:
     shapes = DEFAULT_SHAPES
     if allowed_shapes is not None:
@@ -830,6 +935,10 @@ def choose_layout(
         min_font_size=min_font_size,
         max_font_size=max_font_size,
         max_lines=max_lines,
+        font_id=font_id,
+        letter_spacing=letter_spacing,
+        text_width_scale=text_width_scale,
+        line_height_ratio=line_height_ratio,
     )
     feature_array = np.asarray([candidate.features for candidate in candidates], dtype=np.float32)
     if onnx_path is None:
@@ -887,6 +996,10 @@ def choose_scaled_layout(
     top_k: int = 5,
     onnx_device: str = "auto",
     cpu_threads: int = 0,
+    font_id: str | None = None,
+    letter_spacing: float = 0.0,
+    text_width_scale: float = 1.0,
+    line_height_ratio: float | None = None,
 ) -> tuple[LayoutCandidate, list[LayoutCandidate]]:
     """모델의 기본 선택을 기준으로 더 큰 글자에서 안전하게 재레이아웃한다.
 
@@ -907,6 +1020,10 @@ def choose_scaled_layout(
         top_k=top_k,
         onnx_device=onnx_device,
         cpu_threads=cpu_threads,
+        font_id=font_id,
+        letter_spacing=letter_spacing,
+        text_width_scale=text_width_scale,
+        line_height_ratio=line_height_ratio,
     )
     scale = max(1.0, float(font_scale))
     if scale <= 1.0 + 1e-6 or not base.fits:
@@ -943,6 +1060,10 @@ def choose_scaled_layout(
             top_k=top_k,
             onnx_device=onnx_device,
             cpu_threads=cpu_threads,
+            font_id=font_id,
+            letter_spacing=letter_spacing,
+            text_width_scale=text_width_scale,
+            line_height_ratio=line_height_ratio,
         )
         if selected.fits:
             actual_scale = selected.font_size / max(base.font_size, 1)

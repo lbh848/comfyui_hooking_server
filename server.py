@@ -3607,6 +3607,8 @@ async def handle_api_postprocess_preview(request: web.Request) -> web.Response:
             "face_device": body.get("face_device", "auto"),
             "face_cpu_threads": body.get("face_cpu_threads", 0),
             "theme": body.get("theme", "sky"),
+            "theme_single": body.get("theme_single", body.get("theme", "sky")),
+            "theme_dual": body.get("theme_dual", "sky_diagonal"),
             "opacity": body.get("opacity", 100),
         }
         speak = body.get("speak", "") or ""
@@ -3719,8 +3721,12 @@ async def handle_api_postprocess_preview(request: web.Request) -> web.Response:
         if mode == "bubble":
             from modes.bubble_render import compose_bubble
             bubble_settings = {
+                "font_id": body.get("font_id", "") or "",
                 "font_path": body.get("font_path", ""),
                 "font_size": body.get("font_size", 36) or 36,
+                "letter_spacing": body.get("letter_spacing", 0.0),
+                "line_height_ratio": body.get("line_height_ratio", None),
+                "text_width_scale": body.get("text_width_scale", 1.0),
                 "layout_font_scale": body.get("layout_font_scale", 2.0),
                 "text_color": body.get("text_color", "#111111"),
                 "bubble_fill": body.get("bubble_fill", "#FFFFFF"),
@@ -3880,6 +3886,87 @@ async def handle_api_postprocess_face_devices(request: web.Request) -> web.Respo
         })
     except Exception as e:
         print(f"[ERROR] face_devices 실패: {e}\n{traceback.format_exc()}")
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def handle_api_postprocess_fonts(request: web.Request) -> web.Response:
+    """GET /api/postprocess/fonts
+
+    말풍선 모드 폰트 드롭박스용 폰트 목록.
+    항목: {id, name, source(system|builtin|upload), installed}
+    번들 폰트 미설치 여부도 installed=false 로 알려주며, 선택 시 자동 다운로드한다.
+    """
+    try:
+        from modes.font_assets import list_fonts, ensure_font, BUILTIN_FONTS
+
+        fonts = list_fonts()
+        # 번들 폰트가 아직 미설치면 미리 다운로드를 한 번 시도해 드롭박스가 바로 쓸 수 있게 한다.
+        for item in fonts:
+            if item.get("source") == "builtin" and not item.get("installed"):
+                try:
+                    path = ensure_font(item["id"])
+                    if path:
+                        item["installed"] = True
+                except Exception as e:
+                    print(f"[POSTPROCESS_FONTS] 번들 폰트 자동 다운로드 실패({item['id']}): {e}")
+        return web.json_response({"fonts": fonts})
+    except Exception as e:
+        print(f"[ERROR] postprocess_fonts 실패: {e}\n{traceback.format_exc()}")
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def handle_api_postprocess_font_upload(request: web.Request) -> web.Response:
+    """POST /api/postprocess/font/upload  (multipart: field 'font' = 파일)
+
+    업로드 폰트(.ttf/.otf/.ttc)를 fonts/ 폴더에 저장하고 갱신된 목록을 반환.
+    """
+    try:
+        from modes.font_assets import save_uploaded_font, list_fonts
+
+        reader = await request.multipart()
+        saved_name = None
+        async for part in reader:
+            if part.name == "font" and part.filename:
+                data = await part.read(decode=True)
+                try:
+                    save_uploaded_font(part.filename, data)
+                    saved_name = part.filename
+                    print(f"[POSTPROCESS_FONT_UPLOAD] 저장 완료: {part.filename} ({len(data)} bytes)")
+                except ValueError as ve:
+                    return web.json_response({"error": str(ve)}, status=400)
+                except Exception as e:
+                    print(f"[POSTPROCESS_FONT_UPLOAD] 저장 실패: {e}\n{traceback.format_exc()}")
+                    return web.json_response({"error": f"폰트 저장 실패: {e}"}, status=500)
+                break
+        if not saved_name:
+            return web.json_response({"error": "폰트 파일(font 필드)이 없습니다."}, status=400)
+        return web.json_response({"saved": saved_name, "fonts": list_fonts()})
+    except Exception as e:
+        print(f"[ERROR] postprocess_font_upload 실패: {e}\n{traceback.format_exc()}")
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def handle_api_postprocess_font_delete(request: web.Request) -> web.Response:
+    """POST /api/postprocess/font/delete  body: {"font_id": str}
+
+    업로드 폰트 삭제(번들/시스템 폰트는 삭제 불가).
+    """
+    try:
+        from modes.font_assets import delete_font, list_fonts
+
+        body = await request.json()
+        font_id = (body.get("font_id") or "").strip()
+        if not font_id:
+            return web.json_response({"error": "font_id 가 필요합니다."}, status=400)
+        deleted = delete_font(font_id)
+        if not deleted:
+            return web.json_response(
+                {"error": "삭제할 수 없는 폰트입니다(번들/시스템 폰트이거나 존재하지 않음)."},
+                status=400,
+            )
+        return web.json_response({"deleted": True, "fonts": list_fonts()})
+    except Exception as e:
+        print(f"[ERROR] postprocess_font_delete 실패: {e}\n{traceback.format_exc()}")
         return web.json_response({"error": str(e)}, status=500)
 
 
@@ -5847,6 +5934,9 @@ app.router.add_post("/api/reschedule_with_modified_prompt", handle_api_reschedul
 app.router.add_post("/api/postprocess/preview", handle_api_postprocess_preview)
 app.router.add_post("/api/postprocess/preview_face", handle_api_postprocess_preview_face)
 app.router.add_get("/api/postprocess/face_devices", handle_api_postprocess_face_devices)
+app.router.add_get("/api/postprocess/fonts", handle_api_postprocess_fonts)
+app.router.add_post("/api/postprocess/font/upload", handle_api_postprocess_font_upload)
+app.router.add_post("/api/postprocess/font/delete", handle_api_postprocess_font_delete)
 app.router.add_post("/api/postprocess/emotion_sources", handle_api_postprocess_emotion_sources)
 app.router.add_get("/api/postprocess/emotion_char_counts", handle_api_postprocess_emotion_char_counts)
 app.router.add_post("/api/postprocess/match_image", handle_api_postprocess_match_image)

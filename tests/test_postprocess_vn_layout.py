@@ -10,8 +10,10 @@ from modes.postprocess import (
     _draw_colorized_text,
     _draw_combined_header,
     _load_font,
+    _merge_vn_defaults,
     _paste_diagonal_faces,
     _resolve_vn_theme,
+    _select_vn_theme,
     compose_postprocess,
 )
 from modes import face_detector
@@ -64,6 +66,27 @@ class PostprocessVnLayoutTests(unittest.TestCase):
         self.assertFalse(settings["dialogue_color"])
         self.assertEqual(settings["text_outline_width"], -1)
         self.assertEqual(settings["multi_speaker_layout"], "split")
+        self.assertEqual(settings["theme_single"], "sky")
+        self.assertEqual(settings["theme_dual"], "sky_diagonal")
+
+    def test_single_and_dual_theme_are_selected_independently(self):
+        settings = {
+            "theme": "sky",
+            "theme_single": "ivory",
+            "theme_dual": "black_diagonal",
+        }
+
+        self.assertEqual(_select_vn_theme(settings, 1), ("ivory", False))
+        self.assertEqual(_select_vn_theme(settings, 2), ("black", True))
+
+    def test_legacy_theme_is_migrated_to_separate_single_and_dual_values(self):
+        normal = _merge_vn_defaults({"theme": "lavender"})
+        diagonal = _merge_vn_defaults({"theme": "gray_diagonal"})
+
+        self.assertEqual(normal["theme_single"], "lavender")
+        self.assertEqual(normal["theme_dual"], "lavender_diagonal")
+        self.assertEqual(diagonal["theme_single"], "gray")
+        self.assertEqual(diagonal["theme_dual"], "gray_diagonal")
 
     def test_extend_card_does_not_modify_original_image_area(self):
         source = Image.open(io.BytesIO(_image_bytes())).convert("RGB")
@@ -231,6 +254,7 @@ class PostprocessVnLayoutTests(unittest.TestCase):
                 _settings(
                     face_enabled=True,
                     theme="sky",
+                    theme_dual="sky",
                     multi_speaker_layout="split",
                 ),
             )

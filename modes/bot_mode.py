@@ -2233,10 +2233,8 @@ def _load_postprocess_vn(bot_name: str) -> dict:
         data = _load_bot_data()
         bot = next((b for b in data.get("bots", []) if b.get("name") == bot_name), None)
         if bot and isinstance(bot.get("postprocess_vn"), dict):
-            from modes.postprocess import _default_vn
-            base = _default_vn()
-            base.update(bot["postprocess_vn"])
-            return base
+            from modes.postprocess import _merge_vn_defaults
+            return _merge_vn_defaults(bot["postprocess_vn"])
     except Exception as e:
         print(f"[BOT_MODE] postprocess_vn 로드 실패({bot_name}): {e}")
         traceback.print_exc()
@@ -2306,6 +2304,20 @@ def _save_postprocess_bubble(bot_name: str, bubble: dict):
     clean["layout_font_scale"] = normalize_layout_font_scale(
         clean.get("layout_font_scale", 2.0)
     )
+    # 자간/행간/가로축소/폰트id 정규화(범위 클램프)
+    try:
+        clean["letter_spacing"] = max(-0.10, min(0.05, float(clean.get("letter_spacing", -0.03))))
+    except (TypeError, ValueError):
+        clean["letter_spacing"] = -0.03
+    try:
+        clean["line_height_ratio"] = max(1.0, min(1.40, float(clean.get("line_height_ratio", 1.15))))
+    except (TypeError, ValueError):
+        clean["line_height_ratio"] = 1.15
+    try:
+        clean["text_width_scale"] = max(0.70, min(1.00, float(clean.get("text_width_scale", 1.0))))
+    except (TypeError, ValueError):
+        clean["text_width_scale"] = 1.0
+    clean["font_id"] = str(clean.get("font_id", "system") or "system")
     clean["onnx_device"] = normalize_device_key(clean.get("onnx_device", "auto"))
     clean["cpu_threads"] = normalize_cpu_threads(clean.get("cpu_threads", 0))
     bot["postprocess_bubble"] = clean
