@@ -107,12 +107,12 @@ class ProgramEmbeddingTest(unittest.TestCase):
             preview_bytes,
         )
         self.assertTrue(os.path.isfile(os.path.join(missing_dir, "_face_image.l14.npz")))
-        self.assertTrue(os.path.isfile(os.path.join(
+        self.assertFalse(os.path.isfile(os.path.join(
             committed["backup_dir"], "test-bot", "existing", "_face_image.l14.npz"
         )))
         self.assertFalse(os.path.isdir(session["session_dir"]))
 
-    def test_overwrite_waits_for_commit_and_backs_up_face_prompt_and_cache(self):
+    def test_overwrite_waits_for_commit_and_backs_up_face_and_prompt_only(self):
         char_dir = self._add_character("alice", "gray", existing_face_color="blue")
         face_path = os.path.join(char_dir, "_face_image.webp")
         prompt_path = os.path.join(char_dir, "_face_image_prompt.json")
@@ -145,7 +145,7 @@ class ProgramEmbeddingTest(unittest.TestCase):
         backup_char_dir = os.path.join(committed["backup_dir"], "test-bot", "alice")
         self.assertEqual(Path(os.path.join(backup_char_dir, "_face_image.webp")).read_bytes(), old_face)
         self.assertTrue(os.path.isfile(os.path.join(backup_char_dir, "_face_image_prompt.json")))
-        self.assertTrue(os.path.isfile(os.path.join(backup_char_dir, "_face_image.l14.npz")))
+        self.assertFalse(os.path.isfile(os.path.join(backup_char_dir, "_face_image.l14.npz")))
 
     def test_failed_extraction_without_existing_face_does_not_write_on_commit(self):
         char_dir = self._add_character("nobody", "purple")

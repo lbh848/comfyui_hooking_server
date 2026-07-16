@@ -17,8 +17,6 @@ face_embedder - ONNX Runtime 기반 CLIP ViT-L/14 시각 임베딩 (CPU)
 
 import hashlib
 import os
-import shutil
-import time
 import traceback
 import uuid
 
@@ -32,7 +30,7 @@ BOT_DIR = os.path.join(BASE_DIR, "bot")
 
 _IMG_SIZE = 224
 _EMBED_DIM = 512  # ViT-B/16 이미지 임베딩 차원
-_PREPROCESS_VERSION = "square-pad-v1"
+_PREPROCESS_VERSION = "unified-rgb-square-pad-clip-v2"
 _PAD_COLOR = (114, 114, 114)
 # OpenAI CLIP 정규화 상수 (ViT-L/14 포함 모든 OpenAI CLIP 공통)
 _MEAN = np.array([0.48145466, 0.4578275, 0.40821073], dtype=np.float32)
@@ -124,6 +122,19 @@ def standardize_face_image(image):
     canvas = _PILImage.new("RGB", (side, side), _PAD_COLOR)
     canvas.paste(image, ((side - width) // 2, (side - height) // 2))
     return canvas
+
+
+def prepare_face_for_embedding(image):
+    """캐릭터 FACE와 장면 FACE가 공유하는 단일 임베딩 전처리 진입점.
+
+    여기서는 RGB 변환과 중앙 정사각 패딩을 수행한다. 이어서 ``embed_image``의
+    ``_preprocess``가 양쪽 모두를 동일하게 224x224로 리사이즈하고 OpenAI CLIP
+    mean/std 정규화를 적용한다. 호출자가 별도 전처리를 선택할 수 없게 이 경로를
+    ``embed_image`` 내부에서 강제한다.
+    """
+    if image is None:
+        raise ValueError("임베딩할 얼굴 이미지가 None입니다")
+    return standardize_face_image(image.convert("RGB"))
 
 
 def expanded_face_box(image, box, top_mult=1.0, bottom_mult=1.0):
@@ -227,13 +238,14 @@ def _l2_normalize(v):
 
 
 def embed_image(image) -> np.ndarray:
-    """PIL.Image → L2 정규화 임베딩. 실패 시 None."""
+    """PIL.Image → 공통 얼굴 전처리 → L2 정규화 임베딩. 실패 시 None."""
     sess = _get_session()
     if sess is None:
         print("[FACE_EMBEDDER] 세션 사용 불가 — embed_image 스킵")
         return None
     try:
-        arr = _preprocess(image)
+        prepared = prepare_face_for_embedding(image)
+        arr = _preprocess(prepared)
         inp = sess.get_inputs()[0]
         out = sess.run(None, {inp.name: arr})[0]  # (1,768)
         emb = np.asarray(out, dtype=np.float32).reshape(-1)
@@ -252,7 +264,7 @@ def embed_face_crop(image, box, top_mult=1.0, bottom_mult=1.0):
         )
         if crop is None:
             return None
-        return embed_image(standardize_face_image(crop))
+        return embed_image(crop)
     except Exception as e:
         print(f"[FACE_EMBEDDER] ⚠ embed_face_crop 실패: {e}")
         traceback.print_exc()
@@ -285,7 +297,7 @@ def build_embedding_from_path(image_path):
     try:
         source_hash = _sha256_file(image_path)
         with _PILImage.open(image_path) as img:
-            emb = embed_image(standardize_face_image(img))
+            emb = embed_image(img)
         if emb is None:
             print(f"[FACE_EMBEDDER] 파일 임베딩 실패: {image_path}")
             return None
@@ -296,35 +308,14 @@ def build_embedding_from_path(image_path):
         return None
 
 
-def _backup_embedding_cache(cache_path, backup_dir=None):
-    """기존 임베딩 캐시를 요구사항/ 또는 지정 폴더에 백업한다."""
-    if not os.path.isfile(cache_path):
-        return None
-    try:
-        if backup_dir is None:
-            stamp = time.strftime("%Y%m%d_%H%M%S")
-            backup_dir = os.path.join(
-                BASE_DIR,
-                "요구사항",
-                f"face_embedding_cache_backup_{stamp}_{uuid.uuid4().hex[:8]}",
-            )
-        os.makedirs(backup_dir, exist_ok=True)
-        backup_path = os.path.join(backup_dir, os.path.basename(cache_path))
-        shutil.copy2(cache_path, backup_path)
-        print(f"[FACE_EMBEDDER] 기존 캐시 백업: {cache_path} → {backup_path}")
-        return backup_path
-    except Exception as e:
-        print(f"[FACE_EMBEDDER] 캐시 백업 실패({cache_path}): {e}")
-        traceback.print_exc()
-        raise
-
-
 def write_embedding_cache(cache_path, emb, source_hash, backup_dir=None):
-    """임베딩 캐시를 백업 후 원자적으로 저장한다."""
+    """재생성 가능한 임베딩 캐시를 백업 없이 원자적으로 저장한다.
+
+    ``backup_dir``은 기존 호출부 호환용으로만 받는다. 사용자가 확정한 FACE 원본은
+    별도 경로에서 계속 백업하지만, 파생 ``.npz`` 캐시는 바로 교체한다.
+    """
     tmp_path = f"{cache_path}.tmp-{uuid.uuid4().hex}"
     try:
-        if os.path.isfile(cache_path):
-            _backup_embedding_cache(cache_path, backup_dir=backup_dir)
         os.makedirs(os.path.dirname(cache_path), exist_ok=True)
         emb32 = np.asarray(emb, dtype=np.float32).reshape(-1)
         with open(tmp_path, "wb") as f:

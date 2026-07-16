@@ -234,11 +234,17 @@ def _face_detection_candidate_limit(speaker_count, per_character=8):
 
 
 def _filter_nested_face_candidates(faces, area_ratio=2.0, coverage_ratio=0.60):
-    """NMS 후 같은 얼굴을 감싼 큰 저신뢰 박스를 제거한다.
+    """NMS 후 같은 얼굴의 중복 박스와 경계의 가는 오검출을 제거한다.
 
     크기가 다른 동일 얼굴 박스는 작은 박스가 큰 박스 안에 들어가도 IoU가 NMS
     기준보다 낮아 둘 다 남을 수 있다. 큰 박스가 작은 고신뢰 박스 면적의 일정
     비율 이상을 덮고 면적은 충분히 크면, 큰 박스를 중복 후보로 본다.
+
+    거의 같은 크기의 박스는 면적비 조건을 만족하지 않을 수 있으므로 작은 쪽의
+    겹침률이 충분히 크면 동일 얼굴로 처리한다. 또한 얼굴형 대표 박스의 좌우
+    경계에 붙은 매우 낮은 신뢰도의 가는 박스는 머리카락·옷 영역 오검출로
+    간주한다. 독립된 옆얼굴을 보존하기 위해 이 규칙은 세로 위치가 크게 겹치고,
+    대표 박스보다 신뢰도가 10배 이상 낮을 때만 적용한다.
     """
     source = list(faces or [])
     # 신뢰도 높은 대표 박스를 먼저 확정한다. 이후 후보가 대표 박스와 포함 관계이면
@@ -266,14 +272,38 @@ def _filter_nested_face_candidates(faces, area_ratio=2.0, coverage_ratio=0.60):
                 continue
             smaller_area = min(area, other_area)
             larger_area = max(area, other_area)
-            intersection = (
-                max(0.0, min(x2, ox2) - max(x1, ox1))
-                * max(0.0, min(y2, oy2) - max(y1, oy1))
-            )
+            intersection_w = max(0.0, min(x2, ox2) - max(x1, ox1))
+            intersection_h = max(0.0, min(y2, oy2) - max(y1, oy1))
+            intersection = intersection_w * intersection_h
             covered_smaller = intersection / smaller_area
-            if (
+            size_nested_duplicate = (
                 larger_area >= smaller_area * float(area_ratio)
                 and covered_smaller >= float(coverage_ratio)
+            )
+            similar_size_duplicate = (
+                covered_smaller >= float(coverage_ratio)
+                and larger_area < smaller_area * float(area_ratio)
+            )
+
+            width = max(1e-9, x2 - x1)
+            height = max(1e-9, y2 - y1)
+            other_width = max(1e-9, ox2 - ox1)
+            other_height = max(1e-9, oy2 - oy1)
+            aspect = width / height
+            vertical_coverage = intersection_h / min(height, other_height)
+            horizontal_gap = max(0.0, max(x1, ox1) - min(x2, ox2))
+            confidence = max(0.0, float(face.get("conf") or 0.0))
+            other_confidence = max(0.0, float(other.get("conf") or 0.0))
+            attached_low_confidence_sliver = (
+                aspect < 0.50
+                and confidence <= other_confidence * 0.10
+                and vertical_coverage >= 0.70
+                and horizontal_gap <= min(width, other_width) * 0.35
+            )
+            if (
+                size_nested_duplicate
+                or similar_size_duplicate
+                or attached_low_confidence_sliver
             ):
                 duplicate = True
                 break
@@ -286,7 +316,7 @@ def _filter_nested_face_candidates(faces, area_ratio=2.0, coverage_ratio=0.60):
     kept = [source[index] for index in kept_indices]
     if removed:
         print(
-            f"[BUBBLE_RENDER] 포함 기반 중복 얼굴 후보 제거: indices={removed} "
+            f"[BUBBLE_RENDER] 중복/경계 오검출 얼굴 후보 제거: indices={removed} "
             f"(area_ratio>={float(area_ratio):.2f}, "
             f"coverage>={float(coverage_ratio):.2f})"
         )
@@ -861,7 +891,10 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
     faces = detect_faces(
         base.convert("RGB"), conf_thres=0.0, max_faces=candidate_limit
     )
-    faces = _filter_nested_face_candidates(faces)
+    # 여기서 YOLO confidence 기반으로 중복 박스를 미리 제거하지 않는다.
+    # 캐릭터 임베딩 매칭으로 한 쌍을 확정한 뒤 bubble_match가 CROP_TOP/BOTTOM
+    # 으로 확장한 매칭 박스와 겹치는 후보를 모두 폐기하고, 남은 캐릭터와 남은
+    # 확장 크롭으로 매칭을 다시 수행한다. RAW 박스는 최종 꼬리 좌표에만 쓴다.
     for f in faces:
         f["image"] = base.convert("RGB")  # 매칭용 동일 이미지
 
@@ -960,7 +993,7 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
         box = m.get("face_box")
         unanchored_fallback = bool(m.get("unanchored_fallback"))
         if not box and not unanchored_fallback:
-            print(f"[BUBBLE_RENDER] 세그먼트 매칭된 얼굴 없음 — 스킵: speaker={seg.get('speaker')}")
+            print(f"[BUBBLE_RENDER] 세그먼트 매칭된 얼굴 없음 - 스킵: speaker={seg.get('speaker')}")
             continue
         text = seg.get("text", "")
         btype = seg.get("type", "speech")

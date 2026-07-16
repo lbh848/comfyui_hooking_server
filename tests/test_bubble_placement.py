@@ -10,12 +10,15 @@ from modes.face_embedder import (
     appearance_descriptor,
     appearance_similarity,
     expanded_face_box,
+    prepare_face_for_embedding,
     standardize_face_image,
 )
 from modes.bubble_layout import choose_layout, choose_scaled_layout
 from modes.bubble_match import (
     _assignment_ambiguity_gap,
+    _face_boxes_overlap,
     _optimal_assignment,
+    _sequential_overlap_assignment,
     match_speakers_to_faces,
 )
 from modes.bubble_predictor import (
@@ -133,6 +136,36 @@ class BubblePlacementTest(unittest.TestCase):
         filtered = _filter_nested_face_candidates([wide, tight])
         self.assertEqual(filtered, [wide])
 
+    def test_similar_size_same_face_duplicate_is_removed(self):
+        primary = {
+            "box": (198.35, 193.51, 323.90, 321.71),
+            "conf": 0.07275,
+        }
+        duplicate = {
+            "box": (194.58, 155.55, 309.61, 273.47),
+            "conf": 0.0000085,
+        }
+        filtered = _filter_nested_face_candidates([primary, duplicate])
+        self.assertEqual(filtered, [primary])
+
+    def test_attached_low_confidence_sliver_is_removed(self):
+        face = {
+            "box": (570.50, 297.99, 662.08, 402.45),
+            "conf": 0.0002218,
+        }
+        sliver = {
+            "box": (548.91, 315.49, 578.75, 388.83),
+            "conf": 0.0000108,
+        }
+        filtered = _filter_nested_face_candidates([face, sliver])
+        self.assertEqual(filtered, [face])
+
+    def test_independent_narrow_side_face_is_kept(self):
+        primary = {"box": (570, 298, 662, 402), "conf": 0.2}
+        side_face = {"box": (500, 315, 530, 389), "conf": 0.01}
+        filtered = _filter_nested_face_candidates([primary, side_face])
+        self.assertEqual(filtered, [primary, side_face])
+
     def test_flat_hair_box_does_not_remove_lower_confidence_full_face(self):
         hair = {"box": (282, 80, 369, 138), "conf": 0.00017}
         full_face = {"box": (246, 8, 478, 276), "conf": 0.00012}
@@ -151,6 +184,13 @@ class BubblePlacementTest(unittest.TestCase):
         standardized = standardize_face_image(image)
         self.assertEqual(standardized.size, (40, 40))
         self.assertEqual(standardized.getpixel((35, 15)), (255, 0, 0))
+
+    def test_embedding_preparation_forces_rgb_square_padding(self):
+        image = Image.new("RGBA", (20, 40), (255, 0, 0, 128))
+        prepared = prepare_face_for_embedding(image)
+        self.assertEqual(prepared.mode, "RGB")
+        self.assertEqual(prepared.size, (40, 40))
+        self.assertEqual(prepared.getpixel((20, 20)), (255, 0, 0))
 
     def test_face_crop_expands_with_data_patch_top_bottom_rule(self):
         image = Image.new("RGB", (200, 200), "white")
@@ -635,6 +675,61 @@ class BubblePlacementTest(unittest.TestCase):
         )
         self.assertEqual(assigned[0], (1, 0.80))
         self.assertEqual(assigned[1], (0, 0.85))
+
+    def test_sequential_assignment_discards_all_overlapping_face_boxes(self):
+        clip = [
+            [0.95, 0.94, 0.10],
+            [0.93, 0.92, 0.85],
+        ]
+        boxes = [
+            (100, 100, 220, 240),
+            (90, 80, 205, 225),
+            (400, 100, 520, 240),
+        ]
+        assigned, steps = _sequential_overlap_assignment(
+            clip,
+            clip,
+            0.55,
+            boxes,
+            ambiguity_margin=0.01,
+        )
+        self.assertEqual(assigned[0], (0, 0.95))
+        self.assertEqual(assigned[1], (2, 0.85))
+        self.assertEqual(steps[0]["removed_faces"], [0, 1])
+
+    def test_sequential_assignment_recomputes_global_match_after_confirmation(self):
+        clip = [
+            [0.715, 0.769],  # Alisa
+            [0.775, 0.803],  # Maria
+        ]
+        boxes = [
+            (100, 100, 220, 240),
+            (400, 100, 520, 240),
+        ]
+        assigned, steps = _sequential_overlap_assignment(
+            clip,
+            clip,
+            0.55,
+            boxes,
+            ambiguity_margin=0.01,
+        )
+        self.assertEqual(steps[0]["row"], 1)
+        self.assertEqual(assigned[1], (0, 0.775))
+        self.assertEqual(assigned[0], (1, 0.769))
+
+    def test_face_box_overlap_includes_containment_and_partial_intersection(self):
+        self.assertTrue(_face_boxes_overlap(
+            (100, 100, 220, 240),
+            (120, 120, 180, 180),
+        ))
+        self.assertTrue(_face_boxes_overlap(
+            (100, 100, 220, 240),
+            (200, 200, 300, 300),
+        ))
+        self.assertFalse(_face_boxes_overlap(
+            (100, 100, 220, 240),
+            (220, 100, 300, 240),
+        ))
 
     def test_optimal_assignment_maximizes_total_similarity_at_same_count(self):
         assigned = _optimal_assignment(
