@@ -29,6 +29,7 @@ from modes.bubble_predictor import (
 )
 from modes.postprocess import normalize_layout_font_scale
 from modes.bubble_render import (
+    _apply_unanchored_fallbacks,
     _draw_layout_bubble,
     _draw_preview_debug,
     _face_candidate_limit,
@@ -64,6 +65,53 @@ class _FakeFaceSession:
 
 
 class BubblePlacementTest(unittest.TestCase):
+    def test_all_low_confidence_faces_use_unanchored_fallback_without_tails(self):
+        matched = [
+            {
+                "segment": {"speaker": "Maria", "type": "speech"},
+                "face_box": (500, 200, 900, 800),
+            },
+            {
+                "segment": {"speaker": "Alisa", "type": "thought"},
+                "face_box": (80, 800, 160, 880),
+            },
+        ]
+        faces = [
+            {"box": matched[0]["face_box"], "conf": 0.006},
+            {"box": matched[1]["face_box"], "conf": 0.0001},
+        ]
+
+        _apply_unanchored_fallbacks(matched, faces)
+
+        for item in matched:
+            self.assertIsNone(item["face_box"])
+            self.assertTrue(item["unanchored_fallback"])
+            self.assertEqual(
+                item["unmatched_reason"],
+                "no_reliable_face_detection",
+            )
+
+    def test_only_individually_unmatched_speaker_uses_unanchored_fallback(self):
+        matched = [
+            {
+                "segment": {"speaker": "Maria", "type": "speech"},
+                "face_box": (100, 100, 180, 180),
+            },
+            {
+                "segment": {"speaker": "Alisa", "type": "speech"},
+                "face_box": None,
+            },
+        ]
+        faces = [{"box": matched[0]["face_box"], "conf": 0.8}]
+
+        _apply_unanchored_fallbacks(matched, faces)
+
+        self.assertEqual(matched[0]["face_box"], (100, 100, 180, 180))
+        self.assertNotIn("unanchored_fallback", matched[0])
+        self.assertIsNone(matched[1]["face_box"])
+        self.assertTrue(matched[1]["unanchored_fallback"])
+        self.assertEqual(matched[1]["unmatched_reason"], "face_match_unassigned")
+
     def test_face_letterbox_matches_ultralytics_opencv_geometry(self):
         import cv2
 

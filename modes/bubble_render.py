@@ -30,7 +30,9 @@ from modes.background_segmenter import background_ratio
 
 # 캔버스 폭 대비 말풍선 최대 폭 비율 기본값
 _MAX_WIDTH_RATIO_DEFAULT = 0.45
-_MONOLOGUE_FACE_CONFIDENCE_MIN = 0.01
+_FACE_CONFIDENCE_MIN = 0.01
+_NO_RELIABLE_FACE_DETECTION = "no_reliable_face_detection"
+_FACE_MATCH_UNASSIGNED = "face_match_unassigned"
 
 # font_path 미지정 시 시스템 기본 TTF 후보 (font_size 가 적용되도록 비트맵 폰트 회피).
 # 한국어 텍스트가 많으므로 한글 지정 폰트 우선.
@@ -182,6 +184,50 @@ def _resolve_face_match_crop(settings, bot_name):
         print(f"[BUBBLE_RENDER] FACE_CROP_BOTTOM 변환 실패({bottom!r}), 1.0 사용")
         bottom = 1.0
     return top, bottom
+
+
+def _apply_unanchored_fallbacks(matched, faces):
+    """신뢰할 얼굴이 없거나 개별 매칭에 실패한 세그먼트를 빈 공간에 남긴다.
+
+    얼굴 검출 전체가 저신뢰라면 임베딩 점수가 높아도 배경/신체 오검출일 수 있으므로
+    모든 배정을 폐기한다. 신뢰 가능한 얼굴이 하나라도 있으면 성공한 배정은 유지하고,
+    미배정 세그먼트만 무꼬리 빈 공간 배치 대상으로 전환한다.
+    """
+    max_face_confidence = max(
+        (float(face.get("conf") or 0.0) for face in (faces or [])),
+        default=0.0,
+    )
+    if max_face_confidence < _FACE_CONFIDENCE_MIN:
+        print(
+            f"[BUBBLE_RENDER] 신뢰 가능한 얼굴 후보 없음 → "
+            f"전체 무꼬리 빈 공간 폴백 "
+            f"(최고 yolo_conf={max_face_confidence:.6f}, "
+            f"기준={_FACE_CONFIDENCE_MIN:.3f})"
+        )
+        for item in matched:
+            item["face_box"] = None
+            item["unanchored_fallback"] = True
+            item.setdefault("unmatched_reason", _NO_RELIABLE_FACE_DETECTION)
+        return
+
+    fallback_count = 0
+    for item in matched:
+        if item.get("face_box") is not None:
+            continue
+        item["unanchored_fallback"] = True
+        item.setdefault("unmatched_reason", _FACE_MATCH_UNASSIGNED)
+        fallback_count += 1
+        segment = item.get("segment") or {}
+        print(
+            f"[BUBBLE_RENDER] 발화자 얼굴 미배정 → 무꼬리 빈 공간 배치: "
+            f"speaker={segment.get('speaker')}, "
+            f"reason={item.get('unmatched_reason')}"
+        )
+    if fallback_count:
+        print(
+            f"[BUBBLE_RENDER] 개별 얼굴 미배정 폴백 "
+            f"{fallback_count}개 세그먼트 활성화"
+        )
 
 
 def _face_candidate_limit(segments):
@@ -425,7 +471,7 @@ def _place_body(face_box, body_w, body_h, protected_boxes, canvas_w, canvas_h,
 def _place_unanchored_body(body_w, body_h, protected_boxes, canvas_w, canvas_h,
                            protected_foreground_mask=None,
                            min_background_ratio=0.90, margin=4):
-    """얼굴을 찾지 못한 1인 독백 말풍선을 배경에 배치한다.
+    """얼굴을 신뢰할 수 없거나 매칭하지 못한 말풍선을 배경에 배치한다.
 
     얼굴 방향은 추측하지 않는다. 전체 캔버스 격자에서 기존 말풍선과 겹치지 않고
     foreground 점유가 가장 낮은 영역을 찾으며, 중앙과 가까운 위치를 동률 기준으로
@@ -912,40 +958,7 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
         face_crop_top=face_crop_top,
         face_crop_bottom=face_crop_bottom,
     )
-    missing_project_count = 0
-    for item in matched:
-        if item.get("unmatched_reason") == "missing_project_character":
-            item["face_box"] = None
-            item["unanchored_fallback"] = True
-            missing_project_count += 1
-            segment = item.get("segment") or {}
-            print(
-                f"[BUBBLE_RENDER] 봇 프로젝트에 없는 발화자 -> "
-                f"무꼬리 빈 공간 배치: speaker={segment.get('speaker')}"
-            )
-    if missing_project_count:
-        print(
-            f"[BUBBLE_RENDER] 프로젝트 외 캐릭터 폴백 "
-            f"{missing_project_count}개 세그먼트 활성화"
-        )
-    # 얼굴 검출기가 실제 얼굴을 신뢰할 수준으로 찾지 못한 1인 생각 독백은
-    # 낮은 conf의 배경 오검출에 꼬리를 연결하지 않는다. 얼굴 배정을 폐기하고
-    # foreground 마스크 기반 무꼬리 배경 배치로 넘긴다.
-    if _is_single_speaker_thought(segments):
-        max_face_confidence = max(
-            (float(face.get("conf") or 0.0) for face in faces),
-            default=0.0,
-        )
-        if max_face_confidence < _MONOLOGUE_FACE_CONFIDENCE_MIN:
-            print(
-                f"[BUBBLE_RENDER] 1인 독백의 신뢰 가능한 얼굴 없음 → "
-                f"무꼬리 배경 폴백 "
-                f"(최고 yolo_conf={max_face_confidence:.6f}, "
-                f"기준={_MONOLOGUE_FACE_CONFIDENCE_MIN:.3f})"
-            )
-            for item in matched:
-                item["face_box"] = None
-                item["unanchored_fallback"] = True
+    _apply_unanchored_fallbacks(matched, faces)
 
     # 대사/생각 투명도 분리. 구형 opacity 키는 폴백(기존 bot.json 깨짐 방지).
     base_op = float(s.get("opacity", 1.0) or 1.0)
@@ -993,7 +1006,10 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
         box = m.get("face_box")
         unanchored_fallback = bool(m.get("unanchored_fallback"))
         if not box and not unanchored_fallback:
-            print(f"[BUBBLE_RENDER] 세그먼트 매칭된 얼굴 없음 - 스킵: speaker={seg.get('speaker')}")
+            print(
+                f"[BUBBLE_RENDER] 얼굴 미배정 폴백 상태 누락 - 스킵: "
+                f"speaker={seg.get('speaker')}"
+            )
             continue
         text = seg.get("text", "")
         btype = seg.get("type", "speech")
