@@ -38,6 +38,8 @@ _IOU_THRES = 0.45
 _MIN_FACE_ASPECT_RATIO = 0.35
 _MAX_FACE_ASPECT_RATIO = 1.0 / _MIN_FACE_ASPECT_RATIO
 _MIN_VISIBLE_BOX_RATIO = 0.45
+_LOW_CONF_EDGE_THRESHOLD = 0.05
+_EDGE_MARGIN_PX = 1.0
 
 # device_key -> onnxruntime.InferenceSession 캐시
 _sessions = {}
@@ -332,12 +334,39 @@ def _detect_multi(sess, image_rgb, conf_thres, iou_thres=_IOU_THRES,
         [ox1[valid], oy1[valid], ox2[valid], oy2[valid]], axis=1
     )
     conf = conf[valid]
+    # 최종 후보 수보다 넓게 NMS한 뒤, 매우 낮은 conf로 캔버스 경계에 붙은 후보를
+    # 후순위로 보낸다. 경계 오검출이 상위 N개를 독점해 내부의 실제 얼굴이 잘리는
+    # 문제를 줄이되, 고신뢰 경계 얼굴은 그대로 우선한다.
+    nms_limit = None
+    if max_faces is not None:
+        nms_limit = max(1, min(256, int(max_faces) * 4))
     keep_idx = _nms(
         boxes_original,
         conf,
         iou_thres,
-        max_keep=max_faces,
+        max_keep=nms_limit,
     )
+    if max_faces is not None and len(keep_idx) > int(max_faces):
+        edge_margin = _EDGE_MARGIN_PX
+
+        def candidate_priority(index):
+            bx1, by1, bx2, by2 = boxes_original[index]
+            touches_edge = (
+                bx1 <= edge_margin
+                or by1 <= edge_margin
+                or bx2 >= float(image_w) - edge_margin
+                or by2 >= float(image_h) - edge_margin
+            )
+            low_conf_edge = touches_edge and float(conf[index]) < _LOW_CONF_EDGE_THRESHOLD
+            return (1 if low_conf_edge else 0, -float(conf[index]))
+
+        before = list(keep_idx[:int(max_faces)])
+        keep_idx = sorted(keep_idx, key=candidate_priority)[:max(1, int(max_faces))]
+        if keep_idx != before:
+            print(
+                f"[FACE_DETECTOR] 저신뢰 경계 후보 후순위화: "
+                f"NMS {len(before)}개 기본 선택 → 내부 우선 {len(keep_idx)}개"
+            )
 
     boxes = [tuple(float(v) for v in boxes_original[i]) for i in keep_idx]
     confs = [float(conf[i]) for i in keep_idx]

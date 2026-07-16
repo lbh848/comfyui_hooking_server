@@ -9,6 +9,7 @@ from modes.face_detector import _detect_multi
 from modes.face_embedder import (
     appearance_descriptor,
     appearance_similarity,
+    expanded_face_box,
     standardize_face_image,
 )
 from modes.bubble_layout import choose_layout, choose_scaled_layout
@@ -30,8 +31,10 @@ from modes.bubble_render import (
     _face_candidate_limit,
     _face_detection_candidate_limit,
     _filter_nested_face_candidates,
+    _is_single_speaker_thought,
     _draw_speech,
     _place_body,
+    _place_unanchored_body,
     _protected_face_box,
     _resolve_layout_font_scale,
     _tail_within_threshold,
@@ -124,6 +127,18 @@ class BubblePlacementTest(unittest.TestCase):
         filtered = _filter_nested_face_candidates([tight, wide])
         self.assertEqual(filtered, [tight])
 
+    def test_nested_smaller_low_confidence_box_is_also_removed(self):
+        wide = {"box": (580, 125, 740, 335), "conf": 0.002}
+        tight = {"box": (596, 152, 673, 248), "conf": 0.00002}
+        filtered = _filter_nested_face_candidates([wide, tight])
+        self.assertEqual(filtered, [wide])
+
+    def test_flat_hair_box_does_not_remove_lower_confidence_full_face(self):
+        hair = {"box": (282, 80, 369, 138), "conf": 0.00017}
+        full_face = {"box": (246, 8, 478, 276), "conf": 0.00012}
+        filtered = _filter_nested_face_candidates([hair, full_face])
+        self.assertEqual(filtered, [hair, full_face])
+
     def test_partially_overlapping_distinct_faces_are_kept(self):
         left = {"box": (100, 100, 220, 240), "conf": 0.8}
         right = {"box": (180, 100, 300, 240), "conf": 0.7}
@@ -136,6 +151,59 @@ class BubblePlacementTest(unittest.TestCase):
         standardized = standardize_face_image(image)
         self.assertEqual(standardized.size, (40, 40))
         self.assertEqual(standardized.getpixel((35, 15)), (255, 0, 0))
+
+    def test_face_crop_expands_with_data_patch_top_bottom_rule(self):
+        image = Image.new("RGB", (200, 200), "white")
+        expanded = expanded_face_box(
+            image,
+            (80, 80, 120, 120),
+            top_mult=2.5,
+            bottom_mult=1.0,
+        )
+        self.assertEqual(expanded, (65.0, 50.0, 135.0, 120.0))
+
+    def test_low_confidence_edge_candidate_is_deprioritized(self):
+        session = _FakeFaceSession([
+            (20, 100, 40, 60, 0.04),   # 경계에 붙은 저신뢰 후보
+            (400, 400, 100, 100, 0.01),  # 내부 후보
+        ])
+        boxes, confidences = _detect_multi(
+            session,
+            Image.new("RGB", (960, 960), "white"),
+            conf_thres=0.0,
+            max_faces=1,
+        )
+        self.assertEqual(len(boxes), 1)
+        self.assertAlmostEqual(confidences[0], 0.01, places=5)
+        self.assertGreater(boxes[0][0], 1.0)
+
+    def test_single_speaker_thought_requires_only_thought_segments(self):
+        self.assertTrue(_is_single_speaker_thought([
+            {"speaker": "alice", "type": "thought"},
+            {"speaker": "alice", "type": "thought"},
+        ]))
+        self.assertFalse(_is_single_speaker_thought([
+            {"speaker": "alice", "type": "speech"},
+        ]))
+        self.assertFalse(_is_single_speaker_thought([
+            {"speaker": "alice", "type": "thought"},
+            {"speaker": "bob", "type": "thought"},
+        ]))
+
+    def test_unanchored_monologue_placement_prefers_background(self):
+        protected = np.zeros((200, 200), dtype=np.uint8)
+        protected[:, :100] = 1
+        placed = _place_unanchored_body(
+            60,
+            40,
+            [],
+            200,
+            200,
+            protected_foreground_mask=protected,
+        )
+        self.assertIsNotNone(placed)
+        rect, _anchor = placed
+        self.assertGreaterEqual(rect[0], 100)
 
     def test_appearance_descriptor_distinguishes_brightness_distribution(self):
         dark = appearance_descriptor(Image.new("RGB", (64, 64), (40, 30, 20)))

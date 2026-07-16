@@ -149,7 +149,10 @@ def _assignment_ambiguity_gap(similarities, ranking_scores, match_thres, best):
 def match_speakers_to_faces(segments, faces, bot_name,
                             match_thres=_MATCH_THRES_DEFAULT,
                             appearance_weight=0.4,
-                            ambiguity_margin=0.01):
+                            ambiguity_margin=0.01,
+                            detection_confidence_weight=0.05,
+                            face_crop_top=2.5,
+                            face_crop_bottom=1.0):
     """발화자(NAME) ↔ 얼굴 매칭.
 
     Args:
@@ -222,10 +225,26 @@ def match_speakers_to_faces(segments, faces, bot_name,
     face_embs = []
     face_appearances = []
     for i, f in enumerate(faces):
-        emb = embed_face_crop(image, f["box"])
+        emb = embed_face_crop(
+            image,
+            f["box"],
+            top_mult=face_crop_top,
+            bottom_mult=face_crop_bottom,
+        )
         face_embs.append(emb)
-        crop = extract_face_crop(image, f["box"])
+        crop = extract_face_crop(
+            image,
+            f["box"],
+            top_mult=face_crop_top,
+            bottom_mult=face_crop_bottom,
+        )
         face_appearances.append(appearance_descriptor(crop) if crop is not None else None)
+        if crop is not None:
+            print(
+                f"[BUBBLE_MATCH] 얼굴{i} 매칭 크롭: raw={f['box']}, "
+                f"crop_size={crop.size}, top={float(face_crop_top):.2f}, "
+                f"bottom={float(face_crop_bottom):.2f}"
+            )
         if emb is None:
             print(f"[BUBBLE_MATCH] 얼굴 {i} 임베딩 실패: {f['box']}")
 
@@ -237,6 +256,9 @@ def match_speakers_to_faces(segments, faces, bot_name,
     ranking_scores = []
     appearance_weight = max(0.0, float(appearance_weight or 0.0))
     ambiguity_margin = max(0.0, float(ambiguity_margin or 0.0))
+    detection_confidence_weight = max(
+        0.0, float(detection_confidence_weight or 0.0)
+    )
     for n in embedded_names:
         row = []
         rank_row = []
@@ -252,15 +274,24 @@ def match_speakers_to_faces(segments, faces, bot_name,
                 combined = sim
             else:
                 combined = (sim + appearance_weight * app_sim) / (1.0 + appearance_weight)
-            rank_row.append(combined)
             face_conf = faces[fi].get("conf")
+            confidence = max(0.0, float(face_conf or 0.0))
+            ranking_score = (
+                combined + detection_confidence_weight * confidence
+                if combined is not None else None
+            )
+            rank_row.append(ranking_score)
             conf_text = f"{float(face_conf):.3f}" if face_conf is not None else "없음"
             sim_text = f"{sim:.3f}" if sim is not None else "계산불가"
             app_text = f"{app_sim:.3f}" if app_sim is not None else "계산불가"
             combined_text = f"{combined:.3f}" if combined is not None else "계산불가"
+            rank_text = (
+                f"{ranking_score:.3f}" if ranking_score is not None else "계산불가"
+            )
             print(
                 f"[BUBBLE_MATCH] 유사도: {n} ↔ 얼굴{fi} "
                 f"(clip={sim_text}, appearance={app_text}, combined={combined_text}, "
+                f"rank={rank_text}, "
                 f"yolo_conf={conf_text}, box={faces[fi]['box']})"
             )
         similarities.append(row)
@@ -286,10 +317,10 @@ def match_speakers_to_faces(segments, faces, bot_name,
     for name_index, (fi, sim) in optimal.items():
         n = embedded_names[name_index]
         name_to_face[n] = (fi, sim)
-        combined = ranking_scores[name_index][fi]
+        ranking_score = ranking_scores[name_index][fi]
         print(
             f"[BUBBLE_MATCH] 배정: {n} ↔ 얼굴{fi} "
-            f"(box={faces[fi]['box']}, clip={sim:.3f}, combined={combined:.3f})"
+            f"(box={faces[fi]['box']}, clip={sim:.3f}, rank={ranking_score:.3f})"
         )
 
     for n in names:

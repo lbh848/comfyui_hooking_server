@@ -126,12 +126,43 @@ def standardize_face_image(image):
     return canvas
 
 
-def extract_face_crop(image, box):
-    """box를 캔버스에 클램프해 원본 비율 그대로 얼굴 이미지를 반환한다."""
+def expanded_face_box(image, box, top_mult=1.0, bottom_mult=1.0):
+    """FACE_CROP_TOP/BOTTOM 규칙으로 raw YOLO 박스를 확장해 클램프한다.
+
+    ``face_detector.crop_face`` 및 데이터패치 노드와 동일하게 수평 배율은
+    TOP/BOTTOM 평균, 수직은 위·아래 각 배율을 적용한다.
+    """
     x1, y1, x2, y2 = box
     width, height = image.size
-    x1 = max(0, int(x1)); y1 = max(0, int(y1))
-    x2 = min(width, int(x2)); y2 = min(height, int(y2))
+    try:
+        top_mult = max(1.0, float(top_mult))
+    except (TypeError, ValueError):
+        print(f"[FACE_EMBEDDER] FACE_CROP_TOP 변환 실패({top_mult!r}), 1.0 사용")
+        top_mult = 1.0
+    try:
+        bottom_mult = max(1.0, float(bottom_mult))
+    except (TypeError, ValueError):
+        print(f"[FACE_EMBEDDER] FACE_CROP_BOTTOM 변환 실패({bottom_mult!r}), 1.0 사용")
+        bottom_mult = 1.0
+    box_width = max(1.0, float(x2) - float(x1))
+    box_height = max(1.0, float(y2) - float(y1))
+    center_x = (float(x1) + float(x2)) / 2.0
+    center_y = (float(y1) + float(y2)) / 2.0
+    side_factor = (top_mult + bottom_mult) / 2.0
+    left = max(0.0, center_x - box_width * side_factor / 2.0)
+    right = min(float(width), center_x + box_width * side_factor / 2.0)
+    top = max(0.0, center_y - box_height * top_mult / 2.0)
+    bottom = min(float(height), center_y + box_height * bottom_mult / 2.0)
+    return left, top, right, bottom
+
+
+def extract_face_crop(image, box, top_mult=1.0, bottom_mult=1.0):
+    """raw box를 FACE_CROP 규칙으로 확장해 얼굴 이미지를 반환한다."""
+    x1, y1, x2, y2 = expanded_face_box(
+        image, box, top_mult=top_mult, bottom_mult=bottom_mult
+    )
+    x1 = int(np.floor(x1)); y1 = int(np.floor(y1))
+    x2 = int(np.ceil(x2)); y2 = int(np.ceil(y2))
     if x2 - x1 < 8 or y2 - y1 < 8:
         print(f"[FACE_EMBEDDER] 크롭 영역 너무 작음 ({x2-x1}x{y2-y1}) — 스킵")
         return None
@@ -213,10 +244,12 @@ def embed_image(image) -> np.ndarray:
         return None
 
 
-def embed_face_crop(image, box):
+def embed_face_crop(image, box, top_mult=1.0, bottom_mult=1.0):
     """PIL.Image 의 box(x1,y1,x2,y2) 영역 크롭 → 임베딩. 실패 시 None."""
     try:
-        crop = extract_face_crop(image, box)
+        crop = extract_face_crop(
+            image, box, top_mult=top_mult, bottom_mult=bottom_mult
+        )
         if crop is None:
             return None
         return embed_image(standardize_face_image(crop))

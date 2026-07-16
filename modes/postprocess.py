@@ -1195,6 +1195,18 @@ def get_bubble_settings(config: dict, bot_name: str = "") -> Optional[dict]:
     bb = _load_bot_bubble(bot_name) if bot_name else _default_bubble()
     if not bool(bb.get("enabled", False)):
         return None
+    face_crop_top = 2.5
+    face_crop_bottom = 1.0
+    if bot_name:
+        try:
+            from modes.bot_mode import _load_patch_settings
+
+            patch = _load_patch_settings(bot_name) or {}
+            face_crop_top = patch.get("face_crop_top", face_crop_top)
+            face_crop_bottom = patch.get("face_crop_bottom", face_crop_bottom)
+        except Exception as e:
+            print(f"[POSTPROCESS] bubble FACE_CROP 설정 조회 실패({bot_name}): {e}")
+            traceback.print_exc()
     return {
         "font_path": bb.get("font_path", "") or "",
         "font_size": int(bb.get("font_size", 36) or 36),
@@ -1231,6 +1243,8 @@ def get_bubble_settings(config: dict, bot_name: str = "") -> Optional[dict]:
                 float(bb.get("assignment_ambiguity_margin", 0.01) or 0.0),
             ),
         ),
+        "face_crop_top": max(1.0, min(10.0, float(face_crop_top))),
+        "face_crop_bottom": max(1.0, min(10.0, float(face_crop_bottom))),
     }
 
 
