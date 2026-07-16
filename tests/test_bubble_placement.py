@@ -5,7 +5,7 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 from modes.background_segmenter import background_ratio
-from modes.face_detector import _detect_multi
+from modes.face_detector import _detect_multi, _letterbox
 from modes.face_embedder import (
     appearance_descriptor,
     appearance_similarity,
@@ -64,6 +64,32 @@ class _FakeFaceSession:
 
 
 class BubblePlacementTest(unittest.TestCase):
+    def test_face_letterbox_matches_ultralytics_opencv_geometry(self):
+        import cv2
+
+        pixels = np.arange(5 * 9 * 3, dtype=np.uint8).reshape(5, 9, 3)
+        image = Image.fromarray(pixels, mode="RGB")
+
+        tensor, gain, left, top = _letterbox(image, size=12)
+
+        expected_resized = cv2.resize(
+            pixels, (12, 7), interpolation=cv2.INTER_LINEAR
+        )
+        expected = cv2.copyMakeBorder(
+            expected_resized,
+            2,
+            3,
+            0,
+            0,
+            cv2.BORDER_CONSTANT,
+            value=(114, 114, 114),
+        )
+        actual = (tensor[0].transpose(1, 2, 0) * 255.0).round().astype(np.uint8)
+
+        self.assertAlmostEqual(gain, 12 / 9)
+        self.assertEqual((left, top), (0, 2))
+        np.testing.assert_array_equal(actual, expected)
+
     def test_layout_font_scale_is_user_configurable_and_clamped(self):
         self.assertEqual(normalize_layout_font_scale(1.7), 1.7)
         self.assertEqual(normalize_layout_font_scale(9), 4.0)

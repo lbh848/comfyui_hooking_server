@@ -167,19 +167,47 @@ def _preferred_session(device_key):
 
 # ─── 전처리/추론/디코드 ─────────────────────────────────────────────
 def _letterbox(image, size=_IMG_SIZE):
-    """이미지를 size×size 로 letterbox(비율 유지 + 중앙 pad 114). (gain, pad_w, pad_h) 반환."""
-    W, H = image.size
-    gain = size / float(max(W, H))
-    newW, newH = int(round(W * gain)), int(round(H * gain))
-    resized = image.resize((newW, newH), _PILImage.BILINEAR)
-    canvas = _PILImage.new("RGB", (size, size), (114, 114, 114))
-    pad_w = (size - newW) // 2
-    pad_h = (size - newH) // 2
-    canvas.paste(resized, (pad_w, pad_h))
+    """Ultralytics 방식으로 RGB 이미지를 letterbox한다.
+
+    비율 유지 ``cv2.INTER_LINEAR`` 리사이즈와 중앙 114 패딩을 적용하고,
+    원본 좌표 역변환에 사용할 실제 ``(gain, left, top)``을 반환한다.
+    """
+    import cv2 as _cv2
     import numpy as _np
-    arr = _np.asarray(canvas, dtype="float32") / 255.0
+
+    if image.mode != "RGB":
+        image = image.convert("RGB")
+
+    W, H = image.size
+    gain = min(size / float(H), size / float(W))
+    newW, newH = int(round(W * gain)), int(round(H * gain))
+
+    image_rgb = _np.asarray(image)
+    if (W, H) != (newW, newH):
+        image_rgb = _cv2.resize(
+            image_rgb, (newW, newH), interpolation=_cv2.INTER_LINEAR
+        )
+
+    # Ultralytics LetterBox(center=True)의 홀수 패딩 분배와 동일하다.
+    half_dw = (size - newW) / 2.0
+    half_dh = (size - newH) / 2.0
+    top = int(round(half_dh - 0.1))
+    bottom = int(round(half_dh + 0.1))
+    left = int(round(half_dw - 0.1))
+    right = int(round(half_dw + 0.1))
+    image_rgb = _cv2.copyMakeBorder(
+        image_rgb,
+        top,
+        bottom,
+        left,
+        right,
+        _cv2.BORDER_CONSTANT,
+        value=(114, 114, 114),
+    )
+
+    arr = image_rgb.astype(_np.float32) / 255.0
     arr = arr.transpose(2, 0, 1)[None]  # 1,3,H,W
-    return arr, gain, pad_w, pad_h
+    return arr, gain, left, top
 
 
 def _detect(sess, image_rgb, conf_thres):
