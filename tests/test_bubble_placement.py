@@ -597,6 +597,34 @@ class BubblePlacementTest(unittest.TestCase):
         self.assertEqual(accepted[0]["face_box"], faces[0]["box"])
         self.assertAlmostEqual(accepted[0]["sim"], 0.8, places=5)
 
+    def test_character_missing_from_project_is_marked_for_background_fallback(self):
+        segments = [{"speaker": "jihoo", "text": "hello", "type": "thought"}]
+        with patch(
+            "modes.bubble_match._project_character_name_map",
+            return_value={"maria": "Maria", "alisa": "Alisa"},
+        ), patch("modes.face_embedder.get_char_embedding") as get_embedding:
+            results = match_speakers_to_faces(segments, [], "bot")
+        get_embedding.assert_not_called()
+        self.assertIsNone(results[0]["face_box"])
+        self.assertEqual(
+            results[0].get("unmatched_reason"),
+            "missing_project_character",
+        )
+
+    def test_registered_character_embedding_failure_is_not_background_fallback(self):
+        segments = [{"speaker": "maria", "text": "hello", "type": "speech"}]
+        with patch(
+            "modes.bubble_match._project_character_name_map",
+            return_value={"maria": "Maria"},
+        ), patch(
+            "modes.face_embedder.get_char_embedding",
+            return_value=None,
+        ) as get_embedding:
+            results = match_speakers_to_faces(segments, [], "bot")
+        get_embedding.assert_called_once_with("bot", "Maria")
+        self.assertIsNone(results[0]["face_box"])
+        self.assertNotIn("unmatched_reason", results[0])
+
     def test_optimal_assignment_avoids_greedy_face_stealing(self):
         assigned = _optimal_assignment(
             [

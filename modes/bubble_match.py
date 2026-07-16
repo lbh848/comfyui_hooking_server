@@ -10,12 +10,108 @@ speak 텍스트의 NAME 들과 삽화에서 감지된 얼굴들을 ViT-L/14 임�
 매칭 풀은 speak 에 등장한 NAME 들로 한정한다(NAME: 발화 형식이므로 주어진 NAME 만 사용).
 """
 
+import json
+import os
 import traceback
 
 import numpy as np
 
 # 매칭 신뢰 임계치 (L2 정규화 코사인 유사도). 같은 캐릭터면 보통 0.7 이상.
 _MATCH_THRES_DEFAULT = 0.55
+_BOT_DATA_FILE = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "asset_data",
+    "bot.json",
+)
+_MISSING_PROJECT_CHARACTER = "missing_project_character"
+
+
+def _project_character_name_map(bot_name):
+    """봇 프로젝트에 등록된 캐릭터 이름을 casefold 키로 읽는다.
+
+    ``None``은 메타데이터를 읽지 못했거나 대상 봇을 확인하지 못했다는 뜻이다.
+    이때는 캐릭터가 없다고 단정하지 않고 기존 임베딩 조회 경로를 유지한다.
+    """
+    target_bot = str(bot_name or "").strip()
+    if not target_bot:
+        print("[BUBBLE_MATCH] 봇 이름 없음 - 프로젝트 캐릭터 등록 여부 확인 불가")
+        return None
+    if not os.path.isfile(_BOT_DATA_FILE):
+        print(
+            f"[BUBBLE_MATCH] 봇 메타데이터 파일 없음 - "
+            f"프로젝트 캐릭터 등록 여부 확인 불가: {_BOT_DATA_FILE}"
+        )
+        return None
+    try:
+        with open(_BOT_DATA_FILE, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except Exception as e:
+        print(f"[BUBBLE_MATCH] 봇 메타데이터 로드 실패({_BOT_DATA_FILE}): {e}")
+        traceback.print_exc()
+        return None
+
+    bots = data.get("bots") if isinstance(data, dict) else None
+    if not isinstance(bots, list):
+        print(
+            f"[BUBBLE_MATCH] 봇 메타데이터 형식 오류 - bots 목록 없음: "
+            f"{_BOT_DATA_FILE}"
+        )
+        return None
+
+    bot = next(
+        (
+            item for item in bots
+            if isinstance(item, dict)
+            and str(item.get("name") or "").strip().casefold() == target_bot.casefold()
+        ),
+        None,
+    )
+    if bot is None:
+        print(
+            f"[BUBBLE_MATCH] 봇 프로젝트를 메타데이터에서 찾지 못함: "
+            f"{target_bot} - 캐릭터 없음으로 단정하지 않음"
+        )
+        return None
+
+    characters = bot.get("characters")
+    if not isinstance(characters, list):
+        print(f"[BUBBLE_MATCH] 봇 캐릭터 목록 형식 오류: {target_bot}")
+        return None
+    result = {}
+    for character in characters:
+        if not isinstance(character, dict):
+            print(
+                f"[BUBBLE_MATCH] 잘못된 캐릭터 항목 건너뜀: "
+                f"bot={target_bot}, value={character!r}"
+            )
+            continue
+        name = str(character.get("name") or "").strip()
+        if not name:
+            print(f"[BUBBLE_MATCH] 이름 없는 캐릭터 항목 건너뜀: bot={target_bot}")
+            continue
+        result[name.casefold()] = name
+    return result
+
+
+def _unmatched_segment_results(segments, missing_project_names=None):
+    """미배정 결과를 만들되 프로젝트에 없는 NAME의 사유만 보존한다."""
+    missing_keys = {
+        str(name).casefold() for name in (missing_project_names or ())
+        if str(name).strip()
+    }
+    results = []
+    for segment in segments:
+        speaker = (segment or {}).get("speaker")
+        item = {
+            "segment": segment,
+            "face_box": None,
+            "char_name": speaker,
+            "sim": None,
+        }
+        if speaker and str(speaker).casefold() in missing_keys:
+            item["unmatched_reason"] = _MISSING_PROJECT_CHARACTER
+        results.append(item)
+    return results
 
 
 def _cosine(a, b):
@@ -176,7 +272,7 @@ def match_speakers_to_faces(segments, faces, bot_name,
     except Exception as e:
         print(f"[BUBBLE_MATCH] 의존 모듈 로드 실패: {e}")
         traceback.print_exc()
-        return [{"segment": s, "face_box": None, "char_name": None, "sim": None} for s in segments]
+        return _unmatched_segment_results(segments)
 
     # 발화자(NAME) 목록 — None(독백) 제외, 순서 보존 중복 제거
     names = []
@@ -187,27 +283,47 @@ def match_speakers_to_faces(segments, faces, bot_name,
 
     if not names:
         print("[BUBBLE_MATCH] SPEAK에 NAME 형식의 발화자가 없어 전부 미배정")
-        return [{"segment": s, "face_box": None, "char_name": None, "sim": None} for s in segments]
-
-    # 얼굴이 하나도 없으면 전부 미배정
-    if not faces:
-        print("[BUBBLE_MATCH] 감지된 얼굴 0건 — 전부 미배정")
-        return [{"segment": s, "face_box": None, "char_name": None, "sim": None} for s in segments]
+        return _unmatched_segment_results(segments)
 
     # ── 각 NAME 의 캐릭터 임베딩 ──
     name_embs = {}
     name_appearances = {}
+    missing_project_names = set()
+    project_names = _project_character_name_map(bot_name)
     for n in names:
-        emb = get_char_embedding(bot_name, n)
+        normalized_name = str(n).strip().casefold()
+        if project_names is not None and normalized_name not in project_names:
+            missing_project_names.add(n)
+            print(
+                f"[BUBBLE_MATCH] 봇 프로젝트에 캐릭터 없음: "
+                f"{bot_name}/{n} → 무꼬리 빈 공간 배치 대상"
+            )
+            continue
+        canonical_name = (
+            project_names.get(normalized_name, n)
+            if project_names is not None else n
+        )
+        emb = get_char_embedding(bot_name, canonical_name)
         if emb is None:
-            print(f"[BUBBLE_MATCH] 캐릭터 임베딩 없음: {bot_name}/{n} → 이 NAME 은 미배정")
+            print(
+                f"[BUBBLE_MATCH] 등록 캐릭터 임베딩 없음/실패: "
+                f"{bot_name}/{canonical_name} → 기존 미배정 유지"
+            )
         else:
             name_embs[n] = emb
-            name_appearances[n] = get_char_appearance(bot_name, n)
+            name_appearances[n] = get_char_appearance(bot_name, canonical_name)
+
+    # 얼굴이 없더라도 프로젝트에 없는 발화자는 무꼬리 폴백으로 전달해야 한다.
+    if not faces:
+        print("[BUBBLE_MATCH] 감지된 얼굴 0건 - 등록 캐릭터는 미배정")
+        return _unmatched_segment_results(segments, missing_project_names)
 
     if not name_embs:
-        print("[BUBBLE_MATCH] 사용 가능 캐릭터 임베딩 0건 — 전부 미배정")
-        return [{"segment": s, "face_box": None, "char_name": None, "sim": None} for s in segments]
+        print(
+            "[BUBBLE_MATCH] 사용 가능 캐릭터 임베딩 0건 - "
+            "프로젝트 외 캐릭터만 무꼬리 폴백, 나머지는 미배정"
+        )
+        return _unmatched_segment_results(segments, missing_project_names)
 
     # ── 각 얼굴 임베딩 ──
     # 주의: faces 의 box 는 원본 이미지 좌표. 호출자가 같은 PIL.Image 를 전달해야 한다.
@@ -220,7 +336,7 @@ def match_speakers_to_faces(segments, faces, bot_name,
     if image is None:
         print("[BUBBLE_MATCH] faces 에 image 없음 — 얼굴 임베딩 불가, 전부 미배정 "
               "(호출자가 faces[i]['image'] 에 PIL.Image 를 넣어야 함)")
-        return [{"segment": s, "face_box": None, "char_name": None, "sim": None} for s in segments]
+        return _unmatched_segment_results(segments, missing_project_names)
 
     face_embs = []
     face_appearances = []
@@ -336,5 +452,10 @@ def match_speakers_to_faces(segments, faces, bot_name,
             results.append({"segment": s, "face_box": faces[fi]["box"],
                             "char_name": sp, "sim": sim})
         else:
-            results.append({"segment": s, "face_box": None, "char_name": sp, "sim": None})
+            item = {"segment": s, "face_box": None, "char_name": sp, "sim": None}
+            if sp and str(sp).casefold() in {
+                str(name).casefold() for name in missing_project_names
+            }:
+                item["unmatched_reason"] = _MISSING_PROJECT_CHARACTER
+            results.append(item)
     return results

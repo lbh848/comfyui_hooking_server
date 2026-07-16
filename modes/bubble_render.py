@@ -406,7 +406,7 @@ def _place_unanchored_body(body_w, body_h, protected_boxes, canvas_w, canvas_h,
     margin = max(0.0, float(margin))
     if body_w > canvas_w - margin * 2 or body_h > canvas_h - margin * 2:
         print(
-            f"[BUBBLE_RENDER] 무꼬리 독백 배치 불가: "
+            f"[BUBBLE_RENDER] 무꼬리 빈 공간 배치 불가: "
             f"body=({body_w:.1f},{body_h:.1f}), canvas=({canvas_w:.0f},{canvas_h:.0f})"
         )
         return None
@@ -438,7 +438,7 @@ def _place_unanchored_body(body_w, body_h, protected_boxes, canvas_w, canvas_h,
             candidates.append((bg_ratio, distance, rect))
 
     if not candidates:
-        print("[BUBBLE_RENDER] 무꼬리 독백 배경 후보 0건")
+        print("[BUBBLE_RENDER] 무꼬리 빈 공간 배경 후보 0건")
         return None
     strict = [item for item in candidates if item[0] + 1e-9 >= min_background_ratio]
     pool = strict or candidates
@@ -449,7 +449,7 @@ def _place_unanchored_body(body_w, body_h, protected_boxes, canvas_w, canvas_h,
             f"background={bg_ratio:.3f}"
         )
     else:
-        print(f"[BUBBLE_RENDER] 무꼬리 독백 배경 선택: background={bg_ratio:.3f}")
+        print(f"[BUBBLE_RENDER] 무꼬리 빈 공간 배경 선택: background={bg_ratio:.3f}")
     anchor = ((rect[0] + rect[2]) / 2.0, (rect[1] + rect[3]) / 2.0)
     return rect, anchor
 
@@ -879,6 +879,22 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
         face_crop_top=face_crop_top,
         face_crop_bottom=face_crop_bottom,
     )
+    missing_project_count = 0
+    for item in matched:
+        if item.get("unmatched_reason") == "missing_project_character":
+            item["face_box"] = None
+            item["unanchored_fallback"] = True
+            missing_project_count += 1
+            segment = item.get("segment") or {}
+            print(
+                f"[BUBBLE_RENDER] 봇 프로젝트에 없는 발화자 -> "
+                f"무꼬리 빈 공간 배치: speaker={segment.get('speaker')}"
+            )
+    if missing_project_count:
+        print(
+            f"[BUBBLE_RENDER] 프로젝트 외 캐릭터 폴백 "
+            f"{missing_project_count}개 세그먼트 활성화"
+        )
     # 얼굴 검출기가 실제 얼굴을 신뢰할 수준으로 찾지 못한 1인 생각 독백은
     # 낮은 conf의 배경 오검출에 꼬리를 연결하지 않는다. 얼굴 배정을 폐기하고
     # foreground 마스크 기반 무꼬리 배경 배치로 넘긴다.
@@ -1004,15 +1020,17 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
             )
             if background_placement is None:
                 print(
-                    f"[BUBBLE_RENDER] 무꼬리 독백 배치 실패 — 스킵: "
+                    f"[BUBBLE_RENDER] 무꼬리 빈 공간 배치 실패 - 스킵: "
                     f"speaker={seg.get('speaker')}"
                 )
                 continue
             rect, anchor = background_placement
             used_fallback = True
             print(
-                f"[BUBBLE_RENDER] 무꼬리 독백 배경 배치: "
-                f"speaker={seg.get('speaker')}, rect={rect}"
+                f"[BUBBLE_RENDER] 무꼬리 빈 공간 배치: "
+                f"speaker={seg.get('speaker')}, "
+                f"reason={m.get('unmatched_reason') or 'face_detection_failed_monologue'}, "
+                f"rect={rect}"
             )
         else:
             box_key = tuple(float(v) for v in box)
