@@ -3601,6 +3601,8 @@ async def handle_api_postprocess_preview(request: web.Request) -> web.Response:
             "face_crop_bottom": body.get("face_crop_bottom", 1.0),
             "face_conf": body.get("face_conf", 0.3),
             "face_best_only": bool(body.get("face_best_only", False)),
+            "face_device": body.get("face_device", "auto"),
+            "face_cpu_threads": body.get("face_cpu_threads", 0),
             "theme": body.get("theme", "sky"),
             "opacity": body.get("opacity", 100),
         }
@@ -3737,6 +3739,8 @@ async def handle_api_postprocess_preview(request: web.Request) -> web.Response:
                 "assignment_ambiguity_margin": body.get(
                     "assignment_ambiguity_margin", 0.01
                 ),
+                "onnx_device": body.get("onnx_device", "auto"),
+                "cpu_threads": body.get("cpu_threads", 0),
                 # 아래 두 값은 이 미리보기 API에서만 주입된다. 실제 생성 설정에는
                 # 존재하지 않으므로 마스크/후보 가이드가 결과물에 들어갈 수 없다.
                 "preview_debug_mask": bool(body.get("preview_debug_mask", False)),
@@ -3785,6 +3789,14 @@ async def handle_api_postprocess_preview_face(request: web.Request) -> web.Respo
             face_conf = 0.3
         face_best_only = bool(body.get("face_best_only", False))
         device = (body.get("device") or "auto").strip() or "auto"
+        try:
+            cpu_threads = int(body.get("cpu_threads", 0) or 0)
+        except (TypeError, ValueError):
+            print(
+                f"[POSTPROCESS_PREVIEW_FACE] cpu_threads 변환 실패"
+                f"({body.get('cpu_threads')!r}), 자동 사용"
+            )
+            cpu_threads = 0
 
         # '최고 신뢰도 박스 하나만': 임계치를 0으로 강제 → 검출된 박스 중 신뢰도 최고를 항상 반환.
         if face_best_only:
@@ -3818,7 +3830,8 @@ async def handle_api_postprocess_preview_face(request: web.Request) -> web.Respo
         _t0 = time.perf_counter()
         crop, face_conf_val = face_detector.crop_face(
             base, top_mult=face_crop_top, bottom_mult=face_crop_bottom,
-            target_size=256, conf_thres=face_conf, device=device, return_conf=True)
+            target_size=256, conf_thres=face_conf, device=device,
+            return_conf=True, cpu_threads=cpu_threads)
         _crop_ms = (time.perf_counter() - _t0) * 1000.0
         print(f"[FACE_DETECTOR] 크롭 {os.path.basename(matched[0])}: {_crop_ms:.0f}ms conf={face_conf_val}")
         if crop is None:
@@ -3845,14 +3858,23 @@ async def handle_api_postprocess_preview_face(request: web.Request) -> web.Respo
 async def handle_api_postprocess_face_devices(request: web.Request) -> web.Response:
     """GET /api/postprocess/face_devices
 
-    얼굴 검출(ONNX Runtime)에 사용 가능한 디바이스(Execution Provider) 목록.
-    응답: {"devices": [{key, label, provider}, ...], "auto": "<자동선택 key>"}
-    설치된 onnxruntime 패키지에 따라 CUDA/DirectML/CPU 가 노출된다.
+    대사/말풍선 ONNX Runtime에 사용할 디바이스와 CPU 스레드 목록.
+    설치된 onnxruntime 패키지에 따라 CUDA/DirectML/CPU가 노출되며,
+    스레드는 자동(0)과 현재 환경의 1..논리 프로세서 수를 반환한다.
     """
     try:
         from modes import face_detector
         devices = face_detector.list_devices()
-        return web.json_response({"devices": devices, "auto": "auto"})
+        thread_options = face_detector.list_thread_options()
+        return web.json_response({
+            "devices": devices,
+            "thread_options": thread_options,
+            "logical_cpu_count": max(
+                (int(item["value"]) for item in thread_options),
+                default=1,
+            ),
+            "auto": "auto",
+        })
     except Exception as e:
         print(f"[ERROR] face_devices 실패: {e}\n{traceback.format_exc()}")
         return web.json_response({"error": str(e)}, status=500)

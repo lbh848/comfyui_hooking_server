@@ -635,7 +635,9 @@ def compose_postprocess(image_bytes: bytes, speak_text: str,
         face_conf = 0.0
     prefix = settings.get("prefix", "") or ""
     suffix = settings.get("suffix", "") or ""
-    face_device = (settings.get("face_device") or "auto").strip() or "auto"
+    from modes.onnx_execution import normalize_cpu_threads, normalize_device_key
+    face_device = normalize_device_key(settings.get("face_device", "auto"))
+    face_cpu_threads = normalize_cpu_threads(settings.get("face_cpu_threads", 0))
 
     first_speaker_seg = next((s for s in segments if s.get("speaker")), None)
     face_img = None  # 정사각형 PIL.Image 또는 None
@@ -656,7 +658,8 @@ def compose_postprocess(image_bytes: bytes, speak_text: str,
                     _face_target = max(128, int(bar_h))
                     face_img = face_detector.crop_face(
                         base, top_mult=face_crop_top, bottom_mult=face_crop_bottom,
-                        target_size=_face_target, conf_thres=face_conf, device=face_device)
+                        target_size=_face_target, conf_thres=face_conf,
+                        device=face_device, cpu_threads=face_cpu_threads)
                     if face_img is None:
                         # 얼굴 검출 실패 시 매칭된 원본을 center-crop 정사각형으로 폴백.
                         # 빈 슬롯보다는 나은 근사치(얼굴이 프레임 밖일 수 있음).
@@ -1071,6 +1074,8 @@ def _default_vn() -> dict:
         "face_crop_bottom": 1.0,       # 아래쪽 크롭 계수. 1.0=검출박스 그대로, 클수록 아래로 확장
         "face_conf": 0.3,              # YOLO 얼굴 검출 신뢰도 임계치
         "face_best_only": False,       # True면 CONF 무시, 검출 박스 중 최고 신뢰도 강제 사용
+        "face_device": "auto",         # 자동 | cpu | cuda0 | dml0
+        "face_cpu_threads": 0,         # CPU intra-op 스레드. 0=ONNX Runtime 자동
         "theme": VN_THEME_DEFAULT,     # 대사창 색 테마(sky/ivory/lavender/black/gray/classic)
         "opacity": 100,                # 카드 배경 반투명도(0~100). 100=불투명. 글자/얼굴은 그대로
     }
@@ -1109,6 +1114,8 @@ def _default_bubble() -> dict:
         "face_candidates_per_character": 8,  # 캐릭터당 확보할 YOLO 후보 수(전체 최대 64)
         "appearance_weight": 0.4,         # CLIP 점수에 결합할 명도·채도 외형 보정 가중치
         "assignment_ambiguity_margin": 0.01,  # 최적/차선 전역 배정의 최소 평균 점수 차이
+        "onnx_device": "auto",         # 말풍선 ONNX 공용 장치
+        "cpu_threads": 0,               # CPU intra-op 스레드. 0=ONNX Runtime 자동
     }
 
 
@@ -1161,6 +1168,7 @@ def get_vn_settings(config: dict, bot_name: str = "") -> Optional[dict]:
     vn = _load_bot_vn(bot_name) if bot_name else _default_vn()
     if not bool(vn.get("enabled", False)):
         return None
+    from modes.onnx_execution import normalize_cpu_threads, normalize_device_key
     return {
         "placement": vn.get("placement", "extend"),
         "height_mode": vn.get("height_mode", "ratio"),
@@ -1179,7 +1187,8 @@ def get_vn_settings(config: dict, bot_name: str = "") -> Optional[dict]:
         "face_crop_bottom": float(vn.get("face_crop_bottom", 1.0) or 1.0),
         "face_conf": float(vn.get("face_conf", 0.3) or 0.3),
         "face_best_only": bool(vn.get("face_best_only", False)),
-        "face_device": str(vn.get("face_device", "auto") or "auto"),
+        "face_device": normalize_device_key(vn.get("face_device", "auto")),
+        "face_cpu_threads": normalize_cpu_threads(vn.get("face_cpu_threads", 0)),
         "theme": str(vn.get("theme", VN_THEME_DEFAULT) or VN_THEME_DEFAULT),
         "opacity": int(vn.get("opacity", 100) if vn.get("opacity", 100) is not None else 100),
     }
@@ -1195,6 +1204,7 @@ def get_bubble_settings(config: dict, bot_name: str = "") -> Optional[dict]:
     bb = _load_bot_bubble(bot_name) if bot_name else _default_bubble()
     if not bool(bb.get("enabled", False)):
         return None
+    from modes.onnx_execution import normalize_cpu_threads, normalize_device_key
     face_crop_top = 2.5
     face_crop_bottom = 1.0
     if bot_name:
@@ -1243,6 +1253,8 @@ def get_bubble_settings(config: dict, bot_name: str = "") -> Optional[dict]:
                 float(bb.get("assignment_ambiguity_margin", 0.01) or 0.0),
             ),
         ),
+        "onnx_device": normalize_device_key(bb.get("onnx_device", "auto")),
+        "cpu_threads": normalize_cpu_threads(bb.get("cpu_threads", 0)),
         "face_crop_top": max(1.0, min(10.0, float(face_crop_top))),
         "face_crop_bottom": max(1.0, min(10.0, float(face_crop_bottom))),
     }

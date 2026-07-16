@@ -2257,6 +2257,11 @@ def _save_postprocess_vn(bot_name: str, vn: dict):
     clean = dict(vn or {})
     clean.pop("emotion_rows", None)
     clean.pop("emotion_total", None)
+    from modes.onnx_execution import normalize_cpu_threads, normalize_device_key
+    clean["face_device"] = normalize_device_key(clean.get("face_device", "auto"))
+    clean["face_cpu_threads"] = normalize_cpu_threads(
+        clean.get("face_cpu_threads", 0)
+    )
     bot["postprocess_vn"] = clean
     _save_bot_data(data)
     print(f"[BOT_MODE] postprocess_vn 저장: bot={bot_name}")
@@ -2293,6 +2298,7 @@ def _save_postprocess_bubble(bot_name: str, bubble: dict):
         raise ValueError(f"봇을 찾을 수 없음: {bot_name}")
     _backup_bot_json()
     from modes.postprocess import normalize_layout_font_scale
+    from modes.onnx_execution import normalize_cpu_threads, normalize_device_key
     clean = dict(bubble or {})
     # 폐기된 말풍선 옵션은 기존 클라이언트가 보내더라도 다시 저장하지 않는다.
     clean.pop("tail_len", None)
@@ -2300,6 +2306,8 @@ def _save_postprocess_bubble(bot_name: str, bubble: dict):
     clean["layout_font_scale"] = normalize_layout_font_scale(
         clean.get("layout_font_scale", 2.0)
     )
+    clean["onnx_device"] = normalize_device_key(clean.get("onnx_device", "auto"))
+    clean["cpu_threads"] = normalize_cpu_threads(clean.get("cpu_threads", 0))
     bot["postprocess_bubble"] = clean
     _save_bot_data(data)
     print(f"[BOT_MODE] postprocess_bubble 저장: bot={bot_name}")

@@ -13,6 +13,12 @@ import numpy as np
 from PIL import Image
 
 from modes.background_segmenter import background_ratio
+from modes.onnx_execution import (
+    cache_session,
+    create_session,
+    session_cache_key,
+    session_uses_gpu,
+)
 
 
 _IMG_SIZE = 256
@@ -24,30 +30,27 @@ _MODEL_PATH = os.path.normpath(
     os.path.join(os.path.dirname(__file__), "..", "models", "bubble_predictor.onnx")
 )
 
-_session = None
-_session_path = None
+_sessions = {}
 
 
-def get_session(model_path=None):
-    """ONNX Runtime CPU 세션을 한 번만 로드해 재사용한다."""
-    global _session, _session_path
+def get_session(model_path=None, device="auto", cpu_threads=0):
+    """ONNX 세션을 장치·스레드 조합별로 로드해 재사용한다."""
     path = os.path.abspath(model_path or _MODEL_PATH)
-    if _session is not None and _session_path == path:
-        return _session
     if not os.path.isfile(path):
         print(f"[BUBBLE_PREDICTOR] ONNX 모델 없음: {path}")
         return None
-    try:
-        import onnxruntime as ort
-
-        _session = ort.InferenceSession(path, providers=["CPUExecutionProvider"])
-        _session_path = path
-        print(f"[BUBBLE_PREDICTOR] ONNX 세션 로드: {path}")
-        return _session
-    except Exception as e:
-        print(f"[BUBBLE_PREDICTOR] ONNX 세션 로드 실패({path}): {e}")
-        traceback.print_exc()
-        return None
+    key = session_cache_key(path, device, cpu_threads)
+    if key in _sessions:
+        return _sessions[key]
+    session, _active_device = create_session(
+        path,
+        device_key=device,
+        cpu_threads=cpu_threads,
+        log_prefix="BUBBLE_PREDICTOR",
+    )
+    if session is not None:
+        cache_session(_sessions, key, session, log_prefix="BUBBLE_PREDICTOR")
+    return session
 
 
 def _build_input(roi_gray, face_box_256):
@@ -106,9 +109,16 @@ def _face_boundary_anchor(center, face_box):
     return fx + dx * scale, fy + dy * scale
 
 
-def predict_for_face_candidates(page_rgb, face_box, top_k=_DEFAULT_TOP_K, model_path=None):
+def predict_for_face_candidates(
+    page_rgb,
+    face_box,
+    top_k=_DEFAULT_TOP_K,
+    model_path=None,
+    device="auto",
+    cpu_threads=0,
+):
     """원본 페이지와 얼굴 박스에서 말풍선 중심 후보를 페이지 좌표로 반환한다."""
-    session = get_session(model_path)
+    session = get_session(model_path, device=device, cpu_threads=cpu_threads)
     if session is None:
         print("[BUBBLE_PREDICTOR] 세션이 없어 위치 예측을 건너뜀")
         return []
@@ -154,7 +164,34 @@ def predict_for_face_candidates(page_rgb, face_box, top_k=_DEFAULT_TOP_K, model_
         )
 
         model_input = _build_input(roi_gray, face_box_256)
-        output = session.run(None, {session.get_inputs()[0].name: model_input})[0][0]
+        feeds = {session.get_inputs()[0].name: model_input}
+        try:
+            raw_output = session.run(None, feeds)[0]
+        except Exception as gpu_error:
+            if not session_uses_gpu(session):
+                raise
+            print(f"[BUBBLE_PREDICTOR] GPU 추론 실패, CPU 폴백: {gpu_error}")
+            traceback.print_exc()
+            cpu_session = get_session(
+                model_path,
+                device="cpu",
+                cpu_threads=cpu_threads,
+            )
+            if cpu_session is None:
+                raise RuntimeError("말풍선 위치 CPU 폴백 세션 생성 실패") from gpu_error
+            raw_output = cpu_session.run(None, feeds)[0]
+            requested_key = session_cache_key(
+                os.path.abspath(model_path or _MODEL_PATH),
+                device,
+                cpu_threads,
+            )
+            cache_session(
+                _sessions,
+                requested_key,
+                cpu_session,
+                log_prefix="BUBBLE_PREDICTOR",
+            )
+        output = raw_output[0]
         if output.ndim != 3 or output.shape[0] < 1:
             print(f"[BUBBLE_PREDICTOR] 예상하지 못한 ONNX 출력 shape: {output.shape}")
             return []

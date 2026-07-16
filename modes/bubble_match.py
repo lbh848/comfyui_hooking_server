@@ -383,7 +383,9 @@ def match_speakers_to_faces(segments, faces, bot_name,
                             ambiguity_margin=0.01,
                             detection_confidence_weight=0.05,
                             face_crop_top=2.5,
-                            face_crop_bottom=1.0):
+                            face_crop_bottom=1.0,
+                            onnx_device="auto",
+                            cpu_threads=0):
     """발화자(NAME) ↔ 얼굴 매칭.
 
     Args:
@@ -439,7 +441,15 @@ def match_speakers_to_faces(segments, faces, bot_name,
             project_names.get(normalized_name, n)
             if project_names is not None else n
         )
-        emb = get_char_embedding(bot_name, canonical_name)
+        if onnx_device in (None, "auto") and int(cpu_threads or 0) == 0:
+            emb = get_char_embedding(bot_name, canonical_name)
+        else:
+            emb = get_char_embedding(
+                bot_name,
+                canonical_name,
+                device=onnx_device,
+                cpu_threads=cpu_threads,
+            )
         if emb is None:
             print(
                 f"[BUBBLE_MATCH] 등록 캐릭터 임베딩 없음/실패: "
@@ -485,12 +495,13 @@ def match_speakers_to_faces(segments, faces, bot_name,
             bottom_mult=face_crop_bottom,
         )
         expanded_face_boxes.append(expanded_box)
-        emb = embed_face_crop(
-            image,
-            f["box"],
-            top_mult=face_crop_top,
-            bottom_mult=face_crop_bottom,
-        )
+        embed_kwargs = {
+            "top_mult": face_crop_top,
+            "bottom_mult": face_crop_bottom,
+        }
+        if onnx_device not in (None, "auto") or int(cpu_threads or 0) != 0:
+            embed_kwargs.update(device=onnx_device, cpu_threads=cpu_threads)
+        emb = embed_face_crop(image, f["box"], **embed_kwargs)
         face_embs.append(emb)
         crop = extract_face_crop(
             image,

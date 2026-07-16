@@ -14,6 +14,13 @@ from typing import Iterable
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
+from modes.onnx_execution import (
+    cache_session,
+    create_session,
+    session_cache_key,
+    session_uses_gpu,
+)
+
 
 FEATURE_NAMES = (
     "fit_quality",
@@ -75,8 +82,7 @@ SEEDED_WEIGHTS = (
 _MODEL_PATH = os.path.normpath(
     os.path.join(os.path.dirname(__file__), "..", "models", "bubble_layout.onnx")
 )
-_session = None
-_session_path = None
+_sessions = {}
 
 
 OPENING_PUNCTUATION = frozenset("([{<‘“「『《〈【〔（［｛")
@@ -725,37 +731,66 @@ def _seeded_scores(features: np.ndarray) -> np.ndarray:
     return features @ np.asarray(SEEDED_WEIGHTS, dtype=np.float32)
 
 
-def _get_layout_session(onnx_path: str | os.PathLike):
-    """레이아웃 ONNX 세션을 프로세스 동안 재사용한다."""
-    global _session, _session_path
+def _get_layout_session(onnx_path: str | os.PathLike, device="auto", cpu_threads=0):
+    """레이아웃 ONNX 세션을 장치·스레드 조합별로 재사용한다."""
     path = os.path.abspath(str(onnx_path))
-    if _session is not None and _session_path == path:
-        return _session
     if not os.path.isfile(path):
         print(f"[BUBBLE_LAYOUT] ONNX 모델 없음: {path}")
         return None
-    try:
-        import onnxruntime as ort
+    key = session_cache_key(path, device, cpu_threads)
+    if key in _sessions:
+        return _sessions[key]
+    session, _active_device = create_session(
+        path,
+        device_key=device,
+        cpu_threads=cpu_threads,
+        log_prefix="BUBBLE_LAYOUT",
+    )
+    if session is not None:
+        cache_session(_sessions, key, session, log_prefix="BUBBLE_LAYOUT")
+    return session
 
-        _session = ort.InferenceSession(path, providers=["CPUExecutionProvider"])
-        _session_path = path
-        print(f"[BUBBLE_LAYOUT] ONNX 세션 로드: {path}")
-        return _session
-    except Exception as e:
-        print(f"[BUBBLE_LAYOUT] ONNX 세션 로드 실패({path}): {e}")
-        traceback.print_exc()
-        return None
 
-
-def _onnx_scores(features: np.ndarray, onnx_path: str | os.PathLike) -> np.ndarray | None:
-    session = _get_layout_session(onnx_path)
+def _onnx_scores(
+    features: np.ndarray,
+    onnx_path: str | os.PathLike,
+    device="auto",
+    cpu_threads=0,
+) -> np.ndarray | None:
+    session = _get_layout_session(
+        onnx_path,
+        device=device,
+        cpu_threads=cpu_threads,
+    )
     if session is None:
         print("[BUBBLE_LAYOUT] 세션이 없어 초기 규칙 점수로 폴백")
         return None
 
     try:
         input_name = session.get_inputs()[0].name
-        return np.asarray(session.run(None, {input_name: features})[0], dtype=np.float32)
+        feeds = {input_name: features}
+        try:
+            output = session.run(None, feeds)[0]
+        except Exception as gpu_error:
+            if not session_uses_gpu(session):
+                raise
+            print(f"[BUBBLE_LAYOUT] GPU 추론 실패, CPU 폴백: {gpu_error}")
+            traceback.print_exc()
+            cpu_session = _get_layout_session(
+                onnx_path,
+                device="cpu",
+                cpu_threads=cpu_threads,
+            )
+            if cpu_session is None:
+                raise RuntimeError("레이아웃 CPU 폴백 세션 생성 실패") from gpu_error
+            output = cpu_session.run(None, feeds)[0]
+            cache_session(
+                _sessions,
+                session_cache_key(onnx_path, device, cpu_threads),
+                cpu_session,
+                log_prefix="BUBBLE_LAYOUT",
+            )
+        return np.asarray(output, dtype=np.float32)
     except Exception as e:
         print(f"[BUBBLE_LAYOUT] ONNX 추론 실패(features={features.shape}): {e}")
         traceback.print_exc()
@@ -774,6 +809,8 @@ def choose_layout(
     max_font_size: int | None = None,
     max_lines: int = 7,
     top_k: int = 5,
+    onnx_device: str = "auto",
+    cpu_threads: int = 0,
 ) -> tuple[LayoutCandidate, list[LayoutCandidate]]:
     shapes = DEFAULT_SHAPES
     if allowed_shapes is not None:
@@ -798,7 +835,15 @@ def choose_layout(
     if onnx_path is None:
         default = Path(_MODEL_PATH)
         onnx_path = default if default.is_file() else None
-    scores = _onnx_scores(feature_array, onnx_path) if onnx_path else None
+    scores = (
+        _onnx_scores(
+            feature_array,
+            onnx_path,
+            device=onnx_device,
+            cpu_threads=cpu_threads,
+        )
+        if onnx_path else None
+    )
     if scores is None:
         if onnx_path is None:
             print(f"[BUBBLE_LAYOUT] 기본 ONNX 없음({_MODEL_PATH}) → 초기 규칙 점수 사용")
@@ -840,6 +885,8 @@ def choose_scaled_layout(
     allowed_shapes: tuple[str, ...] | None = None,
     max_lines: int = 7,
     top_k: int = 5,
+    onnx_device: str = "auto",
+    cpu_threads: int = 0,
 ) -> tuple[LayoutCandidate, list[LayoutCandidate]]:
     """모델의 기본 선택을 기준으로 더 큰 글자에서 안전하게 재레이아웃한다.
 
@@ -858,6 +905,8 @@ def choose_scaled_layout(
         allowed_shapes=allowed_shapes,
         max_lines=max_lines,
         top_k=top_k,
+        onnx_device=onnx_device,
+        cpu_threads=cpu_threads,
     )
     scale = max(1.0, float(font_scale))
     if scale <= 1.0 + 1e-6 or not base.fits:
@@ -892,6 +941,8 @@ def choose_scaled_layout(
             max_font_size=max_font,
             max_lines=max_lines,
             top_k=top_k,
+            onnx_device=onnx_device,
+            cpu_threads=cpu_threads,
         )
         if selected.fits:
             actual_scale = selected.font_size / max(base.font_size, 1)

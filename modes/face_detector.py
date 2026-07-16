@@ -5,7 +5,7 @@ face_detector - ONNX Runtime 기반 YOLO 얼굴 검출 + 크롭
 얼굴을 검출해 정사각형으로 크롭한다.
 
 - 모델: YOLOv8m-face (akanametov/yolov8-face) 를 imgsz=960 으로 ONNX export 한 것
-  (models/yolov8m-face.onnx). 모델 파일은 git 에 커밋되어 함께 배포된다.
+  (models/yolov8m-face.onnx). run_en.bat가 Hugging Face에서 검사·다운로드한다.
 - 추론: onnxruntime. PyTorch 의존 없음 — 가볍고 범용.
 - 디바이스(Execution Provider) 런타임 자동 감지 + 드롭박스 수동 선택:
   · CUDAExecutionProvider  (NVIDIA — onnxruntime-gpu)
@@ -21,6 +21,18 @@ face_detector - ONNX Runtime 기반 YOLO 얼굴 검출 + 크롭
 import os
 import traceback
 from PIL import Image as _PILImage
+
+from modes.onnx_execution import (
+    auto_device_key,
+    cache_session,
+    create_session,
+    installed_providers,
+    list_cpu_thread_options,
+    list_devices as list_onnx_devices,
+    providers_for,
+    session_cache_key,
+    session_uses_gpu,
+)
 
 # 프로젝트 루트(modes/ 의 상위)
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -41,47 +53,24 @@ _MIN_VISIBLE_BOX_RATIO = 0.45
 _LOW_CONF_EDGE_THRESHOLD = 0.05
 _EDGE_MARGIN_PX = 1.0
 
-# device_key -> onnxruntime.InferenceSession 캐시
+# (model, resolved_device, cpu_threads) -> onnxruntime.InferenceSession 캐시
 _sessions = {}
-# device_key -> 최초 실패 여부(한 번 CPU 로 폴백 결정되면 그 키는 CPU 고정)
-_fallback_to_cpu = set()
 
 
 # ─── 디바이스(Provider) ─────────────────────────────────────────────
 def _installed_providers():
     """onnxruntime 패키지가 지원하는 provider 목록(set)."""
-    try:
-        import onnxruntime as ort
-        return set(ort.get_available_providers())
-    except Exception as e:
-        print(f"[FACE_DETECTOR] ⚠ onnxruntime provider 조회 실패: {e}")
-        return {"CPUExecutionProvider"}
+    return installed_providers()
 
 
 def _auto_device_key():
     """우선순위: CUDA > DirectML > CPU. 설치된 provider 기반."""
-    p = _installed_providers()
-    if "CUDAExecutionProvider" in p:
-        return "cuda0"
-    if "DmlExecutionProvider" in p:
-        return "dml0"
-    return "cpu"
+    return auto_device_key()
 
 
 def _providers_for(device_key):
     """device_key -> onnxruntime provider 리스트(옵션 포함)."""
-    if device_key is None or device_key == "auto":
-        device_key = _auto_device_key()
-    if device_key == "cpu":
-        return ["CPUExecutionProvider"]
-    if device_key.startswith("cuda"):
-        did = int(device_key[5:] or "0")
-        return [("CUDAExecutionProvider", {"device_id": did})]
-    if device_key.startswith("dml"):
-        did = int(device_key[3:] or "0")
-        return [("DmlExecutionProvider", {"device_id": did})]
-    print(f"[FACE_DETECTOR] 알 수 없는 device_key '{device_key}', CPU 사용")
-    return ["CPUExecutionProvider"]
+    return providers_for(device_key)
 
 
 def _label_for(device_key):
@@ -96,73 +85,45 @@ def list_devices():
     provider(CUDA/DirectML/CPU) 종류별로 1개씩만 노출.
     (다중 GPU 개별 선택은 onnxruntime이 device 개수를 안정적으로 노출하지 않아 제외.
      단일 GPU device_id=0 사용. GPU provider 패키지 미설치 시 해당 항목은 나오지 않음.)"""
-    out = [{"key": "auto", "label": "자동 (권장)", "provider": "auto"}]
-    out.append({"key": "cpu", "label": "CPU", "provider": "CPUExecutionProvider"})
-    avail = _installed_providers()
-    if "CUDAExecutionProvider" in avail:
-        out.append({"key": "cuda0", "label": "CUDA · GPU (NVIDIA)", "provider": "CUDAExecutionProvider"})
-    if "DmlExecutionProvider" in avail:
-        out.append({"key": "dml0", "label": "DirectML · GPU (Windows)", "provider": "DmlExecutionProvider"})
-    return out
+    return list_onnx_devices()
+
+
+def list_thread_options():
+    """대사/말풍선 CPU 스레드 드롭다운용 목록."""
+    return list_cpu_thread_options()
 
 
 # ─── 모델 파일 준비 ─────────────────────────────────────────────────
 def _ensure_model():
-    """.onnx 존재 확인. 모델은 git 에 커밋되어 배포되므로 별도 다운로드/export 없음."""
+    """.onnx 존재 확인. 누락 모델은 ensure_models.py로 다운로드한다."""
     if os.path.isfile(_MODEL_PATH) and os.path.getsize(_MODEL_PATH) > 1024 * 1024:
         return True
     print(f"[FACE_DETECTOR] ⚠ 모델 파일 없음: {_MODEL_PATH}\n"
-          f"  git 으로 models/yolov8m-face.onnx 가 포함되어 있는지 확인 필요.")
+          f"  uv run --no-sync python ensure_models.py 를 실행해 복구하세요.")
     return False
 
 
-def _get_session(device_key=None):
-    """device_key 에 대응하는 ONNX 세션(캐시). 생성 실패 시 CPU 폴백."""
-    import onnxruntime as ort
-
-    if device_key in _fallback_to_cpu:
-        device_key = "cpu"
-
-    if device_key in _sessions:
-        return _sessions[device_key]
-
+def _get_session(device_key=None, cpu_threads=0):
+    """장치·CPU 스레드 조합에 대응하는 ONNX 세션(캐시)."""
     if not _ensure_model():
         return None
-
-    target = device_key if device_key else "auto"
-    providers = _providers_for(target)
-    label = target
-    try:
-        sess = ort.InferenceSession(_MODEL_PATH, providers=providers)
-        active = sess.get_providers()
-        print(f"[FACE_DETECTOR] 세션 생성(device={label}) → 활성 provider: {active}")
-        _sessions[device_key] = sess
-        return sess
-    except Exception as e:
-        if target in ("auto", "cpu") or "cpu" in _sessions:
-            pass
-        print(f"[FACE_DETECTOR] ⚠ device={label} 세션 생성 실패({e}), CPU 로 폴백")
-        traceback.print_exc()
-        _fallback_to_cpu.add(device_key)
-        # CPU 세션 재사용 또는 생성
-        if "cpu" in _sessions:
-            return _sessions["cpu"]
-        try:
-            sess = ort.InferenceSession(_MODEL_PATH, providers=["CPUExecutionProvider"])
-            _sessions["cpu"] = sess
-            print("[FACE_DETECTOR] CPU 세션 생성 완료(폴백)")
-            return sess
-        except Exception as e2:
-            print(f"[FACE_DETECTOR] ⚠ CPU 세션 생성도 실패: {e2}")
-            traceback.print_exc()
-            return None
+    key = session_cache_key(_MODEL_PATH, device_key, cpu_threads)
+    if key in _sessions:
+        return _sessions[key]
+    session, _active_device = create_session(
+        _MODEL_PATH,
+        device_key=device_key,
+        cpu_threads=cpu_threads,
+        log_prefix="FACE_DETECTOR",
+    )
+    if session is not None:
+        cache_session(_sessions, key, session, log_prefix="FACE_DETECTOR")
+    return session
 
 
-def _preferred_session(device_key):
+def _preferred_session(device_key, cpu_threads=0):
     """crop_face 에서 사용할 세션. device_key None/auto 면 자동."""
-    if device_key in (None, "auto"):
-        return _get_session(_auto_device_key())
-    return _get_session(device_key)
+    return _get_session(device_key or "auto", cpu_threads=cpu_threads)
 
 
 # ─── 전처리/추론/디코드 ─────────────────────────────────────────────
@@ -404,7 +365,7 @@ def _detect_multi(sess, image_rgb, conf_thres, iou_thres=_IOU_THRES,
 # ─── 공용 API ───────────────────────────────────────────────────────
 def crop_face(image, top_mult: float = 1.8, bottom_mult: float = 1.0,
               target_size: int = 256, conf_thres: float = 0.3, device: str = None,
-              return_conf: bool = False):
+              return_conf: bool = False, cpu_threads: int = 0):
     """이미지에서 얼굴을 검출해 정사각형으로 크롭한 PIL.Image 반환.
 
     Args:
@@ -414,6 +375,7 @@ def crop_face(image, top_mult: float = 1.8, bottom_mult: float = 1.0,
         target_size: 출력 정사각형 한 변(px)
         conf_thres: 신뢰도 임계치
         device: 디바이스 키(None/auto/cpu/cuda0/dml0 등). None=자동.
+        cpu_threads: CPU intra-op 스레드 수. 0=ONNX Runtime 자동.
         return_conf: True 면 (image, conf) 튜플 반환. conf=None 일 수 있음(검출 실패/예외).
 
     비정사각형 크롭 영역은 비율을 유지해 짧은 변을 target_size로 확대한 뒤,
@@ -424,7 +386,7 @@ def crop_face(image, top_mult: float = 1.8, bottom_mult: float = 1.0,
         return_conf=True: (image_or_None, conf_or_None).
     """
     from PIL import Image as _PILImage
-    sess = _preferred_session(device)
+    sess = _preferred_session(device, cpu_threads=cpu_threads)
     if sess is None:
         print("[FACE_DETECTOR] 세션 사용 불가 — crop_face 스킵")
         return (None, None) if return_conf else None
@@ -433,7 +395,23 @@ def crop_face(image, top_mult: float = 1.8, bottom_mult: float = 1.0,
         if image.mode not in ("RGB", "L"):
             image = image.convert("RGB")
 
-        det = _detect(sess, image, conf_thres)
+        try:
+            det = _detect(sess, image, conf_thres)
+        except Exception as gpu_error:
+            if not session_uses_gpu(sess):
+                raise
+            print(f"[FACE_DETECTOR] GPU 단일 얼굴 추론 실패, CPU 폴백: {gpu_error}")
+            traceback.print_exc()
+            cpu_session = _get_session("cpu", cpu_threads=cpu_threads)
+            if cpu_session is None:
+                raise RuntimeError("얼굴 검출 CPU 폴백 세션 생성 실패") from gpu_error
+            det = _detect(cpu_session, image, conf_thres)
+            cache_session(
+                _sessions,
+                session_cache_key(_MODEL_PATH, device or "auto", cpu_threads),
+                cpu_session,
+                log_prefix="FACE_DETECTOR",
+            )
         box, bconf = det   # box=None 이면 임계치 미달; bconf는 전체 최고 신뢰도(튜닝 단서)
         if box is None:
             print("[FACE_DETECTOR] 얼굴 검출 0건 (conf>=%s, 최고=%.3f)" % (conf_thres, bconf if bconf is not None else -1))
@@ -481,7 +459,7 @@ def crop_face(image, top_mult: float = 1.8, bottom_mult: float = 1.0,
 
 
 def detect_faces(image, conf_thres: float = 0.3, device: str = None,
-                 iou_thres: float = _IOU_THRES, max_faces=None):
+                 iou_thres: float = _IOU_THRES, max_faces=None, cpu_threads: int = 0):
     """이미지에서 모든 얼굴을 검출해 xyxy 박스+신뢰도 리스트 반환 (말풍선 모드용).
 
     crop_face(단일) 와 달리 NMS 후 모든 박스를 반환한다.
@@ -490,22 +468,45 @@ def detect_faces(image, conf_thres: float = 0.3, device: str = None,
         image: PIL.Image (RGB/RGBA)
         conf_thres: 신뢰도 임계치
         device: 디바이스 키(None/auto/cpu/cuda0/dml0). None=자동.
+        cpu_threads: CPU intra-op 스레드 수. 0=ONNX Runtime 자동.
         iou_thres: NMS IoU 임계치
         max_faces: NMS 후 신뢰도 상위 얼굴 최대 개수. None이면 제한 없음.
 
     Returns:
         [{"box":(x1,y1,x2,y2), "conf":float}, ...]. 검출 실패 시 [].
     """
-    sess = _preferred_session(device)
+    sess = _preferred_session(device, cpu_threads=cpu_threads)
     if sess is None:
         print("[FACE_DETECTOR] 세션 사용 불가 — detect_faces 스킵")
         return []
     try:
         if image.mode not in ("RGB", "L"):
             image = image.convert("RGB")
-        boxes, confs = _detect_multi(
-            sess, image, conf_thres, iou_thres, max_faces=max_faces
-        )
+        try:
+            boxes, confs = _detect_multi(
+                sess, image, conf_thres, iou_thres, max_faces=max_faces
+            )
+        except Exception as gpu_error:
+            if not session_uses_gpu(sess):
+                raise
+            print(f"[FACE_DETECTOR] GPU 다중 얼굴 추론 실패, CPU 폴백: {gpu_error}")
+            traceback.print_exc()
+            cpu_session = _get_session("cpu", cpu_threads=cpu_threads)
+            if cpu_session is None:
+                raise RuntimeError("다중 얼굴 CPU 폴백 세션 생성 실패") from gpu_error
+            boxes, confs = _detect_multi(
+                cpu_session,
+                image,
+                conf_thres,
+                iou_thres,
+                max_faces=max_faces,
+            )
+            cache_session(
+                _sessions,
+                session_cache_key(_MODEL_PATH, device or "auto", cpu_threads),
+                cpu_session,
+                log_prefix="FACE_DETECTOR",
+            )
         out = [{"box": b, "conf": c} for b, c in zip(boxes, confs)]
         print(
             f"[FACE_DETECTOR] 다중 검출: {len(out)}건 "

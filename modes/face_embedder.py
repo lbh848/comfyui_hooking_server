@@ -5,8 +5,8 @@ face_embedder - ONNX Runtime 기반 CLIP ViT-L/14 시각 임베딩 (CPU)
 **동일한 로컬 ONNX 모델**로 임베딩해 코사인 유사도로 매칭한다.
 
 - 모델: CLIP ViT-B/16 시각 인코더만 잘라낸 ONNX (models/vitl14_visual.onnx).
-  export 는 export_vitl14_onnx.py 로 수행. 파일이 없으면 여기서 에러 로그 후 None 반환.
-- 추론: onnxruntime CPU 고정 (device 드롭박스 없음 — 임베딩은 가볍고 CPU 로 충분).
+  run_en.bat가 Hugging Face에서 검사·다운로드한다. 파일이 없으면 에러 로그 후 None 반환.
+- 추론: onnxruntime. 말풍선 설정의 자동/CUDA/DirectML/CPU 장치와 CPU 스레드 수를 사용.
   FP16/FP32 모델 모두 대응: 입력 노드 dtype 을 읽어 캐스팅.
 - 전처리: 캐릭터 FACE/감지 FACE 모두 정사각형 패딩 → 224×224 bicubic resize
   → OpenAI 정규화 → L2 정규화. 직사각형 입력의 중앙을 잘라 서로 다른 얼굴
@@ -23,6 +23,13 @@ import uuid
 import numpy as np
 from PIL import Image as _PILImage
 
+from modes.onnx_execution import (
+    cache_session,
+    create_session,
+    session_cache_key,
+    session_uses_gpu,
+)
+
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MODELS_DIR = os.path.join(BASE_DIR, "models")
 _MODEL_PATH = os.path.join(MODELS_DIR, "vitl14_visual.onnx")
@@ -36,55 +43,46 @@ _PAD_COLOR = (114, 114, 114)
 _MEAN = np.array([0.48145466, 0.4578275, 0.40821073], dtype=np.float32)
 _STD = np.array([0.26862954, 0.26130258, 0.27577711], dtype=np.float32)
 
-_session = None
-_session_failed = False
-_input_dtype = None  # "float16" | "float32" (모델 입력 노드 기준)
+_sessions = {}
+_session_failures = set()
 
 
 def _ensure_model():
     if os.path.isfile(_MODEL_PATH) and os.path.getsize(_MODEL_PATH) > 1024 * 1024:
         return True
     print(f"[FACE_EMBEDDER] ⚠ 모델 파일 없음: {_MODEL_PATH}\n"
-          f"  export_vitl14_onnx.py 로 models/vitl14_visual.onnx 생성 필요 "
-          f"(uv run --with open_clip_torch python export_vitl14_onnx.py).")
+          f"  uv run --no-sync python ensure_models.py 를 실행해 복구하세요.")
     return False
 
 
-def _get_session():
-    """CPU 고정 ONNX 세션(캐시). 생성 실패 시 None."""
-    global _session, _session_failed, _input_dtype
-    import onnxruntime as ort
-
-    if _session is not None:
-        return _session
-    if _session_failed:
-        return None
+def _get_session(device="auto", cpu_threads=0):
+    """장치·CPU 스레드 조합별 ONNX 세션(캐시). 생성 실패 시 None."""
     if not _ensure_model():
-        _session_failed = True
         return None
-    try:
-        options = ort.SessionOptions()
-        # FP16 CLIP 그래프의 Sqrt 상수 폴딩은 CPU 커널이 없어도 추론에는 문제가
-        # 없다. 해당 경고가 transformer block마다 반복되지 않도록 ERROR 이상만 표시.
-        options.log_severity_level = 3
-        sess = ort.InferenceSession(
-            _MODEL_PATH,
-            sess_options=options,
-            providers=["CPUExecutionProvider"],
-        )
-        inp = sess.get_inputs()[0]
-        _input_dtype = inp.type  # "tensor(float16)" or "tensor(float)"
-        print(f"[FACE_EMBEDDER] CPU 세션 생성 → 입력 dtype={_input_dtype}")
-        _session = sess
-        return sess
-    except Exception as e:
-        print(f"[FACE_EMBEDDER] ⚠ 세션 생성 실패: {e}")
-        traceback.print_exc()
-        _session_failed = True
+    key = session_cache_key(_MODEL_PATH, device, cpu_threads)
+    if key in _sessions:
+        return _sessions[key]
+    if key in _session_failures:
+        print(f"[FACE_EMBEDDER] 이전 세션 생성 실패 조합 재시도 생략: {key[1:]}")
         return None
+    # FP16 CLIP 그래프의 CPU Sqrt 상수 폴딩 경고가 block마다 반복되지 않도록
+    # ERROR 이상만 표시한다. 추론 결과에는 영향을 주지 않는다.
+    session, _active_device = create_session(
+        _MODEL_PATH,
+        device_key=device,
+        cpu_threads=cpu_threads,
+        log_prefix="FACE_EMBEDDER",
+        log_severity=3,
+    )
+    if session is None:
+        _session_failures.add(key)
+        return None
+    print(f"[FACE_EMBEDDER] 입력 dtype={session.get_inputs()[0].type}")
+    cache_session(_sessions, key, session, log_prefix="FACE_EMBEDDER")
+    return session
 
 
-def _preprocess(image):
+def _preprocess(image, input_dtype=None):
     """정사각형 PIL.Image → (1,3,224,224) 정규화 텐서."""
     if image.mode not in ("RGB", "L"):
         image = image.convert("RGB")
@@ -100,7 +98,7 @@ def _preprocess(image):
     arr = np.asarray(image, dtype=np.float32) / 255.0  # H,W,3
     arr = (arr - _MEAN) / _STD
     arr = arr.transpose(2, 0, 1)[None]  # 1,3,H,W
-    if _input_dtype == "tensor(float16)":
+    if input_dtype == "tensor(float16)":
         arr = arr.astype(np.float16)
     return arr
 
@@ -237,17 +235,36 @@ def _l2_normalize(v):
     return v / n
 
 
-def embed_image(image) -> np.ndarray:
+def embed_image(image, device="auto", cpu_threads=0) -> np.ndarray:
     """PIL.Image → 공통 얼굴 전처리 → L2 정규화 임베딩. 실패 시 None."""
-    sess = _get_session()
+    sess = _get_session(device=device, cpu_threads=cpu_threads)
     if sess is None:
         print("[FACE_EMBEDDER] 세션 사용 불가 — embed_image 스킵")
         return None
     try:
         prepared = prepare_face_for_embedding(image)
-        arr = _preprocess(prepared)
         inp = sess.get_inputs()[0]
-        out = sess.run(None, {inp.name: arr})[0]  # (1,768)
+        arr = _preprocess(prepared, input_dtype=inp.type)
+        feeds = {inp.name: arr}
+        try:
+            out = sess.run(None, feeds)[0]
+        except Exception as gpu_error:
+            if not session_uses_gpu(sess):
+                raise
+            print(f"[FACE_EMBEDDER] GPU 추론 실패, CPU 폴백: {gpu_error}")
+            traceback.print_exc()
+            cpu_session = _get_session(device="cpu", cpu_threads=cpu_threads)
+            if cpu_session is None:
+                raise RuntimeError("CLIP CPU 폴백 세션 생성 실패") from gpu_error
+            cpu_input = cpu_session.get_inputs()[0]
+            cpu_arr = _preprocess(prepared, input_dtype=cpu_input.type)
+            out = cpu_session.run(None, {cpu_input.name: cpu_arr})[0]
+            cache_session(
+                _sessions,
+                session_cache_key(_MODEL_PATH, device, cpu_threads),
+                cpu_session,
+                log_prefix="FACE_EMBEDDER",
+            )
         emb = np.asarray(out, dtype=np.float32).reshape(-1)
         return _l2_normalize(emb)
     except Exception as e:
@@ -256,7 +273,14 @@ def embed_image(image) -> np.ndarray:
         return None
 
 
-def embed_face_crop(image, box, top_mult=1.0, bottom_mult=1.0):
+def embed_face_crop(
+    image,
+    box,
+    top_mult=1.0,
+    bottom_mult=1.0,
+    device="auto",
+    cpu_threads=0,
+):
     """PIL.Image 의 box(x1,y1,x2,y2) 영역 크롭 → 임베딩. 실패 시 None."""
     try:
         crop = extract_face_crop(
@@ -264,7 +288,7 @@ def embed_face_crop(image, box, top_mult=1.0, bottom_mult=1.0):
         )
         if crop is None:
             return None
-        return embed_image(crop)
+        return embed_image(crop, device=device, cpu_threads=cpu_threads)
     except Exception as e:
         print(f"[FACE_EMBEDDER] ⚠ embed_face_crop 실패: {e}")
         traceback.print_exc()
@@ -289,7 +313,7 @@ def _char_face_image_path(bot_name, char_name):
     return None, False
 
 
-def build_embedding_from_path(image_path):
+def build_embedding_from_path(image_path, device="auto", cpu_threads=0):
     """이미지 파일을 임베딩하고 ``(float32 emb, sha256)``를 반환한다."""
     if not image_path or not os.path.isfile(image_path):
         print(f"[FACE_EMBEDDER] 임베딩 소스 이미지 없음: {image_path}")
@@ -297,7 +321,7 @@ def build_embedding_from_path(image_path):
     try:
         source_hash = _sha256_file(image_path)
         with _PILImage.open(image_path) as img:
-            emb = embed_image(img)
+            emb = embed_image(img, device=device, cpu_threads=cpu_threads)
         if emb is None:
             print(f"[FACE_EMBEDDER] 파일 임베딩 실패: {image_path}")
             return None
@@ -340,7 +364,7 @@ def write_embedding_cache(cache_path, emb, source_hash, backup_dir=None):
         return None
 
 
-def get_char_embedding(bot_name, char_name):
+def get_char_embedding(bot_name, char_name, device="auto", cpu_threads=0):
     """캐릭터 얼굴 임베딩 (lazy + SHA-256 캐시).
 
     bot/<봇>/<캐릭>/_face_image.l14.npz 에 {emb, sha256} 저장.
@@ -385,7 +409,15 @@ def get_char_embedding(bot_name, char_name):
 
     # 임베딩 수행
     try:
-        built = build_embedding_from_path(src_path)
+        if (device in (None, "auto")) and int(cpu_threads or 0) == 0:
+            # 기존 호출/테스트 더블과 호환되는 기본 경로.
+            built = build_embedding_from_path(src_path)
+        else:
+            built = build_embedding_from_path(
+                src_path,
+                device=device,
+                cpu_threads=cpu_threads,
+            )
         if built is None:
             print(f"[FACE_EMBEDDER] 임베딩 실패: {bot_name}/{char_name}")
             return None

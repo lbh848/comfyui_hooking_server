@@ -12,6 +12,13 @@ import traceback
 import numpy as np
 from PIL import Image
 
+from modes.onnx_execution import (
+    cache_session,
+    create_session,
+    session_cache_key,
+    session_uses_gpu,
+)
+
 
 _INPUT_SIZE = 1024
 _MODEL_PATH = os.path.normpath(
@@ -21,39 +28,27 @@ _FOREGROUND_THRESHOLD = 0.25
 _MIN_PADDING = 4
 _MAX_PADDING = 24
 
-_session = None
-_session_path = None
+_sessions = {}
 
 
-def get_session(model_path=None):
-    """INT8 anime-seg ONNX의 CPU 세션을 한 번만 생성해 재사용한다."""
-    global _session, _session_path
+def get_session(model_path=None, device="auto", cpu_threads=0):
+    """INT8 anime-seg ONNX 세션을 장치·스레드 조합별로 재사용한다."""
     path = os.path.abspath(model_path or _MODEL_PATH)
-    if _session is not None and _session_path == path:
-        return _session
     if not os.path.isfile(path):
         print(f"[BACKGROUND_SEGMENTER] ONNX 모델 없음: {path}")
         return None
-    try:
-        import onnxruntime as ort
-
-        options = ort.SessionOptions()
-        options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-        _session = ort.InferenceSession(
-            path,
-            sess_options=options,
-            providers=["CPUExecutionProvider"],
-        )
-        _session_path = path
-        print(
-            f"[BACKGROUND_SEGMENTER] ONNX 세션 로드: {path}, "
-            f"providers={_session.get_providers()}"
-        )
-        return _session
-    except Exception as e:
-        print(f"[BACKGROUND_SEGMENTER] ONNX 세션 로드 실패({path}): {e}")
-        traceback.print_exc()
-        return None
+    key = session_cache_key(path, device, cpu_threads)
+    if key in _sessions:
+        return _sessions[key]
+    session, _active_device = create_session(
+        path,
+        device_key=device,
+        cpu_threads=cpu_threads,
+        log_prefix="BACKGROUND_SEGMENTER",
+    )
+    if session is not None:
+        cache_session(_sessions, key, session, log_prefix="BACKGROUND_SEGMENTER")
+    return session
 
 
 def _letterbox_input(image_rgb, size=_INPUT_SIZE):
@@ -85,9 +80,9 @@ def _letterbox_input(image_rgb, size=_INPUT_SIZE):
     return tensor, (left, top, width, height), (width0, height0)
 
 
-def predict_foreground_mask(image_rgb, model_path=None):
+def predict_foreground_mask(image_rgb, model_path=None, device="auto", cpu_threads=0):
     """원본 이미지 크기의 float32 foreground 확률 마스크를 반환한다."""
-    session = get_session(model_path)
+    session = get_session(model_path, device=device, cpu_threads=cpu_threads)
     if session is None:
         print("[BACKGROUND_SEGMENTER] 세션이 없어 foreground 추론을 건너뜀")
         return None
@@ -98,7 +93,36 @@ def predict_foreground_mask(image_rgb, model_path=None):
             image_rgb
         )
         input_name = session.get_inputs()[0].name
-        output = np.asarray(session.run(None, {input_name: tensor})[0])
+        feeds = {input_name: tensor}
+        try:
+            raw_output = session.run(None, feeds)[0]
+        except Exception as gpu_error:
+            if not session_uses_gpu(session):
+                raise
+            print(
+                f"[BACKGROUND_SEGMENTER] GPU 추론 실패, CPU 폴백: {gpu_error}"
+            )
+            traceback.print_exc()
+            cpu_session = get_session(
+                model_path,
+                device="cpu",
+                cpu_threads=cpu_threads,
+            )
+            if cpu_session is None:
+                raise RuntimeError("foreground CPU 폴백 세션 생성 실패") from gpu_error
+            raw_output = cpu_session.run(None, feeds)[0]
+            requested_key = session_cache_key(
+                os.path.abspath(model_path or _MODEL_PATH),
+                device,
+                cpu_threads,
+            )
+            cache_session(
+                _sessions,
+                requested_key,
+                cpu_session,
+                log_prefix="BACKGROUND_SEGMENTER",
+            )
+        output = np.asarray(raw_output)
         if output.ndim != 4 or output.shape[0] < 1 or output.shape[1] < 1:
             print(
                 f"[BACKGROUND_SEGMENTER] 예상하지 못한 출력 shape: {output.shape}"
@@ -127,11 +151,18 @@ def predict_protected_foreground_mask(
     model_path=None,
     threshold=_FOREGROUND_THRESHOLD,
     padding=None,
+    device="auto",
+    cpu_threads=0,
 ):
     """말풍선이 닿지 않도록 팽창한 uint8 foreground 마스크를 반환한다."""
     import cv2
 
-    foreground = predict_foreground_mask(image_rgb, model_path=model_path)
+    foreground = predict_foreground_mask(
+        image_rgb,
+        model_path=model_path,
+        device=device,
+        cpu_threads=cpu_threads,
+    )
     if foreground is None:
         return None
     height, width = foreground.shape

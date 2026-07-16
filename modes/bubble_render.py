@@ -906,6 +906,20 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
 
     s = settings or {}
     try:
+        from modes.onnx_execution import normalize_cpu_threads, normalize_device_key
+
+        onnx_device = normalize_device_key(s.get("onnx_device", "auto"))
+        cpu_threads = normalize_cpu_threads(s.get("cpu_threads", 0))
+    except Exception as e:
+        print(f"[BUBBLE_RENDER] ONNX 실행 설정 정규화 실패, 자동 사용: {e}")
+        traceback.print_exc()
+        onnx_device = "auto"
+        cpu_threads = 0
+    print(
+        f"[BUBBLE_RENDER] ONNX 실행 설정: device={onnx_device}, "
+        f"cpu_threads={'auto' if cpu_threads == 0 else cpu_threads}"
+    )
+    try:
         base = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
     except Exception as e:
         print(f"[BUBBLE_RENDER] base 이미지 열기 실패: {e}")
@@ -935,7 +949,11 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
         f"per_character={candidates_per_character}, total_limit={candidate_limit}"
     )
     faces = detect_faces(
-        base.convert("RGB"), conf_thres=0.0, max_faces=candidate_limit
+        base.convert("RGB"),
+        conf_thres=0.0,
+        max_faces=candidate_limit,
+        device=onnx_device,
+        cpu_threads=cpu_threads,
     )
     # 여기서 YOLO confidence 기반으로 중복 박스를 미리 제거하지 않는다.
     # 캐릭터 임베딩 매칭으로 한 쌍을 확정한 뒤 bubble_match가 CROP_TOP/BOTTOM
@@ -957,6 +975,8 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
         ambiguity_margin=ambiguity_margin,
         face_crop_top=face_crop_top,
         face_crop_bottom=face_crop_bottom,
+        onnx_device=onnx_device,
+        cpu_threads=cpu_threads,
     )
     _apply_unanchored_fallbacks(matched, faces)
 
@@ -996,7 +1016,11 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
     page_rgb = base.convert("RGB")
     protected_foreground_mask = None
     if matched:
-        protected_foreground_mask = predict_protected_foreground_mask(page_rgb)
+        protected_foreground_mask = predict_protected_foreground_mask(
+            page_rgb,
+            device=onnx_device,
+            cpu_threads=cpu_threads,
+        )
         if protected_foreground_mask is None:
             print("[BUBBLE_RENDER] foreground 마스크 없음 → 기존 위치 배치 사용")
 
@@ -1032,6 +1056,8 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
                 allowed_shapes=allowed_shapes,
                 max_lines=7,
                 top_k=5,
+                onnx_device=onnx_device,
+                cpu_threads=cpu_threads,
             )
         except Exception as e:
             print(
@@ -1087,7 +1113,11 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
                 # 넉넉한 후보 풀에서 얼굴 비가림 조건을 먼저 적용한 뒤 거리 최우선으로
                 # 고른다. confidence는 거리가 같은 후보의 보조 정렬에만 사용된다.
                 candidate_cache[box_key] = predict_for_face_candidates(
-                    page_rgb, box, top_k=48
+                    page_rgb,
+                    box,
+                    top_k=48,
+                    device=onnx_device,
+                    cpu_threads=cpu_threads,
                 )
             if preview_debug_candidates:
                 evaluated = evaluate_candidates(
