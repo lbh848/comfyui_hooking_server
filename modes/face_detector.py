@@ -31,6 +31,14 @@ _IMG_SIZE = 960  # 학습 imgsz=960 (akanametov yolov8m-face). 640으로 돌리�
 _CONF_THRES_DEFAULT = 0.3
 _IOU_THRES = 0.45
 
+# 말풍선 모드는 conf=0으로 넓은 후보 풀을 만든 뒤 캐릭터 임베딩으로 최종 얼굴을
+# 고른다. 이때 캔버스 경계의 띠나 배경 무늬 같은 명백한 오검출은 임베딩 전에
+# 제거한다. 얼굴 검출 박스는 대체로 정사각형에 가까우므로 충분히 여유 있는 범위만
+# 적용해 옆얼굴/스타일화된 얼굴은 보존한다.
+_MIN_FACE_ASPECT_RATIO = 0.35
+_MAX_FACE_ASPECT_RATIO = 1.0 / _MIN_FACE_ASPECT_RATIO
+_MIN_VISIBLE_BOX_RATIO = 0.45
+
 # device_key -> onnxruntime.InferenceSession 캐시
 _sessions = {}
 # device_key -> 최초 실패 여부(한 번 CPU 로 폴백 결정되면 그 키는 CPU 고정)
@@ -287,14 +295,36 @@ def _detect_multi(sess, image_rgb, conf_thres, iou_thres=_IOU_THRES,
     # letterbox 역변환 후 원본 캔버스에 클램프한다. 패딩에만 걸친 예측과
     # 음수/캔버스 밖 박스는 임베더에 넘기기 전에 제거한다.
     image_w, image_h = image_rgb.size
-    ox1 = _np.clip((cx - w / 2.0 - pad_w) / gain, 0.0, float(image_w))
-    oy1 = _np.clip((cy - h / 2.0 - pad_h) / gain, 0.0, float(image_h))
-    ox2 = _np.clip((cx + w / 2.0 - pad_w) / gain, 0.0, float(image_w))
-    oy2 = _np.clip((cy + h / 2.0 - pad_h) / gain, 0.0, float(image_h))
-    valid = (ox2 - ox1 >= 8.0) & (oy2 - oy1 >= 8.0)
+    raw_x1 = (cx - w / 2.0 - pad_w) / gain
+    raw_y1 = (cy - h / 2.0 - pad_h) / gain
+    raw_x2 = (cx + w / 2.0 - pad_w) / gain
+    raw_y2 = (cy + h / 2.0 - pad_h) / gain
+    ox1 = _np.clip(raw_x1, 0.0, float(image_w))
+    oy1 = _np.clip(raw_y1, 0.0, float(image_h))
+    ox2 = _np.clip(raw_x2, 0.0, float(image_w))
+    oy2 = _np.clip(raw_y2, 0.0, float(image_h))
+
+    visible_w = _np.maximum(0.0, ox2 - ox1)
+    visible_h = _np.maximum(0.0, oy2 - oy1)
+    raw_w = _np.maximum(1e-9, raw_x2 - raw_x1)
+    raw_h = _np.maximum(1e-9, raw_y2 - raw_y1)
+    aspect = raw_w / raw_h
+    visible_ratio = (visible_w * visible_h) / _np.maximum(raw_w * raw_h, 1e-9)
+    valid_size = (visible_w >= 8.0) & (visible_h >= 8.0)
+    valid_aspect = (
+        (aspect >= _MIN_FACE_ASPECT_RATIO)
+        & (aspect <= _MAX_FACE_ASPECT_RATIO)
+    )
+    valid_visible = visible_ratio >= _MIN_VISIBLE_BOX_RATIO
+    valid = valid_size & valid_aspect & valid_visible
     invalid_count = int(valid.size - valid.sum())
     if invalid_count:
-        print(f"[FACE_DETECTOR] 캔버스 밖/너무 작은 후보 {invalid_count}건 제거")
+        print(
+            f"[FACE_DETECTOR] 비정상 얼굴 후보 {invalid_count}건 제거 "
+            f"(너무 작음={int((~valid_size).sum())}, "
+            f"가로세로비={int((~valid_aspect).sum())}, "
+            f"경계 잘림={int((~valid_visible).sum())})"
+        )
     if not valid.any():
         return [], []
 
@@ -424,6 +454,13 @@ def detect_faces(image, conf_thres: float = 0.3, device: str = None,
             f"[FACE_DETECTOR] 다중 검출: {len(out)}건 "
             f"(conf>={conf_thres}, max_faces={max_faces})"
         )
+        for index, face in enumerate(out):
+            x1, y1, x2, y2 = face["box"]
+            print(
+                f"[FACE_DETECTOR] 후보{index}: conf={face['conf']:.3f}, "
+                f"box=({x1:.1f}, {y1:.1f}, {x2:.1f}, {y2:.1f}), "
+                f"size={x2 - x1:.1f}x{y2 - y1:.1f}"
+            )
         return out
     except Exception as e:
         print(f"[FACE_DETECTOR] ⚠ detect_faces 실패: {e}")

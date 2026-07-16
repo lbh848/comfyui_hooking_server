@@ -5,8 +5,8 @@ compose_bubble() 하나만이 말풍선 렌더의 단일 소스다. 미리보기
 (CLAUDE.md: 미리보기와 실제 전송은 동일한 빌더를 쓴다).
 
 파이프라인:
-  base 이미지 → parse_speak() → conf=0 얼굴 검출(NAME 수 상위 N개)
-  → match_speakers_to_faces()
+  base 이미지 → parse_speak() → conf=0 얼굴 후보 확장 검출 + 비정상 박스 제거
+  → 캐릭터 임베딩 전역 최적 매칭
   → 레이아웃 ONNX가 글자 크기/줄바꿈/버블 종류·비율 결정
   → anime-seg ONNX가 foreground 보호 마스크 생성(페이지당 1회)
   → 위치 ONNX가 얼굴별 중심 후보 생성 → 배경에 놓이는 가장 가까운 후보 선택
@@ -153,6 +153,19 @@ def _face_candidate_limit(segments):
         if speaker and speaker not in names:
             names.append(speaker)
     return len(names)
+
+
+def _face_detection_candidate_limit(speaker_count):
+    """캐릭터 매칭 전에 확보할 YOLO 얼굴 후보 수를 반환한다.
+
+    발화자 수만큼만 자르면 실제 얼굴이 낮은 YOLO 순위에 있을 때 오검출이 그 자리를
+    차지한다. 발화자당 최대 네 후보를 보되 일반적인 장면에서는 16개로 제한한다.
+    발화자가 16명보다 많으면 최소한 발화자 수만큼은 유지한다.
+    """
+    count = max(0, int(speaker_count or 0))
+    if count == 0:
+        return 0
+    return max(count, min(16, count * 4))
 
 
 def _place_body(face_box, body_w, body_h, protected_boxes, canvas_w, canvas_h,
@@ -644,13 +657,15 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
         print("[BUBBLE_RENDER] 파싱된 세그먼트 없음 — 원본 반환")
         return image_bytes
 
-    max_faces = _face_candidate_limit(segments)
-    if max_faces <= 0:
+    speaker_count = _face_candidate_limit(segments)
+    if speaker_count <= 0:
         print("[BUBBLE_RENDER] SPEAK에서 고유 NAME을 찾지 못해 얼굴 검출/합성을 건너뜀")
         return image_bytes
-    # conf 필터는 사용하지 않는다. NMS 결과에서 신뢰도 상위 NAME 수만 남긴다.
+    # conf 필터 대신 넓은 후보 풀을 확보한다. 명백히 비정상인 박스는 검출기에서
+    # 제거하고, 최종 NAME 수만큼은 캐릭터 임베딩 전역 매칭으로 고른다.
+    candidate_limit = _face_detection_candidate_limit(speaker_count)
     faces = detect_faces(
-        base.convert("RGB"), conf_thres=0.0, max_faces=max_faces
+        base.convert("RGB"), conf_thres=0.0, max_faces=candidate_limit
     )
     for f in faces:
         f["image"] = base.convert("RGB")  # 매칭용 동일 이미지
@@ -678,9 +693,15 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
     preview_debug_candidates = bool(s.get("preview_debug_candidates", False))
     # 사용자가 정한 상한까지 키운 뒤 줄바꿈/몸통을 다시 계산한다.
     layout_font_scale = _resolve_layout_font_scale(s)
-    # 모든 얼굴을 보호한다. 모델 추론은 같은 얼굴에 대해 한 번만 수행한다.
+    # 넓힌 후보 풀의 오검출이 말풍선 배치를 막지 않도록 최종 매칭된 얼굴만 보호한다.
+    matched_face_boxes = []
+    for match in matched:
+        matched_box = match.get("face_box")
+        if matched_box and matched_box not in matched_face_boxes:
+            matched_face_boxes.append(matched_box)
     all_boxes = [
-        _protected_face_box(f["box"], (canvas_w, canvas_h)) for f in faces
+        _protected_face_box(box, (canvas_w, canvas_h))
+        for box in matched_face_boxes
     ]
     placed_boxes = []
     candidate_cache = {}

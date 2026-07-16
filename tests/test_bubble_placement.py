@@ -7,7 +7,7 @@ from PIL import Image, ImageDraw
 from modes.background_segmenter import background_ratio
 from modes.face_detector import _detect_multi
 from modes.bubble_layout import choose_layout, choose_scaled_layout
-from modes.bubble_match import match_speakers_to_faces
+from modes.bubble_match import _optimal_assignment, match_speakers_to_faces
 from modes.bubble_predictor import (
     _rect_iou,
     generate_grid_candidates,
@@ -19,6 +19,7 @@ from modes.bubble_render import (
     _draw_layout_bubble,
     _draw_preview_debug,
     _face_candidate_limit,
+    _face_detection_candidate_limit,
     _draw_speech,
     _place_body,
     _protected_face_box,
@@ -86,6 +87,13 @@ class BubblePlacementTest(unittest.TestCase):
             2,
         )
 
+    def test_face_detection_candidate_pool_is_wider_than_speaker_count(self):
+        self.assertEqual(_face_detection_candidate_limit(0), 0)
+        self.assertEqual(_face_detection_candidate_limit(1), 4)
+        self.assertEqual(_face_detection_candidate_limit(2), 8)
+        self.assertEqual(_face_detection_candidate_limit(5), 16)
+        self.assertEqual(_face_detection_candidate_limit(20), 20)
+
     def test_face_detector_discards_outside_boxes_before_limit(self):
         session = _FakeFaceSession([
             (100, 480, 100, 100, 0.99),  # 세로 이미지의 왼쪽 letterbox 패딩
@@ -104,6 +112,25 @@ class BubblePlacementTest(unittest.TestCase):
         self.assertTrue(all(value >= 0 for value in boxes[0]))
         self.assertLessEqual(boxes[0][2], 100)
         self.assertLessEqual(boxes[0][3], 200)
+
+    def test_face_detector_rejects_flat_and_heavily_clipped_candidates(self):
+        session = _FakeFaceSession([
+            (150, 150, 120, 120, 0.95),   # 유효 얼굴 1
+            (400, 930, 300, 24, 0.93),    # 이미지 하단의 납작한 오검출
+            (600, 1020, 140, 140, 0.92),  # 캔버스 밖으로 대부분 잘린 후보
+            (700, 700, 100, 100, 0.80),   # 유효 얼굴 2
+        ])
+        boxes, confidences = _detect_multi(
+            session,
+            Image.new("RGB", (960, 960), "white"),
+            conf_thres=0.0,
+            max_faces=2,
+        )
+        self.assertEqual(len(boxes), 2)
+        self.assertEqual(len(confidences), 2)
+        self.assertAlmostEqual(confidences[0], 0.95, places=5)
+        self.assertAlmostEqual(confidences[1], 0.80, places=5)
+        self.assertTrue(all(0.35 <= (b[2] - b[0]) / (b[3] - b[1]) <= 2.86 for b in boxes))
 
     def test_layout_onnx_selects_font_wrap_ratio_and_shape(self):
         selected, _ = choose_layout(
@@ -451,6 +478,28 @@ class BubblePlacementTest(unittest.TestCase):
         self.assertIsNone(rejected[0]["face_box"])
         self.assertEqual(accepted[0]["face_box"], faces[0]["box"])
         self.assertAlmostEqual(accepted[0]["sim"], 0.8, places=5)
+
+    def test_optimal_assignment_avoids_greedy_face_stealing(self):
+        assigned = _optimal_assignment(
+            [
+                [0.90, 0.80],
+                [0.85, 0.20],
+            ],
+            match_thres=0.55,
+        )
+        self.assertEqual(assigned[0], (1, 0.80))
+        self.assertEqual(assigned[1], (0, 0.85))
+
+    def test_optimal_assignment_maximizes_total_similarity_at_same_count(self):
+        assigned = _optimal_assignment(
+            [
+                [0.90, 0.80],
+                [0.85, 0.70],
+            ],
+            match_thres=0.55,
+        )
+        self.assertEqual(assigned[0], (1, 0.80))
+        self.assertEqual(assigned[1], (0, 0.85))
 
     def test_preview_debug_draws_mask_and_candidate_guides(self):
         base = Image.new("RGBA", (100, 100), (40, 40, 40, 255))
