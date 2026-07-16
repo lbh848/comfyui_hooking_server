@@ -24,7 +24,8 @@ def _cosine(a, b):
     return float(np.dot(a, b))
 
 
-def _optimal_assignment(similarities, match_thres):
+def _optimal_assignment(similarities, match_thres, ranking_scores=None,
+                        forbidden_pairs=None):
     """임계치를 통과한 NAME↔얼굴의 최대 cardinality·최대 유사도 배정.
 
     Hungarian 알고리즘으로 모든 NAME에 실제 얼굴 또는 전용 dummy 열을 배정한다.
@@ -42,14 +43,24 @@ def _optimal_assignment(similarities, match_thres):
     # 실제 얼굴 열 + 각 NAME이 안전하게 미배정될 수 있는 dummy 열.
     column_count = face_count + row_count
     cardinality_bonus = float(max(row_count, face_count) + 1)
+    ranking_scores = ranking_scores if ranking_scores is not None else similarities
+    forbidden_pairs = set(forbidden_pairs or ())
     costs = []
-    for row in similarities:
+    for row_index, row in enumerate(similarities):
         padded = list(row) + [None] * (face_count - len(row))
+        rank_row = list(ranking_scores[row_index]) + [None] * (
+            face_count - len(ranking_scores[row_index])
+        )
         benefits = [
-            cardinality_bonus + float(sim)
-            if sim is not None and sim >= match_thres
+            cardinality_bonus + float(rank_row[face_index])
+            if (
+                sim is not None
+                and rank_row[face_index] is not None
+                and sim >= match_thres
+                and (row_index, face_index) not in forbidden_pairs
+            )
             else -cardinality_bonus
-            for sim in padded
+            for face_index, sim in enumerate(padded)
         ]
         benefits.extend([0.0] * row_count)
         costs.append([-benefit for benefit in benefits])
@@ -110,7 +121,35 @@ def _optimal_assignment(similarities, match_thres):
     return assigned
 
 
-def match_speakers_to_faces(segments, faces, bot_name, match_thres=_MATCH_THRES_DEFAULT):
+def _assignment_score(assignment, scores):
+    """배정의 ranking score 합계."""
+    return sum(float(scores[row][face]) for row, (face, _sim) in assignment.items())
+
+
+def _assignment_ambiguity_gap(similarities, ranking_scores, match_thres, best):
+    """최적 배정과 같은 인원 수의 차선 배정 사이 평균 점수 차이를 반환한다."""
+    if not best:
+        return None
+    best_score = _assignment_score(best, ranking_scores)
+    alternative_scores = []
+    for row, (face, _sim) in best.items():
+        alternative = _optimal_assignment(
+            similarities,
+            match_thres,
+            ranking_scores=ranking_scores,
+            forbidden_pairs={(row, face)},
+        )
+        if len(alternative) == len(best):
+            alternative_scores.append(_assignment_score(alternative, ranking_scores))
+    if not alternative_scores:
+        return None
+    return max(0.0, (best_score - max(alternative_scores)) / max(1, len(best)))
+
+
+def match_speakers_to_faces(segments, faces, bot_name,
+                            match_thres=_MATCH_THRES_DEFAULT,
+                            appearance_weight=0.4,
+                            ambiguity_margin=0.01):
     """발화자(NAME) ↔ 얼굴 매칭.
 
     Args:
@@ -123,7 +162,14 @@ def match_speakers_to_faces(segments, faces, bot_name, match_thres=_MATCH_THRES_
         [{segment, face_box|None, char_name|None, sim|None}, ...] — segments 순서 보존.
     """
     try:
-        from modes.face_embedder import embed_face_crop, get_char_embedding
+        from modes.face_embedder import (
+            appearance_descriptor,
+            appearance_similarity,
+            embed_face_crop,
+            extract_face_crop,
+            get_char_appearance,
+            get_char_embedding,
+        )
     except Exception as e:
         print(f"[BUBBLE_MATCH] 의존 모듈 로드 실패: {e}")
         traceback.print_exc()
@@ -147,12 +193,14 @@ def match_speakers_to_faces(segments, faces, bot_name, match_thres=_MATCH_THRES_
 
     # ── 각 NAME 의 캐릭터 임베딩 ──
     name_embs = {}
+    name_appearances = {}
     for n in names:
         emb = get_char_embedding(bot_name, n)
         if emb is None:
             print(f"[BUBBLE_MATCH] 캐릭터 임베딩 없음: {bot_name}/{n} → 이 NAME 은 미배정")
         else:
             name_embs[n] = emb
+            name_appearances[n] = get_char_appearance(bot_name, n)
 
     if not name_embs:
         print("[BUBBLE_MATCH] 사용 가능 캐릭터 임베딩 0건 — 전부 미배정")
@@ -172,9 +220,12 @@ def match_speakers_to_faces(segments, faces, bot_name, match_thres=_MATCH_THRES_
         return [{"segment": s, "face_box": None, "char_name": None, "sim": None} for s in segments]
 
     face_embs = []
+    face_appearances = []
     for i, f in enumerate(faces):
         emb = embed_face_crop(image, f["box"])
         face_embs.append(emb)
+        crop = extract_face_crop(image, f["box"])
+        face_appearances.append(appearance_descriptor(crop) if crop is not None else None)
         if emb is None:
             print(f"[BUBBLE_MATCH] 얼굴 {i} 임베딩 실패: {f['box']}")
 
@@ -183,26 +234,63 @@ def match_speakers_to_faces(segments, faces, bot_name, match_thres=_MATCH_THRES_
     # 먼저 차지할 수 있다. 전체 조합에서 배정 인원 수와 유사도 합을 차례로 최대화한다.
     embedded_names = list(name_embs)
     similarities = []
+    ranking_scores = []
+    appearance_weight = max(0.0, float(appearance_weight or 0.0))
+    ambiguity_margin = max(0.0, float(ambiguity_margin or 0.0))
     for n in embedded_names:
         row = []
+        rank_row = []
         for fi, fe in enumerate(face_embs):
             sim = _cosine(name_embs[n], fe) if fe is not None else None
             row.append(sim)
+            app_sim = appearance_similarity(
+                name_appearances.get(n), face_appearances[fi]
+            )
+            if sim is None:
+                combined = None
+            elif app_sim is None or appearance_weight <= 0.0:
+                combined = sim
+            else:
+                combined = (sim + appearance_weight * app_sim) / (1.0 + appearance_weight)
+            rank_row.append(combined)
             face_conf = faces[fi].get("conf")
             conf_text = f"{float(face_conf):.3f}" if face_conf is not None else "없음"
             sim_text = f"{sim:.3f}" if sim is not None else "계산불가"
+            app_text = f"{app_sim:.3f}" if app_sim is not None else "계산불가"
+            combined_text = f"{combined:.3f}" if combined is not None else "계산불가"
             print(
                 f"[BUBBLE_MATCH] 유사도: {n} ↔ 얼굴{fi} "
-                f"(sim={sim_text}, yolo_conf={conf_text}, box={faces[fi]['box']})"
+                f"(clip={sim_text}, appearance={app_text}, combined={combined_text}, "
+                f"yolo_conf={conf_text}, box={faces[fi]['box']})"
             )
         similarities.append(row)
+        ranking_scores.append(rank_row)
 
-    optimal = _optimal_assignment(similarities, match_thres)
+    optimal = _optimal_assignment(
+        similarities,
+        match_thres,
+        ranking_scores=ranking_scores,
+    )
+    ambiguity_gap = _assignment_ambiguity_gap(
+        similarities, ranking_scores, match_thres, optimal
+    )
+    if ambiguity_gap is not None:
+        print(
+            f"[BUBBLE_MATCH] 전역 배정 모호성 gap={ambiguity_gap:.4f}, "
+            f"기준={ambiguity_margin:.4f}"
+        )
+        if ambiguity_gap < ambiguity_margin:
+            print("[BUBBLE_MATCH] 최적/차선 배정이 너무 가까워 안전을 위해 전부 미배정")
+            optimal = {}
     name_to_face = {}
     for name_index, (fi, sim) in optimal.items():
         n = embedded_names[name_index]
         name_to_face[n] = (fi, sim)
-        print(f"[BUBBLE_MATCH] 배정: {n} ↔ 얼굴{fi} (box={faces[fi]['box']}, sim={sim:.3f})")
+        combined = ranking_scores[name_index][fi]
+        print(
+            f"[BUBBLE_MATCH] 배정: {n} ↔ 얼굴{fi} "
+            f"(box={faces[fi]['box']}, clip={sim:.3f}, combined={combined:.3f})"
+        )
 
     for n in names:
         if n not in name_to_face and n in name_embs:

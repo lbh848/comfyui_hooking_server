@@ -6,7 +6,7 @@ from modes.illust_prompt_builder import (
     log_illust_build,
 )
 from modes.postprocess import parse_speak
-from modes.word_rules import apply_raw_prompt_rules
+from modes.word_rules import apply_prompt_rules, apply_raw_prompt_rules
 
 
 class RawPromptWordRulesTest(unittest.TestCase):
@@ -188,6 +188,80 @@ class RawPromptWordRulesTest(unittest.TestCase):
         )
 
         self.assertEqual([segment["speaker"] for segment in segments], ["Maria Kujou", "Maria Kujou"])
+
+    def test_weight_rule_forces_user_weight_on_plain_and_weighted_tags(self):
+        rules = [{
+            "type": "weight",
+            "source": "tokidoki bosotto roshia-go de dereru tonari no alya-san",
+            "weight": "1.25",
+            "remove_weight": False,
+            "enabled": True,
+        }]
+        source = (
+            "solo, tokidoki bosotto roshia-go de dereru tonari no alya-san, "
+            "(tokidoki bosotto roshia-go de dereru tonari no alya-san:1.1), outdoors"
+        )
+
+        positive, negative, applied = apply_prompt_rules(source, "", rules)
+
+        expected = "(tokidoki bosotto roshia-go de dereru tonari no alya-san:1.25)"
+        self.assertEqual(positive.count(expected), 2)
+        self.assertEqual(negative, "")
+        self.assertEqual(applied, 1)
+
+    def test_weight_rule_requires_exact_comma_delimited_tag(self):
+        rules = [{
+            "type": "weight",
+            "source": "alya-san",
+            "weight": "1.3",
+            "enabled": True,
+        }]
+
+        positive, _negative, applied = apply_prompt_rules(
+            "alya-san, tokidoki alya-san, alya-san uniform",
+            "",
+            rules,
+        )
+
+        self.assertEqual(positive, "(alya-san:1.3), tokidoki alya-san, alya-san uniform")
+        self.assertEqual(applied, 1)
+
+    def test_weight_removal_toggle_keeps_tag_and_removes_weight_syntax(self):
+        rules = [{
+            "type": "weight",
+            "source": "tokidoki bosotto roshia-go de dereru tonari no alya-san",
+            "weight": "1.4",
+            "remove_weight": True,
+            "enabled": True,
+        }]
+
+        positive, _negative, applied = apply_prompt_rules(
+            "(tokidoki bosotto roshia-go de dereru tonari no alya-san:1.1), solo",
+            "",
+            rules,
+        )
+
+        self.assertEqual(
+            positive,
+            "tokidoki bosotto roshia-go de dereru tonari no alya-san, solo",
+        )
+        self.assertEqual(applied, 1)
+
+    def test_weight_rules_do_not_change_name_or_speaker_sections(self):
+        rules = [{
+            "type": "weight",
+            "source": "Alya",
+            "weight": "1.2",
+            "enabled": True,
+        }]
+        raw = "[SPEAK]\nAlya: \"hello\"\n[NAME]\nAlya\n[CHAR]\nAlya, blue eyes"
+
+        transformed, applied = apply_raw_prompt_rules(raw, rules)
+
+        self.assertIn('[SPEAK]\nAlya: "hello"', transformed)
+        self.assertIn("[NAME]\nAlya", transformed)
+        self.assertIn("[CHAR]\n(Alya:1.2), blue eyes", transformed)
+        self.assertEqual(applied, 1)
 
 
 if __name__ == "__main__":

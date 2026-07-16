@@ -4,7 +4,7 @@ RAW 프롬프트의 섹션 구조를 유지하면서 다음 범위에 규칙을 
 
 - NAME: 치환 규칙만 적용
 - SPEAK: 구조화된 각 발화 줄의 ``NAME:`` 부분에만 치환 규칙 적용
-- SETUP/CHAR/SUPPLEMENT: 치환과 제거 규칙 모두 적용
+- SETUP/CHAR/SUPPLEMENT: 치환, 제거, 가중치 조정 규칙 적용
 """
 
 import re
@@ -13,6 +13,10 @@ import re
 _SECTION_MARKER_RE = re.compile(r"^\[([A-Za-z][A-Za-z0-9_]*)\]", re.IGNORECASE | re.MULTILINE)
 _PROMPT_RULE_SECTIONS = {"setup", "char", "supplement"}
 _REPLACE_ONLY_SECTIONS = {"name"}
+_WEIGHTED_TAG_RE = re.compile(
+    r"^\(\s*(?P<tag>.+?)\s*:\s*(?P<weight>[+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*\)$"
+)
+_WEIGHT_VALUE_RE = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$")
 
 
 def apply_remove_rule(text: str, rule: dict) -> tuple[str, bool]:
@@ -61,6 +65,57 @@ def apply_remove_rule(text: str, rule: dict) -> tuple[str, bool]:
     return ", ".join(segment for segment in output if segment), True
 
 
+def apply_weight_rule(text: str, rule: dict) -> tuple[str, bool]:
+    """일치하는 쉼표 단위 태그의 가중치를 강제하거나 제거한다."""
+    if not text:
+        return text, False
+
+    source = (rule.get("source") or "").strip()
+    if not source:
+        print("[WORD_RULE] 가중치 조정 규칙에 감지 단어(source)가 없어 스킵합니다.")
+        return text, False
+
+    remove_weight = bool(rule.get("remove_weight", False))
+    weight = str(rule.get("weight", "")).strip()
+    if not remove_weight and not _WEIGHT_VALUE_RE.fullmatch(weight):
+        print(
+            f"[WORD_RULE] 가중치 조정값이 올바른 숫자가 아니어서 스킵합니다"
+            f"(source={source!r}, weight={weight!r})."
+        )
+        return text, False
+
+    output = []
+    changed = 0
+    source_key = source.casefold()
+    for segment in text.split(","):
+        leading = segment[: len(segment) - len(segment.lstrip())]
+        trailing = segment[len(segment.rstrip()):]
+        core = segment.strip()
+        weighted_match = _WEIGHTED_TAG_RE.fullmatch(core)
+        detected_tag = weighted_match.group("tag").strip() if weighted_match else core
+
+        if detected_tag.casefold() != source_key:
+            output.append(segment)
+            continue
+
+        if remove_weight:
+            replacement = detected_tag if weighted_match else core
+        else:
+            replacement = f"({detected_tag}:{weight})"
+
+        replaced_segment = leading + replacement + trailing
+        output.append(replaced_segment)
+        if replaced_segment != segment:
+            changed += 1
+
+    if changed == 0:
+        return text, False
+
+    action = "가중치 제거" if remove_weight else f"가중치 {weight} 강제"
+    print(f"[WORD_RULE] 가중치 조정 적용: source={source!r}, action={action}, {changed}개 태그")
+    return ",".join(output), True
+
+
 def apply_replacement_rules(text: str, rules: list[dict]) -> tuple[str, int]:
     """활성화된 치환 규칙만 적용하고 실제 적용된 규칙 수를 반환한다."""
     if not text:
@@ -71,7 +126,7 @@ def apply_replacement_rules(text: str, rules: list[dict]) -> tuple[str, int]:
     for rule in rules:
         if not rule.get("enabled", True):
             continue
-        if (rule.get("type") or "replace").strip().lower() == "remove":
+        if (rule.get("type") or "replace").strip().lower() in {"remove", "weight"}:
             continue
 
         source = (rule.get("source") or "").strip()
@@ -96,6 +151,13 @@ def apply_prompt_rules(positive: str, negative: str, rules: list[dict]) -> tuple
         if rule_type == "remove":
             positive, did_positive = apply_remove_rule(positive, rule)
             negative, did_negative = apply_remove_rule(negative, rule)
+            if did_positive or did_negative:
+                applied_rule_indexes.add(index)
+            continue
+
+        if rule_type == "weight":
+            positive, did_positive = apply_weight_rule(positive, rule)
+            negative, did_negative = apply_weight_rule(negative, rule)
             if did_positive or did_negative:
                 applied_rule_indexes.add(index)
             continue

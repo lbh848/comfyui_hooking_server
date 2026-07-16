@@ -2145,6 +2145,19 @@ def _save_word_replacements(bot_name: str, data: dict):
     path = _word_replacements_path(bot_name)
     bot_dir = os.path.dirname(path)
     os.makedirs(bot_dir, exist_ok=True)
+    if os.path.isfile(path):
+        backup_dir = os.path.join(BASE_DIR, "요구사항")
+        try:
+            os.makedirs(backup_dir, exist_ok=True)
+            stamp = time.strftime("%Y%m%d_%H%M%S")
+            backup_name = f"{bot_name}_{WORD_REPLACEMENTS_FILE}.bak_{stamp}_{uuid.uuid4().hex[:8]}"
+            backup_path = os.path.join(backup_dir, backup_name)
+            shutil.copy2(path, backup_path)
+            print(f"[BOT_MODE] 단어 기반 규칙 기존 파일 백업: {backup_path}")
+        except Exception as exc:
+            print(f"[BOT_MODE] 단어 기반 규칙 백업 실패(path={path!r}): {exc}")
+            traceback.print_exc()
+            raise RuntimeError("기존 단어 기반 규칙 백업에 실패하여 저장을 중단했습니다.") from exc
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
 

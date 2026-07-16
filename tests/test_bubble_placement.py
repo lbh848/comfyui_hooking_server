@@ -6,8 +6,17 @@ from PIL import Image, ImageDraw
 
 from modes.background_segmenter import background_ratio
 from modes.face_detector import _detect_multi
+from modes.face_embedder import (
+    appearance_descriptor,
+    appearance_similarity,
+    standardize_face_image,
+)
 from modes.bubble_layout import choose_layout, choose_scaled_layout
-from modes.bubble_match import _optimal_assignment, match_speakers_to_faces
+from modes.bubble_match import (
+    _assignment_ambiguity_gap,
+    _optimal_assignment,
+    match_speakers_to_faces,
+)
 from modes.bubble_predictor import (
     _rect_iou,
     generate_grid_candidates,
@@ -20,6 +29,7 @@ from modes.bubble_render import (
     _draw_preview_debug,
     _face_candidate_limit,
     _face_detection_candidate_limit,
+    _filter_nested_face_candidates,
     _draw_speech,
     _place_body,
     _protected_face_box,
@@ -89,10 +99,50 @@ class BubblePlacementTest(unittest.TestCase):
 
     def test_face_detection_candidate_pool_is_wider_than_speaker_count(self):
         self.assertEqual(_face_detection_candidate_limit(0), 0)
-        self.assertEqual(_face_detection_candidate_limit(1), 4)
-        self.assertEqual(_face_detection_candidate_limit(2), 8)
-        self.assertEqual(_face_detection_candidate_limit(5), 16)
-        self.assertEqual(_face_detection_candidate_limit(20), 20)
+        self.assertEqual(_face_detection_candidate_limit(1), 8)
+        self.assertEqual(_face_detection_candidate_limit(2), 16)
+        self.assertEqual(_face_detection_candidate_limit(5), 40)
+        self.assertEqual(_face_detection_candidate_limit(20), 64)
+        self.assertEqual(_face_detection_candidate_limit(2, per_character=3), 6)
+
+    def test_nested_low_confidence_giant_face_candidate_is_removed(self):
+        real = {"box": (620, 120, 780, 300), "conf": 0.24}
+        giant = {"box": (520, 20, 965, 670), "conf": 0.00004}
+        side_face = {"box": (430, 200, 555, 357), "conf": 0.00004}
+        filtered = _filter_nested_face_candidates([real, giant, side_face])
+        self.assertEqual(filtered, [real, side_face])
+
+    def test_nested_same_face_box_surviving_nms_is_removed_by_coverage(self):
+        tight = {
+            "box": (316.47, 137.37, 461.18, 309.32),
+            "conf": 0.000107,
+        }
+        wide = {
+            "box": (259.00, 23.80, 511.83, 310.33),
+            "conf": 0.000069,
+        }
+        filtered = _filter_nested_face_candidates([tight, wide])
+        self.assertEqual(filtered, [tight])
+
+    def test_partially_overlapping_distinct_faces_are_kept(self):
+        left = {"box": (100, 100, 220, 240), "conf": 0.8}
+        right = {"box": (180, 100, 300, 240), "conf": 0.7}
+        filtered = _filter_nested_face_candidates([left, right])
+        self.assertEqual(filtered, [left, right])
+
+    def test_face_standardization_pads_without_cropping(self):
+        image = Image.new("RGB", (40, 20), "black")
+        ImageDraw.Draw(image).rectangle((30, 0, 39, 19), fill="red")
+        standardized = standardize_face_image(image)
+        self.assertEqual(standardized.size, (40, 40))
+        self.assertEqual(standardized.getpixel((35, 15)), (255, 0, 0))
+
+    def test_appearance_descriptor_distinguishes_brightness_distribution(self):
+        dark = appearance_descriptor(Image.new("RGB", (64, 64), (40, 30, 20)))
+        bright = appearance_descriptor(Image.new("RGB", (64, 64), (230, 230, 230)))
+        self.assertIsNotNone(dark)
+        self.assertIsNotNone(bright)
+        self.assertLess(appearance_similarity(dark, bright), 0.8)
 
     def test_face_detector_discards_outside_boxes_before_limit(self):
         session = _FakeFaceSession([
@@ -500,6 +550,31 @@ class BubblePlacementTest(unittest.TestCase):
         )
         self.assertEqual(assigned[0], (1, 0.80))
         self.assertEqual(assigned[1], (0, 0.85))
+
+    def test_optimal_assignment_can_rank_with_combined_appearance_score(self):
+        clip = [
+            [0.81, 0.80],
+            [0.79, 0.78],
+        ]
+        combined = [
+            [0.80, 0.84],
+            [0.86, 0.77],
+        ]
+        assigned = _optimal_assignment(
+            clip,
+            match_thres=0.55,
+            ranking_scores=combined,
+        )
+        self.assertEqual(assigned[0], (1, 0.80))
+        self.assertEqual(assigned[1], (0, 0.79))
+
+    def test_assignment_ambiguity_gap_detects_near_tie(self):
+        clip = [[0.80, 0.79], [0.79, 0.80]]
+        ranking = [[0.800, 0.799], [0.799, 0.800]]
+        best = _optimal_assignment(clip, 0.55, ranking_scores=ranking)
+        gap = _assignment_ambiguity_gap(clip, ranking, 0.55, best)
+        self.assertIsNotNone(gap)
+        self.assertAlmostEqual(gap, 0.001, places=6)
 
     def test_preview_debug_draws_mask_and_candidate_guides(self):
         base = Image.new("RGBA", (100, 100), (40, 40, 40, 255))

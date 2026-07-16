@@ -8,8 +8,9 @@ face_embedder - ONNX Runtime 기반 CLIP ViT-L/14 시각 임베딩 (CPU)
   export 는 export_vitl14_onnx.py 로 수행. 파일이 없으면 여기서 에러 로그 후 None 반환.
 - 추론: onnxruntime CPU 고정 (device 드롭박스 없음 — 임베딩은 가볍고 CPU 로 충분).
   FP16/FP32 모델 모두 대응: 입력 노드 dtype 을 읽어 캐스팅.
-- 전처리: 224×224 (shorter side bicubic resize → center crop) → OpenAI 정규화 → L2 정규화.
-  캐릭터/감지얼굴 양쪽 동일 전처리 → 매칭 호환성 보장.
+- 전처리: 캐릭터 FACE/감지 FACE 모두 정사각형 패딩 → 224×224 bicubic resize
+  → OpenAI 정규화 → L2 정규화. 직사각형 입력의 중앙을 잘라 서로 다른 얼굴
+  범위가 들어가던 문제를 방지한다.
 - 캐릭터 임베딩 캐시: bot/<봇>/<캐릭>/_face_image.l14.npz 에 emb + sha256(_face_image.webp) 저장.
   로드 시 webp SHA-256 불일치/무캐시면 재임베딩. (_face_image 가 바뀔 수 있어 해시로 무효화.)
 """
@@ -31,6 +32,8 @@ BOT_DIR = os.path.join(BASE_DIR, "bot")
 
 _IMG_SIZE = 224
 _EMBED_DIM = 512  # ViT-B/16 이미지 임베딩 차원
+_PREPROCESS_VERSION = "square-pad-v1"
+_PAD_COLOR = (114, 114, 114)
 # OpenAI CLIP 정규화 상수 (ViT-L/14 포함 모든 OpenAI CLIP 공통)
 _MEAN = np.array([0.48145466, 0.4578275, 0.40821073], dtype=np.float32)
 _STD = np.array([0.26862954, 0.26130258, 0.27577711], dtype=np.float32)
@@ -84,11 +87,12 @@ def _get_session():
 
 
 def _preprocess(image):
-    """PIL.Image → (1,3,224,224) 정규화 텐서. 모델 입력 dtype 에 맞춰 캐스팅."""
+    """정사각형 PIL.Image → (1,3,224,224) 정규화 텐서."""
     if image.mode not in ("RGB", "L"):
         image = image.convert("RGB")
     W, H = image.size
-    # shorter side → 224 (bicubic), then center crop 224×224 (open_clip 평가 transform 과 동일)
+    # 호출자는 얼굴을 정사각형으로 표준화한다. 안전을 위해 기존 open_clip 평가
+    # resize/center-crop 형태를 유지하되 정사각형 입력에서는 잘리는 픽셀이 없다.
     scale = _IMG_SIZE / float(min(W, H))
     nw, nh = max(_IMG_SIZE, int(round(W * scale))), max(_IMG_SIZE, int(round(H * scale)))
     image = image.resize((nw, nh), _PILImage.BICUBIC)
@@ -101,6 +105,87 @@ def _preprocess(image):
     if _input_dtype == "tensor(float16)":
         arr = arr.astype(np.float16)
     return arr
+
+
+def standardize_face_image(image):
+    """얼굴 이미지를 자르지 않고 정사각형으로 패딩한다.
+
+    캐릭터 기준 FACE와 장면 검출 FACE에 같은 규칙을 적용한다. 패딩은 중앙 정렬하고
+    CLIP letterbox와 동일한 중성 회색을 사용한다.
+    """
+    if image.mode != "RGB":
+        image = image.convert("RGB")
+    width, height = image.size
+    if width <= 0 or height <= 0:
+        raise ValueError(f"잘못된 얼굴 이미지 크기: {image.size}")
+    side = max(width, height)
+    if width == side and height == side:
+        return image.copy()
+    canvas = _PILImage.new("RGB", (side, side), _PAD_COLOR)
+    canvas.paste(image, ((side - width) // 2, (side - height) // 2))
+    return canvas
+
+
+def extract_face_crop(image, box):
+    """box를 캔버스에 클램프해 원본 비율 그대로 얼굴 이미지를 반환한다."""
+    x1, y1, x2, y2 = box
+    width, height = image.size
+    x1 = max(0, int(x1)); y1 = max(0, int(y1))
+    x2 = min(width, int(x2)); y2 = min(height, int(y2))
+    if x2 - x1 < 8 or y2 - y1 < 8:
+        print(f"[FACE_EMBEDDER] 크롭 영역 너무 작음 ({x2-x1}x{y2-y1}) — 스킵")
+        return None
+    return image.crop((x1, y1, x2, y2)).convert("RGB")
+
+
+def appearance_descriptor(image):
+    """구도 변화에 덜 민감한 얼굴 외형 명도·채도 분포 벡터를 반환한다.
+
+    키워드나 캐릭터 태그는 사용하지 않는다. 중앙 타원 영역의 HSV 채도/명도에
+    대해 평균·표준편차·분위수를 계산해 배경 모서리 영향을 줄인다.
+    """
+    try:
+        sample = image.convert("HSV").resize((128, 128), _PILImage.BICUBIC)
+        arr = np.asarray(sample, dtype=np.float32)
+        yy, xx = np.mgrid[:128, :128]
+        mask = (
+            ((xx - 63.5) / (64.0 * 0.8)) ** 2
+            + ((yy - 63.5) / (64.0 * 0.9)) ** 2
+        ) <= 1.0
+        pixels = arr[mask]
+        if pixels.size == 0:
+            print("[FACE_EMBEDDER] 외형 descriptor 픽셀 없음")
+            return None
+        values = []
+        for channel in (1, 2):  # saturation, value
+            data = pixels[:, channel]
+            values.extend([
+                float(data.mean()),
+                float(data.std()),
+                *[float(v) for v in np.quantile(data, (0.1, 0.25, 0.5, 0.75, 0.9))],
+            ])
+        return np.asarray(values, dtype=np.float32) / 255.0
+    except Exception as e:
+        print(f"[FACE_EMBEDDER] 외형 descriptor 생성 실패: {e}")
+        traceback.print_exc()
+        return None
+
+
+def appearance_similarity(a, b):
+    """외형 descriptor 간 0~1 유사도. 실패 시 None."""
+    if a is None or b is None:
+        return None
+    try:
+        av = np.asarray(a, dtype=np.float32).reshape(-1)
+        bv = np.asarray(b, dtype=np.float32).reshape(-1)
+        if av.shape != bv.shape or av.size == 0:
+            print(f"[FACE_EMBEDDER] 외형 descriptor shape 불일치: {av.shape} vs {bv.shape}")
+            return None
+        return max(0.0, min(1.0, 1.0 - float(np.mean(np.abs(av - bv)))))
+    except Exception as e:
+        print(f"[FACE_EMBEDDER] 외형 유사도 계산 실패: {e}")
+        traceback.print_exc()
+        return None
 
 
 def _l2_normalize(v):
@@ -131,15 +216,10 @@ def embed_image(image) -> np.ndarray:
 def embed_face_crop(image, box):
     """PIL.Image 의 box(x1,y1,x2,y2) 영역 크롭 → 임베딩. 실패 시 None."""
     try:
-        x1, y1, x2, y2 = box
-        W, H = image.size
-        x1 = max(0, int(x1)); y1 = max(0, int(y1))
-        x2 = min(W, int(x2)); y2 = min(H, int(y2))
-        if x2 - x1 < 8 or y2 - y1 < 8:
-            print(f"[FACE_EMBEDDER] 크롭 영역 너무 작음 ({x2-x1}x{y2-y1}) — 스킵")
+        crop = extract_face_crop(image, box)
+        if crop is None:
             return None
-        crop = image.crop((x1, y1, x2, y2))
-        return embed_image(crop)
+        return embed_image(standardize_face_image(crop))
     except Exception as e:
         print(f"[FACE_EMBEDDER] ⚠ embed_face_crop 실패: {e}")
         traceback.print_exc()
@@ -172,7 +252,7 @@ def build_embedding_from_path(image_path):
     try:
         source_hash = _sha256_file(image_path)
         with _PILImage.open(image_path) as img:
-            emb = embed_image(img)
+            emb = embed_image(standardize_face_image(img))
         if emb is None:
             print(f"[FACE_EMBEDDER] 파일 임베딩 실패: {image_path}")
             return None
@@ -215,7 +295,12 @@ def write_embedding_cache(cache_path, emb, source_hash, backup_dir=None):
         os.makedirs(os.path.dirname(cache_path), exist_ok=True)
         emb32 = np.asarray(emb, dtype=np.float32).reshape(-1)
         with open(tmp_path, "wb") as f:
-            np.savez(f, emb=emb32, sha256=np.array(str(source_hash)))
+            np.savez(
+                f,
+                emb=emb32,
+                sha256=np.array(str(source_hash)),
+                preprocess_version=np.array(_PREPROCESS_VERSION),
+            )
         os.replace(tmp_path, cache_path)
         print(f"[FACE_EMBEDDER] 임베딩 캐싱: {cache_path} (sha256={str(source_hash)[:12]}…)")
         return _l2_normalize(emb32)
@@ -254,12 +339,23 @@ def get_char_embedding(bot_name, char_name):
     # 캐시 히트 검사
     if os.path.isfile(cache_path):
         try:
-            data = np.load(cache_path, allow_pickle=True)
-            cached_hash = str(data["sha256"].item() if data["sha256"].shape == () else data["sha256"][0])
-            if cached_hash == cur_hash:
-                emb = np.asarray(data["emb"], dtype=np.float32).reshape(-1)
-                return _l2_normalize(emb)
-            print(f"[FACE_EMBEDDER] 캐시 해시 불일치 → 재임베딩: {bot_name}/{char_name}")
+            with np.load(cache_path, allow_pickle=True) as data:
+                cached_hash = str(
+                    data["sha256"].item()
+                    if data["sha256"].shape == () else data["sha256"][0]
+                )
+                cached_version = (
+                    str(data["preprocess_version"].item())
+                    if "preprocess_version" in data.files else ""
+                )
+                if cached_hash == cur_hash and cached_version == _PREPROCESS_VERSION:
+                    emb = np.asarray(data["emb"], dtype=np.float32).reshape(-1)
+                    return _l2_normalize(emb)
+            print(
+                f"[FACE_EMBEDDER] 캐시 소스/전처리 버전 불일치 → 재임베딩: "
+                f"{bot_name}/{char_name} "
+                f"(cache={cached_version or '구버전'}, current={_PREPROCESS_VERSION})"
+            )
         except Exception as e:
             print(f"[FACE_EMBEDDER] 캐시 로드 실패(무시하고 재임베딩): {e}")
 
@@ -277,5 +373,20 @@ def get_char_embedding(bot_name, char_name):
         return saved
     except Exception as e:
         print(f"[FACE_EMBEDDER] ⚠ get_char_embedding 실패({bot_name}/{char_name}): {e}")
+        traceback.print_exc()
+        return None
+
+
+def get_char_appearance(bot_name, char_name):
+    """사용자가 확정한 캐릭터 FACE의 외형 descriptor를 반환한다."""
+    src_path, _ = _char_face_image_path(bot_name, char_name)
+    if not src_path:
+        print(f"[FACE_EMBEDDER] 외형 기준 FACE 이미지 없음: {bot_name}/{char_name}")
+        return None
+    try:
+        with _PILImage.open(src_path) as image:
+            return appearance_descriptor(image)
+    except Exception as e:
+        print(f"[FACE_EMBEDDER] 외형 기준 로드 실패({bot_name}/{char_name}): {e}")
         traceback.print_exc()
         return None

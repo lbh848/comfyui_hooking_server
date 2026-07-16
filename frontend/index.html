@@ -7568,7 +7568,12 @@
                                     <div><div style="font-size:0.7rem; color:var(--text2,#999);">생각 불투명도(0~1)</div><input id="pp-bubble-thought-opacity" type="number" class="input" style="width:70px;" step="0.1" min="0" max="1" oninput="renderPostprocessPreview()"></div>
                                     <div><div style="font-size:0.7rem; color:var(--text2,#999);">매칭 임계치</div><input id="pp-bubble-match-thres" type="number" class="input" style="width:70px;" min="0" max="1" step="0.05" oninput="renderPostprocessPreview()" title="NAME 캐릭터 임베딩과 감지 얼굴의 코사인 유사도가 이 값 이상일 때만 배정합니다."></div>
                                 </div>
-                                <div class="pp-hint">대사는 레이아웃 모델이 타원형/코믹 각진형을 자동 선택합니다. 얼굴 검출은 conf 0에서 고유 NAME 수만큼 신뢰도 상위 박스를 사용합니다.</div>
+                                <div class="pp-field-inline" style="margin-top:6px;">
+                                    <div><div style="font-size:0.7rem; color:var(--text2,#999);">캐릭터당 얼굴 후보</div><input id="pp-bubble-face-candidates-per-character" type="number" class="input" style="width:80px;" min="1" max="32" step="1" oninput="renderPostprocessPreview()" title="고유 NAME 수×이 값만큼 YOLO 후보를 확보합니다. 전체 후보는 최대 64개입니다."></div>
+                                    <div><div style="font-size:0.7rem; color:var(--text2,#999);">외형 보정 가중치</div><input id="pp-bubble-appearance-weight" type="number" class="input" style="width:80px;" min="0" max="2" step="0.05" oninput="renderPostprocessPreview()" title="CLIP 얼굴 유사도에 이미지 명도·채도 분포를 결합하는 가중치입니다. 0이면 외형 보정을 끕니다."></div>
+                                    <div><div style="font-size:0.7rem; color:var(--text2,#999);">배정 모호성 기준</div><input id="pp-bubble-ambiguity-margin" type="number" class="input" style="width:80px;" min="0" max="0.2" step="0.005" oninput="renderPostprocessPreview()" title="최적 배정과 차선 배정의 평균 점수 차이가 이 값보다 작으면 잘못된 꼬리를 막기 위해 미배정합니다. 0이면 검사를 끕니다."></div>
+                                </div>
+                                <div class="pp-hint">대사는 레이아웃 모델이 타원형/코믹 각진형을 자동 선택합니다. 얼굴 입력은 정사각형으로 표준화하며, 확장 후보에서 거대 중첩 오검출을 제거한 뒤 CLIP+외형 점수로 전역 1:1 배정합니다.</div>
                             </div>
 
                             <div class="pp-card">
@@ -25524,6 +25529,9 @@
                     tail_threshold: 1.0,
                     max_width_ratio: 0.45,
                     match_thres: 0.55,
+                    face_candidates_per_character: 8,
+                    appearance_weight: 0.4,
+                    assignment_ambiguity_margin: 0.01,
                 },
                 mode: 'vn',  // 활성 후처리 모드: 'vn' | 'bubble'
             };
@@ -26299,6 +26307,9 @@
             set('pp-bubble-speech-opacity', b.speech_opacity ?? b.opacity ?? 1.0);
             set('pp-bubble-thought-opacity', b.thought_opacity ?? b.opacity ?? 1.0);
             set('pp-bubble-match-thres', b.match_thres ?? 0.55);
+            set('pp-bubble-face-candidates-per-character', b.face_candidates_per_character ?? 8);
+            set('pp-bubble-appearance-weight', b.appearance_weight ?? 0.4);
+            set('pp-bubble-ambiguity-margin', b.assignment_ambiguity_margin ?? 0.01);
             const debugMask = document.getElementById('pp-bubble-debug-mask');
             const debugCandidates = document.getElementById('pp-bubble-debug-candidates');
             if (debugMask) debugMask.checked = false;
@@ -26330,6 +26341,9 @@
             b.thought_opacity = _ppNum('pp-bubble-thought-opacity', 1.0, 0, 1);
             b.opacity = b.speech_opacity;  // 구형 키 동기화(하위호환)
             b.match_thres = _ppNum('pp-bubble-match-thres', 0.55, 0, 1);
+            b.face_candidates_per_character = Math.round(_ppNum('pp-bubble-face-candidates-per-character', 8, 1, 32));
+            b.appearance_weight = _ppNum('pp-bubble-appearance-weight', 0.4, 0, 2);
+            b.assignment_ambiguity_margin = _ppNum('pp-bubble-ambiguity-margin', 0.01, 0, 0.2);
             return b;
         }
 
@@ -26359,6 +26373,9 @@
                     padding: b.padding, radius: b.radius,
                     thought_shape: b.thought_shape, tail_threshold: b.tail_threshold,
                     max_width_ratio: b.max_width_ratio, match_thres: b.match_thres,
+                    face_candidates_per_character: b.face_candidates_per_character,
+                    appearance_weight: b.appearance_weight,
+                    assignment_ambiguity_margin: b.assignment_ambiguity_margin,
                     preview_debug_mask: !!document.getElementById('pp-bubble-debug-mask')?.checked,
                     preview_debug_candidates: !!document.getElementById('pp-bubble-debug-candidates')?.checked,
                 };
@@ -35886,7 +35903,7 @@
                 rules = data.rules || [];
             } catch (e) { console.error('[WORD_RULE] 로드 실패:', e); }
             // 기존 규칙(type 없음)은 치환 모드로 간주
-            _wrRules = rules.map(r => ({ type: 'replace', remove_trigger: false, ...r }));
+            _wrRules = rules.map(r => ({ type: 'replace', remove_trigger: false, remove_weight: false, ...r }));
 
             const modal = document.createElement('div');
             modal.id = 'word-replacements-modal';
@@ -35898,7 +35915,7 @@
                         style="background:none; border:none; color:var(--text2); font-size:1.2rem; cursor:pointer;">✕</button>
                 </div>
                 <div style="font-size:0.72rem; color:var(--text2); margin-bottom:10px; padding:6px 8px; background:rgba(106,27,154,0.08); border-radius:4px; line-height:1.5;">
-                    삽화 모드 프롬프트의 태그를 규칙에 따라 다룹니다. <strong>치환 모드</strong>는 지정한 단어를 다른 단어로 바꿉니다(대소문자 무관 부분 매칭). <strong>제거 모드</strong>는 trigger 단어가 감지되면 패턴(* = 임의 문자열)에 매칭되는 태그를 제거합니다. 예) trigger "closed eyes" + pattern "* eyes" → red eyes 등 충돌 태그 제거.
+                    삽화 모드 프롬프트의 태그를 규칙에 따라 다룹니다. <strong>치환 모드</strong>는 지정한 단어를 다른 단어로 바꿉니다(대소문자 무관 부분 매칭). <strong>제거 모드</strong>는 trigger 단어가 감지되면 패턴(* = 임의 문자열)에 매칭되는 태그를 제거합니다. <strong>가중치 조정</strong>은 쉼표 단위로 정확히 일치하는 태그에 지정 가중치를 강제하며, 제거 토글을 켜면 가중치만 없앱니다.
                 </div>
                 <button onclick="addWordReplacementRule()" style="width:100%; background:#6A1B9A; color:#fff; border:none; padding:6px 10px; border-radius:4px; cursor:pointer; font-size:0.8rem; font-weight:600; margin-bottom:10px;">+ 규칙 추가</button>
                 <div id="wr-rules-list" style="overflow-y:auto; flex:1; min-height:60px;"></div>
@@ -35937,6 +35954,10 @@
                 if (rule.trigger === undefined) rule.trigger = '';
                 if (rule.pattern === undefined) rule.pattern = '';
                 if (rule.remove_trigger === undefined) rule.remove_trigger = false;
+            } else if (mode === 'weight') {
+                if (rule.source === undefined) rule.source = '';
+                if (rule.weight === undefined) rule.weight = '1.1';
+                if (rule.remove_weight === undefined) rule.remove_weight = false;
             }
             renderWordReplacementList();
         }
@@ -35950,7 +35971,9 @@
             }
             const inputStyle = 'flex:1; padding:4px 6px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.8rem; min-width:0;';
             container.innerHTML = _wrRules.map((rule) => {
-                const isRemove = (rule.type || 'replace') === 'remove';
+                const ruleType = rule.type || 'replace';
+                const isRemove = ruleType === 'remove';
+                const isWeight = ruleType === 'weight';
                 const body = isRemove ? `
                     <div style="display:flex; align-items:center; gap:6px; flex:1;">
                         <input type="text" value="${escHtml(rule.trigger || '')}" data-wr-trigger="${rule.id}" placeholder="감지할 단어 (trigger, 비우면 항상)"
@@ -35963,6 +35986,18 @@
                         <input type="checkbox" data-wr-removetrigger="${rule.id}" ${rule.remove_trigger ? 'checked' : ''}>
                         trigger도 제거
                     </label>
+                ` : isWeight ? `
+                    <div style="display:flex; align-items:center; gap:6px; flex:1;">
+                        <input type="text" value="${escHtml(rule.source || '')}" data-wr-source="${rule.id}" placeholder="감지할 태그"
+                            style="${inputStyle}">
+                        <span style="color:var(--text2); font-size:0.7rem; white-space:nowrap;">→ 가중치</span>
+                        <input type="number" value="${escHtml(String(rule.weight ?? '1.1'))}" data-wr-weight="${rule.id}" placeholder="1.1" step="0.05" ${rule.remove_weight ? 'disabled' : ''}
+                            style="${inputStyle} max-width:82px;">
+                    </div>
+                    <label style="display:flex; align-items:center; gap:4px; font-size:0.7rem; color:var(--text2); white-space:nowrap; cursor:pointer;">
+                        <input type="checkbox" data-wr-removeweight="${rule.id}" ${rule.remove_weight ? 'checked' : ''}>
+                        가중치 제거
+                    </label>
                 ` : `
                     <input type="text" value="${escHtml(rule.source || '')}" data-wr-source="${rule.id}" placeholder="찾을 단어"
                         style="${inputStyle}">
@@ -35974,8 +36009,9 @@
                 <div style="display:flex; flex-direction:column; gap:6px; padding:8px 0; border-bottom:1px solid var(--border); ${rule.enabled ? '' : 'opacity:0.45;'}">
                     <div style="display:flex; align-items:center; gap:6px;">
                         <select data-wr-type="${rule.id}" style="padding:4px 6px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.78rem;">
-                            <option value="replace" ${isRemove ? '' : 'selected'}>치환</option>
+                            <option value="replace" ${!isRemove && !isWeight ? 'selected' : ''}>치환</option>
                             <option value="remove" ${isRemove ? 'selected' : ''}>제거</option>
+                            <option value="weight" ${isWeight ? 'selected' : ''}>가중치 조정</option>
                         </select>
                         ${body}
                         <button onclick="toggleWordReplacementRule('${rule.id}')" title="${rule.enabled ? '비활성화' : '활성화'}"
@@ -36007,10 +36043,19 @@
             bind('target', 'target');
             bind('trigger', 'trigger');
             bind('pattern', 'pattern');
+            bind('weight', 'weight');
             container.querySelectorAll('[data-wr-removetrigger]').forEach(el => {
                 el.addEventListener('change', () => {
                     const rule = _wrRules.find(r => r.id === el.dataset.wrRemovetrigger);
                     if (rule) rule.remove_trigger = el.checked;
+                });
+            });
+            container.querySelectorAll('[data-wr-removeweight]').forEach(el => {
+                el.addEventListener('change', () => {
+                    const rule = _wrRules.find(r => r.id === el.dataset.wrRemoveweight);
+                    if (rule) rule.remove_weight = el.checked;
+                    const weightInput = container.querySelector(`[data-wr-weight="${el.dataset.wrRemoveweight}"]`);
+                    if (weightInput) weightInput.disabled = el.checked;
                 });
             });
         }
@@ -36033,24 +36078,39 @@
                 const rule = _wrRules.find(r => r.id === el.dataset.wrPattern);
                 if (rule) rule.pattern = el.value;
             });
+            document.querySelectorAll('[data-wr-weight]').forEach(el => {
+                const rule = _wrRules.find(r => r.id === el.dataset.wrWeight);
+                if (rule) rule.weight = el.value;
+            });
             document.querySelectorAll('[data-wr-removetrigger]').forEach(el => {
                 const rule = _wrRules.find(r => r.id === el.dataset.wrRemovetrigger);
                 if (rule) rule.remove_trigger = el.checked;
+            });
+            document.querySelectorAll('[data-wr-removeweight]').forEach(el => {
+                const rule = _wrRules.find(r => r.id === el.dataset.wrRemoveweight);
+                if (rule) rule.remove_weight = el.checked;
             });
         }
 
         async function saveWordReplacements() {
             syncWordReplacementFromDom();
             try {
-                await fetch('/api/bot_mode/word_replacements', {
+                const resp = await fetch('/api/bot_mode/word_replacements', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ bot: botCurrentBot, rules: _wrRules })
                 });
+                const data = await resp.json();
+                if (!resp.ok || data.error) {
+                    throw new Error(data.error || `HTTP ${resp.status}`);
+                }
                 showToast('단어 기반 규칙 저장 완료', 'success');
                 updateWordReplacementsCount();
                 document.getElementById('word-replacements-modal').remove();
-            } catch (e) { showToast('저장 실패: ' + e.message, 'error'); }
+            } catch (e) {
+                console.error('[WORD_RULE] 저장 실패:', e);
+                showToast('저장 실패: ' + e.message, 'error');
+            }
         }
 
         async function updateWordReplacementsCount() {

@@ -155,17 +155,68 @@ def _face_candidate_limit(segments):
     return len(names)
 
 
-def _face_detection_candidate_limit(speaker_count):
+def _face_detection_candidate_limit(speaker_count, per_character=8):
     """캐릭터 매칭 전에 확보할 YOLO 얼굴 후보 수를 반환한다.
 
     발화자 수만큼만 자르면 실제 얼굴이 낮은 YOLO 순위에 있을 때 오검출이 그 자리를
-    차지한다. 발화자당 최대 네 후보를 보되 일반적인 장면에서는 16개로 제한한다.
-    발화자가 16명보다 많으면 최소한 발화자 수만큼은 유지한다.
+    차지한다. 사용자 설정만큼 캐릭터별 후보 여유를 두되 전체 64개로 제한한다.
+    발화자가 64명보다 많으면 최소한 발화자 수만큼은 유지한다.
     """
     count = max(0, int(speaker_count or 0))
     if count == 0:
         return 0
-    return max(count, min(16, count * 4))
+    try:
+        per_character = int(per_character)
+    except (TypeError, ValueError):
+        print(f"[BUBBLE_RENDER] 얼굴 후보 수 변환 실패({per_character!r}), 8 사용")
+        per_character = 8
+    per_character = max(1, min(32, per_character))
+    return max(count, min(64, count * per_character))
+
+
+def _filter_nested_face_candidates(faces, area_ratio=2.0, coverage_ratio=0.60):
+    """NMS 후 같은 얼굴을 감싼 큰 저신뢰 박스를 제거한다.
+
+    크기가 다른 동일 얼굴 박스는 작은 박스가 큰 박스 안에 들어가도 IoU가 NMS
+    기준보다 낮아 둘 다 남을 수 있다. 큰 박스가 작은 고신뢰 박스 면적의 일정
+    비율 이상을 덮고 면적은 충분히 크면, 큰 박스를 중복 후보로 본다.
+    """
+    kept = []
+    removed = []
+    for index, face in enumerate(faces or []):
+        x1, y1, x2, y2 = [float(v) for v in face["box"]]
+        area = max(1.0, (x2 - x1) * (y2 - y1))
+        conf = max(0.0, float(face.get("conf") or 0.0))
+        nested = False
+        for other_index, other in enumerate(faces or []):
+            if other_index == index:
+                continue
+            ox1, oy1, ox2, oy2 = [float(v) for v in other["box"]]
+            other_area = max(1.0, (ox2 - ox1) * (oy2 - oy1))
+            other_conf = max(0.0, float(other.get("conf") or 0.0))
+            intersection = (
+                max(0.0, min(x2, ox2) - max(x1, ox1))
+                * max(0.0, min(y2, oy2) - max(y1, oy1))
+            )
+            covered_smaller = intersection / other_area
+            if (
+                area >= other_area * float(area_ratio)
+                and covered_smaller >= float(coverage_ratio)
+                and other_conf > conf
+            ):
+                nested = True
+                break
+        if nested:
+            removed.append(index)
+        else:
+            kept.append(face)
+    if removed:
+        print(
+            f"[BUBBLE_RENDER] 포함 기반 중복 얼굴 후보 제거: indices={removed} "
+            f"(area_ratio>={float(area_ratio):.2f}, "
+            f"coverage>={float(coverage_ratio):.2f})"
+        )
+    return kept
 
 
 def _place_body(face_box, body_w, body_h, protected_boxes, canvas_w, canvas_h,
@@ -663,15 +714,32 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
         return image_bytes
     # conf 필터 대신 넓은 후보 풀을 확보한다. 명백히 비정상인 박스는 검출기에서
     # 제거하고, 최종 NAME 수만큼은 캐릭터 임베딩 전역 매칭으로 고른다.
-    candidate_limit = _face_detection_candidate_limit(speaker_count)
+    candidates_per_character = s.get("face_candidates_per_character", 8)
+    candidate_limit = _face_detection_candidate_limit(
+        speaker_count, candidates_per_character
+    )
+    print(
+        f"[BUBBLE_RENDER] 얼굴 후보 풀: speakers={speaker_count}, "
+        f"per_character={candidates_per_character}, total_limit={candidate_limit}"
+    )
     faces = detect_faces(
         base.convert("RGB"), conf_thres=0.0, max_faces=candidate_limit
     )
+    faces = _filter_nested_face_candidates(faces)
     for f in faces:
         f["image"] = base.convert("RGB")  # 매칭용 동일 이미지
 
     match_thres = float(s.get("match_thres", 0.55))
-    matched = match_speakers_to_faces(segments, faces, bot_name, match_thres=match_thres)
+    appearance_weight = float(s.get("appearance_weight", 0.4))
+    ambiguity_margin = float(s.get("assignment_ambiguity_margin", 0.01))
+    matched = match_speakers_to_faces(
+        segments,
+        faces,
+        bot_name,
+        match_thres=match_thres,
+        appearance_weight=appearance_weight,
+        ambiguity_margin=ambiguity_margin,
+    )
 
     # 대사/생각 투명도 분리. 구형 opacity 키는 폴백(기존 bot.json 깨짐 방지).
     base_op = float(s.get("opacity", 1.0) or 1.0)

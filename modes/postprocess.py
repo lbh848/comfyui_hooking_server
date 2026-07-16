@@ -1106,6 +1106,9 @@ def _default_bubble() -> dict:
         "tail_threshold": 1.0,             # 꼬리 생성 최대 거리(얼굴 최대 크기의 배율)
         "max_width_ratio": 0.45,          # 캔버스 폭 대비 말풍선 최대 폭 비율
         "match_thres": 0.55,              # 코사인 유사도 매칭 임계치(이하 미배정)
+        "face_candidates_per_character": 8,  # 캐릭터당 확보할 YOLO 후보 수(전체 최대 64)
+        "appearance_weight": 0.4,         # CLIP 점수에 결합할 명도·채도 외형 보정 가중치
+        "assignment_ambiguity_margin": 0.01,  # 최적/차선 전역 배정의 최소 평균 점수 차이
     }
 
 
@@ -1214,6 +1217,19 @@ def get_bubble_settings(config: dict, bot_name: str = "") -> Optional[dict]:
         "match_thres": float(
             bb.get("match_thres", 0.55)
             if bb.get("match_thres", 0.55) is not None else 0.55
+        ),
+        "face_candidates_per_character": max(
+            1, min(32, int(bb.get("face_candidates_per_character", 8) or 8))
+        ),
+        "appearance_weight": max(
+            0.0, min(2.0, float(bb.get("appearance_weight", 0.4) or 0.0))
+        ),
+        "assignment_ambiguity_margin": max(
+            0.0,
+            min(
+                0.2,
+                float(bb.get("assignment_ambiguity_margin", 0.01) or 0.0),
+            ),
         ),
     }
 

@@ -3713,6 +3713,13 @@ async def handle_api_postprocess_preview(request: web.Request) -> web.Response:
                 "tail_threshold": body.get("tail_threshold", 1.0),
                 "max_width_ratio": body.get("max_width_ratio", 0.45),
                 "match_thres": body.get("match_thres", 0.55),
+                "face_candidates_per_character": body.get(
+                    "face_candidates_per_character", 8
+                ),
+                "appearance_weight": body.get("appearance_weight", 0.4),
+                "assignment_ambiguity_margin": body.get(
+                    "assignment_ambiguity_margin", 0.01
+                ),
                 # 아래 두 값은 이 미리보기 API에서만 주입된다. 실제 생성 설정에는
                 # 존재하지 않으므로 마스크/후보 가이드가 결과물에 들어갈 수 없다.
                 "preview_debug_mask": bool(body.get("preview_debug_mask", False)),
