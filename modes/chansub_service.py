@@ -127,6 +127,60 @@ def _is_retryable_http_status(status: int) -> bool:
     return status in (408, 429) or status >= 500
 
 
+def _split_top_level_prompt_tags(prompt: str) -> list[str]:
+    """괄호류 내부와 이스케이프된 쉼표를 보존하며 최상위 태그만 나눈다."""
+    tags: list[str] = []
+    current: list[str] = []
+    stack: list[str] = []
+    closing_for = {"(": ")", "[": "]", "{": "}"}
+    escaped = False
+
+    for char in prompt:
+        if escaped:
+            current.append(char)
+            escaped = False
+            continue
+        if char == "\\":
+            current.append(char)
+            escaped = True
+            continue
+        if char in closing_for:
+            stack.append(closing_for[char])
+            current.append(char)
+            continue
+        if stack and char == stack[-1]:
+            stack.pop()
+            current.append(char)
+            continue
+        if char == "," and not stack:
+            tag = "".join(current).strip()
+            if tag:
+                tags.append(tag)
+            current = []
+            continue
+        current.append(char)
+
+    tag = "".join(current).strip()
+    if tag:
+        tags.append(tag)
+    return tags
+
+
+def reorder_negative_prompt_for_retry(negative: str, retry_number: int) -> tuple[str, tuple[int, int] | None]:
+    """챈섭 재시도 본문이 달라지도록 최상위 인접 태그 한 쌍을 교환한다."""
+    tags = _split_top_level_prompt_tags(negative)
+    if len(tags) < 2:
+        print(
+            f"[CHANSUB] 부정 프롬프트 태그 순서 변경 생략: "
+            f"retry={retry_number}, tag_count={len(tags)}"
+        )
+        return negative, None
+
+    pair_start = max(0, int(retry_number) - 1) % (len(tags) - 1)
+    tags[pair_start], tags[pair_start + 1] = tags[pair_start + 1], tags[pair_start]
+    return ", ".join(tags), (pair_start, pair_start + 1)
+
+
 async def _post_generate_request(body: dict, headers: dict[str, str]) -> bytes:
     """챈섭에 한 번 요청하고, 성공한 이미지 바이트를 반환한다."""
     timeout = aiohttp.ClientTimeout(total=300, connect=30)
@@ -205,6 +259,18 @@ async def generate_image(
     last_error = "알 수 없는 실패"
 
     for attempt in range(1, total_attempts + 1):
+        if attempt > 1:
+            retry_negative, swapped_indexes = reorder_negative_prompt_for_retry(
+                negative, attempt - 1
+            )
+            body["parameters"]["negative_prompt"] = retry_negative
+            body["parameters"]["v4_negative_prompt"]["caption"]["base_caption"] = retry_negative
+            if swapped_indexes is not None:
+                print(
+                    f"[CHANSUB] 재시도 부정 프롬프트 순서 변경: "
+                    f"retry={attempt - 1}, swapped={swapped_indexes[0]}<->{swapped_indexes[1]}, "
+                    f"negative_len={len(retry_negative)}"
+                )
         print(
             f"[CHANSUB] → POST {CHANSUB_URL} model={CHANSUB_MODEL} "
             f"size={width}x{height} positive_len={len(positive)} negative_len={len(negative)} "

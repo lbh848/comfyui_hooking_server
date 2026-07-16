@@ -1,6 +1,7 @@
 import io
 import unittest
 import zipfile
+import copy
 from unittest.mock import AsyncMock, patch
 
 import aiohttp
@@ -146,6 +147,19 @@ class ChansubServiceTest(unittest.TestCase):
         self.assertFalse(chansub_service._is_retryable_http_status(400))
         self.assertFalse(chansub_service._is_retryable_http_status(401))
 
+    def test_retry_reorders_only_top_level_negative_tags(self):
+        negative = r"lowres, (bad hands, extra fingers), blurry, text\, logo"
+
+        retry_negative, swapped = chansub_service.reorder_negative_prompt_for_retry(
+            negative, 1
+        )
+
+        self.assertEqual(swapped, (0, 1))
+        self.assertEqual(
+            retry_negative,
+            r"(bad hands, extra fingers), lowres, blurry, text\, logo",
+        )
+
 
 class ChansubRetryTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
@@ -217,6 +231,41 @@ class ChansubRetryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(request_mock.await_count, 3)
         self.assertEqual(sleep_mock.await_count, 2)
         sleep_mock.assert_awaited_with(1.5)
+
+    async def test_retry_updates_both_negative_prompt_fields_only_after_failure(self):
+        captured_bodies = []
+
+        async def capture_request(body, headers):
+            captured_bodies.append(copy.deepcopy(body))
+            if len(captured_bodies) == 1:
+                raise chansub_service.ChansubRequestError(
+                    "챈섭 HTTP 500: failed", retryable=True
+                )
+            return b"image-data"
+
+        with patch.object(
+            chansub_service, "_post_generate_request", side_effect=capture_request
+        ), patch.object(chansub_service.asyncio, "sleep", new=AsyncMock()):
+            image, result = await chansub_service.generate_image(
+                "positive",
+                "lowres, bad hands, blurry",
+                640,
+                960,
+                max_retries=1,
+                retry_delay_sec=0,
+            )
+
+        first_params = captured_bodies[0]["parameters"]
+        retry_params = captured_bodies[1]["parameters"]
+        self.assertEqual(first_params["negative_prompt"], "lowres, bad hands, blurry")
+        self.assertEqual(retry_params["negative_prompt"], "bad hands, lowres, blurry")
+        self.assertEqual(
+            retry_params["v4_negative_prompt"]["caption"]["base_caption"],
+            "bad hands, lowres, blurry",
+        )
+        self.assertEqual(first_params["seed"], retry_params["seed"])
+        self.assertEqual(image, b"image-data")
+        self.assertEqual(result["attempts"], 2)
 
 
 class ChansubLlmEditTest(unittest.TestCase):
