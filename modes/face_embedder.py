@@ -59,7 +59,15 @@ def _get_session():
         _session_failed = True
         return None
     try:
-        sess = ort.InferenceSession(_MODEL_PATH, providers=["CPUExecutionProvider"])
+        options = ort.SessionOptions()
+        # FP16 CLIP 그래프의 Sqrt 상수 폴딩은 CPU 커널이 없어도 추론에는 문제가
+        # 없다. 해당 경고가 transformer block마다 반복되지 않도록 ERROR 이상만 표시.
+        options.log_severity_level = 3
+        sess = ort.InferenceSession(
+            _MODEL_PATH,
+            sess_options=options,
+            providers=["CPUExecutionProvider"],
+        )
         inp = sess.get_inputs()[0]
         _input_dtype = inp.type  # "tensor(float16)" or "tensor(float)"
         print(f"[FACE_EMBEDDER] CPU 세션 생성 → 입력 dtype={_input_dtype}")

@@ -247,7 +247,8 @@ def _nms(boxes, scores, iou_thres):
     return keep
 
 
-def _detect_multi(sess, image_rgb, conf_thres, iou_thres=_IOU_THRES):
+def _detect_multi(sess, image_rgb, conf_thres, iou_thres=_IOU_THRES,
+                  max_faces=None):
     """세션으로 얼굴 추론 → 임계치 통과 박스 전부 → NMS → (boxes, confs) 리스트 반환.
 
     단일 검출 _detect 와 달리 모든 얼굴을 반환한다(말풍선 모드는 다인물 매칭 필요).
@@ -270,21 +271,42 @@ def _detect_multi(sess, image_rgb, conf_thres, iou_thres=_IOU_THRES):
         return [], []
 
     cx, cy, w, h, conf = cx[keep], cy[keep], w[keep], h[keep], conf[keep]
-    bx1 = cx - w / 2.0
-    by1 = cy - h / 2.0
-    bx2 = cx + w / 2.0
-    by2 = cy + h / 2.0
-    boxes_960 = _np.stack([bx1, by1, bx2, by2], axis=1)
-    keep_idx = _nms(boxes_960, conf, iou_thres)
+    finite = (
+        _np.isfinite(cx) & _np.isfinite(cy) & _np.isfinite(w)
+        & _np.isfinite(h) & _np.isfinite(conf) & (w > 0) & (h > 0)
+    )
+    if not finite.any():
+        print("[FACE_DETECTOR] 유한한 다중 얼굴 후보가 없음")
+        return [], []
+    cx, cy, w, h, conf = (
+        cx[finite], cy[finite], w[finite], h[finite], conf[finite]
+    )
 
-    boxes, confs = [], []
-    for i in keep_idx:
-        ox1 = (bx1[i] - pad_w) / gain
-        oy1 = (by1[i] - pad_h) / gain
-        ox2 = (bx2[i] - pad_w) / gain
-        oy2 = (by2[i] - pad_h) / gain
-        boxes.append((float(ox1), float(oy1), float(ox2), float(oy2)))
-        confs.append(float(conf[i]))
+    # letterbox 역변환 후 원본 캔버스에 클램프한다. 패딩에만 걸친 예측과
+    # 음수/캔버스 밖 박스는 임베더에 넘기기 전에 제거한다.
+    image_w, image_h = image_rgb.size
+    ox1 = _np.clip((cx - w / 2.0 - pad_w) / gain, 0.0, float(image_w))
+    oy1 = _np.clip((cy - h / 2.0 - pad_h) / gain, 0.0, float(image_h))
+    ox2 = _np.clip((cx + w / 2.0 - pad_w) / gain, 0.0, float(image_w))
+    oy2 = _np.clip((cy + h / 2.0 - pad_h) / gain, 0.0, float(image_h))
+    valid = (ox2 - ox1 >= 8.0) & (oy2 - oy1 >= 8.0)
+    invalid_count = int(valid.size - valid.sum())
+    if invalid_count:
+        print(f"[FACE_DETECTOR] 캔버스 밖/너무 작은 후보 {invalid_count}건 제거")
+    if not valid.any():
+        return [], []
+
+    boxes_original = _np.stack(
+        [ox1[valid], oy1[valid], ox2[valid], oy2[valid]], axis=1
+    )
+    conf = conf[valid]
+    keep_idx = _nms(boxes_original, conf, iou_thres)
+    if max_faces is not None:
+        max_faces = max(1, int(max_faces))
+        keep_idx = keep_idx[:max_faces]
+
+    boxes = [tuple(float(v) for v in boxes_original[i]) for i in keep_idx]
+    confs = [float(conf[i]) for i in keep_idx]
     return boxes, confs
 
 
@@ -368,7 +390,7 @@ def crop_face(image, top_mult: float = 1.8, bottom_mult: float = 1.0,
 
 
 def detect_faces(image, conf_thres: float = 0.3, device: str = None,
-                 iou_thres: float = _IOU_THRES):
+                 iou_thres: float = _IOU_THRES, max_faces=None):
     """이미지에서 모든 얼굴을 검출해 xyxy 박스+신뢰도 리스트 반환 (말풍선 모드용).
 
     crop_face(단일) 와 달리 NMS 후 모든 박스를 반환한다.
@@ -378,6 +400,7 @@ def detect_faces(image, conf_thres: float = 0.3, device: str = None,
         conf_thres: 신뢰도 임계치
         device: 디바이스 키(None/auto/cpu/cuda0/dml0). None=자동.
         iou_thres: NMS IoU 임계치
+        max_faces: NMS 후 신뢰도 상위 얼굴 최대 개수. None이면 제한 없음.
 
     Returns:
         [{"box":(x1,y1,x2,y2), "conf":float}, ...]. 검출 실패 시 [].
@@ -389,9 +412,14 @@ def detect_faces(image, conf_thres: float = 0.3, device: str = None,
     try:
         if image.mode not in ("RGB", "L"):
             image = image.convert("RGB")
-        boxes, confs = _detect_multi(sess, image, conf_thres, iou_thres)
+        boxes, confs = _detect_multi(
+            sess, image, conf_thres, iou_thres, max_faces=max_faces
+        )
         out = [{"box": b, "conf": c} for b, c in zip(boxes, confs)]
-        print(f"[FACE_DETECTOR] 다중 검출: {len(out)}건 (conf>={conf_thres})")
+        print(
+            f"[FACE_DETECTOR] 다중 검출: {len(out)}건 "
+            f"(conf>={conf_thres}, max_faces={max_faces})"
+        )
         return out
     except Exception as e:
         print(f"[FACE_DETECTOR] ⚠ detect_faces 실패: {e}")

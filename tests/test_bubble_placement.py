@@ -1,13 +1,17 @@
 import unittest
 
+import numpy as np
 from PIL import Image, ImageDraw
 
+from modes.background_segmenter import background_ratio
+from modes.face_detector import _detect_multi
 from modes.bubble_layout import choose_layout, choose_scaled_layout
 from modes.bubble_predictor import select_candidate
 from modes.postprocess import normalize_layout_font_scale
 from modes.bubble_render import (
     _bubble_is_above_face,
     _draw_layout_bubble,
+    _face_candidate_limit,
     _draw_speech,
     _place_body,
     _protected_face_box,
@@ -18,6 +22,20 @@ from modes.bubble_render import (
 
 def _overlaps(a, b):
     return not (a[2] <= b[0] or b[2] <= a[0] or a[3] <= b[1] or b[3] <= a[1])
+
+
+class _FakeFaceSession:
+    class _Input:
+        name = "images"
+
+    def __init__(self, predictions):
+        self.output = np.asarray(predictions, dtype=np.float32).T[None]
+
+    def get_inputs(self):
+        return [self._Input()]
+
+    def run(self, _outputs, _feeds):
+        return [self.output]
 
 
 class BubblePlacementTest(unittest.TestCase):
@@ -31,6 +49,43 @@ class BubblePlacementTest(unittest.TestCase):
     def test_face_protection_adds_safety_margin(self):
         protected = _protected_face_box((100, 100, 160, 160), (500, 500))
         self.assertEqual(protected, (92.0, 92.0, 168.0, 168.0))
+
+    def test_face_candidate_limit_tracks_unique_speaker_names(self):
+        self.assertEqual(_face_candidate_limit([]), 1)
+        self.assertEqual(
+            _face_candidate_limit([
+                {"speaker": "alice"},
+                {"speaker": "alice"},
+            ]),
+            1,
+        )
+        self.assertEqual(
+            _face_candidate_limit([
+                {"speaker": "alice"},
+                {"speaker": "bob"},
+                {"speaker": "carol"},
+            ]),
+            2,
+        )
+
+    def test_face_detector_discards_outside_boxes_before_limit(self):
+        session = _FakeFaceSession([
+            (100, 480, 100, 100, 0.99),  # 세로 이미지의 왼쪽 letterbox 패딩
+            (480, 400, 160, 160, 0.90),  # 유효 얼굴 1
+            (650, 700, 120, 120, 0.80),  # 유효 얼굴 2
+        ])
+        boxes, confidences = _detect_multi(
+            session,
+            Image.new("RGB", (100, 200), "white"),
+            conf_thres=0.3,
+            max_faces=1,
+        )
+        self.assertEqual(len(boxes), 1)
+        self.assertEqual(len(confidences), 1)
+        self.assertAlmostEqual(confidences[0], 0.9, places=5)
+        self.assertTrue(all(value >= 0 for value in boxes[0]))
+        self.assertLessEqual(boxes[0][2], 100)
+        self.assertLessEqual(boxes[0][3], 200)
 
     def test_layout_onnx_selects_font_wrap_ratio_and_shape(self):
         selected, _ = choose_layout(
@@ -107,6 +162,34 @@ class BubblePlacementTest(unittest.TestCase):
         )
         self.assertIsNotNone(chosen)
         self.assertEqual(chosen["center"], (130.0, 70.0))
+
+    def test_candidate_on_foreground_is_rejected(self):
+        face = (100, 100, 160, 160)
+        protected_foreground = np.zeros((500, 500), dtype=np.uint8)
+        protected_foreground[:, :250] = 1
+        candidates = [
+            {"center": (200, 70), "anchor": (130, 100), "confidence": 0.9},
+            {"center": (350, 70), "anchor": (160, 100), "confidence": 0.1},
+        ]
+        chosen = select_candidate(
+            candidates,
+            body_size=(60, 40),
+            face_box=face,
+            canvas_size=(500, 500),
+            forbidden_boxes=[face],
+            protected_foreground_mask=protected_foreground,
+        )
+        self.assertIsNotNone(chosen)
+        self.assertEqual(chosen["center"], (350.0, 70.0))
+        self.assertEqual(chosen["background_ratio"], 1.0)
+
+    def test_background_ratio_uses_rect_pixels(self):
+        protected_foreground = np.zeros((20, 20), dtype=np.uint8)
+        protected_foreground[0:10, 0:5] = 1
+        self.assertAlmostEqual(
+            background_ratio(protected_foreground, (0, 0, 10, 10)),
+            0.5,
+        )
 
     def test_safe_fallback_never_covers_face(self):
         face = (200, 200, 260, 260)

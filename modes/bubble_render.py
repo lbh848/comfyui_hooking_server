@@ -7,7 +7,8 @@ compose_bubble() 하나만이 말풍선 렌더의 단일 소스다. 미리보기
 파이프라인:
   base 이미지 → parse_speak() → detect_faces() → match_speakers_to_faces()
   → 레이아웃 ONNX가 글자 크기/줄바꿈/버블 종류·비율 결정
-  → 위치 ONNX가 얼굴별 중심 후보 생성 → 얼굴을 가리지 않는 가장 가까운 후보 선택
+  → anime-seg ONNX가 foreground 보호 마스크 생성(페이지당 1회)
+  → 위치 ONNX가 얼굴별 중심 후보 생성 → 배경에 놓이는 가장 가까운 후보 선택
   → 버블 중심이 얼굴 중심보다 높을 때만 꼬리 표시
   → PNG bytes
 
@@ -20,6 +21,8 @@ import os
 import traceback
 
 from PIL import Image, ImageDraw, ImageFont, ImageColor, ImageFilter
+
+from modes.background_segmenter import background_ratio
 
 # 캔버스 폭 대비 말풍선 최대 폭 비율 기본값
 _MAX_WIDTH_RATIO_DEFAULT = 0.45
@@ -138,8 +141,19 @@ def _resolve_layout_font_scale(settings):
     return max(1.0, min(4.0, scale))
 
 
-def _place_body(face_box, body_w, body_h, protected_boxes, canvas_w, canvas_h, tail_len):
-    """ONNX 후보가 없을 때 얼굴을 가리지 않는 근접 위치를 탐색한다.
+def _face_candidate_limit(segments):
+    """고유 발화자 NAME 수에 따라 얼굴 후보를 1개 또는 2개로 제한한다."""
+    names = []
+    for segment in segments or []:
+        speaker = (segment or {}).get("speaker")
+        if speaker and speaker not in names:
+            names.append(speaker)
+    return 1 if len(names) <= 1 else 2
+
+
+def _place_body(face_box, body_w, body_h, protected_boxes, canvas_w, canvas_h, tail_len,
+                protected_foreground_mask=None, min_background_ratio=0.90):
+    """ONNX 후보가 없을 때 배경에 놓이고 얼굴을 가리지 않는 위치를 찾는다.
 
     얼굴 주변 후보를 먼저 보고, 막혀 있으면 캔버스 전체를 훑는다. 충돌 없는
     위치가 전혀 없으면 ``None``을 반환해 얼굴 위에 말풍선을 그리지 않는다.
@@ -196,7 +210,11 @@ def _place_body(face_box, body_w, body_h, protected_boxes, canvas_w, canvas_h, t
         y1 = max(0, min(y1, canvas_h - body_h))
         x2, y2 = x1 + body_w, y1 + body_h
         rect = (x1, y1, x2, y2)
-        if not _overlap(rect, protected_boxes, pad=2):
+        bg_ratio = background_ratio(protected_foreground_mask, rect)
+        if (
+            not _overlap(rect, protected_boxes, pad=2)
+            and bg_ratio + 1e-9 >= float(min_background_ratio)
+        ):
             return rect, face_anchor(((x1 + x2) / 2.0, (y1 + y2) / 2.0)), side
 
     # 얼굴 주변이 막힌 경우 캔버스 전체의 빈 공간 중 얼굴과 가까운 곳을 찾는다.
@@ -209,15 +227,20 @@ def _place_body(face_box, body_w, body_h, protected_boxes, canvas_w, canvas_h, t
         while x1 <= max(0.0, canvas_w - body_w):
             rect = (x1, y1, x1 + body_w, y1 + body_h)
             if not _overlap(rect, protected_boxes, pad=2):
-                cx, cy = x1 + body_w / 2.0, y1 + body_h / 2.0
-                distance = ((cx - fcx) ** 2 + (cy - fcy) ** 2) ** 0.5
-                candidates.append((distance, rect))
+                bg_ratio = background_ratio(protected_foreground_mask, rect)
+                if bg_ratio + 1e-9 >= float(min_background_ratio):
+                    cx, cy = x1 + body_w / 2.0, y1 + body_h / 2.0
+                    distance = ((cx - fcx) ** 2 + (cy - fcy) ** 2) ** 0.5
+                    candidates.append((distance, -bg_ratio, rect))
             x1 += step_x
         y1 += step_y
     if not candidates:
-        print(f"[BUBBLE_RENDER] 얼굴 비가림 배치 불가: face_box={face_box}, body={body_w}x{body_h}")
+        print(
+            f"[BUBBLE_RENDER] 얼굴/배경 조건 배치 불가: face_box={face_box}, "
+            f"body={body_w}x{body_h}, min_background_ratio={float(min_background_ratio):.2f}"
+        )
         return None
-    _, rect = min(candidates, key=lambda item: item[0])
+    _, _, rect = min(candidates, key=lambda item: (item[0], item[1]))
     center = ((rect[0] + rect[2]) / 2.0, (rect[1] + rect[3]) / 2.0)
     anchor = face_anchor(center)
     dx, dy = center[0] - fcx, center[1] - fcy
@@ -403,6 +426,7 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
         from modes.bubble_match import match_speakers_to_faces
         from modes.bubble_predictor import predict_for_face_candidates, select_candidate
         from modes.bubble_layout import choose_scaled_layout
+        from modes.background_segmenter import predict_protected_foreground_mask
     except Exception as e:
         print(f"[BUBBLE_RENDER] 의존 로드 실패: {e}")
         traceback.print_exc()
@@ -426,7 +450,10 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
         return image_bytes
 
     conf = float(s.get("conf", 0.3))
-    faces = detect_faces(base.convert("RGB"), conf_thres=conf)
+    max_faces = _face_candidate_limit(segments)
+    faces = detect_faces(
+        base.convert("RGB"), conf_thres=conf, max_faces=max_faces
+    )
     for f in faces:
         f["image"] = base.convert("RGB")  # 매칭용 동일 이미지
 
@@ -454,6 +481,11 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
     placed_boxes = []
     candidate_cache = {}
     page_rgb = base.convert("RGB")
+    protected_foreground_mask = None
+    if matched:
+        protected_foreground_mask = predict_protected_foreground_mask(page_rgb)
+        if protected_foreground_mask is None:
+            print("[BUBBLE_RENDER] foreground 마스크 없음 → 기존 위치 배치 사용")
 
     drawn = 0
     for m in matched:
@@ -510,6 +542,7 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
             (canvas_w, canvas_h),
             forbidden_boxes=all_boxes,
             occupied_boxes=placed_boxes,
+            protected_foreground_mask=protected_foreground_mask,
         )
         if chosen is not None:
             rect = chosen["rect"]
@@ -517,14 +550,25 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
             side = _tail_side(rect, anchor)
             print(
                 f"[BUBBLE_RENDER] ONNX 후보 선택: speaker={seg.get('speaker')}, "
-                f"center={chosen['center']}, confidence={chosen.get('confidence', 0.0):.6f}"
+                f"center={chosen['center']}, confidence={chosen.get('confidence', 0.0):.6f}, "
+                f"background={chosen.get('background_ratio', 1.0):.3f}"
             )
         else:
             print(f"[BUBBLE_RENDER] ONNX 유효 후보 없음 → 안전 근접 배치: speaker={seg.get('speaker')}")
             fallback = _place_body(
                 box, body_w, body_h, all_boxes + placed_boxes,
                 canvas_w, canvas_h, tail_len,
+                protected_foreground_mask=protected_foreground_mask,
             )
+            if fallback is None and protected_foreground_mask is not None:
+                print(
+                    f"[BUBBLE_RENDER] 충분한 배경 영역 없음 → 기존 안전 배치 폴백: "
+                    f"speaker={seg.get('speaker')}"
+                )
+                fallback = _place_body(
+                    box, body_w, body_h, all_boxes + placed_boxes,
+                    canvas_w, canvas_h, tail_len,
+                )
             if fallback is None:
                 print(f"[BUBBLE_RENDER] 얼굴을 가리지 않는 위치 없음 — 스킵: speaker={seg.get('speaker')}")
                 continue

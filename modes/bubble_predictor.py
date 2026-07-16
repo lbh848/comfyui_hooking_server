@@ -12,6 +12,8 @@ import traceback
 import numpy as np
 from PIL import Image
 
+from modes.background_segmenter import background_ratio
+
 
 _IMG_SIZE = 256
 _ROI_FACE_SCALE_W = 3.0
@@ -216,11 +218,13 @@ def _rect_distance(a, b):
 
 
 def select_candidate(candidates, body_size, face_box, canvas_size, forbidden_boxes=(),
-                     occupied_boxes=(), margin=4, face_gap=2, bubble_gap=4):
-    """얼굴을 가리지 않는 ONNX 후보 중 화자 얼굴에 가장 가까운 것을 선택한다.
+                     occupied_boxes=(), margin=4, face_gap=2, bubble_gap=4,
+                     protected_foreground_mask=None, min_background_ratio=0.90):
+    """배경에 놓이고 얼굴을 가리지 않는 ONNX 후보 중 가까운 것을 선택한다.
 
-    모델 confidence는 같은 거리 후보의 보조 정렬값으로만 사용한다. 따라서 모델이
-    제안한 자연스러운 영역 안에서 사용자의 요구대로 얼굴과의 거리가 최우선이다.
+    foreground 마스크가 있을 때 말풍선 사각 몸통의 배경 비율이 임계값보다 낮은
+    후보는 제외한다. 통과 후보에서는 얼굴 거리, 배경 비율, 모델 confidence 순으로
+    정렬한다. 마스크가 ``None``이면 기존 거리 우선 동작과 같다.
     """
     ranked = []
     for item in candidates or []:
@@ -236,17 +240,26 @@ def select_candidate(candidates, body_size, face_box, canvas_size, forbidden_box
             continue
         if any(_rects_overlap(rect, box, gap=bubble_gap) for box in occupied_boxes):
             continue
+        bg_ratio = background_ratio(protected_foreground_mask, rect)
+        if bg_ratio + 1e-9 < float(min_background_ratio):
+            continue
         distance = _rect_distance(rect, face_box)
         confidence = float(item.get("confidence", 0.0))
-        ranked.append((distance, -confidence, rect, item))
+        ranked.append((distance, -bg_ratio, -confidence, rect, item))
 
     if not ranked:
-        print("[BUBBLE_PREDICTOR] 얼굴 비가림 조건을 만족하는 ONNX 후보 없음")
+        print(
+            "[BUBBLE_PREDICTOR] 얼굴/배경 조건을 만족하는 ONNX 후보 없음: "
+            f"min_background_ratio={float(min_background_ratio):.2f}"
+        )
         return None
-    _, _, rect, item = min(ranked, key=lambda value: (value[0], value[1]))
+    _, neg_bg_ratio, _, rect, item = min(
+        ranked, key=lambda value: (value[0], value[1], value[2])
+    )
     chosen = dict(item)
     chosen["rect"] = rect
     chosen["center"] = ((rect[0] + rect[2]) / 2.0, (rect[1] + rect[3]) / 2.0)
+    chosen["background_ratio"] = -neg_bg_ratio
     # 캔버스 경계에서 rect 중심이 보정됐을 수 있으므로 anchor도 새 중심 기준으로 맞춘다.
     chosen["anchor"] = _face_boundary_anchor(chosen["center"], face_box)
     return chosen
