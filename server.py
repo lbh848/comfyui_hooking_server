@@ -1952,15 +1952,20 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
             char_replaced = sections["char"]
             supplement_replaced = sections["supplement"]
 
-            # 3. 캐릭터 감지: 치환된 NAME도 직접 포함하여 LoRA/프로필 선택에 반영한다.
+            # 3. 캐릭터 감지: [Name]이 있으면 NAME 정확매칭, 없으면 setup/char/supplement 폴백.
+            # NAME 정확매칭: supplement 산문에 캐릭터 이름이 언명되어 오감지되는 것을 차단.
+            #   예) [Name]=Angel-in-us_reallife 인데 supplement에 "version of Angel-in-us,"
+            #   가 적혀 Angel-in-us까지 잡히는 현상 방지.
             if bot:
                 char_names = [c["name"] for c in bot.get("characters", [])]
-                detection_sections = [setup_replaced, char_replaced, supplement_replaced]
                 if sections.get("name"):
-                    # NAME은 감지/solo-group/LoRA 선택에 사용하되 챈섭 POSITIVE에는 삽입하지 않는다.
-                    detection_sections.append(sections["name"])
-                detected = builder.detect_characters(detection_sections, char_names)
-                print(f"[ILLUST] 감지된 캐릭터: {detected}")
+                    # NAME 정확매칭 (우선). 챈섭 POSITIVE에는 삽입하지 않는다.
+                    detected = builder.detect_characters_from_name(sections["name"], char_names)
+                else:
+                    # [Name] 누락 폴백: setup/char/supplement 스캔
+                    detection_sections = [setup_replaced, char_replaced, supplement_replaced]
+                    detected = builder.detect_characters(detection_sections, char_names)
+                print(f"[ILLUST] 감지된 캐릭터: {detected} (방식: {'NAME 정확매칭' if sections.get('name') else '폴백 스캔'})")
 
                 # 4. 캐릭터 수에 따라 solo/group 프로필 선택
                 tags = asset_mode._tags

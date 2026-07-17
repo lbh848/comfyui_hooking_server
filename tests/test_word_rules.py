@@ -264,5 +264,44 @@ class RawPromptWordRulesTest(unittest.TestCase):
         self.assertEqual(applied, 1)
 
 
+class DetectCharactersFromNameTest(unittest.TestCase):
+    """[Name] 정확매칭 회귀 테스트.
+
+    supplement 산문에 캐릭터 이름이 언급되어 오감지되던 현상(예: Angel-in-us_reallife
+    삽화에서 supplement의 "version of Angel-in-us," 가 Angel-in-us를 잡는 문제)을
+    detect_characters_from_name()이 차단하는지 확인한다.
+    """
+
+    def test_name_exact_match_ignores_supplement_prose(self):
+        # [Name]은 reallife 하나만 지정, supplement 산문에 fantasy 이름이 언급됨.
+        name_section = "Angel-in-us_reallife"
+        supplement = "This is the real-life version of Angel-in-us, bridging the two realities."
+        char_names = ["Angel-in-us", "Angel-in-us_reallife"]
+
+        detected = IllustPromptBuilder.detect_characters_from_name(name_section, char_names)
+
+        # reallife만 감지되어야 함. supplement의 "Angel-in-us" 는 무관.
+        self.assertEqual(detected, ["Angel-in-us_reallife"])
+        self.assertNotIn("Angel-in-us", detected)
+        # 폴백 detect_characters는 supplement 산문에서 fantasy를 잘못 잡음(대조용).
+        fallback = IllustPromptBuilder.detect_characters([supplement], char_names)
+        self.assertIn("Angel-in-us", fallback)
+
+    def test_name_exact_match_case_insensitive_and_multi(self):
+        char_names = ["Alice", "Bob"]
+        detected = IllustPromptBuilder.detect_characters_from_name("alice, BOB", char_names)
+        self.assertEqual(detected, ["Alice", "Bob"])
+
+    def test_name_empty_falls_back(self):
+        # [Name] 비어있으면 from_name 은 빈 리스트 → 호출측이 폴백으로 전환.
+        self.assertEqual(IllustPromptBuilder.detect_characters_from_name("", ["Alice"]), [])
+        self.assertEqual(IllustPromptBuilder.detect_characters_from_name(None, ["Alice"]), [])
+
+    def test_name_no_match_returns_empty(self):
+        char_names = ["Alice"]
+        detected = IllustPromptBuilder.detect_characters_from_name("Charlie", char_names)
+        self.assertEqual(detected, [])
+
+
 if __name__ == "__main__":
     unittest.main()

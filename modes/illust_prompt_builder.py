@@ -256,8 +256,41 @@ class IllustPromptBuilder:
         return result
 
     @staticmethod
+    def detect_characters_from_name(name_section: str, char_names: list) -> list:
+        """[Name] 섹션만 보고 대소문자 무관 완전일치로 감지.
+
+        삽화 프롬프트의 [Name]은 발화자/등장인 지정 필드이므로, 여기에 적힌
+        이름과 bot.json 캐릭터 이름을 "정확히" 일치시킨다. setup/char/supplement
+        산문에 캐릭터 이름이 언급되는 것으로 인한 오감지를 원천 차단한다.
+        예: supplement에 "version of Angel-in-us," 가 적혀 [Angel-in-us]가
+        잘못 걸리는 것을 방지. [Name]="Angel-in-us_reallife"인 경우
+        [Angel-in-us]는 일치하지 않으므로 감지되지 않는다.
+
+        Args:
+            name_section: [Name] 섹션 원문 (쉼표로 다중 지정 가능)
+            char_names: bot.json의 캐릭터 이름 리스트
+
+        Returns:
+            감지된 캐릭터 이름 리스트 (bot.json 원래 대소문자, 중복 제거)
+        """
+        if not name_section:
+            return []
+        raw_names = [n.strip() for n in name_section.split(",") if n.strip()]
+        detected = []
+        for raw in raw_names:
+            match = next((c for c in char_names if c.lower() == raw.lower()), None)
+            if match and match not in detected:
+                detected.append(match)
+        return detected
+
+    @staticmethod
     def detect_characters(text_sections: list, char_names: list) -> list:
-        """모든 텍스트 섹션에서 캐릭터 이름 포함 여부로 감지.
+        """모든 텍스트 섹션에서 캐릭터 이름 포함 여부로 감지 (폴백용).
+
+        [Name] 섹션이 비어있는 엣지케이스용 폴백. 정상적으로 [Name]이 채워지는
+        삽화 프롬프트에서는 detect_characters_from_name()을 우선 사용한다.
+        산문(supplement)에 캐릭터 이름이 언급되면 오감지될 수 있으므로
+        폴백로만 사용할 것.
 
         대소문자 무관하게 검색하되, 결과는 bot.json의 원래 대소문자로 반환한다.
         감지된 순서를 유지하고 중복을 제거한다.
