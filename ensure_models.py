@@ -16,7 +16,7 @@ BACKUP_DIR = PROJECT_ROOT / "요구사항" / "model_backups"
 STAGING_DIR = MODEL_DIR / ".download"
 
 HF_REPO_ID = "byung-hyun/eye_segmentation_model"
-HF_REVISION = "7a5b9c0e38ba452ca70c8bc884aac99e44ef33b8"
+HF_REVISION = "f9d88fe0936658aca4f16b37d26a6bbcf8e96930"
 HF_SUBFOLDER = "comfyui_hooking_server/models"
 
 # filename: (size in bytes, SHA-256)
@@ -48,6 +48,10 @@ MODEL_FILES = {
     "yolov8m-face.onnx": (
         103_835_563,
         "b3b8a17732e40a06557900115f3298f262170f8519055c36855b6c88ceb4ecf9",
+    ),
+    "yolov9c-face.onnx": (
+        135_039_759,
+        "2231ea7eb4575c8d018d56ce12c91eef7b38bbc1d733cfee90cc9d9ef55903b1",
     ),
 }
 

@@ -1013,12 +1013,14 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
         f"[BUBBLE_RENDER] 얼굴 후보 풀: speakers={speaker_count}, "
         f"per_character={candidates_per_character}, total_limit={candidate_limit}"
     )
+    face_fallback = bool(s.get("face_fallback", False))
     faces = detect_faces(
         base.convert("RGB"),
         conf_thres=0.0,
         max_faces=candidate_limit,
         device=onnx_device,
         cpu_threads=cpu_threads,
+        face_fallback=face_fallback,
     )
     # 여기서 YOLO confidence 기반으로 중복 박스를 미리 제거하지 않는다.
     # 캐릭터 임베딩 매칭으로 한 쌍을 확정한 뒤 bubble_match가 CROP_TOP/BOTTOM

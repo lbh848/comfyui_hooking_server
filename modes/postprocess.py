@@ -2129,6 +2129,7 @@ def _default_bubble() -> dict:
         "assignment_ambiguity_margin": 0.01,  # 최적/차선 전역 배정의 최소 평균 점수 차이
         "onnx_device": "auto",         # 말풍선 ONNX 공용 장치
         "cpu_threads": 0,               # CPU intra-op 스레드. 0=ONNX Runtime 자동
+        "face_fallback": False,         # v9c 주검출기가 0건일 때 v8m 으로 재시도. recall↑, CPU 추론 1회 추가
     }
 
 
@@ -2296,6 +2297,7 @@ def get_bubble_settings(config: dict, bot_name: str = "") -> Optional[dict]:
         ),
         "onnx_device": normalize_device_key(bb.get("onnx_device", "auto")),
         "cpu_threads": normalize_cpu_threads(bb.get("cpu_threads", 0)),
+        "face_fallback": bool(bb.get("face_fallback", False)),
         "face_crop_top": max(1.0, min(10.0, float(face_crop_top))),
         "face_crop_bottom": max(1.0, min(10.0, float(face_crop_bottom))),
     }

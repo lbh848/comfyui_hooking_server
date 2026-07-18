@@ -7628,6 +7628,16 @@
                             </div>
 
                             <div class="pp-card">
+                                <div class="pp-switch-line">
+                                    <div>
+                                        <div style="font-size:0.88rem; font-weight:600;">얼굴 검출 v8m 폴백</div>
+                                        <div class="pp-hint">주 검출기(v9c, 640)가 얼굴을 못 찾았을 때 v8m(960)으로 한 번 더 검출합니다. 검출률이 약간 오르는 대신 미검출 이미지에서 CPU 추론이 1회 추가됩니다. v9c 모델이 없는 머신에서는 v8m만 쓰므로 이 옵션이 무의미합니다.</div>
+                                    </div>
+                                    <label class="switch"><input type="checkbox" id="pp-bubble-face-fallback" onchange="collectPpBubbleSettings(); renderPostprocessPreview();"><span class="slider"></span></label>
+                                </div>
+                            </div>
+
+                            <div class="pp-card">
                                 <div class="pp-card-title">폰트 · 텍스트</div>
                                 <div class="pp-field-inline">
                                     <div style="flex:2;">
@@ -25680,6 +25690,7 @@
                     assignment_ambiguity_margin: 0.01,
                     onnx_device: 'auto',
                     cpu_threads: 0,
+                    face_fallback: false,
                 },
                 mode: 'vn',  // 활성 후처리 모드: 'vn' | 'bubble'
             };
@@ -26483,6 +26494,7 @@
             if (base.thought_opacity == null) base.thought_opacity = base.opacity ?? 1.0;
             if (typeof base.onnx_device !== 'string') base.onnx_device = 'auto';
             if (!Number.isInteger(base.cpu_threads) || base.cpu_threads < 0) base.cpu_threads = 0;
+            if (typeof base.face_fallback !== 'boolean') base.face_fallback = false;
             // 폰트 id(드롭박스). 구형 font_path 만 있으면 system 기본으로 두고 선택시 사용자 판단.
             if (typeof base.font_id !== 'string' || !base.font_id) {
                 base.font_id = base.font_path ? 'system' : 'system';
@@ -26636,6 +26648,8 @@
             set('pp-bubble-ambiguity-margin', b.assignment_ambiguity_margin ?? 0.01);
             set('pp-bubble-onnx-device', b.onnx_device || 'auto');
             set('pp-bubble-cpu-threads', b.cpu_threads ?? 0);
+            const _faceFallbackEl = document.getElementById('pp-bubble-face-fallback');
+            if (_faceFallbackEl) _faceFallbackEl.checked = !!b.face_fallback;
             const debugMask = document.getElementById('pp-bubble-debug-mask');
             const debugCandidates = document.getElementById('pp-bubble-debug-candidates');
             if (debugMask) debugMask.checked = false;
@@ -26679,6 +26693,8 @@
             const deviceEl = document.getElementById('pp-bubble-onnx-device');
             b.onnx_device = deviceEl ? (deviceEl.value || 'auto') : (b.onnx_device || 'auto');
             b.cpu_threads = Math.round(_ppNum('pp-bubble-cpu-threads', 0, 0));
+            const _faceFallbackCollect = document.getElementById('pp-bubble-face-fallback');
+            b.face_fallback = _faceFallbackCollect ? _faceFallbackCollect.checked : false;
             return b;
         }
 
@@ -26715,6 +26731,7 @@
                     assignment_ambiguity_margin: b.assignment_ambiguity_margin,
                     onnx_device: b.onnx_device,
                     cpu_threads: b.cpu_threads,
+                    face_fallback: b.face_fallback,
                     preview_debug_mask: !!document.getElementById('pp-bubble-debug-mask')?.checked,
                     preview_debug_candidates: !!document.getElementById('pp-bubble-debug-candidates')?.checked,
                 };
