@@ -2256,7 +2256,8 @@ def build_active_lb_extra(bot_name: str) -> str:
         print("[ILLUST_CONTEXT] 활성 봇이 없어 lb-xnai.lb.extra를 비움")
         return ""
     try:
-        data = bot_mode._load_bot_data()
+        from modes.bot_mode import _load_bot_data, _load_builtin_presets, _load_lb_extra
+        data = _load_bot_data()
         bot = next((b for b in data.get("bots", []) if b.get("name") == bot_name), None)
         if not bot:
             print(f"[ILLUST_CONTEXT] 활성 봇을 찾지 못함: {bot_name}")
@@ -2264,13 +2265,13 @@ def build_active_lb_extra(bot_name: str) -> str:
         preset_name = str(bot.get("system_prompt_preset") or "").strip()
         scope = str(bot.get("preset_scope") or "local").strip()
         if scope == "builtin":
-            system_prompt = str((bot_mode._load_builtin_presets() or {}).get(preset_name, ""))
+            system_prompt = str((_load_builtin_presets() or {}).get(preset_name, ""))
         else:
             system_prompt = str((data.get("system_prompt_presets") or {}).get(preset_name, ""))
         if not system_prompt.strip():
             system_prompt = str(bot.get("system_prompt") or "")
 
-        extra = bot_mode._load_lb_extra(bot_name) or []
+        extra = _load_lb_extra(bot_name) or []
         chars_by_name = {str(c.get("name")): c for c in bot.get("characters", []) if isinstance(c, dict)}
         chunks = [system_prompt.strip()] if system_prompt.strip() else []
         for item in extra:
