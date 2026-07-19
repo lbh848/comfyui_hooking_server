@@ -2442,8 +2442,9 @@ async def process_illustration_context_queue_item(item) -> dict:
             raise RuntimeError("CALL 결과에 생성할 장면이 없습니다")
 
         await progress(70, "enqueue", f"이미지 {len(raw_items)}장 큐 등록", 0, len(raw_items))
-        child_pairs = []
-        for index, descriptor in enumerate(raw_items, start=1):
+
+        # 단일 슬롯을 삽화 하위 큐에 등록. 1차 등록과 2차 재시도(재등록)가 모두 이 함수를 경유.
+        async def _enqueue_child(descriptor, slot_index):
             child_id = str(uuid.uuid4())
             child_prompt = copy.deepcopy(prompt_data)
             if not set_prompt_by_title(child_prompt, "긍정프롬프트", descriptor.get("raw_positive", "")):
@@ -2467,66 +2468,92 @@ async def process_illustration_context_queue_item(item) -> dict:
                 "extra_data": raw_body.get("extra_data", {}),
                 "illustration_context": built.get("context", ""),
                 "illustration_context_session_id": session_id,
-                "illustration_context_index": index,
+                "illustration_context_index": slot_index,
                 "illustration_prompt_format": built.get("prompt_format", "v3"),
             }
             child_item = await queue_manager.add_item(
                 "illustration",
-                f"삽화 {index}/{len(raw_items)} · slot {descriptor.get('slot')}",
+                f"삽화 {slot_index}/{len(raw_items)} · slot {descriptor.get('slot')}",
                 {"prompt_id": child_id, "prompt_data": child_prompt, "raw_body": child_raw_body},
                 priority=0,
             )
-            child_pairs.append((child_id, child_item))
+            return child_id, child_item
 
-        await progress(72, "generating", f"이미지 0/{len(child_pairs)} 완료", 0, len(child_pairs))
-        # 한 슬롯이라도 비면 Risu가 멈추므로, 실패/빈 결과 슬롯에는 폴백 이미지를
-        # 그대로 채워넣는다. descriptor는 그대로 두어 items/images가 항상 정렬되고
-        # Risu 쪽 manifest COUNT · 슬롯 매핑이 깨지지 않게 한다.
-        images: list[bytes] = []
-        substituted: list[str] = []
-        fallback_bytes = _load_illustration_fallback()
-        for index, (child_id, child_item) in enumerate(child_pairs):
-            completed = index + 1
-            descriptor = raw_items[index]
-            slot_label = descriptor.get("slot")
-            image_bytes: bytes | None = None
-            fail_reason = ""
+        # 하위 큐 완료를 기다리고 image_bytes 를 회수. 실패/빈 결과는 (None, 사유) 반환.
+        async def _await_child(child_id, child_item, slot_label):
             try:
                 await child_item.completion_future
                 image_bytes = prompts.get(child_id, {}).get("image_bytes")
                 if not image_bytes:
-                    fail_reason = "생성 결과 비어 있음"
+                    return None, "생성 결과 비어 있음"
+                return image_bytes, ""
             except Exception as e:
                 print(f"[ILLUST_CONTEXT] 하위 이미지 큐 실패: child={child_id}, slot={slot_label}, error={e}")
                 traceback.print_exc()
-                fail_reason = f"큐 실패 - {e}"
+                return None, f"큐 실패 - {e}"
 
-            if not image_bytes:
-                # 후처리/재시도 없이 폴백 이미지로 대체한다. raise하면 Risu가 멈춘다.
+        fallback_bytes = _load_illustration_fallback()
+
+        # ─── 1차: 전부 등록 후 순차 대기. 실패 슬롯은 자리만 None으로 두고 건너뛴다.
+        child_pairs = []
+        for index, descriptor in enumerate(raw_items, start=1):
+            child_pairs.append(await _enqueue_child(descriptor, index))
+
+        total = len(child_pairs)
+        await progress(72, "generating", f"이미지 0/{total} 완료", 0, total)
+        images: list[bytes | None] = [None] * total
+        to_retry: list[tuple[int, dict]] = []  # (raw_items 인덱스, descriptor)
+        for idx, (child_id, child_item) in enumerate(child_pairs):
+            image_bytes, fail_reason = await _await_child(child_id, child_item, raw_items[idx].get("slot"))
+            if image_bytes:
+                images[idx] = image_bytes
+            else:
                 print(
-                    f"[ILLUST_CONTEXT] 폴백 이미지로 대체: child={child_id}, slot={slot_label}, "
-                    f"사유={fail_reason or '알 수 없음'}"
+                    f"[ILLUST_CONTEXT] 1차 실패 - 재시도 대상: slot={raw_items[idx].get('slot')}, 사유={fail_reason}"
                 )
-                substituted.append(f"#{completed}(slot {slot_label}): {fail_reason or '알 수 없음'}")
+                to_retry.append((idx, raw_items[idx]))
+            completed = idx + 1
+            await progress(
+                72 + (completed / total) * 20,
+                "generating",
+                f"이미지 {completed}/{total} 처리",
+                completed,
+                total,
+            )
+
+        # ─── 2차: 1차 실패 슬롯을 새 하위 큐 아이템으로 1회 재등록(이미지 교체 시도).
+        substituted: list[str] = []
+        if to_retry:
+            print(f"[ILLUST_CONTEXT] 1차 실패 {len(to_retry)}건 재시도 시작: session={session_id}")
+            await progress(
+                92, "retrying", f"실패 슬롯 {len(to_retry)}건 재시도",
+                total - len(to_retry), total,
+            )
+            for idx, descriptor in to_retry:
+                slot_label = descriptor.get("slot")
+                retry_index = idx + 1
+                retry_id, retry_item = await _enqueue_child(descriptor, retry_index)
+                image_bytes, fail_reason = await _await_child(retry_id, retry_item, slot_label)
+                if image_bytes:
+                    images[idx] = image_bytes
+                    print(f"[ILLUST_CONTEXT] 재시도 성공으로 이미지 교체: slot={slot_label}")
+                    continue
+                # ─── 3차: 재시도까지 실패한 슬롯에만 폴백 이미지 삽입. descriptor는 그대로 두어
+                # items/images 정렬과 Risu manifest 매핑이 깨지지 않게 한다.
+                print(
+                    f"[ILLUST_CONTEXT] 재시도도 실패 - 폴백 이미지로 대체: slot={slot_label}, 사유={fail_reason}"
+                )
+                substituted.append(f"#{retry_index}(slot {slot_label}): {fail_reason or '알 수 없음'}")
                 if not fallback_bytes:
                     raise RuntimeError(
-                        f"이미지 {completed}/{len(child_pairs)} 슬롯 실패({fail_reason})인데 폴백 이미지를 불러오지 못했습니다"
+                        f"이미지 {retry_index}/{total} 슬롯 실패({fail_reason})인데 폴백 이미지를 불러오지 못했습니다"
                     )
-                image_bytes = fallback_bytes
-
-            images.append(image_bytes)
-            await progress(
-                72 + (completed / len(child_pairs)) * 27,
-                "generating",
-                f"이미지 {completed}/{len(child_pairs)} 완료",
-                completed,
-                len(child_pairs),
-            )
+                images[idx] = fallback_bytes
 
         if substituted:
             print(
                 f"[ILLUST_CONTEXT] 일부 슬롯 폴백 대체 후 계속: session={session_id}, "
-                f"전체={len(images)}/{len(child_pairs)}, 대체={substituted}"
+                f"전체={total}/{total}, 대체={substituted}"
             )
 
         illustration_context_pipeline.set_session_result(session_id, raw_items, images)
