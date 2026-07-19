@@ -26956,6 +26956,10 @@
 
         let ppCurrentBot = '';   // 후처리 모달에서 현재 편집 중인 봇
 
+        // 현재 봇의 후처리 활성 모드('vn'|'bubble'). CALL3 대사 프롬프트 잠금의 진실 소스.
+        // bubble(말풍선 모드)=manga / vn(대사 모드)=speak. 서버가 생성 시 같은 규칙으로 덮어쓴다.
+        let _postprocessActiveMode = 'vn';
+
         function ppFillBotSelect() {
             const sel = document.getElementById('pp-bot-select');
             if (!sel) return;
@@ -27099,6 +27103,8 @@
                     ppApplyBubbleToUI();
                 }
                 switchPostprocessTab(ppWorking.mode || 'vn');  // 저장된 활성 모드 탭으로
+                _postprocessActiveMode = (ppWorking.mode === 'bubble') ? 'bubble' : 'vn';
+                _applyCall3PromptModeLock();  // 생성 설정 CALL3 잠금 동기화
                 renderPpModeBadges();  // 적용중 모드 딱지
                 ppRefreshFaceDevices().then(() => ppRenderFaceCrop());  // vn 얼굴 크롭 미리보기
             } catch (e) {
@@ -28128,6 +28134,8 @@
                     return;
                 }
                 showToast('후처리 설정 저장 완료 (' + ppCurrentBot + ' · ' + ppWorking.mode + ')');
+                _postprocessActiveMode = (ppWorking.mode === 'bubble') ? 'bubble' : 'vn';
+                _applyCall3PromptModeLock();  // 저장된 모드로 CALL3 대사 프롬프트 잠금 이동
             } catch (e) {
                 console.error('[POSTPROCESS] 저장 실패:', e);
                 showToast('후처리 설정 저장 실패: ' + (e.message || e), 'error');
@@ -37573,7 +37581,7 @@
                     {key: 'speak_enabled', label: '장면별 SPEAK 생성', type: 'toggle', help: '각 장면에 표시할 대사를 생성합니다.'},
                     {
                         key: 'call3_prompt_mode', label: 'CALL3 대사 프롬프트', type: 'select',
-                        help: 'Speak는 일반 대사와 선택적 감정을, Manga는 짧은 만화 대사와 #말풍선 형태를 생성합니다.',
+                        help: '후처리 설정(대사 모드=Speak / 말풍선 모드=Manga)에 따라 자동 지정됩니다. 나머지 항목은 회색으로 선택 불가.',
                         options: [{value: 'speak', label: 'Speak'}, {value: 'manga', label: 'Manga'}],
                         dependsOn: ['call3_enabled', 'speak_enabled'],
                     },
@@ -37894,6 +37902,7 @@
             });
             updateIllustrationContextSceneModeVisibility();
             _applyPromptFormatChansubLock();
+            _applyCall3PromptModeLock();
         }
 
         // prompt_format 드롭박스를 챈섭 공급자 상태와 연동.
@@ -37924,6 +37933,35 @@
             if (typeof updateBotModeStatus === 'function') updateBotModeStatus(true);
         }
 
+        // call3_prompt_mode 셀렉트를 후처리 활성 모드에 맞춰 잠근다.
+        // 후처리 bubble(말풍선 모드) → manga, vn(대사 모드) → speak.
+        // 매칭하지 않는 옵션은 disabled(회색) 처리하고 값을 강제한다.
+        // 서버도 생성 시 같은 규칙으로 덮어쓰므로 여기서 값이 틀려도 결과는 안전.
+        function _applyCall3PromptModeLock() {
+            const target = (_postprocessActiveMode === 'bubble') ? 'manga' : 'speak';
+            const select = document.querySelector('[data-illust-toggle="call3_prompt_mode"]');
+            _illustrationContextToggles.call3_prompt_mode = target;
+            if (!select) return;  // 대사 카테고리가 아직 렌더되지 않았을 수 있음
+            Array.from(select.options).forEach(opt => { opt.disabled = (opt.value !== target); });
+            if (select.value !== target) select.value = target;
+        }
+
+        // 현재 봇의 후처리 활성 모드를 서버에서 읽어 캐시하고 잠금을 다시 적용한다.
+        async function refreshPostprocessActiveMode() {
+            const bot = (typeof botCurrentBot !== 'undefined' && botCurrentBot) || ppCurrentBot || '';
+            if (!bot) { _applyCall3PromptModeLock(); return; }
+            try {
+                const resp = await fetch('/api/bot_mode/postprocess_bubble?bot=' + encodeURIComponent(bot));
+                if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                const j = await resp.json();
+                _postprocessActiveMode = (j && j.mode === 'bubble') ? 'bubble' : 'vn';
+            } catch (e) {
+                console.error('[POSTPROCESS] 활성 모드 조회 실패:', e);
+            }
+            _applyCall3PromptModeLock();
+        }
+
+
         function updateIllustrationContextSceneModeVisibility() {
             const body = document.getElementById('illust-tab-content-toggles');
             if (!body) {
@@ -37946,6 +37984,8 @@
                 renderIllustrationContextToggles();
                 _illustrationSettingsDirty = false;
                 setIllustrationContextStatus('로드 완료');
+                // 현재 봇의 후처리 모드를 반영해 CALL3 대사 프롬프트 잠금을 맞춘다.
+                refreshPostprocessActiveMode();
             } catch (e) {
                 console.error('[ILLUST_CONTEXT] 토글 로드 실패:', e);
                 setIllustrationContextStatus('로드 실패: ' + (e.message || e), 'error');

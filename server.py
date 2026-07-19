@@ -2429,10 +2429,21 @@ async def process_illustration_context_queue_item(item) -> dict:
             print(f"[ILLUST_CONTEXT] 원본 prompt 엔트리 없음: {original_prompt_id!r}")
             raise RuntimeError("원본 prompt 엔트리를 찾지 못했습니다")
         await progress(2, "context", "CHAT 컨텍스트 수신")
-        extra_reference = build_active_lb_extra(app_config.get("bot_selected", ""))
+        active_bot = app_config.get("bot_selected", "")
+        extra_reference = build_active_lb_extra(active_bot)
+        # 후처리 모드(bubble→manga / vn→speak)가 CALL3 대사 프롬프트를 자동 결정한다.
+        # call3_prompt_mode는 봇별 후처리 모드를 진실 소스로 삼아 덮어쓴다(전역 토글은 UI 힌트용).
+        illust_toggles = dict(app_config.get("illustration_context_toggles") or {})
+        try:
+            from modes.bot_mode import _get_postprocess_mode
+            _pp_mode = _get_postprocess_mode(active_bot)
+        except Exception as e:
+            print(f"[ILLUST_CONTEXT] postprocess_mode 조회 실패(bot={active_bot}): {e}")
+            _pp_mode = "vn"
+        illust_toggles["call3_prompt_mode"] = "manga" if _pp_mode == "bubble" else "speak"
         built = await illustration_context_pipeline.build_from_context(
             payload,
-            app_config.get("illustration_context_toggles"),
+            illust_toggles,
             extra_reference,
             progress=progress,
             stream_notify=stream_notify,
