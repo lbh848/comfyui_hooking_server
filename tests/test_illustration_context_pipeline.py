@@ -92,6 +92,53 @@ def test_call2_macro_render_has_no_risu_macros():
     assert "Prefer cinematic lighting." in rendered
 
 
+def test_prompt_format_migrates_legacy_preset_and_rejects_unknown_value(capsys):
+    assert pipeline.merged_toggles({"preset": "tutorial"})["prompt_format"] == "v3"
+    assert pipeline.merged_toggles({"preset": "v1"})["prompt_format"] == "v1"
+    assert pipeline.merged_toggles({"prompt_format": "V1"})["prompt_format"] == "v1"
+    assert pipeline.merged_toggles({"prompt_format": "future"})["prompt_format"] == "v3"
+    assert "지원하지 않는 프롬프트 입력 형식" in capsys.readouterr().out
+
+
+def test_build_raw_prompt_uses_v1_or_v3_input_shape():
+    descriptor = {
+        "slot": 2,
+        "camera": "medium shot",
+        "scene": "classroom",
+        "supplement": "sunset lighting",
+        "speak": "Hana: hello",
+        "characters": [{
+            "name": "hana",
+            "positive": "1girl, hana, black hair",
+            "negative": "bad hands",
+        }],
+    }
+    prompts = pipeline.load_prompt_files()
+
+    v1_positive, v1_negative = pipeline.build_raw_prompt(
+        descriptor,
+        "창가에 선다.",
+        prompts,
+        pipeline.merged_toggles({"prompt_format": "v1"}),
+    )
+    assert "[ILXL]\nmedium shot, classroom, 1girl, hana, black hair" in v1_positive
+    assert "[UPSCALE]\n1girl, hana, black hair" in v1_positive
+    assert "[SETUP]" not in v1_positive
+    assert "[CHAT]\n창가에 선다." in v1_positive
+    assert "bad hands" in v1_negative
+
+    v3_positive, v3_negative = pipeline.build_raw_prompt(
+        descriptor,
+        "창가에 선다.",
+        prompts,
+        pipeline.merged_toggles({"prompt_format": "v3"}),
+    )
+    assert "[SETUP]\nmedium shot, classroom" in v3_positive
+    assert "[CHAR]\n1girl, hana, black hair" in v3_positive
+    assert "[ILXL]" not in v3_positive
+    assert "bad hands" in v3_negative
+
+
 @pytest.mark.asyncio
 async def test_call1_enrichment_is_passed_to_call2_without_changing_slots(monkeypatch):
     calls = []

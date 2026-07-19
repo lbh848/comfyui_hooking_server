@@ -23,7 +23,7 @@ _illust_build_logs: deque = deque(maxlen=20)
 
 
 def get_illust_logs() -> list:
-    """삽화 모드 프롬프트 빌드 로그 목록 반환."""
+    """삽화 프롬프트 생성 로그 목록 반환."""
     return list(_illust_build_logs)
 
 
@@ -31,7 +31,7 @@ def log_illust_build(raw_positive: str, word_replaced_raw: str,
                      sections: dict, detected: list,
                      word_replaced: dict, final_positive: str, final_negative: str,
                      context: str = ""):
-    """삽화 모드 프롬프트 빌드 로그 기록."""
+    """삽화 프롬프트 생성 로그 기록."""
     log_entry = {
         "timestamp": time.time(),
         "context": context,
@@ -48,7 +48,7 @@ def log_illust_build(raw_positive: str, word_replaced_raw: str,
         "final_negative": final_negative,
     }
     _illust_build_logs.append(log_entry)
-    print(f"[ILLUST_LOG] 빌드 로그 기록: detected={detected}, "
+    print(f"[ILLUST_LOG] 생성 로그 기록: detected={detected}, "
           f"positive_len={len(final_positive)}, negative_len={len(final_negative)}")
 
 

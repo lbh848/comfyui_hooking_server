@@ -167,7 +167,7 @@ DEFAULT_CONFIG = {
         "context_history": True,
         "focus": "",
         "direction": "",
-        "preset": "tutorial",
+        "prompt_format": "v3",
         "positive_note": "",
         "negative_note": "",
         "compat_comfy": True,
@@ -2420,7 +2420,7 @@ async def process_illustration_context_queue_item(item) -> dict:
 
 
 async def handle_get_illust_logs(request: web.Request) -> web.Response:
-    """GET /api/bot_mode/illust_logs - 삽화 모드 프롬프트 빌드 로그 반환"""
+    """GET /api/bot_mode/illust_logs - 삽화 프롬프트 생성 로그 반환"""
     logs = get_illust_logs()
     return web.json_response({"logs": logs})
 
@@ -3199,7 +3199,7 @@ async def handle_prompt(request: web.Request) -> web.Response:
             }
             asyncio.create_task(queue_manager.add_item(
                 "illustration_llm_build",
-                f"삽화 LLM 빌드 · {session_id[:12]}",
+                f"삽화 프롬프트 생성 · {session_id[:12]}",
                 {
                     "prompt_id": prompt_id,
                     "prompt_data": prompt_data,

@@ -58,7 +58,7 @@ DEFAULT_TOGGLES = {
     "context_history": True,
     "focus": "",
     "direction": "",
-    "preset": "tutorial",
+    "prompt_format": "v3",
     "positive_note": "",
     "negative_note": "",
     "compat_comfy": True,
@@ -122,6 +122,25 @@ def merged_toggles(value: dict | None) -> dict:
         for key in out:
             if key in value:
                 out[key] = value[key]
+        # 구버전의 자유 입력 preset 값은 V1/V3 선택값으로 한 번만 해석한다.
+        # tutorial/default/빈 값은 모두 기존 preset.txt(V3)를 뜻했다.
+        if "prompt_format" not in value and "preset" in value:
+            legacy_preset = str(value.get("preset") or "").strip().lower()
+            if legacy_preset == "v1":
+                out["prompt_format"] = "v1"
+            elif legacy_preset in ("", "default", "tutorial", "v3"):
+                out["prompt_format"] = "v3"
+            else:
+                print(
+                    f"[ILLUST_CONTEXT] 알 수 없는 기존 RAW 프롬프트 프리셋 "
+                    f"{legacy_preset!r}, V3로 전환"
+                )
+                out["prompt_format"] = "v3"
+    prompt_format = str(out.get("prompt_format") or "").strip().lower()
+    if prompt_format not in ("v1", "v3"):
+        print(f"[ILLUST_CONTEXT] 지원하지 않는 프롬프트 입력 형식 {prompt_format!r}, V3 사용")
+        prompt_format = "v3"
+    out["prompt_format"] = prompt_format
     try:
         out["call1_context_turns"] = max(0, min(30, int(out["call1_context_turns"])))
         out["character_limit"] = max(1, min(3, int(out["character_limit"])))
@@ -149,24 +168,6 @@ def load_prompt_files() -> dict:
             traceback.print_exc()
             result[key] = ""
     return result
-
-
-def load_selected_preset(toggles: dict, fallback: str) -> str:
-    """preset_<name>.txt가 있으면 사용하고, 없으면 UI의 preset.txt를 사용한다."""
-    name = re.sub(r"[^A-Za-z0-9_-]+", "_", str(toggles.get("preset") or "").strip()).strip("_")
-    if not name or name.lower() in ("default", "tutorial"):
-        return fallback
-    path = os.path.join(PROMPTS_DIR, f"preset_{name}.txt")
-    if not os.path.isfile(path):
-        print(f"[ILLUST_CONTEXT] 선택 프리셋 파일 없음, preset.txt 사용: {path}")
-        return fallback
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return f.read()
-    except Exception as e:
-        print(f"[ILLUST_CONTEXT] 선택 프리셋 로드 실패, preset.txt 사용: {path}: {e}")
-        traceback.print_exc()
-        return fallback
 
 
 def save_prompt_files(values: dict) -> list[str]:
@@ -767,29 +768,50 @@ async def _call_pipeline_llm(call_name: str, messages: list[dict], stream_notify
 def build_raw_prompt(descriptor: dict, narrative: str, prompts: dict, toggles: dict) -> tuple[str, str]:
     template = prompts.get("call2_preset") or "[Positive]\n[SETUP]\n{setup}\n[CHAR]\n{char}\n[SUPPLEMENT]\n{supplement}\n\n[Negative]\n"
     positive_part, marker, negative_part = template.partition("[Negative]")
-    if positive_part.startswith("[Positive]"):
-        positive_part = positive_part[len("[Positive]"):]
     chars = descriptor.get("characters") or []
     divider = "\n\n" if toggles.get("compat_character_divider") == "newline" else " | "
     char_positive = divider.join(str(ch.get("positive") or "") for ch in chars if str(ch.get("positive") or "").strip())
     char_negative = ", ".join(str(ch.get("negative") or "") for ch in chars if str(ch.get("negative") or "").strip())
     names = ", ".join(str(ch.get("name") or "") for ch in chars if str(ch.get("name") or "").strip())
     setup = ", ".join(x for x in (descriptor.get("camera", ""), descriptor.get("scene", "")) if x)
-    replacements = {
-        "{chat}": narrative,
-        "{slot}": str(descriptor.get("slot", "")),
-        "{speak}": descriptor.get("speak") or "None",
-        "{name}": names,
-        "{setup}": setup,
-        "{prompt}": setup,
-        "{char}": char_positive,
-        "{supplement}": descriptor.get("supplement") or "",
-    }
-    positive = positive_part
-    for key, value in replacements.items():
-        positive = positive.replace(key, str(value))
-    if str(toggles.get("positive_note") or "").strip():
-        positive = positive.rstrip() + "\n" + str(toggles["positive_note"]).strip()
+    supplement = str(descriptor.get("supplement") or "").strip()
+    positive_note = str(toggles.get("positive_note") or "").strip()
+    prompt_format = str(toggles.get("prompt_format") or "v3").strip().lower()
+
+    if prompt_format == "v1":
+        # 비삽화 모드가 기대하는 기존 ILXL/UPSCALE 입력 구조.
+        # 토글의 긍정 추가 문구는 섹션 뒤에 흘리지 않고 실제 이미지 태그에 포함한다.
+        top = ", ".join(x for x in (char_positive, setup, supplement, positive_note) if x)
+        ilxl = ", ".join(x for x in (setup, char_positive, positive_note) if x)
+        upscale = ", ".join(x for x in (char_positive, positive_note) if x)
+        positive = (
+            f"{top}\n\n"
+            f"[ILXL]\n{ilxl}\n\n"
+            f"[UPSCALE]\n{upscale}\n\n"
+            f"[CHAT]\n{narrative}\n"
+            f"[SLOT]\n{descriptor.get('slot', '')}\n"
+            f"[SPEAK]\n{descriptor.get('speak') or 'None'}"
+        )
+    else:
+        if prompt_format != "v3":
+            print(f"[ILLUST_CONTEXT] RAW 생성 중 알 수 없는 입력 형식 {prompt_format!r}, V3 사용")
+        if positive_part.startswith("[Positive]"):
+            positive_part = positive_part[len("[Positive]"):]
+        replacements = {
+            "{chat}": narrative,
+            "{slot}": str(descriptor.get("slot", "")),
+            "{speak}": descriptor.get("speak") or "None",
+            "{name}": names,
+            "{setup}": setup,
+            "{prompt}": setup,
+            "{char}": char_positive,
+            "{supplement}": supplement,
+        }
+        positive = positive_part
+        for key, value in replacements.items():
+            positive = positive.replace(key, str(value))
+        if positive_note:
+            positive = positive.rstrip() + "\n" + positive_note
     negative = negative_part.strip() if marker else ""
     if char_negative:
         negative = ", ".join(x for x in (negative, char_negative) if x)
@@ -801,7 +823,6 @@ def build_raw_prompt(descriptor: dict, narrative: str, prompts: dict, toggles: d
 async def build_from_context(payload: dict, toggles: dict | None, extra_reference: str, progress=None, stream_notify=None) -> dict:
     toggles = merged_toggles(toggles)
     prompts = load_prompt_files()
-    prompts["call2_preset"] = load_selected_preset(toggles, prompts.get("call2_preset", ""))
     chats = payload.get("chats") or []
     target_index, narrative = _latest_narrative(chats)
     if target_index < 0 or not narrative:
@@ -915,7 +936,7 @@ async def build_from_context(payload: dict, toggles: dict | None, extra_referenc
         print("[ILLUST_CONTEXT:CALL3] 토글로 비활성화되었거나 SPEAK이 꺼져 있음")
 
     if progress:
-        await progress(68, "raw_build", f"RAW 프롬프트 {len(descriptors)}개 빌드")
+        await progress(68, "raw_build", f"RAW 프롬프트 {len(descriptors)}개 생성")
     raw_items = []
     for descriptor in descriptors:
         positive, negative = build_raw_prompt(descriptor, enhanced, prompts, toggles)

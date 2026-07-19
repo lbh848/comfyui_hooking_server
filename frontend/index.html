@@ -1083,6 +1083,478 @@
             background: rgba(170, 170, 170, 0.1);
         }
 
+        /* 삽화 프롬프트 생성 모달 */
+        .illust-prompt-modal-content {
+            width: min(1080px, 100%);
+            max-width: 1080px;
+            height: min(88vh, 920px);
+            max-height: 920px;
+            overflow: hidden;
+        }
+        .illust-prompt-modal-content .modal-header,
+        .illust-prompt-modal-content .modal-footer,
+        .illust-modal-tabs {
+            flex: 0 0 auto;
+        }
+        .illust-prompt-modal-content .modal-header h2 {
+            font-size: 18px;
+            font-weight: 700;
+        }
+        .illust-prompt-modal-content .modal-body {
+            min-height: 0;
+            padding: 0;
+            overflow-y: auto;
+        }
+        .illust-prompt-modal-content #illust-tab-content-logs {
+            padding: 20px;
+        }
+        .illust-modal-tabs {
+            display: flex;
+            gap: 2px;
+            padding: 6px 16px 0;
+            border-bottom: 1px solid var(--border);
+            overflow-x: auto;
+        }
+        .illust-modal-tab {
+            height: 40px;
+            padding: 0 16px;
+            border: 0;
+            border-bottom: 2px solid transparent;
+            background: transparent;
+            color: var(--text2);
+            font-size: 0.85rem;
+            font-weight: 500;
+            white-space: nowrap;
+            cursor: pointer;
+        }
+        .illust-modal-tab:hover {
+            color: var(--text);
+            background: color-mix(in srgb, var(--surface2) 26%, transparent);
+        }
+        .illust-modal-tab.is-active {
+            border-bottom-color: var(--accent);
+            color: var(--text);
+            font-weight: 700;
+            background: color-mix(in srgb, var(--accent) 10%, transparent);
+        }
+
+        /* 삽화 프롬프트 생성 설정: 모든 선택자는 전용 루트 아래로 제한한다. */
+        .illust-settings {
+            --illust-panel: color-mix(in srgb, var(--surface2) 30%, var(--surface));
+            --illust-panel-muted: color-mix(in srgb, var(--surface2) 18%, var(--surface));
+            --illust-input: color-mix(in srgb, var(--bg) 82%, var(--surface));
+            --illust-border-subtle: color-mix(in srgb, var(--border) 72%, transparent);
+            box-sizing: border-box;
+            min-height: 100%;
+            padding: 20px 24px 36px;
+            color: var(--text);
+        }
+        .illust-settings .illust-settings-info {
+            display: flex;
+            align-items: center;
+            min-height: 42px;
+            margin-bottom: 18px;
+            padding: 8px 12px;
+            border-left: 3px solid color-mix(in srgb, var(--accent) 65%, var(--border));
+            background: var(--illust-panel-muted);
+            color: var(--text2);
+            font-size: 12.5px;
+            line-height: 1.45;
+            word-break: keep-all;
+            overflow-wrap: break-word;
+        }
+        .illust-settings .illust-settings-layout {
+            display: grid;
+            grid-template-columns: 180px minmax(0, 1fr);
+            align-items: start;
+            gap: 20px;
+        }
+        .illust-settings .illust-settings-nav {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            min-width: 0;
+            padding: 8px;
+            border: 1px solid var(--illust-border-subtle);
+            border-radius: 9px;
+            background: var(--illust-panel-muted);
+        }
+        .illust-settings .illust-settings-nav-button {
+            position: relative;
+            min-height: 42px;
+            padding: 9px 12px;
+            border: 0;
+            border-radius: 6px;
+            background: transparent;
+            color: var(--text2);
+            font-size: 13px;
+            font-weight: 600;
+            line-height: 1.35;
+            text-align: left;
+            white-space: nowrap;
+            cursor: pointer;
+        }
+        .illust-settings .illust-settings-nav-button:hover {
+            color: var(--text);
+            background: color-mix(in srgb, var(--surface2) 38%, transparent);
+        }
+        .illust-settings .illust-settings-nav-button.is-active {
+            color: var(--text);
+            background: color-mix(in srgb, var(--accent) 12%, transparent);
+        }
+        .illust-settings .illust-settings-nav-button.is-active::before {
+            position: absolute;
+            top: 9px;
+            bottom: 9px;
+            left: 0;
+            width: 3px;
+            border-radius: 3px;
+            background: var(--accent);
+            content: '';
+        }
+        .illust-settings .illust-settings-panels,
+        .illust-settings .illust-settings-panel {
+            min-width: 0;
+        }
+        .illust-settings .illust-settings-panel {
+            display: none;
+            overflow: hidden;
+            border: 1px solid var(--illust-border-subtle);
+            border-radius: 10px;
+            background: var(--illust-panel);
+        }
+        .illust-settings .illust-settings-panel.is-active {
+            display: block;
+        }
+        .illust-settings .illust-settings-panel-header {
+            display: block;
+            padding: 17px 18px 15px;
+            border-bottom: 1px solid var(--illust-border-subtle);
+        }
+        .illust-settings .illust-settings-panel-title {
+            margin: 0;
+            color: var(--text);
+            font-size: 16px;
+            font-weight: 700;
+            line-height: 1.4;
+            word-break: keep-all;
+        }
+        .illust-settings .illust-settings-panel-description {
+            margin: 4px 0 0;
+            color: var(--text2);
+            font-size: 12.5px;
+            line-height: 1.45;
+            word-break: keep-all;
+            overflow-wrap: break-word;
+        }
+        .illust-settings .illust-settings-panel-body {
+            min-width: 0;
+        }
+        .illust-settings .illust-setting-row {
+            display: grid;
+            grid-template-columns: minmax(260px, 1fr) minmax(180px, 280px);
+            align-items: center;
+            gap: 24px;
+            min-height: 72px;
+            padding: 14px 18px;
+            border-bottom: 1px solid var(--illust-border-subtle);
+            transition: opacity 0.18s, background 0.18s;
+        }
+        .illust-settings .illust-setting-row:last-child {
+            border-bottom: 0;
+        }
+        .illust-settings .illust-setting-row.is-stacked {
+            grid-template-columns: minmax(0, 1fr);
+            gap: 10px;
+            align-items: stretch;
+        }
+        .illust-settings .illust-setting-copy {
+            min-width: 260px;
+            word-break: keep-all;
+            overflow-wrap: break-word;
+        }
+        .illust-settings .illust-setting-row.is-stacked .illust-setting-copy,
+        .illust-settings .illust-setting-row.is-compact .illust-setting-copy {
+            min-width: 0;
+        }
+        .illust-settings .illust-setting-label {
+            display: block;
+            color: var(--text);
+            font-size: 13.5px;
+            font-weight: 600;
+            line-height: 1.45;
+        }
+        .illust-settings .illust-setting-help {
+            display: block;
+            margin-top: 3px;
+            color: var(--text2);
+            font-size: 12px;
+            font-weight: 400;
+            line-height: 1.45;
+        }
+        .illust-settings .illust-setting-control {
+            display: flex;
+            justify-content: flex-end;
+            align-items: center;
+            gap: 10px;
+            min-width: 0;
+        }
+        .illust-settings .illust-setting-row.is-stacked .illust-setting-control,
+        .illust-settings .illust-setting-row.is-compact .illust-setting-control {
+            justify-content: stretch;
+            width: 100%;
+        }
+        .illust-settings .illust-setting-toggle-control {
+            display: grid;
+            grid-template-columns: 36px 38px;
+            align-items: center;
+            gap: 10px;
+        }
+        .illust-settings .illust-setting-toggle-control .toggle-switch {
+            flex: 0 0 36px;
+        }
+        .illust-settings .illust-setting-state {
+            width: 38px;
+            color: var(--text2);
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.03em;
+            text-align: left;
+        }
+        .illust-settings .illust-setting-state.on {
+            color: color-mix(in srgb, var(--success) 45%, var(--text2));
+        }
+        .illust-settings .illust-setting-input {
+            box-sizing: border-box;
+            width: 100%;
+            min-width: 0;
+            min-height: 38px;
+            padding: 8px 10px;
+            border: 1px solid var(--illust-border-subtle);
+            border-radius: 6px;
+            outline: none;
+            background: var(--illust-input);
+            color: var(--text);
+            font-size: 13px;
+            line-height: 1.4;
+        }
+        .illust-settings .illust-setting-input:focus {
+            border-color: color-mix(in srgb, var(--accent) 76%, var(--border));
+            box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 14%, transparent);
+        }
+        .illust-settings .illust-setting-input:disabled {
+            border-color: transparent;
+            background: color-mix(in srgb, var(--bg) 76%, transparent);
+            color: color-mix(in srgb, var(--text2) 70%, transparent);
+        }
+        .illust-settings .illust-setting-input[type='number'] {
+            max-width: 120px;
+            text-align: right;
+        }
+        .illust-settings textarea.illust-setting-input {
+            min-height: 120px;
+            resize: vertical;
+        }
+        .illust-settings .illust-settings-dependent {
+            margin: 8px 18px 14px 34px;
+            overflow: hidden;
+            border-left: 2px solid var(--illust-border-subtle);
+            background: color-mix(in srgb, var(--surface) 55%, transparent);
+            transition: opacity 0.18s, background 0.18s;
+        }
+        .illust-settings .illust-settings-dependent .illust-setting-row {
+            min-height: 64px;
+            padding-right: 14px;
+            padding-left: 14px;
+        }
+        .illust-settings .illust-settings-dependent.is-locked,
+        .illust-settings .illust-setting-row.is-locked {
+            opacity: 0.46;
+        }
+        .illust-settings .illust-settings-dependent.is-locked {
+            background: color-mix(in srgb, var(--bg) 72%, transparent);
+        }
+        .illust-settings .is-locked .illust-setting-input {
+            cursor: not-allowed;
+        }
+        .illust-settings .illust-settings-subheading {
+            margin: 0;
+            padding: 16px 18px 4px;
+            color: var(--text2);
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+        }
+        .illust-settings .illust-settings-paired {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(220px, 1fr));
+            gap: 12px;
+            padding: 10px 18px 18px;
+        }
+        .illust-settings .illust-settings-paired .illust-setting-row {
+            grid-template-columns: minmax(0, 1fr);
+            align-content: start;
+            gap: 10px;
+            min-width: 220px;
+            padding: 14px;
+            border: 0;
+            border-radius: 7px;
+            background: var(--illust-panel-muted);
+        }
+        .illust-settings .illust-settings-paired .illust-setting-control {
+            justify-content: stretch;
+            width: 100%;
+        }
+
+        .illust-settings-footer {
+            position: sticky;
+            bottom: 0;
+            z-index: 2;
+            align-items: center;
+            gap: 8px;
+            background: var(--surface);
+        }
+        .illust-settings-footer[hidden] {
+            display: none;
+        }
+        .illust-settings-status {
+            flex: 1;
+            color: var(--text2);
+            font-size: 12px;
+        }
+        .illust-settings-status.is-dirty {
+            color: color-mix(in srgb, var(--warn) 72%, var(--text));
+        }
+        .illust-settings-status.is-error {
+            color: var(--error);
+        }
+        .illust-settings-action {
+            min-width: 84px;
+            background: transparent;
+            color: var(--text2);
+        }
+        .illust-settings-action:hover:not(:disabled) {
+            color: var(--text);
+            background: color-mix(in srgb, var(--surface2) 34%, transparent);
+        }
+        .illust-settings-action.is-secondary {
+            background: var(--surface2);
+            color: var(--text);
+        }
+        .illust-settings-action.is-primary {
+            border-color: var(--accent);
+            background: var(--accent);
+            color: #fff;
+            font-weight: 700;
+        }
+        .illust-settings-action.is-primary:hover:not(:disabled) {
+            filter: brightness(1.08);
+        }
+        .illust-settings-action.is-saving::before {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            margin-right: 7px;
+            border: 2px solid rgba(255, 255, 255, 0.42);
+            border-top-color: #fff;
+            border-radius: 50%;
+            vertical-align: -2px;
+            content: '';
+            animation: illust-settings-spin 0.75s linear infinite;
+        }
+        @keyframes illust-settings-spin {
+            to { transform: rotate(360deg); }
+        }
+
+        @media (max-width: 900px) {
+            .illust-settings .illust-settings-layout {
+                grid-template-columns: minmax(0, 1fr);
+                gap: 14px;
+            }
+            .illust-settings .illust-settings-nav {
+                flex-direction: row;
+                overflow-x: auto;
+                padding: 6px;
+            }
+            .illust-settings .illust-settings-nav-button {
+                flex: 0 0 auto;
+                min-height: 38px;
+                padding: 8px 13px;
+                text-align: center;
+            }
+            .illust-settings .illust-settings-nav-button.is-active::before {
+                top: auto;
+                right: 10px;
+                bottom: 0;
+                left: 10px;
+                width: auto;
+                height: 2px;
+            }
+            .illust-settings .illust-setting-row {
+                grid-template-columns: minmax(260px, 1fr) minmax(150px, 220px);
+                gap: 18px;
+            }
+            .illust-settings .illust-settings-paired {
+                grid-template-columns: minmax(0, 1fr);
+            }
+        }
+
+        @media (max-width: 640px) {
+            .illust-prompt-modal-content {
+                height: calc(100vh - 40px);
+                max-height: none;
+            }
+            .illust-settings {
+                padding: 14px 14px 28px;
+            }
+            .illust-settings .illust-settings-info {
+                margin-bottom: 12px;
+            }
+            .illust-settings .illust-setting-row {
+                grid-template-columns: minmax(0, 1fr);
+                gap: 10px;
+                padding: 14px;
+            }
+            .illust-settings .illust-setting-copy {
+                min-width: 0;
+            }
+            .illust-settings .illust-setting-control {
+                justify-content: flex-start;
+                width: 100%;
+            }
+            .illust-settings .illust-setting-toggle-control {
+                margin-left: auto;
+            }
+            .illust-settings .illust-setting-input[type='number'] {
+                max-width: none;
+            }
+            .illust-settings .illust-settings-dependent {
+                margin-right: 14px;
+                margin-left: 22px;
+            }
+            .illust-settings .illust-settings-paired {
+                grid-template-columns: minmax(0, 1fr);
+                padding-right: 14px;
+                padding-left: 14px;
+            }
+            .illust-settings .illust-settings-paired .illust-setting-row {
+                min-width: 0;
+            }
+            .illust-settings-footer {
+                flex-wrap: wrap;
+                padding: 12px 14px;
+            }
+            .illust-settings-status {
+                flex: 1 0 100%;
+            }
+            .illust-settings-action {
+                flex: 0 1 auto;
+            }
+            .illust-settings-action.is-primary {
+                flex: 1 1 140px;
+            }
+        }
+
         /* 삽화모드 칩 스타일 */
         .illust-chip {
             display: inline-flex;
@@ -3893,7 +4365,7 @@
                              </div>
                              </fieldset>
                              <div style="margin-top:8px;">
-                                <button onclick="openIllustLogModal()" style="width:100%; background:#6A1B9A; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">📋 프롬프트 빌드 로그</button>
+                                <button onclick="openIllustLogModal()" style="width:100%; background:#6A1B9A; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">🖼️ 삽화 프롬프트 생성</button>
                             </div>
                         </div>
                     </div>
@@ -11311,7 +11783,7 @@
 
         // ─── 큐 우선순위 설정 ───
         const QUEUE_TYPE_LABELS = {
-            illustration_llm_build: '삽화 LLM 빌드',
+            illustration_llm_build: '삽화 프롬프트 생성',
             asset_lora_training: '에셋 LoRA 학습',
             bot_lora_training: '봇 LoRA 학습',
             instance_lora_analysis: '인스턴스 LoRA 분석 및 학습',
@@ -36122,28 +36594,28 @@
             modal.className = 'modal';
             modal.onclick = (e) => { if (e.target === modal) modal.classList.remove('visible'); };
             modal.innerHTML = `
-                <div class="modal-content" style="max-width:900px;">
+                <div class="modal-content illust-prompt-modal-content">
                     <div class="modal-header">
-                        <h2>📋 프롬프트 빌드 로그</h2>
+                        <h2>삽화 프롬프트 생성</h2>
                         <button class="modal-close" onclick="document.getElementById('illust-log-modal').classList.remove('visible')">&times;</button>
                     </div>
-                    <div style="display:flex; gap:4px; padding:8px 16px 0; border-bottom:1px solid var(--border);">
-                        <button id="illust-tab-logs" onclick="switchIllustModalTab('logs')" style="background:var(--accent); color:#fff; border:none; padding:8px 16px; border-radius:6px 6px 0 0; cursor:pointer; font-size:0.85rem; font-weight:600;">빌드 로그</button>
-                        <button id="illust-tab-llm" onclick="switchIllustModalTab('llm')" style="background:var(--surface2); color:var(--text2); border:none; padding:8px 16px; border-radius:6px 6px 0 0; cursor:pointer; font-size:0.85rem;">LLM 프롬프트 빌드</button>
-                        <button id="illust-tab-toggles" onclick="switchIllustModalTab('toggles')" style="background:var(--surface2); color:var(--text2); border:none; padding:8px 16px; border-radius:6px 6px 0 0; cursor:pointer; font-size:0.85rem;">삽화 토글</button>
+                    <div class="illust-modal-tabs" role="tablist" aria-label="삽화 프롬프트 생성 메뉴">
+                        <button id="illust-tab-logs" class="illust-modal-tab is-active" type="button" role="tab" aria-selected="true" aria-controls="illust-tab-content-logs" onclick="switchIllustModalTab('logs')">생성 로그</button>
+                        <button id="illust-tab-llm" class="illust-modal-tab" type="button" role="tab" aria-selected="false" aria-controls="illust-tab-content-llm" onclick="switchIllustModalTab('llm')">LLM 프롬프트</button>
+                        <button id="illust-tab-toggles" class="illust-modal-tab" type="button" role="tab" aria-selected="false" aria-controls="illust-tab-content-toggles" onclick="switchIllustModalTab('toggles')">생성 설정</button>
                     </div>
-                    <div class="modal-body" id="illust-log-body" style="max-height:70vh; overflow-y:auto;">
+                    <div class="modal-body" id="illust-log-body">
                         <div id="illust-tab-content-logs">
                             <div style="text-align:center; padding:20px; color:var(--text2);">로딩 중...</div>
                         </div>
                         <div id="illust-tab-content-llm" style="display:none; padding:12px 16px;">
                             <div style="margin-bottom:12px; padding:8px; background:rgba(0,0,0,0.06); border-radius:6px; font-size:0.75rem; color:var(--text2); line-height:1.5;">
-                                CHAT을 받은 서버가 CALL1 → CALL2 → CALL3 순서로 실행합니다. 프롬프트 본문은 config.json이 아니라 아래 개별 txt 파일에 저장됩니다.
+                                CHAT을 받은 서버가 CALL1 → CALL2 → CALL3 순서로 실행합니다. 삽화 프롬프트 본문은 config.json이 아니라 아래 개별 txt 파일에 저장됩니다.
                                 1. CALL1은 <strong>enhance.txt</strong>와 최근 CHAT으로 현재 응답의 시각 힌트를 만듭니다.<br>
                                 2. CALL2 system = <strong>jailbreak.txt</strong> + <strong>job.txt</strong> + <strong>system.txt</strong>, 이후 활성 봇 <strong>lb.extra</strong>와 CHAT·슬롯 본문을 전달합니다.<br>
                                 3. CALL2 output 지시 = <strong>thoughts.txt</strong> + <strong>format.txt</strong>, 선택적으로 <strong>prefill.txt</strong>를 사용합니다.<br>
                                 4. CALL3은 정상 결과에는 <strong>speak.txt</strong>, 파싱 실패에는 <strong>repair.txt</strong>를 사용합니다.<br>
-                                <strong>preset.txt</strong>는 descriptor를 기존 RAW 프롬프트로 변환하는 템플릿입니다. 삽화 토글의 프리셋 이름이 지정되고 <code>preset_이름.txt</code>가 존재하면 그 파일을 우선 사용합니다.
+                                <strong>preset.txt</strong>는 V3의 <code>[SETUP]/[CHAR]/[SUPPLEMENT]</code> RAW 입력 템플릿과 공통 부정 프롬프트를 담습니다. V1을 선택하면 서버가 같은 장면을 <code>[ILXL]/[UPSCALE]</code> 입력 형태로 생성합니다.
                             </div>
                             <div style="display:flex; gap:5px; margin:0 0 10px;">
                                 <button id="illust-call-tab-call1" onclick="switchIllustCallTab('call1')" style="padding:6px 14px; border:1px solid var(--border); border-radius:5px; background:var(--accent); color:#fff; cursor:pointer;">CALL1</button>
@@ -36182,7 +36654,7 @@
                                 <textarea id="lighbd-prompt-format" data-lighbd-prompt="format" style="width:100%; height:200px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
                             </details>
                             <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
-                                <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--text);">📝 preset.txt (IllustPromptBuilder용 템플릿)</summary>
+                                <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--text);">📝 preset.txt (V3 RAW 입력 템플릿)</summary>
                                 <textarea id="lighbd-prompt-preset" data-lighbd-prompt="preset" style="width:100%; height:220px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
                             </details>
                             </div>
@@ -36198,7 +36670,7 @@
                             </div>
                             <div id="lighbd-prompt-status" style="margin-top:8px; font-size:0.72rem; color:var(--text2);"></div>
                         </div>
-                        <div id="illust-tab-content-toggles" style="display:none; padding:12px 16px;"></div>
+                        <div id="illust-tab-content-toggles" class="illust-settings" role="tabpanel" aria-labelledby="illust-tab-toggles" hidden></div>
                     </div>
                     <div class="modal-footer" id="illust-log-footer-logs" style="display:flex; align-items:center; gap:8px;">
                         <button id="illust-log-prev" onclick="illustLogPage(-1)" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:6px 12px; border-radius:4px; cursor:pointer;">◀ 이전</button>
@@ -36214,11 +36686,11 @@
                         <button onclick="saveLighbdPrompts()" style="background:var(--accent); color:#fff; border:none; padding:6px 16px; border-radius:4px; cursor:pointer;">💾 저장</button>
                         <button onclick="document.getElementById('illust-log-modal').classList.remove('visible')" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:6px 16px; border-radius:4px; cursor:pointer;">닫기</button>
                     </div>
-                    <div class="modal-footer" id="illust-log-footer-toggles" style="display:none; align-items:center; gap:8px;">
-                        <span id="illust-toggle-status" style="font-size:0.75rem; color:var(--text2); flex:1;"></span>
-                        <button onclick="loadIllustrationContextToggles()" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:6px 16px; border-radius:4px; cursor:pointer;">다시 불러오기</button>
-                        <button onclick="saveIllustrationContextToggles()" style="background:var(--accent); color:#fff; border:none; padding:6px 16px; border-radius:4px; cursor:pointer;">💾 저장</button>
-                        <button onclick="document.getElementById('illust-log-modal').classList.remove('visible')" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:6px 16px; border-radius:4px; cursor:pointer;">닫기</button>
+                    <div class="modal-footer illust-settings-footer" id="illust-log-footer-toggles" hidden>
+                        <span id="illust-toggle-status" class="illust-settings-status" aria-live="polite">로드 대기 중</span>
+                        <button class="illust-settings-action is-secondary" type="button" onclick="loadIllustrationContextToggles()">다시 불러오기</button>
+                        <button id="illust-toggle-save" class="illust-settings-action is-primary" type="button" onclick="saveIllustrationContextToggles()">저장</button>
+                        <button class="illust-settings-action" type="button" onclick="document.getElementById('illust-log-modal').classList.remove('visible')">닫기</button>
                     </div>
                 </div>
             `;
@@ -36244,18 +36716,22 @@
             const logsFooter = document.getElementById('illust-log-footer-logs');
             const llmFooter = document.getElementById('illust-log-footer-llm');
             const togglesFooter = document.getElementById('illust-log-footer-toggles');
+            const requiredElements = [logs, llm, toggles, logsBody, llmBody, togglesBody, logsFooter, llmFooter, togglesFooter];
+            if (requiredElements.some(element => !element)) {
+                console.error('[ILLUST_CONTEXT] 삽화 프롬프트 생성 탭 전환에 필요한 요소가 없습니다:', tab);
+                return;
+            }
             for (const [name, button] of [['logs', logs], ['llm', llm], ['toggles', toggles]]) {
                 const active = name === tab;
-                button.style.background = active ? 'var(--accent)' : 'var(--surface2)';
-                button.style.color = active ? '#fff' : 'var(--text2)';
-                button.style.fontWeight = active ? '600' : '400';
+                button.classList.toggle('is-active', active);
+                button.setAttribute('aria-selected', String(active));
             }
             logsBody.style.display = tab === 'logs' ? '' : 'none';
             llmBody.style.display = tab === 'llm' ? '' : 'none';
-            togglesBody.style.display = tab === 'toggles' ? '' : 'none';
+            togglesBody.hidden = tab !== 'toggles';
             logsFooter.style.display = tab === 'logs' ? 'flex' : 'none';
             llmFooter.style.display = tab === 'llm' ? 'flex' : 'none';
-            togglesFooter.style.display = tab === 'toggles' ? 'flex' : 'none';
+            togglesFooter.hidden = tab !== 'toggles';
             if (tab === 'llm') loadLighbdPrompts();
             if (tab === 'toggles') loadIllustrationContextToggles();
         }
@@ -36330,75 +36806,353 @@
             }
         }
 
-        const ILLUSTRATION_CONTEXT_TOGGLE_FIELDS = [
-            ['call1_enabled', 'CALL1 컨텍스트 보강', 'checkbox'],
-            ['call1_context_turns', 'CALL1/2/3 최근 메시지 사용 수', 'number'],
-            ['call3_enabled', 'CALL3 교정/대사', 'checkbox'],
-            ['speak_enabled', '장면별 SPEAK 생성', 'checkbox'],
-            ['speak_language', 'SPEAK 언어', 'select', ['한국어', '영어', '일어', '중어']],
-            ['speak_emotion_enabled', 'SPEAK 감정 태그', 'checkbox'],
-            ['speak_emotions', '허용 감정 (; 구분)', 'text'],
-            ['nsfw', 'NSFW 태깅', 'checkbox'],
-            ['supplement', 'SUPPLEMENT 생성', 'checkbox'],
-            ['key_visual', 'Key Visual 생성', 'checkbox'],
-            ['character_limit', '이미지당 최대 캐릭터', 'select', [1, 2, 3]],
-            ['scene_max', '최대 Scene 수', 'select', [1, 3, 5, 7, 9, 11, 13, 15]],
-            ['context_history', 'lb.extra 외형 이력 사용', 'checkbox'],
-            ['focus', '집중 캐릭터', 'text'],
-            ['direction', '우선 연출 지시', 'textarea'],
-            ['preset', 'RAW 프롬프트 프리셋 (preset_이름.txt)', 'text'],
-            ['positive_note', '긍정 프롬프트 추가', 'textarea'],
-            ['negative_note', '부정 프롬프트 추가', 'textarea'],
-            ['compat_comfy', 'Comfy 호환', 'checkbox'],
-            ['compat_character_divider', '캐릭터 구분', 'select', ['newline', 'pipe']],
-            ['compat_character_prompt', '캐릭터 프롬프트', 'select', ['separate', 'normal']],
+        const ILLUSTRATION_CONTEXT_TOGGLE_GROUPS = [
+            {
+                key: 'pipeline', title: '파이프라인',
+                description: '장면을 분석하고 교정하는 LLM 호출 범위를 설정합니다.',
+                fields: [
+                    {key: 'call1_enabled', label: 'CALL1 컨텍스트 보강', type: 'toggle', help: '최근 대화에서 시각 정보를 먼저 보강합니다.'},
+                    {key: 'call3_enabled', label: 'CALL3 교정 및 대사', type: 'toggle', help: '장면 출력 교정과 대사 생성을 수행합니다.'},
+                    {key: 'call1_context_turns', label: '최근 메시지 사용 수', type: 'number', min: 0, max: 30, help: 'CALL1/2/3에 전달할 최근 대화 수입니다.'},
+                ],
+            },
+            {
+                key: 'dialogue', title: '대사',
+                description: '장면별 SPEAK 문장과 감정 표현을 설정합니다.',
+                fields: [
+                    {key: 'speak_enabled', label: '장면별 SPEAK 생성', type: 'toggle', help: '각 장면에 표시할 대사를 생성합니다.'},
+                    {key: 'speak_emotion_enabled', label: 'SPEAK 감정 태그', type: 'toggle', help: '생성된 대사에 감정 태그를 덧붙입니다.'},
+                    {key: 'speak_language', label: 'SPEAK 언어', type: 'select', help: '생성할 장면 대사의 언어를 선택합니다.', options: ['한국어', '영어', '일어', '중어'], dependsOn: ['call3_enabled', 'speak_enabled']},
+                    {key: 'speak_emotions', label: '허용 감정', type: 'text', help: '감정 이름을 세미콜론(;)으로 구분해 입력합니다.', placeholder: '기쁨; 분노; 당황; 슬픔', dependsOn: ['call3_enabled', 'speak_enabled', 'speak_emotion_enabled']},
+                ],
+            },
+            {
+                key: 'scene', title: '장면 구성',
+                description: '생성할 장면 수와 장면별 표현 범위를 지정합니다.',
+                fields: [
+                    {key: 'nsfw', label: 'NSFW 태깅', type: 'toggle', help: '성인 장면용 태깅 지침을 허용합니다.'},
+                    {key: 'supplement', label: 'SUPPLEMENT 생성', type: 'toggle', help: '효과와 보조 묘사 섹션을 생성합니다.'},
+                    {key: 'key_visual', label: 'Key Visual 생성', type: 'toggle', help: '슬롯 장면 외에 대표 이미지를 생성합니다.'},
+                    {key: 'character_limit', label: '이미지당 최대 캐릭터', type: 'select', help: '한 이미지에 함께 배치할 캐릭터 수입니다.', options: [1, 2, 3]},
+                    {key: 'scene_max', label: '최대 Scene 수', type: 'select', help: '한 번에 생성할 장면의 상한입니다.', options: [1, 3, 5, 7, 9, 11, 13, 15]},
+                ],
+            },
+            {
+                key: 'context', title: '컨텍스트와 연출',
+                description: '캐릭터 외형 이력과 이번 생성에서 우선할 연출을 전달합니다.',
+                fields: [
+                    {key: 'context_history', label: 'lb.extra 외형 이력 사용', type: 'toggle', help: '저장된 캐릭터 외형과 복장 정보를 참조합니다.'},
+                    {key: 'focus', label: '집중 캐릭터', type: 'text', help: '비워 두면 대화 문맥에서 결정합니다.'},
+                    {key: 'direction', label: '우선 연출 지시', type: 'textarea', help: '이번 생성에서 특별히 강조할 연출을 입력합니다.', stacked: true},
+                ],
+            },
+            {
+                key: 'output', title: '프롬프트 출력',
+                description: '삽화 모드 상태에 맞는 실제 RAW 입력 구조를 선택합니다.',
+                fields: [
+                    {
+                        key: 'prompt_format', label: '프롬프트 입력 형식', type: 'select', stacked: true,
+                        help: '후속 처리기가 해석할 RAW 프롬프트 구조를 선택합니다.',
+                        options: [
+                            {value: 'v1', label: 'V1 — 삽화 모드 비활성화 형식 ([ILXL] / [UPSCALE])'},
+                            {value: 'v3', label: 'V3 — 삽화 모드 활성화 형식 ([SETUP] / [CHAR] / [SUPPLEMENT])'},
+                        ],
+                    },
+                    {key: 'positive_note', label: '긍정 프롬프트 추가', type: 'textarea', help: '모든 장면의 긍정 프롬프트에 덧붙일 내용을 입력합니다.', stacked: true},
+                    {key: 'negative_note', label: '부정 프롬프트 추가', type: 'textarea', help: '모든 장면의 부정 프롬프트에 덧붙일 내용을 입력합니다.', stacked: true},
+                ],
+            },
+            {
+                key: 'compatibility', title: '호환성',
+                description: 'Comfy 입력에서 캐릭터 프롬프트를 나누는 방식을 설정합니다.',
+                fields: [
+                    {key: 'compat_comfy', label: 'Comfy 호환', type: 'toggle', help: 'Comfy용 캐릭터 분리 옵션을 적용합니다.'},
+                    {
+                        key: 'compat_character_divider', label: '캐릭터 구분', type: 'select', help: '캐릭터 프롬프트 사이의 구분 방식을 선택합니다.', dependsOn: ['compat_comfy'],
+                        options: [{value: 'newline', label: '빈 줄'}, {value: 'pipe', label: '파이프 ( | )'}],
+                    },
+                    {
+                        key: 'compat_character_prompt', label: '캐릭터 프롬프트', type: 'select', help: '캐릭터별 프롬프트를 분리할지 선택합니다.', dependsOn: ['compat_comfy'],
+                        options: [{value: 'separate', label: '분리'}, {value: 'normal', label: '일반'}],
+                    },
+                ],
+            },
         ];
+        const ILLUSTRATION_CONTEXT_TOGGLE_FIELDS =
+            ILLUSTRATION_CONTEXT_TOGGLE_GROUPS.flatMap(group => group.fields);
         let _illustrationContextToggles = {};
+        let _illustrationSettingsActiveGroup = 'pipeline';
+        let _illustrationSettingsDirty = false;
 
-        function renderIllustrationContextToggles() {
-            const body = document.getElementById('illust-tab-content-toggles');
-            if (!body) return;
-            const inputStyle = 'width:100%; padding:7px 8px; border:1px solid var(--border); border-radius:5px; background:var(--surface2); color:var(--text); box-sizing:border-box;';
-            body.innerHTML = `
-                <div style="font-size:0.75rem; color:var(--text2); line-height:1.5; margin-bottom:12px; padding:8px; background:rgba(0,0,0,0.06); border-radius:6px;">
-                    기존 모듈의 CALL/장면/호환 변수 중 서버 프롬프트 빌드에 관여하는 항목입니다. 표시 방식·이미지 폭 같은 Risu 화면 전용 값은 v14 모듈에 남습니다.
-                </div>
-                <div style="display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px;">
-                    ${ILLUSTRATION_CONTEXT_TOGGLE_FIELDS.map(([key, label, type, options]) => {
-                        const value = _illustrationContextToggles[key];
-                        if (type === 'checkbox') return `<label style="display:flex; align-items:center; gap:8px; padding:9px; border:1px solid var(--border); border-radius:6px; background:var(--surface2); cursor:pointer;"><input data-illust-toggle="${key}" type="checkbox" ${value ? 'checked' : ''}><span style="font-size:0.78rem;">${label}</span></label>`;
-                        if (type === 'select') return `<label style="display:flex; flex-direction:column; gap:4px;"><span style="font-size:0.72rem; color:var(--text2);">${label}</span><select data-illust-toggle="${key}" style="${inputStyle}">${options.map(o => `<option value="${escapeHtml(String(o))}" ${String(value) === String(o) ? 'selected' : ''}>${escapeHtml(String(o))}</option>`).join('')}</select></label>`;
-                        if (type === 'textarea') return `<label style="display:flex; flex-direction:column; gap:4px; grid-column:1/-1;"><span style="font-size:0.72rem; color:var(--text2);">${label}</span><textarea data-illust-toggle="${key}" style="${inputStyle} min-height:75px; resize:vertical;">${escapeHtml(value || '')}</textarea></label>`;
-                        return `<label style="display:flex; flex-direction:column; gap:4px;"><span style="font-size:0.72rem; color:var(--text2);">${label}</span><input data-illust-toggle="${key}" type="${type}" value="${escapeHtml(value ?? '')}" style="${inputStyle}"></label>`;
-                    }).join('')}
+        function _renderIllustrationContextOptions(options, value) {
+            return (options || []).map(option => {
+                const optionValue = typeof option === 'object' ? option.value : option;
+                const optionLabel = typeof option === 'object' ? option.label : option;
+                const selected = String(value) === String(optionValue) ? 'selected' : '';
+                return `<option value="${escapeHtml(String(optionValue))}" ${selected}>${escapeHtml(String(optionLabel))}</option>`;
+            }).join('');
+        }
+
+        function _renderIllustrationContextField(field, {compact = false} = {}) {
+            const value = _illustrationContextToggles[field.key];
+            const rowClasses = ['illust-setting-row'];
+            if (field.stacked || compact) rowClasses.push(field.stacked ? 'is-stacked' : 'is-compact');
+            const help = field.help
+                ? `<span class="illust-setting-help">${escapeHtml(field.help)}</span>`
+                : '';
+            if (field.type === 'toggle') {
+                const checked = value ? 'checked' : '';
+                return `
+                    <div class="${rowClasses.join(' ')}">
+                        <div class="illust-setting-copy">
+                            <span class="illust-setting-label">${escapeHtml(field.label)}</span>
+                            ${help}
+                        </div>
+                        <div class="illust-setting-control">
+                            <div class="illust-setting-toggle-control">
+                            <label class="toggle-switch sm" aria-label="${escapeHtml(field.label)}">
+                                <input data-illust-toggle="${field.key}" type="checkbox" ${checked} onchange="onIllustrationContextToggleChange(this)">
+                                <span class="toggle-slider"></span>
+                            </label>
+                                <span id="illust-toggle-state-${field.key}" class="illust-setting-state ${value ? 'on' : ''}">${value ? 'ON' : 'OFF'}</span>
+                            </div>
+                        </div>
+                    </div>`;
+            }
+
+            const dependencyAttr = field.dependsOn?.length
+                ? ` data-illust-depends="${field.dependsOn.join(',')}"`
+                : '';
+            const inputId = `illust-setting-${field.key}`;
+            const placeholder = field.placeholder
+                ? ` placeholder="${escapeHtml(field.placeholder)}"`
+                : '';
+            let control = '';
+            if (field.type === 'select') {
+                control = `<select id="${inputId}" data-illust-toggle="${field.key}" class="illust-setting-input">${_renderIllustrationContextOptions(field.options, value)}</select>`;
+            } else if (field.type === 'textarea') {
+                control = `<textarea id="${inputId}" data-illust-toggle="${field.key}" class="illust-setting-input"${placeholder}>${escapeHtml(value || '')}</textarea>`;
+            } else {
+                const min = field.min !== undefined ? ` min="${field.min}"` : '';
+                const max = field.max !== undefined ? ` max="${field.max}"` : '';
+                control = `<input id="${inputId}" data-illust-toggle="${field.key}" class="illust-setting-input" type="${field.type}" value="${escapeHtml(value ?? '')}"${min}${max}${placeholder}>`;
+            }
+            return `
+                <div class="${rowClasses.join(' ')}"${dependencyAttr}>
+                    <label class="illust-setting-copy" for="${inputId}">
+                        <span class="illust-setting-label">${escapeHtml(field.label)}</span>
+                        ${help}
+                    </label>
+                    <div class="illust-setting-control">${control}</div>
                 </div>`;
         }
 
-        async function loadIllustrationContextToggles() {
+        function _renderIllustrationSettingsGroupFields(group) {
+            if (group.key === 'dialogue') {
+                return `
+                    ${group.fields.slice(0, 2).map(field => _renderIllustrationContextField(field)).join('')}
+                    <div class="illust-settings-dependent" aria-label="장면별 SPEAK 생성 세부 옵션">
+                        ${group.fields.slice(2).map(field => _renderIllustrationContextField(field)).join('')}
+                    </div>`;
+            }
+            if (group.key === 'scene') {
+                return `
+                    ${group.fields.slice(0, 3).map(field => _renderIllustrationContextField(field)).join('')}
+                    <h4 class="illust-settings-subheading">장면 제한</h4>
+                    <div class="illust-settings-paired">
+                        ${group.fields.slice(3).map(field => _renderIllustrationContextField(field, {compact: true})).join('')}
+                    </div>`;
+            }
+            if (group.key === 'output') {
+                return `
+                    ${_renderIllustrationContextField(group.fields[0])}
+                    <div class="illust-settings-paired">
+                        ${group.fields.slice(1).map(field => _renderIllustrationContextField(field)).join('')}
+                    </div>`;
+            }
+            if (group.key === 'compatibility') {
+                return `
+                    ${_renderIllustrationContextField(group.fields[0])}
+                    <div class="illust-settings-dependent" aria-label="Comfy 호환 세부 옵션">
+                        ${group.fields.slice(1).map(field => _renderIllustrationContextField(field)).join('')}
+                    </div>`;
+            }
+            return group.fields.map(field => _renderIllustrationContextField(field)).join('');
+        }
+
+        function renderIllustrationContextToggles() {
+            const body = document.getElementById('illust-tab-content-toggles');
+            if (!body) {
+                console.error('[ILLUST_CONTEXT] 생성 설정을 렌더링할 루트 요소가 없습니다.');
+                return;
+            }
+            const activeGroupExists = ILLUSTRATION_CONTEXT_TOGGLE_GROUPS.some(
+                group => group.key === _illustrationSettingsActiveGroup
+            );
+            if (!activeGroupExists) {
+                console.error('[ILLUST_CONTEXT] 활성 생성 설정 카테고리를 찾지 못해 첫 카테고리로 복구합니다:', _illustrationSettingsActiveGroup);
+                _illustrationSettingsActiveGroup = ILLUSTRATION_CONTEXT_TOGGLE_GROUPS[0].key;
+            }
+            body.innerHTML = `
+                <div class="illust-settings-info">
+                    기능을 끄면 관련 세부 옵션만 비활성화됩니다. 설정은 언제든 다시 켤 수 있습니다.
+                </div>
+                <div class="illust-settings-layout">
+                    <nav class="illust-settings-nav" role="tablist" aria-label="생성 설정 카테고리">
+                        ${ILLUSTRATION_CONTEXT_TOGGLE_GROUPS.map(group => {
+                            const active = group.key === _illustrationSettingsActiveGroup;
+                            return `<button id="illust-settings-tab-${group.key}" type="button" role="tab" class="illust-settings-nav-button${active ? ' is-active' : ''}" data-illust-settings-category="${group.key}" aria-selected="${active}" aria-controls="illust-settings-panel-${group.key}" onclick="switchIllustrationSettingsCategory('${group.key}')">${escapeHtml(group.title)}</button>`;
+                        }).join('')}
+                    </nav>
+                    <div class="illust-settings-panels">
+                        ${ILLUSTRATION_CONTEXT_TOGGLE_GROUPS.map(group => {
+                            const active = group.key === _illustrationSettingsActiveGroup;
+                            return `
+                                <section id="illust-settings-panel-${group.key}" role="tabpanel" class="illust-settings-panel${active ? ' is-active' : ''}" data-illust-settings-panel="${group.key}" aria-labelledby="illust-settings-tab-${group.key}" aria-hidden="${!active}">
+                                    <header class="illust-settings-panel-header">
+                                        <h3 class="illust-settings-panel-title">${escapeHtml(group.title)}</h3>
+                                        <p class="illust-settings-panel-description">${escapeHtml(group.description)}</p>
+                                    </header>
+                                    <div class="illust-settings-panel-body">
+                                        ${_renderIllustrationSettingsGroupFields(group)}
+                                    </div>
+                                </section>`;
+                        }).join('')}
+                    </div>
+                </div>`;
+            if (!body.dataset.illustDirtyListenerBound) {
+                const markDirtyFromControl = event => {
+                    if (event.target?.matches?.('[data-illust-toggle]')) {
+                        markIllustrationContextSettingsDirty();
+                    }
+                };
+                body.addEventListener('input', markDirtyFromControl);
+                body.addEventListener('change', markDirtyFromControl);
+                body.dataset.illustDirtyListenerBound = 'true';
+            }
+            updateIllustrationContextOptionLocks();
+        }
+
+        function switchIllustrationSettingsCategory(groupKey) {
+            const body = document.getElementById('illust-tab-content-toggles');
+            const groupExists = ILLUSTRATION_CONTEXT_TOGGLE_GROUPS.some(group => group.key === groupKey);
+            if (!body || !groupExists) {
+                console.error('[ILLUST_CONTEXT] 전환할 생성 설정 카테고리를 찾지 못함:', groupKey);
+                return;
+            }
+            _illustrationSettingsActiveGroup = groupKey;
+            body.querySelectorAll('[data-illust-settings-category]').forEach(button => {
+                const active = button.dataset.illustSettingsCategory === groupKey;
+                button.classList.toggle('is-active', active);
+                button.setAttribute('aria-selected', String(active));
+            });
+            body.querySelectorAll('[data-illust-settings-panel]').forEach(panel => {
+                const active = panel.dataset.illustSettingsPanel === groupKey;
+                panel.classList.toggle('is-active', active);
+                panel.setAttribute('aria-hidden', String(!active));
+            });
+        }
+
+        function setIllustrationContextStatus(message, state = '') {
             const status = document.getElementById('illust-toggle-status');
-            if (status) status.textContent = '불러오는 중...';
+            if (!status) {
+                console.error('[ILLUST_CONTEXT] 생성 설정 상태 표시 요소를 찾지 못함:', message);
+                return;
+            }
+            status.textContent = message;
+            status.classList.toggle('is-dirty', state === 'dirty');
+            status.classList.toggle('is-error', state === 'error');
+        }
+
+        function markIllustrationContextSettingsDirty() {
+            _illustrationSettingsDirty = true;
+            setIllustrationContextStatus('저장되지 않은 변경 사항', 'dirty');
+        }
+
+        function setIllustrationContextSaving(saving) {
+            const button = document.getElementById('illust-toggle-save');
+            const body = document.getElementById('illust-tab-content-toggles');
+            if (!button || !body) {
+                console.error('[ILLUST_CONTEXT] 저장 진행 상태를 표시할 요소를 찾지 못함.');
+                return;
+            }
+            button.disabled = saving;
+            button.classList.toggle('is-saving', saving);
+            button.textContent = saving ? '저장 중...' : '저장';
+            body.setAttribute('aria-busy', String(saving));
+        }
+
+        function onIllustrationContextToggleChange(input) {
+            const key = input?.dataset?.illustToggle;
+            if (!key) {
+                console.error('[ILLUST_CONTEXT] 변경된 슬라이드의 설정 키가 없습니다.', input);
+                return;
+            }
+            _illustrationContextToggles[key] = input.checked;
+            const state = document.getElementById('illust-toggle-state-' + key);
+            if (state) {
+                state.textContent = input.checked ? 'ON' : 'OFF';
+                state.classList.toggle('on', input.checked);
+            }
+            updateIllustrationContextOptionLocks();
+        }
+
+        function updateIllustrationContextOptionLocks() {
+            const body = document.getElementById('illust-tab-content-toggles');
+            if (!body) {
+                console.error('[ILLUST_CONTEXT] 종속 옵션을 갱신할 생성 설정 루트가 없습니다.');
+                return;
+            }
+            body.querySelectorAll('[data-illust-depends]').forEach(wrapper => {
+                const dependencies = String(wrapper.dataset.illustDepends || '').split(',').filter(Boolean);
+                const enabled = dependencies.every(key => Boolean(_illustrationContextToggles[key]));
+                wrapper.classList.toggle('is-locked', !enabled);
+                wrapper.querySelectorAll('input, select, textarea').forEach(control => {
+                    // 슬라이드 토글은 잠금 대상에 넣지 않는다. 항상 다시 켤 수 있어야 한다.
+                    if (control.type !== 'checkbox') control.disabled = !enabled;
+                });
+            });
+            body.querySelectorAll('.illust-settings-dependent').forEach(subpanel => {
+                const dependentRows = Array.from(subpanel.children).filter(
+                    child => child.matches('[data-illust-depends]')
+                );
+                const fullyLocked = dependentRows.length > 0 && dependentRows.every(
+                    row => row.classList.contains('is-locked')
+                );
+                subpanel.classList.toggle('is-locked', fullyLocked);
+            });
+        }
+
+        async function loadIllustrationContextToggles() {
+            setIllustrationContextStatus('불러오는 중...');
             try {
                 const res = await fetch('/api/illustration_context/toggles');
                 if (!res.ok) throw new Error('HTTP ' + res.status);
                 const data = await res.json();
                 _illustrationContextToggles = data.toggles || {};
                 renderIllustrationContextToggles();
-                if (status) status.textContent = '로드 완료';
+                _illustrationSettingsDirty = false;
+                setIllustrationContextStatus('로드 완료');
             } catch (e) {
                 console.error('[ILLUST_CONTEXT] 토글 로드 실패:', e);
-                if (status) status.textContent = '로드 실패: ' + (e.message || e);
+                setIllustrationContextStatus('로드 실패: ' + (e.message || e), 'error');
             }
         }
 
         async function saveIllustrationContextToggles() {
             const body = {};
-            for (const [key, , type] of ILLUSTRATION_CONTEXT_TOGGLE_FIELDS) {
-                const el = document.querySelector(`[data-illust-toggle="${key}"]`);
-                if (!el) continue;
-                body[key] = type === 'checkbox' ? el.checked : (type === 'number' ? Number(el.value) : el.value);
+            for (const field of ILLUSTRATION_CONTEXT_TOGGLE_FIELDS) {
+                const el = document.querySelector(`[data-illust-toggle="${field.key}"]`);
+                if (!el) {
+                    console.error('[ILLUST_CONTEXT] 저장할 설정 컨트롤을 찾지 못함:', field.key);
+                    continue;
+                }
+                body[field.key] = field.type === 'toggle'
+                    ? el.checked
+                    : (field.type === 'number' ? Number(el.value) : el.value);
             }
-            const status = document.getElementById('illust-toggle-status');
-            if (status) status.textContent = '저장 중...';
+            setIllustrationContextStatus('저장 중...');
+            setIllustrationContextSaving(true);
             try {
                 const res = await fetch('/api/illustration_context/toggles', {
                     method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -36408,12 +37162,16 @@
                 if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
                 _illustrationContextToggles = data.toggles || body;
                 renderIllustrationContextToggles();
-                if (status) status.textContent = '저장 완료';
-                showToast('삽화 토글 저장 완료', 'success');
+                _illustrationSettingsDirty = false;
+                setIllustrationContextStatus('저장 완료');
+                showToast('삽화 생성 설정 저장 완료', 'success');
             } catch (e) {
-                console.error('[ILLUST_CONTEXT] 토글 저장 실패:', e);
-                if (status) status.textContent = '저장 실패: ' + (e.message || e);
-                showToast('삽화 토글 저장 실패: ' + (e.message || e), 'error');
+                console.error('[ILLUST_CONTEXT] 생성 설정 저장 실패:', e);
+                _illustrationSettingsDirty = true;
+                setIllustrationContextStatus('저장 실패: ' + (e.message || e), 'error');
+                showToast('삽화 생성 설정 저장 실패: ' + (e.message || e), 'error');
+            } finally {
+                setIllustrationContextSaving(false);
             }
         }
 
