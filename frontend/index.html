@@ -7846,6 +7846,7 @@
                 <div class="settings-tab-panel" id="settings-tab-api">
                     <div class="external-api-group">
                         <div class="external-api-group-title">LLM</div>
+                    <div style="margin:16px 0 8px; padding:8px 10px; border-left:3px solid #00BCD4; background:rgba(0,188,212,.08); font-size:.82rem; font-weight:700;">LLM1 연결 설정</div>
                     <!-- LLM 설정 -->
                     <div class="setting-row">
                         <div class="setting-label">
@@ -7957,6 +7958,7 @@
                         <div id="vertex-key-status" style="margin-top: 6px; font-size: .75rem; color: var(--text2);"></div>
                     </div>
 
+                    <div style="margin:16px 0 8px; padding:8px 10px; border-left:3px solid #00BCD4; background:rgba(0,188,212,.08); font-size:.82rem; font-weight:700;">LLM2 연결 설정</div>
                     <div class="setting-row">
                         <div class="setting-label">
                             <div class="title">LLM2 서비스 선택</div>
@@ -8052,12 +8054,12 @@
                                   style="width: 100%; min-height: 120px; padding: 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-family: monospace; font-size: .8rem;"></textarea>
                     </div>
 
-                    <div style="margin:16px 0 8px; padding:8px 10px; border-left:3px solid #00BCD4; background:rgba(0,188,212,.08); font-size:.82rem; font-weight:700;">LLM3 · 삽화 CALL1 / CALL2 / CALL3 기본값 <span style="font-weight:400; color:var(--text-dim);">(CALL별 분기는 <b>외부 API 분기</b> 탭에서 개별 지정 가능)</span></div>
+                    <div style="margin:16px 0 8px; padding:8px 10px; border-left:3px solid #00BCD4; background:rgba(0,188,212,.08); font-size:.82rem; font-weight:700;">LLM3 연결 설정</div>
                     <div class="setting-row"><div class="setting-label"><div class="title">LLM3 서비스 선택</div><div class="desc">비워두면 LLM1 서비스 사용</div></div><div class="setting-control"><select id="setting-llm-service3" onchange="onLlmServiceChange()" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);"><option value="">(LLM1과 동일)</option><option value="copilot">Copilot</option><option value="vertex">Vertex Gemini</option><option value="vertex-openai">Vertex OpenAI</option><option value="openai">OpenAI</option><option value="openrouter">OpenRouter</option><option value="gemini">Gemini (AI Studio)</option><option value="claude">Claude</option><option value="lmstudio">LM Studio (로컬)</option><option value="ollama">Ollama (로컬)</option><option value="ollama-cloud">Ollama Cloud</option></select></div></div>
-                    <div class="setting-row"><div class="setting-label"><div class="title">LLM3 모델명</div><div class="desc">삽화 프롬프트 빌드에 사용할 모델</div></div><div class="setting-control"><input id="setting-llm-model3" type="text" placeholder="예: gpt-4.1" style="width:220px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);"></div></div>
+                    <div class="setting-row"><div class="setting-label"><div class="title">LLM3 모델명</div><div class="desc">LLM3로 사용할 모델명</div></div><div class="setting-control"><input id="setting-llm-model3" type="text" placeholder="예: gpt-4.1" style="width:220px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);"></div></div>
                     <div class="setting-row" id="llm-api-key3-row" style="display:none;"><div class="setting-label"><div class="title">LLM3 API 키 (옵션)</div><div class="desc">비워두면 LLM1 키 재사용</div></div><div class="setting-control"><input id="setting-llm-api-key3" type="text" placeholder="sk-..." style="width:300px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-family:monospace;"></div></div>
                     <div class="setting-row" id="llm-url3-row" style="display:none;"><div class="setting-label"><div class="title">LLM3 베이스 URL (옵션)</div><div class="desc">비워두면 LLM1 URL 재사용</div></div><div class="setting-control"><input id="setting-llm-url3" type="text" placeholder="https://..." style="width:300px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);"></div></div>
-                    <div class="setting-row" id="llm-reasoning3-row" style="display:none;"><div class="setting-label"><div class="title">LLM3 Reasoning 설정</div><div class="desc">삽화 CALL 전용 reasoning 설정</div></div><div class="setting-control" style="display:flex;gap:8px;"><select id="setting-llm-reasoning-preset3" onchange="onReasoningPreset3Change()" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);"><option value="">(LLM1과 동일)</option><option value="auto">auto</option><option value="none">none</option><option value="gpt">gpt</option><option value="glm">glm</option><option value="deepseek">deepseek</option><option value="kimi">kimi</option><option value="claude">claude</option><option value="gemini">gemini</option><option value="custom">custom</option></select><select id="setting-llm-reasoning-effort3" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);"><option value="">(LLM1과 동일)</option><option value="none">none</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option></select></div></div>
+                    <div class="setting-row" id="llm-reasoning3-row" style="display:none;"><div class="setting-label"><div class="title">LLM3 Reasoning 설정</div><div class="desc">LLM3의 reasoning 설정</div></div><div class="setting-control" style="display:flex;gap:8px;"><select id="setting-llm-reasoning-preset3" onchange="onReasoningPreset3Change()" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);"><option value="">(LLM1과 동일)</option><option value="auto">auto</option><option value="none">none</option><option value="gpt">gpt</option><option value="glm">glm</option><option value="deepseek">deepseek</option><option value="kimi">kimi</option><option value="claude">claude</option><option value="gemini">gemini</option><option value="custom">custom</option></select><select id="setting-llm-reasoning-effort3" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);"><option value="">(LLM1과 동일)</option><option value="none">none</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option></select></div></div>
                     <div class="setting-row" id="llm-custom-body3-row" style="display:none;flex-direction:column;align-items:stretch;"><div class="setting-label" style="margin-bottom:8px;"><div class="title">LLM3 Custom Body (JSON)</div></div><textarea id="setting-llm-custom-body3" placeholder="{ ... }" style="width:100%;min-height:120px;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-family:monospace;"></textarea></div>
 
                     <!-- LLM 자동 분류 재시도 횟수 -->
@@ -8111,7 +8113,7 @@
                                             style="padding: 4px 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: .85rem;">
                                         <option value="llm1">LLM1</option>
                                         <option value="llm2">LLM2</option>
-                                        <option value="llm3">LLM3 (삽화)</option>
+                                        <option value="llm3">LLM3</option>
                                     </select>
                                 </label>
                             </div>
