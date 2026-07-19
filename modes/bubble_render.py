@@ -21,7 +21,10 @@ compose_bubble() 하나만이 말풍선 렌더의 단일 소스다. 미리보기
 import io
 import math
 import os
+import random
+import re
 import traceback
+import xml.etree.ElementTree as ET
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont, ImageColor, ImageFilter
@@ -781,30 +784,154 @@ def _ellipse_edge_geometry(rect, anchor):
     return point, (nx / length, ny / length)
 
 
-def _spiky_points(rect, spikes=16, inner_ratio=0.62):
-    """폭발 강조 풍선(burst)용 별 모양 폴리곤 꼭짓점을 만든다.
+_IMPACT_SVG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "impact_balloon.svg")
+_IMPACT_SVG_CACHE = None  # (outer_pts, inner_pts, inner_bbox)
 
-    외곽 반지름과 내곽 반지름(inner_ratio 배)을 교대로 spikes 개수만큼 배치해
-    뾰족별 형태가 된다. comic 과 같은 마스크 폴리곤 경로로 그려진다.
+
+def _tokenize_svg_path(d):
+    """SVG path 데이터를 명령어 토큰과 숫자 토큰으로 분리."""
+    return re.findall(
+        r"[MmLlQqZz]|[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?", d
+    )
+
+
+def _parse_quadratic_path(d, samples_per_seg=10):
+    """SVG path(M/Q/Z, 대문자 절대좌표)를 고밀도 점열로 변환.
+
+    Q(quadratic Bézier) 각 세그먼트를 samples_per_seg 개 점으로 샘플링해
+    PIL ImageDraw.polygon 용 닫힌 점열을 만든다. burst 벡터는 M/Q/Z 만으로
+    구성되어 있어 이 세 명령만 처리한다(소문자 상대좌표는 미사용).
     """
+    tokens = _tokenize_svg_path(d)
+    pts = []
+    cur = start = None
+    i = 0
+    n = len(tokens)
+    while i < n:
+        t = tokens[i]
+        if t in ("M", "m"):
+            cur = (float(tokens[i + 1]), float(tokens[i + 2]))
+            start = cur
+            pts.append(cur)
+            i += 3
+        elif t in ("Q", "q"):
+            if cur is None:
+                print("[BUBBLE_RENDER] ⚠ impact SVG path: M 없이 Q 시작, 스킵")
+                break
+            cx, cy = float(tokens[i + 1]), float(tokens[i + 2])
+            x, y = float(tokens[i + 3]), float(tokens[i + 4])
+            for s in range(1, samples_per_seg + 1):
+                tt = s / samples_per_seg
+                mt = 1.0 - tt
+                px = mt * mt * cur[0] + 2.0 * mt * tt * cx + tt * tt * x
+                py = mt * mt * cur[1] + 2.0 * mt * tt * cy + tt * tt * y
+                pts.append((px, py))
+            cur = (x, y)
+            i += 5
+        elif t in ("Z", "z"):
+            if start is not None:
+                pts.append(start)
+            cur = start
+            i += 1
+        else:
+            i += 1
+    return pts
+
+
+def _points_bbox(pts):
+    xs = [p[0] for p in pts]
+    ys = [p[1] for p in pts]
+    return (min(xs), min(ys), max(xs), max(ys))
+
+
+def _load_impact_svg():
+    """impact_balloon.svg 를 파싱해 (외곽 점열, 내부 점열, 내부 bbox) 로 캐싱.
+
+    SVG 구조: 첫 path(검정 #231815)가 burst 외곽, 둘째 path(흰 #ffffff)가
+    살짝 작게 들어간 내부 몸통. 이 간격이 렌더 시 테두리 두께가 된다.
+    """
+    global _IMPACT_SVG_CACHE
+    if _IMPACT_SVG_CACHE is not None:
+        return _IMPACT_SVG_CACHE
+    try:
+        tree = ET.parse(_IMPACT_SVG_PATH)
+    except (FileNotFoundError, OSError) as e:
+        print(f"[BUBBLE_RENDER] ⚠ impact SVG 로드 실패({_IMPACT_SVG_PATH}): {e}")
+        traceback.print_exc()
+        _IMPACT_SVG_CACHE = (None, None, None)
+        return _IMPACT_SVG_CACHE
+    except ET.ParseError as e:
+        print(f"[BUBBLE_RENDER] ⚠ impact SVG 파싱 실패: {e}")
+        traceback.print_exc()
+        _IMPACT_SVG_CACHE = (None, None, None)
+        return _IMPACT_SVG_CACHE
+
+    paths = tree.findall(".//{http://www.w3.org/2000/svg}path")
+    if len(paths) < 2:
+        print(f"[BUBBLE_RENDER] ⚠ impact SVG path 부족({len(paths)}개), 2개 필요")
+        _IMPACT_SVG_CACHE = (None, None, None)
+        return _IMPACT_SVG_CACHE
+    outer = _parse_quadratic_path(paths[0].get("d", ""))
+    inner = _parse_quadratic_path(paths[1].get("d", ""))
+    if not outer or not inner:
+        print("[BUBBLE_RENDER] ⚠ impact SVG path 점열 생성 실패(빈 점열)")
+        _IMPACT_SVG_CACHE = (None, None, None)
+        return _IMPACT_SVG_CACHE
+    _IMPACT_SVG_CACHE = (outer, inner, _points_bbox(inner))
+    return _IMPACT_SVG_CACHE
+
+
+def _draw_impact_svg_burst(overlay, rect, fill, border, with_tail=False):
+    """벡터 impact_balloon.svg 를 rect(텍스트 박스)를 감싸도록 배치해 합성.
+
+    내부 path bbox 가 rect 를 cover 하도록(더 큰 쪽 기준) 등비 스케일하고 중앙
+    정렬한 뒤, rect 중심 기준으로 랜덤 각도 회전시킨다(방향 다양화). 회전 각도는
+    rect 중심 해시로 결정론적으로 정해 미리보기/실제 렌더가 동일한 방향을 유지한다.
+    외곽 path 를 border 색으로 채우고, 그 위에 내부 path 를 fill 색
+    (알파 포함)으로 덮어 바깥 고리가 테두리가 된다. SVG burst 는 꼬리가 없으므로
+    with_tail 은 무시한다(별도 꼬리 미추가).
+    """
+    outer, inner, inner_bbox = _load_impact_svg()
+    if outer is None or inner is None or inner_bbox is None:
+        # 폴백: 일반 타원 풍선으로라도 그려 빈 결과를 피함.
+        print("[BUBBLE_RENDER] impact SVG 폴백 → ellipse로 대체 렌더")
+        mask = Image.new("L", overlay.size, 0)
+        ImageDraw.Draw(mask).ellipse(rect, fill=255)
+        _composite_union_mask(overlay, mask, fill, border, 4)
+        return
+
     x1, y1, x2, y2 = [float(v) for v in rect]
-    cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
-    rx = max(1.0, (x2 - x1) / 2.0)
-    ry = max(1.0, (y2 - y1) / 2.0)
-    inner_ratio = max(0.3, min(0.9, float(inner_ratio)))
-    total = max(6, int(spikes)) * 2
-    points = []
-    # 각 꼭짓점을 살짝 비대칭으로 해서 기계적 느낌을 줄인다.
-    for i in range(total):
-        angle = (math.pi * 2.0 * i) / total - math.pi / 2.0
-        is_outer = (i % 2 == 0)
-        scale = 1.0 if is_outer else inner_ratio
-        # 가로/세로 반지름에 미세한 변동을 줘 별이 너무 규칙적이지 않게 한다.
-        wobble = 1.0 + (0.06 if is_outer else -0.04)
-        px = cx + math.cos(angle) * rx * scale * wobble
-        py = cy + math.sin(angle) * ry * scale * wobble
-        points.append((px, py))
-    return points
+    rw = max(1.0, x2 - x1)
+    rh = max(1.0, y2 - y1)
+    bw = max(1.0, inner_bbox[2] - inner_bbox[0])
+    bh = max(1.0, inner_bbox[3] - inner_bbox[1])
+    # cover: 내부 흰 영역이 텍스트 박스를 완전히 덮어 텍스트가 테두리에 가려지지 않음.
+    # 회전 마진 + 글자 잘림 여유로 burst를 넉넉히 잡는다.
+    scale = max(rw / bw, rh / bh) * 1.3
+    bcx = (inner_bbox[0] + inner_bbox[2]) / 2.0
+    bcy = (inner_bbox[1] + inner_bbox[3]) / 2.0
+    rcx = (x1 + x2) / 2.0
+    rcy = (y1 + y2) / 2.0
+
+    # 방향 랜덤 회전. rect 중심 해시로 결정론적 각도를 정해
+    # 미리보기/실제 렌더가 동일한 방향을 유지한다.
+    theta = random.Random((int(rcx) * 73856093) ^ (int(rcy) * 19349663)).uniform(0.0, 2.0 * math.pi)
+    cos_t = math.cos(theta)
+    sin_t = math.sin(theta)
+    tx = rcx - bcx * scale
+    ty = rcy - bcy * scale
+
+    def _tr(p):
+        # SVG 좌표 → 스케일/이동 → rect 중심 기준 회전
+        sx = p[0] * scale + tx - rcx
+        sy = p[1] * scale + ty - rcy
+        return (rcx + sx * cos_t - sy * sin_t, rcy + sx * sin_t + sy * cos_t)
+
+    layer = Image.new("RGBA", overlay.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(layer)
+    draw.polygon([_tr(p) for p in outer], fill=border)
+    draw.polygon([_tr(p) for p in inner], fill=fill)
+    overlay.alpha_composite(layer)
 
 
 def _tail_base_geometry(rect, anchor, shape, radius):
@@ -1107,6 +1234,10 @@ def _draw_layout_bubble(
     if shape == "cloud":
         _draw_cloud(overlay, rect, anchor, fill, border, border_w, with_tail)
         return
+    if shape == "burst":
+        # 벡터 impact_balloon.svg 를 rect 를 감싸도록 합성. 꼬리 없음.
+        _draw_impact_svg_burst(overlay, rect, fill, border, with_tail)
+        return
     if shape == "whisper":
         _draw_whisper(
             overlay, rect, anchor, fill, border, border_w, with_tail,
@@ -1167,8 +1298,6 @@ def _draw_layout_bubble(
     mask_draw = ImageDraw.Draw(mask)
     if render_shape == "comic":
         mask_draw.polygon(_comic_points(rect, radius), fill=255)
-    elif render_shape == "burst":
-        mask_draw.polygon(_spiky_points(rect), fill=255)
     elif render_shape == "box":
         mask_draw.rectangle(rect, fill=255)
         with_tail = False
