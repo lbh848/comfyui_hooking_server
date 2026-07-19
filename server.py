@@ -2443,6 +2443,38 @@ async def handle_api_illustration_context_bridge_health(request: web.Request) ->
     return web.json_response({"ok": True, "service": "illustration_context_bridge", "version": 1})
 
 
+async def handle_api_illustration_context_bridge_client_log(request: web.Request) -> web.Response:
+    """Risu 브리지 플러그인의 비민감 진단 이벤트를 서버 콘솔에 남긴다."""
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            print(
+                "[ILLUST_CONTEXT:BRIDGE:CLIENT] 잘못된 로그 body: "
+                f"type={type(body).__name__}"
+            )
+            return web.json_response({"error": "invalid_body"}, status=400)
+
+        level = str(body.get("level") or "info").lower()[:16]
+        event = re.sub(r"[^A-Za-z0-9_.:-]", "_", str(body.get("event") or "unknown"))[:96]
+        session_id = str(body.get("session_id") or "")[:96]
+        detail = body.get("detail")
+        if isinstance(detail, (dict, list)):
+            detail_text = json.dumps(detail, ensure_ascii=False, separators=(",", ":"), default=str)
+        else:
+            detail_text = str(detail or "")
+        detail_text = detail_text.replace("\r", " ").replace("\n", " ").replace("\t", " ")[:1600]
+
+        print(
+            "[ILLUST_CONTEXT:BRIDGE:CLIENT] "
+            f"level={level} event={event} session={session_id or '-'} detail={detail_text or '-'}"
+        )
+        return web.json_response({"ok": True})
+    except Exception as e:
+        print(f"[ILLUST_CONTEXT:BRIDGE:CLIENT] 로그 수신 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"error": "client_log_failed"}, status=500)
+
+
 def _valid_illustration_context_bridge_session_id(session_id: str) -> bool:
     return re.fullmatch(r"[A-Za-z0-9_-]{8,96}", session_id) is not None
 
@@ -4386,6 +4418,9 @@ async def handle_api_postprocess_preview(request: web.Request) -> web.Response:
                 "radius": body.get("radius", 22),
                 "thought_shape": body.get("thought_shape", "cloud"),
                 "tail_threshold": body.get("tail_threshold", 1.0),
+                "bubble_shape": body.get("bubble_shape", "legacy"),
+                "tail_width_scale": body.get("tail_width_scale", 1.0),
+                "organic_wobble": body.get("organic_wobble", 0.055),
                 "max_width_ratio": body.get("max_width_ratio", 0.45),
                 "match_thres": body.get("match_thres", 0.55),
                 "face_candidates_per_character": body.get(
@@ -6576,6 +6611,7 @@ app.router.add_get("/api/lighbd/prompts", handle_api_lighbd_prompts)
 app.router.add_post("/api/lighbd/prompts", handle_api_lighbd_prompts)
 app.router.add_get("/api/illustration_context/session/{sid}/manifest", handle_api_illustration_context_manifest)
 app.router.add_get("/api/illustration_context/bridge/health", handle_api_illustration_context_bridge_health)
+app.router.add_post("/api/illustration_context/bridge/client-log", handle_api_illustration_context_bridge_client_log)
 app.router.add_get("/api/illustration_context/bridge/session/{sid}", handle_api_illustration_context_bridge_session)
 app.router.add_get("/api/illustration_context/bridge/session/{sid}/image/{slot}", handle_api_illustration_context_bridge_image)
 app.router.add_get("/api/illustration_context/prompts", handle_api_illustration_context_prompts)
