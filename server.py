@@ -3100,6 +3100,104 @@ async def handle_api_lighbd_reroll(request: web.Request) -> web.Response:
 
 
 # ─── 라우트 핸들러 (ComfyUI 프록시) ─────────────────────
+
+
+def _serve_illustration_session_result(
+    body: dict,
+    prompt_id: str,
+    prompt_data: dict,
+    session_id: str,
+    *,
+    index: int | None = None,
+    slot: int | None = None,
+) -> web.Response:
+    """등록된 세션 이미지를 같은 ComfyUI 응답 형태로 반환한다."""
+    image_bytes = (
+        illustration_context_pipeline.session_image_by_slot(session_id, slot)
+        if slot is not None else illustration_context_pipeline.session_image(session_id, index)
+    )
+    save_node = find_save_image_node(prompt_data)
+    if image_bytes is None:
+        print(
+            f"[ILLUST_CONTEXT] 결과 회수 실패: session={session_id}, "
+            f"index={index}, slot={slot}"
+        )
+        prompts[prompt_id] = {
+            "status": "completed", "prompt": prompt_data,
+            "client_id": body.get("client_id", ""), "extra_data": body.get("extra_data", {}),
+            "outputs": {"images": []}, "filename": None, "save_node_id": save_node,
+            "image_bytes": None, "timestamp": time.time(),
+        }
+        return web.json_response({"prompt_id": prompt_id, "number": len(prompts), "node_errors": {}})
+
+    prompts[prompt_id] = {
+        "status": "running", "prompt": prompt_data,
+        "client_id": body.get("client_id", ""), "extra_data": body.get("extra_data", {}),
+        "outputs": {}, "filename": None, "save_node_id": save_node,
+        "image_bytes": image_bytes, "timestamp": time.time(),
+    }
+    filename = f"ComfyUI_{prompt_id[:8]}.png"
+    asyncio.create_task(complete_prompt_from_reschedule(prompt_id, save_node or "9", filename))
+    print(f"[ILLUST_CONTEXT] 캐시 이미지 회수: session={session_id}, index={index}, slot={slot}")
+    return web.json_response({"prompt_id": prompt_id, "number": len(prompts), "node_errors": {}})
+
+
+async def _enqueue_illustration_session_slot(
+    body: dict,
+    prompt_id: str,
+    prompt_data: dict,
+    session_id: str,
+    slot: int,
+    *,
+    attach_context: bool,
+    operation_label: str,
+) -> web.Response:
+    """저장된 RAW descriptor로 한 슬롯을 생성한다. CALL1/2/3은 실행하지 않는다."""
+    descriptor = illustration_context_pipeline.session_item_by_slot(session_id, slot)
+    if descriptor is None:
+        print(
+            f"[ILLUST_CONTEXT] {operation_label} descriptor 없음: "
+            f"session={session_id}, slot={slot}"
+        )
+        return web.json_response(
+            {"error": "illustration full generation unavailable: session or slot not found"},
+            status=409,
+        )
+
+    generated_prompt = copy.deepcopy(prompt_data)
+    if not set_prompt_by_title(generated_prompt, "긍정프롬프트", descriptor.get("raw_positive", "")):
+        return web.json_response({"error": "positive prompt node not found"}, status=400)
+    if not set_prompt_by_title(generated_prompt, "부정프롬프트", descriptor.get("raw_negative", "")):
+        return web.json_response({"error": "negative prompt node not found"}, status=400)
+
+    save_node = find_save_image_node(generated_prompt)
+    prompts[prompt_id] = {
+        "status": "running", "prompt": generated_prompt,
+        "client_id": body.get("client_id", ""), "extra_data": body.get("extra_data", {}),
+        "outputs": {}, "filename": None, "save_node_id": save_node,
+        "image_bytes": None, "timestamp": time.time(),
+    }
+    generated_body = {
+        "prompt": generated_prompt,
+        "client_id": body.get("client_id", ""),
+        "extra_data": body.get("extra_data", {}),
+        "illustration_regenerate_session_id": session_id,
+        "illustration_regenerate_slot": slot,
+    }
+    if attach_context:
+        session = illustration_context_pipeline.get_session(session_id) or {}
+        generated_body["illustration_context"] = session.get("context", "")
+
+    asyncio.create_task(queue_manager.add_item(
+        "illustration",
+        f"삽화 {operation_label} · slot {slot}",
+        {"prompt_id": prompt_id, "prompt_data": generated_prompt, "raw_body": generated_body},
+        priority=0,
+    ))
+    print(f"[ILLUST_CONTEXT] {operation_label} 접수: session={session_id}, slot={slot}")
+    return web.json_response({"prompt_id": prompt_id, "number": len(prompts), "node_errors": {}})
+
+
 async def handle_prompt(request: web.Request) -> web.Response:
     global reschedule_queue
     try:
@@ -3188,6 +3286,27 @@ async def handle_prompt(request: web.Request) -> web.Response:
         context_payload = illustration_context_pipeline.parse_context_request(incoming_positive)
         if context_payload is not None:
             session_id = context_payload["session_id"]
+            context_action = context_payload.get("action", "regenerate")
+            if context_action == "result":
+                return _serve_illustration_session_result(
+                    body,
+                    prompt_id,
+                    prompt_data,
+                    session_id,
+                    slot=context_payload["slot"],
+                )
+            if context_action == "generate":
+                # 현재 응답 전체 생성은 기존 RAW descriptor만 사용한다.
+                # CONTEXT 재생성으로 폴백하지 않으며, RAW 로그에도 CONTEXT를 붙이지 않는다.
+                return await _enqueue_illustration_session_slot(
+                    body,
+                    prompt_id,
+                    prompt_data,
+                    session_id,
+                    context_payload["slot"],
+                    attach_context=False,
+                    operation_label="전체 생성",
+                )
             context_value = illustration_context_pipeline.context_text(context_payload["chats"])
             illustration_context_pipeline.create_session(session_id, context_value)
             save_node = find_save_image_node(prompt_data)

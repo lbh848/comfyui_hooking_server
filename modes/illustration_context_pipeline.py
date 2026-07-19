@@ -12,12 +12,13 @@ import os
 import re
 import time
 import traceback
+import datetime
 from copy import deepcopy
 from urllib.parse import quote
 
 import yaml
 
-from modes import llm_service
+from modes import lighbd_service, llm_service
 
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -234,6 +235,20 @@ def parse_context_request(positive: str) -> dict | None:
     if not chats:
         print(f"[ILLUST_CONTEXT] CHAT 데이터가 비어 있음: session={session_id}")
         return None
+    action = str(payload.get("action") or "regenerate").strip().lower()
+    if action not in ("regenerate", "generate", "result"):
+        print(f"[ILLUST_CONTEXT] 지원하지 않는 CONTEXT action: session={session_id}, action={action!r}")
+        return None
+    slot = None
+    if action in ("generate", "result"):
+        try:
+            slot = int(payload.get("slot"))
+        except Exception as e:
+            print(
+                f"[ILLUST_CONTEXT] CONTEXT {action} slot 파싱 실패: "
+                f"session={session_id}, error={e}, payload={payload}"
+            )
+            return None
     target_slotted = str(payload.get("target_slotted") or "").strip()
     if target_slotted and not re.search(r"\[Slot\s+\d+\]", target_slotted):
         print(f"[ILLUST_CONTEXT] target_slotted에 슬롯 마커가 없어 폴백 사용: session={session_id}")
@@ -241,6 +256,8 @@ def parse_context_request(positive: str) -> dict | None:
     payload["session_id"] = session_id
     payload["chats"] = chats
     payload["target_slotted"] = target_slotted
+    payload["action"] = action
+    payload["slot"] = slot
     return payload
 
 
@@ -734,6 +751,19 @@ async def _call_pipeline_llm(call_name: str, messages: list[dict], stream_notify
         or llm_service._current_config.get("llm_model")
         or ""
     )
+    history_record = {
+        "ts": datetime.datetime.now().isoformat(timespec="seconds"),
+        "prompt_id": f"illustration_context:{call_name}",
+        "call_name": call_name,
+        "task_key": task_key,
+        "model": model,
+        "input": messages,
+        "output": "",
+        "completion_tokens": 0,
+        "elapsed": 0.0,
+        "tps": 0.0,
+    }
+    history_logged = False
     try:
         if stream_notify:
             await stream_notify({
@@ -745,9 +775,9 @@ async def _call_pipeline_llm(call_name: str, messages: list[dict], stream_notify
             if stream_notify:
                 await stream_notify({"type": "error", "call_name": call_name, "error": str(result)})
             raise RuntimeError(str(result or f"빈 {call_name} 응답"))
+        elapsed = time.time() - started
+        tokens = max(1, len(str(result)) // 3)
         if stream_notify:
-            elapsed = time.time() - started
-            tokens = max(1, len(str(result)) // 3)
             await stream_notify({
                 "type": "done",
                 "call_name": call_name,
@@ -758,8 +788,26 @@ async def _call_pipeline_llm(call_name: str, messages: list[dict], stream_notify
                 "tps": tokens / elapsed if elapsed > 0 else 0.0,
                 "ttft": elapsed,
             })
+        history_record.update({
+            "output": str(result),
+            "completion_tokens": tokens,
+            "elapsed": round(elapsed, 3),
+            "tps": round(tokens / elapsed, 1) if elapsed > 0 else 0.0,
+            "ttft": round(elapsed, 3),
+            "status": "ok",
+        })
+        lighbd_service._log_lighbd_history(history_record)
+        history_logged = True
         return str(result)
     except Exception as e:
+        if not history_logged:
+            elapsed = time.time() - started
+            history_record.update({
+                "elapsed": round(elapsed, 3),
+                "status": "error",
+                "error": str(e),
+            })
+            lighbd_service._log_lighbd_history(history_record)
         print(f"[ILLUST_CONTEXT:{call_name}] 호출 예외: {e}")
         traceback.print_exc()
         raise

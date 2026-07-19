@@ -28,6 +28,8 @@ def test_context_and_result_transport_markers():
         {"role": "user", "data": "질문"},
         {"role": "char", "data": "응답"},
     ]
+    assert parsed["action"] == "regenerate"
+    assert parsed["slot"] is None
     assert "[Slot 0]" in parsed["target_slotted"]
     assert pipeline.parse_result_request(
         pipeline.RESULT_PREFIX + "\n" + json.dumps({"session_id": session_id, "slot": -1})
@@ -35,6 +37,37 @@ def test_context_and_result_transport_markers():
     assert pipeline.parse_regenerate_request(
         pipeline.REGENERATE_PREFIX + "\n" + json.dumps({"session_id": session_id, "slot": 0})
     ) == {"session_id": session_id, "slot": 0}
+
+
+def test_context_transport_actions_keep_chat_data_and_validate_slot():
+    session_id = "session_actions_1234"
+    base = {
+        "session_id": session_id,
+        "target_slotted": "첫 문장.\n\n[Slot 0]\n\n둘째 문장.",
+        "chats": [
+            {"role": "user", "data": "질문"},
+            {"role": "char", "data": "응답"},
+        ],
+    }
+
+    for action in ("generate", "result"):
+        payload = {**base, "action": action, "slot": -1}
+        parsed = pipeline.parse_context_request(
+            pipeline.CONTEXT_PREFIX + "\n" + json.dumps(payload, ensure_ascii=False)
+        )
+        assert parsed["action"] == action
+        assert parsed["slot"] == -1
+        assert parsed["chats"] == base["chats"]
+
+    invalid_action = {**base, "action": "fallback"}
+    assert pipeline.parse_context_request(
+        pipeline.CONTEXT_PREFIX + "\n" + json.dumps(invalid_action, ensure_ascii=False)
+    ) is None
+
+    missing_slot = {**base, "action": "generate"}
+    assert pipeline.parse_context_request(
+        pipeline.CONTEXT_PREFIX + "\n" + json.dumps(missing_slot, ensure_ascii=False)
+    ) is None
 
 
 def test_toon_parse_and_slot_cache_roundtrip(tmp_path, monkeypatch):
@@ -137,6 +170,62 @@ def test_build_raw_prompt_uses_v1_or_v3_input_shape():
     assert "[CHAR]\n1girl, hana, black hair" in v3_positive
     assert "[ILXL]" not in v3_positive
     assert "bad hands" in v3_negative
+
+
+@pytest.mark.asyncio
+async def test_pipeline_llm_records_success_in_lighbd_history(monkeypatch):
+    records = []
+    events = []
+    messages = [{"role": "user", "content": "scene"}]
+
+    async def fake_call(task_key, actual_messages):
+        assert task_key == "illustration_call1"
+        assert actual_messages == messages
+        return "completed output"
+
+    async def fake_notify(event):
+        events.append(event)
+
+    monkeypatch.setattr(pipeline.llm_service, "callLLMTask", fake_call)
+    monkeypatch.setattr(pipeline.lighbd_service, "_log_lighbd_history", records.append)
+
+    result = await pipeline._call_pipeline_llm("CALL1", messages, fake_notify)
+
+    assert result == "completed output"
+    assert [event["type"] for event in events] == ["start", "done"]
+    assert len(records) == 1
+    assert records[0]["call_name"] == "CALL1"
+    assert records[0]["task_key"] == "illustration_call1"
+    assert records[0]["input"] == messages
+    assert records[0]["output"] == "completed output"
+    assert records[0]["status"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_pipeline_llm_records_failure_in_lighbd_history(monkeypatch):
+    records = []
+    events = []
+    messages = [{"role": "user", "content": "broken scene"}]
+
+    async def fake_call(task_key, actual_messages):
+        return "[LLM 실패] upstream unavailable"
+
+    async def fake_notify(event):
+        events.append(event)
+
+    monkeypatch.setattr(pipeline.llm_service, "callLLMTask", fake_call)
+    monkeypatch.setattr(pipeline.lighbd_service, "_log_lighbd_history", records.append)
+
+    with pytest.raises(RuntimeError, match="upstream unavailable"):
+        await pipeline._call_pipeline_llm("CALL2", messages, fake_notify)
+
+    assert [event["type"] for event in events] == ["start", "error"]
+    assert len(records) == 1
+    assert records[0]["call_name"] == "CALL2"
+    assert records[0]["input"] == messages
+    assert records[0]["output"] == ""
+    assert records[0]["status"] == "error"
+    assert "upstream unavailable" in records[0]["error"]
 
 
 @pytest.mark.asyncio

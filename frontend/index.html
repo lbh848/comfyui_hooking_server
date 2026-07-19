@@ -13581,10 +13581,14 @@
                 }).join('');
                 const outputText = r.output || '';
                 const stats = `토큰 ${r.completion_tokens ?? 0} · ${r.elapsed ?? 0}s · ${r.tps ?? 0} t/s` + (r.ttft ? ` · TTFT ${r.ttft}s` : '');
+                const callBadge = r.call_name
+                    ? `<span style="font-size:0.7rem; padding:1px 6px; border-radius:3px; background:rgba(0,188,212,0.16); color:#4dd0e1; font-weight:600;">${escapeHtml(r.call_name)}</span>`
+                    : '';
                 return `
                     <div style="border:1px solid var(--border); border-radius:6px; padding:10px; background:var(--surface2);">
                         <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px; flex-wrap:wrap;">
                             <span style="font-size:0.7rem; color:var(--text2);">${escapeHtml(r.ts || '')}</span>
+                            ${callBadge}
                             <span style="font-size:0.7rem; padding:1px 6px; border-radius:3px; background:${isError ? 'rgba(255,107,107,0.18)' : 'rgba(76,175,80,0.18)'}; color:${isError ? '#ff6b6b' : '#5cd5a0'}; font-weight:600;">${isError ? 'ERROR' : 'OK'}</span>
                             <span style="font-size:0.7rem; color:var(--text2);">${escapeHtml(stats)}</span>
                             <button onclick="document.getElementById('lighbd-hist-detail-${i}').style.display = (document.getElementById('lighbd-hist-detail-${i}').style.display === 'none' ? 'block' : 'none');" style="margin-left:auto; background:var(--surface); border:1px solid var(--border); color:var(--text2); padding:2px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">펼치기/접기</button>
