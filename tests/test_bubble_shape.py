@@ -139,7 +139,8 @@ class TestSettingsResolvers(unittest.TestCase):
 
     def test_organic_wobble_clamps(self):
         self.assertAlmostEqual(_resolve_organic_wobble({"organic_wobble": 0.06}), 0.06)
-        self.assertAlmostEqual(_resolve_organic_wobble({"organic_wobble": 5}), 0.10)
+        self.assertAlmostEqual(_resolve_organic_wobble({"organic_wobble": 0.3}), 0.3)
+        self.assertAlmostEqual(_resolve_organic_wobble({"organic_wobble": 5}), 0.30)
         self.assertAlmostEqual(_resolve_organic_wobble({"organic_wobble": 0}), 0.02)
         self.assertAlmostEqual(_resolve_organic_wobble({}), 0.055)
 

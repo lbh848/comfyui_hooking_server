@@ -22,9 +22,9 @@ class OrganicShapeConfig:
     """유기형 타원 외곽선 생성 설정. 저주파 사인파 합성으로 큰 굴곡만 만든다."""
 
     point_count: int = 180
-    wobble: float = 0.055            # 0.035~0.075 권장. 0.1+는 과장 표현이 아니면 금지.
-    min_radial_scale: float = 0.90   # 텍스트 안전 영역 보장을 위한 하한.
-    max_radial_scale: float = 1.10
+    wobble: float = 0.055            # 0.035~0.075 권장. 상한 0.30(과장 표현용).
+    min_radial_scale: float = 0.78   # 텍스트 안전 영역 보장을 위한 하한. 강한 굴곡 허용.
+    max_radial_scale: float = 1.22
     asymmetry: float = 0.025         # 축별 약한 비대칭 성분.
 
 

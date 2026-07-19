@@ -4827,6 +4827,7 @@ async def handle_api_postprocess_preview(request: web.Request) -> web.Response:
                 "onnx_device": body.get("onnx_device", "auto"),
                 "cpu_threads": body.get("cpu_threads", 0),
                 "face_fallback": bool(body.get("face_fallback", False)),
+                "speech_split": bool(body.get("speech_split", True)),
                 # 아래 두 값은 이 미리보기 API에서만 주입된다. 실제 생성 설정에는
                 # 존재하지 않으므로 마스크/후보 가이드가 결과물에 들어갈 수 없다.
                 "preview_debug_mask": bool(body.get("preview_debug_mask", False)),

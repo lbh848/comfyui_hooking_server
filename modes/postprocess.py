@@ -2254,7 +2254,7 @@ def _default_bubble() -> dict:
         "bubble_shape": "legacy",          # 외곽선 렌더: legacy(기본 타원/코믹) | organic(유기형 굴곡)
         "tail_width_scale": 1.0,           # 꼬리 두께 배율(자동 산정값×k, 0.2~3.0). 1.0=변경 없음
         "tail_max_length": 0.0,            # 꼬리 최대 길이(얼굴 최대 크기의 배율, 0=제한 없음). 1.0=얼굴 1개 폭
-        "organic_wobble": 0.055,           # 유기형 굴곡 강도(0.02~0.10). 짧은 대사 0.060, 긴 대사 0.045 권장
+        "organic_wobble": 0.055,           # 유기형 굴곡 강도(0.02~0.30). 짧은 대사 0.060, 긴 대사 0.045 권장
         "max_width_ratio": 0.45,          # 캔버스 폭 대비 말풍선 최대 폭 비율
         "match_thres": 0.55,              # 코사인 유사도 매칭 임계치(이하 미배정)
         "face_candidates_per_character": 8,  # 캐릭터당 확보할 YOLO 후보 수(전체 최대 64)
@@ -2263,6 +2263,7 @@ def _default_bubble() -> dict:
         "onnx_device": "auto",         # 말풍선 ONNX 공용 장치
         "cpu_threads": 0,               # CPU intra-op 스레드. 0=ONNX Runtime 자동
         "face_fallback": False,         # v9c 주검출기가 0건일 때 v8m 으로 재시도. recall↑, CPU 추론 1회 추가
+        "speech_split": True,          # 대사(speech) 5줄 이상 → 텍스트는 그대로 두고 외곽선을 위/아래 두 타원 합집합(한 덩어리)으로. thought·box 제외
     }
 
 
@@ -2422,7 +2423,7 @@ def get_bubble_settings(config: dict, bot_name: str = "") -> Optional[dict]:
             0.0, min(10.0, float(bb.get("tail_max_length", 0.0) or 0.0))
         ),
         "organic_wobble": max(
-            0.02, min(0.10, float(bb.get("organic_wobble", 0.055) or 0.055))
+            0.02, min(0.30, float(bb.get("organic_wobble", 0.055) or 0.055))
         ),
         "max_width_ratio": float(bb.get("max_width_ratio", 0.45) or 0.45),
         "match_thres": float(
@@ -2445,6 +2446,7 @@ def get_bubble_settings(config: dict, bot_name: str = "") -> Optional[dict]:
         "onnx_device": normalize_device_key(bb.get("onnx_device", "auto")),
         "cpu_threads": normalize_cpu_threads(bb.get("cpu_threads", 0)),
         "face_fallback": bool(bb.get("face_fallback", False)),
+        "speech_split": bool(bb.get("speech_split", True)),
         "face_crop_top": max(1.0, min(10.0, float(face_crop_top))),
         "face_crop_bottom": max(1.0, min(10.0, float(face_crop_bottom))),
     }

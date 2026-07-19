@@ -247,14 +247,14 @@ def _resolve_tail_max_length(settings):
 
 
 def _resolve_organic_wobble(settings):
-    """유기형 외곽선 굴곡 강도. 길이 무관 기본 0.055, 0.02~0.10 클램프."""
+    """유기형 외곽선 굴곡 강도. 길이 무관 기본 0.055, 0.02~0.30 클램프."""
     value = (settings or {}).get("organic_wobble", 0.055)
     try:
         wobble = float(value)
     except (TypeError, ValueError):
         print(f"[BUBBLE_RENDER] ⚠ organic_wobble 변환 실패({value!r}), 0.055 사용")
         wobble = 0.055
-    return max(0.02, min(0.10, wobble))
+    return max(0.02, min(0.30, wobble))
 
 
 def _resolve_face_match_crop(settings, bot_name):
@@ -932,16 +932,29 @@ def _draw_layout_bubble(
     point_count=180,
     seed=0,
     tail_max_length_px=None,
+    split=False,
 ):
     """레이아웃 결과를 타원/코믹/구름/무라운드 박스로 그린다.
 
     organic=True 이고 대사(ellipse/comic)면 유기형 굴곡 몸통에 legacy 곡선 꼬리를
     덧셈 합집합으로 붙여 그린다(미리보기/실제 동일 빌더). cloud/box 및 생성 실패 시
     legacy 폴백.
+
+    split=True 면 텍스트(전체)는 그대로 두고 몸통만 위/아래 두 타원의 합집합으로
+    그려, 두 blob이 허리에서 맞물린 하나의 말풍선이 된다. 대사(ellipse/comic) 전용.
     """
     shape = shape if shape in ("ellipse", "rounded", "comic", "cloud", "box") else "ellipse"
     if shape == "cloud":
         _draw_cloud(overlay, rect, anchor, fill, border, border_w, with_tail)
+        return
+    if split and shape in ("ellipse", "comic", "rounded"):
+        mask = _split_body_mask(overlay.size, rect)
+        if with_tail:
+            _add_curved_tail(
+                mask, rect, anchor, "ellipse", radius, border_w, tail_width_scale,
+                max_length_px=tail_max_length_px,
+            )
+        _composite_union_mask(overlay, mask, fill, border, border_w)
         return
     if organic and shape in ("ellipse", "comic"):
         try:
@@ -1065,6 +1078,35 @@ def _tail_side(rect, anchor):
         return "left" if dx > 0 else "right"
     return "top" if dy > 0 else "bottom"
 
+
+
+def _split_body_mask(size, rect, *, overlap=0.34, soften=0.06):
+    """말풍선 몸통을 위/아래 두 타원의 합집합 마스크로 만든다.
+
+    텍스트(전체)는 그대로 두고, 외곽선만 두 개의 blob이 허리에서 맞물려 합쳐진
+    하나의 연결된 말풍선 형태가 되도록 한다. rect 를 수직으로 겹치게 둘로 나눠
+    각각 타원을 그리고 가우시안 블러 + 재이진화로 이음선을 매끄럽게 한다.
+    bbox 계산은 하지 않는다 — rect 의 수직 분할만으로 두 타원 위치를 정한다.
+    """
+    x1, y1, x2, y2 = [float(v) for v in rect]
+    height = max(1.0, y2 - y1)
+    # 두 타원이 중앙에서 겹치는 구간 높이. overlap 비율만큼 서로 침범하게 해
+    # 합집합이 하나로 이어지며 허리가 자연스럽게 조여진다.
+    waist = height * float(overlap)
+    mid = y1 + height / 2.0
+    top_rect = [x1, y1, x2, mid + waist / 2.0]
+    bot_rect = [x1, mid - waist / 2.0, x2, y2]
+    mask = Image.new("L", size, 0)
+    d = ImageDraw.Draw(mask)
+    d.ellipse(top_rect, fill=255)
+    d.ellipse(bot_rect, fill=255)
+    # 블러→재이진화로 허리 굴곡을 부드럽게(형태는 유지).
+    blur_px = max(1.5, min(x2 - x1, height) * float(soften))
+    if blur_px >= 1.0:
+        blurred = mask.filter(ImageFilter.GaussianBlur(blur_px))
+        threshold = 96
+        mask = blurred.point(lambda p: 255 if p > threshold else 0).convert("L")
+    return mask
 
 
 # ─── 진입점 ─────────────────────────────────────────────────────────
@@ -1200,6 +1242,9 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
         thought_shape = "cloud"
     preview_debug_mask = bool(s.get("preview_debug_mask", False))
     preview_debug_candidates = bool(s.get("preview_debug_candidates", False))
+    # 대사(speech) 5줄 이상 → 텍스트는 그대로 두고 외곽선을 위/아래 두 타원의
+    # 합집합(허리가 맞물린 한 덩어리)으로 그린다. thought·box는 제외.
+    speech_split = bool(s.get("speech_split", True))
     # 타이포그래피: 자간(em), 행간(글자 크기 배수), 글자 가로 축소비.
     # 기본(0/1.0/None)이면 기존 multiline_text 렌더와 동일(회귀 방지).
     try:
@@ -1491,6 +1536,8 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
             render_shape = thought_shape
         else:
             render_shape = "comic" if layout.shape == "rounded" else "ellipse"
+        # 긴 대사 분할: speech 5줄 이상이면 텍스트는 그대로 두고 외곽선만 두 타원 합집합.
+        do_split = speech_split and btype == "speech" and len(layout.lines) >= 5
         if unanchored_fallback or render_shape == "box":
             with_tail, tail_gap, tail_limit = False, 0.0, 0.0
         else:
@@ -1538,6 +1585,7 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
             point_count=organic_point_count,
             seed=organic_seed,
             tail_max_length_px=tail_max_length_px,
+            split=do_split,
         )
 
         # 모델이 선택한 줄과 행간을 실제 폰트로 중앙 정렬해 그린다.
@@ -1582,6 +1630,7 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
             f"lines={len(layout.lines)}, body=({body_w:.1f},{body_h:.1f}), "
             f"tail={with_tail} gap={tail_gap:.1f}/{tail_limit:.1f}px, "
             f"organic={'on' if use_organic else 'off'} "
+            f"split_body={'on' if do_split else 'off'} "
             f"tail_w_scale={tail_width_scale:.2f}, "
             f"match={m.get('sim')}, fits={layout.fits}"
         )

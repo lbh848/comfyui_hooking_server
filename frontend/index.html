@@ -8201,6 +8201,16 @@
                             </div>
 
                             <div class="pp-card">
+                                <div class="pp-switch-line">
+                                    <div>
+                                        <div style="font-size:0.88rem; font-weight:600;">긴 대사 말풍선 형태</div>
+                                        <div class="pp-hint">대사(speech)가 5줄 이상일 때 텍스트는 그대로 두고, 말풍선 외곽선을 위/아래 두 타원이 허리에서 맞물린 한 덩어리로 그립니다. 생각·박스 말풍선에는 적용하지 않습니다.</div>
+                                    </div>
+                                    <label class="switch"><input type="checkbox" id="pp-bubble-speech-split" onchange="collectPpBubbleSettings(); renderPostprocessPreview();"><span class="slider"></span></label>
+                                </div>
+                            </div>
+
+                            <div class="pp-card">
                                 <div class="pp-card-title">폰트 · 텍스트</div>
                                 <div class="pp-field-inline">
                                     <div style="flex:2;">
@@ -8249,7 +8259,7 @@
                                     <div><div style="font-size:0.7rem; color:var(--text2,#999);">외곽선 스타일</div><select id="pp-bubble-shape" class="select" style="width:130px;" onchange="renderPostprocessPreview()" title="legacy=기존 타원/코믹, organic=저주파 굴곡 유기형(대사에만 적용)"><option value="legacy">기본(legacy)</option><option value="organic">유기형(organic)</option></select></div>
                                     <div><div style="font-size:0.7rem; color:var(--text2,#999);">꼬리 두께 배율</div><input id="pp-bubble-tail-width-scale" type="number" class="input" style="width:70px;" min="0.2" max="3.0" step="0.1" oninput="renderPostprocessPreview()" title="자동 산정된 꼬리 두께에 곱할 배율. 1.0=기본, 1.5=50% 두껍게."></div>
                                     <div><div style="font-size:0.7rem; color:var(--text2,#999);">꼬리 최대 길이 (얼굴 크기 배)</div><input id="pp-bubble-tail-max-length" type="number" class="input" style="width:70px;" min="0" max="10" step="0.1" oninput="renderPostprocessPreview()" title="꼬리가 발화자 얼굴까지 도달하지 못하게 최대 길이를 제한합니다(얼굴 최대 크기×이 값). 0=제한 없음(얼굴까지 도달). 1.0=얼굴 1개 폭."></div>
-                                    <div><div style="font-size:0.7rem; color:var(--text2,#999);">유기형 굴곡 강도</div><input id="pp-bubble-organic-wobble" type="number" class="input" style="width:70px;" min="0.02" max="0.10" step="0.005" oninput="renderPostprocessPreview()" title="유기형 외곽선 굴곡. 긴 대사는 0.045, 짧은 대사는 0.060 권장. organic일 때만 적용."></div>
+                                    <div><div style="font-size:0.7rem; color:var(--text2,#999);">유기형 굴곡 강도</div><input id="pp-bubble-organic-wobble" type="number" class="input" style="width:70px;" min="0.02" max="0.30" step="0.005" oninput="renderPostprocessPreview()" title="유기형 외곽선 굴곡. 긴 대사는 0.045, 짧은 대사는 0.060 권장. 0.10 이상은 과장 표현. organic일 때만 적용."></div>
                                 </div>
                                 <div class="pp-field-inline" style="margin-top:6px;">
                                     <div><div style="font-size:0.7rem; color:var(--text2,#999);">대사 불투명도(0~1)</div><input id="pp-bubble-speech-opacity" type="number" class="input" style="width:70px;" step="0.1" min="0" max="1" oninput="renderPostprocessPreview()"></div>
@@ -26938,6 +26948,7 @@
                     onnx_device: 'auto',
                     cpu_threads: 0,
                     face_fallback: false,
+                    speech_split: true,
                 },
                 mode: 'vn',  // 활성 후처리 모드: 'vn' | 'bubble'
             };
@@ -27742,6 +27753,7 @@
             if (typeof base.onnx_device !== 'string') base.onnx_device = 'auto';
             if (!Number.isInteger(base.cpu_threads) || base.cpu_threads < 0) base.cpu_threads = 0;
             if (typeof base.face_fallback !== 'boolean') base.face_fallback = false;
+            if (typeof base.speech_split !== 'boolean') base.speech_split = true;
             // 폰트 id(드롭박스). 구형 font_path 만 있으면 system 기본으로 두고 선택시 사용자 판단.
             if (typeof base.font_id !== 'string' || !base.font_id) {
                 base.font_id = base.font_path ? 'system' : 'system';
@@ -27906,6 +27918,8 @@
             set('pp-bubble-cpu-threads', b.cpu_threads ?? 0);
             const _faceFallbackEl = document.getElementById('pp-bubble-face-fallback');
             if (_faceFallbackEl) _faceFallbackEl.checked = !!b.face_fallback;
+            const _speechSplitEl = document.getElementById('pp-bubble-speech-split');
+            if (_speechSplitEl) _speechSplitEl.checked = (b.speech_split !== false);
             const debugMask = document.getElementById('pp-bubble-debug-mask');
             const debugCandidates = document.getElementById('pp-bubble-debug-candidates');
             if (debugMask) debugMask.checked = false;
@@ -27937,7 +27951,7 @@
             b.bubble_shape = (_shapeVal && _shapeVal.value === 'organic') ? 'organic' : 'legacy';
             b.tail_width_scale = _ppNum('pp-bubble-tail-width-scale', 1.0, 0.2, 3.0);
             b.tail_max_length = _ppNum('pp-bubble-tail-max-length', 0.0, 0, 10);
-            b.organic_wobble = _ppNum('pp-bubble-organic-wobble', 0.055, 0.02, 0.10);
+            b.organic_wobble = _ppNum('pp-bubble-organic-wobble', 0.055, 0.02, 0.30);
             const _ppThoughtShape = document.getElementById('pp-bubble-thought-shape').value;
             b.thought_shape = (_ppThoughtShape === 'box' || _ppThoughtShape === 'auto') ? _ppThoughtShape : 'cloud';
             delete b.thought_circle_r;
@@ -27956,6 +27970,8 @@
             b.cpu_threads = Math.round(_ppNum('pp-bubble-cpu-threads', 0, 0));
             const _faceFallbackCollect = document.getElementById('pp-bubble-face-fallback');
             b.face_fallback = _faceFallbackCollect ? _faceFallbackCollect.checked : false;
+            const _speechSplitCollect = document.getElementById('pp-bubble-speech-split');
+            b.speech_split = _speechSplitCollect ? _speechSplitCollect.checked : true;
             return b;
         }
 
@@ -27996,6 +28012,7 @@
                     onnx_device: b.onnx_device,
                     cpu_threads: b.cpu_threads,
                     face_fallback: b.face_fallback,
+                    speech_split: b.speech_split,
                     preview_debug_mask: !!document.getElementById('pp-bubble-debug-mask')?.checked,
                     preview_debug_candidates: !!document.getElementById('pp-bubble-debug-candidates')?.checked,
                 };
