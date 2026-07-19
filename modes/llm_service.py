@@ -17,6 +17,7 @@ import json
 import os
 import time
 import traceback
+import uuid
 from contextvars import ContextVar
 import aiohttp
 import httpx
@@ -350,7 +351,9 @@ _current_config = {
     "llm_custom_body3": "",           # LLM3 용
     "llm_temperature": 1.0,
     "llm_max_tokens": 0,              # 0 = 기본값 사용
-    "llm_stream": False,
+    "llm_stream": False,              # LLM1 실제 API 스트리밍
+    "llm_stream2": False,             # LLM2 실제 API 스트리밍
+    "llm_stream3": False,             # LLM3 실제 API 스트리밍
     # 작업별 LLM1/LLM2 라우팅 (외부 API 분기). task_key -> {"primary": "llm1"|"llm2", "fallback": bool}
     # 실제 기본값은 server.py 의 DEFAULT_CONFIG 에서 update_config 로 내려온다.
     "llm_routing": {},
@@ -640,6 +643,24 @@ VISION_UNSUPPORTED_SERVICES = {
 # callLLM/callLLMVision 에서 json_mode=True 시 set 하고, _build_openai_body/_call_gemini
 # 가 get 하여 요청 body 에 반영한다. async 세이프하고 동시/중첩 호출에도 격리된다.
 _response_format_ctx: ContextVar = ContextVar("llm_response_format", default=None)
+
+# 실제 작업 호출의 스트림 이벤트에 task_key/호출 슬롯 정보를 싣기 위한 컨텍스트.
+# ContextVar 이므로 여러 LLM 큐 작업이 동시에 실행되어도 메타데이터가 섞이지 않는다.
+_stream_metadata_ctx: ContextVar = ContextVar("llm_stream_metadata", default=None)
+
+# server.py가 등록하는 비동기 프론트엔드 알림 콜백.
+# llm_service가 server를 직접 import하지 않게 하여 순환 import를 피한다.
+_stream_notify_func = None
+
+
+def set_stream_notify_func(callback):
+    """실제 작업 LLM 스트림 이벤트를 받을 비동기 콜백을 등록한다."""
+    global _stream_notify_func
+    _stream_notify_func = callback
+    if callback is None:
+        print("[LLM_STREAM] 프론트엔드 알림 콜백 해제")
+    else:
+        print("[LLM_STREAM] 프론트엔드 알림 콜백 등록 완료")
 
 
 def supports_vision(service: str) -> bool:
@@ -1035,6 +1056,8 @@ async def callLLM(messages: list, model: str = None, json_mode: bool = False) ->
     use_model = model or _current_config["llm_model"]
     token = _response_format_ctx.set({"type": "json_object"}) if json_mode else None
     try:
+        if bool(_current_config.get("llm_stream", False)):
+            return await _stream_call_to_text(messages, service, use_model, "llm1")
         return await _dispatch(messages, service, use_model)
     finally:
         if token is not None:
@@ -1084,6 +1107,8 @@ async def callLLMVision(messages: list, image_b64: str, image_mime: str = "image
     _llm_log(f"callLLMVision: service={service} model={use_model} mime={image_mime} img_b64_len={len(image_b64)} json_mode={json_mode}")
     token = _response_format_ctx.set({"type": "json_object"}) if json_mode else None
     try:
+        if bool(_current_config.get("llm_stream", False)):
+            return await _stream_call_to_text(new_messages, service, use_model, "llm1")
         return await _dispatch(new_messages, service, use_model)
     finally:
         if token is not None:
@@ -1164,6 +1189,8 @@ async def callLLM2(messages: list, model: str = None, json_mode: bool = False) -
             _current_config["llm_reasoning_effort"] = effort2
         if body2:
             _current_config["llm_custom_body"] = body2
+        if bool(_current_config.get("llm_stream2", False)):
+            return await _stream_call_to_text(messages, service, use_model, "llm2")
         return await _dispatch(messages, service, use_model)
     finally:
         if token is not None:
@@ -1210,7 +1237,10 @@ async def callLLM3(messages: list, model: str = None, json_mode: bool = False) -
         if body3:
             _current_config["llm_custom_body"] = body3
         print(f"[LLM3] 호출 시작: service={service}, model={use_model}, messages={len(messages)}")
-        result = await _dispatch(messages, service, use_model)
+        if bool(_current_config.get("llm_stream3", False)):
+            result = await _stream_call_to_text(messages, service, use_model, "llm3")
+        else:
+            result = await _dispatch(messages, service, use_model)
         if not result:
             print("[LLM3] 호출 실패: 빈 응답")
         return result
@@ -1229,27 +1259,78 @@ async def callLLM3(messages: list, model: str = None, json_mode: bool = False) -
 
 
 async def callLLM3Stream(messages: list, model: str = None, log_history: bool = True):
-    """LLM3 테스트 UI용 스트림 호환 래퍼.
-
-    LLM3의 실제 삽화 파이프라인은 완료 단위 CALL 위젯을 사용한다. 테스트 API에는
-    동일한 SSE 인터페이스를 제공하기 위해 단일 결과를 done 이벤트로 내보낸다.
-    """
-    started = time.time()
+    """LLM3 실제 스트리밍 호출. delta/done/error 이벤트를 yield한다."""
     service = _current_config.get("llm_service3") or _current_config["llm_service"]
     use_model = model or _current_config.get("llm_model3")
-    yield {"type": "start", "service": service, "model": use_model}
-    result = await callLLM3(messages, model=model)
-    elapsed = time.time() - started
-    if not result or str(result).startswith("[LLM 실패]"):
-        print(f"[LLM3] 스트림 호환 호출 실패: {result}")
-        yield {"type": "error", "error": str(result or "빈 응답")}
+    if not use_model:
+        print("[LLM3] 스트리밍 호출 실패: LLM3 모델명이 설정되지 않았습니다")
+        yield {"type": "error", "error": "[LLM 실패] LLM3 모델명이 설정되지 않았습니다"}
         return
-    tokens = max(1, len(result) // 3)
-    yield {
-        "type": "done", "text": result, "completion_tokens": tokens,
-        "elapsed": elapsed, "tps": tokens / elapsed if elapsed > 0 else 0.0,
-        "ttft": elapsed,
-    }
+
+    key3 = _current_config.get("llm_api_key3", "")
+    url3 = _current_config.get("llm_url3", "")
+    preset3 = _current_config.get("llm_reasoning_preset3", "")
+    effort3 = _current_config.get("llm_reasoning_effort3", "")
+    body3 = _current_config.get("llm_custom_body3", "")
+    saved_key = _current_config.get("llm_api_key", "")
+    saved_url = _current_config.get("llm_url", "")
+    saved_preset = _current_config.get("llm_reasoning_preset", "auto")
+    saved_effort = _current_config.get("llm_reasoning_effort", "")
+    saved_body = _current_config.get("llm_custom_body", "")
+
+    final_text = ""
+    final_tokens = 0
+    final_elapsed = 0.0
+    final_tps = 0.0
+    final_ttft = None
+    error_msg = ""
+
+    try:
+        if key3:
+            _current_config["llm_api_key"] = key3
+        if url3:
+            _current_config["llm_url"] = url3
+        if preset3:
+            _current_config["llm_reasoning_preset"] = preset3
+        if effort3:
+            _current_config["llm_reasoning_effort"] = effort3
+        if body3:
+            _current_config["llm_custom_body"] = body3
+
+        async for ev in _dispatch_stream(messages, service, use_model):
+            if ev["type"] == "done":
+                final_text = ev.get("text", "")
+                final_tokens = ev.get("completion_tokens", 0)
+                final_elapsed = ev.get("elapsed", 0.0)
+                final_tps = ev.get("tps", 0.0)
+                final_ttft = ev.get("ttft")
+            elif ev["type"] == "error":
+                error_msg = ev.get("error", "")
+                print(f"[LLM3] 스트리밍 호출 실패: {error_msg}")
+            yield ev
+
+        if not final_text and not error_msg:
+            error_msg = "LLM3 스트리밍 응답이 비어 있습니다"
+            print(f"[LLM3] 스트리밍 호출 실패: {error_msg}")
+            yield {"type": "error", "error": f"[LLM 실패] {error_msg}"}
+
+        if log_history:
+            _log_history(
+                service=service, model=use_model, messages=messages,
+                output=final_text, completion_tokens=final_tokens,
+                elapsed=final_elapsed, tps=final_tps, ttft=final_ttft,
+                error=error_msg,
+            )
+    except Exception as e:
+        print(f"[LLM3] 스트리밍 호출 예외: {e}")
+        traceback.print_exc()
+        yield {"type": "error", "error": f"[LLM 실패] LLM3 스트리밍 오류: {e}"}
+    finally:
+        _current_config["llm_api_key"] = saved_key
+        _current_config["llm_url"] = saved_url
+        _current_config["llm_reasoning_preset"] = saved_preset
+        _current_config["llm_reasoning_effort"] = saved_effort
+        _current_config["llm_custom_body"] = saved_body
 
 
 # ─── 작업별 LLM 라우팅 (외부 API 분기) ─────────────────────────
@@ -1322,13 +1403,24 @@ async def callLLMTask(task_key: str, messages: list, model: str = None, json_mod
     eff_json = (bool(rj) if rj is not None else json_mode)
     # LLM 식별자 → 호출 함수. fallback_target 이 None 이면 폴백 없음.
     _llm_funcs = {"llm1": callLLM, "llm2": callLLM2, "llm3": callLLM3}
-    first = _llm_funcs.get(primary, callLLM)
-    second = _llm_funcs.get(fb_target) if fb_target else None
+
+    async def _invoke(slot: str) -> str:
+        func = _llm_funcs.get(slot, callLLM)
+        meta_token = _stream_metadata_ctx.set({
+            "task_key": task_key,
+            "call_name": task_key,
+            "llm_slot": slot,
+        })
+        try:
+            return await func(messages, model=model, json_mode=eff_json)
+        finally:
+            _stream_metadata_ctx.reset(meta_token)
+
     _llm_log(f"callLLMTask[{task_key}]: primary={primary} fallback={fb_target} json_mode={eff_json}")
-    result = await first(messages, model=model, json_mode=eff_json)
-    if second is not None and _is_llm_failed(result):
+    result = await _invoke(primary)
+    if fb_target is not None and _is_llm_failed(result):
         _llm_log(f"callLLMTask[{task_key}]: primary 실패→폴백 시도 ({result[:80] if result else ''})")
-        result = await second(messages, model=model, json_mode=eff_json)
+        result = await _invoke(fb_target)
     return result
 
 
@@ -1385,6 +1477,8 @@ async def callLLMVision2(messages: list, image_b64: str, image_mime: str = "imag
             _current_config["llm_reasoning_effort"] = effort2
         if body2:
             _current_config["llm_custom_body"] = body2
+        if bool(_current_config.get("llm_stream2", False)):
+            return await _stream_call_to_text(new_messages, service, use_model, "llm2")
         return await _dispatch(new_messages, service, use_model)
     finally:
         if token is not None:
@@ -1412,13 +1506,26 @@ async def callLLMVisionTask(task_key: str, messages: list, image_b64: str, image
     rj = entry.get("json_mode", None)
     eff_json = (bool(rj) if rj is not None else json_mode)
     _vision_funcs = {"llm1": callLLMVision, "llm2": callLLMVision2}
-    first = _vision_funcs.get(primary, callLLMVision)
-    second = _vision_funcs.get(fb_target) if fb_target else None
+
+    async def _invoke(slot: str) -> str:
+        func = _vision_funcs.get(slot, callLLMVision)
+        meta_token = _stream_metadata_ctx.set({
+            "task_key": task_key,
+            "call_name": task_key,
+            "llm_slot": slot,
+        })
+        try:
+            return await func(
+                messages, image_b64, image_mime, model=model, json_mode=eff_json
+            )
+        finally:
+            _stream_metadata_ctx.reset(meta_token)
+
     _llm_log(f"callLLMVisionTask[{task_key}]: primary={primary} fallback={fb_target} json_mode={eff_json}")
-    result = await first(messages, image_b64, image_mime, model=model, json_mode=eff_json)
-    if second is not None and _is_llm_failed(result):
+    result = await _invoke(primary)
+    if fb_target in _vision_funcs and _is_llm_failed(result):
         _llm_log(f"callLLMVisionTask[{task_key}]: primary 실패→폴백 시도 ({result[:80] if result else ''})")
-        result = await second(messages, image_b64, image_mime, model=model, json_mode=eff_json)
+        result = await _invoke(fb_target)
     return result
 
 
@@ -1431,6 +1538,85 @@ async def callLLMVisionTask(task_key: str, messages: list, image_b64: str, image
 #   {"type": "error",  "error": str}
 
 _STREAM_TIMEOUT = httpx.Timeout(connect=15.0, read=None, write=15.0, pool=15.0)
+
+
+async def _emit_stream_event(event: dict) -> None:
+    """등록된 프론트엔드 콜백으로 스트림 이벤트를 전달한다.
+
+    화면 알림 실패가 LLM 응답 자체를 실패시키면 안 되므로 예외는 전체 스택과 함께
+    cmd에 기록하고 호출 흐름은 계속 진행한다.
+    """
+    if _stream_notify_func is None:
+        return
+    try:
+        await _stream_notify_func(event)
+    except Exception as e:
+        print(f"[LLM_STREAM] 프론트엔드 이벤트 전달 실패: {e}")
+        traceback.print_exc()
+
+
+async def _stream_call_to_text(messages: list, service: str, model: str, llm_slot: str) -> str:
+    """실제 API 스트림을 소비하면서 delta를 프론트엔드에 전달하고 최종 문자열을 반환한다.
+
+    기존 callLLM/callLLM2/callLLM3 호출자는 문자열 반환 계약을 그대로 유지한다.
+    따라서 설정 토글을 켜도 customprompt와 작업 큐 코드는 수정 없이 동작한다.
+    """
+    stream_id = uuid.uuid4().hex
+    metadata = dict(_stream_metadata_ctx.get() or {})
+    metadata["llm_slot"] = llm_slot
+    final_text = ""
+    error_msg = ""
+    done_seen = False
+
+    if _stream_notify_func is None:
+        print(
+            f"[LLM_STREAM] 프론트엔드 알림 콜백 미설정: "
+            f"slot={llm_slot} service={service} model={model}"
+        )
+
+    try:
+        async for event in _dispatch_stream(messages, service, model):
+            event_type = event.get("type")
+            payload = {
+                **metadata,
+                **event,
+                "stream_id": stream_id,
+                "llm_slot": llm_slot,
+            }
+            await _emit_stream_event(payload)
+            if event_type == "done":
+                done_seen = True
+                final_text = str(event.get("text", "") or "")
+            elif event_type == "error":
+                error_msg = str(event.get("error", "") or "알 수 없는 스트리밍 오류")
+    except Exception as e:
+        error_msg = f"{service} stream 소비 예외: {e}"
+        print(f"[LLM_STREAM] {error_msg}")
+        traceback.print_exc()
+        await _emit_stream_event({
+            **metadata,
+            "type": "error",
+            "error": error_msg,
+            "service": service,
+            "model": model,
+            "stream_id": stream_id,
+            "llm_slot": llm_slot,
+        })
+
+    if done_seen and final_text:
+        return final_text
+    if error_msg:
+        print(
+            f"[LLM_STREAM] 호출 실패: slot={llm_slot} service={service} "
+            f"model={model} error={error_msg}"
+        )
+        return f"[LLM 실패] {error_msg}"
+
+    print(
+        f"[LLM_STREAM] 빈 응답: slot={llm_slot} service={service} "
+        f"model={model} done_seen={done_seen}"
+    )
+    return f"[LLM 실패] {service} 스트리밍 응답이 비어 있습니다"
 
 
 def _approx_tokens(text: str) -> int:
@@ -1662,6 +1848,8 @@ async def _stream_gemini(messages: list, model: str):
     }
     if int(_current_config.get("llm_max_tokens", 0) or 0) > 0:
         body["generationConfig"]["maxOutputTokens"] = int(_current_config["llm_max_tokens"])
+    if _response_format_ctx.get():
+        body["generationConfig"]["responseMimeType"] = "application/json"
 
     t0 = time.time()
     ttft = None

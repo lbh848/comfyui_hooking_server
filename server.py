@@ -10,6 +10,7 @@ import zlib
 import hashlib
 import datetime
 import glob
+import threading
 import webbrowser
 import traceback
 import base64
@@ -176,7 +177,9 @@ DEFAULT_CONFIG = {
     },
     "llm_temperature": 1.0,
     "llm_max_tokens": 0,              # 0 = 기본값 사용
-    "llm_stream": False,
+    "llm_stream": False,              # LLM1 실제 API 스트리밍
+    "llm_stream2": False,             # LLM2 실제 API 스트리밍
+    "llm_stream3": False,             # LLM3 실제 API 스트리밍
     # 작업별 LLM1/LLM2 라우팅 (외부 API 분기 탭).
     # task_key -> {"primary": "llm1"|"llm2", "fallback": bool}.
     # 기본값은 현행 동작 보존: 폴백 있던 텍스트 작업(extract/enhance/restore)만 fallback=True.
@@ -416,9 +419,16 @@ async def notify_frontend(event_type: str, data: dict = None):
     message = {"type": event_type, "data": data or {}}
     now = time.time()
     client_count = len(frontend_ws_connections)
-    print(f"[WS-NOTIFY] event={event_type} clients={client_count}")
+    quiet_stream_delta = (
+        event_type == "lighbd_llm_stream"
+        and isinstance(data, dict)
+        and data.get("type") == "delta"
+    )
+    if not quiet_stream_delta:
+        print(f"[WS-NOTIFY] event={event_type} clients={client_count}")
     if client_count == 0:
-        print(f"[WS-NOTIFY] ⚠️ 클라이언트 0명 — event={event_type}, 현재 frontend_ws_connections 비어있음")
+        if not quiet_stream_delta:
+            print(f"[WS-NOTIFY] ⚠️ 클라이언트 0명 — event={event_type}, 현재 frontend_ws_connections 비어있음")
         return
     for client_id, entry in list(frontend_ws_connections.items()):
         try:
@@ -433,17 +443,27 @@ async def notify_frontend(event_type: str, data: dict = None):
             except Exception:
                 peer = ""
             ws_closed = ws.closed
-            print(f"[WS-NOTIFY]   → 송신 시도 client={client_id[:8]} peer={peer} pong_age={pong_age:.1f}s ws.closed={ws_closed}")
+            if not quiet_stream_delta:
+                print(f"[WS-NOTIFY]   → 송신 시도 client={client_id[:8]} peer={peer} pong_age={pong_age:.1f}s ws.closed={ws_closed}")
             if ws_closed:
                 print(f"[WS-NOTIFY]     ✗ 이미 닫힌 ws — 제거 ({client_id[:8]})")
                 frontend_ws_connections.pop(client_id, None)
                 continue
             await ws.send_json(message)
-            print(f"[WS-NOTIFY]     ✓ 송신 성공 ({client_id[:8]})")
+            if not quiet_stream_delta:
+                print(f"[WS-NOTIFY]     ✓ 송신 성공 ({client_id[:8]})")
         except Exception as e:
             print(f"[WS-NOTIFY]     ✗ 송신 실패 client={client_id[:8]} err={type(e).__name__}: {e}")
             frontend_ws_connections.pop(client_id, None)
             traceback.print_exc()
+
+
+async def _notify_llm_stream_event(event: dict):
+    """llm_service의 실제 API 스트림 이벤트를 LB 작은 창으로 중계한다."""
+    await notify_frontend("lighbd_llm_stream", event)
+
+
+llm_service.set_stream_notify_func(_notify_llm_stream_event)
 
 WS_HEARTBEAT_INTERVAL = 30  # 초
 WS_STALE_TIMEOUT = 15       # 핑 후 응답 없으면 제거 (초)
@@ -4033,16 +4053,140 @@ def _extract_prompts_from_backup(filepath: str) -> tuple[str, str]:
 
 
 # ─── 백업 필터용 bot_name 인덱스 캐시 ──────────────────────────
-# 백업이 ~5000개일 때 info 파일 전체 스캔이 약 0.8초 걸린다.
+# 백업이 수천 개일 때 info 파일 전체 스캔이 수 초~수십 초 걸린다(환경/디스크에 따라).
 # 페이지네이션/자동새로고침 때마다 반복 스캔하지 않도록 bot_name 인덱스를 캐싱하고
 # 신규 백업(save_backup) / 삭제(handle_api_backup_delete) 시 무효화한다.
+#
+# 캐시는 백그라운드 스레드에서 100장 단위로 점진적(incremental) 빌드된다.
+# 진행 중에도 부분 캐시를 즉시 반환하여 이벤트 루프를 블로킹하지 않는다.
+#   - building: True 인 동안 total/scanned 가 점진 증가
+#   - 빌드 완료 시 notify_frontend("backup_filter_ready") WS 푸시
 _backup_filter_cache = None  # None 또는 dict
+_backup_filter_lock = threading.Lock()
+_backup_filter_building = False
+_backup_filter_gen = 0  # 무효화 시 증가; 진행 중 빌드는 세대 불일치로 자동 중단
+_BACKUP_FILTER_BUILD_BATCH = 100
+_main_event_loop = None  # on_startup 에서 메인 asyncio 루프 보관 (백그라운드 스레드용)
 
 
 def _invalidate_backup_filter_cache():
-    """백업 추가/삭제 후 캐시를 무효화한다. 다음 조회 시 재구축된다."""
-    global _backup_filter_cache
-    _backup_filter_cache = None
+    """백업 추가/삭제 후 캐시를 무효화한다. 진행 중인 빌드는 세대가 바뀌어 자동 중단되며,
+    다음 조회 시 새 빌드가 시작된다."""
+    global _backup_filter_cache, _backup_filter_gen
+    with _backup_filter_lock:
+        _backup_filter_cache = None
+        _backup_filter_gen += 1
+
+
+def _empty_backup_filter_cache() -> dict:
+    return {
+        "name_to_bot": {},
+        "name_to_method": {},
+        "bot_counts": {},
+        "method_counts": {},
+        "total": 0,
+        "total_files": 0,
+        "scanned": 0,
+        "building": True,
+    }
+
+
+def _schedule_backup_filter_build(backup_dir: str):
+    """백그라운드 스레드에서 필터 캐시를 점진적 빌드한다. 이미 빌드 중이면 무시한다."""
+    global _backup_filter_building
+    with _backup_filter_lock:
+        if _backup_filter_building:
+            return
+        _backup_filter_building = True
+        my_gen = _backup_filter_gen
+    t = threading.Thread(
+        target=_build_backup_filter_cache_background,
+        args=(backup_dir, my_gen),
+        daemon=True,
+        name="backup-filter-build",
+    )
+    t.start()
+
+
+def _build_backup_filter_cache_background(backup_dir: str, my_gen: int):
+    """(백그라운드 스레드) info 파일을 100장 단위로 읽어 캐시를 점진적 갱신한다.
+    my_gen과 세대가 다르면(도중 무효화) 즉시 중단한다."""
+    global _backup_filter_cache, _backup_filter_building
+    try:
+        t0 = time.time()
+        files = glob.glob(os.path.join(backup_dir, "*.webp"))
+        total = len(files)
+        name_to_bot = {}
+        name_to_method = {}
+        bot_counts = {}
+        method_counts = {}
+        scanned = 0
+
+        def _publish(building: bool):
+            """현재 누적 결과의 스냅샷을 반환. 세대가 바뀌었으면 None(중단) 반환.
+            글로벌 캐시 갱신은 이 함수를 부른 외부 스코프에서 수행한다
+            (여기서 대입하면 global 선언 없이 로컬이 되어 글로벌에 반영되지 않음)."""
+            with _backup_filter_lock:
+                if _backup_filter_gen != my_gen:
+                    return None  # 세대 변경 → 중단 신호
+                return {
+                    "name_to_bot": name_to_bot,
+                    "name_to_method": name_to_method,
+                    "bot_counts": bot_counts,
+                    "method_counts": method_counts,
+                    "total": scanned,
+                    "total_files": total,
+                    "scanned": scanned,
+                    "building": building,
+                }
+
+        for i, f in enumerate(files):
+            if i % _BACKUP_FILTER_BUILD_BATCH == 0:
+                # 도중 무효화되었거나, 부분 결과를 한 번 발행하여 UI가 점진 응답.
+                snap = _publish(building=True)
+                if snap is None:
+                    print("[BACKUP_FILTER] 빌드 중단(세대 변경)")
+                    return
+                _backup_filter_cache = snap
+            base = os.path.splitext(os.path.basename(f))[0]
+            bn = ""
+            gm = ""
+            info_path = os.path.join(backup_dir, f"{base}_info.json")
+            if os.path.exists(info_path):
+                try:
+                    with open(info_path, "r", encoding="utf-8") as fp:
+                        d = json.load(fp)
+                        bn = d.get("bot_name", "") or ""
+                        gm = d.get("gen_method", "") or ""
+                except Exception as e:
+                    print(f"[BACKUP_FILTER] ⚠ info 읽기 실패 {base}: {e}")
+                    bn = ""
+                    gm = ""
+            name_to_bot[base] = bn
+            name_to_method[base] = gm
+            bot_counts[bn] = bot_counts.get(bn, 0) + 1
+            method_counts[gm] = method_counts.get(gm, 0) + 1
+            scanned += 1
+
+        snap = _publish(building=False)
+        if snap is None:
+            print("[BACKUP_FILTER] 빌드 중단(세대 변경, 완료 직전)")
+            return
+        _backup_filter_cache = snap
+        print(f"[BACKUP_FILTER] 캐시 구축 완료: {total}개, {time.time() - t0:.2f}s")
+        # 프론트엔드에 빌드 완료 알림 (필터 드롭다운 최종 갱신용)
+        if _main_event_loop is not None:
+            try:
+                asyncio.run_coroutine_threadsafe(notify_frontend("backup_filter_ready", {
+                    "total": total, "elapsed": round(time.time() - t0, 2)
+                }), _main_event_loop)
+            except Exception as e:
+                print(f"[BACKUP_FILTER] 완료 알림 전송 실패: {e}")
+    except Exception:
+        traceback.print_exc()
+    finally:
+        with _backup_filter_lock:
+            _backup_filter_building = False
 
 
 def _read_backup_bot_name(backup_name: str) -> str:
@@ -4108,45 +4252,28 @@ def _read_backup_generation(backup_name: str) -> tuple[str, dict]:
 
 
 def _ensure_backup_filter_cache(backup_dir: str) -> dict:
-    """bot_name 인덱스 캐시를 (필요시) 구축하여 반환한다."""
-    global _backup_filter_cache
-    if _backup_filter_cache is not None:
-        return _backup_filter_cache
-    t0 = time.time()
-    name_to_bot = {}
-    name_to_method = {}
-    bot_counts = {}
-    method_counts = {}
-    total = 0
-    for f in glob.glob(os.path.join(backup_dir, "*.webp")):
-        base = os.path.splitext(os.path.basename(f))[0]
-        total += 1
-        bn = ""
-        gm = ""
-        info_path = os.path.join(backup_dir, f"{base}_info.json")
-        if os.path.exists(info_path):
-            try:
-                with open(info_path, "r", encoding="utf-8") as fp:
-                    d = json.load(fp)
-                    bn = d.get("bot_name", "") or ""
-                    gm = d.get("gen_method", "") or ""
-            except Exception as e:
-                print(f"[BACKUP_FILTER] ⚠ info 읽기 실패 {base}: {e}")
-                bn = ""
-                gm = ""
-        name_to_bot[base] = bn
-        name_to_method[base] = gm
-        bot_counts[bn] = bot_counts.get(bn, 0) + 1
-        method_counts[gm] = method_counts.get(gm, 0) + 1
-    _backup_filter_cache = {
-        "name_to_bot": name_to_bot,
-        "name_to_method": name_to_method,
-        "bot_counts": bot_counts,
-        "method_counts": method_counts,
-        "total": total,
-    }
-    print(f"[BACKUP_FILTER] 캐시 구축: {total}개, {time.time() - t0:.2f}s")
-    return _backup_filter_cache
+    """필터 캐시를 반환한다. 완전히 구축된 캐시가 있으면 그것을 반환하고,
+    없거나 빌드 중이면 백그라운드 빌드를 예약한 뒤 부분 캐시(또는 빈 캐시)를 즉시 반환한다.
+    이벤트 루프를 블로킹하지 않는다."""
+    with _backup_filter_lock:
+        cache = _backup_filter_cache
+        building = _backup_filter_building
+    if cache is not None and not building:
+        return cache  # 완전히 구축됨
+    if cache is None and not building:
+        _schedule_backup_filter_build(backup_dir)
+    # 빌드 중이거나 방금 시작함 → 부분 결과(또는 빈 캐시)를 즉시 반환
+    with _backup_filter_lock:
+        if _backup_filter_cache is not None:
+            return _backup_filter_cache
+    # 아직 백그라운드 첫 발행 전(publish 레이스) → 전체 파일 수만 빠른 glob 로 채워 반환.
+    # info 파일을 읽지 않으므로 디렉토리 나열 비용만 들고, UI가 "집계중 0/N"을 바로 보게 함.
+    empty = _empty_backup_filter_cache()
+    try:
+        empty["total_files"] = len(glob.glob(os.path.join(backup_dir, "*.webp")))
+    except Exception as e:
+        print(f"[BACKUP_FILTER] ⚠ 전체 파일 수 조회 실패: {e}")
+    return empty
 
 
 async def handle_api_backups(request: web.Request) -> web.Response:
@@ -4288,7 +4415,14 @@ async def handle_api_backups_filters(request: web.Request) -> web.Response:
     if none_count:
         items.append({"key": "bot_none", "label": "(bot_name 없음)", "count": none_count})
 
-    return web.json_response({"filters": items, "total": total})
+    return web.json_response({
+        "filters": items,
+        "total": total,
+        # 백그라운드 빌드 진행 상황 (UI가 점진/완료 표시에 사용)
+        "building": bool(cache.get("building", False)),
+        "scanned": cache.get("scanned", total),
+        "total_files": cache.get("total_files", total),
+    })
 
 
 async def handle_api_backup_image(request: web.Request) -> web.Response:
@@ -6164,6 +6298,8 @@ async def handle_api_config(request: web.Request) -> web.Response:
                 "llm_temperature": app_config.get("llm_temperature", 1.0),
                 "llm_max_tokens": app_config.get("llm_max_tokens", 0),
                 "llm_stream": app_config.get("llm_stream", False),
+                "llm_stream2": app_config.get("llm_stream2", False),
+                "llm_stream3": app_config.get("llm_stream3", False),
                 "llm_routing": app_config.get("llm_routing", {}),
             })
 
@@ -12360,6 +12496,9 @@ def _backup_data_on_startup():
 
 async def on_startup(app):
     print("[INFO] 워크플로우 초기 로드...")
+    # 백그라운드 스레드에서 notify_frontend 호출을 위해 메인 루프 참조 보관
+    global _main_event_loop
+    _main_event_loop = asyncio.get_running_loop()
     _backup_data_on_startup()
     asyncio.create_task(_ws_heartbeat())
     try:
@@ -12392,6 +12531,8 @@ async def on_startup(app):
         "llm_temperature": app_config.get("llm_temperature", 1.0),
         "llm_max_tokens": app_config.get("llm_max_tokens", 0),
         "llm_stream": app_config.get("llm_stream", False),
+        "llm_stream2": app_config.get("llm_stream2", False),
+        "llm_stream3": app_config.get("llm_stream3", False),
         "llm_routing": app_config.get("llm_routing", {}),
     })
     # API 키는 config.json 이 아닌 key/llm_keys.json 에서 로드

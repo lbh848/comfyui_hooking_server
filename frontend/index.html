@@ -3912,6 +3912,95 @@
             pointer-events: none;
             box-shadow: 0 2px 8px rgba(0,0,0,0.2);
         }
+
+        #lighbd-window-btn.active {
+            color: #80deea;
+            border-color: rgba(0, 188, 212, 0.65);
+            background: rgba(0, 188, 212, 0.12);
+        }
+        .lighbd-history-overlay,
+        .lighbd-detail-overlay {
+            position: fixed;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+            background: rgba(3, 8, 18, 0.72);
+            backdrop-filter: blur(5px);
+            -webkit-backdrop-filter: blur(5px);
+        }
+        .lighbd-history-overlay { z-index: 10040; }
+        .lighbd-detail-overlay { z-index: 10060; }
+        .lighbd-history-shell,
+        .lighbd-detail-shell {
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            color: var(--text);
+            background: linear-gradient(145deg, var(--surface), color-mix(in srgb, var(--surface2) 86%, #00bcd4 14%));
+            border: 1px solid color-mix(in srgb, var(--border) 72%, #00bcd4 28%);
+            border-radius: 16px;
+            box-shadow: 0 24px 70px rgba(0,0,0,0.58), 0 0 0 1px rgba(255,255,255,0.04) inset;
+        }
+        .lighbd-history-shell { width: min(920px, 94vw); height: min(82vh, 760px); }
+        .lighbd-detail-shell { width: min(1040px, 96vw); max-height: min(88vh, 860px); }
+        .lighbd-modal-head {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 15px 18px;
+            border-bottom: 1px solid var(--border);
+            background: rgba(0, 188, 212, 0.06);
+        }
+        .lighbd-modal-title { flex: 1; min-width: 0; font-size: 0.98rem; font-weight: 700; }
+        .lighbd-modal-subtitle { color: var(--text2); font-size: 0.72rem; font-weight: 400; margin-top: 2px; }
+        .lighbd-modal-close {
+            width: 32px;
+            height: 32px;
+            border: 1px solid var(--border);
+            border-radius: 9px;
+            color: var(--text2);
+            background: var(--surface2);
+            cursor: pointer;
+            font-size: 1rem;
+        }
+        .lighbd-modal-close:hover { color: #fff; border-color: #00bcd4; background: rgba(0,188,212,0.26); }
+        .lighbd-history-list { flex: 1; overflow-y: auto; padding: 14px 16px 18px; display: flex; flex-direction: column; gap: 10px; }
+        .lighbd-history-card {
+            border: 1px solid var(--border);
+            border-radius: 11px;
+            padding: 11px 12px;
+            background: color-mix(in srgb, var(--surface2) 92%, transparent);
+            transition: transform .15s ease, border-color .15s ease, box-shadow .15s ease;
+        }
+        .lighbd-history-card:hover { transform: translateY(-1px); border-color: rgba(0,188,212,.48); box-shadow: 0 8px 22px rgba(0,0,0,.2); }
+        .lighbd-history-open {
+            margin-left: auto;
+            padding: 4px 11px;
+            border: 1px solid rgba(0,188,212,.45);
+            border-radius: 7px;
+            color: #80deea;
+            background: rgba(0,188,212,.09);
+            cursor: pointer;
+            font-size: .72rem;
+            font-weight: 650;
+        }
+        .lighbd-history-open:hover { color: #fff; background: rgba(0,188,212,.28); }
+        .lighbd-detail-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; padding: 14px 18px 0; }
+        .lighbd-detail-stat { padding: 9px 11px; border: 1px solid var(--border); border-radius: 9px; background: rgba(0,0,0,.14); }
+        .lighbd-detail-stat span { display: block; color: var(--text2); font-size: .66rem; margin-bottom: 3px; }
+        .lighbd-detail-stat strong { font-size: .84rem; font-family: monospace; }
+        .lighbd-detail-body { overflow-y: auto; padding: 14px 18px 20px; display: grid; gap: 12px; }
+        .lighbd-detail-section { border: 1px solid var(--border); border-radius: 11px; overflow: hidden; background: rgba(0,0,0,.12); }
+        .lighbd-detail-section-title { padding: 8px 11px; color: var(--text2); background: rgba(255,255,255,.025); border-bottom: 1px solid var(--border); font-size: .72rem; font-weight: 700; }
+        .lighbd-detail-content { margin: 0; padding: 11px 12px; max-height: 340px; overflow: auto; color: var(--text); font-family: monospace; font-size: .75rem; line-height: 1.52; white-space: pre-wrap; word-break: break-word; }
+        @media (max-width: 680px) {
+            .lighbd-history-overlay, .lighbd-detail-overlay { padding: 10px; }
+            .lighbd-history-shell { width: 100%; height: 90vh; }
+            .lighbd-detail-shell { width: 100%; max-height: 92vh; }
+            .lighbd-detail-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        }
     </style>
 </head>
 <body>
@@ -3929,6 +4018,9 @@
             </button>
             <button id="queue-toggle-btn" onclick="toggleQueueModal()" style="position:relative;">📋 작업 큐
                 <span id="queue-badge" style="position:absolute; top:-2px; right:-4px; min-width:14px; height:14px; background:var(--accent); border-radius:7px; font-size:0.6rem; color:#fff; display:none; align-items:center; justify-content:center; padding:0 3px;"></span>
+            </button>
+            <button id="lighbd-window-btn" onclick="toggleLighbdLlmWidget()" title="LLM로그창 열기/닫기" style="position:relative;">LLM로그창
+                <span id="lighbd-window-badge" style="position:absolute; top:-2px; right:-4px; min-width:14px; height:14px; background:#00bcd4; border-radius:7px; font-size:0.6rem; color:#fff; display:none; align-items:center; justify-content:center; padding:0 3px;"></span>
             </button>
             <button onclick="openSettingsModal()">⚙️ 설정</button>
             <button id="tunnel-btn" onclick="toggleTunnel()">🔗 공유</button>
@@ -3977,7 +4069,7 @@
             box-shadow:0 6px 28px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.04) inset;">
         <div style="display:flex; align-items:center; gap:8px;">
             <span class="queue-spinner" id="lighbd-llm-spinner" style="width:12px; height:12px; border-width:2px; flex-shrink:0; display:none;"></span>
-            <span style="font-size:0.7rem; color:var(--text2); font-weight:600; letter-spacing:0.02em; flex:1;">LIGHBD · LLM</span>
+            <span id="lighbd-llm-label" style="font-size:0.7rem; color:var(--text2); font-weight:600; letter-spacing:0.02em; flex:1;">LB · LLM</span>
             <span id="lighbd-llm-status" style="font-size:0.7rem; color:var(--text2);">대기</span>
             <button onclick="openLighbdHistoryModal()" title="자세히 보기" style="background:transparent; border:none; color:var(--text2); cursor:pointer; font-size:0.78rem; padding:0 4px;">자세히</button>
             <button onclick="hideLighbdLlmWidget()" style="background:transparent; border:none; color:var(--text2); cursor:pointer; font-size:0.9rem; padding:0 2px;">×</button>
@@ -8381,6 +8473,20 @@
                         </div>
                     </div>
 
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="title">LLM1 스트리밍</div>
+                            <div class="desc">외부 API 응답을 실제 chunk 스트림으로 받고 LLM로그창에 실시간 표시합니다.</div>
+                        </div>
+                        <div class="setting-control" style="display:flex; align-items:center; gap:8px;">
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="setting-llm-stream" onchange="updateLlmStreamStatus(1, this.checked)">
+                                <span class="toggle-slider"></span>
+                            </label>
+                            <span id="setting-llm-stream-status" class="toggle-status off">OFF</span>
+                        </div>
+                    </div>
+
                     <div class="setting-row" id="llm-reasoning-row" style="display: none;">
                         <div class="setting-label">
                             <div class="title">LLM1 Reasoning 설정</div>
@@ -8493,6 +8599,20 @@
                         </div>
                     </div>
 
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="title">LLM2 스트리밍</div>
+                            <div class="desc">LLM2 요청을 실제 chunk 스트림으로 받고 LLM로그창에 실시간 표시합니다.</div>
+                        </div>
+                        <div class="setting-control" style="display:flex; align-items:center; gap:8px;">
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="setting-llm-stream2" onchange="updateLlmStreamStatus(2, this.checked)">
+                                <span class="toggle-slider"></span>
+                            </label>
+                            <span id="setting-llm-stream2-status" class="toggle-status off">OFF</span>
+                        </div>
+                    </div>
+
                     <div class="setting-row" id="llm-reasoning2-row" style="display: none;">
                         <div class="setting-label">
                             <div class="title">LLM2 Reasoning 설정</div>
@@ -8537,6 +8657,7 @@
                     <div class="setting-row"><div class="setting-label"><div class="title">LLM3 모델명</div><div class="desc">LLM3로 사용할 모델명</div></div><div class="setting-control"><input id="setting-llm-model3" type="text" placeholder="예: gpt-4.1" style="width:220px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);"></div></div>
                     <div class="setting-row" id="llm-api-key3-row" style="display:none;"><div class="setting-label"><div class="title">LLM3 API 키 (옵션)</div><div class="desc">비워두면 LLM1 키 재사용</div></div><div class="setting-control"><input id="setting-llm-api-key3" type="text" placeholder="sk-..." style="width:300px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-family:monospace;"></div></div>
                     <div class="setting-row" id="llm-url3-row" style="display:none;"><div class="setting-label"><div class="title">LLM3 베이스 URL (옵션)</div><div class="desc">비워두면 LLM1 URL 재사용</div></div><div class="setting-control"><input id="setting-llm-url3" type="text" placeholder="https://..." style="width:300px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);"></div></div>
+                    <div class="setting-row"><div class="setting-label"><div class="title">LLM3 스트리밍</div><div class="desc">LLM3 요청을 실제 chunk 스트림으로 받고 LLM로그창에 실시간 표시합니다.</div></div><div class="setting-control" style="display:flex;align-items:center;gap:8px;"><label class="toggle-switch"><input type="checkbox" id="setting-llm-stream3" onchange="updateLlmStreamStatus(3, this.checked)"><span class="toggle-slider"></span></label><span id="setting-llm-stream3-status" class="toggle-status off">OFF</span></div></div>
                     <div class="setting-row" id="llm-reasoning3-row" style="display:none;"><div class="setting-label"><div class="title">LLM3 Reasoning 설정</div><div class="desc">LLM3의 reasoning 설정</div></div><div class="setting-control" style="display:flex;gap:8px;"><select id="setting-llm-reasoning-preset3" onchange="onReasoningPreset3Change()" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);"><option value="">(LLM1과 동일)</option><option value="auto">auto</option><option value="none">none</option><option value="gpt">gpt</option><option value="glm">glm</option><option value="deepseek">deepseek</option><option value="kimi">kimi</option><option value="claude">claude</option><option value="gemini">gemini</option><option value="custom">custom</option></select><select id="setting-llm-reasoning-effort3" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);"><option value="">(LLM1과 동일)</option><option value="none">none</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option></select></div></div>
                     <div class="setting-row" id="llm-custom-body3-row" style="display:none;flex-direction:column;align-items:stretch;"><div class="setting-label" style="margin-bottom:8px;"><div class="title">LLM3 Custom Body (JSON)</div></div><textarea id="setting-llm-custom-body3" placeholder="{ ... }" style="width:100%;min-height:120px;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-family:monospace;"></textarea></div>
 
@@ -8595,7 +8716,7 @@
                                     </select>
                                 </label>
                             </div>
-                            <div class="desc">선택한 LLM(LLM1/LLM2) 설정으로 호출. 결과가 chunk 단위로 누적되고 통계가 실시간 표시됨. logs/llm_history.jsonl 에 20개까지 저장</div>
+                            <div class="desc">선택한 LLM(LLM1/LLM2/LLM3) 설정으로 호출. 결과가 chunk 단위로 누적되고 통계가 실시간 표시됨. logs/llm_history.jsonl 에 20개까지 저장</div>
                         </div>
                         <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap;">
                             <textarea id="llm-test-input" placeholder="테스트용 프롬프트 (user 메시지)"
@@ -9816,6 +9937,10 @@
                         case 'backup_created':
                             handleBackupCreated(msg.data);
                             break;
+                        case 'backup_filter_ready':
+                            // 백그라운드 필터 캐시 빌드 완료 → 드롭다운 최종 갱신
+                            if (typeof loadBackupFilters === 'function') loadBackupFilters();
+                            break;
                         case 'batch_processing_started':
                             showToast(`배치 처리 시작 (${msg.data.request_count}개)`, 'info');
                             batchModeState.processing_batch = {
@@ -10314,8 +10439,12 @@
 
         // ─── 모아보기 필터 ───
         let _backupFiltersLoading = false;
+        let _backupFilterPollTimer = null;
         async function loadBackupFilters() {
             // 필터 드롭다운 옵션(전체/restore 프로세스/bot_name별)을 서버에서 가져와 채운다.
+            // 백업이 많을 때 서버는 백그라운드에서 캐시를 점진 빌드한다. building=true 면
+            // 부분 카운트를 보여주고, (1) 빌드 완료 WS(backup_filter_ready) 즉시 갱신,
+            // (2) WS가 누락되더라도 주기 폴링으로 갱신한다.
             if (_backupFiltersLoading) return;
             _backupFiltersLoading = true;
             try {
@@ -10323,17 +10452,37 @@
                 const sel = document.getElementById('backup-filter');
                 if (!sel) return;
                 const cur = paginationState.filter || 'all';
+                const building = !!data.building;
+                const buildTag = building
+                    ? ` (집계중 ${data.scanned ?? 0}/${data.total_files ?? 0})`
+                    : '';
                 let html = '';
                 for (const it of (data.filters || [])) {
-                    html += `<option value="${escapeAttr(it.key)}">${escapeHtml(it.label)} (${it.count})</option>`;
+                    const cnt = (it.key === 'all') ? `${it.count}${buildTag}` : it.count;
+                    html += `<option value="${escapeAttr(it.key)}">${escapeHtml(it.label)} (${cnt})</option>`;
                 }
                 sel.innerHTML = html;
+                sel.title = building
+                    ? `필터 집계 진행 중: ${data.scanned ?? 0}/${data.total_files ?? 0} 스캔됨 (완료 시 자동 갱신)`
+                    : '';
                 // 현재 선택된 필터 유지 (필터 목록에 없으면 전체로 복귀)
                 if ([...sel.options].some(o => o.value === cur)) {
                     sel.value = cur;
                 } else {
                     paginationState.filter = 'all';
                     sel.value = 'all';
+                }
+                // 빌드 중이면 폴링 재시도 (WS 백업). 타이머 중복 누적 방지.
+                if (building) {
+                    if (_backupFilterPollTimer) clearTimeout(_backupFilterPollTimer);
+                    _backupFilterPollTimer = setTimeout(() => {
+                        _backupFilterPollTimer = null;
+                        _backupFiltersLoading = false; // 폴링 재진입 허용
+                        loadBackupFilters();
+                    }, 1500);
+                } else if (_backupFilterPollTimer) {
+                    clearTimeout(_backupFilterPollTimer);
+                    _backupFilterPollTimer = null;
                 }
             } catch (e) {
                 console.error('[BACKUP_FILTER] 필터 목록 로드 실패:', e);
@@ -11503,6 +11652,12 @@
             const llmService = currentConfig.llm_service || 'copilot';
             document.getElementById('setting-llm-service').value = llmService;
             document.getElementById('setting-llm-model').value = currentConfig.llm_model || 'gpt-4.1';
+            document.getElementById('setting-llm-stream').checked = !!currentConfig.llm_stream;
+            document.getElementById('setting-llm-stream2').checked = !!currentConfig.llm_stream2;
+            document.getElementById('setting-llm-stream3').checked = !!currentConfig.llm_stream3;
+            updateLlmStreamStatus(1, !!currentConfig.llm_stream);
+            updateLlmStreamStatus(2, !!currentConfig.llm_stream2);
+            updateLlmStreamStatus(3, !!currentConfig.llm_stream3);
             const llmUrlEl = document.getElementById('setting-llm-url');
             if (llmUrlEl) llmUrlEl.value = currentConfig.llm_url || '';
             const llmUrl2El = document.getElementById('setting-llm-url2');
@@ -12385,6 +12540,9 @@
                 llm_model2: document.getElementById('setting-llm-model2').value,
                 llm_service3: document.getElementById('setting-llm-service3').value,
                 llm_model3: document.getElementById('setting-llm-model3').value,
+                llm_stream: document.getElementById('setting-llm-stream').checked,
+                llm_stream2: document.getElementById('setting-llm-stream2').checked,
+                llm_stream3: document.getElementById('setting-llm-stream3').checked,
                 llm_url: (document.getElementById('setting-llm-url') || {}).value || '',
                 llm_url2: (document.getElementById('setting-llm-url2') || {}).value || '',
                 llm_url3: (document.getElementById('setting-llm-url3') || {}).value || '',
@@ -13449,10 +13607,14 @@
 
         // ─── lighbd LLM 스트리밍 위젯 ───
         let _lighbdLlmAutoHideTimer = null;
+        const _lighbdLlmStreams = new Map();
+        let _lighbdSelectedStreamId = 'legacy';
 
         function hideLighbdLlmWidget() {
             const w = document.getElementById('lighbd-llm-widget');
             if (w) w.style.display = 'none';
+            const btn = document.getElementById('lighbd-window-btn');
+            if (btn) btn.classList.remove('active');
             if (_lighbdLlmAutoHideTimer) {
                 clearTimeout(_lighbdLlmAutoHideTimer);
                 _lighbdLlmAutoHideTimer = null;
@@ -13463,6 +13625,23 @@
             const w = document.getElementById('lighbd-llm-widget');
             if (!w) return;
             w.style.display = 'flex';
+            const btn = document.getElementById('lighbd-window-btn');
+            if (btn) btn.classList.add('active');
+        }
+
+        function toggleLighbdLlmWidget() {
+            const w = document.getElementById('lighbd-llm-widget');
+            if (!w) {
+                console.error('[LB_WINDOW] LLM로그창 요소를 찾지 못했습니다.');
+                return;
+            }
+            if (w.style.display === 'flex') {
+                hideLighbdLlmWidget();
+                return;
+            }
+            const selected = _lighbdLlmStreams.get(_lighbdSelectedStreamId);
+            if (selected) _renderLighbdStreamState(selected);
+            _showLighbdLlmWidget();
         }
 
         function _setLlbStat(id, val) {
@@ -13470,72 +13649,148 @@
             if (el && val !== undefined && val !== null) el.textContent = val;
         }
 
+        function _updateLighbdWindowBadge() {
+            const activeCount = [..._lighbdLlmStreams.values()].filter(s => s.active).length;
+            const badge = document.getElementById('lighbd-window-badge');
+            if (!badge) return;
+            badge.textContent = String(activeCount);
+            badge.style.display = activeCount > 0 ? 'flex' : 'none';
+        }
+
+        function _createLighbdStreamState(id) {
+            return {
+                id,
+                active: false,
+                slot: '',
+                callName: '',
+                model: '-',
+                status: '대기',
+                output: '',
+                tokens: 0,
+                elapsed: 0,
+                tps: 0,
+                ttft: null,
+            };
+        }
+
+        function _renderLighbdStreamState(state) {
+            if (!state) return;
+            const slotLabel = state.slot ? state.slot.toUpperCase() : 'LLM';
+            _setLlbStat('lighbd-llm-label', `LB · ${slotLabel}`);
+            _setLlbStat('lighbd-llm-model', state.model || '-');
+            _setLlbStat('lighbd-llm-status', state.status || '대기');
+            _setLlbStat('lighbd-llm-tokens', state.tokens ?? 0);
+            _setLlbStat('lighbd-llm-elapsed', Number(state.elapsed || 0).toFixed(2));
+            _setLlbStat('lighbd-llm-tps', Number(state.tps || 0).toFixed(1));
+            _setLlbStat('lighbd-llm-ttft', state.ttft == null ? '-' : `${Math.round(state.ttft * 1000)}ms`);
+            const outEl = document.getElementById('lighbd-llm-output');
+            if (outEl) {
+                outEl.textContent = state.output || '-';
+                outEl.scrollTop = outEl.scrollHeight;
+            }
+            const spinner = document.getElementById('lighbd-llm-spinner');
+            if (spinner) spinner.style.display = state.active ? '' : 'none';
+        }
+
+        function _trimLighbdStreamStates() {
+            if (_lighbdLlmStreams.size <= 30) return;
+            for (const [id, state] of _lighbdLlmStreams) {
+                if (!state.active && id !== _lighbdSelectedStreamId) {
+                    _lighbdLlmStreams.delete(id);
+                    if (_lighbdLlmStreams.size <= 30) break;
+                }
+            }
+        }
+
         function handleLighbdLlmStream(data) {
-            if (!data || typeof data !== 'object') return;
+            if (!data || typeof data !== 'object') {
+                console.error('[LB_STREAM] 잘못된 이벤트:', data);
+                return;
+            }
             const t = data.type;
+            const streamId = String(data.stream_id || 'legacy');
+            const isNewStream = !_lighbdLlmStreams.has(streamId);
+            const state = _lighbdLlmStreams.get(streamId) || _createLighbdStreamState(streamId);
+            state.slot = data.llm_slot || state.slot;
+            state.callName = data.call_name || data.task_key || state.callName;
+            state.model = data.model || state.model;
+            // API 키 누락처럼 provider가 start 없이 곧바로 error를 내는 경로도 창에 표시한다.
+            if (isNewStream && t !== 'start') _lighbdSelectedStreamId = streamId;
+
             if (t === 'start') {
-                _setLlbStat('lighbd-llm-model', data.model || '-');
-                _setLlbStat('lighbd-llm-status', (data.call_name ? data.call_name + ' · ' : '') + '시작');
-                _setLlbStat('lighbd-llm-tokens', '0');
-                _setLlbStat('lighbd-llm-elapsed', '0.00');
-                _setLlbStat('lighbd-llm-tps', '0.0');
-                _setLlbStat('lighbd-llm-ttft', '-');
-                document.getElementById('lighbd-llm-output').textContent = '';
-                const spStart = document.getElementById('lighbd-llm-spinner');
-                if (spStart) spStart.style.display = '';
-                _showLighbdLlmWidget();
+                state.active = true;
+                state.status = (state.callName ? state.callName + ' · ' : '') + '시작';
+                state.output = '';
+                state.tokens = 0;
+                state.elapsed = 0;
+                state.tps = 0;
+                state.ttft = null;
+                _lighbdSelectedStreamId = streamId;
                 if (_lighbdLlmAutoHideTimer) {
                     clearTimeout(_lighbdLlmAutoHideTimer);
                     _lighbdLlmAutoHideTimer = null;
                 }
             } else if (t === 'delta') {
-                _showLighbdLlmWidget();
-                const outEl = document.getElementById('lighbd-llm-output');
-                outEl.textContent += data.text || '';
-                // 자동 스크롤 (마지막 줄 유지)
-                outEl.scrollTop = outEl.scrollHeight;
-                if (data.ttft !== undefined && data.ttft !== null) {
-                    _setLlbStat('lighbd-llm-ttft', (Math.round(data.ttft * 1000)) + 'ms');
-                }
-                if (data.elapsed !== undefined && data.elapsed !== null) {
-                    _setLlbStat('lighbd-llm-elapsed', (Math.round(data.elapsed * 100) / 100).toFixed(2));
-                }
-                // 실시간 토큰/tps: 누적 텍스트로 추정
-                const accLen = outEl.textContent.length;
-                const approxTokens = Math.max(0, Math.floor(accLen / 3));
-                const elapsed = (typeof data.elapsed === 'number') ? data.elapsed : 0;
-                const tps = (elapsed > 0 && approxTokens > 0) ? (Math.round((approxTokens / elapsed) * 10) / 10) : 0;
-                _setLlbStat('lighbd-llm-tokens', approxTokens);
-                _setLlbStat('lighbd-llm-tps', tps.toFixed(1));
-                _setLlbStat('lighbd-llm-status', '스트리밍');
+                state.active = true;
+                state.output += data.text || '';
+                if (data.ttft !== undefined && data.ttft !== null) state.ttft = Number(data.ttft);
+                if (data.elapsed !== undefined && data.elapsed !== null) state.elapsed = Number(data.elapsed);
+                state.tokens = Math.max(0, Math.floor(state.output.length / 3));
+                state.tps = state.elapsed > 0 ? state.tokens / state.elapsed : 0;
+                state.status = (state.callName ? state.callName + ' · ' : '') + '스트리밍';
             } else if (t === 'done') {
-                _showLighbdLlmWidget();
-                document.getElementById('lighbd-llm-output').textContent = data.text || document.getElementById('lighbd-llm-output').textContent;
-                _setLlbStat('lighbd-llm-tokens', data.completion_tokens ?? 0);
-                if (data.elapsed !== undefined && data.elapsed !== null)
-                    _setLlbStat('lighbd-llm-elapsed', (Math.round(data.elapsed * 100) / 100).toFixed(2));
-                _setLlbStat('lighbd-llm-tps', (Math.round((data.tps || 0) * 10) / 10).toFixed(1));
-                if (data.ttft !== undefined && data.ttft !== null)
-                    _setLlbStat('lighbd-llm-ttft', (Math.round(data.ttft * 1000)) + 'ms');
-                _setLlbStat('lighbd-llm-status', (data.call_name ? data.call_name + ' · ' : '') + '완료');
-                const sp = document.getElementById('lighbd-llm-spinner');
-                if (sp) sp.style.display = 'none';
-                // 자동 숨김 없음 — 사용자가 × 누를 때까지 유지
+                state.active = false;
+                state.output = data.text || state.output;
+                state.tokens = data.completion_tokens ?? state.tokens;
+                if (data.elapsed !== undefined && data.elapsed !== null) state.elapsed = Number(data.elapsed);
+                state.tps = Number(data.tps ?? state.tps ?? 0);
+                if (data.ttft !== undefined && data.ttft !== null) state.ttft = Number(data.ttft);
+                state.status = (state.callName ? state.callName + ' · ' : '') + '완료';
             } else if (t === 'error') {
-                _showLighbdLlmWidget();
                 const errMsg = data.error || '알 수 없는 오류';
-                const outEl = document.getElementById('lighbd-llm-output');
-                outEl.textContent += (outEl.textContent ? '\n' : '') + '[ERROR] ' + errMsg;
-                _setLlbStat('lighbd-llm-status', '오류');
-                const sp = document.getElementById('lighbd-llm-spinner');
-                if (sp) sp.style.display = 'none';
-                showToast('lighbd LLM 오류: ' + errMsg, 'error');
+                state.active = false;
+                state.output += (state.output ? '\n' : '') + '[ERROR] ' + errMsg;
+                state.status = (state.callName ? state.callName + ' · ' : '') + '오류';
+                showToast('LB LLM 오류: ' + errMsg, 'error');
+            } else {
+                console.error('[LB_STREAM] 알 수 없는 이벤트 타입:', data);
+                return;
+            }
+
+            _lighbdLlmStreams.set(streamId, state);
+            _trimLighbdStreamStates();
+            _updateLighbdWindowBadge();
+            const selectedEvent = _lighbdSelectedStreamId === streamId;
+            if (selectedEvent && !state.active && (t === 'done' || t === 'error')) {
+                const nextActive = [..._lighbdLlmStreams.values()].reverse().find(s => s.active);
+                if (nextActive) _lighbdSelectedStreamId = nextActive.id;
+            }
+            if (selectedEvent) {
+                _renderLighbdStreamState(
+                    _lighbdLlmStreams.get(_lighbdSelectedStreamId) || state
+                );
+                _showLighbdLlmWidget();
+            }
+
+            if (t === 'error' && ![..._lighbdLlmStreams.values()].some(s => s.active)) {
                 if (_lighbdLlmAutoHideTimer) clearTimeout(_lighbdLlmAutoHideTimer);
                 _lighbdLlmAutoHideTimer = setTimeout(hideLighbdLlmWidget, 8000);
             }
         }
 
         // ─── lighbd 히스토리 모달 ───
+        let _lighbdHistoryRecords = [];
+
+        function closeLighbdHistoryModal() {
+            const overlay = document.getElementById('lighbd-history-overlay');
+            if (overlay) overlay.remove();
+        }
+
+        function closeLighbdHistoryDetail() {
+            const overlay = document.getElementById('lighbd-history-detail-overlay');
+            if (overlay) overlay.remove();
+        }
+
         async function openLighbdHistoryModal() {
             // 기존 모달 제거
             const existing = document.getElementById('lighbd-history-overlay');
@@ -13543,26 +13798,36 @@
 
             const overlay = document.createElement('div');
             overlay.id = 'lighbd-history-overlay';
-            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10010; display:flex; align-items:center; justify-content:center;';
+            overlay.className = 'lighbd-history-overlay';
+            overlay.tabIndex = -1;
             overlay.innerHTML = `
-                <div style="background:var(--surface); border:1px solid var(--border); border-radius:10px; width:min(900px, 92vw); height:min(80vh, 720px); display:flex; flex-direction:column; overflow:hidden;">
-                    <div style="display:flex; align-items:center; padding:12px 16px; border-bottom:1px solid var(--border); gap:10px;">
-                        <span style="font-size:0.95rem; font-weight:600; flex:1;">LIGHBD · LLM 히스토리 (최근 20개)</span>
-                        <button onclick="this.closest('#lighbd-history-overlay').remove()" style="background:none; border:none; color:var(--text2); font-size:1.2rem; cursor:pointer;">✕</button>
+                <div class="lighbd-history-shell" role="dialog" aria-modal="true" aria-labelledby="lighbd-history-title">
+                    <div class="lighbd-modal-head">
+                        <div class="lighbd-modal-title" id="lighbd-history-title">
+                            LB · LLM 히스토리
+                            <div class="lighbd-modal-subtitle">최근 20개 요청 · 항목의 열기를 누르면 전체 입력과 출력을 확인할 수 있습니다.</div>
+                        </div>
+                        <button class="lighbd-modal-close" onclick="closeLighbdHistoryModal()" aria-label="닫기">✕</button>
                     </div>
-                    <div id="lighbd-history-list" style="flex:1; overflow-y:auto; padding:12px 16px; display:flex; flex-direction:column; gap:10px;">
+                    <div id="lighbd-history-list" class="lighbd-history-list">
                         <div style="color:var(--text2); font-size:0.85rem;">불러오는 중...</div>
                     </div>
                 </div>`;
-            overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+            overlay.addEventListener('click', (e) => { if (e.target === overlay) closeLighbdHistoryModal(); });
+            overlay.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeLighbdHistoryModal(); });
             document.body.appendChild(overlay);
+            overlay.focus();
 
             try {
                 const resp = await fetch('/api/lighbd/history');
-                if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                if (!resp.ok) {
+                    console.error('[LB_HISTORY] 히스토리 API 실패:', resp.status);
+                    throw new Error('HTTP ' + resp.status);
+                }
                 const data = await resp.json();
                 renderLighbdHistoryList(data.history || []);
             } catch (e) {
+                console.error('[LB_HISTORY] 히스토리 로드 실패:', e);
                 const list = document.getElementById('lighbd-history-list');
                 if (list) list.innerHTML = `<div style="color:#ff6b6b; font-size:0.85rem;">로드 실패: ${escapeHtml(e.message || String(e))}</div>`;
             }
@@ -13572,48 +13837,107 @@
             const list = document.getElementById('lighbd-history-list');
             if (!list) return;
             if (!records.length) {
+                _lighbdHistoryRecords = [];
                 list.innerHTML = '<div style="color:var(--text2); font-size:0.85rem;">히스토리 없음</div>';
                 return;
             }
             // 최신 → 오래된 순
-            const sorted = [...records].reverse();
-            list.innerHTML = sorted.map((r, i) => {
+            _lighbdHistoryRecords = [...records].reverse();
+            list.innerHTML = _lighbdHistoryRecords.map((r, i) => {
                 const isError = r.status === 'error';
-                const inputMessages = Array.isArray(r.input) ? r.input : [];
-                const inputSummary = inputMessages.map(m => {
-                    const role = (m.role || '?').toUpperCase();
-                    const content = String(m.content || '');
-                    return `<div style="margin-bottom:4px;"><span style="color:var(--text2); font-weight:600;">[${escapeHtml(role)}]</span> <span style="white-space:pre-wrap; word-break:break-word;">${escapeHtml(content)}</span></div>`;
-                }).join('');
                 const outputText = r.output || '';
                 const stats = `토큰 ${r.completion_tokens ?? 0} · ${r.elapsed ?? 0}s · ${r.tps ?? 0} t/s` + (r.ttft ? ` · TTFT ${r.ttft}s` : '');
                 const callBadge = r.call_name
                     ? `<span style="font-size:0.7rem; padding:1px 6px; border-radius:3px; background:rgba(0,188,212,0.16); color:#4dd0e1; font-weight:600;">${escapeHtml(r.call_name)}</span>`
                     : '';
                 return `
-                    <div style="border:1px solid var(--border); border-radius:6px; padding:10px; background:var(--surface2);">
+                    <div class="lighbd-history-card">
                         <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px; flex-wrap:wrap;">
                             <span style="font-size:0.7rem; color:var(--text2);">${escapeHtml(r.ts || '')}</span>
                             ${callBadge}
                             <span style="font-size:0.7rem; padding:1px 6px; border-radius:3px; background:${isError ? 'rgba(255,107,107,0.18)' : 'rgba(76,175,80,0.18)'}; color:${isError ? '#ff6b6b' : '#5cd5a0'}; font-weight:600;">${isError ? 'ERROR' : 'OK'}</span>
                             <span style="font-size:0.7rem; color:var(--text2);">${escapeHtml(stats)}</span>
-                            <button onclick="document.getElementById('lighbd-hist-detail-${i}').style.display = (document.getElementById('lighbd-hist-detail-${i}').style.display === 'none' ? 'block' : 'none');" style="margin-left:auto; background:var(--surface); border:1px solid var(--border); color:var(--text2); padding:2px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">펼치기/접기</button>
+                            <button class="lighbd-history-open" onclick="openLighbdHistoryDetail(${i})">열기</button>
                         </div>
                         <div style="font-size:0.7rem; color:var(--text2); margin-bottom:4px;">출력 요약:</div>
                         <pre style="margin:0 0 6px 0; padding:6px; border-radius:4px; background:rgba(0,0,0,0.25); color:var(--text); font-family:monospace; font-size:0.72rem; line-height:1.4; white-space:pre-wrap; word-break:break-word; max-height:120px; overflow-y:auto;">${escapeHtml(isError ? (r.error || '') : outputText)}</pre>
-                        <div id="lighbd-hist-detail-${i}" style="display:none; margin-top:8px; border-top:1px dashed var(--border); padding-top:8px;">
-                            <div style="font-size:0.7rem; color:var(--text2); margin-bottom:4px;">입력 (전체):</div>
-                            <div style="padding:6px; border-radius:4px; background:rgba(0,0,0,0.15); font-size:0.72rem; line-height:1.4; max-height:300px; overflow-y:auto;">
-                                ${inputSummary || '<span style="color:var(--text2);">-</span>'}
-                            </div>
-                            ${outputText ? `
-                            <div style="font-size:0.7rem; color:var(--text2); margin:8px 0 4px;">출력 (전체):</div>
-                            <pre style="margin:0; padding:6px; border-radius:4px; background:rgba(0,0,0,0.25); color:var(--text); font-family:monospace; font-size:0.72rem; line-height:1.4; white-space:pre-wrap; word-break:break-word; max-height:300px; overflow-y:auto;">${escapeHtml(outputText)}</pre>` : ''}
-                        </div>
                     </div>`;
             }).join('');
         }
+
+        function _formatLighbdHistoryContent(content) {
+            if (typeof content === 'string') return content;
+            try {
+                return JSON.stringify(content ?? '', null, 2);
+            } catch (e) {
+                console.error('[LB_HISTORY] 입력 내용 직렬화 실패:', e);
+                return String(content ?? '');
+            }
+        }
+
+        function openLighbdHistoryDetail(index) {
+            const record = _lighbdHistoryRecords[index];
+            if (!record) {
+                console.error('[LB_HISTORY] 상세 레코드를 찾지 못했습니다:', index);
+                showToast('LB 히스토리 상세 데이터를 찾지 못했습니다.', 'error');
+                return;
+            }
+            closeLighbdHistoryDetail();
+
+            const inputMessages = Array.isArray(record.input) ? record.input : [];
+            const inputText = inputMessages.length
+                ? inputMessages.map((m, i) => `[${i + 1}. ${String(m.role || '?').toUpperCase()}]\n${_formatLighbdHistoryContent(m.content)}`).join('\n\n')
+                : '-';
+            const isError = record.status === 'error';
+            const outputText = isError ? (record.error || record.output || '-') : (record.output || '-');
+            const ttft = record.ttft == null ? '-' : `${record.ttft}s`;
+
+            const overlay = document.createElement('div');
+            overlay.id = 'lighbd-history-detail-overlay';
+            overlay.className = 'lighbd-detail-overlay';
+            overlay.tabIndex = -1;
+            overlay.innerHTML = `
+                <div class="lighbd-detail-shell" role="dialog" aria-modal="true" aria-labelledby="lighbd-detail-title">
+                    <div class="lighbd-modal-head">
+                        <div class="lighbd-modal-title" id="lighbd-detail-title">
+                            ${escapeHtml(record.call_name || record.task_key || 'LLM 요청 상세')}
+                            <div class="lighbd-modal-subtitle">${escapeHtml(record.ts || '')} · ${escapeHtml(record.model || '모델 정보 없음')}</div>
+                        </div>
+                        <span style="font-size:.7rem;padding:3px 8px;border-radius:6px;background:${isError ? 'rgba(255,107,107,.18)' : 'rgba(76,175,80,.18)'};color:${isError ? '#ff6b6b' : '#5cd5a0'};font-weight:700;">${isError ? 'ERROR' : 'OK'}</span>
+                        <button class="lighbd-modal-close" onclick="closeLighbdHistoryDetail()" aria-label="닫기">✕</button>
+                    </div>
+                    <div class="lighbd-detail-stats">
+                        <div class="lighbd-detail-stat"><span>완료 토큰</span><strong>${escapeHtml(String(record.completion_tokens ?? 0))}</strong></div>
+                        <div class="lighbd-detail-stat"><span>경과 시간</span><strong>${escapeHtml(String(record.elapsed ?? 0))}s</strong></div>
+                        <div class="lighbd-detail-stat"><span>처리 속도</span><strong>${escapeHtml(String(record.tps ?? 0))} t/s</strong></div>
+                        <div class="lighbd-detail-stat"><span>TTFT</span><strong>${escapeHtml(ttft)}</strong></div>
+                    </div>
+                    <div class="lighbd-detail-body">
+                        <section class="lighbd-detail-section">
+                            <div class="lighbd-detail-section-title">입력 전체</div>
+                            <pre class="lighbd-detail-content">${escapeHtml(inputText)}</pre>
+                        </section>
+                        <section class="lighbd-detail-section">
+                            <div class="lighbd-detail-section-title">${isError ? '오류 내용' : '출력 전체'}</div>
+                            <pre class="lighbd-detail-content">${escapeHtml(String(outputText))}</pre>
+                        </section>
+                    </div>
+                </div>`;
+            overlay.addEventListener('click', (e) => { if (e.target === overlay) closeLighbdHistoryDetail(); });
+            overlay.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeLighbdHistoryDetail(); });
+            document.body.appendChild(overlay);
+            overlay.focus();
+        }
         // ─── LLM 서비스 변경 ───
+        function updateLlmStreamStatus(slot, checked) {
+            const suffix = slot === 1 ? '' : String(slot);
+            const status = document.getElementById(`setting-llm-stream${suffix}-status`);
+            if (!status) return;
+            status.textContent = checked ? 'ON' : 'OFF';
+            status.classList.toggle('on', checked);
+            status.classList.toggle('off', !checked);
+        }
+
         function onLlmServiceChange() {
             const s1 = document.getElementById('setting-llm-service').value;
             const s2 = document.getElementById('setting-llm-service2').value;
