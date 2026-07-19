@@ -70,6 +70,7 @@ from modes.word_rules import (
     apply_remove_rule as _apply_remove_word_rule,
 )
 from modes import chansub_service
+from modes import illustration_context_pipeline
 import importlib.util
 
 # ─── 설정 ───────────────────────────────────────────────
@@ -133,17 +134,46 @@ DEFAULT_CONFIG = {
     "llm_model": "gpt-4.1",    # LLM 모델명
     "llm_service2": "",         # LLM2 서비스 (비워두면 LLM1 서비스 사용)
     "llm_model2": "",           # LLM2 모델명 (폴백, 비어있으면 비활성)
-    # 주의: API 키(llm_api_key, llm_api_key2)는 config.json 에 저장 안 함.
+    "llm_service3": "",         # LLM3 서비스 (삽화 CALL1/2/3, 비워두면 LLM1 서비스 사용)
+    "llm_model3": "",           # LLM3 모델명
+    # 주의: API 키(llm_api_key, llm_api_key2, llm_api_key3)는 config.json 에 저장 안 함.
     # key/llm_keys.json 으로 분리 (handle_api_llm_keys 참조).
     "llm_url": "",              # LLM1 베이스 URL 오버라이드 (OpenAI 호환 서비스, {model} 치환 지원)
     "llm_url2": "",             # LLM2 베이스 URL 오버라이드 (옵션)
+    "llm_url3": "",             # LLM3 베이스 URL 오버라이드 (옵션)
     "llm_reasoning_preset": "auto",   # auto|none|gpt|glm|deepseek|kimi|claude|gemini|custom
     "llm_reasoning_effort": "",       # low|medium|high (OpenAI reasoning_effort)
     "llm_reasoning_budget_tokens": 0, # GLM/deepseek thinking budget_tokens
     "llm_custom_body": "",            # preset=custom 일 때 JSON 문자열로 body 에 머지
     "llm_custom_body2": "",           # LLM2 용
+    "llm_custom_body3": "",           # LLM3 용
     "llm_reasoning_preset2": "auto",  # LLM2 전용 reasoning preset
     "llm_reasoning_effort2": "",      # LLM2 전용 reasoning effort
+    "llm_reasoning_preset3": "auto",  # LLM3 전용 reasoning preset
+    "llm_reasoning_effort3": "",      # LLM3 전용 reasoning effort
+    "illustration_context_toggles": {
+        "call1_enabled": True,
+        "call1_context_turns": 5,
+        "call3_enabled": True,
+        "speak_enabled": True,
+        "speak_language": "한국어",
+        "speak_emotion_enabled": False,
+        "speak_emotions": "",
+        "nsfw": False,
+        "supplement": True,
+        "key_visual": True,
+        "character_limit": 3,
+        "scene_max": 11,
+        "context_history": True,
+        "focus": "",
+        "direction": "",
+        "preset": "tutorial",
+        "positive_note": "",
+        "negative_note": "",
+        "compat_comfy": True,
+        "compat_character_divider": "newline",
+        "compat_character_prompt": "separate",
+    },
     "llm_temperature": 1.0,
     "llm_max_tokens": 0,              # 0 = 기본값 사용
     "llm_stream": False,
@@ -159,6 +189,10 @@ DEFAULT_CONFIG = {
         "refine_lora_prompt":      {"primary": "llm1", "fallback": False},
         "refine_lora_test_setup":  {"primary": "llm1", "fallback": False},
         "edit_illustration_prompt":{"primary": "llm1", "fallback": False, "json_mode": True},  # json_mode: 외부 API 분기 토글. 끄면 response_format 미전송(Cerebras/Gemma 루프 회피)
+        # 삽화 컨텍스트 파이프라인 CALL1/2/3. 기본 LLM3(callLLM3 가 llm_service3 비어있으면 LLM1 재사용).
+        "illustration_call1":      {"primary": "llm3", "fallback": False},  # 전처리(컨텍스트 보강)
+        "illustration_call2":      {"primary": "llm3", "fallback": False},  # 본문(장면/태그 TOON 빌드)
+        "illustration_call3":      {"primary": "llm3", "fallback": False},  # 후처리/대사 생성(TOON 교정·SPEAK)
     },
     "llm_max_concurrency": 1,         # LLM계열 큐 아이템(태그 정제/얼굴 태그 분류) 동시 처리 수. 1=순차(현행 동작). GPU/ComfyUI 작업과 무관.
     "auto_face_tag_max_retries": 2,   # LLM 자동 얼굴/눈 태그 분류 재시도 횟수 (외부 API 실패/JSON 파싱 실패 시)
@@ -676,6 +710,23 @@ def extract_prompts_by_title(prompt_data: dict, title: str) -> str | None:
             if "text" in inputs and isinstance(inputs["text"], str):
                 return inputs["text"]
     return None
+
+
+def set_prompt_by_title(prompt_data: dict, title: str, value: str) -> bool:
+    """워크플로우의 지정 제목 primitive 값을 교체한다."""
+    for ninfo in prompt_data.values():
+        if not isinstance(ninfo, dict):
+            continue
+        if (ninfo.get("_meta") or {}).get("title", "") != title:
+            continue
+        inputs = ninfo.setdefault("inputs", {})
+        if "value" not in inputs:
+            print(f"[ILLUST_CONTEXT] {title} 노드에 inputs.value가 없음")
+            return False
+        inputs["value"] = value
+        return True
+    print(f"[ILLUST_CONTEXT] 워크플로우에서 {title} 노드를 찾지 못함")
+    return False
 
 
 def clamp_weights(prompt: str, clamp_value: float) -> str:
@@ -1643,6 +1694,7 @@ def init_queue_manager():
     queue_manager.fetch_real_history = fetch_real_history
     queue_manager.fetch_real_image = fetch_real_image
     queue_manager.process_prompt_full = process_prompt
+    queue_manager.process_illustration_context = process_illustration_context_queue_item
     queue_manager.save_backup = save_backup
     queue_manager.generate_image_with_prompt = generate_image_with_prompt
     queue_manager.run_data_patch_utility = _run_data_patch_utility
@@ -2042,7 +2094,8 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                 }
                 log_illust_build(
                     raw_positive, word_replaced_raw, parsed_raw_sections, detected,
-                    word_replaced, positive, negative
+                    word_replaced, positive, negative,
+                    context=str(raw_body.get("illustration_context") or ""),
                 )
             else:
                 print(f"[ILLUST] 봇을 찾을 수 없음: {bot_name}, RAW 선처리 결과를 사용")
@@ -2139,6 +2192,17 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
         prompts[prompt_id]["filename"] = our_filename
         prompts[prompt_id]["image_bytes"] = img_bytes
 
+        regen_session_id = str(raw_body.get("illustration_regenerate_session_id") or "")
+        regen_slot = raw_body.get("illustration_regenerate_slot")
+        if regen_session_id and regen_slot is not None:
+            if not illustration_context_pipeline.update_session_image_by_slot(
+                regen_session_id, regen_slot, img_bytes
+            ):
+                print(
+                    f"[ILLUST_CONTEXT] 재생성 이미지는 반환하지만 캐시 갱신 실패: "
+                    f"session={regen_session_id}, slot={regen_slot}"
+                )
+
         # WS: executed + executing(null)
         executed_msg = {
             "type": "executed",
@@ -2173,10 +2237,248 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
         prompts[prompt_id]["outputs"] = {"images": []}
 
 
+def _tag_text(values) -> str:
+    if not isinstance(values, list):
+        return ""
+    out = []
+    for item in values:
+        value = item.get("tag", "") if isinstance(item, dict) else item
+        value = str(value or "").strip()
+        if value:
+            out.append(value)
+    return ", ".join(out)
+
+
+def build_active_lb_extra(bot_name: str) -> str:
+    """현재 봇의 선택 시스템 프롬프트 + 저장된 lb.extra를 모듈 형식으로 조립."""
+    if not bot_name:
+        print("[ILLUST_CONTEXT] 활성 봇이 없어 lb-xnai.lb.extra를 비움")
+        return ""
+    try:
+        data = bot_mode._load_bot_data()
+        bot = next((b for b in data.get("bots", []) if b.get("name") == bot_name), None)
+        if not bot:
+            print(f"[ILLUST_CONTEXT] 활성 봇을 찾지 못함: {bot_name}")
+            return ""
+        preset_name = str(bot.get("system_prompt_preset") or "").strip()
+        scope = str(bot.get("preset_scope") or "local").strip()
+        if scope == "builtin":
+            system_prompt = str((bot_mode._load_builtin_presets() or {}).get(preset_name, ""))
+        else:
+            system_prompt = str((data.get("system_prompt_presets") or {}).get(preset_name, ""))
+        if not system_prompt.strip():
+            system_prompt = str(bot.get("system_prompt") or "")
+
+        extra = bot_mode._load_lb_extra(bot_name) or []
+        chars_by_name = {str(c.get("name")): c for c in bot.get("characters", []) if isinstance(c, dict)}
+        chunks = [system_prompt.strip()] if system_prompt.strip() else []
+        for item in extra:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or "").strip()
+            if not name:
+                continue
+            char = chars_by_name.get(name, {})
+            gender_tag = str(item.get("gender_tag") or char.get("gender_tag") or "").strip()
+            appearance = _tag_text(item.get("appearance"))
+            outfit = _tag_text(item.get("outfit"))
+            appearance = ", ".join(x for x in (gender_tag, appearance) if x)
+            chunks.append(
+                f"### {name}\n-Name\n{name}\n-Appearance\n{appearance}"
+                f"\n-default_outfit\n{outfit}"
+            )
+        if len(chunks) <= (1 if system_prompt.strip() else 0):
+            print(f"[ILLUST_CONTEXT] 저장된 lb.extra 캐릭터 데이터가 없음: bot={bot_name}")
+        return "\n\n".join(chunks).strip()
+    except Exception as e:
+        print(f"[ILLUST_CONTEXT] 활성 lb.extra 조립 실패: bot={bot_name}, error={e}")
+        traceback.print_exc()
+        return ""
+
+
+async def process_illustration_context_queue_item(item) -> dict:
+    """LLM 큐 핸들러: CALL1/2/3 후 기존 illustration 큐 N개를 만들고 모두 기다린다."""
+    params = item.params or {}
+    original_prompt_id = str(params.get("prompt_id") or "")
+    payload = params.get("payload") or {}
+    session_id = str(payload.get("session_id") or "")
+    prompt_data = params.get("prompt_data") or {}
+    raw_body = params.get("raw_body") or {}
+
+    async def progress(value: float, phase: str, detail: str):
+        await queue_manager._notify_progress(item, {
+            "phase": phase,
+            "value": value,
+            "max": 100,
+            "current": value,
+            "total": 100,
+            "detail": detail,
+        })
+
+    async def stream_notify(event: dict):
+        data = dict(event)
+        data.update({"prompt_id": original_prompt_id, "session_id": session_id})
+        await notify_frontend("lighbd_llm_stream", data)
+
+    try:
+        if not original_prompt_id or original_prompt_id not in prompts:
+            print(f"[ILLUST_CONTEXT] 원본 prompt 엔트리 없음: {original_prompt_id!r}")
+            raise RuntimeError("원본 prompt 엔트리를 찾지 못했습니다")
+        await progress(2, "context", "CHAT 컨텍스트 수신")
+        extra_reference = build_active_lb_extra(app_config.get("bot_selected", ""))
+        built = await illustration_context_pipeline.build_from_context(
+            payload,
+            app_config.get("illustration_context_toggles"),
+            extra_reference,
+            progress=progress,
+            stream_notify=stream_notify,
+        )
+        raw_items = built.get("items") or []
+        if not raw_items:
+            print(f"[ILLUST_CONTEXT] 생성할 장면이 없음: session={session_id}")
+            raise RuntimeError("CALL 결과에 생성할 장면이 없습니다")
+
+        await progress(70, "enqueue", f"이미지 {len(raw_items)}장 큐 등록")
+        child_pairs = []
+        for index, descriptor in enumerate(raw_items, start=1):
+            child_id = str(uuid.uuid4())
+            child_prompt = copy.deepcopy(prompt_data)
+            if not set_prompt_by_title(child_prompt, "긍정프롬프트", descriptor.get("raw_positive", "")):
+                raise RuntimeError("긍정프롬프트 노드를 교체하지 못했습니다")
+            if not set_prompt_by_title(child_prompt, "부정프롬프트", descriptor.get("raw_negative", "")):
+                raise RuntimeError("부정프롬프트 노드를 교체하지 못했습니다")
+            prompts[child_id] = {
+                "status": "running",
+                "prompt": child_prompt,
+                "client_id": raw_body.get("client_id", ""),
+                "extra_data": raw_body.get("extra_data", {}),
+                "outputs": {},
+                "filename": None,
+                "save_node_id": find_save_image_node(child_prompt),
+                "image_bytes": None,
+                "timestamp": time.time(),
+            }
+            child_raw_body = {
+                "prompt": child_prompt,
+                "client_id": raw_body.get("client_id", ""),
+                "extra_data": raw_body.get("extra_data", {}),
+                "illustration_context": built.get("context", ""),
+                "illustration_context_session_id": session_id,
+                "illustration_context_index": index,
+            }
+            child_item = await queue_manager.add_item(
+                "illustration",
+                f"삽화 {index}/{len(raw_items)} · slot {descriptor.get('slot')}",
+                {"prompt_id": child_id, "prompt_data": child_prompt, "raw_body": child_raw_body},
+                priority=0,
+            )
+            child_pairs.append((child_id, child_item))
+
+        await progress(72, "generating", f"이미지 0/{len(child_pairs)} 완료")
+        images = []
+        for completed, (child_id, child_item) in enumerate(child_pairs, start=1):
+            try:
+                await child_item.completion_future
+            except Exception as e:
+                print(f"[ILLUST_CONTEXT] 하위 이미지 큐 실패: child={child_id}, error={e}")
+                traceback.print_exc()
+                raise
+            image_bytes = prompts.get(child_id, {}).get("image_bytes")
+            if not image_bytes:
+                print(f"[ILLUST_CONTEXT] 하위 이미지 결과가 비어 있음: child={child_id}")
+                raise RuntimeError(f"이미지 {completed}/{len(child_pairs)} 생성 결과가 비어 있습니다")
+            images.append(image_bytes)
+            await progress(
+                72 + (completed / len(child_pairs)) * 27,
+                "generating",
+                f"이미지 {completed}/{len(child_pairs)} 완료",
+            )
+
+        illustration_context_pipeline.set_session_result(session_id, raw_items, images)
+        first = images[0]
+        original = prompts[original_prompt_id]
+        original["image_bytes"] = first
+        filename = f"ComfyUI_{original_prompt_id[:8]}.png"
+        await complete_prompt_from_reschedule(
+            original_prompt_id,
+            original.get("save_node_id") or find_save_image_node(prompt_data) or "9",
+            filename,
+        )
+        await progress(100, "ready", f"전체 {len(images)}장 반환 준비 완료")
+        print(f"[ILLUST_CONTEXT] 세션 완료: session={session_id}, images={len(images)}")
+        return {"success": True, "session_id": session_id, "count": len(images)}
+    except Exception as e:
+        print(f"[ILLUST_CONTEXT] 세션 처리 실패: session={session_id}, error={e}")
+        traceback.print_exc()
+        illustration_context_pipeline.set_session_error(session_id, str(e))
+        if original_prompt_id in prompts:
+            prompts[original_prompt_id]["status"] = "completed"
+            prompts[original_prompt_id]["outputs"] = {"images": []}
+        await stream_notify({"type": "error", "call_name": "PIPELINE", "error": str(e)})
+        raise
+
+
 async def handle_get_illust_logs(request: web.Request) -> web.Response:
     """GET /api/bot_mode/illust_logs - 삽화 모드 프롬프트 빌드 로그 반환"""
     logs = get_illust_logs()
     return web.json_response({"logs": logs})
+
+
+async def handle_api_illustration_context_manifest(request: web.Request) -> web.Response:
+    """Risu v14가 최초 이미지 이후 나머지 결과/슬롯 메타데이터를 읽는 text endpoint."""
+    try:
+        session_id = request.match_info.get("sid", "")
+        text = illustration_context_pipeline.session_manifest(session_id)
+        return web.Response(text=text, content_type="text/plain", charset="utf-8")
+    except Exception as e:
+        print(f"[ILLUST_CONTEXT] manifest 응답 실패: {e}")
+        traceback.print_exc()
+        return web.Response(text=f"STATUS|error\nCOUNT|0\nERROR|{e}", status=500)
+
+
+async def handle_api_illustration_context_prompts(request: web.Request) -> web.Response:
+    """CALL1/2/3 프롬프트 파일 조회/저장. 프롬프트 본문은 config에 넣지 않는다."""
+    try:
+        if request.method == "GET":
+            return web.json_response(illustration_context_pipeline.load_prompt_files())
+        body = await request.json()
+        if not isinstance(body, dict):
+            print(f"[ILLUST_CONTEXT] prompt 저장 body가 object가 아님: {type(body).__name__}")
+            return web.json_response({"error": "body must be object"}, status=400)
+        invalid = [key for key, value in body.items() if not isinstance(value, str)]
+        if invalid:
+            print(f"[ILLUST_CONTEXT] prompt 저장 문자열 아닌 필드: {invalid}")
+            return web.json_response({"error": f"prompt fields must be strings: {invalid}"}, status=400)
+        saved = illustration_context_pipeline.save_prompt_files(body)
+        return web.json_response({"status": "ok", "saved": saved})
+    except Exception as e:
+        print(f"[ILLUST_CONTEXT] prompt API 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def handle_api_illustration_context_toggles(request: web.Request) -> web.Response:
+    """서버가 제어하는 삽화 CALL/출력 토글 조회·저장."""
+    try:
+        if request.method == "GET":
+            return web.json_response({
+                "toggles": illustration_context_pipeline.merged_toggles(
+                    app_config.get("illustration_context_toggles")
+                )
+            })
+        body = await request.json()
+        raw = body.get("toggles") if isinstance(body, dict) else None
+        if not isinstance(raw, dict):
+            print(f"[ILLUST_CONTEXT] toggle 저장 body가 잘못됨: {body!r}")
+            return web.json_response({"error": "toggles must be object"}, status=400)
+        toggles = illustration_context_pipeline.merged_toggles(raw)
+        app_config["illustration_context_toggles"] = toggles
+        save_config(app_config)
+        return web.json_response({"status": "ok", "toggles": toggles})
+    except Exception as e:
+        print(f"[ILLUST_CONTEXT] toggle API 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"error": str(e)}, status=500)
 
 
 async def handle_api_lighbd_enqueue(request: web.Request) -> web.Response:
@@ -2312,8 +2614,7 @@ async def handle_api_lighbd_prompts(request: web.Request) -> web.Response:
 async def handle_api_llm_keys(request: web.Request) -> web.Response:
     """LLM API 키 별도 저장 (config.json 분리).
 
-    POST /api/llm/keys   {"llm_api_key": "...", "llm_api_key2": "..."} → key/llm_keys.json 저장
-    GET  /api/llm/keys   → {"llm_api_key": "...", "llm_api_key2": "...", "set1": bool, "set2": bool}
+    POST /api/llm/keys   {"llm_api_key": "...", "llm_api_key2": "...", "llm_api_key3": "..."}
     DELETE /api/llm/keys → 삭제
     """
     import os as _os
@@ -2325,6 +2626,7 @@ async def handle_api_llm_keys(request: web.Request) -> web.Response:
             body = await request.json()
             key1 = (body.get("llm_api_key") or "").strip()
             key2 = (body.get("llm_api_key2") or "").strip()
+            key3 = (body.get("llm_api_key3") or "").strip()
             # 기존 파일 보존하면서 병합 (한쪽만 업데이트 허용)
             existing = {}
             if _os.path.exists(keys_path):
@@ -2342,8 +2644,17 @@ async def handle_api_llm_keys(request: web.Request) -> web.Response:
                 existing["llm_api_key2"] = key2
             else:
                 existing.pop("llm_api_key2", None)
+            if key3:
+                existing["llm_api_key3"] = key3
+            else:
+                existing.pop("llm_api_key3", None)
 
             _os.makedirs(KEY_DIR_LOCAL, exist_ok=True)
+            if _os.path.exists(keys_path):
+                requirements_dir = _os.path.join(BASE_DIR, "요구사항")
+                _os.makedirs(requirements_dir, exist_ok=True)
+                stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+                shutil.copy2(keys_path, _os.path.join(requirements_dir, f"llm_keys_before_save_{stamp}.json"))
             with open(keys_path, "w", encoding="utf-8") as f:
                 json.dump(existing, f, ensure_ascii=False, indent=2)
 
@@ -2351,22 +2662,30 @@ async def handle_api_llm_keys(request: web.Request) -> web.Response:
             from modes.llm_service import _current_config as _ls_cfg
             _ls_cfg["llm_api_key"] = key1
             _ls_cfg["llm_api_key2"] = key2
+            _ls_cfg["llm_api_key3"] = key3
 
-            print(f"[LLM_KEY] keys saved: llm_api_key={'set' if key1 else 'empty'}, llm_api_key2={'set' if key2 else 'empty'}")
+            print(f"[LLM_KEY] keys saved: key1={'set' if key1 else 'empty'}, key2={'set' if key2 else 'empty'}, key3={'set' if key3 else 'empty'}")
             return web.json_response({
                 "status": "ok",
                 "set1": bool(key1),
                 "set2": bool(key2),
+                "set3": bool(key3),
                 "llm_api_key": key1,
                 "llm_api_key2": key2,
+                "llm_api_key3": key3,
             })
 
         if request.method == "DELETE":
             if _os.path.exists(keys_path):
+                requirements_dir = _os.path.join(BASE_DIR, "요구사항")
+                _os.makedirs(requirements_dir, exist_ok=True)
+                stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+                shutil.copy2(keys_path, _os.path.join(requirements_dir, f"llm_keys_before_delete_{stamp}.json"))
                 _os.remove(keys_path)
             from modes.llm_service import _current_config as _ls_cfg
             _ls_cfg["llm_api_key"] = ""
             _ls_cfg["llm_api_key2"] = ""
+            _ls_cfg["llm_api_key3"] = ""
             print("[LLM_KEY] keys deleted")
             return web.json_response({"status": "ok"})
 
@@ -2381,8 +2700,10 @@ async def handle_api_llm_keys(request: web.Request) -> web.Response:
         return web.json_response({
             "llm_api_key": existing.get("llm_api_key", ""),
             "llm_api_key2": existing.get("llm_api_key2", ""),
+            "llm_api_key3": existing.get("llm_api_key3", ""),
             "set1": bool(existing.get("llm_api_key")),
             "set2": bool(existing.get("llm_api_key2")),
+            "set3": bool(existing.get("llm_api_key3")),
         })
     except Exception as e:
         tb = traceback.format_exc()
@@ -2478,7 +2799,7 @@ async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse
     """LLM 호출 테스트용 SSE 엔드포인트.
 
     POST /api/llm/test_stream
-    body: {"messages": [...], "model": "...", "stream": true, "image_b64": "...", "image_mime": "image/webp", "target": "llm1"|"llm2"}
+    body: {"messages": [...], "model": "...", "stream": true, "target": "llm1"|"llm2"|"llm3"}
     응답: text/event-stream. 이벤트: start / delta / done / error.
     stream=False 면 단발 호출 후 done 이벤트 1개만 전송.
     image_b64 가 있으면 비전 호출. target 이 llm2 면 LLM2 설정으로 호출.
@@ -2497,12 +2818,22 @@ async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse
     image_b64 = (body.get("image_b64") or "").strip()
     image_mime = body.get("image_mime") or "image/webp"
     target = (body.get("target") or "llm1").strip().lower()
-    if target not in ("llm1", "llm2"):
+    if target not in ("llm1", "llm2", "llm3"):
         target = "llm1"
+    if target == "llm3" and image_b64:
+        print("[LLM_TEST_STREAM] LLM3 비전 테스트는 지원하지 않음")
+        return web.json_response({"error": "LLM3 test supports text messages only"}, status=400)
 
     # target 에 따른 서비스/모델/함수 선택
     cfg = llm_service.get_config()
-    if target == "llm2":
+    if target == "llm3":
+        cur_service = cfg.get("llm_service3") or cfg.get("llm_service", "")
+        cur_model_key = "llm_model3"
+        fn_stream = llm_service.callLLM3Stream
+        fn_vision_stream = None
+        fn_single = llm_service.callLLM3
+        fn_vision_single = None
+    elif target == "llm2":
         cur_service = cfg.get("llm_service2") or cfg.get("llm_service", "")
         cur_model_key = "llm_model2"
         fn_stream = llm_service.callLLM2Stream
@@ -2624,9 +2955,12 @@ def _load_llm_keys_into_config():
             _ls_cfg["llm_api_key"] = data["llm_api_key"]
         if data.get("llm_api_key2"):
             _ls_cfg["llm_api_key2"] = data["llm_api_key2"]
-        print(f"[LLM_KEY] loaded from key/llm_keys.json: key1={'set' if data.get('llm_api_key') else 'empty'}, key2={'set' if data.get('llm_api_key2') else 'empty'}")
+        if data.get("llm_api_key3"):
+            _ls_cfg["llm_api_key3"] = data["llm_api_key3"]
+        print(f"[LLM_KEY] loaded from key/llm_keys.json: key1={'set' if data.get('llm_api_key') else 'empty'}, key2={'set' if data.get('llm_api_key2') else 'empty'}, key3={'set' if data.get('llm_api_key3') else 'empty'}")
     except Exception as e:
         print(f"[LLM_KEY] load failed: {e}")
+        traceback.print_exc()
 
 
 async def handle_api_lighbd_vertex_key(request: web.Request) -> web.Response:
@@ -2778,6 +3112,114 @@ async def handle_prompt(request: web.Request) -> web.Response:
         cleanup_logs(keep=3)
 
         prompt_data = body.get("prompt", {})
+
+        # 삽화 v14 전단계: 긍정 프롬프트 필드를 CHAT/결과 회수 transport로 사용한다.
+        # 배치/재예약보다 먼저 처리해야 같은 generateImage 호출이 다른 이미지로 치환되지 않는다.
+        incoming_positive = extract_prompts_by_title(prompt_data, "긍정프롬프트") or ""
+        regenerate_request = illustration_context_pipeline.parse_regenerate_request(incoming_positive)
+        if regenerate_request is not None:
+            session_id = regenerate_request["session_id"]
+            slot = regenerate_request["slot"]
+            descriptor = illustration_context_pipeline.session_item_by_slot(session_id, slot)
+            if descriptor is None:
+                print(f"[ILLUST_CONTEXT] 재생성 요청 descriptor 없음: session={session_id}, slot={slot}")
+                return web.json_response({"error": "illustration slot not found"}, status=404)
+            regenerated_prompt = copy.deepcopy(prompt_data)
+            if not set_prompt_by_title(regenerated_prompt, "긍정프롬프트", descriptor.get("raw_positive", "")):
+                return web.json_response({"error": "positive prompt node not found"}, status=400)
+            if not set_prompt_by_title(regenerated_prompt, "부정프롬프트", descriptor.get("raw_negative", "")):
+                return web.json_response({"error": "negative prompt node not found"}, status=400)
+            save_node = find_save_image_node(regenerated_prompt)
+            session = illustration_context_pipeline.get_session(session_id) or {}
+            prompts[prompt_id] = {
+                "status": "running", "prompt": regenerated_prompt,
+                "client_id": body.get("client_id", ""), "extra_data": body.get("extra_data", {}),
+                "outputs": {}, "filename": None, "save_node_id": save_node,
+                "image_bytes": None, "timestamp": time.time(),
+            }
+            regenerate_body = {
+                "prompt": regenerated_prompt,
+                "client_id": body.get("client_id", ""),
+                "extra_data": body.get("extra_data", {}),
+                "illustration_context": session.get("context", ""),
+                "illustration_regenerate_session_id": session_id,
+                "illustration_regenerate_slot": slot,
+            }
+            asyncio.create_task(queue_manager.add_item(
+                "illustration",
+                f"삽화 재생성 · slot {slot}",
+                {"prompt_id": prompt_id, "prompt_data": regenerated_prompt, "raw_body": regenerate_body},
+                priority=0,
+            ))
+            print(f"[ILLUST_CONTEXT] 슬롯 재생성 접수: session={session_id}, slot={slot}")
+            return web.json_response({"prompt_id": prompt_id, "number": len(prompts), "node_errors": {}})
+
+        result_request = illustration_context_pipeline.parse_result_request(incoming_positive)
+        if result_request is not None:
+            sid = result_request["session_id"]
+            index = result_request["index"]
+            slot = result_request.get("slot")
+            image_bytes = (
+                illustration_context_pipeline.session_image_by_slot(sid, slot)
+                if slot is not None else illustration_context_pipeline.session_image(sid, index)
+            )
+            save_node = find_save_image_node(prompt_data)
+            if image_bytes is None:
+                print(f"[ILLUST_CONTEXT] 결과 회수 실패: session={sid}, index={index}, slot={slot}")
+                prompts[prompt_id] = {
+                    "status": "completed", "prompt": prompt_data,
+                    "client_id": body.get("client_id", ""), "extra_data": body.get("extra_data", {}),
+                    "outputs": {"images": []}, "filename": None, "save_node_id": save_node,
+                    "image_bytes": None, "timestamp": time.time(),
+                }
+                return web.json_response({"prompt_id": prompt_id, "number": len(prompts), "node_errors": {}})
+            prompts[prompt_id] = {
+                "status": "running", "prompt": prompt_data,
+                "client_id": body.get("client_id", ""), "extra_data": body.get("extra_data", {}),
+                "outputs": {}, "filename": None, "save_node_id": save_node,
+                "image_bytes": image_bytes, "timestamp": time.time(),
+            }
+            filename = f"ComfyUI_{prompt_id[:8]}.png"
+            asyncio.create_task(complete_prompt_from_reschedule(prompt_id, save_node or "9", filename))
+            print(f"[ILLUST_CONTEXT] 캐시 이미지 회수: session={sid}, index={index}, slot={slot}")
+            return web.json_response({"prompt_id": prompt_id, "number": len(prompts), "node_errors": {}})
+
+        context_payload = illustration_context_pipeline.parse_context_request(incoming_positive)
+        if context_payload is not None:
+            session_id = context_payload["session_id"]
+            context_value = illustration_context_pipeline.context_text(context_payload["chats"])
+            illustration_context_pipeline.create_session(session_id, context_value)
+            save_node = find_save_image_node(prompt_data)
+            prompts[prompt_id] = {
+                "status": "running", "prompt": prompt_data,
+                "client_id": body.get("client_id", ""), "extra_data": body.get("extra_data", {}),
+                "outputs": {}, "filename": None, "save_node_id": save_node,
+                "image_bytes": None, "timestamp": time.time(),
+            }
+            asyncio.create_task(queue_manager.add_item(
+                "illustration_llm_build",
+                f"삽화 LLM 빌드 · {session_id[:12]}",
+                {
+                    "prompt_id": prompt_id,
+                    "prompt_data": prompt_data,
+                    "raw_body": body,
+                    "payload": context_payload,
+                },
+                priority=0,
+            ))
+            print(
+                f"[ILLUST_CONTEXT] CHAT 접수: prompt={prompt_id[:8]}, "
+                f"session={session_id}, chats={len(context_payload['chats'])}"
+            )
+            return web.json_response({"prompt_id": prompt_id, "number": len(prompts), "node_errors": {}})
+
+        if incoming_positive.lstrip().startswith((
+            illustration_context_pipeline.CONTEXT_PREFIX,
+            illustration_context_pipeline.RESULT_PREFIX,
+            illustration_context_pipeline.REGENERATE_PREFIX,
+        )):
+            print(f"[ILLUST_CONTEXT] transport marker는 있으나 payload가 유효하지 않음: {incoming_positive[:240]!r}")
+            return web.json_response({"error": "invalid illustration context payload"}, status=400)
 
         # 배치 모드 재전송 예약 확인 (batch_mode의 scheduled_batch 우선)
         if batch_mode.has_scheduled_images():
@@ -5313,14 +5755,20 @@ async def handle_api_config(request: web.Request) -> web.Response:
                 "llm_model": app_config.get("llm_model", "gpt-4.1"),
                 "llm_service2": app_config.get("llm_service2", ""),
                 "llm_model2": app_config.get("llm_model2", ""),
+                "llm_service3": app_config.get("llm_service3", ""),
+                "llm_model3": app_config.get("llm_model3", ""),
                 "llm_url": app_config.get("llm_url", ""),
                 "llm_url2": app_config.get("llm_url2", ""),
+                "llm_url3": app_config.get("llm_url3", ""),
                 "llm_reasoning_preset": app_config.get("llm_reasoning_preset", "auto"),
                 "llm_reasoning_effort": app_config.get("llm_reasoning_effort", ""),
                 "llm_reasoning_preset2": app_config.get("llm_reasoning_preset2", "auto"),
                 "llm_reasoning_effort2": app_config.get("llm_reasoning_effort2", ""),
+                "llm_reasoning_preset3": app_config.get("llm_reasoning_preset3", "auto"),
+                "llm_reasoning_effort3": app_config.get("llm_reasoning_effort3", ""),
                 "llm_custom_body": app_config.get("llm_custom_body", ""),
                 "llm_custom_body2": app_config.get("llm_custom_body2", ""),
+                "llm_custom_body3": app_config.get("llm_custom_body3", ""),
                 "llm_reasoning_budget_tokens": app_config.get("llm_reasoning_budget_tokens", 0),
                 "llm_temperature": app_config.get("llm_temperature", 1.0),
                 "llm_max_tokens": app_config.get("llm_max_tokens", 0),
@@ -5556,6 +6004,8 @@ async def handle_api_outfit_run_llm(request: web.Request) -> web.Response:
             "llm_model": app_config.get("llm_model", "gpt-4.1"),
             "llm_service2": app_config.get("llm_service2", ""),
             "llm_model2": app_config.get("llm_model2", ""),
+            "llm_service3": app_config.get("llm_service3", ""),
+            "llm_model3": app_config.get("llm_model3", ""),
         })
 
         try:
@@ -5865,7 +6315,7 @@ async def log_middleware(request, handler):
 @web.middleware
 async def cors_middleware(request, handler):
     """lighbd V3 plugin 용 CORS. /api/lighbd/* 경로에만 적용."""
-    if request.path.startswith("/api/lighbd/"):
+    if request.path.startswith(("/api/lighbd/", "/api/illustration_context/")):
         origin = request.headers.get("Origin", "*")
         # Preflight
         if request.method == "OPTIONS":
@@ -5924,6 +6374,11 @@ app.router.add_get("/api/lighbd/image/{pid}", handle_api_lighbd_image)
 app.router.add_post("/api/lighbd/reroll", handle_api_lighbd_reroll)
 app.router.add_get("/api/lighbd/prompts", handle_api_lighbd_prompts)
 app.router.add_post("/api/lighbd/prompts", handle_api_lighbd_prompts)
+app.router.add_get("/api/illustration_context/session/{sid}/manifest", handle_api_illustration_context_manifest)
+app.router.add_get("/api/illustration_context/prompts", handle_api_illustration_context_prompts)
+app.router.add_post("/api/illustration_context/prompts", handle_api_illustration_context_prompts)
+app.router.add_get("/api/illustration_context/toggles", handle_api_illustration_context_toggles)
+app.router.add_post("/api/illustration_context/toggles", handle_api_illustration_context_toggles)
 app.router.add_post("/api/llm/vertex_key", handle_api_lighbd_vertex_key)
 app.router.add_get("/api/llm/vertex_key", handle_api_lighbd_vertex_key)
 app.router.add_delete("/api/llm/vertex_key", handle_api_lighbd_vertex_key)
@@ -11524,14 +11979,20 @@ async def on_startup(app):
         "llm_model": app_config.get("llm_model", "gpt-4.1"),
         "llm_service2": app_config.get("llm_service2", ""),
         "llm_model2": app_config.get("llm_model2", ""),
+        "llm_service3": app_config.get("llm_service3", ""),
+        "llm_model3": app_config.get("llm_model3", ""),
         "llm_url": app_config.get("llm_url", ""),
         "llm_url2": app_config.get("llm_url2", ""),
+        "llm_url3": app_config.get("llm_url3", ""),
         "llm_reasoning_preset": app_config.get("llm_reasoning_preset", "auto"),
         "llm_reasoning_effort": app_config.get("llm_reasoning_effort", ""),
         "llm_reasoning_preset2": app_config.get("llm_reasoning_preset2", "auto"),
         "llm_reasoning_effort2": app_config.get("llm_reasoning_effort2", ""),
+        "llm_reasoning_preset3": app_config.get("llm_reasoning_preset3", "auto"),
+        "llm_reasoning_effort3": app_config.get("llm_reasoning_effort3", ""),
         "llm_custom_body": app_config.get("llm_custom_body", ""),
         "llm_custom_body2": app_config.get("llm_custom_body2", ""),
+        "llm_custom_body3": app_config.get("llm_custom_body3", ""),
         "llm_reasoning_budget_tokens": app_config.get("llm_reasoning_budget_tokens", 0),
         "llm_temperature": app_config.get("llm_temperature", 1.0),
         "llm_max_tokens": app_config.get("llm_max_tokens", 0),

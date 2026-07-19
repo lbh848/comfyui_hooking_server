@@ -29,10 +29,12 @@ def get_illust_logs() -> list:
 
 def log_illust_build(raw_positive: str, word_replaced_raw: str,
                      sections: dict, detected: list,
-                     word_replaced: dict, final_positive: str, final_negative: str):
+                     word_replaced: dict, final_positive: str, final_negative: str,
+                     context: str = ""):
     """삽화 모드 프롬프트 빌드 로그 기록."""
     log_entry = {
         "timestamp": time.time(),
+        "context": context,
         "raw_positive": raw_positive,
         "word_replaced_raw": word_replaced_raw,
         "parsed_setup": sections.get("setup", ""),

@@ -330,17 +330,24 @@ _current_config = {
     "llm_model": "gpt-4.1",
     "llm_service2": "",       # LLM2 서비스 (copilot / vertex / vertex-openai / openai / openrouter / gemini / claude / lmstudio / ollama / ollama-cloud)
     "llm_model2": "",         # LLM2 모델명 (폴백, 비워두면 비활성)
+    "llm_service3": "",       # LLM3 서비스 (삽화 CALL1/2/3 전용, 비우면 LLM1 서비스)
+    "llm_model3": "",         # LLM3 모델명
     "llm_api_key": "",        # OpenAI / OpenRouter / Gemini / Claude API 키
     "llm_api_key2": "",       # LLM2 전용 (옵션)
+    "llm_api_key3": "",       # LLM3 전용 (옵션)
     "llm_url": "",            # 베이스 URL 오버라이드 (모든 OpenAI 호환 서비스). {model} 치환 지원
     "llm_url2": "",           # LLM2 전용 URL 오버라이드
+    "llm_url3": "",           # LLM3 전용 URL 오버라이드
     "llm_reasoning_preset": "auto",   # auto|gpt|gemini|claude|deepseek|kimi|glm|custom|none
     "llm_reasoning_effort": "",       # ""|low|medium|high|none (OpenAI reasoning_effort)
     "llm_reasoning_budget_tokens": 0, # GLM/deepseek thinking budget_tokens
     "llm_reasoning_preset2": "auto",  # LLM2 전용 reasoning preset
     "llm_reasoning_effort2": "",      # LLM2 전용 reasoning effort
+    "llm_reasoning_preset3": "auto",  # LLM3 전용 reasoning preset
+    "llm_reasoning_effort3": "",      # LLM3 전용 reasoning effort
     "llm_custom_body": "",            # LLM1 preset=custom 일 때 JSON 문자열로 body 에 머지
     "llm_custom_body2": "",           # LLM2 용
+    "llm_custom_body3": "",           # LLM3 용
     "llm_temperature": 1.0,
     "llm_max_tokens": 0,              # 0 = 기본값 사용
     "llm_stream": False,
@@ -361,6 +368,7 @@ def migrate_config(config: dict) -> dict:
     for svc_key, url_key, legacy_url_key in (
         ("llm_service", "llm_url", "custom_api_url"),
         ("llm_service2", "llm_url2", "custom_api_url2"),
+        ("llm_service3", "llm_url3", "custom_api_url3"),
     ):
         if config.get(svc_key) in ("openai-compat", "customapi"):
             old = config.get(svc_key)
@@ -1167,6 +1175,83 @@ async def callLLM2(messages: list, model: str = None, json_mode: bool = False) -
         _current_config["llm_custom_body"] = saved_body
 
 
+async def callLLM3(messages: list, model: str = None, json_mode: bool = False) -> str:
+    """삽화 CALL1/CALL2/CALL3 전용 LLM3 호출.
+
+    LLM3 서비스/키/URL가 비어 있으면 LLM1의 해당 값을 재사용한다. 프롬프트는
+    config가 아니라 ``prompts/lighbd/*.txt``에서 관리한다.
+    """
+    service = _current_config.get("llm_service3") or _current_config["llm_service"]
+    use_model = model or _current_config.get("llm_model3")
+    if not use_model:
+        print("[LLM3] 호출 실패: LLM3 모델명이 설정되지 않았습니다")
+        return "[LLM 실패] LLM3 모델명이 설정되지 않았습니다"
+
+    key3 = _current_config.get("llm_api_key3", "")
+    url3 = _current_config.get("llm_url3", "")
+    preset3 = _current_config.get("llm_reasoning_preset3", "")
+    effort3 = _current_config.get("llm_reasoning_effort3", "")
+    body3 = _current_config.get("llm_custom_body3", "")
+    saved_key = _current_config.get("llm_api_key", "")
+    saved_url = _current_config.get("llm_url", "")
+    saved_preset = _current_config.get("llm_reasoning_preset", "auto")
+    saved_effort = _current_config.get("llm_reasoning_effort", "")
+    saved_body = _current_config.get("llm_custom_body", "")
+    token = _response_format_ctx.set({"type": "json_object"}) if json_mode else None
+    try:
+        if key3:
+            _current_config["llm_api_key"] = key3
+        if url3:
+            _current_config["llm_url"] = url3
+        if preset3:
+            _current_config["llm_reasoning_preset"] = preset3
+        if effort3:
+            _current_config["llm_reasoning_effort"] = effort3
+        if body3:
+            _current_config["llm_custom_body"] = body3
+        print(f"[LLM3] 호출 시작: service={service}, model={use_model}, messages={len(messages)}")
+        result = await _dispatch(messages, service, use_model)
+        if not result:
+            print("[LLM3] 호출 실패: 빈 응답")
+        return result
+    except Exception as e:
+        print(f"[LLM3] 호출 예외: {e}")
+        traceback.print_exc()
+        return f"[LLM 실패] LLM3 오류: {e}"
+    finally:
+        if token is not None:
+            _response_format_ctx.reset(token)
+        _current_config["llm_api_key"] = saved_key
+        _current_config["llm_url"] = saved_url
+        _current_config["llm_reasoning_preset"] = saved_preset
+        _current_config["llm_reasoning_effort"] = saved_effort
+        _current_config["llm_custom_body"] = saved_body
+
+
+async def callLLM3Stream(messages: list, model: str = None, log_history: bool = True):
+    """LLM3 테스트 UI용 스트림 호환 래퍼.
+
+    LLM3의 실제 삽화 파이프라인은 완료 단위 CALL 위젯을 사용한다. 테스트 API에는
+    동일한 SSE 인터페이스를 제공하기 위해 단일 결과를 done 이벤트로 내보낸다.
+    """
+    started = time.time()
+    service = _current_config.get("llm_service3") or _current_config["llm_service"]
+    use_model = model or _current_config.get("llm_model3")
+    yield {"type": "start", "service": service, "model": use_model}
+    result = await callLLM3(messages, model=model)
+    elapsed = time.time() - started
+    if not result or str(result).startswith("[LLM 실패]"):
+        print(f"[LLM3] 스트림 호환 호출 실패: {result}")
+        yield {"type": "error", "error": str(result or "빈 응답")}
+        return
+    tokens = max(1, len(result) // 3)
+    yield {
+        "type": "done", "text": result, "completion_tokens": tokens,
+        "elapsed": elapsed, "tps": tokens / elapsed if elapsed > 0 else 0.0,
+        "ttft": elapsed,
+    }
+
+
 # ─── 작업별 LLM 라우팅 (외부 API 분기) ─────────────────────────
 #
 # callLLMTask / callLLMVisionTask 는 task_key 별로 (primary LLM, fallback on/off) 를
@@ -1180,29 +1265,44 @@ def _is_llm_failed(result) -> bool:
 
 
 def _routing_for(task_key: str):
-    """task_key 의 (primary, fallback) 설정 반환. 미설정 시 (llm1, False)."""
+    """task_key 의 (primary, fallback) 설정 반환. 미설정 시 (llm1, False).
+    primary 는 llm1/llm2/llm3 중 하나(삽화 CALL1/2/3 은 llm3 기본)."""
     entry = (_current_config.get("llm_routing") or {}).get(task_key, {}) or {}
     primary = entry.get("primary", "llm1")
-    if primary not in ("llm1", "llm2"):
+    if primary not in ("llm1", "llm2", "llm3"):
         primary = "llm1"
     return primary, bool(entry.get("fallback", False))
 
 
 def routing_primary_service(task_key: str) -> str:
     """task_key 의 primary LLM 서비스명 반환. 라우팅 미설정/llm1 이면 LLM1 서비스.
-    primary=llm2 인데 llm_service2 가 비어 있으면 LLM1 서비스를 재사용(callLLM2 와 동일)."""
+    primary=llm2 인데 llm_service2 가 비어 있으면 LLM1 서비스를 재사용(callLLM2 와 동일).
+    primary=llm3 인데 llm_service3 가 비어 있어도 LLM1 서비스를 재사용(callLLM3 와 동일)."""
     primary, _ = _routing_for(task_key)
     if primary == "llm2":
         return _current_config.get("llm_service2") or _current_config["llm_service"]
+    if primary == "llm3":
+        return _current_config.get("llm_service3") or _current_config["llm_service"]
     return _current_config["llm_service"]
+
+
+def routing_primary_model(task_key: str) -> str:
+    """task_key 의 primary LLM 모델명 반환(스트림 통계/로그 표시용).
+    각 primary 의 전용 모델(llm_model2/3)이 비어 있으면 LLM1 모델로 폴백."""
+    primary, _ = _routing_for(task_key)
+    if primary == "llm2":
+        return _current_config.get("llm_model2") or _current_config.get("llm_model") or ""
+    if primary == "llm3":
+        return _current_config.get("llm_model3") or _current_config.get("llm_model") or ""
+    return _current_config.get("llm_model") or ""
 
 
 async def callLLMTask(task_key: str, messages: list, model: str = None, json_mode: bool = False) -> str:
     """
     작업별 라우팅 텍스트 LLM 호출.
 
-    config["llm_routing"][task_key] 의 primary(llm1/llm2) 에 따라 메인 LLM 호출 후,
-    fallback 이 켜져 있고 결과가 실패면 반대 LLM 으로 재시도한다.
+    config["llm_routing"][task_key] 의 primary(llm1/llm2/llm3) 에 따라 메인 LLM 호출 후,
+    fallback 이 켜져 있고 결과가 실패면 폴백 LLM(llm2/llm3 의 폴백은 llm1)으로 재시도한다.
     """
     primary, fallback = _routing_for(task_key)
     # 라우팅 엔트리에 json_mode 가 명시되어 있으면 그 값 우선(edit_illustration_prompt 토글).
@@ -1210,7 +1310,13 @@ async def callLLMTask(task_key: str, messages: list, model: str = None, json_mod
     entry = (_current_config.get("llm_routing") or {}).get(task_key, {}) or {}
     rj = entry.get("json_mode", None)
     eff_json = (bool(rj) if rj is not None else json_mode)
-    first, second = (callLLM2, callLLM) if primary == "llm2" else (callLLM, callLLM2)
+    # primary 에 따른 (메인, 폴백) LLM 함수. llm3 의 폴백은 llm1(가장 안정적인 기본).
+    if primary == "llm2":
+        first, second = callLLM2, callLLM
+    elif primary == "llm3":
+        first, second = callLLM3, callLLM
+    else:
+        first, second = callLLM, callLLM2
     _llm_log(f"callLLMTask[{task_key}]: primary={primary} fallback={fallback} json_mode={eff_json}")
     result = await first(messages, model=model, json_mode=eff_json)
     if fallback and _is_llm_failed(result):

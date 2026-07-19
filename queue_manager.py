@@ -20,6 +20,7 @@ from typing import Optional
 # LLM계열 큐 아이템 타입 — GPU/ComfyUI 자원을 쓰지 않고 네트워크(LLM API)만 사용하므로
 # 별도 워커풀(llm_max_concurrency)에서 동시 처리한다. GPU계열은 메인 루프에서 순차 처리.
 LLM_TYPES = frozenset({
+    "illustration_llm_build",       # CHAT -> CALL1/2/3 -> 다중 삽화 큐 생성
     "instance_lora_prompt_refine",  # 태그 정제 / test_setup (instance·style·bot·asset 전부 LLM 호출)
     "bot_llm_face_tag_analysis",    # 비전 LLM 기반 얼굴/눈 태그 자동 분류
 })
@@ -91,6 +92,7 @@ class QueueManager:
         # 삽화 생성 콜백 (server.py에서 주입)
         self.generate_image_with_prompt = None  # async def(positive, negative) -> (bytes, errors)
         self.process_prompt_full = None         # async def(prompt_id, prompt_data, positive, negative) -> None
+        self.process_illustration_context = None # async def(queue_item) -> dict
         self.save_backup = None                 # async def(img_bytes, mode, positive, negative) -> None
 
     def _settle_future(self, item: QueueItem) -> None:
@@ -507,6 +509,7 @@ class QueueManager:
             return await self._handle_tag_analysis(item)
         dispatch = {
             "illustration": self._handle_illustration,
+            "illustration_llm_build": self._handle_illustration_llm_build,
             "asset_generation": self._handle_asset_generation,
             "asset_lora_training": self._handle_asset_lora_training,
             "bot_lora_training": self._handle_bot_lora_training,
@@ -550,6 +553,18 @@ class QueueManager:
             raise RuntimeError("process_prompt_full 콜백이 설정되지 않았습니다")
 
         return {"success": True, "prompt_id": prompt_id}
+
+    async def _handle_illustration_llm_build(self, item: QueueItem) -> dict:
+        """CHAT 기반 CALL1/2/3 빌드. GPU 워커와 분리된 LLM 큐에서 실행한다."""
+        if not self.process_illustration_context:
+            print("[QUEUE:ILLUST_CONTEXT] process_illustration_context 콜백이 설정되지 않음")
+            raise RuntimeError("process_illustration_context 콜백이 설정되지 않았습니다")
+        try:
+            return await self.process_illustration_context(item)
+        except Exception as e:
+            print(f"[QUEUE:ILLUST_CONTEXT] 처리 실패: {e}")
+            traceback.print_exc()
+            raise
 
     async def _handle_restore_manual(self, item: QueueItem) -> dict:
         """수동 그리기 (복원 프롬프트 파일로 이미지 생성). 비삽화 모드 전용."""

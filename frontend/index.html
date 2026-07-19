@@ -8052,52 +8052,13 @@
                                   style="width: 100%; min-height: 120px; padding: 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-family: monospace; font-size: .8rem;"></textarea>
                     </div>
 
-                    <!-- LLM 테스트 패널 -->
-                    <div class="setting-row" style="flex-direction: column; align-items: stretch; margin-top: 16px; padding: 12px; border: 1px dashed var(--border); border-radius: 8px;">
-                        <div class="setting-label" style="margin-bottom: 8px;">
-                            <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 4px;">
-                                <div class="title">LLM 테스트 (스트리밍)</div>
-                                <label style="display: flex; align-items: center; gap: 4px; font-size: .85rem; color: var(--text);">
-                                    대상
-                                    <select id="llm-test-target"
-                                            style="padding: 4px 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: .85rem;">
-                                        <option value="llm1">LLM1</option>
-                                        <option value="llm2">LLM2</option>
-                                    </select>
-                                </label>
-                            </div>
-                            <div class="desc">선택한 LLM(LLM1/LLM2) 설정으로 호출. 결과가 chunk 단위로 누적되고 통계가 실시간 표시됨. logs/llm_history.jsonl 에 20개까지 저장</div>
-                        </div>
-                        <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap;">
-                            <textarea id="llm-test-input" placeholder="테스트용 프롬프트 (user 메시지)"
-                                      style="flex: 1; min-width: 320px; min-height: 60px; padding: 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-family: inherit; resize: vertical;"></textarea>
-                        </div>
-                        <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap;">
-                            <label style="display: flex; align-items: center; gap: 4px; font-size: .85rem; color: var(--text);">
-                                <input type="checkbox" id="llm-test-stream" checked> 스트리밍
-                            </label>
-                            <label style="display: flex; align-items: center; gap: 4px; font-size: .85rem; color: var(--text); cursor: pointer;">
-                                <input type="checkbox" id="llm-test-vision" onchange="_onLlmTestVisionToggle()"> 비전(이미지)
-                            </label>
-                            <label id="llm-test-image-label" style="display: none; align-items: center; gap: 4px; font-size: .8rem; color: var(--text2); cursor: pointer; padding: 4px 10px; border: 1px dashed var(--border); border-radius: 6px;">
-                                📷 <span id="llm-test-image-name">이미지 선택</span>
-                                <input type="file" id="llm-test-image" accept="image/*" style="display: none;" onchange="_onLlmTestImagePick(this)">
-                            </label>
-                            <button id="llm-test-send-btn" onclick="sendLlmTest()"
-                                    style="padding: 6px 14px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); cursor: pointer;">전송</button>
-                            <button onclick="clearLlmTest()"
-                                    style="padding: 6px 14px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); cursor: pointer;">지움</button>
-                            <div style="flex: 1;"></div>
-                            <div id="llm-test-stats" style="font-size: .8rem; color: var(--text2); font-family: monospace;">
-                                토큰: <span id="llm-test-tokens">0</span> |
-                                경과: <span id="llm-test-elapsed">0.00</span>s |
-                                <span id="llm-test-tps">0.0</span> t/s |
-                                TTFT: <span id="llm-test-ttft">-</span>
-                            </div>
-                        </div>
-                        <pre id="llm-test-output"
-                             style="min-height: 120px; max-height: 320px; overflow: auto; padding: 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font-family: monospace; font-size: .82rem; white-space: pre-wrap; word-break: break-word;"></pre>
-                    </div>
+                    <div style="margin:16px 0 8px; padding:8px 10px; border-left:3px solid #00BCD4; background:rgba(0,188,212,.08); font-size:.82rem; font-weight:700;">LLM3 · 삽화 CALL1 / CALL2 / CALL3 기본값 <span style="font-weight:400; color:var(--text-dim);">(CALL별 분기는 <b>외부 API 분기</b> 탭에서 개별 지정 가능)</span></div>
+                    <div class="setting-row"><div class="setting-label"><div class="title">LLM3 서비스 선택</div><div class="desc">비워두면 LLM1 서비스 사용</div></div><div class="setting-control"><select id="setting-llm-service3" onchange="onLlmServiceChange()" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);"><option value="">(LLM1과 동일)</option><option value="copilot">Copilot</option><option value="vertex">Vertex Gemini</option><option value="vertex-openai">Vertex OpenAI</option><option value="openai">OpenAI</option><option value="openrouter">OpenRouter</option><option value="gemini">Gemini (AI Studio)</option><option value="claude">Claude</option><option value="lmstudio">LM Studio (로컬)</option><option value="ollama">Ollama (로컬)</option><option value="ollama-cloud">Ollama Cloud</option></select></div></div>
+                    <div class="setting-row"><div class="setting-label"><div class="title">LLM3 모델명</div><div class="desc">삽화 프롬프트 빌드에 사용할 모델</div></div><div class="setting-control"><input id="setting-llm-model3" type="text" placeholder="예: gpt-4.1" style="width:220px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);"></div></div>
+                    <div class="setting-row" id="llm-api-key3-row" style="display:none;"><div class="setting-label"><div class="title">LLM3 API 키 (옵션)</div><div class="desc">비워두면 LLM1 키 재사용</div></div><div class="setting-control"><input id="setting-llm-api-key3" type="text" placeholder="sk-..." style="width:300px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-family:monospace;"></div></div>
+                    <div class="setting-row" id="llm-url3-row" style="display:none;"><div class="setting-label"><div class="title">LLM3 베이스 URL (옵션)</div><div class="desc">비워두면 LLM1 URL 재사용</div></div><div class="setting-control"><input id="setting-llm-url3" type="text" placeholder="https://..." style="width:300px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);"></div></div>
+                    <div class="setting-row" id="llm-reasoning3-row" style="display:none;"><div class="setting-label"><div class="title">LLM3 Reasoning 설정</div><div class="desc">삽화 CALL 전용 reasoning 설정</div></div><div class="setting-control" style="display:flex;gap:8px;"><select id="setting-llm-reasoning-preset3" onchange="onReasoningPreset3Change()" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);"><option value="">(LLM1과 동일)</option><option value="auto">auto</option><option value="none">none</option><option value="gpt">gpt</option><option value="glm">glm</option><option value="deepseek">deepseek</option><option value="kimi">kimi</option><option value="claude">claude</option><option value="gemini">gemini</option><option value="custom">custom</option></select><select id="setting-llm-reasoning-effort3" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);"><option value="">(LLM1과 동일)</option><option value="none">none</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option></select></div></div>
+                    <div class="setting-row" id="llm-custom-body3-row" style="display:none;flex-direction:column;align-items:stretch;"><div class="setting-label" style="margin-bottom:8px;"><div class="title">LLM3 Custom Body (JSON)</div></div><textarea id="setting-llm-custom-body3" placeholder="{ ... }" style="width:100%;min-height:120px;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-family:monospace;"></textarea></div>
 
                     <!-- LLM 자동 분류 재시도 횟수 -->
                     <div class="setting-row">
@@ -8135,6 +8096,57 @@
                         </div>
                     </div>
 
+                    </div>
+
+                    <div class="external-api-group">
+                        <div class="external-api-group-title">LLM 테스트</div>
+                    <!-- LLM 테스트 패널 -->
+                    <div class="setting-row" style="flex-direction: column; align-items: stretch; margin-top: 16px; padding: 12px; border: 1px dashed var(--border); border-radius: 8px;">
+                        <div class="setting-label" style="margin-bottom: 8px;">
+                            <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 4px;">
+                                <div class="title">LLM 테스트 (스트리밍)</div>
+                                <label style="display: flex; align-items: center; gap: 4px; font-size: .85rem; color: var(--text);">
+                                    대상
+                                    <select id="llm-test-target"
+                                            style="padding: 4px 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: .85rem;">
+                                        <option value="llm1">LLM1</option>
+                                        <option value="llm2">LLM2</option>
+                                        <option value="llm3">LLM3 (삽화)</option>
+                                    </select>
+                                </label>
+                            </div>
+                            <div class="desc">선택한 LLM(LLM1/LLM2) 설정으로 호출. 결과가 chunk 단위로 누적되고 통계가 실시간 표시됨. logs/llm_history.jsonl 에 20개까지 저장</div>
+                        </div>
+                        <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap;">
+                            <textarea id="llm-test-input" placeholder="테스트용 프롬프트 (user 메시지)"
+                                      style="flex: 1; min-width: 320px; min-height: 60px; padding: 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-family: inherit; resize: vertical;"></textarea>
+                        </div>
+                        <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap;">
+                            <label style="display: flex; align-items: center; gap: 4px; font-size: .85rem; color: var(--text);">
+                                <input type="checkbox" id="llm-test-stream" checked> 스트리밍
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 4px; font-size: .85rem; color: var(--text); cursor: pointer;">
+                                <input type="checkbox" id="llm-test-vision" onchange="_onLlmTestVisionToggle()"> 비전(이미지)
+                            </label>
+                            <label id="llm-test-image-label" style="display: none; align-items: center; gap: 4px; font-size: .8rem; color: var(--text2); cursor: pointer; padding: 4px 10px; border: 1px dashed var(--border); border-radius: 6px;">
+                                📷 <span id="llm-test-image-name">이미지 선택</span>
+                                <input type="file" id="llm-test-image" accept="image/*" style="display: none;" onchange="_onLlmTestImagePick(this)">
+                            </label>
+                            <button id="llm-test-send-btn" onclick="sendLlmTest()"
+                                    style="padding: 6px 14px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); cursor: pointer;">전송</button>
+                            <button onclick="clearLlmTest()"
+                                    style="padding: 6px 14px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); cursor: pointer;">지움</button>
+                            <div style="flex: 1;"></div>
+                            <div id="llm-test-stats" style="font-size: .8rem; color: var(--text2); font-family: monospace;">
+                                토큰: <span id="llm-test-tokens">0</span> |
+                                경과: <span id="llm-test-elapsed">0.00</span>s |
+                                <span id="llm-test-tps">0.0</span> t/s |
+                                TTFT: <span id="llm-test-ttft">-</span>
+                            </div>
+                        </div>
+                        <pre id="llm-test-output"
+                             style="min-height: 120px; max-height: 320px; overflow: auto; padding: 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font-family: monospace; font-size: .82rem; white-space: pre-wrap; word-break: break-word;"></pre>
+                    </div>
                     </div>
 
                     <div class="external-api-group">
@@ -8253,8 +8265,9 @@
                 <div class="settings-tab-panel" id="settings-tab-api_route">
                     <div class="setting-row" style="flex-direction: column; align-items: stretch;">
                         <div style="margin-bottom: 8px; color: var(--text-dim); font-size: 13px;">
-                            각 LLM 작업이 메인으로 사용할 LLM(LLM1/LLM2)과, 실패 시 반대 LLM으로 폴백할지 여부를 지정합니다.
-                            LLM2 설정은 <b>외부 API</b> 탭에서 먼저 구성하세요(LLM2 모델명이 비어있으면 LLM2 사용/폴백이 동작하지 않습니다).
+                            각 LLM 작업이 메인으로 사용할 LLM(LLM1/LLM2/LLM3)과, 실패 시 폴백할지 여부를 지정합니다.
+                            삽화 CALL1/2/3 의 기본은 LLM3 입니다(LLM3 미설정 시 LLM1으로 폴백). 폴백은 메인 실패 시 LLM1으로 재시도합니다.
+                            LLM2/LLM3 설정은 <b>외부 API</b> 탭에서 먼저 구성하세요(모델명이 비어있으면 해당 LLM 사용이 동작하지 않습니다).
                         </div>
                         <div id="llm-routing-table" style="display: flex; flex-direction: column; gap: 6px;"></div>
                     </div>
@@ -11015,6 +11028,8 @@
             if (llmUrlEl) llmUrlEl.value = currentConfig.llm_url || '';
             const llmUrl2El = document.getElementById('setting-llm-url2');
             if (llmUrl2El) llmUrl2El.value = currentConfig.llm_url2 || '';
+            const llmUrl3El = document.getElementById('setting-llm-url3');
+            if (llmUrl3El) llmUrl3El.value = currentConfig.llm_url3 || '';
             const aftRetriesEl = document.getElementById('setting-auto-face-tag-retries');
             if (aftRetriesEl) aftRetriesEl.value = (currentConfig.auto_face_tag_max_retries ?? 2);
             const aftDelayEl = document.getElementById('setting-auto-llm-retry-delay');
@@ -11037,10 +11052,19 @@
             if (llmEffort2El) llmEffort2El.value = currentConfig.llm_reasoning_effort2 || '';
             const llmCustomBody2El = document.getElementById('setting-llm-custom-body2');
             if (llmCustomBody2El) llmCustomBody2El.value = currentConfig.llm_custom_body2 || '';
+            const llmPreset3El = document.getElementById('setting-llm-reasoning-preset3');
+            if (llmPreset3El) llmPreset3El.value = currentConfig.llm_reasoning_preset3 || '';
+            const llmEffort3El = document.getElementById('setting-llm-reasoning-effort3');
+            if (llmEffort3El) llmEffort3El.value = currentConfig.llm_reasoning_effort3 || '';
+            const llmCustomBody3El = document.getElementById('setting-llm-custom-body3');
+            if (llmCustomBody3El) llmCustomBody3El.value = currentConfig.llm_custom_body3 || '';
             onReasoningPresetChange();
             onReasoningPreset2Change();
+            onReasoningPreset3Change();
             document.getElementById('setting-llm-service2').value = currentConfig.llm_service2 || '';
             document.getElementById('setting-llm-model2').value = currentConfig.llm_model2 || '';
+            document.getElementById('setting-llm-service3').value = currentConfig.llm_service3 || '';
+            document.getElementById('setting-llm-model3').value = currentConfig.llm_model3 || '';
             onLlmServiceChange();
 
             // LLM API 키 별도 로드 (key/llm_keys.json)
@@ -11286,6 +11310,7 @@
 
         // ─── 큐 우선순위 설정 ───
         const QUEUE_TYPE_LABELS = {
+            illustration_llm_build: '삽화 LLM 빌드',
             asset_lora_training: '에셋 LoRA 학습',
             bot_lora_training: '봇 LoRA 학습',
             instance_lora_analysis: '인스턴스 LoRA 분석 및 학습',
@@ -11879,14 +11904,20 @@
                 llm_model: document.getElementById('setting-llm-model').value,
                 llm_service2: document.getElementById('setting-llm-service2').value,
                 llm_model2: document.getElementById('setting-llm-model2').value,
+                llm_service3: document.getElementById('setting-llm-service3').value,
+                llm_model3: document.getElementById('setting-llm-model3').value,
                 llm_url: (document.getElementById('setting-llm-url') || {}).value || '',
                 llm_url2: (document.getElementById('setting-llm-url2') || {}).value || '',
+                llm_url3: (document.getElementById('setting-llm-url3') || {}).value || '',
                 llm_reasoning_preset: (document.getElementById('setting-llm-reasoning-preset') || {}).value || 'auto',
                 llm_reasoning_effort: (document.getElementById('setting-llm-reasoning-effort') || {}).value || '',
                 llm_custom_body: (document.getElementById('setting-llm-custom-body') || {}).value || '',
                 llm_reasoning_preset2: (document.getElementById('setting-llm-reasoning-preset2') || {}).value || '',
                 llm_reasoning_effort2: (document.getElementById('setting-llm-reasoning-effort2') || {}).value || '',
                 llm_custom_body2: (document.getElementById('setting-llm-custom-body2') || {}).value || '',
+                llm_reasoning_preset3: (document.getElementById('setting-llm-reasoning-preset3') || {}).value || '',
+                llm_reasoning_effort3: (document.getElementById('setting-llm-reasoning-effort3') || {}).value || '',
+                llm_custom_body3: (document.getElementById('setting-llm-custom-body3') || {}).value || '',
                 llm_routing: collectLlmRouting(),
                 embedding_provider: document.getElementById('setting-embedding-provider').value,
                 embedding_url: document.getElementById('setting-embedding-url').value,
@@ -12965,7 +12996,7 @@
             const t = data.type;
             if (t === 'start') {
                 _setLlbStat('lighbd-llm-model', data.model || '-');
-                _setLlbStat('lighbd-llm-status', '시작');
+                _setLlbStat('lighbd-llm-status', (data.call_name ? data.call_name + ' · ' : '') + '시작');
                 _setLlbStat('lighbd-llm-tokens', '0');
                 _setLlbStat('lighbd-llm-elapsed', '0.00');
                 _setLlbStat('lighbd-llm-tps', '0.0');
@@ -13007,7 +13038,7 @@
                 _setLlbStat('lighbd-llm-tps', (Math.round((data.tps || 0) * 10) / 10).toFixed(1));
                 if (data.ttft !== undefined && data.ttft !== null)
                     _setLlbStat('lighbd-llm-ttft', (Math.round(data.ttft * 1000)) + 'ms');
-                _setLlbStat('lighbd-llm-status', '완료');
+                _setLlbStat('lighbd-llm-status', (data.call_name ? data.call_name + ' · ' : '') + '완료');
                 const sp = document.getElementById('lighbd-llm-spinner');
                 if (sp) sp.style.display = 'none';
                 // 자동 숨김 없음 — 사용자가 × 누를 때까지 유지
@@ -13103,6 +13134,7 @@
         function onLlmServiceChange() {
             const s1 = document.getElementById('setting-llm-service').value;
             const s2 = document.getElementById('setting-llm-service2').value;
+            const s3 = document.getElementById('setting-llm-service3').value;
 
             // 어떤 provider가 API 키 필요로 하는가 (lmstudio/ollama 는 로컬이라 키 옵션)
             const needsKey = (s) => ['openai', 'openrouter', 'gemini', 'claude', 'ollama-cloud', 'lmstudio', 'ollama'].includes(s);
@@ -13136,6 +13168,19 @@
                 if (url2Row) url2Row.style.display = 'none';
                 if (reasoning2Row) reasoning2Row.style.display = 'none';
             }
+
+            const key3Row = document.getElementById('llm-api-key3-row');
+            const url3Row = document.getElementById('llm-url3-row');
+            const reasoning3Row = document.getElementById('llm-reasoning3-row');
+            if (s3) {
+                if (key3Row) key3Row.style.display = needsKey(s3) ? 'flex' : 'none';
+                if (url3Row) url3Row.style.display = needsUrl(s3) ? 'flex' : 'none';
+                if (reasoning3Row) reasoning3Row.style.display = supportsReasoning(s3) ? 'flex' : 'none';
+            } else {
+                if (key3Row) key3Row.style.display = 'none';
+                if (url3Row) url3Row.style.display = 'none';
+                if (reasoning3Row) reasoning3Row.style.display = 'none';
+            }
         }
 
         function onEmbeddingProviderChange() {
@@ -13166,15 +13211,20 @@
             { key: 'refine_lora_prompt',       label: 'LoRA/에셋/스타일 정제', kind: '비전' },
             { key: 'refine_lora_test_setup',   label: '테스트 이미지 일괄 세팅(봇/에셋)',kind: '텍스트' },
             { key: 'edit_illustration_prompt', label: '삽화 LLM과 함께 수정', kind: '비전/JSON' },
+            { key: 'illustration_call1',       label: '삽화 CALL1 (전처리)',           kind: '텍스트' },
+            { key: 'illustration_call2',       label: '삽화 CALL2 (본문)',             kind: '텍스트' },
+            { key: 'illustration_call3',       label: '삽화 CALL3 (후처리 및 대사 생성)', kind: '텍스트' },
         ];
 
         function renderLlmRoutingTable() {
             const container = document.getElementById('llm-routing-table');
             if (!container) return;
             const routing = (currentConfig && currentConfig.llm_routing) || {};
-            // LLM2 설정 여부 안내용
+            // LLM2/LLM3 설정 여부 안내용
             const llm2Model = (currentConfig && currentConfig.llm_model2) || '';
             const llm2Ready = !!llm2Model;
+            const llm3Model = (currentConfig && currentConfig.llm_model3) || '';
+            const llm3Ready = !!llm3Model;
 
             // 헤더 (5열: 작업 / 형태 / 메인 LLM / 폴백 / JSON)
             const gridCols = '1.6fr 0.8fr 0.7fr 0.5fr 0.5fr';
@@ -13185,7 +13235,7 @@
 
             for (const t of LLM_ROUTING_TASKS) {
                 const entry = routing[t.key] || {};
-                const primary = entry.primary === 'llm2' ? 'llm2' : 'llm1';
+                const primary = (entry.primary === 'llm2' || entry.primary === 'llm3') ? entry.primary : 'llm1';
                 const fallback = !!entry.fallback;
                 // JSON 토글은 edit_illustration_prompt 에만. 기존 설정에 키가 없으면 기본 ON.
                 const supportsJson = t.key === 'edit_illustration_prompt';
@@ -13197,6 +13247,7 @@
                 html += `<div><select data-route-key="${t.key}" data-route-field="primary" style="padding: 4px 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text);">`;
                 html += `<option value="llm1"${primary === 'llm1' ? ' selected' : ''}>LLM1</option>`;
                 html += `<option value="llm2"${primary === 'llm2' ? ' selected' : ''}${llm2Ready ? '' : ' disabled'}>LLM2${llm2Ready ? '' : ' (미설정)'}</option>`;
+                html += `<option value="llm3"${primary === 'llm3' ? ' selected' : ''}${llm3Ready ? '' : ' disabled'}>LLM3${llm3Ready ? '' : ' (미설정)'}</option>`;
                 html += '</select></div>';
                 html += `<div style="text-align: center;"><input type="checkbox" data-route-key="${t.key}" data-route-field="fallback"${fallback ? ' checked' : ''} title="메인 LLM 실패 시 반대 LLM으로 재시도"></div>`;
                 if (supportsJson) {
@@ -13209,6 +13260,9 @@
 
             if (!llm2Ready) {
                 html += '<div style="margin-top: 6px; font-size: 12px; color: #d89a3a;">⚠ 외부 API 탭에서 LLM2 모델명을 설정해야 LLM2 선택/폴백이 동작합니다.</div>';
+            }
+            if (!llm3Ready) {
+                html += '<div style="margin-top: 6px; font-size: 12px; color: #d89a3a;">⚠ 외부 API 탭에서 LLM3 모델명을 설정해야 삽화 CALL의 LLM3 선택이 동작합니다(미설정 시 LLM1으로 폴백).</div>';
             }
             html += '<div style="margin-top: 6px; font-size: 11px; color: var(--text-dim);">💡 JSON 토글은 <b>삽화 LLM과 함께 수정</b>에만 적용됩니다. 끄면 response_format을 보내지 않아 모델이 자연스럽게 JSON을 쓰고 stop합니다(파싱은 그대로 복구).</div>';
             container.innerHTML = html;
@@ -13226,7 +13280,7 @@
                 const sel = document.querySelector(`select[data-route-key="${t.key}"][data-route-field="primary"]`);
                 const cb = document.querySelector(`input[data-route-key="${t.key}"][data-route-field="fallback"]`);
                 const entry = {
-                    primary: (sel && sel.value === 'llm2') ? 'llm2' : 'llm1',
+                    primary: (sel && (sel.value === 'llm2' || sel.value === 'llm3')) ? sel.value : 'llm1',
                     fallback: !!(cb && cb.checked),
                 };
                 // JSON 포맷 토글은 edit_illustration_prompt 에만 저장
@@ -13248,6 +13302,8 @@
                 if (k1) k1.value = data.llm_api_key || '';
                 const k2 = document.getElementById('setting-llm-api-key2');
                 if (k2) k2.value = data.llm_api_key2 || '';
+                const k3 = document.getElementById('setting-llm-api-key3');
+                if (k3) k3.value = data.llm_api_key3 || '';
             } catch (e) {
                 console.error('load LLM keys:', e);
             }
@@ -13256,11 +13312,12 @@
         async function saveLlmKeys() {
             const k1 = (document.getElementById('setting-llm-api-key') || {}).value || '';
             const k2 = (document.getElementById('setting-llm-api-key2') || {}).value || '';
+            const k3 = (document.getElementById('setting-llm-api-key3') || {}).value || '';
             try {
                 await fetch('/api/llm/keys', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ llm_api_key: k1, llm_api_key2: k2 }),
+                    body: JSON.stringify({ llm_api_key: k1, llm_api_key2: k2, llm_api_key3: k3 }),
                 });
             } catch (e) {
                 console.error('save LLM keys:', e);
@@ -36054,6 +36111,7 @@
                     <div style="display:flex; gap:4px; padding:8px 16px 0; border-bottom:1px solid var(--border);">
                         <button id="illust-tab-logs" onclick="switchIllustModalTab('logs')" style="background:var(--accent); color:#fff; border:none; padding:8px 16px; border-radius:6px 6px 0 0; cursor:pointer; font-size:0.85rem; font-weight:600;">빌드 로그</button>
                         <button id="illust-tab-llm" onclick="switchIllustModalTab('llm')" style="background:var(--surface2); color:var(--text2); border:none; padding:8px 16px; border-radius:6px 6px 0 0; cursor:pointer; font-size:0.85rem;">LLM 프롬프트 빌드</button>
+                        <button id="illust-tab-toggles" onclick="switchIllustModalTab('toggles')" style="background:var(--surface2); color:var(--text2); border:none; padding:8px 16px; border-radius:6px 6px 0 0; cursor:pointer; font-size:0.85rem;">삽화 토글</button>
                     </div>
                     <div class="modal-body" id="illust-log-body" style="max-height:70vh; overflow-y:auto;">
                         <div id="illust-tab-content-logs">
@@ -36061,14 +36119,25 @@
                         </div>
                         <div id="illust-tab-content-llm" style="display:none; padding:12px 16px;">
                             <div style="margin-bottom:12px; padding:8px; background:rgba(0,0,0,0.06); border-radius:6px; font-size:0.75rem; color:var(--text2); line-height:1.5;">
-                                lighbd LLM 메시지 시퀀스 (루아 LightBoard XNAI 구조 반영):<br>
-                                1. <strong>jailbreak.txt</strong> + <strong>job.txt</strong> → 첫 user 메시지 (# System rules + # Job Instruction)<br>
-                                2. <strong>CHARACTER DICTIONARY</strong> (lb_extra 자동 주입, 별도 user)<br>
-                                3. 로그 시작 마커 → 4. <strong>context</strong> → assistant 메시지 → 5. 로그 종료 마커<br>
-                                6. <strong>thoughts.txt</strong> + <strong>system.txt</strong>(Tagging Details) + <strong>format.txt</strong> → 마지막 user 메시지 (# Output)<br>
-                                7. 최종 포맷 리마인더<br>
-                                <strong>preset.txt</strong>는 LLM 출력이 아니라 분할 결과(descriptor)를 IllustPromptBuilder로 전달하기 위한 템플릿. 플레이스홀더: <code>{chat}</code>(본문), <code>{slot}</code>(빈 값), <code>{name}</code>, <code>{setup}</code>(camera+scene), <code>{char}</code>, <code>{supplement}</code>.
+                                CHAT을 받은 서버가 CALL1 → CALL2 → CALL3 순서로 실행합니다. 프롬프트 본문은 config.json이 아니라 아래 개별 txt 파일에 저장됩니다.
+                                1. CALL1은 <strong>enhance.txt</strong>와 최근 CHAT으로 현재 응답의 시각 힌트를 만듭니다.<br>
+                                2. CALL2 system = <strong>jailbreak.txt</strong> + <strong>job.txt</strong> + <strong>system.txt</strong>, 이후 활성 봇 <strong>lb.extra</strong>와 CHAT·슬롯 본문을 전달합니다.<br>
+                                3. CALL2 output 지시 = <strong>thoughts.txt</strong> + <strong>format.txt</strong>, 선택적으로 <strong>prefill.txt</strong>를 사용합니다.<br>
+                                4. CALL3은 정상 결과에는 <strong>speak.txt</strong>, 파싱 실패에는 <strong>repair.txt</strong>를 사용합니다.<br>
+                                <strong>preset.txt</strong>는 descriptor를 기존 RAW 프롬프트로 변환하는 템플릿입니다. 삽화 토글의 프리셋 이름이 지정되고 <code>preset_이름.txt</code>가 존재하면 그 파일을 우선 사용합니다.
                             </div>
+                            <div style="display:flex; gap:5px; margin:0 0 10px;">
+                                <button id="illust-call-tab-call1" onclick="switchIllustCallTab('call1')" style="padding:6px 14px; border:1px solid var(--border); border-radius:5px; background:var(--accent); color:#fff; cursor:pointer;">CALL1</button>
+                                <button id="illust-call-tab-call2" onclick="switchIllustCallTab('call2')" style="padding:6px 14px; border:1px solid var(--border); border-radius:5px; background:var(--surface2); color:var(--text); cursor:pointer;">CALL2</button>
+                                <button id="illust-call-tab-call3" onclick="switchIllustCallTab('call3')" style="padding:6px 14px; border:1px solid var(--border); border-radius:5px; background:var(--surface2); color:var(--text); cursor:pointer;">CALL3</button>
+                            </div>
+                            <div id="illust-call-content-call1">
+                                <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
+                                    <summary style="cursor:pointer; font-size:0.8rem; font-weight:600;">📝 enhance.txt (컨텍스트 보강)</summary>
+                                    <textarea id="lighbd-prompt-call1_enhance" data-lighbd-prompt="call1_enhance" style="width:100%; height:300px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;"></textarea>
+                                </details>
+                            </div>
+                            <div id="illust-call-content-call2" style="display:none;">
                             <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
                                 <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--text);">📝 jailbreak.txt (첫 user - # System rules / 요정 프레임)</summary>
                                 <textarea id="lighbd-prompt-jailbreak" data-lighbd-prompt="jailbreak" style="width:100%; height:140px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
@@ -36076,6 +36145,10 @@
                             <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
                                 <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--text);">📝 job.txt (첫 user - # Job Instruction)</summary>
                                 <textarea id="lighbd-prompt-job" data-lighbd-prompt="job" style="width:100%; height:90px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
+                            </details>
+                            <details style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
+                                <summary style="cursor:pointer; font-size:0.8rem; font-weight:600;">📝 prefill.txt (CALL2 assistant prefill)</summary>
+                                <textarea id="lighbd-prompt-call2_prefill" data-lighbd-prompt="call2_prefill" style="width:100%; height:120px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;"></textarea>
                             </details>
                             <details style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
                                 <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--text);">📝 thoughts.txt (마지막 user - # Output step-by-step)</summary>
@@ -36093,8 +36166,20 @@
                                 <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--text);">📝 preset.txt (IllustPromptBuilder용 템플릿)</summary>
                                 <textarea id="lighbd-prompt-preset" data-lighbd-prompt="preset" style="width:100%; height:220px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
                             </details>
+                            </div>
+                            <div id="illust-call-content-call3" style="display:none;">
+                                <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
+                                    <summary style="cursor:pointer; font-size:0.8rem; font-weight:600;">📝 speak.txt (장면별 대사)</summary>
+                                    <textarea id="lighbd-prompt-call3_speak" data-lighbd-prompt="call3_speak" style="width:100%; height:260px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;"></textarea>
+                                </details>
+                                <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
+                                    <summary style="cursor:pointer; font-size:0.8rem; font-weight:600;">📝 repair.txt (TOON 교정)</summary>
+                                    <textarea id="lighbd-prompt-call3_repair" data-lighbd-prompt="call3_repair" style="width:100%; height:260px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;"></textarea>
+                                </details>
+                            </div>
                             <div id="lighbd-prompt-status" style="margin-top:8px; font-size:0.72rem; color:var(--text2);"></div>
                         </div>
+                        <div id="illust-tab-content-toggles" style="display:none; padding:12px 16px;"></div>
                     </div>
                     <div class="modal-footer" id="illust-log-footer-logs" style="display:flex; align-items:center; gap:8px;">
                         <button id="illust-log-prev" onclick="illustLogPage(-1)" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:6px 12px; border-radius:4px; cursor:pointer;">◀ 이전</button>
@@ -36110,52 +36195,83 @@
                         <button onclick="saveLighbdPrompts()" style="background:var(--accent); color:#fff; border:none; padding:6px 16px; border-radius:4px; cursor:pointer;">💾 저장</button>
                         <button onclick="document.getElementById('illust-log-modal').classList.remove('visible')" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:6px 16px; border-radius:4px; cursor:pointer;">닫기</button>
                     </div>
+                    <div class="modal-footer" id="illust-log-footer-toggles" style="display:none; align-items:center; gap:8px;">
+                        <span id="illust-toggle-status" style="font-size:0.75rem; color:var(--text2); flex:1;"></span>
+                        <button onclick="loadIllustrationContextToggles()" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:6px 16px; border-radius:4px; cursor:pointer;">다시 불러오기</button>
+                        <button onclick="saveIllustrationContextToggles()" style="background:var(--accent); color:#fff; border:none; padding:6px 16px; border-radius:4px; cursor:pointer;">💾 저장</button>
+                        <button onclick="document.getElementById('illust-log-modal').classList.remove('visible')" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:6px 16px; border-radius:4px; cursor:pointer;">닫기</button>
+                    </div>
                 </div>
             `;
             document.body.appendChild(modal);
             modal.classList.add('visible');
             refreshIllustLogs();
             loadLighbdPrompts();
+            loadIllustrationContextToggles();
+        }
+        function onReasoningPreset3Change() {
+            const v = document.getElementById('setting-llm-reasoning-preset3').value;
+            const row = document.getElementById('llm-custom-body3-row');
+            if (row) row.style.display = (v === 'custom') ? 'flex' : 'none';
         }
 
         function switchIllustModalTab(tab) {
             const logs = document.getElementById('illust-tab-logs');
             const llm = document.getElementById('illust-tab-llm');
+            const toggles = document.getElementById('illust-tab-toggles');
             const logsBody = document.getElementById('illust-tab-content-logs');
             const llmBody = document.getElementById('illust-tab-content-llm');
+            const togglesBody = document.getElementById('illust-tab-content-toggles');
             const logsFooter = document.getElementById('illust-log-footer-logs');
             const llmFooter = document.getElementById('illust-log-footer-llm');
-            if (tab === 'logs') {
-                logs.style.background = 'var(--accent)'; logs.style.color = '#fff'; logs.style.fontWeight = '600';
-                llm.style.background = 'var(--surface2)'; llm.style.color = 'var(--text2)'; llm.style.fontWeight = '400';
-                logsBody.style.display = '';
-                llmBody.style.display = 'none';
-                logsFooter.style.display = 'flex';
-                llmFooter.style.display = 'none';
-            } else {
-                llm.style.background = 'var(--accent)'; llm.style.color = '#fff'; llm.style.fontWeight = '600';
-                logs.style.background = 'var(--surface2)'; logs.style.color = 'var(--text2)'; logs.style.fontWeight = '400';
-                llmBody.style.display = '';
-                logsBody.style.display = 'none';
-                llmFooter.style.display = 'flex';
-                logsFooter.style.display = 'none';
-                loadLighbdPrompts();
+            const togglesFooter = document.getElementById('illust-log-footer-toggles');
+            for (const [name, button] of [['logs', logs], ['llm', llm], ['toggles', toggles]]) {
+                const active = name === tab;
+                button.style.background = active ? 'var(--accent)' : 'var(--surface2)';
+                button.style.color = active ? '#fff' : 'var(--text2)';
+                button.style.fontWeight = active ? '600' : '400';
+            }
+            logsBody.style.display = tab === 'logs' ? '' : 'none';
+            llmBody.style.display = tab === 'llm' ? '' : 'none';
+            togglesBody.style.display = tab === 'toggles' ? '' : 'none';
+            logsFooter.style.display = tab === 'logs' ? 'flex' : 'none';
+            llmFooter.style.display = tab === 'llm' ? 'flex' : 'none';
+            togglesFooter.style.display = tab === 'toggles' ? 'flex' : 'none';
+            if (tab === 'llm') loadLighbdPrompts();
+            if (tab === 'toggles') loadIllustrationContextToggles();
+        }
+
+        function switchIllustCallTab(tab) {
+            for (const name of ['call1', 'call2', 'call3']) {
+                const active = name === tab;
+                const button = document.getElementById('illust-call-tab-' + name);
+                const content = document.getElementById('illust-call-content-' + name);
+                if (button) {
+                    button.style.background = active ? 'var(--accent)' : 'var(--surface2)';
+                    button.style.color = active ? '#fff' : 'var(--text)';
+                }
+                if (content) content.style.display = active ? '' : 'none';
             }
         }
 
         async function loadLighbdPrompts() {
             const statusEl = document.getElementById('lighbd-prompt-status');
-            const fields = ['system', 'preset', 'jailbreak', 'job', 'thoughts', 'format'];
+            const fields = {
+                call1_enhance: 'call1_enhance',
+                call2_jailbreak: 'jailbreak', call2_job: 'job', call2_prefill: 'call2_prefill',
+                call2_thoughts: 'thoughts', call2_system: 'system', call2_format: 'format', call2_preset: 'preset',
+                call3_speak: 'call3_speak', call3_repair: 'call3_repair',
+            };
             statusEl.textContent = '불러오는 중...';
             try {
-                const res = await fetch('/api/lighbd/prompts');
+                const res = await fetch('/api/illustration_context/prompts');
                 if (!res.ok) throw new Error('HTTP ' + res.status);
                 const data = await res.json();
-                for (const k of fields) {
-                    const el = document.getElementById('lighbd-prompt-' + k);
+                for (const [k, id] of Object.entries(fields)) {
+                    const el = document.getElementById('lighbd-prompt-' + id);
                     if (el) el.value = data[k] || '';
                 }
-                const sizes = fields.map(k => `${k} ${data[k]?.length || 0}자`).join(' · ');
+                const sizes = Object.keys(fields).map(k => `${k} ${data[k]?.length || 0}자`).join(' · ');
                 statusEl.textContent = `로드 완료 (${sizes})`;
             } catch (e) {
                 statusEl.innerHTML = `<span style="color:#ff6b6b;">로드 실패: ${escapeHtml(e.message || String(e))}</span>`;
@@ -36164,15 +36280,20 @@
 
         async function saveLighbdPrompts() {
             const statusEl = document.getElementById('lighbd-prompt-status');
-            const fields = ['system', 'preset', 'jailbreak', 'job', 'thoughts', 'format'];
+            const fields = {
+                call1_enhance: 'call1_enhance',
+                call2_jailbreak: 'jailbreak', call2_job: 'job', call2_prefill: 'call2_prefill',
+                call2_thoughts: 'thoughts', call2_system: 'system', call2_format: 'format', call2_preset: 'preset',
+                call3_speak: 'call3_speak', call3_repair: 'call3_repair',
+            };
             const body = {};
-            for (const k of fields) {
-                const el = document.getElementById('lighbd-prompt-' + k);
+            for (const [k, id] of Object.entries(fields)) {
+                const el = document.getElementById('lighbd-prompt-' + id);
                 if (el) body[k] = el.value;
             }
             statusEl.textContent = '저장 중...';
             try {
-                const res = await fetch('/api/lighbd/prompts', {
+                const res = await fetch('/api/illustration_context/prompts', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify(body),
@@ -36183,10 +36304,97 @@
                 }
                 const data = await res.json();
                 statusEl.innerHTML = `<span style="color:#5cd5a0;">저장 완료 (파일: ${(data.saved || []).join(', ')})</span>`;
-                showToast('lighbd 프롬프트 저장 완료', 'success');
+                showToast('CALL1/2/3 프롬프트 저장 완료', 'success');
             } catch (e) {
                 statusEl.innerHTML = `<span style="color:#ff6b6b;">저장 실패: ${escapeHtml(e.message || String(e))}</span>`;
                 showToast('lighbd 프롬프트 저장 실패: ' + (e.message || String(e)), 'error');
+            }
+        }
+
+        const ILLUSTRATION_CONTEXT_TOGGLE_FIELDS = [
+            ['call1_enabled', 'CALL1 컨텍스트 보강', 'checkbox'],
+            ['call1_context_turns', 'CALL1/2/3 최근 메시지 사용 수', 'number'],
+            ['call3_enabled', 'CALL3 교정/대사', 'checkbox'],
+            ['speak_enabled', '장면별 SPEAK 생성', 'checkbox'],
+            ['speak_language', 'SPEAK 언어', 'select', ['한국어', '영어', '일어', '중어']],
+            ['speak_emotion_enabled', 'SPEAK 감정 태그', 'checkbox'],
+            ['speak_emotions', '허용 감정 (; 구분)', 'text'],
+            ['nsfw', 'NSFW 태깅', 'checkbox'],
+            ['supplement', 'SUPPLEMENT 생성', 'checkbox'],
+            ['key_visual', 'Key Visual 생성', 'checkbox'],
+            ['character_limit', '이미지당 최대 캐릭터', 'select', [1, 2, 3]],
+            ['scene_max', '최대 Scene 수', 'select', [1, 3, 5, 7, 9, 11, 13, 15]],
+            ['context_history', 'lb.extra 외형 이력 사용', 'checkbox'],
+            ['focus', '집중 캐릭터', 'text'],
+            ['direction', '우선 연출 지시', 'textarea'],
+            ['preset', 'RAW 프롬프트 프리셋 (preset_이름.txt)', 'text'],
+            ['positive_note', '긍정 프롬프트 추가', 'textarea'],
+            ['negative_note', '부정 프롬프트 추가', 'textarea'],
+            ['compat_comfy', 'Comfy 호환', 'checkbox'],
+            ['compat_character_divider', '캐릭터 구분', 'select', ['newline', 'pipe']],
+            ['compat_character_prompt', '캐릭터 프롬프트', 'select', ['separate', 'normal']],
+        ];
+        let _illustrationContextToggles = {};
+
+        function renderIllustrationContextToggles() {
+            const body = document.getElementById('illust-tab-content-toggles');
+            if (!body) return;
+            const inputStyle = 'width:100%; padding:7px 8px; border:1px solid var(--border); border-radius:5px; background:var(--surface2); color:var(--text); box-sizing:border-box;';
+            body.innerHTML = `
+                <div style="font-size:0.75rem; color:var(--text2); line-height:1.5; margin-bottom:12px; padding:8px; background:rgba(0,0,0,0.06); border-radius:6px;">
+                    기존 모듈의 CALL/장면/호환 변수 중 서버 프롬프트 빌드에 관여하는 항목입니다. 표시 방식·이미지 폭 같은 Risu 화면 전용 값은 v14 모듈에 남습니다.
+                </div>
+                <div style="display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px;">
+                    ${ILLUSTRATION_CONTEXT_TOGGLE_FIELDS.map(([key, label, type, options]) => {
+                        const value = _illustrationContextToggles[key];
+                        if (type === 'checkbox') return `<label style="display:flex; align-items:center; gap:8px; padding:9px; border:1px solid var(--border); border-radius:6px; background:var(--surface2); cursor:pointer;"><input data-illust-toggle="${key}" type="checkbox" ${value ? 'checked' : ''}><span style="font-size:0.78rem;">${label}</span></label>`;
+                        if (type === 'select') return `<label style="display:flex; flex-direction:column; gap:4px;"><span style="font-size:0.72rem; color:var(--text2);">${label}</span><select data-illust-toggle="${key}" style="${inputStyle}">${options.map(o => `<option value="${escapeHtml(String(o))}" ${String(value) === String(o) ? 'selected' : ''}>${escapeHtml(String(o))}</option>`).join('')}</select></label>`;
+                        if (type === 'textarea') return `<label style="display:flex; flex-direction:column; gap:4px; grid-column:1/-1;"><span style="font-size:0.72rem; color:var(--text2);">${label}</span><textarea data-illust-toggle="${key}" style="${inputStyle} min-height:75px; resize:vertical;">${escapeHtml(value || '')}</textarea></label>`;
+                        return `<label style="display:flex; flex-direction:column; gap:4px;"><span style="font-size:0.72rem; color:var(--text2);">${label}</span><input data-illust-toggle="${key}" type="${type}" value="${escapeHtml(value ?? '')}" style="${inputStyle}"></label>`;
+                    }).join('')}
+                </div>`;
+        }
+
+        async function loadIllustrationContextToggles() {
+            const status = document.getElementById('illust-toggle-status');
+            if (status) status.textContent = '불러오는 중...';
+            try {
+                const res = await fetch('/api/illustration_context/toggles');
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                const data = await res.json();
+                _illustrationContextToggles = data.toggles || {};
+                renderIllustrationContextToggles();
+                if (status) status.textContent = '로드 완료';
+            } catch (e) {
+                console.error('[ILLUST_CONTEXT] 토글 로드 실패:', e);
+                if (status) status.textContent = '로드 실패: ' + (e.message || e);
+            }
+        }
+
+        async function saveIllustrationContextToggles() {
+            const body = {};
+            for (const [key, , type] of ILLUSTRATION_CONTEXT_TOGGLE_FIELDS) {
+                const el = document.querySelector(`[data-illust-toggle="${key}"]`);
+                if (!el) continue;
+                body[key] = type === 'checkbox' ? el.checked : (type === 'number' ? Number(el.value) : el.value);
+            }
+            const status = document.getElementById('illust-toggle-status');
+            if (status) status.textContent = '저장 중...';
+            try {
+                const res = await fetch('/api/illustration_context/toggles', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({toggles: body}),
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+                _illustrationContextToggles = data.toggles || body;
+                renderIllustrationContextToggles();
+                if (status) status.textContent = '저장 완료';
+                showToast('삽화 토글 저장 완료', 'success');
+            } catch (e) {
+                console.error('[ILLUST_CONTEXT] 토글 저장 실패:', e);
+                if (status) status.textContent = '저장 실패: ' + (e.message || e);
+                showToast('삽화 토글 저장 실패: ' + (e.message || e), 'error');
             }
         }
 
@@ -36223,6 +36431,10 @@
                 html += `
                     <div style="background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:12px;">
                         <div style="font-size:0.75rem; color:var(--text2); margin-bottom:10px; padding-bottom:8px; border-bottom:1px solid var(--border);">${ts} | 감지: ${log.detected_characters?.join(', ') || '없음'}</div>
+                        <div style="margin-bottom:10px; padding:8px; background:rgba(0,188,212,0.08); border-radius:6px; border-left:3px solid #00BCD4;">
+                            <div style="font-size:0.8rem; font-weight:700; margin-bottom:6px; color:#00BCD4;">CONTEXT (실제 CHAT 데이터)</div>
+                            <pre style="font-size:0.7rem; white-space:pre-wrap; color:var(--text); max-height:260px; overflow-y:auto; background:rgba(0,0,0,0.04); padding:6px; border-radius:4px; margin:0;">${escapeHtml(log.context || '(일반 RAW 요청 — CONTEXT 없음)')}</pre>
+                        </div>
                         <div style="margin-bottom:10px; padding:8px; background:rgba(0,0,0,0.08); border-radius:6px;">
                             <div style="font-size:0.8rem; font-weight:700; margin-bottom:6px; color:var(--accent);">Raw 프롬프트</div>
                             <pre style="font-size:0.7rem; white-space:pre-wrap; color:var(--text); max-height:200px; overflow-y:auto; background:rgba(0,0,0,0.04); padding:6px; border-radius:4px; margin:0;">${escapeHtml(log.raw_positive || '')}</pre>

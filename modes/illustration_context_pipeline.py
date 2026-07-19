@@ -1,0 +1,935 @@
+"""CHAT -> CALL1/CALL2/CALL3 -> 기존 RAW 삽화 프롬프트 전단계.
+
+RisuAI는 Comfy history에 이미지가 여러 장 있어도 첫 장만 소비한다. 이 모듈은
+최초 CHAT 요청과 후속 결과 회수 요청을 구분하고, 한 세션의 모든 장면 프롬프트와
+이미지를 서버 메모리에 보관할 수 있는 공통 형식을 제공한다.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import time
+import traceback
+from copy import deepcopy
+from urllib.parse import quote
+
+import yaml
+
+from modes import llm_service
+
+
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PROMPTS_DIR = os.path.join(BASE_DIR, "prompts", "lighbd")
+REQUIREMENTS_DIR = os.path.join(BASE_DIR, "요구사항")
+SESSION_DIR = os.path.join(BASE_DIR, "logs", "illustration_context_sessions")
+
+CONTEXT_PREFIX = "__LB_ILLUST_CONTEXT_V1__"
+RESULT_PREFIX = "__LB_ILLUST_RESULT_V1__"
+REGENERATE_PREFIX = "__LB_ILLUST_REGENERATE_V1__"
+
+PROMPT_FILES = {
+    "call1_enhance": "enhance.txt",
+    "call2_jailbreak": "jailbreak.txt",
+    "call2_job": "job.txt",
+    "call2_prefill": "prefill.txt",
+    "call2_thoughts": "thoughts.txt",
+    "call2_system": "system.txt",
+    "call2_format": "format.txt",
+    "call2_preset": "preset.txt",
+    "call3_speak": "speak.txt",
+    "call3_repair": "repair.txt",
+}
+
+DEFAULT_TOGGLES = {
+    "call1_enabled": True,
+    "call1_context_turns": 5,
+    "call3_enabled": True,
+    "speak_enabled": True,
+    "speak_language": "한국어",
+    "speak_emotion_enabled": False,
+    "speak_emotions": "",
+    "nsfw": False,
+    "supplement": True,
+    "key_visual": True,
+    "character_limit": 3,
+    "scene_max": 11,
+    "context_history": True,
+    "focus": "",
+    "direction": "",
+    "preset": "tutorial",
+    "positive_note": "",
+    "negative_note": "",
+    "compat_comfy": True,
+    "compat_character_divider": "newline",
+    "compat_character_prompt": "separate",
+}
+
+_SESSIONS: dict[str, dict] = {}
+
+
+def _session_path(session_id: str) -> str:
+    return os.path.join(SESSION_DIR, f"{session_id}.json")
+
+
+def _persist_session_metadata(session: dict) -> None:
+    """재생성에 필요한 slot/RAW descriptor만 저장한다. 이미지 bytes는 저장하지 않는다."""
+    try:
+        os.makedirs(SESSION_DIR, exist_ok=True)
+        data = {
+            "session_id": session.get("session_id", ""),
+            "status": session.get("status", "ready"),
+            "context": session.get("context", ""),
+            "items": session.get("items") or [],
+            "error": session.get("error", ""),
+            "created_at": session.get("created_at", time.time()),
+            "updated_at": session.get("updated_at", time.time()),
+        }
+        with open(_session_path(str(data["session_id"])), "w", encoding="utf-8", newline="\n") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[ILLUST_CONTEXT] 세션 metadata 저장 실패: {e}")
+        traceback.print_exc()
+
+
+def _load_session_metadata(session_id: str) -> dict | None:
+    path = _session_path(session_id)
+    if not os.path.isfile(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, dict) or data.get("session_id") != session_id:
+            print(f"[ILLUST_CONTEXT] 저장 세션 형식 불일치: {path}")
+            return None
+        items = data.get("items") or []
+        data["items"] = items
+        data["images"] = [None] * len(items)
+        data["status"] = "ready"
+        _SESSIONS[session_id] = data
+        print(f"[ILLUST_CONTEXT] 재생성 세션 metadata 복원: session={session_id}, items={len(items)}")
+        return data
+    except Exception as e:
+        print(f"[ILLUST_CONTEXT] 세션 metadata 로드 실패: {path}: {e}")
+        traceback.print_exc()
+        return None
+
+
+def merged_toggles(value: dict | None) -> dict:
+    out = deepcopy(DEFAULT_TOGGLES)
+    if isinstance(value, dict):
+        for key in out:
+            if key in value:
+                out[key] = value[key]
+    try:
+        out["call1_context_turns"] = max(0, min(30, int(out["call1_context_turns"])))
+        out["character_limit"] = max(1, min(3, int(out["character_limit"])))
+        out["scene_max"] = max(1, min(15, int(out["scene_max"])))
+    except Exception as e:
+        print(f"[ILLUST_CONTEXT] 토글 숫자 보정 실패: {e}")
+        traceback.print_exc()
+        out.update({
+            "call1_context_turns": DEFAULT_TOGGLES["call1_context_turns"],
+            "character_limit": DEFAULT_TOGGLES["character_limit"],
+            "scene_max": DEFAULT_TOGGLES["scene_max"],
+        })
+    return out
+
+
+def load_prompt_files() -> dict:
+    result = {}
+    for key, filename in PROMPT_FILES.items():
+        path = os.path.join(PROMPTS_DIR, filename)
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                result[key] = f.read()
+        except Exception as e:
+            print(f"[ILLUST_CONTEXT] 프롬프트 로드 실패: {path}: {e}")
+            traceback.print_exc()
+            result[key] = ""
+    return result
+
+
+def load_selected_preset(toggles: dict, fallback: str) -> str:
+    """preset_<name>.txt가 있으면 사용하고, 없으면 UI의 preset.txt를 사용한다."""
+    name = re.sub(r"[^A-Za-z0-9_-]+", "_", str(toggles.get("preset") or "").strip()).strip("_")
+    if not name or name.lower() in ("default", "tutorial"):
+        return fallback
+    path = os.path.join(PROMPTS_DIR, f"preset_{name}.txt")
+    if not os.path.isfile(path):
+        print(f"[ILLUST_CONTEXT] 선택 프리셋 파일 없음, preset.txt 사용: {path}")
+        return fallback
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read()
+    except Exception as e:
+        print(f"[ILLUST_CONTEXT] 선택 프리셋 로드 실패, preset.txt 사용: {path}: {e}")
+        traceback.print_exc()
+        return fallback
+
+
+def save_prompt_files(values: dict) -> list[str]:
+    """UI 편집본 저장. 기존 텍스트는 요구사항/에 먼저 백업한다."""
+    os.makedirs(PROMPTS_DIR, exist_ok=True)
+    os.makedirs(REQUIREMENTS_DIR, exist_ok=True)
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    saved = []
+    for key, filename in PROMPT_FILES.items():
+        if key not in values:
+            continue
+        path = os.path.join(PROMPTS_DIR, filename)
+        try:
+            if os.path.exists(path):
+                backup = os.path.join(REQUIREMENTS_DIR, f"lighbd_{filename}.{stamp}.bak")
+                with open(path, "r", encoding="utf-8") as src:
+                    old = src.read()
+                with open(backup, "w", encoding="utf-8") as dst:
+                    dst.write(old)
+            with open(path, "w", encoding="utf-8", newline="\n") as f:
+                f.write(str(values[key]))
+            saved.append(key)
+        except Exception as e:
+            print(f"[ILLUST_CONTEXT] 프롬프트 저장 실패: {path}: {e}")
+            traceback.print_exc()
+            raise
+    return saved
+
+
+def _json_after_prefix(positive: str, prefix: str) -> dict | None:
+    if not isinstance(positive, str) or not positive.lstrip().startswith(prefix):
+        return None
+    raw = positive.lstrip()[len(prefix):].lstrip("\r\n ")
+    try:
+        value = json.loads(raw)
+        if not isinstance(value, dict):
+            print(f"[ILLUST_CONTEXT] {prefix} payload가 object가 아님")
+            return None
+        return value
+    except Exception as e:
+        print(f"[ILLUST_CONTEXT] {prefix} JSON 파싱 실패: {e}; raw={raw[:240]!r}")
+        traceback.print_exc()
+        return None
+
+
+def parse_context_request(positive: str) -> dict | None:
+    payload = _json_after_prefix(positive, CONTEXT_PREFIX)
+    if payload is None:
+        return None
+    session_id = str(payload.get("session_id") or "")
+    if not re.fullmatch(r"[A-Za-z0-9_-]{8,96}", session_id):
+        print(f"[ILLUST_CONTEXT] 잘못된 session_id: {session_id!r}")
+        return None
+    chats = []
+    for item in payload.get("chats") or []:
+        if not isinstance(item, dict):
+            continue
+        data = str(item.get("data") or item.get("content") or "").strip()
+        if not data:
+            continue
+        role = str(item.get("role") or "user").lower()
+        role = "char" if role in ("char", "assistant") else "user"
+        chats.append({"role": role, "data": data})
+    if not chats:
+        print(f"[ILLUST_CONTEXT] CHAT 데이터가 비어 있음: session={session_id}")
+        return None
+    target_slotted = str(payload.get("target_slotted") or "").strip()
+    if target_slotted and not re.search(r"\[Slot\s+\d+\]", target_slotted):
+        print(f"[ILLUST_CONTEXT] target_slotted에 슬롯 마커가 없어 폴백 사용: session={session_id}")
+        target_slotted = ""
+    payload["session_id"] = session_id
+    payload["chats"] = chats
+    payload["target_slotted"] = target_slotted
+    return payload
+
+
+def parse_result_request(positive: str) -> dict | None:
+    payload = _json_after_prefix(positive, RESULT_PREFIX)
+    if payload is None:
+        return None
+    session_id = str(payload.get("session_id") or "")
+    try:
+        index = int(payload.get("index")) if payload.get("index") is not None else None
+        slot = int(payload.get("slot")) if payload.get("slot") is not None else None
+    except Exception as e:
+        print(f"[ILLUST_CONTEXT] 결과 index 파싱 실패: {e}; payload={payload}")
+        traceback.print_exc()
+        return None
+    if not re.fullmatch(r"[A-Za-z0-9_-]{8,96}", session_id) or (index is None and slot is None) or (index is not None and index < 1):
+        print(f"[ILLUST_CONTEXT] 잘못된 결과 요청: session={session_id!r}, index={index}, slot={slot}")
+        return None
+    return {"session_id": session_id, "index": index, "slot": slot}
+
+
+def parse_regenerate_request(positive: str) -> dict | None:
+    payload = _json_after_prefix(positive, REGENERATE_PREFIX)
+    if payload is None:
+        return None
+    session_id = str(payload.get("session_id") or "")
+    try:
+        slot = int(payload.get("slot"))
+    except Exception as e:
+        print(f"[ILLUST_CONTEXT] 재생성 slot 파싱 실패: {e}; payload={payload}")
+        traceback.print_exc()
+        return None
+    if not re.fullmatch(r"[A-Za-z0-9_-]{8,96}", session_id):
+        print(f"[ILLUST_CONTEXT] 잘못된 재생성 session_id: {session_id!r}")
+        return None
+    return {"session_id": session_id, "slot": slot}
+
+
+def create_session(session_id: str, context: str) -> dict:
+    session = {
+        "session_id": session_id,
+        "status": "building",
+        "context": context,
+        "items": [],
+        "images": [],
+        "error": "",
+        "created_at": time.time(),
+        "updated_at": time.time(),
+    }
+    _SESSIONS[session_id] = session
+    return session
+
+
+def get_session(session_id: str) -> dict | None:
+    session = _SESSIONS.get(session_id)
+    if session is None:
+        session = _load_session_metadata(session_id)
+    if session is None:
+        print(f"[ILLUST_CONTEXT] 세션 캐시 미스: {session_id}")
+    return session
+
+
+def set_session_result(session_id: str, items: list, images: list[bytes]) -> None:
+    session = _SESSIONS.get(session_id)
+    if session is None:
+        print(f"[ILLUST_CONTEXT] 결과 저장 실패 - 세션 없음: {session_id}")
+        return
+    session["items"] = deepcopy(items)
+    session["images"] = list(images)
+    session["status"] = "ready"
+    session["updated_at"] = time.time()
+    _persist_session_metadata(session)
+
+
+def set_session_error(session_id: str, error: str) -> None:
+    session = _SESSIONS.get(session_id)
+    if session is None:
+        print(f"[ILLUST_CONTEXT] 에러 저장 실패 - 세션 없음: {session_id}; error={error}")
+        return
+    session["status"] = "error"
+    session["error"] = str(error)
+    session["updated_at"] = time.time()
+
+
+def session_image(session_id: str, index: int) -> bytes | None:
+    session = get_session(session_id)
+    if not session or session.get("status") != "ready":
+        print(f"[ILLUST_CONTEXT] 이미지 회수 실패 - 준비 안 됨: session={session_id}, index={index}")
+        return None
+    images = session.get("images") or []
+    if index < 1 or index > len(images):
+        print(f"[ILLUST_CONTEXT] 이미지 회수 범위 초과: session={session_id}, index={index}, count={len(images)}")
+        return None
+    return images[index - 1]
+
+
+def session_image_by_slot(session_id: str, slot: int) -> bytes | None:
+    session = get_session(session_id)
+    if not session or session.get("status") != "ready":
+        print(f"[ILLUST_CONTEXT] 슬롯 이미지 회수 실패 - 준비 안 됨: session={session_id}, slot={slot}")
+        return None
+    items = session.get("items") or []
+    images = session.get("images") or []
+    for index, item in enumerate(items):
+        try:
+            item_slot = int(item.get("slot"))
+        except Exception:
+            continue
+        if item_slot == int(slot) and index < len(images):
+            return images[index]
+    print(f"[ILLUST_CONTEXT] 슬롯 이미지 없음: session={session_id}, slot={slot}")
+    return None
+
+
+def session_item_by_slot(session_id: str, slot: int) -> dict | None:
+    session = get_session(session_id)
+    if not session or session.get("status") != "ready":
+        print(f"[ILLUST_CONTEXT] 재생성 descriptor 회수 실패: session={session_id}, slot={slot}")
+        return None
+    for item in session.get("items") or []:
+        try:
+            if int(item.get("slot")) == int(slot):
+                return deepcopy(item)
+        except Exception:
+            continue
+    print(f"[ILLUST_CONTEXT] 재생성 descriptor 없음: session={session_id}, slot={slot}")
+    return None
+
+
+def update_session_image_by_slot(session_id: str, slot: int, image: bytes) -> bool:
+    session = get_session(session_id)
+    if not session or session.get("status") != "ready" or not image:
+        print(f"[ILLUST_CONTEXT] 재생성 캐시 갱신 실패: session={session_id}, slot={slot}")
+        return False
+    items = session.get("items") or []
+    images = session.get("images") or []
+    for index, item in enumerate(items):
+        try:
+            if int(item.get("slot")) == int(slot) and index < len(images):
+                images[index] = image
+                session["updated_at"] = time.time()
+                _persist_session_metadata(session)
+                print(f"[ILLUST_CONTEXT] 재생성 캐시 갱신: session={session_id}, slot={slot}")
+                return True
+        except Exception:
+            continue
+    print(f"[ILLUST_CONTEXT] 재생성 캐시 slot 없음: session={session_id}, slot={slot}")
+    return False
+
+
+def _pct(value) -> str:
+    return quote(str(value or ""), safe="")
+
+
+def session_manifest(session_id: str) -> str:
+    session = get_session(session_id)
+    if not session:
+        return "STATUS|missing\nCOUNT|0\nERROR|session_not_found"
+    items = session.get("items") or []
+    lines = [f"STATUS|{session.get('status', 'missing')}", f"COUNT|{len(items)}"]
+    if session.get("error"):
+        lines.append(f"ERROR|{_pct(session['error'])}")
+    for idx, item in enumerate(items, start=1):
+        lines.append("|".join([
+            "ITEM", str(idx), _pct(item.get("kind", "scene")), str(item.get("slot", "")),
+            _pct(item.get("camera")), _pct(item.get("scene")),
+            _pct(item.get("supplement")), _pct(item.get("speak")),
+        ]))
+        for ch in item.get("characters") or []:
+            if not isinstance(ch, dict):
+                continue
+            lines.append("|".join([
+                "CHAR", str(idx), _pct(ch.get("name")), _pct(ch.get("positive")),
+                _pct(ch.get("negative")), _pct(ch.get("position")),
+            ]))
+    return "\n".join(lines)
+
+
+def context_text(chats: list[dict]) -> str:
+    return "\n\n".join(
+        ("[CHAR]" if item.get("role") == "char" else "[USER]") + "\n" + str(item.get("data") or "")
+        for item in chats
+    )
+
+
+def _latest_narrative(chats: list[dict]) -> tuple[int, str]:
+    for index in range(len(chats) - 1, -1, -1):
+        if chats[index].get("role") == "char" and str(chats[index].get("data") or "").strip():
+            return index, str(chats[index]["data"]).strip()
+    print("[ILLUST_CONTEXT] 최신 CHAR 서사를 찾지 못함")
+    return -1, ""
+
+
+def _normalize_messages(messages: list[dict]) -> list[dict]:
+    out = []
+    for msg in messages:
+        role = msg.get("role", "user")
+        role = "assistant" if role in ("char", "assistant") else role
+        content = str(msg.get("content") or "").strip()
+        if not content:
+            continue
+        if out and out[-1]["role"] == role:
+            out[-1]["content"] += "\n\n" + content
+        else:
+            out.append({"role": role, "content": content})
+    if out and out[0]["role"] == "assistant":
+        out.insert(0, {"role": "user", "content": "Below is the preceding conversation for context."})
+    return out
+
+
+def _strip_nodes(text: str) -> str:
+    return re.sub(r"<[^>]+>[\s\S]*?</[^>]+>|<[^>]+/?>", "", str(text or ""), flags=re.I).strip()
+
+
+def _splice_enhancements(body: str, output: str) -> str:
+    result = body
+    base_tags = []
+    for block in re.findall(r"\[CharacterBaseTags\]([\s\S]*?)\[/CharacterBaseTags\]", output or "", re.I):
+        value = block.strip()
+        if value:
+            base_tags.append(value)
+    pattern = re.compile(
+        r"\[Position\]([\s\S]*?)\[/Position\]\s*((?:(?!\[Position\]|\[CharacterBaseTags\])[\s\S])*)",
+        re.I,
+    )
+    offset = 0
+    for match in pattern.finditer(output or ""):
+        anchor = match.group(1).strip()
+        insertion = match.group(2).strip()
+        if not anchor or not insertion:
+            continue
+        pos = result.find(anchor)
+        if pos < 0:
+            compact_anchor = re.sub(r"\s+", " ", anchor).strip()
+            for candidate in re.finditer(r"[^\n]+", result):
+                if compact_anchor in re.sub(r"\s+", " ", candidate.group(0)):
+                    pos = candidate.end()
+                    anchor = ""
+                    break
+        else:
+            pos += len(anchor)
+        if pos < 0:
+            print(f"[ILLUST_CONTEXT:CALL1] 삽입 위치를 찾지 못함: {anchor[:120]!r}")
+            continue
+        result = result[:pos] + "\n\n" + insertion + result[pos:]
+        offset += 1
+    if base_tags:
+        result = result.rstrip() + "\n\n" + "\n\n".join(base_tags)
+    return result
+
+
+def insert_slots(text: str) -> str:
+    # v13 lb-xnai.gen.insertSlots와 바이트 단위로 같은 규칙을 쓴다.
+    # (연속된 빈 줄마다 0부터 슬롯을 넣고, 줄 사이 공백은 별도 해석하지 않음)
+    slot_index = 0
+
+    def replace(_match):
+        nonlocal slot_index
+        value = f"\n\n[Slot {slot_index}]\n\n"
+        slot_index += 1
+        return value
+
+    return re.sub(r"\n\n+", replace, str(text or "").strip())
+
+
+def _bool(value) -> bool:
+    if isinstance(value, str):
+        return value.lower() not in ("", "0", "false", "off", "끄기", "null")
+    return bool(value)
+
+
+def _render_conditionals(text: str, values: dict) -> str:
+    # custom closer를 Risu의 일반 closer와 같게 취급한다.
+    text = re.sub(r"\{\{/(?:compat-comfy|nsfw|supplement|context|history-length|history-null)\}\}", "{{/when}}", text)
+
+    def cond(expr: str) -> bool:
+        bits = [b.strip() for b in expr.strip(": ").split("::") if b.strip()]
+        if not bits:
+            return False
+        if bits[0] == "keep":
+            bits = bits[1:]
+        if bits and bits[0] == "toggle":
+            bits = bits[1:]
+        if not bits:
+            return False
+        left = values.get(bits[0], bits[0])
+        if len(bits) >= 3 and bits[1] in ("tis", "tisnot", "<", ">"):
+            op, right = bits[1], bits[2]
+            if op == "tis":
+                return str(left) == str(right)
+            if op == "tisnot":
+                return str(left) != str(right)
+            try:
+                return float(left) < float(right) if op == "<" else float(left) > float(right)
+            except Exception:
+                return False
+        return _bool(left)
+
+    # innermost block부터 반복 처리한다.
+    block = re.compile(r"\{\{#when(?:::|\s+)([^{}]*?)\}\}((?:(?!\{\{#when)[\s\S])*?)\{\{/when\}\}")
+    for _ in range(80):
+        match = block.search(text)
+        if not match:
+            break
+        body = match.group(2)
+        yes, sep, no = body.partition("{{:else}}")
+        text = text[:match.start()] + (yes if cond(match.group(1)) else (no if sep else "")) + text[match.end():]
+    return text
+
+
+def render_call2_prompt(text: str, toggles: dict, history: str = "") -> str:
+    """Risu 토글 매크로를 서버 설정으로 렌더링한다."""
+    text = str(text or "")
+    # 복잡한 history/client-comment 블록은 서버 값으로 명시적으로 재구성한다.
+    prefix = text
+    suffix = ""
+    if "## Character Tag History" in prefix and "# Example" in prefix:
+        history_pos = prefix.index("## Character Tag History")
+        # 원본은 히스토리 제목 직전에 3중 Risu 조건문을 연다. 제목부터만
+        # 잘라내면 여는 매크로가 남으므로 첫 조건문부터 섹션 전체를 교체한다.
+        section_pos = prefix.rfind("{{#when", 0, history_pos)
+        if section_pos < 0:
+            section_pos = history_pos
+        tail = prefix[history_pos + len("## Character Tag History"):]
+        prefix = prefix[:section_pos]
+        _, suffix = tail.split("# Example", 1)
+        suffix = "# Example" + suffix
+        if toggles.get("context_history") and history.strip():
+            prefix += "## Character Tag History\n\n" + history.strip() + "\n\n"
+        comments = []
+        if str(toggles.get("focus") or "").strip():
+            comments.append(
+                f'I want to focus on the character(s): "{str(toggles["focus"]).strip()}". Do not make scenes for others.'
+            )
+        if str(toggles.get("direction") or "").strip():
+            comments.append(str(toggles["direction"]).strip())
+        prefix += "## Client Comments\n\n<instruction>\n" + ("\n\n".join(comments) if comments else "(None specified)") + "\n</instruction>\n\n"
+        text = prefix + suffix
+
+    risu_values = {
+        "lb-xnai.nsfw": "1" if toggles.get("nsfw") else "0",
+        "lb-xnai.supplement": "1" if toggles.get("supplement") else "0",
+        "lb-xnai.kv.off": "0" if toggles.get("key_visual") else "1",
+        "lb-xnai.compat.comfy": "1" if toggles.get("compat_comfy") else "0",
+        "lb-xnai.compat.charPrompt": "1" if toggles.get("compat_character_prompt") == "separate" else "0",
+        "lb-xnai.context": "1" if toggles.get("context_history") else "0",
+        "lb-xnai.characters": str(max(0, 3 - int(toggles.get("character_limit", 3)))),
+        "lb-xnai.scene.quantity": "0",
+        "lb-xnai-history": history or "null",
+    }
+    for key, value in risu_values.items():
+        text = text.replace("{{getglobalvar::toggle_" + key + "}}", value)
+        text = text.replace("{{getvar::" + key + "}}", value)
+
+    def dict_element(match):
+        try:
+            table = json.loads(match.group(1))
+            return str(table.get(str(match.group(2)).strip(), ""))
+        except Exception as e:
+            print(f"[ILLUST_CONTEXT] dictelement 렌더 실패: {e}; expr={match.group(0)[:160]!r}")
+            traceback.print_exc()
+            return ""
+
+    text = re.sub(r"\{\{dictelement::(\{[^{}]*\})::([^{}]*)\}\}", dict_element, text)
+    text = _render_conditionals(text, risu_values)
+    # Risu에만 존재하는 잔여 매크로는 LLM으로 보내지 않고 로그에 남긴다.
+    leftovers = re.findall(r"\{\{[^\n]{0,240}?\}\}", text)
+    if leftovers:
+        print(f"[ILLUST_CONTEXT] 렌더 후 잔여 Risu 매크로 {len(leftovers)}개 제거: {leftovers[:8]}")
+        text = re.sub(r"\{\{[^\n]*?\}\}", "", text)
+    text += (
+        f"\n\n# Server limits\n- Generate between 1 and {int(toggles['scene_max'])} scenes."
+        f"\n- Maximum fully visible characters per image: {int(toggles['character_limit'])}."
+        f"\n- Key visual: {'required' if toggles.get('key_visual') else 'disabled; omit keyvis'} ."
+    )
+    return text.strip()
+
+
+def _extract_lb_block(text: str) -> str:
+    match = re.search(r"<lb[-_]xnai[^>]*>([\s\S]*?)</lb[-_]xnai>", text or "", re.I)
+    return match.group(1).strip() if match else ""
+
+
+def _normalize_toon(text: str) -> str:
+    text = re.sub(r"\b(scenes|characters)\[\d+\]:", r"\1:", text)
+    text = text.replace("\t", "  ")
+    return text
+
+
+def _descriptor(raw: dict, kind: str, fallback_slot: int) -> dict:
+    chars = []
+    for ch in raw.get("characters") or []:
+        if not isinstance(ch, dict):
+            continue
+        chars.append({
+            "positive": str(ch.get("positive") or "").strip(),
+            "negative": str(ch.get("negative") or "").strip(),
+            "name": str(ch.get("name") or "").strip(),
+            "position": str(ch.get("position") or "").strip(),
+        })
+    slot_value = -1 if kind == "keyvis" else raw.get("slot", fallback_slot)
+    try:
+        slot_value = int(slot_value)
+    except Exception:
+        slot_value = fallback_slot
+    return {
+        "kind": kind,
+        "slot": slot_value,
+        "camera": str(raw.get("camera") or "").strip(),
+        "scene": str(raw.get("scene") or "").strip(),
+        "supplement": str(raw.get("supplement") or "").strip(),
+        "speak": "",
+        "characters": chars,
+    }
+
+
+def parse_toon_plan(text: str, toggles: dict) -> list[dict]:
+    inner = _extract_lb_block(text)
+    if not inner:
+        toon_match = re.search(r"\[TOON\]([\s\S]*?)\[/TOON\]", text or "", re.I)
+        inner = toon_match.group(1).strip() if toon_match else ""
+    if not inner:
+        print("[ILLUST_CONTEXT:CALL2] <lb-xnai> 또는 [TOON] 블록이 없음")
+        return []
+    try:
+        data = yaml.safe_load(_normalize_toon(inner))
+    except Exception as e:
+        print(f"[ILLUST_CONTEXT:CALL2] TOON/YAML 파싱 실패: {e}\n{inner[:1000]}")
+        traceback.print_exc()
+        return []
+    if not isinstance(data, dict):
+        print(f"[ILLUST_CONTEXT:CALL2] TOON 루트가 object가 아님: {type(data).__name__}")
+        return []
+    out = []
+    keyvis = data.get("keyvis")
+    if toggles.get("key_visual") and isinstance(keyvis, dict):
+        out.append(_descriptor(keyvis, "keyvis", -1))
+    scenes = data.get("scenes") or []
+    if not isinstance(scenes, list):
+        print(f"[ILLUST_CONTEXT:CALL2] scenes가 list가 아님: {type(scenes).__name__}")
+        scenes = []
+    for index, raw in enumerate(scenes[: int(toggles["scene_max"])], start=1):
+        if isinstance(raw, dict):
+            out.append(_descriptor(raw, "scene", index))
+    if not out:
+        print("[ILLUST_CONTEXT:CALL2] 유효한 keyvis/scene 결과가 없음")
+    return out
+
+
+def parse_speak_output(text: str) -> dict[int, str]:
+    result: dict[int, list[str]] = {}
+    current = None
+    for line in str(text or "").splitlines():
+        match = re.match(r"\s*\[Scene\s+slot\s*=\s*(-?\d+)\]\s*(.*)", line, re.I)
+        if match:
+            current = int(match.group(1))
+            result.setdefault(current, [])
+            tail = match.group(2).strip()
+            if tail:
+                result[current].append(tail)
+        elif current is not None and line.strip() and not line.lstrip().startswith("["):
+            result[current].append(line.strip())
+    return {slot: "\n".join(lines).strip() for slot, lines in result.items() if lines}
+
+
+def _build_character_history(extra_reference: str) -> str:
+    # 서버가 보유한 lb.extra 자체가 가장 안정적인 외형 이력/영문 이름 사전이다.
+    return str(extra_reference or "").strip()
+
+
+# 삽화 CALL 이름 → 외부 API 분기 task_key. 각 CALL 을 llm_routing 에서 독립적으로
+# 분기(LLM1/LLM2/LLM3)할 수 있다. 기본 primary=llm3(server.py DEFAULT_CONFIG 참고).
+_CALL_TASK_KEYS = {
+    "CALL1": "illustration_call1",
+    "CALL2": "illustration_call2",
+    "CALL3": "illustration_call3",
+}
+
+
+async def _call_pipeline_llm(call_name: str, messages: list[dict], stream_notify=None) -> str:
+    """삽화 CALL1/2/3 의 LLM 호출. 외부 API 분기(illustration_callN task_key)를 경유한다.
+
+    기본값은 LLM3(callLLM3)이지만, 외부 API 분기 탭에서 CALL별로 LLM1/LLM2/LLM3 을
+    선택하거나 폴백을 켤 수 있다. 실패 시 callLLMTask 가 폴백 LLM 으로 재시도한다.
+    """
+    started = time.time()
+    task_key = _CALL_TASK_KEYS.get(call_name, "illustration_call2")
+    model = (
+        llm_service.routing_primary_model(task_key)
+        or llm_service._current_config.get("llm_model3")
+        or llm_service._current_config.get("llm_model")
+        or ""
+    )
+    try:
+        if stream_notify:
+            await stream_notify({
+                "type": "start", "call_name": call_name, "model": model, "text": "",
+            })
+        result = await llm_service.callLLMTask(task_key, messages)
+        if not result or str(result).startswith("[LLM 실패]"):
+            print(f"[ILLUST_CONTEXT:{call_name}] LLM 호출 실패: {result}")
+            if stream_notify:
+                await stream_notify({"type": "error", "call_name": call_name, "error": str(result)})
+            raise RuntimeError(str(result or f"빈 {call_name} 응답"))
+        if stream_notify:
+            elapsed = time.time() - started
+            tokens = max(1, len(str(result)) // 3)
+            await stream_notify({
+                "type": "done",
+                "call_name": call_name,
+                "model": model,
+                "text": str(result),
+                "completion_tokens": tokens,
+                "elapsed": elapsed,
+                "tps": tokens / elapsed if elapsed > 0 else 0.0,
+                "ttft": elapsed,
+            })
+        return str(result)
+    except Exception as e:
+        print(f"[ILLUST_CONTEXT:{call_name}] 호출 예외: {e}")
+        traceback.print_exc()
+        raise
+
+
+def build_raw_prompt(descriptor: dict, narrative: str, prompts: dict, toggles: dict) -> tuple[str, str]:
+    template = prompts.get("call2_preset") or "[Positive]\n[SETUP]\n{setup}\n[CHAR]\n{char}\n[SUPPLEMENT]\n{supplement}\n\n[Negative]\n"
+    positive_part, marker, negative_part = template.partition("[Negative]")
+    if positive_part.startswith("[Positive]"):
+        positive_part = positive_part[len("[Positive]"):]
+    chars = descriptor.get("characters") or []
+    divider = "\n\n" if toggles.get("compat_character_divider") == "newline" else " | "
+    char_positive = divider.join(str(ch.get("positive") or "") for ch in chars if str(ch.get("positive") or "").strip())
+    char_negative = ", ".join(str(ch.get("negative") or "") for ch in chars if str(ch.get("negative") or "").strip())
+    names = ", ".join(str(ch.get("name") or "") for ch in chars if str(ch.get("name") or "").strip())
+    setup = ", ".join(x for x in (descriptor.get("camera", ""), descriptor.get("scene", "")) if x)
+    replacements = {
+        "{chat}": narrative,
+        "{slot}": str(descriptor.get("slot", "")),
+        "{speak}": descriptor.get("speak") or "None",
+        "{name}": names,
+        "{setup}": setup,
+        "{prompt}": setup,
+        "{char}": char_positive,
+        "{supplement}": descriptor.get("supplement") or "",
+    }
+    positive = positive_part
+    for key, value in replacements.items():
+        positive = positive.replace(key, str(value))
+    if str(toggles.get("positive_note") or "").strip():
+        positive = positive.rstrip() + "\n" + str(toggles["positive_note"]).strip()
+    negative = negative_part.strip() if marker else ""
+    if char_negative:
+        negative = ", ".join(x for x in (negative, char_negative) if x)
+    if str(toggles.get("negative_note") or "").strip():
+        negative = ", ".join(x for x in (negative, str(toggles["negative_note"]).strip()) if x)
+    return positive.strip(), negative.strip()
+
+
+async def build_from_context(payload: dict, toggles: dict | None, extra_reference: str, progress=None, stream_notify=None) -> dict:
+    toggles = merged_toggles(toggles)
+    prompts = load_prompt_files()
+    prompts["call2_preset"] = load_selected_preset(toggles, prompts.get("call2_preset", ""))
+    chats = payload.get("chats") or []
+    target_index, narrative = _latest_narrative(chats)
+    if target_index < 0 or not narrative:
+        raise RuntimeError("CHAT에서 최신 CHAR 서사를 찾지 못했습니다")
+
+    if progress:
+        await progress(5, "call1", "CALL1 컨텍스트 준비")
+    call1_output = ""
+    enhanced = _strip_nodes(narrative)
+    if toggles.get("call1_enabled"):
+        n = int(toggles["call1_context_turns"])
+        context_slice = chats[max(0, target_index - n):target_index]
+        call1_messages = [{"role": "system", "content": prompts.get("call1_enhance", "") + "\n\n" + extra_reference}]
+        call1_messages.extend({
+            "role": "assistant" if item["role"] == "char" else "user",
+            "content": _strip_nodes(item["data"]),
+        } for item in context_slice)
+        call1_messages.append({"role": "user", "content": "---\n[Current Response]\n" + enhanced})
+        call1_output = await _call_pipeline_llm("CALL1", _normalize_messages(call1_messages), stream_notify)
+        enhanced = _splice_enhancements(enhanced, call1_output)
+    else:
+        print("[ILLUST_CONTEXT:CALL1] 토글로 비활성화됨")
+
+    # Risu는 결과 메타데이터를 텍스트로 받을 수 없고 generateImage만 반복 호출한다.
+    # 결과를 slot 번호로 회수할 수 있도록 슬롯 번호는 원문 문단을 기준으로 고정한다.
+    # 모듈이 v13 규칙으로 원문 XML을 보존한 채 먼저 삽입한 슬롯 맵을 우선한다.
+    # 없으면 구버전/테스트 호환을 위해 필터된 최신 narrative로 생성한다.
+    slotted = str(payload.get("target_slotted") or "").strip()
+    if not slotted:
+        slotted = insert_slots(_strip_nodes(narrative))
+    if call1_output:
+        # CALL2에는 CALL1이 만든 Visual Content/DynamicPrompt를 넘기되,
+        # 결과 회수에 쓰는 [Slot N] 번호는 원문 문단 기준으로 그대로 유지한다.
+        slotted = _splice_enhancements(slotted, call1_output)
+    if progress:
+        await progress(30, "call2", "CALL2 장면/태그 빌드")
+    history = _build_character_history(extra_reference)
+    call2_system = render_call2_prompt(prompts.get("call2_system", ""), toggles, history)
+    call2_thoughts = render_call2_prompt(prompts.get("call2_thoughts", ""), toggles, history)
+    call2_messages = [{
+        "role": "system",
+        "content": "\n\n".join(x for x in (
+            prompts.get("call2_jailbreak", ""), prompts.get("call2_job", ""), call2_system,
+        ) if x.strip()),
+    }]
+    if extra_reference.strip():
+        call2_messages.append({"role": "user", "content": "# CHARACTER DICTIONARY\n\n" + extra_reference})
+    for item in chats[max(0, target_index - int(toggles["call1_context_turns"])):target_index]:
+        call2_messages.append({
+            "role": "assistant" if item["role"] == "char" else "user",
+            "content": _strip_nodes(item["data"]),
+        })
+    call2_messages.append({"role": "user", "content": "[Last log entry]\n" + slotted})
+    call2_messages.append({
+        "role": "user",
+        "content": "# Output instructions\n\n" + call2_thoughts + "\n\n" + prompts.get("call2_format", ""),
+    })
+    if prompts.get("call2_prefill", "").strip():
+        call2_messages.append({"role": "assistant", "content": prompts["call2_prefill"]})
+    call2_messages.append({"role": "user", "content": "Return the final <lb-xnai> TOON block only after your analysis."})
+    call2_output = await _call_pipeline_llm("CALL2", _normalize_messages(call2_messages), stream_notify)
+    descriptors = parse_toon_plan(call2_output, toggles)
+
+    call3_output = ""
+    if not descriptors:
+        if not toggles.get("call3_enabled"):
+            raise RuntimeError("CALL2 결과 파싱 실패, CALL3 교정이 비활성화되어 있습니다")
+        if progress:
+            await progress(52, "call3", "CALL3 TOON 교정")
+        repair_messages = [{
+            "role": "system",
+            "content": prompts.get("call3_repair", "") + "\n\n" + extra_reference,
+        }, {
+            "role": "user",
+            "content": "Repair this malformed output. Return [TOON]...[/TOON].\n\n" + call2_output,
+        }]
+        call3_output = await _call_pipeline_llm("CALL3", _normalize_messages(repair_messages), stream_notify)
+        descriptors = parse_toon_plan(call3_output, toggles)
+        if not descriptors:
+            raise RuntimeError("CALL3 교정 후에도 장면 TOON 파싱에 실패했습니다")
+    elif toggles.get("call3_enabled") and toggles.get("speak_enabled"):
+        if progress:
+            await progress(52, "call3", "CALL3 대사 빌드")
+        emotion_instruction = ""
+        if toggles.get("speak_emotion_enabled"):
+            emotion_instruction = "\nAdd one #emotion tag to every emitted line."
+            emotions = str(toggles.get("speak_emotions") or "").strip()
+            if emotions:
+                emotion_instruction += " Allowed labels: " + emotions
+        speak_messages = [{
+            "role": "system",
+            "content": prompts.get("call3_speak", "") + "\n\n" + extra_reference + emotion_instruction,
+        }]
+        for item in chats[max(0, target_index - int(toggles["call1_context_turns"])):target_index]:
+            speak_messages.append({
+                "role": "assistant" if item["role"] == "char" else "user",
+                "content": _strip_nodes(item["data"]),
+            })
+        speak_messages.append({
+            "role": "user",
+            "content": (
+                f"[Narrative to illustrate]\n{enhanced}\n\n[Scene list]\n{_extract_lb_block(call2_output)}"
+                f"\n\nLanguage: {toggles.get('speak_language', '한국어')}"
+            ),
+        })
+        call3_output = await _call_pipeline_llm("CALL3", _normalize_messages(speak_messages), stream_notify)
+        speak_map = parse_speak_output(call3_output)
+        for descriptor in descriptors:
+            descriptor["speak"] = speak_map.get(int(descriptor.get("slot", 0)), "")
+    else:
+        print("[ILLUST_CONTEXT:CALL3] 토글로 비활성화되었거나 SPEAK이 꺼져 있음")
+
+    if progress:
+        await progress(68, "raw_build", f"RAW 프롬프트 {len(descriptors)}개 빌드")
+    raw_items = []
+    for descriptor in descriptors:
+        positive, negative = build_raw_prompt(descriptor, enhanced, prompts, toggles)
+        item = deepcopy(descriptor)
+        item["raw_positive"] = positive
+        item["raw_negative"] = negative
+        raw_items.append(item)
+    return {
+        "session_id": payload["session_id"],
+        "context": context_text(chats),
+        "narrative": narrative,
+        "enhanced_narrative": enhanced,
+        "call1_output": call1_output,
+        "call2_output": call2_output,
+        "call3_output": call3_output,
+        "items": raw_items,
+    }
