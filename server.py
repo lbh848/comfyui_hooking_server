@@ -3290,6 +3290,99 @@ def _serve_illustration_session_result(
     return web.json_response({"prompt_id": prompt_id, "number": len(prompts), "node_errors": {}})
 
 
+async def _serve_priority_reservation_for_illustration_slot(
+    body: dict,
+    prompt_id: str,
+    prompt_data: dict,
+    session_id: str,
+    slot: int,
+    raw_positive: str,
+) -> web.Response | None:
+    """예약 이미지가 있으면 한 슬롯의 실제 생성보다 먼저 반환한다.
+
+    CONTEXT 세션 생성과 RESULT 캐시 회수는 다중 이미지 transport이므로 가로채지
+    않는다. 이 함수는 저장 RAW로 한 장을 생성하려는 요청에서만 호출한다.
+    """
+    global reschedule_queue
+
+    image_bytes = None
+    reservation_kind = ""
+    reservation_detail = ""
+
+    if batch_mode.has_scheduled_images():
+        compare_positive, _ = split_prompt_chat(str(raw_positive or ""))
+        if app_config.get("clamp_enabled", False):
+            compare_positive = clamp_weights(
+                compare_positive,
+                app_config.get("clamp_value", 1.2),
+            )
+        scheduled_result = batch_mode.get_scheduled_image(compare_positive)
+        if scheduled_result is not None:
+            image_bytes, request_info = scheduled_result
+            reservation_kind = "batch"
+            reservation_detail = str(request_info.get("request_id") or "")
+            await notify_frontend("batch_resend_used", request_info)
+            if not batch_mode.has_scheduled_images():
+                await notify_frontend("batch_resend_completed", {})
+
+    if image_bytes is None and reschedule_queue is not None:
+        scheduled = reschedule_queue
+        image_bytes = scheduled.get("image_bytes")
+        scheduled_name = str(scheduled.get("name") or "")
+        if image_bytes:
+            reservation_kind = "single"
+            reservation_detail = scheduled_name
+            reschedule_queue = None
+            await notify_frontend("reschedule_used", {"name": scheduled_name})
+            await notify_frontend(
+                "reschedule_changed",
+                {"scheduled": False, "name": None},
+            )
+        else:
+            print(
+                f"[ILLUST_CONTEXT] 예약 우선 처리 실패 - 이미지 bytes 없음: "
+                f"session={session_id}, slot={slot}, name={scheduled_name!r}"
+            )
+
+    if not image_bytes:
+        return None
+
+    save_node = find_save_image_node(prompt_data)
+    filename = f"ComfyUI_{prompt_id[:8]}.png"
+    prompts[prompt_id] = {
+        "status": "running",
+        "prompt": prompt_data,
+        "client_id": body.get("client_id", ""),
+        "extra_data": body.get("extra_data", {}),
+        "outputs": {},
+        "filename": filename,
+        "save_node_id": save_node,
+        "image_bytes": image_bytes,
+        "timestamp": time.time(),
+    }
+
+    if not illustration_context_pipeline.update_session_image_by_slot(
+        session_id,
+        slot,
+        image_bytes,
+    ):
+        print(
+            f"[ILLUST_CONTEXT] 예약 이미지는 반환하지만 세션 캐시 갱신 실패: "
+            f"session={session_id}, slot={slot}, kind={reservation_kind}"
+        )
+
+    print(
+        f"[ILLUST_CONTEXT] 예약 이미지 우선 반환: session={session_id}, "
+        f"slot={slot}, kind={reservation_kind}, detail={reservation_detail or '-'}"
+    )
+    asyncio.create_task(
+        complete_prompt_from_reschedule(prompt_id, save_node or "9", filename)
+    )
+    return web.json_response(
+        {"prompt_id": prompt_id, "number": len(prompts), "node_errors": {}}
+    )
+
+
 async def _enqueue_illustration_session_slot(
     body: dict,
     prompt_id: str,
@@ -3371,6 +3464,16 @@ async def handle_prompt(request: web.Request) -> web.Response:
             if descriptor is None:
                 print(f"[ILLUST_CONTEXT] 재생성 요청 descriptor 없음: session={session_id}, slot={slot}")
                 return web.json_response({"error": "illustration slot not found"}, status=404)
+            reservation_response = await _serve_priority_reservation_for_illustration_slot(
+                body,
+                prompt_id,
+                prompt_data,
+                session_id,
+                slot,
+                descriptor.get("raw_positive", ""),
+            )
+            if reservation_response is not None:
+                return reservation_response
             regenerated_prompt = copy.deepcopy(prompt_data)
             if not set_prompt_by_title(regenerated_prompt, "긍정프롬프트", descriptor.get("raw_positive", "")):
                 return web.json_response({"error": "positive prompt node not found"}, status=400)
@@ -3446,12 +3549,28 @@ async def handle_prompt(request: web.Request) -> web.Response:
             if context_action == "generate":
                 # 현재 응답 전체 생성은 기존 RAW descriptor만 사용한다.
                 # CONTEXT 재생성으로 폴백하지 않으며, RAW 로그에도 CONTEXT를 붙이지 않는다.
+                slot = context_payload["slot"]
+                descriptor = illustration_context_pipeline.session_item_by_slot(
+                    session_id,
+                    slot,
+                )
+                if descriptor is not None:
+                    reservation_response = await _serve_priority_reservation_for_illustration_slot(
+                        body,
+                        prompt_id,
+                        prompt_data,
+                        session_id,
+                        slot,
+                        descriptor.get("raw_positive", ""),
+                    )
+                    if reservation_response is not None:
+                        return reservation_response
                 return await _enqueue_illustration_session_slot(
                     body,
                     prompt_id,
                     prompt_data,
                     session_id,
-                    context_payload["slot"],
+                    slot,
                     attach_context=False,
                     operation_label="전체 생성",
                 )
