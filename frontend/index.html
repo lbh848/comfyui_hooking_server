@@ -8252,7 +8252,7 @@
                                 </div>
                                 <div class="pp-field-inline" style="margin-top:6px;">
                                     <div><div style="font-size:0.7rem; color:var(--text2,#999);">꼬리 생성 기준 (얼굴 크기 배)</div><input id="pp-bubble-tail-threshold" type="number" class="input" style="width:90px;" min="0" max="5" step="0.1" oninput="renderPostprocessPreview()" title="풍선과 얼굴 경계의 거리가 얼굴 최대 크기×이 값 이내일 때만 꼬리를 만듭니다. 0이면 꼬리를 끕니다."></div>
-                                    <div><div style="font-size:0.7rem; color:var(--text2,#999);">생각 형상</div><select id="pp-bubble-thought-shape" class="select" style="width:130px;" onchange="renderPostprocessPreview()"><option value="cloud">구름형</option><option value="box">생각 박스</option><option value="auto">1인 박스·2인 구름</option></select></div>
+                                    <div><div style="font-size:0.7rem; color:var(--text2,#999);">생각 형상(풍선 타입 없을 때)</div><select id="pp-bubble-thought-shape" class="select" style="width:130px;" onchange="renderPostprocessPreview()"><option value="cloud">구름형</option><option value="box">생각 박스</option></select></div>
                                     <div><div style="font-size:0.7rem; color:var(--text2,#999);">가로·세로 비율 — 모델 자동</div><input id="pp-bubble-max-width-ratio" type="number" class="input" style="width:70px;" step="0.05" disabled title="텍스트와 버블 종류에 맞춰 레이아웃 ONNX가 자동 결정합니다"></div>
                                 </div>
                                 <div class="pp-field-inline" style="margin-top:6px;">
@@ -27959,7 +27959,7 @@
             b.tail_max_length = _ppNum('pp-bubble-tail-max-length', 0.0, 0, 10);
             b.organic_wobble = _ppNum('pp-bubble-organic-wobble', 0.055, 0.02, 0.30);
             const _ppThoughtShape = document.getElementById('pp-bubble-thought-shape').value;
-            b.thought_shape = (_ppThoughtShape === 'box' || _ppThoughtShape === 'auto') ? _ppThoughtShape : 'cloud';
+            b.thought_shape = (_ppThoughtShape === 'box') ? 'box' : 'cloud';
             delete b.thought_circle_r;
             delete b.tail_len;
             delete b.conf;

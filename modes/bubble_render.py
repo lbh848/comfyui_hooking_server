@@ -36,6 +36,22 @@ _FACE_CONFIDENCE_MIN = 0.01
 _NO_RELIABLE_FACE_DETECTION = "no_reliable_face_detection"
 _FACE_MATCH_UNASSIGNED = "face_match_unassigned"
 
+# CALL3(manga)가 내보내는 balloon_type → (레이아웃 force_shape, 레이아웃 allowed,
+# 렌더 형상, per-segment organic 강제). balloon_type이 있으면 CALL3 모델의 결정을
+# 그대로 따라 형상을 강제한다(force_shape가 레이아웃 ONNX의 형상 선택을 덮어쓴다).
+# 사이징(글자크기/줄바꿈)은 여전히 레이아웃 ONNX가 수행한다.
+# 레이아웃 모델이 아는 형상은 ellipse/rounded/cloud 뿐이므로 box/burst/comic/whisper는
+# 렌더 전용 형상이고 사이징은 가장 가까운 레이아웃 형상에서 가져온다.
+_BALLOON_TYPE_SHAPE = {
+    "normal":        ("ellipse", ("ellipse",), "ellipse", False),
+    "angular":       ("rounded", ("rounded",), "comic",   False),
+    "narration_box": ("rounded", ("rounded",), "box",     False),
+    "thought_cloud": ("cloud",   ("cloud",),   "cloud",   False),
+    "trembling":     ("ellipse", ("ellipse",), "ellipse", True),
+    "burst":         ("rounded", ("rounded",), "burst",   False),
+    "whisper":       ("ellipse", ("ellipse",), "whisper", False),
+}
+
 # font_path 미지정 시 시스템 기본 TTF 후보 (font_size 가 적용되도록 비트맵 폰트 회피).
 # 한국어 텍스트가 많으므로 한글 지정 폰트 우선.
 _SYSTEM_FONT_CANDIDATES = [
@@ -765,9 +781,38 @@ def _ellipse_edge_geometry(rect, anchor):
     return point, (nx / length, ny / length)
 
 
+def _spiky_points(rect, spikes=16, inner_ratio=0.62):
+    """폭발 강조 풍선(burst)용 별 모양 폴리곤 꼭짓점을 만든다.
+
+    외곽 반지름과 내곽 반지름(inner_ratio 배)을 교대로 spikes 개수만큼 배치해
+    뾰족별 형태가 된다. comic 과 같은 마스크 폴리곤 경로로 그려진다.
+    """
+    x1, y1, x2, y2 = [float(v) for v in rect]
+    cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
+    rx = max(1.0, (x2 - x1) / 2.0)
+    ry = max(1.0, (y2 - y1) / 2.0)
+    inner_ratio = max(0.3, min(0.9, float(inner_ratio)))
+    total = max(6, int(spikes)) * 2
+    points = []
+    # 각 꼭짓점을 살짝 비대칭으로 해서 기계적 느낌을 줄인다.
+    for i in range(total):
+        angle = (math.pi * 2.0 * i) / total - math.pi / 2.0
+        is_outer = (i % 2 == 0)
+        scale = 1.0 if is_outer else inner_ratio
+        # 가로/세로 반지름에 미세한 변동을 줘 별이 너무 규칙적이지 않게 한다.
+        wobble = 1.0 + (0.06 if is_outer else -0.04)
+        px = cx + math.cos(angle) * rx * scale * wobble
+        py = cy + math.sin(angle) * ry * scale * wobble
+        points.append((px, py))
+    return points
+
+
 def _tail_base_geometry(rect, anchor, shape, radius):
     shape = "comic" if shape == "rounded" else shape
-    if shape in ("ellipse", "cloud"):
+    if shape in ("ellipse", "cloud", "burst", "whisper"):
+        # burst/whisper 꼬리는 외곽 바운딩 타원 경계에서 출발시킨다.
+        # burst는 별 모양이 비볼록이라 폴리곤 꼬리 기하가 부정확하고, whisper는
+        # 점선 꼬리를 타원 경계 기반으로 따로 그린다.
         return _ellipse_edge_geometry(rect, anchor)
     if shape == "comic":
         return _polygon_edge_geometry(_comic_points(rect, radius), anchor)
@@ -853,6 +898,121 @@ def _composite_union_mask(overlay, mask, fill, border, border_w):
     outline = mask.filter(ImageFilter.MaxFilter(filter_size))
     overlay.paste(border, mask=outline)
     overlay.paste(fill, mask=mask)
+
+
+def _ellipse_perimeter_points(rect, samples=240):
+    """ellipse 둘레를 등간격 각도로 샘플링한 점 리스트(호장은 비균등)."""
+    x1, y1, x2, y2 = [float(v) for v in rect]
+    cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
+    rx = max(1.0, (x2 - x1) / 2.0)
+    ry = max(1.0, (y2 - y1) / 2.0)
+    samples = max(48, int(samples))
+    return [
+        (
+            cx + rx * math.cos(2.0 * math.pi * i / samples),
+            cy + ry * math.sin(2.0 * math.pi * i / samples),
+        )
+        for i in range(samples)
+    ]
+
+
+def _stroke_dashed_path(draw, points, on, off, width, fill, closed=False):
+    """순서화된 점 리스트를 따라 on/off 점선 폴리라인을 그린다(closed=True면 닫힘).
+
+    호장(누적 현 길이) 기준으로 on/off 구간을 반복해, 타원처럼 속도가 일정하지 않은
+    경로에서도 대시가 균일하게 보이도록 한다. 각 on 구간에 속하는 정점들을 모아
+    joint="curve" 폴리라인으로 그린다.
+    """
+    pts = [(float(p[0]), float(p[1])) for p in points]
+    if len(pts) < 2:
+        return
+    if closed:
+        pts.append(pts[0])
+    cum = [0.0]
+    for i in range(1, len(pts)):
+        cum.append(cum[-1] + math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]))
+    total = cum[-1]
+    if total <= 0.0:
+        return
+    on = max(2.0, float(on))
+    off = max(1.0, float(off))
+    period = on + off
+    width_i = max(1, int(round(width)))
+
+    def point_at(t):
+        for i in range(1, len(cum)):
+            if cum[i] >= t:
+                seg_len = cum[i] - cum[i - 1]
+                if seg_len <= 1e-9:
+                    return pts[i]
+                ratio = (t - cum[i - 1]) / seg_len
+                return (
+                    pts[i - 1][0] + (pts[i][0] - pts[i - 1][0]) * ratio,
+                    pts[i - 1][1] + (pts[i][1] - pts[i - 1][1]) * ratio,
+                )
+        return pts[-1]
+
+    pos = 0.0
+    while pos < total:
+        start = pos
+        end = min(pos + on, total)
+        poly = [point_at(start)]
+        for i in range(1, len(cum) - 1):
+            if start < cum[i] < end:
+                poly.append(pts[i])
+        poly.append(point_at(end))
+        if len(poly) >= 2:
+            draw.line(poly, fill=fill, width=width_i, joint="curve")
+        pos += period
+
+
+def _draw_whisper(overlay, rect, anchor, fill, border, border_w, with_tail,
+                  *, tail_width_scale=1.0, tail_max_length_px=None):
+    """속삭임 풍선: ellipse 몸통 + 점선 테두리 + 점선 곡선 꼬리.
+
+    몸통 채우기는 일반 ellipse와 동일하지만, 외곽선을 MaxFilter 실선 대신 점선으로
+    그려 작고 약한 목소리임을 표현한다. 꼬리도 같은 점선 스트로크 헬퍼로 그린다.
+    """
+    draw = ImageDraw.Draw(overlay)
+    mask = Image.new("L", overlay.size, 0)
+    ImageDraw.Draw(mask).ellipse(rect, fill=255)
+    overlay.paste(fill, mask=mask)
+
+    x1, y1, x2, y2 = [float(v) for v in rect]
+    dim = max(1.0, min(x2 - x1, y2 - y1))
+    dash_on = max(6.0, dim * 0.10)
+    dash_off = max(4.0, dim * 0.06)
+    peri = _ellipse_perimeter_points(rect, samples=max(120, int(dim)))
+    _stroke_dashed_path(draw, peri, dash_on, dash_off, border_w, border, closed=True)
+
+    if not with_tail:
+        return
+    base, normal = _ellipse_edge_geometry(rect, anchor)
+    distance = math.hypot(anchor[0] - base[0], anchor[1] - base[1])
+    if distance < 1.0:
+        return
+    try:
+        max_length_px = float(tail_max_length_px) if tail_max_length_px is not None else 0.0
+    except (TypeError, ValueError):
+        max_length_px = 0.0
+    if max_length_px > 0.0 and distance > max_length_px:
+        ratio = max_length_px / distance
+        tip = (
+            base[0] + (anchor[0] - base[0]) * ratio,
+            base[1] + (anchor[1] - base[1]) * ratio,
+        )
+        eff_distance = max_length_px
+    else:
+        tip = anchor
+        eff_distance = distance
+    control = (
+        base[0] + normal[0] * eff_distance * 0.58,
+        base[1] + normal[1] * eff_distance * 0.58,
+    )
+    steps = 18
+    centerline = [_quadratic_point(base, control, tip, i / steps) for i in range(steps + 1)]
+    tail_w = max(1.0, float(border_w) * 0.8 * max(0.1, float(tail_width_scale)))
+    _stroke_dashed_path(draw, centerline, dash_on * 0.8, dash_off, tail_w, border)
 
 
 def _cloud_body_mask(size, rect):
@@ -943,9 +1103,15 @@ def _draw_layout_bubble(
     split=True 면 텍스트(전체)는 그대로 두고 몸통만 위/아래 두 타원의 합집합으로
     그려, 두 blob이 허리에서 맞물린 하나의 말풍선이 된다. 대사(ellipse/comic) 전용.
     """
-    shape = shape if shape in ("ellipse", "rounded", "comic", "cloud", "box") else "ellipse"
+    shape = shape if shape in ("ellipse", "rounded", "comic", "cloud", "box", "burst", "whisper") else "ellipse"
     if shape == "cloud":
         _draw_cloud(overlay, rect, anchor, fill, border, border_w, with_tail)
+        return
+    if shape == "whisper":
+        _draw_whisper(
+            overlay, rect, anchor, fill, border, border_w, with_tail,
+            tail_width_scale=tail_width_scale, tail_max_length_px=tail_max_length_px,
+        )
         return
     if split and shape in ("ellipse", "comic", "rounded"):
         # 캔버스 가장자리에 타원 극점이 수직 접선으로 닿아 "벽에 붙은" 느낌이 나는
@@ -1001,6 +1167,8 @@ def _draw_layout_bubble(
     mask_draw = ImageDraw.Draw(mask)
     if render_shape == "comic":
         mask_draw.polygon(_comic_points(rect, radius), fill=255)
+    elif render_shape == "burst":
+        mask_draw.polygon(_spiky_points(rect), fill=255)
     elif render_shape == "box":
         mask_draw.rectangle(rect, fill=255)
         with_tail = False
@@ -1245,14 +1413,9 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
     organic_point_count = int(s.get("organic_point_count", 180) or 180)
     radius = int(s.get("radius", 20))
     thought_shape = str(s.get("thought_shape", "cloud") or "cloud").strip().lower()
-    # auto: 대사 고유 화자 수로 형상을 자동 결정(1인→박스, 2인 이상→구름).
-    # 미리보기와 실제 전송이 모두 이 분기를 지나므로 양쪽 결과가 일치한다.
-    if thought_shape == "auto":
-        thought_shape = "box" if speaker_count == 1 else "cloud"
-        print(
-            f"[BUBBLE_RENDER] 생각 형상 자동(1인 박스/2인 구름): "
-            f"speakers={speaker_count} → {thought_shape}"
-        )
+    # balloon_type이 형상을 결정하는 말풍선(manga) 모드에서는 이 값은 사실상 사용되지
+    # 않는다(balloon_type 없는 legacy/speak 폴밋값일 때만 적용). auto(1인 박스/2인 구름)
+    # 자동 분기는 제거되었으므로, 저장된 auto는 cloud로 정규화한다.
     if thought_shape not in ("cloud", "box"):
         print(f"[BUBBLE_RENDER] ⚠ 알 수 없는 생각 형상({thought_shape!r}), cloud 사용")
         thought_shape = "cloud"
@@ -1325,15 +1488,24 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
             continue
         text = seg.get("text", "")
         btype = seg.get("type", "speech")
-        if btype == "thought":
+        balloon_type = str(seg.get("balloon_type") or "").strip().lower() or None
+        balloon_map = _BALLOON_TYPE_SHAPE.get(balloon_type) if balloon_type else None
+        if balloon_map:
+            # CALL3가 지정한 풍선 타입이 있으면 그 형상으로 강제(모델 결정을 따른다).
+            force_shape, allowed_shapes, render_target, force_organic = balloon_map
+        elif btype == "thought":
             # box도 레이아웃 치수는 rounded 특성을 쓰되 렌더는 라운드/꼬리 없는
             # 직사각형으로 바꾼다.
             force_shape = "cloud" if thought_shape == "cloud" else "rounded"
             allowed_shapes = (force_shape,)
+            render_target = None
+            force_organic = False
         else:
             # 대사는 모델이 텍스트 기하를 보고 타원/코믹 각진형을 자동 선택한다.
             force_shape = None
             allowed_shapes = ("ellipse", "rounded")
+            render_target = None
+            force_organic = False
         try:
             layout, _layout_alternatives = choose_scaled_layout(
                 text,
@@ -1548,7 +1720,10 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
             preview_candidates.extend(visible)
 
         fill = thought_fill if btype == "thought" else speech_fill
-        if btype == "thought":
+        if balloon_map:
+            # balloon_type이 렌더 형상을 결정한다.
+            render_shape = render_target
+        elif btype == "thought":
             render_shape = thought_shape
         else:
             render_shape = "comic" if layout.shape == "rounded" else "ellipse"
@@ -1566,7 +1741,13 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
                 radius,
             )
         # 유기형 외곽선은 대사(ellipse/comic)에만 적용. cloud/box는 legacy 유지.
-        use_organic = bubble_shape_mode == "organic" and render_shape in ("ellipse", "comic")
+        # trembling balloon_type은 per-segment로 organic을 강제하고 굴곡을 세게 한다.
+        use_organic = force_organic or (
+            bubble_shape_mode == "organic" and render_shape in ("ellipse", "comic")
+        )
+        seg_wobble = organic_wobble
+        if balloon_type == "trembling":
+            seg_wobble = max(organic_wobble, 0.20)
         # 동일 배치에서 동일 형태가 재현되도록 rect 좌표로 결정론적 seed 산출.
         # hash()는 프로세스마다 salt가 달라 재현성이 없으므로 정수 연산을 쓴다.
         organic_seed = (
@@ -1597,7 +1778,7 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
             with_tail,
             organic=use_organic,
             tail_width_scale=tail_width_scale,
-            wobble=organic_wobble,
+            wobble=seg_wobble,
             point_count=organic_point_count,
             seed=organic_seed,
             tail_max_length_px=tail_max_length_px,
@@ -1642,6 +1823,7 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
             )
         print(
             f"[BUBBLE_RENDER] 레이아웃 적용: speaker={seg.get('speaker')}, "
+            f"balloon_type={balloon_type or '-'}, "
             f"shape={render_shape}(layout={layout.shape}), font={layout.font_size}, "
             f"lines={len(layout.lines)}, body=({body_w:.1f},{body_h:.1f}), "
             f"tail={with_tail} gap={tail_gap:.1f}/{tail_limit:.1f}px, "

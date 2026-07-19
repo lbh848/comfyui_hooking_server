@@ -177,6 +177,15 @@ _FONT_CANDIDATES = [
 _EMOTION_SUFFIX_RE = re.compile(r'\s+(#\S.*?)\s*$', re.UNICODE)
 
 
+# CALL3(manga)가 내보내는 고정 말풍선 타입 라벨. 줄 끝 '#라벨'이 이 중 하나면
+# 감정(emotion)이 아니라 balloon_type 으로 분류한다. 키워드로 문맥을 추론하는 것이
+# 아니라 LLM이 정해진 프로토콜로 출력하는 7개 라벨을 역직렬화하는 구조화 파싱이다.
+_BALLOON_TYPE_LABELS = {
+    "normal", "angular", "narration_box", "thought_cloud",
+    "burst", "whisper", "trembling",
+}
+
+
 def _split_emotion_suffix(line: str) -> tuple:
     """줄 끝의 ' #감정' 리터럴을 (본문, 감정태그) 로 분리.
 
@@ -209,7 +218,10 @@ def parse_speak(speak_text: str, strip_emotion: bool = False) -> list:
       - strip_emotion=False -> speaker=kapri, text='대사 #happy smile', emotion='#happy smile'
 
     Returns:
-        [{"speaker": str|None, "text": str, "type": "speech"|"thought", "emotion": str|None}, ...]
+        [{"speaker": str|None, "text": str, "type": "speech"|"thought",
+          "emotion": str|None, "balloon_type": str|None}, ...]
+        balloon_type: CALL3(manga)의 7개 풍선 타입 라벨 중 하나. 말풍선 모드 렌더가
+        현재 형상을 결정할 때 참조한다.
     """
     if not speak_text:
         return []
@@ -248,7 +260,15 @@ def parse_speak(speak_text: str, strip_emotion: bool = False) -> list:
         m = speech_re.match(line) or thought_named_re.match(line) or thought_bare_re.match(line)
         if m:
             emo_grp = m.group("emotion")
-            emotion = f"#{emo_grp}" if emo_grp else None
+            emotion = None
+            balloon_type = None
+            if emo_grp:
+                label = emo_grp.strip()
+                # 7개 풍선 타입 라벨이면 balloon_type, 그 외만 감정으로 분류한다.
+                if label in _BALLOON_TYPE_LABELS:
+                    balloon_type = label
+                else:
+                    emotion = f"#{label}"
             keep_emotion = emotion if not strip_emotion else None
             text = m.group("text")
             if keep_emotion:
@@ -262,15 +282,35 @@ def parse_speak(speak_text: str, strip_emotion: bool = False) -> list:
                 "text": text,
                 "type": seg_type,
                 "emotion": emotion,
+                "balloon_type": balloon_type,
             })
             continue
 
         # 그 외: 이름 없는 일반 텍스트 줄은 발화로 취급.
         # 토글 OFF면 감정 유지(원본 line), ON이면 감정 제거(core).
-        core, emotion = _split_emotion_suffix(line)
-        text = line.strip() if not strip_emotion else core.strip()
-        if text:
-            segments.append({"speaker": None, "text": text, "type": "speech", "emotion": emotion})
+        # 풍선 타입 라벨은 표시용 텍스트가 아니므로 strip_emotion 여부와 무관하게
+        # 항상 본문에서 제거하고 balloon_type 으로만 보존한다.
+        core, suffix = _split_emotion_suffix(line)
+        balloon_type = None
+        emotion = None
+        if suffix:
+            label = suffix.lstrip("#").strip()
+            if label in _BALLOON_TYPE_LABELS:
+                balloon_type = label
+            else:
+                emotion = suffix
+        if emotion and not strip_emotion:
+            text = line.strip()
+        else:
+            text = core.strip()
+        if text or balloon_type:
+            segments.append({
+                "speaker": None,
+                "text": text,
+                "type": "speech",
+                "emotion": emotion,
+                "balloon_type": balloon_type,
+            })
 
     return segments
 
@@ -2257,7 +2297,7 @@ def _default_bubble() -> dict:
         "thought_opacity": 1.0,           # 생각 말풍선 배경 불투명도(0~1)
         "padding": 16,                    # 몸통 내 텍스트 여백
         "radius": 22,                     # 코믹 각진형의 모서리 절삭 크기
-        "thought_shape": "cloud",         # 생각 표현: cloud | box(무라운드/무꼬리) | auto(1인 박스/2인 구름)
+        "thought_shape": "cloud",         # 생각 표현(풍선 타입 라벨이 없을 때만): cloud | box(무라운드/무꼬리)
         "tail_threshold": 1.0,             # 꼬리 생성 최대 거리(얼굴 최대 크기의 배율)
         "bubble_shape": "legacy",          # 외곽선 렌더: legacy(기본 타원/코믹) | organic(유기형 굴곡)
         "tail_width_scale": 1.0,           # 꼬리 두께 배율(자동 산정값×k, 0.2~3.0). 1.0=변경 없음
