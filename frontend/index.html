@@ -8155,6 +8155,11 @@
                                     <div><div style="font-size:0.7rem; color:var(--text2,#999);">가로·세로 비율 — 모델 자동</div><input id="pp-bubble-max-width-ratio" type="number" class="input" style="width:70px;" step="0.05" disabled title="텍스트와 버블 종류에 맞춰 레이아웃 ONNX가 자동 결정합니다"></div>
                                 </div>
                                 <div class="pp-field-inline" style="margin-top:6px;">
+                                    <div><div style="font-size:0.7rem; color:var(--text2,#999);">외곽선 스타일</div><select id="pp-bubble-shape" class="select" style="width:130px;" onchange="renderPostprocessPreview()" title="legacy=기존 타원/코믹, organic=저주파 굴곡 유기형(대사에만 적용)"><option value="legacy">기본(legacy)</option><option value="organic">유기형(organic)</option></select></div>
+                                    <div><div style="font-size:0.7rem; color:var(--text2,#999);">꼬리 두께 배율</div><input id="pp-bubble-tail-width-scale" type="number" class="input" style="width:70px;" min="0.2" max="3.0" step="0.1" oninput="renderPostprocessPreview()" title="자동 산정된 꼬리 두께에 곱할 배율. 1.0=기본, 1.5=50% 두껍게."></div>
+                                    <div><div style="font-size:0.7rem; color:var(--text2,#999);">유기형 굴곡 강도</div><input id="pp-bubble-organic-wobble" type="number" class="input" style="width:70px;" min="0.02" max="0.10" step="0.005" oninput="renderPostprocessPreview()" title="유기형 외곽선 굴곡. 긴 대사는 0.045, 짧은 대사는 0.060 권장. organic일 때만 적용."></div>
+                                </div>
+                                <div class="pp-field-inline" style="margin-top:6px;">
                                     <div><div style="font-size:0.7rem; color:var(--text2,#999);">대사 불투명도(0~1)</div><input id="pp-bubble-speech-opacity" type="number" class="input" style="width:70px;" step="0.1" min="0" max="1" oninput="renderPostprocessPreview()"></div>
                                     <div><div style="font-size:0.7rem; color:var(--text2,#999);">생각 불투명도(0~1)</div><input id="pp-bubble-thought-opacity" type="number" class="input" style="width:70px;" step="0.1" min="0" max="1" oninput="renderPostprocessPreview()"></div>
                                     <div><div style="font-size:0.7rem; color:var(--text2,#999);">매칭 임계치</div><input id="pp-bubble-match-thres" type="number" class="input" style="width:70px;" min="0" max="1" step="0.05" oninput="renderPostprocessPreview()" title="NAME 캐릭터 임베딩과 감지 얼굴의 코사인 유사도가 이 값 이상일 때만 배정합니다."></div>
@@ -26235,6 +26240,9 @@
                     radius: 22,
                     thought_shape: 'cloud',
                     tail_threshold: 1.0,
+                    bubble_shape: 'legacy',
+                    tail_width_scale: 1.0,
+                    organic_wobble: 0.055,
                     max_width_ratio: 0.45,
                     match_thres: 0.55,
                     face_candidates_per_character: 8,
@@ -27054,6 +27062,9 @@
             if (base.letter_spacing == null || isNaN(Number(base.letter_spacing))) base.letter_spacing = -0.03;
             if (base.line_height_ratio == null || isNaN(Number(base.line_height_ratio))) base.line_height_ratio = 1.15;
             if (base.text_width_scale == null || isNaN(Number(base.text_width_scale))) base.text_width_scale = 1.0;
+            if (base.bubble_shape !== 'organic') base.bubble_shape = 'legacy';
+            if (base.tail_width_scale == null || isNaN(Number(base.tail_width_scale))) base.tail_width_scale = 1.0;
+            if (base.organic_wobble == null || isNaN(Number(base.organic_wobble))) base.organic_wobble = 0.055;
             return base;
         }
 
@@ -27190,6 +27201,10 @@
             set('pp-bubble-padding', b.padding ?? 16);
             set('pp-bubble-radius', b.radius ?? 22);
             set('pp-bubble-tail-threshold', b.tail_threshold ?? 1.0);
+            const _shapeSel = document.getElementById('pp-bubble-shape');
+            if (_shapeSel) _shapeSel.value = (b.bubble_shape === 'organic') ? 'organic' : 'legacy';
+            set('pp-bubble-tail-width-scale', b.tail_width_scale ?? 1.0);
+            set('pp-bubble-organic-wobble', b.organic_wobble ?? 0.055);
             set('pp-bubble-thought-shape', b.thought_shape || 'cloud');
             set('pp-bubble-max-width-ratio', b.max_width_ratio ?? 0.45);
             set('pp-bubble-speech-opacity', b.speech_opacity ?? b.opacity ?? 1.0);
@@ -27229,6 +27244,10 @@
             b.padding = _ppNum('pp-bubble-padding', 16, 0, 200);
             b.radius = _ppNum('pp-bubble-radius', 22, 0, 200);
             b.tail_threshold = _ppNum('pp-bubble-tail-threshold', 1.0, 0, 5);
+            const _shapeVal = document.getElementById('pp-bubble-shape');
+            b.bubble_shape = (_shapeVal && _shapeVal.value === 'organic') ? 'organic' : 'legacy';
+            b.tail_width_scale = _ppNum('pp-bubble-tail-width-scale', 1.0, 0.2, 3.0);
+            b.organic_wobble = _ppNum('pp-bubble-organic-wobble', 0.055, 0.02, 0.10);
             const _ppThoughtShape = document.getElementById('pp-bubble-thought-shape').value;
             b.thought_shape = (_ppThoughtShape === 'box' || _ppThoughtShape === 'auto') ? _ppThoughtShape : 'cloud';
             delete b.thought_circle_r;
@@ -27277,6 +27296,8 @@
                     speech_opacity: b.speech_opacity, thought_opacity: b.thought_opacity,
                     padding: b.padding, radius: b.radius,
                     thought_shape: b.thought_shape, tail_threshold: b.tail_threshold,
+                    bubble_shape: b.bubble_shape, tail_width_scale: b.tail_width_scale,
+                    organic_wobble: b.organic_wobble,
                     max_width_ratio: b.max_width_ratio, match_thres: b.match_thres,
                     face_candidates_per_character: b.face_candidates_per_character,
                     appearance_weight: b.appearance_weight,

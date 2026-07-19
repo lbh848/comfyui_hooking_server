@@ -2122,6 +2122,9 @@ def _default_bubble() -> dict:
         "radius": 22,                     # 코믹 각진형의 모서리 절삭 크기
         "thought_shape": "cloud",         # 생각 표현: cloud | box(무라운드/무꼬리) | auto(1인 박스/2인 구름)
         "tail_threshold": 1.0,             # 꼬리 생성 최대 거리(얼굴 최대 크기의 배율)
+        "bubble_shape": "legacy",          # 외곽선 렌더: legacy(기본 타원/코믹) | organic(유기형 굴곡)
+        "tail_width_scale": 1.0,           # 꼬리 두께 배율(자동 산정값×k, 0.2~3.0). 1.0=변경 없음
+        "organic_wobble": 0.055,           # 유기형 굴곡 강도(0.02~0.10). 짧은 대사 0.060, 긴 대사 0.045 권장
         "max_width_ratio": 0.45,          # 캔버스 폭 대비 말풍선 최대 폭 비율
         "match_thres": 0.55,              # 코사인 유사도 매칭 임계치(이하 미배정)
         "face_candidates_per_character": 8,  # 캐릭터당 확보할 YOLO 후보 수(전체 최대 64)
@@ -2276,6 +2279,17 @@ def get_bubble_settings(config: dict, bot_name: str = "") -> Optional[dict]:
         "tail_threshold": float(
             bb.get("tail_threshold", 1.0)
             if bb.get("tail_threshold", 1.0) is not None else 1.0
+        ),
+        "bubble_shape": (
+            str(bb.get("bubble_shape", "legacy") or "legacy").strip().lower()
+            if str(bb.get("bubble_shape", "legacy") or "legacy").strip().lower()
+            in ("legacy", "organic") else "legacy"
+        ),
+        "tail_width_scale": max(
+            0.2, min(3.0, float(bb.get("tail_width_scale", 1.0) or 1.0))
+        ),
+        "organic_wobble": max(
+            0.02, min(0.10, float(bb.get("organic_wobble", 0.055) or 0.055))
         ),
         "max_width_ratio": float(bb.get("max_width_ratio", 0.45) or 0.45),
         "match_thres": float(

@@ -27,6 +27,8 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont, ImageColor, ImageFilter
 
 from modes.background_segmenter import background_ratio
+from modes.bubble_shape import make_organic_ellipse
+from modes.bubble_types import OrganicShapeConfig
 
 # 캔버스 폭 대비 말풍선 최대 폭 비율 기본값
 _MAX_WIDTH_RATIO_DEFAULT = 0.45
@@ -211,6 +213,37 @@ def _resolve_layout_font_scale(settings):
         print(f"[BUBBLE_RENDER] ⚠ layout_font_scale 변환 실패({value!r}), 2.0 사용")
         scale = 2.0
     return max(1.0, min(4.0, scale))
+
+
+def _resolve_bubble_shape_mode(settings):
+    """말풍선 외곽선 렌더 모드: legacy(기존 타원/코믹) | organic(유기형)."""
+    mode = str((settings or {}).get("bubble_shape", "legacy") or "legacy").strip().lower()
+    if mode not in ("legacy", "organic"):
+        print(f"[BUBBLE_RENDER] ⚠ 알 수 없는 bubble_shape({mode!r}), legacy 사용")
+        return "legacy"
+    return mode
+
+
+def _resolve_tail_width_scale(settings):
+    """꼬리 두께 배율. 자동 산정 두께에 곱한다(0.2~3.0 클램프). 1.0=변경 없음."""
+    value = (settings or {}).get("tail_width_scale", 1.0)
+    try:
+        scale = float(value)
+    except (TypeError, ValueError):
+        print(f"[BUBBLE_RENDER] ⚠ tail_width_scale 변환 실패({value!r}), 1.0 사용")
+        scale = 1.0
+    return max(0.2, min(3.0, scale))
+
+
+def _resolve_organic_wobble(settings):
+    """유기형 외곽선 굴곡 강도. 길이 무관 기본 0.055, 0.02~0.10 클램프."""
+    value = (settings or {}).get("organic_wobble", 0.055)
+    try:
+        wobble = float(value)
+    except (TypeError, ValueError):
+        print(f"[BUBBLE_RENDER] ⚠ organic_wobble 변환 실패({value!r}), 0.055 사용")
+        wobble = 0.055
+    return max(0.02, min(0.10, wobble))
 
 
 def _resolve_face_match_crop(settings, bot_name):
@@ -739,8 +772,11 @@ def _quadratic_point(start, control, end, amount):
     )
 
 
-def _add_curved_tail(mask, rect, anchor, shape, radius, border_w):
-    """몸통 법선으로 출발해 얼굴 anchor로 휘는 꼬리를 union mask에 더한다."""
+def _add_curved_tail(mask, rect, anchor, shape, radius, border_w, tail_width_scale=1.0):
+    """몸통 법선으로 출발해 얼굴 anchor로 휘는 꼬리를 union mask에 더한다.
+
+    tail_width_scale 이 자동 산정 half_width 에 곱해 꼬리 두께를 조절한다.
+    """
     base, normal = _tail_base_geometry(rect, anchor, shape, radius)
     distance = math.hypot(anchor[0] - base[0], anchor[1] - base[1])
     if distance < 1.0:
@@ -750,6 +786,7 @@ def _add_curved_tail(mask, rect, anchor, shape, radius, border_w):
         max(1.0, float(border_w)) * 1.7,
         min(18.0, min(x2 - x1, y2 - y1) * 0.13),
     )
+    half_width *= max(0.1, float(tail_width_scale))
     tangent = (-normal[1], normal[0])
     left_start = (base[0] + tangent[0] * half_width, base[1] + tangent[1] * half_width)
     right_start = (base[0] - tangent[0] * half_width, base[1] - tangent[1] * half_width)
@@ -832,6 +869,21 @@ def _draw_cloud(overlay, rect, anchor, fill, border, border_w, with_tail):
         )
 
 
+def _build_organic_body_contour(rect, *, wobble, point_count, seed):
+    """유기형 몸통 외곽선(닫힌 폴리곤)을 numpy (N,2) int32 로 만든다.
+
+    꼬리는 포함하지 않는다 — 렌더 경로에서 legacy _add_curved_tail(덧셈 합집합)로
+    붙인다. 윤곽선을 잘라내 스플라이스하는 방식은 큰 이미지에서 tip 이 몸통 안쪽으로
+    클램프되어 노치(파임)를 만드는 문제가 있어 쓰지 않는다.
+    """
+    x1, y1, x2, y2 = [float(v) for v in rect]
+    cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
+    rx = max(1.0, (x2 - x1) / 2.0)
+    ry = max(1.0, (y2 - y1) / 2.0)
+    shape_config = OrganicShapeConfig(point_count=int(point_count), wobble=float(wobble))
+    return make_organic_ellipse((cx, cy), (rx, ry), seed=int(seed), config=shape_config)
+
+
 def _draw_layout_bubble(
     overlay,
     rect,
@@ -842,12 +894,46 @@ def _draw_layout_bubble(
     border_w,
     radius,
     with_tail,
+    *,
+    organic=False,
+    tail_width_scale=1.0,
+    wobble=0.055,
+    point_count=180,
+    seed=0,
 ):
-    """레이아웃 결과를 타원/코믹/구름/무라운드 박스로 그린다."""
+    """레이아웃 결과를 타원/코믹/구름/무라운드 박스로 그린다.
+
+    organic=True 이고 대사(ellipse/comic)면 유기형 굴곡 몸통에 legacy 곡선 꼬리를
+    덧셈 합집합으로 붙여 그린다(미리보기/실제 동일 빌더). cloud/box 및 생성 실패 시
+    legacy 폴백.
+    """
     shape = shape if shape in ("ellipse", "rounded", "comic", "cloud", "box") else "ellipse"
     if shape == "cloud":
         _draw_cloud(overlay, rect, anchor, fill, border, border_w, with_tail)
         return
+    if organic and shape in ("ellipse", "comic"):
+        try:
+            body = _build_organic_body_contour(
+                rect, wobble=wobble, point_count=point_count, seed=seed,
+            )
+            mask = Image.new("L", overlay.size, 0)
+            mask_draw = ImageDraw.Draw(mask)
+            # 베이스 타원을 먼저 깔아 유기형 굴곡이 안쪽으로 파인 구간도 채운다.
+            # 이 베이스 위에 꼬리(_add_curved_tail)가 타원 경계에서 접합하므로
+            # 몸통-꼬리 사이에 갭/노치가 생기지 않는다.
+            mask_draw.ellipse(rect, fill=255)
+            mask_draw.polygon(
+                [(int(p[0]), int(p[1])) for p in body], fill=255
+            )
+            if with_tail:
+                _add_curved_tail(
+                    mask, rect, anchor, "ellipse", radius, border_w, tail_width_scale
+                )
+            _composite_union_mask(overlay, mask, fill, border, border_w)
+            return
+        except Exception as e:
+            print(f"[BUBBLE_RENDER] ⚠ 유기형 외곽선 생성 실패 → legacy 폴백: {e}")
+            traceback.print_exc()
     render_shape = "comic" if shape == "rounded" else shape
     mask = Image.new("L", overlay.size, 0)
     mask_draw = ImageDraw.Draw(mask)
@@ -859,7 +945,9 @@ def _draw_layout_bubble(
     else:
         mask_draw.ellipse(rect, fill=255)
     if with_tail:
-        _add_curved_tail(mask, rect, anchor, render_shape, radius, border_w)
+        _add_curved_tail(
+            mask, rect, anchor, render_shape, radius, border_w, tail_width_scale
+        )
     _composite_union_mask(overlay, mask, fill, border, border_w)
 
 
@@ -1058,6 +1146,10 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
     text_color = ImageColor.getrgb(s.get("text_color", "#111111")) + (255,)
     border_w = float(s.get("border_width", 2))
     tail_threshold = s.get("tail_threshold", 1.0)
+    bubble_shape_mode = _resolve_bubble_shape_mode(s)
+    tail_width_scale = _resolve_tail_width_scale(s)
+    organic_wobble = _resolve_organic_wobble(s)
+    organic_point_count = int(s.get("organic_point_count", 180) or 180)
     radius = int(s.get("radius", 20))
     thought_shape = str(s.get("thought_shape", "cloud") or "cloud").strip().lower()
     # auto: 대사 고유 화자 수로 형상을 자동 결정(1인→박스, 2인 이상→구름).
@@ -1375,6 +1467,16 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
                 render_shape,
                 radius,
             )
+        # 유기형 외곽선은 대사(ellipse/comic)에만 적용. cloud/box는 legacy 유지.
+        use_organic = bubble_shape_mode == "organic" and render_shape in ("ellipse", "comic")
+        # 동일 배치에서 동일 형태가 재현되도록 rect 좌표로 결정론적 seed 산출.
+        # hash()는 프로세스마다 salt가 달라 재현성이 없으므로 정수 연산을 쓴다.
+        organic_seed = (
+            (int(round(rect[0])) * 73856093)
+            ^ (int(round(rect[1])) * 19349663)
+            ^ (int(round(rect[2])) * 83492791)
+            ^ (int(round(rect[3])) * 39916801)
+        ) & 0x7FFFFFFF
         _draw_layout_bubble(
             overlay,
             rect,
@@ -1385,6 +1487,11 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
             border_w,
             radius,
             with_tail,
+            organic=use_organic,
+            tail_width_scale=tail_width_scale,
+            wobble=organic_wobble,
+            point_count=organic_point_count,
+            seed=organic_seed,
         )
 
         # 모델이 선택한 줄과 행간을 실제 폰트로 중앙 정렬해 그린다.
@@ -1428,6 +1535,8 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
             f"shape={render_shape}(layout={layout.shape}), font={layout.font_size}, "
             f"lines={len(layout.lines)}, body=({body_w:.1f},{body_h:.1f}), "
             f"tail={with_tail} gap={tail_gap:.1f}/{tail_limit:.1f}px, "
+            f"organic={'on' if use_organic else 'off'} "
+            f"tail_w_scale={tail_width_scale:.2f}, "
             f"match={m.get('sim')}, fits={layout.fits}"
         )
         placed_boxes.append(rect)
