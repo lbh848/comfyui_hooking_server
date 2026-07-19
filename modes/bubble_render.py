@@ -948,13 +948,29 @@ def _draw_layout_bubble(
         _draw_cloud(overlay, rect, anchor, fill, border, border_w, with_tail)
         return
     if split and shape in ("ellipse", "comic", "rounded"):
-        mask = _split_body_mask(overlay.size, rect)
+        # 캔버스 가장자리에 타원 극점이 수직 접선으로 닿아 "벽에 붙은" 느낌이 나는
+        # 걸 피하기 위해 캔버스를 임시로 패딩하고, 두 타원을 rect 바깥으로 pad 만큼
+        # 팽창시켜 그린 뒤 원래 캔버스 영역만 크롭해 합성한다. 가장자리에서 타원이
+        # 수직 접선이 아닌 빗곡선 상태로 잘려 프레임 밖으로 깔끔하게 빠져나간다.
+        # 텍스트는 별도 렌더이므로 본문 위치에는 영향 없고, 몸통만 약간(pad≈6%)
+        # 커진다. 패딩 영역에 그려진 타원의 프레임 밖 부분은 크롭으로 버려진다.
+        bw, bh = overlay.size
+        x1, y1, x2, y2 = [float(v) for v in rect]
+        pad = max(0, int(round(max(float(border_w) * 2.0, min(x2 - x1, y2 - y1) * 0.06))))
+        padded_size = (bw + 2 * pad, bh + 2 * pad)
+        # rect 바깥으로 pad 만큼 팽창한 타원 bbox → 패딩 오프셋(+pad)을 더해
+        # 패딩 캔버스 좌표계로 변환. 중심은 real center+pad 로 대칭 유지된다.
+        padded_rect = [x1, y1, x2 + 2 * pad, y2 + 2 * pad]
+        padded_anchor = (anchor[0] + pad, anchor[1] + pad)
+        mask = _split_body_mask(padded_size, padded_rect)
         if with_tail:
             _add_curved_tail(
-                mask, rect, anchor, "ellipse", radius, border_w, tail_width_scale,
+                mask, padded_rect, padded_anchor, "ellipse", radius, border_w, tail_width_scale,
                 max_length_px=tail_max_length_px,
             )
-        _composite_union_mask(overlay, mask, fill, border, border_w)
+        padded_overlay = Image.new("RGBA", padded_size, (0, 0, 0, 0))
+        _composite_union_mask(padded_overlay, mask, fill, border, border_w)
+        overlay.alpha_composite(padded_overlay.crop((pad, pad, pad + bw, pad + bh)))
         return
     if organic and shape in ("ellipse", "comic"):
         try:
