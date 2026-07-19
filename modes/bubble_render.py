@@ -23,18 +23,12 @@ import math
 import os
 import traceback
 
-import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont, ImageColor, ImageFilter
 
 from modes.background_segmenter import background_ratio
-from modes.bubble_shape import (
-    build_text_safe_geometry,
-    estimate_envelope_extra,
-    make_organic_ellipse,
-    make_organic_text_box,
-)
-from modes.bubble_types import OrganicShapeConfig, TextBoxShapeConfig
+from modes.bubble_shape import make_organic_ellipse
+from modes.bubble_types import OrganicShapeConfig
 
 # 캔버스 폭 대비 말풍선 최대 폭 비율 기본값
 _MAX_WIDTH_RATIO_DEFAULT = 0.45
@@ -861,219 +855,6 @@ def _composite_union_mask(overlay, mask, fill, border, border_w):
     overlay.paste(fill, mask=mask)
 
 
-def _composite_union_masks(overlay, fill_mask, border_mask, fill, border):
-    """fill/border mask 를 별도로 받는 합성(high-res downscale 경로용).
-
-    기존 _composite_union_mask 와 동일 효과(border 바깥 영역 위에 fill 덮어쓰기)이나,
-    supersample 한 고해상도 mask 에서 미리 fill/border 두 mask 를 만들어 downscale 해서
-    넘겨받는다. border_mask 는 fill_mask 를 포함하는 확장 영역(외곽선 두께분)이어야 한다.
-    """
-    overlay.paste(border, mask=border_mask)
-    overlay.paste(fill, mask=fill_mask)
-
-
-def _box_outside_mask_ratio(box, mask_arr):
-    """box 영역 중 mask(0/255 uint8 배열) 가 채워지지 않은 비율. containment 검증용."""
-    if mask_arr is None:
-        return 1.0
-    h, w = mask_arr.shape[:2]
-    x1, y1, x2, y2 = [int(round(float(v))) for v in box]
-    x1 = max(0, min(w, x1))
-    x2 = max(0, min(w, x2))
-    y1 = max(0, min(h, y1))
-    y2 = max(0, min(h, y2))
-    area = max(0, x2 - x1) * max(0, y2 - y1)
-    if area <= 0:
-        return 1.0
-    sub = mask_arr[y1:y2, x1:x2]
-    filled = int(np.count_nonzero(sub > 0))
-    return max(0.0, 1.0 - filled / area)
-
-
-def _mask_outside_box_ratio(mask_arr, box):
-    """mask 픽셀 중 box 바깥에 있는 비율. body ⊆ rect(hard envelope) 검증용."""
-    if mask_arr is None:
-        return 1.0
-    h, w = mask_arr.shape[:2]
-    x1, y1, x2, y2 = [int(round(float(v))) for v in box]
-    x1 = max(0, min(w, x1))
-    x2 = max(0, min(w, x2))
-    y1 = max(0, min(h, y1))
-    y2 = max(0, min(h, y2))
-    total = int(np.count_nonzero(mask_arr > 0))
-    if total <= 0:
-        return 1.0
-    inside_box = np.zeros_like(mask_arr)
-    inside_box[y1:y2, x1:x2] = 255
-    outside = int(np.count_nonzero((mask_arr > 0) & (inside_box == 0)))
-    return outside / total
-
-
-def _render_text_safe_organic(
-    overlay,
-    rect,
-    anchor,
-    text_w,
-    text_h,
-    font_size,
-    padding_x,
-    padding_y,
-    line_count,
-    fill,
-    border,
-    border_w,
-    radius,
-    with_tail,
-    *,
-    seed=0,
-    wobble=0.05,
-    tail_width_scale=1.0,
-    tail_max_length_px=None,
-    supersample=3,
-    padding_scale=1.0,
-    config=None,
-):
-    """text-safe organic rounded box 렌더. rect 는 최종 풍선 전체의 hard envelope.
-
-    텍스트 박스 → content_safe_box → 둥근 skeleton → 외곽 normal 저주파 offset 순서로
-    contour 를 만들어 rect 안에 가둔다. 몸통 mask 와 꼬리 mask 를 고해상도에서 OR 합성한
-    뒤 fill/border mask 를 각각 downscale 해 기존 PIL compositor 로 합성한다.
-    실패(hard validation 위반/예외) 시 False 반환 → 호출부에서 legacy 폴백.
-    """
-    config = config or TextBoxShapeConfig()
-    scale = max(1, int(supersample))
-
-    try:
-        pad_x = float(padding_x) * float(padding_scale)
-        pad_y = float(padding_y) * float(padding_scale)
-
-        geometry = build_text_safe_geometry(
-            rect,
-            text_w,
-            text_h,
-            font_size,
-            padding_x=pad_x,
-            padding_y=pad_y,
-            border_w=border_w,
-            config=config,
-        )
-
-        # wobble 자동 보정: line count/rect aspect 로 진폭만 축소(base_outset 은 불변).
-        rect_w = float(geometry.rect[2] - geometry.rect[0])
-        rect_h = float(geometry.rect[3] - geometry.rect[1])
-        wobble_amp = _auto_wobble_amplitude(wobble, line_count, rect_w, rect_h)
-
-        contour = make_organic_text_box(
-            geometry,
-            seed=int(seed),
-            config=config,
-            wobble_amplitude=wobble_amp,
-        )
-
-        base_w, base_h = overlay.size
-        hi_w, hi_h = base_w * scale, base_h * scale
-        # 고해상도 body mask: cv2 fillPoly + skeleton_box 의 기본 rounded rect 를 같이 채워
-        # 내향 파임(혹시 모를 offset 음수/수치 오차)도 보정.
-        body_high = np.zeros((hi_h, hi_w), dtype=np.uint8)
-        hi_contour = np.rint(contour.astype(np.float32) * scale).astype(np.int32)
-        cv2.fillPoly(body_high, [hi_contour], 255, lineType=cv2.LINE_AA)
-        sx1, sy1, sx2, sy2 = geometry.skeleton_box
-        cv2.rectangle(
-            body_high,
-            (int(round(sx1 * scale)), int(round(sy1 * scale))),
-            (int(round(sx2 * scale)), int(round(sy2 * scale))),
-            255,
-            thickness=-1,
-        )
-
-        # 꼬리 OR 합성: body contour 를 자르지 않고 기존 _add_curved_tail 을 고해상도 mask 에.
-        if with_tail:
-            hi_mask_img = Image.fromarray(body_high, mode="L")
-            hi_rect = tuple(float(v) * scale for v in rect)
-            hi_anchor = (float(anchor[0]) * scale, float(anchor[1]) * scale)
-            _add_curved_tail(
-                hi_mask_img,
-                hi_rect,
-                hi_anchor,
-                "ellipse",
-                radius,
-                float(border_w) * scale,
-                tail_width_scale=tail_width_scale,
-                max_length_px=(float(tail_max_length_px) * scale if tail_max_length_px else None),
-            )
-            union_high = np.asarray(hi_mask_img)
-        else:
-            union_high = body_high
-
-        # border mask = union 의 외곽 확장(MaxFilter). outline 두께는 border_w 기준.
-        outline_w = max(1, int(round(float(border_w))))
-        filter_size = max(3, outline_w * scale * 2 + 1)
-        if filter_size % 2 == 0:
-            filter_size += 1
-        union_img = Image.fromarray(union_high, mode="L")
-        border_high = np.asarray(union_img.filter(ImageFilter.MaxFilter(int(filter_size))))
-
-        # downscale → base 해상도 mask. 이후 검증/합성은 모두 base 좌표계로 통일.
-        fill_mask = cv2.resize(
-            union_high, (base_w, base_h), interpolation=cv2.INTER_AREA,
-        )
-        body_base = cv2.resize(
-            body_high, (base_w, base_h), interpolation=cv2.INTER_AREA,
-        )
-        border_mask = cv2.resize(
-            border_high, (base_w, base_h), interpolation=cv2.INTER_AREA,
-        )
-        _, fill_bin = cv2.threshold(fill_mask, 32, 255, cv2.THRESH_BINARY)
-        _, body_bin = cv2.threshold(body_base, 32, 255, cv2.THRESH_BINARY)
-        _, border_bin = cv2.threshold(border_mask, 32, 255, cv2.THRESH_BINARY)
-
-        # hard validation (base 해상도, geometry.rect/box 와 동일 좌표계).
-        body_outside_rect = _mask_outside_box_ratio(body_bin, geometry.rect)
-        safe_outside = _box_outside_mask_ratio(geometry.content_safe_box, fill_bin)
-        text_outside = _box_outside_mask_ratio(geometry.text_box, fill_bin)
-        tol = 0.001
-        if body_outside_rect > tol or safe_outside > tol or text_outside > tol:
-            print(
-                f"[BUBBLE_RENDER] ⚠ text-safe 검증 실패 → 폐기: "
-                f"body_out_rect={body_outside_rect:.4f} safe_out={safe_outside:.4f} "
-                f"text_out={text_outside:.4f} rect={geometry.rect}"
-            )
-            return False
-
-        fill_mask_img = Image.fromarray(fill_bin, mode="L")
-        border_mask_img = Image.fromarray(border_bin, mode="L")
-        _composite_union_masks(overlay, fill_mask_img, border_mask_img, fill, border)
-        return True
-    except Exception as e:
-        print(f"[BUBBLE_RENDER] ⚠ text-safe organic 생성 예외 → legacy 폴백: {e}")
-        traceback.print_exc()
-        return False
-
-
-def _auto_wobble_amplitude(base_wobble, line_count, rect_w, rect_h):
-    """line count/rect aspect 로 organic 진폭(wobble)만 축소. base_outset 은 건드리지 않는다.
-
-    줄이 많거나(좁은 공간) 가로/세로 비율이 극단적이면 굴곡 진폭을 줄여 텍스트 여유를 지킨다.
-    """
-    try:
-        base = max(0.0, min(0.1, float(base_wobble)))
-    except (TypeError, ValueError):
-        base = 0.05
-    try:
-        n = max(1, int(line_count))
-    except (TypeError, ValueError):
-        n = 1
-    # 줄 수: 2줄=1.0, 5줄≈0.90, 10줄≈0.80 정도로 완만 감소.
-    line_factor = max(0.75, 1.0 - 0.028 * max(0, n - 2))
-    # aspect: 정방형(1:1)=1.0, 극단(>3 또는 <1/3)=0.85.
-    ar = float(rect_w) / max(rect_h, 1.0)
-    if ar >= 1.0:
-        aspect_factor = max(0.85, 1.0 - 0.05 * (ar - 1.0))
-    else:
-        aspect_factor = max(0.85, 1.0 - 0.05 * (1.0 / ar - 1.0))
-    return max(0.02, base * line_factor * aspect_factor)
-
-
 def _cloud_body_mask(size, rect):
     x1, y1, x2, y2 = [float(v) for v in rect]
     cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
@@ -1151,58 +932,41 @@ def _draw_layout_bubble(
     point_count=180,
     seed=0,
     tail_max_length_px=None,
-    text_w=0.0,
-    text_h=0.0,
-    font_size=24,
-    padding_x=14,
-    padding_y=10,
-    line_count=1,
 ):
-    """레이아웃 결과를 타원/코믹/구름/text-safe organic 박스로 그린다.
+    """레이아웃 결과를 타원/코믹/구름/무라운드 박스로 그린다.
 
-    organic=True 이고 대사(ellipse/comic)면 text-safe organic rounded box(텍스트 박스 →
-    안전 영역 → 둥근 skeleton → 외곽 저주파 offset)에 legacy 곡선 꼬리를 덧셈 합집합으로
-    붙여 그린다(미리보기/실제 동일 빌더). rect 는 최종 풍선 전체의 hard envelope 이며,
-    body mask 가 rect 를 넘거나 텍스트가 contour 안에 들지 않으면 검증 실패 → legacy 폴백.
-    cloud/box 도 legacy 유지.
+    organic=True 이고 대사(ellipse/comic)면 유기형 굴곡 몸통에 legacy 곡선 꼬리를
+    덧셈 합집합으로 붙여 그린다(미리보기/실제 동일 빌더). cloud/box 및 생성 실패 시
+    legacy 폴백.
     """
     shape = shape if shape in ("ellipse", "rounded", "comic", "cloud", "box") else "ellipse"
     if shape == "cloud":
         _draw_cloud(overlay, rect, anchor, fill, border, border_w, with_tail)
         return
     if organic and shape in ("ellipse", "comic"):
-        config = TextBoxShapeConfig(perimeter_points=max(64, int(point_count)))
-        ok = False
-        for attempt, pad_scale in enumerate((1.0, 1.10)):
-            ok = _render_text_safe_organic(
-                overlay,
-                rect,
-                anchor,
-                text_w,
-                text_h,
-                font_size,
-                padding_x,
-                padding_y,
-                line_count,
-                fill,
-                border,
-                border_w,
-                radius,
-                with_tail,
-                seed=seed,
-                wobble=wobble,
-                tail_width_scale=tail_width_scale,
-                tail_max_length_px=tail_max_length_px,
-                padding_scale=pad_scale,
-                config=config,
+        try:
+            body = _build_organic_body_contour(
+                rect, wobble=wobble, point_count=point_count, seed=seed,
             )
-            if ok:
-                if attempt > 0:
-                    print(f"[BUBBLE_RENDER] text-safe 검증 통과(padding×{pad_scale:.2f} 재시도)")
-                return
-            print(f"[BUBBLE_RENDER] text-safe 실패(padding_scale={pad_scale:.2f}) → 다음 시도")
-        # 두 시도 모두 실패 → legacy 폴백.
-        print("[BUBBLE_RENDER] text-safe organic 최종 실패 → legacy 타원 폴백")
+            mask = Image.new("L", overlay.size, 0)
+            mask_draw = ImageDraw.Draw(mask)
+            # 베이스 타원을 먼저 깔아 유기형 굴곡이 안쪽으로 파인 구간도 채운다.
+            # 이 베이스 위에 꼬리(_add_curved_tail)가 타원 경계에서 접합하므로
+            # 몸통-꼬리 사이에 갭/노치가 생기지 않는다.
+            mask_draw.ellipse(rect, fill=255)
+            mask_draw.polygon(
+                [(int(p[0]), int(p[1])) for p in body], fill=255
+            )
+            if with_tail:
+                _add_curved_tail(
+                    mask, rect, anchor, "ellipse", radius, border_w, tail_width_scale,
+                    max_length_px=tail_max_length_px,
+                )
+            _composite_union_mask(overlay, mask, fill, border, border_w)
+            return
+        except Exception as e:
+            print(f"[BUBBLE_RENDER] ⚠ 유기형 외곽선 생성 실패 → legacy 폴백: {e}")
+            traceback.print_exc()
     render_shape = "comic" if shape == "rounded" else shape
     mask = Image.new("L", overlay.size, 0)
     mask_draw = ImageDraw.Draw(mask)
@@ -1548,39 +1312,13 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
         body_w = float(layout.bubble_width)
         body_h = float(layout.bubble_height)
 
-        # organic 적용 여부를 placement 전에 확정한다. text-safe organic 은 풍선 전체
-        # (content + corner guard + organic 최대 확장 + border 여유) 가 들어갈 만큼 rect 를
-        # 크게 잡아야 하므로, 배치에 전달할 body_size 를 envelope 크기로 부풀린다.
-        # legacy/cloud/box 는 기존 content 크기 그대로.
-        if btype == "thought":
-            render_shape = thought_shape
-        else:
-            render_shape = "comic" if layout.shape == "rounded" else "ellipse"
-        use_organic = bubble_shape_mode == "organic" and render_shape in ("ellipse", "comic")
-
-        layout_text_w = float(layout.text_width)
-        layout_text_h = float(layout.text_height)
-        org_pad_x = max(TextBoxShapeConfig().min_padding_x, (body_w - layout_text_w) / 2.0)
-        org_pad_y = max(TextBoxShapeConfig().min_padding_y, (body_h - layout_text_h) / 2.0)
-        if use_organic:
-            _content_short = min(body_w, body_h)
-            _guard, _bm, _maxo = estimate_envelope_extra(
-                _content_short, border_w, TextBoxShapeConfig()
-            )
-            _extra = float(_guard + _bm + _maxo)
-            place_w = body_w + 2.0 * _extra
-            place_h = body_h + 2.0 * _extra
-        else:
-            place_w, place_h = body_w, body_h
-        body_size = (place_w, place_h)
-
         evaluated = None
         chosen = None
         used_fallback = False
         if unanchored_fallback:
             background_placement = _place_unanchored_body(
-                place_w,
-                place_h,
+                body_w,
+                body_h,
                 placed_boxes,
                 canvas_w,
                 canvas_h,
@@ -1615,7 +1353,7 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
             if preview_debug_candidates:
                 evaluated = evaluate_candidates(
                     candidate_cache[box_key],
-                    body_size,
+                    (body_w, body_h),
                     box,
                     (canvas_w, canvas_h),
                     forbidden_boxes=all_boxes,
@@ -1624,7 +1362,7 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
                 )
             chosen = select_candidate(
                 candidate_cache[box_key],
-                body_size,
+                (body_w, body_h),
                 box,
                 (canvas_w, canvas_h),
                 forbidden_boxes=all_boxes,
@@ -1643,7 +1381,7 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
             else:
                 print(f"[BUBBLE_RENDER] ONNX 유효 후보 없음 → 엄격 배경 격자 탐색: speaker={seg.get('speaker')}")
                 fallback = _place_body(
-                    box, place_w, place_h, all_boxes + placed_boxes,
+                    box, body_w, body_h, all_boxes + placed_boxes,
                     canvas_w, canvas_h,
                     protected_foreground_mask=protected_foreground_mask,
                 )
@@ -1654,13 +1392,13 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
                     )
                     relaxed_pool = list(candidate_cache[box_key])
                     relaxed_pool.extend(generate_grid_candidates(
-                        body_size,
+                        (body_w, body_h),
                         box,
                         (canvas_w, canvas_h),
                     ))
                     chosen = select_relaxed_candidate(
                         relaxed_pool,
-                        body_size,
+                        (body_w, body_h),
                         box,
                         (canvas_w, canvas_h),
                         face_boxes=all_boxes,
@@ -1669,8 +1407,8 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
                     )
                     if (
                         chosen is None
-                        and place_w <= canvas_w
-                        and place_h <= canvas_h
+                        and body_w <= canvas_w
+                        and body_h <= canvas_h
                     ):
                         print(
                             f"[BUBBLE_RENDER] 테두리 여백까지 확보할 수 없어 캔버스 경계 허용 재시도: "
@@ -1678,14 +1416,14 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
                         )
                         edge_pool = list(candidate_cache[box_key])
                         edge_pool.extend(generate_grid_candidates(
-                            body_size,
+                            (body_w, body_h),
                             box,
                             (canvas_w, canvas_h),
                             margin=0,
                         ))
                         chosen = select_relaxed_candidate(
                             edge_pool,
-                            body_size,
+                            (body_w, body_h),
                             box,
                             (canvas_w, canvas_h),
                             face_boxes=all_boxes,
@@ -1749,6 +1487,10 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
             preview_candidates.extend(visible)
 
         fill = thought_fill if btype == "thought" else speech_fill
+        if btype == "thought":
+            render_shape = thought_shape
+        else:
+            render_shape = "comic" if layout.shape == "rounded" else "ellipse"
         if unanchored_fallback or render_shape == "box":
             with_tail, tail_gap, tail_limit = False, 0.0, 0.0
         else:
@@ -1761,6 +1503,7 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
                 radius,
             )
         # 유기형 외곽선은 대사(ellipse/comic)에만 적용. cloud/box는 legacy 유지.
+        use_organic = bubble_shape_mode == "organic" and render_shape in ("ellipse", "comic")
         # 동일 배치에서 동일 형태가 재현되도록 rect 좌표로 결정론적 seed 산출.
         # hash()는 프로세스마다 salt가 달라 재현성이 없으므로 정수 연산을 쓴다.
         organic_seed = (
@@ -1795,12 +1538,6 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
             point_count=organic_point_count,
             seed=organic_seed,
             tail_max_length_px=tail_max_length_px,
-            text_w=layout_text_w,
-            text_h=layout_text_h,
-            font_size=layout.font_size,
-            padding_x=org_pad_x,
-            padding_y=org_pad_y,
-            line_count=len(layout.lines),
         )
 
         # 모델이 선택한 줄과 행간을 실제 폰트로 중앙 정렬해 그린다.
