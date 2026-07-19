@@ -12,6 +12,7 @@ postprocess - 삽화 후처리(이미지 하단 박스 + [SPEAK] 텍스트 합�
 import os
 import re
 import io
+import colorsys
 import traceback
 from typing import Optional
 
@@ -20,7 +21,7 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BOT_DIR = os.path.join(BASE_DIR, "bot")
 
 try:
-    from PIL import Image, ImageDraw, ImageFont, ImageFilter
+    from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageColor
     _HAS_PIL = True
 except Exception as _e:  # pragma: no cover
     print(f"[POSTPROCESS] ⚠ PIL import 실패, 후처리 비활성: {_e}")
@@ -266,18 +267,146 @@ def parse_speak(speak_text: str, strip_emotion: bool = False) -> list:
     return segments
 
 
+# 발화자 이름 비교 정규화 시 제거할 접미사(표기변형).
+# 예: 'Yura_reallife' ↔ 'Yura' 를 같은 캐릭터로 흡수.
+_NAME_VARIANT_SUFFIXES = ("reallife", "real")
+
+# 이름 색상 퍼지 매칭 수락 임계치(_pp_image_similarity 0~1).
+_NAME_MATCH_FUZZY_THRESHOLD = 0.8
+
+
+def _normalize_name(name: str) -> str:
+    """이름 비교 정규화: 소문자화 + 표기변형 접미사 제거 + 구분자/공백 제거.
+
+    'Yura_reallife' → 'yura', 'Yura Reallife' → 'yura', 'yura-real' → 'yura'.
+    비교를 위한 토큰만 만들 뿐 표시명은 원본 그대로 유지된다.
+    """
+    s = str(name or "").strip().lower()
+    # 접미사: 끝의 'reallife'/'real' (+ 앞 구분자) 제거
+    for suf in _NAME_VARIANT_SUFFIXES:
+        m = re.search(rf"[\s_\-]*{suf}$", s)
+        if m:
+            s = s[: m.start()]
+            break
+    # 공백/언더스코어/하이픈/구두점 제거 → 토큰 비교
+    s = re.sub(r"[\s_\-.,]+", "", s)
+    return s
+
+
+def _find_character(speaker: str, bot_name: str):
+    """speaker → bot.json 캐릭터(dict) 매칭. 실패 시 None.
+
+    매칭 우선순위(D):
+      1) 정규화 정확 일치(_normalize_name 기준)
+      2) 포함 일치(한쪽 토큰이 다른 쪽에 포함 — 표기변형/별명 흡수)
+      3) 퍼지(Levenshtein _pp_image_similarity, 임계치 이상 최고득점)
+
+    bot_name이 해당 봇에 없으면 전체 봇에서 검색한다.
+    """
+    if not speaker:
+        return None
+    try:
+        from modes.bot_mode import _load_bot_data
+    except Exception as e:
+        print(f"[POSTPROCESS] ⚠ bot_mode import 실패(이름 매칭): {e}")
+        return None
+    try:
+        bot_data = _load_bot_data()
+        bots = bot_data.get("bots", []) if isinstance(bot_data, dict) else []
+        target_bot = next((b for b in bots if b.get("name") == bot_name), None)
+        if target_bot:
+            chars = target_bot.get("characters", [])
+        else:
+            if bot_name:
+                print(f"[POSTPROCESS] 이름 매칭 봇 미발견, 전체 검색: bot={bot_name!r}")
+            chars = [c for b in bots for c in b.get("characters", [])]
+        chars = [c for c in chars if isinstance(c, dict)]
+        if not chars:
+            return None
+
+        sp_n = _normalize_name(speaker)
+        if not sp_n:
+            return None
+        sp_raw = str(speaker).strip().lower()
+
+        # 1a) raw 정확 일치(대소문자만 무시, 접미사 유지) — '_reallife' 변형이
+        #     기본 캐릭터와 충돌하지 않도록 가장 높은 우선순위.
+        for c in chars:
+            if str(c.get("name", "")).strip().lower() == sp_raw:
+                return c
+        # 1b) 정규화 정확 일치(접미사/구분자 무시)
+        for c in chars:
+            if _normalize_name(c.get("name", "")) == sp_n:
+                return c
+        # 2) 포함 일치(양방향). 짧은 토큰 오매칭 방지를 위해 최소 길이 요구.
+        if len(sp_n) >= 3:
+            for c in chars:
+                cn = _normalize_name(c.get("name", ""))
+                if cn and (cn in sp_n or sp_n in cn):
+                    return c
+        # 3) 퍼지: 임계치 이상 최고득점
+        best, best_score = None, 0.0
+        for c in chars:
+            cn = _normalize_name(c.get("name", ""))
+            if not cn:
+                continue
+            score = _pp_image_similarity(cn, sp_n)
+            if score > best_score:
+                best, best_score = c, score
+        if best is not None and best_score >= _NAME_MATCH_FUZZY_THRESHOLD:
+            return best
+        return None
+    except Exception as e:
+        print(f"[POSTPROCESS] ⚠ 캐릭터 매칭 실패(speaker={speaker}): {e}")
+        traceback.print_exc()
+        return None
+
+
+def _css_color_hex(color_word: str) -> Optional[str]:
+    """색상명(예: 'light blue','cyan','navy') → 어두운 배경 가독용 보정 hex.
+
+    표준 CSS/Web 색상명(PIL.ImageColor.colormap)인 경우에만 동작.
+    'light blue' → 'lightblue' 처럼 공백 제거 후 조회.
+    맵(HAIR_COLOR_MAP)에 없는 새 색상도 합리적 색으로 렌더링하기 위한 E1 폴백.
+    색상명이 아니면 None.
+    """
+    try:
+        from PIL import ImageColor
+    except Exception as e:
+        print(f"[POSTPROCESS] ⚠ ImageColor import 실패(CSS 색 폴백): {e}")
+        return None
+    w = str(color_word or "").strip().lower().replace(" ", "")
+    if not w or not hasattr(ImageColor, "colormap") or w not in ImageColor.colormap:
+        return None
+    try:
+        r, g, b = ImageColor.getrgb(w)
+    except Exception as e:
+        print(f"[POSTPROCESS] ⚠ CSS 색 조회 실패({color_word!r}): {e}")
+        return None
+    # 어두운 대사 바 위 가독성을 위해 lightness 하한(0.6)만 올리고, 밝은 색은 깎지 않는다.
+    # 기존 HAIR_COLOR_MAP의 보정 철학(black→#d6d6d6 등)과 동일 선상.
+    h, l, s = colorsys.rgb_to_hls(r / 255.0, g / 255.0, b / 255.0)
+    l = max(l, 0.6)
+    rr, gg, bb = colorsys.hls_to_rgb(h, l, s)
+    return "#{:02x}{:02x}{:02x}".format(
+        max(0, min(255, round(rr * 255))),
+        max(0, min(255, round(gg * 255))),
+        max(0, min(255, round(bb * 255))),
+    )
+
+
 def resolve_name_color(speaker: Optional[str], bot_name: str) -> str:
     """발화자 이름(speaker)에 해당하는 캐릭터의 머리색 → hex 색상을 반환.
 
-    bot_name의 bot.json 캐릭터 목록에서 speaker(대소문자 무관)를 찾아
-    face_tags에서 '* hair' 태그를 추출해 HAIR_COLOR_MAP으로 변환한다.
-    못 찾으면 DEFAULT_NAME_COLOR.
+    이름 매칭(D): _find_character 가 정규화 정확 → 포함 → 퍼지 순으로 캐릭터를 찾는다.
+    색상 결정(E1): HAIR_COLOR_MAP(수동 보정값) 우선 → 'hair' 앞 단어의 CSS 색상명 폴백.
+    어느 쪽도 못 찾으면 DEFAULT_NAME_COLOR.
     """
     if not speaker:
         print("[POSTPROCESS] 이름 색상 폴백: speaker 비어있음")
         return DEFAULT_NAME_COLOR
     try:
-        from modes.bot_mode import BOT_DATA_FILE, _load_bot_data
+        from modes.bot_mode import BOT_DATA_FILE
         global _NAME_COLOR_CACHE_MTIME_NS
         try:
             mtime_ns = os.stat(BOT_DATA_FILE).st_mtime_ns
@@ -291,38 +420,38 @@ def resolve_name_color(speaker: Optional[str], bot_name: str) -> str:
         if cache_key in _NAME_COLOR_CACHE:
             return _NAME_COLOR_CACHE[cache_key]
 
-        bot_data = _load_bot_data()
-        bots = bot_data.get("bots", []) if isinstance(bot_data, dict) else []
-        target_bot = next((b for b in bots if b.get("name") == bot_name), None)
-        if not target_bot:
-            # bot_name이 비어도 모든 캐릭터에서 찾아본다
-            if bot_name:
-                print(f"[POSTPROCESS] 이름 색상 봇 미발견, 전체 검색: bot={bot_name!r}")
-            chars = [c for b in bots for c in b.get("characters", [])]
-        else:
-            chars = target_bot.get("characters", [])
-
-        sp_lower = speaker.lower()
-        char = next((c for c in chars
-                     if isinstance(c, dict)
-                     and str(c.get("name", "")).lower() == sp_lower), None)
+        char = _find_character(speaker, bot_name)
         if not char:
             print(
-                f"[POSTPROCESS] 이름 색상 캐릭터 미발견, 기본색 사용: "
+                f"[POSTPROCESS] 이름 색상 캐릭터 매칭 실패, 기본색 사용: "
                 f"bot={bot_name!r}, speaker={speaker!r}"
             )
             _NAME_COLOR_CACHE[cache_key] = DEFAULT_NAME_COLOR
             return DEFAULT_NAME_COLOR
 
         face_tags = str(char.get("face_tags", "") or "")
-        # 모든 "* hair" 태그 중 매핑에 있는 첫 번째 사용
-        hair_candidates = re.findall(r'([a-z]+(?:\s+[a-z]+)?\s+hair)', face_tags, re.IGNORECASE)
+        # 'hair' 앞 단어 1~2개를 잡는다(2단어 색상 'light blue hair' 등 커버).
+        hair_candidates = re.findall(
+            r'([a-z]+(?:\s+[a-z]+)?\s+hair)', face_tags, re.IGNORECASE
+        )
+
+        # E1-1) 수동 맵 우선(밝기 보정값이 직접 지정된 색상)
         for tag in hair_candidates:
             key = tag.lower().strip()
             if key in HAIR_COLOR_MAP:
                 color = HAIR_COLOR_MAP[key]
                 _NAME_COLOR_CACHE[cache_key] = color
                 return color
+        # E1-2) CSS 색상명 폴백: 'hair' 접미사 떼고 표준 색상명 조회 → 밝기 보정
+        for tag in hair_candidates:
+            key = tag.lower().strip()
+            color_word = key[:-len("hair")].strip()  # 'light blue hair' → 'light blue'
+            if not color_word:
+                continue
+            css = _css_color_hex(color_word)
+            if css:
+                _NAME_COLOR_CACHE[cache_key] = css
+                return css
         print(
             f"[POSTPROCESS] 매핑 가능한 머리색 태그 없음, 기본색 사용: "
             f"bot={bot_name!r}, speaker={speaker!r}, face_tags={face_tags!r}"
