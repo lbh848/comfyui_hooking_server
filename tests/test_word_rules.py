@@ -6,7 +6,7 @@ from modes.illust_prompt_builder import (
     log_illust_build,
 )
 from modes.postprocess import parse_speak
-from modes.word_rules import apply_prompt_rules, apply_raw_prompt_rules
+from modes.word_rules import apply_prompt_rules, apply_raw_prompt_rules, apply_insert_rules
 
 
 class RawPromptWordRulesTest(unittest.TestCase):
@@ -262,6 +262,112 @@ class RawPromptWordRulesTest(unittest.TestCase):
         self.assertIn("[NAME]\nAlya", transformed)
         self.assertIn("[CHAR]\n(Alya:1.2), blue eyes", transformed)
         self.assertEqual(applied, 1)
+
+
+class InsertRuleTest(unittest.TestCase):
+    """삽입(insert) 규칙: 단어가 없으면 품질([ANIMA_QUALITY]/[SDXL_QUALITY]) 뒤에
+    평문으로 강제 삽입. 가중치 괄호/일반 괄호 형태도 중복으로 간주해 스킵."""
+
+    SAMPLE = (
+        "[ANIMA_QUALITY]\n"
+        "masterpiece, best quality\n"
+        "[ANIMA_ARTIST]\n"
+        "artist_a\n"
+        "[ANIMA_CONTENT]\n"
+        "1girl, solo\n"
+        "[ANIMA_ALL]\n"
+        "trigger, artist_a, masterpiece, best quality, 1girl, solo\n"
+        "[SDXL_QUALITY]\n"
+        "sdxl_q1, sdxl_q2\n"
+        "[SDXL_ARTIST]\n"
+        "artist_b\n"
+        "[SDXL]\n"
+        "strigger, artist_b, sdxl_q1, sdxl_q2, 1girl, solo\n"
+        "[CHAR_LIST]\n"
+        "alice"
+    )
+
+    def test_inserts_after_quality_when_absent(self):
+        rules = [{"type": "insert", "word": "blue eyes", "enabled": True}]
+        result, applied = apply_insert_rules(self.SAMPLE, rules)
+
+        self.assertEqual(applied, 1)
+        # ANIMA 품질 줄 바로 뒤에 삽입
+        self.assertIn("[ANIMA_QUALITY]\nmasterpiece, best quality, blue eyes\n", result)
+        # SDXL 품질 줄 바로 뒤에 삽입
+        self.assertIn("[SDXL_QUALITY]\nsdxl_q1, sdxl_q2, blue eyes\n", result)
+
+    def test_skips_when_present_as_plain_tag(self):
+        # 양쪽 영역(ANIMA/SDXL) 모두에 masterpiece 가 평문으로 존재
+        sample = self.SAMPLE.replace(
+            "sdxl_q1, sdxl_q2\n[SDXL_ARTIST]",
+            "sdxl_q1, sdxl_q2, masterpiece\n[SDXL_ARTIST]",
+        )
+        rules = [{"type": "insert", "word": "masterpiece", "enabled": True}]
+        result, applied = apply_insert_rules(sample, rules)
+
+        self.assertEqual(applied, 0)
+        self.assertEqual(result, sample)
+
+    def test_skips_when_present_as_weighted_tag(self):
+        # 양쪽 영역 모두에 (blue eyes:1.2) 가 존재
+        sample = self.SAMPLE.replace(
+            "1girl, solo\n[ANIMA_ALL]",
+            "(blue eyes:1.2), 1girl, solo\n[ANIMA_ALL]",
+        ).replace(
+            "1girl, solo\n[CHAR_LIST]",
+            "(blue eyes:1.2), 1girl, solo\n[CHAR_LIST]",
+        )
+        rules = [{"type": "insert", "word": "blue eyes", "enabled": True}]
+        result, applied = apply_insert_rules(sample, rules)
+
+        self.assertEqual(applied, 0)
+        # 품질 줄에는 삽입되지 않음
+        anima_quality = result.split("[ANIMA_QUALITY]\n")[1].split("\n")[0]
+        sdxl_quality = result.split("[SDXL_QUALITY]\n")[1].split("\n")[0]
+        self.assertNotIn("blue eyes", anima_quality)
+        self.assertNotIn("blue eyes", sdxl_quality)
+
+    def test_skips_when_present_as_paren_wrapped_tag(self):
+        sample = self.SAMPLE.replace(
+            "sdxl_q1, sdxl_q2\n[SDXL_ARTIST]",
+            "sdxl_q1, sdxl_q2, (blue eyes)\n[SDXL_ARTIST]",
+        )
+        rules = [{"type": "insert", "word": "blue eyes", "enabled": True}]
+        result, applied = apply_insert_rules(sample, rules)
+
+        self.assertEqual(applied, 1)  # ANIMA엔 없어 삽입, SDXL엔 있어 스킵 → 규칙 1회 적용
+        # SDXL에는 이미 있으므로 추가 삽입 없음
+        sdxl_quality_line = result.split("[SDXL_QUALITY]\n")[1].split("\n")[0]
+        self.assertEqual(sdxl_quality_line.count("blue eyes"), 1)
+        # ANIMA에는 삽입됨
+        self.assertIn("[ANIMA_QUALITY]\nmasterpiece, best quality, blue eyes\n", result)
+
+    def test_substring_match_does_not_count_as_present(self):
+        # "deep blue eyes" 가 있어도 "blue eyes" 는 별개 태그 → 삽입
+        sample = self.SAMPLE.replace(
+            "1girl, solo\n[ANIMA_ALL]",
+            "deep blue eyes, 1girl, solo\n[ANIMA_ALL]",
+        )
+        rules = [{"type": "insert", "word": "blue eyes", "enabled": True}]
+        result, applied = apply_insert_rules(sample, rules)
+
+        self.assertEqual(applied, 1)
+        self.assertIn("[ANIMA_QUALITY]\nmasterpiece, best quality, blue eyes\n", result)
+
+    def test_disabled_rule_is_skipped(self):
+        rules = [{"type": "insert", "word": "blue eyes", "enabled": False}]
+        result, applied = apply_insert_rules(self.SAMPLE, rules)
+
+        self.assertEqual(applied, 0)
+        self.assertEqual(result, self.SAMPLE)
+
+    def test_empty_word_is_skipped(self):
+        rules = [{"type": "insert", "word": "", "enabled": True}]
+        result, applied = apply_insert_rules(self.SAMPLE, rules)
+
+        self.assertEqual(applied, 0)
+        self.assertEqual(result, self.SAMPLE)
 
 
 class DetectCharactersFromNameTest(unittest.TestCase):

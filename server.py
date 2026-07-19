@@ -69,6 +69,7 @@ from modes.word_rules import (
     apply_prompt_rules as _apply_prompt_word_rules,
     apply_raw_prompt_rules as _apply_raw_prompt_word_rules,
     apply_remove_rule as _apply_remove_word_rule,
+    apply_insert_rules as _apply_insert_word_rules,
 )
 from modes import chansub_service
 from modes import illustration_context_pipeline
@@ -800,6 +801,25 @@ def apply_raw_prompt_word_replacements(raw_prompt: str, bot_name: str) -> str:
     if applied > 0:
         print(f"[WORD_RULE] RAW 프롬프트 선처리 적용: bot={bot_name}, {applied}개 섹션별 규칙")
     return transformed
+
+
+def apply_insert_word_rules(positive: str, bot_name: str) -> str:
+    """삽화 빌드 후 최종 positive의 품질([ANIMA_QUALITY]/[SDXL_QUALITY]) 뒤에
+    삽입 규칙(단어가 없으면 강제 삽입)을 후처리로 적용한다.
+
+    품질 태그는 RAW 선처리 시점엔 아직 조립되지 않으므로, 빌드 결과에 대해
+    별도로 실행한다. 삽입 규칙이 없으면 positive 를 그대로 반환한다.
+    """
+    if not bot_name or not positive:
+        return positive
+    from modes.bot_mode import _load_word_replacements
+    rules = _load_word_replacements(bot_name).get("rules", [])
+    if not rules:
+        return positive
+    positive, applied = _apply_insert_word_rules(positive, rules)
+    if applied > 0:
+        print(f"[WORD_RULE] 삽입 규칙 적용: bot={bot_name}, {applied}개 규칙")
+    return positive
 
 
 def split_prompt_chat(text: str) -> tuple[str, str]:
@@ -2105,6 +2125,8 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                         detected, bot, tags, settings, bot_name
                     )
                     negative = builder.build_negative_prompt(tags, settings, detected, bot)
+                    # 품질 뒤 강제 삽입 규칙(ANIMA/SDXL) 후처리
+                    positive = apply_insert_word_rules(positive, bot_name)
 
                 # 4-1. 인스턴스 LoRA 사용 횟수 증가 (V1/챈섭은 LoRA 미사용 → 제외)
                 from modes.instance_lora_mode import increment_usage as _increment_instance_lora_usage

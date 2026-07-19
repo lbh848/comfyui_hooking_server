@@ -148,6 +148,9 @@ def apply_prompt_rules(positive: str, negative: str, rules: list[dict]) -> tuple
             continue
 
         rule_type = (rule.get("type") or "replace").strip().lower()
+        if rule_type == "insert":
+            # 삽입 타입은 최종 positive 후처리(apply_insert_rules)에서만 동작.
+            continue
         if rule_type == "remove":
             positive, did_positive = apply_remove_rule(positive, rule)
             negative, did_negative = apply_remove_rule(negative, rule)
@@ -174,6 +177,123 @@ def apply_prompt_rules(positive: str, negative: str, rules: list[dict]) -> tuple
             applied_rule_indexes.add(index)
 
     return positive, negative, len(applied_rule_indexes)
+
+
+def _tag_core(segment: str) -> str:
+    """쉼표 단위 세그먼트에서 괄호·가중치 문법을 벗겨낸 태그(casefold)를 반환한다.
+
+    중복 삽입 검사용. ``(word:1.2)`` → ``word``, ``(word)`` → ``word``,
+    일반 ``word`` → ``word`` 로 정규화한다.
+    """
+    core = segment.strip()
+    weighted_match = _WEIGHTED_TAG_RE.fullmatch(core)
+    if weighted_match:
+        return weighted_match.group("tag").strip().casefold()
+    if core.startswith("(") and core.endswith(")"):
+        inner = core[1:-1].strip()
+        # (tag:1.2) 는 위 정규식이 잡지만, 혹시 남은 경우 한 번 더 벗김
+        inner_match = _WEIGHTED_TAG_RE.fullmatch(inner)
+        if inner_match:
+            return inner_match.group("tag").strip().casefold()
+        return inner.casefold()
+    return core.casefold()
+
+
+def _word_present_in_region(region: str, word: str) -> bool:
+    """영역 텍스트 안에 ``word`` 태그가 콤마 단위로 정확히 존재하는지 검사한다.
+
+    줄바꿈도 구분자로 취급해 섹션 경계를 무시하지 않도록 정규화한다.
+    ``blue eyes`` 가 있을 때 ``light blue eyes`` 같은 별개 태그는 False 다.
+    """
+    word_cf = word.strip().casefold()
+    if not word_cf:
+        return False
+    normalized = re.sub(r"[\r\n]+", ",", region)
+    for segment in normalized.split(","):
+        if _tag_core(segment) == word_cf:
+            return True
+    return False
+
+
+# 품질 섹션 헤더 + 그 직후 한 줄(태그 리스트)을 매칭
+_ANIMA_QUALITY_LINE_RE = re.compile(r"(\[ANIMA_QUALITY\]\n)([^\n]*)", re.IGNORECASE)
+_SDXL_QUALITY_LINE_RE = re.compile(r"(\[SDXL_QUALITY\]\n)([^\n]*)", re.IGNORECASE)
+_ANIMA_REGION_END_RE = re.compile(r"\n\[SDXL_QUALITY\]", re.IGNORECASE)
+_SDXL_REGION_END_RE = re.compile(r"\n\[CHAR_LIST\]", re.IGNORECASE)
+
+
+def _extract_region(text: str, start_re: "re.Pattern", end_re: "re.Pattern") -> str:
+    """시작 마커부터 (있으면) 종료 마커 전까지의 영역 문자열을 반환한다."""
+    start_match = start_re.search(text)
+    if not start_match:
+        return ""
+    start = start_match.start()
+    tail = text[start_match.end():]
+    end_match = end_re.search(tail)
+    end = start_match.end() + end_match.start() if end_match else len(text)
+    return text[start:end]
+
+
+def _insert_word_after_quality_line(text: str, quality_line_re: "re.Pattern",
+                                    word: str, label: str) -> tuple[str, bool]:
+    """품질 섹션 헤더 직후의 태그 줄 끝에 ``word`` 를 추가한다."""
+    match = quality_line_re.search(text)
+    if not match:
+        return text, False
+    header = match.group(1)
+    tag_line = match.group(2).rstrip()
+    new_line = f"{tag_line}, {word}" if tag_line.strip() else word
+    print(f"[WORD_RULE] 삽입 적용: word={word!r}, 영역={label}")
+    return text[:match.start()] + header + new_line + text[match.end():], True
+
+
+def apply_insert_rules(positive: str, rules: list[dict]) -> tuple[str, int]:
+    """최종 positive의 [ANIMA_QUALITY]/[SDXL_QUALITY] 뒤에 단어를 강제 삽입한다.
+
+    각 모델 영역(ANIMA / SDXL)에 해당 단어가 이미 존재하면(가중치·괄호 형태
+    포함) 그 영역은 스킵하여 중복을 막는다. 삽입은 평문 태그로만 한다.
+    """
+    if not positive:
+        return positive, 0
+
+    applied_rule_count = 0
+    for rule in rules:
+        if not rule.get("enabled", True):
+            continue
+        if (rule.get("type") or "replace").strip().lower() != "insert":
+            continue
+
+        word = (rule.get("word") or rule.get("source") or "").strip()
+        if not word:
+            print("[WORD_RULE] 삽입 규칙에 word가 없어 스킵합니다.")
+            continue
+
+        did_insert = False
+
+        anima_region = _extract_region(positive, _ANIMA_QUALITY_LINE_RE, _ANIMA_REGION_END_RE)
+        if anima_region:
+            if _word_present_in_region(anima_region, word):
+                print(f"[WORD_RULE] 삽입 스킵(이미 존재): word={word!r}, 영역=ANIMA")
+            else:
+                positive, did_anima = _insert_word_after_quality_line(
+                    positive, _ANIMA_QUALITY_LINE_RE, word, "ANIMA"
+                )
+                did_insert = did_insert or did_anima
+
+        sdxl_region = _extract_region(positive, _SDXL_QUALITY_LINE_RE, _SDXL_REGION_END_RE)
+        if sdxl_region:
+            if _word_present_in_region(sdxl_region, word):
+                print(f"[WORD_RULE] 삽입 스킵(이미 존재): word={word!r}, 영역=SDXL")
+            else:
+                positive, did_sdxl = _insert_word_after_quality_line(
+                    positive, _SDXL_QUALITY_LINE_RE, word, "SDXL"
+                )
+                did_insert = did_insert or did_sdxl
+
+        if did_insert:
+            applied_rule_count += 1
+
+    return positive, applied_rule_count
 
 
 def _apply_rules_to_single_prompt(text: str, rules: list[dict]) -> tuple[str, int]:
