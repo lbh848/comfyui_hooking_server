@@ -83,6 +83,7 @@ def _persist_session_metadata(session: dict) -> None:
             "status": session.get("status", "ready"),
             "context": session.get("context", ""),
             "items": session.get("items") or [],
+            "progress": session.get("progress") or {},
             "error": session.get("error", ""),
             "created_at": session.get("created_at", time.time()),
             "updated_at": session.get("updated_at", time.time()),
@@ -303,12 +304,57 @@ def create_session(session_id: str, context: str) -> dict:
         "context": context,
         "items": [],
         "images": [],
+        "progress": {
+            "phase": "queued",
+            "label": "서버 작업 대기",
+            "value": 0,
+            "done": 0,
+            "total": 0,
+        },
         "error": "",
         "created_at": time.time(),
         "updated_at": time.time(),
     }
     _SESSIONS[session_id] = session
     return session
+
+
+def set_session_progress(
+    session_id: str,
+    phase: str,
+    label: str,
+    value: float = 0,
+    done: int = 0,
+    total: int = 0,
+) -> None:
+    """브리지에 노출할 비민감 진행 상태를 현재 세션에 기록한다."""
+    session = _SESSIONS.get(session_id)
+    if session is None:
+        print(
+            f"[ILLUST_CONTEXT] 진행 상태 저장 실패 - 세션 없음: "
+            f"session={session_id}, phase={phase!r}, label={label!r}"
+        )
+        return
+    try:
+        numeric_value = max(0.0, min(100.0, float(value)))
+        numeric_done = max(0, int(done))
+        numeric_total = max(0, int(total))
+        if numeric_total and numeric_done > numeric_total:
+            numeric_done = numeric_total
+        session["progress"] = {
+            "phase": re.sub(r"[^a-z0-9_-]", "_", str(phase or "building").lower())[:32],
+            "label": str(label or "처리 중").replace("\r", " ").replace("\n", " ")[:160],
+            "value": round(numeric_value, 1),
+            "done": numeric_done,
+            "total": numeric_total,
+        }
+        session["updated_at"] = time.time()
+    except Exception as e:
+        print(
+            f"[ILLUST_CONTEXT] 진행 상태 보정 실패: session={session_id}, "
+            f"phase={phase!r}, label={label!r}, error={e}"
+        )
+        traceback.print_exc()
 
 
 def get_session(session_id: str) -> dict | None:
@@ -328,6 +374,13 @@ def set_session_result(session_id: str, items: list, images: list[bytes]) -> Non
     session["items"] = deepcopy(items)
     session["images"] = list(images)
     session["status"] = "ready"
+    session["progress"] = {
+        "phase": "ready",
+        "label": f"전체 {len(images)}장 반환 준비 완료",
+        "value": 100,
+        "done": len(images),
+        "total": len(images),
+    }
     session["updated_at"] = time.time()
     _persist_session_metadata(session)
 
@@ -339,6 +392,14 @@ def set_session_error(session_id: str, error: str) -> None:
         return
     session["status"] = "error"
     session["error"] = str(error)
+    previous = session.get("progress") or {}
+    session["progress"] = {
+        "phase": "error",
+        "label": str(error).replace("\r", " ").replace("\n", " ")[:160] or "처리 실패",
+        "value": previous.get("value", 0),
+        "done": previous.get("done", 0),
+        "total": previous.get("total", 0),
+    }
     session["updated_at"] = time.time()
 
 
@@ -707,6 +768,61 @@ def parse_toon_plan(text: str, toggles: dict) -> list[dict]:
     return out
 
 
+def candidate_slots(target_slotted: str) -> list[int]:
+    """Return the module's ordered paragraph slots without trusting CALL output."""
+    slots: list[int] = []
+    seen: set[int] = set()
+    for raw in re.findall(r"\[Slot\s+(\d+)\]", str(target_slotted or "")):
+        slot = int(raw)
+        if slot not in seen:
+            seen.add(slot)
+            slots.append(slot)
+    return slots
+
+
+def normalize_descriptor_slots(descriptors: list[dict], target_slotted: str) -> list[dict]:
+    """Map scene descriptors onto stable, evenly spaced source paragraph slots.
+
+    CALL2 may choose sparse or duplicate slot numbers.  The Risu module cannot
+    safely receive that manifest while generateImage() is blocking, so both
+    sides derive the same mapping from target_slotted instead.
+    """
+    candidates = candidate_slots(target_slotted)
+    scenes = [item for item in descriptors if str(item.get("kind")) == "scene"]
+    if not scenes or not candidates:
+        return descriptors
+
+    scene_count = min(len(scenes), len(candidates))
+    chosen: list[int] = []
+    previous_position = 0
+    candidate_count = len(candidates)
+    for index in range(1, scene_count + 1):
+        position = (index * (candidate_count + 1)) // (scene_count + 1)
+        minimum = previous_position + 1
+        maximum = candidate_count - (scene_count - index)
+        position = max(minimum, min(maximum, position))
+        chosen.append(candidates[position - 1])
+        previous_position = position
+
+    normalized: list[dict] = []
+    scene_index = 0
+    for item in descriptors:
+        if str(item.get("kind")) != "scene":
+            normalized.append(item)
+            continue
+        if scene_index >= scene_count:
+            continue
+        item["slot"] = chosen[scene_index]
+        normalized.append(item)
+        scene_index += 1
+
+    print(
+        f"[ILLUST_CONTEXT] 장면 슬롯 정규화: "
+        f"candidates={candidate_count}, scenes={scene_count}, slots={chosen}"
+    )
+    return normalized
+
+
 def parse_speak_output(text: str) -> dict[int, str]:
     result: dict[int, list[str]] = {}
     current = None
@@ -983,6 +1099,7 @@ async def build_from_context(payload: dict, toggles: dict | None, extra_referenc
     else:
         print("[ILLUST_CONTEXT:CALL3] 토글로 비활성화되었거나 SPEAK이 꺼져 있음")
 
+    descriptors = normalize_descriptor_slots(descriptors, payload.get("target_slotted") or "")
     if progress:
         await progress(68, "raw_build", f"RAW 프롬프트 {len(descriptors)}개 생성")
     raw_items = []

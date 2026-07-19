@@ -2307,7 +2307,21 @@ async def process_illustration_context_queue_item(item) -> dict:
     prompt_data = params.get("prompt_data") or {}
     raw_body = params.get("raw_body") or {}
 
-    async def progress(value: float, phase: str, detail: str):
+    async def progress(
+        value: float,
+        phase: str,
+        detail: str,
+        done: int = 0,
+        total: int = 0,
+    ):
+        illustration_context_pipeline.set_session_progress(
+            session_id,
+            phase,
+            detail,
+            value,
+            done,
+            total,
+        )
         await queue_manager._notify_progress(item, {
             "phase": phase,
             "value": value,
@@ -2340,7 +2354,7 @@ async def process_illustration_context_queue_item(item) -> dict:
             print(f"[ILLUST_CONTEXT] 생성할 장면이 없음: session={session_id}")
             raise RuntimeError("CALL 결과에 생성할 장면이 없습니다")
 
-        await progress(70, "enqueue", f"이미지 {len(raw_items)}장 큐 등록")
+        await progress(70, "enqueue", f"이미지 {len(raw_items)}장 큐 등록", 0, len(raw_items))
         child_pairs = []
         for index, descriptor in enumerate(raw_items, start=1):
             child_id = str(uuid.uuid4())
@@ -2376,7 +2390,7 @@ async def process_illustration_context_queue_item(item) -> dict:
             )
             child_pairs.append((child_id, child_item))
 
-        await progress(72, "generating", f"이미지 0/{len(child_pairs)} 완료")
+        await progress(72, "generating", f"이미지 0/{len(child_pairs)} 완료", 0, len(child_pairs))
         images = []
         for completed, (child_id, child_item) in enumerate(child_pairs, start=1):
             try:
@@ -2394,6 +2408,8 @@ async def process_illustration_context_queue_item(item) -> dict:
                 72 + (completed / len(child_pairs)) * 27,
                 "generating",
                 f"이미지 {completed}/{len(child_pairs)} 완료",
+                completed,
+                len(child_pairs),
             )
 
         illustration_context_pipeline.set_session_result(session_id, raw_items, images)
@@ -2406,7 +2422,13 @@ async def process_illustration_context_queue_item(item) -> dict:
             original.get("save_node_id") or find_save_image_node(prompt_data) or "9",
             filename,
         )
-        await progress(100, "ready", f"전체 {len(images)}장 반환 준비 완료")
+        await progress(
+            100,
+            "ready",
+            f"전체 {len(images)}장 반환 준비 완료",
+            len(images),
+            len(images),
+        )
         print(f"[ILLUST_CONTEXT] 세션 완료: session={session_id}, images={len(images)}")
         return {"success": True, "session_id": session_id, "count": len(images)}
     except Exception as e:
@@ -2440,7 +2462,12 @@ async def handle_api_illustration_context_manifest(request: web.Request) -> web.
 
 async def handle_api_illustration_context_bridge_health(request: web.Request) -> web.Response:
     """최소 Risu 플러그인 브릿지가 후킹 서버를 확인하는 endpoint."""
-    return web.json_response({"ok": True, "service": "illustration_context_bridge", "version": 1})
+    return web.json_response({
+        "ok": True,
+        "service": "illustration_context_bridge",
+        "version": 2,
+        "progress_phases": ["call1", "call2", "call3", "enqueue", "generating", "ready", "error"],
+    })
 
 
 async def handle_api_illustration_context_bridge_client_log(request: web.Request) -> web.Response:
@@ -2510,10 +2537,19 @@ async def handle_api_illustration_context_bridge_session(request: web.Request) -
                 "kind": "keyvis" if str(item.get("kind")) == "keyvis" else "scene",
                 "slot": slot,
             })
+        raw_progress = session.get("progress") or {}
+        progress = {
+            "phase": str(raw_progress.get("phase") or "building")[:32],
+            "label": str(raw_progress.get("label") or "처리 중")[:160],
+            "value": raw_progress.get("value", 0),
+            "done": raw_progress.get("done", 0),
+            "total": raw_progress.get("total", 0),
+        }
         return web.json_response({
             "session_id": session_id,
             "status": str(session.get("status") or "missing"),
             "error": str(session.get("error") or ""),
+            "progress": progress,
             "items": items,
         })
     except Exception as e:

@@ -39,6 +39,32 @@ def test_context_and_result_transport_markers():
     ) == {"session_id": session_id, "slot": 0}
 
 
+def test_descriptor_slots_are_evenly_normalized_from_target_paragraphs():
+    descriptors = [
+        {"kind": "keyvis", "slot": -1},
+        *({"kind": "scene", "slot": slot} for slot in (1, 1, 999, 4, 2)),
+    ]
+    slotted = "\n\n".join(f"문단 {index}\n\n[Slot {index}]" for index in range(10))
+
+    normalized = pipeline.normalize_descriptor_slots(descriptors, slotted)
+
+    assert [item["slot"] for item in normalized] == [-1, 0, 2, 4, 6, 8]
+
+
+def test_descriptor_slot_normalization_truncates_to_available_slots():
+    descriptors = [
+        {"kind": "keyvis", "slot": -1},
+        *({"kind": "scene", "slot": index} for index in range(5)),
+    ]
+
+    normalized = pipeline.normalize_descriptor_slots(
+        descriptors,
+        "첫째\n\n[Slot 2]\n\n둘째\n\n[Slot 8]\n\n셋째",
+    )
+
+    assert [item["slot"] for item in normalized] == [-1, 2, 8]
+
+
 def test_context_transport_actions_keep_chat_data_and_validate_slot():
     session_id = "session_actions_1234"
     base = {
@@ -100,6 +126,51 @@ scenes[1]:
     assert pipeline.session_image_by_slot("cache_test_1234", 0) == b"rerolled"
     pipeline._SESSIONS.pop("cache_test_1234")
     assert pipeline.session_item_by_slot("cache_test_1234", 0)["scene"] == "classroom, sunset"
+
+
+def test_session_progress_tracks_call_and_image_counts_without_payload_data():
+    session_id = "progress_test_1234"
+    pipeline.create_session(session_id, "private chat context")
+    try:
+        pipeline.set_session_progress(
+            session_id,
+            "CALL3",
+            "CALL3 대사 빌드",
+            value=52,
+            done=0,
+            total=0,
+        )
+        progress = pipeline.get_session(session_id)["progress"]
+        assert progress == {
+            "phase": "call3",
+            "label": "CALL3 대사 빌드",
+            "value": 52.0,
+            "done": 0,
+            "total": 0,
+        }
+        assert "private chat context" not in progress.values()
+
+        pipeline.set_session_progress(
+            session_id,
+            "generating",
+            "이미지 4/3 완료",
+            value=130,
+            done=4,
+            total=3,
+        )
+        progress = pipeline.get_session(session_id)["progress"]
+        assert progress["phase"] == "generating"
+        assert progress["value"] == 100.0
+        assert progress["done"] == 3
+        assert progress["total"] == 3
+
+        pipeline.set_session_error(session_id, "remote failed")
+        progress = pipeline.get_session(session_id)["progress"]
+        assert progress["phase"] == "error"
+        assert progress["done"] == 3
+        assert progress["total"] == 3
+    finally:
+        pipeline._SESSIONS.pop(session_id, None)
 
 
 def test_call2_macro_render_has_no_risu_macros():
