@@ -2364,6 +2364,27 @@ def build_active_lb_extra(bot_name: str) -> str:
         return ""
 
 
+_ILLUST_FALLBACK_BYTES: bytes | None = None
+
+
+def _load_illustration_fallback() -> bytes | None:
+    """삽화 컨텍스트 슬롯 생성 실패 시 대신 채워넣을 폴백 이미지를 로드(캐시)."""
+    global _ILLUST_FALLBACK_BYTES
+    if _ILLUST_FALLBACK_BYTES is not None:
+        return _ILLUST_FALLBACK_BYTES
+    try:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        fallback_path = os.path.join(script_dir, "modes", "fallback_img2", "illustration_fallback.png")
+        with open(fallback_path, "rb") as f:
+            _ILLUST_FALLBACK_BYTES = f.read()
+        print(f"[ILLUST_CONTEXT] 폴백 이미지 로드 완료: {fallback_path} ({len(_ILLUST_FALLBACK_BYTES):,}B)")
+    except Exception as e:
+        print(f"[ILLUST_CONTEXT] 폴백 이미지 로드 실패: {e}")
+        traceback.print_exc()
+        _ILLUST_FALLBACK_BYTES = None
+    return _ILLUST_FALLBACK_BYTES
+
+
 async def process_illustration_context_queue_item(item) -> dict:
     """LLM 큐 핸들러: CALL1/2/3 후 기존 illustration 큐 N개를 만들고 모두 기다린다."""
     params = item.params or {}
@@ -2458,18 +2479,41 @@ async def process_illustration_context_queue_item(item) -> dict:
             child_pairs.append((child_id, child_item))
 
         await progress(72, "generating", f"이미지 0/{len(child_pairs)} 완료", 0, len(child_pairs))
-        images = []
-        for completed, (child_id, child_item) in enumerate(child_pairs, start=1):
+        # 한 슬롯이라도 비면 Risu가 멈추므로, 실패/빈 결과 슬롯에는 폴백 이미지를
+        # 그대로 채워넣는다. descriptor는 그대로 두어 items/images가 항상 정렬되고
+        # Risu 쪽 manifest COUNT · 슬롯 매핑이 깨지지 않게 한다.
+        images: list[bytes] = []
+        substituted: list[str] = []
+        fallback_bytes = _load_illustration_fallback()
+        for index, (child_id, child_item) in enumerate(child_pairs):
+            completed = index + 1
+            descriptor = raw_items[index]
+            slot_label = descriptor.get("slot")
+            image_bytes: bytes | None = None
+            fail_reason = ""
             try:
                 await child_item.completion_future
+                image_bytes = prompts.get(child_id, {}).get("image_bytes")
+                if not image_bytes:
+                    fail_reason = "생성 결과 비어 있음"
             except Exception as e:
-                print(f"[ILLUST_CONTEXT] 하위 이미지 큐 실패: child={child_id}, error={e}")
+                print(f"[ILLUST_CONTEXT] 하위 이미지 큐 실패: child={child_id}, slot={slot_label}, error={e}")
                 traceback.print_exc()
-                raise
-            image_bytes = prompts.get(child_id, {}).get("image_bytes")
+                fail_reason = f"큐 실패 - {e}"
+
             if not image_bytes:
-                print(f"[ILLUST_CONTEXT] 하위 이미지 결과가 비어 있음: child={child_id}")
-                raise RuntimeError(f"이미지 {completed}/{len(child_pairs)} 생성 결과가 비어 있습니다")
+                # 후처리/재시도 없이 폴백 이미지로 대체한다. raise하면 Risu가 멈춘다.
+                print(
+                    f"[ILLUST_CONTEXT] 폴백 이미지로 대체: child={child_id}, slot={slot_label}, "
+                    f"사유={fail_reason or '알 수 없음'}"
+                )
+                substituted.append(f"#{completed}(slot {slot_label}): {fail_reason or '알 수 없음'}")
+                if not fallback_bytes:
+                    raise RuntimeError(
+                        f"이미지 {completed}/{len(child_pairs)} 슬롯 실패({fail_reason})인데 폴백 이미지를 불러오지 못했습니다"
+                    )
+                image_bytes = fallback_bytes
+
             images.append(image_bytes)
             await progress(
                 72 + (completed / len(child_pairs)) * 27,
@@ -2477,6 +2521,12 @@ async def process_illustration_context_queue_item(item) -> dict:
                 f"이미지 {completed}/{len(child_pairs)} 완료",
                 completed,
                 len(child_pairs),
+            )
+
+        if substituted:
+            print(
+                f"[ILLUST_CONTEXT] 일부 슬롯 폴백 대체 후 계속: session={session_id}, "
+                f"전체={len(images)}/{len(child_pairs)}, 대체={substituted}"
             )
 
         illustration_context_pipeline.set_session_result(session_id, raw_items, images)
