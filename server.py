@@ -2437,6 +2437,85 @@ async def handle_api_illustration_context_manifest(request: web.Request) -> web.
         return web.Response(text=f"STATUS|error\nCOUNT|0\nERROR|{e}", status=500)
 
 
+async def handle_api_illustration_context_bridge_health(request: web.Request) -> web.Response:
+    """최소 Risu 플러그인 브릿지가 후킹 서버를 확인하는 endpoint."""
+    return web.json_response({"ok": True, "service": "illustration_context_bridge", "version": 1})
+
+
+def _valid_illustration_context_bridge_session_id(session_id: str) -> bool:
+    return re.fullmatch(r"[A-Za-z0-9_-]{8,96}", session_id) is not None
+
+
+async def handle_api_illustration_context_bridge_session(request: web.Request) -> web.Response:
+    """세션 상태와 이미지 삽입에 필요한 슬롯 순서만 반환한다.
+
+    RAW 프롬프트·채팅 문맥은 플러그인에 노출하지 않는다.
+    """
+    session_id = str(request.match_info.get("sid") or "")
+    if not _valid_illustration_context_bridge_session_id(session_id):
+        print(f"[ILLUST_CONTEXT:BRIDGE] 잘못된 세션 ID: {session_id!r}")
+        return web.json_response({"error": "invalid_session_id"}, status=400)
+    try:
+        session = illustration_context_pipeline.get_session(session_id)
+        if session is None:
+            return web.json_response(
+                {"session_id": session_id, "status": "missing", "error": "session_not_found", "items": []},
+                status=404,
+            )
+        items = []
+        for index, item in enumerate(session.get("items") or []):
+            try:
+                slot = int(item.get("slot"))
+            except Exception as e:
+                print(
+                    f"[ILLUST_CONTEXT:BRIDGE] 슬롯 metadata 무시: "
+                    f"session={session_id}, index={index}, error={e}"
+                )
+                continue
+            items.append({
+                "index": index,
+                "kind": "keyvis" if str(item.get("kind")) == "keyvis" else "scene",
+                "slot": slot,
+            })
+        return web.json_response({
+            "session_id": session_id,
+            "status": str(session.get("status") or "missing"),
+            "error": str(session.get("error") or ""),
+            "items": items,
+        })
+    except Exception as e:
+        print(f"[ILLUST_CONTEXT:BRIDGE] 세션 응답 실패: session={session_id}, error={e}")
+        traceback.print_exc()
+        return web.json_response({"error": "bridge_session_failed"}, status=500)
+
+
+async def handle_api_illustration_context_bridge_image(request: web.Request) -> web.Response:
+    """준비된 세션의 한 슬롯 이미지 bytes를 반환한다."""
+    session_id = str(request.match_info.get("sid") or "")
+    if not _valid_illustration_context_bridge_session_id(session_id):
+        print(f"[ILLUST_CONTEXT:BRIDGE] 잘못된 세션 ID: {session_id!r}")
+        return web.json_response({"error": "invalid_session_id"}, status=400)
+    try:
+        slot = int(request.match_info.get("slot"))
+    except Exception as e:
+        print(f"[ILLUST_CONTEXT:BRIDGE] 슬롯 파싱 실패: session={session_id}, error={e}")
+        return web.json_response({"error": "invalid_slot"}, status=400)
+    try:
+        image_bytes = illustration_context_pipeline.session_image_by_slot(session_id, slot)
+    except Exception as e:
+        print(f"[ILLUST_CONTEXT:BRIDGE] 이미지 응답 실패: session={session_id}, slot={slot}, error={e}")
+        traceback.print_exc()
+        return web.json_response({"error": "bridge_image_failed"}, status=500)
+    if image_bytes is None:
+        print(f"[ILLUST_CONTEXT:BRIDGE] 이미지 없음: session={session_id}, slot={slot}")
+        return web.json_response({"error": "image_not_ready_or_missing"}, status=404)
+    return web.Response(
+        body=image_bytes,
+        content_type="image/png",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 async def handle_api_illustration_context_prompts(request: web.Request) -> web.Response:
     """CALL1/2/3 프롬프트 파일 조회/저장. 프롬프트 본문은 config에 넣지 않는다."""
     try:
@@ -6495,6 +6574,9 @@ app.router.add_post("/api/lighbd/reroll", handle_api_lighbd_reroll)
 app.router.add_get("/api/lighbd/prompts", handle_api_lighbd_prompts)
 app.router.add_post("/api/lighbd/prompts", handle_api_lighbd_prompts)
 app.router.add_get("/api/illustration_context/session/{sid}/manifest", handle_api_illustration_context_manifest)
+app.router.add_get("/api/illustration_context/bridge/health", handle_api_illustration_context_bridge_health)
+app.router.add_get("/api/illustration_context/bridge/session/{sid}", handle_api_illustration_context_bridge_session)
+app.router.add_get("/api/illustration_context/bridge/session/{sid}/image/{slot}", handle_api_illustration_context_bridge_image)
 app.router.add_get("/api/illustration_context/prompts", handle_api_illustration_context_prompts)
 app.router.add_post("/api/illustration_context/prompts", handle_api_illustration_context_prompts)
 app.router.add_get("/api/illustration_context/toggles", handle_api_illustration_context_toggles)
