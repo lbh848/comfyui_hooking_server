@@ -215,10 +215,18 @@ def parse_speak(speak_text: str, strip_emotion: bool = False) -> list:
         return []
 
     segments = []
-    # 발화: NAME: "..."  — 닫는 따옴표(") 뒤에만 ' #감정'(공백 포함 다단어 허용) 을 인식한다.
+    # 발화: NAME: "..."  — 닫는 따옴표/닫는 겹각괄호 뒤에만 ' #감정'(공백 포함 다단어 허용) 을 인식한다.
     # 따라서 따옴표 안의 '#' 은 대사의 일부로 취급되어 감정으로 잘리지 않는다.
+    # 인용 부호는 LLM이 내보내는 다양한 쌍을 모두 허용한다:
+    #   "     ASCII 곧은따옴표
+    #   « »   겹각괄호(guillemets, 러시아어/프랑스어 등)
+    #   “ ” „ ‟   곡선 큰따옴표 계열
+    # 열기/닫기가 서로 다른 글자(« … », „ … “)도 잡히도록 한 글자 클래스로 넉넉하게 매칭하며,
+    # 본문(text)은 바깥 따옴표만 벗겨내고 그대로 보존한다.
+    _QUOTE_CHARS = r'["«»“”„‟]'   # " « » “ ” „ ‟
     speech_re = re.compile(
-        r'^\s*(?P<speaker>[^:\r\n]+?)\s*:\s*"(?P<text>.*)"(?:\s+#(?P<emotion>\S.*?))?\s*$',
+        r'^\s*(?P<speaker>[^:\r\n]+?)\s*:\s*' + _QUOTE_CHARS + r'(?P<text>.*)' + _QUOTE_CHARS +
+        r'(?:\s+#(?P<emotion>\S.*?))?\s*$',
         re.UNICODE)
     # 생각(NAME 있음): NAME: (...)
     thought_named_re = re.compile(

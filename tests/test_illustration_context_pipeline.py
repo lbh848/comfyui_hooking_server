@@ -245,6 +245,129 @@ def test_prompt_format_migrates_legacy_preset_and_rejects_unknown_value(capsys):
     assert "지원하지 않는 프롬프트 입력 형식" in capsys.readouterr().out
 
 
+def test_call3_prompt_mode_defaults_and_rejects_unknown_value(capsys):
+    assert pipeline.merged_toggles({})["call3_prompt_mode"] == "speak"
+    assert pipeline.merged_toggles({"call3_prompt_mode": "MANGA"})["call3_prompt_mode"] == "manga"
+    assert pipeline.merged_toggles({"call3_prompt_mode": "future"})["call3_prompt_mode"] == "speak"
+    assert "지원하지 않는 CALL3 대사 프롬프트" in capsys.readouterr().out
+
+
+def test_call3_dialogue_prompt_selects_speak_or_manga_and_scopes_emotions():
+    prompts = {
+        "call3_speak": "SPEAK PROMPT",
+        "call3_manga": "MANGA PROMPT",
+    }
+
+    speak_mode, speak_prompt = pipeline.build_call3_dialogue_system_prompt(
+        prompts,
+        pipeline.merged_toggles({
+            "call3_prompt_mode": "speak",
+            "speak_emotion_enabled": True,
+            "speak_emotions": "joy; anger",
+        }),
+        "CHARACTER REFERENCE",
+    )
+    manga_mode, manga_prompt = pipeline.build_call3_dialogue_system_prompt(
+        prompts,
+        pipeline.merged_toggles({
+            "call3_prompt_mode": "manga",
+            "speak_emotion_enabled": True,
+            "speak_emotions": "joy; anger",
+        }),
+        "CHARACTER REFERENCE",
+    )
+
+    assert speak_mode == "speak"
+    assert speak_prompt.startswith("SPEAK PROMPT")
+    assert "Add one #emotion tag" in speak_prompt
+    assert "Allowed labels: joy; anger" in speak_prompt
+    assert manga_mode == "manga"
+    assert manga_prompt.startswith("MANGA PROMPT")
+    assert "CHARACTER REFERENCE" in manga_prompt
+    assert "#emotion" not in manga_prompt
+
+
+def test_parse_speak_output_enforces_two_entry_limit_per_scene(capsys):
+    parsed = pipeline.parse_speak_output(
+        '''[Scene slot=3]
+Alice: "First"
+Bob: "Second"
+Alice: "Third"
+[Scene slot=4] Bob: "Only"''',
+        max_entries_per_scene=2,
+    )
+
+    assert parsed == {
+        3: 'Alice: "First"\nBob: "Second"',
+        4: 'Bob: "Only"',
+    }
+    assert "slot=3, limit=2, dropped=1" in capsys.readouterr().out
+
+
+def test_manga_prompt_declares_all_balloon_labels_and_short_dialogue_rules():
+    manga = pipeline.load_prompt_files()["call3_manga"]
+
+    for label in (
+        "#normal",
+        "#angular",
+        "#narration_box",
+        "#thought_cloud",
+        "#burst",
+        "#whisper",
+        "#trembling",
+    ):
+        assert label in manga
+    assert "Never produce a monologue, paragraph, or multi-sentence speech." in manga
+
+
+@pytest.mark.asyncio
+async def test_build_from_context_uses_selected_manga_prompt(monkeypatch):
+    calls = []
+    responses = [
+        """<lb-xnai>
+scenes[1]:
+  - camera: close-up
+    characters[1]:
+      - name: hana
+        positive: 1girl, hana, black hair
+    scene: classroom
+    slot: 0
+</lb-xnai>""",
+        """[Scene slot=0]
+Hana: "No way!" #burst""",
+    ]
+
+    async def fake_call(task_key, messages, **kwargs):
+        calls.append(messages)
+        return responses[len(calls) - 1]
+
+    monkeypatch.setattr(pipeline.llm_service, "callLLMTask", fake_call)
+    result = await pipeline.build_from_context(
+        {
+            "session_id": "manga_prompt_test_1234",
+            "target_slotted": "하나가 놀란다.\n\n[Slot 0]",
+            "chats": [
+                {"role": "user", "data": "무슨 일이야?"},
+                {"role": "char", "data": "하나가 놀란다."},
+            ],
+        },
+        {
+            "call1_enabled": False,
+            "call3_enabled": True,
+            "speak_enabled": True,
+            "call3_prompt_mode": "manga",
+            "key_visual": False,
+        },
+        "### hana\n-Appearance: 1girl, black hair",
+    )
+
+    assert len(calls) == 2
+    assert "manga dialogue and balloon-style editor" in calls[1][0]["content"]
+    assert "#normal" in calls[1][0]["content"]
+    assert result["items"][0]["speak"] == 'Hana: "No way!" #burst'
+    assert '[SPEAK]\nHana: "No way!" #burst' in result["items"][0]["raw_positive"]
+
+
 def test_build_raw_prompt_uses_v1_or_v3_input_shape():
     descriptor = {
         "slot": 2,

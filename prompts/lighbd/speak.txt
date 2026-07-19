@@ -11,4 +11,9 @@ Rules:
 - Use the exact numeric slot, including -1 for the key visual when present.
 - Omit a scene if it has no speech or thought.
 - A line must belong to a character visible or narratively present in that scene.
+- Emit at most two dialogue/thought entries per scene. This is a hard limit.
+- Prefer one entry: the illustrated speaker's single most relevant utterance or thought.
+- Use two entries only for one immediate exchange: one utterance followed by one direct reply.
+- Never continue to a third turn, never output an A-B-A exchange, and never split one utterance across multiple entries.
+- If the source contains a longer conversation, select only the one line or single two-entry exchange that best matches the exact illustrated moment.
 - Output only Scene blocks.

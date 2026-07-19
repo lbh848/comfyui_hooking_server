@@ -158,6 +158,7 @@ DEFAULT_CONFIG = {
         "call1_context_turns": 5,
         "call3_enabled": True,
         "speak_enabled": True,
+        "call3_prompt_mode": "speak",
         "speak_language": "한국어",
         "speak_emotion_enabled": False,
         "speak_emotions": "",

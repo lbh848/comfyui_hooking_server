@@ -40,6 +40,7 @@ PROMPT_FILES = {
     "call2_format": "format.txt",
     "call2_preset": "preset.txt",
     "call3_speak": "speak.txt",
+    "call3_manga": "manga.txt",
     "call3_repair": "repair.txt",
 }
 
@@ -48,6 +49,7 @@ DEFAULT_TOGGLES = {
     "call1_context_turns": 5,
     "call3_enabled": True,
     "speak_enabled": True,
+    "call3_prompt_mode": "speak",
     "speak_language": "한국어",
     "speak_emotion_enabled": False,
     "speak_emotions": "",
@@ -146,6 +148,14 @@ def merged_toggles(value: dict | None) -> dict:
         print(f"[ILLUST_CONTEXT] 지원하지 않는 프롬프트 입력 형식 {prompt_format!r}, V3 사용")
         prompt_format = "v3"
     out["prompt_format"] = prompt_format
+    call3_prompt_mode = str(out.get("call3_prompt_mode") or "").strip().lower()
+    if call3_prompt_mode not in ("speak", "manga"):
+        print(
+            f"[ILLUST_CONTEXT] 지원하지 않는 CALL3 대사 프롬프트 "
+            f"{call3_prompt_mode!r}, speak 사용"
+        )
+        call3_prompt_mode = "speak"
+    out["call3_prompt_mode"] = call3_prompt_mode
     try:
         out["call1_context_turns"] = max(0, min(30, int(out["call1_context_turns"])))
         out["character_limit"] = max(1, min(3, int(out["character_limit"])))
@@ -885,9 +895,11 @@ def normalize_descriptor_slots(descriptors: list[dict], target_slotted: str) -> 
     return normalized
 
 
-def parse_speak_output(text: str) -> dict[int, str]:
+def parse_speak_output(text: str, max_entries_per_scene: int | None = None) -> dict[int, str]:
+    """Parse CALL3 Scene blocks and optionally enforce a structural entry limit."""
     result: dict[int, list[str]] = {}
     current = None
+    dropped: dict[int, int] = {}
     for line in str(text or "").splitlines():
         match = re.match(r"\s*\[Scene\s+slot\s*=\s*(-?\d+)\]\s*(.*)", line, re.I)
         if match:
@@ -895,10 +907,53 @@ def parse_speak_output(text: str) -> dict[int, str]:
             result.setdefault(current, [])
             tail = match.group(2).strip()
             if tail:
-                result[current].append(tail)
+                if max_entries_per_scene is None or len(result[current]) < max_entries_per_scene:
+                    result[current].append(tail)
+                else:
+                    dropped[current] = dropped.get(current, 0) + 1
         elif current is not None and line.strip() and not line.lstrip().startswith("["):
-            result[current].append(line.strip())
+            if max_entries_per_scene is None or len(result[current]) < max_entries_per_scene:
+                result[current].append(line.strip())
+            else:
+                dropped[current] = dropped.get(current, 0) + 1
+    for slot, count in dropped.items():
+        print(
+            f"[ILLUST_CONTEXT:CALL3] Speak 장면 발화 상한 적용: "
+            f"slot={slot}, limit={max_entries_per_scene}, dropped={count}"
+        )
     return {slot: "\n".join(lines).strip() for slot, lines in result.items() if lines}
+
+
+def build_call3_dialogue_system_prompt(
+    prompts: dict,
+    toggles: dict,
+    extra_reference: str,
+) -> tuple[str, str]:
+    """Select the Speak/Manga prompt and append only mode-compatible instructions."""
+    prompt_mode = str(toggles.get("call3_prompt_mode") or "speak").strip().lower()
+    prompt_key = "call3_manga" if prompt_mode == "manga" else "call3_speak"
+    selected_prompt = str(prompts.get(prompt_key) or "").strip()
+    if not selected_prompt:
+        print(
+            f"[ILLUST_CONTEXT:CALL3] 선택한 대사 프롬프트가 비어 있음: "
+            f"mode={prompt_mode}, key={prompt_key}"
+        )
+        raise RuntimeError(f"CALL3 {prompt_mode} 프롬프트가 비어 있습니다")
+
+    emotion_instruction = ""
+    if prompt_mode == "speak" and toggles.get("speak_emotion_enabled"):
+        emotion_instruction = "\nAdd one #emotion tag to every emitted line."
+        emotions = str(toggles.get("speak_emotions") or "").strip()
+        if emotions:
+            emotion_instruction += " Allowed labels: " + emotions
+    elif prompt_mode == "manga" and toggles.get("speak_emotion_enabled"):
+        print("[ILLUST_CONTEXT:CALL3] Manga 모드에서는 감정 태그 설정을 사용하지 않음")
+
+    system_prompt = selected_prompt
+    if str(extra_reference or "").strip():
+        system_prompt += "\n\n" + str(extra_reference).strip()
+    system_prompt += emotion_instruction
+    return prompt_mode, system_prompt
 
 
 def _build_character_history(extra_reference: str) -> str:
@@ -1119,15 +1174,14 @@ async def build_from_context(payload: dict, toggles: dict | None, extra_referenc
     elif toggles.get("call3_enabled") and toggles.get("speak_enabled"):
         if progress:
             await progress(52, "call3", "CALL3 대사 빌드")
-        emotion_instruction = ""
-        if toggles.get("speak_emotion_enabled"):
-            emotion_instruction = "\nAdd one #emotion tag to every emitted line."
-            emotions = str(toggles.get("speak_emotions") or "").strip()
-            if emotions:
-                emotion_instruction += " Allowed labels: " + emotions
+        call3_prompt_mode, call3_system_prompt = build_call3_dialogue_system_prompt(
+            prompts,
+            toggles,
+            extra_reference,
+        )
         speak_messages = [{
             "role": "system",
-            "content": prompts.get("call3_speak", "") + "\n\n" + extra_reference + emotion_instruction,
+            "content": call3_system_prompt,
         }]
         for item in chats[max(0, target_index - int(toggles["call1_context_turns"])):target_index]:
             speak_messages.append({
@@ -1142,7 +1196,10 @@ async def build_from_context(payload: dict, toggles: dict | None, extra_referenc
             ),
         })
         call3_output = await _call_pipeline_llm("CALL3", _normalize_messages(speak_messages), stream_notify)
-        speak_map = parse_speak_output(call3_output)
+        speak_map = parse_speak_output(
+            call3_output,
+            max_entries_per_scene=2 if call3_prompt_mode == "speak" else None,
+        )
         for descriptor in descriptors:
             descriptor["speak"] = speak_map.get(int(descriptor.get("slot", 0)), "")
     else:
