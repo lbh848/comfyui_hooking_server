@@ -705,7 +705,45 @@ def _extract_lb_block(text: str) -> str:
 def _normalize_toon(text: str) -> str:
     text = re.sub(r"\b(scenes|characters)\[\d+\]:", r"\1:", text)
     text = text.replace("\t", "  ")
-    return text
+
+    # CALL2/CALL3 commonly emit TOON string fields as unquoted YAML scalars.
+    # Natural-language values can legally contain YAML syntax such as ``: ``
+    # or `` #`` (for example, ``supplement: split-screen: left ...``), which
+    # makes PyYAML reject or truncate an otherwise valid plan.  These schema
+    # fields are always strings, so encode each one as a JSON string; JSON
+    # strings are valid YAML scalars and preserve punctuation verbatim.
+    text_fields = {
+        "camera", "positive", "negative", "name", "position",
+        "scene", "supplement", "speak",
+    }
+    scalar_line = re.compile(
+        r"^(\s*(?:-\s+)?)([A-Za-z_][\w-]*):(\s*)(.*)$"
+    )
+    normalized_lines = []
+    for line in text.splitlines():
+        match = scalar_line.match(line)
+        if not match or match.group(2) not in text_fields:
+            normalized_lines.append(line)
+            continue
+
+        value = match.group(4).strip()
+        if not value:
+            normalized_lines.append(line)
+            continue
+
+        # Avoid adding literal quote characters when the model already used a
+        # valid quoted YAML scalar.
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            try:
+                loaded = yaml.safe_load(value)
+                if isinstance(loaded, str):
+                    value = loaded
+            except Exception:
+                pass
+        normalized_lines.append(
+            f"{match.group(1)}{match.group(2)}: {json.dumps(value, ensure_ascii=False)}"
+        )
+    return "\n".join(normalized_lines)
 
 
 def _descriptor(raw: dict, kind: str, fallback_slot: int) -> dict:
@@ -735,22 +773,23 @@ def _descriptor(raw: dict, kind: str, fallback_slot: int) -> dict:
     }
 
 
-def parse_toon_plan(text: str, toggles: dict) -> list[dict]:
+def parse_toon_plan(text: str, toggles: dict, source: str = "CALL2") -> list[dict]:
+    source = re.sub(r"[^A-Za-z0-9_-]", "", str(source or "TOON").upper()) or "TOON"
     inner = _extract_lb_block(text)
     if not inner:
         toon_match = re.search(r"\[TOON\]([\s\S]*?)\[/TOON\]", text or "", re.I)
         inner = toon_match.group(1).strip() if toon_match else ""
     if not inner:
-        print("[ILLUST_CONTEXT:CALL2] <lb-xnai> 또는 [TOON] 블록이 없음")
+        print(f"[ILLUST_CONTEXT:{source}] <lb-xnai> 또는 [TOON] 블록이 없음")
         return []
     try:
         data = yaml.safe_load(_normalize_toon(inner))
     except Exception as e:
-        print(f"[ILLUST_CONTEXT:CALL2] TOON/YAML 파싱 실패: {e}\n{inner[:1000]}")
+        print(f"[ILLUST_CONTEXT:{source}] TOON/YAML 파싱 실패: {e}\n{inner[:1000]}")
         traceback.print_exc()
         return []
     if not isinstance(data, dict):
-        print(f"[ILLUST_CONTEXT:CALL2] TOON 루트가 object가 아님: {type(data).__name__}")
+        print(f"[ILLUST_CONTEXT:{source}] TOON 루트가 object가 아님: {type(data).__name__}")
         return []
     out = []
     keyvis = data.get("keyvis")
@@ -758,13 +797,13 @@ def parse_toon_plan(text: str, toggles: dict) -> list[dict]:
         out.append(_descriptor(keyvis, "keyvis", -1))
     scenes = data.get("scenes") or []
     if not isinstance(scenes, list):
-        print(f"[ILLUST_CONTEXT:CALL2] scenes가 list가 아님: {type(scenes).__name__}")
+        print(f"[ILLUST_CONTEXT:{source}] scenes가 list가 아님: {type(scenes).__name__}")
         scenes = []
     for index, raw in enumerate(scenes[: int(toggles["scene_max"])], start=1):
         if isinstance(raw, dict):
             out.append(_descriptor(raw, "scene", index))
     if not out:
-        print("[ILLUST_CONTEXT:CALL2] 유효한 keyvis/scene 결과가 없음")
+        print(f"[ILLUST_CONTEXT:{source}] 유효한 keyvis/scene 결과가 없음")
     return out
 
 
@@ -1048,7 +1087,7 @@ async def build_from_context(payload: dict, toggles: dict | None, extra_referenc
         call2_messages.append({"role": "assistant", "content": prompts["call2_prefill"]})
     call2_messages.append({"role": "user", "content": "Return the final <lb-xnai> TOON block only after your analysis."})
     call2_output = await _call_pipeline_llm("CALL2", _normalize_messages(call2_messages), stream_notify)
-    descriptors = parse_toon_plan(call2_output, toggles)
+    descriptors = parse_toon_plan(call2_output, toggles, "CALL2")
 
     call3_output = ""
     if not descriptors:
@@ -1064,7 +1103,7 @@ async def build_from_context(payload: dict, toggles: dict | None, extra_referenc
             "content": "Repair this malformed output. Return [TOON]...[/TOON].\n\n" + call2_output,
         }]
         call3_output = await _call_pipeline_llm("CALL3", _normalize_messages(repair_messages), stream_notify)
-        descriptors = parse_toon_plan(call3_output, toggles)
+        descriptors = parse_toon_plan(call3_output, toggles, "CALL3")
         if not descriptors:
             raise RuntimeError("CALL3 교정 후에도 장면 TOON 파싱에 실패했습니다")
     elif toggles.get("call3_enabled") and toggles.get("speak_enabled"):

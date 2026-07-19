@@ -128,6 +128,47 @@ scenes[1]:
     assert pipeline.session_item_by_slot("cache_test_1234", 0)["scene"] == "classroom, sunset"
 
 
+def test_toon_parse_preserves_yaml_punctuation_in_unquoted_text_fields():
+    toon = """[TOON]
+scenes[1]:
+  - camera: close-up: from side
+    characters[1]:
+      - positive: 1girl, (solo focus:1.2), sign: blue # not a YAML comment
+        negative: lowres, bad hands
+        name: Bbyakbbyak
+    scene: guildhouse: warm interior
+    slot: 7
+    supplement: A split-screen composition: the left side shows Kai's dark room #1.
+[/TOON]"""
+
+    items = pipeline.parse_toon_plan(
+        toon,
+        pipeline.merged_toggles({"scene_max": 11, "key_visual": False}),
+    )
+
+    assert len(items) == 1
+    assert items[0]["camera"] == "close-up: from side"
+    assert items[0]["scene"] == "guildhouse: warm interior"
+    assert items[0]["supplement"] == (
+        "A split-screen composition: the left side shows Kai's dark room #1."
+    )
+    assert items[0]["characters"][0]["positive"] == (
+        "1girl, (solo focus:1.2), sign: blue # not a YAML comment"
+    )
+
+
+def test_toon_parse_error_uses_actual_call_source(capsys):
+    assert pipeline.parse_toon_plan(
+        "[TOON]\nscenes: invalid\n[/TOON]",
+        pipeline.merged_toggles({}),
+        "CALL3",
+    ) == []
+
+    captured = capsys.readouterr()
+    assert "[ILLUST_CONTEXT:CALL3] scenes가 list가 아님" in captured.out
+    assert "[ILLUST_CONTEXT:CALL2]" not in captured.out
+
+
 def test_session_progress_tracks_call_and_image_counts_without_payload_data():
     session_id = "progress_test_1234"
     pipeline.create_session(session_id, "private chat context")
