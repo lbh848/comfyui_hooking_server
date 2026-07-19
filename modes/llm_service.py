@@ -1265,13 +1265,23 @@ def _is_llm_failed(result) -> bool:
 
 
 def _routing_for(task_key: str):
-    """task_key 의 (primary, fallback) 설정 반환. 미설정 시 (llm1, False).
-    primary 는 llm1/llm2/llm3 중 하나(삽화 CALL1/2/3 은 llm3 기본)."""
+    """task_key 의 (primary, fallback_target) 반환. 미설정 시 (llm1, None).
+    primary 는 llm1/llm2/llm3 중 하나.
+    fallback_target 은 폴백 대상(llm1/llm2/llm3) 또는 None(폴백 없음).
+
+    하위호환: fallback_target 이 지정되어 있지 않고 기존 fallback(bool)이 True 이면
+    과거 하드코딩 매핑(llm1→llm2, llm2→llm1, llm3→llm1)을 적용한다."""
     entry = (_current_config.get("llm_routing") or {}).get(task_key, {}) or {}
     primary = entry.get("primary", "llm1")
     if primary not in ("llm1", "llm2", "llm3"):
         primary = "llm1"
-    return primary, bool(entry.get("fallback", False))
+    fb = entry.get("fallback_target")
+    if fb not in ("llm1", "llm2", "llm3"):
+        fb = None
+    if fb is None and bool(entry.get("fallback", False)):
+        # 레거시 bool 폴백 → 기존 하드코딩 대상.
+        fb = {"llm1": "llm2", "llm2": "llm1", "llm3": "llm1"}.get(primary)
+    return primary, fb
 
 
 def routing_primary_service(task_key: str) -> str:
@@ -1302,24 +1312,21 @@ async def callLLMTask(task_key: str, messages: list, model: str = None, json_mod
     작업별 라우팅 텍스트 LLM 호출.
 
     config["llm_routing"][task_key] 의 primary(llm1/llm2/llm3) 에 따라 메인 LLM 호출 후,
-    fallback 이 켜져 있고 결과가 실패면 폴백 LLM(llm2/llm3 의 폴백은 llm1)으로 재시도한다.
+    fallback_target 이 지정되어 있고 결과가 실패면 해당 폴백 LLM 으로 재시도한다.
     """
-    primary, fallback = _routing_for(task_key)
+    primary, fb_target = _routing_for(task_key)
     # 라우팅 엔트리에 json_mode 가 명시되어 있으면 그 값 우선(edit_illustration_prompt 토글).
     # 없으면 caller 가 넘긴 json_mode 사용(기존 동작 보존).
     entry = (_current_config.get("llm_routing") or {}).get(task_key, {}) or {}
     rj = entry.get("json_mode", None)
     eff_json = (bool(rj) if rj is not None else json_mode)
-    # primary 에 따른 (메인, 폴백) LLM 함수. llm3 의 폴백은 llm1(가장 안정적인 기본).
-    if primary == "llm2":
-        first, second = callLLM2, callLLM
-    elif primary == "llm3":
-        first, second = callLLM3, callLLM
-    else:
-        first, second = callLLM, callLLM2
-    _llm_log(f"callLLMTask[{task_key}]: primary={primary} fallback={fallback} json_mode={eff_json}")
+    # LLM 식별자 → 호출 함수. fallback_target 이 None 이면 폴백 없음.
+    _llm_funcs = {"llm1": callLLM, "llm2": callLLM2, "llm3": callLLM3}
+    first = _llm_funcs.get(primary, callLLM)
+    second = _llm_funcs.get(fb_target) if fb_target else None
+    _llm_log(f"callLLMTask[{task_key}]: primary={primary} fallback={fb_target} json_mode={eff_json}")
     result = await first(messages, model=model, json_mode=eff_json)
-    if fallback and _is_llm_failed(result):
+    if second is not None and _is_llm_failed(result):
         _llm_log(f"callLLMTask[{task_key}]: primary 실패→폴백 시도 ({result[:80] if result else ''})")
         result = await second(messages, model=model, json_mode=eff_json)
     return result
@@ -1395,18 +1402,21 @@ async def callLLMVisionTask(task_key: str, messages: list, image_b64: str, image
     작업별 라우팅 비전 LLM 호출.
 
     config["llm_routing"][task_key] 의 primary(llm1/llm2) 에 따라 메인 비전 LLM 호출 후,
-    fallback 이 켜져 있고 결과가 실패면 반대 비전 LLM 으로 재시도한다.
+    fallback_target 이 지정되어 있고 결과가 실패면 해당 폴백 비전 LLM 으로 재시도한다.
+    (비전은 LLM1/LLM2 만 지원. 폴백 대상이 LLM3 이면 무시한다.)
     """
-    primary, fallback = _routing_for(task_key)
+    primary, fb_target = _routing_for(task_key)
     # 라우팅 엔트리에 json_mode 가 명시되어 있으면 그 값 우선(edit_illustration_prompt 토글).
     # 없으면 caller 가 넘긴 json_mode 사용(기존 동작 보존).
     entry = (_current_config.get("llm_routing") or {}).get(task_key, {}) or {}
     rj = entry.get("json_mode", None)
     eff_json = (bool(rj) if rj is not None else json_mode)
-    first, second = (callLLMVision2, callLLMVision) if primary == "llm2" else (callLLMVision, callLLMVision2)
-    _llm_log(f"callLLMVisionTask[{task_key}]: primary={primary} fallback={fallback} json_mode={eff_json}")
+    _vision_funcs = {"llm1": callLLMVision, "llm2": callLLMVision2}
+    first = _vision_funcs.get(primary, callLLMVision)
+    second = _vision_funcs.get(fb_target) if fb_target else None
+    _llm_log(f"callLLMVisionTask[{task_key}]: primary={primary} fallback={fb_target} json_mode={eff_json}")
     result = await first(messages, image_b64, image_mime, model=model, json_mode=eff_json)
-    if fallback and _is_llm_failed(result):
+    if second is not None and _is_llm_failed(result):
         _llm_log(f"callLLMVisionTask[{task_key}]: primary 실패→폴백 시도 ({result[:80] if result else ''})")
         result = await second(messages, image_b64, image_mime, model=model, json_mode=eff_json)
     return result

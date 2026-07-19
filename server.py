@@ -189,10 +189,11 @@ DEFAULT_CONFIG = {
         "refine_lora_prompt":      {"primary": "llm1", "fallback": False},
         "refine_lora_test_setup":  {"primary": "llm1", "fallback": False},
         "edit_illustration_prompt":{"primary": "llm1", "fallback": False, "json_mode": True},  # json_mode: 외부 API 분기 토글. 끄면 response_format 미전송(Cerebras/Gemma 루프 회피)
-        # 삽화 컨텍스트 파이프라인 CALL1/2/3. 기본 LLM3(callLLM3 가 llm_service3 비어있으면 LLM1 재사용).
-        "illustration_call1":      {"primary": "llm3", "fallback": False},  # 전처리(컨텍스트 보강)
-        "illustration_call2":      {"primary": "llm3", "fallback": False},  # 본문(장면/태그 TOON 빌드)
-        "illustration_call3":      {"primary": "llm3", "fallback": False},  # 후처리/대사 생성(TOON 교정·SPEAK)
+        # 삽화 컨텍스트 파이프라인 CALL1/2/3. 메인 LLM/폴백은 외부 API 분기 탭에서 드롭박스로 선택.
+        # 폴백 없음(fallback_target 미지정)이 기본.
+        "illustration_call1":      {"primary": "llm1", "fallback": False},  # 전처리(컨텍스트 보강)
+        "illustration_call2":      {"primary": "llm1", "fallback": False},  # 본문(장면/태그 TOON 빌드)
+        "illustration_call3":      {"primary": "llm1", "fallback": False},  # 후처리/대사 생성(TOON 교정·SPEAK)
     },
     "llm_max_concurrency": 1,         # LLM계열 큐 아이템(태그 정제/얼굴 태그 분류) 동시 처리 수. 1=순차(현행 동작). GPU/ComfyUI 작업과 무관.
     "auto_face_tag_max_retries": 2,   # LLM 자동 얼굴/눈 태그 분류 재시도 횟수 (외부 API 실패/JSON 파싱 실패 시)
