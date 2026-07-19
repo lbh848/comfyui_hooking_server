@@ -290,8 +290,6 @@ CORRECT:
 Also: do NOT prepend quality/style tags (`masterpiece`, `best quality`, `highres`, etc.) to `positive`. Those belong to the preset, not the character tags.
 - Close `</lb-xnai>`.
 
-{{#when::{{getglobalvar::toggle_lb-xnai.scene.quantity}}::<::3}}Generate {{dictelement::{"0":"0-1","1":"0-3","2":"1-5"}::{{getglobalvar::toggle_lb-xnai.scene.quantity}}}} scenes.{{/when}}
-
 Do not use slots placed out of prose content.
 
 Only tag for the last log entry.

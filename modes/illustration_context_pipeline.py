@@ -55,6 +55,9 @@ DEFAULT_TOGGLES = {
     "supplement": True,
     "key_visual": True,
     "character_limit": 3,
+    # scene_mode: "manual" = 서버가 최소/최대 강제, "auto" = lb-xnai(call2)에 완전 방임
+    "scene_mode": "manual",
+    "scene_min": 5,
     "scene_max": 11,
     "context_history": True,
     "focus": "",
@@ -146,13 +149,23 @@ def merged_toggles(value: dict | None) -> dict:
     try:
         out["call1_context_turns"] = max(0, min(30, int(out["call1_context_turns"])))
         out["character_limit"] = max(1, min(3, int(out["character_limit"])))
+        out["scene_mode"] = "auto" if str(out.get("scene_mode")) == "auto" else "manual"
+        out["scene_min"] = max(1, min(15, int(out["scene_min"])))
         out["scene_max"] = max(1, min(15, int(out["scene_max"])))
+        if out["scene_min"] > out["scene_max"]:
+            print(
+                f"[ILLUST_CONTEXT] scene_min({out['scene_min']}) > scene_max({out['scene_max']}), "
+                f"min을 max로 보정"
+            )
+            out["scene_min"] = out["scene_max"]
     except Exception as e:
         print(f"[ILLUST_CONTEXT] 토글 숫자 보정 실패: {e}")
         traceback.print_exc()
         out.update({
             "call1_context_turns": DEFAULT_TOGGLES["call1_context_turns"],
             "character_limit": DEFAULT_TOGGLES["character_limit"],
+            "scene_mode": DEFAULT_TOGGLES["scene_mode"],
+            "scene_min": DEFAULT_TOGGLES["scene_min"],
             "scene_max": DEFAULT_TOGGLES["scene_max"],
         })
     return out
@@ -666,7 +679,6 @@ def render_call2_prompt(text: str, toggles: dict, history: str = "") -> str:
         "lb-xnai.compat.charPrompt": "1" if toggles.get("compat_character_prompt") == "separate" else "0",
         "lb-xnai.context": "1" if toggles.get("context_history") else "0",
         "lb-xnai.characters": str(max(0, 3 - int(toggles.get("character_limit", 3)))),
-        "lb-xnai.scene.quantity": "0",
         "lb-xnai-history": history or "null",
     }
     for key, value in risu_values.items():
@@ -689,11 +701,18 @@ def render_call2_prompt(text: str, toggles: dict, history: str = "") -> str:
     if leftovers:
         print(f"[ILLUST_CONTEXT] 렌더 후 잔여 Risu 매크로 {len(leftovers)}개 제거: {leftovers[:8]}")
         text = re.sub(r"\{\{[^\n]*?\}\}", "", text)
-    text += (
-        f"\n\n# Server limits\n- Generate between 1 and {int(toggles['scene_max'])} scenes."
-        f"\n- Maximum fully visible characters per image: {int(toggles['character_limit'])}."
-        f"\n- Key visual: {'required' if toggles.get('key_visual') else 'disabled; omit keyvis'} ."
+    # scene_mode == "auto" 면 장면 수에 대한 서버 제한을 일절 붙이지 않고
+    # lb-xnai(call2)에 완전히 맡긴다(템플릿의 scene.quantity 도 3으로 무력화됨).
+    limits = []
+    if str(toggles.get("scene_mode")) != "auto":
+        limits.append(
+            f"Generate between {int(toggles['scene_min'])} and {int(toggles['scene_max'])} scenes."
+        )
+    limits.append(f"Maximum fully visible characters per image: {int(toggles['character_limit'])}.")
+    limits.append(
+        f"Key visual: {'required' if toggles.get('key_visual') else 'disabled; omit keyvis'} ."
     )
+    text += "\n\n# Server limits\n- " + "\n- ".join(limits)
     return text.strip()
 
 
@@ -799,7 +818,11 @@ def parse_toon_plan(text: str, toggles: dict, source: str = "CALL2") -> list[dic
     if not isinstance(scenes, list):
         print(f"[ILLUST_CONTEXT:{source}] scenes가 list가 아님: {type(scenes).__name__}")
         scenes = []
-    for index, raw in enumerate(scenes[: int(toggles["scene_max"])], start=1):
+    # auto 모드는 파싱 단계에서도 장면 수를 컷하지 않고 lb-xnai(call2)의 결정을
+    # 그대로 수용한다. manual 모드일 때만 scene_max 상한으로 잘라낸다.
+    scene_cap = None if str(toggles.get("scene_mode")) == "auto" else int(toggles["scene_max"])
+    capped = scenes if scene_cap is None else scenes[:scene_cap]
+    for index, raw in enumerate(capped, start=1):
         if isinstance(raw, dict):
             out.append(_descriptor(raw, "scene", index))
     if not out:

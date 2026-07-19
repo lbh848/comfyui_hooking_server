@@ -164,6 +164,8 @@ DEFAULT_CONFIG = {
         "supplement": True,
         "key_visual": True,
         "character_limit": 3,
+        "scene_mode": "manual",
+        "scene_min": 5,
         "scene_max": 11,
         "context_history": True,
         "focus": "",
