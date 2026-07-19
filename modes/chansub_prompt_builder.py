@@ -110,3 +110,36 @@ class ChansubPromptBuilder:
             "quality_tag_start": len(artist_tags),
             "quality_tag_count": len(quality_tags),
         }
+
+
+def build_v1_prompt(setup: str, char: str, supplement: str, tags: dict, settings: dict) -> dict:
+    """V1(ILXL/UPSCALE 스타일) 포맷 조립.
+
+    ANIMA 품질/부정 프리셋만 소비하고 LoRA·아티스트·SDXL 분기는 없는 단순 조립.
+    구조:
+      [Positive]
+      {ANIMA 품질 태그}, {setup}, {char}, {supplement},
+      [ILXL]
+      {setup}, {char},
+      [Negative]
+      {ANIMA 부정 태그}
+    """
+    v1_settings = dict(settings or {})
+    v1_settings["chansub_workflow_type"] = "anima"  # ANIMA 프리셋 강제
+    quality_tags = _get_quality_tags(tags, v1_settings)
+    negative = ChansubPromptBuilder.build_negative_prompt(tags, v1_settings)
+
+    positive_section = _join_parts(", ".join(quality_tags), setup, char, supplement)
+    ilxl_section = _join_parts(setup, char)
+    positive = (
+        f"[Positive]\n{positive_section}\n\n"
+        f"[ILXL]\n{ilxl_section}"
+    )
+    return {
+        "positive": positive,
+        "negative": negative,
+        "width": int(settings.get("img_w", 756) or 756),
+        "height": int(settings.get("img_h", 756) or 756),
+        "quality_tag_start": 0,
+        "quality_tag_count": 0,
+    }

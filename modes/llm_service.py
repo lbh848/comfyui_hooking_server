@@ -1738,14 +1738,79 @@ async def callLLMVision2(messages: list, image_b64: str, image_mime: str = "imag
         _current_config["llm_custom_body"] = saved_body
 
 
+async def callLLMVision3(messages: list, image_b64: str, image_mime: str = "image/webp",
+                         model: str = None, json_mode: bool = False) -> str:
+    """
+    LLM3 비전(이미지 입력) 호출 공개 함수.
+
+    callLLM3 의 설정 스왑 패턴(key3/url3/preset3/effort3/body3 → LLM1 슬롯 임시 덮어쓰기)과
+    callLLMVision 의 비전 처리(_normalize_vision_image/_build_vision_messages)를 합성.
+    LLM3 서비스가 비전을 지원하지 않으면 RuntimeError 대신 "[LLM 실패]" 문자열 반환.
+    """
+    service = _current_config.get("llm_service3") or _current_config["llm_service"]
+    if not supports_vision(service):
+        return (f"[LLM 실패] LLM3 서비스({service})가 비전(이미지 입력)을 지원하지 않습니다. "
+                "OpenAI 호환/Gemini/Claude 등 비전 지원 서비스를 선택하세요.")
+
+    use_model = model or _current_config.get("llm_model3")
+    if not use_model:
+        return "[LLM 실패] LLM3 모델명이 설정되지 않았습니다"
+
+    if not image_b64:
+        return "[LLM 실패] callLLMVision3: image_b64 가 비어 있습니다."
+
+    # 설정 스왑용 LLM3 값
+    key3 = _current_config.get("llm_api_key3", "")
+    url3 = _current_config.get("llm_url3", "")
+    preset3 = _current_config.get("llm_reasoning_preset3", "")
+    effort3 = _current_config.get("llm_reasoning_effort3", "")
+    body3 = _current_config.get("llm_custom_body3", "")
+    saved_key = _current_config.get("llm_api_key", "")
+    saved_url = _current_config.get("llm_url", "")
+    saved_preset = _current_config.get("llm_reasoning_preset", "auto")
+    saved_effort = _current_config.get("llm_reasoning_effort", "")
+    saved_body = _current_config.get("llm_custom_body", "")
+
+    # 비전 messages 빌드는 스왑 전/후 무관하지만, 로그 정확도를 위해 스왑과 무관하게 수행
+    try:
+        image_b64, image_mime = _normalize_vision_image(image_b64, image_mime)
+        new_messages = _build_vision_messages(messages, image_b64, image_mime=image_mime)
+    except ValueError as e:
+        return f"[LLM 실패] {e}"
+
+    _llm_log(f"callLLMVision3: service={service} model={use_model} mime={image_mime} img_b64_len={len(image_b64)} json_mode={json_mode}")
+    token = _response_format_ctx.set({"type": "json_object"}) if json_mode else None
+    try:
+        if key3:
+            _current_config["llm_api_key"] = key3
+        if url3:
+            _current_config["llm_url"] = url3
+        if preset3:
+            _current_config["llm_reasoning_preset"] = preset3
+        if effort3:
+            _current_config["llm_reasoning_effort"] = effort3
+        if body3:
+            _current_config["llm_custom_body"] = body3
+        if bool(_current_config.get("llm_stream3", False)):
+            return await _stream_call_to_text(new_messages, service, use_model, "llm3")
+        return await _dispatch(new_messages, service, use_model)
+    finally:
+        if token is not None:
+            _response_format_ctx.reset(token)
+        _current_config["llm_api_key"] = saved_key
+        _current_config["llm_url"] = saved_url
+        _current_config["llm_reasoning_preset"] = saved_preset
+        _current_config["llm_reasoning_effort"] = saved_effort
+        _current_config["llm_custom_body"] = saved_body
+
+
 async def callLLMVisionTask(task_key: str, messages: list, image_b64: str, image_mime: str = "image/webp",
                             model: str = None, json_mode: bool = False) -> str:
     """
     작업별 라우팅 비전 LLM 호출.
 
-    config["llm_routing"][task_key] 의 primary(llm1/llm2) 에 따라 메인 비전 LLM 호출 후,
+    config["llm_routing"][task_key] 의 primary(llm1/llm2/llm3) 에 따라 메인 비전 LLM 호출 후,
     fallback_target 이 지정되어 있고 결과가 실패면 해당 폴백 비전 LLM 으로 재시도한다.
-    (비전은 LLM1/LLM2 만 지원. 폴백 대상이 LLM3 이면 무시한다.)
     """
     primary, fb_target = _routing_for(task_key)
     # 라우팅 엔트리에 json_mode 가 명시되어 있으면 그 값 우선(edit_illustration_prompt 토글).
@@ -1753,7 +1818,7 @@ async def callLLMVisionTask(task_key: str, messages: list, image_b64: str, image
     entry = (_current_config.get("llm_routing") or {}).get(task_key, {}) or {}
     rj = entry.get("json_mode", None)
     eff_json = (bool(rj) if rj is not None else json_mode)
-    _vision_funcs = {"llm1": callLLMVision, "llm2": callLLMVision2}
+    _vision_funcs = {"llm1": callLLMVision, "llm2": callLLMVision2, "llm3": callLLMVision3}
 
     async def _invoke(slot: str) -> str:
         func = _vision_funcs.get(slot, callLLMVision)
@@ -2590,4 +2655,36 @@ async def callLLMVision2Stream(messages: list, image_b64: str, image_mime: str =
 
     _llm_log(f"callLLMVision2Stream: service={service} model={use_model} mime={image_mime} img_b64_len={len(image_b64)}")
     async for ev in callLLM2Stream(new_messages, model=use_model, log_history=log_history):
+        yield ev
+
+
+async def callLLMVision3Stream(messages: list, image_b64: str, image_mime: str = "image/webp",
+                                model: str = None, log_history: bool = True):
+    """비전(이미지 입력) LLM3 스트리밍 호출. delta/done/error 이벤트를 비동기 제너레이터로 yield.
+
+    callLLMVision3 의 비전 처리(_normalize_vision_image/_build_vision_messages, supports_vision 체크) 후
+    callLLM3Stream 으로 위임한다. callLLMVision2Stream → callLLM2Stream 구조와 동일.
+    """
+    service = _current_config.get("llm_service3") or _current_config["llm_service"]
+    if not supports_vision(service):
+        yield {"type": "error", "error": f"[LLM 실패] LLM3 서비스({service})가 비전(이미지 입력)을 지원하지 않습니다. "
+                                          "OpenAI 호환/Gemini/Claude 등 비전 지원 서비스를 선택하세요."}
+        return
+    use_model = model or _current_config.get("llm_model3")
+    if not use_model:
+        yield {"type": "error", "error": "[LLM 실패] LLM3 모델명이 설정되지 않았습니다"}
+        return
+    if not image_b64:
+        yield {"type": "error", "error": "callLLMVision3Stream: image_b64 가 비어 있습니다."}
+        return
+
+    try:
+        image_b64, image_mime = _normalize_vision_image(image_b64, image_mime)
+        new_messages = _build_vision_messages(messages, image_b64, image_mime=image_mime)
+    except ValueError as e:
+        yield {"type": "error", "error": str(e)}
+        return
+
+    _llm_log(f"callLLMVision3Stream: service={service} model={use_model} mime={image_mime} img_b64_len={len(image_b64)}")
+    async for ev in callLLM3Stream(new_messages, model=use_model, log_history=log_history):
         yield ev

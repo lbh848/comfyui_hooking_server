@@ -266,9 +266,11 @@ def test_build_raw_prompt_uses_v1_or_v3_input_shape():
         prompts,
         pipeline.merged_toggles({"prompt_format": "v1"}),
     )
-    assert "[ILXL]\nmedium shot, classroom, 1girl, hana, black hair" in v1_positive
-    assert "[UPSCALE]\n1girl, hana, black hair" in v1_positive
-    assert "[SETUP]" not in v1_positive
+    # V1도 이제 V3 마커(SETUP/CHAR/SUPPLEMENT)를 내보낸다.
+    # 포맷별 최종 조립(ILXL 등)은 후속 처리기(process_prompt)가 수행.
+    assert "[SETUP]\nmedium shot, classroom" in v1_positive
+    assert "[CHAR]\n1girl, hana, black hair" in v1_positive
+    assert "[ILXL]" not in v1_positive
     assert "[CHAT]\n창가에 선다." in v1_positive
     assert "bad hands" in v1_negative
 

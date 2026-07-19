@@ -4178,11 +4178,11 @@
             </div>
             <div style="display:flex; align-items:center; gap:10px; padding:8px 16px; border-bottom:1px solid var(--border);">
                 <label class="toggle-switch">
-                    <input type="checkbox" id="bot-mode-toggle" onchange="onBotModeToggle()">
+                    <input type="checkbox" id="bot-mode-toggle" checked disabled>
                     <span class="toggle-slider"></span>
                 </label>
-                <span style="font-size:0.85rem;">삽화 모드 활성화</span>
-                <span id="bot-mode-status" class="toggle-status off">OFF</span>
+                <span style="font-size:0.85rem;">삽화 모드 (항상 ON 고정)</span>
+                <span id="bot-mode-status" class="toggle-status on">ON</span>
                 <span style="width:12px;"></span>
                 <label class="toggle-switch">
                     <input type="checkbox" id="postprocess-toggle" onchange="onPostprocessToggle()">
@@ -4301,7 +4301,7 @@
                             <button onclick="openPositiveRulesModal()" style="width:100%; background:#00695C; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">POSITIVE 태그 규칙 설정</button>
                             <div id="positive-rules-count" style="font-size:0.7rem; color:var(--text2); margin-top:4px;"></div>
                         </div>
-                        <div style="background:rgba(156,39,176,0.08); border-radius:8px; padding:10px; margin-top:8px;">
+                        <div id="illust-prompt-settings-block" style="background:rgba(156,39,176,0.08); border-radius:8px; padding:10px; margin-top:8px;">
                             <div style="display:flex; align-items:center; justify-content:space-between;">
                                 <div style="display:flex; align-items:center; gap:8px;">
                                     <div class="section-title" style="margin-bottom:0;">삽화 프롬프트 설정</div>
@@ -11753,10 +11753,9 @@
             document.getElementById('setting-outfit-enabled').checked = outfitEnabled;
             updateOutfitStatus(outfitEnabled);
 
-            // 삽화 모드 활성화 설정
-            const botModeEnabled = currentConfig.bot_mode_enabled || false;
-            document.getElementById('bot-mode-toggle').checked = botModeEnabled;
-            updateBotModeStatus(botModeEnabled);
+            // 삽화 모드: 항상 ON 고정 (서버가 True 강제). 토글은 비활성화.
+            document.getElementById('bot-mode-toggle').checked = true;
+            updateBotModeStatus(true);
             // 디버깅 모드 설정
             const debugModeEnabled = currentConfig.debug_mode_enabled || false;
             document.getElementById('debug-mode-toggle').checked = debugModeEnabled;
@@ -13424,7 +13423,7 @@
         let _llmTestAbort = null;
         let _llmTestImage = { b64: '', mime: '', source: '' }; // 비전 테스트용 이미지
 
-        // LLM1/LLM2 선택 복원
+        // LLM1/LLM2/LLM3 선택 복원
         (function _restoreLlmTestTarget() {
             try {
                 const saved = localStorage.getItem('llm-test-target');
@@ -13541,7 +13540,7 @@
 
             const payload = {messages, stream: useStream};
             const targetSel = document.getElementById('llm-test-target');
-            const targetVal = (targetSel && targetSel.value === 'llm2') ? 'llm2' : 'llm1';
+            const targetVal = (targetSel && ['llm1', 'llm2', 'llm3'].includes(targetSel.value)) ? targetSel.value : 'llm1';
             payload.target = targetVal;
             try { localStorage.setItem('llm-test-target', targetVal); } catch (_) {}
             if (useVision) {
@@ -14574,6 +14573,8 @@
             const wfAutocomplete = document.getElementById('workflow-autocomplete');
             if (wfAutocomplete) wfAutocomplete.style.display = enabled ? 'none' : '';
             updateChansubAdvancedOptions();
+            // prompt_format 드롭박스도 챈섭 상태에 맞춰 잠금/해제
+            if (typeof _applyPromptFormatChansubLock === 'function') _applyPromptFormatChansubLock();
         }
 
         function onChansubWorkflowTypeChange() {
@@ -15448,9 +15449,9 @@
                 const debugModeOn = cfg.debug_mode_enabled || false;
                 document.getElementById('debug-mode-toggle').checked = debugModeOn;
                 updateDebugModeStatus(debugModeOn);
-                const botModeOn = cfg.bot_mode_enabled || false;
-                document.getElementById('bot-mode-toggle').checked = botModeOn;
-                updateBotModeStatus(botModeOn);
+                // 삽화 모드: 항상 ON 고정 — 설정값과 무관하게 잠금
+                document.getElementById('bot-mode-toggle').checked = true;
+                updateBotModeStatus(true);
                 const postprocessOn = cfg.postprocess_enabled || false;
                 const ppToggleEl = document.getElementById('postprocess-toggle');
                 if (ppToggleEl) ppToggleEl.checked = postprocessOn;
@@ -28475,25 +28476,11 @@
             document.getElementById('debug-workflow-autocomplete').classList.remove('visible');
         }
 
-        async function onBotModeToggle() {
-            const checked = document.getElementById('bot-mode-toggle').checked;
-            updateBotModeStatus(checked);
-            try {
-                const resp = await fetch('/api/config', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({bot_mode_enabled: checked})
-                });
-                if (!resp.ok) {
-                    document.getElementById('bot-mode-toggle').checked = !checked;
-                    updateBotModeStatus(!checked);
-                    showToast('삽화 모드 설정 저장 실패');
-                }
-            } catch (e) {
-                console.error('[BOT] 삽화 모드 토글 저장 실패:', e);
-                document.getElementById('bot-mode-toggle').checked = !checked;
-                updateBotModeStatus(!checked);
-            }
+        // 삽화 모드는 항상 ON 고정 — 토글 비활성화. 호출되더라도 잠금 상태를 유지한다.
+        function onBotModeToggle() {
+            const el = document.getElementById('bot-mode-toggle');
+            if (el) { el.checked = true; el.disabled = true; }
+            updateBotModeStatus(true);
         }
 
         async function saveBotSelected() {
@@ -28521,10 +28508,9 @@
                 try {
                     const cfgResp = await fetch('/api/config');
                     const cfg = await cfgResp.json();
-                    // 토글 상태 복원
-                    const botModeOn = cfg.bot_mode_enabled || false;
-                    document.getElementById('bot-mode-toggle').checked = botModeOn;
-                    updateBotModeStatus(botModeOn);
+                    // 토글 상태 복원 (삽화 모드: 항상 ON 고정)
+                    document.getElementById('bot-mode-toggle').checked = true;
+                    updateBotModeStatus(true);
                     // 선택 봇 복원
                     const savedBot = cfg.bot_selected || '';
                     if (savedBot && botData.bots && botData.bots.some(b => b.name === savedBot)) {
@@ -36642,6 +36628,7 @@
                     document.getElementById('illust-face-lora-upscale').value = s.face_lora_upscale_size || '';
                     updateIllustToggles();
                     updateChansubAdvancedOptions();
+                    applyIllustSettingsV1Lock();
                     // 프리셋 태그 렌더링
                     renderIllustPresetTags('illust-sdxl-artist-preset','illust-sdxl-artist-tags','artist_presets');
                     renderIllustPresetTags('illust-sdxl-quality-preset','illust-sdxl-quality-tags','quality_presets');
@@ -36653,6 +36640,31 @@
             } catch (e) {
                 console.error('[ILLUST] 설정 로드 실패:', e);
             }
+        }
+
+        // V1 포맷일 때 삽화 프롬프트 설정 패널에서 ANIMA 품질/부정 프리셋만 편집 가능,
+        // 나머지 컨트롤은 회색 비활성. data-v1-locked 마커로 본 함수가 잠근 것만 해제해
+        // 다른 잠금 로직(chansub/HRF 종속 등)은 건드리지 않는다.
+        function applyIllustSettingsV1Lock() {
+            const block = document.getElementById('illust-prompt-settings-block');
+            if (!block) return;
+            const liveToggles = (typeof _illustrationContextToggles !== 'undefined') ? _illustrationContextToggles : null;
+            const cfgToggles = (typeof currentConfig !== 'undefined' && currentConfig && currentConfig.illustration_context_toggles) || {};
+            const fmt = String((liveToggles && liveToggles.prompt_format) || cfgToggles.prompt_format || 'v3').toLowerCase();
+            const isV1 = fmt === 'v1';
+            const ALLOWED = new Set(['illust-anima-quality-preset', 'illust-anima-negative-preset']);
+            block.querySelectorAll('input, select').forEach(ctrl => {
+                if (ctrl.id && ALLOWED.has(ctrl.id)) {
+                    if (ctrl.dataset.v1Locked) { ctrl.disabled = false; delete ctrl.dataset.v1Locked; }
+                    return;
+                }
+                if (isV1) {
+                    if (!ctrl.disabled) { ctrl.dataset.v1Locked = 'true'; ctrl.disabled = true; }
+                } else if (ctrl.dataset.v1Locked) {
+                    ctrl.disabled = false;
+                    delete ctrl.dataset.v1Locked;
+                }
+            });
         }
 
         async function saveIllustSettings() {
@@ -37555,10 +37567,11 @@
                 fields: [
                     {
                         key: 'prompt_format', label: '프롬프트 입력 형식', type: 'select', stacked: true,
-                        help: '후속 처리기가 해석할 RAW 프롬프트 구조를 선택합니다.',
+                        help: '후속 처리기가 해석할 RAW 프롬프트 구조를 선택합니다. 챈섭 공급자가 켜져 있으면 챈섭으로 고정됩니다.',
                         options: [
                             {value: 'v1', label: 'V1 — 삽화 모드 비활성화 형식 ([ILXL] / [UPSCALE])'},
                             {value: 'v3', label: 'V3 — 삽화 모드 활성화 형식 ([SETUP] / [CHAR] / [SUPPLEMENT])'},
+                            {value: 'chansub', label: '챈섭 — Comfy POSITIVE/NEGATIVE (챈섭 공급자 전용)'},
                         ],
                     },
                     {key: 'positive_note', label: '긍정 프롬프트 추가', type: 'textarea', help: '모든 장면의 긍정 프롬프트에 덧붙일 내용을 입력합니다.', stacked: true},
@@ -37830,6 +37843,33 @@
                 subpanel.classList.toggle('is-locked', fullyLocked);
             });
             updateIllustrationContextSceneModeVisibility();
+            _applyPromptFormatChansubLock();
+        }
+
+        // prompt_format 드롭박스를 챈섭 공급자 상태와 연동.
+        // 챈섭 ON → 강제 chansub, v1/v3 비활성(회색).
+        // 챈섭 OFF → chansub 옵션 비활성(회색), 값이 chansub이면 v3로 복귀.
+        function _applyPromptFormatChansubLock() {
+            const select = document.querySelector('[data-illust-toggle="prompt_format"]');
+            if (!select) return;
+            // 실시간 토글 상태를 우선, 없으면 currentConfig 사용(모달 로드 시점)
+            const liveToggle = document.getElementById('setting-illustration-provider-chansub');
+            let chansubOn;
+            if (liveToggle) {
+                chansubOn = !!liveToggle.checked;
+            } else {
+                chansubOn = String(
+                    (typeof currentConfig !== 'undefined' && currentConfig && currentConfig.illustration_provider) || 'comfy'
+                ).toLowerCase() === 'chansub';
+            }
+            Array.from(select.options).forEach(opt => {
+                opt.disabled = chansubOn ? (opt.value !== 'chansub') : (opt.value === 'chansub');
+            });
+            if (chansubOn) {
+                select.value = 'chansub';
+            } else if (select.value === 'chansub') {
+                select.value = 'v3';
+            }
         }
 
         function updateIllustrationContextSceneModeVisibility() {
@@ -37886,6 +37926,7 @@
                 _illustrationSettingsDirty = false;
                 setIllustrationContextStatus('저장 완료');
                 showToast('삽화 생성 설정 저장 완료', 'success');
+                applyIllustSettingsV1Lock();
             } catch (e) {
                 console.error('[ILLUST_CONTEXT] 생성 설정 저장 실패:', e);
                 _illustrationSettingsDirty = true;

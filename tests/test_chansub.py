@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 import aiohttp
 
-from modes.chansub_prompt_builder import ChansubPromptBuilder
+from modes.chansub_prompt_builder import ChansubPromptBuilder, build_v1_prompt
 from modes import chansub_service
 from modes.chansub_service import build_request_body, extract_image_from_response
 from modes import llm_prompt_edit
@@ -105,6 +105,26 @@ class ChansubPromptBuilderTest(unittest.TestCase):
 
         self.assertIn("default sdxl quality", result["positive"])
         self.assertEqual(result["negative"], "default sdxl negative")
+
+    def test_build_v1_prompt_uses_anima_quality_and_negative_only(self):
+        """V1 조립: ANIMA 품질/부정 프리셋만 사용, 아티스트 없음, [Positive]/[ILXL] 구조."""
+        result = build_v1_prompt(
+            "night, classroom",
+            "1girl, hana, black hair",
+            "sunset lighting",
+            self.tags,
+            self.settings,
+        )
+        # [Positive] = ANIMA 품질 프리셋 + setup + char + supplement, 아티스트 없음
+        self.assertIn("[Positive]\nbest quality, amazing quality, night, classroom, "
+                      "1girl, hana, black hair, sunset lighting", result["positive"])
+        # [ILXL] = setup + char
+        self.assertIn("[ILXL]\nnight, classroom, 1girl, hana, black hair", result["positive"])
+        # [Negative] = ANIMA 부정 프리셋
+        self.assertEqual(result["negative"], "bad anatomy, lowres")
+        # 아티스트/LoRA 없음
+        self.assertNotIn("artist:sample", result["positive"])
+        self.assertNotIn("[LORA", result["positive"])
 
     def test_invalid_workflow_type_falls_back_to_anima(self):
         self.settings["chansub_workflow_type"] = "unknown"

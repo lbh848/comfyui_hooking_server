@@ -6,9 +6,9 @@
 [SETUP]/[CHAR]/[SUPPLEMENT] 양식의 무작위 상황을 1인(단일) 캐릭터로 생성한다.
 
 동작 조건:
-  - bot_mode_enabled == True 이고 bot_selected 가 유효한 봇 이름이어야 한다.
+  - bot_selected 가 유효한 봇 이름이어야 한다 (삽화 모드는 항상 ON 고정).
   - 수동 그리기(/api/restore_manual_draw)에서 restore_prompt_file 로 지정해 사용한다.
-    bot_mode 가 켜져 있으면 illustration 큐로 진입해 기존 삽화 파이프라인
+    bot이 선택되어 있으면 illustration 큐로 진입해 기존 삽화 파이프라인
     (단어치환 → 캐릭터 감지 → IllustPromptBuilder 빌드)을 그대로 탄다.
 
 필수 함수:
@@ -215,16 +215,15 @@ def _ensure_tags_in_char(char_section: str, appearance: list[str],
 # ─── 진입점 ──────────────────────────────────────────────────
 
 async def run(char_name: str | None = None, situation: str | None = None) -> dict:
-    # 1. 활성 봇 확인
+    # 1. 활성 봇 확인 (삽화 모드는 항상 ON)
     config = _read_json(CONFIG_PATH) or {}
     bot_name = config.get("bot_selected", "")
-    bot_mode_enabled = config.get("bot_mode_enabled", False)
 
-    if not (bot_name and bot_mode_enabled):
+    if not bot_name:
         print(
-            "[RESTORE_LLM_SOLO] bot_mode 가 꺼져 있거나 bot_selected 가 없습니다. "
-            "이 프롬프트는 삽화(bot) 모드에서만 동작합니다. "
-            f"(bot_selected={bot_name!r}, bot_mode_enabled={bot_mode_enabled})"
+            "[RESTORE_LLM_SOLO] bot_selected 가 없습니다. "
+            "이 프롬프트는 bot이 선택된 삽화 모드에서만 동작합니다. "
+            f"(bot_selected={bot_name!r})"
         )
         return {"positive": "", "negative": ""}
 

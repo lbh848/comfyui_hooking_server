@@ -142,7 +142,7 @@ def merged_toggles(value: dict | None) -> dict:
                 )
                 out["prompt_format"] = "v3"
     prompt_format = str(out.get("prompt_format") or "").strip().lower()
-    if prompt_format not in ("v1", "v3"):
+    if prompt_format not in ("v1", "v3", "chansub"):
         print(f"[ILLUST_CONTEXT] 지원하지 않는 프롬프트 입력 형식 {prompt_format!r}, V3 사용")
         prompt_format = "v3"
     out["prompt_format"] = prompt_format
@@ -1004,40 +1004,27 @@ def build_raw_prompt(descriptor: dict, narrative: str, prompts: dict, toggles: d
     positive_note = str(toggles.get("positive_note") or "").strip()
     prompt_format = str(toggles.get("prompt_format") or "v3").strip().lower()
 
-    if prompt_format == "v1":
-        # 비삽화 모드가 기대하는 기존 ILXL/UPSCALE 입력 구조.
-        # 토글의 긍정 추가 문구는 섹션 뒤에 흘리지 않고 실제 이미지 태그에 포함한다.
-        top = ", ".join(x for x in (char_positive, setup, supplement, positive_note) if x)
-        ilxl = ", ".join(x for x in (setup, char_positive, positive_note) if x)
-        upscale = ", ".join(x for x in (char_positive, positive_note) if x)
-        positive = (
-            f"{top}\n\n"
-            f"[ILXL]\n{ilxl}\n\n"
-            f"[UPSCALE]\n{upscale}\n\n"
-            f"[CHAT]\n{narrative}\n"
-            f"[SLOT]\n{descriptor.get('slot', '')}\n"
-            f"[SPEAK]\n{descriptor.get('speak') or 'None'}"
-        )
-    else:
-        if prompt_format != "v3":
-            print(f"[ILLUST_CONTEXT] RAW 생성 중 알 수 없는 입력 형식 {prompt_format!r}, V3 사용")
-        if positive_part.startswith("[Positive]"):
-            positive_part = positive_part[len("[Positive]"):]
-        replacements = {
-            "{chat}": narrative,
-            "{slot}": str(descriptor.get("slot", "")),
-            "{speak}": descriptor.get("speak") or "None",
-            "{name}": names,
-            "{setup}": setup,
-            "{prompt}": setup,
-            "{char}": char_positive,
-            "{supplement}": supplement,
-        }
-        positive = positive_part
-        for key, value in replacements.items():
-            positive = positive.replace(key, str(value))
-        if positive_note:
-            positive = positive.rstrip() + "\n" + positive_note
+    # 모든 포맷(v1/v3/chansub)이 동일하게 V3 마커([SETUP]/[CHAR]/[SUPPLEMENT])를 내보낸다.
+    # 포맷별 최종 조립(LoRA/품질 프리셋/챈섭 평탄화)은 후속 처리기(process_prompt)가 수행.
+    if prompt_format not in ("v1", "v3", "chansub"):
+        print(f"[ILLUST_CONTEXT] RAW 생성 중 알 수 없는 입력 형식 {prompt_format!r}, V3 사용")
+    if positive_part.startswith("[Positive]"):
+        positive_part = positive_part[len("[Positive]"):]
+    replacements = {
+        "{chat}": narrative,
+        "{slot}": str(descriptor.get("slot", "")),
+        "{speak}": descriptor.get("speak") or "None",
+        "{name}": names,
+        "{setup}": setup,
+        "{prompt}": setup,
+        "{char}": char_positive,
+        "{supplement}": supplement,
+    }
+    positive = positive_part
+    for key, value in replacements.items():
+        positive = positive.replace(key, str(value))
+    if positive_note:
+        positive = positive.rstrip() + "\n" + positive_note
     negative = negative_part.strip() if marker else ""
     if char_negative:
         negative = ", ".join(x for x in (negative, char_negative) if x)
@@ -1179,5 +1166,6 @@ async def build_from_context(payload: dict, toggles: dict | None, extra_referenc
         "call1_output": call1_output,
         "call2_output": call2_output,
         "call3_output": call3_output,
+        "prompt_format": str(toggles.get("prompt_format") or "v3").strip().lower(),
         "items": raw_items,
     }

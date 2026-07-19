@@ -154,9 +154,10 @@ async def run() -> dict:
     except Exception as e:
         print(f"[RESTORE_V3] config.json 로드 실패: {e}")
 
-    bot_mode_enabled = config.get("bot_mode_enabled", False)
-
-    if bot_mode_enabled:
-        return _build_illust_prompt()
-
-    return _build_v2_prompt()
+    # 모듈 ON/OFF 대신 프롬프트 입력 형식(prompt_format) 값으로 분기.
+    # v1 → ILXL/UPSCALE 통과용, v3(기본) → 삽화 빌드본.
+    toggles = (config.get("illustration_context_toggles") or {})
+    prompt_format = str(toggles.get("prompt_format") or "v3").strip().lower()
+    if prompt_format == "v1":
+        return _build_v2_prompt()
+    return _build_illust_prompt()

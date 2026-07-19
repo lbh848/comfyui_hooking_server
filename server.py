@@ -64,7 +64,7 @@ from modes.bot_mode import handle_get_illust_settings, handle_update_illust_sett
 from modes.instance_lora_mode import handle_get_auto_lora_prompt, handle_set_auto_lora_prompt, handle_auto_refine_enqueue, handle_resolve_gender_tag, handle_get_bot_test_setup_prompt, handle_set_bot_test_setup_prompt
 from modes import embedding_service
 from modes.illust_prompt_builder import IllustPromptBuilder, log_illust_build, get_illust_logs
-from modes.chansub_prompt_builder import ChansubPromptBuilder
+from modes.chansub_prompt_builder import ChansubPromptBuilder, build_v1_prompt
 from modes.word_rules import (
     apply_prompt_rules as _apply_prompt_word_rules,
     apply_raw_prompt_rules as _apply_raw_prompt_word_rules,
@@ -108,7 +108,7 @@ DEFAULT_CONFIG = {
     "chansub_max_retries": 2,  # 챈섭 일시적 실패 시 재시도 횟수 (최초 요청 제외)
     "chansub_retry_delay_sec": 3.0,  # 챈섭 재시도 사이의 설정 대기 시간(초)
     "utility_workflow_source_path": "",  # 삽화 유틸리티 워크플로우 전체 경로
-    "bot_mode_enabled": False,  # 삽화 모드 활성화 여부
+    "bot_mode_enabled": True,  # 삽화 모드: 항상 ON 고정 (V1/V3 분기는 파이프라인이 포맷 감지로 처리)
     "debug_mode_enabled": False,  # 디버깅 모드 (ComfyUI 전송만 중단)
     "postprocess_enabled": False,  # 삽화 후처리([SPEAK] 합성) 마스터 스위치
     "postprocess": {  # 후처리 상세 설정 (탭별 모드)
@@ -1977,8 +1977,12 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
         # 단어 기반 규칙 적용 / 삽화 모드 프롬프트 빌딩
         bot_name = app_config.get("bot_selected", "")
         illustration_provider = (app_config.get("illustration_provider", "comfy") or "comfy").strip().lower()
-        if not (bot_name and app_config.get("bot_mode_enabled", False)):
+        if not bot_name:
             illustration_provider = "comfy"
+        # CALL 파이프라인이 전달한 프롬프트 포맷(v1/v3/chansub). 없으면 V3(일반/수동그리기).
+        prompt_format = str(raw_body.get("illustration_prompt_format") or "v3").strip().lower()
+        if prompt_format not in ("v1", "v3", "chansub"):
+            prompt_format = "v3"
         if illustration_provider not in ("comfy", "chansub"):
             print(f"[ILLUST] 알 수 없는 공급자 {illustration_provider!r}, comfy로 폴백")
             illustration_provider = "comfy"
@@ -1996,8 +2000,9 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
         chansub_quality_tag_start = 0
         chansub_quality_tag_count = 0
         _speak_text = ""  # [SPEAK] 섹션 원문 (후처리 합성용)
-        if bot_name and app_config.get("bot_mode_enabled", False):
-            # 삽화 모드: RAW 규칙 선처리 → 파싱 → 캐릭터 감지 → 빌드
+        if bot_name and not llm_prompt_edit.detect_v1_format(positive):
+            # 삽화 빌딩 분기: V3([NAME]/[SETUP]/[CHAR]/[SUPPLEMENT]) 입력만 처리.
+            # V1([ILXL]/[UPSCALE]) 입력은 illust 빌딩을 타지 않고 밑 else 에서 통과시킨다.
             builder = IllustPromptBuilder()
             raw_positive = positive
 
@@ -2078,6 +2083,22 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                         f"size={generation_width}x{generation_height}, "
                         f"detected={detected} (LoRA 트리거 미추가)"
                     )
+                elif prompt_format == "v1":
+                    # V1 조립: ANIMA 품질/부정 프리셋만 사용, LoRA·아티스트·SDXL 없음.
+                    v1_built = build_v1_prompt(
+                        setup_replaced,
+                        char_replaced,
+                        supplement_replaced,
+                        tags,
+                        settings,
+                    )
+                    positive = v1_built["positive"]
+                    negative = v1_built["negative"]
+                    print(
+                        f"[ILLUST:V1] V1 조립 완료: "
+                        f"profile={'group' if is_multi else 'solo'}, "
+                        f"detected={detected} (LoRA 미사용)"
+                    )
                 else:
                     positive = builder.build_positive_prompt(
                         setup_replaced, char_replaced, supplement_replaced,
@@ -2085,12 +2106,13 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                     )
                     negative = builder.build_negative_prompt(tags, settings, detected, bot)
 
-                # 4-1. 인스턴스 LoRA 사용 횟수 증가
+                # 4-1. 인스턴스 LoRA 사용 횟수 증가 (V1/챈섭은 LoRA 미사용 → 제외)
                 from modes.instance_lora_mode import increment_usage as _increment_instance_lora_usage
                 characters_list = bot.get("characters", [])
                 _lora_key = "loras_group" if is_multi else "loras_solo"
                 _incremented = set()
-                for _cn in (detected if illustration_provider == "comfy" else []):
+                _lora_active = illustration_provider == "comfy" and prompt_format != "v1"
+                for _cn in (detected if _lora_active else []):
                     _cd = next((c for c in characters_list if c["name"] == _cn), None)
                     if not _cd:
                         continue
@@ -2125,8 +2147,8 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                 positive = word_replaced_raw
                 negative = apply_word_replacements("", negative, bot_name)[1]
         else:
-            # 비삽화 모드: 단어 기반 규칙만 적용
-            if bot_name and app_config.get("bot_mode_enabled", False):
+            # V1(ILXL/UPSCALE) 통과 또는 bot 미선택: illust 빌딩 없이 단어 치환만 적용
+            if bot_name:
                 positive, negative = apply_word_replacements(positive, negative, bot_name)
 
         print(f"[INFO] 긍정: {positive[:80]}...")
@@ -2170,7 +2192,7 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
         print(f"[INFO] 이미지 수신 완료: {len(img_bytes):,} bytes ({elapsed_time:.1f}s)")
 
         # 백업 저장 (WebP + 원본 워크플로우 JSON + 변환정보)
-        _backup_bot_name = bot_name if (bot_name and app_config.get("bot_mode_enabled", False)) else ""
+        _backup_bot_name = bot_name if bot_name else ""
         # 수동 그리기(prompt_id 'manual-' 접두사)는 생성 방법 딱지 부여 (봇 딱지와 별개 차원)
         _gen_method = "수동 그리기" if str(prompt_id).startswith("manual-") else ""
         # 후처리([SPEAK] 합성): 활성 시 설정 스냅샷 + 이번 생성의 SPEAK 원문 전달
@@ -2403,6 +2425,7 @@ async def process_illustration_context_queue_item(item) -> dict:
                 "illustration_context": built.get("context", ""),
                 "illustration_context_session_id": session_id,
                 "illustration_context_index": index,
+                "illustration_prompt_format": built.get("prompt_format", "v3"),
             }
             child_item = await queue_manager.add_item(
                 "illustration",
@@ -2983,7 +3006,7 @@ async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse
     body: {"messages": [...], "model": "...", "stream": true, "target": "llm1"|"llm2"|"llm3"}
     응답: text/event-stream. 이벤트: start / delta / done / error.
     stream=False 면 단발 호출 후 done 이벤트 1개만 전송.
-    image_b64 가 있으면 비전 호출. target 이 llm2 면 LLM2 설정으로 호출.
+    image_b64 가 있으면 비전 호출. target(llm1/llm2/llm3) 에 따라 해당 LLM 설정으로 호출.
     """
     try:
         body = await request.json()
@@ -3001,9 +3024,6 @@ async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse
     target = (body.get("target") or "llm1").strip().lower()
     if target not in ("llm1", "llm2", "llm3"):
         target = "llm1"
-    if target == "llm3" and image_b64:
-        print("[LLM_TEST_STREAM] LLM3 비전 테스트는 지원하지 않음")
-        return web.json_response({"error": "LLM3 test supports text messages only"}, status=400)
 
     # target 에 따른 서비스/모델/함수 선택
     cfg = llm_service.get_config()
@@ -3011,9 +3031,9 @@ async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse
         cur_service = cfg.get("llm_service3") or cfg.get("llm_service", "")
         cur_model_key = "llm_model3"
         fn_stream = llm_service.callLLM3Stream
-        fn_vision_stream = None
+        fn_vision_stream = llm_service.callLLMVision3Stream
         fn_single = llm_service.callLLM3
-        fn_vision_single = None
+        fn_vision_single = llm_service.callLLMVision3
     elif target == "llm2":
         cur_service = cfg.get("llm_service2") or cfg.get("llm_service", "")
         cur_model_key = "llm_model2"
@@ -6238,6 +6258,9 @@ async def handle_api_config(request: web.Request) -> web.Response:
                 if key in DEFAULT_CONFIG:
                     app_config[key] = body[key]
 
+            # 삽화 모드는 항상 ON 고정 — 사용자 토글과 무관하게 True 강제
+            app_config["bot_mode_enabled"] = True
+
             # 큐 타입 순서 검증: 분석이 항상 학습보다 먼저여야 함
             qto = app_config.get("queue_type_order", {})
             analysis_order = qto.get("instance_lora_analysis", 99)
@@ -6378,7 +6401,7 @@ async def handle_api_config(request: web.Request) -> web.Response:
 # ─── 워크플로우 복원 수동 그리기 ─────────────────────────────
 async def handle_api_restore_manual_draw(request: web.Request) -> web.Response:
     """수동 그리기: 복원 프롬프트 파일로 프롬프트를 만들어 그림을 그린다.
-    삽화 모드가 활성화되어 있으면 illustration 큐로 들어가 동일한 파이프라인을 탄다."""
+    bot이 선택되어 있으면(삽화 모드는 항상 ON) illustration 큐로 들어가 동일한 파이프라인을 탄다."""
     prompt_file = app_config.get("restore_prompt_file", "")
     if not prompt_file:
         return web.json_response({"error": "복원 프롬프트 파일이 지정되지 않았습니다"}, status=400)
@@ -6436,10 +6459,9 @@ async def handle_api_restore_manual_draw(request: web.Request) -> web.Response:
             return web.json_response({"error": "빈 프롬프트 - 실행 불가"}, status=400)
 
         bot_name = app_config.get("bot_selected", "")
-        bot_mode_enabled = app_config.get("bot_mode_enabled", False)
 
-        # 삽화 모드: illustration 큐로 동일 파이프라인 타기
-        if bot_name and bot_mode_enabled:
+        # 삽화 모드(항상 ON): bot 선택 시 illustration 큐로 동일 파이프라인 타기
+        if bot_name:
             prompt_id = f"manual-{uuid.uuid4().hex[:8]}"
             prompt_data = {
                 "manual_pos": {
@@ -6472,7 +6494,7 @@ async def handle_api_restore_manual_draw(request: web.Request) -> web.Response:
                 priority=0,
             ))
         else:
-            # 비삽화 모드: 기존 restore_manual 큐
+            # bot 미선택: 기존 restore_manual 큐
             print(f"[RESTORE_MANUAL] 수동 그리기 큐 등록: positive='{positive[:50]}...'")
             _label = f"수동그리기: {positive[:40]}..."
             asyncio.create_task(queue_manager.add_item(
