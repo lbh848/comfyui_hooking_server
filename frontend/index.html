@@ -37571,7 +37571,9 @@
                 fields: [
                     {key: 'call1_enabled', label: 'CALL1 컨텍스트 보강', type: 'toggle', help: '최근 대화에서 시각 정보를 먼저 보강합니다.'},
                     {key: 'call3_enabled', label: 'CALL3 교정 및 대사', type: 'toggle', help: '장면 출력 교정과 대사 생성을 수행합니다.'},
-                    {key: 'call1_context_turns', label: '최근 메시지 사용 수', type: 'number', min: 0, max: 30, help: 'CALL1/2/3에 전달할 최근 대화 수입니다.'},
+                    {key: 'call1_context_turns', label: 'CALL1 최근 메시지 수', type: 'number', min: 0, max: 30, help: 'CALL1에 전달할 최근 대화 수입니다.'},
+                    {key: 'call2_context_turns', label: 'CALL2 최근 메시지 수', type: 'number', min: 0, max: 30, help: 'CALL2에 전달할 최근 대화 수입니다.'},
+                    {key: 'call3_context_turns', label: 'CALL3 최근 메시지 수', type: 'number', min: 0, max: 30, help: 'CALL3 대사 생성에 전달할 최근 대화 수입니다.'},
                 ],
             },
             {

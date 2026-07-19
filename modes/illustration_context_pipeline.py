@@ -47,6 +47,8 @@ PROMPT_FILES = {
 DEFAULT_TOGGLES = {
     "call1_enabled": True,
     "call1_context_turns": 5,
+    "call2_context_turns": 5,
+    "call3_context_turns": 5,
     "call3_enabled": True,
     "speak_enabled": True,
     "call3_prompt_mode": "speak",
@@ -158,6 +160,14 @@ def merged_toggles(value: dict | None) -> dict:
     out["call3_prompt_mode"] = call3_prompt_mode
     try:
         out["call1_context_turns"] = max(0, min(30, int(out["call1_context_turns"])))
+        # call2/call3 전용 키가 없거나 무효하면 call1 값으로 폴백(하위호환).
+        for _ck in ("call2_context_turns", "call3_context_turns"):
+            _raw = value.get(_ck) if isinstance(value, dict) else None
+            try:
+                out[_ck] = max(0, min(30, int(_raw)))
+            except (TypeError, ValueError):
+                print(f"[ILLUST_CONTEXT] {_ck} 값 무효({_raw!r}), call1_context_turns로 폴백")
+                out[_ck] = out["call1_context_turns"]
         out["character_limit"] = max(1, min(3, int(out["character_limit"])))
         out["scene_mode"] = "auto" if str(out.get("scene_mode")) == "auto" else "manual"
         out["scene_min"] = max(1, min(15, int(out["scene_min"])))
@@ -173,6 +183,8 @@ def merged_toggles(value: dict | None) -> dict:
         traceback.print_exc()
         out.update({
             "call1_context_turns": DEFAULT_TOGGLES["call1_context_turns"],
+            "call2_context_turns": DEFAULT_TOGGLES["call2_context_turns"],
+            "call3_context_turns": DEFAULT_TOGGLES["call3_context_turns"],
             "character_limit": DEFAULT_TOGGLES["character_limit"],
             "scene_mode": DEFAULT_TOGGLES["scene_mode"],
             "scene_min": DEFAULT_TOGGLES["scene_min"],
@@ -1138,7 +1150,7 @@ async def build_from_context(payload: dict, toggles: dict | None, extra_referenc
     }]
     if extra_reference.strip():
         call2_messages.append({"role": "user", "content": "# CHARACTER DICTIONARY\n\n" + extra_reference})
-    for item in chats[max(0, target_index - int(toggles["call1_context_turns"])):target_index]:
+    for item in chats[max(0, target_index - int(toggles["call2_context_turns"])):target_index]:
         call2_messages.append({
             "role": "assistant" if item["role"] == "char" else "user",
             "content": _strip_nodes(item["data"]),
@@ -1183,7 +1195,7 @@ async def build_from_context(payload: dict, toggles: dict | None, extra_referenc
             "role": "system",
             "content": call3_system_prompt,
         }]
-        for item in chats[max(0, target_index - int(toggles["call1_context_turns"])):target_index]:
+        for item in chats[max(0, target_index - int(toggles["call3_context_turns"])):target_index]:
             speak_messages.append({
                 "role": "assistant" if item["role"] == "char" else "user",
                 "content": _strip_nodes(item["data"]),

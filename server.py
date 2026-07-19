@@ -156,6 +156,8 @@ DEFAULT_CONFIG = {
     "illustration_context_toggles": {
         "call1_enabled": True,
         "call1_context_turns": 5,
+        "call2_context_turns": 5,
+        "call3_context_turns": 5,
         "call3_enabled": True,
         "speak_enabled": True,
         "call3_prompt_mode": "speak",
