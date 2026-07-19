@@ -2124,6 +2124,7 @@ def _default_bubble() -> dict:
         "tail_threshold": 1.0,             # 꼬리 생성 최대 거리(얼굴 최대 크기의 배율)
         "bubble_shape": "legacy",          # 외곽선 렌더: legacy(기본 타원/코믹) | organic(유기형 굴곡)
         "tail_width_scale": 1.0,           # 꼬리 두께 배율(자동 산정값×k, 0.2~3.0). 1.0=변경 없음
+        "tail_max_length": 0.0,            # 꼬리 최대 길이(얼굴 최대 크기의 배율, 0=제한 없음). 1.0=얼굴 1개 폭
         "organic_wobble": 0.055,           # 유기형 굴곡 강도(0.02~0.10). 짧은 대사 0.060, 긴 대사 0.045 권장
         "max_width_ratio": 0.45,          # 캔버스 폭 대비 말풍선 최대 폭 비율
         "match_thres": 0.55,              # 코사인 유사도 매칭 임계치(이하 미배정)
@@ -2287,6 +2288,9 @@ def get_bubble_settings(config: dict, bot_name: str = "") -> Optional[dict]:
         ),
         "tail_width_scale": max(
             0.2, min(3.0, float(bb.get("tail_width_scale", 1.0) or 1.0))
+        ),
+        "tail_max_length": max(
+            0.0, min(10.0, float(bb.get("tail_max_length", 0.0) or 0.0))
         ),
         "organic_wobble": max(
             0.02, min(0.10, float(bb.get("organic_wobble", 0.055) or 0.055))

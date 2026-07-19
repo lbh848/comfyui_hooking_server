@@ -235,6 +235,17 @@ def _resolve_tail_width_scale(settings):
     return max(0.2, min(3.0, scale))
 
 
+def _resolve_tail_max_length(settings):
+    """꼬리 최대 길이(얼굴 최대 크기의 배율). 0=제한 없음(현재 동작). 0~10 클램프."""
+    value = (settings or {}).get("tail_max_length", 0.0)
+    try:
+        ratio = float(value)
+    except (TypeError, ValueError):
+        print(f"[BUBBLE_RENDER] ⚠ tail_max_length 변환 실패({value!r}), 제한 없음")
+        ratio = 0.0
+    return max(0.0, min(10.0, ratio))
+
+
 def _resolve_organic_wobble(settings):
     """유기형 외곽선 굴곡 강도. 길이 무관 기본 0.055, 0.02~0.10 클램프."""
     value = (settings or {}).get("organic_wobble", 0.055)
@@ -772,15 +783,35 @@ def _quadratic_point(start, control, end, amount):
     )
 
 
-def _add_curved_tail(mask, rect, anchor, shape, radius, border_w, tail_width_scale=1.0):
+def _add_curved_tail(mask, rect, anchor, shape, radius, border_w, tail_width_scale=1.0,
+                     max_length_px=None):
     """몸통 법선으로 출발해 얼굴 anchor로 휘는 꼬리를 union mask에 더한다.
 
     tail_width_scale 이 자동 산정 half_width 에 곱해 꼬리 두께를 조절한다.
+    max_length_px(>0) 가 주어지고 base→anchor 거리가 이보다 길면 꼬리 끝점을
+    도중에 멈춰 너무 길게 뻗는 것을 막는다(끝점과 곡률을 비율적으로 축소).
     """
     base, normal = _tail_base_geometry(rect, anchor, shape, radius)
     distance = math.hypot(anchor[0] - base[0], anchor[1] - base[1])
     if distance < 1.0:
         return
+    # 최대 길이 초과 시 base 방향을 따라 끝점을 clamp. 곡률도 eff_distance 로
+    # 재산정해 비율이 보존된 짧은 꼬리가 된다.
+    try:
+        max_length_px = float(max_length_px) if max_length_px is not None else 0.0
+    except (TypeError, ValueError):
+        print(f"[BUBBLE_RENDER] ⚠ max_length_px 변환 실패({max_length_px!r}), 제한 없음")
+        max_length_px = 0.0
+    if max_length_px > 0.0 and distance > max_length_px:
+        ratio = max_length_px / distance
+        tip = (
+            base[0] + (anchor[0] - base[0]) * ratio,
+            base[1] + (anchor[1] - base[1]) * ratio,
+        )
+        eff_distance = max_length_px
+    else:
+        tip = anchor
+        eff_distance = distance
     x1, y1, x2, y2 = [float(v) for v in rect]
     half_width = max(
         max(1.0, float(border_w)) * 1.7,
@@ -792,7 +823,7 @@ def _add_curved_tail(mask, rect, anchor, shape, radius, border_w, tail_width_sca
     right_start = (base[0] - tangent[0] * half_width, base[1] - tangent[1] * half_width)
     # 몸통에 수직으로 나와 얼굴 쪽으로 합류한다. 법선과 직접 방향이 다를수록
     # 자연스럽게 곡률이 커지고, 정면에 가까우면 거의 곧은 꼬리가 된다.
-    control = (base[0] + normal[0] * distance * 0.58, base[1] + normal[1] * distance * 0.58)
+    control = (base[0] + normal[0] * eff_distance * 0.58, base[1] + normal[1] * eff_distance * 0.58)
     left_control = (
         control[0] + tangent[0] * half_width * 0.52,
         control[1] + tangent[1] * half_width * 0.52,
@@ -803,11 +834,11 @@ def _add_curved_tail(mask, rect, anchor, shape, radius, border_w, tail_width_sca
     )
     steps = 18
     left_curve = [
-        _quadratic_point(left_start, left_control, anchor, index / steps)
+        _quadratic_point(left_start, left_control, tip, index / steps)
         for index in range(steps + 1)
     ]
     right_curve = [
-        _quadratic_point(right_start, right_control, anchor, index / steps)
+        _quadratic_point(right_start, right_control, tip, index / steps)
         for index in range(steps + 1)
     ]
     ImageDraw.Draw(mask).polygon(left_curve + list(reversed(right_curve)), fill=255)
@@ -900,6 +931,7 @@ def _draw_layout_bubble(
     wobble=0.055,
     point_count=180,
     seed=0,
+    tail_max_length_px=None,
 ):
     """레이아웃 결과를 타원/코믹/구름/무라운드 박스로 그린다.
 
@@ -927,7 +959,8 @@ def _draw_layout_bubble(
             )
             if with_tail:
                 _add_curved_tail(
-                    mask, rect, anchor, "ellipse", radius, border_w, tail_width_scale
+                    mask, rect, anchor, "ellipse", radius, border_w, tail_width_scale,
+                    max_length_px=tail_max_length_px,
                 )
             _composite_union_mask(overlay, mask, fill, border, border_w)
             return
@@ -946,7 +979,8 @@ def _draw_layout_bubble(
         mask_draw.ellipse(rect, fill=255)
     if with_tail:
         _add_curved_tail(
-            mask, rect, anchor, render_shape, radius, border_w, tail_width_scale
+            mask, rect, anchor, render_shape, radius, border_w, tail_width_scale,
+            max_length_px=tail_max_length_px,
         )
     _composite_union_mask(overlay, mask, fill, border, border_w)
 
@@ -1148,6 +1182,7 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
     tail_threshold = s.get("tail_threshold", 1.0)
     bubble_shape_mode = _resolve_bubble_shape_mode(s)
     tail_width_scale = _resolve_tail_width_scale(s)
+    tail_max_length_ratio = _resolve_tail_max_length(s)
     organic_wobble = _resolve_organic_wobble(s)
     organic_point_count = int(s.get("organic_point_count", 180) or 180)
     radius = int(s.get("radius", 20))
@@ -1477,6 +1512,16 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
             ^ (int(round(rect[2])) * 83492791)
             ^ (int(round(rect[3])) * 39916801)
         ) & 0x7FFFFFFF
+        # 꼬리 최대 길이(얼굴 크기 배율→px). box 없거나 제한 없이면 None.
+        if with_tail and tail_max_length_ratio > 0.0 and box:
+            face_size = max(
+                float(box[2]) - float(box[0]),
+                float(box[3]) - float(box[1]),
+                1.0,
+            )
+            tail_max_length_px = face_size * tail_max_length_ratio
+        else:
+            tail_max_length_px = None
         _draw_layout_bubble(
             overlay,
             rect,
@@ -1492,6 +1537,7 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
             wobble=organic_wobble,
             point_count=organic_point_count,
             seed=organic_seed,
+            tail_max_length_px=tail_max_length_px,
         )
 
         # 모델이 선택한 줄과 행간을 실제 폰트로 중앙 정렬해 그린다.

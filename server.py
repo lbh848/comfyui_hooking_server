@@ -4420,6 +4420,7 @@ async def handle_api_postprocess_preview(request: web.Request) -> web.Response:
                 "tail_threshold": body.get("tail_threshold", 1.0),
                 "bubble_shape": body.get("bubble_shape", "legacy"),
                 "tail_width_scale": body.get("tail_width_scale", 1.0),
+                "tail_max_length": body.get("tail_max_length", 0.0),
                 "organic_wobble": body.get("organic_wobble", 0.055),
                 "max_width_ratio": body.get("max_width_ratio", 0.45),
                 "match_thres": body.get("match_thres", 0.55),

@@ -8157,6 +8157,7 @@
                                 <div class="pp-field-inline" style="margin-top:6px;">
                                     <div><div style="font-size:0.7rem; color:var(--text2,#999);">외곽선 스타일</div><select id="pp-bubble-shape" class="select" style="width:130px;" onchange="renderPostprocessPreview()" title="legacy=기존 타원/코믹, organic=저주파 굴곡 유기형(대사에만 적용)"><option value="legacy">기본(legacy)</option><option value="organic">유기형(organic)</option></select></div>
                                     <div><div style="font-size:0.7rem; color:var(--text2,#999);">꼬리 두께 배율</div><input id="pp-bubble-tail-width-scale" type="number" class="input" style="width:70px;" min="0.2" max="3.0" step="0.1" oninput="renderPostprocessPreview()" title="자동 산정된 꼬리 두께에 곱할 배율. 1.0=기본, 1.5=50% 두껍게."></div>
+                                    <div><div style="font-size:0.7rem; color:var(--text2,#999);">꼬리 최대 길이 (얼굴 크기 배)</div><input id="pp-bubble-tail-max-length" type="number" class="input" style="width:70px;" min="0" max="10" step="0.1" oninput="renderPostprocessPreview()" title="꼬리가 발화자 얼굴까지 도달하지 못하게 최대 길이를 제한합니다(얼굴 최대 크기×이 값). 0=제한 없음(얼굴까지 도달). 1.0=얼굴 1개 폭."></div>
                                     <div><div style="font-size:0.7rem; color:var(--text2,#999);">유기형 굴곡 강도</div><input id="pp-bubble-organic-wobble" type="number" class="input" style="width:70px;" min="0.02" max="0.10" step="0.005" oninput="renderPostprocessPreview()" title="유기형 외곽선 굴곡. 긴 대사는 0.045, 짧은 대사는 0.060 권장. organic일 때만 적용."></div>
                                 </div>
                                 <div class="pp-field-inline" style="margin-top:6px;">
@@ -26242,6 +26243,7 @@
                     tail_threshold: 1.0,
                     bubble_shape: 'legacy',
                     tail_width_scale: 1.0,
+                    tail_max_length: 0.0,
                     organic_wobble: 0.055,
                     max_width_ratio: 0.45,
                     match_thres: 0.55,
@@ -27064,6 +27066,7 @@
             if (base.text_width_scale == null || isNaN(Number(base.text_width_scale))) base.text_width_scale = 1.0;
             if (base.bubble_shape !== 'organic') base.bubble_shape = 'legacy';
             if (base.tail_width_scale == null || isNaN(Number(base.tail_width_scale))) base.tail_width_scale = 1.0;
+            if (base.tail_max_length == null || isNaN(Number(base.tail_max_length))) base.tail_max_length = 0.0;
             if (base.organic_wobble == null || isNaN(Number(base.organic_wobble))) base.organic_wobble = 0.055;
             return base;
         }
@@ -27204,6 +27207,7 @@
             const _shapeSel = document.getElementById('pp-bubble-shape');
             if (_shapeSel) _shapeSel.value = (b.bubble_shape === 'organic') ? 'organic' : 'legacy';
             set('pp-bubble-tail-width-scale', b.tail_width_scale ?? 1.0);
+            set('pp-bubble-tail-max-length', b.tail_max_length ?? 0.0);
             set('pp-bubble-organic-wobble', b.organic_wobble ?? 0.055);
             set('pp-bubble-thought-shape', b.thought_shape || 'cloud');
             set('pp-bubble-max-width-ratio', b.max_width_ratio ?? 0.45);
@@ -27247,6 +27251,7 @@
             const _shapeVal = document.getElementById('pp-bubble-shape');
             b.bubble_shape = (_shapeVal && _shapeVal.value === 'organic') ? 'organic' : 'legacy';
             b.tail_width_scale = _ppNum('pp-bubble-tail-width-scale', 1.0, 0.2, 3.0);
+            b.tail_max_length = _ppNum('pp-bubble-tail-max-length', 0.0, 0, 10);
             b.organic_wobble = _ppNum('pp-bubble-organic-wobble', 0.055, 0.02, 0.10);
             const _ppThoughtShape = document.getElementById('pp-bubble-thought-shape').value;
             b.thought_shape = (_ppThoughtShape === 'box' || _ppThoughtShape === 'auto') ? _ppThoughtShape : 'cloud';
@@ -27297,6 +27302,7 @@
                     padding: b.padding, radius: b.radius,
                     thought_shape: b.thought_shape, tail_threshold: b.tail_threshold,
                     bubble_shape: b.bubble_shape, tail_width_scale: b.tail_width_scale,
+                    tail_max_length: b.tail_max_length,
                     organic_wobble: b.organic_wobble,
                     max_width_ratio: b.max_width_ratio, match_thres: b.match_thres,
                     face_candidates_per_character: b.face_candidates_per_character,
