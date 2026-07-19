@@ -8445,7 +8445,7 @@
                             <div class="desc">사용할 모델 (예: gpt-4.1, gemini-3-flash-preview, glm-4.6, claude-sonnet-4)</div>
                         </div>
                         <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
-                            <input type="text" id="setting-llm-model" value="gpt-4.1" placeholder="gpt-4.1"
+                            <input type="text" id="setting-llm-model" value="gpt-4.1" placeholder="gpt-4.1" oninput="renderReasoningControls(1)"
                                    style="width: 200px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text);">
                         </div>
                     </div>
@@ -8464,7 +8464,7 @@
                     <div class="setting-row" id="llm-url-row" style="display: none;">
                         <div class="setting-label">
                             <div class="title">LLM 베이스 URL (오버라이드)</div>
-                            <div class="desc">OpenAI 호환 서비스(openai/openrouter/lmstudio/ollama/ollama-cloud)의 엔드포인트. 비워두면 provider 기본 URL. {model} 치환 지원 (예: http://host/v1/{model})</div>
+                            <div class="desc">비워두면 선택한 서비스의 기본 URL을 사용합니다. OpenAI 호환 서비스는 베이스 URL 또는 전체 /chat/completions URL과 {model} 치환을 지원합니다.</div>
                         </div>
                         <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
                             <input type="text" id="setting-llm-url" placeholder="https://..."
@@ -8486,12 +8486,12 @@
                         </div>
                     </div>
 
-                    <div class="setting-row" id="llm-reasoning-row" style="display: none;">
+                    <div class="setting-row" id="llm-reasoning-row" style="display: flex;">
                         <div class="setting-label">
                             <div class="title">LLM1 Reasoning 설정</div>
-                            <div class="desc">auto 가 기본 (모델명으로 추론). custom 선택 시 JSON body 직접 입력</div>
+                            <div class="desc">프리셋과 서비스 전송 포맷에 맞는 입력 항목이 아래에 표시됩니다.</div>
                         </div>
-                        <div class="setting-control" style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                        <div class="setting-control" style="display: flex; flex-direction: column; align-items: stretch; gap: 8px; min-width: 360px;">
                             <select id="setting-llm-reasoning-preset" onchange="onReasoningPresetChange()"
                                     style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: .85rem;">
                                 <option value="auto">auto (모델명 추론)</option>
@@ -8504,24 +8504,24 @@
                                 <option value="gemini">gemini</option>
                                 <option value="custom">custom (JSON body 직접 입력)</option>
                             </select>
-                            <select id="setting-llm-reasoning-effort"
-                                    style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: .85rem;">
-                                <option value="">(미지정, 기본값)</option>
-                                <option value="none">none (명시적 끔)</option>
-                                <option value="low">low</option>
-                                <option value="medium">medium</option>
-                                <option value="high">high</option>
-                            </select>
+                            <div id="llm-reasoning-dynamic"></div>
                         </div>
                     </div>
 
-                    <div class="setting-row" id="llm-custom-body-row" style="display: none; flex-direction: column; align-items: stretch;">
-                        <div class="setting-label" style="margin-bottom: 8px;">
-                            <div class="title">LLM1 Custom Body (JSON)</div>
-                            <div class="desc">preset=custom 일 때 이 JSON 이 요청 body 에 머지됨. model/messages/stream 은 보존, 나머지 덮어쓰기</div>
+                    <div class="setting-row" id="llm-custom-body-row" style="display: flex; flex-direction: column; align-items: stretch;">
+                        <div style="display:flex; justify-content:space-between; gap:10px; align-items:flex-start; margin-bottom:8px;">
+                            <div class="setting-label">
+                                <div class="title">LLM1 Custom Body (JSON)</div>
+                                <div class="desc">항상 실제 요청 BODY에 재귀 병합됩니다. model/messages/stream은 런타임 값을 보존합니다.</div>
+                            </div>
+                            <div style="display:flex; gap:6px; flex-shrink:0;">
+                                <button type="button" onclick="buildReasoningBody(1)" style="padding:6px 10px; border-radius:6px; border:1px solid #00BCD4; background:rgba(0,188,212,.14); color:var(--text); cursor:pointer;">BODY 빌드</button>
+                                <button type="button" onclick="formatCustomBody(1)" style="padding:6px 10px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); cursor:pointer;">JSON 정리</button>
+                            </div>
                         </div>
                         <textarea id="setting-llm-custom-body" placeholder='{\n  "temperature": 0.8,\n  "top_p": 0.9,\n  "thinking": { "type": "disabled" },\n  "reasoning_effort": "none"\n}'
                                   style="width: 100%; min-height: 120px; padding: 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-family: monospace; font-size: .8rem;"></textarea>
+                        <div id="llm-custom-body-status" style="margin-top:6px; font-size:.75rem; color:var(--text2);"></div>
                     </div>
 
                     <div class="setting-row" id="vertex-key-row" style="display: none; flex-direction: column; align-items: stretch;">
@@ -8571,7 +8571,7 @@
                             <div class="desc">폴백 모델 (LLM 실패 시 자동 시도, 비워두면 비활성)</div>
                         </div>
                         <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
-                            <input type="text" id="setting-llm-model2" placeholder="예: gemini-3-flash-preview"
+                            <input type="text" id="setting-llm-model2" placeholder="예: gemini-3-flash-preview" oninput="renderReasoningControls(2)"
                                    style="width: 200px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text);">
                         </div>
                     </div>
@@ -8590,7 +8590,7 @@
                     <div class="setting-row" id="llm-url2-row" style="display: none;">
                         <div class="setting-label">
                             <div class="title">LLM2 베이스 URL (옵션)</div>
-                            <div class="desc">LLM2 전용 URL 오버라이드. 비워두면 LLM1 URL 재사용</div>
+                            <div class="desc">LLM2 전용 URL 오버라이드. 비워두면 LLM1 URL 또는 선택한 서비스의 기본 URL 사용</div>
                         </div>
                         <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
                             <input type="text" id="setting-llm-url2" placeholder="https://..."
@@ -8612,12 +8612,12 @@
                         </div>
                     </div>
 
-                    <div class="setting-row" id="llm-reasoning2-row" style="display: none;">
+                    <div class="setting-row" id="llm-reasoning2-row" style="display: flex;">
                         <div class="setting-label">
                             <div class="title">LLM2 Reasoning 설정</div>
                             <div class="desc">LLM2 가 LLM1 과 다를 때만. 비워두면 LLM1 reasoning 설정 재사용</div>
                         </div>
-                        <div class="setting-control" style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                        <div class="setting-control" style="display: flex; flex-direction: column; align-items: stretch; gap: 8px; min-width: 360px;">
                             <select id="setting-llm-reasoning-preset2" onchange="onReasoningPreset2Change()"
                                     style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: .85rem;">
                                 <option value="">(LLM1과 동일)</option>
@@ -8631,34 +8631,52 @@
                                 <option value="gemini">gemini</option>
                                 <option value="custom">custom (JSON body)</option>
                             </select>
-                            <select id="setting-llm-reasoning-effort2"
-                                    style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: .85rem;">
-                                <option value="">(LLM1과 동일)</option>
-                                <option value="none">none</option>
-                                <option value="low">low</option>
-                                <option value="medium">medium</option>
-                                <option value="high">high</option>
-                            </select>
+                            <div id="llm-reasoning2-dynamic"></div>
                         </div>
                     </div>
 
-                    <div class="setting-row" id="llm-custom-body2-row" style="display: none; flex-direction: column; align-items: stretch;">
-                        <div class="setting-label" style="margin-bottom: 8px;">
-                            <div class="title">LLM2 Custom Body (JSON)</div>
-                            <div class="desc">LLM2 preset=custom 일 때 JSON body 머지</div>
+                    <div class="setting-row" id="llm-custom-body2-row" style="display: flex; flex-direction: column; align-items: stretch;">
+                        <div style="display:flex; justify-content:space-between; gap:10px; align-items:flex-start; margin-bottom:8px;">
+                            <div class="setting-label">
+                                <div class="title">LLM2 Custom Body (JSON)</div>
+                                <div class="desc">비어 있으면 LLM1 BODY를 재사용하며, 값이 있으면 LLM2 요청에 재귀 병합합니다.</div>
+                            </div>
+                            <div style="display:flex; gap:6px; flex-shrink:0;">
+                                <button type="button" onclick="buildReasoningBody(2)" style="padding:6px 10px; border-radius:6px; border:1px solid #00BCD4; background:rgba(0,188,212,.14); color:var(--text); cursor:pointer;">BODY 빌드</button>
+                                <button type="button" onclick="formatCustomBody(2)" style="padding:6px 10px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); cursor:pointer;">JSON 정리</button>
+                            </div>
                         </div>
                         <textarea id="setting-llm-custom-body2" placeholder='{ ... }'
                                   style="width: 100%; min-height: 120px; padding: 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-family: monospace; font-size: .8rem;"></textarea>
+                        <div id="llm-custom-body2-status" style="margin-top:6px; font-size:.75rem; color:var(--text2);"></div>
                     </div>
 
                     <div style="margin:16px 0 8px; padding:8px 10px; border-left:3px solid #00BCD4; background:rgba(0,188,212,.08); font-size:.82rem; font-weight:700;">LLM3 연결 설정</div>
                     <div class="setting-row"><div class="setting-label"><div class="title">LLM3 서비스 선택</div><div class="desc">비워두면 LLM1 서비스 사용</div></div><div class="setting-control"><select id="setting-llm-service3" onchange="onLlmServiceChange()" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);"><option value="">(LLM1과 동일)</option><option value="copilot">Copilot</option><option value="vertex">Vertex Gemini</option><option value="vertex-openai">Vertex OpenAI</option><option value="openai">OpenAI</option><option value="openrouter">OpenRouter</option><option value="gemini">Gemini (AI Studio)</option><option value="claude">Claude</option><option value="lmstudio">LM Studio (로컬)</option><option value="ollama">Ollama (로컬)</option><option value="ollama-cloud">Ollama Cloud</option></select></div></div>
-                    <div class="setting-row"><div class="setting-label"><div class="title">LLM3 모델명</div><div class="desc">LLM3로 사용할 모델명</div></div><div class="setting-control"><input id="setting-llm-model3" type="text" placeholder="예: gpt-4.1" style="width:220px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);"></div></div>
+                    <div class="setting-row"><div class="setting-label"><div class="title">LLM3 모델명</div><div class="desc">LLM3로 사용할 모델명</div></div><div class="setting-control"><input id="setting-llm-model3" type="text" placeholder="예: gpt-4.1" oninput="renderReasoningControls(3)" style="width:220px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);"></div></div>
                     <div class="setting-row" id="llm-api-key3-row" style="display:none;"><div class="setting-label"><div class="title">LLM3 API 키 (옵션)</div><div class="desc">비워두면 LLM1 키 재사용</div></div><div class="setting-control"><input id="setting-llm-api-key3" type="text" placeholder="sk-..." style="width:300px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-family:monospace;"></div></div>
-                    <div class="setting-row" id="llm-url3-row" style="display:none;"><div class="setting-label"><div class="title">LLM3 베이스 URL (옵션)</div><div class="desc">비워두면 LLM1 URL 재사용</div></div><div class="setting-control"><input id="setting-llm-url3" type="text" placeholder="https://..." style="width:300px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);"></div></div>
+                    <div class="setting-row" id="llm-url3-row" style="display:none;"><div class="setting-label"><div class="title">LLM3 베이스 URL (옵션)</div><div class="desc">비워두면 LLM1 URL 또는 선택한 서비스의 기본 URL 사용</div></div><div class="setting-control"><input id="setting-llm-url3" type="text" placeholder="https://..." style="width:300px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);"></div></div>
                     <div class="setting-row"><div class="setting-label"><div class="title">LLM3 스트리밍</div><div class="desc">LLM3 요청을 실제 chunk 스트림으로 받고 LLM로그창에 실시간 표시합니다.</div></div><div class="setting-control" style="display:flex;align-items:center;gap:8px;"><label class="toggle-switch"><input type="checkbox" id="setting-llm-stream3" onchange="updateLlmStreamStatus(3, this.checked)"><span class="toggle-slider"></span></label><span id="setting-llm-stream3-status" class="toggle-status off">OFF</span></div></div>
-                    <div class="setting-row" id="llm-reasoning3-row" style="display:none;"><div class="setting-label"><div class="title">LLM3 Reasoning 설정</div><div class="desc">LLM3의 reasoning 설정</div></div><div class="setting-control" style="display:flex;gap:8px;"><select id="setting-llm-reasoning-preset3" onchange="onReasoningPreset3Change()" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);"><option value="">(LLM1과 동일)</option><option value="auto">auto</option><option value="none">none</option><option value="gpt">gpt</option><option value="glm">glm</option><option value="deepseek">deepseek</option><option value="kimi">kimi</option><option value="claude">claude</option><option value="gemini">gemini</option><option value="custom">custom</option></select><select id="setting-llm-reasoning-effort3" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);"><option value="">(LLM1과 동일)</option><option value="none">none</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option></select></div></div>
-                    <div class="setting-row" id="llm-custom-body3-row" style="display:none;flex-direction:column;align-items:stretch;"><div class="setting-label" style="margin-bottom:8px;"><div class="title">LLM3 Custom Body (JSON)</div></div><textarea id="setting-llm-custom-body3" placeholder="{ ... }" style="width:100%;min-height:120px;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-family:monospace;"></textarea></div>
+                    <div class="setting-row" id="llm-reasoning3-row" style="display:flex;">
+                        <div class="setting-label"><div class="title">LLM3 Reasoning 설정</div><div class="desc">비워두면 LLM1 reasoning 설정을 재사용합니다.</div></div>
+                        <div class="setting-control" style="display:flex;flex-direction:column;align-items:stretch;gap:8px;min-width:360px;">
+                            <select id="setting-llm-reasoning-preset3" onchange="onReasoningPreset3Change()" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);">
+                                <option value="">(LLM1과 동일)</option><option value="auto">auto</option><option value="none">none</option><option value="gpt">gpt</option><option value="glm">glm</option><option value="deepseek">deepseek</option><option value="kimi">kimi</option><option value="claude">claude</option><option value="gemini">gemini</option><option value="custom">custom</option>
+                            </select>
+                            <div id="llm-reasoning3-dynamic"></div>
+                        </div>
+                    </div>
+                    <div class="setting-row" id="llm-custom-body3-row" style="display:flex;flex-direction:column;align-items:stretch;">
+                        <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;margin-bottom:8px;">
+                            <div class="setting-label"><div class="title">LLM3 Custom Body (JSON)</div><div class="desc">비어 있으면 LLM1 BODY를 재사용하며, 값이 있으면 LLM3 요청에 재귀 병합합니다.</div></div>
+                            <div style="display:flex;gap:6px;flex-shrink:0;">
+                                <button type="button" onclick="buildReasoningBody(3)" style="padding:6px 10px;border-radius:6px;border:1px solid #00BCD4;background:rgba(0,188,212,.14);color:var(--text);cursor:pointer;">BODY 빌드</button>
+                                <button type="button" onclick="formatCustomBody(3)" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);cursor:pointer;">JSON 정리</button>
+                            </div>
+                        </div>
+                        <textarea id="setting-llm-custom-body3" placeholder="{ ... }" style="width:100%;min-height:120px;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-family:monospace;"></textarea>
+                        <div id="llm-custom-body3-status" style="margin-top:6px;font-size:.75rem;color:var(--text2);"></div>
+                    </div>
 
                     <!-- LLM 자동 분류 재시도 횟수 -->
                     <div class="setting-row">
@@ -11601,6 +11619,7 @@
                 console.error('설정 로드 실패:', e);
                 currentConfig = {};
             }
+            await loadLlmServiceCatalog();
 
             // 폼에 값 설정
             document.getElementById('setting-comfyui-port').value = currentConfig.comfyui_port || 8188;
@@ -11691,13 +11710,13 @@
             if (llmEffort3El) llmEffort3El.value = currentConfig.llm_reasoning_effort3 || '';
             const llmCustomBody3El = document.getElementById('setting-llm-custom-body3');
             if (llmCustomBody3El) llmCustomBody3El.value = currentConfig.llm_custom_body3 || '';
-            onReasoningPresetChange();
-            onReasoningPreset2Change();
-            onReasoningPreset3Change();
             document.getElementById('setting-llm-service2').value = currentConfig.llm_service2 || '';
             document.getElementById('setting-llm-model2').value = currentConfig.llm_model2 || '';
             document.getElementById('setting-llm-service3').value = currentConfig.llm_service3 || '';
             document.getElementById('setting-llm-model3').value = currentConfig.llm_model3 || '';
+            onReasoningPresetChange();
+            onReasoningPreset2Change();
+            onReasoningPreset3Change();
             onLlmServiceChange();
 
             // LLM API 키 별도 로드 (key/llm_keys.json)
@@ -12513,6 +12532,27 @@
         }
 
         async function saveSettings() {
+            for (const slot of [1, 2, 3]) {
+                const suffix = llmSlotSuffix(slot);
+                const textarea = document.getElementById(`setting-llm-custom-body${suffix}`);
+                const raw = textarea?.value.trim() || '';
+                if (!raw) continue;
+                try {
+                    const parsed = JSON.parse(raw);
+                    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+                        throw new Error('JSON object 형식이 아닙니다.');
+                    }
+                } catch (error) {
+                    console.error(`[LLM${slot}] 설정 저장 중 Custom Body 검증 실패:`, error, raw);
+                    const status = document.getElementById(`llm-custom-body${suffix}-status`);
+                    if (status) {
+                        status.textContent = `JSON 오류: ${error.message}`;
+                        status.style.color = '#ff6b6b';
+                    }
+                    showToast(`LLM${slot} Custom Body JSON을 먼저 수정하세요.`, 'error');
+                    return;
+                }
+            }
             const config = {
                 data_saving_mode: currentConfig.data_saving_mode || false,
                 comfyui_port: parseInt(document.getElementById('setting-comfyui-port').value) || 8188,
@@ -13937,55 +13977,113 @@
             status.classList.toggle('off', !checked);
         }
 
+        let llmServiceCatalog = [];
+        let llmServiceCatalogPromise = null;
+
+        function llmSlotSuffix(slot) {
+            return slot === 1 ? '' : String(slot);
+        }
+
+        async function loadLlmServiceCatalog() {
+            if (llmServiceCatalogPromise) return llmServiceCatalogPromise;
+            llmServiceCatalogPromise = (async () => {
+                try {
+                    const response = await fetch('/api/llm/providers');
+                    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                    const data = await response.json();
+                    if (!Array.isArray(data.services) || !data.services.length) {
+                        throw new Error('서비스 목록이 비어 있습니다.');
+                    }
+                    llmServiceCatalog = data.services;
+                    for (const slot of [1, 2, 3]) {
+                        const suffix = llmSlotSuffix(slot);
+                        const select = document.getElementById(`setting-llm-service${suffix}`);
+                        if (!select) continue;
+                        const previous = select.value;
+                        select.replaceChildren();
+                        if (slot > 1) {
+                            const inherited = document.createElement('option');
+                            inherited.value = '';
+                            inherited.textContent = '(LLM1과 동일)';
+                            select.appendChild(inherited);
+                        }
+                        const groups = new Map();
+                        for (const service of llmServiceCatalog) {
+                            const groupName = service.group || '기타';
+                            if (!groups.has(groupName)) {
+                                const group = document.createElement('optgroup');
+                                group.label = groupName;
+                                groups.set(groupName, group);
+                                select.appendChild(group);
+                            }
+                            const option = document.createElement('option');
+                            option.value = service.id;
+                            option.textContent = service.name;
+                            groups.get(groupName).appendChild(option);
+                        }
+                        if (previous && !llmServiceCatalog.some(service => service.id === previous)) {
+                            const legacy = document.createElement('option');
+                            legacy.value = previous;
+                            legacy.textContent = `${previous} (기존 설정)`;
+                            select.appendChild(legacy);
+                        }
+                        select.value = previous;
+                    }
+                    return llmServiceCatalog;
+                } catch (error) {
+                    console.error('[LLM_PROVIDER] 서비스 카탈로그 로드 실패:', error);
+                    showToast('LLM 서비스 목록 로드 실패: 기존 목록을 사용합니다.', 'warning');
+                    llmServiceCatalogPromise = null;
+                    return [];
+                }
+            })();
+            return llmServiceCatalogPromise;
+        }
+
+        function getLlmServiceMeta(serviceId) {
+            const found = llmServiceCatalog.find(service => service.id === serviceId);
+            if (found) return found;
+            const fallbackFormats = {
+                vertex: 'vertex', 'vertex-openai': 'vertex-openai', gemini: 'google', claude: 'anthropic'
+            };
+            return {
+                id: serviceId,
+                api_key: ['copilot', 'vertex', 'vertex-openai'].includes(serviceId) ? 'none' : 'optional',
+                url_override: !['copilot', 'vertex'].includes(serviceId),
+                format: fallbackFormats[serviceId] || 'openai'
+            };
+        }
+
+        function getEffectiveLlmService(slot) {
+            const suffix = llmSlotSuffix(slot);
+            const selected = document.getElementById(`setting-llm-service${suffix}`)?.value || '';
+            if (slot === 1 || selected) return selected;
+            return document.getElementById('setting-llm-service')?.value || 'copilot';
+        }
+
         function onLlmServiceChange() {
+            for (const slot of [1, 2, 3]) {
+                const suffix = llmSlotSuffix(slot);
+                const selected = document.getElementById(`setting-llm-service${suffix}`)?.value || '';
+                const meta = getLlmServiceMeta(getEffectiveLlmService(slot));
+                const keyRow = document.getElementById(`llm-api-key${suffix}-row`);
+                const urlRow = document.getElementById(`llm-url${suffix}-row`);
+                const reasoningRow = document.getElementById(`llm-reasoning${suffix}-row`);
+                const customRow = document.getElementById(`llm-custom-body${suffix}-row`);
+                const hasOwnService = slot === 1 || !!selected;
+                const genericKey = ['required', 'optional'].includes(meta.api_key);
+                if (keyRow) keyRow.style.display = hasOwnService && genericKey ? 'flex' : 'none';
+                if (urlRow) urlRow.style.display = hasOwnService && meta.url_override ? 'flex' : 'none';
+                if (reasoningRow) reasoningRow.style.display = 'flex';
+                if (customRow) customRow.style.display = 'flex';
+                renderReasoningControls(slot);
+            }
+
             const s1 = document.getElementById('setting-llm-service').value;
-            const s2 = document.getElementById('setting-llm-service2').value;
-            const s3 = document.getElementById('setting-llm-service3').value;
-
-            // 어떤 provider가 API 키 필요로 하는가 (lmstudio/ollama 는 로컬이라 키 옵션)
-            const needsKey = (s) => ['openai', 'openrouter', 'gemini', 'claude', 'ollama-cloud', 'lmstudio', 'ollama'].includes(s);
-            // 어떤 provider가 베이스 URL 입력 필요 (OpenAI 호환 서비스들)
-            const needsUrl = (s) => ['openai', 'openrouter', 'lmstudio', 'ollama', 'ollama-cloud'].includes(s);
-            // 어떤 provider가 reasoning 설정 지원
-            const supportsReasoning = (s) => ['openai', 'openrouter', 'lmstudio', 'ollama', 'ollama-cloud'].includes(s);
-
-            // LLM1
-            document.getElementById('llm-api-key-row').style.display = needsKey(s1) ? 'flex' : 'none';
-            document.getElementById('llm-url-row').style.display = needsUrl(s1) ? 'flex' : 'none';
-            document.getElementById('llm-reasoning-row').style.display = supportsReasoning(s1) ? 'flex' : 'none';
             const vertexKeyRow = document.getElementById('vertex-key-row');
             if (vertexKeyRow) {
                 vertexKeyRow.style.display = (s1 === 'vertex' || s1 === 'vertex-openai') ? 'flex' : 'none';
                 if (s1 === 'vertex' || s1 === 'vertex-openai') loadVertexKeyStatus();
-            }
-
-            // LLM2
-            const key2Row = document.getElementById('llm-api-key2-row');
-            const url2Row = document.getElementById('llm-url2-row');
-            const reasoning2Row = document.getElementById('llm-reasoning2-row');
-            if (s2) {
-                // LLM2 가 별도 서비스일 때만 LLM2 필드 표시
-                if (key2Row) key2Row.style.display = needsKey(s2) ? 'flex' : 'none';
-                if (url2Row) url2Row.style.display = needsUrl(s2) ? 'flex' : 'none';
-                if (reasoning2Row) reasoning2Row.style.display = supportsReasoning(s2) ? 'flex' : 'none';
-            } else {
-                // LLM2 = (LLM1과 동일) 이면 LLM2 전용 필드 숨김
-                if (key2Row) key2Row.style.display = 'none';
-                if (url2Row) url2Row.style.display = 'none';
-                if (reasoning2Row) reasoning2Row.style.display = 'none';
-            }
-
-            const key3Row = document.getElementById('llm-api-key3-row');
-            const url3Row = document.getElementById('llm-url3-row');
-            const reasoning3Row = document.getElementById('llm-reasoning3-row');
-            if (s3) {
-                if (key3Row) key3Row.style.display = needsKey(s3) ? 'flex' : 'none';
-                if (url3Row) url3Row.style.display = needsUrl(s3) ? 'flex' : 'none';
-                if (reasoning3Row) reasoning3Row.style.display = supportsReasoning(s3) ? 'flex' : 'none';
-            } else {
-                if (key3Row) key3Row.style.display = 'none';
-                if (url3Row) url3Row.style.display = 'none';
-                if (reasoning3Row) reasoning3Row.style.display = 'none';
             }
         }
 
@@ -13995,16 +14093,257 @@
             urlRow.style.display = (provider === 'custom') ? 'flex' : 'none';
         }
 
-        function onReasoningPresetChange() {
-            const v = document.getElementById('setting-llm-reasoning-preset').value;
-            const row = document.getElementById('llm-custom-body-row');
-            if (row) row.style.display = (v === 'custom') ? 'flex' : 'none';
+        function detectReasoningFamily(model, preset) {
+            if (preset && preset !== 'auto') return preset;
+            const normalized = String(model || '').toLowerCase();
+            if (normalized.includes('glm') || normalized.includes('chatglm') || normalized.includes('zhipu')) return 'glm';
+            if (normalized.includes('deepseek')) return 'deepseek';
+            if (normalized.includes('kimi') || normalized.includes('k2')) return 'kimi';
+            if (/(^|[^a-z0-9])(o1|o3|o4)([^a-z0-9]|$)/.test(normalized) || normalized.includes('gpt-5')) return 'gpt';
+            if (normalized.includes('claude')) return 'claude';
+            if (normalized.includes('gemini')) return 'gemini';
+            return 'none';
         }
-        function onReasoningPreset2Change() {
-            const v = document.getElementById('setting-llm-reasoning-preset2').value;
-            const row = document.getElementById('llm-custom-body2-row');
-            if (row) row.style.display = (v === 'custom') ? 'flex' : 'none';
+
+        function parseReasoningBody(slot, quiet = true) {
+            const suffix = llmSlotSuffix(slot);
+            const textarea = document.getElementById(`setting-llm-custom-body${suffix}`);
+            const raw = textarea?.value.trim() || '';
+            if (!raw) return {};
+            try {
+                const parsed = JSON.parse(raw);
+                if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+                    throw new Error('JSON object 형식이 아닙니다.');
+                }
+                return parsed;
+            } catch (error) {
+                console.error(`[LLM${slot}] Custom Body JSON 파싱 실패:`, error, raw);
+                if (!quiet) showToast(`LLM${slot} Custom Body JSON 오류: ${error.message}`, 'error');
+                return {};
+            }
         }
+
+        function reasoningField(label, control, hint = '') {
+            return `<label style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:.78rem;color:var(--text2);"><span style="min-width:108px;">${label}</span>${control}${hint ? `<span style="font-size:.7rem;opacity:.8;">${hint}</span>` : ''}</label>`;
+        }
+
+        function renderReasoningControls(slot) {
+            const suffix = llmSlotSuffix(slot);
+            const container = document.getElementById(`llm-reasoning${suffix}-dynamic`);
+            if (!container) return;
+            const preset = document.getElementById(`setting-llm-reasoning-preset${suffix}`)?.value || '';
+            const oldEffort = document.getElementById(`setting-llm-reasoning-effort${suffix}`)?.value;
+            const configuredEffort = currentConfig?.[`llm_reasoning_effort${suffix}`] || '';
+            const model = document.getElementById(`setting-llm-model${suffix}`)?.value || '';
+            const service = getEffectiveLlmService(slot);
+            const meta = getLlmServiceMeta(service);
+            const inherited = slot > 1 && !preset;
+            const family = inherited
+                ? detectReasoningFamily(document.getElementById('setting-llm-model')?.value || '', document.getElementById('setting-llm-reasoning-preset')?.value || 'auto')
+                : detectReasoningFamily(model, preset || 'auto');
+            const body = parseReasoningBody(slot);
+            const baseStyle = 'padding:5px 8px;border-radius:5px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:.78rem;';
+            const hiddenEffort = `<input type="hidden" id="setting-llm-reasoning-effort${suffix}" value="">`;
+            const badge = `<div style="font-size:.72rem;color:#4dd0e1;">판별: ${family} · 전송 포맷: ${meta.format}</div>`;
+
+            if (inherited) {
+                container.innerHTML = `${hiddenEffort}<div style="font-size:.75rem;color:var(--text2);">LLM1 설정을 그대로 사용합니다. 별도 BODY를 빌드하려면 프리셋을 선택하세요.</div>`;
+                document.getElementById(`setting-llm-reasoning-effort${suffix}`).value = oldEffort ?? configuredEffort;
+                return;
+            }
+            if (meta.format === 'vertex' || meta.format === 'vertex-openai') {
+                container.innerHTML = `${hiddenEffort}${badge}<div style="font-size:.75rem;color:#d89a3a;">현재 정상 동작 중인 Vertex 호출 경로를 유지합니다. 이 화면에서 Reasoning BODY를 자동 적용하지 않습니다.</div>`;
+                document.getElementById(`setting-llm-reasoning-effort${suffix}`).value = oldEffort ?? configuredEffort;
+                return;
+            }
+            if (family === 'none') {
+                container.innerHTML = `${hiddenEffort}${badge}<div style="font-size:.75rem;color:var(--text2);">추가 Reasoning 필드를 만들지 않습니다. BODY 빌드 결과는 빈 object입니다.</div>`;
+                return;
+            }
+            if (family === 'custom') {
+                container.innerHTML = `${hiddenEffort}${badge}<div style="font-size:.75rem;color:var(--text2);">아래 Custom Body를 직접 편집합니다. BODY 빌드는 JSON 정리만 수행합니다.</div>`;
+                return;
+            }
+
+            let html = badge;
+            if (meta.format === 'google') {
+                if (family !== 'gemini') {
+                    container.innerHTML = `${hiddenEffort}${badge}<div style="font-size:.75rem;color:#ff9f43;">Google 전송 포맷에서는 gemini 프리셋을 선택하세요.</div>`;
+                    return;
+                }
+                const thinking = body.generationConfig?.thinkingConfig || {};
+                html += hiddenEffort;
+                html += reasoningField('Thinking 모드', `<select id="setting-llm-thinking-mode${suffix}" style="${baseStyle}"><option value="default">모델 기본값</option><option value="enabled">활성화</option></select>`);
+                html += reasoningField('Thinking Level', `<select id="setting-llm-thinking-level${suffix}" style="${baseStyle}"><option value="">미지정</option><option value="minimal">minimal</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option></select>`);
+                html += reasoningField('Thinking Budget', `<input id="setting-llm-thinking-budget${suffix}" type="number" min="0" step="1" style="${baseStyle}width:120px;" placeholder="미지정">`, 'Level과 동시에 지정하면 Level을 우선합니다.');
+                html += reasoningField('생각 포함', `<input id="setting-llm-include-thoughts${suffix}" type="checkbox">`);
+                container.innerHTML = html;
+                document.getElementById(`setting-llm-thinking-mode${suffix}`).value = Object.keys(thinking).length ? 'enabled' : 'default';
+                const thinkingLevel = thinking.thinkingLevel || oldEffort || configuredEffort || '';
+                document.getElementById(`setting-llm-thinking-level${suffix}`).value = thinkingLevel;
+                document.getElementById(`setting-llm-thinking-budget${suffix}`).value = thinking.thinkingBudget ?? '';
+                document.getElementById(`setting-llm-include-thoughts${suffix}`).checked = thinking.includeThoughts !== false;
+                document.getElementById(`setting-llm-reasoning-effort${suffix}`).value = thinkingLevel;
+                document.getElementById(`setting-llm-thinking-level${suffix}`).addEventListener('change', event => {
+                    document.getElementById(`setting-llm-reasoning-effort${suffix}`).value = event.target.value;
+                });
+                return;
+            }
+
+            if (meta.format === 'anthropic') {
+                if (family !== 'claude') {
+                    container.innerHTML = `${hiddenEffort}${badge}<div style="font-size:.75rem;color:#ff9f43;">Anthropic 전송 포맷에서는 claude 프리셋을 선택하세요.</div>`;
+                    return;
+                }
+                const thinking = body.thinking || {};
+                const effort = body.output_config?.effort ?? oldEffort ?? configuredEffort;
+                html += `<input type="hidden" id="setting-llm-reasoning-effort${suffix}" value="">`;
+                html += reasoningField('Thinking 모드', `<select id="setting-llm-thinking-mode${suffix}" style="${baseStyle}"><option value="default">모델 기본값</option><option value="enabled">enabled</option><option value="adaptive">adaptive</option></select>`);
+                html += reasoningField('Thinking Budget', `<input id="setting-llm-thinking-budget${suffix}" type="number" min="0" step="1" style="${baseStyle}width:120px;" placeholder="1024">`);
+                html += reasoningField('Output Effort', `<select id="setting-llm-output-effort${suffix}" style="${baseStyle}"><option value="">미지정</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option><option value="xhigh">xhigh</option><option value="max">max</option></select>`);
+                html += reasoningField('Thinking Display', `<select id="setting-llm-thinking-display${suffix}" style="${baseStyle}"><option value="">모델 기본값</option><option value="summarized">summarized</option><option value="omitted">omitted</option></select>`);
+                container.innerHTML = html;
+                document.getElementById(`setting-llm-thinking-mode${suffix}`).value = thinking.type || (effort ? 'adaptive' : 'default');
+                document.getElementById(`setting-llm-thinking-budget${suffix}`).value = thinking.budget_tokens ?? '';
+                document.getElementById(`setting-llm-output-effort${suffix}`).value = effort || '';
+                document.getElementById(`setting-llm-thinking-display${suffix}`).value = thinking.display || '';
+                document.getElementById(`setting-llm-reasoning-effort${suffix}`).value = effort || '';
+                document.getElementById(`setting-llm-output-effort${suffix}`).addEventListener('change', event => {
+                    document.getElementById(`setting-llm-reasoning-effort${suffix}`).value = event.target.value;
+                });
+                return;
+            }
+
+            if (['glm', 'deepseek', 'kimi'].includes(family)) {
+                const thinking = body.thinking || {};
+                html += hiddenEffort;
+                html += reasoningField('Thinking 모드', `<select id="setting-llm-thinking-mode${suffix}" style="${baseStyle}"><option value="enabled">enabled</option><option value="disabled">disabled</option><option value="default">모델 기본값</option></select>`);
+                html += reasoningField('Budget Tokens', `<input id="setting-llm-thinking-budget${suffix}" type="number" min="0" step="1" style="${baseStyle}width:120px;" placeholder="미지정">`);
+                container.innerHTML = html;
+                document.getElementById(`setting-llm-thinking-mode${suffix}`).value = thinking.type || 'enabled';
+                document.getElementById(`setting-llm-thinking-budget${suffix}`).value = thinking.budget_tokens ?? '';
+                return;
+            }
+
+            const effort = body.reasoning_effort ?? oldEffort ?? configuredEffort;
+            html += reasoningField('Reasoning Effort', `<select id="setting-llm-reasoning-effort${suffix}" style="${baseStyle}"><option value="">미지정</option><option value="none">none</option><option value="minimal">minimal</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option><option value="xhigh">xhigh</option><option value="max">max</option></select>`);
+            if (family === 'claude' || family === 'gemini') {
+                html += `<div style="font-size:.7rem;color:var(--text2);">${family} 모델을 OpenAI 호환 포맷으로 호출하므로 Provider Manager 방식의 reasoning_effort를 생성합니다.</div>`;
+            }
+            container.innerHTML = html;
+            document.getElementById(`setting-llm-reasoning-effort${suffix}`).value = effort || '';
+        }
+
+        function buildReasoningBody(slot) {
+            const suffix = llmSlotSuffix(slot);
+            const preset = document.getElementById(`setting-llm-reasoning-preset${suffix}`)?.value || '';
+            const textarea = document.getElementById(`setting-llm-custom-body${suffix}`);
+            const status = document.getElementById(`llm-custom-body${suffix}-status`);
+            const service = getEffectiveLlmService(slot);
+            const meta = getLlmServiceMeta(service);
+            if (!textarea) return;
+            if (slot > 1 && !preset) {
+                console.error(`[LLM${slot}] BODY 빌드 거부: LLM1과 동일 프리셋`);
+                showToast(`LLM${slot} 프리셋을 먼저 선택하세요.`, 'warning');
+                return;
+            }
+            if (meta.format === 'vertex' || meta.format === 'vertex-openai') {
+                console.warn(`[LLM${slot}] Vertex 기존 경로 보호로 BODY 빌드를 건너뜁니다.`);
+                showToast('Vertex의 현재 정상 호출 경로는 변경하지 않습니다.', 'warning');
+                return;
+            }
+            const model = document.getElementById(`setting-llm-model${suffix}`)?.value || '';
+            const family = detectReasoningFamily(model, preset || 'auto');
+            if (family === 'custom') {
+                formatCustomBody(slot);
+                return;
+            }
+            let body = {};
+            if (meta.format === 'google') {
+                if (family !== 'gemini' && family !== 'none') {
+                    console.error(`[LLM${slot}] Google 포맷과 ${family} 프리셋이 호환되지 않습니다.`);
+                    showToast('Google 포맷에서는 gemini 프리셋을 선택하세요.', 'error');
+                    return;
+                }
+                if (family === 'gemini') {
+                    const mode = document.getElementById(`setting-llm-thinking-mode${suffix}`)?.value || 'default';
+                    if (mode === 'enabled') {
+                        const config = { includeThoughts: !!document.getElementById(`setting-llm-include-thoughts${suffix}`)?.checked };
+                        const level = document.getElementById(`setting-llm-thinking-level${suffix}`)?.value || '';
+                        const budget = Number(document.getElementById(`setting-llm-thinking-budget${suffix}`)?.value || 0);
+                        if (level) config.thinkingLevel = level;
+                        else if (budget > 0) config.thinkingBudget = Math.trunc(budget);
+                        body = { generationConfig: { thinkingConfig: config } };
+                    }
+                }
+            } else if (meta.format === 'anthropic') {
+                if (family !== 'claude' && family !== 'none') {
+                    console.error(`[LLM${slot}] Anthropic 포맷과 ${family} 프리셋이 호환되지 않습니다.`);
+                    showToast('Anthropic 포맷에서는 claude 프리셋을 선택하세요.', 'error');
+                    return;
+                }
+                if (family === 'claude') {
+                    const mode = document.getElementById(`setting-llm-thinking-mode${suffix}`)?.value || 'default';
+                    const budget = Number(document.getElementById(`setting-llm-thinking-budget${suffix}`)?.value || 0);
+                    const display = document.getElementById(`setting-llm-thinking-display${suffix}`)?.value || '';
+                    const outputEffort = document.getElementById(`setting-llm-output-effort${suffix}`)?.value || '';
+                    if (mode === 'enabled') body.thinking = { type: 'enabled', budget_tokens: Math.max(1024, Math.trunc(budget || 1024)) };
+                    else if (mode === 'adaptive' || outputEffort) body.thinking = { type: 'adaptive' };
+                    if (body.thinking && display) body.thinking.display = display;
+                    if (outputEffort) body.output_config = { effort: outputEffort };
+                }
+            } else if (['glm', 'deepseek', 'kimi'].includes(family)) {
+                const mode = document.getElementById(`setting-llm-thinking-mode${suffix}`)?.value || 'enabled';
+                const budget = Number(document.getElementById(`setting-llm-thinking-budget${suffix}`)?.value || 0);
+                if (mode !== 'default') {
+                    body.thinking = { type: mode };
+                    if (mode === 'enabled' && budget > 0) body.thinking.budget_tokens = Math.trunc(budget);
+                }
+            } else if (['gpt', 'claude', 'gemini'].includes(family)) {
+                const effort = document.getElementById(`setting-llm-reasoning-effort${suffix}`)?.value || '';
+                if (effort) body.reasoning_effort = effort;
+            }
+            textarea.value = JSON.stringify(body, null, 2);
+            if (status) {
+                status.textContent = `${service} / ${family} 형식으로 BODY를 생성했습니다.`;
+                status.style.color = '#5cd5a0';
+            }
+            showToast(`LLM${slot} BODY를 생성했습니다.`, 'success');
+            renderReasoningControls(slot);
+        }
+
+        function formatCustomBody(slot) {
+            const suffix = llmSlotSuffix(slot);
+            const textarea = document.getElementById(`setting-llm-custom-body${suffix}`);
+            const status = document.getElementById(`llm-custom-body${suffix}-status`);
+            if (!textarea) return;
+            const raw = textarea.value.trim();
+            if (!raw) {
+                textarea.value = '{}';
+                if (status) status.textContent = '빈 BODY를 JSON object로 정리했습니다.';
+                return;
+            }
+            try {
+                const parsed = JSON.parse(raw);
+                if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('JSON object 형식이 아닙니다.');
+                textarea.value = JSON.stringify(parsed, null, 2);
+                if (status) {
+                    status.textContent = '유효한 JSON object입니다.';
+                    status.style.color = '#5cd5a0';
+                }
+                renderReasoningControls(slot);
+            } catch (error) {
+                console.error(`[LLM${slot}] Custom Body JSON 정리 실패:`, error, raw);
+                if (status) {
+                    status.textContent = `JSON 오류: ${error.message}`;
+                    status.style.color = '#ff6b6b';
+                }
+                showToast(`LLM${slot} Custom Body JSON 오류: ${error.message}`, 'error');
+            }
+        }
+
+        function onReasoningPresetChange() { renderReasoningControls(1); }
+        function onReasoningPreset2Change() { renderReasoningControls(2); }
 
         // ─── 외부 API 분기: 작업별 LLM1/LLM2 라우팅 테이블 ───
         // task_key 목록과 표시명. DEFAULT_CONFIG(server.py) 와 일치해야 함.
@@ -37058,9 +37397,7 @@
             loadIllustrationContextToggles();
         }
         function onReasoningPreset3Change() {
-            const v = document.getElementById('setting-llm-reasoning-preset3').value;
-            const row = document.getElementById('llm-custom-body3-row');
-            if (row) row.style.display = (v === 'custom') ? 'flex' : 'none';
+            renderReasoningControls(3);
         }
 
         function switchIllustModalTab(tab) {

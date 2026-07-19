@@ -28,6 +28,76 @@ KEY_DIR = os.path.join(BASE_DIR, "key")
 LOG_DIR = os.path.join(BASE_DIR, "logs")
 
 
+# Provider Manager 1.9.2 의 providers.json 에 정의된 OpenAI 호환 프리셋.
+# 각 endpoint 는 baseUrl + formats.openai 를 결합한 실제 Chat Completions URL이다.
+# OpenRouter / Ollama Cloud 는 기존 전용 처리(헤더 및 회귀 호환)를 유지하므로 여기서 제외한다.
+PROVIDER_MANAGER_SERVICES = {
+    "nano-gpt": {"name": "NanoGPT", "endpoint": "https://nano-gpt.com/api/v1/chat/completions", "api_key_required": False},
+    "nano-gpt-subscription": {"name": "NanoGPT Subscription", "endpoint": "https://nano-gpt.com/api/subscription/v1/chat/completions", "api_key_required": False},
+    "vercel-ai": {
+        "name": "Vercel AI Gateway",
+        "endpoint": "https://ai-gateway.vercel.sh/v1/chat/completions",
+        "api_key_required": True,
+        "default_body": {"providerOptions": {"gateway": {}}},
+    },
+    "cloudflare-ai-gateway": {"name": "Cloudflare AI Gateway", "endpoint": "https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1/chat/completions", "api_key_required": True},
+    "z-ai": {"name": "Z.ai", "endpoint": "https://api.z.ai/api/paas/v4/chat/completions", "api_key_required": True},
+    "z-ai-coding": {"name": "Z.ai GLM Coding Plan", "endpoint": "https://api.z.ai/api/coding/paas/v4/chat/completions", "api_key_required": True},
+    "fireworks": {"name": "Fireworks AI", "endpoint": "https://api.fireworks.ai/inference/v1/chat/completions", "api_key_required": True},
+    "arliai": {"name": "ArliAI", "endpoint": "https://api.arliai.com/v1/chat/completions", "api_key_required": True},
+    "opencode-go": {"name": "OpenCode Go", "endpoint": "https://opencode.ai/zen/go/v1/chat/completions", "api_key_required": False},
+    "crof-ai": {"name": "CrofAI", "endpoint": "https://crof.ai/v1/chat/completions", "api_key_required": True},
+    "synthetic": {"name": "Synthetic", "endpoint": "https://api.synthetic.new/v1/chat/completions", "api_key_required": True},
+    "featherless": {"name": "Featherless", "endpoint": "https://api.featherless.ai/v1/chat/completions", "api_key_required": True},
+    "neuralwatt": {"name": "Neuralwatt Cloud", "endpoint": "https://api.neuralwatt.com/v1/chat/completions", "api_key_required": False},
+    "novita": {"name": "Novita AI", "endpoint": "https://api.novita.ai/openai/v1/chat/completions", "api_key_required": True},
+    "novita-coding": {"name": "Novita Coding", "endpoint": "https://api.novita.ai/openai/v1/chat/completions", "api_key_required": True},
+    "siliconflow": {"name": "SiliconFlow", "endpoint": "https://api.siliconflow.com/v1/chat/completions", "api_key_required": True},
+    "together": {"name": "Together AI", "endpoint": "https://api.together.xyz/v1/chat/completions", "api_key_required": True},
+    "deepseek": {"name": "DeepSeek", "endpoint": "https://api.deepseek.com/chat/completions", "api_key_required": True},
+    "digitalocean": {"name": "DigitalOcean", "endpoint": "https://inference.do-ai.run/v1/chat/completions", "api_key_required": True},
+    "heroku-us": {"name": "Heroku (US)", "endpoint": "https://us.inference.heroku.com/v1/chat/completions", "api_key_required": True},
+    "heroku-eu": {"name": "Heroku (EU)", "endpoint": "https://eu.inference.heroku.com/v1/chat/completions", "api_key_required": True},
+    "xiaomi-mimo": {"name": "Xiaomi MiMo", "endpoint": "https://api.xiaomimimo.com/v1/chat/completions", "api_key_required": True},
+    "xiaomi-mimo-token-plan-sgp": {"name": "MiMo Token Plan (Singapore)", "endpoint": "https://token-plan-sgp.xiaomimimo.com/v1/chat/completions", "api_key_required": True},
+    "xiaomi-mimo-token-plan-ams": {"name": "MiMo Token Plan (Europe)", "endpoint": "https://token-plan-ams.xiaomimimo.com/v1/chat/completions", "api_key_required": True},
+    "lightning-ai": {"name": "Lightning AI", "endpoint": "https://lightning.ai/api/v1/chat/completions", "api_key_required": False},
+    "venice-ai": {"name": "Venice AI", "endpoint": "https://api.venice.ai/api/v1/chat/completions", "api_key_required": True},
+    "llm-gateway": {"name": "LLM Gateway", "endpoint": "https://api.llmgateway.io/v1/chat/completions", "api_key_required": True},
+    "cerebras": {"name": "Cerebras", "endpoint": "https://api.cerebras.ai/v1/chat/completions", "api_key_required": False},
+    "ai-novelist": {"name": "AI Novelist", "endpoint": "https://api.tringpt.com/v1/chat/completions", "api_key_required": True},
+    "wellspring": {"name": "Wellspring (챈섭)", "endpoint": "https://wellspring.encrypt.gay/v1/chat/completions", "api_key_required": True},
+}
+
+
+def get_service_catalog() -> list:
+    """설정 UI가 사용하는 LLM 서비스 메타데이터를 반환한다."""
+    builtins = [
+        {"id": "copilot", "name": "Copilot", "group": "기본", "api_key": "none", "url_override": False, "format": "openai"},
+        {"id": "vertex", "name": "Vertex Gemini", "group": "기본", "api_key": "vertex", "url_override": False, "format": "vertex"},
+        {"id": "vertex-openai", "name": "Vertex OpenAI", "group": "기본", "api_key": "vertex", "url_override": True, "format": "vertex-openai"},
+        {"id": "openai", "name": "OpenAI / 호환 URL", "group": "기본", "api_key": "required", "url_override": True, "format": "openai"},
+        {"id": "openrouter", "name": "OpenRouter", "group": "기본", "api_key": "required", "url_override": True, "format": "openai"},
+        {"id": "gemini", "name": "Gemini (AI Studio)", "group": "기본", "api_key": "required", "url_override": True, "format": "google"},
+        {"id": "claude", "name": "Claude (Anthropic)", "group": "기본", "api_key": "required", "url_override": True, "format": "anthropic"},
+        {"id": "lmstudio", "name": "LM Studio (로컬)", "group": "기본", "api_key": "optional", "url_override": True, "format": "openai"},
+        {"id": "ollama", "name": "Ollama (로컬)", "group": "기본", "api_key": "optional", "url_override": True, "format": "openai"},
+        {"id": "ollama-cloud", "name": "Ollama Cloud", "group": "기본", "api_key": "required", "url_override": True, "format": "openai"},
+    ]
+    presets = [
+        {
+            "id": service_id,
+            "name": metadata["name"],
+            "group": "Provider Manager",
+            "api_key": "required" if metadata["api_key_required"] else "optional",
+            "url_override": True,
+            "format": "openai",
+        }
+        for service_id, metadata in PROVIDER_MANAGER_SERVICES.items()
+    ]
+    return builtins + presets
+
+
 # ─── 키 로딩 ───────────────────────────────────────────────
 
 def _load_copilot_key() -> Optional[str]:
@@ -72,7 +142,7 @@ COPILOT_KEY = _load_copilot_key()
 
 # API 키는 메모리에만 존재해야 하므로 로그(파일/stdout)에 절대 평문 노출 금지.
 _REDACTED_KEYS = {
-    "llm_api_key", "llm_api_key2", "api_key", "apikey",
+    "llm_api_key", "llm_api_key2", "llm_api_key3", "api_key", "apikey",
     "token", "access_token", "authorization", "x-api-key",
     "key", "secret", "password",
 }
@@ -110,7 +180,7 @@ def _redact_in_text(msg):
     redacted = msg
     candidates = []
     try:
-        for k in ("llm_api_key", "llm_api_key2"):
+        for k in ("llm_api_key", "llm_api_key2", "llm_api_key3"):
             v = _current_config.get(k, "")
             if isinstance(v, str) and len(v) >= 8:
                 candidates.append(v)
@@ -259,12 +329,20 @@ async def _call_copilot(messages: list, model: str) -> str:
         "Editor-Plugin-Version": "copilot/1.150.0",
     }
 
-    request_body = {
-        "model": model,
-        "messages": messages,
-        "stream": False,
-        "temperature": 1,
-    }
+    reasoning_family = _detect_reasoning_family(
+        model,
+        _current_config.get("llm_reasoning_preset", "auto"),
+    )
+    request_body = _build_openai_body(
+        model,
+        messages,
+        reasoning_family,
+        reasoning_effort=_current_config.get("llm_reasoning_effort", ""),
+        reasoning_budget=int(_current_config.get("llm_reasoning_budget_tokens", 0) or 0),
+        temperature=float(_current_config.get("llm_temperature", 1.0) or 1.0),
+        max_tokens=int(_current_config.get("llm_max_tokens", 0) or 0),
+        custom_body=_current_config.get("llm_custom_body", ""),
+    )
 
     _llm_log(f"Copilot 요청: model={model}, messages={len(messages)}개")
 
@@ -285,9 +363,11 @@ async def _call_copilot(messages: list, model: str) -> str:
                 return f"[LLM 실패] Copilot {response.status_code} 오류: {error_text}"
     except httpx.TimeoutException:
         _llm_log("Copilot 타임아웃")
+        traceback.print_exc()
         return "[LLM 실패] Copilot 타임아웃"
     except Exception as e:
         _llm_log(f"Copilot 예외: {e}")
+        traceback.print_exc()
         return f"[LLM 실패] Copilot 예외: {e}"
 
 
@@ -346,9 +426,9 @@ _current_config = {
     "llm_reasoning_effort2": "",      # LLM2 전용 reasoning effort
     "llm_reasoning_preset3": "auto",  # LLM3 전용 reasoning preset
     "llm_reasoning_effort3": "",      # LLM3 전용 reasoning effort
-    "llm_custom_body": "",            # LLM1 preset=custom 일 때 JSON 문자열로 body 에 머지
-    "llm_custom_body2": "",           # LLM2 용
-    "llm_custom_body3": "",           # LLM3 용
+    "llm_custom_body": "",            # LLM1 JSON object 문자열. 모든 프리셋의 body 에 재귀 병합
+    "llm_custom_body2": "",           # LLM2 용 (비우면 LLM1 재사용)
+    "llm_custom_body3": "",           # LLM3 용 (비우면 LLM1 재사용)
     "llm_temperature": 1.0,
     "llm_max_tokens": 0,              # 0 = 기본값 사용
     "llm_stream": False,              # LLM1 실제 API 스트리밍
@@ -438,6 +518,52 @@ def _detect_reasoning_family(model: str, preset: str) -> str:
     return "none"
 
 
+def _deep_merge_body(base: dict, override: dict, protected_keys=None, source: str = "custom body") -> dict:
+    """Provider Manager 방식으로 중첩 객체를 재귀 병합한다.
+
+    model/messages/stream 같이 런타임이 소유하는 최상위 키는 사용자 BODY가 덮어쓸 수 없다.
+    """
+    protected = set(protected_keys or ())
+    merged = dict(base)
+    for key, value in override.items():
+        if key in protected:
+            _llm_log(f"{source}: 런타임 보호 키 무시: {key}")
+            continue
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge_body(merged[key], value, source=source)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _parse_custom_body(custom_body, source: str = "custom body") -> dict:
+    """문자열/객체 Custom Body를 JSON object로 검증한다. 실패는 반드시 콘솔에 기록한다."""
+    if custom_body is None or custom_body == "":
+        return {}
+    if isinstance(custom_body, dict):
+        return custom_body
+    if not isinstance(custom_body, str):
+        print(f"[LLM_SERVICE] {source} 타입 오류: {type(custom_body).__name__}")
+        return {}
+    if not custom_body.strip():
+        return {}
+    try:
+        parsed = json.loads(custom_body)
+    except json.JSONDecodeError as e:
+        print(f"[LLM_SERVICE] {source} JSON 파싱 실패: {e}; 입력={custom_body[:300]!r}")
+        traceback.print_exc()
+        return {}
+    if not isinstance(parsed, dict):
+        print(f"[LLM_SERVICE] {source}는 JSON object여야 함: {type(parsed).__name__}")
+        return {}
+    return parsed
+
+
+def _merge_custom_body(base: dict, custom_body, protected_keys, source: str) -> dict:
+    custom = _parse_custom_body(custom_body, source=source)
+    return _deep_merge_body(base, custom, protected_keys=protected_keys, source=source)
+
+
 def _build_openai_body(
     model: str,
     messages: list,
@@ -447,11 +573,13 @@ def _build_openai_body(
     temperature: float = 1.0,
     max_tokens: int = 0,
     custom_body: str = "",
+    default_body: dict = None,
+    legacy_custom_only: bool = False,
 ) -> dict:
     """OpenAI 호환 body 빌드. reasoning_family 별 분기.
 
-    custom_body: reasoning_family == 'custom' 일 때 JSON 문자열을 파싱해 body 에 머지.
-                 preset != custom 이면 무시.
+    custom_body: 프리셋 종류와 무관하게 마지막에 body 에 재귀 병합한다.
+    default_body: 서비스 프리셋이 요구하는 기본 body 조각. 사용자 custom_body가 우선한다.
     """
     body = {
         "model": model,
@@ -484,25 +612,27 @@ def _build_openai_body(
                 reasoning_budget, max(0, body["max_tokens"] - 1024) or reasoning_budget
             )
         body.pop("temperature", None)
-    elif reasoning_effort and reasoning_effort != "none":
+    elif (
+        (legacy_custom_only and reasoning_effort and reasoning_effort != "none")
+        or (not legacy_custom_only and reasoning_family in ("gpt", "claude", "gemini") and reasoning_effort)
+    ):
         body["reasoning_effort"] = reasoning_effort
         # reasoning 모델은 max_completion_tokens 사용
         if "max_tokens" in body:
             body["max_completion_tokens"] = body.pop("max_tokens")
         else:
             body["max_completion_tokens"] = 4096
-    elif reasoning_family == "custom":
-        # 사용자 정의 JSON body 머지. model/messages/stream 은 보존, 나머지는 덮어쓰기.
-        if custom_body and custom_body.strip():
-            try:
-                custom = json.loads(custom_body)
-                if isinstance(custom, dict):
-                    for k, v in custom.items():
-                        body[k] = v
-                else:
-                    _llm_log(f"custom body must be JSON object, got {type(custom).__name__}")
-            except json.JSONDecodeError as e:
-                _llm_log(f"custom body JSON parse failed: {e}")
+
+    if legacy_custom_only:
+        if reasoning_family == "custom":
+            legacy_custom = _parse_custom_body(custom_body, source="legacy OpenAI custom body")
+            for key, value in legacy_custom.items():
+                body[key] = value
+    else:
+        protected = {"model", "messages", "stream"}
+        if default_body:
+            body = _deep_merge_body(body, default_body, protected_keys=protected, source="provider default body")
+        body = _merge_custom_body(body, custom_body, protected, "OpenAI custom body")
 
     # JSON 모드(response_format) 적용 — 컨텍스트에 설정된 경우만.
     # OpenAI 호환 계열은 json_object 를, 일부는 json_schema 도 지원하지만
@@ -517,7 +647,8 @@ def _build_openai_body(
 async def _call_lmstudio(messages: list, model: str) -> str:
     """LM Studio 로컬 서버 (OpenAI 호환)."""
     base = _current_config.get("llm_url") or "http://localhost:1234"
-    return await _call_openai_compat(messages, model, base)
+    api_key = _current_config.get("llm_api_key", "")
+    return await _call_openai_compat(messages, model, base, api_key=api_key)
 
 
 # ─── 비전(vision) 메시지 헬퍼 ───────────────────────────────
@@ -566,6 +697,110 @@ def _build_claude_content(content):
                     blocks.append({"type": "image",
                                    "source": {"type": "base64", "media_type": mime, "data": b64}})
     return blocks
+
+
+def _build_gemini_request_body(messages: list, model: str, custom_body: str = "") -> dict:
+    """Provider Manager의 Google 형식에 맞춘 Gemini REST 요청 BODY."""
+    system_text = ""
+    user_parts = []
+    for msg in messages:
+        if msg.get("role") == "system":
+            system_text += ("\n\n" if system_text else "") + _msg_text(msg.get("content", ""))
+        else:
+            user_parts.append({
+                "role": "user" if msg.get("role") != "assistant" else "model",
+                "parts": _build_gemini_parts(msg.get("content", "")),
+            })
+
+    body = {"contents": user_parts}
+    if system_text:
+        body["systemInstruction"] = {"parts": [{"text": system_text}]}
+    generation_config = {
+        "temperature": float(_current_config.get("llm_temperature", 1.0) or 1.0),
+    }
+    max_tokens = int(_current_config.get("llm_max_tokens", 0) or 0)
+    if max_tokens > 0:
+        generation_config["maxOutputTokens"] = max_tokens
+
+    family = _detect_reasoning_family(
+        model,
+        _current_config.get("llm_reasoning_preset", "auto"),
+    )
+    effort = _current_config.get("llm_reasoning_effort", "")
+    budget = int(_current_config.get("llm_reasoning_budget_tokens", 0) or 0)
+    if family == "gemini" and effort and effort != "none":
+        generation_config["thinkingConfig"] = {
+            "includeThoughts": True,
+            "thinkingLevel": effort,
+        }
+    elif family == "gemini" and budget > 0:
+        generation_config["thinkingConfig"] = {
+            "includeThoughts": True,
+            "thinkingBudget": budget,
+        }
+    body["generationConfig"] = generation_config
+    body = _merge_custom_body(
+        body,
+        custom_body,
+        {"contents", "systemInstruction"},
+        "Gemini custom body",
+    )
+
+    if _response_format_ctx.get():
+        body.setdefault("generationConfig", {})["responseMimeType"] = "application/json"
+    return body
+
+
+def _build_claude_request_body(messages: list, model: str, stream: bool, custom_body: str = "") -> dict:
+    """Provider Manager의 Anthropic 형식에 맞춘 Messages API 요청 BODY."""
+    system_text = ""
+    msg_list = []
+    for msg in messages:
+        role = msg.get("role")
+        content = msg.get("content", "")
+        if role == "system":
+            system_text += ("\n\n" if system_text else "") + _msg_text(content)
+        else:
+            msg_list.append({
+                "role": "user" if role != "assistant" else "assistant",
+                "content": _build_claude_content(content),
+            })
+
+    body = {
+        "model": model,
+        "max_tokens": int(_current_config.get("llm_max_tokens", 0) or 0) or 4096,
+        "messages": msg_list,
+    }
+    if stream:
+        body["stream"] = True
+    if system_text:
+        body["system"] = system_text
+    if _current_config.get("llm_temperature") is not None:
+        body["temperature"] = float(_current_config.get("llm_temperature", 1.0) or 1.0)
+
+    family = _detect_reasoning_family(
+        model,
+        _current_config.get("llm_reasoning_preset", "auto"),
+    )
+    effort = _current_config.get("llm_reasoning_effort", "")
+    budget = int(_current_config.get("llm_reasoning_budget_tokens", 0) or 0)
+    if family == "claude" and effort and effort != "none":
+        body["thinking"] = {"type": "adaptive"}
+        body["output_config"] = {"effort": effort}
+    elif family == "claude" and budget > 0:
+        body["thinking"] = {"type": "enabled", "budget_tokens": budget}
+
+    body = _merge_custom_body(
+        body,
+        custom_body,
+        {"model", "messages", "stream", "system"},
+        "Claude custom body",
+    )
+    if body.get("thinking"):
+        body.pop("temperature", None)
+        body.pop("top_p", None)
+        body.pop("top_k", None)
+    return body
 
 
 def _parse_data_url(url: str) -> tuple[str, str]:
@@ -753,7 +988,8 @@ def _build_vision_messages(messages: list, image_b64: str, image_mime: str = "im
 async def _call_ollama(messages: list, model: str) -> str:
     """Ollama 로컬 서버 (OpenAI 호환 엔드포인트 /v1)."""
     base = _current_config.get("llm_url") or "http://localhost:11434"
-    return await _call_openai_compat(messages, model, base)
+    api_key = _current_config.get("llm_api_key", "")
+    return await _call_openai_compat(messages, model, base, api_key=api_key)
 
 
 async def _call_ollama_cloud(messages: list, model: str) -> str:
@@ -785,7 +1021,13 @@ async def _call_vertex_openai(messages: list, model: str) -> str:
     except Exception as e:
         return f"[LLM 실패] vertex-openai 토큰 발급 실패: {e}"
 
-    return await _call_openai_compat(messages, model, url, api_key=token)
+    return await _call_openai_compat(
+        messages,
+        model,
+        url,
+        api_key=token,
+        legacy_custom_only=True,
+    )
 
 
 def _vertex_project_id() -> str:
@@ -821,7 +1063,9 @@ async def _get_vertex_access_token(key_path: str) -> str:
 # ─── 신규 provider 구현 ────────────────────────────────────
 
 async def _call_openai_compat(messages: list, model: str, endpoint: str,
-                              api_key: str = "", extra_headers: dict = None) -> str:
+                              api_key: str = "", extra_headers: dict = None,
+                              default_body: dict = None,
+                              legacy_custom_only: bool = False) -> str:
     """OpenAI 호환 generic POST (reasoning 지원).
     endpoint: 'https://host', 'https://host/v1', 'https://host/v1/chat/completions' 모두 허용.
     내부에서 /v1/chat/completions 형태로 정규화.
@@ -841,6 +1085,8 @@ async def _call_openai_compat(messages: list, model: str, endpoint: str,
         temperature=float(_current_config.get("llm_temperature", 1.0) or 1.0),
         max_tokens=int(_current_config.get("llm_max_tokens", 0) or 0),
         custom_body=_current_config.get("llm_custom_body", ""),
+        default_body=default_body,
+        legacy_custom_only=legacy_custom_only,
     )
 
     headers = {"Content-Type": "application/json"}
@@ -863,10 +1109,36 @@ async def _call_openai_compat(messages: list, model: str, endpoint: str,
             _llm_log(f"openai-compat 실패: {response.status_code} - {error_text}")
             return f"[LLM 실패] openai-compat {response.status_code}: {error_text}"
     except httpx.TimeoutException:
+        _llm_log("openai-compat 타임아웃")
+        traceback.print_exc()
         return "[LLM 실패] openai-compat 타임아웃"
     except Exception as e:
         _llm_log(f"openai-compat 예외: {e}")
+        traceback.print_exc()
         return f"[LLM 실패] openai-compat 예외: {e}"
+
+
+async def _call_provider_manager_service(messages: list, model: str, service: str) -> str:
+    """Provider Manager 카탈로그의 OpenAI 호환 서비스를 호출한다."""
+    metadata = PROVIDER_MANAGER_SERVICES.get(service)
+    if not metadata:
+        print(f"[LLM_SERVICE] Provider Manager 서비스 정의 없음: {service}")
+        return f"[LLM 실패] Provider Manager 서비스 정의 없음: {service}"
+    api_key = _current_config.get("llm_api_key", "")
+    if metadata.get("api_key_required") and not api_key:
+        print(f"[LLM_SERVICE] {service}: llm_api_key 없음")
+        return f"[LLM 실패] {service}: llm_api_key 없음"
+    endpoint = _current_config.get("llm_url") or metadata["endpoint"]
+    if "{account_id}" in endpoint:
+        print(f"[LLM_SERVICE] {service}: URL의 {{account_id}}를 실제 계정 ID로 바꿔야 함: {endpoint}")
+        return f"[LLM 실패] {service}: LLM URL의 {{account_id}}를 실제 계정 ID로 바꿔주세요"
+    return await _call_openai_compat(
+        messages,
+        model,
+        endpoint,
+        api_key=api_key,
+        default_body=metadata.get("default_body"),
+    )
 
 
 async def _call_openai_direct(messages: list, model: str) -> str:
@@ -900,29 +1172,11 @@ async def _call_gemini(messages: list, model: str) -> str:
         return "[LLM 실패] gemini: llm_api_key 없음"
     base = _current_config.get("llm_url") or "https://generativelanguage.googleapis.com"
     url = f"{base.rstrip('/')}/v1beta/models/{model}:generateContent?key={api_key}"
-
-    system_text = ""
-    user_parts = []
-    for msg in messages:
-        if msg.get("role") == "system":
-            system_text += (system_text and "\n\n" or "") + _msg_text(msg.get("content", ""))
-        else:
-            parts = _build_gemini_parts(msg.get("content", ""))
-            user_parts.append({"role": "user" if msg.get("role") != "assistant" else "model",
-                               "parts": parts})
-
-    body = {"contents": user_parts}
-    if system_text:
-        body["systemInstruction"] = {"parts": [{"text": system_text}]}
-    body["generationConfig"] = {
-        "temperature": float(_current_config.get("llm_temperature", 1.0) or 1.0),
-    }
-    if int(_current_config.get("llm_max_tokens", 0) or 0) > 0:
-        body["generationConfig"]["maxOutputTokens"] = int(_current_config["llm_max_tokens"])
-
-    # JSON 모드 — Gemini 는 responseMimeType 로 지정.
-    if _response_format_ctx.get():
-        body["generationConfig"]["responseMimeType"] = "application/json"
+    body = _build_gemini_request_body(
+        messages,
+        model,
+        custom_body=_current_config.get("llm_custom_body", ""),
+    )
 
     _llm_log(f"gemini 요청: model={model} messages={len(messages)}")
 
@@ -939,9 +1193,12 @@ async def _call_gemini(messages: list, model: str) -> str:
             _llm_log(f"gemini 실패: {response.status_code} - {error_text}")
             return f"[LLM 실패] gemini {response.status_code}: {error_text}"
     except httpx.TimeoutException:
+        _llm_log("gemini 타임아웃")
+        traceback.print_exc()
         return "[LLM 실패] gemini 타임아웃"
     except Exception as e:
         _llm_log(f"gemini 예외: {e}")
+        traceback.print_exc()
         return f"[LLM 실패] gemini 예외: {e}"
 
 
@@ -952,27 +1209,12 @@ async def _call_claude(messages: list, model: str) -> str:
         return "[LLM 실패] claude: llm_api_key 없음"
     base = _current_config.get("llm_url") or "https://api.anthropic.com"
     url = f"{base.rstrip('/')}/v1/messages"
-
-    system_text = ""
-    msg_list = []
-    for msg in messages:
-        role = msg.get("role")
-        content = msg.get("content", "")
-        if role == "system":
-            system_text += (system_text and "\n\n" or "") + _msg_text(content)
-        else:
-            built = _build_claude_content(content)
-            msg_list.append({"role": "user" if role != "assistant" else "assistant", "content": built})
-
-    body = {
-        "model": model,
-        "max_tokens": int(_current_config.get("llm_max_tokens", 0) or 0) or 4096,
-        "messages": msg_list,
-    }
-    if system_text:
-        body["system"] = system_text
-    if _current_config.get("llm_temperature") is not None:
-        body["temperature"] = float(_current_config.get("llm_temperature", 1.0) or 1.0)
+    body = _build_claude_request_body(
+        messages,
+        model,
+        stream=False,
+        custom_body=_current_config.get("llm_custom_body", ""),
+    )
 
     headers = {
         "x-api-key": api_key,
@@ -995,9 +1237,12 @@ async def _call_claude(messages: list, model: str) -> str:
             _llm_log(f"claude 실패: {response.status_code} - {error_text}")
             return f"[LLM 실패] claude {response.status_code}: {error_text}"
     except httpx.TimeoutException:
+        _llm_log("claude 타임아웃")
+        traceback.print_exc()
         return "[LLM 실패] claude 타임아웃"
     except Exception as e:
         _llm_log(f"claude 예외: {e}")
+        traceback.print_exc()
         return f"[LLM 실패] claude 예외: {e}"
 
 
@@ -1027,7 +1272,10 @@ async def _dispatch(messages: list, service: str, model: str) -> str:
         return await _call_ollama_cloud(messages, model)
     elif service == "vertex-openai":
         return await _call_vertex_openai(messages, model)
+    elif service in PROVIDER_MANAGER_SERVICES:
+        return await _call_provider_manager_service(messages, model, service)
     else:
+        print(f"[LLM_SERVICE] 알 수 없는 LLM 서비스: {service}")
         return f"[LLM 실패] 알 수 없는 LLM 서비스: {service}"
 
 
@@ -1628,7 +1876,9 @@ def _approx_tokens(text: str) -> int:
 
 async def _stream_openai_compat(messages: list, model: str, url: str,
                                  api_key: str = "", extra_headers: dict = None,
-                                 service: str = "openai-compat"):
+                                 service: str = "openai-compat",
+                                 default_body: dict = None,
+                                 legacy_custom_only: bool = False):
     """OpenAI 호환 SSE 스트리밍. openai/openrouter/lmstudio/ollama/ollama-cloud/customapi/vertex-openai 공용."""
     if not url:
         yield {"type": "error", "error": f"{service}: URL 이 설정되지 않음"}
@@ -1646,6 +1896,8 @@ async def _stream_openai_compat(messages: list, model: str, url: str,
         temperature=float(_current_config.get("llm_temperature", 1.0) or 1.0),
         max_tokens=int(_current_config.get("llm_max_tokens", 0) or 0),
         custom_body=_current_config.get("llm_custom_body", ""),
+        default_body=default_body,
+        legacy_custom_only=legacy_custom_only,
     )
     # 스트리밍 강제
     body["stream"] = True
@@ -1724,6 +1976,7 @@ async def _stream_openai_compat(messages: list, model: str, url: str,
         }
     except httpx.TimeoutException:
         _llm_log(f"{service} stream 타임아웃")
+        traceback.print_exc()
         yield {"type": "error", "error": f"{service} stream 타임아웃"}
     except Exception as e:
         _llm_log(f"{service} stream 예외: {e}")
@@ -1750,15 +2003,22 @@ async def _stream_copilot(messages: list, model: str):
     accumulated = []
     completion_tokens = None
 
-    body = {
-        "model": model,
-        "messages": messages,
-        "stream": True,
-        "stream_options": {"include_usage": True},
-        "temperature": float(_current_config.get("llm_temperature", 1.0) or 1.0),
-    }
-    if int(_current_config.get("llm_max_tokens", 0) or 0) > 0:
-        body["max_tokens"] = int(_current_config["llm_max_tokens"])
+    reasoning_family = _detect_reasoning_family(
+        model,
+        _current_config.get("llm_reasoning_preset", "auto"),
+    )
+    body = _build_openai_body(
+        model,
+        messages,
+        reasoning_family,
+        reasoning_effort=_current_config.get("llm_reasoning_effort", ""),
+        reasoning_budget=int(_current_config.get("llm_reasoning_budget_tokens", 0) or 0),
+        temperature=float(_current_config.get("llm_temperature", 1.0) or 1.0),
+        max_tokens=int(_current_config.get("llm_max_tokens", 0) or 0),
+        custom_body=_current_config.get("llm_custom_body", ""),
+    )
+    body["stream"] = True
+    body["stream_options"] = {"include_usage": True}
 
     _llm_log(f"copilot stream 요청: model={model}")
     yield {"type": "start", "service": "copilot", "model": model}
@@ -1812,6 +2072,8 @@ async def _stream_copilot(messages: list, model: str):
             "ttft": ttft,
         }
     except httpx.TimeoutException:
+        _llm_log("copilot stream 타임아웃")
+        traceback.print_exc()
         yield {"type": "error", "error": "copilot stream 타임아웃"}
     except Exception as e:
         _llm_log(f"copilot stream 예외: {e}")
@@ -1827,29 +2089,11 @@ async def _stream_gemini(messages: list, model: str):
         return
     base = _current_config.get("llm_url") or "https://generativelanguage.googleapis.com"
     url = f"{base.rstrip('/')}/v1beta/models/{model}:streamGenerateContent?alt=sse&key={api_key}"
-
-    system_text = ""
-    user_parts = []
-    for msg in messages:
-        if msg.get("role") == "system":
-            system_text += (system_text and "\n\n" or "") + _msg_text(msg.get("content", ""))
-        else:
-            parts = _build_gemini_parts(msg.get("content", ""))
-            user_parts.append({
-                "role": "user" if msg.get("role") != "assistant" else "model",
-                "parts": parts,
-            })
-
-    body = {"contents": user_parts}
-    if system_text:
-        body["systemInstruction"] = {"parts": [{"text": system_text}]}
-    body["generationConfig"] = {
-        "temperature": float(_current_config.get("llm_temperature", 1.0) or 1.0),
-    }
-    if int(_current_config.get("llm_max_tokens", 0) or 0) > 0:
-        body["generationConfig"]["maxOutputTokens"] = int(_current_config["llm_max_tokens"])
-    if _response_format_ctx.get():
-        body["generationConfig"]["responseMimeType"] = "application/json"
+    body = _build_gemini_request_body(
+        messages,
+        model,
+        custom_body=_current_config.get("llm_custom_body", ""),
+    )
 
     t0 = time.time()
     ttft = None
@@ -1909,6 +2153,8 @@ async def _stream_gemini(messages: list, model: str):
             "ttft": ttft,
         }
     except httpx.TimeoutException:
+        _llm_log("gemini stream 타임아웃")
+        traceback.print_exc()
         yield {"type": "error", "error": "gemini stream 타임아웃"}
     except Exception as e:
         _llm_log(f"gemini stream 예외: {e}")
@@ -1924,28 +2170,12 @@ async def _stream_claude(messages: list, model: str):
         return
     base = _current_config.get("llm_url") or "https://api.anthropic.com"
     url = f"{base.rstrip('/')}/v1/messages"
-
-    system_text = ""
-    msg_list = []
-    for msg in messages:
-        role = msg.get("role")
-        content = msg.get("content", "")
-        if role == "system":
-            system_text += (system_text and "\n\n" or "") + _msg_text(content)
-        else:
-            built = _build_claude_content(content)
-            msg_list.append({"role": "user" if role != "assistant" else "assistant", "content": built})
-
-    body = {
-        "model": model,
-        "max_tokens": int(_current_config.get("llm_max_tokens", 0) or 0) or 4096,
-        "messages": msg_list,
-        "stream": True,
-    }
-    if system_text:
-        body["system"] = system_text
-    if _current_config.get("llm_temperature") is not None:
-        body["temperature"] = float(_current_config.get("llm_temperature", 1.0) or 1.0)
+    body = _build_claude_request_body(
+        messages,
+        model,
+        stream=True,
+        custom_body=_current_config.get("llm_custom_body", ""),
+    )
 
     headers = {
         "x-api-key": api_key,
@@ -2021,6 +2251,8 @@ async def _stream_claude(messages: list, model: str):
             "ttft": ttft,
         }
     except httpx.TimeoutException:
+        _llm_log("claude stream 타임아웃")
+        traceback.print_exc()
         yield {"type": "error", "error": "claude stream 타임아웃"}
     except Exception as e:
         _llm_log(f"claude stream 예외: {e}")
@@ -2122,8 +2354,43 @@ async def _stream_vertex_openai(messages: list, model: str):
     except Exception as e:
         yield {"type": "error", "error": f"vertex-openai 토큰 발급 실패: {e}"}
         return
-    async for ev in _stream_openai_compat(messages, model, url, api_key=token, service="vertex-openai"):
+    async for ev in _stream_openai_compat(
+        messages,
+        model,
+        url,
+        api_key=token,
+        service="vertex-openai",
+        legacy_custom_only=True,
+    ):
         yield ev
+
+
+async def _stream_provider_manager_service(messages: list, model: str, service: str):
+    """Provider Manager 카탈로그 서비스의 OpenAI 호환 SSE 호출."""
+    metadata = PROVIDER_MANAGER_SERVICES.get(service)
+    if not metadata:
+        print(f"[LLM_SERVICE] Provider Manager 스트림 서비스 정의 없음: {service}")
+        yield {"type": "error", "error": f"Provider Manager 서비스 정의 없음: {service}"}
+        return
+    api_key = _current_config.get("llm_api_key", "")
+    if metadata.get("api_key_required") and not api_key:
+        print(f"[LLM_SERVICE] {service} stream: llm_api_key 없음")
+        yield {"type": "error", "error": f"{service}: llm_api_key 없음"}
+        return
+    endpoint = _current_config.get("llm_url") or metadata["endpoint"]
+    if "{account_id}" in endpoint:
+        print(f"[LLM_SERVICE] {service} stream: URL의 {{account_id}} 미치환: {endpoint}")
+        yield {"type": "error", "error": f"{service}: LLM URL의 {{account_id}}를 실제 계정 ID로 바꿔주세요"}
+        return
+    async for event in _stream_openai_compat(
+        messages,
+        model,
+        endpoint,
+        api_key=api_key,
+        service=service,
+        default_body=metadata.get("default_body"),
+    ):
+        yield event
 
 
 async def _dispatch_stream(messages: list, service: str, model: str):
@@ -2165,11 +2432,13 @@ async def _dispatch_stream(messages: list, service: str, model: str):
             yield ev
     elif service == "lmstudio":
         base = _current_config.get("llm_url") or "http://localhost:1234"
-        async for ev in _stream_openai_compat(messages, model, base, service="lmstudio"):
+        api_key = _current_config.get("llm_api_key", "")
+        async for ev in _stream_openai_compat(messages, model, base, api_key=api_key, service="lmstudio"):
             yield ev
     elif service == "ollama":
         base = _current_config.get("llm_url") or "http://localhost:11434"
-        async for ev in _stream_openai_compat(messages, model, base, service="ollama"):
+        api_key = _current_config.get("llm_api_key", "")
+        async for ev in _stream_openai_compat(messages, model, base, api_key=api_key, service="ollama"):
             yield ev
     elif service == "ollama-cloud":
         api_key = _current_config.get("llm_api_key", "")
@@ -2179,7 +2448,11 @@ async def _dispatch_stream(messages: list, service: str, model: str):
         base = _current_config.get("llm_url") or "https://ollama.com"
         async for ev in _stream_openai_compat(messages, model, base, api_key=api_key, service="ollama-cloud"):
             yield ev
+    elif service in PROVIDER_MANAGER_SERVICES:
+        async for ev in _stream_provider_manager_service(messages, model, service):
+            yield ev
     else:
+        print(f"[LLM_SERVICE] 알 수 없는 LLM 스트림 서비스: {service}")
         yield {"type": "error", "error": f"알 수 없는 LLM 서비스: {service}"}
 
 

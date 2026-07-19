@@ -145,7 +145,7 @@ DEFAULT_CONFIG = {
     "llm_reasoning_preset": "auto",   # auto|none|gpt|glm|deepseek|kimi|claude|gemini|custom
     "llm_reasoning_effort": "",       # low|medium|high (OpenAI reasoning_effort)
     "llm_reasoning_budget_tokens": 0, # GLM/deepseek thinking budget_tokens
-    "llm_custom_body": "",            # preset=custom 일 때 JSON 문자열로 body 에 머지
+    "llm_custom_body": "",            # 모든 프리셋의 요청 body 에 재귀 병합되는 JSON object 문자열
     "llm_custom_body2": "",           # LLM2 용
     "llm_custom_body3": "",           # LLM3 용
     "llm_reasoning_preset2": "auto",  # LLM2 전용 reasoning preset
@@ -2879,6 +2879,16 @@ async def handle_api_llm_keys(request: web.Request) -> web.Response:
     except Exception as e:
         tb = traceback.format_exc()
         print(f"[LLM_KEY] error: {e}\n{tb}")
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def handle_api_llm_providers(request: web.Request) -> web.Response:
+    """설정 UI용 LLM 서비스/전송 포맷 카탈로그."""
+    try:
+        return web.json_response({"services": llm_service.get_service_catalog()})
+    except Exception as e:
+        print(f"[LLM_PROVIDER] 서비스 카탈로그 생성 실패: {e}")
+        traceback.print_exc()
         return web.json_response({"error": str(e)}, status=500)
 
 
@@ -6126,6 +6136,40 @@ async def handle_api_config(request: web.Request) -> web.Response:
         try:
             body = await request.json()
 
+            for custom_body_key in ("llm_custom_body", "llm_custom_body2", "llm_custom_body3"):
+                if custom_body_key not in body:
+                    continue
+                raw_custom_body = body.get(custom_body_key) or ""
+                if not isinstance(raw_custom_body, str):
+                    print(
+                        f"[CONFIG] {custom_body_key} 저장 거부: 문자열이 아님 "
+                        f"({type(raw_custom_body).__name__})"
+                    )
+                    return web.json_response(
+                        {"error": f"{custom_body_key}는 JSON 문자열이어야 합니다."},
+                        status=400,
+                    )
+                if not raw_custom_body.strip():
+                    continue
+                try:
+                    parsed_custom_body = json.loads(raw_custom_body)
+                except json.JSONDecodeError as e:
+                    print(f"[CONFIG] {custom_body_key} JSON 파싱 실패: {e}; 입력={raw_custom_body[:300]!r}")
+                    traceback.print_exc()
+                    return web.json_response(
+                        {"error": f"{custom_body_key} JSON 오류: {e}"},
+                        status=400,
+                    )
+                if not isinstance(parsed_custom_body, dict):
+                    print(
+                        f"[CONFIG] {custom_body_key} 저장 거부: JSON object가 아님 "
+                        f"({type(parsed_custom_body).__name__})"
+                    )
+                    return web.json_response(
+                        {"error": f"{custom_body_key}는 JSON object여야 합니다."},
+                        status=400,
+                    )
+
             if "chansub_workflow_type" in body:
                 chansub_workflow_type = str(
                     body.get("chansub_workflow_type") or ""
@@ -6918,6 +6962,7 @@ app.router.add_delete("/api/llm/vertex_key", handle_api_lighbd_vertex_key)
 app.router.add_post("/api/llm/keys", handle_api_llm_keys)
 app.router.add_get("/api/llm/keys", handle_api_llm_keys)
 app.router.add_delete("/api/llm/keys", handle_api_llm_keys)
+app.router.add_get("/api/llm/providers", handle_api_llm_providers)
 app.router.add_post("/api/chansub/key", handle_api_chansub_key)
 app.router.add_get("/api/chansub/key", handle_api_chansub_key)
 app.router.add_delete("/api/chansub/key", handle_api_chansub_key)
