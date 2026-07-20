@@ -19,6 +19,7 @@ compose_bubble() 하나만이 말풍선 렌더의 단일 소스다. 미리보기
 """
 
 import io
+import itertools
 import math
 import os
 import random
@@ -893,7 +894,7 @@ _BURST_ANGLE_CACHE = {}
 
 # ─── 떨림 강조선(tremble marks) ──────────────────────────────────────
 _TREMBLE_SVG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tremble_marks.svg")
-_TREMBLE_SVG_CACHE = None  # (곡선 점열 리스트, 단일 곡선 bbox) — viewBox 좌표
+_TREMBLE_SVG_CACHE = None  # (곡선 점열 리스트, 전체 `))` 그룹 bbox) — viewBox 좌표
 
 
 def _parse_cubic_path(d, samples_per_seg=14):
@@ -950,10 +951,10 @@ def _parse_cubic_path(d, samples_per_seg=14):
 
 
 def _load_tremble_svg():
-    """tremble_marks.svg 를 파싱해 (곡선 점열 리스트, 첫 곡선 bbox) 로 캐싱.
+    """tremble_marks.svg 를 파싱해 (곡선 점열 리스트, 전체 그룹 bbox) 로 캐싱.
 
-    각 path 는 하나의 `)` 모양 강조선이다. 두 곡선은 동일 형상(가로 이동만 다름)이므로
-    첫 곡선만 기준으로 쓰고 렌더 시 풍선 높이에 맞춰 복제·배치한다.
+    SVG 안의 두 path 를 합쳐 하나의 `))` 강조 마크로 취급한다. 렌더 단계에서는
+    이 한 쌍을 여러 위치에 복제해 말풍선 외곽을 감싸도록 배치한다.
     """
     global _TREMBLE_SVG_CACHE
     if _TREMBLE_SVG_CACHE is not None:
@@ -980,54 +981,192 @@ def _load_tremble_svg():
         print("[BUBBLE_RENDER] ⚠ tremble SVG 곡선 파싱 0건")
         _TREMBLE_SVG_CACHE = (None, None)
         return _TREMBLE_SVG_CACHE
-    _TREMBLE_SVG_CACHE = (curves, _points_bbox(curves[0]))
+    all_points = [point for curve in curves for point in curve]
+    _TREMBLE_SVG_CACHE = (curves, _points_bbox(all_points))
     return _TREMBLE_SVG_CACHE
 
 
-def _draw_tremble_marks(overlay, rect, border, border_w, *, side="right", mark_count=3):
-    """풍선 옆에 떨림 강조선(진동 고스트 아웃라인)을 mark_count개 그려 trembling을 표현.
+def _angle_distance(a, b):
+    """두 라디안 각도의 0~pi 최단 거리."""
+    return abs((float(a) - float(b) + math.pi) % (2.0 * math.pi) - math.pi)
 
-    tremble_marks.svg 의 단일 곡선(베지어 점열)을 풍선 높이에 맞춰 등비 스케일해
-    지정한 side 에 배치한다. 곡선의 **오목한 면이 풍선을 향하도록**(풍선 모서리
-    곡률과 나란한 진동 궤적) 좌우 배치에 따라 곡선을 반전시킨다.
-    stroke 색/두께는 풍선 테두리와 동일하게 유지해 한 붓 터치 느낌을 준다.
+
+def _draw_tremble_marks(overlay, rect, border, border_w, *, anchor=None, mark_count=3, seed=None):
+    """SVG의 `))` 한 쌍을 여러 곳에 배치해 풍선 외곽을 감싸는 떨림 효과를 그린다.
+
+    각 마크는 타원 경계의 바깥 법선 방향으로 볼록하고, 긴 축은 경계 접선과 나란하게
+    회전한다. 꼬리(anchor)가 있으면 꼬리 반대쪽 반원에 우선 분산하며, 캔버스 밖으로
+    잘리는 후보에는 큰 패널티를 줘 실제로 보이는 위치를 자동 선택한다.
     """
-    curves, curve_bbox = _load_tremble_svg()
-    if not curves or curve_bbox is None:
+    curves, group_bbox = _load_tremble_svg()
+    if not curves or group_bbox is None:
         return
+
+    mark_count = max(1, min(6, int(mark_count)))
     x1, y1, x2, y2 = [float(v) for v in rect]
+
+    # 완전 무작위로 두면 미리보기와 실제 합성이 달라질 수 있으므로, 호출자가 넘긴
+    # 안정적인 seed를 사용한다. seed가 없을 때도 rect/anchor로 결정론적 seed를 만든다.
+    if seed is None:
+        seed = (
+            (int(round(x1)) * 73856093)
+            ^ (int(round(y1)) * 19349663)
+            ^ (int(round(x2)) * 83492791)
+            ^ (int(round(y2)) * 39916801)
+        ) & 0xFFFFFFFF
+        if anchor is not None:
+            seed ^= (
+                (int(round(float(anchor[0]))) * 2654435761)
+                ^ (int(round(float(anchor[1]))) * 2246822519)
+            ) & 0xFFFFFFFF
+    rng = random.Random(int(seed) & 0xFFFFFFFF)
+    bw = max(1.0, x2 - x1)
     bh = max(1.0, y2 - y1)
-    cy = (y1 + y2) / 2.0
-    base = curves[0]
-    cb_x1, cb_y1, cb_x2, cb_y2 = curve_bbox
-    cw_v = max(1.0, cb_x2 - cb_x1)   # 곡선 하나의 가로폭(viewBox 단위)
-    ch_v = max(1.0, cb_y2 - cb_y1)   # 곡선 하나의 세로폭(스케일 기준축)
-    scale = (bh * 0.82) / ch_v
+    cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
+    rx, ry = bw / 2.0, bh / 2.0
+    canvas_w, canvas_h = overlay.size
+
+    gx1, gy1, gx2, gy2 = group_bbox
+    group_h = max(1.0, gy2 - gy1)
+    group_cy = (gy1 + gy2) / 2.0
+
+    # `))` 한 쌍의 길이는 풍선 높이의 약 1/3. 예전처럼 풍선 높이 전체를 덮지 않는다.
+    target_h = max(18.0, min(bh * 0.32, bw * 0.24, 72.0))
+    scale = target_h / group_h
     stroke_w = max(1, int(round(max(2.0, float(border_w) * 1.1))))
-    # 곡선을 자체 bbox 중심 기준 국소 좌표로 정규화(회전/반전 중심).
-    ccx = (cb_x1 + cb_x2) / 2.0
-    ccy = (cb_y1 + cb_y2) / 2.0
-    local = [((p[0] - ccx), (p[1] - ccy)) for p in base]
-    gap = cw_v * scale * 1.35        # 강조선 간 가로 간격(svg 두 곡선 간격 비율 근사)
-    margin = max(stroke_w * 1.5, bh * 0.05)
+    margin = max(stroke_w * 1.5, min(bw, bh) * 0.025, 3.0)
+
+    # SVG는 오른쪽이 풍선에 가까운 안쪽, 왼쪽으로 휘어진 부분이 바깥쪽이다.
+    # 따라서 local_r = gx2 - x 로 두면 어느 각도에 놓아도 항상 풍선 바깥으로 볼록해진다.
+    local_curves = [
+        [((gx2 - px) * scale, (py - group_cy) * scale) for px, py in curve]
+        for curve in curves
+    ]
+
+    def transformed_group(angle):
+        cos_a, sin_a = math.cos(angle), math.sin(angle)
+        edge_x = cx + rx * cos_a
+        edge_y = cy + ry * sin_a
+
+        # 타원의 실제 바깥 법선. 단순 중심 방사선보다 납작한 타원에서도 외곽과 잘 맞는다.
+        nx = cos_a / max(rx, 1e-6)
+        ny = sin_a / max(ry, 1e-6)
+        normal_len = max(math.hypot(nx, ny), 1e-6)
+        nx, ny = nx / normal_len, ny / normal_len
+        tx, ty = -ny, nx  # 접선
+
+        placed = []
+        for curve in local_curves:
+            placed.append([
+                (
+                    edge_x + nx * (margin + radial) + tx * tangent,
+                    edge_y + ny * (margin + radial) + ty * tangent,
+                )
+                for radial, tangent in curve
+            ])
+        points = [point for curve in placed for point in curve]
+        half_stroke = stroke_w / 2.0
+        bbox = (
+            min(point[0] for point in points) - half_stroke,
+            min(point[1] for point in points) - half_stroke,
+            max(point[0] for point in points) + half_stroke,
+            max(point[1] for point in points) + half_stroke,
+        )
+        return placed, bbox
+
+    # 15도 간격 후보 중 mark_count개 조합을 고른다. 목표는 꼬리 반대쪽 반원에
+    # 약 -70°~+70°로 퍼지는 배치이며, 화면 밖 잘림과 꼬리 근처 배치를 강하게 피한다.
+    if anchor is not None:
+        tail_angle = math.atan2(
+            (float(anchor[1]) - cy) / max(ry, 1e-6),
+            (float(anchor[0]) - cx) / max(rx, 1e-6),
+        )
+    else:
+        tail_angle = math.pi / 2.0  # 꼬리 없으면 아래쪽을 피하고 위쪽 반원에 배치
+    # 핵심 변동은 spread가 아니라 마크 묶음 전체의 중심 이동이다. 꼬리 반대쪽을
+    # 기준으로 좌우 최대 32도까지 드리프트시켜, 매번 같은 10시/12시/2시 위치에
+    # 고정되는 느낌을 없앤다.
+    cluster_shift = math.radians(rng.uniform(-32.0, 32.0))
+    opposite_angle = (tail_angle + math.pi + cluster_shift) % (2.0 * math.pi)
+
+    # 후보 격자 자체도 반 칸 범위에서 회전시킨다. 기존 15도 고정 격자는 spread를
+    # 조금 바꿔도 같은 조합으로 스냅되는 원인이었다.
+    candidate_phase = math.radians(rng.uniform(-7.5, 7.5))
+    candidates = []
+    for index in range(24):
+        angle = candidate_phase + 2.0 * math.pi * index / 24.0
+        placed, bbox = transformed_group(angle)
+        overflow = (
+            max(0.0, -bbox[0])
+            + max(0.0, -bbox[1])
+            + max(0.0, bbox[2] - canvas_w)
+            + max(0.0, bbox[3] - canvas_h)
+        )
+        tail_distance = _angle_distance(angle, tail_angle)
+        tail_zone = max(0.0, math.radians(55.0) - tail_distance) / math.radians(55.0)
+        candidates.append((angle, placed, bbox, overflow, tail_zone))
+
+    # spread만 ±10도 바꾸는 것은 15도 후보 격자에서 거의 같은 결과로 반올림된다.
+    # 폭을 넓게 변동하고, 각 마크 목표각에도 독립 지터를 줘 좌우 대칭을 일부러 깬다.
+    target_spread = math.radians(rng.uniform(48.0, 86.0))
+    if mark_count == 1:
+        target_offsets = [math.radians(rng.uniform(-12.0, 12.0))]
+    else:
+        target_offsets = sorted(
+            -target_spread
+            + (2.0 * target_spread * index / (mark_count - 1))
+            + math.radians(rng.uniform(-12.0, 12.0))
+            for index in range(mark_count)
+        )
+
+    minimum_separation = math.radians(rng.uniform(32.0, 44.0))
+    scored = []
+    for combo in itertools.combinations(candidates, mark_count):
+        offsets = sorted(
+            (item[0] - opposite_angle + math.pi) % (2.0 * math.pi) - math.pi
+            for item in combo
+        )
+        score = sum(
+            ((offset - target) ** 2) * 80.0
+            for offset, target in zip(offsets, target_offsets)
+        )
+        score += sum(
+            item[3] * 1000.0 + (item[4] ** 2) * 500.0
+            for item in combo
+        )
+        # 너무 가까운 마크끼리는 한 덩어리처럼 보여서 강한 패널티.
+        for first, second in itertools.combinations(combo, 2):
+            separation = _angle_distance(first[0], second[0])
+            if separation < minimum_separation:
+                score += ((minimum_separation - separation) ** 2) * 5000.0
+        scored.append((score, combo))
+
+    if not scored:
+        return
+
+    # 최저점 하나를 고정 선택하지 않고, 거의 동급인 상위 조합 중 하나를 뽑는다.
+    # 화면 밖/꼬리 근처 패널티는 그대로라 품질은 유지하면서 패턴만 덜 기계적으로 된다.
+    scored.sort(key=lambda item: item[0])
+    best_score = scored[0][0]
+    tolerance = max(20.0, abs(best_score) * 0.16)
+    near_best = [item for item in scored[:24] if item[0] <= best_score + tolerance]
+    if len(near_best) < 3:
+        near_best = scored[:min(6, len(scored))]
+    weights = [math.exp(-0.55 * rank) for rank in range(len(near_best))]
+    selected_score, selected_combo = rng.choices(near_best, weights=weights, k=1)[0]
 
     layer = Image.new("RGBA", overlay.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(layer)
-    # svg 기준 곡선은 `)` (오른쪽으로 열림). 오목한 면이 풍선을 향하게(감싸듯) 하려면
-    #   - right 배치: 곡선을 좌우 반전(`(`)시켜 볼록한 면이 바깥(오른쪽)으로.
-    #   - left  배치: 원본 `)` 그대로 써서 볼록한 면이 바깥(왼쪽)으로.
-    if side == "left":
-        flip = 1.0
-        x0 = x1 - margin - (cw_v * scale) / 2.0
-        step = -gap
-    else:
-        flip = -1.0
-        x0 = x2 + margin + (cw_v * scale) / 2.0
-        step = gap
-    for k in range(max(1, int(mark_count))):
-        ox = x0 + step * k
-        pts = [(ox + lx * scale * flip, cy + ly * scale) for (lx, ly) in local]
-        draw.line(pts, fill=border, width=stroke_w, joint="curve")
+    radius = stroke_w / 2.0
+    for _angle, placed, _bbox, _overflow, _tail_zone in selected_combo:
+        for points in placed:
+            draw.line(points, fill=border, width=stroke_w, joint="curve")
+            # SVG의 round linecap을 PIL에서도 재현한다.
+            for px, py in (points[0], points[-1]):
+                draw.ellipse(
+                    [px - radius, py - radius, px + radius, py + radius],
+                    fill=border,
+                )
     overlay.alpha_composite(layer)
 
 
@@ -2200,26 +2339,23 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
             split=do_split,
         )
 
-        # trembling: normal 풍선 옆에 떨림 강조선(`)))`) 추가. 꼬리가 있는 경우
-        # 꼬리 반대쪽에 배치해 꼬리와 겹치지 않게 하고, 캔버스 여유가 부족하면 반대편.
+        # trembling: SVG의 `))` 한 쌍을 3곳에 복제하고, 각 위치의 타원 접선에 맞춰
+        # 회전시켜 풍선 외곽을 감싸는 진동선으로 그린다. 꼬리 주변과 화면 밖은 자동 회피.
         if balloon_type == "trembling":
-            rx1, ry1, rx2, ry2 = [float(v) for v in rect]
-            rbh = max(1.0, ry2 - ry1)
-            # 강조선 3개가 한쪽으로 뻗는 총 폭 추정(tremble svg 곡선 종횡비 기반 근사).
-            marks_extent = rbh * 0.85
-            rcx = (rx1 + rx2) / 2.0
-            prefer_left = with_tail and float(anchor[0]) >= rcx
-            room_left = rx1
-            room_right = canvas_w - rx2
-            if prefer_left and room_left >= marks_extent:
-                tremble_side = "left"
-            elif room_right >= marks_extent:
-                tremble_side = "right"
-            elif room_left >= room_right:
-                tremble_side = "left"
-            else:
-                tremble_side = "right"
-            _draw_tremble_marks(overlay, rect, border, border_w, side=tremble_side)
+            # 위치만으로 seed를 만들면 비슷한 rect의 말풍선들이 같은 패턴을 반복한다.
+            # 발화자/대사/그리기 순서를 안정적 정수 해시에 섞어 버블마다 다른 배치를 만든다.
+            tremble_seed = organic_seed ^ (((drawn + 1) * 0x9E3779B1) & 0xFFFFFFFF)
+            for ch in f"{seg.get('speaker') or ''}\0{text}\0{balloon_type or ''}":
+                tremble_seed = ((tremble_seed ^ ord(ch)) * 16777619) & 0xFFFFFFFF
+            _draw_tremble_marks(
+                overlay,
+                rect,
+                border,
+                border_w,
+                anchor=anchor if with_tail else None,
+                mark_count=3,
+                seed=tremble_seed,
+            )
 
         # 모델이 선택한 줄과 행간을 실제 폰트로 중앙 정렬해 그린다.
         rect_cx = (rect[0] + rect[2]) / 2.0
