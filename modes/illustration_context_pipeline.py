@@ -41,7 +41,7 @@ PROMPT_FILES = {
     "call2_preset": "preset.txt",
     "call3_speak": "speak.txt",
     "call3_manga": "manga.txt",
-    "call3_repair": "repair.txt",
+    "call2_fix": "repair.txt",
 }
 
 DEFAULT_TOGGLES = {
@@ -978,6 +978,7 @@ def _build_character_history(extra_reference: str) -> str:
 _CALL_TASK_KEYS = {
     "CALL1": "illustration_call1",
     "CALL2": "illustration_call2",
+    "CALL2-FIX": "illustration_call2_fix",
     "CALL3": "illustration_call3",
 }
 
@@ -1166,26 +1167,33 @@ async def build_from_context(payload: dict, toggles: dict | None, extra_referenc
     call2_output = await _call_pipeline_llm("CALL2", _normalize_messages(call2_messages), stream_notify)
     descriptors = parse_toon_plan(call2_output, toggles, "CALL2")
 
-    call3_output = ""
+    # CALL2 파싱 실패 시 CALL2-FIX(repair.txt)가 TOON 블록을 교정한다.
+    # CALL3는 대사 생성 전용이므로 교정은 여기서 먼저 마무리한다.
+    call2_fix_output = ""
     if not descriptors:
-        if not toggles.get("call3_enabled"):
-            raise RuntimeError("CALL2 결과 파싱 실패, CALL3 교정이 비활성화되어 있습니다")
         if progress:
-            await progress(52, "call3", "CALL3 TOON 교정")
-        repair_messages = [{
+            await progress(48, "call2_fix", "CALL2-FIX TOON 교정")
+        fix_messages = [{
             "role": "system",
-            "content": prompts.get("call3_repair", "") + "\n\n" + extra_reference,
+            "content": prompts.get("call2_fix", "") + "\n\n" + extra_reference,
         }, {
             "role": "user",
             "content": "Repair this malformed output. Return [TOON]...[/TOON].\n\n" + call2_output,
         }]
-        call3_output = await _call_pipeline_llm("CALL3", _normalize_messages(repair_messages), stream_notify)
-        descriptors = parse_toon_plan(call3_output, toggles, "CALL3")
+        call2_fix_output = await _call_pipeline_llm(
+            "CALL2-FIX", _normalize_messages(fix_messages), stream_notify
+        )
+        descriptors = parse_toon_plan(call2_fix_output, toggles, "CALL2-FIX")
         if not descriptors:
-            raise RuntimeError("CALL3 교정 후에도 장면 TOON 파싱에 실패했습니다")
-    elif toggles.get("call3_enabled") and toggles.get("speak_enabled"):
+            raise RuntimeError("CALL2-FIX 교정 후에도 장면 TOON 파싱에 실패했습니다")
+
+    # CALL3는 대사 빌드(speak/manga)만 담당한다. 교정이 일어났으면 교정 결과의
+    # TOON 블록을 장면 목록으로 넘긴다.
+    call3_output = ""
+    scene_source = call2_fix_output or call2_output
+    if toggles.get("call3_enabled") and toggles.get("speak_enabled"):
         if progress:
-            await progress(52, "call3", "CALL3 대사 빌드")
+            await progress(58, "call3", "CALL3 대사 빌드")
         call3_prompt_mode, call3_system_prompt = build_call3_dialogue_system_prompt(
             prompts,
             toggles,
@@ -1203,7 +1211,7 @@ async def build_from_context(payload: dict, toggles: dict | None, extra_referenc
         speak_messages.append({
             "role": "user",
             "content": (
-                f"[Narrative to illustrate]\n{enhanced}\n\n[Scene list]\n{_extract_lb_block(call2_output)}"
+                f"[Narrative to illustrate]\n{enhanced}\n\n[Scene list]\n{_extract_lb_block(scene_source)}"
                 f"\n\nLanguage: {toggles.get('speak_language', '한국어')}"
             ),
         })
@@ -1234,6 +1242,7 @@ async def build_from_context(payload: dict, toggles: dict | None, extra_referenc
         "enhanced_narrative": enhanced,
         "call1_output": call1_output,
         "call2_output": call2_output,
+        "call2_fix_output": call2_fix_output,
         "call3_output": call3_output,
         "prompt_format": str(toggles.get("prompt_format") or "v3").strip().lower(),
         "items": raw_items,

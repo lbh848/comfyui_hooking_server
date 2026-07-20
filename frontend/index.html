@@ -14367,7 +14367,8 @@
             { key: 'edit_illustration_prompt', label: '삽화 LLM과 함께 수정', kind: '비전/JSON' },
             { key: 'illustration_call1',       label: '삽화 CALL1 (전처리)',           kind: '텍스트' },
             { key: 'illustration_call2',       label: '삽화 CALL2 (본문)',             kind: '텍스트' },
-            { key: 'illustration_call3',       label: '삽화 CALL3 (후처리 및 대사 생성)', kind: '텍스트' },
+            { key: 'illustration_call2_fix',   label: '삽화 CALL2-FIX (TOON 교정)',    kind: '텍스트' },
+            { key: 'illustration_call3',       label: '삽화 CALL3 (대사 생성)',         kind: '텍스트' },
         ];
 
         function renderLlmRoutingTable() {
@@ -37365,11 +37366,11 @@
                         </div>
                         <div id="illust-tab-content-llm" style="display:none; padding:12px 16px;">
                             <div style="margin-bottom:12px; padding:8px; background:rgba(0,0,0,0.06); border-radius:6px; font-size:0.75rem; color:var(--text2); line-height:1.5;">
-                                CHAT을 받은 서버가 CALL1 → CALL2 → CALL3 순서로 실행합니다. 삽화 프롬프트 본문은 config.json이 아니라 아래 개별 txt 파일에 저장됩니다.
+                                CHAT을 받은 서버가 CALL1 → CALL2 → (파싱 실패 시 CALL2-FIX) → CALL3 순서로 실행합니다. 삽화 프롬프트 본문은 config.json이 아니라 아래 개별 txt 파일에 저장됩니다.
                                 1. CALL1은 <strong>enhance.txt</strong>와 최근 CHAT으로 현재 응답의 시각 힌트를 만듭니다.<br>
                                 2. CALL2 system = <strong>jailbreak.txt</strong> + <strong>job.txt</strong> + <strong>system.txt</strong>, 이후 활성 봇 <strong>lb.extra</strong>와 CHAT·슬롯 본문을 전달합니다.<br>
                                 3. CALL2 output 지시 = <strong>thoughts.txt</strong> + <strong>format.txt</strong>, 선택적으로 <strong>prefill.txt</strong>를 사용합니다.<br>
-                                4. CALL3은 정상 결과에 생성 설정에서 선택한 <strong>speak.txt</strong> 또는 <strong>manga.txt</strong>를 사용하고, 파싱 실패에는 <strong>repair.txt</strong>를 사용합니다.<br>
+                                4. CALL2 파싱이 실패하면 <strong>repair.txt</strong>(CALL2-FIX)가 TOON 블록을 교정합니다. CALL3는 생성 설정에서 선택한 <strong>speak.txt</strong> 또는 <strong>manga.txt</strong>로 대사만 생성합니다.<br>
                                 <strong>preset.txt</strong>는 V3의 <code>[SETUP]/[CHAR]/[SUPPLEMENT]</code> RAW 입력 템플릿과 공통 부정 프롬프트를 담습니다. V1을 선택하면 서버가 같은 장면을 <code>[ILXL]/[UPSCALE]</code> 입력 형태로 생성합니다.
                             </div>
                             <div style="display:flex; gap:5px; margin:0 0 10px;">
@@ -37412,6 +37413,10 @@
                                 <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--text);">📝 preset.txt (V3 RAW 입력 템플릿)</summary>
                                 <textarea id="lighbd-prompt-preset" data-lighbd-prompt="preset" style="width:100%; height:220px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
                             </details>
+                            <details style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
+                                <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--text);">📝 repair.txt (CALL2-FIX TOON 교정)</summary>
+                                <textarea id="lighbd-prompt-call2_fix" data-lighbd-prompt="call2_fix" style="width:100%; height:260px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
+                            </details>
                             </div>
                             <div id="illust-call-content-call3" style="display:none;">
                                 <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
@@ -37421,10 +37426,6 @@
                                 <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
                                     <summary style="cursor:pointer; font-size:0.8rem; font-weight:600;">📝 manga.txt (만화 대사와 말풍선 형태)</summary>
                                     <textarea id="lighbd-prompt-call3_manga" data-lighbd-prompt="call3_manga" style="width:100%; height:320px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;"></textarea>
-                                </details>
-                                <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
-                                    <summary style="cursor:pointer; font-size:0.8rem; font-weight:600;">📝 repair.txt (TOON 교정)</summary>
-                                    <textarea id="lighbd-prompt-call3_repair" data-lighbd-prompt="call3_repair" style="width:100%; height:260px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;"></textarea>
                                 </details>
                             </div>
                             <div id="lighbd-prompt-status" style="margin-top:8px; font-size:0.72rem; color:var(--text2);"></div>
@@ -37512,7 +37513,7 @@
                 call1_enhance: 'call1_enhance',
                 call2_jailbreak: 'jailbreak', call2_job: 'job', call2_prefill: 'call2_prefill',
                 call2_thoughts: 'thoughts', call2_system: 'system', call2_format: 'format', call2_preset: 'preset',
-                call3_speak: 'call3_speak', call3_manga: 'call3_manga', call3_repair: 'call3_repair',
+                call3_speak: 'call3_speak', call3_manga: 'call3_manga', call2_fix: 'call2_fix',
             };
             statusEl.textContent = '불러오는 중...';
             try {
@@ -37536,7 +37537,7 @@
                 call1_enhance: 'call1_enhance',
                 call2_jailbreak: 'jailbreak', call2_job: 'job', call2_prefill: 'call2_prefill',
                 call2_thoughts: 'thoughts', call2_system: 'system', call2_format: 'format', call2_preset: 'preset',
-                call3_speak: 'call3_speak', call3_manga: 'call3_manga', call3_repair: 'call3_repair',
+                call3_speak: 'call3_speak', call3_manga: 'call3_manga', call2_fix: 'call2_fix',
             };
             const body = {};
             for (const [k, id] of Object.entries(fields)) {
@@ -37566,10 +37567,10 @@
         const ILLUSTRATION_CONTEXT_TOGGLE_GROUPS = [
             {
                 key: 'pipeline', title: '파이프라인',
-                description: '장면을 분석하고 교정하는 LLM 호출 범위를 설정합니다.',
+                description: '장면을 분석하고 대사를 생성하는 LLM 호출 범위를 설정합니다.',
                 fields: [
                     {key: 'call1_enabled', label: 'CALL1 컨텍스트 보강', type: 'toggle', help: '최근 대화에서 시각 정보를 먼저 보강합니다.'},
-                    {key: 'call3_enabled', label: 'CALL3 교정 및 대사', type: 'toggle', help: '장면 출력 교정과 대사 생성을 수행합니다.'},
+                    {key: 'call3_enabled', label: 'CALL3 대사 생성', type: 'toggle', help: 'CALL3 대사(speak/manga) 생성을 켭니다. CALL2 파싱 실패 시 CALL2-FIX 교정은 항상 동작합니다.'},
                     {key: 'call1_context_turns', label: 'CALL1 최근 메시지 수', type: 'number', min: 0, max: 30, help: 'CALL1에 전달할 최근 대화 수입니다.'},
                     {key: 'call2_context_turns', label: 'CALL2 최근 메시지 수', type: 'number', min: 0, max: 30, help: 'CALL2에 전달할 최근 대화 수입니다.'},
                     {key: 'call3_context_turns', label: 'CALL3 최근 메시지 수', type: 'number', min: 0, max: 30, help: 'CALL3 대사 생성에 전달할 최근 대화 수입니다.'},
