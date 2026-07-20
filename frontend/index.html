@@ -3990,11 +3990,11 @@
             font-weight: 650;
         }
         .lighbd-history-open:hover { color: #fff; background: rgba(0,188,212,.28); }
-        .lighbd-detail-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; padding: 14px 18px 0; }
+        .lighbd-detail-stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; padding: 14px 18px 0; }
         .lighbd-detail-stat { padding: 9px 11px; border: 1px solid var(--border); border-radius: 9px; background: rgba(0,0,0,.14); }
         .lighbd-detail-stat span { display: block; color: var(--text2); font-size: .66rem; margin-bottom: 3px; }
         .lighbd-detail-stat strong { font-size: .84rem; font-family: monospace; }
-        .lighbd-detail-body { overflow-y: auto; padding: 14px 18px 20px; display: grid; gap: 12px; }
+        .lighbd-detail-body { flex: 1; min-height: 0; overflow-y: auto; padding: 14px 18px 20px; display: grid; gap: 12px; }
         .lighbd-detail-section { border: 1px solid var(--border); border-radius: 11px; overflow: hidden; background: rgba(0,0,0,.12); }
         .lighbd-detail-section-title { padding: 8px 11px; color: var(--text2); background: rgba(255,255,255,.025); border-bottom: 1px solid var(--border); font-size: .72rem; font-weight: 700; }
         .lighbd-detail-content { margin: 0; padding: 11px 12px; max-height: 340px; overflow: auto; color: var(--text); font-family: monospace; font-size: .75rem; line-height: 1.52; white-space: pre-wrap; word-break: break-word; }
@@ -4081,7 +4081,8 @@
             <span>모델: <span id="lighbd-llm-model" style="color:var(--text);">-</span></span>
         </div>
         <div style="display:flex; gap:10px; font-size:0.7rem; color:var(--text2); font-family:monospace; flex-wrap:wrap;">
-            <span>토큰: <span id="lighbd-llm-tokens" style="color:var(--text);">0</span></span>
+            <span>입력: <span id="lighbd-llm-prompt-tokens" style="color:var(--text);">0</span></span>
+            <span>출력: <span id="lighbd-llm-tokens" style="color:var(--text);">0</span></span>
             <span>경과: <span id="lighbd-llm-elapsed" style="color:var(--text);">0.00</span>s</span>
             <span><span id="lighbd-llm-tps" style="color:var(--text);">0.0</span> t/s</span>
             <span>TTFT: <span id="lighbd-llm-ttft" style="color:var(--text);">-</span></span>
@@ -13716,6 +13717,7 @@
                 status: '대기',
                 output: '',
                 tokens: 0,
+                promptTokens: 0,
                 elapsed: 0,
                 tps: 0,
                 ttft: null,
@@ -13729,6 +13731,7 @@
             _setLlbStat('lighbd-llm-model', state.model || '-');
             _setLlbStat('lighbd-llm-status', state.status || '대기');
             _setLlbStat('lighbd-llm-tokens', state.tokens ?? 0);
+            _setLlbStat('lighbd-llm-prompt-tokens', state.promptTokens ?? 0);
             _setLlbStat('lighbd-llm-elapsed', Number(state.elapsed || 0).toFixed(2));
             _setLlbStat('lighbd-llm-tps', Number(state.tps || 0).toFixed(1));
             _setLlbStat('lighbd-llm-ttft', state.ttft == null ? '-' : `${Math.round(state.ttft * 1000)}ms`);
@@ -13771,6 +13774,7 @@
                 state.status = (state.callName ? state.callName + ' · ' : '') + '시작';
                 state.output = '';
                 state.tokens = 0;
+                state.promptTokens = 0;
                 state.elapsed = 0;
                 state.tps = 0;
                 state.ttft = null;
@@ -13791,6 +13795,7 @@
                 state.active = false;
                 state.output = data.text || state.output;
                 state.tokens = data.completion_tokens ?? state.tokens;
+                state.promptTokens = data.prompt_tokens ?? state.promptTokens;
                 if (data.elapsed !== undefined && data.elapsed !== null) state.elapsed = Number(data.elapsed);
                 state.tps = Number(data.tps ?? state.tps ?? 0);
                 if (data.ttft !== undefined && data.ttft !== null) state.ttft = Number(data.ttft);
@@ -13862,7 +13867,6 @@
                         <div style="color:var(--text2); font-size:0.85rem;">불러오는 중...</div>
                     </div>
                 </div>`;
-            overlay.addEventListener('click', (e) => { if (e.target === overlay) closeLighbdHistoryModal(); });
             overlay.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeLighbdHistoryModal(); });
             document.body.appendChild(overlay);
             overlay.focus();
@@ -13895,7 +13899,7 @@
             list.innerHTML = _lighbdHistoryRecords.map((r, i) => {
                 const isError = r.status === 'error';
                 const outputText = r.output || '';
-                const stats = `토큰 ${r.completion_tokens ?? 0} · ${r.elapsed ?? 0}s · ${r.tps ?? 0} t/s` + (r.ttft ? ` · TTFT ${r.ttft}s` : '');
+                const stats = `입력 ${r.prompt_tokens ?? 0} · 출력 ${r.completion_tokens ?? 0} · ${r.elapsed ?? 0}s · ${r.tps ?? 0} t/s` + (r.ttft ? ` · TTFT ${r.ttft}s` : '');
                 const callBadge = r.call_name
                     ? `<span style="font-size:0.7rem; padding:1px 6px; border-radius:3px; background:rgba(0,188,212,0.16); color:#4dd0e1; font-weight:600;">${escapeHtml(r.call_name)}</span>`
                     : '';
@@ -13956,6 +13960,7 @@
                         <button class="lighbd-modal-close" onclick="closeLighbdHistoryDetail()" aria-label="닫기">✕</button>
                     </div>
                     <div class="lighbd-detail-stats">
+                        <div class="lighbd-detail-stat"><span>입력 토큰</span><strong>${escapeHtml(String(record.prompt_tokens ?? 0))}</strong></div>
                         <div class="lighbd-detail-stat"><span>완료 토큰</span><strong>${escapeHtml(String(record.completion_tokens ?? 0))}</strong></div>
                         <div class="lighbd-detail-stat"><span>경과 시간</span><strong>${escapeHtml(String(record.elapsed ?? 0))}s</strong></div>
                         <div class="lighbd-detail-stat"><span>처리 속도</span><strong>${escapeHtml(String(record.tps ?? 0))} t/s</strong></div>
@@ -13972,7 +13977,6 @@
                         </section>
                     </div>
                 </div>`;
-            overlay.addEventListener('click', (e) => { if (e.target === overlay) closeLighbdHistoryDetail(); });
             overlay.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeLighbdHistoryDetail(); });
             document.body.appendChild(overlay);
             overlay.focus();
@@ -37431,6 +37435,11 @@
                                     <summary style="cursor:pointer; font-size:0.8rem; font-weight:600;">📝 manga.txt (만화 대사와 말풍선 형태)</summary>
                                     <textarea id="lighbd-prompt-call3_manga" data-lighbd-prompt="call3_manga" style="width:100%; height:320px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;"></textarea>
                                 </details>
+                                <details style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
+                                    <summary style="cursor:pointer; font-size:0.8rem; font-weight:600; color:var(--warning);">📝 manga_nsfw.txt (NSFW 보강 — #nsfw_soft/#nsfw_hard)</summary>
+                                    <div style="margin-top:6px; font-size:0.7rem; color:var(--text2); line-height:1.5;">manga 모드이고 생성 설정의 <strong>NSFW 태깅</strong> 토글이 ON일 때만 manga 프롬프트 끝에 주입됩니다. 일반 장면엔 노출되지 않습니다.</div>
+                                    <textarea id="lighbd-prompt-call3_manga_nsfw" data-lighbd-prompt="call3_manga_nsfw" style="width:100%; height:220px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;" placeholder="로딩 중..."></textarea>
+                                </details>
                             </div>
                             <div id="lighbd-prompt-status" style="margin-top:8px; font-size:0.72rem; color:var(--text2);"></div>
                         </div>
@@ -37517,7 +37526,7 @@
                 call1_enhance: 'call1_enhance',
                 call2_jailbreak: 'jailbreak', call2_job: 'job', call2_prefill: 'call2_prefill',
                 call2_thoughts: 'thoughts', call2_system: 'system', call2_format: 'format', call2_preset: 'preset',
-                call3_speak: 'call3_speak', call3_manga: 'call3_manga', call2_fix: 'call2_fix',
+                call3_speak: 'call3_speak', call3_manga: 'call3_manga', call3_manga_nsfw: 'call3_manga_nsfw', call2_fix: 'call2_fix',
             };
             statusEl.textContent = '불러오는 중...';
             try {
@@ -37541,7 +37550,7 @@
                 call1_enhance: 'call1_enhance',
                 call2_jailbreak: 'jailbreak', call2_job: 'job', call2_prefill: 'call2_prefill',
                 call2_thoughts: 'thoughts', call2_system: 'system', call2_format: 'format', call2_preset: 'preset',
-                call3_speak: 'call3_speak', call3_manga: 'call3_manga', call2_fix: 'call2_fix',
+                call3_speak: 'call3_speak', call3_manga: 'call3_manga', call3_manga_nsfw: 'call3_manga_nsfw', call2_fix: 'call2_fix',
             };
             const body = {};
             for (const [k, id] of Object.entries(fields)) {

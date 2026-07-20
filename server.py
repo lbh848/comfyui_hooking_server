@@ -3269,6 +3269,7 @@ async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse
                         await write_event("done", {
                             "text": text,
                             "completion_tokens": tokens,
+                            "prompt_tokens": llm_service._approx_input_tokens(messages),
                             "elapsed": elapsed,
                             "tps": tps,
                             "ttft": None,
@@ -3297,15 +3298,18 @@ async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse
             else:
                 tokens = max(1, len(text) // 3)
                 tps = (tokens / elapsed) if elapsed > 0 else 0.0
+                prompt_tokens = llm_service._approx_input_tokens(messages)
                 # 히스토리 로깅
                 llm_service._log_history(
                     service=service, model=use_model_resolved,
                     messages=messages, output=text,
                     completion_tokens=tokens, elapsed=elapsed, tps=tps,
+                    prompt_tokens=prompt_tokens,
                 )
                 await write_event("done", {
                     "text": text,
                     "completion_tokens": tokens,
+                    "prompt_tokens": prompt_tokens,
                     "elapsed": elapsed,
                     "tps": tps,
                     "ttft": None,

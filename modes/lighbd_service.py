@@ -291,6 +291,7 @@ async def _stream_with_frontend_notify(prompt_id: str, messages: list):
         "input": messages,
         "output": "",
         "completion_tokens": 0,
+        "prompt_tokens": 0,
         "elapsed": 0.0,
         "tps": 0.0,
     }
@@ -308,6 +309,7 @@ async def _stream_with_frontend_notify(prompt_id: str, messages: list):
         if ev["type"] == "done":
             final_record["output"] = ev.get("text", "")
             final_record["completion_tokens"] = ev.get("completion_tokens", 0)
+            final_record["prompt_tokens"] = ev.get("prompt_tokens", 0)
             final_record["elapsed"] = round(ev.get("elapsed", 0.0), 3)
             final_record["tps"] = round(ev.get("tps", 0.0), 1)
             if ev.get("ttft") is not None:

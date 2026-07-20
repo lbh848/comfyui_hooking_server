@@ -216,7 +216,7 @@ HISTORY_BACKUP_PATH = os.path.join(HISTORY_BACKUP_DIR, "llm_history.jsonl.bak")
 
 def _log_history(service: str, model: str, messages: list, output: str,
                  completion_tokens: int, elapsed: float, tps: float,
-                 ttft: float = None, error: str = ""):
+                 ttft: float = None, error: str = "", prompt_tokens: int = 0):
     """입출력 이력을 logs/llm_history.jsonl 에 append. 최근 20개까지만 유지.
 
     단일 JSON Lines 파일에 input/output 필드로 분리되어 있어
@@ -232,6 +232,7 @@ def _log_history(service: str, model: str, messages: list, output: str,
         "input": messages,
         "output": output,
         "completion_tokens": completion_tokens,
+        "prompt_tokens": prompt_tokens or 0,
         "elapsed": round(elapsed, 3),
         "tps": round(tps, 1),
     }
@@ -1528,6 +1529,7 @@ async def callLLM3Stream(messages: list, model: str = None, log_history: bool = 
 
     final_text = ""
     final_tokens = 0
+    final_prompt_tokens = 0
     final_elapsed = 0.0
     final_tps = 0.0
     final_ttft = None
@@ -1549,6 +1551,7 @@ async def callLLM3Stream(messages: list, model: str = None, log_history: bool = 
             if ev["type"] == "done":
                 final_text = ev.get("text", "")
                 final_tokens = ev.get("completion_tokens", 0)
+                final_prompt_tokens = ev.get("prompt_tokens", 0)
                 final_elapsed = ev.get("elapsed", 0.0)
                 final_tps = ev.get("tps", 0.0)
                 final_ttft = ev.get("ttft")
@@ -1567,7 +1570,7 @@ async def callLLM3Stream(messages: list, model: str = None, log_history: bool = 
                 service=service, model=use_model, messages=messages,
                 output=final_text, completion_tokens=final_tokens,
                 elapsed=final_elapsed, tps=final_tps, ttft=final_ttft,
-                error=error_msg,
+                error=error_msg, prompt_tokens=final_prompt_tokens,
             )
     except Exception as e:
         print(f"[LLM3] 스트리밍 호출 예외: {e}")
@@ -1939,6 +1942,28 @@ def _approx_tokens(text: str) -> int:
     return max(1, len(text) // 3)
 
 
+def _approx_input_tokens(messages: list) -> int:
+    """provider 가 usage 를 주지 않을 때 입력 토큰 근사치.
+
+    messages 각 항목의 content 에서 텍스트를 추출해 합산.
+    content 가 list(비전)인 경우 text 파트만 합산(이미지 분량은 제외).
+    """
+    if not messages:
+        return 0
+    total = 0
+    for m in messages:
+        content = m.get("content") if isinstance(m, dict) else None
+        if isinstance(content, str):
+            total += len(content)
+        elif isinstance(content, list):
+            for part in content:
+                if isinstance(part, dict) and part.get("type") == "text":
+                    total += len(part.get("text") or "")
+                elif isinstance(part, str):
+                    total += len(part)
+    return max(1, total // 3)
+
+
 async def _stream_openai_compat(messages: list, model: str, url: str,
                                  api_key: str = "", extra_headers: dict = None,
                                  service: str = "openai-compat",
@@ -1981,6 +2006,7 @@ async def _stream_openai_compat(messages: list, model: str, url: str,
     ttft = None
     accumulated = []
     completion_tokens = None
+    prompt_tokens = None
 
     _llm_log(f"{service} stream 요청: url={norm_url} model={model} family={reasoning_family}")
     yield {"type": "start", "service": service, "model": model}
@@ -2013,6 +2039,9 @@ async def _stream_openai_compat(messages: list, model: str, url: str,
                         ct = chunk["usage"].get("completion_tokens")
                         if ct:
                             completion_tokens = ct
+                        pt = chunk["usage"].get("prompt_tokens")
+                        if pt:
+                            prompt_tokens = pt
 
                     choices = chunk.get("choices") or []
                     if choices:
@@ -2029,12 +2058,15 @@ async def _stream_openai_compat(messages: list, model: str, url: str,
         elapsed = time.time() - t0
         if completion_tokens is None:
             completion_tokens = _approx_tokens(full)
+        if prompt_tokens is None:
+            prompt_tokens = _approx_input_tokens(messages)
         tps = (completion_tokens / elapsed) if elapsed > 0 else 0.0
-        _llm_log(f"{service} stream 완료: {len(full)}자, tokens={completion_tokens}, elapsed={elapsed:.2f}s, tps={tps:.1f}")
+        _llm_log(f"{service} stream 완료: {len(full)}자, tokens={completion_tokens}, prompt_tokens={prompt_tokens}, elapsed={elapsed:.2f}s, tps={tps:.1f}")
         yield {
             "type": "done",
             "text": full,
             "completion_tokens": completion_tokens,
+            "prompt_tokens": prompt_tokens,
             "elapsed": elapsed,
             "tps": tps,
             "ttft": ttft,
@@ -2067,6 +2099,7 @@ async def _stream_copilot(messages: list, model: str):
     ttft = None
     accumulated = []
     completion_tokens = None
+    prompt_tokens = None
 
     reasoning_family = _detect_reasoning_family(
         model,
@@ -2112,6 +2145,9 @@ async def _stream_copilot(messages: list, model: str):
                         ct = chunk["usage"].get("completion_tokens")
                         if ct:
                             completion_tokens = ct
+                        pt = chunk["usage"].get("prompt_tokens")
+                        if pt:
+                            prompt_tokens = pt
                     choices = chunk.get("choices") or []
                     if choices:
                         delta = choices[0].get("delta", {}) or {}
@@ -2126,12 +2162,15 @@ async def _stream_copilot(messages: list, model: str):
         elapsed = time.time() - t0
         if completion_tokens is None:
             completion_tokens = _approx_tokens(full)
+        if prompt_tokens is None:
+            prompt_tokens = _approx_input_tokens(messages)
         tps = (completion_tokens / elapsed) if elapsed > 0 else 0.0
-        _llm_log(f"copilot stream 완료: {len(full)}자, tokens={completion_tokens}, elapsed={elapsed:.2f}s")
+        _llm_log(f"copilot stream 완료: {len(full)}자, tokens={completion_tokens}, prompt_tokens={prompt_tokens}, elapsed={elapsed:.2f}s")
         yield {
             "type": "done",
             "text": full,
             "completion_tokens": completion_tokens,
+            "prompt_tokens": prompt_tokens,
             "elapsed": elapsed,
             "tps": tps,
             "ttft": ttft,
@@ -2164,6 +2203,7 @@ async def _stream_gemini(messages: list, model: str):
     ttft = None
     accumulated = []
     completion_tokens = None
+    prompt_tokens = None
 
     _llm_log(f"gemini stream 요청: model={model}")
     yield {"type": "start", "service": "gemini", "model": model}
@@ -2193,6 +2233,8 @@ async def _stream_gemini(messages: list, model: str):
                     md = chunk.get("usageMetadata") or {}
                     if md.get("candidatesTokenCount"):
                         completion_tokens = md["candidatesTokenCount"]
+                    if md.get("promptTokenCount"):
+                        prompt_tokens = md["promptTokenCount"]
                     candidates = chunk.get("candidates") or []
                     if candidates:
                         parts = candidates[0].get("content", {}).get("parts", []) or []
@@ -2207,12 +2249,15 @@ async def _stream_gemini(messages: list, model: str):
         elapsed = time.time() - t0
         if completion_tokens is None:
             completion_tokens = _approx_tokens(full)
+        if prompt_tokens is None:
+            prompt_tokens = _approx_input_tokens(messages)
         tps = (completion_tokens / elapsed) if elapsed > 0 else 0.0
-        _llm_log(f"gemini stream 완료: {len(full)}자, tokens={completion_tokens}, elapsed={elapsed:.2f}s")
+        _llm_log(f"gemini stream 완료: {len(full)}자, tokens={completion_tokens}, prompt_tokens={prompt_tokens}, elapsed={elapsed:.2f}s")
         yield {
             "type": "done",
             "text": full,
             "completion_tokens": completion_tokens,
+            "prompt_tokens": prompt_tokens,
             "elapsed": elapsed,
             "tps": tps,
             "ttft": ttft,
@@ -2253,6 +2298,7 @@ async def _stream_claude(messages: list, model: str):
     ttft = None
     accumulated = []
     completion_tokens = None
+    prompt_tokens = None
 
     _llm_log(f"claude stream 요청: model={model}")
     yield {"type": "start", "service": "claude", "model": model}
@@ -2300,17 +2346,22 @@ async def _stream_claude(messages: list, model: str):
                         usage = (chunk.get("message") or {}).get("usage", {}) or {}
                         if usage.get("output_tokens"):
                             completion_tokens = usage["output_tokens"]
+                        if usage.get("input_tokens"):
+                            prompt_tokens = usage["input_tokens"]
 
         full = "".join(accumulated)
         elapsed = time.time() - t0
         if completion_tokens is None:
             completion_tokens = _approx_tokens(full)
+        if prompt_tokens is None:
+            prompt_tokens = _approx_input_tokens(messages)
         tps = (completion_tokens / elapsed) if elapsed > 0 else 0.0
-        _llm_log(f"claude stream 완료: {len(full)}자, tokens={completion_tokens}, elapsed={elapsed:.2f}s")
+        _llm_log(f"claude stream 완료: {len(full)}자, tokens={completion_tokens}, prompt_tokens={prompt_tokens}, elapsed={elapsed:.2f}s")
         yield {
             "type": "done",
             "text": full,
             "completion_tokens": completion_tokens,
+            "prompt_tokens": prompt_tokens,
             "elapsed": elapsed,
             "tps": tps,
             "ttft": ttft,
@@ -2386,12 +2437,14 @@ async def _stream_vertex_sdk(messages: list, model: str):
         full = "".join(accumulated)
         elapsed = time.time() - t0
         completion_tokens = _approx_tokens(full)
+        prompt_tokens = _approx_input_tokens(messages)
         tps = (completion_tokens / elapsed) if elapsed > 0 else 0.0
-        _llm_log(f"vertex stream 완료: {len(full)}자, elapsed={elapsed:.2f}s")
+        _llm_log(f"vertex stream 완료: {len(full)}자, prompt_tokens={prompt_tokens}, elapsed={elapsed:.2f}s")
         yield {
             "type": "done",
             "text": full,
             "completion_tokens": completion_tokens,
+            "prompt_tokens": prompt_tokens,
             "elapsed": elapsed,
             "tps": tps,
             "ttft": ttft,
@@ -2532,6 +2585,7 @@ async def callLLMStream(messages: list, model: str = None, log_history: bool = T
 
     final_text = ""
     final_tokens = 0
+    final_prompt_tokens = 0
     final_elapsed = 0.0
     final_tps = 0.0
     final_ttft = None
@@ -2541,6 +2595,7 @@ async def callLLMStream(messages: list, model: str = None, log_history: bool = T
         if ev["type"] == "done":
             final_text = ev.get("text", "")
             final_tokens = ev.get("completion_tokens", 0)
+            final_prompt_tokens = ev.get("prompt_tokens", 0)
             final_elapsed = ev.get("elapsed", 0.0)
             final_tps = ev.get("tps", 0.0)
             final_ttft = ev.get("ttft")
@@ -2553,7 +2608,7 @@ async def callLLMStream(messages: list, model: str = None, log_history: bool = T
             service=service, model=use_model, messages=messages,
             output=final_text, completion_tokens=final_tokens,
             elapsed=final_elapsed, tps=final_tps, ttft=final_ttft,
-            error=error_msg,
+            error=error_msg, prompt_tokens=final_prompt_tokens,
         )
 
 
@@ -2583,6 +2638,7 @@ async def callLLM2Stream(messages: list, model: str = None, log_history: bool = 
 
     final_text = ""
     final_tokens = 0
+    final_prompt_tokens = 0
     final_elapsed = 0.0
     final_tps = 0.0
     final_ttft = None
@@ -2604,6 +2660,7 @@ async def callLLM2Stream(messages: list, model: str = None, log_history: bool = 
             if ev["type"] == "done":
                 final_text = ev.get("text", "")
                 final_tokens = ev.get("completion_tokens", 0)
+                final_prompt_tokens = ev.get("prompt_tokens", 0)
                 final_elapsed = ev.get("elapsed", 0.0)
                 final_tps = ev.get("tps", 0.0)
                 final_ttft = ev.get("ttft")
@@ -2616,7 +2673,7 @@ async def callLLM2Stream(messages: list, model: str = None, log_history: bool = 
                 service=service, model=use_model, messages=messages,
                 output=final_text, completion_tokens=final_tokens,
                 elapsed=final_elapsed, tps=final_tps, ttft=final_ttft,
-                error=error_msg,
+                error=error_msg, prompt_tokens=final_prompt_tokens,
             )
     finally:
         _current_config["llm_api_key"] = saved_key
