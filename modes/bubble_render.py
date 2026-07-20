@@ -1196,49 +1196,133 @@ def _draw_whisper(overlay, rect, anchor, fill, border, border_w, with_tail,
     _stroke_dashed_path(draw, centerline, dash_on * 0.8, dash_off, tail_w, border)
 
 
-def _cloud_body_mask(size, rect):
+def _cloud_lobe_profile(theta, lobes):
+    """구름 lobe(cos² 종)들의 합으로 해당 방향(θ)의 반경 증분을 반환.
+
+    각 lobe 는 (중심각 rad, 진폭, 반폭 rad). |Δθ| < 반폭*π/2 일 때만 양수 기여.
+    """
+    total = 0.0
+    for center, amp, half_span in lobes:
+        d = (theta - center + math.pi) % (2.0 * math.pi) - math.pi
+        bell = math.cos(d / max(half_span, 1e-6))
+        if bell <= 0.0:
+            continue
+        total += amp * bell * bell
+    return total
+
+
+def _cloud_body_polygon(rect, *, seed=0):
+    """생각구름 몸통 외곽 폴리곤을 만든다.
+
+    기저 타원 위에 비대칭 lobe(위·오른쪽은 크고 많고, 아래는 평평)를 덧붙여
+    '완벽한 구름'이 아닌 찌그러진 둥근 덩어리로 만든다. 각 정점을 ±1~2px
+    지터해 손그림 외곽선 느낌을 준다. seed 로 결정론적(미리보기=실제 동일).
+    """
     x1, y1, x2, y2 = [float(v) for v in rect]
     cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
-    rx, ry = (x2 - x1) / 2.0, (y2 - y1) / 2.0
-    mask = Image.new("L", size, 0)
-    cloud = ImageDraw.Draw(mask)
-    cloud.ellipse([cx - rx * 0.92, cy - ry * 0.84, cx + rx * 0.92, cy + ry * 0.84], fill=255)
-    for ox, oy, scale_x, scale_y in (
-        (-0.76, -0.12, 0.24, 0.31), (-0.60, -0.56, 0.31, 0.33),
-        (-0.26, -0.72, 0.34, 0.28), (0.14, -0.74, 0.34, 0.27),
-        (0.52, -0.58, 0.31, 0.33), (0.76, -0.18, 0.24, 0.31),
-        (0.77, 0.22, 0.23, 0.31), (0.55, 0.58, 0.31, 0.32),
-        (0.18, 0.73, 0.35, 0.27), (-0.24, 0.72, 0.34, 0.28),
-        (-0.59, 0.55, 0.31, 0.33), (-0.77, 0.20, 0.23, 0.31),
-    ):
-        lobe_x, lobe_y = cx + ox * rx, cy + oy * ry
-        lobe_rx, lobe_ry = rx * scale_x, ry * scale_y
-        cloud.ellipse([lobe_x - lobe_rx, lobe_y - lobe_ry, lobe_x + lobe_rx, lobe_y + lobe_ry], fill=255)
-    return mask
+    rx = max(1.0, (x2 - x1) / 2.0)
+    ry = max(1.0, (y2 - y1) / 2.0)
+    base = min(rx, ry)
+    rng = random.Random(int(seed) & 0x7FFFFFFF)
+    # (중심각[deg], 진폭[base 비율], 반폭[rad]). 위/오른쪽에 큰 lobe, 왼쪽은
+    # 작게, 아래(≈90°)는 비워 평평하게 — 좌우 대칭이 아닌 흐트러진 배치.
+    lobes = [
+        (268.0, 0.34, 0.62),  # 위 가운데(큼)
+        (224.0, 0.30, 0.58),  # 위-왼(큼)
+        (316.0, 0.33, 0.60),  # 위-오른(큼)
+        (4.0, 0.30, 0.64),    # 오른(큼)
+        (164.0, 0.20, 0.54),  # 왼(작음)
+        (42.0, 0.16, 0.48),   # 아래-오른(작음, 부드럽게)
+    ]
+    lobes_rad = [(math.radians(a), amp, hs) for (a, amp, hs) in lobes]
+    samples = 220
+    jitter = min(2.0, base * 0.012)
+    pts = []
+    for i in range(samples):
+        theta = 2.0 * math.pi * i / samples
+        nx, ny = math.cos(theta), math.sin(theta)
+        amp = _cloud_lobe_profile(theta, lobes_rad) * base
+        bx = cx + rx * nx
+        by = cy + ry * ny
+        jx = rng.uniform(-1.0, 1.0) * jitter
+        jy = rng.uniform(-1.0, 1.0) * jitter
+        pts.append((bx + nx * amp + jx, by + ny * amp + jy))
+    return pts
 
 
-def _draw_cloud(overlay, rect, anchor, fill, border, border_w, with_tail):
-    """굴곡진 cloud 몸통과 거리 조건을 통과한 원형 생각 꼬리를 그린다."""
-    mask = _cloud_body_mask(overlay.size, rect)
-    _composite_union_mask(overlay, mask, fill, border, border_w)
+def _draw_oriented_ellipse(overlay, center, radii, angle, *, fill, outline, width):
+    """회전·찌그러진 타원을 별도 타일에 그려 회전시킨 뒤 합성(깨끗한 외곽선)."""
+    rx, ry = float(radii[0]), float(radii[1])
+    pad = max(2, int(round(width)) + 2)
+    w = max(4, int(math.ceil(rx * 2.0)) + pad * 2)
+    h = max(4, int(math.ceil(ry * 2.0)) + pad * 2)
+    tile = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    ImageDraw.Draw(tile).ellipse(
+        [pad, pad, w - pad, h - pad],
+        fill=fill, outline=outline, width=max(1, int(round(width))),
+    )
+    rot = tile.rotate(math.degrees(angle), expand=True, resample=Image.BICUBIC)
+    ox = int(round(center[0] - rot.width / 2.0))
+    oy = int(round(center[1] - rot.height / 2.0))
+    overlay.alpha_composite(rot, (ox, oy))
+
+
+def _draw_cloud(overlay, rect, anchor, fill, border, border_w, with_tail, *, seed=0):
+    """찌그러진 둥근 덩어리 구름 몸통 + (거리 조건) 찌그러진 타원 생각 꼬리.
+
+    몸통은 _cloud_body_polygon 의 지터된 폴리곤을 채우고 외곽선을 폴리라인으로
+    그려 손그림 느낌을 준다(균일 MaxFilter 테두리와 달리 윤곽이 살짝 흔들림).
+    꼬리는 크기 차이가 큰 찌그러진 타원 3개를 살짝 휜 곡선을 따라 anchor 쪽에
+    배치한다(완벽한 원의 일직선 정렬이 아님).
+    """
+    pts = _cloud_body_polygon(rect, seed=seed)
+    layer = Image.new("RGBA", overlay.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(layer)
+    int_pts = [(int(p[0]), int(p[1])) for p in pts]
+    draw.polygon(int_pts, fill=fill)
+    outline_w = max(1, int(round(border_w)))
+    draw.line(int_pts + [int_pts[0]], fill=border, width=outline_w, joint="curve")
+    overlay.alpha_composite(layer)
+
     if not with_tail:
         return
     x1, y1, x2, y2 = [float(v) for v in rect]
     rx, ry = (x2 - x1) / 2.0, (y2 - y1) / 2.0
-    draw = ImageDraw.Draw(overlay)
-    outline_w = max(1, int(round(border_w)))
-    base_x, base_y = _ellipse_edge_point(rect, anchor)
     dot_base = min(rx, ry)
-    for fraction, scale in ((0.12, 0.13), (0.39, 0.09), (0.68, 0.055)):
-        dot_x = base_x + (anchor[0] - base_x) * fraction
-        dot_y = base_y + (anchor[1] - base_y) * fraction
-        dot_radius = max(outline_w * 1.35, dot_base * scale)
-        draw.ellipse(
-            [dot_x - dot_radius, dot_y - dot_radius, dot_x + dot_radius, dot_y + dot_radius],
-            fill=fill,
-            outline=border,
-            width=outline_w,
+    base_x, base_y = _ellipse_edge_point(rect, anchor)
+    dx = float(anchor[0]) - base_x
+    dy = float(anchor[1]) - base_y
+    length = math.hypot(dx, dy)
+    if length < 1.0:
+        return
+    rng = random.Random((int(seed) ^ 0x9E3779B1) & 0x7FFFFFFF)
+    # 꼬리가 일직선이 아니라 살짝 휘도록 베지어 control 을 측면으로 벌린다.
+    px, py = -dy / length, dx / length
+    side = rng.uniform(-1.0, 1.0) * dot_base * 0.18
+    mx = (base_x + float(anchor[0])) / 2.0
+    my = (base_y + float(anchor[1])) / 2.0
+    ctrl = (mx + px * side, my + py * side)
+
+    def _q(t):
+        mt = 1.0 - t
+        return (
+            mt * mt * base_x + 2.0 * mt * t * ctrl[0] + t * t * float(anchor[0]),
+            mt * mt * base_y + 2.0 * mt * t * ctrl[1] + t * t * float(anchor[1]),
         )
+
+    tail_layer = Image.new("RGBA", overlay.size, (0, 0, 0, 0))
+    # (진행 t, 반지름 비율). 몸통 lobe 안쪽으로 들어가는 가장 큰 점은 빼고,
+    # 몸통 바깥에 확실히 떨어지는 중간·작은 점 2개만 — 크기 차이는 크게 유지.
+    for t, scale in ((0.34, 0.13), (0.72, 0.058)):
+        cx, cy = _q(t)
+        r = max(outline_w * 1.35, dot_base * scale)
+        squish = rng.uniform(0.60, 0.80)
+        angle = rng.uniform(-0.55, 0.55)
+        _draw_oriented_ellipse(
+            tail_layer, (cx, cy), (r, r * squish), angle,
+            fill=fill, outline=border, width=outline_w,
+        )
+    overlay.alpha_composite(tail_layer)
 
 
 def _build_organic_body_contour(rect, *, wobble, point_count, seed):
@@ -1286,7 +1370,7 @@ def _draw_layout_bubble(
     """
     shape = shape if shape in ("ellipse", "rounded", "comic", "cloud", "box", "burst", "whisper") else "ellipse"
     if shape == "cloud":
-        _draw_cloud(overlay, rect, anchor, fill, border, border_w, with_tail)
+        _draw_cloud(overlay, rect, anchor, fill, border, border_w, with_tail, seed=seed)
         return
     if shape == "burst":
         # 벡터 impact_balloon.svg 를 rect 를 감싸도록 합성. 꼬리 없음.
