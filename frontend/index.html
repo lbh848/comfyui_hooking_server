@@ -37567,13 +37567,24 @@
         const ILLUSTRATION_CONTEXT_TOGGLE_GROUPS = [
             {
                 key: 'pipeline', title: '파이프라인',
-                description: '장면을 분석하고 대사를 생성하는 LLM 호출 범위를 설정합니다.',
+                description: '장면을 분석하고 대사를 생성하는 LLM 호출 범위와 최종 RAW 프롬프트 출력 구조를 설정합니다.',
                 fields: [
                     {key: 'call1_enabled', label: 'CALL1 컨텍스트 보강', type: 'toggle', help: '최근 대화에서 시각 정보를 먼저 보강합니다.'},
                     {key: 'call3_enabled', label: 'CALL3 대사 생성', type: 'toggle', help: 'CALL3 대사(speak/manga) 생성을 켭니다. CALL2 파싱 실패 시 CALL2-FIX 교정은 항상 동작합니다.'},
                     {key: 'call1_context_turns', label: 'CALL1 최근 메시지 수', type: 'number', min: 0, max: 30, help: 'CALL1에 전달할 최근 대화 수입니다.'},
                     {key: 'call2_context_turns', label: 'CALL2 최근 메시지 수', type: 'number', min: 0, max: 30, help: 'CALL2에 전달할 최근 대화 수입니다.'},
                     {key: 'call3_context_turns', label: 'CALL3 최근 메시지 수', type: 'number', min: 0, max: 30, help: 'CALL3 대사 생성에 전달할 최근 대화 수입니다.'},
+                    {
+                        key: 'prompt_format', label: '프롬프트 입력 형식', type: 'select', stacked: true,
+                        help: '후속 처리기가 해석할 RAW 프롬프트 구조를 선택합니다. 챈섭 공급자가 켜져 있으면 챈섭으로 고정됩니다.',
+                        options: [
+                            {value: 'v1', label: 'V1 — 삽화 모드 비활성화 형식 ([ILXL] / [UPSCALE])'},
+                            {value: 'v3', label: 'V3 — 삽화 모드 활성화 형식 ([SETUP] / [CHAR] / [SUPPLEMENT])'},
+                            {value: 'chansub', label: '챈섭 — Comfy POSITIVE/NEGATIVE (챈섭 공급자 전용)'},
+                        ],
+                    },
+                    {key: 'positive_note', label: '긍정 프롬프트 추가', type: 'textarea', help: '모든 장면의 긍정 프롬프트에 덧붙일 내용을 입력합니다.', stacked: true},
+                    {key: 'negative_note', label: '부정 프롬프트 추가', type: 'textarea', help: '모든 장면의 부정 프롬프트에 덧붙일 내용을 입력합니다.', stacked: true},
                 ],
             },
             {
@@ -37619,23 +37630,6 @@
                     {key: 'context_history', label: 'lb.extra 외형 이력 사용', type: 'toggle', help: '저장된 캐릭터 외형과 복장 정보를 참조합니다.'},
                     {key: 'focus', label: '집중 캐릭터', type: 'text', help: '비워 두면 대화 문맥에서 결정합니다.'},
                     {key: 'direction', label: '우선 연출 지시', type: 'textarea', help: '이번 생성에서 특별히 강조할 연출을 입력합니다.', stacked: true},
-                ],
-            },
-            {
-                key: 'output', title: '프롬프트 출력',
-                description: '삽화 모드 상태에 맞는 실제 RAW 입력 구조를 선택합니다.',
-                fields: [
-                    {
-                        key: 'prompt_format', label: '프롬프트 입력 형식', type: 'select', stacked: true,
-                        help: '후속 처리기가 해석할 RAW 프롬프트 구조를 선택합니다. 챈섭 공급자가 켜져 있으면 챈섭으로 고정됩니다.',
-                        options: [
-                            {value: 'v1', label: 'V1 — 삽화 모드 비활성화 형식 ([ILXL] / [UPSCALE])'},
-                            {value: 'v3', label: 'V3 — 삽화 모드 활성화 형식 ([SETUP] / [CHAR] / [SUPPLEMENT])'},
-                            {value: 'chansub', label: '챈섭 — Comfy POSITIVE/NEGATIVE (챈섭 공급자 전용)'},
-                        ],
-                    },
-                    {key: 'positive_note', label: '긍정 프롬프트 추가', type: 'textarea', help: '모든 장면의 긍정 프롬프트에 덧붙일 내용을 입력합니다.', stacked: true},
-                    {key: 'negative_note', label: '부정 프롬프트 추가', type: 'textarea', help: '모든 장면의 부정 프롬프트에 덧붙일 내용을 입력합니다.', stacked: true},
                 ],
             },
             {
@@ -37724,6 +37718,15 @@
         }
 
         function _renderIllustrationSettingsGroupFields(group) {
+            if (group.key === 'pipeline') {
+                return `
+                    ${group.fields.slice(0, 5).map(field => _renderIllustrationContextField(field)).join('')}
+                    <h4 class="illust-settings-subheading">프롬프트 출력</h4>
+                    ${_renderIllustrationContextField(group.fields[5])}
+                    <div class="illust-settings-paired" aria-label="프롬프트 추가 메모">
+                        ${group.fields.slice(6).map(field => _renderIllustrationContextField(field)).join('')}
+                    </div>`;
+            }
             if (group.key === 'dialogue') {
                 return `
                     ${_renderIllustrationContextField(group.fields[0])}
@@ -37740,13 +37743,6 @@
                     <div class="illust-settings-paired" data-illust-scene-manual aria-label="수동 Scene 수 범위">
                         ${_renderIllustrationContextField(group.fields[5], {compact: true})}
                         ${_renderIllustrationContextField(group.fields[6], {compact: true})}
-                    </div>`;
-            }
-            if (group.key === 'output') {
-                return `
-                    ${_renderIllustrationContextField(group.fields[0])}
-                    <div class="illust-settings-paired">
-                        ${group.fields.slice(1).map(field => _renderIllustrationContextField(field)).join('')}
                     </div>`;
             }
             if (group.key === 'compatibility') {
