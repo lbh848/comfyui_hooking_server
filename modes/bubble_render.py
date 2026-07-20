@@ -1872,6 +1872,65 @@ def _build_organic_body_contour(rect, *, wobble, point_count, seed):
     return make_organic_ellipse((cx, cy), (rx, ry), seed=int(seed), config=shape_config)
 
 
+def _bubble_edge_pad(rect, border_w):
+    """말풍선 몸통을 캔버스 밖으로 밀어내 빗곡선 절단을 유도하기 위한 패딩 두께.
+    테두리 두께의 2배와 본통 단변의 약 6% 중 큰 값."""
+    x1, y1, x2, y2 = [float(v) for v in rect]
+    return max(0, int(round(max(float(border_w) * 2.0, min(x2 - x1, y2 - y1) * 0.06))))
+
+
+def _rect_near_canvas_edge(rect, canvas_size, pad):
+    """rect 가 캔버스 가장자리 pad 이내에 닿아, 패딩-크롭으로 빗곡선 절단이 필요한지."""
+    if pad <= 0:
+        return False
+    x1, y1, x2, y2 = [float(v) for v in rect]
+    cw, ch = canvas_size
+    return (x1 <= pad) or (y1 <= pad) or (x2 >= cw - pad) or (y2 >= ch - pad)
+
+
+def _make_single_body_mask_factory(render_shape, radius):
+    """패딩-크롭 렌더에 쓸 '단일 본통 마스크' 빌더 콜백을 만든다.
+    split 의 두-타원 합집합(_split_body_mask) 과 달리 한 개의 ellipse/comic 만 그린다."""
+    def factory(size, rect):
+        m = Image.new("L", size, 0)
+        md = ImageDraw.Draw(m)
+        if render_shape == "comic":
+            md.polygon(_comic_points(rect, radius), fill=255)
+        else:
+            md.ellipse(rect, fill=255)
+        return m
+    return factory
+
+
+def _composite_padded_bubble(
+    overlay, rect, anchor, mask_factory, *, fill, border, border_w, with_tail,
+    radius, tail_width_scale, tail_max_length_px, halo_px, tail_shape,
+):
+    """캔버스 밖 패딩-크롭 렌더. 캔버스를 사방으로 pad 만큼 임시 확장하고, 몸통을
+    rect 바깥으로 pad 만큼 팽창시켜 그린 뒤 원래 캔버스 영역만 크롭해 합성한다.
+    가장자리에서 몸통이 수직 접선이 아닌 빗곡선으로 잘려 프레임 밖으로 깔끔히 빠진다.
+    mask_factory(padded_size, padded_rect) -> "L" 마스크를 그리는 콜백.
+    텍스트는 별도 렌더이므로 본문 위치에는 영향 없고 몸통만 약간(pad≈6%) 커진다.
+    패딩 영역에 그려진 몸통의 프레임 밖 부분은 크롭으로 버려진다."""
+    bw, bh = overlay.size
+    x1, y1, x2, y2 = [float(v) for v in rect]
+    pad = _bubble_edge_pad(rect, border_w)
+    padded_size = (bw + 2 * pad, bh + 2 * pad)
+    # rect 바깥으로 pad 만큼 팽창한 bbox → 패딩 오프셋(+pad)을 더해 패딩 캔버스
+    # 좌표계로 변환. 중심은 real center+pad 로 대칭 유지된다.
+    padded_rect = [x1, y1, x2 + 2 * pad, y2 + 2 * pad]
+    padded_anchor = (anchor[0] + pad, anchor[1] + pad)
+    mask = mask_factory(padded_size, padded_rect)
+    if with_tail:
+        _add_curved_tail(
+            mask, padded_rect, padded_anchor, tail_shape, radius, border_w, tail_width_scale,
+            max_length_px=tail_max_length_px,
+        )
+    padded_overlay = Image.new("RGBA", padded_size, (0, 0, 0, 0))
+    _composite_union_mask(padded_overlay, mask, fill, border, border_w, halo_px=halo_px)
+    overlay.alpha_composite(padded_overlay.crop((pad, pad, pad + bw, pad + bh)))
+
+
 def _draw_layout_bubble(
     overlay,
     rect,
@@ -1918,29 +1977,16 @@ def _draw_layout_bubble(
         )
         return
     if split and shape in ("ellipse", "comic", "rounded"):
-        # 캔버스 가장자리에 타원 극점이 수직 접선으로 닿아 "벽에 붙은" 느낌이 나는
-        # 걸 피하기 위해 캔버스를 임시로 패딩하고, 두 타원을 rect 바깥으로 pad 만큼
-        # 팽창시켜 그린 뒤 원래 캔버스 영역만 크롭해 합성한다. 가장자리에서 타원이
-        # 수직 접선이 아닌 빗곡선 상태로 잘려 프레임 밖으로 깔끔하게 빠져나간다.
-        # 텍스트는 별도 렌더이므로 본문 위치에는 영향 없고, 몸통만 약간(pad≈6%)
-        # 커진다. 패딩 영역에 그려진 타원의 프레임 밖 부분은 크롭으로 버려진다.
-        bw, bh = overlay.size
-        x1, y1, x2, y2 = [float(v) for v in rect]
-        pad = max(0, int(round(max(float(border_w) * 2.0, min(x2 - x1, y2 - y1) * 0.06))))
-        padded_size = (bw + 2 * pad, bh + 2 * pad)
-        # rect 바깥으로 pad 만큼 팽창한 타원 bbox → 패딩 오프셋(+pad)을 더해
-        # 패딩 캔버스 좌표계로 변환. 중심은 real center+pad 로 대칭 유지된다.
-        padded_rect = [x1, y1, x2 + 2 * pad, y2 + 2 * pad]
-        padded_anchor = (anchor[0] + pad, anchor[1] + pad)
-        mask = _split_body_mask(padded_size, padded_rect)
-        if with_tail:
-            _add_curved_tail(
-                mask, padded_rect, padded_anchor, "ellipse", radius, border_w, tail_width_scale,
-                max_length_px=tail_max_length_px,
-            )
-        padded_overlay = Image.new("RGBA", padded_size, (0, 0, 0, 0))
-        _composite_union_mask(padded_overlay, mask, fill, border, border_w, halo_px=halo_px)
-        overlay.alpha_composite(padded_overlay.crop((pad, pad, pad + bw, pad + bh)))
+        # 긴 대사(5줄 이상)의 두-타원 합집합 본통도 캔버스 밖 패딩-크롭으로 가장자리
+        # 빗곡선 절단. mask_factory 로 _split_body_mask(위/아래 두 타원 합집합) 만 넘기고
+        # 나머지 패딩/크롭/꼬리/합성은 _composite_padded_bubble 에서 공통 처리한다.
+        _composite_padded_bubble(
+            overlay, rect, anchor,
+            lambda sz, pr: _split_body_mask(sz, pr),
+            fill=fill, border=border, border_w=border_w, with_tail=with_tail,
+            radius=radius, tail_width_scale=tail_width_scale,
+            tail_max_length_px=tail_max_length_px, halo_px=halo_px, tail_shape="ellipse",
+        )
         return
     if organic and shape in ("ellipse", "comic"):
         try:
@@ -1967,6 +2013,20 @@ def _draw_layout_bubble(
             print(f"[BUBBLE_RENDER] ⚠ 유기형 외곽선 생성 실패 → legacy 폴백: {e}")
             traceback.print_exc()
     render_shape = "comic" if shape == "rounded" else shape
+    # 캔버스 가장자리에 닿는 일반 대사(ellipse/comic/rounded)도 split 과 동일한
+    # 패딩-크롭으로 빗곡선 절단을 적용한다. 내부 여백이 충분한 말풍선은 그대로 두고,
+    # box(독백)는 형상상 제외한다. organic 은 이미 곡선이라 여기서 다루지 않는다.
+    if render_shape in ("ellipse", "comic"):
+        pad = _bubble_edge_pad(rect, border_w)
+        if _rect_near_canvas_edge(rect, overlay.size, pad):
+            _composite_padded_bubble(
+                overlay, rect, anchor,
+                _make_single_body_mask_factory(render_shape, radius),
+                fill=fill, border=border, border_w=border_w, with_tail=with_tail,
+                radius=radius, tail_width_scale=tail_width_scale,
+                tail_max_length_px=tail_max_length_px, halo_px=halo_px, tail_shape=render_shape,
+            )
+            return
     mask = Image.new("L", overlay.size, 0)
     mask_draw = ImageDraw.Draw(mask)
     if render_shape == "comic":
