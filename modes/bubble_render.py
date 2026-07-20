@@ -19,6 +19,7 @@ compose_bubble() 하나만이 말풍선 렌더의 단일 소스다. 미리보기
 """
 
 import io
+import hashlib
 import itertools
 import math
 import os
@@ -792,13 +793,11 @@ def _ellipse_edge_geometry(rect, anchor):
 
 
 _IMPACT_SVG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "impact_balloon.svg")
-_IMPACT_SVG_CACHE = None  # (outer_pts, inner_pts, inner_bbox)
 
 # 다중 임팩트 디자인 레지스트리. modes/impact_balloons/impact_NN.svg 를 읽어
-# (id, outer, inner, inner_bbox) 리스트로 캐싱. burst 렌더 시 각 디자인을 rect에
-# 맞춰 점수화(_score_impact_variant)해 최고점 디자인을 자동 선택한다.
+# (id, outer, inner, inner_bbox) 리스트 반환. burst 렌더 시 매 호출마다 파일을
+# 읽고(캐시 없음), 렌더 파라미터로 시드 결정론적으로 변종 하나를 무작위 선택한다.
 _IMPACT_BALLOONS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "impact_balloons")
-_IMPACT_BALLOONS_CACHE = None  # list[(id, outer, inner, inner_bbox)] | None(폴백)
 
 
 def _tokenize_svg_path(d):
@@ -863,57 +862,44 @@ def _points_bbox(pts):
 
 
 def _load_impact_svg():
-    """impact_balloon.svg 를 파싱해 (외곽 점열, 내부 점열, 내부 bbox) 로 캐싱.
+    """impact_balloon.svg 를 파싱해 (외곽 점열, 내부 점열, 내부 bbox) 반환.
 
     SVG 구조: 첫 path(검정 #231815)가 burst 외곽, 둘째 path(흰 #ffffff)가
-    살짝 작게 들어간 내부 몸통. 이 간격이 렌더 시 테두리 두께가 된다.
+    살짝 작게 들어간 내부 몸통. 캐시 없이 매 호출마다 파일을 읽는다(요청 사양).
     """
-    global _IMPACT_SVG_CACHE
-    if _IMPACT_SVG_CACHE is not None:
-        return _IMPACT_SVG_CACHE
     try:
         tree = ET.parse(_IMPACT_SVG_PATH)
     except (FileNotFoundError, OSError) as e:
         print(f"[BUBBLE_RENDER] ⚠ impact SVG 로드 실패({_IMPACT_SVG_PATH}): {e}")
         traceback.print_exc()
-        _IMPACT_SVG_CACHE = (None, None, None)
-        return _IMPACT_SVG_CACHE
+        return (None, None, None)
     except ET.ParseError as e:
         print(f"[BUBBLE_RENDER] ⚠ impact SVG 파싱 실패: {e}")
         traceback.print_exc()
-        _IMPACT_SVG_CACHE = (None, None, None)
-        return _IMPACT_SVG_CACHE
+        return (None, None, None)
 
     paths = tree.findall(".//{http://www.w3.org/2000/svg}path")
     if len(paths) < 2:
         print(f"[BUBBLE_RENDER] ⚠ impact SVG path 부족({len(paths)}개), 2개 필요")
-        _IMPACT_SVG_CACHE = (None, None, None)
-        return _IMPACT_SVG_CACHE
+        return (None, None, None)
     outer = _parse_quadratic_path(paths[0].get("d", ""))
     inner = _parse_quadratic_path(paths[1].get("d", ""))
     if not outer or not inner:
         print("[BUBBLE_RENDER] ⚠ impact SVG path 점열 생성 실패(빈 점열)")
-        _IMPACT_SVG_CACHE = (None, None, None)
-        return _IMPACT_SVG_CACHE
-    _IMPACT_SVG_CACHE = (outer, inner, _points_bbox(inner))
-    return _IMPACT_SVG_CACHE
+        return (None, None, None)
+    return (outer, inner, _points_bbox(inner))
 
 
 def _load_impact_svgs():
-    """modes/impact_balloons/impact_NN.svg 들을 로드해 변종 리스트로 캐싱.
+    """modes/impact_balloons/impact_NN.svg 들을 로드해 변종 리스트 반환.
 
     반환: [(id, outer, inner, inner_bbox), ...]. 디렉토리/파일이 없거나 파싱에
     전부 실패하면 None → 호출처에서 단일 impact_balloon.svg 폴백으로 빠진다.
-    정렬은 파일명 오름차순(impact_01 → impact_05)으로 결정론적.
+    정렬은 파일명 오름차순(impact_01 → impact_05). 캐시 없이 매 호출마다 읽는다.
     """
-    global _IMPACT_BALLOONS_CACHE
-    if _IMPACT_BALLOONS_CACHE is not None:
-        return _IMPACT_BALLOONS_CACHE
-
     if not os.path.isdir(_IMPACT_BALLOONS_DIR):
         print(f"[BUBBLE_RENDER] impact_balloons 디렉토리 없음 → 단일 SVG 폴백: {_IMPACT_BALLOONS_DIR}")
-        _IMPACT_BALLOONS_CACHE = None
-        return _IMPACT_BALLOONS_CACHE
+        return None
 
     variants = []
     files = sorted(f for f in os.listdir(_IMPACT_BALLOONS_DIR) if f.lower().endswith(".svg"))
@@ -938,11 +924,9 @@ def _load_impact_svgs():
 
     if not variants:
         print("[BUBBLE_RENDER] ⚠ impact_balloons 에서 사용 가능한 변종 없음 → 단일 SVG 폴백")
-        _IMPACT_BALLOONS_CACHE = None
-        return _IMPACT_BALLOONS_CACHE
+        return None
 
-    _IMPACT_BALLOONS_CACHE = variants
-    return _IMPACT_BALLOONS_CACHE
+    return variants
 
 
 def _poly_area(poly):
@@ -956,9 +940,6 @@ def _poly_area(poly):
         x2, y2 = poly[(i + 1) % n]
         s += x1 * y2 - x2 * y1
     return abs(s) * 0.5
-
-
-_IMPACT_VARIANT_CACHE = {}  # (rect + canvas + salt) → 선택된 변종 인덱스(int)
 
 
 def _impact_variant_transform(outer, inner, inner_bbox, rect, salt=""):
@@ -1057,15 +1038,14 @@ def _score_impact_variant(outer, inner, inner_bbox, rect, canvas_size, face_box=
     return coverage * w_coverage - overflow * w_overflow - face_overlap * w_face
 
 
-def _select_impact_variant(rect, canvas_size, face_box=None):
-    """5종 변종 중 rect/canvas/화자위치 에 가장 적합한 변종을 점수로 선택해 반환.
+def _select_impact_variant(rect, canvas_size, face_box=None, seed=0):
+    """변종 중 하나를 시드 결정론적으로 무작위 선택해 반환.
 
     반환: (vid, outer, inner, inner_bbox). 레지스트리 비었으면 None(단일 SVG 폴백).
-    점수는 rect 전체 좌표 + 캔버스 + 화자 face_box 에 모두 의존하므로 캐시 키도 이
-    전부를 포함한다. 예전엔 (rect W,H + 캔버스) 만 키로 써서, 치수만 같으면 화자
-    위치/씬이 달라도 항상 같은 변종이 고정되는 버그가 있었다. 이제 위치와 화자가
-    바뀌면(=씬이 바뀌면) 5개를 다시 점수 매겨 다른 변종이 선택될 수 있다.
-    (미리보기=실제 동일, 결정론적 — 같은 입력엔 같은 변종.)
+    점수 기반 최적 선택은 사용하지 않고, rect + 캔버스 + 화자 face_box + seed
+    로 만든 해시를 시드로 한 RNG 가 변종 하나를 고른다. 같은 입력엔 같은 변종이
+    나와 미리보기와 실제 렌더가 동일(CLAUDE.md: 미리보기=실제). seed 가 바뀌면
+    변종이 바뀐다. 캐시는 사용하지 않는다(매 호출마다 파일을 읽고 무작위 추출).
     """
     variants = _load_impact_svgs()
     if not variants:
@@ -1077,28 +1057,13 @@ def _select_impact_variant(rect, canvas_size, face_box=None):
     if face_box is not None:
         fx1, fy1, fx2, fy2 = [float(v) for v in face_box]
         fb_key = (int(round(fx1)), int(round(fy1)), int(round(fx2)), int(round(fy2)))
-    key = (int(round(x1)), int(round(y1)), int(round(x2)), int(round(y2)), int(cw), int(ch), fb_key)
-    cached = _IMPACT_VARIANT_CACHE.get(key)
-    if cached is not None:
-        return variants[cached]
-
-    best_idx, best_score = 0, -1e18
-    for i, (vid, outer, inner, inner_bbox) in enumerate(variants):
-        try:
-            sc = _score_impact_variant(
-                outer, inner, inner_bbox, rect, canvas_size, face_box=face_box, salt=vid,
-            )
-        except Exception:
-            traceback.print_exc()
-            continue
-        if sc > best_score:
-            best_score, best_idx = sc, i
-
-    _IMPACT_VARIANT_CACHE[key] = best_idx
-    return variants[best_idx]
-
-
-_BURST_ANGLE_CACHE = {}
+    h = (int(round(x1)), int(round(y1)), int(round(x2)), int(round(y2)),
+         int(cw), int(ch), fb_key, int(seed))
+    # SHA-256로 균등하게 분포시킨 시드(단순 hash()는 편향될 수 있음).
+    digest = hashlib.sha256(repr(h).encode("utf-8")).digest()
+    rng = random.Random(int.from_bytes(digest[:8], "big"))
+    idx = rng.randrange(len(variants))
+    return variants[idx]
 
 
 # ─── 떨림 강조선(tremble marks) ──────────────────────────────────────
@@ -1388,17 +1353,13 @@ def _optimal_burst_angle(inner_pts, bcx, bcy, rect, scale, salt=""):
     캔버스를 rect 와 동일 비율로 정규화해 rect 가 캔버스를 가득 채우게 한다.
     그러면 '회전·스케일된 내부 폴리곤이 rect 안에 그려지는 픽셀 수'가 곧
     겹침 면적이 된다. 2° 간격 후보 각도마다 폴리곤을 래스터화해 픽셀 수를
-    비교해 최대 각도를 찾는다. rect 치수(반올림)+salt 로 캐싱해 미리보기/실제
-    렌더가 항상 동일한 각도를 갖는다(결정론적). salt 는 변종(id) 구분용.
-    사이즈(scale)는 호출처에서 정한 대로 유지.
+    비교해 최대 각도를 찾는다. salt 는 변종(id) 구분용.
+    사이즈(scale)는 호출처에서 정한 대로 유지. 캐시 없이 매 호출마다 탐색한다
+    (요청 사양). 알고리즘 자체가 결정론적이므로 미리보기=실제 는 유지된다.
     """
     x1, y1, x2, y2 = [float(v) for v in rect]
     rw = max(1.0, x2 - x1)
     rh = max(1.0, y2 - y1)
-    key = (int(round(rw)), int(round(rh)), str(salt))
-    cached = _BURST_ANGLE_CACHE.get(key)
-    if cached is not None:
-        return cached
 
     # rect 비율 캔버스(최대변 240px). rect 가 캔버스를 가득 채우므로
     # 겹침 = 회전된 내부 폴리곤이 캔버스 안에 그려지는 픽셀 수.
@@ -1428,11 +1389,10 @@ def _optimal_burst_angle(inner_pts, bcx, bcy, rect, scale, salt=""):
         if cnt > best_count:
             best_count, best_theta = cnt, theta
 
-    _BURST_ANGLE_CACHE[key] = best_theta
     return best_theta
 
 
-def _draw_impact_svg_burst(overlay, rect, fill, border, with_tail=False, face_box=None):
+def _draw_impact_svg_burst(overlay, rect, fill, border, border_w=2, with_tail=False, face_box=None, seed=0):
     """벡터 impact_balloon.svg 를 rect(텍스트 박스)를 감싸도록 배치해 합성.
 
     modes/impact_balloons/ 변종 중 rect/canvas 에 가장 적합한 것을 점수로 자동
@@ -1441,11 +1401,13 @@ def _draw_impact_svg_burst(overlay, rect, fill, border, with_tail=False, face_bo
     등비 스케일하고 중앙 정렬한 뒤, rect 중심 기준으로 회전시킨다. 회전 각도는
     rect 와 내부(흰) 영역의 겹침이 최대가 되는 각도(_optimal_burst_angle)를 써서
     텍스트 박스를 흰 영역이 최대한 덮도록(테두리에 가려지는 글자 최소화) 배치한다.
-    외곽 path 를 border 색으로 채우고, 그 위에 내부 path 를 fill 색
-    (알파 포함)으로 덮어 바깥 고리가 테두리가 된다. SVG burst 는 꼬리가 없으므로
-    with_tail 은 무시한다(별도 꼬리 미추가).
+    렌더는 outer path 를 border 색으로 채운 뒤, outer 영역 마스크를 border_w
+    만큼 침식(MinFilter)해 만든 inner(흰) 마스크를 fill 색(알파 포함)으로 덮어
+    바깥 고리(두께=border_w)가 테두리가 된다. inner path 자체는 스케일/회전/
+    변종 선택 계산용으로만 쓰고 렌더 채움에는 쓰지 않는다 → 두께를 런타임에
+    border_w 로 조절 가능. SVG burst 는 꼬리가 없으므로 with_tail 은 무시한다.
     """
-    variant = _select_impact_variant(rect, overlay.size, face_box=face_box)
+    variant = _select_impact_variant(rect, overlay.size, face_box=face_box, seed=seed)
     if variant is not None:
         vid, outer, inner, inner_bbox = variant
     else:
@@ -1487,10 +1449,28 @@ def _draw_impact_svg_burst(overlay, rect, fill, border, with_tail=False, face_bo
         sy = p[1] * scale + ty - rcy
         return (rcx + sx * cos_t - sy * sin_t, rcy + sx * sin_t + sy * cos_t)
 
+    # border_w → 픽셀 외곽 두께. 0 이면 테두리 없음(꽉 찬 fill). 변환 실패 시 2 폴백.
+    try:
+        outline_w = max(0, int(round(float(border_w))))
+    except (TypeError, ValueError):
+        print(f"[BUBBLE_RENDER] ⚠ impact border_w 변환 실패({border_w!r}), 2 사용")
+        outline_w = 2
+
+    outer_poly = [_tr(p) for p in outer]
     layer = Image.new("RGBA", overlay.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(layer)
-    draw.polygon([_tr(p) for p in outer], fill=border)
-    draw.polygon([_tr(p) for p in inner], fill=fill)
+    # 1) outer 전체를 border 색으로 채운다.
+    draw.polygon(outer_poly, fill=border)
+    # 2) outer 영역 마스크 → border_w 만큼 침식 → inner(흰) 마스크.
+    #    침식은 현재 2-폴리곤 채움과 같은 원리라 비볼록 별/가시 형태를 유지하며,
+    #    두께를 런타임에 border_w 로 조절할 수 있다(outer/inner path 데이터에 고정 X).
+    if outline_w > 0:
+        mask = Image.new("L", overlay.size, 0)
+        ImageDraw.Draw(mask).polygon(outer_poly, fill=255)
+        eroded = mask.filter(ImageFilter.MinFilter(outline_w * 2 + 1))
+        fill_layer = Image.new("RGBA", overlay.size, fill)
+        fill_layer.putalpha(eroded)
+        layer.alpha_composite(fill_layer)
     overlay.alpha_composite(layer)
     if vid is not None:
         fb = ""
@@ -2090,7 +2070,7 @@ def _draw_layout_bubble(
     if shape == "burst":
         # 벡터 impact_balloon.svg 를 rect 를 감싸도록 합성. 꼬리 없음.
         # face_box(화자)를 넘겨 씬마다 가장 적합한 변종을 선택(화자 얼굴 안 가림).
-        _draw_impact_svg_burst(overlay, rect, fill, border, with_tail, face_box=face_box)
+        _draw_impact_svg_burst(overlay, rect, fill, border, border_w, with_tail, face_box=face_box, seed=seed)
         return
     if shape == "whisper":
         _draw_whisper(
