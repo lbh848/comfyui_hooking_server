@@ -6,7 +6,12 @@ from modes.illust_prompt_builder import (
     log_illust_build,
 )
 from modes.postprocess import parse_speak
-from modes.word_rules import apply_prompt_rules, apply_raw_prompt_rules, apply_insert_rules
+from modes.word_rules import (
+    apply_prompt_rules,
+    apply_raw_prompt_rules,
+    apply_insert_rules,
+    apply_char_tag_override_rules,
+)
 
 
 class RawPromptWordRulesTest(unittest.TestCase):
@@ -407,6 +412,86 @@ class DetectCharactersFromNameTest(unittest.TestCase):
         char_names = ["Alice"]
         detected = IllustPromptBuilder.detect_characters_from_name("Charlie", char_names)
         self.assertEqual(detected, [])
+
+
+class CharTagOverrideRulesTest(unittest.TestCase):
+    """캐릭터 눈 제거 / 얼굴 치환 특수 규칙 테스트."""
+
+    def setUp(self):
+        self.characters = [
+            {"name": "Alice", "face_tags": "black hair, bob cut", "eye_tags": "blue eyes"},
+            {"name": "Bob", "face_tags": "brown hair", "eye_tags": "green eyes"},
+        ]
+
+    def test_eye_remove_fires_when_trigger_present(self):
+        rules = [{"type": "char_eye_remove", "trigger": "from behind", "enabled": True}]
+        out = apply_char_tag_override_rules(self.characters, rules, "viewed from behind")
+        self.assertEqual(out[0]["eye_tags"], "")
+        self.assertEqual(out[1]["eye_tags"], "")
+
+    def test_face_replace_fires_when_trigger_present(self):
+        rules = [{
+            "type": "char_face_replace",
+            "trigger": "disguise",
+            "target": "1boy, short hair, blonde hair",
+            "enabled": True,
+        }]
+        out = apply_char_tag_override_rules(self.characters, rules, "in disguise mode")
+        self.assertEqual(out[0]["face_tags"], "1boy, short hair, blonde hair")
+        self.assertEqual(out[1]["face_tags"], "1boy, short hair, blonde hair")
+
+    def test_no_match_leaves_tags_unchanged(self):
+        rules = [{"type": "char_eye_remove", "trigger": "from behind", "enabled": True}]
+        out = apply_char_tag_override_rules(self.characters, rules, "facing the camera")
+        self.assertEqual(out[0]["eye_tags"], "blue eyes")
+        self.assertEqual(out[1]["eye_tags"], "green eyes")
+
+    def test_empty_trigger_is_skipped(self):
+        rules = [{"type": "char_eye_remove", "trigger": "", "enabled": True}]
+        out = apply_char_tag_override_rules(self.characters, rules, "from behind")
+        self.assertEqual(out[0]["eye_tags"], "blue eyes")
+
+    def test_disabled_rule_is_skipped(self):
+        rules = [{"type": "char_eye_remove", "trigger": "from behind", "enabled": False}]
+        out = apply_char_tag_override_rules(self.characters, rules, "from behind")
+        self.assertEqual(out[0]["eye_tags"], "blue eyes")
+
+    def test_original_characters_not_mutated(self):
+        # 빌드 직전 변수 상에서만 적용 — 원본 bot.json 캐릭터는 불변이어야 한다.
+        rules = [
+            {"type": "char_eye_remove", "trigger": "from behind", "enabled": True},
+            {
+                "type": "char_face_replace",
+                "trigger": "disguise",
+                "target": "masked",
+                "enabled": True,
+            },
+        ]
+        original_eye_0 = self.characters[0]["eye_tags"]
+        original_face_0 = self.characters[0]["face_tags"]
+        original_eye_1 = self.characters[1]["eye_tags"]
+        original_face_1 = self.characters[1]["face_tags"]
+
+        out = apply_char_tag_override_rules(
+            self.characters, rules, "from behind in disguise"
+        )
+
+        # 반환값은 변환되어야
+        self.assertEqual(out[0]["eye_tags"], "")
+        self.assertEqual(out[0]["face_tags"], "masked")
+        # 원본은 그대로
+        self.assertEqual(self.characters[0]["eye_tags"], original_eye_0)
+        self.assertEqual(self.characters[0]["face_tags"], original_face_0)
+        self.assertEqual(self.characters[1]["eye_tags"], original_eye_1)
+        self.assertEqual(self.characters[1]["face_tags"], original_face_1)
+        # 반환 리스트는 원본 리스트와 다른 객체
+        self.assertIsNot(out, self.characters)
+        self.assertIsNot(out[0], self.characters[0])
+
+    def test_no_override_rules_returns_original_list(self):
+        rules = [{"type": "replace", "source": "x", "target": "y", "enabled": True}]
+        out = apply_char_tag_override_rules(self.characters, rules, "anything")
+        self.assertIs(out, self.characters)
 
 
 if __name__ == "__main__":

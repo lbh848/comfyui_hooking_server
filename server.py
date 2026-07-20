@@ -70,6 +70,7 @@ from modes.word_rules import (
     apply_raw_prompt_rules as _apply_raw_prompt_word_rules,
     apply_remove_rule as _apply_remove_word_rule,
     apply_insert_rules as _apply_insert_word_rules,
+    apply_char_tag_override_rules as _apply_char_tag_override_rules,
 )
 from modes import chansub_service
 from modes import illustration_context_pipeline
@@ -824,6 +825,29 @@ def apply_insert_word_rules(positive: str, bot_name: str) -> str:
     if applied > 0:
         print(f"[WORD_RULE] 삽입 규칙 적용: bot={bot_name}, {applied}개 규칙")
     return positive
+
+
+def apply_char_tag_override_to_bot(bot: dict, bot_name: str, trigger_text: str) -> dict:
+    """캐릭터 눈 제거 / 얼굴 치환 특수 규칙을 빌드 직전 변수 상에서만 적용한다.
+
+    bot (bot.json 원본)은 훼손하지 않고, characters 만 규칙 적용된 복사본으로
+    교체한 bot 의 얕은 복사를 반환한다. 해당 특수 규칙이 없으면 bot 을 그대로
+    반환한다. trigger_text 는 일반적으로 NAME/SETUP/CHAR/SUPPLEMENT 를 합친
+    작성 본문으로, 규칙의 trigger 단어가 여기에 매칭되면 발동한다.
+    """
+    if not bot_name or not bot:
+        return bot
+    from modes.bot_mode import _load_word_replacements
+    rules = _load_word_replacements(bot_name).get("rules", [])
+    if not rules:
+        return bot
+    characters = bot.get("characters", [])
+    transformed = _apply_char_tag_override_rules(characters, rules, trigger_text)
+    if transformed is characters:
+        return bot
+    bot_copy = dict(bot)
+    bot_copy["characters"] = transformed
+    return bot_copy
 
 
 def split_prompt_chat(text: str) -> tuple[str, str]:
@@ -2124,11 +2148,20 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                         f"detected={detected} (LoRA 미사용)"
                     )
                 else:
+                    # 캐릭터 눈 제거 / 얼굴 치환 특수 규칙: 빌드 직전 변수 상에서만
+                    # characters 복사본에 임시 적용 (bot.json 원본은 미변경).
+                    _char_rule_trigger_text = "\n".join([
+                        sections.get("name", "") or "",
+                        setup_replaced, char_replaced, supplement_replaced,
+                    ])
+                    _bot_for_build = apply_char_tag_override_to_bot(
+                        bot, bot_name, _char_rule_trigger_text
+                    )
                     positive = builder.build_positive_prompt(
                         setup_replaced, char_replaced, supplement_replaced,
-                        detected, bot, tags, settings, bot_name
+                        detected, _bot_for_build, tags, settings, bot_name
                     )
-                    negative = builder.build_negative_prompt(tags, settings, detected, bot)
+                    negative = builder.build_negative_prompt(tags, settings, detected, _bot_for_build)
                     # 품질 뒤 강제 삽입 규칙(ANIMA/SDXL) 후처리
                     positive = apply_insert_word_rules(positive, bot_name)
 

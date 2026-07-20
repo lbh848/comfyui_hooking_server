@@ -389,3 +389,71 @@ def apply_raw_prompt_rules(raw_prompt: str, rules: list[dict]) -> tuple[str, int
 
     output.append(raw_prompt[cursor:])
     return "".join(output), applied_total
+
+
+# 캐릭터 태그 덮어쓰기 특수 규칙이 다루는 필드.
+# - char_eye_remove:  eye_tags 를 빈 문자열로 (캐릭터 눈 제거)
+# - char_face_replace: face_tags 를 target 값으로 교체 (캐릭터 얼굴 치환)
+_CHAR_TAG_OVERRIDE_TYPES = {"char_eye_remove", "char_face_replace"}
+
+
+def apply_char_tag_override_rules(
+    characters: list, rules: list, trigger_text: str
+) -> list:
+    """캐릭터 눈 제거 / 얼굴 치환 특수 규칙을 characters 복사본에 임시 적용한다.
+
+    원본 ``characters`` (bot.json 캐릭터 데이터)는 절대 훼손하지 않으며, 각
+    캐릭터 dict 의 얕은 복사로 이루어진 새 리스트를 반환한다. 빌드 직전
+    변수 상에서만 치환/제거를 거친 뒤 프롬프트 빌더로 넘기기 위함이다.
+
+    규칙 타입:
+      - ``char_eye_remove``  : trigger 가 trigger_text 에 있으면 eye_tags -> ""
+      - ``char_face_replace``: trigger 가 trigger_text 에 있으면 face_tags -> target
+
+    trigger 가 발동하면 감지된(전달된) 모든 캐릭터에 일괄 적용한다.
+    trigger 가 비어 있거나 매칭되지 않으면 해당 규칙은 스킵한다.
+    """
+    override_rules = [
+        r for r in (rules or [])
+        if r.get("enabled", True)
+        and (r.get("type") or "").strip().lower() in _CHAR_TAG_OVERRIDE_TYPES
+    ]
+    if not characters or not override_rules:
+        return characters
+
+    # 변환 대상 캐릭터를 얕은 복사하여 원본 보존.
+    transformed = [dict(c) for c in characters]
+
+    for rule in override_rules:
+        rule_type = (rule.get("type") or "").strip().lower()
+        trigger = (rule.get("trigger") or "").strip()
+        if not trigger:
+            print(
+                f"[WORD_RULE] 캐릭터 태그 규칙(type={rule_type})에 trigger가 없어 스킵합니다."
+            )
+            continue
+        if not re.search(re.escape(trigger), trigger_text or "", flags=re.IGNORECASE):
+            continue
+
+        for char_data in transformed:
+            char_name = char_data.get("name", "")
+            if rule_type == "char_eye_remove":
+                before = char_data.get("eye_tags", "")
+                if not before:
+                    continue
+                char_data["eye_tags"] = ""
+                print(
+                    f"[WORD_RULE] 캐릭터 눈 제거 적용: char={char_name}, "
+                    f"trigger={trigger!r}, 이전 eye_tags={before!r}"
+                )
+            elif rule_type == "char_face_replace":
+                target = rule.get("target", "")
+                before = char_data.get("face_tags", "")
+                char_data["face_tags"] = target
+                print(
+                    f"[WORD_RULE] 캐릭터 얼굴 치환 적용: char={char_name}, "
+                    f"trigger={trigger!r}, 이전 face_tags={before!r}, "
+                    f"새 face_tags={target!r}"
+                )
+
+    return transformed

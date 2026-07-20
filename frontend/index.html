@@ -38174,7 +38174,7 @@
                         style="background:none; border:none; color:var(--text2); font-size:1.2rem; cursor:pointer;">✕</button>
                 </div>
                 <div style="font-size:0.72rem; color:var(--text2); margin-bottom:10px; padding:6px 8px; background:rgba(106,27,154,0.08); border-radius:4px; line-height:1.5;">
-                    삽화 모드 프롬프트의 태그를 규칙에 따라 다룹니다. <strong>치환 모드</strong>는 지정한 단어를 다른 단어로 바꿉니다(대소문자 무관 부분 매칭). <strong>제거 모드</strong>는 trigger 단어가 감지되면 패턴(* = 임의 문자열)에 매칭되는 태그를 제거합니다. <strong>가중치 조정</strong>은 쉼표 단위로 정확히 일치하는 태그에 지정 가중치를 강제하며, 제거 토글을 켜면 가중치만 없앱니다. <strong>삽입 모드</strong>는 지정한 단어가 최종 프롬프트(ANIMA/SDXL 각각)에 없으면 품질 태그 바로 뒤에 강제로 삽입합니다(평문, 가중치·괄호 형태도 중복으로 간주해 스킵).
+                    삽화 모드 프롬프트의 태그를 규칙에 따라 다룁습니다. <strong>치환 모드</strong>는 지정한 단어를 다른 단어로 바꿉니다(대소문자 무관 부분 매칭). <strong>제거 모드</strong>는 trigger 단어가 감지되면 패턴(* = 임의 문자열)에 매칭되는 태그를 제거합니다. <strong>가중치 조정</strong>은 쉼표 단위로 정확히 일치하는 태그에 지정 가중치를 강제하며, 제거 토글을 켜면 가중치만 없앱니다. <strong>삽입 모드</strong>는 지정한 단어가 최종 프롬프트(ANIMA/SDXL 각각)에 없으면 품질 태그 바로 뒤에 강제로 삽입합니다(평문, 가중치·괄호 형태도 중복으로 간주해 스킵). <strong>캐릭터 눈 제거</strong>는 trigger 단어가 프롬프트(NAME/SETUP/CHAR/SUPPLEMENT)에 있으면 감지된 모든 캐릭터의 eye_tags를 빈 값으로 만들어 빌드에 넘김(캐릭터 값 자체는 변경 안 함). <strong>캐릭터 얼굴 치환</strong>은 같은 조건에서 face_tags 전체를 지정한 새 값으로 교체해 빌드에 넘깁니다.
                 </div>
                 <button onclick="addWordReplacementRule()" style="width:100%; background:#6A1B9A; color:#fff; border:none; padding:6px 10px; border-radius:4px; cursor:pointer; font-size:0.8rem; font-weight:600; margin-bottom:10px;">+ 규칙 추가</button>
                 <div id="wr-rules-list" style="overflow-y:auto; flex:1; min-height:60px;"></div>
@@ -38219,6 +38219,11 @@
                 if (rule.remove_weight === undefined) rule.remove_weight = false;
             } else if (mode === 'insert') {
                 if (rule.word === undefined) rule.word = '';
+            } else if (mode === 'char_eye_remove') {
+                if (rule.trigger === undefined) rule.trigger = '';
+            } else if (mode === 'char_face_replace') {
+                if (rule.trigger === undefined) rule.trigger = '';
+                if (rule.target === undefined) rule.target = '';
             }
             renderWordReplacementList();
         }
@@ -38236,7 +38241,19 @@
                 const isRemove = ruleType === 'remove';
                 const isWeight = ruleType === 'weight';
                 const isInsert = ruleType === 'insert';
-                const body = isRemove ? `
+                const isCharEyeRemove = ruleType === 'char_eye_remove';
+                const isCharFaceReplace = ruleType === 'char_face_replace';
+                const body = isCharEyeRemove ? `
+                    <input type="text" value="${escHtml(rule.trigger || '')}" data-wr-trigger="${rule.id}" placeholder="감지할 단어 (프롬프트에 있으면 발동)"
+                        style="${inputStyle}">
+                    <span style="color:var(--text2); font-size:0.7rem; white-space:nowrap;">→ 감지된 모든 캐릭터 eye_tags 제거</span>
+                ` : isCharFaceReplace ? `
+                    <input type="text" value="${escHtml(rule.trigger || '')}" data-wr-trigger="${rule.id}" placeholder="감지할 단어 (프롬프트에 있으면 발동)"
+                        style="${inputStyle}">
+                    <span style="color:var(--text2); font-size:0.7rem; white-space:nowrap;">→ face_tags를</span>
+                    <input type="text" value="${escHtml(rule.target || '')}" data-wr-target="${rule.id}" placeholder="새 얼굴 태그(전체 교체)"
+                        style="${inputStyle}">
+                ` : isRemove ? `
                     <div style="display:flex; align-items:center; gap:6px; flex:1;">
                         <input type="text" value="${escHtml(rule.trigger || '')}" data-wr-trigger="${rule.id}" placeholder="감지할 단어 (trigger, 비우면 항상)"
                             style="${inputStyle}">
@@ -38275,10 +38292,12 @@
                 <div style="display:flex; flex-direction:column; gap:6px; padding:8px 0; border-bottom:1px solid var(--border); ${rule.enabled ? '' : 'opacity:0.45;'}">
                     <div style="display:flex; align-items:center; gap:6px;">
                         <select data-wr-type="${rule.id}" style="padding:4px 6px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.78rem;">
-                            <option value="replace" ${!isRemove && !isWeight && !isInsert ? 'selected' : ''}>치환</option>
+                            <option value="replace" ${!isRemove && !isWeight && !isInsert && !isCharEyeRemove && !isCharFaceReplace ? 'selected' : ''}>치환</option>
                             <option value="remove" ${isRemove ? 'selected' : ''}>제거</option>
                             <option value="weight" ${isWeight ? 'selected' : ''}>가중치 조정</option>
                             <option value="insert" ${isInsert ? 'selected' : ''}>삽입</option>
+                            <option value="char_eye_remove" ${isCharEyeRemove ? 'selected' : ''}>캐릭터 눈 제거</option>
+                            <option value="char_face_replace" ${isCharFaceReplace ? 'selected' : ''}>캐릭터 얼굴 치환</option>
                         </select>
                         ${body}
                         <button onclick="toggleWordReplacementRule('${rule.id}')" title="${rule.enabled ? '비활성화' : '활성화'}"
