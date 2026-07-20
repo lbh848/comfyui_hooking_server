@@ -1857,152 +1857,114 @@ def _draw_cloud(overlay, rect, anchor, fill, border, border_w, with_tail, *, see
     overlay.alpha_composite(tail_layer)
 
 
-def _catmull_rom_closed(anchors, *, samples):
-    """닫힌 Catmull-Rom 스플라인으로 anchors 를 통과하는 부드러운 폐곡선 점열 반환.
+_CHARMING_SVG_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "charming_balloon.svg"
+)
+_CHARMING_SVG_CACHE = None  # (points, bbox) | None(폴백)
 
-    각 구간을 동일한 수로 세분해 총 samples 개에 가까운 근사 점을 만든다. 표준
-    Catmull-Rom(tension 0)이라 인접 점 사이가 과도하게 튀지 않고 매끄럽다.
-    charming 외곽처럼 부드러운 유기 곡선에 쓴다.
+
+def _parse_polygon_points(points_attr):
+    """SVG <polygon points="x1,y1 x2,y2 ..."> 를 (x, y) 점열로 변환.
+
+    좌표 구분자는 쉼표 또는 공백을 모두 허용한다(빈 토큰은 스킵).
     """
-    n = len(anchors)
-    if n < 3:
-        return list(anchors)
-    samples = max(n * 4, int(samples))
-    per = max(4, samples // n)
-    out = []
-    for i in range(n):
-        p0 = anchors[(i - 1) % n]
-        p1 = anchors[i]
-        p2 = anchors[(i + 1) % n]
-        p3 = anchors[(i + 2) % n]
-        for j in range(per):
-            t = j / per
-            t2 = t * t
-            t3 = t2 * t
-            x = 0.5 * (
-                (2.0 * p1[0])
-                + (-p0[0] + p2[0]) * t
-                + (2.0 * p0[0] - 5.0 * p1[0] + 4.0 * p2[0] - p3[0]) * t2
-                + (-p0[0] + 3.0 * p1[0] - 3.0 * p2[0] + p3[0]) * t3
-            )
-            y = 0.5 * (
-                (2.0 * p1[1])
-                + (-p0[1] + p2[1]) * t
-                + (2.0 * p0[1] - 5.0 * p1[1] + 4.0 * p2[1] - p3[1]) * t2
-                + (-p0[1] + 3.0 * p1[1] - 3.0 * p2[1] + p3[1]) * t3
-            )
-            out.append((x, y))
-    return out
+    tokens = [t for t in re.split(r"[\s,]+", points_attr.strip()) if t]
+    if len(tokens) % 2 != 0:
+        print(f"[BUBBLE_RENDER] ⚠ charming polygon 점 개수 홀수({len(tokens)}), 스킵")
+        return []
+    pts = []
+    for i in range(0, len(tokens), 2):
+        try:
+            pts.append((float(tokens[i]), float(tokens[i + 1])))
+        except ValueError:
+            print(f"[BUBBLE_RENDER] ⚠ charming polygon 좌표 파싱 실패: {tokens[i:i+2]}")
+            return []
+    return pts
 
 
-def _charming_body_polygon(rect, *, seed=0, samples=240):
-    """charming 말풍선의 부드러운 비대칭 외곽과 안전 기저 타원을 반환한다.
+def _load_charming_svg():
+    """charming_balloon.svg 의 단일 <polygon> 을 (점열, bbox) 로 캐싱.
 
-    기본 골격은 타원으로 유지하고, 긴 축을 따라 좌우(가로형은 상하)의 폭만 서로 다르게
-    부풀린다. 둘레 전체에 규칙적인 파동을 넣지 않고, 넓은 굴곡을 불규칙하게 배치해
-    참고 만화처럼 말랑한 세로형 실루엣을 만든다. 모든 변화는 바깥쪽으로만 적용하며
-    작은 기저 타원을 합쳐 과도한 허리 파임과 텍스트 영역 침범을 막는다.
+    고정 SVG 실루엣 하나를 비균등 스케일로 rect 에 맞춰 그린다(좌우 프로필 수식
+    생성 방식은 감자/마름모/구름 실루엣으로 자꾸 수렴해 폐기). polygon 자체가 완성된
+    폐곡선이라 보조 타원 합성은 하지 않는다.
     """
+    global _CHARMING_SVG_CACHE
+    if _CHARMING_SVG_CACHE is not None:
+        return _CHARMING_SVG_CACHE
+    try:
+        tree = ET.parse(_CHARMING_SVG_PATH)
+    except (FileNotFoundError, OSError) as e:
+        print(f"[BUBBLE_RENDER] ⚠ charming SVG 로드 실패({_CHARMING_SVG_PATH}): {e}")
+        traceback.print_exc()
+        _CHARMING_SVG_CACHE = (None, None)
+        return _CHARMING_SVG_CACHE
+    except ET.ParseError as e:
+        print(f"[BUBBLE_RENDER] ⚠ charming SVG 파싱 실패: {e}")
+        traceback.print_exc()
+        _CHARMING_SVG_CACHE = (None, None)
+        return _CHARMING_SVG_CACHE
+
+    polygon = tree.find(".//{http://www.w3.org/2000/svg}polygon")
+    if polygon is None:
+        print(f"[BUBBLE_RENDER] ⚠ charming SVG 에 <polygon> 없음({_CHARMING_SVG_PATH})")
+        _CHARMING_SVG_CACHE = (None, None)
+        return _CHARMING_SVG_CACHE
+    points = _parse_polygon_points(polygon.get("points", ""))
+    if len(points) < 3:
+        print(f"[BUBBLE_RENDER] ⚠ charming SVG polygon 점 부족({len(points)}개)")
+        _CHARMING_SVG_CACHE = (None, None)
+        return _CHARMING_SVG_CACHE
+    _CHARMING_SVG_CACHE = (points, _points_bbox(points))
+    return _CHARMING_SVG_CACHE
+
+
+def _fit_points_to_rect(points, bbox, rect, *, non_uniform=True):
+    """점열의 bbox 를 rect 에 맞춰 변환. non_uniform 이면 가로/세로 독립 스케일.
+
+    대사가 가로형이면 자연스럽게 가로로 늘고 세로형이면 세로로 늘어, 굴곡 위치도
+    말풍선 전체 둘레에 남아 좌우에만 몰리지 않는다.
+    """
+    bx0, by0, bx1, by1 = bbox
+    bw = max(1e-6, bx1 - bx0)
+    bh = max(1e-6, by1 - by0)
     x1, y1, x2, y2 = [float(v) for v in rect]
-    cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
-    rx = max(1.0, (x2 - x1) / 2.0)
-    ry = max(1.0, (y2 - y1) / 2.0)
-    rng = random.Random(int(seed) & 0x7FFFFFFF)
-
-    def _jitter_bumps(template):
-        bumps = []
-        for center, amplitude, sigma in template:
-            bumps.append((
-                center + rng.uniform(-0.055, 0.055),
-                amplitude * rng.uniform(0.92, 1.08),
-                sigma * rng.uniform(0.94, 1.06),
-            ))
-        return bumps
-
-    def _bump_value(position, bumps):
-        # 단순 합산은 둘레 전체를 부풀리고, raw max는 굴곡 교차점에 미세한 각을 만든다.
-        # 4차 smooth-max로 가장 강한 굴곡 위주를 유지하면서 연결은 매끈하게 만든다.
-        values = []
-        for center, amplitude, sigma in bumps:
-            distance = (position - center) / max(0.08, sigma)
-            values.append(amplitude * math.exp(-(distance * distance)))
-        return sum(value ** 4 for value in values) ** 0.25 if values else 0.0
-
-    samples = max(160, int(samples))
-    points = []
-
-    if (y2 - y1) >= (x2 - x1) * 0.82:
-        # 세로형: 좌우 옆면을 독립적으로 부풀린다.
-        # 중심·크기·간격을 일부러 서로 다르게 두어 꽃잎 같은 규칙성을 피한다.
-        left_bumps = _jitter_bumps([
-            (-0.58, 0.140, 0.20),
-            (-0.02, 0.170, 0.24),
-            ( 0.58, 0.130, 0.20),
-        ])
-        right_bumps = _jitter_bumps([
-            (-0.72, 0.110, 0.17),
-            (-0.27, 0.160, 0.22),
-            ( 0.40, 0.160, 0.24),
-        ])
-        base_side = 0.825
-        for i in range(samples):
-            theta = 2.0 * math.pi * i / samples
-            nx, ny = math.cos(theta), math.sin(theta)
-            bumps = right_bumps if nx >= 0.0 else left_bumps
-            side_scale = min(1.0, base_side + _bump_value(ny, bumps))
-            points.append((
-                cx + rx * nx * side_scale,
-                cy + ry * ny * 0.975,
-            ))
-        core_rect = [
-            cx - rx * 0.845,
-            cy - ry * 0.955,
-            cx + rx * 0.845,
-            cy + ry * 0.955,
-        ]
-    else:
-        # 가로형은 같은 원리를 90도 돌려 상하에 불규칙한 큰 굴곡을 둔다.
-        top_bumps = _jitter_bumps([
-            (-0.62, 0.125, 0.20),
-            (-0.02, 0.165, 0.24),
-            ( 0.60, 0.105, 0.19),
-        ])
-        bottom_bumps = _jitter_bumps([
-            (-0.45, 0.150, 0.23),
-            ( 0.30, 0.140, 0.22),
-        ])
-        base_side = 0.825
-        for i in range(samples):
-            theta = 2.0 * math.pi * i / samples
-            nx, ny = math.cos(theta), math.sin(theta)
-            bumps = bottom_bumps if ny >= 0.0 else top_bumps
-            side_scale = min(1.0, base_side + _bump_value(nx, bumps))
-            points.append((
-                cx + rx * nx * 0.975,
-                cy + ry * ny * side_scale,
-            ))
-        core_rect = [
-            cx - rx * 0.955,
-            cy - ry * 0.845,
-            cx + rx * 0.955,
-            cy + ry * 0.845,
-        ]
-
-    return points, core_rect
+    rw = max(1.0, x2 - x1)
+    rh = max(1.0, y2 - y1)
+    if non_uniform:
+        sx = rw / bw
+        sy = rh / bh
+        ox = x1 - bx0 * sx
+        oy = y1 - by0 * sy
+        return [(p[0] * sx + ox, p[1] * sy + oy) for p in points]
+    s = min(rw / bw, rh / bh)
+    cx = (x1 + x2) / 2.0
+    cy = (y1 + y2) / 2.0
+    bcx = (bx0 + bx1) / 2.0
+    bcy = (by0 + by1) / 2.0
+    ox = cx - bcx * s
+    oy = cy - bcy * s
+    return [(p[0] * s + ox, p[1] * s + oy) for p in points]
 
 
 def _draw_charming(overlay, rect, fill, border, border_w, *, seed=0, halo_px=0):
-    """꼬리 없는 charming 말풍선: 안정적인 타원 골격 + 불규칙한 넓은 측면 굴곡."""
-    points, core_rect = _charming_body_polygon(rect, seed=seed)
+    """꼬리 없는 charming 말풍선: 고정 SVG 실루엣을 비균등 스케일로 rect 에 맞춰 합성.
+
+    보조 타원 없이 변환된 polygon 만 마스크에 채우고 _composite_union_mask 로 테두리/
+    채움을 통일. SVG 로드 실패 시 안전 타원으로 폴백해 빈 결과를 피한다.
+    """
+    points, bbox = _load_charming_svg()
     mask = Image.new("L", overlay.size, 0)
     draw = ImageDraw.Draw(mask)
-
-    # 작은 기저 타원은 굴곡 사이가 과하게 파이는 것만 막고, 바깥 돌출은 그대로 남긴다.
-    draw.ellipse(core_rect, fill=255)
-    draw.polygon(
-        [(int(round(x)), int(round(y))) for x, y in points],
-        fill=255,
-    )
+    if points is None or bbox is None:
+        print("[BUBBLE_RENDER] charming SVG 폴백 → ellipse로 대체 렌더")
+        draw.ellipse(rect, fill=255)
+    else:
+        transformed = _fit_points_to_rect(points, bbox, rect, non_uniform=True)
+        draw.polygon(
+            [(int(round(x)), int(round(y))) for x, y in transformed],
+            fill=255,
+        )
     _composite_union_mask(
         overlay,
         mask,
