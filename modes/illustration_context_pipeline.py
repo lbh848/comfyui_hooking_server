@@ -939,7 +939,7 @@ def parse_speak_output(text: str, max_entries_per_scene: int | None = None) -> d
 def build_call3_dialogue_system_prompt(
     prompts: dict,
     toggles: dict,
-    extra_reference: str,
+    extra_names: str,
 ) -> tuple[str, str]:
     """Select the Speak/Manga prompt and append only mode-compatible instructions."""
     prompt_mode = str(toggles.get("call3_prompt_mode") or "speak").strip().lower()
@@ -961,9 +961,15 @@ def build_call3_dialogue_system_prompt(
     elif prompt_mode == "manga" and toggles.get("speak_emotion_enabled"):
         print("[ILLUST_CONTEXT:CALL3] Manga 모드에서는 감정 태그 설정을 사용하지 않음")
 
-    system_prompt = selected_prompt
-    if str(extra_reference or "").strip():
-        system_prompt += "\n\n" + str(extra_reference).strip()
+    # CALL3에는 lb.extra 중 캐릭터 영문 이름 리스트만 넘긴다(시스템 프롬프트/복장 제외).
+    # speak/manga 프롬프트의 {character_names} 자리표시자를 치환한다.
+    names = str(extra_names or "").strip()
+    if "{character_names}" in selected_prompt:
+        system_prompt = selected_prompt.replace("{character_names}", names)
+    elif names:
+        system_prompt = selected_prompt + "\n\nCharacter names: " + names
+    else:
+        system_prompt = selected_prompt
     system_prompt += emotion_instruction
     return prompt_mode, system_prompt
 
@@ -1101,7 +1107,7 @@ def build_raw_prompt(descriptor: dict, narrative: str, prompts: dict, toggles: d
     return positive.strip(), negative.strip()
 
 
-async def build_from_context(payload: dict, toggles: dict | None, extra_reference: str, progress=None, stream_notify=None) -> dict:
+async def build_from_context(payload: dict, toggles: dict | None, extra_reference: str, progress=None, stream_notify=None, extra_costume: str = "", extra_names: str = "") -> dict:
     toggles = merged_toggles(toggles)
     prompts = load_prompt_files()
     chats = payload.get("chats") or []
@@ -1116,7 +1122,16 @@ async def build_from_context(payload: dict, toggles: dict | None, extra_referenc
     if toggles.get("call1_enabled"):
         n = int(toggles["call1_context_turns"])
         context_slice = chats[max(0, target_index - n):target_index]
-        call1_messages = [{"role": "system", "content": prompts.get("call1_enhance", "") + "\n\n" + extra_reference}]
+        # CALL1에는 lb.extra 중 시스템 프롬프트를 빼고 캐릭터 복장 정보만 넘긴다.
+        # enhance 프롬프트의 {lb_extra_costume} 자리표시자를 치환한다.
+        # (자리표시자가 없으면 복장 정보를 뒤에 덧붙여 정보 유실을 막는다.)
+        call1_system = prompts.get("call1_enhance", "")
+        costume = str(extra_costume or "").strip()
+        if "{lb_extra_costume}" in call1_system:
+            call1_system = call1_system.replace("{lb_extra_costume}", costume)
+        elif costume:
+            call1_system = call1_system + "\n\n" + costume
+        call1_messages = [{"role": "system", "content": call1_system}]
         call1_messages.extend({
             "role": "assistant" if item["role"] == "char" else "user",
             "content": _strip_nodes(item["data"]),
@@ -1197,7 +1212,7 @@ async def build_from_context(payload: dict, toggles: dict | None, extra_referenc
         call3_prompt_mode, call3_system_prompt = build_call3_dialogue_system_prompt(
             prompts,
             toggles,
-            extra_reference,
+            extra_names,
         )
         speak_messages = [{
             "role": "system",

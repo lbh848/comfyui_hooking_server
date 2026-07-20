@@ -5,6 +5,9 @@ For each supplied scene, select only dialogue, thought, or inner monologue that 
 Do not invent new conversation, relationships, exposition, or plot information.
 Use the requested language and preserve character names exactly.
 
+Character roster (use these exact names when attributing lines):
+{character_names}
+
 Writing rules:
 - Keep each entry short and natural for a manga balloon.
 - Prefer a reaction, short phrase, or one short sentence.

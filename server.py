@@ -2320,18 +2320,22 @@ def _tag_text(values) -> str:
     return ", ".join(out)
 
 
-def build_active_lb_extra(bot_name: str) -> str:
-    """현재 봇의 선택 시스템 프롬프트 + 저장된 lb.extra를 모듈 형식으로 조립."""
+def _collect_lb_extra(bot_name: str) -> dict | None:
+    """현재 봇의 시스템 프롬프트와 lb.extra 캐릭터 정보를 구조화해 수집.
+
+    반환: {"system_prompt": str, "characters": [{"name","appearance","outfit"}, ...]}
+    실패/빈 봇이면 None.
+    """
     if not bot_name:
         print("[ILLUST_CONTEXT] 활성 봇이 없어 lb-xnai.lb.extra를 비움")
-        return ""
+        return None
     try:
         from modes.bot_mode import _load_bot_data, _load_builtin_presets, _load_lb_extra
         data = _load_bot_data()
         bot = next((b for b in data.get("bots", []) if b.get("name") == bot_name), None)
         if not bot:
             print(f"[ILLUST_CONTEXT] 활성 봇을 찾지 못함: {bot_name}")
-            return ""
+            return None
         preset_name = str(bot.get("system_prompt_preset") or "").strip()
         scope = str(bot.get("preset_scope") or "local").strip()
         if scope == "builtin":
@@ -2343,7 +2347,7 @@ def build_active_lb_extra(bot_name: str) -> str:
 
         extra = _load_lb_extra(bot_name) or []
         chars_by_name = {str(c.get("name")): c for c in bot.get("characters", []) if isinstance(c, dict)}
-        chunks = [system_prompt.strip()] if system_prompt.strip() else []
+        characters = []
         for item in extra:
             if not isinstance(item, dict):
                 continue
@@ -2355,17 +2359,57 @@ def build_active_lb_extra(bot_name: str) -> str:
             appearance = _tag_text(item.get("appearance"))
             outfit = _tag_text(item.get("outfit"))
             appearance = ", ".join(x for x in (gender_tag, appearance) if x)
-            chunks.append(
-                f"### {name}\n-Name\n{name}\n-Appearance\n{appearance}"
-                f"\n-default_outfit\n{outfit}"
-            )
-        if len(chunks) <= (1 if system_prompt.strip() else 0):
-            print(f"[ILLUST_CONTEXT] 저장된 lb.extra 캐릭터 데이터가 없음: bot={bot_name}")
-        return "\n\n".join(chunks).strip()
+            characters.append({"name": name, "appearance": appearance, "outfit": outfit})
+        return {"system_prompt": system_prompt.strip(), "characters": characters}
     except Exception as e:
-        print(f"[ILLUST_CONTEXT] 활성 lb.extra 조립 실패: bot={bot_name}, error={e}")
+        print(f"[ILLUST_CONTEXT] 활성 lb.extra 수집 실패: bot={bot_name}, error={e}")
         traceback.print_exc()
+        return None
+
+
+def _lb_extra_costume_chunks(collected: dict) -> str:
+    """수집된 lb.extra에서 시스템 프롬프트를 뺀 캐릭터 복장(Appearance/default_outfit) 덩어리."""
+    chunks = []
+    for c in collected.get("characters", []):
+        name = str(c.get("name") or "").strip()
+        if not name:
+            continue
+        chunks.append(
+            f"### {name}\n-Name\n{name}\n-Appearance\n{c.get('appearance', '')}"
+            f"\n-default_outfit\n{c.get('outfit', '')}"
+        )
+    return "\n\n".join(chunks).strip()
+
+
+def build_active_lb_extra(bot_name: str) -> str:
+    """현재 봇의 선택 시스템 프롬프트 + 저장된 lb.extra를 모듈 형식으로 조립(CALL2/CALL2-FIX용 full)."""
+    collected = _collect_lb_extra(bot_name)
+    if not collected:
         return ""
+    chunks = [collected["system_prompt"]] if collected["system_prompt"] else []
+    costume = _lb_extra_costume_chunks(collected)
+    if costume:
+        chunks.append(costume)
+    if len(chunks) <= (1 if collected["system_prompt"] else 0):
+        print(f"[ILLUST_CONTEXT] 저장된 lb.extra 캐릭터 데이터가 없음: bot={bot_name}")
+    return "\n\n".join(chunks).strip()
+
+
+def build_lb_extra_costume(bot_name: str) -> str:
+    """lb.extra 중 시스템 프롬프트를 제외한 캐릭터 복장 정보만 조립(CALL1용)."""
+    collected = _collect_lb_extra(bot_name)
+    if not collected:
+        return ""
+    return _lb_extra_costume_chunks(collected)
+
+
+def build_lb_extra_names(bot_name: str) -> str:
+    """lb.extra 캐릭터 영문 이름 리스트만 반환(CALL3용)."""
+    collected = _collect_lb_extra(bot_name)
+    if not collected:
+        return ""
+    names = [str(c.get("name") or "").strip() for c in collected.get("characters", [])]
+    return ", ".join(n for n in names if n)
 
 
 _ILLUST_FALLBACK_BYTES: bytes | None = None
@@ -2433,7 +2477,10 @@ async def process_illustration_context_queue_item(item) -> dict:
             raise RuntimeError("원본 prompt 엔트리를 찾지 못했습니다")
         await progress(2, "context", "CHAT 컨텍스트 수신")
         active_bot = app_config.get("bot_selected", "")
+        # CALL1=복장만, CALL2/2-FIX=full(시스템프롬프트+복장), CALL3=이름리스트만.
         extra_reference = build_active_lb_extra(active_bot)
+        extra_costume = build_lb_extra_costume(active_bot)
+        extra_names = build_lb_extra_names(active_bot)
         # 후처리 모드(bubble→manga / vn→speak)가 CALL3 대사 프롬프트를 자동 결정한다.
         # call3_prompt_mode는 봇별 후처리 모드를 진실 소스로 삼아 덮어쓴다(전역 토글은 UI 힌트용).
         illust_toggles = dict(app_config.get("illustration_context_toggles") or {})
@@ -2450,6 +2497,8 @@ async def process_illustration_context_queue_item(item) -> dict:
             extra_reference,
             progress=progress,
             stream_notify=stream_notify,
+            extra_costume=extra_costume,
+            extra_names=extra_names,
         )
         raw_items = built.get("items") or []
         if not raw_items:

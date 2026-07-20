@@ -13,6 +13,9 @@ You may additionally return character reference blocks:
 NAME: stable English appearance and default-outfit facts needed by the image planner
 [/CharacterBaseTags]
 
+Known character appearance / default-outfit (cite these verbatim where relevant; do not invent new ones):
+{lb_extra_costume}
+
 Rules:
 - Position must be copied verbatim from Current Response.
 - Never invent a plot event, action, location, identity, relationship, or clothing change.
