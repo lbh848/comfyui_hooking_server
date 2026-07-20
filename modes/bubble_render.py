@@ -1778,79 +1778,79 @@ def _cloud_body_polygon(rect, *, seed=0):
     return pts
 
 
-def _draw_oriented_ellipse(overlay, center, radii, angle, *, fill, outline, width):
-    """회전·찌그러진 타원을 별도 타일에 그려 회전시킨 뒤 합성(깨끗한 외곽선)."""
+def _stamp_oriented_ellipse_mask(mask, center, radii, angle):
+    """회전·찌그러진 타원을 L 마스크에 찍는다(덧셈 합집합, fill=255).
+
+    몸통+꼬리 union 마스크를 만들 때 쓴다. 회전 타일을 paste 의 mask 로 써서
+    타일 영역 밖의 기존 마스크는 그대로 두고 255 영역만 더한다.
+    """
     rx, ry = float(radii[0]), float(radii[1])
-    pad = max(2, int(round(width)) + 2)
+    pad = 2
     w = max(4, int(math.ceil(rx * 2.0)) + pad * 2)
     h = max(4, int(math.ceil(ry * 2.0)) + pad * 2)
-    tile = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    ImageDraw.Draw(tile).ellipse(
-        [pad, pad, w - pad, h - pad],
-        fill=fill, outline=outline, width=max(1, int(round(width))),
-    )
+    tile = Image.new("L", (w, h), 0)
+    ImageDraw.Draw(tile).ellipse([pad, pad, w - pad, h - pad], fill=255)
     rot = tile.rotate(math.degrees(angle), expand=True, resample=Image.BICUBIC)
     ox = int(round(center[0] - rot.width / 2.0))
     oy = int(round(center[1] - rot.height / 2.0))
-    overlay.alpha_composite(rot, (ox, oy))
+    mask.paste(255, (ox, oy), rot)
 
 
 def _draw_cloud(overlay, rect, anchor, fill, border, border_w, with_tail, *, seed=0):
     """찌그러진 둥근 덩어리 구름 몸통 + (거리 조건) 찌그러진 타원 생각 꼬리.
 
-    몸통은 _cloud_body_polygon 의 지터된 폴리곤을 채우고 외곽선을 폴리라인으로
-    그려 손그림 느낌을 준다(균일 MaxFilter 테두리와 달리 윤곽이 살짝 흔들림).
-    꼬리는 크기 차이가 큰 찌그러진 타원 3개를 살짝 휜 곡선을 따라 anchor 쪽에
-    배치한다(완벽한 원의 일직선 정렬이 아님).
+    몸통은 _cloud_body_polygon 의 지터된 폴리곤, 꼬리는 크기 차이가 큰 찌그러진
+    타원 2개를 살짝 휜 곡선을 따라 anchor 쪽에 배치한다(완벽한 원의 일직선 정렬이
+    아님). 몸통과 꼬리를 하나의 합집합 마스크로 합성해 외곽선을 union 바깥에 한 번만
+    그리므로, 꼬리 점이 몸통 안쪽으로 들어가도 내부 경계선(이음선) 없이 자연스럽게
+    병합된다. fill 도 한 번만 칠해 반투명(thought_opacity)에서 겹침 영역이 진해지지
+    않는다. 몸통 마스크가 지터 폴리곤이라 손그림 외곽 흔들림은 유지된다.
     """
     pts = _cloud_body_polygon(rect, seed=seed)
-    layer = Image.new("RGBA", overlay.size, (0, 0, 0, 0))
-    draw = ImageDraw.Draw(layer)
     int_pts = [(int(p[0]), int(p[1])) for p in pts]
-    draw.polygon(int_pts, fill=fill)
     outline_w = max(1, int(round(border_w)))
-    draw.line(int_pts + [int_pts[0]], fill=border, width=outline_w, joint="curve")
-    overlay.alpha_composite(layer)
 
-    if not with_tail:
-        return
-    x1, y1, x2, y2 = [float(v) for v in rect]
-    rx, ry = (x2 - x1) / 2.0, (y2 - y1) / 2.0
-    dot_base = min(rx, ry)
-    base_x, base_y = _ellipse_edge_point(rect, anchor)
-    dx = float(anchor[0]) - base_x
-    dy = float(anchor[1]) - base_y
-    length = math.hypot(dx, dy)
-    if length < 1.0:
-        return
-    rng = random.Random((int(seed) ^ 0x9E3779B1) & 0x7FFFFFFF)
-    # 꼬리가 일직선이 아니라 살짝 휘도록 베지어 control 을 측면으로 벌린다.
-    px, py = -dy / length, dx / length
-    side = rng.uniform(-1.0, 1.0) * dot_base * 0.18
-    mx = (base_x + float(anchor[0])) / 2.0
-    my = (base_y + float(anchor[1])) / 2.0
-    ctrl = (mx + px * side, my + py * side)
+    # 몸통 + 꼬리 합집합 마스크. 몸통은 지터 폴리곤, 꼬리 점은 회전 타원.
+    union_mask = Image.new("L", overlay.size, 0)
+    ImageDraw.Draw(union_mask).polygon(int_pts, fill=255)
 
-    def _q(t):
-        mt = 1.0 - t
-        return (
-            mt * mt * base_x + 2.0 * mt * t * ctrl[0] + t * t * float(anchor[0]),
-            mt * mt * base_y + 2.0 * mt * t * ctrl[1] + t * t * float(anchor[1]),
-        )
+    if with_tail:
+        x1, y1, x2, y2 = [float(v) for v in rect]
+        rx, ry = (x2 - x1) / 2.0, (y2 - y1) / 2.0
+        dot_base = min(rx, ry)
+        base_x, base_y = _ellipse_edge_point(rect, anchor)
+        dx = float(anchor[0]) - base_x
+        dy = float(anchor[1]) - base_y
+        length = math.hypot(dx, dy)
+        if length >= 1.0:
+            rng = random.Random((int(seed) ^ 0x9E3779B1) & 0x7FFFFFFF)
+            # 꼬리가 일직선이 아니라 살짝 휘도록 베지어 control 을 측면으로 벌린다.
+            px, py = -dy / length, dx / length
+            side = rng.uniform(-1.0, 1.0) * dot_base * 0.18
+            mx = (base_x + float(anchor[0])) / 2.0
+            my = (base_y + float(anchor[1])) / 2.0
+            ctrl = (mx + px * side, my + py * side)
 
-    tail_layer = Image.new("RGBA", overlay.size, (0, 0, 0, 0))
-    # (진행 t, 반지름 비율). 몸통 lobe 안쪽으로 들어가는 가장 큰 점은 빼고,
-    # 몸통 바깥에 확실히 떨어지는 중간·작은 점 2개만 — 크기 차이는 크게 유지.
-    for t, scale in ((0.34, 0.13), (0.72, 0.058)):
-        cx, cy = _q(t)
-        r = max(outline_w * 1.35, dot_base * scale)
-        squish = rng.uniform(0.60, 0.80)
-        angle = rng.uniform(-0.55, 0.55)
-        _draw_oriented_ellipse(
-            tail_layer, (cx, cy), (r, r * squish), angle,
-            fill=fill, outline=border, width=outline_w,
-        )
-    overlay.alpha_composite(tail_layer)
+            def _q(t):
+                mt = 1.0 - t
+                return (
+                    mt * mt * base_x + 2.0 * mt * t * ctrl[0] + t * t * float(anchor[0]),
+                    mt * mt * base_y + 2.0 * mt * t * ctrl[1] + t * t * float(anchor[1]),
+                )
+
+            # (진행 t, 반지름 비율). 크기 차이를 크게 유지해 점점 작아지는 생각 꼬리.
+            # 점이 몸통과 겹치면 합집합 마스크로 자연 병합(경계선 없음).
+            for t, scale in ((0.34, 0.13), (0.72, 0.058)):
+                cx, cy = _q(t)
+                r = max(outline_w * 1.35, dot_base * scale)
+                squish = rng.uniform(0.60, 0.80)
+                angle = rng.uniform(-0.55, 0.55)
+                _stamp_oriented_ellipse_mask(union_mask, (cx, cy), (r, r * squish), angle)
+
+    # 합집합 마스크로 fill+외곽선을 한 번에 합성. 외곽선은 union 바깥 띠에만
+    # 생기므로 몸통-꼬리 사이 내부 이음선이 없다. 지터 폴리곤 마스크를 쓰므로
+    # 손그림 외곽 흔들림은 유지된다.
+    _composite_union_mask(overlay, union_mask, fill, border, border_w, halo_px=0)
 
 
 _CHARMING_SVG_PATH = os.path.join(
