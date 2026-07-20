@@ -50,7 +50,9 @@ _BALLOON_TYPE_SHAPE = {
     "angular":       ("rounded", ("rounded",), "comic",   False),
     "narration_box": ("rounded", ("rounded",), "box",     False),
     "thought_cloud": ("cloud",   ("cloud",),   "cloud",   False),
-    "trembling":     ("ellipse", ("ellipse",), "ellipse", True),
+    # trembling은 몸통을 normal 타원으로 그리고 옆에 떨림 강조선(`)))`)을 덧붙인다.
+    # 예전처럼 몸통 전체를 올록볼록(organic)하게 만들지 않는다.
+    "trembling":     ("ellipse", ("ellipse",), "ellipse", False),
     "burst":         ("rounded", ("rounded",), "burst",   False),
     "whisper":       ("ellipse", ("ellipse",), "whisper", False),
 }
@@ -789,9 +791,14 @@ _IMPACT_SVG_CACHE = None  # (outer_pts, inner_pts, inner_bbox)
 
 
 def _tokenize_svg_path(d):
-    """SVG path 데이터를 명령어 토큰과 숫자 토큰으로 분리."""
+    """SVG path 데이터를 명령어 토큰과 숫자 토큰으로 분리.
+
+    모든 SVG 명령어(M/L/C/Q/T/A/Z 대소문자)를 명령 토큰으로 인식한다.
+    impact(burst)는 M/Q/Z, tremble marks는 M/C/Z 만 사용하지만 정규식은
+    공통으로 쓰므로 전 명령어를 허용한다.
+    """
     return re.findall(
-        r"[MmLlQqZz]|[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?", d
+        r"[MmLlCcSsQqTtAaZz]|[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?", d
     )
 
 
@@ -882,6 +889,149 @@ def _load_impact_svg():
 
 
 _BURST_ANGLE_CACHE = {}
+
+
+# ─── 떨림 강조선(tremble marks) ──────────────────────────────────────
+_TREMBLE_SVG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tremble_marks.svg")
+_TREMBLE_SVG_CACHE = None  # (곡선 점열 리스트, 단일 곡선 bbox) — viewBox 좌표
+
+
+def _parse_cubic_path(d, samples_per_seg=14):
+    """SVG path(M/C/Z, 대문자 절대좌표)를 고밀도 점열로 변환.
+
+    tremble_marks.svg 가 C(cubic Bézier)로 곡선을 표현하므로 cubic 을 샘플링한다.
+    M/Q/Z(소문자 상대좌표)는 미사용 — tremble SVG 는 M/C/Z 만으로 구성된다.
+    """
+    tokens = _tokenize_svg_path(d)
+    pts = []
+    cur = start = None
+    i = 0
+    n = len(tokens)
+    while i < n:
+        t = tokens[i]
+        if t in ("M", "m"):
+            cur = (float(tokens[i + 1]), float(tokens[i + 2]))
+            start = cur
+            pts.append(cur)
+            i += 3
+        elif t in ("C", "c"):
+            if cur is None:
+                print("[BUBBLE_RENDER] ⚠ tremble SVG path: M 없이 C 시작, 스킵")
+                break
+            c1 = (float(tokens[i + 1]), float(tokens[i + 2]))
+            c2 = (float(tokens[i + 3]), float(tokens[i + 4]))
+            end = (float(tokens[i + 5]), float(tokens[i + 6]))
+            for s in range(1, samples_per_seg + 1):
+                tt = s / samples_per_seg
+                mt = 1.0 - tt
+                px = (
+                    mt * mt * mt * cur[0]
+                    + 3.0 * mt * mt * tt * c1[0]
+                    + 3.0 * mt * tt * tt * c2[0]
+                    + tt * tt * tt * end[0]
+                )
+                py = (
+                    mt * mt * mt * cur[1]
+                    + 3.0 * mt * mt * tt * c1[1]
+                    + 3.0 * mt * tt * tt * c2[1]
+                    + tt * tt * tt * end[1]
+                )
+                pts.append((px, py))
+            cur = end
+            i += 7
+        elif t in ("Z", "z"):
+            if start is not None:
+                pts.append(start)
+            cur = start
+            i += 1
+        else:
+            i += 1
+    return pts
+
+
+def _load_tremble_svg():
+    """tremble_marks.svg 를 파싱해 (곡선 점열 리스트, 첫 곡선 bbox) 로 캐싱.
+
+    각 path 는 하나의 `)` 모양 강조선이다. 두 곡선은 동일 형상(가로 이동만 다름)이므로
+    첫 곡선만 기준으로 쓰고 렌더 시 풍선 높이에 맞춰 복제·배치한다.
+    """
+    global _TREMBLE_SVG_CACHE
+    if _TREMBLE_SVG_CACHE is not None:
+        return _TREMBLE_SVG_CACHE
+    try:
+        tree = ET.parse(_TREMBLE_SVG_PATH)
+    except (FileNotFoundError, OSError) as e:
+        print(f"[BUBBLE_RENDER] ⚠ tremble SVG 로드 실패({_TREMBLE_SVG_PATH}): {e}")
+        traceback.print_exc()
+        _TREMBLE_SVG_CACHE = (None, None)
+        return _TREMBLE_SVG_CACHE
+    except ET.ParseError as e:
+        print(f"[BUBBLE_RENDER] ⚠ tremble SVG 파싱 실패: {e}")
+        traceback.print_exc()
+        _TREMBLE_SVG_CACHE = (None, None)
+        return _TREMBLE_SVG_CACHE
+    paths = tree.findall(".//{http://www.w3.org/2000/svg}path")
+    curves = []
+    for path in paths:
+        sampled = _parse_cubic_path(path.get("d", ""))
+        if sampled:
+            curves.append(sampled)
+    if not curves:
+        print("[BUBBLE_RENDER] ⚠ tremble SVG 곡선 파싱 0건")
+        _TREMBLE_SVG_CACHE = (None, None)
+        return _TREMBLE_SVG_CACHE
+    _TREMBLE_SVG_CACHE = (curves, _points_bbox(curves[0]))
+    return _TREMBLE_SVG_CACHE
+
+
+def _draw_tremble_marks(overlay, rect, border, border_w, *, side="right", mark_count=3):
+    """풍선 옆에 떨림 강조선(진동 고스트 아웃라인)을 mark_count개 그려 trembling을 표현.
+
+    tremble_marks.svg 의 단일 곡선(베지어 점열)을 풍선 높이에 맞춰 등비 스케일해
+    지정한 side 에 배치한다. 곡선의 **오목한 면이 풍선을 향하도록**(풍선 모서리
+    곡률과 나란한 진동 궤적) 좌우 배치에 따라 곡선을 반전시킨다.
+    stroke 색/두께는 풍선 테두리와 동일하게 유지해 한 붓 터치 느낌을 준다.
+    """
+    curves, curve_bbox = _load_tremble_svg()
+    if not curves or curve_bbox is None:
+        return
+    x1, y1, x2, y2 = [float(v) for v in rect]
+    bh = max(1.0, y2 - y1)
+    cy = (y1 + y2) / 2.0
+    base = curves[0]
+    cb_x1, cb_y1, cb_x2, cb_y2 = curve_bbox
+    cw_v = max(1.0, cb_x2 - cb_x1)   # 곡선 하나의 가로폭(viewBox 단위)
+    ch_v = max(1.0, cb_y2 - cb_y1)   # 곡선 하나의 세로폭(스케일 기준축)
+    scale = (bh * 0.82) / ch_v
+    stroke_w = max(1, int(round(max(2.0, float(border_w) * 1.1))))
+    # 곡선을 자체 bbox 중심 기준 국소 좌표로 정규화(회전/반전 중심).
+    ccx = (cb_x1 + cb_x2) / 2.0
+    ccy = (cb_y1 + cb_y2) / 2.0
+    local = [((p[0] - ccx), (p[1] - ccy)) for p in base]
+    gap = cw_v * scale * 1.35        # 강조선 간 가로 간격(svg 두 곡선 간격 비율 근사)
+    margin = max(stroke_w * 1.5, bh * 0.05)
+
+    layer = Image.new("RGBA", overlay.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(layer)
+    # svg 기준 곡선은 `)` (오른쪽으로 열림). 오목한 면이 풍선을 향하게(감싸듯) 하려면
+    #   - right 배치: 곡선을 좌우 반전(`(`)시켜 볼록한 면이 바깥(오른쪽)으로.
+    #   - left  배치: 원본 `)` 그대로 써서 볼록한 면이 바깥(왼쪽)으로.
+    if side == "left":
+        flip = 1.0
+        x0 = x1 - margin - (cw_v * scale) / 2.0
+        step = -gap
+    else:
+        flip = -1.0
+        x0 = x2 + margin + (cw_v * scale) / 2.0
+        step = gap
+    for k in range(max(1, int(mark_count))):
+        ox = x0 + step * k
+        pts = [(ox + lx * scale * flip, cy + ly * scale) for (lx, ly) in local]
+        draw.line(pts, fill=border, width=stroke_w, joint="curve")
+    overlay.alpha_composite(layer)
+
+
+
 
 
 def _optimal_burst_angle(inner_pts, bcx, bcy, rect, scale):
@@ -2008,13 +2158,11 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
                 radius,
             )
         # 유기형 외곽선은 대사(ellipse/comic)에만 적용. cloud/box는 legacy 유지.
-        # trembling balloon_type은 per-segment로 organic을 강제하고 굴곡을 세게 한다.
+        # trembling은 몸통을 normal로 그리고 떨림 강조선을 옆에 덧붙이므로 organic 강제 안 함.
         use_organic = force_organic or (
             bubble_shape_mode == "organic" and render_shape in ("ellipse", "comic")
         )
         seg_wobble = organic_wobble
-        if balloon_type == "trembling":
-            seg_wobble = max(organic_wobble, 0.20)
         # 동일 배치에서 동일 형태가 재현되도록 rect 좌표로 결정론적 seed 산출.
         # hash()는 프로세스마다 salt가 달라 재현성이 없으므로 정수 연산을 쓴다.
         organic_seed = (
@@ -2051,6 +2199,27 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
             tail_max_length_px=tail_max_length_px,
             split=do_split,
         )
+
+        # trembling: normal 풍선 옆에 떨림 강조선(`)))`) 추가. 꼬리가 있는 경우
+        # 꼬리 반대쪽에 배치해 꼬리와 겹치지 않게 하고, 캔버스 여유가 부족하면 반대편.
+        if balloon_type == "trembling":
+            rx1, ry1, rx2, ry2 = [float(v) for v in rect]
+            rbh = max(1.0, ry2 - ry1)
+            # 강조선 3개가 한쪽으로 뻗는 총 폭 추정(tremble svg 곡선 종횡비 기반 근사).
+            marks_extent = rbh * 0.85
+            rcx = (rx1 + rx2) / 2.0
+            prefer_left = with_tail and float(anchor[0]) >= rcx
+            room_left = rx1
+            room_right = canvas_w - rx2
+            if prefer_left and room_left >= marks_extent:
+                tremble_side = "left"
+            elif room_right >= marks_extent:
+                tremble_side = "right"
+            elif room_left >= room_right:
+                tremble_side = "left"
+            else:
+                tremble_side = "right"
+            _draw_tremble_marks(overlay, rect, border, border_w, side=tremble_side)
 
         # 모델이 선택한 줄과 행간을 실제 폰트로 중앙 정렬해 그린다.
         rect_cx = (rect[0] + rect[2]) / 2.0

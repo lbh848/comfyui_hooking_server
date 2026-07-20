@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="80" height="120" viewBox="0 0 80 120" fill="none">
+  <title>Trembling marks ))</title>
+  <desc>Two curved trembling emphasis lines for comic speech balloons.</desc>
+  <path d="M 18 20 C 2 40, 2 80, 18 100" stroke="#231815" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <path d="M 40 12 C 24 36, 24 84, 40 108" stroke="#231815" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+</svg>
