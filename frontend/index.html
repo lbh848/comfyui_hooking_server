@@ -8246,7 +8246,8 @@
                             <div class="pp-card pp-card-advanced">
                                 <div class="pp-card-title">말풍선 형상</div>
                                 <div class="pp-field-inline">
-                                    <div><div style="font-size:0.7rem; color:var(--text2,#999);">테두리 두께</div><input id="pp-bubble-border-width" type="number" class="input" style="width:70px;" step="0.5" oninput="renderPostprocessPreview()"></div>
+                                    <div><div style="font-size:0.7rem; color:var(--text2,#999);">테두리 두께</div><input id="pp-bubble-border-width" type="number" class="input" style="width:70px;" step="0.5" oninput="renderPostprocessPreview()" title="수학적 말풍선(구름/유기형 등)의 테두리 두께"></div>
+                                    <div><div style="font-size:0.7rem; color:var(--text2,#999);">SVG 외곽 두께 (impact)</div><input id="pp-bubble-svg-border-width" type="number" class="input" style="width:70px;" min="0" step="0.5" oninput="renderPostprocessPreview()" title="impact(burst) 말풍선 외곽 두께(px). 비우면 SVG 사전정의 두께(outer/inner 간격) 사용"></div>
                                     <div><div style="font-size:0.7rem; color:var(--text2,#999);">여백 — 모델 자동</div><input id="pp-bubble-padding" type="number" class="input" style="width:70px;" disabled title="선택된 버블 종류에 맞춰 레이아웃 ONNX가 자동 결정합니다"></div>
                                     <div><div style="font-size:0.7rem; color:var(--text2,#999);">코믹 모서리 크기</div><input id="pp-bubble-radius" type="number" class="input" style="width:70px;" min="0" oninput="renderPostprocessPreview()"></div>
                                 </div>
@@ -26930,6 +26931,7 @@
                     bubble_fill: '#FFFFFF',
                     bubble_border: '#333333',
                     border_width: 2,
+                    svg_border_width: 0,
                     opacity: 1.0,
                     speech_opacity: 1.0,
                     thought_opacity: 1.0,
@@ -27905,6 +27907,7 @@
             set('pp-bubble-fill', b.bubble_fill || '#FFFFFF');
             set('pp-bubble-border', b.bubble_border || '#333333');
             set('pp-bubble-border-width', b.border_width ?? 2);
+            set('pp-bubble-svg-border-width', b.svg_border_width ? b.svg_border_width : '');
             set('pp-bubble-padding', b.padding ?? 16);
             set('pp-bubble-radius', b.radius ?? 22);
             set('pp-bubble-tail-threshold', b.tail_threshold ?? 1.0);
@@ -27951,6 +27954,7 @@
             b.bubble_fill = document.getElementById('pp-bubble-fill').value;
             b.bubble_border = document.getElementById('pp-bubble-border').value;
             b.border_width = _ppNum('pp-bubble-border-width', 2, 0, 20);
+            b.svg_border_width = _ppNum('pp-bubble-svg-border-width', 0, 0, 40);
             b.padding = _ppNum('pp-bubble-padding', 16, 0, 200);
             b.radius = _ppNum('pp-bubble-radius', 22, 0, 200);
             b.tail_threshold = _ppNum('pp-bubble-tail-threshold', 1.0, 0, 5);
@@ -28005,7 +28009,7 @@
                     text_width_scale: b.text_width_scale,
                     layout_font_scale: b.layout_font_scale,
                     text_color: b.text_color, bubble_fill: b.bubble_fill, bubble_border: b.bubble_border,
-                    border_width: b.border_width, opacity: b.opacity,
+                    border_width: b.border_width, svg_border_width: b.svg_border_width, opacity: b.opacity,
                     speech_opacity: b.speech_opacity, thought_opacity: b.thought_opacity,
                     padding: b.padding, radius: b.radius,
                     thought_shape: b.thought_shape, tail_threshold: b.tail_threshold,

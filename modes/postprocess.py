@@ -2293,6 +2293,7 @@ def _default_bubble() -> dict:
         "bubble_fill": "#FFFFFF",
         "bubble_border": "#333333",
         "border_width": 2,
+        "svg_border_width": 0,           # SVG(impact burst) 외곽 두께 px. 0=SVG 사전정의(outer/inner 간격)
         "opacity": 1.0,                   # 말풍선 배경 불투명도(0~1) — 구형 폴백
         "speech_opacity": 1.0,            # 대사(발화) 말풍선 배경 불투명도(0~1)
         "thought_opacity": 1.0,           # 생각 말풍선 배경 불투명도(0~1)
@@ -2450,6 +2451,7 @@ def get_bubble_settings(config: dict, bot_name: str = "") -> Optional[dict]:
         "bubble_fill": bb.get("bubble_fill", "#FFFFFF"),
         "bubble_border": bb.get("bubble_border", "#333333"),
         "border_width": float(bb.get("border_width", 2) or 2),
+        "svg_border_width": max(0.0, float(bb.get("svg_border_width", 0) or 0)),
         "opacity": float(bb.get("opacity", 1.0) or 1.0),
         "speech_opacity": float(bb.get("speech_opacity", bb.get("opacity", 1.0)) or 1.0),
         "thought_opacity": float(bb.get("thought_opacity", bb.get("opacity", 1.0)) or 1.0),

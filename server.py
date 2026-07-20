@@ -2543,18 +2543,26 @@ async def process_illustration_context_queue_item(item) -> dict:
             )
             return child_id, child_item
 
-        # 하위 큐 완료를 기다리고 image_bytes 를 회수. 실패/빈 결과는 (None, 사유) 반환.
+        # 하위 큐 완료를 기다리고 image_bytes 를 회수.
+        # 반환: (image_bytes, 사유, cancelled)
+        #   - cancelled=True: 사용자가 큐를 직접 취소한 경우. 재시도/폴백 대상이 아님.
         async def _await_child(child_id, child_item, slot_label):
             try:
                 await child_item.completion_future
                 image_bytes = prompts.get(child_id, {}).get("image_bytes")
                 if not image_bytes:
-                    return None, "생성 결과 비어 있음"
-                return image_bytes, ""
+                    return None, "생성 결과 비어 있음", False
+                return image_bytes, "", False
             except Exception as e:
+                # 취소 예외(RuntimeError("큐 항목이 취소되었습니다")) 또는 이미 cancelled 상태인 경우
+                if getattr(child_item, "status", None) == "cancelled" or "취소" in str(e):
+                    print(
+                        f"[ILLUST_CONTEXT] 하위 큐가 사용자에 의해 취소됨: child={child_id}, slot={slot_label}, error={e}"
+                    )
+                    return None, f"취소됨 - {e}", True
                 print(f"[ILLUST_CONTEXT] 하위 이미지 큐 실패: child={child_id}, slot={slot_label}, error={e}")
                 traceback.print_exc()
-                return None, f"큐 실패 - {e}"
+                return None, f"큐 실패 - {e}", False
 
         fallback_bytes = _load_illustration_fallback()
 
@@ -2568,7 +2576,10 @@ async def process_illustration_context_queue_item(item) -> dict:
         images: list[bytes | None] = [None] * total
         to_retry: list[tuple[int, dict]] = []  # (raw_items 인덱스, descriptor)
         for idx, (child_id, child_item) in enumerate(child_pairs):
-            image_bytes, fail_reason = await _await_child(child_id, child_item, raw_items[idx].get("slot"))
+            image_bytes, fail_reason, cancelled = await _await_child(child_id, child_item, raw_items[idx].get("slot"))
+            if cancelled:
+                # 사용자가 직접 큐를 취소한 경우 - 재시도/폴백 없이 세션 전체를 취소한다.
+                raise RuntimeError(f"사용자가 큐를 취소했습니다 (slot={raw_items[idx].get('slot')}, 사유={fail_reason})")
             if image_bytes:
                 images[idx] = image_bytes
             else:
@@ -2597,7 +2608,10 @@ async def process_illustration_context_queue_item(item) -> dict:
                 slot_label = descriptor.get("slot")
                 retry_index = idx + 1
                 retry_id, retry_item = await _enqueue_child(descriptor, retry_index)
-                image_bytes, fail_reason = await _await_child(retry_id, retry_item, slot_label)
+                image_bytes, fail_reason, cancelled = await _await_child(retry_id, retry_item, slot_label)
+                if cancelled:
+                    # 재시도 큐마저 사용자가 취소한 경우 - 폴백 없이 세션 전체 취소.
+                    raise RuntimeError(f"사용자가 큐를 취소했습니다 (slot={slot_label}, 사유={fail_reason})")
                 if image_bytes:
                     images[idx] = image_bytes
                     print(f"[ILLUST_CONTEXT] 재시도 성공으로 이미지 교체: slot={slot_label}")

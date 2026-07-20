@@ -1392,7 +1392,7 @@ def _optimal_burst_angle(inner_pts, bcx, bcy, rect, scale, salt=""):
     return best_theta
 
 
-def _draw_impact_svg_burst(overlay, rect, fill, border, border_w=2, with_tail=False, face_box=None, seed=0):
+def _draw_impact_svg_burst(overlay, rect, fill, border, with_tail=False, face_box=None, seed=0, svg_border_w=0):
     """벡터 impact_balloon.svg 를 rect(텍스트 박스)를 감싸도록 배치해 합성.
 
     modes/impact_balloons/ 변종 중 rect/canvas 에 가장 적합한 것을 점수로 자동
@@ -1401,11 +1401,13 @@ def _draw_impact_svg_burst(overlay, rect, fill, border, border_w=2, with_tail=Fa
     등비 스케일하고 중앙 정렬한 뒤, rect 중심 기준으로 회전시킨다. 회전 각도는
     rect 와 내부(흰) 영역의 겹침이 최대가 되는 각도(_optimal_burst_angle)를 써서
     텍스트 박스를 흰 영역이 최대한 덮도록(테두리에 가려지는 글자 최소화) 배치한다.
-    렌더는 outer path 를 border 색으로 채운 뒤, outer 영역 마스크를 border_w
-    만큼 침식(MinFilter)해 만든 inner(흰) 마스크를 fill 색(알파 포함)으로 덮어
-    바깥 고리(두께=border_w)가 테두리가 된다. inner path 자체는 스케일/회전/
-    변종 선택 계산용으로만 쓰고 렌더 채움에는 쓰지 않는다 → 두께를 런타임에
-    border_w 로 조절 가능. SVG burst 는 꼬리가 없으므로 with_tail 은 무시한다.
+    테두리 두께는 기본적으로 SVG 사전 정의(outer path 와 inner path 사이의 간격)
+    을 그대로 쓴다. svg_border_w > 0 이면 절대 px 오버라이드: outer path 를 border
+    색으로 채운 뒤 outer 영역 마스크를 svg_border_w 만큼 침식(MinFilter)해 만든
+    inner(흰) 마스크를 fill 색(알파 포함)으로 덮어 바깥 고리(두께=svg_border_w)
+    가 테두리가 된다. svg_border_w=0(미지정)이면 inner path 자체를 fill 로 채워
+    SVG 사전정의 두께를 유지한다. border_w(수학적 말풍선용)와는 분리된 파라미터.
+    SVG burst 는 꼬리가 없으므로 with_tail 도 무시.
     """
     variant = _select_impact_variant(rect, overlay.size, face_box=face_box, seed=seed)
     if variant is not None:
@@ -1449,28 +1451,28 @@ def _draw_impact_svg_burst(overlay, rect, fill, border, border_w=2, with_tail=Fa
         sy = p[1] * scale + ty - rcy
         return (rcx + sx * cos_t - sy * sin_t, rcy + sx * sin_t + sy * cos_t)
 
-    # border_w → 픽셀 외곽 두께. 0 이면 테두리 없음(꽉 찬 fill). 변환 실패 시 2 폴백.
-    try:
-        outline_w = max(0, int(round(float(border_w))))
-    except (TypeError, ValueError):
-        print(f"[BUBBLE_RENDER] ⚠ impact border_w 변환 실패({border_w!r}), 2 사용")
-        outline_w = 2
-
-    outer_poly = [_tr(p) for p in outer]
     layer = Image.new("RGBA", overlay.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(layer)
-    # 1) outer 전체를 border 색으로 채운다.
-    draw.polygon(outer_poly, fill=border)
-    # 2) outer 영역 마스크 → border_w 만큼 침식 → inner(흰) 마스크.
-    #    침식은 현재 2-폴리곤 채움과 같은 원리라 비볼록 별/가시 형태를 유지하며,
-    #    두께를 런타임에 border_w 로 조절할 수 있다(outer/inner path 데이터에 고정 X).
-    if outline_w > 0:
-        mask = Image.new("L", overlay.size, 0)
-        ImageDraw.Draw(mask).polygon(outer_poly, fill=255)
-        eroded = mask.filter(ImageFilter.MinFilter(outline_w * 2 + 1))
-        fill_layer = Image.new("RGBA", overlay.size, fill)
-        fill_layer.putalpha(eroded)
-        layer.alpha_composite(fill_layer)
+    # outer path(테두리) → border 색.
+    draw.polygon([_tr(p) for p in outer], fill=border)
+    # inner(몸통) → fill 색. svg_border_w>0 이면 inner path 대신 outer 마스크를
+    # svg_border_w 만큼 침식한 영역을 써서 두께를 절대 px 로 오버라이드.
+    # 0 이면 SVG inner path 를 그대로 써 사전정의 두께(outer/inner 간격) 유지.
+    if svg_border_w > 0:
+        try:
+            outline_w = max(1, int(round(float(svg_border_w))))
+        except (TypeError, ValueError):
+            print(f"[BUBBLE_RENDER] ⚠ svg_border_w 변환 실패({svg_border_w!r}), SVG 사전정의 두께 사용")
+            draw.polygon([_tr(p) for p in inner], fill=fill)
+        else:
+            mask = Image.new("L", overlay.size, 0)
+            ImageDraw.Draw(mask).polygon([_tr(p) for p in outer], fill=255)
+            eroded = mask.filter(ImageFilter.MinFilter(outline_w * 2 + 1))
+            fill_layer = Image.new("RGBA", overlay.size, fill)
+            fill_layer.putalpha(eroded)
+            layer.alpha_composite(fill_layer)
+    else:
+        draw.polygon([_tr(p) for p in inner], fill=fill)
     overlay.alpha_composite(layer)
     if vid is not None:
         fb = ""
@@ -2049,6 +2051,7 @@ def _draw_layout_bubble(
     split=False,
     halo_px=0,
     face_box=None,
+    svg_border_w=0,
 ):
     """레이아웃 결과를 타원/코믹/구름/무라운드 박스로 그린다.
 
@@ -2070,7 +2073,7 @@ def _draw_layout_bubble(
     if shape == "burst":
         # 벡터 impact_balloon.svg 를 rect 를 감싸도록 합성. 꼬리 없음.
         # face_box(화자)를 넘겨 씬마다 가장 적합한 변종을 선택(화자 얼굴 안 가림).
-        _draw_impact_svg_burst(overlay, rect, fill, border, border_w, with_tail, face_box=face_box, seed=seed)
+        _draw_impact_svg_burst(overlay, rect, fill, border, with_tail, face_box=face_box, seed=seed, svg_border_w=svg_border_w)
         return
     if shape == "whisper":
         _draw_whisper(
@@ -2369,6 +2372,9 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
     border = ImageColor.getrgb(s.get("bubble_border", "#333333")) + (255,)
     text_color = ImageColor.getrgb(s.get("text_color", "#111111")) + (255,)
     border_w = float(s.get("border_width", 2))
+    # SVG(impact burst) 전용 외곽 두께(절대 px). 0/미지정=SVG 사전정의(outer/inner path 간격).
+    # 수학적 말풍선의 border_w 와 분리된 파라미터(burst 형상에만 적용).
+    svg_border_w = float(s.get("svg_border_width", 0) or 0)
     # 흰 헤일로: 검은 테두리 바깥으로 흰 띠를 번지게 해 손그림 만화풍 느낌.
     # 미지정 시 border_width에서 자동 산정. 0이면 헤일로 없음(종전 동작).
     halo_raw = s.get("bubble_halo_px", None)
@@ -2760,6 +2766,7 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
             split=do_split,
             halo_px=bubble_halo_px,
             face_box=box,
+            svg_border_w=svg_border_w,
         )
 
         # trembling: SVG의 `))` 한 쌍을 3곳에 복제하고, 각 위치의 타원 접선에 맞춰
