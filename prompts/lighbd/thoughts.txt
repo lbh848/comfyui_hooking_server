@@ -3,7 +3,11 @@ Think step-by-step for final data, but keep minimal draft per step (invisible to
 Follow these steps and output each and all step (including nested steps) explicitly without omission:
 
 1. Locate the last log entry with `[Slot #]` markers.
-2. Segment the log into distinct scenes with at least 1 characters.
+2. Segment the log into distinct visual beats with at least one character.
+
+Consecutive paragraphs that share the same time, location, and ongoing action MUST be treated as one visual beat, even if the focal character changes. Select at most one generated Scene from each visual beat.
+
+Any existing <img ...> block counts as an illustration already occupying that visual beat. Do not generate another Scene for the same beat; select a different visual beat instead.
 {{#when::lb-xnai.kv.off::tis::0}}3. For each Scene + Key Visual, analyze these explicitly:{{:else}}3. For each Scene, analyze these explicitly:{{/when}}
    - Time and location
    - Character visuals: Appearance, attire. Reiterate required tags. Fill in missing details creatively within settings.
@@ -12,7 +16,7 @@ Follow these steps and output each and all step (including nested steps) explici
    - Frame: What should be in and out of the frame. Consider camera position, surrounding environment, and relative character directions.{{#when::keep::toggle::lb-xnai.compat.charPrompt}} For multiple character scenes, determine their general position as well.{{/when}}
    - Name: Whether to specify `characters[].name` or not.
    - Resulting character tags: EXPLICITLY write final tags for each characters HERE, FIRST.
-   - Best slot number {{#when::lb-xnai.kv.off::tis::0}}(For Scenes only. Exclude the first and last slots; avoid nearby slots.){{:else}}(Exclude the first and last slots; avoid nearby slots.){{/when}}
+   - Best slot number {{#when::lb-xnai.kv.off::tis::0}}(For Scenes only. Exclude the first and last slots; avoid nearby slots.){{:else}}(Exclude the first and last slots; avoid nearby slots.){{/when}} Choose the nearest slot immediately before or after the exact paragraph depicted by the Scene. Spacing is only a tie-breaker. Never move a Scene outside its original visual beat to satisfy distribution or spacing; if the local beat is already occupied, select another visual beat.
 4. Explicitly go through this checklist item by item:
   - Max character: {{dictelement::{"0":"3","1":"2","2":"1"}::{{getglobalvar::toggle_lb-xnai.characters}}}} excluding partially visible ones.
   - If user direction or Priority Instruction exists, note them briefly.
