@@ -881,12 +881,66 @@ def _load_impact_svg():
     return _IMPACT_SVG_CACHE
 
 
+_BURST_ANGLE_CACHE = {}
+
+
+def _optimal_burst_angle(inner_pts, bcx, bcy, rect, scale):
+    """rect(텍스트 박스) 와 burst 내부(흰) 영역의 겹침이 최대가 되는 회전각 반환.
+
+    캔버스를 rect 와 동일 비율로 정규화해 rect 가 캔버스를 가득 채우게 한다.
+    그러면 '회전·스케일된 내부 폴리곤이 rect 안에 그려지는 픽셀 수'가 곧
+    겹침 면적이 된다. 2° 간격 후보 각도마다 폴리곤을 래스터화해 픽셀 수를
+    비교해 최대 각도를 찾는다. rect 치수(반올림)로 캐싱해 미리보기/실제 렌더가
+    항상 동일한 각도를 갖는다(결정론적). 사이즈(scale)는 호출처에서 정한 대로 유지.
+    """
+    x1, y1, x2, y2 = [float(v) for v in rect]
+    rw = max(1.0, x2 - x1)
+    rh = max(1.0, y2 - y1)
+    key = (int(round(rw)), int(round(rh)))
+    cached = _BURST_ANGLE_CACHE.get(key)
+    if cached is not None:
+        return cached
+
+    # rect 비율 캔버스(최대변 240px). rect 가 캔버스를 가득 채우므로
+    # 겹침 = 회전된 내부 폴리곤이 캔버스 안에 그려지는 픽셀 수.
+    MAXD = 240
+    if rw >= rh:
+        cw, ch = MAXD, max(1, int(round(MAXD * rh / rw)))
+    else:
+        ch, cw = MAXD, max(1, int(round(MAXD * rw / rh)))
+    px = cw / rw  # == ch / rh
+    ccx, ccy = cw / 2.0, ch / 2.0
+    # 내부 폴리곤을 중심 정렬(bcx,bcy 기준) + scale 적용한 기저점
+    base = [((p[0] - bcx) * scale, (p[1] - bcy) * scale) for p in inner_pts]
+
+    best_theta, best_count = 0.0, -1
+    step = math.radians(2.0)
+    n = int(round(2.0 * math.pi / step))
+    for i in range(n):
+        theta = i * step
+        c, s = math.cos(theta), math.sin(theta)
+        poly = [
+            (ccx + (bx * c - by * s) * px, ccy + (bx * s + by * c) * px)
+            for (bx, by) in base
+        ]
+        m = Image.new("L", (cw, ch), 0)
+        ImageDraw.Draw(m).polygon(poly, fill=255)
+        cnt = m.tobytes().count(b"\xff")
+        if cnt > best_count:
+            best_count, best_theta = cnt, theta
+
+    _BURST_ANGLE_CACHE[key] = best_theta
+    return best_theta
+
+
 def _draw_impact_svg_burst(overlay, rect, fill, border, with_tail=False):
     """벡터 impact_balloon.svg 를 rect(텍스트 박스)를 감싸도록 배치해 합성.
 
     내부 path bbox 가 rect 를 cover 하도록(더 큰 쪽 기준) 등비 스케일하고 중앙
-    정렬한 뒤, rect 중심 기준으로 랜덤 각도 회전시킨다(방향 다양화). 회전 각도는
-    rect 중심 해시로 결정론적으로 정해 미리보기/실제 렌더가 동일한 방향을 유지한다.
+    정렬한 뒤, rect 중심 기준으로 회전시킨다. 회전 각도는 rect 와 내부(흰) 영역의
+    겹침이 최대가 되는 각도(_optimal_burst_angle)를 써서 텍스트 박스를 흰 영역이
+    최대한 덮도록(테두리에 가려지는 글자 최소화) 배치한다. 사이즈(scale)는 종전과
+    동일하게 유지한다.
     외곽 path 를 border 색으로 채우고, 그 위에 내부 path 를 fill 색
     (알파 포함)으로 덮어 바깥 고리가 테두리가 된다. SVG burst 는 꼬리가 없으므로
     with_tail 은 무시한다(별도 꼬리 미추가).
@@ -913,9 +967,9 @@ def _draw_impact_svg_burst(overlay, rect, fill, border, with_tail=False):
     rcx = (x1 + x2) / 2.0
     rcy = (y1 + y2) / 2.0
 
-    # 방향 랜덤 회전. rect 중심 해시로 결정론적 각도를 정해
-    # 미리보기/실제 렌더가 동일한 방향을 유지한다.
-    theta = random.Random((int(rcx) * 73856093) ^ (int(rcy) * 19349663)).uniform(0.0, 2.0 * math.pi)
+    # 회전 각도: rect 와 내부(흰) 영역의 겹침이 최대가 되는 각도.
+    # 미리보기/실제 렌더가 동일한 방향을 유지(결정론적, rect 치수로 캐싱).
+    theta = _optimal_burst_angle(inner, bcx, bcy, rect, scale)
     cos_t = math.cos(theta)
     sin_t = math.sin(theta)
     tx = rcx - bcx * scale
