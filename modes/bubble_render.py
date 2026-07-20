@@ -262,14 +262,14 @@ def _resolve_tail_width_scale(settings):
 
 
 def _resolve_tail_max_length(settings):
-    """꼬리 최대 길이(얼굴 최대 크기의 배율). 0=제한 없음(현재 동작). 0~10 클램프."""
+    """꼬리 최대 길이(절대 픽셀). 0=제한 없음(발화자 얼굴까지 도달). 0~2000 클램프."""
     value = (settings or {}).get("tail_max_length", 0.0)
     try:
-        ratio = float(value)
+        px = float(value)
     except (TypeError, ValueError):
         print(f"[BUBBLE_RENDER] ⚠ tail_max_length 변환 실패({value!r}), 제한 없음")
-        ratio = 0.0
-    return max(0.0, min(10.0, ratio))
+        px = 0.0
+    return max(0.0, min(2000.0, px))
 
 
 def _resolve_organic_wobble(settings):
@@ -993,12 +993,14 @@ def _impact_variant_transform(outer, inner, inner_bbox, rect, salt=""):
     return [(_tr(p)[0], _tr(p)[1]) for p in outer], [(_tr(p)[0], _tr(p)[1]) for p in inner]
 
 
-def _score_impact_variant(outer, inner, inner_bbox, rect, canvas_size, salt=""):
-    """단일 변종을 rect/canvas 에 배치했을 때 적합도 점수(클수록 좋음).
+def _score_impact_variant(outer, inner, inner_bbox, rect, canvas_size, face_box=None, salt=""):
+    """단일 변종을 rect/canvas/화자위치 에 배치했을 때 적합도 점수(클수록 좋음).
 
     다운샘플링된 캔버스(최대변 200px)에서 측정:
-      coverage  = (내부 흰 ∩ rect) / rect 면적  → 텍스트가 테두리에 가려지지 않는 비율 (+)
-      overflow  = (외곽이 캔버스 밖으로 삐져나간 면적) / 외곽 면적 → 벌점 (−)
+      coverage    = (내부 흰 ∩ rect) / rect 면적  → 텍스트가 테두리에 가려지지 않는 비율 (+)
+      overflow    = (외곽이 캔버스 밖으로 삐져나간 면적) / 외곽 면적 → 벌점 (−)
+      face_overlap= (외곽 ∩ 화자 face_box) / face_box 면적 → 별표 가시가 화자 얼굴을
+                    가리는 비율, 벌점 (−). 화자 위치가 씬마다 달라지므로 적합 변종이 달라짐.
     """
     x1, y1, x2, y2 = [float(v) for v in rect]
     rw = max(1.0, x2 - x1)
@@ -1035,16 +1037,35 @@ def _score_impact_variant(outer, inner, inner_bbox, rect, canvas_size, salt=""):
     overflow_area_ds = max(0.0, outer_area_ds - outer_drawn_px)
     overflow = (overflow_area_ds / outer_area_ds) if outer_area_ds > 0 else 0.0
 
+    # 화자 가림: 외곽(별표 가시 포함) 폴리곤이 화자 얼굴 face_box 와 겹치는 비율.
+    # 화자 위치가 씬마다 바뀌므로 이 값이 변하고, 그 결과 적합 변종도 달라진다.
+    # 별표 가시가 화자 얼굴 쪽으로 뻗어 얼굴을 덮는 변종은 벌점.
+    face_overlap = 0.0
+    if face_box is not None:
+        fx1, fy1, fx2, fy2 = [float(v) for v in face_box]
+        face_poly_ds = [(fx1 * ds, fy1 * ds), (fx2 * ds, fy1 * ds), (fx2 * ds, fy2 * ds), (fx1 * ds, fy2 * ds)]
+        m_face = Image.new("L", (cw, ch), 0)
+        ImageDraw.Draw(m_face).polygon(face_poly_ds, fill=255)
+        face_px = m_face.tobytes().count(b"\xff")
+        if face_px > 0:
+            face_inter_px = bytes(a & b for a, b in zip(m_outer.tobytes(), m_face.tobytes())).count(b"\xff")
+            face_overlap = face_inter_px / face_px
+
     w_coverage = 1.0
     w_overflow = 1.5
-    return coverage * w_coverage - overflow * w_overflow
+    w_face = 2.0  # 화자 얼굴 가림은 텍스트 가림보다 중요 — 별표가 얼굴을 덮으면 안 됨
+    return coverage * w_coverage - overflow * w_overflow - face_overlap * w_face
 
 
-def _select_impact_variant(rect, canvas_size):
-    """5종 변종 중 rect/canvas 에 가장 적합한 변종을 점수로 선택해 반환.
+def _select_impact_variant(rect, canvas_size, face_box=None):
+    """5종 변종 중 rect/canvas/화자위치 에 가장 적합한 변종을 점수로 선택해 반환.
 
     반환: (vid, outer, inner, inner_bbox). 레지스트리 비었으면 None(단일 SVG 폴백).
-    (rect 치수 + 캔버스) 키로 캐싱해 미리보기/실제가 동일 변종을 고른다(결정론적).
+    점수는 rect 전체 좌표 + 캔버스 + 화자 face_box 에 모두 의존하므로 캐시 키도 이
+    전부를 포함한다. 예전엔 (rect W,H + 캔버스) 만 키로 써서, 치수만 같으면 화자
+    위치/씬이 달라도 항상 같은 변종이 고정되는 버그가 있었다. 이제 위치와 화자가
+    바뀌면(=씬이 바뀌면) 5개를 다시 점수 매겨 다른 변종이 선택될 수 있다.
+    (미리보기=실제 동일, 결정론적 — 같은 입력엔 같은 변종.)
     """
     variants = _load_impact_svgs()
     if not variants:
@@ -1052,7 +1073,11 @@ def _select_impact_variant(rect, canvas_size):
 
     x1, y1, x2, y2 = [float(v) for v in rect]
     cw, ch = canvas_size
-    key = (int(round(x2 - x1)), int(round(y2 - y1)), int(cw), int(ch))
+    fb_key = None
+    if face_box is not None:
+        fx1, fy1, fx2, fy2 = [float(v) for v in face_box]
+        fb_key = (int(round(fx1)), int(round(fy1)), int(round(fx2)), int(round(fy2)))
+    key = (int(round(x1)), int(round(y1)), int(round(x2)), int(round(y2)), int(cw), int(ch), fb_key)
     cached = _IMPACT_VARIANT_CACHE.get(key)
     if cached is not None:
         return variants[cached]
@@ -1060,7 +1085,9 @@ def _select_impact_variant(rect, canvas_size):
     best_idx, best_score = 0, -1e18
     for i, (vid, outer, inner, inner_bbox) in enumerate(variants):
         try:
-            sc = _score_impact_variant(outer, inner, inner_bbox, rect, canvas_size, salt=vid)
+            sc = _score_impact_variant(
+                outer, inner, inner_bbox, rect, canvas_size, face_box=face_box, salt=vid,
+            )
         except Exception:
             traceback.print_exc()
             continue
@@ -1405,7 +1432,7 @@ def _optimal_burst_angle(inner_pts, bcx, bcy, rect, scale, salt=""):
     return best_theta
 
 
-def _draw_impact_svg_burst(overlay, rect, fill, border, with_tail=False):
+def _draw_impact_svg_burst(overlay, rect, fill, border, with_tail=False, face_box=None):
     """벡터 impact_balloon.svg 를 rect(텍스트 박스)를 감싸도록 배치해 합성.
 
     modes/impact_balloons/ 변종 중 rect/canvas 에 가장 적합한 것을 점수로 자동
@@ -1418,7 +1445,7 @@ def _draw_impact_svg_burst(overlay, rect, fill, border, with_tail=False):
     (알파 포함)으로 덮어 바깥 고리가 테두리가 된다. SVG burst 는 꼬리가 없으므로
     with_tail 은 무시한다(별도 꼬리 미추가).
     """
-    variant = _select_impact_variant(rect, overlay.size)
+    variant = _select_impact_variant(rect, overlay.size, face_box=face_box)
     if variant is not None:
         vid, outer, inner, inner_bbox = variant
     else:
@@ -1466,7 +1493,12 @@ def _draw_impact_svg_burst(overlay, rect, fill, border, with_tail=False):
     draw.polygon([_tr(p) for p in inner], fill=fill)
     overlay.alpha_composite(layer)
     if vid is not None:
-        print(f"[BUBBLE_RENDER] impact 변종 선택: {vid} (rect={int(rw)}x{int(rh)})")
+        fb = ""
+        if face_box is not None:
+            fcx = (face_box[0] + face_box[2]) / 2.0 - rcx
+            fcy = (face_box[1] + face_box[3]) / 2.0 - rcy
+            fb = f", 화자상대=({int(fcx)},{int(fcy)})"
+        print(f"[BUBBLE_RENDER] impact 변종 선택: {vid} (rect={int(rw)}x{int(rh)} @({int(rcx)},{int(rcy)}){fb})")
 
 
 def _tail_base_geometry(rect, anchor, shape, radius):
@@ -1859,6 +1891,7 @@ def _draw_layout_bubble(
     tail_max_length_px=None,
     split=False,
     halo_px=0,
+    face_box=None,
 ):
     """레이아웃 결과를 타원/코믹/구름/무라운드 박스로 그린다.
 
@@ -1875,7 +1908,8 @@ def _draw_layout_bubble(
         return
     if shape == "burst":
         # 벡터 impact_balloon.svg 를 rect 를 감싸도록 합성. 꼬리 없음.
-        _draw_impact_svg_burst(overlay, rect, fill, border, with_tail)
+        # face_box(화자)를 넘겨 씬마다 가장 적합한 변종을 선택(화자 얼굴 안 가림).
+        _draw_impact_svg_burst(overlay, rect, fill, border, with_tail, face_box=face_box)
         return
     if shape == "whisper":
         _draw_whisper(
@@ -2177,17 +2211,18 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
     # 미지정 시 border_width에서 자동 산정. 0이면 헤일로 없음(종전 동작).
     halo_raw = s.get("bubble_halo_px", None)
     if halo_raw is None:
-        bubble_halo_px = max(1, int(round(border_w)))
+        # 흰 헤일로 폭: border_width의 2배(손그림 만화풍 흰 튀어나옴 강조).
+        bubble_halo_px = max(1, int(round(border_w * 2)))
     else:
         try:
             bubble_halo_px = max(0, int(round(float(halo_raw))))
         except (TypeError, ValueError):
             print(f"[BUBBLE_RENDER] ⚠ bubble_halo_px 변환 실패({halo_raw!r}), 자동 사용")
-            bubble_halo_px = max(1, int(round(border_w)))
+            bubble_halo_px = max(1, int(round(border_w * 2)))
     tail_threshold = s.get("tail_threshold", 1.0)
     bubble_shape_mode = _resolve_bubble_shape_mode(s)
     tail_width_scale = _resolve_tail_width_scale(s)
-    tail_max_length_ratio = _resolve_tail_max_length(s)
+    tail_max_length_limit_px = _resolve_tail_max_length(s)
     organic_wobble = _resolve_organic_wobble(s)
     organic_point_count = int(s.get("organic_point_count", 180) or 180)
     radius = int(s.get("radius", 20))
@@ -2533,14 +2568,9 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
             ^ (int(round(rect[2])) * 83492791)
             ^ (int(round(rect[3])) * 39916801)
         ) & 0x7FFFFFFF
-        # 꼬리 최대 길이(얼굴 크기 배율→px). box 없거나 제한 없이면 None.
-        if with_tail and tail_max_length_ratio > 0.0 and box:
-            face_size = max(
-                float(box[2]) - float(box[0]),
-                float(box[3]) - float(box[1]),
-                1.0,
-            )
-            tail_max_length_px = face_size * tail_max_length_ratio
+        # 꼬리 최대 길이(절대 픽셀). 0이면 제한 없음(None).
+        if with_tail and tail_max_length_limit_px > 0.0:
+            tail_max_length_px = tail_max_length_limit_px
         else:
             tail_max_length_px = None
         _draw_layout_bubble(
@@ -2561,6 +2591,7 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
             tail_max_length_px=tail_max_length_px,
             split=do_split,
             halo_px=bubble_halo_px,
+            face_box=box,
         )
 
         # trembling: SVG의 `))` 한 쌍을 3곳에 복제하고, 각 위치의 타원 접선에 맞춰

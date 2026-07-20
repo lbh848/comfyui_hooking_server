@@ -8258,7 +8258,7 @@
                                 <div class="pp-field-inline" style="margin-top:6px;">
                                     <div><div style="font-size:0.7rem; color:var(--text2,#999);">외곽선 스타일</div><select id="pp-bubble-shape" class="select" style="width:130px;" onchange="renderPostprocessPreview()" title="legacy=기존 타원/코믹, organic=저주파 굴곡 유기형(대사에만 적용)"><option value="legacy">기본(legacy)</option><option value="organic">유기형(organic)</option></select></div>
                                     <div><div style="font-size:0.7rem; color:var(--text2,#999);">꼬리 두께 배율</div><input id="pp-bubble-tail-width-scale" type="number" class="input" style="width:70px;" min="0.2" max="3.0" step="0.1" oninput="renderPostprocessPreview()" title="자동 산정된 꼬리 두께에 곱할 배율. 1.0=기본, 1.5=50% 두껍게."></div>
-                                    <div><div style="font-size:0.7rem; color:var(--text2,#999);">꼬리 최대 길이 (얼굴 크기 배)</div><input id="pp-bubble-tail-max-length" type="number" class="input" style="width:70px;" min="0" max="10" step="0.1" oninput="renderPostprocessPreview()" title="꼬리가 발화자 얼굴까지 도달하지 못하게 최대 길이를 제한합니다(얼굴 최대 크기×이 값). 0=제한 없음(얼굴까지 도달). 1.0=얼굴 1개 폭."></div>
+                                    <div><div style="font-size:0.7rem; color:var(--text2,#999);">꼬리 최대 길이 (px)</div><input id="pp-bubble-tail-max-length" type="number" class="input" style="width:70px;" min="0" max="2000" step="1" oninput="renderPostprocessPreview()" title="꼬리가 발화자 얼굴까지 도달하지 못하게 최대 길이를 픽셀로 제한합니다. 0=제한 없음(얼굴까지 도달). 예: 120=최대 120px."></div>
                                     <div><div style="font-size:0.7rem; color:var(--text2,#999);">유기형 굴곡 강도</div><input id="pp-bubble-organic-wobble" type="number" class="input" style="width:70px;" min="0.02" max="0.30" step="0.005" oninput="renderPostprocessPreview()" title="유기형 외곽선 굴곡. 긴 대사는 0.045, 짧은 대사는 0.060 권장. 0.10 이상은 과장 표현. organic일 때만 적용."></div>
                                 </div>
                                 <div class="pp-field-inline" style="margin-top:6px;">
@@ -27957,7 +27957,7 @@
             const _shapeVal = document.getElementById('pp-bubble-shape');
             b.bubble_shape = (_shapeVal && _shapeVal.value === 'organic') ? 'organic' : 'legacy';
             b.tail_width_scale = _ppNum('pp-bubble-tail-width-scale', 1.0, 0.2, 3.0);
-            b.tail_max_length = _ppNum('pp-bubble-tail-max-length', 0.0, 0, 10);
+            b.tail_max_length = _ppNum('pp-bubble-tail-max-length', 0.0, 0, 2000);
             b.organic_wobble = _ppNum('pp-bubble-organic-wobble', 0.055, 0.02, 0.30);
             const _ppThoughtShape = document.getElementById('pp-bubble-thought-shape').value;
             b.thought_shape = (_ppThoughtShape === 'box') ? 'box' : 'cloud';
