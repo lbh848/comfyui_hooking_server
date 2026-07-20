@@ -440,6 +440,27 @@ class CharTagOverrideRulesTest(unittest.TestCase):
         self.assertEqual(out[0]["face_tags"], "1boy, short hair, blonde hair")
         self.assertEqual(out[1]["face_tags"], "1boy, short hair, blonde hair")
 
+    def test_eye_replace_fires_when_trigger_present(self):
+        rules = [{
+            "type": "char_eye_replace",
+            "trigger": "hypnosis",
+            "target": "red spiral eyes",
+            "enabled": True,
+        }]
+        out = apply_char_tag_override_rules(self.characters, rules, "under hypnosis")
+        self.assertEqual(out[0]["eye_tags"], "red spiral eyes")
+        self.assertEqual(out[1]["eye_tags"], "red spiral eyes")
+        # face_tags 는 미변경
+        self.assertEqual(out[0]["face_tags"], "black hair, bob cut")
+
+    def test_face_remove_fires_when_trigger_present(self):
+        rules = [{"type": "char_face_remove", "trigger": "faceless", "enabled": True}]
+        out = apply_char_tag_override_rules(self.characters, rules, "a faceless figure")
+        self.assertEqual(out[0]["face_tags"], "")
+        self.assertEqual(out[1]["face_tags"], "")
+        # eye_tags 는 미변경
+        self.assertEqual(out[0]["eye_tags"], "blue eyes")
+
     def test_no_match_leaves_tags_unchanged(self):
         rules = [{"type": "char_eye_remove", "trigger": "from behind", "enabled": True}]
         out = apply_char_tag_override_rules(self.characters, rules, "facing the camera")
