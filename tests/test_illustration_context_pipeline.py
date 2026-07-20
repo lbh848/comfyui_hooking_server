@@ -65,6 +65,53 @@ def test_descriptor_slot_normalization_truncates_to_available_slots():
     assert [item["slot"] for item in normalized] == [-1, 2, 8]
 
 
+def test_call2_context_anchors_are_attached_before_even_slot_redistribution():
+    descriptors = [
+        {"kind": "keyvis", "slot": -1},
+        {"kind": "scene", "slot": 1},
+        {"kind": "scene", "slot": 3},
+    ]
+    slotted = (
+        "첫 문단의 마지막 문구.\n\n[Slot 0]\n\n"
+        "둘째 문단의 핵심 문구.\n\n[Slot 1]\n\n"
+        "셋째 문단의 장면 문구.\n\n[Slot 2]\n\n"
+        "넷째 문단의 시작 문구.\n\n[Slot 3]\n\n"
+        "다섯째 문단의 후속 문구."
+    )
+
+    pipeline.attach_descriptor_anchors(descriptors, slotted)
+    normalized = pipeline.normalize_descriptor_slots(descriptors, slotted)
+
+    scenes = [item for item in normalized if item["kind"] == "scene"]
+    assert [item["slot"] for item in scenes] == [0, 2]
+    assert scenes[0]["anchor_before"] == "둘째 문단의 핵심 문구."
+    assert scenes[0]["anchor_after"] == "셋째 문단의 장면 문구."
+    assert scenes[1]["anchor_before"] == "넷째 문단의 시작 문구."
+    assert scenes[1]["anchor_after"] == "다섯째 문단의 후속 문구."
+
+
+def test_call2_context_anchor_text_is_bounded_and_survives_session_roundtrip(tmp_path, monkeypatch):
+    monkeypatch.setattr(pipeline, "SESSION_DIR", str(tmp_path / "sessions"))
+    long_before = "앞" * 240
+    long_after = "뒤" * 240
+    items = [{"kind": "scene", "slot": 0}]
+    pipeline.attach_descriptor_anchors(
+        items,
+        f"{long_before}\n\n[Slot 0]\n\n{long_after}",
+    )
+
+    assert len(items[0]["anchor_before"]) == 180
+    assert len(items[0]["anchor_after"]) == 180
+    pipeline.create_session("anchor_cache_test_1234", "context")
+    pipeline.set_session_result("anchor_cache_test_1234", items, [b"scene"])
+    pipeline._SESSIONS.pop("anchor_cache_test_1234")
+
+    restored = pipeline.session_item_by_slot("anchor_cache_test_1234", 0)
+    assert restored["anchor_before"] == items[0]["anchor_before"]
+    assert restored["anchor_after"] == items[0]["anchor_after"]
+    assert "anchor_slot" not in restored
+
+
 def test_context_transport_actions_keep_chat_data_and_validate_slot():
     session_id = "session_actions_1234"
     base = {

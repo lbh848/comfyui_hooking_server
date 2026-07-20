@@ -61,6 +61,11 @@ _BALLOON_TYPE_SHAPE = {
     # charming(호감/애교/설득): 꼬리 없는 독립 장식 말풍선. 사이징(글자크기/줄바꿈)은
     # ellipse 레이아웃을 그대로 쓰고 렌더만 전용 외곽선(넓은 파동의 둥근 형태)으로.
     "charming":      ("ellipse", ("ellipse",), "charming", False),
+    # NSFW 버블 — 진행/절정 상황의 신음·절규를 담는 꼬리 없는 독립 분위기 풍선.
+    # 사이징은 ellipse 레이아웃을 쓰고 렌더만 각 전용 실루엣(nsfw_balloons_soft/hard)으로.
+    # SOFT=진행 과정(빌드업), HARD=절정 임박/사정 순간. charming/burst 와 같은 분류이다.
+    "nsfw_soft":     ("ellipse", ("ellipse",), "nsfw_soft", False),
+    "nsfw_hard":     ("ellipse", ("ellipse",), "nsfw_hard", False),
 }
 
 # font_path 미지정 시 시스템 기본 TTF 후보 (font_size 가 적용되도록 비트맵 폰트 회피).
@@ -813,11 +818,12 @@ def _tokenize_svg_path(d):
 
 
 def _parse_quadratic_path(d, samples_per_seg=10):
-    """SVG path(M/Q/Z, 대문자 절대좌표)를 고밀도 점열로 변환.
+    """SVG path(M/L/Q/Z, 대문자 절대좌표)를 고밀도 점열로 변환.
 
     Q(quadratic Bézier) 각 세그먼트를 samples_per_seg 개 점으로 샘플링해
-    PIL ImageDraw.polygon 용 닫힌 점열을 만든다. burst 벡터는 M/Q/Z 만으로
-    구성되어 있어 이 세 명령만 처리한다(소문자 상대좌표는 미사용).
+    PIL ImageDraw.polygon 용 닫힌 점열을 만든다. burst/charming/nsfw_hard 벡터는
+    M/Q/Z 만, nsfw_soft 벡터는 M/L/Z 만으로 구성되어 이 네 명령을 처리한다
+    (C/S/T/A 등의 곡선 명령과 소문자 상대좌표는 미사용 → 만나면 스킵).
     """
     tokens = _tokenize_svg_path(d)
     pts = []
@@ -829,6 +835,14 @@ def _parse_quadratic_path(d, samples_per_seg=10):
         if t in ("M", "m"):
             cur = (float(tokens[i + 1]), float(tokens[i + 2]))
             start = cur
+            pts.append(cur)
+            i += 3
+        elif t in ("L", "l"):
+            # 직선 세그먼트. 끝점만 추가(폴리곤 폐곡선).
+            if cur is None:
+                print("[BUBBLE_RENDER] ⚠ SVG path: M 없이 L 시작, 스킵")
+                break
+            cur = (float(tokens[i + 1]), float(tokens[i + 2]))
             pts.append(cur)
             i += 3
         elif t in ("Q", "q"):
@@ -1844,6 +1858,14 @@ _CHARMING_SVG_PATH = os.path.join(
 )
 _CHARMING_SVG_CACHE = None  # (points, bbox) | None(폴백)
 
+# 다중 charming 디자인 레지스트리. modes/charming_balloons/charming_NN.svg 를 읽어
+# (id, 점열, bbox) 리스트 반환. 각 SVG 는 단일 <path>(M/Q/Z) 실루엣. charming 렌더 시
+# 매 호출마다 파일을 읽고(캐시 없음), rect/canvas/화자에 가장 점수가 높은 변종 하나를
+# 선택한다. burst 와 달리 회전 최적화는 하지 않는다(요청 사양).
+_CHARMING_BALLOONS_DIR = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "charming_balloons"
+)
+
 
 def _parse_polygon_points(points_attr):
     """SVG <polygon points="x1,y1 x2,y2 ..."> 를 (x, y) 점열로 변환.
@@ -1901,11 +1923,91 @@ def _load_charming_svg():
     return _CHARMING_SVG_CACHE
 
 
-def _fit_points_to_rect(points, bbox, rect, *, non_uniform=True):
+def _load_charming_svgs():
+    """modes/charming_balloons/charming_NN.svg 들을 로드해 변종 리스트 반환.
+
+    반환: [(vid, points, bbox), ...]. 각 SVG 는 단일 <path>(M/Q/Z) 폐곡선 실루엣.
+    디렉토리가 없거나 파싱에 전부 실패하면 None → 호출처에서 단일
+    charming_balloon.svg(<polygon>) 폴백으로 빠진다. 정렬은 파일명 오름차순
+    (charming_01 → charming_05). 캐시 없이 매 호출마다 파일을 읽는다(요청 사양).
+    """
+    if not os.path.isdir(_CHARMING_BALLOONS_DIR):
+        print(f"[BUBBLE_RENDER] charming_balloons 디렉토리 없음 → 단일 SVG 폴백: {_CHARMING_BALLOONS_DIR}")
+        return None
+
+    variants = []
+    files = sorted(f for f in os.listdir(_CHARMING_BALLOONS_DIR) if f.lower().endswith(".svg"))
+    for fname in files:
+        fpath = os.path.join(_CHARMING_BALLOONS_DIR, fname)
+        try:
+            tree = ET.parse(fpath)
+        except (FileNotFoundError, OSError, ET.ParseError) as e:
+            print(f"[BUBBLE_RENDER] ⚠ charming 변종 SVG 로드 실패({fname}): {e}")
+            continue
+        path = tree.find(".//{http://www.w3.org/2000/svg}path")
+        if path is None:
+            print(f"[BUBBLE_RENDER] ⚠ charming 변종 <path> 없음({fname}), 스킵")
+            continue
+        pts = _parse_quadratic_path(path.get("d", ""))
+        if len(pts) < 3:
+            print(f"[BUBBLE_RENDER] ⚠ charming 변종 점열 부족({fname}, {len(pts)}개), 스킵")
+            continue
+        vid = os.path.splitext(fname)[0]  # charming_01 등
+        variants.append((vid, pts, _points_bbox(pts)))
+
+    if not variants:
+        print("[BUBBLE_RENDER] ⚠ charming_balloons 에서 사용 가능한 변종 없음 → 단일 SVG 폴백")
+        return None
+
+    return variants
+
+
+# charming 몸통이 rect(텍스트 박스) 바깥으로 살짝 삐져나오는 균등 확대 비율.
+# 글자가 테두리에 닿지 않도록 여유를 준다(요청 사양: SVG 배경이 살짝 삐져나오게).
+_CHARMING_OVERFLOW = 1.08
+
+
+def _pick_variant_random(variants, rect, canvas_size, face_box=None, seed=0):
+    """변종 리스트에서 rect+canvas+face_box+seed 해시로 결정론적 무작위 선택(burst 방식).
+
+    charming/NSFW 공용. 회전은 하지 않고 인덱스만 고른다(burst 의 _select_impact_variant
+    와 같은 해시-시드 RNG). 같은 입력엔 같은 변종 → 미리보기=실제(CLAUDE.md). seed 가
+    바뀌면 변종이 바뀐다. variants 가 비었으면 None.
+    """
+    if not variants:
+        return None
+    x1, y1, x2, y2 = [float(v) for v in rect]
+    cw, ch = canvas_size
+    fb_key = None
+    if face_box is not None:
+        fx1, fy1, fx2, fy2 = [float(v) for v in face_box]
+        fb_key = (int(round(fx1)), int(round(fy1)), int(round(fx2)), int(round(fy2)))
+    h = (int(round(x1)), int(round(y1)), int(round(x2)), int(round(y2)),
+         int(cw), int(ch), fb_key, int(seed))
+    # SHA-256로 균등하게 분포시킨 시드(단순 hash()는 프로세스마다/편향 위험).
+    digest = hashlib.sha256(repr(h).encode("utf-8")).digest()
+    rng = random.Random(int.from_bytes(digest[:8], "big"))
+    return variants[rng.randrange(len(variants))]
+
+
+def _select_charming_variant(rect, canvas_size, face_box=None, seed=0):
+    """charming 변종 중 하나를 시드 결정론적으로 무작위 선택(burst/NSFW 방식, 회전 없음).
+
+    반환: (vid, points, bbox). 레지스트리 비었으면 None(단일 SVG 폴백).
+    점수 기반 최적 선택은 쓰지 않고 해시-시드 무작위 → 같은 입력엔 같은 변종(미리보기=실제),
+    seed 가 바뀌면 변종이 바뀐다. 회전은 하지 않는다(요청 사양: 회전은 burst 전용).
+    """
+    return _pick_variant_random(_load_charming_svgs(), rect, canvas_size, face_box=face_box, seed=seed)
+
+
+def _fit_points_to_rect(points, bbox, rect, *, non_uniform=True, overflow=1.0):
     """점열의 bbox 를 rect 에 맞춰 변환. non_uniform 이면 가로/세로 독립 스케일.
 
     대사가 가로형이면 자연스럽게 가로로 늘고 세로형이면 세로로 늘어, 굴곡 위치도
     말풍선 전체 둘레에 남아 좌우에만 몰리지 않는다.
+
+    overflow>1 이면 rect 중심 기준으로 추가 균등 확대해 말풍선 몸통이 rect(텍스트 박스)
+    바깥으로 살짝 삐져나가게 한다(charming — 글자가 테두리에 닿지 않도록).
     """
     bx0, by0, bx1, by1 = bbox
     bw = max(1e-6, bx1 - bx0)
@@ -1918,35 +2020,179 @@ def _fit_points_to_rect(points, bbox, rect, *, non_uniform=True):
         sy = rh / bh
         ox = x1 - bx0 * sx
         oy = y1 - by0 * sy
-        return [(p[0] * sx + ox, p[1] * sy + oy) for p in points]
-    s = min(rw / bw, rh / bh)
-    cx = (x1 + x2) / 2.0
-    cy = (y1 + y2) / 2.0
-    bcx = (bx0 + bx1) / 2.0
-    bcy = (by0 + by1) / 2.0
-    ox = cx - bcx * s
-    oy = cy - bcy * s
-    return [(p[0] * s + ox, p[1] * s + oy) for p in points]
+        out = [(p[0] * sx + ox, p[1] * sy + oy) for p in points]
+    else:
+        s = min(rw / bw, rh / bh)
+        cx = (x1 + x2) / 2.0
+        cy = (y1 + y2) / 2.0
+        bcx = (bx0 + bx1) / 2.0
+        bcy = (by0 + by1) / 2.0
+        ox = cx - bcx * s
+        oy = cy - bcy * s
+        out = [(p[0] * s + ox, p[1] * s + oy) for p in points]
+    if overflow != 1.0:
+        rcx = (x1 + x2) / 2.0
+        rcy = (y1 + y2) / 2.0
+        out = [(rcx + (p[0] - rcx) * overflow, rcy + (p[1] - rcy) * overflow) for p in out]
+    return out
 
 
-def _draw_charming(overlay, rect, fill, border, border_w, *, seed=0, halo_px=0):
-    """꼬리 없는 charming 말풍선: 고정 SVG 실루엣을 비균등 스케일로 rect 에 맞춰 합성.
+def _draw_charming(overlay, rect, fill, border, border_w, *, seed=0, halo_px=0, face_box=None):
+    """꼬리 없는 charming 말풍선: charming_balloons/ 변종 중 시드 무작위로 고른 실루엣을
+    비균등 스케일 + overflow 확대로 rect 에 맞춰 합성.
 
-    보조 타원 없이 변환된 polygon 만 마스크에 채우고 _composite_union_mask 로 테두리/
-    채움을 통일. SVG 로드 실패 시 안전 타원으로 폴백해 빈 결과를 피한다.
+    변종 선택은 burst/NSFW 와 같은 해시-시드 무작위(회전 없음) → 같은 배치에선 같은 변종
+    (미리보기=실제), seed 가 바뀌면 다른 변종. 보조 타원 없이 변환된 polygon 만 마스크에
+    채우고 _composite_union_mask 로 테두리/채움을 통일한다. 회전은 하지 않고(요청 사양:
+    회전은 burst 전용) overflow 로 몸통이 rect 바깥으로 살짝 삐져나오게 해 글자가 테두리에
+    닿지 않게 한다. 변종 레지스트리가 없으면 단일 charming_balloon.svg(<polygon>) 폴백,
+    그것도 실패하면 안전 타원으로 빈 결과를 피한다(CLAUDE.md: 미리보기=실제).
     """
-    points, bbox = _load_charming_svg()
     mask = Image.new("L", overlay.size, 0)
     draw = ImageDraw.Draw(mask)
-    if points is None or bbox is None:
-        print("[BUBBLE_RENDER] charming SVG 폴백 → ellipse로 대체 렌더")
-        draw.ellipse(rect, fill=255)
-    else:
-        transformed = _fit_points_to_rect(points, bbox, rect, non_uniform=True)
+
+    variant = _select_charming_variant(rect, overlay.size, face_box=face_box, seed=seed)
+    if variant is not None:
+        vid, points, bbox = variant
+        transformed = _fit_points_to_rect(points, bbox, rect, non_uniform=True, overflow=_CHARMING_OVERFLOW)
         draw.polygon(
             [(int(round(x)), int(round(y))) for x, y in transformed],
             fill=255,
         )
+        rw = float(rect[2] - rect[0])
+        rh = float(rect[3] - rect[1])
+        rcx = (float(rect[0]) + float(rect[2])) / 2.0
+        rcy = (float(rect[1]) + float(rect[3])) / 2.0
+        fb = ""
+        if face_box is not None:
+            fcx = (face_box[0] + face_box[2]) / 2.0 - rcx
+            fcy = (face_box[1] + face_box[3]) / 2.0 - rcy
+            fb = f", 화자상대=({int(fcx)},{int(fcy)})"
+        print(f"[BUBBLE_RENDER] charming 변종 선택: {vid} (rect={int(rw)}x{int(rh)} @({int(rcx)},{int(rcy)}){fb})")
+    else:
+        # 레지스트리 폴백: 단일 charming_balloon.svg(<polygon>)
+        points, bbox = _load_charming_svg()
+        if points is None or bbox is None:
+            print("[BUBBLE_RENDER] charming SVG 폴백 → ellipse로 대체 렌더")
+            draw.ellipse(rect, fill=255)
+        else:
+            transformed = _fit_points_to_rect(points, bbox, rect, non_uniform=True, overflow=_CHARMING_OVERFLOW)
+            draw.polygon(
+                [(int(round(x)), int(round(y))) for x, y in transformed],
+                fill=255,
+            )
+
+    _composite_union_mask(
+        overlay,
+        mask,
+        fill,
+        border,
+        border_w,
+        halo_px=halo_px,
+    )
+
+
+# ─── NSFW(SOFT/HARD) 버블 ───────────────────────────────────────────
+# charming 렌더와 같은 구조(꼬리 없는 독립 장식 풍선)이되, 실루엣 SVG 디렉토리가
+# 다르다. SOFT(nsfw_balloons_soft/, M/L/Z 폴리라인)는 진행 과정의 부드러운 신음용,
+# HARD(nsfw_balloons_hard/, M/Q/Z 곡선)는 절정 임박/사정 순간의 거친 절규용.
+# 변종 선택/점수/맞춤 변환은 charming 의 함수를 그대로 재사용한다(동일 기하).
+_NSFW_BALLOONS_DIRS = {
+    "nsfw_soft": os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "nsfw_balloons_soft"
+    ),
+    "nsfw_hard": os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "nsfw_balloons_hard"
+    ),
+}
+# NSFW 몸통이 rect(텍스트 박스) 바깥으로 살짝 삐져나오는 균등 확대 비율(charming 과 동일).
+_NSFW_OVERFLOW = 1.08
+
+
+def _load_nsfw_svgs(kind):
+    """modes/nsfw_balloons_{kind}/nsfw_{kind}_NN.svg 들을 로드해 변종 리스트 반환.
+
+    반환: [(vid, points, bbox), ...]. 각 SVG 는 단일 <path>(M/Q/Z 또는 M/L/Z) 폐곡선
+    실루엣. 디렉토리가 없거나 파싱에 전부 실패하면 None → 호출처에서 안전 타원 폴백.
+    정렬은 파일명 오름차순. 캐시 없이 매 호출마다 읽는다(charming 과 동일).
+    """
+    d = _NSFW_BALLOONS_DIRS.get(kind)
+    if not d or not os.path.isdir(d):
+        print(f"[BUBBLE_RENDER] {kind} 디렉토리 없음 → 폴백: {d}")
+        return None
+
+    variants = []
+    files = sorted(f for f in os.listdir(d) if f.lower().endswith(".svg"))
+    for fname in files:
+        fpath = os.path.join(d, fname)
+        try:
+            tree = ET.parse(fpath)
+        except (FileNotFoundError, OSError, ET.ParseError) as e:
+            print(f"[BUBBLE_RENDER] ⚠ {kind} 변종 SVG 로드 실패({fname}): {e}")
+            continue
+        path = tree.find(".//{http://www.w3.org/2000/svg}path")
+        if path is None:
+            print(f"[BUBBLE_RENDER] ⚠ {kind} 변종 <path> 없음({fname}), 스킵")
+            continue
+        # SOFT(M/L/Z)·HARD(M/Q/Z) 모두 이 파서 하나로 처리한다.
+        pts = _parse_quadratic_path(path.get("d", ""))
+        if len(pts) < 3:
+            print(f"[BUBBLE_RENDER] ⚠ {kind} 변종 점열 부족({fname}, {len(pts)}개), 스킵")
+            continue
+        vid = os.path.splitext(fname)[0]  # nsfw_soft_01 등
+        variants.append((vid, pts, _points_bbox(pts)))
+
+    if not variants:
+        print(f"[BUBBLE_RENDER] ⚠ {kind} 에서 사용 가능한 변종 없음 → 폴백")
+        return None
+
+    return variants
+
+
+def _select_nsfw_variant(kind, rect, canvas_size, face_box=None, seed=0):
+    """NSFW 변종 중 하나를 시드 결정론적으로 무작위 선택해 반환(burst/charming 방식, 회전 없음).
+
+    반환: (vid, points, bbox). 레지스트리 비었으면 None(안전 타원 폴백). charming 과 동일한
+    해시-시드 무작위 선택(_pick_variant_random)을 쓴다 → 같은 입력엔 같은 변종(미리보기=실제),
+    seed 가 바뀌면 변종이 바뀐다. 회전은 하지 않는다(요청 사양: 회전은 burst 전용).
+    """
+    return _pick_variant_random(_load_nsfw_svgs(kind), rect, canvas_size, face_box=face_box, seed=seed)
+
+
+def _draw_nsfw_balloon(overlay, rect, fill, border, border_w, *, kind, seed=0, halo_px=0, face_box=None):
+    """꼬리 없는 NSFW(SOFT/HARD) 말풍선: nsfw_balloons_{kind}/ 변종 중 시드 무작위로 고른
+    실루엣을 비균등 스케일 + overflow 확대로 rect 에 맞춰 합성.
+
+    변종 선택은 burst 와 같은 해시-시드 무작위(charming 의 최고 점수 고정이 아님) →
+    같은 배치에선 같은 변종(미리보기=실제), seed 가 바뀌면 다른 변종. charming 렌더와
+    동일한 합성 흐름(mask → polygon → _composite_union_mask). 변종 레지스트리가 없으면
+    안전 타원으로 빈 결과를 피한다(CLAUDE.md: 미리보기=실제).
+    """
+    mask = Image.new("L", overlay.size, 0)
+    draw = ImageDraw.Draw(mask)
+
+    variant = _select_nsfw_variant(kind, rect, overlay.size, face_box=face_box, seed=seed)
+    if variant is not None:
+        vid, points, bbox = variant
+        transformed = _fit_points_to_rect(points, bbox, rect, non_uniform=True, overflow=_NSFW_OVERFLOW)
+        draw.polygon(
+            [(int(round(x)), int(round(y))) for x, y in transformed],
+            fill=255,
+        )
+        rw = float(rect[2] - rect[0])
+        rh = float(rect[3] - rect[1])
+        rcx = (float(rect[0]) + float(rect[2])) / 2.0
+        rcy = (float(rect[1]) + float(rect[3])) / 2.0
+        fb = ""
+        if face_box is not None:
+            fcx = (face_box[0] + face_box[2]) / 2.0 - rcx
+            fcy = (face_box[1] + face_box[3]) / 2.0 - rcy
+            fb = f", 화자상대=({int(fcx)},{int(fcy)})"
+        print(f"[BUBBLE_RENDER] {kind} 변종 선택: {vid} (rect={int(rw)}x{int(rh)} @({int(rcx)},{int(rcy)}){fb})")
+    else:
+        print(f"[BUBBLE_RENDER] {kind} 변종 없음 → ellipse로 대체 렌더")
+        draw.ellipse(rect, fill=255)
+
     _composite_union_mask(
         overlay,
         mask,
@@ -2062,10 +2308,16 @@ def _draw_layout_bubble(
     split=True 면 텍스트(전체)는 그대로 두고 몸통만 위/아래 두 타원의 합집합으로
     그려, 두 blob이 허리에서 맞물린 하나의 말풍선이 된다. 대사(ellipse/comic) 전용.
     """
-    shape = shape if shape in ("ellipse", "rounded", "comic", "cloud", "box", "burst", "whisper", "charming") else "ellipse"
+    shape = shape if shape in ("ellipse", "rounded", "comic", "cloud", "box", "burst", "whisper", "charming", "nsfw_soft", "nsfw_hard") else "ellipse"
     if shape == "charming":
         # 꼬리 없는 독립 장식 말풍선. anchor/with_tail 을 쓰지 않는 전용 렌더러.
-        _draw_charming(overlay, rect, fill, border, border_w, seed=seed, halo_px=halo_px)
+        # face_box(화자)를 넘겨 씬마다 가장 적합한 변종을 선택(화자 얼굴 안 가림).
+        _draw_charming(overlay, rect, fill, border, border_w, seed=seed, halo_px=halo_px, face_box=face_box)
+        return
+    if shape in ("nsfw_soft", "nsfw_hard"):
+        # NSFW(진행/절정) 버블. charming/burst 와 같은 꼬리 없는 독립 분위기 풍선.
+        # face_box(화자)를 넘겨 씬마다 가장 적합한 변종을 선택(화자 얼굴 안 가림).
+        _draw_nsfw_balloon(overlay, rect, fill, border, border_w, kind=shape, seed=seed, halo_px=halo_px, face_box=face_box)
         return
     if shape == "cloud":
         _draw_cloud(overlay, rect, anchor, fill, border, border_w, with_tail, seed=seed)
@@ -2532,6 +2784,10 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
             # (충돌 검사·실제 렌더 크기와 일치).
             body_w *= 1.06
             body_h *= 1.06
+        elif balloon_type in ("nsfw_soft", "nsfw_hard"):
+            # NSFW 버블도 charming 과 동일 — 외곽 실루엣 여유만 균등 확보(비율 유지).
+            body_w *= 1.06
+            body_h *= 1.06
 
         evaluated = None
         chosen = None
@@ -2717,7 +2973,10 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
             render_shape = "comic" if layout.shape == "rounded" else "ellipse"
         # 긴 대사 분할: speech 5줄 이상이면 텍스트는 그대로 두고 외곽선만 두 타원 합집합.
         do_split = speech_split and btype == "speech" and len(layout.lines) >= 5
-        if unanchored_fallback or render_shape in ("box", "charming"):
+        # box/charming/nsfw_*는 꼬리 없는 독립 풍선. burst도 _draw_impact_svg_burst 가
+        # with_tail 을 무시(항상 꼬리 없음)하므로 함께 단락시켜 _tail_within_threshold 의
+        # 불필요한 호출을 건너뛴다.
+        if unanchored_fallback or render_shape in ("box", "charming", "burst", "nsfw_soft", "nsfw_hard"):
             with_tail, tail_gap, tail_limit = False, 0.0, 0.0
         else:
             with_tail, tail_gap, tail_limit = _tail_within_threshold(

@@ -2758,6 +2758,9 @@ async def handle_api_illustration_context_bridge_session(request: web.Request) -
                 "index": index,
                 "kind": "keyvis" if str(item.get("kind")) == "keyvis" else "scene",
                 "slot": slot,
+                "anchor_before": str(item.get("anchor_before") or "")[:180],
+                "anchor_after": str(item.get("anchor_after") or "")[:180],
+                "anchor_version": item.get("anchor_version", 0),
             })
         raw_progress = session.get("progress") or {}
         progress = {

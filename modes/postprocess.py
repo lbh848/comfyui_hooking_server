@@ -179,11 +179,14 @@ _EMOTION_SUFFIX_RE = re.compile(r'\s+(#\S.*?)\s*$', re.UNICODE)
 
 # CALL3(manga)가 내보내는 고정 말풍선 타입 라벨. 줄 끝 '#라벨'이 이 중 하나면
 # 감정(emotion)이 아니라 balloon_type 으로 분류한다. 키워드로 문맥을 추론하는 것이
-# 아니라 LLM이 정해진 프로토콜로 출력하는 8개 라벨을 역직렬화하는 구조화 파싱이다.
+# 아니라 LLM이 정해진 프로토콜로 출력하는 라벨을 역직렬화하는 구조화 파싱이다.
 # narration_box 는 내면 독백 용도로 monologue_box 로 개명, charming 이 신규 추가됨.
+# nsfw_soft/nsfw_hard 는 NSFW(SOFT/HARD) 버블 — manga_nsfw 프롬프트가 nsfw 토글 ON일
+# 때만 주입하므로, 비활성 장면에선 LLM이 내보내지 않는다(레이블 인식만 항상 대기).
 _BALLOON_TYPE_LABELS = {
     "normal", "angular", "monologue_box", "thought_cloud",
     "trembling", "burst", "whisper", "charming",
+    "nsfw_soft", "nsfw_hard",
 }
 
 

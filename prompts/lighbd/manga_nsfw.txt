@@ -1,0 +1,30 @@
+
+
+Additional balloon types — explicit sexual content (NSFW) only:
+When the scene depicts an explicit sexual act, two more balloon types become
+available. In that context they take precedence over #normal and #burst for
+sexual vocalizations, because they carry the NSFW mood that the generic types
+cannot. They never apply outside explicit sexual scenes.
+
+- #nsfw_soft:
+  Moans, gasps, or aroused remarks during the ongoing act — the buildup phase.
+  Use during foreplay or intercourse while pleasure is still rising, not at the
+  peak. Words are drawn-out, wet, or melting rather than explosive.
+
+- #nsfw_hard:
+  Raw, forceful cries at or just before climax — ejaculation or orgasm is
+  imminent or hitting. Use only at the peak moment. Short, intense, and
+  declarative.
+
+These two labels extend the label list above; append them to an entry the same
+way as the other labels. Choose #nsfw_soft for the buildup and #nsfw_hard for
+the climax. Do not use them for non-sexual shouting (#burst) or ordinary
+dialogue (#normal).
+
+Examples:
+
+[Scene slot=9]
+Mia: "혀를 돌려서 귀두를 쓰담쓰담하고 있어♥" #nsfw_soft
+
+[Scene slot=10]
+Jack: "싼닷!♥" #nsfw_hard

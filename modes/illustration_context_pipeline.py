@@ -41,6 +41,9 @@ PROMPT_FILES = {
     "call2_preset": "preset.txt",
     "call3_speak": "speak.txt",
     "call3_manga": "manga.txt",
+    # NSFW(SOFT/HARD) 버블 타입 보강. manga 모드 + nsfw 토글 ON일 때만 manga 프롬프트
+    # 끝에 추가로 주입한다(일반 작업에 노출 안 됨).
+    "call3_manga_nsfw": "manga_nsfw.txt",
     "call2_fix": "repair.txt",
 }
 
@@ -864,6 +867,70 @@ def candidate_slots(target_slotted: str) -> list[int]:
     return slots
 
 
+def _anchor_text(value: str, *, tail: bool = False, limit: int = 180) -> str:
+    """Return a compact nearby-text anchor suitable for transport to Risu.
+
+    CALL2 sees ``target_slotted`` before the server's even-slot redistribution.
+    Keeping a bounded text fragment from that original boundary preserves the
+    model's intended location while leaving the legacy numeric redistribution
+    and image cache protocol unchanged.
+    """
+    compact = re.sub(r"\s+", " ", _strip_nodes(str(value or ""))).strip()
+    if len(compact) <= limit:
+        return compact
+    return compact[-limit:] if tail else compact[:limit]
+
+
+def slot_context_anchors(target_slotted: str) -> dict[int, dict[str, str]]:
+    """Build ordered before/after text anchors for every original Slot marker."""
+    source = str(target_slotted or "")
+    matches = list(re.finditer(r"\[Slot\s+(\d+)\]", source))
+    anchors: dict[int, dict[str, str]] = {}
+    for index, match in enumerate(matches):
+        slot = int(match.group(1))
+        previous_end = matches[index - 1].end() if index > 0 else 0
+        next_start = matches[index + 1].start() if index + 1 < len(matches) else len(source)
+        anchors[slot] = {
+            "anchor_before": _anchor_text(source[previous_end:match.start()], tail=True),
+            "anchor_after": _anchor_text(source[match.end():next_start], tail=False),
+        }
+    return anchors
+
+
+def attach_descriptor_anchors(descriptors: list[dict], target_slotted: str) -> list[dict]:
+    """Attach CALL2-boundary context before numeric slots are redistributed."""
+    anchors = slot_context_anchors(target_slotted)
+    attached = 0
+    for item in descriptors:
+        if str(item.get("kind")) != "scene":
+            continue
+        try:
+            call2_slot = int(item.get("slot"))
+        except Exception as e:
+            print(f"[ILLUST_CONTEXT] CALL2 앵커 slot 파싱 실패: item={item!r}, error={e}")
+            traceback.print_exc()
+            item["anchor_before"] = ""
+            item["anchor_after"] = ""
+            continue
+        pair = anchors.get(call2_slot) or {}
+        item["anchor_before"] = str(pair.get("anchor_before") or "")
+        item["anchor_after"] = str(pair.get("anchor_after") or "")
+        item["anchor_version"] = 1
+        if item["anchor_before"] or item["anchor_after"]:
+            attached += 1
+        else:
+            print(
+                f"[ILLUST_CONTEXT] CALL2 슬롯 주변 문구 없음: "
+                f"slot={call2_slot}, candidates={list(anchors)}"
+            )
+    print(
+        f"[ILLUST_CONTEXT] CALL2 문구 앵커 저장: "
+        f"scenes={sum(1 for item in descriptors if str(item.get('kind')) == 'scene')}, "
+        f"attached={attached}"
+    )
+    return descriptors
+
+
 def normalize_descriptor_slots(descriptors: list[dict], target_slotted: str) -> list[dict]:
     """Map scene descriptors onto stable, evenly spaced source paragraph slots.
 
@@ -961,6 +1028,16 @@ def build_call3_dialogue_system_prompt(
     elif prompt_mode == "manga" and toggles.get("speak_emotion_enabled"):
         print("[ILLUST_CONTEXT:CALL3] Manga 모드에서는 감정 태그 설정을 사용하지 않음")
 
+    # NSFW 버블 타입(#nsfw_soft/#nsfw_hard) 보강 블록. manga 모드이고 nsfw 토글이
+    # 켜져 있을 때만 manga 프롬프트 끝에 붙인다. 일반 장면엔 노출되지 않는다.
+    nsfw_instruction = ""
+    if prompt_mode == "manga" and toggles.get("nsfw"):
+        nsfw_block = str(prompts.get("call3_manga_nsfw") or "").strip()
+        if nsfw_block:
+            nsfw_instruction = "\n" + nsfw_block
+        else:
+            print("[ILLUST_CONTEXT:CALL3] nsfw 토글 ON이나 manga_nsfw 프롬프트가 비어 있어 SOFT/HARD 타입 미주입")
+
     # CALL3에는 lb.extra 중 캐릭터 영문 이름 리스트만 넘긴다(시스템 프롬프트/복장 제외).
     # speak/manga 프롬프트의 {character_names} 자리표시자를 치환한다.
     names = str(extra_names or "").strip()
@@ -971,6 +1048,7 @@ def build_call3_dialogue_system_prompt(
     else:
         system_prompt = selected_prompt
     system_prompt += emotion_instruction
+    system_prompt += nsfw_instruction
     return prompt_mode, system_prompt
 
 
@@ -1240,6 +1318,13 @@ async def build_from_context(payload: dict, toggles: dict | None, extra_referenc
     else:
         print("[ILLUST_CONTEXT:CALL3] 토글로 비활성화되었거나 SPEAK이 꺼져 있음")
 
+    # Save CALL2's original semantic boundary before the legacy even-slot
+    # redistribution mutates descriptor["slot"].  The bridge uses these text
+    # anchors for placement; the redistributed slot remains cache/backcompat.
+    descriptors = attach_descriptor_anchors(
+        descriptors,
+        payload.get("target_slotted") or "",
+    )
     descriptors = normalize_descriptor_slots(descriptors, payload.get("target_slotted") or "")
     if progress:
         await progress(68, "raw_build", f"RAW 프롬프트 {len(descriptors)}개 생성")
