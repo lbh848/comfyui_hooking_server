@@ -4909,6 +4909,7 @@ async def handle_api_postprocess_preview(request: web.Request) -> web.Response:
                 "bubble_fill": body.get("bubble_fill", "#FFFFFF"),
                 "bubble_border": body.get("bubble_border", "#333333"),
                 "border_width": body.get("border_width", 2),
+                "svg_border_width": body.get("svg_border_width", 0),
                 "opacity": body.get("opacity", 1.0),
                 "speech_opacity": body.get("speech_opacity", body.get("opacity", 1.0)),
                 "thought_opacity": body.get("thought_opacity", body.get("opacity", 1.0)),
