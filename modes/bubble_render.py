@@ -1857,39 +1857,95 @@ def _draw_cloud(overlay, rect, anchor, fill, border, border_w, with_tail, *, see
     overlay.alpha_composite(tail_layer)
 
 
-def _charming_body_polygon(rect, *, seed=0, samples=200):
-    """charming 말풍선 몸통 외곽 폴리곤과 안전 기저 타원 rect 를 반환한다.
+def _catmull_rom_closed(anchors, *, samples):
+    """닫힌 Catmull-Rom 스플라인으로 anchors 를 통과하는 부드러운 폐곡선 점열 반환.
 
-    rect 보다 약간 작은(0.95) 타원을 기본 골격으로 삼고, 외곽에 넓고 완만한 파동
-    7개를 더해 '물결치는 둥근 말풍선'을 만든다. thought_cloud 처럼 작은 혹이
-    다닥다닥 붙지 않으며 굴곡 수가 적고 부드럽다. 점 단위 지터는 쓰지 않고 seed 로
-    결정론적(미리보기=실제 동일). 반환: (외곽 점열, 안전 기저 타원 rect).
+    각 구간을 동일한 수로 세분해 총 samples 개에 가까운 근사 점을 만든다. 표준
+    Catmull-Rom(tension 0)이라 인접 점 사이가 과도하게 튀지 않고 매끄럽다.
+    charming 외곽처럼 부드러운 유기 곡선에 쓴다.
+    """
+    n = len(anchors)
+    if n < 3:
+        return list(anchors)
+    samples = max(n * 4, int(samples))
+    per = max(4, samples // n)
+    out = []
+    for i in range(n):
+        p0 = anchors[(i - 1) % n]
+        p1 = anchors[i]
+        p2 = anchors[(i + 1) % n]
+        p3 = anchors[(i + 2) % n]
+        for j in range(per):
+            t = j / per
+            t2 = t * t
+            t3 = t2 * t
+            x = 0.5 * (
+                (2.0 * p1[0])
+                + (-p0[0] + p2[0]) * t
+                + (2.0 * p0[0] - 5.0 * p1[0] + 4.0 * p2[0] - p3[0]) * t2
+                + (-p0[0] + 3.0 * p1[0] - 3.0 * p2[0] + p3[0]) * t3
+            )
+            y = 0.5 * (
+                (2.0 * p1[1])
+                + (-p0[1] + p2[1]) * t
+                + (2.0 * p0[1] - 5.0 * p1[1] + 4.0 * p2[1] - p3[1]) * t2
+                + (-p0[1] + 3.0 * p1[1] - 3.0 * p2[1] + p3[1]) * t3
+            )
+            out.append((x, y))
+    return out
+
+
+def _charming_body_polygon(rect, *, seed=0, samples=220):
+    """charming 말풍선 몸통 외곽 폴리곤 점열을 반환한다.
+
+    기본은 타원(rect 의 0.96 배)이고, 외곽 한두 군데만 넓고 부드럽게 부풀어
+    '거의 타원인데 살짝 출렁이는 사랑스러운 실루엣'을 만든다. 둘레 전체를
+    꾸미지 않기 때문에 규칙적인 꽃/구름 무늬가 되지 않는다. lobe 패턴 3종을
+    seed 로 하나 골라 적용하며, 겹침 구간은 가장 강한 하나만 max() 로 채택해
+    혹처럼 튀지 않는다. 점 단위 지터는 쓰지 않고 seed 로 결정론적
+    (미리보기=실제 동일). 반환: 외곽 점열.
     """
     x1, y1, x2, y2 = [float(v) for v in rect]
     cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
-    # 기저 타원을 rect 의 0.95 배로 잡아 파동 돌출이 rect 안에 머무르도록 한다.
-    rx = max(1.0, (x2 - x1) / 2.0 * 0.95)
-    ry = max(1.0, (y2 - y1) / 2.0 * 0.95)
-    base = min(rx, ry)
+    rx = max(1.0, (x2 - x1) / 2.0)
+    ry = max(1.0, (y2 - y1) / 2.0)
     rng = random.Random(int(seed) & 0x7FFFFFFF)
-    # 굴곡 방향(도). 균등 분할이 아닌 살짝 흐트러진 배치로 자연스럽게. 각 lobe 는
-    # 넓은 반폭(0.42~0.55 rad)의 cos² 종이라 좁은 혹이 아니라 완만한 파동이 된다.
-    base_angles = [265.0, 315.0, 10.0, 58.0, 108.0, 164.0, 218.0]
+    # lobe 패턴 3종. (중심각 도, 진폭, 반평 rad). 한두 군데만 부풀어 자연스럽게.
+    # A: 위쪽 큰 볼록 + 오른쪽 아래 작은 볼록
+    # B: 오른쪽 위 큰 볼록 + 왼쪽 아래 작은 볼록
+    # C: 왼쪽 위 중간 볼록 1개만
+    patterns = [
+        [(285.0, 0.14, 0.72), (40.0, 0.06, 0.52)],
+        [(330.0, 0.13, 0.68), (210.0, 0.05, 0.50)],
+        [(250.0, 0.11, 0.70)],
+    ]
+    chosen = patterns[rng.randrange(len(patterns))]
     lobes = []
-    for ang in base_angles:
-        angle = math.radians(ang + rng.uniform(-4.0, 4.0))
-        amp = rng.uniform(0.04, 0.06)
-        half_span = rng.uniform(0.42, 0.55)
-        lobes.append((angle, amp, half_span))
-    samples = max(96, int(samples))
+    for angle, amp, span in chosen:
+        lobes.append((
+            math.radians(angle + rng.uniform(-6.0, 6.0)),
+            amp * rng.uniform(0.92, 1.08),
+            span * rng.uniform(0.95, 1.05),
+        ))
+    samples = max(120, int(samples))
+    base_scale = 0.96
     pts = []
     for i in range(samples):
         theta = 2.0 * math.pi * i / samples
-        nx, ny = math.cos(theta), math.sin(theta)
-        amp = _cloud_lobe_profile(theta, lobes) * base
-        pts.append((cx + rx * nx + nx * amp, cy + ry * ny + ny * amp))
-    core_rect = [cx - rx, cy - ry, cx + rx, cy + ry]
-    return pts, core_rect
+        # 겹치는 구간은 가장 강한 lobe 하나만 채택(합산 금지)해 혹처럼 튀지 않게.
+        bump = 0.0
+        for center, amplitude, half_span in lobes:
+            d = (theta - center + math.pi) % (2.0 * math.pi) - math.pi
+            if abs(d) >= half_span:
+                continue
+            bell = math.cos(d / half_span * math.pi / 2.0)
+            value = amplitude * bell * bell
+            if value > bump:
+                bump = value
+        scale = base_scale + bump
+        pts.append((cx + rx * scale * math.cos(theta),
+                    cy + ry * scale * math.sin(theta)))
+    return pts
 
 
 def _draw_charming(overlay, rect, fill, border, border_w, *, seed=0, halo_px=0):
@@ -1899,11 +1955,10 @@ def _draw_charming(overlay, rect, fill, border, border_w, *, seed=0, halo_px=0):
     with_tail 을 받지 않는다(항상 꼬리 없음). _composite_union_mask 로 채움·테두리·
     헤일로를 합성한다.
     """
-    points, core_rect = _charming_body_polygon(rect, seed=seed)
+    points = _charming_body_polygon(rect, seed=seed)
     mask = Image.new("L", overlay.size, 0)
     draw = ImageDraw.Draw(mask)
-    # 굴곡 사이가 안쪽으로 과도하게 파이지 않도록 안전 기저 타원을 먼저 채운다.
-    draw.ellipse(core_rect, fill=255)
+    # 폴리곤 자체가 닫힌 채 내부 전체를 채우므로 별도의 기저 타원 합성은 불필요.
     draw.polygon(
         [(int(round(x)), int(round(y))) for x, y in points],
         fill=255,
@@ -2483,6 +2538,12 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
             continue
         body_w = float(layout.bubble_width)
         body_h = float(layout.bubble_height)
+        if balloon_type == "charming":
+            # charming 은 외곽 굴곡을 위한 공간만 균등하게 살짝 확보한다. 비율은
+            # 강제로 바꾸지 않아 가로형 대사는 가로형, 세로형은 세로형으로 유지된다
+            # (충돌 검사·실제 렌더 크기와 일치).
+            body_w *= 1.06
+            body_h *= 1.06
 
         evaluated = None
         chosen = None
