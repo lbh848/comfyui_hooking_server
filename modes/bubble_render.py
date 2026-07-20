@@ -1895,70 +1895,110 @@ def _catmull_rom_closed(anchors, *, samples):
     return out
 
 
-def _charming_body_polygon(rect, *, seed=0, samples=220):
-    """charming 말풍선 몸통 외곽 폴리곤 점열을 반환한다.
+def _charming_body_polygon(rect, *, seed=0, samples=240):
+    """charming 말풍선의 부드러운 비대칭 외곽과 안전 기저 타원을 반환한다.
 
-    기본은 타원(rect 의 0.96 배)이고, 외곽 한두 군데만 넓고 부드럽게 부풀어
-    '거의 타원인데 살짝 출렁이는 사랑스러운 실루엣'을 만든다. 둘레 전체를
-    꾸미지 않기 때문에 규칙적인 꽃/구름 무늬가 되지 않는다. lobe 패턴 3종을
-    seed 로 하나 골라 적용하며, 겹침 구간은 가장 강한 하나만 max() 로 채택해
-    혹처럼 튀지 않는다. 점 단위 지터는 쓰지 않고 seed 로 결정론적
-    (미리보기=실제 동일). 반환: 외곽 점열.
+    기본 골격은 타원으로 유지하고, 긴 축을 따라 좌우(가로형은 상하)의 폭만 서로 다르게
+    부풀린다. 둘레 전체에 규칙적인 파동을 넣지 않고, 넓은 굴곡을 불규칙하게 배치해
+    참고 만화처럼 말랑한 세로형 실루엣을 만든다. 모든 변화는 바깥쪽으로만 적용하며
+    작은 기저 타원을 합쳐 과도한 허리 파임과 텍스트 영역 침범을 막는다.
     """
     x1, y1, x2, y2 = [float(v) for v in rect]
     cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
     rx = max(1.0, (x2 - x1) / 2.0)
     ry = max(1.0, (y2 - y1) / 2.0)
     rng = random.Random(int(seed) & 0x7FFFFFFF)
-    # lobe 패턴 3종. (중심각 도, 진폭, 반평 rad). 한두 군데만 부풀어 자연스럽게.
-    # A: 위쪽 큰 볼록 + 오른쪽 아래 작은 볼록
-    # B: 오른쪽 위 큰 볼록 + 왼쪽 아래 작은 볼록
-    # C: 왼쪽 위 중간 볼록 1개만
-    patterns = [
-        [(285.0, 0.14, 0.72), (40.0, 0.06, 0.52)],
-        [(330.0, 0.13, 0.68), (210.0, 0.05, 0.50)],
-        [(250.0, 0.11, 0.70)],
-    ]
-    chosen = patterns[rng.randrange(len(patterns))]
-    lobes = []
-    for angle, amp, span in chosen:
-        lobes.append((
-            math.radians(angle + rng.uniform(-6.0, 6.0)),
-            amp * rng.uniform(0.92, 1.08),
-            span * rng.uniform(0.95, 1.05),
-        ))
-    samples = max(120, int(samples))
-    base_scale = 0.96
-    pts = []
-    for i in range(samples):
-        theta = 2.0 * math.pi * i / samples
-        # 겹치는 구간은 가장 강한 lobe 하나만 채택(합산 금지)해 혹처럼 튀지 않게.
-        bump = 0.0
-        for center, amplitude, half_span in lobes:
-            d = (theta - center + math.pi) % (2.0 * math.pi) - math.pi
-            if abs(d) >= half_span:
-                continue
-            bell = math.cos(d / half_span * math.pi / 2.0)
-            value = amplitude * bell * bell
-            if value > bump:
-                bump = value
-        scale = base_scale + bump
-        pts.append((cx + rx * scale * math.cos(theta),
-                    cy + ry * scale * math.sin(theta)))
-    return pts
+
+    def _jitter_bumps(template):
+        bumps = []
+        for center, amplitude, sigma in template:
+            bumps.append((
+                center + rng.uniform(-0.055, 0.055),
+                amplitude * rng.uniform(0.92, 1.08),
+                sigma * rng.uniform(0.94, 1.06),
+            ))
+        return bumps
+
+    def _bump_value(position, bumps):
+        # 단순 합산은 둘레 전체를 부풀리고, raw max는 굴곡 교차점에 미세한 각을 만든다.
+        # 4차 smooth-max로 가장 강한 굴곡 위주를 유지하면서 연결은 매끈하게 만든다.
+        values = []
+        for center, amplitude, sigma in bumps:
+            distance = (position - center) / max(0.08, sigma)
+            values.append(amplitude * math.exp(-(distance * distance)))
+        return sum(value ** 4 for value in values) ** 0.25 if values else 0.0
+
+    samples = max(160, int(samples))
+    points = []
+
+    if (y2 - y1) >= (x2 - x1) * 0.82:
+        # 세로형: 좌우 옆면을 독립적으로 부풀린다.
+        # 중심·크기·간격을 일부러 서로 다르게 두어 꽃잎 같은 규칙성을 피한다.
+        left_bumps = _jitter_bumps([
+            (-0.58, 0.140, 0.20),
+            (-0.02, 0.170, 0.24),
+            ( 0.58, 0.130, 0.20),
+        ])
+        right_bumps = _jitter_bumps([
+            (-0.72, 0.110, 0.17),
+            (-0.27, 0.160, 0.22),
+            ( 0.40, 0.160, 0.24),
+        ])
+        base_side = 0.825
+        for i in range(samples):
+            theta = 2.0 * math.pi * i / samples
+            nx, ny = math.cos(theta), math.sin(theta)
+            bumps = right_bumps if nx >= 0.0 else left_bumps
+            side_scale = min(1.0, base_side + _bump_value(ny, bumps))
+            points.append((
+                cx + rx * nx * side_scale,
+                cy + ry * ny * 0.975,
+            ))
+        core_rect = [
+            cx - rx * 0.845,
+            cy - ry * 0.955,
+            cx + rx * 0.845,
+            cy + ry * 0.955,
+        ]
+    else:
+        # 가로형은 같은 원리를 90도 돌려 상하에 불규칙한 큰 굴곡을 둔다.
+        top_bumps = _jitter_bumps([
+            (-0.62, 0.125, 0.20),
+            (-0.02, 0.165, 0.24),
+            ( 0.60, 0.105, 0.19),
+        ])
+        bottom_bumps = _jitter_bumps([
+            (-0.45, 0.150, 0.23),
+            ( 0.30, 0.140, 0.22),
+        ])
+        base_side = 0.825
+        for i in range(samples):
+            theta = 2.0 * math.pi * i / samples
+            nx, ny = math.cos(theta), math.sin(theta)
+            bumps = bottom_bumps if ny >= 0.0 else top_bumps
+            side_scale = min(1.0, base_side + _bump_value(nx, bumps))
+            points.append((
+                cx + rx * nx * 0.975,
+                cy + ry * ny * side_scale,
+            ))
+        core_rect = [
+            cx - rx * 0.955,
+            cy - ry * 0.845,
+            cx + rx * 0.955,
+            cy + ry * 0.845,
+        ]
+
+    return points, core_rect
 
 
 def _draw_charming(overlay, rect, fill, border, border_w, *, seed=0, halo_px=0):
-    """charming 말풍선: 꼬리 없는 독립 장식 말풍선.
-
-    세로 긴 타원 골격 위에 넓고 완만한 파동을 더한 둥근 외곽선을 그린다. anchor/
-    with_tail 을 받지 않는다(항상 꼬리 없음). _composite_union_mask 로 채움·테두리·
-    헤일로를 합성한다.
-    """
-    points = _charming_body_polygon(rect, seed=seed)
+    """꼬리 없는 charming 말풍선: 안정적인 타원 골격 + 불규칙한 넓은 측면 굴곡."""
+    points, core_rect = _charming_body_polygon(rect, seed=seed)
     mask = Image.new("L", overlay.size, 0)
     draw = ImageDraw.Draw(mask)
-    # 폴리곤 자체가 닫힌 채 내부 전체를 채우므로 별도의 기저 타원 합성은 불필요.
+
+    # 작은 기저 타원은 굴곡 사이가 과하게 파이는 것만 막고, 바깥 돌출은 그대로 남긴다.
+    draw.ellipse(core_rect, fill=255)
     draw.polygon(
         [(int(round(x)), int(round(y))) for x, y in points],
         fill=255,
