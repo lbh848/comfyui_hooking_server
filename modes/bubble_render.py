@@ -57,9 +57,9 @@ _BALLOON_TYPE_SHAPE = {
     "trembling":     ("ellipse", ("ellipse",), "ellipse", False),
     "burst":         ("rounded", ("rounded",), "burst",   False),
     "whisper":       ("ellipse", ("ellipse",), "whisper", False),
-    # charming(호감/애교/설득) 렌더는 아직 미구현. 일단 자리만 잡아두고 가장 단순한
-    # ellipse 말풍선으로 폴백한다. 전용 형상(하트 장식 등)은 별도 구현 필요(TODO).
-    "charming":      ("ellipse", ("ellipse",), "ellipse", False),
+    # charming(호감/애교/설득): 꼬리 없는 독립 장식 말풍선. 사이징(글자크기/줄바꿈)은
+    # ellipse 레이아웃을 그대로 쓰고 렌더만 전용 외곽선(넓은 파동의 둥근 형태)으로.
+    "charming":      ("ellipse", ("ellipse",), "charming", False),
 }
 
 # font_path 미지정 시 시스템 기본 TTF 후보 (font_size 가 적용되도록 비트맵 폰트 회피).
@@ -1857,6 +1857,67 @@ def _draw_cloud(overlay, rect, anchor, fill, border, border_w, with_tail, *, see
     overlay.alpha_composite(tail_layer)
 
 
+def _charming_body_polygon(rect, *, seed=0, samples=200):
+    """charming 말풍선 몸통 외곽 폴리곤과 안전 기저 타원 rect 를 반환한다.
+
+    rect 보다 약간 작은(0.95) 타원을 기본 골격으로 삼고, 외곽에 넓고 완만한 파동
+    7개를 더해 '물결치는 둥근 말풍선'을 만든다. thought_cloud 처럼 작은 혹이
+    다닥다닥 붙지 않으며 굴곡 수가 적고 부드럽다. 점 단위 지터는 쓰지 않고 seed 로
+    결정론적(미리보기=실제 동일). 반환: (외곽 점열, 안전 기저 타원 rect).
+    """
+    x1, y1, x2, y2 = [float(v) for v in rect]
+    cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
+    # 기저 타원을 rect 의 0.95 배로 잡아 파동 돌출이 rect 안에 머무르도록 한다.
+    rx = max(1.0, (x2 - x1) / 2.0 * 0.95)
+    ry = max(1.0, (y2 - y1) / 2.0 * 0.95)
+    base = min(rx, ry)
+    rng = random.Random(int(seed) & 0x7FFFFFFF)
+    # 굴곡 방향(도). 균등 분할이 아닌 살짝 흐트러진 배치로 자연스럽게. 각 lobe 는
+    # 넓은 반폭(0.42~0.55 rad)의 cos² 종이라 좁은 혹이 아니라 완만한 파동이 된다.
+    base_angles = [265.0, 315.0, 10.0, 58.0, 108.0, 164.0, 218.0]
+    lobes = []
+    for ang in base_angles:
+        angle = math.radians(ang + rng.uniform(-4.0, 4.0))
+        amp = rng.uniform(0.04, 0.06)
+        half_span = rng.uniform(0.42, 0.55)
+        lobes.append((angle, amp, half_span))
+    samples = max(96, int(samples))
+    pts = []
+    for i in range(samples):
+        theta = 2.0 * math.pi * i / samples
+        nx, ny = math.cos(theta), math.sin(theta)
+        amp = _cloud_lobe_profile(theta, lobes) * base
+        pts.append((cx + rx * nx + nx * amp, cy + ry * ny + ny * amp))
+    core_rect = [cx - rx, cy - ry, cx + rx, cy + ry]
+    return pts, core_rect
+
+
+def _draw_charming(overlay, rect, fill, border, border_w, *, seed=0, halo_px=0):
+    """charming 말풍선: 꼬리 없는 독립 장식 말풍선.
+
+    세로 긴 타원 골격 위에 넓고 완만한 파동을 더한 둥근 외곽선을 그린다. anchor/
+    with_tail 을 받지 않는다(항상 꼬리 없음). _composite_union_mask 로 채움·테두리·
+    헤일로를 합성한다.
+    """
+    points, core_rect = _charming_body_polygon(rect, seed=seed)
+    mask = Image.new("L", overlay.size, 0)
+    draw = ImageDraw.Draw(mask)
+    # 굴곡 사이가 안쪽으로 과도하게 파이지 않도록 안전 기저 타원을 먼저 채운다.
+    draw.ellipse(core_rect, fill=255)
+    draw.polygon(
+        [(int(round(x)), int(round(y))) for x, y in points],
+        fill=255,
+    )
+    _composite_union_mask(
+        overlay,
+        mask,
+        fill,
+        border,
+        border_w,
+        halo_px=halo_px,
+    )
+
+
 def _build_organic_body_contour(rect, *, wobble, point_count, seed):
     """유기형 몸통 외곽선(닫힌 폴리곤)을 numpy (N,2) int32 로 만든다.
 
@@ -1961,7 +2022,11 @@ def _draw_layout_bubble(
     split=True 면 텍스트(전체)는 그대로 두고 몸통만 위/아래 두 타원의 합집합으로
     그려, 두 blob이 허리에서 맞물린 하나의 말풍선이 된다. 대사(ellipse/comic) 전용.
     """
-    shape = shape if shape in ("ellipse", "rounded", "comic", "cloud", "box", "burst", "whisper") else "ellipse"
+    shape = shape if shape in ("ellipse", "rounded", "comic", "cloud", "box", "burst", "whisper", "charming") else "ellipse"
+    if shape == "charming":
+        # 꼬리 없는 독립 장식 말풍선. anchor/with_tail 을 쓰지 않는 전용 렌더러.
+        _draw_charming(overlay, rect, fill, border, border_w, seed=seed, halo_px=halo_px)
+        return
     if shape == "cloud":
         _draw_cloud(overlay, rect, anchor, fill, border, border_w, with_tail, seed=seed)
         return
@@ -2603,7 +2668,7 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
             render_shape = "comic" if layout.shape == "rounded" else "ellipse"
         # 긴 대사 분할: speech 5줄 이상이면 텍스트는 그대로 두고 외곽선만 두 타원 합집합.
         do_split = speech_split and btype == "speech" and len(layout.lines) >= 5
-        if unanchored_fallback or render_shape == "box":
+        if unanchored_fallback or render_shape in ("box", "charming"):
             with_tail, tail_gap, tail_limit = False, 0.0, 0.0
         else:
             with_tail, tail_gap, tail_limit = _tail_within_threshold(
