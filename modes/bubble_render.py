@@ -1359,13 +1359,32 @@ def _add_curved_tail(mask, rect, anchor, shape, radius, border_w, tail_width_sca
     ImageDraw.Draw(mask).polygon(left_curve + list(reversed(right_curve)), fill=255)
 
 
-def _composite_union_mask(overlay, mask, fill, border, border_w):
-    """몸통+꼬리 union의 바깥쪽에만 테두리를 그려 내부 이음선을 없앤다."""
+def _composite_union_mask(overlay, mask, fill, border, border_w, halo_px=0):
+    """몸통+꼬리 union의 바깥쪽에만 테두리를 그려 내부 이음선을 없앤다.
+
+    halo_px > 0 이면 테두리 바깥으로 fill(흰) 헤일로 띠를 추가한다. 손그림 만화에서
+    흰 물감이 잉크선 바깥으로 살짝 번져 나온 효과. 칠하는 순서:
+      1) halo(mask를 더 크게 팽창)에 fill  → 흰 띠 + 내부 전체
+      2) outline(mask 팽창)에 border        → 검은 테두리(위에서 칠한 흰을 덮음)
+      3) mask(원본)에 fill                   → 흰 내부
+    최종 가장자리 단면(바깥→안): 배경 | 흰 헤일로 | 검은 테두리 | 흰 면.
+    """
     outline_w = max(1, int(round(border_w)))
     filter_size = max(3, outline_w * 2 + 1)
     if filter_size % 2 == 0:
         filter_size += 1
     outline = mask.filter(ImageFilter.MaxFilter(filter_size))
+    try:
+        halo_px = max(0, int(round(float(halo_px))))
+    except (TypeError, ValueError):
+        print(f"[BUBBLE_RENDER] ⚠ halo_px 변환 실패({halo_px!r}), 헤일로 없음")
+        halo_px = 0
+    if halo_px > 0:
+        halo_size = filter_size + halo_px * 2
+        if halo_size % 2 == 0:
+            halo_size += 1
+        halo = mask.filter(ImageFilter.MaxFilter(halo_size))
+        overlay.paste(fill, mask=halo)
     overlay.paste(border, mask=outline)
     overlay.paste(fill, mask=mask)
 
@@ -1647,6 +1666,7 @@ def _draw_layout_bubble(
     seed=0,
     tail_max_length_px=None,
     split=False,
+    halo_px=0,
 ):
     """레이아웃 결과를 타원/코믹/구름/무라운드 박스로 그린다.
 
@@ -1693,7 +1713,7 @@ def _draw_layout_bubble(
                 max_length_px=tail_max_length_px,
             )
         padded_overlay = Image.new("RGBA", padded_size, (0, 0, 0, 0))
-        _composite_union_mask(padded_overlay, mask, fill, border, border_w)
+        _composite_union_mask(padded_overlay, mask, fill, border, border_w, halo_px=halo_px)
         overlay.alpha_composite(padded_overlay.crop((pad, pad, pad + bw, pad + bh)))
         return
     if organic and shape in ("ellipse", "comic"):
@@ -1715,7 +1735,7 @@ def _draw_layout_bubble(
                     mask, rect, anchor, "ellipse", radius, border_w, tail_width_scale,
                     max_length_px=tail_max_length_px,
                 )
-            _composite_union_mask(overlay, mask, fill, border, border_w)
+            _composite_union_mask(overlay, mask, fill, border, border_w, halo_px=halo_px)
             return
         except Exception as e:
             print(f"[BUBBLE_RENDER] ⚠ 유기형 외곽선 생성 실패 → legacy 폴백: {e}")
@@ -1735,7 +1755,7 @@ def _draw_layout_bubble(
             mask, rect, anchor, render_shape, radius, border_w, tail_width_scale,
             max_length_px=tail_max_length_px,
         )
-    _composite_union_mask(overlay, mask, fill, border, border_w)
+    _composite_union_mask(overlay, mask, fill, border, border_w, halo_px=halo_px)
 
 
 def _tail_gap(rect, anchor, shape, radius=20):
@@ -1961,6 +1981,17 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
     border = ImageColor.getrgb(s.get("bubble_border", "#333333")) + (255,)
     text_color = ImageColor.getrgb(s.get("text_color", "#111111")) + (255,)
     border_w = float(s.get("border_width", 2))
+    # 흰 헤일로: 검은 테두리 바깥으로 흰 띠를 번지게 해 손그림 만화풍 느낌.
+    # 미지정 시 border_width에서 자동 산정. 0이면 헤일로 없음(종전 동작).
+    halo_raw = s.get("bubble_halo_px", None)
+    if halo_raw is None:
+        bubble_halo_px = max(1, int(round(border_w)))
+    else:
+        try:
+            bubble_halo_px = max(0, int(round(float(halo_raw))))
+        except (TypeError, ValueError):
+            print(f"[BUBBLE_RENDER] ⚠ bubble_halo_px 변환 실패({halo_raw!r}), 자동 사용")
+            bubble_halo_px = max(1, int(round(border_w)))
     tail_threshold = s.get("tail_threshold", 1.0)
     bubble_shape_mode = _resolve_bubble_shape_mode(s)
     tail_width_scale = _resolve_tail_width_scale(s)
@@ -2337,6 +2368,7 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
             seed=organic_seed,
             tail_max_length_px=tail_max_length_px,
             split=do_split,
+            halo_px=bubble_halo_px,
         )
 
         # trembling: SVG의 `))` 한 쌍을 3곳에 복제하고, 각 위치의 타원 접선에 맞춰
