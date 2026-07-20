@@ -39,33 +39,36 @@ def test_context_and_result_transport_markers():
     ) == {"session_id": session_id, "slot": 0}
 
 
-def test_descriptor_slots_are_evenly_normalized_from_target_paragraphs():
+def test_descriptor_slots_trust_call2_with_light_sanitization():
     descriptors = [
         {"kind": "keyvis", "slot": -1},
         *({"kind": "scene", "slot": slot} for slot in (1, 1, 999, 4, 2)),
     ]
     slotted = "\n\n".join(f"문단 {index}\n\n[Slot {index}]" for index in range(10))
 
-    normalized = pipeline.normalize_descriptor_slots(descriptors, slotted)
+    normalized = pipeline.sanitize_descriptor_slots(descriptors, slotted)
 
-    assert [item["slot"] for item in normalized] == [-1, 0, 2, 4, 6, 8]
+    # keyvis=-1; CALL2 picks: 1(keep), 1(dup->nearest unused 0), 999(out->nearest 9),
+    # 4(keep), 2(keep).
+    assert [item["slot"] for item in normalized] == [-1, 1, 0, 9, 4, 2]
 
 
-def test_descriptor_slot_normalization_truncates_to_available_slots():
+def test_descriptor_slot_sanitization_drops_excess_when_candidates_exhausted():
     descriptors = [
         {"kind": "keyvis", "slot": -1},
         *({"kind": "scene", "slot": index} for index in range(5)),
     ]
 
-    normalized = pipeline.normalize_descriptor_slots(
+    normalized = pipeline.sanitize_descriptor_slots(
         descriptors,
         "첫째\n\n[Slot 2]\n\n둘째\n\n[Slot 8]\n\n셋째",
     )
 
+    # 후보 [2,8]: scene 0->2, 1->8, 나머지(2,3,4)는 빈 후보 없음 -> 드롭.
     assert [item["slot"] for item in normalized] == [-1, 2, 8]
 
 
-def test_call2_context_anchors_are_attached_before_even_slot_redistribution():
+def test_call2_context_anchors_survive_slot_sanitization():
     descriptors = [
         {"kind": "keyvis", "slot": -1},
         {"kind": "scene", "slot": 1},
@@ -80,10 +83,11 @@ def test_call2_context_anchors_are_attached_before_even_slot_redistribution():
     )
 
     pipeline.attach_descriptor_anchors(descriptors, slotted)
-    normalized = pipeline.normalize_descriptor_slots(descriptors, slotted)
+    normalized = pipeline.sanitize_descriptor_slots(descriptors, slotted)
 
     scenes = [item for item in normalized if item["kind"] == "scene"]
-    assert [item["slot"] for item in scenes] == [0, 2]
+    # CALL2 원 슬롯(1, 3)을 신뢰하여 그대로 유지.
+    assert [item["slot"] for item in scenes] == [1, 3]
     assert scenes[0]["anchor_before"] == "둘째 문단의 핵심 문구."
     assert scenes[0]["anchor_after"] == "셋째 문단의 장면 문구."
     assert scenes[1]["anchor_before"] == "넷째 문단의 시작 문구."

@@ -867,6 +867,27 @@ def candidate_slots(target_slotted: str) -> list[int]:
     return slots
 
 
+def _pick_slot(raw: int, candidates: list[int], used: set[int]) -> int | None:
+    """CALL2가 고른 raw 슬롯을 신뢰해 후보 중 하나를 고른다.
+
+    raw가 valid(후보 안) & unique(미사용)면 그대로 쓴다. invalid(후보 밖)이거나
+    duplicate(이미 사용됨)면 raw에 가장 가까운 미사용 후보로 보정한다.
+    사용 가능한 후보가 없으면 None을 돌려 scene 드롭을 유도한다.
+    """
+    if not candidates:
+        return None
+    if raw in candidates and raw not in used:
+        used.add(raw)
+        return raw
+    free = [c for c in candidates if c not in used]
+    if not free:
+        return None
+    # raw와 거리가 가장 가까운 미사용 후보(동점이면 작은 값)
+    chosen = min(free, key=lambda c: (abs(c - raw), c))
+    used.add(chosen)
+    return chosen
+
+
 def _anchor_text(value: str, *, tail: bool = False, limit: int = 180) -> str:
     """Return a compact nearby-text anchor suitable for transport to Risu.
 
@@ -931,45 +952,43 @@ def attach_descriptor_anchors(descriptors: list[dict], target_slotted: str) -> l
     return descriptors
 
 
-def normalize_descriptor_slots(descriptors: list[dict], target_slotted: str) -> list[dict]:
-    """Map scene descriptors onto stable, evenly spaced source paragraph slots.
+def sanitize_descriptor_slots(descriptors: list[dict], target_slotted: str) -> list[dict]:
+    """CALL2가 선택한 slot을 신뢰하고, 범위 밖/중복만 보정한다.
 
-    CALL2 may choose sparse or duplicate slot numbers.  The Risu module cannot
-    safely receive that manifest while generateImage() is blocking, so both
-    sides derive the same mapping from target_slotted instead.
+    재배치(even redistribution)를 하지 않는다. CALL2는 target_slotted의
+    [Slot N] 마커를 보고 슬롯을 고르므로, valid & unique 선택은 그대로 존중하고
+    invalid(후보 밖) 또는 duplicate(이미 사용된 슬롯)만 가장 가까운 미사용 후보로 보정한다.
+    후보 수보다 scene이 많으면 초과분은 드롭한다(리스 회수 프로토콜이 중복 슬롯을
+    처리하지 못하므로, 빈 슬롯이 없을 때는 드롭이 안전하다).
     """
     candidates = candidate_slots(target_slotted)
-    scenes = [item for item in descriptors if str(item.get("kind")) == "scene"]
-    if not scenes or not candidates:
-        return descriptors
-
-    scene_count = min(len(scenes), len(candidates))
-    chosen: list[int] = []
-    previous_position = 0
-    candidate_count = len(candidates)
-    for index in range(1, scene_count + 1):
-        position = (index * (candidate_count + 1)) // (scene_count + 1)
-        minimum = previous_position + 1
-        maximum = candidate_count - (scene_count - index)
-        position = max(minimum, min(maximum, position))
-        chosen.append(candidates[position - 1])
-        previous_position = position
-
+    used: set[int] = set()
     normalized: list[dict] = []
-    scene_index = 0
+    dropped = 0
     for item in descriptors:
         if str(item.get("kind")) != "scene":
             normalized.append(item)
             continue
-        if scene_index >= scene_count:
+        try:
+            raw = int(item.get("slot"))
+        except Exception:
+            raw = -1
+        chosen = _pick_slot(raw, candidates, used)
+        if chosen is None:
+            dropped += 1
             continue
-        item["slot"] = chosen[scene_index]
+        item["slot"] = chosen
         normalized.append(item)
-        scene_index += 1
 
+    scene_slots = [it["slot"] for it in normalized if str(it.get("kind")) == "scene"]
+    if dropped:
+        print(
+            f"[ILLUST_CONTEXT] 슬롯 후보 초과로 {dropped}개 scene 드롭: "
+            f"candidates={len(candidates)}"
+        )
     print(
-        f"[ILLUST_CONTEXT] 장면 슬롯 정규화: "
-        f"candidates={candidate_count}, scenes={scene_count}, slots={chosen}"
+        f"[ILLUST_CONTEXT] 장면 슬롯 보정(CALL2 신뢰): "
+        f"candidates={candidates}, slots={scene_slots}"
     )
     return normalized
 
@@ -1318,14 +1337,14 @@ async def build_from_context(payload: dict, toggles: dict | None, extra_referenc
     else:
         print("[ILLUST_CONTEXT:CALL3] 토글로 비활성화되었거나 SPEAK이 꺼져 있음")
 
-    # Save CALL2's original semantic boundary before the legacy even-slot
-    # redistribution mutates descriptor["slot"].  The bridge uses these text
-    # anchors for placement; the redistributed slot remains cache/backcompat.
+    # Save CALL2's original semantic boundary text anchors before slot
+    # sanitization.  The bridge uses these anchors for placement; sanitize only
+    # corrects out-of-range/duplicate slot numbers while trusting CALL2's pick.
     descriptors = attach_descriptor_anchors(
         descriptors,
         payload.get("target_slotted") or "",
     )
-    descriptors = normalize_descriptor_slots(descriptors, payload.get("target_slotted") or "")
+    descriptors = sanitize_descriptor_slots(descriptors, payload.get("target_slotted") or "")
     if progress:
         await progress(68, "raw_build", f"RAW 프롬프트 {len(descriptors)}개 생성")
     raw_items = []
