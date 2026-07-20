@@ -10552,7 +10552,7 @@
                 const isScheduled = b.is_scheduled || false;
 
                 // Store prompt data in Map (avoids data-attribute truncation issues)
-                promptDataMap.set(b.name, { positive, negative, enhanced_positive: b.enhanced_positive || '', wildcard_info: b.wildcard_info || {} });
+                promptDataMap.set(b.name, { positive, negative, enhanced_positive: b.enhanced_positive || '', wildcard_info: b.wildcard_info || {}, conversion_info: b.conversion_info || {} });
 
                 // 현재 배치 또는 예약된 배치에 속한 카드인지 확인
                 const isInCurrentBatch = currentBatchFiles.has(b.name);

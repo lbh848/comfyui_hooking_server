@@ -310,14 +310,15 @@ def test_manga_prompt_declares_all_balloon_labels_and_short_dialogue_rules():
     for label in (
         "#normal",
         "#angular",
-        "#narration_box",
+        "#monologue_box",
         "#thought_cloud",
+        "#trembling",
         "#burst",
         "#whisper",
-        "#trembling",
+        "#charming",
     ):
         assert label in manga
-    assert "Never produce a monologue, paragraph, or multi-sentence speech." in manga
+    assert "Do not write paragraphs, long monologues, or multi-sentence speeches." in manga
 
 
 @pytest.mark.asyncio
