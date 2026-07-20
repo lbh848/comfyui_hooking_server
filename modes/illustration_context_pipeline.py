@@ -1126,6 +1126,7 @@ async def _call_pipeline_llm(call_name: str, messages: list[dict], stream_notify
             raise RuntimeError(str(result or f"빈 {call_name} 응답"))
         elapsed = time.time() - started
         tokens = max(1, len(str(result)) // 3)
+        prompt_tokens = llm_service._approx_input_tokens(messages)
         if stream_notify:
             await stream_notify({
                 "type": "done",
@@ -1133,6 +1134,7 @@ async def _call_pipeline_llm(call_name: str, messages: list[dict], stream_notify
                 "model": model,
                 "text": str(result),
                 "completion_tokens": tokens,
+                "prompt_tokens": prompt_tokens,
                 "elapsed": elapsed,
                 "tps": tokens / elapsed if elapsed > 0 else 0.0,
                 "ttft": elapsed,
@@ -1140,6 +1142,7 @@ async def _call_pipeline_llm(call_name: str, messages: list[dict], stream_notify
         history_record.update({
             "output": str(result),
             "completion_tokens": tokens,
+            "prompt_tokens": prompt_tokens,
             "elapsed": round(elapsed, 3),
             "tps": round(tokens / elapsed, 1) if elapsed > 0 else 0.0,
             "ttft": round(elapsed, 3),

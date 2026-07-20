@@ -5872,15 +5872,33 @@ async def handle_api_llm_edit_prompt(request: web.Request) -> web.Response:
                 "error": f"LLM 호출 실패: {raw}",
             }, status=500)
         # 정상 raw → 위젯에 전체 표시 (파싱 실패 시 원인 확인용) + 히스토리 기록(자세히 모달)
+        # callLLMTask/callLLMVisionTask 는 비스트리밍 단발 호출이라 usage 가 없으므로,
+        # 토큰/속도 근사치를 직접 계산해서 done 이벤트와 히스토리에 채운다.
+        # (채우지 않으면 프론트에서 data.prompt_tokens ?? 0 → 항상 0 으로 표시됨)
+        _edit_elapsed = time.time() - t0
+        _edit_completion_tokens = llm_service._approx_tokens(raw)
+        _edit_prompt_tokens = llm_service._approx_input_tokens(messages)
+        _edit_tps = (_edit_completion_tokens / _edit_elapsed) if _edit_elapsed > 0 else 0.0
         try:
-            await notify_frontend("lighbd_llm_stream", {"type": "done", "text": raw})
+            await notify_frontend("lighbd_llm_stream", {
+                "type": "done",
+                "text": raw,
+                "completion_tokens": _edit_completion_tokens,
+                "prompt_tokens": _edit_prompt_tokens,
+                "elapsed": _edit_elapsed,
+                "tps": _edit_tps,
+                "ttft": None,
+            })
         except Exception as _e:
             print(f"[LLM_EDIT] WARN: 위젯 done 알림 실패: {_e}")
         try:
             _log_hist({
                 "ts": datetime.datetime.now().isoformat(timespec="seconds"),
                 "prompt_id": _hist_pid, "input": messages, "output": raw,
-                "elapsed": round(time.time() - t0, 3),
+                "completion_tokens": _edit_completion_tokens,
+                "prompt_tokens": _edit_prompt_tokens,
+                "elapsed": round(_edit_elapsed, 3),
+                "tps": round(_edit_tps, 1),
                 "status": "ok",
             })
         except Exception as _e:
