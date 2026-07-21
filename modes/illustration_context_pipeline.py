@@ -53,6 +53,7 @@ PROMPT_FILES = {
 DEFAULT_TOGGLES = {
     "call1_backtranslate_enabled": False,
     "call1_backtranslate_max_concurrency": 4,
+    "call1_backtranslate_failure_strategy": "fallback",
     "call1_enabled": True,
     "call1_context_turns": 5,
     "call2_context_turns": 5,
@@ -237,6 +238,16 @@ def merged_toggles(value: dict | None) -> dict:
         )
         call3_prompt_mode = "speak"
     out["call3_prompt_mode"] = call3_prompt_mode
+    failure_strategy = str(
+        out.get("call1_backtranslate_failure_strategy") or ""
+    ).strip().lower()
+    if failure_strategy not in ("fallback", "retry_abort"):
+        print(
+            f"[ILLUST_CONTEXT:BACKTRANSLATE] 지원하지 않는 실패 전략 "
+            f"{failure_strategy!r}, fallback 사용"
+        )
+        failure_strategy = "fallback"
+    out["call1_backtranslate_failure_strategy"] = failure_strategy
     try:
         out["call1_backtranslate_max_concurrency"] = max(
             1,
@@ -1671,9 +1682,18 @@ async def backtranslate_current_context(
     prompt: str,
     character_names: str,
     max_concurrency: int,
+    failure_strategy: str = "fallback",
     stream_notify=None,
 ) -> tuple[str, list[dict]]:
-    """current context만 영어로 병렬 역번역하고 실패 청크는 원문으로 폴백한다."""
+    """current context만 영어로 병렬 역번역하고 선택된 실패 전략을 적용한다."""
+    strategy = str(failure_strategy or "").strip().lower()
+    if strategy not in ("fallback", "retry_abort"):
+        print(
+            f"[ILLUST_CONTEXT:BACKTRANSLATE] 호출 시 실패 전략이 무효함: "
+            f"value={failure_strategy!r}; fallback 사용"
+        )
+        strategy = "fallback"
+    strict = strategy == "retry_abort"
     chunks = split_backtranslation_chunks(source, max_concurrency)
     if not chunks:
         print("[ILLUST_CONTEXT:BACKTRANSLATE] 번역할 청크가 없어 원문 사용")
@@ -1683,8 +1703,12 @@ async def backtranslate_current_context(
     if not template:
         print(
             "[ILLUST_CONTEXT:BACKTRANSLATE] backtranslate.txt가 비어 있어 "
-            f"전체 원문 사용: chunks={len(chunks)}"
+            f"번역 불가: strategy={strategy}, chunks={len(chunks)}"
         )
+        if strict:
+            raise RuntimeError(
+                "CALL1 역번역 엄격 전략 실패: backtranslate.txt가 비어 있습니다"
+            )
         return str(source or ""), [
             {"index": index, "status": "fallback", "reason": "prompt_empty"}
             for index in range(1, len(chunks) + 1)
@@ -1720,43 +1744,102 @@ async def backtranslate_current_context(
                 ),
             },
         ])
-        call_name = f"CALL1-BACKTRANSLATE {index}/{len(chunks)}"
-        try:
-            translated = await _call_pipeline_llm(call_name, messages, stream_notify)
-        except Exception as e:
-            print(
-                f"[ILLUST_CONTEXT:BACKTRANSLATE] 청크 호출 실패, 원문 폴백: "
-                f"chunk={index}/{len(chunks)}, input_len={len(chunk)}, error={e}"
-            )
-            traceback.print_exc()
-            return chunk.strip(), {
-                "index": index,
-                "status": "fallback",
-                "reason": f"call_failed: {e}",
-            }
+        max_attempts = 2 if strict else 1
+        last_reason = "unknown_failure"
+        for attempt in range(1, max_attempts + 1):
+            base_call_name = f"CALL1-BACKTRANSLATE {index}/{len(chunks)}"
+            call_name = base_call_name if attempt == 1 else base_call_name + " RETRY"
+            try:
+                translated = await _call_pipeline_llm(call_name, messages, stream_notify)
+            except Exception as e:
+                last_reason = f"call_failed: {e}"
+                print(
+                    f"[ILLUST_CONTEXT:BACKTRANSLATE] 청크 호출 실패: "
+                    f"strategy={strategy}, chunk={index}/{len(chunks)}, "
+                    f"attempt={attempt}/{max_attempts}, input_len={len(chunk)}, error={e}"
+                )
+                traceback.print_exc()
+            else:
+                valid, reason = _valid_backtranslation(chunk, translated)
+                if valid:
+                    return str(translated).strip(), {
+                        "index": index,
+                        "status": "translated",
+                        "reason": "",
+                        "attempts": attempt,
+                    }
+                last_reason = reason
+                print(
+                    f"[ILLUST_CONTEXT:BACKTRANSLATE] 청크 응답 실패: "
+                    f"strategy={strategy}, chunk={index}/{len(chunks)}, "
+                    f"attempt={attempt}/{max_attempts}, input_len={len(chunk)}, "
+                    f"output_len={len(str(translated or ''))}, reason={reason}"
+                )
 
-        valid, reason = _valid_backtranslation(chunk, translated)
-        if not valid:
-            print(
-                f"[ILLUST_CONTEXT:BACKTRANSLATE] 청크 응답 실패, 원문 폴백: "
-                f"chunk={index}/{len(chunks)}, input_len={len(chunk)}, "
-                f"output_len={len(str(translated or ''))}, reason={reason}"
+            if attempt < max_attempts:
+                print(
+                    f"[ILLUST_CONTEXT:BACKTRANSLATE] 엄격 전략 청크 재시도: "
+                    f"chunk={index}/{len(chunks)}, next_attempt={attempt + 1}/{max_attempts}"
+                )
+
+        if strict:
+            raise RuntimeError(
+                f"청크 {index}/{len(chunks)}가 1회 재시도 후에도 실패했습니다: "
+                f"{last_reason}"
             )
-            return chunk.strip(), {
-                "index": index,
-                "status": "fallback",
-                "reason": reason,
-            }
-        return str(translated).strip(), {
+        print(
+            f"[ILLUST_CONTEXT:BACKTRANSLATE] 실패 청크 원문 폴백: "
+            f"chunk={index}/{len(chunks)}, reason={last_reason}"
+        )
+        return chunk.strip(), {
             "index": index,
-            "status": "translated",
-            "reason": "",
+            "status": "fallback",
+            "reason": last_reason,
+            "attempts": max_attempts,
         }
 
-    results = await asyncio.gather(*(
+    gathered = await asyncio.gather(*(
         translate_one(index, chunk)
         for index, chunk in enumerate(chunks, start=1)
-    ))
+    ), return_exceptions=True)
+    cancellations = [
+        result for result in gathered if isinstance(result, asyncio.CancelledError)
+    ]
+    if cancellations:
+        print(
+            f"[ILLUST_CONTEXT:BACKTRANSLATE] 병렬 역번역 취소됨: "
+            f"cancelled={len(cancellations)}/{len(chunks)}"
+        )
+        raise cancellations[0]
+    failures = [
+        (index, result)
+        for index, result in enumerate(gathered, start=1)
+        if isinstance(result, Exception)
+    ]
+    if failures:
+        for index, error in failures:
+            print(
+                f"[ILLUST_CONTEXT:BACKTRANSLATE] 청크 처리 예외: "
+                f"strategy={strategy}, chunk={index}/{len(chunks)}, error={error}"
+            )
+            traceback.print_exception(type(error), error, error.__traceback__)
+        if strict:
+            raise RuntimeError(
+                f"CALL1 역번역 엄격 전략 실패: "
+                f"{len(failures)}/{len(chunks)}개 청크 실패"
+            ) from failures[0][1]
+        for index, error in failures:
+            gathered[index - 1] = (
+                chunks[index - 1].strip(),
+                {
+                    "index": index,
+                    "status": "fallback",
+                    "reason": f"unexpected_error: {error}",
+                    "attempts": 1,
+                },
+            )
+
+    results = gathered
     translated_chunks = [value for value, _status in results]
     statuses = [status for _value, status in results]
     translated_count = sum(1 for status in statuses if status["status"] == "translated")
@@ -1835,6 +1918,9 @@ async def build_from_context(
     slotted = original_slotted
     backtranslation_chunks = []
     backtranslated_narrative = ""
+    backtranslation_failure_strategy = str(
+        toggles["call1_backtranslate_failure_strategy"]
+    )
     if toggles.get("call1_backtranslate_enabled"):
         if progress:
             await progress(3, "call1_backtranslate", "CALL1 역번역 준비")
@@ -1843,14 +1929,19 @@ async def build_from_context(
             prompts.get("call1_backtranslate", ""),
             backtranslate_names,
             int(toggles["call1_backtranslate_max_concurrency"]),
+            failure_strategy=backtranslation_failure_strategy,
             stream_notify=stream_notify,
         )
         backtranslated_narrative = remove_slot_markers(slotted)
         if not backtranslated_narrative:
             print(
                 "[ILLUST_CONTEXT:BACKTRANSLATE] 병합 결과의 본문 길이가 0이어서 "
-                "current context 전체를 원문으로 폴백"
+                f"후속 처리 불가: strategy={backtranslation_failure_strategy}"
             )
+            if backtranslation_failure_strategy == "retry_abort":
+                raise RuntimeError(
+                    "CALL1 역번역 엄격 전략 실패: 병합 결과의 본문 길이가 0입니다"
+                )
             slotted = original_slotted
             backtranslated_narrative = _strip_nodes(narrative)
             backtranslation_chunks = [{

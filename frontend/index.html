@@ -37679,6 +37679,15 @@
                 description: '현재 응답만 영어로 번역해 이후 삽화 CALL이 상황을 인식할 때 사용합니다. 과거 대화는 번역 대상이 아닙니다.',
                 fields: [
                     {key: 'call1_backtranslate_max_concurrency', label: '최대 병렬 개수', type: 'number', min: 1, max: 16, help: '슬롯 여러 개를 균등하게 묶어 동시에 요청할 최대 청크 수입니다.', dependsOn: ['call1_backtranslate_enabled']},
+                    {
+                        key: 'call1_backtranslate_failure_strategy', label: '실패 처리 전략', type: 'select', stacked: true,
+                        help: '엄격 검증은 실패 청크를 한 번 더 요청한 뒤 다시 실패하면 전체 삽화 파이프라인을 중단합니다. 원문 사용은 실패 청크만 원문으로 대체합니다.',
+                        dependsOn: ['call1_backtranslate_enabled'],
+                        options: [
+                            {value: 'retry_abort', label: '엄격 검증 후 중단 (1안)'},
+                            {value: 'fallback', label: '실패 청크 원문 사용 (2안)'},
+                        ],
+                    },
                 ],
             },
             {

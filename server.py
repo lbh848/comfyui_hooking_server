@@ -157,6 +157,7 @@ DEFAULT_CONFIG = {
     "illustration_context_toggles": {
         "call1_backtranslate_enabled": False,
         "call1_backtranslate_max_concurrency": 4,
+        "call1_backtranslate_failure_strategy": "fallback",
         "call1_enabled": True,
         "call1_context_turns": 5,
         "call2_context_turns": 5,

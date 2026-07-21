@@ -574,12 +574,19 @@ def test_backtranslation_defaults_and_concurrency_clamp():
     defaults = pipeline.merged_toggles({})
     assert defaults["call1_backtranslate_enabled"] is False
     assert defaults["call1_backtranslate_max_concurrency"] == 4
+    assert defaults["call1_backtranslate_failure_strategy"] == "fallback"
     assert pipeline.merged_toggles({
         "call1_backtranslate_max_concurrency": 0,
     })["call1_backtranslate_max_concurrency"] == 1
     assert pipeline.merged_toggles({
         "call1_backtranslate_max_concurrency": 99,
     })["call1_backtranslate_max_concurrency"] == 16
+    assert pipeline.merged_toggles({
+        "call1_backtranslate_failure_strategy": "retry_abort",
+    })["call1_backtranslate_failure_strategy"] == "retry_abort"
+    assert pipeline.merged_toggles({
+        "call1_backtranslate_failure_strategy": "unknown",
+    })["call1_backtranslate_failure_strategy"] == "fallback"
 
 
 def test_backtranslation_chunks_balance_contiguous_slot_groups():
@@ -640,6 +647,58 @@ async def test_backtranslation_slot_mismatch_falls_back_to_original_chunk(monkey
     assert translated == source
     assert statuses[0]["status"] == "fallback"
     assert "슬롯 마커 불일치" in statuses[0]["reason"]
+
+
+@pytest.mark.asyncio
+async def test_backtranslation_strict_strategy_retries_once_then_succeeds(monkeypatch):
+    calls = []
+    source = "장면.\n\n[Slot 3]"
+
+    async def fake_pipeline_call(call_name, messages, stream_notify=None):
+        calls.append(call_name)
+        if len(calls) == 1:
+            return ""
+        return "Scene.\n\n[Slot 3]"
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
+    translated, statuses = await pipeline.backtranslate_current_context(
+        source,
+        "Translate. {character_names}",
+        "Hana",
+        4,
+        failure_strategy="retry_abort",
+    )
+
+    assert translated == "Scene.\n\n[Slot 3]"
+    assert len(calls) == 2
+    assert calls[1].endswith("RETRY")
+    assert statuses == [{
+        "index": 1,
+        "status": "translated",
+        "reason": "",
+        "attempts": 2,
+    }]
+
+
+@pytest.mark.asyncio
+async def test_backtranslation_strict_strategy_aborts_after_retry(monkeypatch):
+    calls = []
+
+    async def fake_pipeline_call(call_name, messages, stream_notify=None):
+        calls.append(call_name)
+        return "   "
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
+    with pytest.raises(RuntimeError, match="엄격 전략 실패"):
+        await pipeline.backtranslate_current_context(
+            "장면.\n\n[Slot 9]",
+            "Translate. {character_names}",
+            "Hana",
+            4,
+            failure_strategy="retry_abort",
+        )
+
+    assert len(calls) == 2
 
 
 def test_call3_dialogue_prompt_selects_speak_or_manga_and_scopes_emotions():
