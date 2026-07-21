@@ -13,7 +13,7 @@ from modes.face_embedder import (
     prepare_face_for_embedding,
     standardize_face_image,
 )
-from modes.bubble_layout import choose_layout, choose_scaled_layout
+from modes.bubble_layout import choose_layout, choose_scaled_layout, load_font
 from modes.bubble_match import (
     _assignment_ambiguity_gap,
     _face_boxes_overlap,
@@ -30,14 +30,19 @@ from modes.bubble_predictor import (
 from modes.postprocess import normalize_layout_font_scale
 from modes.bubble_render import (
     _apply_unanchored_fallbacks,
+    _draw_diagonal_split_bubble,
     _draw_layout_bubble,
     _draw_preview_debug,
+    _ellipse_intersects_box,
+    _ellipse_pair_neck_width,
+    _estimate_diagonal_split_sizes,
     _face_candidate_limit,
     _face_detection_candidate_limit,
     _filter_nested_face_candidates,
     _is_single_speaker_thought,
     _draw_speech,
     _place_body,
+    _place_diagonal_split_bodies,
     _place_unanchored_body,
     _protected_face_box,
     _resolve_layout_font_scale,
@@ -426,6 +431,159 @@ class BubblePlacementTest(unittest.TestCase):
             allowed_shapes=("ellipse",),
         )
         self.assertEqual(" ".join(selected.lines), text)
+
+    def test_diagonal_split_reuses_layout_lines_without_rewrapping(self):
+        lines = (
+            "첫 번째 줄입니다",
+            "두 번째 줄입니다",
+            "세 번째 줄입니다",
+            "네 번째 줄입니다",
+            "다섯 번째 줄입니다",
+            "여섯 번째 줄입니다",
+        )
+        layout = type("Layout", (), {
+            "font_size": 20,
+            "spacing": 4,
+            "shape": "ellipse",
+        })()
+        spec = _estimate_diagonal_split_sizes(
+            lines,
+            load_font(20, None),
+            layout,
+            580,
+            420,
+        )
+        self.assertIsNotNone(spec)
+        upper_lines, lower_lines, upper_size, lower_size = spec
+        self.assertEqual(tuple(upper_lines), lines[:3])
+        self.assertEqual(tuple(lower_lines), lines[3:])
+        self.assertEqual(tuple(upper_lines + lower_lines), lines)
+        # 전체 버블의 preferred/min-size 여백을 두 조각에 복제하지 않는다.
+        self.assertLess(upper_size[0], 580)
+        self.assertLess(lower_size[0], 580)
+
+    def test_connected_diagonal_candidate_is_safe_and_lower_is_closer(self):
+        face = (260, 300, 340, 390)
+        canvas = (600, 600)
+        safe_face = _protected_face_box(face, canvas)
+        occupied = (0, 0, 120, 600)
+        chosen = _place_diagonal_split_bodies(
+            face,
+            (180, 110),
+            (190, 120),
+            [safe_face, occupied],
+            *canvas,
+            protected_foreground_mask=np.zeros((600, 600), dtype=np.uint8),
+            edge_margin=8,
+        )
+        self.assertIsNotNone(chosen)
+        upper = chosen["upper_rect"]
+        lower = chosen["lower_rect"]
+        upper_center = ((upper[0] + upper[2]) / 2.0, (upper[1] + upper[3]) / 2.0)
+        lower_center = ((lower[0] + lower[2]) / 2.0, (lower[1] + lower[3]) / 2.0)
+        face_center = ((face[0] + face[2]) / 2.0, (face[1] + face[3]) / 2.0)
+        self.assertLess(upper_center[1], lower_center[1])
+        self.assertLess(
+            np.hypot(lower_center[0] - face_center[0], lower_center[1] - face_center[1]),
+            np.hypot(upper_center[0] - face_center[0], upper_center[1] - face_center[1]),
+        )
+        self.assertLess(chosen["lower_face_gap"], chosen["upper_face_gap"])
+        self.assertGreaterEqual(chosen["neck_width"], min(180, 190) * 0.055)
+        self.assertGreater(_ellipse_pair_neck_width(upper, lower), 0.0)
+        self.assertFalse(_ellipse_intersects_box(upper, safe_face))
+        self.assertFalse(_ellipse_intersects_box(lower, safe_face))
+        self.assertFalse(_overlaps(upper, occupied))
+        self.assertFalse(_overlaps(lower, occupied))
+
+    def test_diagonal_split_does_not_relax_foreground_safety(self):
+        face = (260, 300, 340, 390)
+        canvas = (600, 600)
+        chosen = _place_diagonal_split_bodies(
+            face,
+            (180, 110),
+            (190, 120),
+            [_protected_face_box(face, canvas)],
+            *canvas,
+            protected_foreground_mask=np.ones((600, 600), dtype=np.uint8),
+            edge_margin=8,
+        )
+        self.assertIsNone(chosen)
+
+    def test_diagonal_split_supports_both_reading_directions(self):
+        canvas = (600, 600)
+        foreground = np.zeros((600, 600), dtype=np.uint8)
+        for face, expected in (
+            ((30, 300, 90, 380), "upper_right"),
+            ((510, 300, 570, 380), "upper_left"),
+        ):
+            with self.subTest(face=face):
+                chosen = _place_diagonal_split_bodies(
+                    face,
+                    (180, 110),
+                    (190, 120),
+                    [_protected_face_box(face, canvas)],
+                    *canvas,
+                    protected_foreground_mask=foreground,
+                    edge_margin=8,
+                )
+                self.assertIsNotNone(chosen)
+                self.assertEqual(chosen["direction"], expected)
+
+    def test_diagonal_split_uses_full_grid_when_speaker_area_is_blocked(self):
+        face = (450, 500, 550, 620)
+        canvas = (1000, 1000)
+        central_obstacle = (250, 250, 750, 750)
+        chosen = _place_diagonal_split_bodies(
+            face,
+            (160, 100),
+            (170, 110),
+            [_protected_face_box(face, canvas), central_obstacle],
+            *canvas,
+            protected_foreground_mask=np.zeros((1000, 1000), dtype=np.uint8),
+            edge_margin=8,
+        )
+        self.assertIsNotNone(chosen)
+        self.assertEqual(chosen["source_rank"], 2)
+        self.assertFalse(_overlaps(chosen["upper_rect"], central_obstacle))
+        self.assertFalse(_overlaps(chosen["lower_rect"], central_obstacle))
+
+    def test_diagonal_split_draws_one_connected_body_without_inner_seam(self):
+        overlay = Image.new("RGBA", (400, 300), (0, 0, 0, 0))
+        upper = (60, 40, 240, 150)
+        lower = (130, 125, 320, 245)
+        _draw_diagonal_split_bubble(
+            overlay,
+            upper,
+            lower,
+            lower,
+            (225, 275),
+            "ellipse",
+            (255, 255, 255, 255),
+            (0, 0, 0, 255),
+            2,
+            20,
+            False,
+        )
+        pixels = np.asarray(overlay)
+        alpha = pixels[..., 3] > 0
+        start = tuple(int(value) for value in np.argwhere(alpha)[0])
+        stack = [start]
+        visited = {start}
+        while stack:
+            y, x = stack.pop()
+            for ny, nx in ((y - 1, x), (y + 1, x), (y, x - 1), (y, x + 1)):
+                point = (ny, nx)
+                if (
+                    0 <= ny < alpha.shape[0]
+                    and 0 <= nx < alpha.shape[1]
+                    and alpha[ny, nx]
+                    and point not in visited
+                ):
+                    visited.add(point)
+                    stack.append(point)
+        self.assertEqual(len(visited), int(alpha.sum()))
+        # 두 타원의 중첩부는 검은 내부 테두리가 아니라 흰 채움이어야 한다.
+        self.assertEqual(tuple(pixels[138, 187]), (255, 255, 255, 255))
 
     def test_candidate_uses_distance_before_confidence(self):
         face = (100, 100, 160, 160)

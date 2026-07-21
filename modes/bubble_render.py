@@ -213,6 +213,89 @@ def _draw_typo_text(overlay, lines, font, fill, rect_cx, rect_cy,
         overlay.alpha_composite(strip, (int(round(px)), int(round(py))))
 
 
+def _text_render_geometry(font, font_size, spacing, *, use_typo_render=False,
+                           letter_spacing=0.0, text_width_scale=1.0,
+                           line_height_ratio=None):
+    """텍스트 측정/렌더가 공유하는 자간·행간 기하를 계산한다."""
+    tracking_px = float(font_size) * float(letter_spacing)
+    if use_typo_render:
+        ascent, descent = font.getmetrics()
+        natural_lh = float(ascent + descent)
+        if line_height_ratio is not None:
+            line_advance = max(natural_lh, float(font_size) * float(line_height_ratio))
+        else:
+            line_advance = natural_lh + float(spacing)
+    else:
+        line_advance = None
+    return tracking_px, float(text_width_scale), line_advance
+
+
+def _measure_text_lines(lines, font, spacing, *, use_typo_render=False,
+                        tracking_px=0.0, h_scale=1.0, line_advance=None):
+    """현재 실제 렌더 경로와 같은 규칙으로 여러 줄 텍스트 블록을 측정한다."""
+    lines = list(lines or [""])
+    probe = ImageDraw.Draw(Image.new("RGBA", (1, 1), (0, 0, 0, 0)))
+    if use_typo_render:
+        widths = []
+        for line in lines:
+            chars = [float(probe.textlength(ch, font=font)) for ch in line]
+            width = sum(chars) + float(tracking_px) * max(0, len(chars) - 1)
+            widths.append(width * float(h_scale))
+        width = max(widths, default=0.0)
+        if line_advance is None:
+            ascent, descent = font.getmetrics()
+            line_advance = float(ascent + descent) + float(spacing)
+        height = float(line_advance) * max(1, len(lines))
+        return width, height
+
+    layout_text = "\n".join(lines)
+    bbox = probe.multiline_textbbox(
+        (0, 0), layout_text, font=font, spacing=spacing, align="center",
+    )
+    return float(bbox[2] - bbox[0]), float(bbox[3] - bbox[1])
+
+
+def _draw_text_lines_in_rect(overlay, lines, font, fill, rect, spacing, font_size,
+                             *, use_typo_render=False, letter_spacing=0.0,
+                             text_width_scale=1.0, line_height_ratio=None):
+    """지정한 줄 목록만 rect 중앙에 그린다. 긴 대사 분할 렌더에서 사용한다.
+
+    미리보기와 실제 합성이 동일한 텍스트 기하(tracking/h_scale/line_advance)를
+    공유하도록 _text_render_geometry/_draw_typo_text 경로만 경유한다
+    (CLAUDE.md: 미리보기와 실제 전송은 동일한 빌더를 쓴다).
+    """
+    lines = list(lines or [""])
+    rect_cx = (float(rect[0]) + float(rect[2])) / 2.0
+    rect_cy = (float(rect[1]) + float(rect[3])) / 2.0
+    tracking_px, h_scale, line_advance = _text_render_geometry(
+        font,
+        font_size,
+        spacing,
+        use_typo_render=use_typo_render,
+        letter_spacing=letter_spacing,
+        text_width_scale=text_width_scale,
+        line_height_ratio=line_height_ratio,
+    )
+    if use_typo_render:
+        _draw_typo_text(
+            overlay, lines, font, fill, rect_cx, rect_cy,
+            tracking_px, h_scale, line_advance,
+        )
+        return
+
+    text_draw = ImageDraw.Draw(overlay)
+    layout_text = "\n".join(lines)
+    text_box = text_draw.multiline_textbbox(
+        (0, 0), layout_text, font=font, spacing=spacing, align="center",
+    )
+    tx = rect_cx - (text_box[0] + text_box[2]) / 2.0
+    ty = rect_cy - (text_box[1] + text_box[3]) / 2.0
+    text_draw.multiline_text(
+        (tx, ty), layout_text, font=font, fill=fill,
+        spacing=spacing, align="center",
+    )
+
+
 # ─── 배치(몸통 위치) ─────────────────────────────────────────────────
 def _overlap(a, boxes, pad=0):
     ax1, ay1, ax2, ay2 = a
@@ -234,6 +317,32 @@ def _protected_face_box(face_box, canvas_size):
         min(canvas_w, x2 + pad),
         min(canvas_h, y2 + pad),
     )
+
+
+def _rect_center(rect):
+    return ((float(rect[0]) + float(rect[2])) / 2.0,
+            (float(rect[1]) + float(rect[3])) / 2.0)
+
+
+def _rect_intersection_area(a, b):
+    return max(0.0, min(float(a[2]), float(b[2])) - max(float(a[0]), float(b[0]))) * \
+           max(0.0, min(float(a[3]), float(b[3])) - max(float(a[1]), float(b[1])))
+
+
+def _face_anchor_toward(face_box, center):
+    """얼굴 중심에서 center 방향으로 나아간 얼굴 bbox 경계점을 반환한다."""
+    fx1, fy1, fx2, fy2 = [float(v) for v in face_box]
+    fcx, fcy = (fx1 + fx2) / 2.0, (fy1 + fy2) / 2.0
+    dx, dy = float(center[0]) - fcx, float(center[1]) - fcy
+    if abs(dx) + abs(dy) < 1e-6:
+        return fcx, fcy
+    rx = max((fx2 - fx1) / 2.0, 1.0)
+    ry = max((fy2 - fy1) / 2.0, 1.0)
+    tx = rx / abs(dx) if abs(dx) > 1e-6 else float("inf")
+    ty = ry / abs(dy) if abs(dy) > 1e-6 else float("inf")
+    scale = min(tx, ty)
+    return fcx + dx * scale, fcy + dy * scale
+
 
 
 def _resolve_layout_font_scale(settings):
@@ -669,6 +778,339 @@ def _place_unanchored_body(body_w, body_h, protected_boxes, canvas_w, canvas_h,
         print(f"[BUBBLE_RENDER] 무꼬리 빈 공간 배경 선택: background={bg_ratio:.3f}")
     anchor = ((rect[0] + rect[2]) / 2.0, (rect[1] + rect[3]) / 2.0)
     return rect, anchor
+
+
+def _estimate_diagonal_split_sizes(lines, font, layout, body_w, body_h,
+                                   *, use_typo_render=False, letter_spacing=0.0,
+                                   text_width_scale=1.0, line_height_ratio=None):
+    """5줄 이상 대사를 위 3줄/아래 나머지로 나눌 두 말풍선 크기를 계산한다.
+
+    기존 레이아웃이 확보한 곡면 여백을 재사용하므로 폰트 크기와 줄바꿈은 바뀌지 않는다.
+    반환: (upper_lines, lower_lines, upper_size, lower_size) 또는 None(5줄 미만).
+    """
+    all_lines = list(lines or [])
+    if len(all_lines) < 5:
+        return None
+    upper_lines = all_lines[:3]
+    lower_lines = all_lines[3:]
+    tracking_px, h_scale, line_advance = _text_render_geometry(
+        font,
+        layout.font_size,
+        layout.spacing,
+        use_typo_render=use_typo_render,
+        letter_spacing=letter_spacing,
+        text_width_scale=text_width_scale,
+        line_height_ratio=line_height_ratio,
+    )
+    measure_kwargs = dict(
+        use_typo_render=use_typo_render,
+        tracking_px=tracking_px,
+        h_scale=h_scale,
+        line_advance=line_advance,
+    )
+    upper_tw, upper_th = _measure_text_lines(
+        upper_lines, font, layout.spacing, **measure_kwargs,
+    )
+    lower_tw, lower_th = _measure_text_lines(
+        lower_lines, font, layout.spacing, **measure_kwargs,
+    )
+
+    # 전체 레이아웃의 preferred-aspect/min-size 여백을 각 조각에 복제하면 두 풍선이
+    # 불필요하게 넓어진다. 줄바꿈/폰트는 모델 선택을 그대로 두고, bubble_layout 에서
+    # 해당 형상에 사용한 em 여백만 조각별 측정 폭/높이에 다시 적용한다.
+    shape_padding = {
+        "ellipse": (1.10, 0.88),
+        "rounded": (0.88, 0.70),
+    }
+    pad_x_em, pad_y_em = shape_padding.get(str(layout.shape), (1.10, 0.88))
+    pad_x = float(layout.font_size) * pad_x_em
+    pad_y = float(layout.font_size) * pad_y_em
+
+    def chunk_size(text_w, text_h):
+        width = max(float(layout.font_size) * 3.2, text_w + pad_x * 2.0)
+        height = max(float(layout.font_size) * 1.9, text_h + pad_y * 2.0)
+        return float(math.ceil(width)), float(math.ceil(height))
+
+    return (
+        upper_lines,
+        lower_lines,
+        chunk_size(upper_tw, upper_th),
+        chunk_size(lower_tw, lower_th),
+    )
+
+
+def _ellipse_intersects_box(ellipse_rect, box):
+    """축 정렬 타원과 사각형이 실제로 닿거나 겹치는지 검사한다."""
+    ex1, ey1, ex2, ey2 = [float(v) for v in ellipse_rect]
+    bx1, by1, bx2, by2 = [float(v) for v in box]
+    if ex2 < bx1 or bx2 < ex1 or ey2 < by1 or by2 < ey1:
+        return False
+    rx = max((ex2 - ex1) / 2.0, 1e-6)
+    ry = max((ey2 - ey1) / 2.0, 1e-6)
+    cx, cy = (ex1 + ex2) / 2.0, (ey1 + ey2) / 2.0
+    nearest_x = max(bx1, min(cx, bx2))
+    nearest_y = max(by1, min(cy, by2))
+    return ((nearest_x - cx) / rx) ** 2 + ((nearest_y - cy) / ry) ** 2 <= 1.0
+
+
+def _ellipse_pair_neck_width(first, second, samples=28):
+    """두 타원이 겹치는 연결부의 최대 가로 폭을 근사한다."""
+    top = max(float(first[1]), float(second[1]))
+    bottom = min(float(first[3]), float(second[3]))
+    if bottom <= top:
+        return 0.0
+
+    def horizontal_interval(rect, y):
+        x1, y1, x2, y2 = [float(v) for v in rect]
+        rx = max((x2 - x1) / 2.0, 1e-6)
+        ry = max((y2 - y1) / 2.0, 1e-6)
+        cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
+        normalized_y = (float(y) - cy) / ry
+        if abs(normalized_y) > 1.0:
+            return None
+        half_width = rx * math.sqrt(max(0.0, 1.0 - normalized_y * normalized_y))
+        return cx - half_width, cx + half_width
+
+    widest = 0.0
+    count = max(8, int(samples))
+    for index in range(count):
+        y = top + (index + 0.5) * (bottom - top) / count
+        left_interval = horizontal_interval(first, y)
+        right_interval = horizontal_interval(second, y)
+        if left_interval is None or right_interval is None:
+            continue
+        width = min(left_interval[1], right_interval[1]) - max(
+            left_interval[0], right_interval[0]
+        )
+        widest = max(widest, width)
+    return widest
+
+
+def _rect_union(*rects):
+    rects = [tuple(float(v) for v in rect) for rect in rects if rect is not None]
+    if not rects:
+        return None
+    return (
+        min(rect[0] for rect in rects),
+        min(rect[1] for rect in rects),
+        max(rect[2] for rect in rects),
+        max(rect[3] for rect in rects),
+    )
+
+
+def _place_diagonal_split_bodies(face_box, upper_size, lower_size, protected_boxes,
+                                 canvas_w, canvas_h, *,
+                                 protected_foreground_mask=None,
+                                 min_background_ratio=0.90,
+                                 edge_margin=2.0):
+    """위 3줄/아래 나머지 몸통을 연결된 대각선 합집합으로 배치한다.
+
+    아래(두 번째) 말풍선을 화자에 가깝게 두고 꼬리의 기준으로 삼는다. 위 말풍선은
+    아래 말풍선의 좌상단 또는 우상단에 두며, 화자까지의 거리가 반드시 더 멀어야 한다.
+    두 타원의 실제 연결 폭을 검사해 단일 마스크로 합칠 수 있는 후보만 허용한다.
+    얼굴·다른 화자·기존 말풍선·전경 마스크 조건을 엄격히 만족하는 공간이 없으면
+    None을 반환하며, 호출자는 기존 수직 합집합 말풍선으로 폴백한다.
+    """
+    upper_w, upper_h = [float(v) for v in upper_size]
+    lower_w, lower_h = [float(v) for v in lower_size]
+    canvas_w, canvas_h = float(canvas_w), float(canvas_h)
+    if (
+        upper_w > canvas_w or upper_h > canvas_h
+        or lower_w > canvas_w or lower_h > canvas_h
+    ):
+        print(
+            f"[BUBBLE_RENDER] 대각선 합집합 몸통이 캔버스보다 커서 배치 불가: "
+            f"upper={upper_size}, lower={lower_size}, canvas=({canvas_w:.0f},{canvas_h:.0f})"
+        )
+        return None
+
+    fx1, fy1, fx2, fy2 = [float(v) for v in face_box]
+    fcx, fcy = (fx1 + fx2) / 2.0, (fy1 + fy2) / 2.0
+    safe_fx1, safe_fy1, safe_fx2, safe_fy2 = _protected_face_box(
+        face_box, (canvas_w, canvas_h),
+    )
+    face_gap = max(6.0, min(canvas_w, canvas_h) * 0.008)
+    margin = max(float(edge_margin), min(canvas_w, canvas_h) * 0.004)
+    smaller_area = min(upper_w * upper_h, lower_w * lower_h)
+    max_bbox_overlap = smaller_area * 0.22
+    min_neck_width = max(2.0, min(upper_w, lower_w) * 0.055)
+
+    lower_centers = []
+    seen = set()
+
+    def add_lower_center(cx, cy, source_rank):
+        key = (round(float(cx), 2), round(float(cy), 2))
+        if key in seen:
+            return
+        seen.add(key)
+        lower_centers.append((float(cx), float(cy), int(source_rank)))
+
+    # 1순위: 화자의 좌상단/우상단 모서리. 얼굴 bbox와 말풍선 bbox가 조금 겹쳐도
+    # 실제 타원은 모서리만 스치게 배치할 수 있어, 참고 이미지 같은 구성이 나온다.
+    min_pair_overlap = min(upper_h, lower_h) * 0.22
+    corner_cy = max(
+        safe_fy1 + lower_h * 0.65,
+        margin + upper_h - min_pair_overlap + lower_h / 2.0,
+    )
+    for overlap_ratio in (0.15, 0.25):
+        left_cx = safe_fx1 - lower_w * (0.5 - overlap_ratio)
+        right_cx = safe_fx2 + lower_w * (0.5 - overlap_ratio)
+        add_lower_center(left_cx, corner_cy, 0)
+        add_lower_center(right_cx, corner_cy, 0)
+
+    # 1순위 보조: 화자 바로 위. 좌우로 흔들어 대각선 조합이 빈 공간을 찾게 한다.
+    top_cy = safe_fy1 - face_gap - lower_h / 2.0
+    for offset in (0.0, -0.32, 0.32, -0.66, 0.66, -1.0, 1.0):
+        add_lower_center(fcx + offset * lower_w, top_cy, 0)
+
+    # 2순위: 화자 좌우. 아래 조각이 얼굴 옆에 놓이는 구성을 허용한다.
+    right_cx = safe_fx2 + face_gap + lower_w / 2.0
+    left_cx = safe_fx1 - face_gap - lower_w / 2.0
+    for offset in (0.0, -0.30, 0.30, -0.62, 0.62):
+        add_lower_center(right_cx, fcy + offset * lower_h, 1)
+        add_lower_center(left_cx, fcy + offset * lower_h, 1)
+
+    # 3순위: 위/옆이 막힌 장면을 위한 전체 격자. 점수에서 화자 거리를 크게 반영하므로
+    # 실제 선택은 가능한 한 화자 가까운 곳으로 수렴한다.
+    step_x = max(14.0, lower_w * 0.24)
+    step_y = max(14.0, lower_h * 0.24)
+    cy = margin + lower_h / 2.0
+    while cy <= canvas_h - margin - lower_h / 2.0 + 1e-6:
+        cx = margin + lower_w / 2.0
+        while cx <= canvas_w - margin - lower_w / 2.0 + 1e-6:
+            add_lower_center(cx, cy, 2)
+            cx += step_x
+        cy += step_y
+
+    # 좌상→우하와 우상→좌하를 모두 탐색한다. x 이동이 커질수록 y 겹침도 늘려
+    # 대각선 실루엣을 유지하면서 실제 타원 연결부가 끊어지지 않게 한다.
+    patterns = (
+        (-1.0, 0.34, 0.22, 0),
+        (1.0, 0.34, 0.22, 0),
+        (-1.0, 0.50, 0.28, 1),
+        (1.0, 0.50, 0.28, 1),
+        (-1.0, 0.62, 0.36, 2),
+        (1.0, 0.62, 0.36, 2),
+    )
+    candidates = []
+    protected = list(protected_boxes or [])
+    # 자기 얼굴은 실제 타원-사각 교차로 검사한다. 다른 얼굴과 이미 배치된 말풍선은
+    # 보수적으로 bbox 충돌을 사용해 어느 화자도 가리지 않는다.
+    self_safe = tuple(float(v) for v in (safe_fx1, safe_fy1, safe_fx2, safe_fy2))
+    other_protected = []
+    for protected_box in protected:
+        normalized = tuple(float(v) for v in protected_box)
+        if all(abs(a - b) <= 1.0 for a, b in zip(normalized, self_safe)):
+            continue
+        other_protected.append(normalized)
+
+    for lower_cx, lower_cy, source_rank in lower_centers:
+        lower = (
+            lower_cx - lower_w / 2.0,
+            lower_cy - lower_h / 2.0,
+            lower_cx + lower_w / 2.0,
+            lower_cy + lower_h / 2.0,
+        )
+        if (
+            lower[0] < margin or lower[1] < margin
+            or lower[2] > canvas_w - margin or lower[3] > canvas_h - margin
+        ):
+            continue
+        if _overlap(lower, other_protected, pad=2):
+            continue
+        if _ellipse_intersects_box(lower, self_safe):
+            continue
+
+        for direction, shift_ratio, overlap_ratio, pattern_rank in patterns:
+            shift_x = direction * (upper_w + lower_w) * 0.5 * shift_ratio
+            upper_cx = lower_cx + shift_x
+            pair_overlap = min(upper_h, lower_h) * overlap_ratio
+            upper_cy = lower[1] + pair_overlap - upper_h / 2.0
+            upper = (
+                upper_cx - upper_w / 2.0,
+                upper_cy - upper_h / 2.0,
+                upper_cx + upper_w / 2.0,
+                upper_cy + upper_h / 2.0,
+            )
+            if (
+                upper[0] < margin or upper[1] < margin
+                or upper[2] > canvas_w - margin or upper[3] > canvas_h - margin
+            ):
+                continue
+            if _overlap(upper, other_protected, pad=2):
+                continue
+            if _ellipse_intersects_box(upper, self_safe):
+                continue
+            inter = _rect_intersection_area(upper, lower)
+            if inter > max_bbox_overlap:
+                continue
+            neck_width = _ellipse_pair_neck_width(upper, lower)
+            if neck_width + 1e-9 < min_neck_width:
+                continue
+
+            upper_center = _rect_center(upper)
+            lower_center = _rect_center(lower)
+            lower_distance = math.hypot(lower_center[0] - fcx, lower_center[1] - fcy)
+            upper_distance = math.hypot(upper_center[0] - fcx, upper_center[1] - fcy)
+            upper_anchor = _face_anchor_toward(face_box, upper_center)
+            lower_anchor = _face_anchor_toward(face_box, lower_center)
+            upper_face_gap = _tail_gap(upper, upper_anchor, "ellipse")
+            lower_face_gap = _tail_gap(lower, lower_anchor, "ellipse")
+            # 중심 거리뿐 아니라 실제 타원 외곽 거리도 아래 몸통이 더 가까워야 한다.
+            if (
+                upper_distance <= lower_distance + 2.0
+                or upper_face_gap <= lower_face_gap + 2.0
+            ):
+                continue
+
+            upper_bg = background_ratio(protected_foreground_mask, upper)
+            lower_bg = background_ratio(protected_foreground_mask, lower)
+            if (
+                upper_bg + 1e-9 < float(min_background_ratio)
+                or lower_bg + 1e-9 < float(min_background_ratio)
+            ):
+                continue
+            pair_distance = math.hypot(
+                upper_center[0] - lower_center[0],
+                upper_center[1] - lower_center[1],
+            )
+            # 위쪽 배치를 우선하고, 옆/격자 후보는 공간이 막혔을 때만 선택되게 한다.
+            side_penalty = 0.0 if lower_center[1] < fcy else 22.0
+            # 너무 굵은 이음부보다 두 lobes가 구분되는 좁고 확실한 연결부를 우선한다.
+            neck_penalty = abs(neck_width / max(1.0, min(upper_w, lower_w)) - 0.10) * 70.0
+            score = (
+                lower_distance
+                + pair_distance * 0.18
+                + upper_distance * 0.06
+                + source_rank * 26.0
+                + pattern_rank * 4.0
+                + side_penalty
+                + neck_penalty
+                + (2.0 - upper_bg - lower_bg) * 140.0
+            )
+            candidates.append({
+                "upper_rect": upper,
+                "lower_rect": lower,
+                "anchor": lower_anchor,
+                "upper_background_ratio": upper_bg,
+                "lower_background_ratio": lower_bg,
+                "upper_face_gap": upper_face_gap,
+                "lower_face_gap": lower_face_gap,
+                "score": score,
+                "source_rank": source_rank,
+                "direction": "upper_left" if direction < 0 else "upper_right",
+                "neck_width": neck_width,
+                "relaxed": False,
+            })
+
+    if not candidates:
+        print(
+            f"[BUBBLE_RENDER] 안전한 연결 대각선 후보 없음: "
+            f"lower_candidates={len(lower_centers)}, min_background={float(min_background_ratio):.2f}, "
+            f"min_neck={min_neck_width:.1f}px"
+        )
+        return None
+    return min(candidates, key=lambda item: item["score"])
 
 
 # ─── 말풍선 그리기 ──────────────────────────────────────────────────
@@ -2401,6 +2843,90 @@ def _draw_layout_bubble(
     _composite_union_mask(overlay, mask, fill, border, border_w, halo_px=halo_px)
 
 
+def _draw_diagonal_split_bubble(
+    overlay,
+    upper_rect,
+    lower_rect,
+    tail_rect,
+    anchor,
+    shape,
+    fill,
+    border,
+    border_w,
+    radius,
+    with_tail,
+    *,
+    organic=False,
+    tail_width_scale=1.0,
+    wobble=0.055,
+    point_count=180,
+    seed=0,
+    tail_max_length_px=None,
+    halo_px=0,
+):
+    """대각선 두 몸통과 선택 꼬리를 하나의 합집합 마스크로 렌더한다.
+
+    몸통별 외곽선을 따로 그리지 않고 union 외곽에 한 번만 테두리를 생성하므로
+    겹친 연결부에 내부 이음선이 남지 않는다.
+    """
+    render_shape = "comic" if shape == "rounded" else shape
+    if render_shape not in ("ellipse", "comic"):
+        print(
+            f"[BUBBLE_RENDER] 대각선 합집합 미지원 형상({shape!r}) → ellipse 사용"
+        )
+        render_shape = "ellipse"
+
+    mask = Image.new("L", overlay.size, 0)
+    mask_draw = ImageDraw.Draw(mask)
+    for index, rect in enumerate((upper_rect, lower_rect)):
+        if organic:
+            # organic contour가 안쪽으로 파인 구간에도 연결성이 유지되도록 기존 렌더와
+            # 동일하게 베이스 타원을 먼저 채운 뒤 굴곡 폴리곤을 합친다.
+            mask_draw.ellipse(rect, fill=255)
+            try:
+                body = _build_organic_body_contour(
+                    rect,
+                    wobble=wobble,
+                    point_count=point_count,
+                    seed=int(seed) ^ (0x45D9F3B1 if index == 0 else 0),
+                )
+                mask_draw.polygon(
+                    [(int(point[0]), int(point[1])) for point in body],
+                    fill=255,
+                )
+            except Exception as e:
+                print(
+                    f"[BUBBLE_RENDER] 대각선 organic 몸통 생성 실패 → 기본 타원 유지: "
+                    f"index={index}, error={e}"
+                )
+                traceback.print_exc()
+        elif render_shape == "comic":
+            mask_draw.polygon(_comic_points(rect, radius), fill=255)
+        else:
+            mask_draw.ellipse(rect, fill=255)
+
+    if with_tail:
+        tail_shape = "ellipse" if organic else render_shape
+        _add_curved_tail(
+            mask,
+            tail_rect,
+            anchor,
+            tail_shape,
+            radius,
+            border_w,
+            tail_width_scale,
+            max_length_px=tail_max_length_px,
+        )
+    _composite_union_mask(
+        overlay,
+        mask,
+        fill,
+        border,
+        border_w,
+        halo_px=halo_px,
+    )
+
+
 def _tail_gap(rect, anchor, shape, radius=20):
     base, _normal = _tail_base_geometry(rect, anchor, shape, radius)
     return math.hypot(float(anchor[0]) - base[0], float(anchor[1]) - base[1])
@@ -2418,6 +2944,17 @@ def _tail_within_threshold(rect, anchor, face_box, threshold_ratio, shape, radiu
     gap = _tail_gap(rect, anchor, shape, radius)
     limit = face_size * threshold_ratio
     return gap <= limit + 1e-6, gap, limit
+
+
+def _select_diagonal_tail_geometry(upper_rect, lower_rect, face_box, shape, radius=20):
+    """합쳐진 두 몸통 중 화자까지 실제 외곽 거리가 짧은 꼬리 시작 몸통을 고른다."""
+    candidates = []
+    for role, rect in (("upper", upper_rect), ("lower", lower_rect)):
+        anchor = _face_anchor_toward(face_box, _rect_center(rect))
+        gap = _tail_gap(rect, anchor, shape, radius)
+        candidates.append((gap, role, rect, anchor))
+    gap, role, rect, anchor = min(candidates, key=lambda item: item[0])
+    return rect, anchor, role, gap
 
 
 def _draw_preview_debug(image, protected_foreground_mask, candidates, show_mask, show_candidates):
@@ -2789,10 +3326,92 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
             body_w *= 1.06
             body_h *= 1.06
 
+        fill = thought_fill if btype == "thought" else speech_fill
+        if balloon_map:
+            # balloon_type이 렌더 형상을 결정한다.
+            render_shape = render_target
+        elif btype == "thought":
+            render_shape = thought_shape
+        else:
+            render_shape = "comic" if layout.shape == "rounded" else "ellipse"
+
+        # 긴 대사(5줄 이상): ONNX 레이아웃의 줄/폰트를 그대로 3줄+나머지로 나누고,
+        # 대각선으로 겹친 두 몸통을 하나의 합집합 마스크로 렌더한다. 얼굴·다른 화자·
+        # 기존 풍선·전경 마스크를 모두 피하는 연결 후보가 없으면 기존 수직 합집합으로 폴백.
+        diagonal_split = None
+        split_spec = None
+        if (
+            speech_split
+            and not unanchored_fallback
+            and box is not None
+            and btype == "speech"
+            and len(layout.lines) >= 5
+            and render_shape in ("ellipse", "comic")
+        ):
+            split_spec = _estimate_diagonal_split_sizes(
+                layout.lines,
+                font,
+                layout,
+                body_w,
+                body_h,
+                use_typo_render=use_typo_render,
+                letter_spacing=letter_spacing,
+                text_width_scale=text_width_scale,
+                line_height_ratio=line_height_ratio,
+            )
+            if split_spec is not None:
+                _upper_lines, _lower_lines, upper_size, lower_size = split_spec
+                protected_all = all_boxes + placed_boxes
+                diagonal_split = _place_diagonal_split_bodies(
+                    box,
+                    upper_size,
+                    lower_size,
+                    protected_all,
+                    canvas_w,
+                    canvas_h,
+                    protected_foreground_mask=protected_foreground_mask,
+                    edge_margin=max(2.0, border_w + bubble_halo_px + 2.0),
+                )
+                if diagonal_split is None:
+                    print(
+                        f"[BUBBLE_RENDER] 안전한 연결 대각선 공간 없음 → 기존 합집합 폴백: "
+                        f"speaker={seg.get('speaker')}"
+                    )
+                else:
+                    tail_rect, tail_anchor, tail_role, _tail_gap_px = (
+                        _select_diagonal_tail_geometry(
+                            diagonal_split["upper_rect"],
+                            diagonal_split["lower_rect"],
+                            box,
+                            render_shape,
+                            radius,
+                        )
+                    )
+                    diagonal_split = dict(diagonal_split)
+                    diagonal_split.update({
+                        "tail_rect": tail_rect,
+                        "anchor": tail_anchor,
+                        "tail_role": tail_role,
+                    })
+                    print(
+                        f"[BUBBLE_RENDER] 긴 대사 연결 대각선 배치: "
+                        f"speaker={seg.get('speaker')}, "
+                        f"mode={diagonal_split['direction']}, "
+                        f"upper_bg={diagonal_split['upper_background_ratio']:.3f}, "
+                        f"lower_bg={diagonal_split['lower_background_ratio']:.3f}, "
+                        f"neck={diagonal_split['neck_width']:.1f}px, "
+                        f"tail_origin={tail_role}"
+                    )
+
         evaluated = None
         chosen = None
         used_fallback = False
-        if unanchored_fallback:
+        if diagonal_split is not None:
+            # 꼬리 제한 판정은 합쳐진 두 몸통 중 화자와 실제 외곽 거리가 가까운 몸통 기준.
+            rect = diagonal_split["tail_rect"]
+            anchor = diagonal_split["anchor"]
+            used_fallback = True
+        elif unanchored_fallback:
             background_placement = _place_unanchored_body(
                 body_w,
                 body_h,
@@ -2963,16 +3582,13 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
                     visible = [selected_record]
             preview_candidates.extend(visible)
 
-        fill = thought_fill if btype == "thought" else speech_fill
-        if balloon_map:
-            # balloon_type이 렌더 형상을 결정한다.
-            render_shape = render_target
-        elif btype == "thought":
-            render_shape = thought_shape
-        else:
-            render_shape = "comic" if layout.shape == "rounded" else "ellipse"
-        # 긴 대사 분할: speech 5줄 이상이면 텍스트는 그대로 두고 외곽선만 두 타원 합집합.
-        do_split = speech_split and btype == "speech" and len(layout.lines) >= 5
+        # 연결 대각선 배치가 실패한 경우에만 기존 단일 rect의 수직 두-타원 합집합을 쓴다.
+        do_split = (
+            speech_split
+            and diagonal_split is None
+            and btype == "speech"
+            and len(layout.lines) >= 5
+        )
         # box/charming/nsfw_*는 꼬리 없는 독립 풍선. burst도 _draw_impact_svg_burst 가
         # with_tail 을 무시(항상 꼬리 없음)하므로 함께 단락시켜 _tail_within_threshold 의
         # 불필요한 호출을 건너뛴다.
@@ -3006,6 +3622,77 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
             tail_max_length_px = tail_max_length_limit_px
         else:
             tail_max_length_px = None
+
+        # ── 긴 대사 연결 대각선 합집합 렌더 ───────────────────────────────
+        if diagonal_split is not None:
+            upper_lines, lower_lines, upper_size, lower_size = split_spec
+            upper_rect = diagonal_split["upper_rect"]
+            lower_rect = diagonal_split["lower_rect"]
+            _draw_diagonal_split_bubble(
+                overlay,
+                upper_rect,
+                lower_rect,
+                diagonal_split["tail_rect"],
+                anchor,
+                render_shape,
+                fill,
+                border,
+                border_w,
+                radius,
+                with_tail,
+                organic=use_organic,
+                tail_width_scale=tail_width_scale,
+                wobble=seg_wobble,
+                point_count=organic_point_count,
+                seed=organic_seed,
+                tail_max_length_px=tail_max_length_px,
+                halo_px=bubble_halo_px,
+            )
+            if balloon_type == "trembling":
+                pair_rect = _rect_union(upper_rect, lower_rect)
+                tremble_seed = organic_seed ^ (((drawn + 1) * 0x9E3779B1) & 0xFFFFFFFF)
+                for ch in f"{seg.get('speaker') or ''}\0{text}\0{balloon_type or ''}":
+                    tremble_seed = ((tremble_seed ^ ord(ch)) * 16777619) & 0xFFFFFFFF
+                _draw_tremble_marks(
+                    overlay,
+                    pair_rect,
+                    border,
+                    border_w,
+                    anchor=anchor if with_tail else None,
+                    mark_count=3,
+                    seed=tremble_seed,
+                )
+
+            # 텍스트는 ONNX 레이아웃이 선택한 줄을 재줄바꿈하지 않고 3줄+나머지로 렌더.
+            _draw_text_lines_in_rect(
+                overlay, upper_lines, font, text_color, upper_rect,
+                layout.spacing, layout.font_size,
+                use_typo_render=use_typo_render, letter_spacing=letter_spacing,
+                text_width_scale=text_width_scale, line_height_ratio=line_height_ratio,
+            )
+            _draw_text_lines_in_rect(
+                overlay, lower_lines, font, text_color, lower_rect,
+                layout.spacing, layout.font_size,
+                use_typo_render=use_typo_render, letter_spacing=letter_spacing,
+                text_width_scale=text_width_scale, line_height_ratio=line_height_ratio,
+            )
+            print(
+                f"[BUBBLE_RENDER] 레이아웃 적용: speaker={seg.get('speaker')}, "
+                f"balloon_type={balloon_type or '-'}, "
+                f"shape={render_shape}(layout={layout.shape}), font={layout.font_size}, "
+                f"lines={len(layout.lines)}(3+{len(lower_lines)}), "
+                f"upper=({upper_size[0]:.1f},{upper_size[1]:.1f}), "
+                f"lower=({lower_size[0]:.1f},{lower_size[1]:.1f}), "
+                f"mode={diagonal_split['direction']}, "
+                f"neck={diagonal_split['neck_width']:.1f}px, "
+                f"tail={with_tail}({diagonal_split['tail_role']}), "
+                f"organic={'on' if use_organic else 'off'}, "
+                f"match={m.get('sim')}, fits={layout.fits}"
+            )
+            placed_boxes.extend([upper_rect, lower_rect])
+            drawn += 1
+            continue
+
         _draw_layout_bubble(
             overlay,
             rect,
