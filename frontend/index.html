@@ -28725,7 +28725,10 @@
                         try {
                             const resp = await fetch('/api/bot_mode/bots');
                             const data = await resp.json();
-                            bots = (data && data.bots) ? data.bots : null;
+                            if (data && data.bots) {
+                                botData = data;  // popover 재사용을 위해 전역에도 저장
+                                bots = data.bots;
+                            }
                         } catch (e) {
                             console.error('[BOT] 봇 목록 로드 실패:', e);
                         }
