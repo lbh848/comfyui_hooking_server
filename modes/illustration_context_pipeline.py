@@ -29,6 +29,7 @@ SESSION_DIR = os.path.join(BASE_DIR, "logs", "illustration_context_sessions")
 CONTEXT_PREFIX = "__LB_ILLUST_CONTEXT_V1__"
 RESULT_PREFIX = "__LB_ILLUST_RESULT_V1__"
 REGENERATE_PREFIX = "__LB_ILLUST_REGENERATE_V1__"
+PROMPT_BATCH_PREFIX = "__LB_ILLUST_PROMPT_BATCH_V1__"
 
 PROMPT_FILES = {
     "call1_enhance": "enhance.txt",
@@ -78,6 +79,60 @@ DEFAULT_TOGGLES = {
 }
 
 _SESSIONS: dict[str, dict] = {}
+_LOOKUP_KEYS: dict[str, str] = {}
+_LOOKUP_KEY_RE = re.compile(r"[0-9a-f]{24}")
+_CANONICAL_SESSION_RE = re.compile(r"risu_([0-9a-f]{64})")
+
+
+def session_lookup_key(session_id: str) -> str:
+    """Return the 24-hex URL lookup key for canonical Risu illustration sessions."""
+    match = _CANONICAL_SESSION_RE.fullmatch(str(session_id or "").lower())
+    return match.group(1)[:24] if match else ""
+
+
+def _persisted_lookup_matches(lookup_key: str) -> list[str]:
+    if not _LOOKUP_KEY_RE.fullmatch(str(lookup_key or "")) or not os.path.isdir(SESSION_DIR):
+        return []
+    prefix = f"risu_{lookup_key}"
+    suffix = ".json"
+    matches = []
+    try:
+        for name in os.listdir(SESSION_DIR):
+            if not name.startswith(prefix) or not name.endswith(suffix):
+                continue
+            session_id = name[:-len(suffix)]
+            if session_lookup_key(session_id) == lookup_key:
+                matches.append(session_id)
+    except Exception as e:
+        print(f"[ILLUST_CONTEXT] lookup metadata scan failed: key={lookup_key}, error={e}")
+        traceback.print_exc()
+        raise
+    return matches
+
+
+def _register_lookup_key(session_id: str, lookup_key: str = "") -> str:
+    key = str(lookup_key or session_lookup_key(session_id)).lower()
+    if not key:
+        return ""
+    if not _LOOKUP_KEY_RE.fullmatch(key):
+        raise ValueError(f"invalid illustration lookup key: {key!r}")
+
+    existing = _LOOKUP_KEYS.get(key)
+    if existing and existing != session_id:
+        raise ValueError(
+            f"illustration lookup key collision: key={key}, "
+            f"existing={existing}, incoming={session_id}"
+        )
+
+    persisted = [value for value in _persisted_lookup_matches(key) if value != session_id]
+    if persisted:
+        raise ValueError(
+            f"persisted illustration lookup key collision: key={key}, "
+            f"existing={persisted}, incoming={session_id}"
+        )
+
+    _LOOKUP_KEYS[key] = session_id
+    return key
 
 
 def _session_path(session_id: str) -> str:
@@ -90,6 +145,7 @@ def _persist_session_metadata(session: dict) -> None:
         os.makedirs(SESSION_DIR, exist_ok=True)
         data = {
             "session_id": session.get("session_id", ""),
+            "lookup_key": session.get("lookup_key", ""),
             "status": session.get("status", "ready"),
             "context": session.get("context", ""),
             "items": session.get("items") or [],
@@ -119,6 +175,10 @@ def _load_session_metadata(session_id: str) -> dict | None:
         data["items"] = items
         data["images"] = [None] * len(items)
         data["status"] = "ready"
+        data["lookup_key"] = _register_lookup_key(
+            session_id,
+            str(data.get("lookup_key") or ""),
+        )
         _SESSIONS[session_id] = data
         print(f"[ILLUST_CONTEXT] 재생성 세션 metadata 복원: session={session_id}, items={len(items)}")
         return data
@@ -318,6 +378,87 @@ def parse_result_request(positive: str) -> dict | None:
     return {"session_id": session_id, "index": index, "slot": slot}
 
 
+def parse_prompt_batch_request(positive: str) -> dict | None:
+    """원본 LightBoard 콜백이 확정한 슬롯/프롬프트 배치를 검증한다.
+
+    이 경로는 CHAT, 캐릭터 정보, 이미지 bytes를 플러그인과 주고받지 않는다.
+    Risu Lua가 이미 만든 최종 이미지 프롬프트만 generation 채널로 받는다.
+    """
+    payload = _json_after_prefix(positive, PROMPT_BATCH_PREFIX)
+    if payload is None:
+        return None
+
+    session_id = str(payload.get("session_id") or "")
+    if not re.fullmatch(r"[A-Za-z0-9_-]{8,96}", session_id):
+        print(f"[ILLUST_PROMPT_BATCH] 잘못된 session_id: {session_id!r}")
+        return None
+
+    raw_items = payload.get("items")
+    if not isinstance(raw_items, list) or not 1 <= len(raw_items) <= 16:
+        count = len(raw_items) if isinstance(raw_items, list) else -1
+        print(
+            f"[ILLUST_PROMPT_BATCH] 잘못된 items 개수: "
+            f"session={session_id}, count={count}"
+        )
+        return None
+
+    items = []
+    seen_slots: set[int] = set()
+    for index, raw_item in enumerate(raw_items, start=1):
+        if not isinstance(raw_item, dict):
+            print(
+                f"[ILLUST_PROMPT_BATCH] item 형식 오류: "
+                f"session={session_id}, index={index}, type={type(raw_item).__name__}"
+            )
+            return None
+        try:
+            slot = int(raw_item.get("slot"))
+        except Exception as e:
+            print(
+                f"[ILLUST_PROMPT_BATCH] slot 파싱 실패: "
+                f"session={session_id}, index={index}, error={e}, item={raw_item}"
+            )
+            traceback.print_exc()
+            return None
+        if slot < -1 or slot in seen_slots:
+            print(
+                f"[ILLUST_PROMPT_BATCH] slot 범위/중복 오류: "
+                f"session={session_id}, index={index}, slot={slot}"
+            )
+            return None
+
+        raw_positive = str(raw_item.get("positive") or "").strip()
+        raw_negative = str(raw_item.get("negative") or "").strip()
+        if not raw_positive:
+            print(
+                f"[ILLUST_PROMPT_BATCH] positive 비어 있음: "
+                f"session={session_id}, index={index}, slot={slot}"
+            )
+            return None
+        if len(raw_positive) > 200_000 or len(raw_negative) > 200_000:
+            print(
+                f"[ILLUST_PROMPT_BATCH] 프롬프트 길이 초과: "
+                f"session={session_id}, index={index}, slot={slot}, "
+                f"positive={len(raw_positive)}, negative={len(raw_negative)}"
+            )
+            return None
+
+        seen_slots.add(slot)
+        items.append({
+            "kind": "keyvis" if slot == -1 else "scene",
+            "slot": slot,
+            "raw_positive": raw_positive,
+            "raw_negative": raw_negative,
+            "source": "risu_module_prompt_batch_v1",
+        })
+
+    return {
+        "protocol": "prompt_batch_v1",
+        "session_id": session_id,
+        "items": items,
+    }
+
+
 def parse_regenerate_request(positive: str) -> dict | None:
     payload = _json_after_prefix(positive, REGENERATE_PREFIX)
     if payload is None:
@@ -336,8 +477,10 @@ def parse_regenerate_request(positive: str) -> dict | None:
 
 
 def create_session(session_id: str, context: str) -> dict:
+    lookup_key = _register_lookup_key(session_id)
     session = {
         "session_id": session_id,
+        "lookup_key": lookup_key,
         "status": "building",
         "context": context,
         "items": [],
@@ -395,6 +538,54 @@ def set_session_progress(
         traceback.print_exc()
 
 
+def set_session_regenerate_started(session_id: str, slot: int) -> None:
+    """기존 결과를 유지한 채 특정 슬롯 재생성 진행상황을 노출한다."""
+    session = get_session(session_id)
+    if session is None:
+        print(
+            f"[ILLUST_CONTEXT] 재생성 진행 시작 실패 - 세션 없음: "
+            f"session={session_id}, slot={slot}"
+        )
+        return
+    session["error"] = ""
+    set_session_progress(
+        session_id,
+        "regenerating",
+        f"슬롯 {slot} 서버 재생성 중",
+        0,
+        0,
+        1,
+    )
+
+
+def set_session_regenerate_error(session_id: str, slot: int, error: str) -> None:
+    """재생성 실패를 표시하되 기존 준비된 이미지와 ready 상태는 보존한다."""
+    session = get_session(session_id)
+    if session is None:
+        print(
+            f"[ILLUST_CONTEXT] 재생성 오류 저장 실패 - 세션 없음: "
+            f"session={session_id}, slot={slot}, error={error}"
+        )
+        return
+    try:
+        safe_error = str(error or "재생성 실패").replace("\r", " ").replace("\n", " ")[:300]
+        session["error"] = safe_error
+        session["progress"] = {
+            "phase": "error",
+            "label": f"슬롯 {slot} 재생성 실패: {safe_error}"[:160],
+            "value": 0,
+            "done": 0,
+            "total": 1,
+        }
+        session["updated_at"] = time.time()
+    except Exception as e:
+        print(
+            f"[ILLUST_CONTEXT] 재생성 오류 보정 실패: "
+            f"session={session_id}, slot={slot}, error={e}"
+        )
+        traceback.print_exc()
+
+
 def get_session(session_id: str) -> dict | None:
     session = _SESSIONS.get(session_id)
     if session is None:
@@ -402,6 +593,42 @@ def get_session(session_id: str) -> dict | None:
     if session is None:
         print(f"[ILLUST_CONTEXT] 세션 캐시 미스: {session_id}")
     return session
+
+
+def recent_session_summaries(limit: int = 20) -> list[dict]:
+    """플러그인 상태 화면용 비민감 세션 요약을 반환한다."""
+    try:
+        safe_limit = max(1, min(50, int(limit)))
+    except Exception as e:
+        print(f"[ILLUST_CONTEXT] 세션 요약 limit 보정 실패: limit={limit!r}, error={e}")
+        traceback.print_exc()
+        safe_limit = 20
+
+    summaries = []
+    sessions = sorted(
+        _SESSIONS.values(),
+        key=lambda session: float(session.get("updated_at") or 0),
+        reverse=True,
+    )
+    for session in sessions[:safe_limit]:
+        raw_progress = session.get("progress") or {}
+        items = session.get("items") or []
+        summaries.append({
+            "session_id": str(session.get("session_id") or ""),
+            "status": str(session.get("status") or "missing"),
+            "error": str(session.get("error") or "")[:300],
+            "progress": {
+                "phase": str(raw_progress.get("phase") or "building")[:32],
+                "label": str(raw_progress.get("label") or "처리 중")[:160],
+                "value": raw_progress.get("value", 0),
+                "done": raw_progress.get("done", 0),
+                "total": raw_progress.get("total", 0),
+            },
+            "item_count": len(items),
+            "created_at": session.get("created_at", 0),
+            "updated_at": session.get("updated_at", 0),
+        })
+    return summaries
 
 
 def set_session_result(session_id: str, items: list, images: list[bytes]) -> None:
@@ -497,6 +724,15 @@ def update_session_image_by_slot(session_id: str, slot: int, image: bytes) -> bo
         try:
             if int(item.get("slot")) == int(slot) and index < len(images):
                 images[index] = image
+                session["status"] = "ready"
+                session["error"] = ""
+                session["progress"] = {
+                    "phase": "ready",
+                    "label": f"슬롯 {slot} 서버 재생성 완료",
+                    "value": 100,
+                    "done": 1,
+                    "total": 1,
+                }
                 session["updated_at"] = time.time()
                 _persist_session_metadata(session)
                 print(f"[ILLUST_CONTEXT] 재생성 캐시 갱신: session={session_id}, slot={slot}")
@@ -533,6 +769,54 @@ def session_manifest(session_id: str) -> str:
                 _pct(ch.get("negative")), _pct(ch.get("position")),
             ]))
     return "\n".join(lines)
+
+
+def session_slots_by_lookup_key(lookup_key: str) -> list[int]:
+    """Return only the ready slot numbers for the short HTTPS manifest route."""
+    key = str(lookup_key or "").strip().lower()
+    if not _LOOKUP_KEY_RE.fullmatch(key):
+        raise ValueError(f"invalid illustration lookup key: {key!r}")
+
+    session_id = _LOOKUP_KEYS.get(key)
+    if not session_id:
+        matches = _persisted_lookup_matches(key)
+        if len(matches) > 1:
+            raise LookupError(f"ambiguous illustration lookup key: key={key}, sessions={matches}")
+        if len(matches) == 1:
+            session_id = matches[0]
+            _LOOKUP_KEYS[key] = session_id
+    if not session_id:
+        raise KeyError(f"illustration lookup key not found: {key}")
+
+    session = get_session(session_id)
+    if not session:
+        raise KeyError(f"illustration session not found: key={key}")
+    if str(session.get("status") or "missing") != "ready":
+        raise RuntimeError(
+            f"illustration session not ready: key={key}, status={session.get('status')}"
+        )
+
+    items = session.get("items") or []
+    slots: list[int] = []
+    seen: set[int] = set()
+    for item in items:
+        try:
+            slot = int(item.get("slot"))
+        except Exception as e:
+            print(
+                f"[ILLUST_CONTEXT] short manifest slot parse failed: "
+                f"key={key}, item={item}, error={e}"
+            )
+            traceback.print_exc()
+            raise ValueError("invalid slot in illustration session") from e
+        if slot < -1 or slot in seen:
+            raise ValueError(f"invalid or duplicate illustration slot: key={key}, slot={slot}")
+        seen.add(slot)
+        slots.append(slot)
+
+    if not 1 <= len(slots) <= 16:
+        raise ValueError(f"invalid illustration slot count: key={key}, count={len(slots)}")
+    return slots
 
 
 def context_text(chats: list[dict]) -> str:

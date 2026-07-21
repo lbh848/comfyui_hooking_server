@@ -2006,6 +2006,8 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
         all_nodes = list(incoming_prompt.keys())
         save_node_id = all_nodes[-1] if all_nodes else "9"
     prompts[prompt_id]["save_node_id"] = save_node_id
+    regen_session_id = str(raw_body.get("illustration_regenerate_session_id") or "")
+    regen_slot = raw_body.get("illustration_regenerate_slot")
 
     try:
         # 프롬프트 추출
@@ -2242,6 +2244,12 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
             print(f"[ERROR] 이미지 생성 실패: {node_errors}")
             prompts[prompt_id]["status"] = "completed"
             prompts[prompt_id]["outputs"] = {"images": []}
+            if regen_session_id and regen_slot is not None:
+                illustration_context_pipeline.set_session_regenerate_error(
+                    regen_session_id,
+                    regen_slot,
+                    str(node_errors or "이미지 생성 결과가 비어 있습니다"),
+                )
             return
 
         # node_errors 기록
@@ -2296,8 +2304,6 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
         prompts[prompt_id]["filename"] = our_filename
         prompts[prompt_id]["image_bytes"] = img_bytes
 
-        regen_session_id = str(raw_body.get("illustration_regenerate_session_id") or "")
-        regen_slot = raw_body.get("illustration_regenerate_slot")
         if regen_session_id and regen_slot is not None:
             if not illustration_context_pipeline.update_session_image_by_slot(
                 regen_session_id, regen_slot, img_bytes
@@ -2339,6 +2345,12 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
         log_to_file("proxy.log", f"ERROR in process_prompt: {e}\n{tb}")
         prompts[prompt_id]["status"] = "completed"
         prompts[prompt_id]["outputs"] = {"images": []}
+        if regen_session_id and regen_slot is not None:
+            illustration_context_pipeline.set_session_regenerate_error(
+                regen_session_id,
+                regen_slot,
+                str(e),
+            )
 
 
 def _tag_text(values) -> str:
@@ -2508,35 +2520,58 @@ async def process_illustration_context_queue_item(item) -> dict:
         if not original_prompt_id or original_prompt_id not in prompts:
             print(f"[ILLUST_CONTEXT] 원본 prompt 엔트리 없음: {original_prompt_id!r}")
             raise RuntimeError("원본 prompt 엔트리를 찾지 못했습니다")
-        await progress(2, "context", "CHAT 컨텍스트 수신")
-        active_bot = app_config.get("bot_selected", "")
-        # CALL1=복장만, CALL2/2-FIX=full(시스템프롬프트+복장), CALL3=이름리스트만.
-        extra_reference = build_active_lb_extra(active_bot)
-        extra_costume = build_lb_extra_costume(active_bot)
-        extra_names = build_lb_extra_names(active_bot)
-        # 후처리 모드(bubble→manga / vn→speak)가 CALL3 대사 프롬프트를 자동 결정한다.
-        # call3_prompt_mode는 봇별 후처리 모드를 진실 소스로 삼아 덮어쓴다(전역 토글은 UI 힌트용).
-        illust_toggles = dict(app_config.get("illustration_context_toggles") or {})
-        try:
-            from modes.bot_mode import _get_postprocess_mode
-            _pp_mode = _get_postprocess_mode(active_bot)
-        except Exception as e:
-            print(f"[ILLUST_CONTEXT] postprocess_mode 조회 실패(bot={active_bot}): {e}")
-            _pp_mode = "vn"
-        illust_toggles["call3_prompt_mode"] = "manga" if _pp_mode == "bubble" else "speak"
-        built = await illustration_context_pipeline.build_from_context(
-            payload,
-            illust_toggles,
-            extra_reference,
-            progress=progress,
-            stream_notify=stream_notify,
-            extra_costume=extra_costume,
-            extra_names=extra_names,
-        )
-        raw_items = built.get("items") or []
-        if not raw_items:
-            print(f"[ILLUST_CONTEXT] 생성할 장면이 없음: session={session_id}")
-            raise RuntimeError("CALL 결과에 생성할 장면이 없습니다")
+        if payload.get("protocol") == "prompt_batch_v1":
+            raw_items = payload.get("items") or []
+            if not raw_items:
+                print(f"[ILLUST_PROMPT_BATCH] 확정 프롬프트가 비어 있음: session={session_id}")
+                raise RuntimeError("모듈 확정 프롬프트 배치가 비어 있습니다")
+            built = {
+                "items": raw_items,
+                "context": "",
+                "prompt_format": "risu_module_prompt_batch_v1",
+            }
+            await progress(
+                70,
+                "enqueue",
+                f"모듈 확정 프롬프트 {len(raw_items)}장 수신",
+                0,
+                len(raw_items),
+            )
+            print(
+                f"[ILLUST_PROMPT_BATCH] 확정 배치 수신: "
+                f"session={session_id}, items={len(raw_items)}, "
+                f"slots={[entry.get('slot') for entry in raw_items]}"
+            )
+        else:
+            await progress(2, "context", "CHAT 컨텍스트 수신")
+            active_bot = app_config.get("bot_selected", "")
+            # CALL1=복장만, CALL2/2-FIX=full(시스템프롬프트+복장), CALL3=이름리스트만.
+            extra_reference = build_active_lb_extra(active_bot)
+            extra_costume = build_lb_extra_costume(active_bot)
+            extra_names = build_lb_extra_names(active_bot)
+            # 후처리 모드(bubble→manga / vn→speak)가 CALL3 대사 프롬프트를 자동 결정한다.
+            # call3_prompt_mode는 봇별 후처리 모드를 진실 소스로 삼아 덮어쓴다(전역 토글은 UI 힌트용).
+            illust_toggles = dict(app_config.get("illustration_context_toggles") or {})
+            try:
+                from modes.bot_mode import _get_postprocess_mode
+                _pp_mode = _get_postprocess_mode(active_bot)
+            except Exception as e:
+                print(f"[ILLUST_CONTEXT] postprocess_mode 조회 실패(bot={active_bot}): {e}")
+                _pp_mode = "vn"
+            illust_toggles["call3_prompt_mode"] = "manga" if _pp_mode == "bubble" else "speak"
+            built = await illustration_context_pipeline.build_from_context(
+                payload,
+                illust_toggles,
+                extra_reference,
+                progress=progress,
+                stream_notify=stream_notify,
+                extra_costume=extra_costume,
+                extra_names=extra_names,
+            )
+            raw_items = built.get("items") or []
+            if not raw_items:
+                print(f"[ILLUST_CONTEXT] 생성할 장면이 없음: session={session_id}")
+                raise RuntimeError("CALL 결과에 생성할 장면이 없습니다")
 
         await progress(70, "enqueue", f"이미지 {len(raw_items)}장 큐 등록", 0, len(raw_items))
 
@@ -2715,14 +2750,63 @@ async def handle_api_illustration_context_manifest(request: web.Request) -> web.
         return web.Response(text=f"STATUS|error\nCOUNT|0\nERROR|{e}", status=500)
 
 
+async def handle_api_illustration_context_short_slots(request: web.Request) -> web.Response:
+    """Return a compact slot array for Risu Lua's 120-character HTTPS request limit."""
+    lookup_key = str(request.match_info.get("key") or "").strip().lower()
+    try:
+        slots = illustration_context_pipeline.session_slots_by_lookup_key(lookup_key)
+        return web.json_response(slots)
+    except ValueError as e:
+        print(f"[ILLUST_CONTEXT:SHORT_MANIFEST] invalid: key={lookup_key!r}, error={e}")
+        return web.json_response({"error": "invalid_lookup_key"}, status=400)
+    except KeyError as e:
+        print(f"[ILLUST_CONTEXT:SHORT_MANIFEST] missing: key={lookup_key!r}, error={e}")
+        return web.json_response({"error": "lookup_key_not_found"}, status=404)
+    except LookupError as e:
+        print(f"[ILLUST_CONTEXT:SHORT_MANIFEST] collision: key={lookup_key!r}, error={e}")
+        return web.json_response({"error": "lookup_key_collision"}, status=409)
+    except RuntimeError as e:
+        print(f"[ILLUST_CONTEXT:SHORT_MANIFEST] not ready: key={lookup_key!r}, error={e}")
+        return web.json_response({"error": "session_not_ready"}, status=425)
+    except Exception as e:
+        print(f"[ILLUST_CONTEXT:SHORT_MANIFEST] failed: key={lookup_key!r}, error={e}")
+        traceback.print_exc()
+        return web.json_response({"error": "short_manifest_failed"}, status=500)
+
+
 async def handle_api_illustration_context_bridge_health(request: web.Request) -> web.Response:
     """최소 Risu 플러그인 브릿지가 후킹 서버를 확인하는 endpoint."""
     return web.json_response({
         "ok": True,
         "service": "illustration_context_bridge",
-        "version": 2,
-        "progress_phases": ["call1", "call2", "call3", "enqueue", "generating", "ready", "error"],
+        "version": 5,
+        "prompt_batch": True,
+        "short_slot_manifest": True,
+        "lookup_key_length": 24,
+        "progress_phases": ["call1", "call2", "call3", "enqueue", "generating", "retrying", "regenerating", "ready", "error"],
     })
+
+
+async def handle_api_illustration_context_bridge_sessions(request: web.Request) -> web.Response:
+    """채팅·프롬프트·이미지를 제외한 최근 세션 진행 요약만 반환한다."""
+    raw_limit = request.query.get("limit", "20")
+    try:
+        limit = max(1, min(50, int(raw_limit)))
+    except Exception as e:
+        print(f"[ILLUST_CONTEXT:BRIDGE] sessions limit 파싱 실패: value={raw_limit!r}, error={e}")
+        traceback.print_exc()
+        return web.json_response({"error": "invalid_limit"}, status=400)
+    try:
+        sessions = illustration_context_pipeline.recent_session_summaries(limit)
+        return web.json_response({
+            "ok": True,
+            "service": "illustration_context_bridge",
+            "sessions": sessions,
+        })
+    except Exception as e:
+        print(f"[ILLUST_CONTEXT:BRIDGE] sessions 응답 실패: limit={limit}, error={e}")
+        traceback.print_exc()
+        return web.json_response({"error": "bridge_sessions_failed"}, status=500)
 
 
 async def handle_api_illustration_context_bridge_client_log(request: web.Request) -> web.Response:
@@ -3733,6 +3817,7 @@ async def handle_prompt(request: web.Request) -> web.Response:
             if descriptor is None:
                 print(f"[ILLUST_CONTEXT] 재생성 요청 descriptor 없음: session={session_id}, slot={slot}")
                 return web.json_response({"error": "illustration slot not found"}, status=404)
+            illustration_context_pipeline.set_session_regenerate_started(session_id, slot)
             reservation_response = await _serve_priority_reservation_for_illustration_slot(
                 body,
                 prompt_id,
@@ -3801,6 +3886,34 @@ async def handle_prompt(request: web.Request) -> web.Response:
             filename = f"ComfyUI_{prompt_id[:8]}.png"
             asyncio.create_task(complete_prompt_from_reschedule(prompt_id, save_node or "9", filename))
             print(f"[ILLUST_CONTEXT] 캐시 이미지 회수: session={sid}, index={index}, slot={slot}")
+            return web.json_response({"prompt_id": prompt_id, "number": len(prompts), "node_errors": {}})
+
+        prompt_batch_payload = illustration_context_pipeline.parse_prompt_batch_request(incoming_positive)
+        if prompt_batch_payload is not None:
+            session_id = prompt_batch_payload["session_id"]
+            illustration_context_pipeline.create_session(session_id, "")
+            save_node = find_save_image_node(prompt_data)
+            prompts[prompt_id] = {
+                "status": "running", "prompt": prompt_data,
+                "client_id": body.get("client_id", ""), "extra_data": body.get("extra_data", {}),
+                "outputs": {}, "filename": None, "save_node_id": save_node,
+                "image_bytes": None, "timestamp": time.time(),
+            }
+            asyncio.create_task(queue_manager.add_item(
+                "illustration_llm_build",
+                f"모듈 확정 삽화 배치 · {session_id[:12]}",
+                {
+                    "prompt_id": prompt_id,
+                    "prompt_data": prompt_data,
+                    "raw_body": body,
+                    "payload": prompt_batch_payload,
+                },
+                priority=0,
+            ))
+            print(
+                f"[ILLUST_PROMPT_BATCH] 접수: prompt={prompt_id[:8]}, "
+                f"session={session_id}, items={len(prompt_batch_payload['items'])}"
+            )
             return web.json_response({"prompt_id": prompt_id, "number": len(prompts), "node_errors": {}})
 
         context_payload = illustration_context_pipeline.parse_context_request(incoming_positive)
@@ -3873,6 +3986,7 @@ async def handle_prompt(request: web.Request) -> web.Response:
             illustration_context_pipeline.CONTEXT_PREFIX,
             illustration_context_pipeline.RESULT_PREFIX,
             illustration_context_pipeline.REGENERATE_PREFIX,
+            illustration_context_pipeline.PROMPT_BATCH_PREFIX,
         )):
             print(f"[ILLUST_CONTEXT] transport marker는 있으나 payload가 유효하지 않음: {incoming_positive[:240]!r}")
             return web.json_response({"error": "invalid illustration context payload"}, status=400)
@@ -7207,7 +7321,9 @@ app.router.add_post("/api/lighbd/reroll", handle_api_lighbd_reroll)
 app.router.add_get("/api/lighbd/prompts", handle_api_lighbd_prompts)
 app.router.add_post("/api/lighbd/prompts", handle_api_lighbd_prompts)
 app.router.add_get("/api/illustration_context/session/{sid}/manifest", handle_api_illustration_context_manifest)
+app.router.add_get("/s/{key}", handle_api_illustration_context_short_slots)
 app.router.add_get("/api/illustration_context/bridge/health", handle_api_illustration_context_bridge_health)
+app.router.add_get("/api/illustration_context/bridge/sessions", handle_api_illustration_context_bridge_sessions)
 app.router.add_post("/api/illustration_context/bridge/client-log", handle_api_illustration_context_bridge_client_log)
 app.router.add_get("/api/illustration_context/bridge/session/{sid}", handle_api_illustration_context_bridge_session)
 app.router.add_get("/api/illustration_context/bridge/session/{sid}/image/{slot}", handle_api_illustration_context_bridge_image)

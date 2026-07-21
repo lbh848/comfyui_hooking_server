@@ -173,6 +173,57 @@ scenes[1]:
     assert pipeline.session_image_by_slot("cache_test_1234", -1) == b"keyvis"
     assert pipeline.session_image_by_slot("cache_test_1234", 0) == b"scene"
     assert pipeline.session_item_by_slot("cache_test_1234", 0)["scene"] == "classroom, sunset"
+
+
+def test_short_lookup_key_returns_only_ready_slots_and_survives_metadata_reload(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(pipeline, "SESSION_DIR", str(tmp_path / "sessions"))
+    session_id = "risu_" + ("a" * 64)
+    lookup_key = "a" * 24
+    pipeline._SESSIONS.pop(session_id, None)
+    pipeline._LOOKUP_KEYS.pop(lookup_key, None)
+
+    try:
+        session = pipeline.create_session(session_id, "private context")
+        assert session["lookup_key"] == lookup_key
+        pipeline.set_session_result(
+            session_id,
+            [
+                {"kind": "keyvis", "slot": -1},
+                {"kind": "scene", "slot": 3},
+                {"kind": "scene", "slot": 10},
+            ],
+            [b"keyvis", b"scene-3", b"scene-10"],
+        )
+        assert pipeline.session_slots_by_lookup_key(lookup_key) == [-1, 3, 10]
+
+        pipeline._SESSIONS.pop(session_id, None)
+        pipeline._LOOKUP_KEYS.pop(lookup_key, None)
+        assert pipeline.session_slots_by_lookup_key(lookup_key) == [-1, 3, 10]
+    finally:
+        pipeline._SESSIONS.pop(session_id, None)
+        pipeline._LOOKUP_KEYS.pop(lookup_key, None)
+
+
+def test_short_lookup_key_collision_is_rejected_without_overwrite(tmp_path, monkeypatch):
+    monkeypatch.setattr(pipeline, "SESSION_DIR", str(tmp_path / "sessions"))
+    lookup_key = "b" * 24
+    first_id = "risu_" + lookup_key + ("1" * 40)
+    second_id = "risu_" + lookup_key + ("2" * 40)
+    pipeline._LOOKUP_KEYS.pop(lookup_key, None)
+
+    try:
+        first = pipeline.create_session(first_id, "first")
+        assert first["lookup_key"] == lookup_key
+        with pytest.raises(ValueError, match="lookup key collision"):
+            pipeline.create_session(second_id, "second")
+        assert pipeline._LOOKUP_KEYS[lookup_key] == first_id
+        assert second_id not in pipeline._SESSIONS
+    finally:
+        pipeline._SESSIONS.pop(first_id, None)
+        pipeline._SESSIONS.pop(second_id, None)
+        pipeline._LOOKUP_KEYS.pop(lookup_key, None)
     assert pipeline.update_session_image_by_slot("cache_test_1234", 0, b"rerolled")
     assert pipeline.session_image_by_slot("cache_test_1234", 0) == b"rerolled"
     pipeline._SESSIONS.pop("cache_test_1234")
