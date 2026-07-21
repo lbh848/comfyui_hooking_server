@@ -1,3 +1,4 @@
+import asyncio
 import sys
 from pathlib import Path
 
@@ -120,6 +121,54 @@ async def test_task_stream_event_contains_task_metadata(monkeypatch):
     assert all(event["task_key"] == "unit_task" for event in events)
     assert all(event["call_name"] == "unit_task" for event in events)
     assert all(event["llm_slot"] == "llm2" for event in events)
+
+
+@pytest.mark.asyncio
+async def test_task_parallel_routes_isolate_llm2_and_llm3_config(monkeypatch):
+    config = _test_config()
+    config.update({
+        "llm_api_key": "key-1",
+        "llm_api_key2": "key-2",
+        "llm_api_key3": "key-3",
+        "llm_url": "https://llm1.invalid",
+        "llm_url2": "https://llm2.invalid",
+        "llm_url3": "https://llm3.invalid",
+        "llm_routing": {
+            "task2": {"primary": "llm2", "fallback": False},
+            "task3": {"primary": "llm3", "fallback": False},
+        },
+    })
+    monkeypatch.setattr(llm_service, "_current_config", llm_service._ContextConfig(config))
+
+    both_started = asyncio.Event()
+    started = 0
+
+    async def dispatch(messages, service, model):
+        nonlocal started
+        before = (
+            llm_service._current_config.get("llm_api_key"),
+            llm_service._current_config.get("llm_url"),
+        )
+        started += 1
+        if started == 2:
+            both_started.set()
+        await both_started.wait()
+        after = (
+            llm_service._current_config.get("llm_api_key"),
+            llm_service._current_config.get("llm_url"),
+        )
+        return f"{model}|{before}|{after}"
+
+    monkeypatch.setattr(llm_service, "_dispatch", dispatch)
+    result2, result3 = await asyncio.gather(
+        llm_service.callLLMTask("task2", [{"role": "user", "content": "two"}]),
+        llm_service.callLLMTask("task3", [{"role": "user", "content": "three"}]),
+    )
+
+    assert "model-2|('key-2', 'https://llm2.invalid')|('key-2', 'https://llm2.invalid')" == result2
+    assert "model-3|('key-3', 'https://llm3.invalid')|('key-3', 'https://llm3.invalid')" == result3
+    assert llm_service._current_config.get("llm_api_key") == "key-1"
+    assert llm_service._current_config.get("llm_url") == "https://llm1.invalid"
 
 
 @pytest.mark.asyncio

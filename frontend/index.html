@@ -14370,6 +14370,7 @@
             { key: 'refine_lora_prompt',       label: 'LoRA/에셋/스타일 정제', kind: '비전' },
             { key: 'refine_lora_test_setup',   label: '테스트 이미지 일괄 세팅(봇/에셋)',kind: '텍스트' },
             { key: 'edit_illustration_prompt', label: '삽화 LLM과 함께 수정', kind: '비전/JSON' },
+            { key: 'illustration_call1_backtranslate', label: '삽화 CALL1 역번역',               kind: '텍스트' },
             { key: 'illustration_call1',       label: '삽화 CALL1 (전처리)',           kind: '텍스트' },
             { key: 'illustration_call2',       label: '삽화 CALL2 (본문)',             kind: '텍스트' },
             { key: 'illustration_call2_fix',   label: '삽화 CALL2-FIX (TOON 교정)',    kind: '텍스트' },
@@ -37377,19 +37378,28 @@
                         </div>
                         <div id="illust-tab-content-llm" style="display:none; padding:12px 16px;">
                             <div style="margin-bottom:12px; padding:8px; background:rgba(0,0,0,0.06); border-radius:6px; font-size:0.75rem; color:var(--text2); line-height:1.5;">
-                                CHAT을 받은 서버가 CALL1 → CALL2 → (파싱 실패 시 CALL2-FIX) → CALL3 순서로 실행합니다. 삽화 프롬프트 본문은 config.json이 아니라 아래 개별 txt 파일에 저장됩니다.
-                                1. CALL1은 <strong>enhance.txt</strong>와 최근 CHAT으로 현재 응답의 시각 힌트를 만듭니다.<br>
-                                2. CALL2 system = <strong>jailbreak.txt</strong> + <strong>job.txt</strong> + <strong>system.txt</strong>, 이후 활성 봇 <strong>lb.extra</strong>와 CHAT·슬롯 본문을 전달합니다.<br>
-                                3. CALL2 output 지시 = <strong>thoughts.txt</strong> + <strong>format.txt</strong>, 선택적으로 <strong>prefill.txt</strong>를 사용합니다.<br>
-                                4. CALL2 파싱이 실패하면 <strong>repair.txt</strong>(CALL2-FIX)가 TOON 블록을 교정합니다. CALL3는 생성 설정에서 선택한 <strong>speak.txt</strong> 또는 <strong>manga.txt</strong>로 대사만 생성합니다.<br>
+                                CHAT을 받은 서버가 CALL1 역번역 → CALL1 컨텍스트 보강 → CALL2 → (파싱 실패 시 CALL2-FIX) → CALL3 순서로 실행합니다. 삽화 프롬프트 본문은 config.json이 아니라 아래 개별 txt 파일에 저장됩니다.
+                                1. 역번역이 켜져 있으면 <strong>backtranslate.txt</strong>로 현재 응답만 영어로 병렬 번역하며, 과거 CHAT은 번역하지 않습니다.<br>
+                                2. CALL1은 <strong>enhance.txt</strong>와 최근 CHAT으로 역번역된 현재 응답의 시각 힌트를 만듭니다.<br>
+                                3. CALL2 system = <strong>jailbreak.txt</strong> + <strong>job.txt</strong> + <strong>system.txt</strong>, 이후 활성 봇 <strong>lb.extra</strong>와 CHAT·슬롯 본문을 전달합니다.<br>
+                                4. CALL2 output 지시 = <strong>thoughts.txt</strong> + <strong>format.txt</strong>, 선택적으로 <strong>prefill.txt</strong>를 사용합니다.<br>
+                                5. CALL2 파싱이 실패하면 <strong>repair.txt</strong>(CALL2-FIX)가 TOON 블록을 교정합니다. CALL3는 생성 설정에서 선택한 <strong>speak.txt</strong> 또는 <strong>manga.txt</strong>로 대사만 생성합니다.<br>
                                 <strong>preset.txt</strong>는 V3의 <code>[SETUP]/[CHAR]/[SUPPLEMENT]</code> RAW 입력 템플릿과 공통 부정 프롬프트를 담습니다. V1을 선택하면 서버가 같은 장면을 <code>[ILXL]/[UPSCALE]</code> 입력 형태로 생성합니다.
                             </div>
                             <div style="display:flex; gap:5px; margin:0 0 10px;">
-                                <button id="illust-call-tab-call1" onclick="switchIllustCallTab('call1')" style="padding:6px 14px; border:1px solid var(--border); border-radius:5px; background:var(--accent); color:#fff; cursor:pointer;">CALL1</button>
+                                <button id="illust-call-tab-backtranslate" onclick="switchIllustCallTab('backtranslate')" style="padding:6px 14px; border:1px solid var(--border); border-radius:5px; background:var(--accent); color:#fff; cursor:pointer;">CALL1 역번역</button>
+                                <button id="illust-call-tab-call1" onclick="switchIllustCallTab('call1')" style="padding:6px 14px; border:1px solid var(--border); border-radius:5px; background:var(--surface2); color:var(--text); cursor:pointer;">CALL1 보강</button>
                                 <button id="illust-call-tab-call2" onclick="switchIllustCallTab('call2')" style="padding:6px 14px; border:1px solid var(--border); border-radius:5px; background:var(--surface2); color:var(--text); cursor:pointer;">CALL2</button>
                                 <button id="illust-call-tab-call3" onclick="switchIllustCallTab('call3')" style="padding:6px 14px; border:1px solid var(--border); border-radius:5px; background:var(--surface2); color:var(--text); cursor:pointer;">CALL3</button>
                             </div>
-                            <div id="illust-call-content-call1">
+                            <div id="illust-call-content-backtranslate">
+                                <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
+                                    <summary style="cursor:pointer; font-size:0.8rem; font-weight:600;">📝 backtranslate.txt (현재 응답 영문 역번역)</summary>
+                                    <div style="margin-top:6px; font-size:0.7rem; color:var(--text2); line-height:1.5;"><code>{character_names}</code>, <code>{chunk_index}</code>, <code>{chunk_total}</code> 자리표시자를 사용할 수 있습니다.</div>
+                                    <textarea id="lighbd-prompt-call1_backtranslate" data-lighbd-prompt="call1_backtranslate" style="width:100%; height:300px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;"></textarea>
+                                </details>
+                            </div>
+                            <div id="illust-call-content-call1" style="display:none;">
                                 <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
                                     <summary style="cursor:pointer; font-size:0.8rem; font-weight:600;">📝 enhance.txt (컨텍스트 보강)</summary>
                                     <textarea id="lighbd-prompt-call1_enhance" data-lighbd-prompt="call1_enhance" style="width:100%; height:300px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;"></textarea>
@@ -37511,7 +37521,7 @@
         }
 
         function switchIllustCallTab(tab) {
-            for (const name of ['call1', 'call2', 'call3']) {
+            for (const name of ['backtranslate', 'call1', 'call2', 'call3']) {
                 const active = name === tab;
                 const button = document.getElementById('illust-call-tab-' + name);
                 const content = document.getElementById('illust-call-content-' + name);
@@ -37526,6 +37536,7 @@
         async function loadLighbdPrompts() {
             const statusEl = document.getElementById('lighbd-prompt-status');
             const fields = {
+                call1_backtranslate: 'call1_backtranslate',
                 call1_enhance: 'call1_enhance',
                 call2_jailbreak: 'jailbreak', call2_job: 'job', call2_prefill: 'call2_prefill',
                 call2_thoughts: 'thoughts', call2_system: 'system', call2_format: 'format', call2_preset: 'preset',
@@ -37550,6 +37561,7 @@
         async function saveLighbdPrompts() {
             const statusEl = document.getElementById('lighbd-prompt-status');
             const fields = {
+                call1_backtranslate: 'call1_backtranslate',
                 call1_enhance: 'call1_enhance',
                 call2_jailbreak: 'jailbreak', call2_job: 'job', call2_prefill: 'call2_prefill',
                 call2_thoughts: 'thoughts', call2_system: 'system', call2_format: 'format', call2_preset: 'preset',
@@ -37573,7 +37585,7 @@
                 }
                 const data = await res.json();
                 statusEl.innerHTML = `<span style="color:#5cd5a0;">저장 완료 (파일: ${(data.saved || []).join(', ')})</span>`;
-                showToast('CALL1/2/3 프롬프트 저장 완료', 'success');
+                showToast('CALL1 역번역/1/2/3 프롬프트 저장 완료', 'success');
             } catch (e) {
                 statusEl.innerHTML = `<span style="color:#ff6b6b;">저장 실패: ${escapeHtml(e.message || String(e))}</span>`;
                 showToast('lighbd 프롬프트 저장 실패: ' + (e.message || String(e)), 'error');
@@ -37601,6 +37613,14 @@
                     },
                     {key: 'positive_note', label: '긍정 프롬프트 추가', type: 'textarea', help: '모든 장면의 긍정 프롬프트에 덧붙일 내용을 입력합니다.', stacked: true},
                     {key: 'negative_note', label: '부정 프롬프트 추가', type: 'textarea', help: '모든 장면의 부정 프롬프트에 덧붙일 내용을 입력합니다.', stacked: true},
+                ],
+            },
+            {
+                key: 'backtranslation', title: '역번역 설정',
+                description: '현재 응답만 영어로 번역해 이후 삽화 CALL이 상황을 인식할 때 사용합니다. 과거 대화는 번역 대상이 아닙니다.',
+                fields: [
+                    {key: 'call1_backtranslate_enabled', label: 'CALL1 역번역', type: 'toggle', help: 'CALL1 컨텍스트 보강 전에 현재 응답을 영어로 역번역합니다.'},
+                    {key: 'call1_backtranslate_max_concurrency', label: '최대 병렬 개수', type: 'number', min: 1, max: 16, help: '슬롯 여러 개를 균등하게 묶어 동시에 요청할 최대 청크 수입니다.', dependsOn: ['call1_backtranslate_enabled']},
                 ],
             },
             {

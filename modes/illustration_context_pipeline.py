@@ -7,6 +7,7 @@ RisuAI는 Comfy history에 이미지가 여러 장 있어도 첫 장만 소비�
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -32,6 +33,7 @@ REGENERATE_PREFIX = "__LB_ILLUST_REGENERATE_V1__"
 PROMPT_BATCH_PREFIX = "__LB_ILLUST_PROMPT_BATCH_V1__"
 
 PROMPT_FILES = {
+    "call1_backtranslate": "backtranslate.txt",
     "call1_enhance": "enhance.txt",
     "call2_jailbreak": "jailbreak.txt",
     "call2_job": "job.txt",
@@ -49,6 +51,8 @@ PROMPT_FILES = {
 }
 
 DEFAULT_TOGGLES = {
+    "call1_backtranslate_enabled": False,
+    "call1_backtranslate_max_concurrency": 4,
     "call1_enabled": True,
     "call1_context_turns": 5,
     "call2_context_turns": 5,
@@ -234,6 +238,10 @@ def merged_toggles(value: dict | None) -> dict:
         call3_prompt_mode = "speak"
     out["call3_prompt_mode"] = call3_prompt_mode
     try:
+        out["call1_backtranslate_max_concurrency"] = max(
+            1,
+            min(16, int(out["call1_backtranslate_max_concurrency"])),
+        )
         out["call1_context_turns"] = max(0, min(30, int(out["call1_context_turns"])))
         # call2/call3 전용 키가 없거나 무효하면 call1 값으로 폴백(하위호환).
         for _ck in ("call2_context_turns", "call3_context_turns"):
@@ -257,6 +265,9 @@ def merged_toggles(value: dict | None) -> dict:
         print(f"[ILLUST_CONTEXT] 토글 숫자 보정 실패: {e}")
         traceback.print_exc()
         out.update({
+            "call1_backtranslate_max_concurrency": DEFAULT_TOGGLES[
+                "call1_backtranslate_max_concurrency"
+            ],
             "call1_context_turns": DEFAULT_TOGGLES["call1_context_turns"],
             "call2_context_turns": DEFAULT_TOGGLES["call2_context_turns"],
             "call3_context_turns": DEFAULT_TOGGLES["call3_context_turns"],
@@ -1031,6 +1042,78 @@ def insert_slots(text: str) -> str:
     return re.sub(r"\n\n+", replace, str(text or "").strip())
 
 
+_SLOT_MARKER_RE = re.compile(r"\[Slot\s+(\d+)\]")
+
+
+def split_backtranslation_chunks(text: str, max_concurrency: int) -> list[str]:
+    """현재 응답을 연속 슬롯 묶음으로 균등 분할한다.
+
+    슬롯 하나마다 요청하지 않고 ``max_concurrency`` 개 이하의 연속 묶음을 만든다.
+    마지막 슬롯 뒤의 꼬리 본문은 마지막 슬롯 단위에 포함한다. 슬롯 마커가 없는
+    짧은 응답은 한 묶음으로 처리한다.
+    """
+    source = str(text or "")
+    if not source:
+        print("[ILLUST_CONTEXT:BACKTRANSLATE] 분할할 current context가 비어 있음")
+        return []
+    try:
+        concurrency = max(1, min(16, int(max_concurrency)))
+    except (TypeError, ValueError) as e:
+        print(
+            f"[ILLUST_CONTEXT:BACKTRANSLATE] 최대 병렬 개수 파싱 실패: "
+            f"value={max_concurrency!r}, error={e}; 1 사용"
+        )
+        concurrency = 1
+
+    matches = list(_SLOT_MARKER_RE.finditer(source))
+    if not matches:
+        return [source]
+
+    units = []
+    cursor = 0
+    for match in matches:
+        units.append(source[cursor:match.end()])
+        cursor = match.end()
+    if cursor < len(source):
+        units[-1] += source[cursor:]
+
+    group_count = min(concurrency, len(units))
+    base_size, remainder = divmod(len(units), group_count)
+    chunks = []
+    offset = 0
+    for group_index in range(group_count):
+        size = base_size + (1 if group_index < remainder else 0)
+        chunks.append("".join(units[offset:offset + size]))
+        offset += size
+    if "".join(chunks) != source:
+        print(
+            f"[ILLUST_CONTEXT:BACKTRANSLATE] 슬롯 묶음 재조립 검증 실패: "
+            f"source_len={len(source)}, chunks={len(chunks)}"
+        )
+        raise RuntimeError("역번역 슬롯 묶음 분할 결과가 원문과 일치하지 않습니다")
+    return chunks
+
+
+def remove_slot_markers(text: str) -> str:
+    """역번역된 슬롯 본문에서 배치용 마커만 제거한다."""
+    return _SLOT_MARKER_RE.sub("", str(text or "")).strip()
+
+
+def _valid_backtranslation(chunk: str, translated: str) -> tuple[bool, str]:
+    value = str(translated or "")
+    if len(value.strip()) == 0:
+        return False, "응답 길이가 0임"
+    expected = _SLOT_MARKER_RE.findall(str(chunk or ""))
+    actual = _SLOT_MARKER_RE.findall(value)
+    if actual != expected:
+        return False, f"슬롯 마커 불일치(expected={expected}, actual={actual})"
+    source_body = remove_slot_markers(chunk)
+    translated_body = remove_slot_markers(value)
+    if source_body and len(translated_body.strip()) == 0:
+        return False, "번역 본문 길이가 0임"
+    return True, ""
+
+
 def _bool(value) -> bool:
     if isinstance(value, str):
         return value.lower() not in ("", "0", "false", "off", "끄기", "null")
@@ -1486,8 +1569,9 @@ def _build_character_history(extra_reference: str) -> str:
 
 
 # 삽화 CALL 이름 → 외부 API 분기 task_key. 각 CALL 을 llm_routing 에서 독립적으로
-# 분기(LLM1/LLM2/LLM3)할 수 있다. 기본 primary=llm3(server.py DEFAULT_CONFIG 참고).
+# 분기(LLM1/LLM2/LLM3)할 수 있다. 기본 primary=llm1(server.py DEFAULT_CONFIG 참고).
 _CALL_TASK_KEYS = {
+    "CALL1-BACKTRANSLATE": "illustration_call1_backtranslate",
     "CALL1": "illustration_call1",
     "CALL2": "illustration_call2",
     "CALL2-FIX": "illustration_call2_fix",
@@ -1498,11 +1582,19 @@ _CALL_TASK_KEYS = {
 async def _call_pipeline_llm(call_name: str, messages: list[dict], stream_notify=None) -> str:
     """삽화 CALL1/2/3 의 LLM 호출. 외부 API 분기(illustration_callN task_key)를 경유한다.
 
-    기본값은 LLM3(callLLM3)이지만, 외부 API 분기 탭에서 CALL별로 LLM1/LLM2/LLM3 을
-    선택하거나 폴백을 켤 수 있다. 실패 시 callLLMTask 가 폴백 LLM 으로 재시도한다.
+    외부 API 분기 탭에서 CALL별로 LLM1/LLM2/LLM3 을 선택하거나 폴백을 켤 수 있다.
+    실패 시 callLLMTask 가 지정된 폴백 LLM 으로 재시도한다.
     """
     started = time.time()
-    task_key = _CALL_TASK_KEYS.get(call_name, "illustration_call2")
+    task_key = _CALL_TASK_KEYS.get(call_name)
+    if task_key is None and call_name.startswith("CALL1-BACKTRANSLATE"):
+        task_key = _CALL_TASK_KEYS["CALL1-BACKTRANSLATE"]
+    if task_key is None:
+        print(
+            f"[ILLUST_CONTEXT:{call_name}] 등록되지 않은 CALL 이름, "
+            "illustration_call2 라우팅 사용"
+        )
+        task_key = "illustration_call2"
     model = (
         llm_service.routing_primary_model(task_key)
         or llm_service._current_config.get("llm_model3")
@@ -1574,6 +1666,108 @@ async def _call_pipeline_llm(call_name: str, messages: list[dict], stream_notify
         raise
 
 
+async def backtranslate_current_context(
+    source: str,
+    prompt: str,
+    character_names: str,
+    max_concurrency: int,
+    stream_notify=None,
+) -> tuple[str, list[dict]]:
+    """current context만 영어로 병렬 역번역하고 실패 청크는 원문으로 폴백한다."""
+    chunks = split_backtranslation_chunks(source, max_concurrency)
+    if not chunks:
+        print("[ILLUST_CONTEXT:BACKTRANSLATE] 번역할 청크가 없어 원문 사용")
+        return str(source or ""), []
+
+    template = str(prompt or "").strip()
+    if not template:
+        print(
+            "[ILLUST_CONTEXT:BACKTRANSLATE] backtranslate.txt가 비어 있어 "
+            f"전체 원문 사용: chunks={len(chunks)}"
+        )
+        return str(source or ""), [
+            {"index": index, "status": "fallback", "reason": "prompt_empty"}
+            for index in range(1, len(chunks) + 1)
+        ]
+
+    names = str(character_names or "").strip()
+    if not names:
+        print(
+            "[ILLUST_CONTEXT:BACKTRANSLATE] 활성 봇 캐릭터 이름 목록이 비어 있음; "
+            "이름 사전 없이 번역 계속"
+        )
+
+    async def translate_one(index: int, chunk: str) -> tuple[str, dict]:
+        system_prompt = template
+        replacements = {
+            "{character_names}": names or "(none)",
+            "{chunk_index}": str(index),
+            "{chunk_total}": str(len(chunks)),
+        }
+        for marker, value in replacements.items():
+            system_prompt = system_prompt.replace(marker, value)
+        if names and "{character_names}" not in template:
+            system_prompt += "\n\n# Protected character names\n" + names
+
+        messages = _normalize_messages([
+            {"role": "system", "content": system_prompt},
+            {
+                "role": "user",
+                "content": (
+                    f"[Current Response Chunk {index}/{len(chunks)}]\n"
+                    "Return only the English translation of the chunk body below.\n\n"
+                    + chunk
+                ),
+            },
+        ])
+        call_name = f"CALL1-BACKTRANSLATE {index}/{len(chunks)}"
+        try:
+            translated = await _call_pipeline_llm(call_name, messages, stream_notify)
+        except Exception as e:
+            print(
+                f"[ILLUST_CONTEXT:BACKTRANSLATE] 청크 호출 실패, 원문 폴백: "
+                f"chunk={index}/{len(chunks)}, input_len={len(chunk)}, error={e}"
+            )
+            traceback.print_exc()
+            return chunk.strip(), {
+                "index": index,
+                "status": "fallback",
+                "reason": f"call_failed: {e}",
+            }
+
+        valid, reason = _valid_backtranslation(chunk, translated)
+        if not valid:
+            print(
+                f"[ILLUST_CONTEXT:BACKTRANSLATE] 청크 응답 실패, 원문 폴백: "
+                f"chunk={index}/{len(chunks)}, input_len={len(chunk)}, "
+                f"output_len={len(str(translated or ''))}, reason={reason}"
+            )
+            return chunk.strip(), {
+                "index": index,
+                "status": "fallback",
+                "reason": reason,
+            }
+        return str(translated).strip(), {
+            "index": index,
+            "status": "translated",
+            "reason": "",
+        }
+
+    results = await asyncio.gather(*(
+        translate_one(index, chunk)
+        for index, chunk in enumerate(chunks, start=1)
+    ))
+    translated_chunks = [value for value, _status in results]
+    statuses = [status for _value, status in results]
+    translated_count = sum(1 for status in statuses if status["status"] == "translated")
+    fallback_count = len(statuses) - translated_count
+    print(
+        f"[ILLUST_CONTEXT:BACKTRANSLATE] 병렬 역번역 완료: "
+        f"chunks={len(chunks)}, translated={translated_count}, fallback={fallback_count}"
+    )
+    return "\n\n".join(translated_chunks), statuses
+
+
 def build_raw_prompt(descriptor: dict, narrative: str, prompts: dict, toggles: dict) -> tuple[str, str]:
     template = prompts.get("call2_preset") or "[Positive]\n[SETUP]\n{setup}\n[CHAR]\n{char}\n[SUPPLEMENT]\n{supplement}\n\n[Negative]\n"
     positive_part, marker, negative_part = template.partition("[Negative]")
@@ -1616,7 +1810,16 @@ def build_raw_prompt(descriptor: dict, narrative: str, prompts: dict, toggles: d
     return positive.strip(), negative.strip()
 
 
-async def build_from_context(payload: dict, toggles: dict | None, extra_reference: str, progress=None, stream_notify=None, extra_costume: str = "", extra_names: str = "") -> dict:
+async def build_from_context(
+    payload: dict,
+    toggles: dict | None,
+    extra_reference: str,
+    progress=None,
+    stream_notify=None,
+    extra_costume: str = "",
+    extra_names: str = "",
+    backtranslate_names: str = "",
+) -> dict:
     toggles = merged_toggles(toggles)
     prompts = load_prompt_files()
     chats = payload.get("chats") or []
@@ -1624,10 +1827,45 @@ async def build_from_context(payload: dict, toggles: dict | None, extra_referenc
     if target_index < 0 or not narrative:
         raise RuntimeError("CHAT에서 최신 CHAR 서사를 찾지 못했습니다")
 
+    # 역번역 대상은 최신 CHAR 응답(current context) 하나뿐이다. 과거 CHAT은 원문을
+    # 유지하고, 슬롯 위치 앵커도 원문 응답을 계속 사용한다.
+    original_slotted = str(payload.get("target_slotted") or "").strip()
+    if not original_slotted:
+        original_slotted = insert_slots(_strip_nodes(narrative))
+    slotted = original_slotted
+    backtranslation_chunks = []
+    backtranslated_narrative = ""
+    if toggles.get("call1_backtranslate_enabled"):
+        if progress:
+            await progress(3, "call1_backtranslate", "CALL1 역번역 준비")
+        slotted, backtranslation_chunks = await backtranslate_current_context(
+            original_slotted,
+            prompts.get("call1_backtranslate", ""),
+            backtranslate_names,
+            int(toggles["call1_backtranslate_max_concurrency"]),
+            stream_notify=stream_notify,
+        )
+        backtranslated_narrative = remove_slot_markers(slotted)
+        if not backtranslated_narrative:
+            print(
+                "[ILLUST_CONTEXT:BACKTRANSLATE] 병합 결과의 본문 길이가 0이어서 "
+                "current context 전체를 원문으로 폴백"
+            )
+            slotted = original_slotted
+            backtranslated_narrative = _strip_nodes(narrative)
+            backtranslation_chunks = [{
+                "index": 0,
+                "status": "fallback",
+                "reason": "merged_body_empty",
+            }]
+    else:
+        print("[ILLUST_CONTEXT:BACKTRANSLATE] 토글로 비활성화됨")
+    backtranslated_slotted = slotted if toggles.get("call1_backtranslate_enabled") else ""
+
     if progress:
         await progress(5, "call1", "CALL1 컨텍스트 준비")
     call1_output = ""
-    enhanced = _strip_nodes(narrative)
+    enhanced = backtranslated_narrative or _strip_nodes(narrative)
     if toggles.get("call1_enabled"):
         n = int(toggles["call1_context_turns"])
         context_slice = chats[max(0, target_index - n):target_index]
@@ -1655,9 +1893,6 @@ async def build_from_context(payload: dict, toggles: dict | None, extra_referenc
     # 결과를 slot 번호로 회수할 수 있도록 슬롯 번호는 원문 문단을 기준으로 고정한다.
     # 모듈이 v13 규칙으로 원문 XML을 보존한 채 먼저 삽입한 슬롯 맵을 우선한다.
     # 없으면 구버전/테스트 호환을 위해 필터된 최신 narrative로 생성한다.
-    slotted = str(payload.get("target_slotted") or "").strip()
-    if not slotted:
-        slotted = insert_slots(_strip_nodes(narrative))
     if call1_output:
         # CALL2에는 CALL1이 만든 Visual Content/DynamicPrompt를 넘기되,
         # 결과 회수에 쓰는 [Slot N] 번호는 원문 문단 기준으로 그대로 유지한다.
@@ -1754,9 +1989,9 @@ async def build_from_context(payload: dict, toggles: dict | None, extra_referenc
     # corrects out-of-range/duplicate slot numbers while trusting CALL2's pick.
     descriptors = attach_descriptor_anchors(
         descriptors,
-        payload.get("target_slotted") or "",
+        original_slotted,
     )
-    descriptors = sanitize_descriptor_slots(descriptors, payload.get("target_slotted") or "")
+    descriptors = sanitize_descriptor_slots(descriptors, original_slotted)
     if progress:
         await progress(68, "raw_build", f"RAW 프롬프트 {len(descriptors)}개 생성")
     raw_items = []
@@ -1766,10 +2001,16 @@ async def build_from_context(payload: dict, toggles: dict | None, extra_referenc
         item["raw_positive"] = positive
         item["raw_negative"] = negative
         raw_items.append(item)
+    downstream_chats = deepcopy(chats)
+    if toggles.get("call1_backtranslate_enabled"):
+        downstream_chats[target_index]["data"] = enhanced
     return {
         "session_id": payload["session_id"],
-        "context": context_text(chats),
+        "context": context_text(downstream_chats),
         "narrative": narrative,
+        "backtranslated_narrative": backtranslated_narrative,
+        "backtranslated_slotted": backtranslated_slotted,
+        "backtranslation_chunks": backtranslation_chunks,
         "enhanced_narrative": enhanced,
         "call1_output": call1_output,
         "call2_output": call2_output,

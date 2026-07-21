@@ -155,6 +155,8 @@ DEFAULT_CONFIG = {
     "llm_reasoning_preset3": "auto",  # LLM3 전용 reasoning preset
     "llm_reasoning_effort3": "",      # LLM3 전용 reasoning effort
     "illustration_context_toggles": {
+        "call1_backtranslate_enabled": False,
+        "call1_backtranslate_max_concurrency": 4,
         "call1_enabled": True,
         "call1_context_turns": 5,
         "call2_context_turns": 5,
@@ -199,8 +201,9 @@ DEFAULT_CONFIG = {
         "refine_lora_prompt":      {"primary": "llm1", "fallback": False},
         "refine_lora_test_setup":  {"primary": "llm1", "fallback": False},
         "edit_illustration_prompt":{"primary": "llm1", "fallback": False, "json_mode": True},  # json_mode: 외부 API 분기 토글. 끄면 response_format 미전송(Cerebras/Gemma 루프 회피)
-        # 삽화 컨텍스트 파이프라인 CALL1/2/2-FIX/3. 메인 LLM/폴백은 외부 API 분기 탭에서 드롭박스로 선택.
+        # 삽화 컨텍스트 파이프라인 역번역/CALL1/2/2-FIX/3. 메인 LLM/폴백은 외부 API 분기 탭에서 드롭박스로 선택.
         # 폴백 없음(fallback_target 미지정)이 기본.
+        "illustration_call1_backtranslate": {"primary": "llm1", "fallback": False},  # 최신 응답 영문 역번역
         "illustration_call1":      {"primary": "llm1", "fallback": False},  # 전처리(컨텍스트 보강)
         "illustration_call2":      {"primary": "llm1", "fallback": False},  # 본문(장면/태그 TOON 빌드)
         "illustration_call2_fix":  {"primary": "llm1", "fallback": False},  # CALL2 파싱 실패 시 TOON 교정(repair.txt)
@@ -2363,7 +2366,7 @@ def _tag_text(values) -> str:
 def _collect_lb_extra(bot_name: str) -> dict | None:
     """현재 봇의 시스템 프롬프트와 lb.extra 캐릭터 정보를 구조화해 수집.
 
-    반환: {"system_prompt": str, "characters": [{"name","appearance","outfit"}, ...]}
+    반환: {"system_prompt": str, "characters": [...], "bot_character_names": [...]}
     실패/빈 봇이면 None.
     """
     if not bot_name:
@@ -2400,7 +2403,16 @@ def _collect_lb_extra(bot_name: str) -> dict | None:
             outfit = _tag_text(item.get("outfit"))
             appearance = ", ".join(x for x in (gender_tag, appearance) if x)
             characters.append({"name": name, "appearance": appearance, "outfit": outfit})
-        return {"system_prompt": system_prompt.strip(), "characters": characters}
+        bot_character_names = [
+            str(character.get("name") or "").strip()
+            for character in bot.get("characters", [])
+            if isinstance(character, dict) and str(character.get("name") or "").strip()
+        ]
+        return {
+            "system_prompt": system_prompt.strip(),
+            "characters": characters,
+            "bot_character_names": bot_character_names,
+        }
     except Exception as e:
         print(f"[ILLUST_CONTEXT] 활성 lb.extra 수집 실패: bot={bot_name}, error={e}")
         traceback.print_exc()
@@ -2450,6 +2462,19 @@ def build_lb_extra_names(bot_name: str) -> str:
         return ""
     names = [str(c.get("name") or "").strip() for c in collected.get("characters", [])]
     return ", ".join(n for n in names if n)
+
+
+def build_bot_character_names(bot_name: str) -> str:
+    """역번역 단어 보호용 활성 봇 전체 캐릭터 정식 영문 이름 목록."""
+    collected = _collect_lb_extra(bot_name)
+    if not collected:
+        print(f"[ILLUST_CONTEXT:BACKTRANSLATE] 봇 캐릭터 목록 수집 실패: bot={bot_name!r}")
+        return ""
+    names = collected.get("bot_character_names") or []
+    if not names:
+        print(f"[ILLUST_CONTEXT:BACKTRANSLATE] 봇 캐릭터 목록이 비어 있음: bot={bot_name!r}")
+        return ""
+    return ", ".join(str(name) for name in names)
 
 
 async def process_illustration_context_queue_item(item) -> dict:
@@ -2523,6 +2548,7 @@ async def process_illustration_context_queue_item(item) -> dict:
             extra_reference = build_active_lb_extra(active_bot)
             extra_costume = build_lb_extra_costume(active_bot)
             extra_names = build_lb_extra_names(active_bot)
+            backtranslate_names = build_bot_character_names(active_bot)
             # 후처리 모드(bubble→manga / vn→speak)가 CALL3 대사 프롬프트를 자동 결정한다.
             # call3_prompt_mode는 봇별 후처리 모드를 진실 소스로 삼아 덮어쓴다(전역 토글은 UI 힌트용).
             illust_toggles = dict(app_config.get("illustration_context_toggles") or {})
@@ -2541,6 +2567,7 @@ async def process_illustration_context_queue_item(item) -> dict:
                 stream_notify=stream_notify,
                 extra_costume=extra_costume,
                 extra_names=extra_names,
+                backtranslate_names=backtranslate_names,
             )
             raw_items = built.get("items") or []
             if not raw_items:
@@ -2941,7 +2968,7 @@ async def handle_api_illustration_context_bridge_image(request: web.Request) -> 
 
 
 async def handle_api_illustration_context_prompts(request: web.Request) -> web.Response:
-    """CALL1/2/3 프롬프트 파일 조회/저장. 프롬프트 본문은 config에 넣지 않는다."""
+    """CALL1 역번역/1/2/3 프롬프트 파일 조회/저장. 본문은 config에 넣지 않는다."""
     try:
         if request.method == "GET":
             return web.json_response(illustration_context_pipeline.load_prompt_files())

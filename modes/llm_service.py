@@ -407,7 +407,34 @@ async def _call_vertex(messages: list, model: str) -> str:
 
 # ─── 설정 관리 ──────────────────────────────────────────────
 
-_current_config = {
+_request_config_override_ctx: ContextVar[dict | None] = ContextVar(
+    "llm_request_config_override",
+    default=None,
+)
+
+
+class _ContextConfig(dict):
+    """요청별 LLM 슬롯 설정을 ContextVar로 격리하는 dict.
+
+    LLM2/LLM3 설정을 전역 LLM1 키에 임시 덮어쓰는 기존 공개 함수와 달리,
+    작업 라우팅의 병렬 호출은 이 조회 오버레이를 사용해 서로의 키/URL/추론
+    설정을 오염시키지 않는다.
+    """
+
+    def __getitem__(self, key):
+        override = _request_config_override_ctx.get()
+        if override is not None and key in override:
+            return override[key]
+        return super().__getitem__(key)
+
+    def get(self, key, default=None):
+        override = _request_config_override_ctx.get()
+        if override is not None and key in override:
+            return override[key]
+        return super().get(key, default)
+
+
+_current_config = _ContextConfig({
     "llm_service": "copilot",
     "llm_model": "gpt-4.1",
     "llm_service2": "",       # LLM2 서비스 (copilot / vertex / vertex-openai / openai / openrouter / gemini / claude / lmstudio / ollama / ollama-cloud)
@@ -438,7 +465,7 @@ _current_config = {
     # 작업별 LLM1/LLM2 라우팅 (외부 API 분기). task_key -> {"primary": "llm1"|"llm2", "fallback": bool}
     # 실제 기본값은 server.py 의 DEFAULT_CONFIG 에서 update_config 로 내려온다.
     "llm_routing": {},
-}
+})
 
 
 def migrate_config(config: dict) -> dict:
@@ -1639,6 +1666,59 @@ def routing_primary_model(task_key: str) -> str:
     return _current_config.get("llm_model") or ""
 
 
+def _base_config_get(key: str, default=None):
+    """ContextVar 오버레이를 무시하고 저장된 전역 설정값을 읽는다."""
+    return dict.get(_current_config, key, default)
+
+
+async def _call_routed_text_slot(
+    slot: str,
+    messages: list,
+    model: str = None,
+    json_mode: bool = False,
+) -> str:
+    """callLLMTask용 병렬 안전 텍스트 슬롯 호출."""
+    if slot == "llm1":
+        return await callLLM(messages, model=model, json_mode=json_mode)
+
+    suffix = "2" if slot == "llm2" else "3"
+    service = _base_config_get(f"llm_service{suffix}") or _base_config_get("llm_service")
+    use_model = model or _base_config_get(f"llm_model{suffix}")
+    if not use_model:
+        print(f"[LLM{suffix}] 호출 실패: LLM{suffix} 모델명이 설정되지 않았습니다")
+        return f"[LLM 실패] LLM{suffix} 모델명이 설정되지 않았습니다"
+
+    overrides = {}
+    for base_key, slot_key, base_default in (
+        ("llm_api_key", f"llm_api_key{suffix}", ""),
+        ("llm_url", f"llm_url{suffix}", ""),
+        ("llm_reasoning_preset", f"llm_reasoning_preset{suffix}", "auto"),
+        ("llm_reasoning_effort", f"llm_reasoning_effort{suffix}", ""),
+        ("llm_custom_body", f"llm_custom_body{suffix}", ""),
+    ):
+        slot_value = _base_config_get(slot_key, "")
+        overrides[base_key] = (
+            slot_value
+            if slot_value
+            else _base_config_get(base_key, base_default)
+        )
+
+    config_token = _request_config_override_ctx.set(overrides)
+    format_token = _response_format_ctx.set({"type": "json_object"}) if json_mode else None
+    try:
+        if bool(_base_config_get(f"llm_stream{suffix}", False)):
+            return await _stream_call_to_text(messages, service, use_model, slot)
+        return await _dispatch(messages, service, use_model)
+    except Exception as e:
+        print(f"[LLM{suffix}] 라우팅 호출 예외: {e}")
+        traceback.print_exc()
+        return f"[LLM 실패] LLM{suffix} 오류: {e}"
+    finally:
+        if format_token is not None:
+            _response_format_ctx.reset(format_token)
+        _request_config_override_ctx.reset(config_token)
+
+
 async def callLLMTask(task_key: str, messages: list, model: str = None, json_mode: bool = False) -> str:
     """
     작업별 라우팅 텍스트 LLM 호출.
@@ -1652,18 +1732,19 @@ async def callLLMTask(task_key: str, messages: list, model: str = None, json_mod
     entry = (_current_config.get("llm_routing") or {}).get(task_key, {}) or {}
     rj = entry.get("json_mode", None)
     eff_json = (bool(rj) if rj is not None else json_mode)
-    # LLM 식별자 → 호출 함수. fallback_target 이 None 이면 폴백 없음.
-    _llm_funcs = {"llm1": callLLM, "llm2": callLLM2, "llm3": callLLM3}
-
     async def _invoke(slot: str) -> str:
-        func = _llm_funcs.get(slot, callLLM)
         meta_token = _stream_metadata_ctx.set({
             "task_key": task_key,
             "call_name": task_key,
             "llm_slot": slot,
         })
         try:
-            return await func(messages, model=model, json_mode=eff_json)
+            return await _call_routed_text_slot(
+                slot,
+                messages,
+                model=model,
+                json_mode=eff_json,
+            )
         finally:
             _stream_metadata_ctx.reset(meta_token)
 

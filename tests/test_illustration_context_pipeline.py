@@ -570,6 +570,78 @@ def test_call3_prompt_mode_defaults_and_rejects_unknown_value(capsys):
     assert "지원하지 않는 CALL3 대사 프롬프트" in capsys.readouterr().out
 
 
+def test_backtranslation_defaults_and_concurrency_clamp():
+    defaults = pipeline.merged_toggles({})
+    assert defaults["call1_backtranslate_enabled"] is False
+    assert defaults["call1_backtranslate_max_concurrency"] == 4
+    assert pipeline.merged_toggles({
+        "call1_backtranslate_max_concurrency": 0,
+    })["call1_backtranslate_max_concurrency"] == 1
+    assert pipeline.merged_toggles({
+        "call1_backtranslate_max_concurrency": 99,
+    })["call1_backtranslate_max_concurrency"] == 16
+
+
+def test_backtranslation_chunks_balance_contiguous_slot_groups():
+    source = "\n\n".join(
+        f"문단 {index}\n\n[Slot {index}]"
+        for index in range(5)
+    ) + "\n\n마지막 문단"
+
+    chunks = pipeline.split_backtranslation_chunks(source, 2)
+
+    assert len(chunks) == 2
+    assert pipeline._SLOT_MARKER_RE.findall(chunks[0]) == ["0", "1", "2"]
+    assert pipeline._SLOT_MARKER_RE.findall(chunks[1]) == ["3", "4"]
+    assert "".join(chunks) == source
+
+
+@pytest.mark.asyncio
+async def test_backtranslation_empty_response_falls_back_only_failed_chunk(monkeypatch, capsys):
+    source = "첫 문단.\n\n[Slot 0]\n\n둘째 문단.\n\n[Slot 1]\n\n끝 문단."
+
+    async def fake_pipeline_call(call_name, messages, stream_notify=None):
+        if call_name.endswith("1/2"):
+            return "First paragraph.\n\n[Slot 0]"
+        return "   "
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
+    translated, statuses = await pipeline.backtranslate_current_context(
+        source,
+        "Protected names: {character_names}",
+        "Bbyakbbyak",
+        2,
+    )
+
+    assert translated == (
+        "First paragraph.\n\n[Slot 0]\n\n"
+        "둘째 문단.\n\n[Slot 1]\n\n끝 문단."
+    )
+    assert [status["status"] for status in statuses] == ["translated", "fallback"]
+    assert statuses[1]["reason"] == "응답 길이가 0임"
+    assert "output_len=3" in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
+async def test_backtranslation_slot_mismatch_falls_back_to_original_chunk(monkeypatch):
+    source = "장면.\n\n[Slot 7]"
+
+    async def fake_pipeline_call(call_name, messages, stream_notify=None):
+        return "Scene.\n\n[Slot 8]"
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
+    translated, statuses = await pipeline.backtranslate_current_context(
+        source,
+        "Translate. {character_names}",
+        "Hana",
+        4,
+    )
+
+    assert translated == source
+    assert statuses[0]["status"] == "fallback"
+    assert "슬롯 마커 불일치" in statuses[0]["reason"]
+
+
 def test_call3_dialogue_prompt_selects_speak_or_manga_and_scopes_emotions():
     prompts = {
         "call3_speak": "SPEAK PROMPT",
@@ -685,6 +757,78 @@ Hana: "No way!" #burst""",
     assert "#normal" in calls[1][0]["content"]
     assert result["items"][0]["speak"] == 'Hana: "No way!" #burst'
     assert '[SPEAK]\nHana: "No way!" #burst' in result["items"][0]["raw_positive"]
+
+
+@pytest.mark.asyncio
+async def test_build_from_context_uses_backtranslated_current_response_only(monkeypatch):
+    calls = []
+
+    async def fake_call(task_key, messages, **kwargs):
+        calls.append((task_key, messages))
+        if task_key == "illustration_call1_backtranslate":
+            body = messages[-1]["content"]
+            assert "Bbyakbbyak" in messages[0]["content"]
+            if "[Slot 0]" in body:
+                return "Bbyakbbyak opens the door.\n\n[Slot 0]"
+            return "She looks inside.\n\n[Slot 1]\n\nThe room is quiet."
+        assert task_key == "illustration_call2"
+        return """<lb-xnai>
+scenes[1]:
+  - camera: medium shot
+    characters[1]:
+      - name: Bbyakbbyak
+        positive: 1girl, Bbyakbbyak, white hair
+    scene: quiet room
+    slot: 0
+</lb-xnai>"""
+
+    monkeypatch.setattr(pipeline.llm_service, "callLLMTask", fake_call)
+    result = await pipeline.build_from_context(
+        {
+            "session_id": "backtranslate_pipeline_1234",
+            "target_slotted": (
+                "뺙뺙이 문을 연다.\n\n[Slot 0]\n\n"
+                "그녀가 안을 본다.\n\n[Slot 1]\n\n방은 조용하다."
+            ),
+            "chats": [
+                {"role": "user", "data": "과거 질문은 한국어다."},
+                {"role": "char", "data": "과거 답변도 한국어다."},
+                {"role": "user", "data": "문을 열어 봐."},
+                {"role": "char", "data": "뺙뺙이 문을 연다.\n\n그녀가 안을 본다.\n\n방은 조용하다."},
+            ],
+        },
+        {
+            "call1_backtranslate_enabled": True,
+            "call1_backtranslate_max_concurrency": 2,
+            "call1_enabled": False,
+            "call3_enabled": False,
+            "speak_enabled": False,
+            "key_visual": False,
+        },
+        "### Bbyakbbyak\n-Appearance: 1girl, white hair",
+        backtranslate_names="Bbyakbbyak, Bbyakbbyak_reallife",
+    )
+
+    assert [task_key for task_key, _messages in calls].count(
+        "illustration_call1_backtranslate"
+    ) == 2
+    call2_text = "\n".join(
+        message["content"]
+        for task_key, messages in calls
+        if task_key == "illustration_call2"
+        for message in messages
+    )
+    assert "과거 답변도 한국어다." in call2_text
+    assert "Bbyakbbyak opens the door." in call2_text
+    assert "뺙뺙이 문을 연다." not in call2_text
+    assert "[CHAT]\nBbyakbbyak opens the door." in result["items"][0]["raw_positive"]
+    assert "[CHAR]\n과거 답변도 한국어다." in result["context"]
+    assert "[CHAR]\nBbyakbbyak opens the door." in result["context"]
+    assert result["backtranslated_slotted"].startswith("Bbyakbbyak opens the door.")
+    assert [entry["status"] for entry in result["backtranslation_chunks"]] == [
+        "translated",
+        "translated",
+    ]
 
 
 def test_build_raw_prompt_uses_v1_or_v3_input_shape():
