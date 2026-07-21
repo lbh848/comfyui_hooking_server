@@ -603,6 +603,36 @@ def test_backtranslation_chunks_balance_contiguous_slot_groups():
     assert "".join(chunks) == source
 
 
+def test_backtranslation_slot_protection_round_trips_exact_markers():
+    source = "첫 문단.\n\n[Slot 7]\n\n둘째 문단.\n\n[Slot   11]"
+
+    protected, markers = pipeline._protect_slot_markers(source)
+
+    assert "[Slot" not in protected
+    assert pipeline._PROTECTED_SLOT_TOKEN_RE.findall(protected) == [
+        token for token, _marker in markers
+    ]
+    restored, valid, reason = pipeline._restore_slot_markers(protected, markers)
+    assert valid is True
+    assert reason == ""
+    assert restored == source
+
+
+def test_backtranslation_slot_protection_rejects_reordered_tokens():
+    source = "첫 문단.\n\n[Slot 0]\n\n둘째 문단.\n\n[Slot 1]"
+    protected, markers = pipeline._protect_slot_markers(source)
+    first, second = [token for token, _marker in markers]
+    reordered = protected.replace(first, "__TEMP_SLOT__").replace(
+        second, first
+    ).replace("__TEMP_SLOT__", second)
+
+    restored, valid, reason = pipeline._restore_slot_markers(reordered, markers)
+
+    assert restored == reordered
+    assert valid is False
+    assert "보호 슬롯 토큰 불일치" in reason
+
+
 @pytest.mark.asyncio
 async def test_backtranslation_stream_events_include_queue_subtask_metadata(monkeypatch):
     source = "첫 문단.\n\n[Slot 0]\n\n둘째 문단.\n\n[Slot 1]\n\n셋째 문단.\n\n[Slot 2]"
@@ -613,7 +643,9 @@ async def test_backtranslation_stream_events_include_queue_subtask_metadata(monk
         call_name, messages, stream_notify=None, result_validator=None
     ):
         index = int(call_name.rsplit(" ", 1)[1].split("/", 1)[0])
-        translated = chunks[index - 1]
+        translated, _markers = pipeline._protect_slot_markers(chunks[index - 1])
+        assert translated in messages[-1]["content"]
+        assert "[Slot " not in messages[-1]["content"]
         await stream_notify({"type": "start", "call_name": call_name})
         await stream_notify({
             "type": "done",
@@ -659,7 +691,10 @@ async def test_backtranslation_empty_response_falls_back_only_failed_chunk(monke
         call_name, messages, stream_notify=None, result_validator=None
     ):
         if call_name.endswith("1/2"):
-            return "First paragraph.\n\n[Slot 0]"
+            token = pipeline._PROTECTED_SLOT_TOKEN_RE.findall(
+                messages[-1]["content"]
+            )[0]
+            return f"First paragraph.\n\n{token}"
         return "   "
 
     monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
@@ -680,13 +715,16 @@ async def test_backtranslation_empty_response_falls_back_only_failed_chunk(monke
 
 
 @pytest.mark.asyncio
-async def test_backtranslation_slot_mismatch_falls_back_to_original_chunk(monkeypatch):
+async def test_backtranslation_protected_slot_mismatch_falls_back_to_original_chunk(monkeypatch):
     source = "장면.\n\n[Slot 7]"
 
     async def fake_pipeline_call(
         call_name, messages, stream_notify=None, result_validator=None
     ):
-        return "Scene.\n\n[Slot 8]"
+        token = pipeline._PROTECTED_SLOT_TOKEN_RE.findall(
+            messages[-1]["content"]
+        )[0]
+        return "Scene.\n\n" + token.replace("_0000__", "_0001__")
 
     monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
     translated, statuses = await pipeline.backtranslate_current_context(
@@ -698,7 +736,7 @@ async def test_backtranslation_slot_mismatch_falls_back_to_original_chunk(monkey
 
     assert translated == source
     assert statuses[0]["status"] == "fallback"
-    assert "슬롯 마커 불일치" in statuses[0]["reason"]
+    assert "보호 슬롯 토큰 불일치" in statuses[0]["reason"]
 
 
 @pytest.mark.asyncio
@@ -711,8 +749,11 @@ async def test_backtranslation_strict_strategy_uses_central_route_retry(monkeypa
     ):
         calls.append(call_name)
         assert result_validator is not None
-        assert result_validator("Scene.\n\n[Slot 8]")[0] is False
-        successful = "Scene.\n\n[Slot 3]"
+        token = pipeline._PROTECTED_SLOT_TOKEN_RE.findall(
+            messages[-1]["content"]
+        )[0]
+        assert result_validator("Scene without protected token.")[0] is False
+        successful = f"Scene.\n\n{token}"
         assert result_validator(successful)[0] is True
         return successful
 
@@ -744,7 +785,7 @@ async def test_backtranslation_strict_strategy_aborts_after_route_retries(monkey
     ):
         calls.append(call_name)
         assert result_validator is not None
-        invalid = "Scene.\n\n[Slot 8]"
+        invalid = "Scene without protected token."
         assert result_validator(invalid)[0] is False
         assert result_validator(invalid)[0] is False
         return invalid
@@ -942,9 +983,15 @@ async def test_build_from_context_uses_backtranslated_current_response_only(monk
         if task_key == "illustration_call1_backtranslate":
             body = messages[-1]["content"]
             assert "Bbyakbbyak" in messages[0]["content"]
-            if "[Slot 0]" in body:
-                return "Bbyakbbyak opens the door.\n\n[Slot 0]"
-            return "She looks inside.\n\n[Slot 1]\n\nThe room is quiet."
+            token = pipeline._PROTECTED_SLOT_TOKEN_RE.findall(body)[0]
+            assert "[Slot " not in body
+            backtranslation_call_count = sum(
+                1 for called_task, _messages in calls
+                if called_task == "illustration_call1_backtranslate"
+            )
+            if backtranslation_call_count == 1:
+                return f"Bbyakbbyak opens the door.\n\n{token}"
+            return f"She looks inside.\n\n{token}\n\nThe room is quiet."
         assert task_key == "illustration_call2"
         return """<lb-xnai>
 scenes[1]:

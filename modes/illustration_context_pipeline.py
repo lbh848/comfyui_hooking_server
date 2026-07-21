@@ -8,6 +8,7 @@ RisuAI는 Comfy history에 이미지가 여러 장 있어도 첫 장만 소비�
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import re
@@ -1054,6 +1055,48 @@ def insert_slots(text: str) -> str:
 
 
 _SLOT_MARKER_RE = re.compile(r"\[Slot\s+(\d+)\]")
+_PROTECTED_SLOT_TOKEN_RE = re.compile(
+    r"__LB_ILLUST_SLOT_[0-9A-F]{12}_[0-9]{4}__"
+)
+
+
+def _protect_slot_markers(text: str) -> tuple[str, list[tuple[str, str]]]:
+    """LLM이 슬롯을 구조 태그로 해석하지 않도록 불투명 토큰으로 치환한다."""
+    source = str(text or "")
+    nonce = hashlib.sha256(source.encode("utf-8")).hexdigest()[:12].upper()
+    protected_markers: list[tuple[str, str]] = []
+
+    def replace(match: re.Match) -> str:
+        token = f"__LB_ILLUST_SLOT_{nonce}_{len(protected_markers):04d}__"
+        protected_markers.append((token, match.group(0)))
+        return token
+
+    protected = _SLOT_MARKER_RE.sub(replace, source)
+    return protected, protected_markers
+
+
+def _restore_slot_markers(
+    text: str,
+    protected_markers: list[tuple[str, str]],
+) -> tuple[str, bool, str]:
+    """보호 토큰의 개수와 순서를 확인하고 원래 슬롯 마커로 복원한다."""
+    value = str(text or "")
+    if not protected_markers:
+        return value, True, ""
+
+    expected = [token for token, _marker in protected_markers]
+    actual = _PROTECTED_SLOT_TOKEN_RE.findall(value)
+    if actual != expected:
+        return (
+            value,
+            False,
+            f"보호 슬롯 토큰 불일치(expected={expected}, actual={actual})",
+        )
+
+    restored = value
+    for token, marker in protected_markers:
+        restored = restored.replace(token, marker, 1)
+    return restored, True, ""
 
 
 def split_backtranslation_chunks(text: str, max_concurrency: int) -> list[str]:
@@ -1762,6 +1805,8 @@ async def backtranslate_current_context(
         if names and "{character_names}" not in template:
             system_prompt += "\n\n# Protected character names\n" + names
 
+        protected_chunk, protected_markers = _protect_slot_markers(chunk)
+
         messages = _normalize_messages([
             {"role": "system", "content": system_prompt},
             {
@@ -1769,17 +1814,32 @@ async def backtranslate_current_context(
                 "content": (
                     f"[Current Response Chunk {index}/{len(chunks)}]\n"
                     "Return only the English translation of the chunk body below.\n\n"
-                    + chunk
+                    "Tokens shaped like __LB_ILLUST_SLOT_...__ are server-protected "
+                    "slot markers. Copy every token exactly once and in the same order.\n\n"
+                    + protected_chunk
                 ),
             },
         ])
         last_reason = "unknown_failure"
         validation_attempts = 0
 
+        def _restore_and_validate(translated):
+            value = str(translated or "")
+            if len(value.strip()) == 0:
+                return value, False, "응답 길이가 0임"
+            restored, protection_valid, protection_reason = _restore_slot_markers(
+                value,
+                protected_markers,
+            )
+            if not protection_valid:
+                return restored, False, protection_reason
+            valid, reason = _valid_backtranslation(chunk, restored)
+            return restored, valid, reason
+
         def _validate_translation(translated):
             nonlocal validation_attempts, last_reason
             validation_attempts += 1
-            valid, reason = _valid_backtranslation(chunk, translated)
+            _restored, valid, reason = _restore_and_validate(translated)
             last_reason = reason
             if not valid:
                 print(
@@ -1818,9 +1878,9 @@ async def backtranslate_current_context(
             )
             traceback.print_exc()
         else:
-            valid, reason = _valid_backtranslation(chunk, translated)
+            restored, valid, reason = _restore_and_validate(translated)
             if valid:
-                return str(translated).strip(), {
+                return restored.strip(), {
                     "index": index,
                     "status": "translated",
                     "reason": "",
