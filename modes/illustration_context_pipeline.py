@@ -149,6 +149,10 @@ def _persist_session_metadata(session: dict) -> None:
             "status": session.get("status", "ready"),
             "context": session.get("context", ""),
             "items": session.get("items") or [],
+            "requested_count": session.get("requested_count", len(session.get("items") or [])),
+            "success_count": session.get("success_count", len(session.get("items") or [])),
+            "failure_count": session.get("failure_count", 0),
+            "failures": session.get("failures") or [],
             "progress": session.get("progress") or {},
             "error": session.get("error", ""),
             "created_at": session.get("created_at", time.time()),
@@ -175,6 +179,14 @@ def _load_session_metadata(session_id: str) -> dict | None:
         data["items"] = items
         data["images"] = [None] * len(items)
         data["status"] = "ready"
+        data["requested_count"] = max(len(items), int(data.get("requested_count") or len(items)))
+        data["success_count"] = len(items)
+        data["failures"] = data.get("failures") or []
+        data["failure_count"] = max(
+            len(data["failures"]),
+            int(data.get("failure_count") or 0),
+            data["requested_count"] - data["success_count"],
+        )
         data["lookup_key"] = _register_lookup_key(
             session_id,
             str(data.get("lookup_key") or ""),
@@ -485,6 +497,10 @@ def create_session(session_id: str, context: str) -> dict:
         "context": context,
         "items": [],
         "images": [],
+        "requested_count": 0,
+        "success_count": 0,
+        "failure_count": 0,
+        "failures": [],
         "progress": {
             "phase": "queued",
             "label": "서버 작업 대기",
@@ -670,26 +686,66 @@ def recent_session_summaries(limit: int = 20) -> list[dict]:
                 "total": raw_progress.get("total", 0),
             },
             "item_count": len(items),
+            "requested_count": int(session.get("requested_count") or len(items)),
+            "success_count": int(session.get("success_count") or len(items)),
+            "failure_count": int(session.get("failure_count") or 0),
             "created_at": session.get("created_at", 0),
             "updated_at": session.get("updated_at", 0),
         })
     return summaries
 
 
-def set_session_result(session_id: str, items: list, images: list[bytes]) -> None:
+def set_session_result(
+    session_id: str,
+    items: list,
+    images: list[bytes],
+    *,
+    requested_count: int | None = None,
+    failures: list[dict] | None = None,
+) -> None:
     session = _SESSIONS.get(session_id)
     if session is None:
         print(f"[ILLUST_CONTEXT] 결과 저장 실패 - 세션 없음: {session_id}")
         return
     session["items"] = deepcopy(items)
     session["images"] = list(images)
+    success_count = len(images)
+    try:
+        requested_count = max(success_count, int(requested_count or success_count))
+    except Exception:
+        requested_count = success_count
+    safe_failures = []
+    for failure in failures or []:
+        if not isinstance(failure, dict):
+            continue
+        try:
+            slot = int(failure.get("slot"))
+        except Exception:
+            slot = None
+        safe_failures.append({
+            "slot": slot,
+            "error": str(failure.get("error") or "생성 실패")
+            .replace("\r", " ")
+            .replace("\n", " ")[:300],
+        })
+    failure_count = max(len(safe_failures), requested_count - success_count)
+    partial = failure_count > 0
+    session["requested_count"] = requested_count
+    session["success_count"] = success_count
+    session["failure_count"] = failure_count
+    session["failures"] = safe_failures
     session["status"] = "ready"
     session["progress"] = {
-        "phase": "ready",
-        "label": f"전체 {len(images)}장 반환 준비 완료",
+        "phase": "ready_partial" if partial else "ready",
+        "label": (
+            f"성공 {success_count}/{requested_count}장 반환 준비 완료 · "
+            f"최종 실패 {failure_count}장 제외"
+            if partial
+            else f"전체 {success_count}장 반환 준비 완료"
+        ),
         "value": 100,
-        "done": len(images),
-        "total": len(images),
+        "done": success_count,
+        "total": requested_count,
     }
     session["updated_at"] = time.time()
     _persist_session_metadata(session)

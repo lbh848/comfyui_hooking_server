@@ -207,6 +207,66 @@ def test_short_lookup_key_returns_only_ready_slots_and_survives_metadata_reload(
         pipeline._LOOKUP_KEYS.pop(lookup_key, None)
 
 
+def test_partial_result_returns_only_successful_slots_and_tracks_failures(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(pipeline, "SESSION_DIR", str(tmp_path / "sessions"))
+    lookup_key = "c" * 24
+    session_id = "risu_" + lookup_key + ("3" * 40)
+    pipeline._SESSIONS.pop(session_id, None)
+    pipeline._LOOKUP_KEYS.pop(lookup_key, None)
+
+    try:
+        pipeline.create_session(session_id, "private context")
+        pipeline.set_session_result(
+            session_id,
+            [
+                {"kind": "keyvis", "slot": -1},
+                {"kind": "scene", "slot": 10},
+            ],
+            [b"keyvis", b"scene-10"],
+            requested_count=3,
+            failures=[{"slot": 3, "error": "remote\nfailed"}],
+        )
+
+        session = pipeline.get_session(session_id)
+        assert session["status"] == "ready"
+        assert session["progress"] == {
+            "phase": "ready_partial",
+            "label": "성공 2/3장 반환 준비 완료 · 최종 실패 1장 제외",
+            "value": 100,
+            "done": 2,
+            "total": 3,
+        }
+        assert session["requested_count"] == 3
+        assert session["success_count"] == 2
+        assert session["failure_count"] == 1
+        assert session["failures"] == [{"slot": 3, "error": "remote failed"}]
+        assert pipeline.session_slots_by_lookup_key(lookup_key) == [-1, 10]
+        assert pipeline.session_image_by_slot(session_id, 10) == b"scene-10"
+        assert pipeline.session_image_by_slot(session_id, 3) is None
+
+        summary = next(
+            item
+            for item in pipeline.recent_session_summaries()
+            if item["session_id"] == session_id
+        )
+        assert summary["requested_count"] == 3
+        assert summary["success_count"] == 2
+        assert summary["failure_count"] == 1
+
+        pipeline._SESSIONS.pop(session_id, None)
+        pipeline._LOOKUP_KEYS.pop(lookup_key, None)
+        assert pipeline.session_slots_by_lookup_key(lookup_key) == [-1, 10]
+        restored = pipeline.get_session(session_id)
+        assert restored["progress"]["phase"] == "ready_partial"
+        assert restored["requested_count"] == 3
+        assert restored["failure_count"] == 1
+    finally:
+        pipeline._SESSIONS.pop(session_id, None)
+        pipeline._LOOKUP_KEYS.pop(lookup_key, None)
+
+
 def test_short_lookup_key_collision_is_rejected_without_overwrite(tmp_path, monkeypatch):
     monkeypatch.setattr(pipeline, "SESSION_DIR", str(tmp_path / "sessions"))
     lookup_key = "b" * 24

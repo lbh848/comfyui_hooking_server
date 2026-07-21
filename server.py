@@ -2244,13 +2244,7 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
             print(f"[ERROR] 이미지 생성 실패: {node_errors}")
             prompts[prompt_id]["status"] = "completed"
             prompts[prompt_id]["outputs"] = {"images": []}
-            if regen_session_id and regen_slot is not None:
-                illustration_context_pipeline.set_session_regenerate_error(
-                    regen_session_id,
-                    regen_slot,
-                    str(node_errors or "이미지 생성 결과가 비어 있습니다"),
-                )
-            return
+            raise RuntimeError(str(node_errors or "이미지 생성 결과가 비어 있습니다"))
 
         # node_errors 기록
         if illustration_provider == "comfy" and isinstance(node_errors, dict) and node_errors:
@@ -2351,6 +2345,7 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                 regen_slot,
                 str(e),
             )
+        raise
 
 
 def _tag_text(values) -> str:
@@ -2455,27 +2450,6 @@ def build_lb_extra_names(bot_name: str) -> str:
         return ""
     names = [str(c.get("name") or "").strip() for c in collected.get("characters", [])]
     return ", ".join(n for n in names if n)
-
-
-_ILLUST_FALLBACK_BYTES: bytes | None = None
-
-
-def _load_illustration_fallback() -> bytes | None:
-    """삽화 컨텍스트 슬롯 생성 실패 시 대신 채워넣을 폴백 이미지를 로드(캐시)."""
-    global _ILLUST_FALLBACK_BYTES
-    if _ILLUST_FALLBACK_BYTES is not None:
-        return _ILLUST_FALLBACK_BYTES
-    try:
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        fallback_path = os.path.join(script_dir, "modes", "fallback_img2", "illustration_fallback.png")
-        with open(fallback_path, "rb") as f:
-            _ILLUST_FALLBACK_BYTES = f.read()
-        print(f"[ILLUST_CONTEXT] 폴백 이미지 로드 완료: {fallback_path} ({len(_ILLUST_FALLBACK_BYTES):,}B)")
-    except Exception as e:
-        print(f"[ILLUST_CONTEXT] 폴백 이미지 로드 실패: {e}")
-        traceback.print_exc()
-        _ILLUST_FALLBACK_BYTES = None
-    return _ILLUST_FALLBACK_BYTES
 
 
 async def process_illustration_context_queue_item(item) -> dict:
@@ -2613,7 +2587,7 @@ async def process_illustration_context_queue_item(item) -> dict:
 
         # 하위 큐 완료를 기다리고 image_bytes 를 회수.
         # 반환: (image_bytes, 사유, cancelled)
-        #   - cancelled=True: 사용자가 큐를 직접 취소한 경우. 재시도/폴백 대상이 아님.
+        #   - cancelled=True: 사용자가 큐를 직접 취소한 경우. 자동 재시도 대상이 아님.
         async def _await_child(child_id, child_item, slot_label):
             try:
                 await child_item.completion_future
@@ -2632,8 +2606,6 @@ async def process_illustration_context_queue_item(item) -> dict:
                 traceback.print_exc()
                 return None, f"큐 실패 - {e}", False
 
-        fallback_bytes = _load_illustration_fallback()
-
         # ─── 1차: 전부 등록 후 순차 대기. 실패 슬롯은 자리만 None으로 두고 건너뛴다.
         child_pairs = []
         for index, descriptor in enumerate(raw_items, start=1):
@@ -2643,6 +2615,7 @@ async def process_illustration_context_queue_item(item) -> dict:
         await progress(72, "generating", f"이미지 0/{total} 완료", 0, total)
         images: list[bytes | None] = [None] * total
         to_retry: list[tuple[int, dict]] = []  # (raw_items 인덱스, descriptor)
+        success_count = 0
         for idx, (child_id, child_item) in enumerate(child_pairs):
             image_bytes, fail_reason, cancelled = await _await_child(child_id, child_item, raw_items[idx].get("slot"))
             if cancelled:
@@ -2650,6 +2623,7 @@ async def process_illustration_context_queue_item(item) -> dict:
                 raise RuntimeError(f"사용자가 큐를 취소했습니다 (slot={raw_items[idx].get('slot')}, 사유={fail_reason})")
             if image_bytes:
                 images[idx] = image_bytes
+                success_count += 1
             else:
                 print(
                     f"[ILLUST_CONTEXT] 1차 실패 - 재시도 대상: slot={raw_items[idx].get('slot')}, 사유={fail_reason}"
@@ -2659,51 +2633,76 @@ async def process_illustration_context_queue_item(item) -> dict:
             await progress(
                 72 + (completed / total) * 20,
                 "generating",
-                f"이미지 {completed}/{total} 처리",
-                completed,
+                f"성공 {success_count}/{total}장 · 1차 처리 {completed}/{total}",
+                success_count,
                 total,
             )
 
         # ─── 2차: 1차 실패 슬롯을 새 하위 큐 아이템으로 1회 재등록(이미지 교체 시도).
-        substituted: list[str] = []
+        failures: list[dict] = []
         if to_retry:
             print(f"[ILLUST_CONTEXT] 1차 실패 {len(to_retry)}건 재시도 시작: session={session_id}")
             await progress(
                 92, "retrying", f"실패 슬롯 {len(to_retry)}건 재시도",
-                total - len(to_retry), total,
+                success_count, total,
             )
+            # 모든 실패 항목을 먼저 등록해야 현재 대기열의 맨 뒤에서 서로의 순서도 보존된다.
+            retry_pairs = []
             for idx, descriptor in to_retry:
                 slot_label = descriptor.get("slot")
                 retry_index = idx + 1
                 retry_id, retry_item = await _enqueue_child(descriptor, retry_index)
+                retry_pairs.append((idx, descriptor, retry_id, retry_item))
+
+            for retry_number, (idx, descriptor, retry_id, retry_item) in enumerate(retry_pairs, start=1):
+                slot_label = descriptor.get("slot")
                 image_bytes, fail_reason, cancelled = await _await_child(retry_id, retry_item, slot_label)
                 if cancelled:
-                    # 재시도 큐마저 사용자가 취소한 경우 - 폴백 없이 세션 전체 취소.
+                    # 재시도 큐마저 사용자가 취소한 경우 세션 전체를 취소한다.
                     raise RuntimeError(f"사용자가 큐를 취소했습니다 (slot={slot_label}, 사유={fail_reason})")
                 if image_bytes:
                     images[idx] = image_bytes
+                    success_count += 1
                     print(f"[ILLUST_CONTEXT] 재시도 성공으로 이미지 교체: slot={slot_label}")
-                    continue
-                # ─── 3차: 재시도까지 실패한 슬롯에만 폴백 이미지 삽입. descriptor는 그대로 두어
-                # items/images 정렬과 Risu manifest 매핑이 깨지지 않게 한다.
-                print(
-                    f"[ILLUST_CONTEXT] 재시도도 실패 - 폴백 이미지로 대체: slot={slot_label}, 사유={fail_reason}"
-                )
-                substituted.append(f"#{retry_index}(slot {slot_label}): {fail_reason or '알 수 없음'}")
-                if not fallback_bytes:
-                    raise RuntimeError(
-                        f"이미지 {retry_index}/{total} 슬롯 실패({fail_reason})인데 폴백 이미지를 불러오지 못했습니다"
+                else:
+                    # 최종 실패 슬롯은 성공 결과/짧은 슬롯 manifest에서 제외한다.
+                    print(
+                        f"[ILLUST_CONTEXT] 재시도도 실패 - 결과에서 제외: "
+                        f"slot={slot_label}, 사유={fail_reason}"
                     )
-                images[idx] = fallback_bytes
+                    failures.append({"slot": slot_label, "error": fail_reason or "알 수 없음"})
+                await progress(
+                    92 + (retry_number / len(retry_pairs)) * 7,
+                    "retrying",
+                    f"성공 {success_count}/{total}장 · 재시도 {retry_number}/{len(retry_pairs)} 처리",
+                    success_count,
+                    total,
+                )
 
-        if substituted:
+        successful_items = []
+        successful_images = []
+        for descriptor, image_bytes in zip(raw_items, images):
+            if image_bytes:
+                successful_items.append(descriptor)
+                successful_images.append(image_bytes)
+
+        if not successful_images:
+            raise RuntimeError(f"이미지 {total}장이 재시도 후에도 모두 실패했습니다")
+
+        if failures:
             print(
-                f"[ILLUST_CONTEXT] 일부 슬롯 폴백 대체 후 계속: session={session_id}, "
-                f"전체={total}/{total}, 대체={substituted}"
+                f"[ILLUST_CONTEXT] 일부 슬롯 최종 실패를 제외하고 계속: session={session_id}, "
+                f"성공={len(successful_images)}/{total}, 실패={failures}"
             )
 
-        illustration_context_pipeline.set_session_result(session_id, raw_items, images)
-        first = images[0]
+        illustration_context_pipeline.set_session_result(
+            session_id,
+            successful_items,
+            successful_images,
+            requested_count=total,
+            failures=failures,
+        )
+        first = successful_images[0]
         original = prompts[original_prompt_id]
         original["image_bytes"] = first
         filename = f"ComfyUI_{original_prompt_id[:8]}.png"
@@ -2712,15 +2711,25 @@ async def process_illustration_context_queue_item(item) -> dict:
             original.get("save_node_id") or find_save_image_node(prompt_data) or "9",
             filename,
         )
-        await progress(
-            100,
-            "ready",
-            f"전체 {len(images)}장 반환 준비 완료",
-            len(images),
-            len(images),
+        ready_phase = "ready_partial" if failures else "ready"
+        ready_label = (
+            f"성공 {len(successful_images)}/{total}장 반환 준비 완료 · "
+            f"최종 실패 {len(failures)}장 제외"
+            if failures
+            else f"전체 {len(successful_images)}장 반환 준비 완료"
         )
-        print(f"[ILLUST_CONTEXT] 세션 완료: session={session_id}, images={len(images)}")
-        return {"success": True, "session_id": session_id, "count": len(images)}
+        await progress(100, ready_phase, ready_label, len(successful_images), total)
+        print(
+            f"[ILLUST_CONTEXT] 세션 완료: session={session_id}, "
+            f"success={len(successful_images)}/{total}, failed={len(failures)}"
+        )
+        return {
+            "success": True,
+            "session_id": session_id,
+            "count": len(successful_images),
+            "requested_count": total,
+            "failed_count": len(failures),
+        }
     except Exception as e:
         print(f"[ILLUST_CONTEXT] 세션 처리 실패: session={session_id}, error={e}")
         traceback.print_exc()
@@ -2892,6 +2901,10 @@ async def handle_api_illustration_context_bridge_session(request: web.Request) -
             "status": str(session.get("status") or "missing"),
             "error": str(session.get("error") or ""),
             "progress": progress,
+            "requested_count": int(session.get("requested_count") or len(items)),
+            "success_count": int(session.get("success_count") or len(items)),
+            "failure_count": int(session.get("failure_count") or 0),
+            "failures": session.get("failures") or [],
             "items": items,
         })
     except Exception as e:
