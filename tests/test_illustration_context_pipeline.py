@@ -832,6 +832,60 @@ Hana: "No way!" #burst""",
 
 
 @pytest.mark.asyncio
+async def test_call2_ready_callback_runs_before_call3_and_receives_generation_raw(monkeypatch):
+    events = []
+    early_payloads = []
+
+    async def fake_call(task_key, messages, **kwargs):
+        events.append(task_key)
+        if task_key == "illustration_call2":
+            return """<lb-xnai>
+scenes[1]:
+  - camera: close-up
+    characters[1]:
+      - name: hana
+        positive: 1girl, hana, black hair
+    scene: classroom
+    slot: 0
+</lb-xnai>"""
+        assert task_key == "illustration_call3"
+        assert events == ["illustration_call2", "dispatch", "illustration_call3"]
+        return '[Scene slot=0]\nHana: "Ready." #normal'
+
+    async def on_call2_ready(payload):
+        events.append("dispatch")
+        early_payloads.append(payload)
+        assert payload["items"][0].get("speak") in (None, "")
+        assert 'Hana: "Ready."' not in payload["items"][0]["raw_positive"]
+
+    monkeypatch.setattr(pipeline.llm_service, "callLLMTask", fake_call)
+    result = await pipeline.build_from_context(
+        {
+            "session_id": "call2_early_dispatch_test",
+            "target_slotted": "하나가 교실을 둘러본다.\n\n[Slot 0]",
+            "chats": [
+                {"role": "user", "data": "어디야?"},
+                {"role": "char", "data": "하나가 교실을 둘러본다."},
+            ],
+        },
+        {
+            "call1_enabled": False,
+            "call3_enabled": True,
+            "speak_enabled": True,
+            "call3_prompt_mode": "manga",
+            "key_visual": False,
+        },
+        "### hana\n-Appearance: 1girl, black hair",
+        on_call2_ready=on_call2_ready,
+    )
+
+    assert events == ["illustration_call2", "dispatch", "illustration_call3"]
+    assert len(early_payloads) == 1
+    assert result["items"][0]["speak"] == 'Hana: "Ready." #normal'
+    assert '[SPEAK]\nHana: "Ready." #normal' in result["items"][0]["raw_positive"]
+
+
+@pytest.mark.asyncio
 async def test_build_from_context_uses_backtranslated_current_response_only(monkeypatch):
     calls = []
 

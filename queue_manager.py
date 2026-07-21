@@ -224,10 +224,52 @@ class QueueManager:
             print(f"[QUEUE] 대기 항목 {cancelled}개 전체 취소")
             await self._notify_queue_updated()
 
+    def _item_execution_area(self, item: QueueItem) -> tuple[str, str]:
+        """큐 UI용 실행 영역과 공급자를 반환한다. 실제 스케줄 순서는 변경하지 않는다."""
+        if item.type in LLM_TYPES:
+            return "llm", "llm"
+
+        params = item.params if isinstance(item.params, dict) else {}
+        raw_body = params.get("raw_body") if isinstance(params.get("raw_body"), dict) else {}
+        provider = str(
+            params.get("provider")
+            or raw_body.get("illustration_provider")
+            or ""
+        ).strip().lower()
+        if not provider and item.type in ("illustration", "regenerate"):
+            try:
+                config = self.get_config() if self.get_config else {}
+                provider = str(
+                    config.get(
+                        "illustration_provider",
+                        "comfy",
+                    )
+                    or "comfy"
+                ).strip().lower()
+                if item.type == "illustration" and not config.get("bot_selected"):
+                    provider = "comfy"
+            except Exception as e:
+                print(
+                    f"[QUEUE] 실행 영역 공급자 조회 실패: "
+                    f"item={item.id}, type={item.type}, error={e}"
+                )
+                traceback.print_exc()
+                provider = "comfy"
+        if provider == "chansub":
+            return "external", "chansub"
+        return "gpu", provider or "local"
+
+    def _item_status_dict(self, item: QueueItem) -> dict:
+        data = item.to_dict()
+        execution_area, provider = self._item_execution_area(item)
+        data["execution_area"] = execution_area
+        data["provider"] = provider
+        return data
+
     def get_status(self) -> dict:
         return {
-            "items": [i.to_dict() for i in self.items],
-            "current": self.current_item.to_dict() if self.current_item else None,
+            "items": [self._item_status_dict(i) for i in self.items],
+            "current": self._item_status_dict(self.current_item) if self.current_item else None,
             "processing": self._processing,
             "paused": self._paused,
             "pending_count": len([i for i in self.items if i.status == "pending"]),

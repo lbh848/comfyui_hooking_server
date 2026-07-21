@@ -1143,6 +1143,9 @@ def create_placeholder_png() -> bytes:
 
 
 # ─── 백업 관리 ────────────────────────────────────────────
+_BACKUP_SNAPSHOT_UNSET = object()
+
+
 async def save_backup(
     image_bytes: bytes,
     prompt_id: str,
@@ -1158,14 +1161,33 @@ async def save_backup(
     speak_text: str = "",
     provider: str = "comfy",
     generation_params: dict = None,
+    original_workflow_snapshot=_BACKUP_SNAPSHOT_UNSET,
+    api_workflow_snapshot=_BACKUP_SNAPSHOT_UNSET,
+    conversion_info_snapshot=_BACKUP_SNAPSHOT_UNSET,
 ):
     """이미지(WebP q80 + 원본 워크플로우 메타데이터)와 원본 워크플로우를 백업한다.
     bot_name: 봇/워크플로우 컨텍스트 딱지 (bot 모드일 때 봇 이름).
     gen_method: 생성 방법 딱지 (수동 그리기 / 자동 복원 등). 일반 생성·재생성은 빈칸.
     postprocess_settings: 후처리(vn) 설정 스냅샷. dict이면 [SPEAK] 합성을 이미지에 적용.
-    speak_text: 후처리에 쓸 [SPEAK] 원문 (postprocess_settings 있을 때만 의미)."""
+    speak_text: 후처리에 쓸 [SPEAK] 원문 (postprocess_settings 있을 때만 의미).
+    *_snapshot: 이미지 생성과 백업이 겹칠 때 해당 이미지 생성 시점의 전역 메타데이터를 고정한다."""
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     base_name = f"{ts}_{prompt_id[:8]}"
+    backup_original_workflow = (
+        original_workflow_snapshot
+        if original_workflow_snapshot is not _BACKUP_SNAPSHOT_UNSET
+        else current_original_workflow
+    )
+    backup_api_workflow = (
+        api_workflow_snapshot
+        if api_workflow_snapshot is not _BACKUP_SNAPSHOT_UNSET
+        else current_api_workflow
+    )
+    backup_conversion_info = (
+        conversion_info_snapshot
+        if conversion_info_snapshot is not _BACKUP_SNAPSHOT_UNSET
+        else current_conversion_info
+    )
 
     # 0) 후처리([SPEAK] 합성) — 저장 전 이미지에 적용
     #    postprocess_settings._mode == "bubble" 이면 말풍선 빌더, 아니면 vn 대사창 빌더.
@@ -1195,12 +1217,12 @@ async def save_backup(
 
     # EXIF에 원본 워크플로우 삽입 (ComfyUI 호환)
     exif_bytes = None
-    if HAS_PIEXIF and current_original_workflow:
+    if HAS_PIEXIF and backup_original_workflow:
         try:
             metadata = json.dumps(
                 {
-                    "prompt": current_api_workflow or {},
-                    "workflow": current_original_workflow,
+                    "prompt": backup_api_workflow or {},
+                    "workflow": backup_original_workflow,
                 },
                 ensure_ascii=False,
             )
@@ -1244,8 +1266,8 @@ async def save_backup(
                 ensure_ascii=False,
             )
         print(f"[BACKUP] 챈섭 프롬프트 저장: {base_name}.json")
-    elif current_original_workflow:
-        wf_copy = copy.deepcopy(current_original_workflow)
+    elif backup_original_workflow:
+        wf_copy = copy.deepcopy(backup_original_workflow)
         if "nodes" in wf_copy:
             for node in wf_copy["nodes"]:
                 title = node.get("title", "")
@@ -1274,7 +1296,7 @@ async def save_backup(
         print(f"[BACKUP] 워크플로우 저장: {base_name}.json")
 
     # 3) 변환 정보 저장
-    info_to_save = copy.deepcopy(current_conversion_info)
+    info_to_save = copy.deepcopy(backup_conversion_info)
     if generation_time is not None:
         info_to_save["generation_time"] = generation_time
     if bot_name:
@@ -2176,6 +2198,172 @@ async def complete_prompt_from_reschedule(prompt_id: str, save_node_id: str, fil
         prompts[prompt_id]["outputs"] = {"images": []}
 
 
+def _get_illustration_postprocess_settings(bot_name: str) -> dict | None:
+    """봇별 후처리 설정을 현재 모드에 맞게 스냅샷으로 반환한다."""
+    try:
+        from modes.postprocess import get_vn_settings, get_bubble_settings
+        from modes.bot_mode import _get_postprocess_mode
+
+        postprocess_mode = _get_postprocess_mode(bot_name)
+        if postprocess_mode == "bubble":
+            bubble_settings = get_bubble_settings(app_config, bot_name=bot_name)
+            if bubble_settings:
+                return {"_mode": "bubble", **bubble_settings}
+            print(f"[BACKUP] 말풍선 후처리 설정이 비어 있음: bot={bot_name!r}")
+            return None
+        return get_vn_settings(app_config, bot_name=bot_name)
+    except Exception as e:
+        print(f"[BACKUP] ⚠ 후처리 설정 조회 실패: bot={bot_name!r}, error={e}")
+        traceback.print_exc()
+        return None
+
+
+def _resolve_deferred_speak_text(prompt_id: str, descriptor: dict) -> str:
+    """조기 생성에서 건너뛴 RAW 단어 규칙을 최종 SPEAK 발화자명에 동일 적용한다."""
+    original_speak = str(descriptor.get("speak") or "")
+    if not original_speak:
+        return ""
+    entry = prompts.get(prompt_id) or {}
+    state = entry.get("_deferred_finalize") or {}
+    bot_name = str(state.get("bot_name") or "")
+    raw_positive = str(descriptor.get("raw_positive") or "")
+    if not bot_name or not raw_positive:
+        return original_speak
+    try:
+        transformed_raw = apply_raw_prompt_word_replacements(raw_positive, bot_name)
+        transformed_speak = str(
+            IllustPromptBuilder().parse_sections(transformed_raw).get("speak") or ""
+        )
+        if transformed_speak:
+            return transformed_speak
+        print(
+            f"[ILLUST_CONTEXT:POSTPROCESS] 최종 SPEAK 재파싱 결과가 비어 원문 사용: "
+            f"prompt={prompt_id}, bot={bot_name!r}"
+        )
+        return original_speak
+    except Exception as e:
+        print(
+            f"[ILLUST_CONTEXT:POSTPROCESS] 최종 SPEAK 단어 규칙 적용 실패, 원문 사용: "
+            f"prompt={prompt_id}, bot={bot_name!r}, error={e}"
+        )
+        traceback.print_exc()
+        return original_speak
+
+
+async def _finalize_deferred_illustration_prompt(prompt_id: str, speak_text: str) -> bytes:
+    """CALL3와 병렬 생성된 원본을 후처리·백업한 뒤에만 공개 상태로 전환한다."""
+    entry = prompts.get(prompt_id)
+    if not isinstance(entry, dict):
+        print(f"[ILLUST_CONTEXT:POSTPROCESS] 보류 prompt 없음: prompt={prompt_id}")
+        raise RuntimeError("후처리할 이미지 prompt를 찾지 못했습니다")
+    raw_image = entry.get("_deferred_image_bytes")
+    state = entry.get("_deferred_finalize")
+    if not raw_image or not isinstance(state, dict):
+        print(
+            f"[ILLUST_CONTEXT:POSTPROCESS] 보류 데이터 없음: prompt={prompt_id}, "
+            f"image={bool(raw_image)}, state={type(state).__name__}"
+        )
+        raise RuntimeError("후처리할 보류 이미지 데이터가 없습니다")
+
+    try:
+        bot_name = str(state.get("bot_name") or "")
+        postprocess_settings = _get_illustration_postprocess_settings(bot_name)
+        _backup_name, final_image = await save_backup(
+            raw_image,
+            prompt_id,
+            str(state.get("positive") or ""),
+            str(state.get("negative") or ""),
+            generation_time=state.get("generation_time"),
+            bot_name=bot_name,
+            gen_method=str(state.get("gen_method") or ""),
+            postprocess_settings=postprocess_settings,
+            speak_text=str(speak_text or ""),
+            provider=str(state.get("provider") or "comfy"),
+            generation_params=state.get("generation_params"),
+            original_workflow_snapshot=state.get("original_workflow"),
+            api_workflow_snapshot=state.get("api_workflow"),
+            conversion_info_snapshot=state.get("conversion_info"),
+        )
+
+        save_node_id = entry.get("save_node_id") or "9"
+        filename = f"ComfyUI_{prompt_id[:8]}.png"
+        entry["status"] = "completed"
+        entry["outputs"] = {
+            "images": [{"filename": filename, "subfolder": "", "type": "output"}]
+        }
+        entry["filename"] = filename
+        entry["image_bytes"] = final_image
+        entry.pop("_deferred_image_bytes", None)
+        entry.pop("_deferred_finalize", None)
+
+        executed_msg = {
+            "type": "executed",
+            "data": {
+                "node": save_node_id,
+                "output": {
+                    "images": [{"filename": filename, "subfolder": "", "type": "output"}]
+                },
+                "prompt_id": prompt_id,
+            },
+        }
+        exec_done_msg = {
+            "type": "executing",
+            "data": {"node": None, "prompt_id": prompt_id},
+        }
+        for _sid, ws in list(ws_connections.items()):
+            try:
+                await ws.send_json(executed_msg)
+                await ws.send_json(exec_done_msg)
+            except Exception as e:
+                print(
+                    f"[ILLUST_CONTEXT:POSTPROCESS] 완료 WS 전송 실패: "
+                    f"prompt={prompt_id}, error={e}"
+                )
+                traceback.print_exc()
+
+        print(
+            f"[ILLUST_CONTEXT:POSTPROCESS] 보류 이미지 후처리 완료: "
+            f"prompt={prompt_id}, speak_len={len(str(speak_text or ''))}"
+        )
+        return final_image
+    except Exception as e:
+        print(f"[ILLUST_CONTEXT:POSTPROCESS] 보류 이미지 후처리 실패: prompt={prompt_id}, error={e}")
+        traceback.print_exc()
+        raise
+
+
+def _discard_deferred_illustration_prompt(prompt_id: str, reason: str) -> None:
+    """상위 CALL 파이프라인 실패 시 외부에 노출하지 않은 원본을 메모리에서 제거한다."""
+    entry = prompts.get(prompt_id)
+    if not isinstance(entry, dict):
+        print(f"[ILLUST_CONTEXT:POSTPROCESS] 보류 이미지 폐기 스킵 - prompt 없음: {prompt_id}")
+        return
+    if "_deferred_image_bytes" not in entry and "_deferred_finalize" not in entry:
+        if entry.get("status") == "running":
+            entry["status"] = "completed"
+            entry["outputs"] = {"images": []}
+            entry["image_bytes"] = None
+            print(
+                f"[ILLUST_CONTEXT:POSTPROCESS] 생성 전 하위 prompt 정리: "
+                f"prompt={prompt_id}, reason={reason}"
+            )
+            return
+        print(
+            f"[ILLUST_CONTEXT:POSTPROCESS] 보류 이미지 폐기 스킵 - 보류 상태 아님: "
+            f"prompt={prompt_id}, reason={reason}"
+        )
+        return
+    had_deferred = bool(entry.pop("_deferred_image_bytes", None))
+    entry.pop("_deferred_finalize", None)
+    entry["status"] = "completed"
+    entry["outputs"] = {"images": []}
+    entry["image_bytes"] = None
+    print(
+        f"[ILLUST_CONTEXT:POSTPROCESS] 보류 이미지 폐기: prompt={prompt_id}, "
+        f"image={had_deferred}, reason={reason}"
+    )
+
+
 async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, queue_progress_callback=None):
     save_node_id = find_save_image_node(incoming_prompt)
     if not save_node_id:
@@ -2202,7 +2390,11 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
 
         # 단어 기반 규칙 적용 / 삽화 모드 프롬프트 빌딩
         bot_name = app_config.get("bot_selected", "")
-        illustration_provider = (app_config.get("illustration_provider", "comfy") or "comfy").strip().lower()
+        illustration_provider = str(
+            raw_body.get("illustration_provider")
+            or app_config.get("illustration_provider", "comfy")
+            or "comfy"
+        ).strip().lower()
         if not bot_name:
             illustration_provider = "comfy"
         # CALL 파이프라인이 전달한 프롬프트 포맷(v1/v3/chansub). 없으면 V3(일반/수동그리기).
@@ -2432,21 +2624,38 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
         _backup_bot_name = bot_name if bot_name else ""
         # 수동 그리기(prompt_id 'manual-' 접두사)는 생성 방법 딱지 부여 (봇 딱지와 별개 차원)
         _gen_method = "수동 그리기" if str(prompt_id).startswith("manual-") else ""
+        _generation_params = {
+            "width": generation_width,
+            "height": generation_height,
+            "model": chansub_service.CHANSUB_MODEL if illustration_provider == "chansub" else "",
+        } if illustration_provider == "chansub" else None
+
+        # CALL2 직후 조기 등록된 이미지는 GPU/외부 큐를 즉시 놓아 다음 이미지가 계속
+        # 생성되게 한다. 원본은 공개 필드(image_bytes)에 넣지 않고 CALL3 합류용으로만 보류한다.
+        if raw_body.get("illustration_defer_postprocess"):
+            prompt_entry = prompts[prompt_id]
+            prompt_entry["_deferred_image_bytes"] = img_bytes
+            prompt_entry["_deferred_finalize"] = {
+                "positive": positive,
+                "negative": negative,
+                "generation_time": elapsed_time,
+                "bot_name": _backup_bot_name,
+                "gen_method": _gen_method,
+                "provider": illustration_provider,
+                "generation_params": copy.deepcopy(_generation_params),
+                "original_workflow": copy.deepcopy(current_original_workflow),
+                "api_workflow": copy.deepcopy(current_api_workflow),
+                "conversion_info": copy.deepcopy(current_conversion_info),
+            }
+            print(
+                f"[ILLUST_CONTEXT:POSTPROCESS] 이미지 원본 보류 · 다음 생성 계속: "
+                f"prompt={prompt_id}, bytes={len(img_bytes):,}, provider={illustration_provider}"
+            )
+            return
+
         # 후처리([SPEAK] 합성): 활성 시 설정 스냅샷 + 이번 생성의 SPEAK 원문 전달
         # 봇의 postprocess_mode(vn|bubble) 에 따라 어느 합성 빌더를 쓸지 결정.
-        _pp_settings = None
-        try:
-            from modes.postprocess import get_vn_settings, get_bubble_settings
-            from modes.bot_mode import _get_postprocess_mode
-            _pp_mode = _get_postprocess_mode(_backup_bot_name)
-            if _pp_mode == "bubble":
-                _bb = get_bubble_settings(app_config, bot_name=_backup_bot_name)
-                if _bb:
-                    _pp_settings = {"_mode": "bubble", **_bb}
-            else:
-                _pp_settings = get_vn_settings(app_config, bot_name=_backup_bot_name)
-        except Exception as _e:
-            print(f"[BACKUP] ⚠ 후처리 설정 조회 실패: {_e}")
+        _pp_settings = _get_illustration_postprocess_settings(_backup_bot_name)
         _backup_name, img_bytes = await save_backup(
             img_bytes,
             prompt_id,
@@ -2458,11 +2667,7 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
             postprocess_settings=_pp_settings,
             speak_text=_speak_text,
             provider=illustration_provider,
-            generation_params={
-                "width": generation_width,
-                "height": generation_height,
-                "model": chansub_service.CHANSUB_MODEL if illustration_provider == "chansub" else "",
-            } if illustration_provider == "chansub" else None,
+            generation_params=_generation_params,
         )
 
         # 프록시 응답 설정
@@ -2651,13 +2856,31 @@ def build_bot_character_names(bot_name: str) -> str:
 
 
 async def process_illustration_context_queue_item(item) -> dict:
-    """LLM 큐 핸들러: CALL1/2/3 후 기존 illustration 큐 N개를 만들고 모두 기다린다."""
+    """CALL2 뒤 이미지 큐와 CALL3를 병렬 실행하고 후처리 합류까지 기다린다."""
     params = item.params or {}
     original_prompt_id = str(params.get("prompt_id") or "")
     payload = params.get("payload") or {}
     session_id = str(payload.get("session_id") or "")
     prompt_data = params.get("prompt_data") or {}
     raw_body = params.get("raw_body") or {}
+    active_bot = str(app_config.get("bot_selected") or "")
+    illustration_provider_snapshot = str(
+        app_config.get("illustration_provider", "comfy") or "comfy"
+    ).strip().lower()
+    if not active_bot:
+        illustration_provider_snapshot = "comfy"
+    if illustration_provider_snapshot not in ("comfy", "chansub"):
+        print(
+            f"[ILLUST_CONTEXT] 알 수 없는 공급자 스냅샷: "
+            f"{illustration_provider_snapshot!r}, comfy 사용"
+        )
+        illustration_provider_snapshot = "comfy"
+
+    child_pairs = []
+    all_child_pairs = []
+    early_descriptor_slots = []
+    early_dispatch = False
+    raw_items = []
 
     async def progress(
         value: float,
@@ -2676,10 +2899,11 @@ async def process_illustration_context_queue_item(item) -> dict:
         )
         await queue_manager._notify_progress(item, {
             "phase": phase,
+            "percentage": value,
             "value": value,
             "max": 100,
-            "current": value,
-            "total": 100,
+            "current": done,
+            "total": total,
             "detail": detail,
         })
 
@@ -2687,6 +2911,131 @@ async def process_illustration_context_queue_item(item) -> dict:
         data = dict(event)
         data.update({"prompt_id": original_prompt_id, "session_id": session_id})
         await notify_frontend("lighbd_llm_stream", data)
+
+    # 단일 슬롯을 삽화 하위 큐에 등록. 조기 등록과 2차 재시도가 모두 이 함수를 경유한다.
+    async def _enqueue_child(
+        descriptor,
+        slot_index,
+        total_count,
+        context_value,
+        prompt_format,
+        *,
+        defer_postprocess,
+    ):
+        child_id = str(uuid.uuid4())
+        child_prompt = copy.deepcopy(prompt_data)
+        if not set_prompt_by_title(child_prompt, "긍정프롬프트", descriptor.get("raw_positive", "")):
+            print(
+                f"[ILLUST_CONTEXT] 긍정프롬프트 노드 교체 실패: "
+                f"session={session_id}, slot={descriptor.get('slot')}"
+            )
+            raise RuntimeError("긍정프롬프트 노드를 교체하지 못했습니다")
+        if not set_prompt_by_title(child_prompt, "부정프롬프트", descriptor.get("raw_negative", "")):
+            print(
+                f"[ILLUST_CONTEXT] 부정프롬프트 노드 교체 실패: "
+                f"session={session_id}, slot={descriptor.get('slot')}"
+            )
+            raise RuntimeError("부정프롬프트 노드를 교체하지 못했습니다")
+        prompts[child_id] = {
+            "status": "running",
+            "prompt": child_prompt,
+            "client_id": raw_body.get("client_id", ""),
+            "extra_data": raw_body.get("extra_data", {}),
+            "outputs": {},
+            "filename": None,
+            "save_node_id": find_save_image_node(child_prompt),
+            "image_bytes": None,
+            "timestamp": time.time(),
+        }
+        child_raw_body = {
+            "prompt": child_prompt,
+            "client_id": raw_body.get("client_id", ""),
+            "extra_data": raw_body.get("extra_data", {}),
+            "illustration_context": context_value,
+            "illustration_context_session_id": session_id,
+            "illustration_context_index": slot_index,
+            "illustration_prompt_format": prompt_format,
+            "illustration_provider": illustration_provider_snapshot,
+            "illustration_defer_postprocess": bool(defer_postprocess),
+        }
+        try:
+            child_item = await queue_manager.add_item(
+                "illustration",
+                f"삽화 {slot_index}/{total_count} · slot {descriptor.get('slot')}",
+                {
+                    "prompt_id": child_id,
+                    "prompt_data": child_prompt,
+                    "raw_body": child_raw_body,
+                    "provider": illustration_provider_snapshot,
+                },
+                priority=0,
+            )
+        except Exception as e:
+            print(
+                f"[ILLUST_CONTEXT] 하위 이미지 큐 등록 실패: "
+                f"child={child_id}, slot={descriptor.get('slot')}, error={e}"
+            )
+            traceback.print_exc()
+            prompts[child_id]["status"] = "completed"
+            prompts[child_id]["outputs"] = {"images": []}
+            raise
+        pair = (child_id, child_item)
+        all_child_pairs.append(pair)
+        return pair
+
+    # 하위 큐 완료를 기다리고 원본 또는 이미 완료된 최종 image bytes를 회수한다.
+    async def _await_child(child_id, child_item, slot_label):
+        try:
+            await child_item.completion_future
+            child_prompt = prompts.get(child_id, {})
+            image_bytes = (
+                child_prompt.get("_deferred_image_bytes")
+                or child_prompt.get("image_bytes")
+            )
+            if not image_bytes:
+                print(
+                    f"[ILLUST_CONTEXT] 하위 이미지 결과가 비어 있음: "
+                    f"child={child_id}, slot={slot_label}"
+                )
+                return None, "생성 결과 비어 있음", False
+            return image_bytes, "", False
+        except Exception as e:
+            if getattr(child_item, "status", None) == "cancelled" or "취소" in str(e):
+                print(
+                    f"[ILLUST_CONTEXT] 하위 큐가 사용자에 의해 취소됨: "
+                    f"child={child_id}, slot={slot_label}, error={e}"
+                )
+                return None, f"취소됨 - {e}", True
+            print(f"[ILLUST_CONTEXT] 하위 이미지 큐 실패: child={child_id}, slot={slot_label}, error={e}")
+            traceback.print_exc()
+            return None, f"큐 실패 - {e}", False
+
+    async def _collect_final_child(child_id, child_item, descriptor):
+        slot_label = descriptor.get("slot")
+        image_bytes, fail_reason, cancelled = await _await_child(
+            child_id,
+            child_item,
+            slot_label,
+        )
+        if not image_bytes or cancelled:
+            return image_bytes, fail_reason, cancelled
+        child_prompt = prompts.get(child_id, {})
+        if "_deferred_finalize" not in child_prompt:
+            return image_bytes, "", False
+        try:
+            final_image = await _finalize_deferred_illustration_prompt(
+                child_id,
+                _resolve_deferred_speak_text(child_id, descriptor),
+            )
+            return final_image, "", False
+        except Exception as e:
+            print(
+                f"[ILLUST_CONTEXT] 하위 이미지 후처리 실패: "
+                f"child={child_id}, slot={slot_label}, error={e}"
+            )
+            traceback.print_exc()
+            _discard_deferred_illustration_prompt(child_id, f"후처리 실패 - {e}")
+            return None, f"후처리 실패 - {e}", False
 
     try:
         if not original_prompt_id or original_prompt_id not in prompts:
@@ -2716,7 +3065,6 @@ async def process_illustration_context_queue_item(item) -> dict:
             )
         else:
             await progress(2, "context", "CHAT 컨텍스트 수신")
-            active_bot = app_config.get("bot_selected", "")
             # CALL1=복장만, CALL2/2-FIX=full(시스템프롬프트+복장), CALL3=이름리스트만.
             extra_reference = build_active_lb_extra(active_bot)
             extra_costume = build_lb_extra_costume(active_bot)
@@ -2730,14 +3078,41 @@ async def process_illustration_context_queue_item(item) -> dict:
                 _pp_mode = _get_postprocess_mode(active_bot)
             except Exception as e:
                 print(f"[ILLUST_CONTEXT] postprocess_mode 조회 실패(bot={active_bot}): {e}")
+                traceback.print_exc()
                 _pp_mode = "vn"
             illust_toggles["call3_prompt_mode"] = "manga" if _pp_mode == "bubble" else "speak"
+
+            async def _on_call2_ready(call2_built: dict):
+                nonlocal child_pairs, early_dispatch, early_descriptor_slots
+                preliminary_items = call2_built.get("items") or []
+                if not preliminary_items:
+                    print(f"[ILLUST_CONTEXT] CALL2 조기 등록 장면이 비어 있음: session={session_id}")
+                    raise RuntimeError("CALL2 조기 등록 장면이 비어 있습니다")
+                early_dispatch = True
+                early_descriptor_slots = [entry.get("slot") for entry in preliminary_items]
+                total_count = len(preliminary_items)
+                print(
+                    f"[ILLUST_CONTEXT] CALL2 완료 · CALL3와 이미지 생성 병렬 시작: "
+                    f"session={session_id}, images={total_count}, "
+                    f"provider={illustration_provider_snapshot}"
+                )
+                for index, descriptor in enumerate(preliminary_items, start=1):
+                    child_pairs.append(await _enqueue_child(
+                        descriptor,
+                        index,
+                        total_count,
+                        call2_built.get("context", ""),
+                        call2_built.get("prompt_format", "v3"),
+                        defer_postprocess=True,
+                    ))
+
             built = await illustration_context_pipeline.build_from_context(
                 payload,
                 illust_toggles,
                 extra_reference,
                 progress=progress,
                 stream_notify=stream_notify,
+                on_call2_ready=_on_call2_ready,
                 extra_costume=extra_costume,
                 extra_names=extra_names,
                 backtranslate_names=backtranslate_names,
@@ -2747,69 +3122,39 @@ async def process_illustration_context_queue_item(item) -> dict:
                 print(f"[ILLUST_CONTEXT] 생성할 장면이 없음: session={session_id}")
                 raise RuntimeError("CALL 결과에 생성할 장면이 없습니다")
 
-        await progress(70, "enqueue", f"이미지 {len(raw_items)}장 큐 등록", 0, len(raw_items))
+            if len(child_pairs) != len(raw_items):
+                print(
+                    f"[ILLUST_CONTEXT] 조기 등록/최종 장면 수 불일치: "
+                    f"session={session_id}, early={len(child_pairs)}, final={len(raw_items)}"
+                )
+                raise RuntimeError("CALL2 조기 등록 결과와 CALL3 최종 결과 수가 다릅니다")
+            final_slots = [entry.get("slot") for entry in raw_items]
+            if early_descriptor_slots != final_slots:
+                print(
+                    f"[ILLUST_CONTEXT] 조기 등록/최종 슬롯 순서 불일치: "
+                    f"session={session_id}, early={early_descriptor_slots}, final={final_slots}"
+                )
+                raise RuntimeError("CALL2 조기 등록 결과와 CALL3 최종 슬롯 순서가 다릅니다")
 
-        # 단일 슬롯을 삽화 하위 큐에 등록. 1차 등록과 2차 재시도(재등록)가 모두 이 함수를 경유.
-        async def _enqueue_child(descriptor, slot_index):
-            child_id = str(uuid.uuid4())
-            child_prompt = copy.deepcopy(prompt_data)
-            if not set_prompt_by_title(child_prompt, "긍정프롬프트", descriptor.get("raw_positive", "")):
-                raise RuntimeError("긍정프롬프트 노드를 교체하지 못했습니다")
-            if not set_prompt_by_title(child_prompt, "부정프롬프트", descriptor.get("raw_negative", "")):
-                raise RuntimeError("부정프롬프트 노드를 교체하지 못했습니다")
-            prompts[child_id] = {
-                "status": "running",
-                "prompt": child_prompt,
-                "client_id": raw_body.get("client_id", ""),
-                "extra_data": raw_body.get("extra_data", {}),
-                "outputs": {},
-                "filename": None,
-                "save_node_id": find_save_image_node(child_prompt),
-                "image_bytes": None,
-                "timestamp": time.time(),
-            }
-            child_raw_body = {
-                "prompt": child_prompt,
-                "client_id": raw_body.get("client_id", ""),
-                "extra_data": raw_body.get("extra_data", {}),
-                "illustration_context": built.get("context", ""),
-                "illustration_context_session_id": session_id,
-                "illustration_context_index": slot_index,
-                "illustration_prompt_format": built.get("prompt_format", "v3"),
-            }
-            child_item = await queue_manager.add_item(
-                "illustration",
-                f"삽화 {slot_index}/{len(raw_items)} · slot {descriptor.get('slot')}",
-                {"prompt_id": child_id, "prompt_data": child_prompt, "raw_body": child_raw_body},
-                priority=0,
+        if not early_dispatch:
+            await progress(70, "enqueue", f"이미지 {len(raw_items)}장 큐 등록", 0, len(raw_items))
+            for index, descriptor in enumerate(raw_items, start=1):
+                child_pairs.append(await _enqueue_child(
+                    descriptor,
+                    index,
+                    len(raw_items),
+                    built.get("context", ""),
+                    built.get("prompt_format", "v3"),
+                    defer_postprocess=False,
+                ))
+        else:
+            await progress(
+                70,
+                "generating",
+                f"CALL3 완료 · 이미지 생성/후처리 합류 0/{len(raw_items)}",
+                0,
+                len(raw_items),
             )
-            return child_id, child_item
-
-        # 하위 큐 완료를 기다리고 image_bytes 를 회수.
-        # 반환: (image_bytes, 사유, cancelled)
-        #   - cancelled=True: 사용자가 큐를 직접 취소한 경우. 자동 재시도 대상이 아님.
-        async def _await_child(child_id, child_item, slot_label):
-            try:
-                await child_item.completion_future
-                image_bytes = prompts.get(child_id, {}).get("image_bytes")
-                if not image_bytes:
-                    return None, "생성 결과 비어 있음", False
-                return image_bytes, "", False
-            except Exception as e:
-                # 취소 예외(RuntimeError("큐 항목이 취소되었습니다")) 또는 이미 cancelled 상태인 경우
-                if getattr(child_item, "status", None) == "cancelled" or "취소" in str(e):
-                    print(
-                        f"[ILLUST_CONTEXT] 하위 큐가 사용자에 의해 취소됨: child={child_id}, slot={slot_label}, error={e}"
-                    )
-                    return None, f"취소됨 - {e}", True
-                print(f"[ILLUST_CONTEXT] 하위 이미지 큐 실패: child={child_id}, slot={slot_label}, error={e}")
-                traceback.print_exc()
-                return None, f"큐 실패 - {e}", False
-
-        # ─── 1차: 전부 등록 후 순차 대기. 실패 슬롯은 자리만 None으로 두고 건너뛴다.
-        child_pairs = []
-        for index, descriptor in enumerate(raw_items, start=1):
-            child_pairs.append(await _enqueue_child(descriptor, index))
 
         total = len(child_pairs)
         await progress(72, "generating", f"이미지 0/{total} 완료", 0, total)
@@ -2817,7 +3162,11 @@ async def process_illustration_context_queue_item(item) -> dict:
         to_retry: list[tuple[int, dict]] = []  # (raw_items 인덱스, descriptor)
         success_count = 0
         for idx, (child_id, child_item) in enumerate(child_pairs):
-            image_bytes, fail_reason, cancelled = await _await_child(child_id, child_item, raw_items[idx].get("slot"))
+            image_bytes, fail_reason, cancelled = await _collect_final_child(
+                child_id,
+                child_item,
+                raw_items[idx],
+            )
             if cancelled:
                 # 사용자가 직접 큐를 취소한 경우 - 재시도/폴백 없이 세션 전체를 취소한다.
                 raise RuntimeError(f"사용자가 큐를 취소했습니다 (slot={raw_items[idx].get('slot')}, 사유={fail_reason})")
@@ -2833,7 +3182,7 @@ async def process_illustration_context_queue_item(item) -> dict:
             await progress(
                 72 + (completed / total) * 20,
                 "generating",
-                f"성공 {success_count}/{total}장 · 1차 처리 {completed}/{total}",
+                f"성공 {success_count}/{total}장 · 생성/후처리 {completed}/{total}",
                 success_count,
                 total,
             )
@@ -2851,12 +3200,23 @@ async def process_illustration_context_queue_item(item) -> dict:
             for idx, descriptor in to_retry:
                 slot_label = descriptor.get("slot")
                 retry_index = idx + 1
-                retry_id, retry_item = await _enqueue_child(descriptor, retry_index)
+                retry_id, retry_item = await _enqueue_child(
+                    descriptor,
+                    retry_index,
+                    len(raw_items),
+                    built.get("context", ""),
+                    built.get("prompt_format", "v3"),
+                    defer_postprocess=early_dispatch,
+                )
                 retry_pairs.append((idx, descriptor, retry_id, retry_item))
 
             for retry_number, (idx, descriptor, retry_id, retry_item) in enumerate(retry_pairs, start=1):
                 slot_label = descriptor.get("slot")
-                image_bytes, fail_reason, cancelled = await _await_child(retry_id, retry_item, slot_label)
+                image_bytes, fail_reason, cancelled = await _collect_final_child(
+                    retry_id,
+                    retry_item,
+                    descriptor,
+                )
                 if cancelled:
                     # 재시도 큐마저 사용자가 취소한 경우 세션 전체를 취소한다.
                     raise RuntimeError(f"사용자가 큐를 취소했습니다 (slot={slot_label}, 사유={fail_reason})")
@@ -2933,6 +3293,35 @@ async def process_illustration_context_queue_item(item) -> dict:
     except Exception as e:
         print(f"[ILLUST_CONTEXT] 세션 처리 실패: session={session_id}, error={e}")
         traceback.print_exc()
+        cleanup_reason = f"상위 파이프라인 실패 - {e}"
+        for child_id, child_item in all_child_pairs:
+            completion_future = getattr(child_item, "completion_future", None)
+
+            def _cleanup_deferred(_future, *, _child_id=child_id, _reason=cleanup_reason):
+                try:
+                    if _future is not None and not _future.cancelled():
+                        _future.exception()
+                except BaseException as cleanup_error:
+                    print(
+                        f"[ILLUST_CONTEXT:POSTPROCESS] 하위 완료 상태 회수 실패: "
+                        f"child={_child_id}, error={cleanup_error}"
+                    )
+                _discard_deferred_illustration_prompt(_child_id, _reason)
+
+            if completion_future is not None and not completion_future.done():
+                completion_future.add_done_callback(_cleanup_deferred)
+            else:
+                _cleanup_deferred(completion_future)
+            if getattr(child_item, "status", None) == "pending":
+                try:
+                    await queue_manager.cancel_item(child_item.id)
+                except Exception as cleanup_error:
+                    print(
+                        f"[ILLUST_CONTEXT:POSTPROCESS] 대기 하위 큐 취소 실패: "
+                        f"child={child_id}, queue={getattr(child_item, 'id', '')}, "
+                        f"error={cleanup_error}"
+                    )
+                    traceback.print_exc()
         illustration_context_pipeline.set_session_error(session_id, str(e))
         if original_prompt_id in prompts:
             prompts[original_prompt_id]["status"] = "completed"

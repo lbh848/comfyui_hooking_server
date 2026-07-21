@@ -894,6 +894,50 @@
         }
 
         /* 큐 모달 아이템 */
+        #queue-modal .queue-modal-content {
+            width:min(1180px, calc(100vw - 32px));
+            max-width:1180px;
+        }
+        .queue-lanes {
+            display:grid;
+            grid-template-columns:repeat(3, minmax(0, 1fr));
+            gap:12px;
+            align-items:start;
+        }
+        .queue-lane {
+            min-width:0;
+            border:1px solid var(--border);
+            border-radius:10px;
+            background:color-mix(in srgb, var(--surface1) 72%, transparent);
+            overflow:hidden;
+        }
+        .queue-lane-header {
+            display:flex;
+            align-items:center;
+            gap:8px;
+            min-height:42px;
+            padding:9px 11px;
+            border-bottom:1px solid var(--border);
+            background:var(--surface2);
+        }
+        .queue-lane-title { font-size:0.86rem; font-weight:700; color:var(--text); }
+        .queue-lane-note {
+            flex:1; min-width:0; font-size:0.68rem; color:var(--text3);
+            white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+        }
+        .queue-lane-count {
+            min-width:22px; padding:2px 6px; border-radius:999px;
+            background:var(--surface1); color:var(--text2);
+            font-size:0.68rem; text-align:center;
+        }
+        .queue-lane-items { padding:8px; min-height:72px; }
+        .queue-lane-empty {
+            display:flex; align-items:center; justify-content:center;
+            min-height:56px; color:var(--text3); font-size:0.76rem;
+        }
+        .queue-lane.llm { border-top:2px solid #8b5cf6; }
+        .queue-lane.gpu { border-top:2px solid #22c55e; }
+        .queue-lane.external { border-top:2px solid #38bdf8; }
         .queue-modal-item {
             display:flex; align-items:center; gap:10px;
             padding:10px 12px; border-radius:8px;
@@ -925,6 +969,10 @@
             font-size:0.8rem; padding:2px 4px; border-radius:3px;
         }
         .queue-modal-item .qm-actions button:hover { color:var(--text); background:var(--surface1); }
+        @media (max-width:900px) {
+            .queue-lanes { grid-template-columns:1fr; }
+            #queue-modal .queue-modal-content { width:min(680px, calc(100vw - 20px)); }
+        }
 
         .setting-row {
             display: flex;
@@ -9485,7 +9533,7 @@
 
     <!-- 통합 큐 모달 -->
     <div class="modal" id="queue-modal">
-        <div class="modal-content" style="max-width:520px;">
+        <div class="modal-content queue-modal-content">
             <div class="modal-header">
                 <h2>&#x1F4CB; 작업 큐</h2>
                 <div style="display:flex;gap:8px;align-items:center;">
@@ -46290,6 +46338,12 @@
                         status: item.status,
                         progress: item.progress || 0,
                         progress_detail: item.progress_detail || {},
+                        execution_area: item.execution_area || 'gpu',
+                        provider: item.provider || '',
+                        batch_id: item.batch_id || null,
+                        batch_label: item.batch_label || null,
+                        batch_index: item.batch_index || null,
+                        batch_total: item.batch_total || null,
                         _completedLocalTs: null,
                     }));
                     updateQueueBadge();
@@ -46330,12 +46384,28 @@
 
         const _queueTypeLabels = {
             illustration: '삽화', asset_generation: '에셋',
+            illustration_llm_build: '삽화 LLM',
             asset_lora_training: '에셋로라', bot_lora_training: '봇로라',
             instance_lora_training: '인스턴스로라',
             instance_lora_analysis: '인스턴스분석',
+            instance_lora_prompt_refine: '프롬프트 정제',
+            bot_llm_face_tag_analysis: 'LLM 얼굴분석',
             tag_analysis: '태그분석',
             regenerate: '재생성',
+            restore_manual: '수동 생성',
+            data_patch_utility: '데이터 패치',
         };
+
+        const _queueAreaDefinitions = [
+            {key: 'llm', icon: '🧠', title: 'LLM 처리', note: 'CALL 및 프롬프트 분석'},
+            {key: 'gpu', icon: '🖥️', title: 'GPU', note: '로컬 ComfyUI 작업'},
+            {key: 'external', icon: '☁️', title: '외부 서비스', note: '챈섭 API 작업'},
+        ];
+
+        function _queueItemArea(item) {
+            const area = String((item && item.execution_area) || 'gpu').toLowerCase();
+            return _queueAreaDefinitions.some(def => def.key === area) ? area : 'gpu';
+        }
 
         function _updateIllustWaitTimer() {
             if (queueIllustWaiting && !_queueIllustWaitTimer) {
@@ -46409,13 +46479,51 @@
             if (pauseBanner) body.appendChild(pauseBanner);
             if (waitBanner) body.appendChild(waitBanner);
             try {
-            // 배치 그룹핑: 동일 batch_id 항목을 1줄 요약(접기/펼치기). batch_id 없으면 개별 1줄.
+                const lanes = document.createElement('div');
+                lanes.className = 'queue-lanes';
+                _queueAreaDefinitions.forEach(def => {
+                    const laneItems = items.filter(item => _queueItemArea(item) === def.key);
+                    const activeCount = laneItems.filter(
+                        item => item.status === 'pending' || item.status === 'processing'
+                    ).length;
+                    const lane = document.createElement('section');
+                    lane.className = `queue-lane ${def.key}`;
+                    lane.dataset.queueArea = def.key;
+                    lane.innerHTML = `
+                        <div class="queue-lane-header">
+                            <span aria-hidden="true">${def.icon}</span>
+                            <span class="queue-lane-title">${def.title}</span>
+                            <span class="queue-lane-note">${def.note}</span>
+                            <span class="queue-lane-count" title="대기 및 처리 중">${activeCount}</span>
+                        </div>
+                    `;
+                    const laneBody = document.createElement('div');
+                    laneBody.className = 'queue-lane-items';
+                    laneBody.dataset.queueArea = def.key;
+                    _renderQueueAreaItems(laneBody, laneItems);
+                    lane.appendChild(laneBody);
+                    lanes.appendChild(lane);
+                });
+                body.appendChild(lanes);
+            } catch (err) { console.error('[QUEUE] renderQueueModal 아이템 렌더링 실패:', err, 'items:', items); }
+        }
+
+        // 실행 영역 하나의 항목을 기존 배치 접기 규칙으로 렌더한다.
+        function _renderQueueAreaItems(container, items) {
+            if (!items.length) {
+                const empty = document.createElement('div');
+                empty.className = 'queue-lane-empty';
+                empty.textContent = '대기 중인 작업 없음';
+                container.appendChild(empty);
+                return;
+            }
             const rendered = new Set();
-            items.forEach((item, idx) => {
+            items.forEach(item => {
                 if (rendered.has(item.id)) return;
+                const idx = queueModalData.indexOf(item);
                 if (item.batch_id) {
                     const grp = items.filter(i => i.batch_id === item.batch_id);
-                    grp.forEach(g => rendered.add(g.id));
+                    grp.forEach(groupItem => rendered.add(groupItem.id));
                     const total = item.batch_total || grp.length;
                     const pending = grp.filter(i => i.status === 'pending').length;
                     const processing = grp.filter(i => i.status === 'processing').length;
@@ -46427,27 +46535,27 @@
                     const pct = total > 0 ? Math.round((done / total) * 100) : 0;
                     const el = document.createElement('div');
                     el.className = 'queue-modal-item queue-modal-batch' + (processing ? ' processing' : '') + ((pending === 0 && processing === 0) ? ' completed' : '');
+                    el.dataset.queueArea = _queueItemArea(item);
                     el.innerHTML = `
                         <span class="qm-handle">&nbsp;</span>
-                        <span class="qm-type">${typeLabel}</span>
+                        <span class="qm-type">${escapeHtml(typeLabel)}</span>
                         <span class="qm-label" style="cursor:pointer" onclick="queueModalToggleBatch('${escapeHtml(item.batch_id)}')">${expanded ? '▼' : '▶'} ${escapeHtml(label)}</span>
                         <span class="qm-progress">${done}/${total} <span style="font-size:0.6rem;color:var(--text3);">${pct}%</span></span>
                         <span class="qm-actions">
                             ${anyPending ? '<button onclick="queueModalCancelBatch(\''+escapeHtml(item.batch_id)+'\')" title="배치 전체 취소">✕</button>' : ''}
                         </span>
                     `;
-                    body.appendChild(el);
+                    container.appendChild(el);
                     if (expanded) {
-                        grp.forEach(gi => {
-                            const gidx = items.indexOf(gi);
-                            body.appendChild(_renderQueueItemRow(gi, gidx, true));
+                        grp.forEach(groupItem => {
+                            const groupIdx = queueModalData.indexOf(groupItem);
+                            container.appendChild(_renderQueueItemRow(groupItem, groupIdx, true));
                         });
                     }
                 } else {
-                    body.appendChild(_renderQueueItemRow(item, idx, false));
+                    container.appendChild(_renderQueueItemRow(item, idx, false));
                 }
             });
-            } catch (err) { console.error('[QUEUE] renderQueueModal 아이템 렌더링 실패:', err, 'items:', items); }
         }
 
         // 배치 그룹 항목 1줄 렌더 헬퍼 (개별/펼침 자식 공용). indent=true면 자식 항목(↳ 들여쓰기).
@@ -46455,6 +46563,7 @@
             const el = document.createElement('div');
             el.className = 'queue-modal-item' + (item.status === 'processing' ? ' processing' : '') + (item.status === 'completed' ? ' completed' : '') + (indent ? ' indented' : '');
             el.dataset.queueModalIdx = idx;
+            el.dataset.queueArea = _queueItemArea(item);
             const isPending = item.status === 'pending';
             const isProcessing = item.status === 'processing';
             const pct = item.progress ? Math.round(item.progress) : 0;
@@ -46462,9 +46571,12 @@
             if (isProcessing && item.progress_detail) {
                 const d = item.progress_detail;
                 if (d.phase === 'generating' || d.phase === 'preview') {
-                    const cur = d.current || d.value || 0;
-                    const tot = d.total || d.max || 0;
-                    progressLabel = '프리뷰 <span style="font-size:0.65rem;color:var(--text3);">' + cur + '/' + tot + '</span>';
+                    const cur = d.current ?? d.value ?? 0;
+                    const tot = d.total ?? d.max ?? 0;
+                    const phaseLabel = item.type === 'illustration_llm_build'
+                        ? '합류'
+                        : (d.phase === 'preview' ? '프리뷰' : '생성');
+                    progressLabel = phaseLabel + ' <span style="font-size:0.65rem;color:var(--text3);">' + cur + '/' + tot + '</span>';
                 } else if (d.phase === 'training' && d.step !== undefined && d.total) {
                     progressLabel = pct + '% <span style="font-size:0.65rem;color:var(--text3);">' + d.step + '/' + d.total + '</span>';
                 }
@@ -46533,37 +46645,49 @@
             e.preventDefault();
             const body = document.getElementById('queue-modal-body');
             if (!body) { console.error('[QUEUE] queueModalDragStart: queue-modal-body 요소 없음'); return; }
-            const el = body.children[idx];
+            const area = _queueItemArea(item);
+            const laneBody = body.querySelector(`.queue-lane-items[data-queue-area="${area}"]`);
+            if (!laneBody) { console.error('[QUEUE] 드래그 대상 실행 영역 없음:', area); return; }
+            const el = laneBody.querySelector(`.queue-modal-item[data-queue-modal-idx="${idx}"]`);
             if (el) el.classList.add('dragging');
 
             const onMove = (ev) => {
-                const items = body.querySelectorAll('.queue-modal-item');
-                items.forEach((child, ci) => {
-                    if (ci === idx) return;
+                const items = Array.from(laneBody.querySelectorAll('.queue-modal-item[data-queue-modal-idx]'));
+                items.forEach(child => {
+                    if (Number(child.dataset.queueModalIdx) === idx) return;
                     const rect = child.getBoundingClientRect();
                     const mid = rect.top + rect.height / 2;
-                    if (ev.clientY < mid && ci > idx) child.style.borderTop = '2px solid var(--accent)';
-                    else if (ev.clientY > mid && ci < idx) child.style.borderBottom = '2px solid var(--accent)';
+                    if (ev.clientY < mid) child.style.borderTop = '2px solid var(--accent)';
+                    else if (ev.clientY > mid) child.style.borderBottom = '2px solid var(--accent)';
                     else { child.style.borderTop = ''; child.style.borderBottom = ''; }
                 });
             };
             const onUp = (ev) => {
                 document.removeEventListener('mousemove', onMove);
                 document.removeEventListener('mouseup', onUp);
-                body.querySelectorAll('.queue-modal-item').forEach(c => { c.classList.remove('dragging'); c.style.borderTop = ''; c.style.borderBottom = ''; });
-                // 타겟 인덱스 찾기
-                const items = body.querySelectorAll('.queue-modal-item');
+                laneBody.querySelectorAll('.queue-modal-item').forEach(c => { c.classList.remove('dragging'); c.style.borderTop = ''; c.style.borderBottom = ''; });
+                const items = Array.from(laneBody.querySelectorAll('.queue-modal-item[data-queue-modal-idx]'));
                 let targetIdx = idx;
-                items.forEach((child, ci) => {
-                    if (ci === idx) return;
+                let closestDistance = Number.POSITIVE_INFINITY;
+                items.forEach(child => {
+                    const childIdx = Number(child.dataset.queueModalIdx);
+                    if (childIdx === idx) return;
                     const rect = child.getBoundingClientRect();
                     const mid = rect.top + rect.height / 2;
-                    if (ev.clientY < mid && ci < idx) targetIdx = Math.min(targetIdx, ci);
-                    else if (ev.clientY > mid && ci > idx) targetIdx = Math.max(targetIdx, ci);
+                    const distance = Math.abs(ev.clientY - mid);
+                    if (distance < closestDistance) {
+                        closestDistance = distance;
+                        targetIdx = childIdx;
+                    }
                 });
-                if (targetIdx !== idx && queueModalData[targetIdx]?.status === 'pending') {
+                if (
+                    targetIdx !== idx
+                    && queueModalData[targetIdx]?.status === 'pending'
+                    && _queueItemArea(queueModalData[targetIdx]) === area
+                ) {
                     const [moved] = queueModalData.splice(idx, 1);
-                    queueModalData.splice(targetIdx, 0, moved);
+                    const adjustedTarget = targetIdx > idx ? targetIdx - 1 : targetIdx;
+                    queueModalData.splice(adjustedTarget, 0, moved);
                 }
                 renderQueueModal();
             };
@@ -46572,8 +46696,10 @@
         }
 
         function queueModalMoveUp(idx) {
-            // pending 항목 중 이전 항목 찾기
-            const pendingIndices = queueModalData.map((i, ci) => i.status === 'pending' ? ci : -1).filter(ci => ci >= 0);
+            const area = _queueItemArea(queueModalData[idx]);
+            const pendingIndices = queueModalData.map(
+                (item, ci) => item.status === 'pending' && _queueItemArea(item) === area ? ci : -1
+            ).filter(ci => ci >= 0);
             const posInPending = pendingIndices.indexOf(idx);
             if (posInPending <= 0) return;
             const prevIdx = pendingIndices[posInPending - 1];
@@ -46581,7 +46707,10 @@
             renderQueueModal();
         }
         function queueModalMoveDown(idx) {
-            const pendingIndices = queueModalData.map((i, ci) => i.status === 'pending' ? ci : -1).filter(ci => ci >= 0);
+            const area = _queueItemArea(queueModalData[idx]);
+            const pendingIndices = queueModalData.map(
+                (item, ci) => item.status === 'pending' && _queueItemArea(item) === area ? ci : -1
+            ).filter(ci => ci >= 0);
             const posInPending = pendingIndices.indexOf(idx);
             if (posInPending < 0 || posInPending >= pendingIndices.length - 1) return;
             const nextIdx = pendingIndices[posInPending + 1];
@@ -46676,6 +46805,8 @@
                 status: item.status,
                 progress: item.progress || 0,
                 progress_detail: item.progress_detail || {},
+                execution_area: item.execution_area || 'gpu',
+                provider: item.provider || '',
                 batch_id: item.batch_id || null,
                 batch_label: item.batch_label || null,
                 batch_index: item.batch_index || null,

@@ -1923,6 +1923,7 @@ async def build_from_context(
     extra_reference: str,
     progress=None,
     stream_notify=None,
+    on_call2_ready=None,
     extra_costume: str = "",
     extra_names: str = "",
     backtranslate_names: str = "",
@@ -2075,8 +2076,49 @@ async def build_from_context(
         if not descriptors:
             raise RuntimeError("CALL2-FIX 교정 후에도 장면 TOON 파싱에 실패했습니다")
 
-    # CALL3는 대사 빌드(speak/manga)만 담당한다. 교정이 일어났으면 교정 결과의
-    # TOON 블록을 장면 목록으로 넘긴다.
+    # 이미지 생성에는 CALL3의 대사가 필요하지 않다. CALL2(+필요 시 FIX)가 확정되면
+    # 슬롯/RAW를 먼저 고정하고 콜백으로 공개해, CALL3와 이미지 생성을 병렬로 진행한다.
+    # 콜백에는 SPEAK이 없는 RAW가 전달되며 최종 반환 RAW에는 아래 CALL3 결과가 합쳐진다.
+    descriptors = attach_descriptor_anchors(
+        descriptors,
+        original_slotted,
+    )
+    descriptors = sanitize_descriptor_slots(descriptors, original_slotted)
+    if not descriptors:
+        print("[ILLUST_CONTEXT:CALL2] 슬롯 보정 후 생성할 descriptor가 없음")
+        raise RuntimeError("CALL2 결과에 유효한 장면 슬롯이 없습니다")
+
+    downstream_chats = deepcopy(chats)
+    if toggles.get("call1_backtranslate_enabled"):
+        downstream_chats[target_index]["data"] = enhanced
+    downstream_context = context_text(downstream_chats)
+    prompt_format = str(toggles.get("prompt_format") or "v3").strip().lower()
+
+    preliminary_items = []
+    for descriptor in descriptors:
+        positive, negative = build_raw_prompt(descriptor, enhanced, prompts, toggles)
+        raw_item = deepcopy(descriptor)
+        raw_item["raw_positive"] = positive
+        raw_item["raw_negative"] = negative
+        preliminary_items.append(raw_item)
+
+    if on_call2_ready:
+        if progress:
+            await progress(52, "enqueue", f"CALL2 확정 · 이미지 {len(preliminary_items)}장 조기 등록")
+        try:
+            await on_call2_ready({
+                "session_id": payload["session_id"],
+                "context": downstream_context,
+                "prompt_format": prompt_format,
+                "items": deepcopy(preliminary_items),
+            })
+        except Exception as e:
+            print(f"[ILLUST_CONTEXT:CALL2] 이미지 조기 등록 콜백 실패: {e}")
+            traceback.print_exc()
+            raise
+
+    # CALL3는 대사 빌드(speak/manga)만 담당한다. 위에서 시작한 이미지 생성과
+    # 동시에 실행되며, 교정이 일어났으면 교정 결과의 TOON 블록을 장면 목록으로 넘긴다.
     call3_output = ""
     scene_source = call2_fix_output or call2_output
     if toggles.get("call3_enabled") and toggles.get("speak_enabled"):
@@ -2113,14 +2155,6 @@ async def build_from_context(
     else:
         print("[ILLUST_CONTEXT:CALL3] 토글로 비활성화되었거나 SPEAK이 꺼져 있음")
 
-    # Save CALL2's original semantic boundary text anchors before slot
-    # sanitization.  The bridge uses these anchors for placement; sanitize only
-    # corrects out-of-range/duplicate slot numbers while trusting CALL2's pick.
-    descriptors = attach_descriptor_anchors(
-        descriptors,
-        original_slotted,
-    )
-    descriptors = sanitize_descriptor_slots(descriptors, original_slotted)
     if progress:
         await progress(68, "raw_build", f"RAW 프롬프트 {len(descriptors)}개 생성")
     raw_items = []
@@ -2130,12 +2164,9 @@ async def build_from_context(
         item["raw_positive"] = positive
         item["raw_negative"] = negative
         raw_items.append(item)
-    downstream_chats = deepcopy(chats)
-    if toggles.get("call1_backtranslate_enabled"):
-        downstream_chats[target_index]["data"] = enhanced
     return {
         "session_id": payload["session_id"],
-        "context": context_text(downstream_chats),
+        "context": downstream_context,
         "narrative": narrative,
         "backtranslated_narrative": backtranslated_narrative,
         "backtranslated_slotted": backtranslated_slotted,
@@ -2145,6 +2176,6 @@ async def build_from_context(
         "call2_output": call2_output,
         "call2_fix_output": call2_fix_output,
         "call3_output": call3_output,
-        "prompt_format": str(toggles.get("prompt_format") or "v3").strip().lower(),
+        "prompt_format": prompt_format,
         "items": raw_items,
     }
