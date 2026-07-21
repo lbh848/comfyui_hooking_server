@@ -37655,6 +37655,7 @@
                 key: 'pipeline', title: '파이프라인',
                 description: '장면을 분석하고 대사를 생성하는 LLM 호출 범위와 최종 RAW 프롬프트 출력 구조를 설정합니다.',
                 fields: [
+                    {key: 'call1_backtranslate_enabled', label: 'CALL1 역번역', type: 'toggle', help: 'CALL1 컨텍스트 보강 전에 현재 응답을 영어로 역번역합니다.'},
                     {key: 'call1_enabled', label: 'CALL1 컨텍스트 보강', type: 'toggle', help: '최근 대화에서 시각 정보를 먼저 보강합니다.'},
                     {key: 'call3_enabled', label: 'CALL3 대사 생성', type: 'toggle', help: 'CALL3 대사(speak/manga) 생성을 켭니다. CALL2 파싱 실패 시 CALL2-FIX 교정은 항상 동작합니다.'},
                     {key: 'call1_context_turns', label: 'CALL1 최근 메시지 수', type: 'number', min: 0, max: 30, help: 'CALL1에 전달할 최근 대화 수입니다.'},
@@ -37677,7 +37678,6 @@
                 key: 'backtranslation', title: '역번역 설정',
                 description: '현재 응답만 영어로 번역해 이후 삽화 CALL이 상황을 인식할 때 사용합니다. 과거 대화는 번역 대상이 아닙니다.',
                 fields: [
-                    {key: 'call1_backtranslate_enabled', label: 'CALL1 역번역', type: 'toggle', help: 'CALL1 컨텍스트 보강 전에 현재 응답을 영어로 역번역합니다.'},
                     {key: 'call1_backtranslate_max_concurrency', label: '최대 병렬 개수', type: 'number', min: 1, max: 16, help: '슬롯 여러 개를 균등하게 묶어 동시에 요청할 최대 청크 수입니다.', dependsOn: ['call1_backtranslate_enabled']},
                 ],
             },
@@ -37814,11 +37814,11 @@
         function _renderIllustrationSettingsGroupFields(group) {
             if (group.key === 'pipeline') {
                 return `
-                    ${group.fields.slice(0, 5).map(field => _renderIllustrationContextField(field)).join('')}
+                    ${group.fields.slice(0, 6).map(field => _renderIllustrationContextField(field)).join('')}
                     <h4 class="illust-settings-subheading">프롬프트 출력</h4>
-                    ${_renderIllustrationContextField(group.fields[5])}
+                    ${_renderIllustrationContextField(group.fields[6])}
                     <div class="illust-settings-paired" aria-label="프롬프트 추가 메모">
-                        ${group.fields.slice(6).map(field => _renderIllustrationContextField(field)).join('')}
+                        ${group.fields.slice(7).map(field => _renderIllustrationContextField(field)).join('')}
                     </div>`;
             }
             if (group.key === 'dialogue') {
