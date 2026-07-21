@@ -37920,8 +37920,6 @@
         // 챈섭 ON → 강제 chansub, v1/v3 비활성(회색).
         // 챈섭 OFF → chansub 옵션 비활성(회색), 값이 chansub이면 v3로 복귀.
         function _applyPromptFormatChansubLock() {
-            const select = document.querySelector('[data-illust-toggle="prompt_format"]');
-            if (!select) return;
             // 실시간 토글 상태를 우선, 없으면 currentConfig 사용(모달 로드 시점)
             const liveToggle = document.getElementById('setting-illustration-provider-chansub');
             let chansubOn;
@@ -37932,15 +37930,22 @@
                     (typeof currentConfig !== 'undefined' && currentConfig && currentConfig.illustration_provider) || 'comfy'
                 ).toLowerCase() === 'chansub';
             }
-            Array.from(select.options).forEach(opt => {
-                opt.disabled = chansubOn ? (opt.value !== 'chansub') : (opt.value === 'chansub');
-            });
-            if (chansubOn) {
-                select.value = 'chansub';
-            } else if (select.value === 'chansub') {
-                select.value = 'v3';
+            // prompt_format 셀렉트는 삽화 프롬프트 생성 모달이 열려야 DOM에 생성된다.
+            // 모달을 열지 않은 상태에서도 상단 칩이 챈섭 전환을 즉시 반영하도록
+            // 셀렉트 조작과 칩 갱신은 분리한다(셀렉트가 없으면 조작만 스킵).
+            const select = document.querySelector('[data-illust-toggle="prompt_format"]');
+            if (select) {
+                Array.from(select.options).forEach(opt => {
+                    opt.disabled = chansubOn ? (opt.value !== 'chansub') : (opt.value === 'chansub');
+                });
+                if (chansubOn) {
+                    select.value = 'chansub';
+                } else if (select.value === 'chansub') {
+                    select.value = 'v3';
+                }
             }
             // 포맷 변경/잠금이 일어날 때마다 상단 칩·상태 표시도 함께 갱신
+            // (셀렉트가 없어도 _currentPromptFormatLabel 은 live 토글로 챈섭 여부를 판단하므로 칩은 즉시 갱신됨)
             if (typeof updateBotModeStatus === 'function') updateBotModeStatus(true);
         }
 
