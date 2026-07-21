@@ -8341,8 +8341,8 @@
                             <div class="pp-card">
                                 <div class="pp-switch-line">
                                     <div>
-                                        <div style="font-size:0.88rem; font-weight:600;">얼굴 검출 v8m 폴백</div>
-                                        <div class="pp-hint">주 검출기(v9c, 640)가 얼굴을 못 찾았을 때 v8m(960)으로 한 번 더 검출합니다. 검출률이 약간 오르는 대신 미검출 이미지에서 CPU 추론이 1회 추가됩니다. v9c 모델이 없는 머신에서는 v8m만 쓰므로 이 옵션이 무의미합니다.</div>
+                                        <div style="font-size:0.88rem; font-weight:600;">저신뢰 얼굴 재검출</div>
+                                        <div class="pp-hint">주 검출기(v9c, 640)의 최고 신뢰도가 0.01 미만이면 BGR 채널본과 RGB -20°/+20° 회전본으로 다시 검출합니다. 그래도 회복되지 않을 때만 v8m(960)을 사용합니다. 회전은 검출에만 쓰며 최종 이미지와 캐릭터 임베딩은 원본 RGB를 유지합니다.</div>
                                     </div>
                                     <label class="switch"><input type="checkbox" id="pp-bubble-face-fallback" onchange="collectPpBubbleSettings(); renderPostprocessPreview();"><span class="slider"></span></label>
                                 </div>

@@ -60,6 +60,8 @@ _PRIMARY_FACE_MODEL = "v9c"
 
 _CONF_THRES_DEFAULT = 0.3
 _IOU_THRES = 0.45
+_FACE_RETRY_CONFIDENCE_MIN = 0.01
+_FACE_RETRY_ANGLES = (-20.0, 20.0)
 
 # 말풍선 모드는 conf=0으로 넓은 후보 풀을 만든 뒤 캐릭터 임베딩으로 최종 얼굴을
 # 고른다. 이때 캔버스 경계의 띠나 배경 무늬 같은 명백한 오검출은 임베딩 전에
@@ -396,6 +398,106 @@ def _detect_multi(sess, image_rgb, conf_thres, iou_thres=_IOU_THRES,
     return boxes, confs
 
 
+def _bgr_retry_image(image):
+    """RGB 원본의 채널만 BGR 순서로 바꾼 검출 전용 이미지를 만든다."""
+    import numpy as _np
+
+    rgb = image.convert("RGB")
+    swapped = _np.asarray(rgb)[:, :, ::-1].copy()
+    return _PILImage.fromarray(swapped, mode="RGB")
+
+
+def _rotate_retry_image(image, angle):
+    """검출 전용 회전본. 최종 합성 이미지에는 사용하지 않는다."""
+    resampling = getattr(_PILImage, "Resampling", _PILImage)
+    return image.convert("RGB").rotate(
+        float(angle),
+        resample=resampling.BILINEAR,
+        expand=False,
+        fillcolor=(114, 114, 114),
+    )
+
+
+def _inverse_rotated_box(box, angle, image_size):
+    """회전본의 축 정렬 박스를 원본 좌표의 보수적 AABB로 되돌린다."""
+    import math as _math
+
+    x1, y1, x2, y2 = [float(value) for value in box]
+    width, height = [float(value) for value in image_size]
+    center_x, center_y = width / 2.0, height / 2.0
+    radians = _math.radians(float(angle))
+    cos_a, sin_a = _math.cos(radians), _math.sin(radians)
+
+    def inverse_point(x, y):
+        dx, dy = float(x) - center_x, float(y) - center_y
+        return (
+            center_x + cos_a * dx - sin_a * dy,
+            center_y + sin_a * dx + cos_a * dy,
+        )
+
+    points = [
+        inverse_point(x, y)
+        for x in (x1, x2)
+        for y in (y1, y2)
+    ]
+    mapped = (
+        max(0.0, min(point[0] for point in points)),
+        max(0.0, min(point[1] for point in points)),
+        min(width, max(point[0] for point in points)),
+        min(height, max(point[1] for point in points)),
+    )
+    if mapped[2] - mapped[0] < 8.0 or mapped[3] - mapped[1] < 8.0:
+        print(
+            f"[FACE_DETECTOR] 회전 박스 역변환 결과가 너무 작음: "
+            f"angle={float(angle):.1f}, box={mapped}"
+        )
+        return None
+    return mapped
+
+
+def _merge_detection_results(results, iou_thres, max_faces=None):
+    """원본/BGR/회전/보조 모델 후보를 원본 좌표에서 NMS 병합한다."""
+    import numpy as _np
+
+    merged_boxes = []
+    merged_confs = []
+    for boxes, confs in results:
+        for box, confidence in zip(boxes or (), confs or ()):
+            if box is None:
+                continue
+            values = tuple(float(value) for value in box)
+            score = float(confidence)
+            if not all(_np.isfinite(value) for value in (*values, score)):
+                print(
+                    f"[FACE_DETECTOR] 병합 중 비유한 후보 제외: "
+                    f"box={values}, conf={score}"
+                )
+                continue
+            if values[2] - values[0] < 8.0 or values[3] - values[1] < 8.0:
+                print(
+                    f"[FACE_DETECTOR] 병합 중 너무 작은 후보 제외: "
+                    f"box={values}, conf={score:.6f}"
+                )
+                continue
+            merged_boxes.append(values)
+            merged_confs.append(score)
+
+    if not merged_boxes:
+        return [], []
+    boxes_array = _np.asarray(merged_boxes, dtype=_np.float32)
+    confs_array = _np.asarray(merged_confs, dtype=_np.float32)
+    keep = _nms(
+        boxes_array,
+        confs_array,
+        iou_thres,
+        max_keep=max_faces,
+    )
+    return (
+        [tuple(float(value) for value in boxes_array[index]) for index in keep],
+        [float(confs_array[index]) for index in keep],
+    )
+
+
 # ─── 모델 실행(GPU→CPU 폴백 포함) ───────────────────────────────────
 def _run_with_cpu_fallback(model_key, device_key, cpu_threads, run_fn):
     """run_fn(sess) -> result 를 주 장치 세션으로 실행.
@@ -557,9 +659,10 @@ def detect_faces(image, conf_thres: float = 0.3, device: str = None,
         cpu_threads: CPU intra-op 스레드 수. 0=ONNX Runtime 자동.
         iou_thres: NMS IoU 임계치
         max_faces: NMS 후 신뢰도 상위 얼굴 최대 개수. None이면 제한 없음.
-        face_fallback: True 면 주 검출기(v9c) 가 0건일 때 v8m 으로 재시도한다.
-            v9c 단독보다 recall 이 약간 오르는 대신 미검출 이미지에서 CPU 추론이
-            한 번 더 일어난다. 말풍선 모드 설정에서 토글.
+        face_fallback: True 면 주 검출기(v9c)의 최고 신뢰도가 0.01 미만일 때
+            BGR 채널본과 RGB -20/+20도 회전본으로 재검출한다. 그래도 회복되지
+            않으면 v8m 으로 한 번 더 검출한다. 재검출 좌표는 원본으로 되돌리고
+            캐릭터 임베딩은 항상 원본 RGB 이미지를 사용한다.
 
     Returns:
         [{"box":(x1,y1,x2,y2), "conf":float}, ...]. 검출 실패 시 [].
@@ -569,7 +672,7 @@ def detect_faces(image, conf_thres: float = 0.3, device: str = None,
         print("[FACE_DETECTOR] 사용 가능한 얼굴 검출 모델 없음 — detect_faces 스킵")
         return []
     try:
-        if image.mode not in ("RGB", "L"):
+        if image.mode != "RGB":
             image = image.convert("RGB")
 
         def _run_multi(key, sess):
@@ -587,19 +690,129 @@ def detect_faces(image, conf_thres: float = 0.3, device: str = None,
             return []
         boxes, confs = result
 
-        # 폴백: 주 모델이 v9c 인데 0건이고 face_fallback 켜져 있으면 v8m 으로 재시도.
-        if (not boxes and face_fallback and model_key == _PRIMARY_FACE_MODEL
-                and model_key != "v8m" and _ensure_model("v8m")):
-            def _run_fb(sess):
-                return _run_multi("v8m", sess)
+        used_stages = [model_key]
+        retry_threshold = max(float(conf_thres), _FACE_RETRY_CONFIDENCE_MIN)
+        max_primary_conf = max((float(value) for value in confs), default=0.0)
 
-            fb = _run_with_cpu_fallback("v8m", device, cpu_threads, _run_fb)
-            if fb is not None:
-                boxes, confs = fb
-                print(f"[FACE_DETECTOR] v9c 0건 → v8m 폴백: {len(boxes)}건")
+        # 말풍선 모드는 conf=0으로 임베딩용 후보를 넓게 수집하므로 잡음 박스가 항상
+        # 남는다. 따라서 "0건"이 아니라 실제 신뢰도 0.01을 기준으로 재검출한다.
+        if (
+            face_fallback
+            and model_key == _PRIMARY_FACE_MODEL
+            and model_key != "v8m"
+            and max_primary_conf < retry_threshold
+        ):
+            print(
+                f"[FACE_DETECTOR] v9c 저신뢰 → BGR/RGB 회전 재검출: "
+                f"최고={max_primary_conf:.6f}, 기준={retry_threshold:.3f}"
+            )
+            retry_results = [(boxes, confs)]
+            retry_specs = []
+            try:
+                retry_specs.append(("bgr", _bgr_retry_image(image), 0.0))
+                for angle in _FACE_RETRY_ANGLES:
+                    retry_specs.append((
+                        f"rot{angle:+.0f}",
+                        _rotate_retry_image(image, angle),
+                        float(angle),
+                    ))
+            except Exception as e:
+                print(f"[FACE_DETECTOR] 재검출 입력 생성 실패: {e}")
+                traceback.print_exc()
+                retry_specs = []
+
+            for label, retry_image, angle in retry_specs:
+                try:
+                    def _run_retry(sess, _image=retry_image):
+                        return _detect_multi(
+                            sess,
+                            _image,
+                            retry_threshold,
+                            iou_thres,
+                            max_faces=max_faces,
+                            img_size=_FACE_MODELS[model_key]["imgsz"],
+                        )
+
+                    retried = _run_with_cpu_fallback(
+                        model_key, device, cpu_threads, _run_retry
+                    )
+                    if retried is None:
+                        print(f"[FACE_DETECTOR] {label} 재검출 세션 사용 불가")
+                        continue
+                    retry_boxes, retry_confs = retried
+                    if angle:
+                        mapped_boxes = []
+                        mapped_confs = []
+                        for retry_box, retry_conf in zip(retry_boxes, retry_confs):
+                            mapped = _inverse_rotated_box(
+                                retry_box, angle, image.size
+                            )
+                            if mapped is not None:
+                                mapped_boxes.append(mapped)
+                                mapped_confs.append(retry_conf)
+                        retry_boxes, retry_confs = mapped_boxes, mapped_confs
+                    retry_results.append((retry_boxes, retry_confs))
+                    retry_max = max(
+                        (float(value) for value in retry_confs), default=0.0
+                    )
+                    print(
+                        f"[FACE_DETECTOR] {label} 재검출: "
+                        f"{len(retry_boxes)}건, 최고={retry_max:.6f}"
+                    )
+                    used_stages.append(label)
+                except Exception as e:
+                    print(f"[FACE_DETECTOR] {label} 재검출 실패: {e}")
+                    traceback.print_exc()
+
+            boxes, confs = _merge_detection_results(
+                retry_results,
+                iou_thres,
+                max_faces=max_faces,
+            )
+
+        max_retried_conf = max((float(value) for value in confs), default=0.0)
+        # BGR/회전으로도 신뢰 후보를 확보하지 못했을 때만 기존 v8m 보조 모델을 쓴다.
+        if (
+            face_fallback
+            and model_key == _PRIMARY_FACE_MODEL
+            and model_key != "v8m"
+            and max_retried_conf < retry_threshold
+            and _ensure_model("v8m")
+        ):
+            try:
+                def _run_fb(sess):
+                    return _detect_multi(
+                        sess,
+                        image,
+                        retry_threshold,
+                        iou_thres,
+                        max_faces=max_faces,
+                        img_size=_FACE_MODELS["v8m"]["imgsz"],
+                    )
+
+                fb = _run_with_cpu_fallback(
+                    "v8m", device, cpu_threads, _run_fb
+                )
+                if fb is not None:
+                    boxes, confs = _merge_detection_results(
+                        [(boxes, confs), fb],
+                        iou_thres,
+                        max_faces=max_faces,
+                    )
+                    fb_max = max(
+                        (float(value) for value in fb[1]), default=0.0
+                    )
+                    print(
+                        f"[FACE_DETECTOR] BGR/회전 미회복 → v8m 폴백: "
+                        f"{len(fb[0])}건, 최고={fb_max:.6f}"
+                    )
+                    used_stages.append("v8m")
+            except Exception as e:
+                print(f"[FACE_DETECTOR] v8m 폴백 실패: {e}")
+                traceback.print_exc()
 
         out = [{"box": b, "conf": c} for b, c in zip(boxes, confs)]
-        used = "v9c+v8m폴백" if (face_fallback and model_key == _PRIMARY_FACE_MODEL) else model_key
+        used = "+".join(used_stages)
         print(
             f"[FACE_DETECTOR] 다중 검출[{used}]: {len(out)}건 "
             f"(conf>={conf_thres}, max_faces={max_faces})"
