@@ -1630,6 +1630,7 @@ async def _call_pipeline_llm(
         "tps": 0.0,
     }
     history_logged = False
+    terminal_notified = False
     try:
         if stream_notify:
             await stream_notify({
@@ -1647,6 +1648,7 @@ async def _call_pipeline_llm(
             print(f"[ILLUST_CONTEXT:{call_name}] LLM 호출 실패: {result}")
             if stream_notify:
                 await stream_notify({"type": "error", "call_name": call_name, "error": str(result)})
+                terminal_notified = True
             raise RuntimeError(str(result or f"빈 {call_name} 응답"))
         elapsed = time.time() - started
         tokens = max(1, len(str(result)) // 3)
@@ -1663,6 +1665,7 @@ async def _call_pipeline_llm(
                 "tps": tokens / elapsed if elapsed > 0 else 0.0,
                 "ttft": elapsed,
             })
+            terminal_notified = True
         history_record.update({
             "output": str(result),
             "completion_tokens": tokens,
@@ -1676,6 +1679,20 @@ async def _call_pipeline_llm(
         history_logged = True
         return str(result)
     except Exception as e:
+        if stream_notify and not terminal_notified:
+            try:
+                await stream_notify({
+                    "type": "error",
+                    "call_name": call_name,
+                    "error": str(e),
+                })
+                terminal_notified = True
+            except Exception as notify_error:
+                print(
+                    f"[ILLUST_CONTEXT:{call_name}] 오류 스트림 알림 실패: "
+                    f"{notify_error}"
+                )
+                traceback.print_exc()
         if not history_logged:
             elapsed = time.time() - started
             history_record.update({
@@ -1774,11 +1791,22 @@ async def backtranslate_current_context(
             return valid, reason
 
         call_name = f"CALL1-BACKTRANSLATE {index}/{len(chunks)}"
+        chunk_stream_notify = None
+        if stream_notify:
+            async def chunk_stream_notify(event: dict):
+                payload = dict(event)
+                payload["queue_subtask"] = {
+                    "group_id": "backtranslation",
+                    "group_label": "역번역",
+                    "index": index,
+                    "total": len(chunks),
+                }
+                await stream_notify(payload)
         try:
             translated = await _call_pipeline_llm(
                 call_name,
                 messages,
-                stream_notify,
+                chunk_stream_notify,
                 result_validator=_validate_translation,
             )
         except Exception as e:

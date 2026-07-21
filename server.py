@@ -2909,6 +2909,18 @@ async def process_illustration_context_queue_item(item) -> dict:
 
     async def stream_notify(event: dict):
         data = dict(event)
+        subtask_metadata = data.pop("queue_subtask", None)
+        if subtask_metadata:
+            try:
+                await queue_manager.update_subtask(item, subtask_metadata, data)
+            except Exception as e:
+                # 큐 표시 갱신 실패가 실제 LLM 작업까지 실패시키면 안 된다.
+                print(
+                    f"[ILLUST_CONTEXT:SUBTASK] 큐 하위 작업 갱신 예외: "
+                    f"item={getattr(item, 'id', '')}, metadata={subtask_metadata!r}, "
+                    f"event={data!r}, error={e}"
+                )
+                traceback.print_exc()
         data.update({"prompt_id": original_prompt_id, "session_id": session_id})
         await notify_frontend("lighbd_llm_stream", data)
 

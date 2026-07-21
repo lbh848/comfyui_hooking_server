@@ -35,6 +35,9 @@ class QueueItem:
     params: dict = field(default_factory=dict)
     progress: float = 0.0
     progress_detail: dict = field(default_factory=dict)
+    # 부모 큐 항목 내부에서 병렬 실행되는 사용자 표시용 하위 작업.
+    # 스케줄링 단위가 아니므로 별도 QueueItem으로 등록하지 않는다.
+    subtasks: list[dict] = field(default_factory=list)
     created_at: float = field(default_factory=time.time)
     started_at: Optional[float] = None
     completed_at: Optional[float] = None
@@ -393,7 +396,99 @@ class QueueManager:
                 "item_label": item.label,
                 "progress": item.progress,
                 "detail": detail,
+                "subtasks": copy.deepcopy(item.subtasks),
             })
+
+    async def update_subtask(self, item: QueueItem, metadata: dict, event: dict) -> bool:
+        """부모 큐 항목의 표시용 하위 작업 상태를 갱신한다.
+
+        하위 작업은 실제 QueueItem이 아니며 부모 작업의 취소·우선순위·워커 점유를
+        그대로 따른다. 첫 이벤트에서 같은 그룹의 전체 항목을 pending으로 만들어
+        병렬 호출이 시작되는 즉시 UI가 전체 작업 수를 표시할 수 있게 한다.
+        """
+        try:
+            group_id = str(metadata.get("group_id") or "").strip()
+            group_label = str(metadata.get("group_label") or "하위 작업").strip()
+            index = int(metadata.get("index"))
+            total = int(metadata.get("total"))
+            event_type = str(event.get("type") or "").strip().lower()
+            if not group_id:
+                raise ValueError("group_id가 비어 있습니다")
+            if total < 1 or index < 1 or index > total:
+                raise ValueError(f"하위 작업 범위가 잘못되었습니다: index={index}, total={total}")
+            if event_type not in ("start", "done", "error", "cancelled"):
+                raise ValueError(f"지원하지 않는 하위 작업 이벤트입니다: {event_type!r}")
+        except (AttributeError, TypeError, ValueError) as e:
+            print(
+                f"[QUEUE:SUBTASK] 하위 작업 이벤트 파싱 실패: "
+                f"item={getattr(item, 'id', '')}, metadata={metadata!r}, "
+                f"event={event!r}, error={e}"
+            )
+            traceback.print_exc()
+            return False
+
+        existing = {
+            str(subtask.get("id") or ""): subtask
+            for subtask in item.subtasks
+            if isinstance(subtask, dict)
+        }
+        for subtask_index in range(1, total + 1):
+            subtask_id = f"{group_id}:{subtask_index}"
+            if subtask_id in existing:
+                continue
+            subtask = {
+                "id": subtask_id,
+                "group_id": group_id,
+                "group_label": group_label,
+                "label": f"{group_label} {subtask_index}/{total}",
+                "index": subtask_index,
+                "total": total,
+                "status": "pending",
+                "started_at": None,
+                "completed_at": None,
+                "error": "",
+            }
+            item.subtasks.append(subtask)
+            existing[subtask_id] = subtask
+
+        target_id = f"{group_id}:{index}"
+        target = existing[target_id]
+        now = time.time()
+        if event_type == "start":
+            target["status"] = "processing"
+            target["started_at"] = target.get("started_at") or now
+            target["completed_at"] = None
+            target["error"] = ""
+        elif event_type == "done":
+            target["status"] = "completed"
+            target["started_at"] = target.get("started_at") or now
+            target["completed_at"] = now
+            target["error"] = ""
+        elif event_type == "error":
+            target["status"] = "failed"
+            target["started_at"] = target.get("started_at") or now
+            target["completed_at"] = now
+            target["error"] = str(event.get("error") or "하위 작업 실패")
+        else:
+            target["status"] = "cancelled"
+            target["started_at"] = target.get("started_at") or now
+            target["completed_at"] = now
+            target["error"] = str(event.get("error") or "")
+
+        item.subtasks.sort(key=lambda subtask: (
+            str(subtask.get("group_id") or ""),
+            int(subtask.get("index") or 0),
+        ))
+        if self.notify_frontend:
+            await self.notify_frontend("queue_progress", {
+                "item_id": item.id,
+                "item_type": item.type,
+                "item_label": item.label,
+                "progress": item.progress,
+                "detail": copy.deepcopy(item.progress_detail),
+                "subtasks": copy.deepcopy(item.subtasks),
+            })
+        return True
 
     async def _process_loop(self):
         """GPU계열 아이템을 1개씩 순차 처리하는 메인 루프.

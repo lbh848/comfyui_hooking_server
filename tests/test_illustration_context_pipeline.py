@@ -604,6 +604,54 @@ def test_backtranslation_chunks_balance_contiguous_slot_groups():
 
 
 @pytest.mark.asyncio
+async def test_backtranslation_stream_events_include_queue_subtask_metadata(monkeypatch):
+    source = "첫 문단.\n\n[Slot 0]\n\n둘째 문단.\n\n[Slot 1]\n\n셋째 문단.\n\n[Slot 2]"
+    chunks = pipeline.split_backtranslation_chunks(source, 3)
+    events = []
+
+    async def fake_pipeline_call(
+        call_name, messages, stream_notify=None, result_validator=None
+    ):
+        index = int(call_name.rsplit(" ", 1)[1].split("/", 1)[0])
+        translated = chunks[index - 1]
+        await stream_notify({"type": "start", "call_name": call_name})
+        await stream_notify({
+            "type": "done",
+            "call_name": call_name,
+            "text": translated,
+        })
+        return translated
+
+    async def capture(event):
+        events.append(event)
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
+    translated, statuses = await pipeline.backtranslate_current_context(
+        source,
+        "Translate. {character_names}",
+        "Hana",
+        3,
+        stream_notify=capture,
+    )
+
+    assert translated == "\n\n".join(chunk.strip() for chunk in chunks)
+    assert [status["status"] for status in statuses] == [
+        "translated",
+        "translated",
+        "translated",
+    ]
+    start_metadata = [
+        event["queue_subtask"]
+        for event in events
+        if event["type"] == "start"
+    ]
+    assert sorted(metadata["index"] for metadata in start_metadata) == [1, 2, 3]
+    assert all(metadata["group_id"] == "backtranslation" for metadata in start_metadata)
+    assert all(metadata["group_label"] == "역번역" for metadata in start_metadata)
+    assert all(metadata["total"] == 3 for metadata in start_metadata)
+
+
+@pytest.mark.asyncio
 async def test_backtranslation_empty_response_falls_back_only_failed_chunk(monkeypatch, capsys):
     source = "첫 문단.\n\n[Slot 0]\n\n둘째 문단.\n\n[Slot 1]\n\n끝 문단."
 

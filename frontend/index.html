@@ -948,6 +948,13 @@
         .queue-modal-item:hover { background:var(--surface3); }
         .queue-modal-item.processing { border-color:var(--accent); }
         .queue-modal-item.completed { opacity:0.5; }
+        .queue-modal-item.failed { border-color:var(--danger, #ef4444); }
+        .queue-modal-item.queue-modal-subtask {
+            margin-left:28px; padding:7px 10px; background:var(--surface1);
+        }
+        .queue-modal-item.queue-modal-subtask .qm-label { font-size:0.76rem; }
+        .queue-modal-item.queue-modal-subtask .qm-handle { cursor:default; }
+        .qm-subtask-toggle { cursor:pointer; }
         .queue-modal-item.dragging { opacity:0.4; transform:scale(0.97); }
         .queue-modal-item .qm-handle {
             cursor:grab; color:var(--text3); font-size:1rem; padding:0 4px; user-select:none;
@@ -46338,6 +46345,7 @@
                         status: item.status,
                         progress: item.progress || 0,
                         progress_detail: item.progress_detail || {},
+                        subtasks: Array.isArray(item.subtasks) ? item.subtasks : [],
                         execution_area: item.execution_area || 'gpu',
                         provider: item.provider || '',
                         batch_id: item.batch_id || null,
@@ -46346,6 +46354,7 @@
                         batch_total: item.batch_total || null,
                         _completedLocalTs: null,
                     }));
+                    queueModalData.forEach(_expandActiveQueueSubtasks);
                     updateQueueBadge();
                     queueIllustWaiting = !!data.illust_waiting;
                     queueIllustWaitStartedAt = data.illust_wait_started_at ? data.illust_wait_started_at * 1000 : null;
@@ -46554,6 +46563,11 @@
                     }
                 } else {
                     container.appendChild(_renderQueueItemRow(item, idx, false));
+                    if (_queueSubtasksExpanded.has(item.id) && Array.isArray(item.subtasks)) {
+                        item.subtasks.forEach(subtask => {
+                            container.appendChild(_renderQueueSubtaskRow(subtask));
+                        });
+                    }
                 }
             });
         }
@@ -46566,6 +46580,9 @@
             el.dataset.queueArea = _queueItemArea(item);
             const isPending = item.status === 'pending';
             const isProcessing = item.status === 'processing';
+            const subtasks = Array.isArray(item.subtasks) ? item.subtasks : [];
+            const hasSubtasks = subtasks.length > 0;
+            const subtasksExpanded = hasSubtasks && _queueSubtasksExpanded.has(item.id);
             const pct = item.progress ? Math.round(item.progress) : 0;
             let progressLabel = pct + '%';
             if (isProcessing && item.progress_detail) {
@@ -46581,13 +46598,34 @@
                     progressLabel = pct + '% <span style="font-size:0.65rem;color:var(--text3);">' + d.step + '/' + d.total + '</span>';
                 }
             }
+            let subtaskSummary = '';
+            if (hasSubtasks) {
+                const finished = subtasks.filter(subtask =>
+                    ['completed', 'failed', 'cancelled'].includes(subtask.status)
+                ).length;
+                const failed = subtasks.filter(subtask => subtask.status === 'failed').length;
+                const groupLabel = subtasks[0].group_label || '하위 작업';
+                subtaskSummary = `${groupLabel} ${finished}/${subtasks.length}`;
+                if (failed > 0) subtaskSummary += ` · 오류 ${failed}`;
+                progressLabel += ` <span style="font-size:0.65rem;color:var(--text3);">· ${escapeHtml(subtaskSummary)}</span>`;
+            }
             const typeLabel = indent ? '' : (_queueTypeLabels[item.type] || item.type || '');
             const labelTxt = indent ? '↳ ' + (item.label || '') : (item.label || '');
+            const labelHtml = hasSubtasks
+                ? `<span class="qm-subtask-toggle" onclick="queueModalToggleSubtasks('${escapeHtml(item.id)}')">${subtasksExpanded ? '▼' : '▶'} ${escapeHtml(labelTxt)}</span>`
+                : escapeHtml(labelTxt);
+            let completedLabel = item.status === 'completed' ? '✓'
+                : item.status === 'failed' ? '✗'
+                : item.status === 'cancelled' ? '—'
+                : '';
+            if (!isProcessing && subtaskSummary) {
+                completedLabel += ` <span style="font-size:0.65rem;color:var(--text3);">${escapeHtml(subtaskSummary)}</span>`;
+            }
             el.innerHTML = `
                 <span class="qm-handle" title="드래그하여 이동">${isPending ? '⠿' : '&nbsp;'}</span>
                 <span class="qm-type">${typeLabel}</span>
-                <span class="qm-label">${escapeHtml(labelTxt)}</span>
-                <span class="qm-progress">${isProcessing ? progressLabel : (item.status === 'completed' ? '✓' : item.status === 'failed' ? '✗' : item.status === 'cancelled' ? '—' : '')}</span>
+                <span class="qm-label">${labelHtml}</span>
+                <span class="qm-progress">${isProcessing ? progressLabel : completedLabel}</span>
                 <span class="qm-actions">
                     ${isPending ? '<button onclick="queueModalMoveUp('+idx+')" title="위로">▲</button><button onclick="queueModalMoveDown('+idx+')" title="아래로">▼</button>' : ''}
                     ${isPending ? '<button onclick="queueModalCancelItem(\''+item.id+'\')" title="취소">✕</button>' : ''}
@@ -46600,7 +46638,45 @@
             return el;
         }
 
+        function _renderQueueSubtaskRow(subtask) {
+            const el = document.createElement('div');
+            const status = ['pending', 'processing', 'completed', 'failed', 'cancelled'].includes(subtask.status)
+                ? subtask.status
+                : 'pending';
+            el.className = 'queue-modal-item queue-modal-subtask ' + status;
+            const statusLabel = status === 'processing' ? '진행 중'
+                : status === 'completed' ? '✓'
+                : status === 'failed' ? '✗'
+                : status === 'cancelled' ? '—'
+                : '대기';
+            const error = String(subtask.error || '');
+            if (error) el.title = error;
+            el.innerHTML = `
+                <span class="qm-handle">&nbsp;</span>
+                <span class="qm-type"></span>
+                <span class="qm-label">↳ ${escapeHtml(subtask.label || '하위 작업')}</span>
+                <span class="qm-progress">${statusLabel}</span>
+                <span class="qm-actions"></span>
+            `;
+            return el;
+        }
+
         const _queueBatchExpanded = new Set();
+        const _queueSubtasksExpanded = new Set();
+        function _expandActiveQueueSubtasks(item) {
+            if (!item || !Array.isArray(item.subtasks)) return;
+            if (item.subtasks.some(subtask => subtask.status === 'processing')) {
+                _queueSubtasksExpanded.add(item.id);
+            }
+        }
+
+        function queueModalToggleSubtasks(itemId) {
+            if (!itemId) return;
+            if (_queueSubtasksExpanded.has(itemId)) _queueSubtasksExpanded.delete(itemId);
+            else _queueSubtasksExpanded.add(itemId);
+            renderQueueModal();
+        }
+
         function queueModalToggleBatch(batchId) {
             if (!batchId) return;
             if (_queueBatchExpanded.has(batchId)) _queueBatchExpanded.delete(batchId);
@@ -46779,6 +46855,7 @@
                 status: item.status,
                 progress: item.progress || 0,
                 progress_detail: item.progress_detail || {},
+                subtasks: Array.isArray(item.subtasks) ? item.subtasks : [],
                 startTime: item.started_at ? item.started_at * 1000 : null,
                 endTime: item.completed_at ? item.completed_at * 1000 : null,
                 errorMsg: item.error || '',
@@ -46805,6 +46882,7 @@
                 status: item.status,
                 progress: item.progress || 0,
                 progress_detail: item.progress_detail || {},
+                subtasks: Array.isArray(item.subtasks) ? item.subtasks : [],
                 execution_area: item.execution_area || 'gpu',
                 provider: item.provider || '',
                 batch_id: item.batch_id || null,
@@ -46815,6 +46893,7 @@
                     ? (prevStatus[item.id] !== item.status ? Date.now() : (queueModalData.find(q => q.id === item.id)?._completedLocalTs || Date.now()))
                     : null,
             }));
+            queueModalData.forEach(_expandActiveQueueSubtasks);
             queueModalAutoRemoveCompleted();
             updateQueueBadge();
             // 삽화 대기 상태 동기화
@@ -46860,6 +46939,7 @@
             if (item) {
                 item.progress = data.progress || 0;
                 item.progress_detail = data.detail || {};
+                if (Array.isArray(data.subtasks)) item.subtasks = data.subtasks;
                 if (data.detail) {
                     if (data.detail.phase === 'generating') {
                         updateTopProgress(data.detail.value || 0, data.detail.max || 100);
@@ -46876,6 +46956,10 @@
             if (modalItem) {
                 modalItem.progress = data.progress || 0;
                 modalItem.progress_detail = data.detail || {};
+                if (Array.isArray(data.subtasks)) {
+                    modalItem.subtasks = data.subtasks;
+                    _expandActiveQueueSubtasks(modalItem);
+                }
             }
             if (queueModalOpen) renderQueueModal();
         }
