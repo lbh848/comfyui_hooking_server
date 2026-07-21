@@ -4121,6 +4121,35 @@
             .lighbd-detail-shell { width: 100%; max-height: 92vh; }
             .lighbd-detail-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         }
+        /* lighbd LLM 라이브 모달 */
+        .lighbd-live-overlay { z-index: 10050; }
+        .lighbd-live-shell { width: min(1080px, 96vw); height: min(86vh, 820px); }
+        .lighbd-live-summary {
+            display: flex; gap: 14px; align-items: center; flex-wrap: wrap;
+            padding: 8px 18px; border-bottom: 1px solid var(--border);
+            background: rgba(0,188,212,0.04); font-size: 0.74rem; color: var(--text2); font-family: monospace;
+        }
+        .lighbd-live-summary .pill { padding: 2px 9px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-weight: 600; }
+        .lighbd-live-list { flex: 1; overflow-y: auto; padding: 14px 16px 18px; display: flex; flex-direction: column; gap: 12px; }
+        .lighbd-live-empty { color: var(--text2); font-size: 0.9rem; padding: 40px 0; text-align: center; }
+        .lighbd-live-card { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: color-mix(in srgb, var(--surface2) 92%, transparent); }
+        .lighbd-live-card.is-active { border-color: rgba(0,188,212,0.55); box-shadow: 0 0 0 1px rgba(0,188,212,0.18) inset, 0 8px 24px rgba(0,0,0,0.22); }
+        .lighbd-live-card.is-error { border-color: rgba(255,107,107,0.5); }
+        .lighbd-live-card-head { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-bottom: 1px solid var(--border); background: rgba(255,255,255,0.025); }
+        .lighbd-live-card-title { min-width: 0; font-size: 0.82rem; font-weight: 700; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .lighbd-live-card-slot { font-size: 0.62rem; font-weight: 700; color: #80deea; background: rgba(0,188,212,0.14); border: 1px solid rgba(0,188,212,0.35); border-radius: 5px; padding: 1px 6px; flex-shrink: 0; }
+        .lighbd-live-card-status { margin-left: auto; font-size: 0.68rem; font-weight: 600; padding: 2px 8px; border-radius: 999px; flex-shrink: 0; }
+        .lighbd-live-card-status.st-run { color: #80deea; background: rgba(0,188,212,0.16); }
+        .lighbd-live-card-status.st-done { color: #a5d6a7; background: rgba(76,175,80,0.16); }
+        .lighbd-live-card-status.st-error { color: #ff6b6b; background: rgba(255,107,107,0.16); }
+        .lighbd-live-card-stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; padding: 8px 12px; font-family: monospace; font-size: 0.68rem; color: var(--text2); }
+        .lighbd-live-card-stats span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .lighbd-live-card-stats strong { color: var(--text); font-weight: 600; }
+        .lighbd-live-card-out { margin: 0; padding: 9px 12px; max-height: 180px; overflow: auto; color: var(--text); font-family: monospace; font-size: 0.74rem; line-height: 1.45; white-space: pre-wrap; word-break: break-word; background: rgba(0,0,0,0.18); }
+        @media (max-width: 680px) {
+            .lighbd-live-shell { width: 100%; height: 92vh; }
+            .lighbd-live-card-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        }
     </style>
 </head>
 <body>
@@ -4191,6 +4220,7 @@
             <span class="queue-spinner" id="lighbd-llm-spinner" style="width:12px; height:12px; border-width:2px; flex-shrink:0; display:none;"></span>
             <span id="lighbd-llm-label" style="font-size:0.7rem; color:var(--text2); font-weight:600; letter-spacing:0.02em; flex:1;">LB · LLM</span>
             <span id="lighbd-llm-status" style="font-size:0.7rem; color:var(--text2);">대기</span>
+            <button onclick="openLighbdLiveModal()" title="병렬 LLM 스트리밍 실시간 보기" style="background:transparent; border:1px solid rgba(0,188,212,0.4); border-radius:5px; color:#80deea; cursor:pointer; font-size:0.7rem; padding:1px 7px; font-weight:600;">🔴 라이브</button>
             <button onclick="openLighbdHistoryModal()" title="자세히 보기" style="background:transparent; border:none; color:var(--text2); cursor:pointer; font-size:0.78rem; padding:0 4px;">자세히</button>
             <button onclick="hideLighbdLlmWidget()" style="background:transparent; border:none; color:var(--text2); cursor:pointer; font-size:0.9rem; padding:0 2px;">×</button>
         </div>
@@ -13866,6 +13896,7 @@
                 state.elapsed = 0;
                 state.tps = 0;
                 state.ttft = null;
+                state._startedAt = Date.now();
                 _lighbdSelectedStreamId = streamId;
                 if (_lighbdLlmAutoHideTimer) {
                     clearTimeout(_lighbdLlmAutoHideTimer);
@@ -13917,6 +13948,174 @@
             if (t === 'error' && ![..._lighbdLlmStreams.values()].some(s => s.active)) {
                 if (_lighbdLlmAutoHideTimer) clearTimeout(_lighbdLlmAutoHideTimer);
                 _lighbdLlmAutoHideTimer = setTimeout(hideLighbdLlmWidget, 8000);
+            }
+
+            if (_lighbdLiveModalOpen) _renderLighbdLiveModal();
+        }
+
+        // ─── lighbd LLM 라이브 모달 ───
+        let _lighbdLiveModalOpen = false;
+        let _lighbdLiveTickTimer = null;
+        let _lighbdLiveCards = new Map(); // streamId -> { root, out, lastOutput, fields }
+
+        function openLighbdLiveModal() {
+            const existing = document.getElementById('lighbd-live-overlay');
+            if (existing) { closeLighbdLiveModal(); return; }
+
+            const overlay = document.createElement('div');
+            overlay.id = 'lighbd-live-overlay';
+            overlay.className = 'lighbd-history-overlay lighbd-live-overlay';
+            overlay.tabIndex = -1;
+            overlay.innerHTML = `
+                <div class="lighbd-history-shell lighbd-live-shell" role="dialog" aria-modal="true" aria-labelledby="lighbd-live-title">
+                    <div class="lighbd-modal-head">
+                        <div class="lighbd-modal-title" id="lighbd-live-title">
+                            🔴 LB · LLM 라이브
+                            <div class="lighbd-modal-subtitle">현재 병렬로 실행 중인 LLM 스트리밍을 실시간으로 표시합니다. 새 작업이 시작되면 자동으로 추가됩니다.</div>
+                        </div>
+                        <button class="lighbd-modal-close" onclick="closeLighbdLiveModal()" aria-label="닫기">✕</button>
+                    </div>
+                    <div id="lighbd-live-summary" class="lighbd-live-summary"></div>
+                    <div id="lighbd-live-list" class="lighbd-live-list">
+                        <div class="lighbd-live-empty">진행 중인 LLM 스트림이 없습니다.</div>
+                    </div>
+                </div>`;
+            overlay.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeLighbdLiveModal(); });
+            document.body.appendChild(overlay);
+            overlay.focus();
+
+            _lighbdLiveModalOpen = true;
+            _lighbdLiveCards = new Map();
+            _renderLighbdLiveModal();
+            // 활성 스트림 경과/tps를 실시간으로 갱신 (이벤트가 없어도 흐르는 시간 표시)
+            _lighbdLiveTickTimer = setInterval(() => {
+                if (!_lighbdLiveModalOpen) return;
+                let hasActive = false;
+                for (const s of _lighbdLlmStreams.values()) {
+                    if (!s.active) continue;
+                    hasActive = true;
+                    if (s._startedAt) {
+                        const live = (Date.now() - s._startedAt) / 1000;
+                        if (live > s.elapsed) s.elapsed = live;
+                        if (s.elapsed > 0) s.tps = s.tokens / s.elapsed;
+                    }
+                }
+                if (hasActive) _renderLighbdLiveModal();
+            }, 250);
+        }
+
+        function closeLighbdLiveModal() {
+            const overlay = document.getElementById('lighbd-live-overlay');
+            if (overlay) overlay.remove();
+            _lighbdLiveModalOpen = false;
+            if (_lighbdLiveTickTimer) { clearInterval(_lighbdLiveTickTimer); _lighbdLiveTickTimer = null; }
+            _lighbdLiveCards = new Map();
+        }
+
+        function _lighbdLiveStatusClass(st) {
+            if (st.active) return 'st-run';
+            if (st.status && st.status.includes('오류')) return 'st-error';
+            return 'st-done';
+        }
+
+        function _buildLighbdLiveCard(state) {
+            const root = document.createElement('div');
+            root.className = 'lighbd-live-card';
+            root.dataset.sid = state.id;
+            root.innerHTML = `
+                <div class="lighbd-live-card-head">
+                    <span class="lighbd-live-card-slot"></span>
+                    <span class="lighbd-live-card-title"></span>
+                    <span class="lighbd-live-card-status st-run"></span>
+                </div>
+                <div class="lighbd-live-card-stats">
+                    <span>모델: <strong class="f-model">-</strong></span>
+                    <span>입력: <strong class="f-ptok">0</strong></span>
+                    <span>출력: <strong class="f-tok">0</strong></span>
+                    <span>경과: <strong class="f-elapsed">0.00</strong>s</span>
+                    <span><strong class="f-tps">0.0</strong> t/s · TTFT <strong class="f-ttft">-</strong></span>
+                </div>
+                <pre class="lighbd-live-card-out">-</pre>`;
+            return {
+                root,
+                slot: root.querySelector('.lighbd-live-card-slot'),
+                title: root.querySelector('.lighbd-live-card-title'),
+                status: root.querySelector('.lighbd-live-card-status'),
+                fModel: root.querySelector('.f-model'),
+                fPtok: root.querySelector('.f-ptok'),
+                fTok: root.querySelector('.f-tok'),
+                fElapsed: root.querySelector('.f-elapsed'),
+                fTps: root.querySelector('.f-tps'),
+                fTtft: root.querySelector('.f-ttft'),
+                out: root.querySelector('.lighbd-live-card-out'),
+                lastOutput: null,
+            };
+        }
+
+        function _renderLighbdLiveModal() {
+            const list = document.getElementById('lighbd-live-list');
+            const summary = document.getElementById('lighbd-live-summary');
+            if (!list || !summary) return;
+
+            const streams = [..._lighbdLlmStreams.values()];
+            const active = streams.filter(s => s.active);
+            const inactive = streams.filter(s => !s.active);
+            // 활성을 위로, 비활성은 최근 완료 순(=Map 삽입 역순)으로
+            const ordered = [...active, ...inactive.reverse()];
+
+            // 요약
+            summary.innerHTML = `<span class="pill">활성 ${active.length}</span><span class="pill">합계 ${streams.length}</span>`;
+
+            if (ordered.length === 0) {
+                list.innerHTML = '<div class="lighbd-live-empty">진행 중인 LLM 스트림이 없습니다.</div>';
+                _lighbdLiveCards = new Map();
+                return;
+            }
+
+            const seen = new Set(ordered.map(s => s.id));
+            // 사라진 스트림 카드 제거
+            for (const [id, card] of _lighbdLiveCards) {
+                if (!seen.has(id)) { card.root.remove(); _lighbdLiveCards.delete(id); }
+            }
+
+            // 빈 상태 안내 제거
+            const empty = list.querySelector('.lighbd-live-empty');
+            if (empty) empty.remove();
+
+            let prevEl = null;
+            for (const state of ordered) {
+                let card = _lighbdLiveCards.get(state.id);
+                if (!card) {
+                    card = _buildLighbdLiveCard(state);
+                    _lighbdLiveCards.set(state.id, card);
+                }
+                // 정렬 순서대로 배치
+                if (prevEl) prevEl.after(card.root);
+                else list.prepend(card.root);
+                prevEl = card.root;
+
+                // 필드 갱신
+                const slotLabel = state.slot ? state.slot.toUpperCase() : 'LLM';
+                card.slot.textContent = slotLabel;
+                card.title.textContent = state.callName || state.id;
+                card.status.textContent = state.status || (state.active ? '스트리밍' : '대기');
+                card.status.className = 'lighbd-live-card-status ' + _lighbdLiveStatusClass(state);
+                card.fModel.textContent = state.model || '-';
+                card.fPtok.textContent = state.promptTokens ?? 0;
+                card.fTok.textContent = state.tokens ?? 0;
+                card.fElapsed.textContent = Number(state.elapsed || 0).toFixed(2);
+                card.fTps.textContent = Number(state.tps || 0).toFixed(1);
+                card.fTtft.textContent = state.ttft == null ? '-' : Math.round(state.ttft * 1000) + 'ms';
+                card.root.classList.toggle('is-active', !!state.active);
+                card.root.classList.toggle('is-error', !state.active && !!(state.status && state.status.includes('오류')));
+
+                // 출력은 변경된 경우만 갱신(스크롤 유지)
+                const outText = state.output || '-';
+                if (card.lastOutput !== outText) {
+                    card.out.textContent = outText;
+                    card.lastOutput = outText;
+                    if (state.active) card.out.scrollTop = card.out.scrollHeight;
+                }
             }
         }
 
