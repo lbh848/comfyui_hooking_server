@@ -1099,6 +1099,174 @@ def _restore_slot_markers(
     return restored, True, ""
 
 
+def _slotless_projection_with_source_indexes(text: str) -> tuple[str, list[int]]:
+    """슬롯 마커만 숨긴 문자열과 각 문자의 원문 인덱스를 반환한다."""
+    source = str(text or "")
+    projected_parts = []
+    source_indexes = []
+    cursor = 0
+    for match in _SLOT_MARKER_RE.finditer(source):
+        projected_parts.append(source[cursor:match.start()])
+        source_indexes.extend(range(cursor, match.start()))
+        cursor = match.end()
+    projected_parts.append(source[cursor:])
+    source_indexes.extend(range(cursor, len(source)))
+    return "".join(projected_parts), source_indexes
+
+
+def _find_position_span(
+    projected: str,
+    anchor: str,
+    start_offset: int,
+) -> tuple[int, int] | None:
+    """CALL1 Position을 슬롯 없는 투영 본문에서 찾는다."""
+    exact_start = projected.find(anchor, start_offset)
+    if exact_start >= 0:
+        return exact_start, exact_start + len(anchor)
+
+    # 슬롯 마커 주위의 빈 줄 개수만 달라진 경우도 같은 위치로 취급한다.
+    pieces = re.split(r"(\s+)", anchor)
+    flexible_pattern = "".join(
+        r"\s+" if piece.isspace() else re.escape(piece)
+        for piece in pieces
+        if piece
+    )
+    if not flexible_pattern:
+        return None
+    match = re.search(flexible_pattern, projected[start_offset:])
+    if not match:
+        return None
+    return start_offset + match.start(), start_offset + match.end()
+
+
+def _merge_call1_output_into_slotted(
+    slotted_body: str,
+    call1_output: str,
+) -> str:
+    """CALL1 Position 블록을 슬롯을 보존한 본문의 실제 위치에 합친다."""
+    source = str(slotted_body or "")
+    output = str(call1_output or "")
+    if not output.strip():
+        print("[ILLUST_CONTEXT:CALL1] 슬롯 본문에 합칠 CALL1 응답이 비어 있음")
+        return source
+
+    expected_slots = _SLOT_MARKER_RE.findall(source)
+    unexpected_slots = _SLOT_MARKER_RE.findall(output)
+    if unexpected_slots:
+        print(
+            f"[ILLUST_CONTEXT:CALL1] 슬롯을 숨긴 CALL1 응답에 예상하지 못한 "
+            f"슬롯 마커가 포함됨: slots={unexpected_slots}; 제거 후 병합"
+        )
+        output = _SLOT_MARKER_RE.sub("", output)
+
+    position_pattern = re.compile(
+        r"\[Position\]([\s\S]*?)\[/Position\]\s*"
+        r"((?:(?!\[Position\]|\[CharacterBaseTags\])[\s\S])*)",
+        re.I,
+    )
+    projected, source_indexes = _slotless_projection_with_source_indexes(source)
+    operations = []
+    fallback_blocks = []
+    projection_cursor = 0
+
+    for block_index, match in enumerate(position_pattern.finditer(output), start=1):
+        anchor = match.group(1).strip()
+        insertion = match.group(2).strip()
+        raw_block = match.group(0).strip()
+        if not anchor or not insertion:
+            print(
+                f"[ILLUST_CONTEXT:CALL1] Position 병합 블록이 비어 있음: "
+                f"block={block_index}, anchor_len={len(anchor)}, "
+                f"insertion_len={len(insertion)}"
+            )
+            if raw_block:
+                fallback_blocks.append(raw_block)
+            continue
+
+        projected_span = _find_position_span(
+            projected,
+            anchor,
+            projection_cursor,
+        )
+        if projected_span is None and projection_cursor > 0:
+            print(
+                f"[ILLUST_CONTEXT:CALL1] Position 순차 검색 실패, 전체 본문 재검색: "
+                f"block={block_index}, anchor={anchor[:120]!r}"
+            )
+            projected_span = _find_position_span(projected, anchor, 0)
+        if projected_span is None:
+            print(
+                f"[ILLUST_CONTEXT:CALL1] 슬롯 본문에서 Position을 찾지 못함: "
+                f"block={block_index}, anchor={anchor[:120]!r}"
+            )
+            fallback_blocks.append(raw_block)
+            continue
+
+        projected_start, projected_end = projected_span
+        if (
+            projected_start >= len(source_indexes)
+            or projected_end <= projected_start
+            or projected_end > len(source_indexes)
+        ):
+            print(
+                f"[ILLUST_CONTEXT:CALL1] Position 원문 인덱스 변환 실패: "
+                f"block={block_index}, projected=({projected_start}, {projected_end}), "
+                f"index_count={len(source_indexes)}"
+            )
+            fallback_blocks.append(raw_block)
+            continue
+
+        source_start = source_indexes[projected_start]
+        source_end = source_indexes[projected_end - 1] + 1
+        if any(
+            source_start < existing_end and source_end > existing_start
+            for existing_start, existing_end, _replacement in operations
+        ):
+            print(
+                f"[ILLUST_CONTEXT:CALL1] Position 병합 범위가 기존 블록과 겹침: "
+                f"block={block_index}, source=({source_start}, {source_end})"
+            )
+            fallback_blocks.append(raw_block)
+            continue
+
+        matched_source = source[source_start:source_end]
+        replacement = (
+            f"[Position]{matched_source}[/Position]\n"
+            f"{insertion}"
+        )
+        operations.append((source_start, source_end, replacement))
+        projection_cursor = projected_end
+
+    result = source
+    for source_start, source_end, replacement in sorted(
+        operations,
+        key=lambda operation: operation[0],
+        reverse=True,
+    ):
+        result = result[:source_start] + replacement + result[source_end:]
+
+    character_base_blocks = [
+        match.group(0).strip()
+        for match in re.finditer(
+            r"\[CharacterBaseTags\][\s\S]*?\[/CharacterBaseTags\]",
+            output,
+            re.I,
+        )
+        if match.group(0).strip()
+    ]
+    append_blocks = fallback_blocks + character_base_blocks
+    if append_blocks:
+        result = result.rstrip() + "\n\n" + "\n\n".join(append_blocks)
+    actual_slots = _SLOT_MARKER_RE.findall(result)
+    if actual_slots != expected_slots:
+        print(
+            f"[ILLUST_CONTEXT:CALL1] Position 병합 후 슬롯 검증 실패: "
+            f"expected={expected_slots}, actual={actual_slots}; 원본 슬롯 본문 사용"
+        )
+        return source
+    return result
+
+
 def split_backtranslation_chunks(text: str, max_concurrency: int) -> list[str]:
     """현재 응답을 연속 슬롯 묶음으로 균등 분할한다.
 
@@ -1566,6 +1734,79 @@ def parse_speak_output(text: str, max_entries_per_scene: int | None = None) -> d
             f"slot={slot}, limit={max_entries_per_scene}, dropped={count}"
         )
     return {slot: "\n".join(lines).strip() for slot, lines in result.items() if lines}
+
+
+def build_call3_scene_selection(descriptors: list[dict]) -> tuple[list[int], str]:
+    """CALL2가 확정한 일반 장면만 CALL3용 payload로 직렬화한다."""
+    selected_scenes = []
+    selected_slots = []
+    for descriptor in descriptors:
+        if str(descriptor.get("kind") or "") != "scene":
+            continue
+        try:
+            slot = int(descriptor.get("slot"))
+        except Exception as e:
+            print(
+                f"[ILLUST_CONTEXT:CALL3] 선택 장면 slot 직렬화 실패: "
+                f"descriptor={descriptor!r}, error={e}"
+            )
+            traceback.print_exc()
+            raise RuntimeError("CALL3 선택 장면 slot을 직렬화할 수 없습니다") from e
+
+        characters = []
+        for character in descriptor.get("characters") or []:
+            if not isinstance(character, dict):
+                print(
+                    f"[ILLUST_CONTEXT:CALL3] 선택 장면의 캐릭터 항목 무시: "
+                    f"slot={slot}, value={character!r}"
+                )
+                continue
+            characters.append({
+                "name": str(character.get("name") or "").strip(),
+                "position": str(character.get("position") or "").strip(),
+            })
+
+        selected_slots.append(slot)
+        selected_scenes.append({
+            "slot": slot,
+            "scene": str(descriptor.get("scene") or "").strip(),
+            "camera": str(descriptor.get("camera") or "").strip(),
+            "supplement": str(descriptor.get("supplement") or "").strip(),
+            "characters": characters,
+        })
+
+    return selected_slots, json.dumps(
+        {"selected_scenes": selected_scenes},
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
+def validate_call3_slot_coverage(
+    text: str,
+    expected_slots: list[int],
+) -> tuple[bool, str]:
+    """CALL3가 선택된 모든 slot만 빠짐없이 작성했는지 검증한다."""
+    expected = list(dict.fromkeys(int(slot) for slot in expected_slots))
+    parsed = parse_speak_output(text)
+    actual = list(parsed)
+    emitted_headers = [
+        int(match.group(1))
+        for match in re.finditer(
+            r"(?im)^\s*\[Scene\s+slot\s*=\s*(-?\d+)\]",
+            str(text or ""),
+        )
+    ]
+    missing = [slot for slot in expected if slot not in parsed]
+    unexpected = [slot for slot in actual if slot not in expected]
+    if missing or unexpected or emitted_headers != expected:
+        reason = (
+            f"CALL3 선택 slot 불일치: expected={expected}, actual={actual}, "
+            f"headers={emitted_headers}, missing={missing}, unexpected={unexpected}"
+        )
+        print(f"[ILLUST_CONTEXT:CALL3] {reason}")
+        return False, reason
+    return True, ""
 
 
 def build_call3_dialogue_system_prompt(
@@ -2098,9 +2339,9 @@ async def build_from_context(
     # 모듈이 v13 규칙으로 원문 XML을 보존한 채 먼저 삽입한 슬롯 맵을 우선한다.
     # 없으면 구버전/테스트 호환을 위해 필터된 최신 narrative로 생성한다.
     if call1_output:
-        # CALL2에는 CALL1이 만든 Visual Content/DynamicPrompt를 넘기되,
-        # 결과 회수에 쓰는 [Slot N] 번호는 원문 문단 기준으로 그대로 유지한다.
-        slotted = _splice_enhancements(slotted, call1_output)
+        # 일반 CALL1에는 슬롯을 노출하지 않는다. CALL1이 반환한 Position 범위를
+        # 서버가 보관한 슬롯 본문에 투영해 [Slot N]과 [Position]을 함께 보존한다.
+        slotted = _merge_call1_output_into_slotted(slotted, call1_output)
     if progress:
         await progress(30, "call2", "CALL2 장면/태그 빌드")
     history = _build_character_history(extra_reference)
@@ -2206,10 +2447,19 @@ async def build_from_context(
             raise
 
     # CALL3는 대사 빌드(speak/manga)만 담당한다. 위에서 시작한 이미지 생성과
-    # 동시에 실행되며, 교정이 일어났으면 교정 결과의 TOON 블록을 장면 목록으로 넘긴다.
+    # 동시에 실행되며, CALL2가 최종 선택한 일반 scene만 넘긴다.
+    # 대사 말투는 역변환/보강으로 흔들리지 않도록 최신 CHAR 원문을 사용한다.
     call3_output = ""
-    scene_source = call2_fix_output or call2_output
-    if toggles.get("call3_enabled") and toggles.get("speak_enabled"):
+    call3_descriptors = [
+        descriptor
+        for descriptor in descriptors
+        if str(descriptor.get("kind") or "") == "scene"
+    ]
+    if (
+        toggles.get("call3_enabled")
+        and toggles.get("speak_enabled")
+        and call3_descriptors
+    ):
         if progress:
             await progress(58, "call3", "CALL3 대사 빌드")
         call3_prompt_mode, call3_system_prompt = build_call3_dialogue_system_prompt(
@@ -2217,6 +2467,10 @@ async def build_from_context(
             toggles,
             extra_names,
         )
+        selected_slots, selected_scene_payload = build_call3_scene_selection(
+            call3_descriptors
+        )
+        original_narrative = _strip_nodes(narrative)
         speak_messages = [{
             "role": "system",
             "content": call3_system_prompt,
@@ -2229,17 +2483,65 @@ async def build_from_context(
         speak_messages.append({
             "role": "user",
             "content": (
-                f"[Narrative to illustrate]\n{enhanced}\n\n[Scene list]\n{_extract_lb_block(scene_source)}"
+                f"[Original narrative]\n{original_narrative}"
+                f"\n\n[Selected scenes from CALL2]\n{selected_scene_payload}"
                 f"\n\nLanguage: {toggles.get('speak_language', '한국어')}"
             ),
         })
         call3_output = await _call_pipeline_llm("CALL3", _normalize_messages(speak_messages), stream_notify)
+        call3_valid, call3_failure_reason = validate_call3_slot_coverage(
+            call3_output,
+            selected_slots,
+        )
+        if not call3_valid:
+            print(
+                f"[ILLUST_CONTEXT:CALL3] 선택 slot 완전성 교정 재시도: "
+                f"slots={selected_slots}, reason={call3_failure_reason}"
+            )
+            retry_messages = deepcopy(speak_messages)
+            retry_messages.extend([{
+                "role": "assistant",
+                "content": call3_output,
+            }, {
+                "role": "user",
+                "content": (
+                    "Your previous output violated the selected-scene contract. "
+                    f"Required slots, in order: {selected_slots}. "
+                    "Rewrite the entire output. Emit exactly one [Scene slot=N] block "
+                    "for every required slot and no block for any other slot. "
+                    "Every block must contain at least one dialogue, thought, or inner "
+                    "monologue entry. Output only the corrected Scene blocks."
+                ),
+            }])
+            call3_output = await _call_pipeline_llm(
+                "CALL3",
+                _normalize_messages(retry_messages),
+                stream_notify,
+                result_validator=lambda result: validate_call3_slot_coverage(
+                    result,
+                    selected_slots,
+                ),
+            )
         speak_map = parse_speak_output(
             call3_output,
             max_entries_per_scene=2 if call3_prompt_mode == "speak" else None,
         )
-        for descriptor in descriptors:
+        for descriptor in call3_descriptors:
             descriptor["speak"] = speak_map.get(int(descriptor.get("slot", 0)), "")
+    elif (
+        toggles.get("call3_enabled")
+        and toggles.get("speak_enabled")
+        and not call3_descriptors
+    ):
+        key_visual_count = sum(
+            1
+            for descriptor in descriptors
+            if str(descriptor.get("kind") or "") == "keyvis"
+        )
+        print(
+            "[ILLUST_CONTEXT:CALL3] CALL2가 선택한 일반 장면 slot이 없어 "
+            f"대사 생성 건너뜀: key_visuals={key_visual_count}"
+        )
     else:
         print("[ILLUST_CONTEXT:CALL3] 토글로 비활성화되었거나 SPEAK이 꺼져 있음")
 

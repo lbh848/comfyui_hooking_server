@@ -633,6 +633,52 @@ def test_backtranslation_slot_protection_rejects_reordered_tokens():
     assert "보호 슬롯 토큰 불일치" in reason
 
 
+def test_call1_position_merges_into_slotted_body_without_placeholder():
+    slotted = "첫 문장.\n\n[Slot 0]\n\n둘째 문장."
+    call1_output = """[Position]둘째 문장.[/Position]
+[VisualSupplement]
+창가의 빛이 얼굴을 비춘다.
+[/VisualSupplement]"""
+
+    merged = pipeline._merge_call1_output_into_slotted(slotted, call1_output)
+
+    assert "__SLOT" not in merged
+    assert "[Slot 0]" in merged
+    assert "[Position]둘째 문장.[/Position]" in merged
+    assert "[VisualSupplement]" in merged
+
+
+def test_call1_position_mapping_can_cross_a_hidden_slot_boundary():
+    slotted = "첫 문장.\n\n[Slot 0]\n\n둘째 문장."
+    call1_output = """[Position]
+첫 문장.
+
+둘째 문장.
+[/Position]
+[VisualSupplement]
+두 문장은 같은 장면이다.
+[/VisualSupplement]"""
+
+    merged = pipeline._merge_call1_output_into_slotted(slotted, call1_output)
+
+    assert "[Position]첫 문장.\n\n[Slot 0]\n\n둘째 문장.[/Position]" in merged
+    assert merged.count("[Slot 0]") == 1
+
+
+def test_call1_merge_removes_unexpected_slots_from_llm_output(capsys):
+    slotted = "첫 문장.\n\n[Slot 0]\n\n둘째 문장."
+    call1_output = """[Position]둘째 문장.[/Position]
+[VisualSupplement]
+[Slot 99]
+창가의 빛이 얼굴을 비춘다.
+[/VisualSupplement]"""
+
+    merged = pipeline._merge_call1_output_into_slotted(slotted, call1_output)
+
+    assert pipeline._SLOT_MARKER_RE.findall(merged) == ["0"]
+    assert "예상하지 못한 슬롯 마커" in capsys.readouterr().out
+
+
 @pytest.mark.asyncio
 async def test_backtranslation_stream_events_include_queue_subtask_metadata(monkeypatch):
     source = "첫 문단.\n\n[Slot 0]\n\n둘째 문단.\n\n[Slot 1]\n\n셋째 문단.\n\n[Slot 2]"
@@ -855,6 +901,66 @@ Alice: "Third"
     assert "slot=3, limit=2, dropped=1" in capsys.readouterr().out
 
 
+def test_call3_scene_selection_excludes_key_visual_and_keeps_only_scene_context():
+    selected_slots, payload = pipeline.build_call3_scene_selection([
+        {
+            "kind": "keyvis",
+            "slot": -1,
+            "scene": "poster key visual",
+            "characters": [{"name": "hana", "position": "center"}],
+        },
+        {
+            "kind": "scene",
+            "slot": 2,
+            "scene": "quiet classroom",
+            "camera": "close-up",
+            "supplement": "sunset",
+            "characters": [{"name": "hana", "position": "left"}],
+        },
+        {
+            "kind": "scene",
+            "slot": 7,
+            "scene": "school hallway",
+            "camera": "medium shot",
+            "characters": [{"name": "minsu", "position": "right"}],
+        },
+    ])
+
+    decoded = json.loads(payload)
+    assert selected_slots == [2, 7]
+    assert [scene["slot"] for scene in decoded["selected_scenes"]] == [2, 7]
+    assert decoded["selected_scenes"][0]["characters"] == [
+        {"name": "hana", "position": "left"}
+    ]
+    assert "poster key visual" not in payload
+    assert '"slot": -1' not in payload
+
+
+def test_call3_slot_coverage_requires_every_selected_slot_and_rejects_others(capsys):
+    valid, reason = pipeline.validate_call3_slot_coverage(
+        '[Scene slot=2]\nHana: "Ready."\n[Scene slot=7]\nMinsu: (Wait.)',
+        [2, 7],
+    )
+    assert valid is True
+    assert reason == ""
+
+    valid, reason = pipeline.validate_call3_slot_coverage(
+        '[Scene slot=2]\nHana: "Ready."\n[Scene slot=-1]\nHana: "Poster."',
+        [2, 7],
+    )
+    assert valid is False
+    assert "missing=[7]" in reason
+    assert "unexpected=[-1]" in reason
+    assert "CALL3 선택 slot 불일치" in capsys.readouterr().out
+
+    valid, reason = pipeline.validate_call3_slot_coverage(
+        '[Scene slot=7]\nMinsu: "Later."\n[Scene slot=2]\nHana: "First."',
+        [2, 7],
+    )
+    assert valid is False
+    assert "headers=[7, 2]" in reason
+
+
 def test_manga_prompt_declares_all_balloon_labels_and_short_dialogue_rules():
     manga = pipeline.load_prompt_files()["call3_manga"]
 
@@ -870,6 +976,8 @@ def test_manga_prompt_declares_all_balloon_labels_and_short_dialogue_rules():
     ):
         assert label in manga
     assert "Do not write paragraphs, long monologues, or multi-sentence speeches." in manga
+    assert "Never omit or skip a supplied selected scene." in manga
+    assert "Never output slot -1." in manga
 
 
 @pytest.mark.asyncio
@@ -914,10 +1022,223 @@ Hana: "No way!" #burst""",
     )
 
     assert len(calls) == 2
-    assert "manga dialogue and balloon-style editor" in calls[1][0]["content"]
+    assert "manga dialogue writer and balloon-style editor" in calls[1][0]["content"]
     assert "#normal" in calls[1][0]["content"]
     assert result["items"][0]["speak"] == 'Hana: "No way!" #burst'
     assert '[SPEAK]\nHana: "No way!" #burst' in result["items"][0]["raw_positive"]
+
+
+@pytest.mark.asyncio
+async def test_call3_uses_original_narrative_and_only_call2_selected_scene_slots(monkeypatch):
+    calls = []
+
+    async def fake_call(task_key, messages, **kwargs):
+        calls.append((task_key, messages, kwargs))
+        if task_key == "illustration_call1_backtranslate":
+            body = messages[-1]["content"].split(
+                "slot markers. Copy every token exactly once and in the same order.\n\n",
+                1,
+            )[1]
+            return body.replace("원문의 첫 문장.", "Translated first sentence.").replace(
+                "원문의 둘째 문장.",
+                "Translated second sentence.",
+            )
+        if task_key == "illustration_call2":
+            return """<lb-xnai>
+keyvis:
+  camera: portrait
+  characters[1]:
+    - name: hana
+      positive: 1girl, hana, black hair
+  scene: poster key visual
+scenes[2]:
+  - camera: close-up
+    characters[1]:
+      - name: hana
+        positive: 1girl, hana, black hair
+        position: left
+    scene: first selected moment
+    slot: 2
+  - camera: medium shot
+    characters[1]:
+      - name: hana
+        positive: 1girl, hana, black hair
+        position: center
+    scene: second selected moment
+    slot: 5
+</lb-xnai>"""
+
+        assert task_key == "illustration_call3"
+        request = messages[-1]["content"]
+        assert "[Original narrative]" in request
+        assert "원문의 첫 문장." in request
+        assert "원문의 둘째 문장." in request
+        assert "Translated first sentence." not in request
+        assert "Translated second sentence." not in request
+        assert "poster key visual" not in request
+        assert '"slot": -1' not in request
+        selected = json.loads(request.split("[Selected scenes from CALL2]\n", 1)[1].split(
+            "\n\nLanguage:",
+            1,
+        )[0])
+        assert [scene["slot"] for scene in selected["selected_scenes"]] == [2, 5]
+        return """[Scene slot=2]
+Hana: "첫 장면이야." #normal
+[Scene slot=5]
+Hana: (다음은 어떤 장면일까?) #thought_cloud"""
+
+    monkeypatch.setattr(pipeline.llm_service, "callLLMTask", fake_call)
+    result = await pipeline.build_from_context(
+        {
+            "session_id": "call3_original_selected_slots_test",
+            "target_slotted": (
+                "원문의 첫 문장.\n\n[Slot 2]\n\n"
+                "원문의 둘째 문장.\n\n[Slot 5]"
+            ),
+            "chats": [
+                {"role": "user", "data": "장면을 보여줘."},
+                {"role": "char", "data": "원문의 첫 문장.\n\n원문의 둘째 문장."},
+            ],
+        },
+        {
+            "call1_backtranslate_enabled": True,
+            "call1_backtranslate_max_concurrency": 1,
+            "call1_enabled": False,
+            "call3_enabled": True,
+            "speak_enabled": True,
+            "call3_prompt_mode": "manga",
+            "key_visual": True,
+        },
+        "### hana\n-Appearance: 1girl, black hair",
+        extra_names="Hana",
+        backtranslate_names="Hana",
+    )
+
+    assert [task_key for task_key, _messages, _kwargs in calls] == [
+        "illustration_call1_backtranslate",
+        "illustration_call2",
+        "illustration_call3",
+    ]
+    assert [item["kind"] for item in result["items"]] == ["keyvis", "scene", "scene"]
+    assert result["items"][0]["slot"] == -1
+    assert result["items"][0]["speak"] == ""
+    assert result["items"][1]["speak"] == 'Hana: "첫 장면이야." #normal'
+    assert result["items"][2]["speak"] == "Hana: (다음은 어떤 장면일까?) #thought_cloud"
+
+
+@pytest.mark.asyncio
+async def test_call3_retries_once_when_a_selected_slot_is_missing(monkeypatch, capsys):
+    call3_attempts = 0
+
+    async def fake_call(task_key, messages, **kwargs):
+        nonlocal call3_attempts
+        if task_key == "illustration_call2":
+            return """<lb-xnai>
+scenes[2]:
+  - camera: close-up
+    characters[1]:
+      - name: hana
+        positive: 1girl, hana, black hair
+    scene: first moment
+    slot: 0
+  - camera: medium shot
+    characters[1]:
+      - name: hana
+        positive: 1girl, hana, black hair
+    scene: second moment
+    slot: 1
+</lb-xnai>"""
+
+        assert task_key == "illustration_call3"
+        call3_attempts += 1
+        if call3_attempts == 1:
+            assert "result_validator" not in kwargs
+            return '[Scene slot=0]\nHana: "첫 장면." #normal'
+
+        assert "Required slots, in order: [0, 1]" in messages[-1]["content"]
+        validator = kwargs.get("result_validator")
+        assert validator is not None
+        corrected = """[Scene slot=0]
+Hana: "첫 장면." #normal
+[Scene slot=1]
+Hana: "둘째 장면." #normal"""
+        assert validator(corrected) == (True, "")
+        return corrected
+
+    monkeypatch.setattr(pipeline.llm_service, "callLLMTask", fake_call)
+    result = await pipeline.build_from_context(
+        {
+            "session_id": "call3_missing_slot_retry_test",
+            "target_slotted": "첫 장면.\n\n[Slot 0]\n\n둘째 장면.\n\n[Slot 1]",
+            "chats": [
+                {"role": "user", "data": "계속해."},
+                {"role": "char", "data": "첫 장면.\n\n둘째 장면."},
+            ],
+        },
+        {
+            "call1_enabled": False,
+            "call3_enabled": True,
+            "speak_enabled": True,
+            "call3_prompt_mode": "manga",
+            "key_visual": False,
+        },
+        "### hana\n-Appearance: 1girl, black hair",
+        extra_names="Hana",
+    )
+
+    assert call3_attempts == 2
+    assert [item["speak"] for item in result["items"]] == [
+        'Hana: "첫 장면." #normal',
+        'Hana: "둘째 장면." #normal',
+    ]
+    captured = capsys.readouterr().out
+    assert "missing=[1]" in captured
+    assert "선택 slot 완전성 교정 재시도" in captured
+
+
+@pytest.mark.asyncio
+async def test_call3_skips_dialogue_when_call2_selected_only_key_visual(monkeypatch, capsys):
+    task_keys = []
+
+    async def fake_call(task_key, messages, **kwargs):
+        task_keys.append(task_key)
+        assert task_key == "illustration_call2"
+        return """<lb-xnai>
+keyvis:
+  camera: portrait
+  characters[1]:
+    - name: hana
+      positive: 1girl, hana, black hair
+  scene: poster key visual
+</lb-xnai>"""
+
+    monkeypatch.setattr(pipeline.llm_service, "callLLMTask", fake_call)
+    result = await pipeline.build_from_context(
+        {
+            "session_id": "call3_key_visual_only_test",
+            "target_slotted": "포스터 장면.\n\n[Slot 0]",
+            "chats": [
+                {"role": "user", "data": "포스터를 보여줘."},
+                {"role": "char", "data": "포스터 장면."},
+            ],
+        },
+        {
+            "call1_enabled": False,
+            "call3_enabled": True,
+            "speak_enabled": True,
+            "call3_prompt_mode": "manga",
+            "key_visual": True,
+        },
+        "### hana\n-Appearance: 1girl, black hair",
+        extra_names="Hana",
+    )
+
+    assert task_keys == ["illustration_call2"]
+    assert len(result["items"]) == 1
+    assert result["items"][0]["kind"] == "keyvis"
+    assert result["items"][0]["slot"] == -1
+    assert result["items"][0]["speak"] == ""
+    assert "일반 장면 slot이 없어 대사 생성 건너뜀: key_visuals=1" in capsys.readouterr().out
 
 
 @pytest.mark.asyncio
@@ -1193,8 +1514,14 @@ scenes[1]:
         "### hana\n-Appearance: 1girl, black hair",
     )
 
+    call1_text = "\n".join(message["content"] for message in calls[0])
     call2_text = "\n".join(message["content"] for message in calls[1])
+    assert "[Slot 0]" not in call1_text
+    assert "__LB_ILLUST_SLOT_" not in call1_text
     assert "[Visual Content #01]" in call2_text
     assert "[Slot 0]" in call2_text
+    assert "[Position]첫 문장.[/Position]" in call2_text
+    assert "[CharacterBaseTags]" in call2_text
+    assert "[Position]" not in result["enhanced_narrative"]
     assert result["items"][0]["slot"] == 0
     assert result["items"][0]["raw_positive"]
