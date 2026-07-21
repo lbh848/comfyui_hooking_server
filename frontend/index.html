@@ -954,6 +954,58 @@
             border-bottom: 1px solid var(--border);
         }
         .external-api-group .setting-row { padding-left: 12px; padding-right: 12px; }
+        .llm-route-header,
+        .llm-route-main {
+            display: grid;
+            grid-template-columns: 1.5fr 0.7fr 0.7fr 0.9fr 0.5fr;
+            gap: 8px;
+            align-items: center;
+        }
+        .llm-route-card {
+            padding: 6px 8px;
+            background: var(--surface2);
+            border-radius: 6px;
+        }
+        .llm-route-retry-grid {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 8px;
+            margin-top: 7px;
+            padding-top: 7px;
+            border-top: 1px solid var(--border);
+        }
+        .llm-route-retry-field {
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 6px;
+            min-width: 0;
+            font-size: 11px;
+            color: var(--text-dim);
+            white-space: nowrap;
+        }
+        .llm-route-retry-field input {
+            width: 70px;
+            min-width: 0;
+            padding: 4px 6px;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            background: var(--surface);
+            color: var(--text);
+        }
+        .llm-route-retry-field input:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+        }
+        @media (max-width: 760px) {
+            .llm-route-header,
+            .llm-route-main {
+                grid-template-columns: 1.25fr 0.65fr 0.8fr 0.9fr 0.45fr;
+                gap: 5px;
+            }
+            .llm-route-retry-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .llm-route-retry-field { justify-content: space-between; }
+        }
 
         .illust-workflow-option {
             transition: opacity 0.18s ease, filter 0.18s ease;
@@ -8690,30 +8742,6 @@
                         <div id="llm-custom-body3-status" style="margin-top:6px;font-size:.75rem;color:var(--text2);"></div>
                     </div>
 
-                    <!-- LLM 자동 분류 재시도 횟수 -->
-                    <div class="setting-row">
-                        <div class="setting-label">
-                            <div class="title">LLM 자동 분류 재시도 횟수</div>
-                            <div class="desc">캐릭터 얼굴/눈 태그 자동 분류(LLM 비전 호출)가 외부 API 실패 · JSON 파싱 실패 시 자동 재시도하는 횟수. 데이터 문제(얼굴 이미지 없음 등)는 재시도 안 함.</div>
-                        </div>
-                        <div class="setting-control">
-                            <input type="number" id="setting-auto-face-tag-retries" min="0" max="10" step="1"
-                                   style="width: 80px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: .85rem;">
-                        </div>
-                    </div>
-
-                    <!-- LLM 자동 분류 재시도 대기 시간 -->
-                    <div class="setting-row">
-                        <div class="setting-label">
-                            <div class="title">LLM 자동 분류 재시도 대기(초)</div>
-                            <div class="desc">얼굴/눈 태그 분류 · LoRA 프롬프트 정제가 실패해 재시도할 때마다 대기하는 고정 시간(초). 0이면 바로 재시도. face/lora 공통.</div>
-                        </div>
-                        <div class="setting-control">
-                            <input type="number" id="setting-auto-llm-retry-delay" min="0" max="60" step="0.5"
-                                   style="width: 80px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: .85rem;">
-                        </div>
-                    </div>
-
                     <!-- LLM 동시 요청 수 -->
                     <div class="setting-row">
                         <div class="setting-label">
@@ -8895,7 +8923,8 @@
                 <div class="settings-tab-panel" id="settings-tab-api_route">
                     <div class="setting-row" style="flex-direction: column; align-items: stretch;">
                         <div style="margin-bottom: 8px; color: var(--text-dim); font-size: 13px;">
-                            각 LLM 작업이 메인으로 사용할 LLM(LLM1/LLM2/LLM3)과, 메인 실패 시 재시도할 폴백 LLM을 지정합니다. 폴백을 <b>없음</b>으로 두면 재시도하지 않습니다.
+                            각 LLM 작업의 메인/폴백 LLM과 양쪽의 재시도 횟수·대기초를 지정합니다. 재시도 횟수는 최초 호출을 제외한 추가 시도 수이며, <b>0</b>이면 한 번만 호출합니다.
+                            폴백을 <b>없음</b>으로 두면 폴백 호출만 비활성화됩니다. 빈 응답과 공백만 있는 응답도 실패로 처리합니다.
                             LLM2/LLM3 설정은 <b>외부 API</b> 탭에서 먼저 구성하세요(모델명이 비어있으면 해당 LLM 선택지가 비활성화됩니다).
                         </div>
                         <div id="llm-routing-table" style="display: flex; flex-direction: column; gap: 6px;"></div>
@@ -11694,10 +11723,6 @@
             if (llmUrl2El) llmUrl2El.value = currentConfig.llm_url2 || '';
             const llmUrl3El = document.getElementById('setting-llm-url3');
             if (llmUrl3El) llmUrl3El.value = currentConfig.llm_url3 || '';
-            const aftRetriesEl = document.getElementById('setting-auto-face-tag-retries');
-            if (aftRetriesEl) aftRetriesEl.value = (currentConfig.auto_face_tag_max_retries ?? 2);
-            const aftDelayEl = document.getElementById('setting-auto-llm-retry-delay');
-            if (aftDelayEl) aftDelayEl.value = (currentConfig.auto_llm_retry_delay_sec ?? 1.0);
             const chansubRetriesEl = document.getElementById('setting-chansub-max-retries');
             if (chansubRetriesEl) chansubRetriesEl.value = (currentConfig.chansub_max_retries ?? 2);
             const chansubRetryDelayEl = document.getElementById('setting-chansub-retry-delay');
@@ -12648,8 +12673,6 @@
                 workflow_filename: currentConfig.workflow_filename || '',
                 debug_workflow_source_path: document.getElementById('setting-debug-workflow-source-path').value,
                 queue_type_order: currentConfig.queue_type_order || {},
-                auto_face_tag_max_retries: parseInt(document.getElementById('setting-auto-face-tag-retries').value) || 0,
-                auto_llm_retry_delay_sec: parseFloat(document.getElementById('setting-auto-llm-retry-delay').value) || 0,
                 llm_max_concurrency: parseInt(document.getElementById('setting-llm-max-concurrency').value) || 1,
             };
 
@@ -14377,6 +14400,25 @@
             { key: 'illustration_call3',       label: '삽화 CALL3 (대사 생성)',         kind: '텍스트' },
         ];
 
+        function llmRouteNumber(value, fallback, integer = false) {
+            const parsed = Number(value);
+            if (!Number.isFinite(parsed)) return fallback;
+            return integer ? Math.trunc(parsed) : parsed;
+        }
+
+        function updateLlmRouteFallbackState(taskKey) {
+            const fallbackSelect = document.querySelector(
+                `select[data-route-key="${taskKey}"][data-route-field="fallback_target"]`
+            );
+            const disabled = !fallbackSelect || fallbackSelect.value === 'none';
+            for (const field of ['fallback_retry_delay_sec', 'fallback_max_retries']) {
+                const input = document.querySelector(
+                    `input[data-route-key="${taskKey}"][data-route-field="${field}"]`
+                );
+                if (input) input.disabled = disabled;
+            }
+        }
+
         function renderLlmRoutingTable() {
             const container = document.getElementById('llm-routing-table');
             if (!container) return;
@@ -14387,10 +14429,9 @@
             const llm3Model = (currentConfig && currentConfig.llm_model3) || '';
             const llm3Ready = !!llm3Model;
 
-            // 헤더 (5열: 작업 / 형태 / 메인 LLM / 폴백 / JSON)
-            const gridCols = '1.5fr 0.7fr 0.7fr 0.9fr 0.5fr';
+            // 각 작업은 라우팅 1줄 + 메인/폴백 재시도 설정 1줄로 표시한다.
             let html = '';
-            html += `<div style="display: grid; grid-template-columns: ${gridCols}; gap: 8px; padding: 4px 8px; font-size: 12px; color: var(--text-dim); border-bottom: 1px solid var(--border);">`;
+            html += '<div class="llm-route-header" style="padding: 4px 8px; font-size: 12px; color: var(--text-dim); border-bottom: 1px solid var(--border);">';
             html += '<div>작업</div><div>형태</div><div>메인 LLM</div><div style="text-align: center;">폴백</div><div style="text-align: center;" title="response_format: json_object 강제 여부. 일부 서버(Cerebras/Gemma 등)에서 반복 루프가 나면 끄세요.">JSON</div>';
             html += '</div>';
 
@@ -14408,8 +14449,14 @@
                 // JSON 토글은 edit_illustration_prompt 에만. 기존 설정에 키가 없으면 기본 ON.
                 const supportsJson = t.key === 'edit_illustration_prompt';
                 const jsonMode = supportsJson ? (entry.json_mode !== undefined ? !!entry.json_mode : true) : null;
+                const retryDelay = llmRouteNumber(entry.retry_delay_sec, 0);
+                const maxRetries = llmRouteNumber(entry.max_retries, 0, true);
+                const fallbackRetryDelay = llmRouteNumber(entry.fallback_retry_delay_sec, 0);
+                const fallbackMaxRetries = llmRouteNumber(entry.fallback_max_retries, 0, true);
+                const fallbackDisabled = fbTarget === 'none' ? ' disabled' : '';
 
-                html += `<div class="${t.locked ? 'ui-locked' : ''}" style="display: grid; grid-template-columns: ${gridCols}; gap: 8px; align-items: center; padding: 6px 8px; background: var(--surface2); border-radius: 6px;"${t.locked ? ' data-lock-reason="현재 미사용으로 일시 잠금" title="현재 미사용으로 일시 잠금"' : ''}>`;
+                html += `<div class="llm-route-card ${t.locked ? 'ui-locked' : ''}"${t.locked ? ' data-lock-reason="현재 미사용으로 일시 잠금" title="현재 미사용으로 일시 잠금"' : ''}>`;
+                html += '<div class="llm-route-main">';
                 html += `<div style="font-size: 13px;">${t.label}</div>`;
                 html += `<div style="font-size: 12px; color: var(--text-dim);">${t.kind}</div>`;
                 html += `<div><select data-route-key="${t.key}" data-route-field="primary" style="padding: 4px 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text);">`;
@@ -14417,7 +14464,7 @@
                 html += `<option value="llm2"${primary === 'llm2' ? ' selected' : ''}${llm2Ready ? '' : ' disabled'}>LLM2${llm2Ready ? '' : ' (미설정)'}</option>`;
                 html += `<option value="llm3"${primary === 'llm3' ? ' selected' : ''}${llm3Ready ? '' : ' disabled'}>LLM3${llm3Ready ? '' : ' (미설정)'}</option>`;
                 html += '</select></div>';
-                html += `<div style="text-align: center;"><select data-route-key="${t.key}" data-route-field="fallback_target" style="padding: 4px 6px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text);">`;
+                html += `<div style="text-align: center;"><select data-route-key="${t.key}" data-route-field="fallback_target" onchange="updateLlmRouteFallbackState('${t.key}')" style="padding: 4px 6px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text);">`;
                 html += `<option value="none"${fbTarget === 'none' ? ' selected' : ''}>없음</option>`;
                 html += `<option value="llm1"${fbTarget === 'llm1' ? ' selected' : ''}>LLM1</option>`;
                 html += `<option value="llm2"${fbTarget === 'llm2' ? ' selected' : ''}${llm2Ready ? '' : ' disabled'}>LLM2${llm2Ready ? '' : ' (미설정)'}</option>`;
@@ -14429,6 +14476,13 @@
                     html += '<div></div>';
                 }
                 html += '</div>';
+                html += '<div class="llm-route-retry-grid">';
+                html += `<label class="llm-route-retry-field"><span>재시도 대기초</span><input type="number" min="0" max="300" step="0.5" value="${retryDelay}" data-route-key="${t.key}" data-route-field="retry_delay_sec" aria-label="${t.label} 재시도 대기초"></label>`;
+                html += `<label class="llm-route-retry-field"><span>재시도 횟수</span><input type="number" min="0" max="10" step="1" value="${maxRetries}" data-route-key="${t.key}" data-route-field="max_retries" aria-label="${t.label} 재시도 횟수"></label>`;
+                html += `<label class="llm-route-retry-field"><span>폴백 재시도 대기초</span><input type="number" min="0" max="300" step="0.5" value="${fallbackRetryDelay}" data-route-key="${t.key}" data-route-field="fallback_retry_delay_sec" aria-label="${t.label} 폴백 재시도 대기초"${fallbackDisabled}></label>`;
+                html += `<label class="llm-route-retry-field"><span>폴백 재시도 횟수</span><input type="number" min="0" max="10" step="1" value="${fallbackMaxRetries}" data-route-key="${t.key}" data-route-field="fallback_max_retries" aria-label="${t.label} 폴백 재시도 횟수"${fallbackDisabled}></label>`;
+                html += '</div>';
+                html += '</div>';
             }
 
             if (!llm2Ready) {
@@ -14437,7 +14491,7 @@
             if (!llm3Ready) {
                 html += '<div style="margin-top: 6px; font-size: 12px; color: #d89a3a;">⚠ 외부 API 탭에서 LLM3 모델명을 설정해야 LLM3(메인/폴백) 선택지가 활성화됩니다.</div>';
             }
-            html += '<div style="margin-top: 6px; font-size: 11px; color: var(--text-dim);">💡 JSON 토글은 <b>삽화 LLM과 함께 수정</b>에만 적용됩니다. 끄면 response_format을 보내지 않아 모델이 자연스럽게 JSON을 쓰고 stop합니다(파싱은 그대로 복구).</div>';
+            html += '<div style="margin-top: 6px; font-size: 11px; color: var(--text-dim);">💡 메인 재시도를 모두 소진한 뒤 폴백으로 넘어갑니다. JSON 토글은 <b>삽화 LLM과 함께 수정</b>에만 적용됩니다.</div>';
             container.innerHTML = html;
         }
 
@@ -14455,6 +14509,14 @@
                 const primary = (sel && (sel.value === 'llm2' || sel.value === 'llm3')) ? sel.value : 'llm1';
                 const fbVal = fbSel ? fbSel.value : 'none';
                 const entry = { primary };
+                const retryDelayInput = document.querySelector(`input[data-route-key="${t.key}"][data-route-field="retry_delay_sec"]`);
+                const maxRetriesInput = document.querySelector(`input[data-route-key="${t.key}"][data-route-field="max_retries"]`);
+                const fallbackRetryDelayInput = document.querySelector(`input[data-route-key="${t.key}"][data-route-field="fallback_retry_delay_sec"]`);
+                const fallbackMaxRetriesInput = document.querySelector(`input[data-route-key="${t.key}"][data-route-field="fallback_max_retries"]`);
+                entry.retry_delay_sec = llmRouteNumber(retryDelayInput?.value, 0);
+                entry.max_retries = llmRouteNumber(maxRetriesInput?.value, 0, true);
+                entry.fallback_retry_delay_sec = llmRouteNumber(fallbackRetryDelayInput?.value, 0);
+                entry.fallback_max_retries = llmRouteNumber(fallbackMaxRetriesInput?.value, 0, true);
                 // 폴백 대상은 fallback_target 으로 저장. '없음'이면 폴백 미사용(false).
                 if (fbVal === 'llm1' || fbVal === 'llm2' || fbVal === 'llm3') {
                     entry.fallback_target = fbVal;

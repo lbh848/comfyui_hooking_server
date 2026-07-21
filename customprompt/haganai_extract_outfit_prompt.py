@@ -43,7 +43,7 @@ Gemini-3 계열 모델 요청 형식:
 }
 
 주의:
-- callLLM이 service/model 설정을 자동으로 처리합니다. (재시도 없음, 단일 시도)
+- callLLMTask가 service/model과 외부 API 분기의 작업별 재시도/폴백 설정을 처리합니다.
 """
 
 import re

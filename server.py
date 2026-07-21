@@ -92,6 +92,28 @@ MODE_WORKFLOW_DIR = os.path.join(BASE_DIR, "mode_workflow")
 CURRENT_MODE_WORK_DIR = os.path.join(BASE_DIR, "current_mode_workflow")
 WORKFLOW_BACKUP_STATIC_DIR = os.path.join(BASE_DIR, "workflow_backup_static")
 
+# 외부 API 분기의 작업별 기본값. 재시도 횟수는 최초 호출을 제외한 추가 시도 수다.
+def _llm_route_defaults(
+    *,
+    fallback: bool = False,
+    max_retries: int = 0,
+    retry_delay_sec: float = 1.0,
+    fallback_max_retries: int = 0,
+    fallback_retry_delay_sec: float = 1.0,
+    **extra,
+) -> dict:
+    route = {
+        "primary": "llm1",
+        "fallback": fallback,
+        "retry_delay_sec": retry_delay_sec,
+        "max_retries": max_retries,
+        "fallback_retry_delay_sec": fallback_retry_delay_sec,
+        "fallback_max_retries": fallback_max_retries,
+    }
+    route.update(extra)
+    return route
+
+
 # 기본 설정값
 DEFAULT_CONFIG = {
     "comfyui_port": 8188,  # ComfyUI 서버 포트
@@ -190,30 +212,25 @@ DEFAULT_CONFIG = {
     "llm_stream": False,              # LLM1 실제 API 스트리밍
     "llm_stream2": False,             # LLM2 실제 API 스트리밍
     "llm_stream3": False,             # LLM3 실제 API 스트리밍
-    # 작업별 LLM1/LLM2 라우팅 (외부 API 분기 탭).
-    # task_key -> {"primary": "llm1"|"llm2", "fallback": bool}.
-    # 기본값은 현행 동작 보존: 폴백 있던 텍스트 작업(extract/enhance/restore)만 fallback=True.
+    # 작업별 LLM1/LLM2/LLM3 라우팅 및 메인/폴백 재시도 정책(외부 API 분기 탭).
     "llm_routing": {
-        "extract_outfit":          {"primary": "llm1", "fallback": True},
-        "enhance_outfit":          {"primary": "llm1", "fallback": True},
-        "restore_workflow":        {"primary": "llm1", "fallback": True},
-        "classify_face_tags":      {"primary": "llm1", "fallback": False},
-        "refine_lb_extra":         {"primary": "llm1", "fallback": False},
-        "refine_lora_prompt":      {"primary": "llm1", "fallback": False},
-        "refine_lora_test_setup":  {"primary": "llm1", "fallback": False},
-        "edit_illustration_prompt":{"primary": "llm1", "fallback": False, "json_mode": True},  # json_mode: 외부 API 분기 토글. 끄면 response_format 미전송(Cerebras/Gemma 루프 회피)
+        "extract_outfit":          _llm_route_defaults(fallback=True),
+        "enhance_outfit":          _llm_route_defaults(fallback=True),
+        "restore_workflow":        _llm_route_defaults(fallback=True),
+        "classify_face_tags":      _llm_route_defaults(max_retries=2, fallback_max_retries=2),
+        "refine_lb_extra":         _llm_route_defaults(max_retries=2, fallback_max_retries=2),
+        "refine_lora_prompt":      _llm_route_defaults(max_retries=2, fallback_max_retries=2),
+        "refine_lora_test_setup":  _llm_route_defaults(max_retries=2, fallback_max_retries=2),
+        "edit_illustration_prompt":_llm_route_defaults(json_mode=True),  # 끄면 response_format 미전송(Cerebras/Gemma 루프 회피)
         # 삽화 컨텍스트 파이프라인 역번역/CALL1/2/2-FIX/3. 메인 LLM/폴백은 외부 API 분기 탭에서 드롭박스로 선택.
         # 폴백 없음(fallback_target 미지정)이 기본.
-        "illustration_call1_backtranslate": {"primary": "llm1", "fallback": False},  # 최신 응답 영문 역번역
-        "illustration_call1":      {"primary": "llm1", "fallback": False},  # 전처리(컨텍스트 보강)
-        "illustration_call2":      {"primary": "llm1", "fallback": False},  # 본문(장면/태그 TOON 빌드)
-        "illustration_call2_fix":  {"primary": "llm1", "fallback": False},  # CALL2 파싱 실패 시 TOON 교정(repair.txt)
-        "illustration_call3":      {"primary": "llm1", "fallback": False},  # 대사 생성(speak/manga)
+        "illustration_call1_backtranslate": _llm_route_defaults(max_retries=1, retry_delay_sec=0.0, fallback_max_retries=1, fallback_retry_delay_sec=0.0),
+        "illustration_call1":      _llm_route_defaults(),  # 전처리(컨텍스트 보강)
+        "illustration_call2":      _llm_route_defaults(),  # 본문(장면/태그 TOON 빌드)
+        "illustration_call2_fix":  _llm_route_defaults(),  # CALL2 파싱 실패 시 TOON 교정(repair.txt)
+        "illustration_call3":      _llm_route_defaults(),  # 대사 생성(speak/manga)
     },
     "llm_max_concurrency": 1,         # LLM계열 큐 아이템(태그 정제/얼굴 태그 분류) 동시 처리 수. 1=순차(현행 동작). GPU/ComfyUI 작업과 무관.
-    "auto_face_tag_max_retries": 2,   # LLM 자동 얼굴/눈 태그 분류 재시도 횟수 (외부 API 실패/JSON 파싱 실패 시)
-    "auto_lora_prompt_max_retries": 2,   # LLM 자동 LoRA 프롬프트 정제 재시도 횟수 (외부 API 실패/JSON 파싱 실패 시)
-    "auto_llm_retry_delay_sec": 1.0,   # LLM 자동 분류 재시도 간 고정 대기 시간(초) - face/lora 공통
     "embedding_provider": "voyage",  # 임베딩 프로바이더: voyage / custom
     "embedding_url": "https://api.voyageai.com/v1/embeddings",  # 임베딩 API URL
     "embedding_api_key": "",      # 임베딩 API 키
@@ -275,6 +292,158 @@ for _d in [WORKFLOW_DIR, CURRENT_WORK_DIR, WORKFLOW_BACKUP_DIR, LOG_DIR, FRONTEN
 
 
 # ─── 설정 파일 관리 ─────────────────────────────────────
+_LLM_RETRY_COUNT_FIELDS = ("max_retries", "fallback_max_retries")
+_LLM_RETRY_DELAY_FIELDS = ("retry_delay_sec", "fallback_retry_delay_sec")
+_LEGACY_LLM_RETRY_TASKS = {
+    "classify_face_tags": "auto_face_tag_max_retries",
+    "refine_lb_extra": "auto_face_tag_max_retries",
+    "refine_lora_prompt": "auto_lora_prompt_max_retries",
+    "refine_lora_test_setup": "auto_lora_prompt_max_retries",
+}
+_LEGACY_LLM_RETRY_KEYS = {
+    "auto_face_tag_max_retries",
+    "auto_lora_prompt_max_retries",
+    "auto_llm_retry_delay_sec",
+}
+
+
+def _parse_llm_retry_count(value, field_label: str) -> int:
+    if isinstance(value, bool):
+        raise ValueError(f"{field_label}은 불리언이 아닌 0~10 사이의 정수여야 합니다.")
+    numeric = float(value)
+    if not math.isfinite(numeric) or not numeric.is_integer():
+        raise ValueError(f"{field_label}은 0~10 사이의 정수여야 합니다.")
+    parsed = int(numeric)
+    if not 0 <= parsed <= 10:
+        raise ValueError(f"{field_label}은 0~10 사이여야 합니다.")
+    return parsed
+
+
+def _parse_llm_retry_delay(value, field_label: str) -> float:
+    if isinstance(value, bool):
+        raise ValueError(f"{field_label}은 불리언이 아닌 0~300 사이의 숫자여야 합니다.")
+    parsed = float(value)
+    if not math.isfinite(parsed) or not 0 <= parsed <= 300:
+        raise ValueError(f"{field_label}은 0~300초 사이여야 합니다.")
+    return parsed
+
+
+def _merge_llm_routing_config(raw_config: dict) -> dict:
+    """라우팅 기본값을 작업별로 병합하고 구 전역 재시도 설정을 마이그레이션한다."""
+    raw_routing = raw_config.get("llm_routing", {})
+    if not isinstance(raw_routing, dict):
+        print(
+            f"[CONFIG] llm_routing 로드값이 객체가 아님: "
+            f"type={type(raw_routing).__name__}; 기본값 사용"
+        )
+        raw_routing = {}
+
+    merged_routing = {}
+    for task_key, default_entry in DEFAULT_CONFIG["llm_routing"].items():
+        raw_entry = raw_routing.get(task_key, {})
+        if not isinstance(raw_entry, dict):
+            print(
+                f"[CONFIG] llm_routing.{task_key} 로드값이 객체가 아님: "
+                f"type={type(raw_entry).__name__}; 기본값 사용"
+            )
+            raw_entry = {}
+        entry = copy.deepcopy(default_entry)
+        entry.update(raw_entry)
+
+        legacy_count_key = _LEGACY_LLM_RETRY_TASKS.get(task_key)
+        if legacy_count_key and "max_retries" not in raw_entry:
+            try:
+                legacy_count = _parse_llm_retry_count(
+                    raw_config.get(legacy_count_key, default_entry["max_retries"]),
+                    legacy_count_key,
+                )
+            except (TypeError, ValueError) as e:
+                print(f"[CONFIG] 구 LLM 재시도 횟수 마이그레이션 실패: task={task_key}, error={e}")
+                traceback.print_exc()
+            else:
+                entry["max_retries"] = legacy_count
+                if "fallback_max_retries" not in raw_entry:
+                    entry["fallback_max_retries"] = legacy_count
+
+        if legacy_count_key and "retry_delay_sec" not in raw_entry:
+            try:
+                legacy_delay = _parse_llm_retry_delay(
+                    raw_config.get("auto_llm_retry_delay_sec", default_entry["retry_delay_sec"]),
+                    "auto_llm_retry_delay_sec",
+                )
+            except (TypeError, ValueError) as e:
+                print(f"[CONFIG] 구 LLM 재시도 대기초 마이그레이션 실패: task={task_key}, error={e}")
+                traceback.print_exc()
+            else:
+                entry["retry_delay_sec"] = legacy_delay
+                if "fallback_retry_delay_sec" not in raw_entry:
+                    entry["fallback_retry_delay_sec"] = legacy_delay
+
+        merged_routing[task_key] = entry
+
+    for task_key, raw_entry in raw_routing.items():
+        if task_key in merged_routing:
+            continue
+        if not isinstance(raw_entry, dict):
+            print(
+                f"[CONFIG] 알 수 없는 LLM 라우팅 항목 스킵: task={task_key!r}, "
+                f"type={type(raw_entry).__name__}"
+            )
+            continue
+        merged_routing[task_key] = copy.deepcopy(raw_entry)
+    return merged_routing
+
+
+def _normalize_llm_routing_for_save(raw_routing) -> dict:
+    """설정 API로 받은 작업별 라우팅/재시도 값을 검증하고 정규화한다."""
+    if not isinstance(raw_routing, dict):
+        raise ValueError("llm_routing은 JSON 객체여야 합니다.")
+
+    candidate = copy.deepcopy(DEFAULT_CONFIG["llm_routing"])
+    for task_key, raw_entry in raw_routing.items():
+        if not isinstance(task_key, str) or not task_key.strip():
+            raise ValueError(f"LLM 작업 키가 유효하지 않습니다: {task_key!r}")
+        if not isinstance(raw_entry, dict):
+            raise ValueError(f"llm_routing.{task_key}는 JSON 객체여야 합니다.")
+        base = candidate.get(task_key, _llm_route_defaults())
+        base.update(raw_entry)
+        candidate[task_key] = base
+
+    normalized = {}
+    for task_key, entry in candidate.items():
+        primary = entry.get("primary", "llm1")
+        if primary not in ("llm1", "llm2", "llm3"):
+            raise ValueError(f"llm_routing.{task_key}.primary 값이 유효하지 않습니다: {primary!r}")
+
+        fallback = entry.get("fallback", False)
+        if not isinstance(fallback, bool):
+            raise ValueError(f"llm_routing.{task_key}.fallback은 true/false여야 합니다.")
+        fallback_target = entry.get("fallback_target")
+        if fallback_target is not None and fallback_target not in ("llm1", "llm2", "llm3"):
+            raise ValueError(
+                f"llm_routing.{task_key}.fallback_target 값이 유효하지 않습니다: "
+                f"{fallback_target!r}"
+            )
+
+        clean_entry = {"primary": primary, "fallback": fallback}
+        if fallback_target is not None:
+            clean_entry["fallback_target"] = fallback_target
+        for field in _LLM_RETRY_COUNT_FIELDS:
+            clean_entry[field] = _parse_llm_retry_count(
+                entry.get(field, 0), f"llm_routing.{task_key}.{field}"
+            )
+        for field in _LLM_RETRY_DELAY_FIELDS:
+            clean_entry[field] = _parse_llm_retry_delay(
+                entry.get(field, 0.0), f"llm_routing.{task_key}.{field}"
+            )
+        if "json_mode" in entry:
+            if not isinstance(entry["json_mode"], bool):
+                raise ValueError(f"llm_routing.{task_key}.json_mode는 true/false여야 합니다.")
+            clean_entry["json_mode"] = entry["json_mode"]
+        normalized[task_key] = clean_entry
+    return normalized
+
+
 def load_config() -> dict:
     """설정 파일을 로드한다. 없으면 기본값으로 생성한다."""
     if os.path.exists(CONFIG_FILE):
@@ -284,6 +453,9 @@ def load_config() -> dict:
                 # 기본값과 병합 (deepcopy로 중첩 dict 오염 방지)
                 merged = copy.deepcopy(DEFAULT_CONFIG)
                 merged.update(config)
+                merged["llm_routing"] = _merge_llm_routing_config(config)
+                for legacy_key in _LEGACY_LLM_RETRY_KEYS:
+                    merged.pop(legacy_key, None)
                 # 레거시 서비스(openai-compat/customapi) -> openai 마이그레이션
                 llm_service.migrate_config(merged)
                 return merged
@@ -5982,18 +6154,29 @@ async def handle_api_llm_edit_prompt(request: web.Request) -> web.Response:
             print(f"[LLM_EDIT] WARN: 위젯 start 알림 실패: {_e}")
 
         raw = None
+        def edit_result_validator(result):
+            return (
+                bool(llm_prompt_edit.parse_llm_json(result)),
+                "삽화 편집 JSON 파싱 실패",
+            )
+
         try:
             if image_b64:
                 raw = await llm_service.callLLMVisionTask(
                     "edit_illustration_prompt", messages,
-                    image_b64=image_b64, image_mime=image_mime, json_mode=True)
+                    image_b64=image_b64, image_mime=image_mime, json_mode=True,
+                    result_validator=edit_result_validator)
             else:
-                raw = await llm_service.callLLMTask("edit_illustration_prompt", messages, json_mode=True)
+                raw = await llm_service.callLLMTask(
+                    "edit_illustration_prompt", messages, json_mode=True,
+                    result_validator=edit_result_validator)
         except RuntimeError as e:
             # 비전 미지원 서비스 → 텍스트 전용 폴백
             print(f"[LLM_EDIT] 비전 미지원, 텍스트 폴백 name={backup_name}: {e}")
             fallback_note = " (현재 LLM 서비스가 비전을 지원하지 않아 텍스트만으로 분석했습니다)"
-            raw = await llm_service.callLLMTask("edit_illustration_prompt", messages, json_mode=True)
+            raw = await llm_service.callLLMTask(
+                "edit_illustration_prompt", messages, json_mode=True,
+                result_validator=edit_result_validator)
 
         # 위젯에 raw 표시 — LLM 실패/빈 응답은 error, 정상 응답은 done(raw 전체)
         if not raw:
@@ -6589,6 +6772,16 @@ async def handle_api_config(request: web.Request) -> web.Response:
                         {"error": f"{custom_body_key}는 JSON object여야 합니다."},
                         status=400,
                     )
+
+            if "llm_routing" in body:
+                try:
+                    body["llm_routing"] = _normalize_llm_routing_for_save(
+                        body.get("llm_routing")
+                    )
+                except (TypeError, ValueError) as e:
+                    print(f"[CONFIG] 외부 API 분기 저장 거부: {e}")
+                    traceback.print_exc()
+                    return web.json_response({"error": str(e)}, status=400)
 
             if "chansub_workflow_type" in body:
                 chansub_workflow_type = str(

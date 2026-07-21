@@ -124,6 +124,221 @@ async def test_task_stream_event_contains_task_metadata(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_task_retries_none_empty_and_whitespace_responses(monkeypatch):
+    config = _test_config()
+    config["llm_routing"] = {
+        "unit_task": {
+            "primary": "llm1",
+            "fallback": False,
+            "max_retries": 3,
+            "retry_delay_sec": 2.5,
+            "fallback_max_retries": 0,
+            "fallback_retry_delay_sec": 0,
+        }
+    }
+    monkeypatch.setattr(llm_service, "_current_config", config)
+
+    responses = iter([None, "", "   \n\t", "완료"])
+    calls = []
+    sleeps = []
+
+    async def dispatch(messages, service, model):
+        calls.append((service, model))
+        return next(responses)
+
+    async def fake_sleep(delay):
+        sleeps.append(delay)
+
+    monkeypatch.setattr(llm_service, "_dispatch", dispatch)
+    monkeypatch.setattr(llm_service.asyncio, "sleep", fake_sleep)
+
+    result = await llm_service.callLLMTask(
+        "unit_task", [{"role": "user", "content": "hello"}]
+    )
+
+    assert result == "완료"
+    assert len(calls) == 4
+    assert sleeps == [2.5, 2.5, 2.5]
+
+
+@pytest.mark.asyncio
+async def test_task_returns_explicit_failure_after_blank_responses_are_exhausted(monkeypatch):
+    config = _test_config()
+    config["llm_routing"] = {
+        "unit_task": {
+            "primary": "llm1",
+            "fallback": False,
+            "max_retries": 1,
+            "retry_delay_sec": 0,
+            "fallback_max_retries": 0,
+            "fallback_retry_delay_sec": 0,
+        }
+    }
+    monkeypatch.setattr(llm_service, "_current_config", config)
+
+    async def dispatch(messages, service, model):
+        return "  \n"
+
+    monkeypatch.setattr(llm_service, "_dispatch", dispatch)
+
+    result = await llm_service.callLLMTask(
+        "unit_task", [{"role": "user", "content": "hello"}]
+    )
+
+    assert result.startswith("[LLM 실패]")
+    assert "응답이 비어 있음" in result
+
+
+@pytest.mark.asyncio
+async def test_task_exhausts_primary_then_uses_independent_fallback_policy(monkeypatch):
+    config = _test_config()
+    config["llm_routing"] = {
+        "unit_task": {
+            "primary": "llm1",
+            "fallback": True,
+            "fallback_target": "llm2",
+            "max_retries": 1,
+            "retry_delay_sec": 0.25,
+            "fallback_max_retries": 2,
+            "fallback_retry_delay_sec": 0.5,
+        }
+    }
+    monkeypatch.setattr(llm_service, "_current_config", config)
+
+    slots = []
+    sleeps = []
+    fallback_results = iter(["[LLM 실패] 일시 오류", " ", "폴백 완료"])
+
+    async def fake_slot(slot, messages, model=None, json_mode=False):
+        slots.append(slot)
+        if slot == "llm1":
+            return ""
+        return next(fallback_results)
+
+    async def fake_sleep(delay):
+        sleeps.append(delay)
+
+    monkeypatch.setattr(llm_service, "_call_routed_text_slot", fake_slot)
+    monkeypatch.setattr(llm_service.asyncio, "sleep", fake_sleep)
+
+    result = await llm_service.callLLMTask(
+        "unit_task", [{"role": "user", "content": "hello"}]
+    )
+
+    assert result == "폴백 완료"
+    assert slots == ["llm1", "llm1", "llm2", "llm2", "llm2"]
+    assert sleeps == [0.25, 0.5, 0.5]
+
+
+@pytest.mark.asyncio
+async def test_task_retries_response_validator_failures(monkeypatch):
+    config = _test_config()
+    config["llm_routing"] = {
+        "unit_task": {
+            "primary": "llm1",
+            "fallback": False,
+            "max_retries": 1,
+            "retry_delay_sec": 0,
+            "fallback_max_retries": 0,
+            "fallback_retry_delay_sec": 0,
+        }
+    }
+    monkeypatch.setattr(llm_service, "_current_config", config)
+
+    responses = iter(["not-json", '{"ok": true}'])
+    calls = []
+
+    async def dispatch(messages, service, model):
+        calls.append(model)
+        return next(responses)
+
+    monkeypatch.setattr(llm_service, "_dispatch", dispatch)
+
+    result = await llm_service.callLLMTask(
+        "unit_task",
+        [{"role": "user", "content": "hello"}],
+        result_validator=lambda value: (value.startswith("{"), "JSON 아님"),
+    )
+
+    assert result == '{"ok": true}'
+    assert calls == ["model-1", "model-1"]
+
+
+@pytest.mark.asyncio
+async def test_task_retries_raised_call_exception(monkeypatch):
+    config = _test_config()
+    config["llm_routing"] = {
+        "unit_task": {
+            "primary": "llm1",
+            "fallback": False,
+            "max_retries": 1,
+            "retry_delay_sec": 0,
+            "fallback_max_retries": 0,
+            "fallback_retry_delay_sec": 0,
+        }
+    }
+    monkeypatch.setattr(llm_service, "_current_config", config)
+
+    calls = 0
+
+    async def dispatch(messages, service, model):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("temporary failure")
+        return "복구됨"
+
+    monkeypatch.setattr(llm_service, "_dispatch", dispatch)
+
+    result = await llm_service.callLLMTask(
+        "unit_task", [{"role": "user", "content": "hello"}]
+    )
+
+    assert result == "복구됨"
+    assert calls == 2
+
+
+@pytest.mark.asyncio
+async def test_vision_task_uses_same_primary_and_fallback_retry_policy(monkeypatch):
+    config = _test_config()
+    config["llm_routing"] = {
+        "vision_task": {
+            "primary": "llm1",
+            "fallback": True,
+            "fallback_target": "llm2",
+            "max_retries": 0,
+            "retry_delay_sec": 0,
+            "fallback_max_retries": 1,
+            "fallback_retry_delay_sec": 0,
+        }
+    }
+    monkeypatch.setattr(llm_service, "_current_config", config)
+
+    slots = []
+    fallback_responses = iter(["", "비전 완료"])
+
+    async def fake_vision1(*args, **kwargs):
+        slots.append("llm1")
+        return " "
+
+    async def fake_vision2(*args, **kwargs):
+        slots.append("llm2")
+        return next(fallback_responses)
+
+    monkeypatch.setattr(llm_service, "callLLMVision", fake_vision1)
+    monkeypatch.setattr(llm_service, "callLLMVision2", fake_vision2)
+
+    result = await llm_service.callLLMVisionTask(
+        "vision_task",
+        [{"role": "user", "content": "inspect"}],
+        image_b64="aW1hZ2U=",
+    )
+
+    assert result == "비전 완료"
+    assert slots == ["llm1", "llm2", "llm2"]
+
+
+@pytest.mark.asyncio
 async def test_task_parallel_routes_isolate_llm2_and_llm3_config(monkeypatch):
     config = _test_config()
     config.update({

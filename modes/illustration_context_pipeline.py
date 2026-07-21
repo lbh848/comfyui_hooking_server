@@ -1590,7 +1590,12 @@ _CALL_TASK_KEYS = {
 }
 
 
-async def _call_pipeline_llm(call_name: str, messages: list[dict], stream_notify=None) -> str:
+async def _call_pipeline_llm(
+    call_name: str,
+    messages: list[dict],
+    stream_notify=None,
+    result_validator=None,
+) -> str:
     """삽화 CALL1/2/3 의 LLM 호출. 외부 API 분기(illustration_callN task_key)를 경유한다.
 
     외부 API 분기 탭에서 CALL별로 LLM1/LLM2/LLM3 을 선택하거나 폴백을 켤 수 있다.
@@ -1630,7 +1635,14 @@ async def _call_pipeline_llm(call_name: str, messages: list[dict], stream_notify
             await stream_notify({
                 "type": "start", "call_name": call_name, "model": model, "text": "",
             })
-        result = await llm_service.callLLMTask(task_key, messages)
+        if result_validator is None:
+            result = await llm_service.callLLMTask(task_key, messages)
+        else:
+            result = await llm_service.callLLMTask(
+                task_key,
+                messages,
+                result_validator=result_validator,
+            )
         if not result or str(result).startswith("[LLM 실패]"):
             print(f"[ILLUST_CONTEXT:{call_name}] LLM 호출 실패: {result}")
             if stream_notify:
@@ -1744,47 +1756,59 @@ async def backtranslate_current_context(
                 ),
             },
         ])
-        max_attempts = 2 if strict else 1
         last_reason = "unknown_failure"
-        for attempt in range(1, max_attempts + 1):
-            base_call_name = f"CALL1-BACKTRANSLATE {index}/{len(chunks)}"
-            call_name = base_call_name if attempt == 1 else base_call_name + " RETRY"
-            try:
-                translated = await _call_pipeline_llm(call_name, messages, stream_notify)
-            except Exception as e:
-                last_reason = f"call_failed: {e}"
+        validation_attempts = 0
+
+        def _validate_translation(translated):
+            nonlocal validation_attempts, last_reason
+            validation_attempts += 1
+            valid, reason = _valid_backtranslation(chunk, translated)
+            last_reason = reason
+            if not valid:
                 print(
-                    f"[ILLUST_CONTEXT:BACKTRANSLATE] 청크 호출 실패: "
+                    f"[ILLUST_CONTEXT:BACKTRANSLATE] 청크 응답 검증 실패: "
                     f"strategy={strategy}, chunk={index}/{len(chunks)}, "
-                    f"attempt={attempt}/{max_attempts}, input_len={len(chunk)}, error={e}"
-                )
-                traceback.print_exc()
-            else:
-                valid, reason = _valid_backtranslation(chunk, translated)
-                if valid:
-                    return str(translated).strip(), {
-                        "index": index,
-                        "status": "translated",
-                        "reason": "",
-                        "attempts": attempt,
-                    }
-                last_reason = reason
-                print(
-                    f"[ILLUST_CONTEXT:BACKTRANSLATE] 청크 응답 실패: "
-                    f"strategy={strategy}, chunk={index}/{len(chunks)}, "
-                    f"attempt={attempt}/{max_attempts}, input_len={len(chunk)}, "
+                    f"validation_attempt={validation_attempts}, input_len={len(chunk)}, "
                     f"output_len={len(str(translated or ''))}, reason={reason}"
                 )
+            return valid, reason
 
-            if attempt < max_attempts:
-                print(
-                    f"[ILLUST_CONTEXT:BACKTRANSLATE] 엄격 전략 청크 재시도: "
-                    f"chunk={index}/{len(chunks)}, next_attempt={attempt + 1}/{max_attempts}"
-                )
+        call_name = f"CALL1-BACKTRANSLATE {index}/{len(chunks)}"
+        try:
+            translated = await _call_pipeline_llm(
+                call_name,
+                messages,
+                stream_notify,
+                result_validator=_validate_translation,
+            )
+        except Exception as e:
+            last_reason = f"call_failed: {e}"
+            print(
+                f"[ILLUST_CONTEXT:BACKTRANSLATE] 청크 호출 실패: "
+                f"strategy={strategy}, chunk={index}/{len(chunks)}, "
+                f"input_len={len(chunk)}, error={e}"
+            )
+            traceback.print_exc()
+        else:
+            valid, reason = _valid_backtranslation(chunk, translated)
+            if valid:
+                return str(translated).strip(), {
+                    "index": index,
+                    "status": "translated",
+                    "reason": "",
+                    "attempts": max(1, validation_attempts),
+                }
+            last_reason = reason
+            print(
+                f"[ILLUST_CONTEXT:BACKTRANSLATE] 청크 최종 응답 실패: "
+                f"strategy={strategy}, chunk={index}/{len(chunks)}, "
+                f"input_len={len(chunk)}, output_len={len(str(translated or ''))}, "
+                f"reason={reason}"
+            )
 
         if strict:
             raise RuntimeError(
-                f"청크 {index}/{len(chunks)}가 1회 재시도 후에도 실패했습니다: "
+                f"청크 {index}/{len(chunks)}가 설정된 라우팅 재시도 후에도 실패했습니다: "
                 f"{last_reason}"
             )
         print(
@@ -1795,7 +1819,7 @@ async def backtranslate_current_context(
             "index": index,
             "status": "fallback",
             "reason": last_reason,
-            "attempts": max_attempts,
+            "attempts": max(1, validation_attempts),
         }
 
     gathered = await asyncio.gather(*(
@@ -2014,7 +2038,15 @@ async def build_from_context(
     if prompts.get("call2_prefill", "").strip():
         call2_messages.append({"role": "assistant", "content": prompts["call2_prefill"]})
     call2_messages.append({"role": "user", "content": "Return the final <lb-xnai> TOON block only after your analysis."})
-    call2_output = await _call_pipeline_llm("CALL2", _normalize_messages(call2_messages), stream_notify)
+    call2_output = await _call_pipeline_llm(
+        "CALL2",
+        _normalize_messages(call2_messages),
+        stream_notify,
+        result_validator=lambda result: (
+            bool(parse_toon_plan(result, toggles, "CALL2-RETRY-CHECK")),
+            "CALL2 TOON 파싱 실패",
+        ),
+    )
     descriptors = parse_toon_plan(call2_output, toggles, "CALL2")
 
     # CALL2 파싱 실패 시 CALL2-FIX(repair.txt)가 TOON 블록을 교정한다.
@@ -2031,7 +2063,13 @@ async def build_from_context(
             "content": "Repair this malformed output. Return [TOON]...[/TOON].\n\n" + call2_output,
         }]
         call2_fix_output = await _call_pipeline_llm(
-            "CALL2-FIX", _normalize_messages(fix_messages), stream_notify
+            "CALL2-FIX",
+            _normalize_messages(fix_messages),
+            stream_notify,
+            result_validator=lambda result: (
+                bool(parse_toon_plan(result, toggles, "CALL2-FIX-RETRY-CHECK")),
+                "CALL2-FIX TOON 파싱 실패",
+            ),
         )
         descriptors = parse_toon_plan(call2_fix_output, toggles, "CALL2-FIX")
         if not descriptors:

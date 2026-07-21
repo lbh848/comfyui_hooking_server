@@ -3810,56 +3810,57 @@ async def run_auto_classify_face_tags(bot_name: str, char_name: str) -> dict:
         print(f"[BOT_MODE] auto_classify_face_tags 호출: bot={bot_name} char={char_name} service={service} appearance={len(groups.get('외모/신체', []))} attire={len(groups.get('복장', []))} etc={len(groups.get('미분류', []))} use_custom={use_custom}")
 
         use_model = cfg.get("llm_model", "")
-        max_retries = max(0, int(cfg.get("auto_face_tag_max_retries", 2)))
         await _notify_llm_widget("start", {"model": use_model, "prompt_id": f"auto_face_tag:{char_name}"})
 
         raw = None
         last_err = None
-        total_elapsed = 0.0
-        for attempt in range(max_retries + 1):
-            t0 = _time.time()
-            try:
-                raw = await callLLMVisionTask("classify_face_tags", messages, image_b64=img_b64, image_mime="image/webp")
-            except Exception as call_err:
-                print(f"[BOT_MODE] callLLMVision 예외 (시도 {attempt + 1}/{max_retries + 1}): {call_err}")
-                traceback.print_exc()
-                last_err = f"{type(call_err).__name__}: {call_err}"
-                raw = None
-            total_elapsed += _time.time() - t0
+        t0 = _time.time()
+        try:
+            raw = await callLLMVisionTask(
+                "classify_face_tags",
+                messages,
+                image_b64=img_b64,
+                image_mime="image/webp",
+                result_validator=lambda result: (
+                    _parse_auto_face_tag_response(result) is not None,
+                    "얼굴/눈 태그 JSON 파싱 실패",
+                ),
+            )
+        except Exception as call_err:
+            print(f"[BOT_MODE] callLLMVision 예외: {call_err}")
+            traceback.print_exc()
+            last_err = f"{type(call_err).__name__}: {call_err}"
+            raw = None
+        total_elapsed = _time.time() - t0
 
-            if raw and not raw.startswith("[LLM 실패]"):
-                parsed = _parse_auto_face_tag_response(raw)
-                if parsed is not None:
-                    done_data = {
-                        "text": raw,
-                        "completion_tokens": max(1, len(raw) // 3),
-                        "elapsed": round(total_elapsed, 3),
-                        "tps": round((max(1, len(raw) // 3) / total_elapsed), 1) if total_elapsed > 0 else 0.0,
-                        "ttft": None,
-                    }
-                    await _notify_llm_widget("done", done_data)
-                    _log_lighbd_history({
-                        "ts": datetime.datetime.now().isoformat(timespec="seconds"),
-                        "prompt_id": f"auto_face_tag:{char_name}",
-                        "input": messages,
-                        "output": raw,
-                        "completion_tokens": done_data["completion_tokens"],
-                        "elapsed": done_data["elapsed"],
-                        "tps": done_data["tps"],
-                        "status": "ok",
-                    })
-                    print(f"[BOT_MODE] auto_classify_face_tags 완료: face={len(parsed['face'])}개 eye={len(parsed['eye'])}개 (시도 {attempt + 1})")
-                    return {"success": True, "data": parsed}
-                last_err = f"LLM 응답을 JSON으로 파싱하지 못했습니다. raw: {raw[:300]}"
-                print(f"[BOT_MODE] LLM 응답 JSON 파싱 실패 (시도 {attempt + 1}/{max_retries + 1}). raw={raw[:500]}")
-            else:
-                last_err = f"LLM 호출 실패: {raw or '빈 응답'}"
-                print(f"[BOT_MODE] LLM 호출 실패 (시도 {attempt + 1}/{max_retries + 1}): {raw}")
-
-            if attempt < max_retries:
-                retry_delay = max(0.0, float(cfg.get("auto_llm_retry_delay_sec", 1.0)))
-                print(f"[BOT_MODE] 재시도 대기 중... ({attempt + 1}/{max_retries}) {retry_delay}초")
-                await asyncio.sleep(retry_delay)
+        if raw and not raw.startswith("[LLM 실패]"):
+            parsed = _parse_auto_face_tag_response(raw)
+            if parsed is not None:
+                done_data = {
+                    "text": raw,
+                    "completion_tokens": max(1, len(raw) // 3),
+                    "elapsed": round(total_elapsed, 3),
+                    "tps": round((max(1, len(raw) // 3) / total_elapsed), 1) if total_elapsed > 0 else 0.0,
+                    "ttft": None,
+                }
+                await _notify_llm_widget("done", done_data)
+                _log_lighbd_history({
+                    "ts": datetime.datetime.now().isoformat(timespec="seconds"),
+                    "prompt_id": f"auto_face_tag:{char_name}",
+                    "input": messages,
+                    "output": raw,
+                    "completion_tokens": done_data["completion_tokens"],
+                    "elapsed": done_data["elapsed"],
+                    "tps": done_data["tps"],
+                    "status": "ok",
+                })
+                print(f"[BOT_MODE] auto_classify_face_tags 완료: face={len(parsed['face'])}개 eye={len(parsed['eye'])}개")
+                return {"success": True, "data": parsed}
+            last_err = f"LLM 응답을 JSON으로 파싱하지 못했습니다. raw: {raw[:300]}"
+            print(f"[BOT_MODE] LLM 응답 JSON 파싱 실패(라우팅 재시도 소진). raw={raw[:500]}")
+        else:
+            last_err = last_err or f"LLM 호출 실패: {raw or '빈 응답'}"
+            print(f"[BOT_MODE] LLM 호출 실패(라우팅 재시도 소진): {raw}")
 
         await _notify_llm_widget("error", {"error": last_err or "알 수 없는 오류", "elapsed": round(total_elapsed, 3)})
         _log_lighbd_history({
@@ -3871,7 +3872,7 @@ async def run_auto_classify_face_tags(bot_name: str, char_name: str) -> dict:
             "status": "error",
             "error": last_err or "알 수 없는 오류",
         })
-        return {"success": False, "error": f"{max_retries + 1}회 시도 후 실패: {last_err}"}
+        return {"success": False, "error": f"라우팅 재시도 후 실패: {last_err}"}
     except Exception as e:
         print(f"[BOT_MODE] auto_classify_face_tags 예외: {e}")
         traceback.print_exc()
@@ -4017,56 +4018,57 @@ async def run_lb_extra_refine(bot_name: str, char_name: str, appearance_tags: li
               f"appearance={len(appearance_tags or [])} outfit={len(outfit_tags or [])} etc={len(etc_tags or [])} use_custom={use_custom}")
 
         use_model = cfg.get("llm_model", "")
-        max_retries = max(0, int(cfg.get("auto_face_tag_max_retries", 2)))
         await _notify_llm_widget("start", {"model": use_model, "prompt_id": f"lb_extra_refine:{char_name}"})
 
         raw = None
         last_err = None
-        total_elapsed = 0.0
-        for attempt in range(max_retries + 1):
-            t0 = _time.time()
-            try:
-                raw = await callLLMVisionTask("refine_lb_extra", messages, image_b64=img_b64, image_mime=mime)
-            except Exception as call_err:
-                print(f"[BOT_MODE] callLLMVision 예외 (시도 {attempt + 1}/{max_retries + 1}): {call_err}")
-                traceback.print_exc()
-                last_err = f"{type(call_err).__name__}: {call_err}"
-                raw = None
-            total_elapsed += _time.time() - t0
+        t0 = _time.time()
+        try:
+            raw = await callLLMVisionTask(
+                "refine_lb_extra",
+                messages,
+                image_b64=img_b64,
+                image_mime=mime,
+                result_validator=lambda result: (
+                    _parse_lb_extra_refine_response(result) is not None,
+                    "외모/복장 태그 JSON 파싱 실패",
+                ),
+            )
+        except Exception as call_err:
+            print(f"[BOT_MODE] callLLMVision 예외: {call_err}")
+            traceback.print_exc()
+            last_err = f"{type(call_err).__name__}: {call_err}"
+            raw = None
+        total_elapsed = _time.time() - t0
 
-            if raw and not raw.startswith("[LLM 실패]"):
-                parsed = _parse_lb_extra_refine_response(raw)
-                if parsed is not None:
-                    done_data = {
-                        "text": raw,
-                        "completion_tokens": max(1, len(raw) // 3),
-                        "elapsed": round(total_elapsed, 3),
-                        "tps": round((max(1, len(raw) // 3) / total_elapsed), 1) if total_elapsed > 0 else 0.0,
-                        "ttft": None,
-                    }
-                    await _notify_llm_widget("done", done_data)
-                    _log_lighbd_history({
-                        "ts": datetime.datetime.now().isoformat(timespec="seconds"),
-                        "prompt_id": f"lb_extra_refine:{char_name}",
-                        "input": messages,
-                        "output": raw,
-                        "completion_tokens": done_data["completion_tokens"],
-                        "elapsed": done_data["elapsed"],
-                        "tps": done_data["tps"],
-                        "status": "ok",
-                    })
-                    print(f"[BOT_MODE] lb_extra_refine 완료: appearance={len(parsed['appearance'])}개 outfit={len(parsed['outfit'])}개 (시도 {attempt + 1})")
-                    return {"success": True, "data": parsed}
-                last_err = f"LLM 응답을 JSON으로 파싱하지 못했습니다. raw: {raw[:300]}"
-                print(f"[BOT_MODE] LLM 응답 JSON 파싱 실패 (시도 {attempt + 1}/{max_retries + 1}). raw={raw[:500]}")
-            else:
-                last_err = f"LLM 호출 실패: {raw or '빈 응답'}"
-                print(f"[BOT_MODE] LLM 호출 실패 (시도 {attempt + 1}/{max_retries + 1}): {raw}")
-
-            if attempt < max_retries:
-                retry_delay = max(0.0, float(cfg.get("auto_llm_retry_delay_sec", 1.0)))
-                print(f"[BOT_MODE] 재시도 대기 중... ({attempt + 1}/{max_retries}) {retry_delay}초")
-                await asyncio.sleep(retry_delay)
+        if raw and not raw.startswith("[LLM 실패]"):
+            parsed = _parse_lb_extra_refine_response(raw)
+            if parsed is not None:
+                done_data = {
+                    "text": raw,
+                    "completion_tokens": max(1, len(raw) // 3),
+                    "elapsed": round(total_elapsed, 3),
+                    "tps": round((max(1, len(raw) // 3) / total_elapsed), 1) if total_elapsed > 0 else 0.0,
+                    "ttft": None,
+                }
+                await _notify_llm_widget("done", done_data)
+                _log_lighbd_history({
+                    "ts": datetime.datetime.now().isoformat(timespec="seconds"),
+                    "prompt_id": f"lb_extra_refine:{char_name}",
+                    "input": messages,
+                    "output": raw,
+                    "completion_tokens": done_data["completion_tokens"],
+                    "elapsed": done_data["elapsed"],
+                    "tps": done_data["tps"],
+                    "status": "ok",
+                })
+                print(f"[BOT_MODE] lb_extra_refine 완료: appearance={len(parsed['appearance'])}개 outfit={len(parsed['outfit'])}개")
+                return {"success": True, "data": parsed}
+            last_err = f"LLM 응답을 JSON으로 파싱하지 못했습니다. raw: {raw[:300]}"
+            print(f"[BOT_MODE] LLM 응답 JSON 파싱 실패(라우팅 재시도 소진). raw={raw[:500]}")
+        else:
+            last_err = last_err or f"LLM 호출 실패: {raw or '빈 응답'}"
+            print(f"[BOT_MODE] LLM 호출 실패(라우팅 재시도 소진): {raw}")
 
         await _notify_llm_widget("error", {"error": last_err or "알 수 없는 오류", "elapsed": round(total_elapsed, 3)})
         _log_lighbd_history({
@@ -4078,7 +4080,7 @@ async def run_lb_extra_refine(bot_name: str, char_name: str, appearance_tags: li
             "status": "error",
             "error": last_err or "알 수 없는 오류",
         })
-        return {"success": False, "error": f"{max_retries + 1}회 시도 후 실패: {last_err}"}
+        return {"success": False, "error": f"라우팅 재시도 후 실패: {last_err}"}
     except Exception as e:
         print(f"[BOT_MODE] lb_extra_refine 예외: {e}")
         traceback.print_exc()

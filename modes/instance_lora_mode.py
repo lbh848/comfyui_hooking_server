@@ -5,7 +5,6 @@ Instance LoRA 매니징 모듈
 - 태그 분석 후 1-pass 자동 학습
 """
 
-import asyncio
 import base64
 import json
 import os
@@ -490,56 +489,59 @@ async def run_auto_refine_lora_prompt(
         print(f"[INSTANCE_LORA] auto_refine_lora_prompt 호출: source={source_type} {source_desc} char={char_name} filename={filename} service={service} is_asset={is_asset} gender={gender_tag} etc_len={len(current_positive)} use_custom={use_custom}")
 
         use_model = cfg.get("llm_model", "")
-        max_retries = max(0, int(cfg.get("auto_lora_prompt_max_retries", 2)))
         await _notify_llm_widget("start", {"model": use_model, "prompt_id": f"auto_lora_prompt:{source_type}:{char_name}/{filename}"})
 
         raw = None
         last_err = None
-        total_elapsed = 0.0
-        for attempt in range(max_retries + 1):
-            t0 = time.time()
-            try:
-                raw = await callLLMVisionTask("refine_lora_prompt", messages, image_b64=img_b64, image_mime=image_mime)
-            except Exception as call_err:
-                print(f"[INSTANCE_LORA] callLLMVision 예외 (시도 {attempt + 1}/{max_retries + 1}): {call_err}")
-                traceback.print_exc()
-                last_err = f"{type(call_err).__name__}: {call_err}"
-                raw = None
-            total_elapsed += time.time() - t0
+        t0 = time.time()
+        try:
+            raw = await callLLMVisionTask(
+                "refine_lora_prompt",
+                messages,
+                image_b64=img_b64,
+                image_mime=image_mime,
+                result_validator=lambda result: (
+                    _parse_auto_lora_prompt_response(
+                        result, gender_fallback=gender_tag
+                    ) is not None,
+                    "LoRA 프롬프트 JSON 파싱 실패",
+                ),
+            )
+        except Exception as call_err:
+            print(f"[INSTANCE_LORA] callLLMVision 예외: {call_err}")
+            traceback.print_exc()
+            last_err = f"{type(call_err).__name__}: {call_err}"
+            raw = None
+        total_elapsed = time.time() - t0
 
-            if raw and not raw.startswith("[LLM 실패]"):
-                parsed = _parse_auto_lora_prompt_response(raw, gender_fallback=gender_tag)
-                if parsed is not None:
-                    done_data = {
-                        "text": raw,
-                        "completion_tokens": max(1, len(raw) // 3),
-                        "elapsed": round(total_elapsed, 3),
-                        "tps": round((max(1, len(raw) // 3) / total_elapsed), 1) if total_elapsed > 0 else 0.0,
-                        "ttft": None,
-                    }
-                    await _notify_llm_widget("done", done_data)
-                    _log_lighbd_history({
-                        "ts": datetime.datetime.now().isoformat(timespec="seconds"),
-                        "prompt_id": f"auto_lora_prompt:{source_type}:{char_name}/{filename}",
-                        "input": messages,
-                        "output": raw,
-                        "completion_tokens": done_data["completion_tokens"],
-                        "elapsed": done_data["elapsed"],
-                        "tps": done_data["tps"],
-                        "status": "ok",
-                    })
-                    print(f"[INSTANCE_LORA] auto_refine_lora_prompt 완료: positive 길이={len(parsed['positive'])} (시도 {attempt + 1})")
-                    return {"success": True, "data": parsed}
-                last_err = f"LLM 응답을 JSON으로 파싱하지 못했습니다. raw: {raw[:300]}"
-                print(f"[INSTANCE_LORA] LLM 응답 JSON 파싱 실패 (시도 {attempt + 1}/{max_retries + 1}). raw={raw[:500]}")
-            else:
-                last_err = f"LLM 호출 실패: {raw or '빈 응답'}"
-                print(f"[INSTANCE_LORA] LLM 호출 실패 (시도 {attempt + 1}/{max_retries + 1}): {raw}")
-
-            if attempt < max_retries:
-                retry_delay = max(0.0, float(cfg.get("auto_llm_retry_delay_sec", 1.0)))
-                print(f"[INSTANCE_LORA] 재시도 대기 중... ({attempt + 1}/{max_retries}) {retry_delay}초")
-                await asyncio.sleep(retry_delay)
+        if raw and not raw.startswith("[LLM 실패]"):
+            parsed = _parse_auto_lora_prompt_response(raw, gender_fallback=gender_tag)
+            if parsed is not None:
+                done_data = {
+                    "text": raw,
+                    "completion_tokens": max(1, len(raw) // 3),
+                    "elapsed": round(total_elapsed, 3),
+                    "tps": round((max(1, len(raw) // 3) / total_elapsed), 1) if total_elapsed > 0 else 0.0,
+                    "ttft": None,
+                }
+                await _notify_llm_widget("done", done_data)
+                _log_lighbd_history({
+                    "ts": datetime.datetime.now().isoformat(timespec="seconds"),
+                    "prompt_id": f"auto_lora_prompt:{source_type}:{char_name}/{filename}",
+                    "input": messages,
+                    "output": raw,
+                    "completion_tokens": done_data["completion_tokens"],
+                    "elapsed": done_data["elapsed"],
+                    "tps": done_data["tps"],
+                    "status": "ok",
+                })
+                print(f"[INSTANCE_LORA] auto_refine_lora_prompt 완료: positive 길이={len(parsed['positive'])}")
+                return {"success": True, "data": parsed}
+            last_err = f"LLM 응답을 JSON으로 파싱하지 못했습니다. raw: {raw[:300]}"
+            print(f"[INSTANCE_LORA] LLM 응답 JSON 파싱 실패(라우팅 재시도 소진). raw={raw[:500]}")
+        else:
+            last_err = last_err or f"LLM 호출 실패: {raw or '빈 응답'}"
+            print(f"[INSTANCE_LORA] LLM 호출 실패(라우팅 재시도 소진): {raw}")
 
         await _notify_llm_widget("error", {"error": last_err or "알 수 없는 오류", "elapsed": round(total_elapsed, 3)})
         _log_lighbd_history({
@@ -551,7 +553,7 @@ async def run_auto_refine_lora_prompt(
             "status": "error",
             "error": last_err or "알 수 없는 오류",
         })
-        return {"success": False, "error": f"{max_retries + 1}회 시도 후 실패: {last_err}"}
+        return {"success": False, "error": f"라우팅 재시도 후 실패: {last_err}"}
     except Exception as e:
         print(f"[INSTANCE_LORA] auto_refine_lora_prompt 예외: {e}")
         traceback.print_exc()
@@ -622,7 +624,6 @@ async def run_auto_refine_test_setup(
         cfg = get_config()
         service = cfg.get("llm_service", "")
         use_model = cfg.get("llm_model", "")
-        max_retries = max(0, int(cfg.get("auto_lora_prompt_max_retries", 2)))
         prompt_id = f"bot_test_setup:{bot_name}/{project_name}/{character}/{test_filename}"
         print(f"[INSTANCE_LORA] run_auto_refine_test_setup 호출: bot={bot_name} project={project_name} char={character} test={test_filename} service={service} card_len={len(card_positive)} test_len={len(test_positive)}")
 
@@ -630,51 +631,51 @@ async def run_auto_refine_test_setup(
 
         raw = None
         last_err = None
-        total_elapsed = 0.0
-        for attempt in range(max_retries + 1):
-            t0 = time.time()
-            try:
-                raw = await callLLMTask("refine_lora_test_setup", messages)
-            except Exception as call_err:
-                print(f"[INSTANCE_LORA] callLLM 예외 (시도 {attempt + 1}/{max_retries + 1}): {call_err}")
-                traceback.print_exc()
-                last_err = f"{type(call_err).__name__}: {call_err}"
-                raw = None
-            total_elapsed += time.time() - t0
+        t0 = time.time()
+        try:
+            raw = await callLLMTask(
+                "refine_lora_test_setup",
+                messages,
+                result_validator=lambda result: (
+                    _parse_auto_lora_prompt_response(result) is not None,
+                    "테스트 이미지 세팅 JSON 파싱 실패",
+                ),
+            )
+        except Exception as call_err:
+            print(f"[INSTANCE_LORA] callLLM 예외: {call_err}")
+            traceback.print_exc()
+            last_err = f"{type(call_err).__name__}: {call_err}"
+            raw = None
+        total_elapsed = time.time() - t0
 
-            if raw and not raw.startswith("[LLM 실패]"):
-                parsed = _parse_auto_lora_prompt_response(raw)
-                if parsed is not None:
-                    done_data = {
-                        "text": raw,
-                        "completion_tokens": max(1, len(raw) // 3),
-                        "elapsed": round(total_elapsed, 3),
-                        "tps": round((max(1, len(raw) // 3) / total_elapsed), 1) if total_elapsed > 0 else 0.0,
-                        "ttft": None,
-                    }
-                    await _notify_llm_widget("done", done_data)
-                    _log_lighbd_history({
-                        "ts": datetime.datetime.now().isoformat(timespec="seconds"),
-                        "prompt_id": prompt_id,
-                        "input": messages,
-                        "output": raw,
-                        "completion_tokens": done_data["completion_tokens"],
-                        "elapsed": done_data["elapsed"],
-                        "tps": done_data["tps"],
-                        "status": "ok",
-                    })
-                    print(f"[INSTANCE_LORA] run_auto_refine_test_setup 완료: positive 길이={len(parsed['positive'])} (시도 {attempt + 1})")
-                    return {"success": True, "data": parsed}
-                last_err = f"LLM 응답을 JSON으로 파싱하지 못했습니다. raw: {raw[:300]}"
-                print(f"[INSTANCE_LORA] LLM 응답 JSON 파싱 실패 (시도 {attempt + 1}/{max_retries + 1}). raw={raw[:500]}")
-            else:
-                last_err = f"LLM 호출 실패: {raw or '빈 응답'}"
-                print(f"[INSTANCE_LORA] LLM 호출 실패 (시도 {attempt + 1}/{max_retries + 1}): {raw}")
-
-            if attempt < max_retries:
-                retry_delay = max(0.0, float(cfg.get("auto_llm_retry_delay_sec", 1.0)))
-                print(f"[INSTANCE_LORA] 재시도 대기 중... ({attempt + 1}/{max_retries}) {retry_delay}초")
-                await asyncio.sleep(retry_delay)
+        if raw and not raw.startswith("[LLM 실패]"):
+            parsed = _parse_auto_lora_prompt_response(raw)
+            if parsed is not None:
+                done_data = {
+                    "text": raw,
+                    "completion_tokens": max(1, len(raw) // 3),
+                    "elapsed": round(total_elapsed, 3),
+                    "tps": round((max(1, len(raw) // 3) / total_elapsed), 1) if total_elapsed > 0 else 0.0,
+                    "ttft": None,
+                }
+                await _notify_llm_widget("done", done_data)
+                _log_lighbd_history({
+                    "ts": datetime.datetime.now().isoformat(timespec="seconds"),
+                    "prompt_id": prompt_id,
+                    "input": messages,
+                    "output": raw,
+                    "completion_tokens": done_data["completion_tokens"],
+                    "elapsed": done_data["elapsed"],
+                    "tps": done_data["tps"],
+                    "status": "ok",
+                })
+                print(f"[INSTANCE_LORA] run_auto_refine_test_setup 완료: positive 길이={len(parsed['positive'])}")
+                return {"success": True, "data": parsed}
+            last_err = f"LLM 응답을 JSON으로 파싱하지 못했습니다. raw: {raw[:300]}"
+            print(f"[INSTANCE_LORA] LLM 응답 JSON 파싱 실패(라우팅 재시도 소진). raw={raw[:500]}")
+        else:
+            last_err = last_err or f"LLM 호출 실패: {raw or '빈 응답'}"
+            print(f"[INSTANCE_LORA] LLM 호출 실패(라우팅 재시도 소진): {raw}")
 
         await _notify_llm_widget("error", {"error": last_err or "알 수 없는 오류", "elapsed": round(total_elapsed, 3)})
         _log_lighbd_history({
@@ -686,7 +687,7 @@ async def run_auto_refine_test_setup(
             "status": "error",
             "error": last_err or "알 수 없는 오류",
         })
-        return {"success": False, "error": f"{max_retries + 1}회 시도 후 실패: {last_err}"}
+        return {"success": False, "error": f"라우팅 재시도 후 실패: {last_err}"}
     except Exception as e:
         print(f"[INSTANCE_LORA] run_auto_refine_test_setup 예외: {e}")
         traceback.print_exc()

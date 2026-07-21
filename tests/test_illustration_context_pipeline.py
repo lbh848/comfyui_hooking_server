@@ -607,7 +607,9 @@ def test_backtranslation_chunks_balance_contiguous_slot_groups():
 async def test_backtranslation_empty_response_falls_back_only_failed_chunk(monkeypatch, capsys):
     source = "첫 문단.\n\n[Slot 0]\n\n둘째 문단.\n\n[Slot 1]\n\n끝 문단."
 
-    async def fake_pipeline_call(call_name, messages, stream_notify=None):
+    async def fake_pipeline_call(
+        call_name, messages, stream_notify=None, result_validator=None
+    ):
         if call_name.endswith("1/2"):
             return "First paragraph.\n\n[Slot 0]"
         return "   "
@@ -633,7 +635,9 @@ async def test_backtranslation_empty_response_falls_back_only_failed_chunk(monke
 async def test_backtranslation_slot_mismatch_falls_back_to_original_chunk(monkeypatch):
     source = "장면.\n\n[Slot 7]"
 
-    async def fake_pipeline_call(call_name, messages, stream_notify=None):
+    async def fake_pipeline_call(
+        call_name, messages, stream_notify=None, result_validator=None
+    ):
         return "Scene.\n\n[Slot 8]"
 
     monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
@@ -650,15 +654,19 @@ async def test_backtranslation_slot_mismatch_falls_back_to_original_chunk(monkey
 
 
 @pytest.mark.asyncio
-async def test_backtranslation_strict_strategy_retries_once_then_succeeds(monkeypatch):
+async def test_backtranslation_strict_strategy_uses_central_route_retry(monkeypatch):
     calls = []
     source = "장면.\n\n[Slot 3]"
 
-    async def fake_pipeline_call(call_name, messages, stream_notify=None):
+    async def fake_pipeline_call(
+        call_name, messages, stream_notify=None, result_validator=None
+    ):
         calls.append(call_name)
-        if len(calls) == 1:
-            return ""
-        return "Scene.\n\n[Slot 3]"
+        assert result_validator is not None
+        assert result_validator("Scene.\n\n[Slot 8]")[0] is False
+        successful = "Scene.\n\n[Slot 3]"
+        assert result_validator(successful)[0] is True
+        return successful
 
     monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
     translated, statuses = await pipeline.backtranslate_current_context(
@@ -670,8 +678,7 @@ async def test_backtranslation_strict_strategy_retries_once_then_succeeds(monkey
     )
 
     assert translated == "Scene.\n\n[Slot 3]"
-    assert len(calls) == 2
-    assert calls[1].endswith("RETRY")
+    assert len(calls) == 1
     assert statuses == [{
         "index": 1,
         "status": "translated",
@@ -681,12 +688,18 @@ async def test_backtranslation_strict_strategy_retries_once_then_succeeds(monkey
 
 
 @pytest.mark.asyncio
-async def test_backtranslation_strict_strategy_aborts_after_retry(monkeypatch):
+async def test_backtranslation_strict_strategy_aborts_after_route_retries(monkeypatch):
     calls = []
 
-    async def fake_pipeline_call(call_name, messages, stream_notify=None):
+    async def fake_pipeline_call(
+        call_name, messages, stream_notify=None, result_validator=None
+    ):
         calls.append(call_name)
-        return "   "
+        assert result_validator is not None
+        invalid = "Scene.\n\n[Slot 8]"
+        assert result_validator(invalid)[0] is False
+        assert result_validator(invalid)[0] is False
+        return invalid
 
     monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
     with pytest.raises(RuntimeError, match="엄격 전략 실패"):
@@ -698,7 +711,7 @@ async def test_backtranslation_strict_strategy_aborts_after_retry(monkeypatch):
             failure_strategy="retry_abort",
         )
 
-    assert len(calls) == 2
+    assert len(calls) == 1
 
 
 def test_call3_dialogue_prompt_selects_speak_or_manga_and_scopes_emotions():

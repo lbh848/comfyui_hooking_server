@@ -14,6 +14,7 @@ customprompt/ 폴더의 스크립트에서 callLLM 함수를 import하여 사용
 import asyncio
 import datetime
 import json
+import math
 import os
 import time
 import traceback
@@ -462,7 +463,7 @@ _current_config = _ContextConfig({
     "llm_stream": False,              # LLM1 실제 API 스트리밍
     "llm_stream2": False,             # LLM2 실제 API 스트리밍
     "llm_stream3": False,             # LLM3 실제 API 스트리밍
-    # 작업별 LLM1/LLM2 라우팅 (외부 API 분기). task_key -> {"primary": "llm1"|"llm2", "fallback": bool}
+    # 작업별 LLM1/LLM2/LLM3 라우팅과 메인/폴백 재시도 정책(외부 API 분기).
     # 실제 기본값은 server.py 의 DEFAULT_CONFIG 에서 update_config 로 내려온다.
     "llm_routing": {},
 })
@@ -1613,14 +1614,18 @@ async def callLLM3Stream(messages: list, model: str = None, log_history: bool = 
 
 # ─── 작업별 LLM 라우팅 (외부 API 분기) ─────────────────────────
 #
-# callLLMTask / callLLMVisionTask 는 task_key 별로 (primary LLM, fallback on/off) 를
-# config["llm_routing"] 에서 읽어 메인 LLM 을 호출하고, 실패 시(반대 LLM 폴백이 켜져 있으면)
-# 반대 LLM 으로 재시도한다. 기존에 각 customprompt 스크립트에 하드코딩되던 폴백 로직을
-# 단일 경로로 통합한다.
+# callLLMTask / callLLMVisionTask 는 task_key 별 라우팅과 메인/폴백 재시도 정책을
+# config["llm_routing"] 에서 읽는다. API 오류, 빈 응답, 선택적 응답 검증 실패를 같은
+# 단일 경로에서 처리한다.
 
 def _is_llm_failed(result) -> bool:
-    """LLM 호출 결과가 실패(에러 문자열 또는 빈 결과)인지 판별."""
-    return (not result) or (isinstance(result, str) and result.startswith("[LLM 실패]"))
+    """LLM 호출 결과가 실패(에러 문자열, None, 빈 문자열/공백)인지 판별."""
+    if result is None:
+        return True
+    if isinstance(result, str):
+        stripped = result.strip()
+        return not stripped or stripped.startswith("[LLM 실패]")
+    return not bool(result)
 
 
 def _routing_for(task_key: str):
@@ -1641,6 +1646,141 @@ def _routing_for(task_key: str):
         # 레거시 bool 폴백 → 기존 하드코딩 대상.
         fb = {"llm1": "llm2", "llm2": "llm1", "llm3": "llm1"}.get(primary)
     return primary, fb
+
+
+def _routing_retry_policy(task_key: str) -> dict:
+    """작업의 메인/폴백 재시도 횟수와 대기초를 안전하게 정규화한다."""
+    entry = (_current_config.get("llm_routing") or {}).get(task_key, {}) or {}
+
+    def _count(field: str) -> int:
+        raw = entry.get(field, 0)
+        try:
+            if isinstance(raw, bool):
+                raise ValueError("불리언은 허용되지 않음")
+            numeric = float(raw)
+            if not math.isfinite(numeric) or not numeric.is_integer():
+                raise ValueError("정수가 아님")
+            value = int(numeric)
+            if not 0 <= value <= 10:
+                raise ValueError("허용 범위 0~10을 벗어남")
+            return value
+        except (TypeError, ValueError) as e:
+            print(
+                f"[LLM_ROUTE] 재시도 횟수 설정 오류, 0 사용: "
+                f"task={task_key}, field={field}, value={raw!r}, error={e}"
+            )
+            traceback.print_exc()
+            return 0
+
+    def _delay(field: str) -> float:
+        raw = entry.get(field, 0.0)
+        try:
+            if isinstance(raw, bool):
+                raise ValueError("불리언은 허용되지 않음")
+            value = float(raw)
+            if not math.isfinite(value) or not 0 <= value <= 300:
+                raise ValueError("허용 범위 0~300을 벗어남")
+            return value
+        except (TypeError, ValueError) as e:
+            print(
+                f"[LLM_ROUTE] 재시도 대기초 설정 오류, 0초 사용: "
+                f"task={task_key}, field={field}, value={raw!r}, error={e}"
+            )
+            traceback.print_exc()
+            return 0.0
+
+    return {
+        "max_retries": _count("max_retries"),
+        "retry_delay_sec": _delay("retry_delay_sec"),
+        "fallback_max_retries": _count("fallback_max_retries"),
+        "fallback_retry_delay_sec": _delay("fallback_retry_delay_sec"),
+    }
+
+
+def _validate_routed_result(task_key: str, phase: str, result, result_validator=None):
+    """호출 결과와 선택적 업무별 검증 결과를 (성공 여부, 사유)로 반환한다."""
+    if _is_llm_failed(result):
+        if result is None:
+            return False, "응답이 None임"
+        if isinstance(result, str) and not result.strip():
+            return False, "응답이 비어 있음"
+        return False, str(result)[:300]
+    if result_validator is None:
+        return True, ""
+
+    try:
+        validation = result_validator(result)
+    except Exception as e:
+        print(
+            f"[LLM_ROUTE] 응답 검증기 예외: task={task_key}, phase={phase}, "
+            f"error={type(e).__name__}: {e}"
+        )
+        traceback.print_exc()
+        return False, f"응답 검증기 예외: {type(e).__name__}: {e}"
+
+    if isinstance(validation, tuple):
+        valid = bool(validation[0]) if validation else False
+        reason = str(validation[1]) if len(validation) > 1 else ""
+    else:
+        valid = bool(validation)
+        reason = ""
+    if valid:
+        return True, ""
+    return False, reason or "응답 검증 실패"
+
+
+async def _invoke_routed_with_retry(
+    task_key: str,
+    phase: str,
+    slot: str,
+    max_retries: int,
+    retry_delay_sec: float,
+    invoke,
+    result_validator=None,
+):
+    """한 LLM 슬롯을 설정 횟수만큼 호출하며 결과와 성공 여부를 반환한다."""
+    total_attempts = max_retries + 1
+    last_result = None
+    last_reason = "호출되지 않음"
+    last_exception = None
+    for attempt in range(1, total_attempts + 1):
+        try:
+            last_result = await invoke(slot)
+            last_exception = None
+            accepted, last_reason = _validate_routed_result(
+                task_key, phase, last_result, result_validator
+            )
+        except Exception as e:
+            last_exception = e
+            last_result = None
+            accepted = False
+            last_reason = f"{type(e).__name__}: {e}"
+            print(
+                f"[LLM_ROUTE] 호출 예외: task={task_key}, phase={phase}, slot={slot}, "
+                f"attempt={attempt}/{total_attempts}, error={last_reason}"
+            )
+            traceback.print_exc()
+
+        if accepted:
+            if attempt > 1:
+                _llm_log(
+                    f"callLLMTask[{task_key}]: {phase} 재시도 성공 "
+                    f"slot={slot} attempt={attempt}/{total_attempts}"
+                )
+            return last_result, True, "", None
+
+        print(
+            f"[LLM_ROUTE] 호출 실패: task={task_key}, phase={phase}, slot={slot}, "
+            f"attempt={attempt}/{total_attempts}, reason={last_reason}"
+        )
+        if attempt < total_attempts:
+            print(
+                f"[LLM_ROUTE] 재시도 대기: task={task_key}, phase={phase}, slot={slot}, "
+                f"next_attempt={attempt + 1}/{total_attempts}, delay={retry_delay_sec}초"
+            )
+            await asyncio.sleep(retry_delay_sec)
+
+    return last_result, False, last_reason, last_exception
 
 
 def routing_primary_service(task_key: str) -> str:
@@ -1719,12 +1859,19 @@ async def _call_routed_text_slot(
         _request_config_override_ctx.reset(config_token)
 
 
-async def callLLMTask(task_key: str, messages: list, model: str = None, json_mode: bool = False) -> str:
+async def callLLMTask(
+    task_key: str,
+    messages: list,
+    model: str = None,
+    json_mode: bool = False,
+    result_validator=None,
+) -> str:
     """
     작업별 라우팅 텍스트 LLM 호출.
 
     config["llm_routing"][task_key] 의 primary(llm1/llm2/llm3) 에 따라 메인 LLM 호출 후,
-    fallback_target 이 지정되어 있고 결과가 실패면 해당 폴백 LLM 으로 재시도한다.
+    작업별 설정에 따라 메인 LLM을 재시도한 뒤, 실패하면 폴백 LLM도 별도 정책으로
+    재시도한다. result_validator가 있으면 형식/내용 검증 실패도 같은 정책을 적용한다.
     """
     primary, fb_target = _routing_for(task_key)
     # 라우팅 엔트리에 json_mode 가 명시되어 있으면 그 값 우선(edit_illustration_prompt 토글).
@@ -1748,11 +1895,46 @@ async def callLLMTask(task_key: str, messages: list, model: str = None, json_mod
         finally:
             _stream_metadata_ctx.reset(meta_token)
 
-    _llm_log(f"callLLMTask[{task_key}]: primary={primary} fallback={fb_target} json_mode={eff_json}")
-    result = await _invoke(primary)
-    if fb_target is not None and _is_llm_failed(result):
-        _llm_log(f"callLLMTask[{task_key}]: primary 실패→폴백 시도 ({result[:80] if result else ''})")
-        result = await _invoke(fb_target)
+    retry_policy = _routing_retry_policy(task_key)
+    _llm_log(
+        f"callLLMTask[{task_key}]: primary={primary} fallback={fb_target} "
+        f"json_mode={eff_json} retry={retry_policy}"
+    )
+    result, accepted, reason, last_exception = await _invoke_routed_with_retry(
+        task_key,
+        "primary",
+        primary,
+        retry_policy["max_retries"],
+        retry_policy["retry_delay_sec"],
+        _invoke,
+        result_validator,
+    )
+    final_phase = "primary"
+    if fb_target is not None and not accepted:
+        _llm_log(
+            f"callLLMTask[{task_key}]: primary 소진→폴백 시도 "
+            f"slot={fb_target} reason={reason}"
+        )
+        result, accepted, reason, last_exception = await _invoke_routed_with_retry(
+            task_key,
+            "fallback",
+            fb_target,
+            retry_policy["fallback_max_retries"],
+            retry_policy["fallback_retry_delay_sec"],
+            _invoke,
+            result_validator,
+        )
+        final_phase = "fallback"
+    if not accepted and last_exception is not None:
+        raise last_exception
+    if not accepted and _is_llm_failed(result):
+        if isinstance(result, str) and result.strip().startswith("[LLM 실패]"):
+            return result
+        print(
+            f"[LLM_ROUTE] 빈 응답으로 최종 실패: task={task_key}, "
+            f"phase={final_phase}, reason={reason}"
+        )
+        return f"[LLM 실패] {task_key} {final_phase} 재시도 소진: {reason}"
     return result
 
 
@@ -1888,13 +2070,21 @@ async def callLLMVision3(messages: list, image_b64: str, image_mime: str = "imag
         _current_config["llm_custom_body"] = saved_body
 
 
-async def callLLMVisionTask(task_key: str, messages: list, image_b64: str, image_mime: str = "image/webp",
-                            model: str = None, json_mode: bool = False) -> str:
+async def callLLMVisionTask(
+    task_key: str,
+    messages: list,
+    image_b64: str,
+    image_mime: str = "image/webp",
+    model: str = None,
+    json_mode: bool = False,
+    result_validator=None,
+) -> str:
     """
     작업별 라우팅 비전 LLM 호출.
 
     config["llm_routing"][task_key] 의 primary(llm1/llm2/llm3) 에 따라 메인 비전 LLM 호출 후,
-    fallback_target 이 지정되어 있고 결과가 실패면 해당 폴백 비전 LLM 으로 재시도한다.
+    작업별 설정에 따라 메인 비전 LLM을 재시도한 뒤, 실패하면 폴백 비전 LLM도 별도
+    정책으로 재시도한다. result_validator가 있으면 형식/내용 검증 실패도 포함한다.
     """
     primary, fb_target = _routing_for(task_key)
     # 라우팅 엔트리에 json_mode 가 명시되어 있으면 그 값 우선(edit_illustration_prompt 토글).
@@ -1918,11 +2108,46 @@ async def callLLMVisionTask(task_key: str, messages: list, image_b64: str, image
         finally:
             _stream_metadata_ctx.reset(meta_token)
 
-    _llm_log(f"callLLMVisionTask[{task_key}]: primary={primary} fallback={fb_target} json_mode={eff_json}")
-    result = await _invoke(primary)
-    if fb_target in _vision_funcs and _is_llm_failed(result):
-        _llm_log(f"callLLMVisionTask[{task_key}]: primary 실패→폴백 시도 ({result[:80] if result else ''})")
-        result = await _invoke(fb_target)
+    retry_policy = _routing_retry_policy(task_key)
+    _llm_log(
+        f"callLLMVisionTask[{task_key}]: primary={primary} fallback={fb_target} "
+        f"json_mode={eff_json} retry={retry_policy}"
+    )
+    result, accepted, reason, last_exception = await _invoke_routed_with_retry(
+        task_key,
+        "primary",
+        primary,
+        retry_policy["max_retries"],
+        retry_policy["retry_delay_sec"],
+        _invoke,
+        result_validator,
+    )
+    final_phase = "primary"
+    if fb_target in _vision_funcs and not accepted:
+        _llm_log(
+            f"callLLMVisionTask[{task_key}]: primary 소진→폴백 시도 "
+            f"slot={fb_target} reason={reason}"
+        )
+        result, accepted, reason, last_exception = await _invoke_routed_with_retry(
+            task_key,
+            "fallback",
+            fb_target,
+            retry_policy["fallback_max_retries"],
+            retry_policy["fallback_retry_delay_sec"],
+            _invoke,
+            result_validator,
+        )
+        final_phase = "fallback"
+    if not accepted and last_exception is not None:
+        raise last_exception
+    if not accepted and _is_llm_failed(result):
+        if isinstance(result, str) and result.strip().startswith("[LLM 실패]"):
+            return result
+        print(
+            f"[LLM_ROUTE] 빈 응답으로 최종 실패: task={task_key}, "
+            f"phase={final_phase}, reason={reason}"
+        )
+        return f"[LLM 실패] {task_key} {final_phase} 재시도 소진: {reason}"
     return result
 
 

@@ -21,8 +21,8 @@
 ---
 
 사용 가능한 LLM 호출 함수:
-    callLLM(messages, model=None)  → LLM1 호출 (설정의 서비스/모델 사용)
-    callLLM2(messages, model=None) → LLM2 호출 (설정의 서비스2/모델2 사용)
+    callLLMTask("extract_outfit", messages, model=None)
+        → 외부 API 분기의 복장 추출 라우팅/재시도/폴백 설정 사용
 
 사용 가능한 유틸리티:
     get_config() → {"llm_service": ..., "llm_model": ..., "llm_service2": ..., "llm_model2": ..., ...}
@@ -52,17 +52,16 @@ Gemini-3 계열 모델 요청 형식:
 }
 
 주의:
-- callLLM이 service/model 설정을 자동으로 처리합니다. (재시도 없음, 단일 시도)
+- callLLMTask가 service/model과 외부 API 분기의 작업별 재시도/폴백 설정을 처리합니다.
 
 주의:
 - Gemini 모델은 system role을 지원하지 않으므로 시스템 프롬프트도 user role로 전달해야 합니다.
 - GPT 모델은 system role을 지원합니다.
-- callLLM / callLLM2 모두 재시도 없이 단일 시도입니다.
 - LLM 실패 시 반환값: "[LLM 실패] ..." 형식 문자열
-- 에러 메시지에 따라 callLLM2로 폴백하는 로직을 직접 구현할 수 있습니다.
+- 폴백은 외부 API 분기의 복장 추출 항목에서 설정합니다.
 """
 
-from modes.llm_service import callLLM, callLLM2, get_config
+from modes.llm_service import callLLMTask, get_config
 
 
 async def run(character_name: str, outfit_list: list, chat_list: list = [],
@@ -91,7 +90,7 @@ async def run(character_name: str, outfit_list: list, chat_list: list = [],
     """
 
     # TODO: 여기에 프롬프트 로직을 구현하세요
-    result = await callLLM([
+    result = await callLLMTask("extract_outfit", [
         {"role": "user", "content": f"캐릭터 '{character_name}'의 복장을 정리해주세요."}
     ])
 
