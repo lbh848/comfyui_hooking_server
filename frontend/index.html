@@ -21518,8 +21518,7 @@
             } else if (name === 'bot') {
                 document.querySelectorAll('.tab-btn')[1].classList.add('active');
                 document.getElementById('tab-bot-content').classList.add('active');
-                if (!botData) await loadBotData();
-                else if (botCurrentBot) checkPatchFiles();
+                await loadBotData();
                 loadIllustArtistPresets();
             } else if (name === 'asset') {
                 document.querySelectorAll('.tab-btn')[2].classList.add('active');
@@ -26775,6 +26774,9 @@
 
         // ═══ 삽화 설정 (봇 모드) ═══
         let botData = null;
+        let botDataLoadPromise = null;
+        let botStateInitPromise = null;
+        let botTabHydrationPromise = null;
         let botCurrentBot = '';
         let botCurrentChar = '';
 
@@ -28553,36 +28555,114 @@
             }
         }
 
-        async function loadBotData() {
-            document.getElementById('bot-loading').style.display = 'flex';
-            document.getElementById('bot-empty-state').style.display = 'none';
-            document.getElementById('bot-folder-grid').style.display = 'none';
-            document.getElementById('bot-character-grid').style.display = 'none';
-            document.getElementById('bot-char-detail').style.display = 'none';
-            try {
-                const resp = await fetch('/api/bot_mode/bots');
-                botData = await resp.json();
-                // config에서 토글 상태 및 선택 봇 복원
-                try {
-                    const cfgResp = await fetch('/api/config');
-                    const cfg = await cfgResp.json();
-                    // 토글 상태 복원 (삽화 모드: 항상 ON 고정)
-                    document.getElementById('bot-mode-toggle').checked = true;
-                    updateBotModeStatus(true);
-                    // 선택 봇 복원
-                    const savedBot = cfg.bot_selected || '';
-                    if (savedBot && botData.bots && botData.bots.some(b => b.name === savedBot)) {
-                        botCurrentBot = savedBot;
+        function ensureBotDataLoaded() {
+            if (botData && Array.isArray(botData.bots)) {
+                return Promise.resolve(botData);
+            }
+            if (botDataLoadPromise) return botDataLoadPromise;
+
+            const requestPromise = fetchJSON('/api/bot_mode/bots')
+                .then(data => {
+                    if (!data || !Array.isArray(data.bots)) {
+                        console.error('[BOT] 봇 데이터 응답 형식 오류:', data);
+                        throw new Error('봇 데이터 응답 형식이 올바르지 않습니다.');
                     }
-                } catch (e) {
-                    console.error('[BOT] 설정 로드 실패:', e);
+                    botData = data;
+                    return data;
+                })
+                .catch(error => {
+                    console.error('[BOT] 봇 데이터 로드 실패:', error);
+                    throw error;
+                })
+                .finally(() => {
+                    if (botDataLoadPromise === requestPromise) {
+                        botDataLoadPromise = null;
+                    }
+                });
+
+            botDataLoadPromise = requestPromise;
+            return requestPromise;
+        }
+
+        function ensureBotStateInitialized() {
+            if (botStateInitPromise) return botStateInitPromise;
+
+            const requestPromise = (async () => {
+                const data = await ensureBotDataLoaded();
+
+                const botModeToggle = document.getElementById('bot-mode-toggle');
+                if (botModeToggle) botModeToggle.checked = true;
+                updateBotModeStatus(true);
+
+                try {
+                    const cfg = await loadCurrentConfig();
+                    const savedBot = cfg.bot_selected || '';
+                    if (!savedBot) {
+                        botCurrentBot = '';
+                        console.log('[BOT] config에 저장된 봇 없음');
+                    } else if (data.bots.some(bot => bot.name === savedBot)) {
+                        botCurrentBot = savedBot;
+                    } else {
+                        botCurrentBot = '';
+                        console.log('[BOT] 저장된 봇이 봇 목록에 없음:', savedBot);
+                    }
+                } catch (error) {
+                    console.error('[BOT] 초기 선택 설정 로드 실패:', error);
                 }
-                renderBotSelect();
-                renderBotList();
-                // 선택 봇이 있으면 캐릭터/설정 UI도 복원
-                if (botCurrentBot) onBotChange();
+
+                return data;
+            })();
+
+            botStateInitPromise = requestPromise;
+            requestPromise.catch(() => {
+                if (botStateInitPromise === requestPromise) {
+                    botStateInitPromise = null;
+                }
+            });
+            return requestPromise;
+        }
+
+        function hydrateBotTabFromState() {
+            renderBotSelect();
+            renderBotList();
+            applyBotSelectionUi();
+        }
+
+        async function ensureBotTabHydrated() {
+            if (botTabHydrationPromise) {
+                await botTabHydrationPromise;
+                return false;
+            }
+
+            const requestPromise = Promise.resolve().then(hydrateBotTabFromState);
+            botTabHydrationPromise = requestPromise;
+            try {
+                await requestPromise;
+                return true;
+            } catch (error) {
+                if (botTabHydrationPromise === requestPromise) {
+                    botTabHydrationPromise = null;
+                }
+                console.error('[BOT] 탭 UI hydration 실패:', error);
+                throw error;
+            }
+        }
+
+        async function loadBotData() {
+            const needsHydration = !botTabHydrationPromise;
+            if (needsHydration) {
+                document.getElementById('bot-loading').style.display = 'flex';
+                document.getElementById('bot-empty-state').style.display = 'none';
+                document.getElementById('bot-folder-grid').style.display = 'none';
+                document.getElementById('bot-character-grid').style.display = 'none';
+                document.getElementById('bot-char-detail').style.display = 'none';
+            }
+            try {
+                await ensureBotStateInitialized();
+                const hydratedNow = await ensureBotTabHydrated();
+                if (!hydratedNow && botCurrentBot) checkPatchFiles();
             } catch (e) {
-                console.error('[BOT] 데이터 로드 실패:', e);
+                console.error('[BOT] 탭 데이터 준비 실패:', e);
                 showBotView('empty');
                 const botEmptyState = document.getElementById('bot-empty-state');
                 botEmptyState.querySelector('h3').textContent = '삽화 라이브러리';
@@ -28713,46 +28793,17 @@
 
         async function restoreBotCurrentBotLightweight() {
             try {
-                const cfgResp = await fetch('/api/config');
-                const cfg = await cfgResp.json();
-                const savedBot = cfg.bot_selected || '';
-                if (!savedBot) {
-                    console.log('[BOT] config에 저장된 봇 없음');
-                } else {
-                    let bots = null;
-                    if (botData && botData.bots) {
-                        bots = botData.bots;
-                    } else {
-                        try {
-                            const resp = await fetch('/api/bot_mode/bots');
-                            const data = await resp.json();
-                            if (data && data.bots) {
-                                botData = data;  // popover 재사용을 위해 전역에도 저장
-                                bots = data.bots;
-                            }
-                        } catch (e) {
-                            console.error('[BOT] 봇 목록 로드 실패:', e);
-                        }
-                    }
-                    if (bots && bots.some(b => b.name === savedBot)) {
-                        botCurrentBot = savedBot;
-                    } else {
-                        console.log('[BOT] 저장된 봇이 봇 목록에 없음:', savedBot);
-                    }
-                }
+                await ensureBotStateInitialized();
             } catch (e) {
-                console.error('[BOT] 설정 로드 실패:', e);
+                console.error('[BOT] 라이트웨이트 복원 실패:', e);
             }
             updateActiveBotFloat();
         }
 
-        function onBotChange() {
-            botCurrentBot = document.getElementById('bot-select').value;
+        function applyBotSelectionUi() {
             botCurrentChar = '';
             const charDetailSidebar = document.getElementById('bot-char-detail-sidebar');
             if (charDetailSidebar) charDetailSidebar.style.display = 'none';
-            // 선택된 봇을 config에 저장
-            saveBotSelected();
             updateActiveBotFloat();
             const btnList = document.getElementById('bot-btn-group-list');
             const btnSelected = document.getElementById('bot-btn-group-selected');
@@ -28777,9 +28828,16 @@
             botRenderNegativePresetSelect();
             renderBotCharacters();
             updateWordReplacementsCount();
-            loadIllustArtistPresets();
             loadIllustSettings();
             loadPositiveRules();
+        }
+
+        function onBotChange() {
+            botCurrentBot = document.getElementById('bot-select').value;
+            // 사용자가 선택을 변경한 경우에만 config에 저장한다.
+            saveBotSelected();
+            applyBotSelectionUi();
+            loadIllustArtistPresets();
         }
 
         function showBotView(view) {
