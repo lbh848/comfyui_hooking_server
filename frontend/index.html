@@ -13878,6 +13878,7 @@
                 elapsed: 0,
                 tps: 0,
                 ttft: null,
+                hasDelta: false,
             };
         }
 
@@ -13935,6 +13936,7 @@
                 state.elapsed = 0;
                 state.tps = 0;
                 state.ttft = null;
+                state.hasDelta = false;
                 state._startedAt = Date.now();
                 _lighbdSelectedStreamId = streamId;
                 if (_lighbdLlmAutoHideTimer) {
@@ -13943,6 +13945,7 @@
                 }
             } else if (t === 'delta') {
                 state.active = true;
+                state.hasDelta = true;
                 state.output += data.text || '';
                 if (data.ttft !== undefined && data.ttft !== null) state.ttft = Number(data.ttft);
                 if (data.elapsed !== undefined && data.elapsed !== null) state.elapsed = Number(data.elapsed);
@@ -13996,6 +13999,7 @@
         let _lighbdLiveModalOpen = false;
         let _lighbdLiveTickTimer = null;
         let _lighbdLiveCards = new Map(); // streamId -> { root, out, lastOutput, fields }
+        const _LIGHTBD_LIVE_MAX_CARDS = 20;
 
         function openLighbdLiveModal() {
             const existing = document.getElementById('lighbd-live-overlay');
@@ -14010,7 +14014,7 @@
                     <div class="lighbd-modal-head">
                         <div class="lighbd-modal-title" id="lighbd-live-title">
                             🔴 LB · LLM 라이브
-                            <div class="lighbd-modal-subtitle">현재 병렬로 실행 중인 LLM 스트리밍을 실시간으로 표시합니다. 새 작업이 시작되면 자동으로 추가됩니다.</div>
+                            <div class="lighbd-modal-subtitle">응답이 실제 스트리밍 중인 항목만 실시간으로 표시합니다. 완료된 항목은 즉시 사라집니다.</div>
                         </div>
                         <button class="lighbd-modal-close" onclick="closeLighbdLiveModal()" aria-label="닫기">✕</button>
                     </div>
@@ -14031,7 +14035,7 @@
                 if (!_lighbdLiveModalOpen) return;
                 let hasActive = false;
                 for (const s of _lighbdLlmStreams.values()) {
-                    if (!s.active) continue;
+                    if (!s.active || !s.hasDelta) continue;
                     hasActive = true;
                     if (s._startedAt) {
                         const live = (Date.now() - s._startedAt) / 1000;
@@ -14096,14 +14100,14 @@
             const summary = document.getElementById('lighbd-live-summary');
             if (!list || !summary) return;
 
-            const streams = [..._lighbdLlmStreams.values()];
-            const active = streams.filter(s => s.active);
-            const inactive = streams.filter(s => !s.active);
-            // 활성을 위로, 비활성은 최근 완료 순(=Map 삽입 역순)으로
-            const ordered = [...active, ...inactive.reverse()];
+            // start만 받은 항목과 완료/오류 항목은 제외하고, 실제 delta가 흐르는
+            // 최신 스트림만 최대 20개 표시한다.
+            const streaming = [..._lighbdLlmStreams.values()]
+                .filter(s => s.active && s.hasDelta);
+            const ordered = streaming.slice(-_LIGHTBD_LIVE_MAX_CARDS);
 
             // 요약
-            summary.innerHTML = `<span class="pill">활성 ${active.length}</span><span class="pill">합계 ${streams.length}</span>`;
+            summary.innerHTML = `<span class="pill">스트리밍 ${streaming.length}</span><span>최대 ${_LIGHTBD_LIVE_MAX_CARDS}개 표시</span>`;
 
             if (ordered.length === 0) {
                 list.innerHTML = '<div class="lighbd-live-empty">진행 중인 LLM 스트림이 없습니다.</div>';
