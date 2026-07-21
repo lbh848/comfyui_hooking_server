@@ -3745,6 +3745,7 @@ async def _enqueue_illustration_session_slot(
     *,
     attach_context: bool,
     operation_label: str,
+    whole_session: bool = False,
 ) -> web.Response:
     """저장된 RAW descriptor로 한 슬롯을 생성한다. CALL1/2/3은 실행하지 않는다."""
     descriptor = illustration_context_pipeline.session_item_by_slot(session_id, slot)
@@ -3782,6 +3783,12 @@ async def _enqueue_illustration_session_slot(
         session = illustration_context_pipeline.get_session(session_id) or {}
         generated_body["illustration_context"] = session.get("context", "")
 
+    illustration_context_pipeline.set_session_regenerate_started(
+        session_id,
+        slot,
+        operation_label,
+        whole_session=whole_session,
+    )
     asyncio.create_task(queue_manager.add_item(
         "illustration",
         f"삽화 {operation_label} · slot {slot}",
@@ -3955,6 +3962,7 @@ async def handle_prompt(request: web.Request) -> web.Response:
                     slot,
                     attach_context=False,
                     operation_label="전체 생성",
+                    whole_session=True,
                 )
             context_value = illustration_context_pipeline.context_text(context_payload["chats"])
             illustration_context_pipeline.create_session(session_id, context_value)

@@ -538,8 +538,14 @@ def set_session_progress(
         traceback.print_exc()
 
 
-def set_session_regenerate_started(session_id: str, slot: int) -> None:
-    """기존 결과를 유지한 채 특정 슬롯 재생성 진행상황을 노출한다."""
+def set_session_regenerate_started(
+    session_id: str,
+    slot: int,
+    operation_label: str = "재생성",
+    *,
+    whole_session: bool = False,
+) -> None:
+    """기존 결과를 유지한 채 특정 슬롯의 서버 생성 진행상황을 노출한다."""
     session = get_session(session_id)
     if session is None:
         print(
@@ -547,14 +553,52 @@ def set_session_regenerate_started(session_id: str, slot: int) -> None:
             f"session={session_id}, slot={slot}"
         )
         return
+    safe_operation_label = (
+        str(operation_label or "재생성")
+        .replace("\r", " ")
+        .replace("\n", " ")[:40]
+    )
+    slot_label = "키비주얼" if slot == -1 else f"슬롯 {slot}"
+    label = f"{slot_label} 서버 {safe_operation_label} 중"
+    value = 0
+    done = 0
+    total = 1
+    session.pop("_active_slot_progress", None)
+
+    if whole_session:
+        items = session.get("items") or []
+        current = next((
+            index
+            for index, item in enumerate(items, start=1)
+            if isinstance(item, dict) and item.get("slot") == slot
+        ), 0)
+        if current > 0:
+            total = len(items)
+            done = current - 1
+            value = (done / total) * 100
+            label = (
+                f"전체 {total}장 중 {current}장째 · "
+                f"{slot_label} 서버 {safe_operation_label} 중"
+            )
+            session["_active_slot_progress"] = {
+                "slot": slot,
+                "current": current,
+                "total": total,
+                "operation_label": safe_operation_label,
+            }
+        else:
+            print(
+                f"[ILLUST_CONTEXT] 전체 생성 슬롯 순번 계산 실패: "
+                f"session={session_id}, slot={slot}, items={len(items)}"
+            )
     session["error"] = ""
     set_session_progress(
         session_id,
         "regenerating",
-        f"슬롯 {slot} 서버 재생성 중",
-        0,
-        0,
-        1,
+        label,
+        value,
+        done,
+        total,
     )
 
 
@@ -568,6 +612,7 @@ def set_session_regenerate_error(session_id: str, slot: int, error: str) -> None
         )
         return
     try:
+        session.pop("_active_slot_progress", None)
         safe_error = str(error or "재생성 실패").replace("\r", " ").replace("\n", " ")[:300]
         session["error"] = safe_error
         session["progress"] = {
@@ -726,13 +771,37 @@ def update_session_image_by_slot(session_id: str, slot: int, image: bytes) -> bo
                 images[index] = image
                 session["status"] = "ready"
                 session["error"] = ""
-                session["progress"] = {
-                    "phase": "ready",
-                    "label": f"슬롯 {slot} 서버 재생성 완료",
-                    "value": 100,
-                    "done": 1,
-                    "total": 1,
-                }
+                active_progress = session.pop("_active_slot_progress", None)
+                if (
+                    isinstance(active_progress, dict)
+                    and active_progress.get("slot") == slot
+                    and active_progress.get("current", 0) > 0
+                    and active_progress.get("total", 0) > 0
+                ):
+                    current = int(active_progress["current"])
+                    total = int(active_progress["total"])
+                    operation_label = str(
+                        active_progress.get("operation_label") or "전체 생성"
+                    )
+                    slot_label = "키비주얼" if slot == -1 else f"슬롯 {slot}"
+                    session["progress"] = {
+                        "phase": "ready",
+                        "label": (
+                            f"전체 {total}장 중 {current}장 완료 · "
+                            f"{slot_label} 서버 {operation_label} 완료"
+                        )[:160],
+                        "value": round((current / total) * 100, 1),
+                        "done": current,
+                        "total": total,
+                    }
+                else:
+                    session["progress"] = {
+                        "phase": "ready",
+                        "label": f"슬롯 {slot} 서버 재생성 완료",
+                        "value": 100,
+                        "done": 1,
+                        "total": 1,
+                    }
                 session["updated_at"] = time.time()
                 _persist_session_metadata(session)
                 print(f"[ILLUST_CONTEXT] 재생성 캐시 갱신: session={session_id}, slot={slot}")

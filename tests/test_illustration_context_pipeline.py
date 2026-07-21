@@ -1,3 +1,4 @@
+import ast
 import json
 import sys
 from pathlib import Path
@@ -312,6 +313,161 @@ def test_session_progress_tracks_call_and_image_counts_without_payload_data():
         assert progress["phase"] == "error"
         assert progress["done"] == 3
         assert progress["total"] == 3
+    finally:
+        pipeline._SESSIONS.pop(session_id, None)
+
+
+def test_raw_full_generation_progress_is_active_until_slot_image_updates(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(pipeline, "SESSION_DIR", str(tmp_path / "sessions"))
+    session_id = "raw_full_progress_1234"
+    pipeline.create_session(session_id, "private chat context")
+    pipeline.set_session_result(
+        session_id,
+        [
+            {"kind": "keyvis", "slot": -1},
+            {"kind": "scene", "slot": 3},
+            {"kind": "scene", "slot": 8},
+        ],
+        [b"old keyvis", b"old scene 3", b"old scene 8"],
+    )
+
+    try:
+        pipeline.set_session_regenerate_started(
+            session_id,
+            -1,
+            "전체 생성",
+            whole_session=True,
+        )
+
+        active_session = pipeline.get_session(session_id)
+        assert active_session["status"] == "ready"
+        assert active_session["progress"] == {
+            "phase": "regenerating",
+            "label": "전체 3장 중 1장째 · 키비주얼 서버 전체 생성 중",
+            "value": 0.0,
+            "done": 0,
+            "total": 3,
+        }
+        summary = next(
+            item
+            for item in pipeline.recent_session_summaries()
+            if item["session_id"] == session_id
+        )
+        assert summary["status"] == "ready"
+        assert summary["progress"] == active_session["progress"]
+
+        assert pipeline.update_session_image_by_slot(session_id, -1, b"new keyvis")
+        completed_session = pipeline.get_session(session_id)
+        assert completed_session["progress"]["phase"] == "ready"
+        assert completed_session["progress"] == {
+            "phase": "ready",
+            "label": "전체 3장 중 1장 완료 · 키비주얼 서버 전체 생성 완료",
+            "value": 33.3,
+            "done": 1,
+            "total": 3,
+        }
+        assert pipeline.session_image_by_slot(session_id, -1) == b"new keyvis"
+
+        pipeline.set_session_regenerate_started(
+            session_id,
+            3,
+            "전체 생성",
+            whole_session=True,
+        )
+        assert pipeline.get_session(session_id)["progress"] == {
+            "phase": "regenerating",
+            "label": "전체 3장 중 2장째 · 슬롯 3 서버 전체 생성 중",
+            "value": 33.3,
+            "done": 1,
+            "total": 3,
+        }
+    finally:
+        pipeline._SESSIONS.pop(session_id, None)
+
+
+def test_raw_full_generation_queue_marks_session_active():
+    server_path = Path(__file__).resolve().parents[1] / "server.py"
+    tree = ast.parse(server_path.read_text(encoding="utf-8-sig"))
+    enqueue_function = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.AsyncFunctionDef)
+        and node.name == "_enqueue_illustration_session_slot"
+    )
+    progress_calls = [
+        node
+        for node in ast.walk(enqueue_function)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "set_session_regenerate_started"
+    ]
+
+    assert len(progress_calls) == 1
+    argument_names = [
+        argument.id
+        for argument in progress_calls[0].args
+        if isinstance(argument, ast.Name)
+    ]
+    assert argument_names == [
+        "session_id",
+        "slot",
+        "operation_label",
+    ]
+    assert [keyword.arg for keyword in progress_calls[0].keywords] == ["whole_session"]
+    assert isinstance(progress_calls[0].keywords[0].value, ast.Name)
+    assert progress_calls[0].keywords[0].value.id == "whole_session"
+
+    handle_function = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "handle_prompt"
+    )
+    enqueue_calls = [
+        node
+        for node in ast.walk(handle_function)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_enqueue_illustration_session_slot"
+    ]
+    assert len(enqueue_calls) == 1
+    enqueue_keywords = {keyword.arg: keyword.value for keyword in enqueue_calls[0].keywords}
+    assert isinstance(enqueue_keywords["whole_session"], ast.Constant)
+    assert enqueue_keywords["whole_session"].value is True
+
+
+def test_individual_regeneration_keeps_single_slot_progress(tmp_path, monkeypatch):
+    monkeypatch.setattr(pipeline, "SESSION_DIR", str(tmp_path / "sessions"))
+    session_id = "single_regenerate_progress_1234"
+    pipeline.create_session(session_id, "private chat context")
+    pipeline.set_session_result(
+        session_id,
+        [
+            {"kind": "keyvis", "slot": -1},
+            {"kind": "scene", "slot": 3},
+        ],
+        [b"old keyvis", b"old scene"],
+    )
+
+    try:
+        pipeline.set_session_regenerate_started(session_id, 3)
+        assert pipeline.get_session(session_id)["progress"] == {
+            "phase": "regenerating",
+            "label": "슬롯 3 서버 재생성 중",
+            "value": 0.0,
+            "done": 0,
+            "total": 1,
+        }
+
+        assert pipeline.update_session_image_by_slot(session_id, 3, b"new scene")
+        assert pipeline.get_session(session_id)["progress"] == {
+            "phase": "ready",
+            "label": "슬롯 3 서버 재생성 완료",
+            "value": 100,
+            "done": 1,
+            "total": 1,
+        }
     finally:
         pipeline._SESSIONS.pop(session_id, None)
 
