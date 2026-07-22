@@ -8589,7 +8589,7 @@
                             <!-- 미리보기 입력 -->
                             <div class="pp-card">
                                 <div class="pp-card-title">미리보기 대사 샘플</div>
-                                <textarea id="pp-vn-preview-speak" class="input" rows="2" style="width:100%; font-family:monospace; resize:vertical;" placeholder='kapri: "대사 예시"&#10;kapri: (생각 예시)' oninput="renderPostprocessPreview(); ppRenderFaceCrop()">kapri: "달콤하고 다정하게 해주셔야 해요♡" #angry</textarea>
+                                <textarea id="pp-vn-preview-speak" class="input" rows="2" style="width:100%; font-family:monospace; resize:vertical;" placeholder='kapri: "대사 예시"&#10;kapri: (생각 예시)' oninput="renderPostprocessPreview(); ppRenderFaceCrop()">kapri: "대사창 테스트입니다"</textarea>
                                 <div class="pp-hint">형식:<br>- <code>NAME: "대사"</code><br>- <code>NAME: (생각)</code><br>- 대사 뒤 <code>#감정</code> (감정 토글 켜면 합성에서 숨김)</div>
                                 <div class="pp-subsection">
                                     <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:4px;">
@@ -8749,7 +8749,7 @@
                                         </div>
                                     </div>
                                 </div>
-                                <textarea id="pp-bubble-preview-speak" class="input" rows="2" style="width:100%; font-family:monospace; resize:vertical; margin-top:6px;" placeholder='NAME: "대사"&#10;NAME: (생각)' oninput="renderPostprocessPreview()">akane: "안녕하세요! 말풍선 테스트입니다."</textarea>
+                                <textarea id="pp-bubble-preview-speak" class="input" rows="2" style="width:100%; font-family:monospace; resize:vertical; margin-top:6px;" placeholder='NAME: "대사"&#10;NAME: (생각)' oninput="renderPostprocessPreview()">kapri: "말풍선 테스트"</textarea>
                                 <div class="pp-field-inline" style="margin-top:6px; gap:12px;">
                                     <label style="font-size:0.72rem; color:var(--text2,#999); display:flex; align-items:center; gap:5px;"><input id="pp-bubble-preview-min-font" type="checkbox" onchange="renderPostprocessPreview()"> 최소 글자 크기로</label>
                                     <label style="font-size:0.72rem; color:var(--text2,#999); display:flex; align-items:center; gap:5px;"><input id="pp-bubble-debug-mask" type="checkbox" onchange="renderPostprocessPreview()"> 배경/보호 마스크</label>
@@ -27545,71 +27545,73 @@
         let ppEmotionLastItems = null;  // 감정 뽑기: 최근 조회한 {character, filename} 원본(규칙 변경 시 재적용용)
 
         function defaultPpConfig() {
+            // 서버 _default_vn/_default_bubble 과 동일. ERENCHA_ONLINE(vn, kapri만) /
+            // Roshidere simulator(bubble) 실제값을 기준. 하드웨어값은 auto/0.
             return {
                 vn: {
-                    enabled: false,
-                    placement: 'extend',
+                    enabled: true,
+                    placement: 'overlay',
                     height_mode: 'ratio',
-                    height_value: 0.12,
-                    font_size: 0,
+                    height_value: 0.25,
+                    font_size: 50,
                     name_font_size: 0,
                     emotion_font_size: 0,
-                    name_color: false,
-                    dialogue_color: false,
+                    name_color: true,
+                    dialogue_color: true,
                     text_outline_width: -1,
-                    name_replace: {},
+                    name_replace: { kapri: '카프리' },
                     name_replace_enabled: true,
-                    strip_emotion: false,
+                    strip_emotion: true,
                     emotion_extract_rules: [{ action: 'split_by', separator: '_', take: -1 }],
                     prefix: '',
                     suffix: '',
                     face_enabled: true,
                     face_crop_top: 1.8,
-                    face_crop_bottom: 1.0,
+                    face_crop_bottom: 1.8,
                     face_conf: 0.3,
-                    face_best_only: false,
+                    face_best_only: true,
                     face_device: 'auto',
                     face_cpu_threads: 0,
                     multi_face_mode: 'both',
-                    theme: 'sky',
-                    theme_single: 'sky',
-                    theme_dual: 'sky',
+                    theme: 'classic',
+                    theme_single: 'classic',
+                    theme_dual: 'classic_simple',
                     opacity: 100,
                 },
                 bubble: {
-                    enabled: false,
-                    font_id: 'system',
+                    enabled: true,
+                    font_id: 'noto-sans-kr-medium',
                     font_path: '',
                     font_size: 36,
-                    min_font_size: 0,
-                    letter_spacing: -0.03,
+                    min_font_size: 30,
+                    letter_spacing: -0.08,
                     line_height_ratio: 1.15,
-                    text_width_scale: 1.0,
-                    layout_font_scale: 2.0,
+                    text_width_scale: 0.94,
+                    layout_font_scale: 1.0,
                     text_color: '#111111',
-                    bubble_fill: '#FFFFFF',
-                    bubble_border: '#333333',
+                    bubble_fill: '#ffffff',
+                    bubble_border: '#000000',
                     border_width: 2,
-                    svg_border_width: 0,
-                    opacity: 1.0,
-                    speech_opacity: 1.0,
-                    thought_opacity: 1.0,
+                    svg_border_width: 8,
+                    opacity: 0.8,
+                    speech_opacity: 0.8,
+                    thought_opacity: 0.8,
                     padding: 16,
                     radius: 22,
-                    thought_shape: 'cloud',
-                    tail_threshold: 1.0,
-                    bubble_shape: 'legacy',
-                    tail_width_scale: 1.0,
-                    tail_max_length: 0.0,
-                    organic_wobble: 0.055,
+                    thought_shape: 'box',
+                    tail_threshold: 5.0,
+                    bubble_shape: 'organic',
+                    tail_width_scale: 0.4,
+                    tail_max_length: 25.0,
+                    organic_wobble: 0.1,
                     max_width_ratio: 0.45,
-                    match_thres: 0.55,
+                    match_thres: 0.1,
                     face_candidates_per_character: 8,
                     appearance_weight: 0.4,
                     assignment_ambiguity_margin: 0.01,
                     onnx_device: 'auto',
                     cpu_threads: 0,
-                    face_fallback: false,
+                    face_fallback: true,
                     speech_split: true,
                 },
                 mode: 'vn',  // 활성 후처리 모드: 'vn' | 'bubble'

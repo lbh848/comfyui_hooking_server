@@ -2547,35 +2547,39 @@ def is_postprocess_active(config: dict) -> bool:
 
 
 def _default_vn() -> dict:
-    """봇별 postprocess_vn 기본값."""
+    """봇별 postprocess_vn 기본값.
+
+    ERENCHA_ONLINE 의 실제 설정값을 기준으로 한다(단 name_replace 는 kapri만).
+    저장값이 없는 봇·신규 봇이 이 값에서 시작한다.
+    """
     return {
-        "enabled": False,
-        "placement": "extend",        # extend | overlay
+        "enabled": True,
+        "placement": "overlay",        # extend | overlay
         "height_mode": "ratio",       # ratio | px
-        "height_value": 0.12,
-        "font_size": 0,               # 대사 폰트 px. 0=박스 높이 기반 자동
+        "height_value": 0.25,
+        "font_size": 50,               # 대사 폰트 px. 0=박스 높이 기반 자동
         "name_font_size": 0,          # 이름 폰트 px. 0=자동(대사 폰트*1.25)
         "emotion_font_size": 0,       # 감정 폰트 px. 0=자동(대사 폰트와 동일)
-        "name_color": False,
-        "dialogue_color": False,      # 발화자 머리색으로 대사 색상화(배경은 자동)
+        "name_color": True,
+        "dialogue_color": True,       # 발화자 머리색으로 대사 색상화(배경은 자동)
         "text_outline_width": -1,     # 색상 글자 외곽 배경 px. -1=자동, 0=없음
-        "name_replace": {},
+        "name_replace": {"kapri": "카프리"},
         "name_replace_enabled": True,
-        "strip_emotion": False,
+        "strip_emotion": True,
         "emotion_extract_rules": [{"action": "split_by", "separator": "_", "take": -1}],
         "prefix": "",                  # 이미지 조회 토큰 prefix (봇별 1개)
         "suffix": "",                  # 이미지 조회 토큰 suffix (봇별 1개)
         "face_enabled": True,          # VN 좌측 얼굴 슬롯 표시
         "face_crop_top": 1.8,          # 위쪽 크롭 계수. 1.0=검출박스 그대로, 클수록 위로 확장(데이터패치 노드와 동일 규칙)
-        "face_crop_bottom": 1.0,       # 아래쪽 크롭 계수. 1.0=검출박스 그대로, 클수록 아래로 확장
+        "face_crop_bottom": 1.8,       # 아래쪽 크롭 계수. 1.0=검출박스 그대로, 클수록 아래로 확장
         "face_conf": 0.3,              # YOLO 얼굴 검출 신뢰도 임계치
-        "face_best_only": False,       # True면 CONF 무시, 검출 박스 중 최고 신뢰도 강제 사용
+        "face_best_only": True,       # True면 CONF 무시, 검출 박스 중 최고 신뢰도 강제 사용
         "face_device": "auto",         # 자동 | cpu | cuda0 | dml0
         "face_cpu_threads": 0,         # CPU intra-op 스레드. 0=ONNX Runtime 자동
         "multi_face_mode": "both",     # 2인+ 썸네일: both | first
-        "theme": VN_THEME_DEFAULT,     # 구버전 호환용 1인 테마
-        "theme_single": VN_THEME_DEFAULT,  # 1인 테마 팔레트
-        "theme_dual": VN_THEME_DEFAULT,  # 2인+ 테마. *_simple은 무블럭 배치
+        "theme": "classic",     # 구버전 호환용 1인 테마
+        "theme_single": "classic",  # 1인 테마 팔레트
+        "theme_dual": "classic_simple",  # 2인+ 테마. *_simple은 무블럭 배치
         "opacity": 100,                # 카드 배경 반투명도(0~100). 100=불투명. 글자/얼굴은 그대로
     }
 
@@ -2637,41 +2641,46 @@ def normalize_min_font_size(value, default: int = 0) -> int:
 
 
 def _default_bubble() -> dict:
-    """봇별 postprocess_bubble 기본값 (말풍선 모드)."""
+    """봇별 postprocess_bubble 기본값 (말풍선 모드).
+
+    Roshidere simulator 의 실제 설정값을 기준으로 한다. 단 하드웨어 값
+    (onnx_device/cpu_threads)은 git 배포 소스이므로 이식성을 위해 auto/0 으로 둔다.
+    저장값이 없는 봇·신규 봇이 이 값에서 시작한다.
+    """
     return {
-        "enabled": False,
-        "font_id": "system",              # 폰트 드롭박스 식별자. system=시스템 폰트
+        "enabled": True,
+        "font_id": "noto-sans-kr-medium",  # 폰트 드롭박스 식별자. system=시스템 폰트
         "font_path": "",                  # 하위호환: 빈 값=시스템 기본 폰트(font_id 우선)
         "font_size": 36,                  # 텍스트 폰트 px
-        "min_font_size": 0,               # 최소 글자 크기 px. 0=캔버스 기준 자동
-        "letter_spacing": -0.03,          # 자간(em, font_size 대비). 음수=글자가 붙음. -0.04~-0.02 권장
+        "min_font_size": 30,              # 최소 글자 크기 px. 0=캔버스 기준 자동
+        "letter_spacing": -0.08,         # 자간(em, font_size 대비). 음수=글자가 붙음. -0.04~-0.02 권장
         "line_height_ratio": 1.15,        # 행간(글자 크기 배수). 줄 전체 높이=font_size×이 값. 1.10~1.20 권장
-        "text_width_scale": 1.0,           # 글자 가로 축소비(0.94~0.97 권장). 1.0=축소 없음
-        "layout_font_scale": 2.0,         # 모델 기본 글자 크기의 최대 확대 배율(1.0~4.0)
+        "text_width_scale": 0.94,        # 글자 가로 축소비(0.94~0.97 권장). 1.0=축소 없음
+        "layout_font_scale": 1.0,        # 모델 기본 글자 크기의 최대 확대 배율(1.0~4.0)
         "text_color": "#111111",
-        "bubble_fill": "#FFFFFF",
-        "bubble_border": "#333333",
+        "bubble_fill": "#ffffff",
+        "bubble_border": "#000000",
         "border_width": 2,
-        "svg_border_width": 0,           # SVG(impact burst) 외곽 두께 px. 0=SVG 사전정의(outer/inner 간격)
-        "opacity": 1.0,                   # 말풍선 배경 불투명도(0~1) — 구형 폴백
-        "speech_opacity": 1.0,            # 대사(발화) 말풍선 배경 불투명도(0~1)
-        "thought_opacity": 1.0,           # 생각 말풍선 배경 불투명도(0~1)
+        "svg_border_width": 8,           # SVG(impact burst) 외곽 두께 px. 0=SVG 사전정의(outer/inner 간격)
+        "opacity": 0.8,                   # 말풍선 배경 불투명도(0~1) — 구형 폴백
+        "speech_opacity": 0.8,            # 대사(발화) 말풍선 배경 불투명도(0~1)
+        "thought_opacity": 0.8,           # 생각 말풍선 배경 불투명도(0~1)
         "padding": 16,                    # 몸통 내 텍스트 여백
         "radius": 22,                     # 코믹 각진형의 모서리 절삭 크기
-        "thought_shape": "cloud",         # 생각 표현(풍선 타입 라벨이 없을 때만): cloud | box(무라운드/무꼬리)
-        "tail_threshold": 1.0,             # 꼬리 생성 최대 거리(얼굴 최대 크기의 배율)
-        "bubble_shape": "legacy",          # 외곽선 렌더: legacy(기본 타원/코믹) | organic(유기형 굴곡)
-        "tail_width_scale": 1.0,           # 꼬리 두께 배율(자동 산정값×k, 0.2~3.0). 1.0=변경 없음
-        "tail_max_length": 0.0,            # 꼬리 최대 길이(절대 픽셀, 0=제한 없음). px 단위로 직접 지정
-        "organic_wobble": 0.055,           # 유기형 굴곡 강도(0.02~0.30). 짧은 대사 0.060, 긴 대사 0.045 권장
+        "thought_shape": "box",         # 생각 표현(풍선 타입 라벨이 없을 때만): cloud | box(무라운드/무꼬리)
+        "tail_threshold": 5.0,             # 꼬리 생성 최대 거리(얼굴 최대 크기의 배율)
+        "bubble_shape": "organic",          # 외곽선 렌더: legacy(기본 타원/코믹) | organic(유기형 굴곡)
+        "tail_width_scale": 0.4,           # 꼬리 두께 배율(자동 산정값×k, 0.2~3.0). 1.0=변경 없음
+        "tail_max_length": 25.0,            # 꼬리 최대 길이(절대 픽셀, 0=제한 없음). px 단위로 직접 지정
+        "organic_wobble": 0.1,           # 유기형 굴곡 강도(0.02~0.30). 짧은 대사 0.060, 긴 대사 0.045 권장
         "max_width_ratio": 0.45,          # 캔버스 폭 대비 말풍선 최대 폭 비율
-        "match_thres": 0.55,              # 코사인 유사도 매칭 임계치(이하 미배정)
+        "match_thres": 0.1,              # 코사인 유사도 매칭 임계치(이하 미배정)
         "face_candidates_per_character": 8,  # 캐릭터당 확보할 YOLO 후보 수(전체 최대 64)
         "appearance_weight": 0.4,         # CLIP 점수에 결합할 명도·채도 외형 보정 가중치
         "assignment_ambiguity_margin": 0.01,  # 최적/차선 전역 배정의 최소 평균 점수 차이
         "onnx_device": "auto",         # 말풍선 ONNX 공용 장치
         "cpu_threads": 0,               # CPU intra-op 스레드. 0=ONNX Runtime 자동
-        "face_fallback": False,         # v9c 저신뢰 시 BGR/RGB ±20도 재검출, 미회복 시 v8m 보조 검출
+        "face_fallback": True,         # v9c 저신뢰 시 BGR/RGB ±20도 재검출, 미회복 시 v8m 보조 검출
         "speech_split": True,          # 대사(speech) 5줄 이상 → 텍스트는 그대로 두고 외곽선을 위/아래 두 타원 합집합(한 덩어리)으로. thought·box 제외
     }
 
