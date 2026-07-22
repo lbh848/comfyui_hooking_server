@@ -21,6 +21,7 @@ from typing import Optional, Callable, Awaitable
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ASSET_DATA_DIR = os.path.join(BASE_DIR, "asset_data")
 ASSET_DIR = os.path.join(BASE_DIR, "asset")
+AUTOMATCH_DEFAULT_OUTFIT_DIR = "_automatch_defaults"
 TAGS_FILE = os.path.join(ASSET_DATA_DIR, "tags.json")
 HIDDEN_TAGS_FILE = os.path.join(ASSET_DATA_DIR, "hidden_tags.json")
 NAME_MAPPING_FILE = os.path.join(ASSET_DATA_DIR, "name_mapping.json")
@@ -1414,6 +1415,7 @@ class AssetMode:
         negative_prompt: str = None,
         style_lora_activate: bool = False,
         style_lora_data: str = "",
+        storage_group: str = "",
     ) -> dict:
         async with self._lock:
             self._is_generating = True
@@ -1431,6 +1433,7 @@ class AssetMode:
                     anima_lora_trigger_words, sdxl_lora_trigger_words,
                     positive_prompt, negative_prompt,
                     style_lora_activate, style_lora_data,
+                    storage_group,
                 )
             finally:
                 self._is_generating = False
@@ -1472,7 +1475,18 @@ class AssetMode:
         negative_prompt: str = None,
         style_lora_activate: bool = False,
         style_lora_data: str = "",
+        storage_group: str = "",
     ) -> dict:
+        if storage_group not in ("", "automatch_defaults"):
+            error_msg = f"지원하지 않는 에셋 저장 분류: {storage_group}"
+            print(f"[ASSET] {error_msg}")
+            return {"success": False, "error": error_msg}
+        storage_outfit = (
+            AUTOMATCH_DEFAULT_OUTFIT_DIR
+            if storage_group == "automatch_defaults"
+            else outfit
+        )
+
         # ANIMA 모드 시 워크플로우 경로 교체
         saved_workflow_path = self.workflow_source_path
         if asset_workflow_type == "anima" and self.anima_workflow_source_path:
@@ -1604,7 +1618,7 @@ class AssetMode:
             save_dir = os.path.join(
                 ASSET_DIR,
                 self._safe_dirname(character),
-                self._safe_dirname(outfit),
+                self._safe_dirname(storage_outfit),
                 self._safe_dirname(expression),
             )
             os.makedirs(save_dir, exist_ok=True)
@@ -1634,9 +1648,12 @@ class AssetMode:
                         "appearance": appearance,
                         "outfit": outfit,
                         "expression": expression,
+                        "storage_group": storage_group,
+                        "storage_outfit": storage_outfit,
                     }, f, ensure_ascii=False, indent=2)
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[ASSET] 프롬프트 기록 저장 실패: {prompt_record_path} ({e})")
+                traceback.print_exc()
 
             self._log("generate_saved", {
                 "character": character, "outfit": outfit, "expression": expression,
@@ -1648,6 +1665,8 @@ class AssetMode:
                     "status": "success",
                     "character": character, "outfit": outfit, "expression": expression,
                     "filename": filename,
+                    "storage_group": storage_group,
+                    "storage_outfit": storage_outfit,
                 })
 
             return {
@@ -1656,6 +1675,8 @@ class AssetMode:
                 "character": character,
                 "outfit": outfit,
                 "expression": expression,
+                "storage_group": storage_group,
+                "storage_outfit": storage_outfit,
             }
         finally:
             # ANIMA 모드 워크플로우 경로 복원
@@ -1731,6 +1752,123 @@ class AssetMode:
                 "local_path": fpath,
             })
         return {"images": images, "representative": representative}
+
+    @staticmethod
+    def _preferred_image_filename(image_listing: dict) -> str:
+        images = image_listing.get("images", []) if isinstance(image_listing, dict) else []
+        filenames = [item.get("filename", "") for item in images if item.get("filename")]
+        representative = image_listing.get("representative", "") if isinstance(image_listing, dict) else ""
+        if representative and representative in filenames:
+            return representative
+        return filenames[0] if filenames else ""
+
+    def list_automatch_compare_images(
+        self,
+        character: str,
+        outfit: str,
+        include_existing: bool = False,
+    ) -> dict:
+        """오토매치 비교 이미지의 명시적 우선순위를 반환한다.
+
+        선택 복장의 일반 에셋 대표 이미지를 우선한다. ``include_existing``이
+        활성화되면 외모/복장 프리셋과 무관하게 같은 캐릭터의 다른 일반 복장을
+        표정 폴더명으로 탐색하고, 그래도 없을 때만 ``_automatch_defaults``
+        분류 이미지를 사용한다.
+        """
+        if not character:
+            print("[AUTOMATCH] 비교 이미지 조회 실패: character가 비어있음")
+            return {
+                "success": False,
+                "error": "character 필수",
+                "images": {},
+                "default_outfit": AUTOMATCH_DEFAULT_OUTFIT_DIR,
+            }
+
+        char_dir = os.path.join(ASSET_DIR, self._safe_dirname(character))
+        other_outfits = []
+        if include_existing:
+            if os.path.isdir(char_dir):
+                selected_outfit_dir = self._safe_dirname(outfit) if outfit else ""
+                other_outfits = [
+                    dirname
+                    for dirname in sorted(os.listdir(char_dir))
+                    if dirname not in ("Lora", AUTOMATCH_DEFAULT_OUTFIT_DIR, selected_outfit_dir)
+                    and os.path.isdir(os.path.join(char_dir, dirname))
+                ]
+            else:
+                print(
+                    f"[AUTOMATCH] 기존 에셋 탐색 결과 없음: "
+                    f"character={character!r}, 캐릭터 폴더가 존재하지 않음"
+                )
+
+        results = {}
+        for expression in self.list_expressions():
+            direct_filename = ""
+            if outfit and outfit != AUTOMATCH_DEFAULT_OUTFIT_DIR:
+                direct_listing = self.list_images(character, outfit, expression)
+                direct_filename = self._preferred_image_filename(direct_listing)
+
+            if direct_filename:
+                results[expression] = {
+                    "source": "direct",
+                    "outfit": outfit,
+                    "expression": expression,
+                    "filename": direct_filename,
+                }
+                continue
+
+            if include_existing:
+                existing_match = None
+                for existing_outfit in other_outfits:
+                    existing_listing = self.list_images(
+                        character,
+                        existing_outfit,
+                        expression,
+                    )
+                    existing_filename = self._preferred_image_filename(existing_listing)
+                    if existing_filename:
+                        existing_match = {
+                            "source": "existing_asset",
+                            "outfit": existing_outfit,
+                            "expression": expression,
+                            "filename": existing_filename,
+                        }
+                        break
+                if existing_match:
+                    results[expression] = existing_match
+                    continue
+
+            default_listing = self.list_images(
+                character,
+                AUTOMATCH_DEFAULT_OUTFIT_DIR,
+                expression,
+            )
+            default_filename = self._preferred_image_filename(default_listing)
+            if default_filename:
+                results[expression] = {
+                    "source": "generated_default",
+                    "outfit": AUTOMATCH_DEFAULT_OUTFIT_DIR,
+                    "expression": expression,
+                    "filename": default_filename,
+                }
+
+        existing_count = sum(
+            1 for item in results.values() if item.get("source") == "existing_asset"
+        )
+        if include_existing:
+            print(
+                f"[AUTOMATCH] 기존 에셋 탐색 완료: character={character!r}, "
+                f"후보복장={len(other_outfits)}, 표정매칭={existing_count}"
+            )
+
+        return {
+            "success": True,
+            "character": character,
+            "outfit": outfit,
+            "include_existing": include_existing,
+            "default_outfit": AUTOMATCH_DEFAULT_OUTFIT_DIR,
+            "images": results,
+        }
 
     def set_representative(self, character: str, outfit: str, expression: str, filename: str) -> dict:
         img_dir = os.path.join(

@@ -860,7 +860,16 @@ class QueueManager:
             sdxl_lora_trigger_words=body.get("sdxl_lora_trigger_words", ""),
             positive_prompt=body.get("positive_prompt"),
             negative_prompt=body.get("negative_prompt"),
+            storage_group=body.get("storage_group", ""),
         )
+
+        # 저장 전에 실패한 경우에도 오토매치 UI가 해당 큐 항목을 완료 처리할 수 있도록
+        # 요청 식별 정보를 결과에 유지한다.
+        if body.get("storage_group"):
+            result.setdefault("storage_group", body.get("storage_group", ""))
+            result.setdefault("character", body.get("character", ""))
+            result.setdefault("outfit", body.get("outfit", ""))
+            result.setdefault("expression", body.get("expression", ""))
 
         # 완료 알림 (기존 에셋 탭 UI 갱신용)
         if self.notify_frontend:
@@ -2064,7 +2073,7 @@ class QueueManager:
         params = item.params
         items = params.get("items", [])
         tag_category = params.get("category", "expressions")
-        top_n = params.get("top_n", 10)
+        top_n = params.get("top_n", 12)
         embedding_threshold = params.get("embedding_threshold", 0)
         event_type = "auto_match_batch_progress"
 

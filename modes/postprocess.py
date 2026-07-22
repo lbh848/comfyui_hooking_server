@@ -2671,7 +2671,7 @@ def _default_bubble() -> dict:
         "tail_threshold": 5.0,             # 꼬리 생성 최대 거리(얼굴 최대 크기의 배율)
         "bubble_shape": "organic",          # 외곽선 렌더: legacy(기본 타원/코믹) | organic(유기형 굴곡)
         "tail_width_scale": 0.4,           # 꼬리 두께 배율(자동 산정값×k, 0.2~3.0). 1.0=변경 없음
-        "tail_max_length": 25.0,            # 꼬리 최대 길이(절대 픽셀, 0=제한 없음). px 단위로 직접 지정
+        "tail_max_length": 40.0,            # 꼬리 최대 길이(절대 픽셀, 0=제한 없음). px 단위로 직접 지정
         "organic_wobble": 0.1,           # 유기형 굴곡 강도(0.02~0.30). 짧은 대사 0.060, 긴 대사 0.045 권장
         "max_width_ratio": 0.45,          # 캔버스 폭 대비 말풍선 최대 폭 비율
         "match_thres": 0.1,              # 코사인 유사도 매칭 임계치(이하 미배정)
@@ -2823,8 +2823,8 @@ def get_bubble_settings(config: dict, bot_name: str = "") -> Optional[dict]:
         "radius": int(bb.get("radius", 22) or 22),
         "thought_shape": str(bb.get("thought_shape", "cloud") or "cloud"),
         "tail_threshold": float(
-            bb.get("tail_threshold", 1.0)
-            if bb.get("tail_threshold", 1.0) is not None else 1.0
+            bb.get("tail_threshold", 5.0)
+            if bb.get("tail_threshold", 5.0) is not None else 5.0
         ),
         "bubble_shape": (
             str(bb.get("bubble_shape", "legacy") or "legacy").strip().lower()
@@ -2835,7 +2835,7 @@ def get_bubble_settings(config: dict, bot_name: str = "") -> Optional[dict]:
             0.2, min(3.0, float(bb.get("tail_width_scale", 1.0) or 1.0))
         ),
         "tail_max_length": max(
-            0.0, min(2000.0, float(bb.get("tail_max_length", 0.0) or 0.0))
+            0.0, min(2000.0, float(bb.get("tail_max_length", 40.0) or 40.0))
         ),
         "organic_wobble": max(
             0.02, min(0.30, float(bb.get("organic_wobble", 0.055) or 0.055))

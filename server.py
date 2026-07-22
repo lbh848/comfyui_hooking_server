@@ -5838,10 +5838,10 @@ async def handle_api_postprocess_preview(request: web.Request) -> web.Response:
                 "padding": body.get("padding", 16),
                 "radius": body.get("radius", 22),
                 "thought_shape": body.get("thought_shape", "cloud"),
-                "tail_threshold": body.get("tail_threshold", 1.0),
+                "tail_threshold": body.get("tail_threshold", 5.0),
                 "bubble_shape": body.get("bubble_shape", "legacy"),
                 "tail_width_scale": body.get("tail_width_scale", 1.0),
-                "tail_max_length": body.get("tail_max_length", 0.0),
+                "tail_max_length": body.get("tail_max_length", 40.0),
                 "organic_wobble": body.get("organic_wobble", 0.055),
                 "max_width_ratio": body.get("max_width_ratio", 0.45),
                 "match_thres": body.get("match_thres", 0.55),
@@ -8894,6 +8894,7 @@ async def handle_api_asset_mode_generate(request: web.Request) -> web.Response:
             asset_workflow_type=body.get("asset_workflow_type", "regular"),
             anima_lora_trigger_words=body.get("anima_lora_trigger_words", ""),
             sdxl_lora_trigger_words=body.get("sdxl_lora_trigger_words", ""),
+            storage_group=body.get("storage_group", ""),
         )
         return web.json_response(result)
     except Exception as e:
@@ -8927,6 +8928,33 @@ async def handle_api_asset_mode_images(request: web.Request) -> web.Response:
     outfit = request.match_info.get("outfit", "")
     expression = request.match_info.get("expression", "")
     return web.json_response(asset_mode.list_images(character, outfit, expression))
+
+async def handle_api_asset_mode_automatch_compare(request: web.Request) -> web.Response:
+    try:
+        character = request.match_info.get("character", "")
+        outfit = request.query.get("outfit", "")
+        include_existing_raw = request.query.get("include_existing", "0").strip().lower()
+        if include_existing_raw not in ("0", "1", "false", "true"):
+            print(
+                f"[AUTOMATCH] 비교 이미지 조회 실패: 잘못된 include_existing="
+                f"{include_existing_raw!r}"
+            )
+            return web.json_response(
+                {"success": False, "error": "include_existing은 0/1 또는 false/true여야 합니다", "images": {}},
+                status=400,
+            )
+        include_existing = include_existing_raw in ("1", "true")
+        result = asset_mode.list_automatch_compare_images(
+            character,
+            outfit,
+            include_existing=include_existing,
+        )
+        status = 200 if result.get("success") else 400
+        return web.json_response(result, status=status)
+    except Exception as e:
+        print(f"[AUTOMATCH] 비교 이미지 조회 예외: character={request.match_info.get('character', '')}, error={e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e), "images": {}}, status=500)
 
 async def handle_api_asset_mode_set_representative(request: web.Request) -> web.Response:
     try:
@@ -9653,6 +9681,7 @@ app.router.add_get("/api/asset_mode/characters/{character}/gallery", handle_api_
 app.router.add_get("/api/asset_mode/characters/{character}/outfits", handle_api_asset_mode_outfits)
 app.router.add_get("/api/asset_mode/characters/{character}/expressions", handle_api_asset_mode_expressions)
 app.router.add_get("/api/asset_mode/characters/{character}/outfits/{outfit}/expressions/{expression}/images", handle_api_asset_mode_images)
+app.router.add_get("/api/asset_mode/characters/{character}/automatch_compare", handle_api_asset_mode_automatch_compare)
 app.router.add_post("/api/asset_mode/set_representative", handle_api_asset_mode_set_representative)
 app.router.add_get("/api/asset_mode/characters/{character}/outfits/{outfit}/expressions/{expression}/images/{filename}", handle_api_asset_mode_image)
 app.router.add_post("/api/asset_mode/delete_combination", handle_api_asset_mode_delete_combination)
@@ -9817,7 +9846,7 @@ async def handle_api_asset_tool_match_batch(request: web.Request) -> web.Respons
         body = await request.json()
         items = body.get("items", [])
         tag_category = body.get("category", "expressions")
-        top_n = body.get("top_n", 10)
+        top_n = body.get("top_n", 12)
         embedding_threshold = body.get("embedding_threshold", 0)
 
         if not items:
