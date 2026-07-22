@@ -6,6 +6,7 @@ from PIL import Image, ImageChops
 from unittest.mock import Mock
 
 from modes.postprocess import (
+    VN_THEMES,
     _default_vn,
     _draw_colorized_text,
     _load_font,
@@ -42,6 +43,11 @@ def _settings(**overrides):
 
 
 class PostprocessVnLayoutTests(unittest.TestCase):
+    def test_gfl_theme_uses_tactical_cyan_and_orange_reference_colors(self):
+        self.assertEqual(VN_THEMES["gfl"]["accent"], (135, 231, 231))
+        self.assertEqual(VN_THEMES["gfl"]["emotion"], (244, 163, 77))
+        self.assertEqual(VN_THEMES["gfl"]["body"], (238, 247, 247))
+
     def test_face_crop_returns_actual_center_in_final_square(self):
         image = Image.new("RGB", (100, 100), (80, 80, 80))
         with patch("modes.face_detector._preferred_session", return_value=object()), patch(
@@ -132,7 +138,7 @@ class PostprocessVnLayoutTests(unittest.TestCase):
         self.assertGreater(long_image.height, 480 + 100)
 
     def test_simple_and_legacy_theme_suffixes_are_resolved(self):
-        for base_theme in ("classic", "gfl"):
+        for base_theme in ("classic", "gfl", "devil", "nikke"):
             with self.subTest(theme=base_theme):
                 palette_theme, simple = _resolve_vn_theme(base_theme + "_simple")
                 self.assertEqual(palette_theme, base_theme)
@@ -173,7 +179,7 @@ class PostprocessVnLayoutTests(unittest.TestCase):
         )
         self.assertEqual(draw.text.call_args.kwargs["stroke_width"], 0)
 
-    def test_two_thumbnail_mode_places_first_left_and_second_right(self):
+    def test_two_thumbnail_mode_combines_both_faces_in_one_left_slot(self):
         faces = {
             "alice": Image.new("RGBA", (100, 100), (255, 0, 0, 255)),
             "bob": Image.new("RGBA", (100, 100), (0, 0, 255, 255)),
@@ -201,7 +207,12 @@ class PostprocessVnLayoutTests(unittest.TestCase):
             if blue > 200 and red < 40 and green < 40
         )
         self.assertGreater(left_red, 0)
-        self.assertGreater(right_blue, 0)
+        left_blue = sum(
+            1 for red, green, blue in left.get_flattened_data()
+            if blue > 200 and red < 40 and green < 40
+        )
+        self.assertGreater(left_blue, 0)
+        self.assertEqual(right_blue, 0)
 
     def test_multi_face_mode_first_renders_only_one_thumbnail(self):
         faces = {
@@ -224,7 +235,7 @@ class PostprocessVnLayoutTests(unittest.TestCase):
         self.assertEqual(paste_face.call_count, 1)
         self.assertIs(paste_face.call_args.args[1], faces["alice"])
 
-    def test_simple_layout_skips_panel_and_block_layout_draws_one_panel(self):
+    def test_simple_theme_skips_panel_and_block_themes_use_one_panel(self):
         with patch("modes.postprocess._draw_multi_panel") as draw_panel:
             compose_postprocess(
                 _image_bytes(),
@@ -239,6 +250,58 @@ class PostprocessVnLayoutTests(unittest.TestCase):
                 _settings(theme_dual="gfl"),
             )
             self.assertEqual(draw_panel.call_count, 1)
+
+            compose_postprocess(
+                _image_bytes(),
+                'alice: "첫 번째"\nbob: "두 번째"',
+                _settings(theme_dual="sky"),
+            )
+            self.assertEqual(draw_panel.call_count, 2)
+
+    def test_simple_layout_draws_one_combined_header_and_original_segment_order(self):
+        with patch("modes.postprocess._draw_combined_header", return_value=80) as header, patch(
+            "modes.postprocess._draw_segment_group",
+        ) as body:
+            compose_postprocess(
+                _image_bytes(),
+                'alice: "첫 번째"\nbob: "두 번째"\nalice: "세 번째"',
+                _settings(theme_dual="classic_simple"),
+            )
+
+        self.assertEqual(header.call_count, 1)
+        self.assertEqual(header.call_args.args[3], ["alice", "bob"])
+        self.assertEqual(body.call_count, 1)
+        self.assertEqual(
+            [segment["text"] for segment in body.call_args.args[3]],
+            ["첫 번째", "두 번째", "세 번째"],
+        )
+
+    def test_every_special_single_theme_supports_face_slot(self):
+        face = Image.new("RGBA", (100, 100), (255, 0, 0, 255))
+        for theme in ("gfl", "devil", "nikke"):
+            with self.subTest(theme=theme), patch(
+                "modes.postprocess._prepare_face_images", return_value={"alice": face},
+            ), patch("modes.postprocess._paste_face_slot") as paste_face:
+                compose_postprocess(
+                    _image_bytes(),
+                    'alice: "한 명 대사"',
+                    _settings(face_enabled=True, theme_single=theme),
+                )
+                self.assertEqual(paste_face.call_count, 1)
+                self.assertIs(paste_face.call_args.args[1], face)
+
+    def test_every_special_theme_supports_overlay_without_canvas_growth(self):
+        for theme in ("gfl", "devil", "nikke"):
+            with self.subTest(theme=theme):
+                rendered = Image.open(io.BytesIO(compose_postprocess(
+                    _image_bytes(),
+                    'alice: "오버레이 대사"',
+                    _settings(
+                        placement="overlay", face_enabled=False,
+                        theme_single=theme,
+                    ),
+                )))
+                self.assertEqual(rendered.size, (320, 480))
 
     def test_split_bottom_right_text_block_stays_left_aligned_near_thumbnail(self):
         faces = {

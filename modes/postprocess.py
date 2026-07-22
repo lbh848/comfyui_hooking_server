@@ -123,20 +123,39 @@ VN_THEMES = {
         "face_frame": (96, 98, 106),
     },
     "gfl": {
-        "fill_top": (34, 34, 30), "fill_bottom": (10, 10, 8),
-        "outer": (246, 205, 50), "outer2": (154, 119, 12),
-        "accent": (255, 220, 54),
-        "name": (255, 221, 62), "emotion": (255, 239, 166), "body": (244, 244, 236),
-        "header": (18, 18, 14, 232), "divider": (224, 186, 38),
-        "shadow": (0, 0, 0), "backdrop_top": (24, 24, 20), "backdrop_bottom": (3, 3, 2),
-        "face_frame": (246, 205, 50),
+        "fill_top": (13, 22, 27), "fill_bottom": (6, 10, 13),
+        "outer": (118, 220, 222), "outer2": (42, 92, 96),
+        "accent": (135, 231, 231),
+        "name": (196, 255, 255), "emotion": (244, 163, 77), "body": (238, 247, 247),
+        "header": (8, 14, 18, 232), "divider": (118, 220, 222),
+        "shadow": (0, 0, 0), "backdrop_top": (14, 24, 29), "backdrop_bottom": (3, 7, 9),
+        "face_frame": (135, 231, 231),
+    },
+    "devil": {
+        "fill_top": (24, 20, 28), "fill_bottom": (4, 4, 6),
+        "outer": (174, 116, 196), "outer2": (74, 42, 88),
+        "accent": (244, 164, 73),
+        "name": (255, 255, 255), "emotion": (220, 148, 240), "body": (244, 174, 86),
+        "header": (8, 7, 10, 220), "divider": (244, 164, 73),
+        "shadow": (0, 0, 0), "backdrop_top": (30, 20, 34), "backdrop_bottom": (2, 2, 3),
+        "face_frame": (190, 118, 210),
+    },
+    "nikke": {
+        "fill_top": (8, 12, 15), "fill_bottom": (0, 0, 0),
+        "outer": (19, 121, 166), "outer2": (5, 45, 67),
+        "accent": (23, 151, 204),
+        "name": (250, 250, 250), "emotion": (92, 190, 226), "body": (238, 238, 238),
+        "header": (0, 0, 0, 220), "divider": (18, 116, 158),
+        "shadow": (0, 0, 0), "backdrop_top": (5, 10, 13), "backdrop_bottom": (0, 0, 0),
+        "face_frame": (23, 151, 204),
     },
     "classic": None,  # 기존 검정 심플 렌더링 사용(팔레트 없음)
 }
 VN_THEME_DEFAULT = "sky"
 VN_SIMPLE_THEME_SUFFIX = "_simple"
 VN_LEGACY_DIAGONAL_THEME_SUFFIX = "_diagonal"
-VN_SIMPLE_THEME_BASES = {"classic", "gfl"}
+VN_SIMPLE_THEME_BASES = {"classic", "gfl", "devil", "nikke"}
+VN_SPECIAL_THEME_BASES = {"gfl", "devil", "nikke"}
 
 
 def _resolve_vn_theme(theme_value) -> tuple:
@@ -1073,6 +1092,43 @@ def _draw_multi_panel(canvas, rect, pal, opacity: float):
             print(f"[POSTPROCESS] 다중 카드 크기 오류: rect={rect}")
             return
         theme = _multi_palette(pal)
+        if pal is VN_THEMES.get("gfl"):
+            cut = max(10, min(34, height // 10))
+            opa = max(0.0, min(1.0, float(opacity)))
+            layer = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+            ld = ImageDraw.Draw(layer)
+            points = [
+                (x1 + cut // 2, y1), (x2 - cut * 2, y1),
+                (x2, y1 + cut), (x2, y2 - cut // 2),
+                (x2 - cut // 2, y2), (x1 + cut, y2),
+                (x1, y2 - cut), (x1, y1 + cut // 2),
+            ]
+            ld.polygon(points, fill=(8, 14, 18, int(232 * opa)))
+            ld.line(points + [points[0]], fill=(118, 220, 222, 165), width=2)
+            inset = max(6, cut // 2)
+            inner = [
+                (x1 + inset + cut // 2, y1 + inset),
+                (x2 - inset - cut * 2, y1 + inset),
+                (x2 - inset, y1 + inset + cut),
+                (x2 - inset, y2 - inset - cut // 2),
+                (x2 - inset - cut // 2, y2 - inset),
+                (x1 + inset + cut, y2 - inset),
+                (x1 + inset, y2 - inset - cut),
+                (x1 + inset, y1 + inset + cut // 2),
+            ]
+            ld.line(inner + [inner[0]], fill=(135, 231, 231, 42), width=1)
+            for scan_y in range(y1 + 4, y2, 5):
+                ld.line(
+                    [(x1 + cut, scan_y), (x2 - cut, scan_y)],
+                    fill=(255, 255, 255, 7), width=1,
+                )
+            ld.rectangle(
+                [(x1, y1 + cut),
+                 (x1 + max(3, cut // 4), y1 + cut + max(16, height // 6))],
+                fill=(244, 163, 77, 235),
+            )
+            canvas.alpha_composite(layer)
+            return
         radius = max(12, min(28, height // 8))
         ft = max(2, min(5, height // 35))
         opa = max(0.0, min(1.0, float(opacity)))
@@ -1349,19 +1405,338 @@ def _draw_combined_header(draw, x: int, y: int, speakers: list,
     return cur_x
 
 
+def _render_unified_theme_dialogue(
+        img, layout, pal, theme_key, settings, segments, speakers,
+        face_images, name_replace, use_name_replace, strip_emotion,
+        font, name_font, emotion_font, line_height, img_w, img_h,
+        use_name_color, use_dialogue_color, bot_name):
+    """하나의 썸네일 슬롯·이름 헤더·본문을 갖는 통합 대사창 렌더러."""
+    try:
+        style = str(theme_key or "classic").strip().lower()
+        if style not in ({"classic"} | VN_SPECIAL_THEME_BASES):
+            print(f"[POSTPROCESS] 통합 대사창 테마 오류({style!r}), classic 사용")
+            style = "classic"
+        theme = _multi_palette(pal)
+        base_h = max(64, int(layout.get("bar_h", 64)))
+        pad = max(10, int(base_h * (0.085 if style == "gfl" else 0.075)))
+        gap = max(12, int(base_h * 0.08))
+        outer_x = 0 if style in ("classic", "devil") else max(10, int(img_w * 0.025))
+        outer_y = 0 if style == "classic" else max(8, int(base_h * 0.07))
+        panel_w = img_w - outer_x * 2
+        if panel_w < 120:
+            print(
+                f"[POSTPROCESS] 통합 대사창 폭 부족: style={style}, "
+                f"img_w={img_w}, panel_w={panel_w}"
+            )
+            return _to_output_bytes(img)
+
+        face_enabled = bool(settings.get("face_enabled", True))
+        multi_face_mode = str(settings.get("multi_face_mode", "both") or "both").strip().lower()
+        if multi_face_mode not in ("both", "first"):
+            print(
+                f"[POSTPROCESS] 통합 대사창 multi_face_mode 오류"
+                f"({multi_face_mode!r}), both 사용"
+            )
+            multi_face_mode = "both"
+        first_face = face_images.get(speakers[0].casefold()) if speakers else None
+        second_face = face_images.get(speakers[1].casefold()) if len(speakers) >= 2 else None
+        combine_faces = bool(
+            len(speakers) >= 2 and multi_face_mode == "both"
+            and first_face is not None and second_face is not None
+        )
+        slot_face = (
+            (first_face or second_face)
+            if multi_face_mode == "both" else first_face
+        )
+        show_face = bool(face_enabled and slot_face is not None)
+        face_side = max(48, min(int(base_h * 0.72), int(img_w * 0.22)))
+        content_x_local = pad + (face_side + gap if show_face else 0)
+        content_w = max(40, panel_w - content_x_local - pad)
+
+        label_font = _load_font(max(8, int(getattr(font, "size", 12) * 0.55)))
+        header_gap = max(8, line_height // 3)
+        segment_gap = max(3, line_height // 3)
+        label_h = max(10, getattr(label_font, "size", 10) + 4)
+        name_h = max(getattr(name_font, "size", 12) + 6, line_height)
+        if style == "gfl":
+            header_block_h = label_h + 4 + name_h + label_h + header_gap
+        else:
+            header_block_h = name_h + header_gap
+        measure_draw = ImageDraw.Draw(
+            Image.new("RGBA", (max(1, img_w), 32), (0, 0, 0, 0))
+        )
+        measure_body_w = max(
+            40, content_w - (max(12, pad // 2) if style == "devil" else 0),
+        )
+        body_h = _segments_height(
+            measure_draw, segments, font, measure_body_w, line_height, segment_gap,
+        )
+        panel_h = max(
+            base_h,
+            pad * 2 + header_block_h + body_h,
+            pad * 2 + (face_side if show_face else 0),
+        )
+        required_h = panel_h + outer_y * 2
+        placement = str(layout.get("placement", "extend") or "extend")
+        if placement == "overlay" and required_h > img_h:
+            print(
+                f"[POSTPROCESS] 통합 대사창 오버레이 공간 부족"
+                f"(style={style}, required={required_h}, img_h={img_h}), 하단 확장 사용"
+            )
+            placement = "extend"
+
+        if placement == "extend":
+            canvas_h = img_h + required_h
+            canvas = Image.new("RGBA", (img_w, canvas_h), (0, 0, 0, 255))
+            canvas.paste(img, (0, 0))
+            if style == "classic":
+                backdrop = Image.new("RGBA", (img_w, required_h), (0, 0, 0, 255))
+            elif style == "devil":
+                backdrop = _vertical_gradient(
+                    (img_w, required_h), (24, 18, 26, 255), (1, 1, 2, 255),
+                )
+            else:
+                backdrop = _vertical_gradient(
+                    (img_w, required_h), _rgba(theme["backdrop_top"]),
+                    _rgba(theme["backdrop_bottom"]),
+                )
+            canvas.paste(backdrop, (0, img_h))
+            panel_y = img_h + outer_y
+        else:
+            canvas_h = img_h
+            canvas = img.copy()
+            panel_y = max(0, img_h - outer_y - panel_h)
+
+        try:
+            opacity = float(settings.get("opacity", 100)) / 100.0
+        except (TypeError, ValueError):
+            print(
+                f"[POSTPROCESS] 통합 대사창 opacity 변환 실패"
+                f"({settings.get('opacity')!r}), 100 사용"
+            )
+            opacity = 1.0
+        opacity = max(0.0, min(1.0, opacity))
+
+        x1, y1 = outer_x, panel_y
+        x2, y2 = img_w - outer_x, panel_y + panel_h
+        panel_layer = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+        panel_draw = ImageDraw.Draw(panel_layer)
+        if style == "classic":
+            alpha = int((255 if placement == "extend" else 178) * opacity)
+            panel_draw.rectangle([(x1, y1), (x2, y2)], fill=(0, 0, 0, alpha))
+            panel_draw.line(
+                [(x1, y1), (x2, y1)], fill=(180, 182, 188, 210), width=2,
+            )
+            panel_draw.line(
+                [(x1, y2 - 1), (x2, y2 - 1)], fill=(86, 88, 94, 180), width=1,
+            )
+        elif style == "gfl":
+            cut = max(10, int(panel_h * 0.10))
+            points = [
+                (x1 + cut // 2, y1), (x2 - cut * 2, y1),
+                (x2, y1 + cut), (x2, y2 - cut // 2),
+                (x2 - cut // 2, y2), (x1 + cut, y2),
+                (x1, y2 - cut), (x1, y1 + cut // 2),
+            ]
+            panel_draw.polygon(points, fill=(8, 14, 18, int(232 * opacity)))
+            panel_draw.line(points + [points[0]], fill=(118, 220, 222, 150), width=2)
+            inset = max(6, cut // 2)
+            inner = [
+                (x1 + inset + cut // 2, y1 + inset),
+                (x2 - inset - cut * 2, y1 + inset),
+                (x2 - inset, y1 + inset + cut),
+                (x2 - inset, y2 - inset - cut // 2),
+                (x2 - inset - cut // 2, y2 - inset),
+                (x1 + inset + cut, y2 - inset),
+                (x1 + inset, y2 - inset - cut),
+                (x1 + inset, y1 + inset + cut // 2),
+            ]
+            panel_draw.line(inner + [inner[0]], fill=(135, 231, 231, 40), width=1)
+            for scan_y in range(y1 + 4, y2, 5):
+                panel_draw.line(
+                    [(x1 + cut, scan_y), (x2 - cut, scan_y)],
+                    fill=(255, 255, 255, 7), width=1,
+                )
+            panel_draw.rectangle(
+                [(x1, y1 + pad), (x1 + max(3, pad // 4), y1 + pad + max(14, panel_h // 5))],
+                fill=(244, 163, 77, 235),
+            )
+        elif style == "devil":
+            gradient = _vertical_gradient(
+                (max(1, x2 - x1), max(1, y2 - y1)),
+                (10, 8, 12, int(110 * opacity)),
+                (0, 0, 0, int(242 * opacity)),
+            )
+            panel_layer.alpha_composite(gradient, (x1, y1))
+            panel_draw = ImageDraw.Draw(panel_layer)
+        else:  # nikke
+            cut = max(8, int(panel_h * 0.08))
+            points = [
+                (x1 + cut, y1), (x2 - cut * 2, y1),
+                (x2, y1 + cut * 2), (x2, y2),
+                (x1, y2), (x1, y1 + cut),
+            ]
+            panel_draw.polygon(points, fill=(0, 0, 0, int(224 * opacity)))
+            panel_draw.line(
+                [(x1, y1 + cut), (x1 + cut, y1), (x1 + cut * 4, y1)],
+                fill=(23, 151, 204, 225), width=max(2, cut // 5),
+            )
+            panel_draw.line(
+                [(x2 - cut * 3, y1), (x2 - cut, y1 + cut * 2), (x2, y1 + cut * 2)],
+                fill=(23, 151, 204, 150), width=max(2, cut // 5),
+            )
+            panel_draw.line(
+                [(x2 - cut, y2 - cut * 2), (x2, y2 - cut)],
+                fill=(23, 151, 204, 95), width=max(1, cut // 6),
+            )
+        canvas = Image.alpha_composite(canvas, panel_layer)
+
+        content_x = x1 + content_x_local
+        content_y = y1 + pad
+        face_x = x1 + pad
+        face_y = y1 + (panel_h - face_side) // 2
+        if show_face:
+            face_box = (face_x, face_y, face_x + face_side, face_y + face_side)
+            if combine_faces:
+                _paste_diagonal_faces(
+                    canvas, first_face, second_face, face_box, pal,
+                )
+            else:
+                _paste_face_slot(canvas, slot_face, face_box, pal)
+
+        draw = ImageDraw.Draw(canvas)
+        if show_face:
+            divider_x = content_x - gap // 2
+            if style == "devil":
+                divider_fill = (128, 74, 146, 130)
+            elif style == "nikke":
+                divider_fill = (23, 151, 204, 115)
+            elif style == "gfl":
+                divider_fill = (135, 231, 231, 120)
+            else:
+                divider_fill = (160, 162, 168, 130)
+            draw.line(
+                [(divider_x, y1 + pad), (divider_x, y2 - pad)],
+                fill=divider_fill, width=1,
+            )
+
+        name_fill = _rgba(theme["name"])
+        body_fill = _rgba(theme["body"])
+        outline_width = normalize_text_outline_width(
+            settings.get("text_outline_width", -1)
+        )
+        header_y = content_y
+        name_x = content_x
+        if style == "gfl":
+            draw.text(
+                (content_x, header_y), "TACTICAL RESPONSE UNIT",
+                font=label_font, fill=(244, 163, 77, 255),
+            )
+            header_y += label_h + 4
+        elif style == "nikke":
+            mark_w = max(3, int(getattr(name_font, "size", 12) * 0.12))
+            draw.rectangle(
+                [(content_x, header_y + 2),
+                 (content_x + mark_w, header_y + name_h - 4)],
+                fill=(23, 151, 204, 255),
+            )
+            name_x = content_x + mark_w + max(7, mark_w * 2)
+
+        name_end_x = _draw_combined_header(
+            draw, name_x, header_y, speakers, name_replace,
+            use_name_replace, use_name_color, bot_name, name_font,
+            name_fill, outline_width,
+        )
+        first_segment = next((seg for seg in segments if seg.get("speaker")), None)
+        emotion = (
+            (first_segment.get("emotion") or "").lstrip("#").strip()
+            if strip_emotion and len(speakers) == 1 and first_segment else ""
+        )
+        if emotion:
+            draw.text(
+                (name_end_x + 14, header_y + max(0, name_h // 8)),
+                f"# {emotion}", font=emotion_font,
+                fill=_rgba(theme["emotion"]),
+            )
+
+        body_y = header_y + name_h + header_gap
+        if style == "gfl":
+            status_y = header_y + name_h + 2
+            diamond = max(3, label_h // 4)
+            draw.polygon(
+                [(content_x, status_y + diamond),
+                 (content_x + diamond, status_y),
+                 (content_x + diamond * 2, status_y + diamond),
+                 (content_x + diamond, status_y + diamond * 2)],
+                fill=(135, 231, 231, 255),
+            )
+            draw.text(
+                (content_x + diamond * 3, status_y - 1),
+                "INCOMING ENCRYPTED VOICE DATA", font=label_font,
+                fill=(140, 163, 165, 255),
+            )
+            body_y = status_y + label_h + header_gap
+            draw.text(
+                (x2 - pad - int(_text_width(draw, "SECURE CHANNEL", label_font)), y1 + pad),
+                "SECURE CHANNEL", font=label_font, fill=(135, 231, 231, 110),
+            )
+        elif style == "devil":
+            line_x = content_x
+            body_y = header_y + name_h + header_gap
+            draw.rectangle(
+                [(line_x, body_y),
+                 (line_x + max(3, pad // 4), min(y2 - pad, body_y + body_h))],
+                fill=(244, 164, 73, 255),
+            )
+            content_x = line_x + max(12, pad // 2)
+            content_w = max(40, x2 - pad - content_x)
+        elif style == "nikke":
+            chevron_x = x2 - pad
+            chevron_y = y2 - pad
+            chevron_size = max(4, pad // 3)
+            draw.line(
+                [(chevron_x - chevron_size, chevron_y - chevron_size),
+                 (chevron_x, chevron_y)], fill=(238, 238, 238, 210), width=2,
+            )
+            draw.line(
+                [(chevron_x, chevron_y),
+                 (chevron_x + chevron_size, chevron_y - chevron_size)],
+                fill=(238, 238, 238, 210), width=2,
+            )
+
+        _draw_segment_group(
+            draw, content_x, body_y, segments, font, content_w,
+            line_height, segment_gap, body_fill, use_dialogue_color,
+            bot_name, outline_width,
+        )
+        print(
+            f"[POSTPROCESS] 통합 대사창 렌더링 완료: style={style}, "
+            f"speakers={len(speakers)}, faces={multi_face_mode}, "
+            f"segments={len(segments)}, output={img_w}x{canvas_h}"
+        )
+        return _to_output_bytes(canvas)
+    except Exception as e:
+        print(
+            f"[POSTPROCESS] 통합 대사창 렌더링 실패: theme={theme_key!r}, "
+            f"speakers={speakers!r}, error={e}"
+        )
+        traceback.print_exc()
+        return _to_output_bytes(img)
+
+
 def _render_multi_dialogue(img, layout, pal, settings, segments, speakers,
                            face_images, name_replace, use_name_replace,
                            strip_emotion, font, name_font, emotion_font,
                            line_height, img_w, img_h, use_name_color,
                            use_dialogue_color, bot_name, mode):
-    """심플/블럭형의 공유 영역에 발화자별 행을 렌더링한다.
+    """블럭형의 공유 카드 안에 발화자별 영역을 렌더링한다.
 
     대사마다 별도 박스를 만들지 않는다. 3명 이상도 같은 공유 영역을
     확장해 표시하며, 썸네일은 설정에 따라 첫 발화자 또는 앞의 두 발화자만
     사용한다.
     """
     try:
-        if mode not in ("simple", "block"):
+        if mode != "block":
             print(f"[POSTPROCESS] 알 수 없는 2인+ 배치({mode!r}), block 사용")
             mode = "block"
 
@@ -1481,20 +1856,7 @@ def _render_multi_dialogue(img, layout, pal, settings, segments, speakers,
             opacity = 1.0
 
         area_rect = (outer_x, first_y, img_w - outer_x, first_y + content_h)
-        if mode == "block":
-            _draw_multi_panel(canvas, area_rect, pal, opacity)
-        else:
-            simple_draw = ImageDraw.Draw(canvas)
-            accent_width = max(2, min(5, base_h // 32))
-            simple_draw.line(
-                [(outer_x, first_y), (img_w - outer_x, first_y)],
-                fill=_rgba(theme["accent"]), width=accent_width,
-            )
-            simple_draw.line(
-                [(outer_x, first_y + content_h),
-                 (img_w - outer_x, first_y + content_h)],
-                fill=_rgba(theme["divider"]), width=max(1, accent_width - 1),
-            )
+        _draw_multi_panel(canvas, area_rect, pal, opacity)
 
         draw = ImageDraw.Draw(canvas)
         x1, _y1, x2, _y2 = area_rect
@@ -1554,11 +1916,11 @@ def _render_multi_dialogue(img, layout, pal, settings, segments, speakers,
             current_y += row_h
             if row_number < len(rows) - 1:
                 divider_y = current_y + divider_gap // 2
-                inset = pad if mode == "block" else max(pad, int(area_w * 0.06))
+                inset = pad
                 draw.line(
                     [(x1 + inset, divider_y), (x2 - inset, divider_y)],
                     fill=_rgba(theme["divider"]),
-                    width=2 if mode == "block" else 1,
+                    width=2,
                 )
                 current_y += divider_gap
 
@@ -1746,14 +2108,28 @@ def compose_postprocess(image_bytes: bytes, speak_text: str,
     except Exception:
         line_height = int(font_size * (1.45 if palette else 1.3))
 
-    # 2명 이상은 대사별 박스를 쌓지 않고 선택한 공유 영역에 함께 렌더링한다.
+    # 심플 배치와 전용 테마는 발화자 수와 무관하게 하나의 이름/본문 영역을 쓴다.
     if len(speakers) >= 2:
-        multi_mode = "simple" if simple_multi_theme else "block"
+        if simple_multi_theme or palette_theme_key in {"devil", "nikke"}:
+            return _render_unified_theme_dialogue(
+                img, layout, palette, palette_theme_key, settings, segments,
+                speakers, face_images, name_replace, use_name_replace,
+                strip_emotion, font, name_font, emotion_font, line_height,
+                img_w, img_h, use_name_color, use_dialogue_color, bot_name,
+            )
         return _render_multi_dialogue(
             img, layout, palette, settings, segments, speakers, face_images,
             name_replace, use_name_replace, strip_emotion, font, name_font,
             emotion_font, line_height, img_w, img_h, use_name_color,
-            use_dialogue_color, bot_name, multi_mode,
+            use_dialogue_color, bot_name, "block",
+        )
+
+    if palette_theme_key in VN_SPECIAL_THEME_BASES:
+        return _render_unified_theme_dialogue(
+            img, layout, palette, palette_theme_key, settings, segments,
+            speakers, face_images, name_replace, use_name_replace,
+            strip_emotion, font, name_font, emotion_font, line_height,
+            img_w, img_h, use_name_color, use_dialogue_color, bot_name,
         )
 
     layout = _fit_single_extend_layout(
