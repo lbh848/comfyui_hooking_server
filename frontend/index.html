@@ -8419,6 +8419,17 @@
                                 <div class="pp-hint">형식:<br>- <code>NAME: "대사"</code><br>- <code>NAME: (생각)</code><br>- 대사 뒤 <code>#감정</code> (감정 토글 켜면 합성에서 숨김)</div>
                                 <div class="pp-subsection">
                                     <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:4px;">
+                                        <span style="font-size:0.74rem; color:var(--text2, #999);">베이스 이미지 (삽화 백업에서 선택)</span>
+                                        <div style="display:flex; gap:6px; align-items:center;">
+                                            <button type="button" class="btn" style="padding:3px 10px; font-size:0.72rem;" onclick="ppOpenBasePicker()">백업에서 선택</button>
+                                            <span id="pp-vn-base-name" style="font-size:0.72rem; color:var(--text2,#999);">(없음 → 더미)</span>
+                                            <button type="button" class="btn" style="padding:3px 10px; font-size:0.72rem;" onclick="ppClearVnBase()">지우기</button>
+                                        </div>
+                                    </div>
+                                    <div class="pp-hint" style="margin-top:0;">미리보기에 깔 삽화를 고릅니다. 비우면 저장된 삽화 비율의 더미 이미지 사용. (미리보기 전용·저장 안 됨)</div>
+                                </div>
+                                <div class="pp-subsection">
+                                    <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:4px;">
                                         <span style="font-size:0.74rem; color:var(--text2, #999);">매칭 캐릭터 이미지 (NAME + 감정)</span>
                                         <button type="button" class="btn" style="padding:3px 10px; font-size:0.72rem;" onclick="ppOpenParallelTestModal()">병렬 테스트</button>
                                     </div>
@@ -8594,15 +8605,15 @@
         </div>
     </div>
 
-    <!-- 말풍선 모드: 베이스 이미지 피커 (삽화 백업에서 선택) -->
+    <!-- 베이스 이미지 피커 (삽화 백업에서 선택) — 대사/말풍선 모드 공용 -->
     <div class="modal" id="pp-bubble-base-modal">
         <div class="modal-content" style="max-width:760px;">
             <div class="modal-header">
-                <h2>베이스 이미지 선택 (삽화 백업)</h2>
+                <h2 id="pp-base-modal-title">베이스 이미지 선택 (삽화 백업)</h2>
                 <button class="modal-close" onclick="ppCloseBasePicker()">&times;</button>
             </div>
             <div class="modal-body">
-                <div class="pp-hint" style="margin-bottom:8px;">말풍선 미리보기에 사용할 삽화를 고르세요. (최근 80장)</div>
+                <div class="pp-hint" style="margin-bottom:8px;">미리보기에 사용할 삽화를 고르세요. (최근 80장)</div>
                 <div id="pp-bubble-base-grid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(110px, 1fr)); gap:8px; max-height:60vh; overflow:auto;">
                     <div style="font-size:0.8rem; color:var(--text2,#999);">불러오는 중…</div>
                 </div>
@@ -27552,6 +27563,7 @@
             ppEmotionResetSession();
             ppRenderEmotionRules();
             ppRenderEmotionList();
+            ppClearVnBase();  // 베이스는 세션 전용(저장 안 함) — 봇 로드 시 이전 베이스 잔존 방지
         }
 
         async function ppLoadBotSettings(botName) {
@@ -27600,6 +27612,7 @@
         function openPostprocessModal() {
             ppWorking = JSON.parse(JSON.stringify(defaultPpConfig()));
             ppBubbleBaseDataUrl = null;
+            ppVnBaseDataUrl = null;
             ppFillBotSelect();
             document.getElementById('postprocess-modal').classList.add('visible');
             if (ppCurrentBot) {
@@ -28196,6 +28209,7 @@
                             // 미리보기 베이스 크기를 실제 생성 결과와 일치시키도록 전달
                             profile: (typeof _illustSettingsProfile !== 'undefined' && _illustSettingsProfile) ? _illustSettingsProfile : 'solo',
                             bot_name: (typeof ppCurrentBot !== 'undefined' && ppCurrentBot) ? ppCurrentBot : '',
+                            base: ppVnBaseDataUrl || undefined,
                         })
                     });
                     if (!resp.ok) {
@@ -28224,6 +28238,8 @@
 
         // ─── 말풍선 모드 (bubble) ────────────────────────────────
         let ppBubbleBaseDataUrl = null;  // 삽화 백업에서 고른 베이스 이미지(data URL). null=더미.
+        let ppVnBaseDataUrl = null;      // 대사 모드 미리보기 베이스(data URL). null=더미.
+        let ppBasePickerTarget = 'bubble';  // 베이스 피커가 어느 모드용으로 열렸는지('vn'|'bubble') → ppPickBase/ppClearBase 분기용
 
         function _ppNormalizeBubble(b) {
             const base = defaultPpConfig().bubble;
@@ -28536,8 +28552,16 @@
             }
         }
 
-        // 베이스 이미지 피커 (삽화 백업에서 선택)
+        // 베이스 이미지 피커 (삽화 백업에서 선택) — 대사/말풍선 모드 공용.
+        // 어느 모드용으로 열렸는지 ppBasePickerTarget 에 기록 → ppPickBase 가 알맞은 변수/이름표에 기록.
+        function _ppBaseNameId() { return ppBasePickerTarget === 'bubble' ? 'pp-bubble-base-name' : 'pp-vn-base-name'; }
+
         async function ppOpenBasePicker() {
+            ppBasePickerTarget = (ppActiveTab === 'bubble') ? 'bubble' : 'vn';
+            const titleEl = document.getElementById('pp-base-modal-title');
+            if (titleEl) titleEl.textContent = ppBasePickerTarget === 'bubble'
+                ? '베이스 이미지 선택 (삽화 백업) — 말풍선 모드'
+                : '베이스 이미지 선택 (삽화 백업) — 대사 모드';
             document.getElementById('pp-bubble-base-modal').classList.add('visible');
             const grid = document.getElementById('pp-bubble-base-grid');
             grid.innerHTML = '<div style="font-size:0.8rem; color:var(--text2,#999);">불러오는 중…</div>';
@@ -28570,8 +28594,13 @@
                 const blob = await resp.blob();
                 const reader = new FileReader();
                 reader.onload = () => {
-                    ppBubbleBaseDataUrl = reader.result;
-                    const nm = document.getElementById('pp-bubble-base-name');
+                    // 피커가 열린 모드의 베이스 변수/이름표에 기록 (대사·말풍선 독립)
+                    if (ppBasePickerTarget === 'bubble') {
+                        ppBubbleBaseDataUrl = reader.result;
+                    } else {
+                        ppVnBaseDataUrl = reader.result;
+                    }
+                    const nm = document.getElementById(_ppBaseNameId());
                     if (nm) nm.textContent = name;
                     ppCloseBasePicker();
                     renderPostprocessPreview();
@@ -28584,9 +28613,18 @@
             }
         }
 
+        // 말풍선 모드 베이스 지우기 (ppApplyBubbleToUI 의 세션 초기화도 이쪽 사용)
         function ppClearBase() {
             ppBubbleBaseDataUrl = null;
             const nm = document.getElementById('pp-bubble-base-name');
+            if (nm) nm.textContent = '(없음 → 더미)';
+            if (ppWorking) renderPostprocessPreview();
+        }
+
+        // 대사 모드 베이스 지우기
+        function ppClearVnBase() {
+            ppVnBaseDataUrl = null;
+            const nm = document.getElementById('pp-vn-base-name');
             if (nm) nm.textContent = '(없음 → 더미)';
             if (ppWorking) renderPostprocessPreview();
         }
