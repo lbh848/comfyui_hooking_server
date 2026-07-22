@@ -29084,7 +29084,6 @@
 
         function hydrateBotTabFromState() {
             renderBotSelect();
-            renderBotList();
             applyBotSelectionUi();
         }
 
@@ -29193,10 +29192,7 @@
                     + (isSelected ? '<span style="font-size:0.75rem; color:var(--accent); font-weight:600;">선택됨</span>' : '<span style="font-size:0.7rem; color:var(--text2);">선택</span>');
                 row.onclick = (e) => {
                     e.stopPropagation();
-                    botCurrentBot = bot.name;
-                    const sel = document.getElementById('bot-select');
-                    if (sel) sel.value = bot.name;
-                    onBotChange();
+                    selectBot(bot.name);
                     closeBotFloatPopover();
                 };
                 list.appendChild(row);
@@ -29273,12 +29269,7 @@
                 if (countEl) countEl.textContent = '';
                 if (btnList) btnList.style.display = 'flex';
                 if (btnSelected) btnSelected.style.display = 'none';
-                showBotView('empty');
-                const botEmptyState = document.getElementById('bot-empty-state');
-                botEmptyState.querySelector('h3').textContent = '삽화 라이브러리';
-                botEmptyState.querySelector('p').textContent = '캐릭터를 선택해 주세요.';
-                const constructionIcon = botEmptyState.querySelector('.construction-icon');
-                if (constructionIcon) constructionIcon.style.display = '';
+                renderBotList();
                 updateBotBreadcrumb();
                 return;
             }
@@ -29292,12 +29283,39 @@
             loadPositiveRules();
         }
 
-        function onBotChange() {
-            botCurrentBot = document.getElementById('bot-select').value;
+        function selectBot(botName) {
+            const nextBot = String(botName || '');
+            if (nextBot && (!botData || !Array.isArray(botData.bots)
+                    || !botData.bots.some(bot => bot.name === nextBot))) {
+                console.error('[BOT] 존재하지 않는 봇 선택 시도:', nextBot);
+                showToast('선택한 봇을 찾을 수 없습니다.', 'error');
+                return false;
+            }
+
+            botCurrentBot = nextBot;
+            const botSelect = document.getElementById('bot-select');
+            if (botSelect) {
+                const hasOption = Array.from(botSelect.options).some(option => option.value === nextBot);
+                if (!hasOption && botData && Array.isArray(botData.bots)) {
+                    renderBotSelect();
+                }
+                botSelect.value = nextBot;
+            }
+
             // 사용자가 선택을 변경한 경우에만 config에 저장한다.
             saveBotSelected();
             applyBotSelectionUi();
             loadIllustArtistPresets();
+            return true;
+        }
+
+        function onBotChange() {
+            const botSelect = document.getElementById('bot-select');
+            if (!botSelect) {
+                console.error('[BOT] 봇 선택 UI를 찾을 수 없습니다.');
+                return;
+            }
+            selectBot(botSelect.value);
         }
 
         function showBotView(view) {
@@ -29354,15 +29372,10 @@
                     <button class="bot-select-btn" style="margin-top:8px; padding:3px 10px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); cursor:pointer; font-size:0.7rem; transition:background 0.2s;">${isSelected ? '선택됨' : '선택'}</button>`;
                 card.querySelector('.bot-select-btn').onclick = (e) => {
                     e.stopPropagation();
-                    botCurrentBot = bot.name;
-                    document.getElementById('bot-select').value = bot.name;
-                    onBotChange();
-                    renderBotList();
+                    if (selectBot(bot.name)) renderBotList();
                 };
                 card.onclick = () => {
-                    botCurrentBot = bot.name;
-                    document.getElementById('bot-select').value = bot.name;
-                    onBotChange();
+                    selectBot(bot.name);
                 };
                 grid.appendChild(card);
 
@@ -35669,10 +35682,7 @@
                             return;
                         }
                         botData.bots = data.bots;
-                        botCurrentBot = name;
-                        renderBotSelect();
-                        renderBotList();
-                        onBotChange();
+                        selectBot(name);
                         showToast(`봇 "${name}" 추가됨`);
                     } catch (e) {
                         console.error('[BOT] 봇 추가 실패:', e);
