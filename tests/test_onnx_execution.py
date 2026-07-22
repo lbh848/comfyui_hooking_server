@@ -74,6 +74,9 @@ class OnnxExecutionTests(unittest.TestCase):
         self.assertEqual(bubble["onnx_device"], "auto")
         self.assertEqual(bubble["cpu_threads"], 0)
 
+    def test_bubble_min_font_size_defaults_to_automatic(self):
+        self.assertEqual(_default_bubble()["min_font_size"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

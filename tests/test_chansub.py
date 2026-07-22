@@ -75,6 +75,27 @@ class ChansubPromptBuilderTest(unittest.TestCase):
         self.assertIn("(dramatic lighting:1.2)", result["positive"])
         self.assertIn(r"alice \(series\) | bob \(series\)", result["positive"])
 
+    def test_build_applies_insert_rules_after_quality_for_chansub(self):
+        result = ChansubPromptBuilder().build(
+            "night",
+            "1girl",
+            "rain",
+            self.tags,
+            self.settings,
+            insert_rules=[
+                {"type": "insert", "word": "series title", "enabled": True}
+            ],
+        )
+
+        self.assertEqual(
+            result["positive"],
+            "artist:sample, best quality, amazing quality, series title, "
+            "night, 1girl, rain",
+        )
+        self.assertEqual(result["quality_tag_start"], 1)
+        self.assertEqual(result["quality_tag_count"], 3)
+        self.assertEqual(result["applied_insert_rules"], 1)
+
     def test_build_uses_selected_sdxl_presets(self):
         self.settings["chansub_workflow_type"] = "sdxl"
 

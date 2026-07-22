@@ -356,6 +356,19 @@ def _resolve_layout_font_scale(settings):
     return max(1.0, min(4.0, scale))
 
 
+def _resolve_min_font_size(settings):
+    """0은 자동(None), 양수는 실제 말풍선 글자 하한으로 정규화한다."""
+    value = (settings or {}).get("min_font_size", 0)
+    try:
+        size = int(round(float(value)))
+    except (TypeError, ValueError, OverflowError):
+        print(f"[BUBBLE_RENDER] ⚠ min_font_size 변환 실패({value!r}), 자동 사용")
+        traceback.print_exc()
+        return None
+    size = max(0, min(400, size))
+    return size or None
+
+
 def _resolve_bubble_shape_mode(settings):
     """말풍선 외곽선 렌더 모드: legacy(기존 타원/코믹) | organic(유기형)."""
     mode = str((settings or {}).get("bubble_shape", "legacy") or "legacy").strip().lower()
@@ -3246,6 +3259,8 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
     )
     # 사용자가 정한 상한까지 키운 뒤 줄바꿈/몸통을 다시 계산한다.
     layout_font_scale = _resolve_layout_font_scale(s)
+    min_font_size = _resolve_min_font_size(s)
+    preview_force_min_font_size = bool(s.get("preview_force_min_font_size", False))
     # 넓힌 후보 풀의 오검출이 말풍선 배치를 막지 않도록 최종 매칭된 얼굴만 보호한다.
     matched_face_boxes = []
     for match in matched:
@@ -3307,6 +3322,8 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
                 (canvas_w, canvas_h),
                 s.get("font_path") or None,
                 font_scale=layout_font_scale,
+                min_font_size=min_font_size,
+                force_min_font_size=preview_force_min_font_size,
                 force_shape=force_shape,
                 allowed_shapes=allowed_shapes,
                 max_lines=7,

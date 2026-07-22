@@ -94,13 +94,66 @@ def test_deferred_speak_uses_same_raw_name_replacements(monkeypatch):
     monkeypatch.setattr(
         server,
         "apply_raw_prompt_word_replacements",
-        lambda raw, bot_name: raw.replace("Alias", "Canonical"),
+        lambda raw, bot_name, rules=None: raw.replace("Alias", "Canonical"),
     )
 
     try:
         assert server._resolve_deferred_speak_text(prompt_id, descriptor) == (
             'Canonical: "hello"'
         )
+    finally:
+        server.prompts.pop(prompt_id, None)
+
+
+@pytest.mark.asyncio
+async def test_process_prompt_uses_queued_runtime_snapshot(monkeypatch):
+    prompt_id = "runtime-snapshot-test"
+    captured = {}
+    server.prompts[prompt_id] = {
+        "status": "running",
+        "prompt": {},
+        "outputs": {},
+        "filename": None,
+        "save_node_id": "9",
+        "image_bytes": None,
+        "_illustration_runtime_snapshot": {
+            "bot_name": "",
+            "provider": "comfy",
+            "chansub_workflow_type": "anima",
+            "clamp_enabled": True,
+            "clamp_value": 1.2,
+            "illustration_context_toggles": {
+                "call1_backtranslate_max_concurrency": 3,
+            },
+            "word_rules": [],
+        },
+    }
+
+    def fake_extract(_prompt, title):
+        return "(lighting:2.0)" if title == "긍정프롬프트" else ""
+
+    async def fake_generate(positive, negative, **kwargs):
+        captured["positive"] = positive
+        captured["provider"] = kwargs.get("provider")
+        return b"raw-image", {}
+
+    monkeypatch.setitem(server.app_config, "clamp_enabled", False)
+    monkeypatch.setattr(server, "extract_prompts_by_title", fake_extract)
+    monkeypatch.setattr(server, "generate_image_with_prompt", fake_generate)
+
+    try:
+        await server.process_prompt(
+            prompt_id,
+            {},
+            {"illustration_defer_postprocess": True},
+        )
+
+        assert captured == {
+            "positive": "(lighting:1.2)",
+            "provider": "comfy",
+        }
+        assert "_illustration_runtime_snapshot" not in server.prompts[prompt_id]
+        assert server.prompts[prompt_id]["_deferred_finalize"]["word_rules"] == []
     finally:
         server.prompts.pop(prompt_id, None)
 
@@ -206,6 +259,7 @@ async def test_context_queue_keeps_generating_until_call3_returns(tmp_path, monk
 
     async def fake_build(*args, on_call2_ready=None, **kwargs):
         assert on_call2_ready is not None
+        assert args[1]["call1_backtranslate_max_concurrency"] == 3
         await on_call2_ready({
             "session_id": session_id,
             "context": "private context",
@@ -236,6 +290,9 @@ async def test_context_queue_keeps_generating_until_call3_returns(tmp_path, monk
         assert params["raw_body"]["illustration_defer_postprocess"] is True
         assert params["provider"] == "comfy"
         child_prompt_id = params["prompt_id"]
+        assert server.prompts[child_prompt_id]["_illustration_runtime_snapshot"][
+            "illustration_context_toggles"
+        ]["call1_backtranslate_max_concurrency"] == 3
         child_prompt_ids.append(child_prompt_id)
         future = asyncio.get_running_loop().create_future()
         queue_item = SimpleNamespace(
@@ -276,10 +333,19 @@ async def test_context_queue_keeps_generating_until_call3_returns(tmp_path, monk
         server.prompts[prompt_id]["status"] = "completed"
 
     async def ignore_progress(*args, **kwargs):
+        # 첫 progress await 중 전역 설정이 바뀌어도 이미 캡처한 CALL1 병렬값을 쓴다.
+        server.app_config["illustration_context_toggles"][
+            "call1_backtranslate_max_concurrency"
+        ] = 1
         return None
 
     monkeypatch.setitem(server.app_config, "bot_selected", "")
     monkeypatch.setitem(server.app_config, "illustration_provider", "comfy")
+    monkeypatch.setitem(
+        server.app_config,
+        "illustration_context_toggles",
+        {"call1_backtranslate_max_concurrency": 3},
+    )
     monkeypatch.setattr(pipeline, "build_from_context", fake_build)
     monkeypatch.setattr(server.queue_manager, "add_item", fake_add_item)
     monkeypatch.setattr(server.queue_manager, "_notify_progress", ignore_progress)

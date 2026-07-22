@@ -10,6 +10,7 @@ from modes.word_rules import (
     apply_prompt_rules,
     apply_raw_prompt_rules,
     apply_insert_rules,
+    apply_flat_insert_rules,
     apply_char_tag_override_rules,
 )
 
@@ -373,6 +374,43 @@ class InsertRuleTest(unittest.TestCase):
 
         self.assertEqual(applied, 0)
         self.assertEqual(result, self.SAMPLE)
+
+    def test_chansub_flat_prompt_inserts_after_quality_tags(self):
+        positive = (
+            "artist:sample, best quality, amazing quality, "
+            "1girl, (red dress, blue ribbon)"
+        )
+        rules = [{"type": "insert", "word": "series title", "enabled": True}]
+
+        result, applied, inserted_tags = apply_flat_insert_rules(
+            positive,
+            rules,
+            quality_tag_start=1,
+            quality_tag_count=2,
+        )
+
+        self.assertEqual(applied, 1)
+        self.assertEqual(inserted_tags, 1)
+        self.assertEqual(
+            result,
+            "artist:sample, best quality, amazing quality, series title, "
+            "1girl, (red dress, blue ribbon)",
+        )
+
+    def test_chansub_flat_prompt_skips_existing_weighted_tag(self):
+        positive = "best quality, 1girl, (series title:1.2)"
+        rules = [{"type": "insert", "word": "series title", "enabled": True}]
+
+        result, applied, inserted_tags = apply_flat_insert_rules(
+            positive,
+            rules,
+            quality_tag_start=0,
+            quality_tag_count=1,
+        )
+
+        self.assertEqual(applied, 0)
+        self.assertEqual(inserted_tags, 0)
+        self.assertEqual(result, positive)
 
 
 class DetectCharactersFromNameTest(unittest.TestCase):

@@ -7,6 +7,8 @@ POSITIVE/NEGATIVE로 만든다. HTTP 요청 외형만 NAI API 형식이다.
 
 from __future__ import annotations
 
+from modes.word_rules import apply_flat_insert_rules
+
 
 def _as_tags(value) -> list[str]:
     """프리셋 값을 정리된 태그 리스트로 변환한다."""
@@ -99,16 +101,25 @@ class ChansubPromptBuilder:
         supplement: str,
         tags: dict,
         settings: dict,
+        insert_rules: list[dict] | None = None,
     ) -> dict:
         artist_tags = _get_artist_tags(tags, settings)
         quality_tags = _get_quality_tags(tags, settings)
+        positive = self.build_positive_prompt(setup, char, supplement, tags, settings)
+        positive, applied_insert_rules, inserted_tag_count = apply_flat_insert_rules(
+            positive,
+            insert_rules or [],
+            quality_tag_start=len(artist_tags),
+            quality_tag_count=len(quality_tags),
+        )
         return {
-            "positive": self.build_positive_prompt(setup, char, supplement, tags, settings),
+            "positive": positive,
             "negative": self.build_negative_prompt(tags, settings),
             "width": int(settings.get("img_w", 756) or 756),
             "height": int(settings.get("img_h", 756) or 756),
             "quality_tag_start": len(artist_tags),
-            "quality_tag_count": len(quality_tags),
+            "quality_tag_count": len(quality_tags) + inserted_tag_count,
+            "applied_insert_rules": applied_insert_rules,
         }
 
 

@@ -7627,6 +7627,77 @@
   min-width: 0;
 }
 
+.postprocess-ui .pp-settings-groups {
+  display: grid;
+  gap: 12px;
+}
+
+.postprocess-ui .pp-settings-group {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--pp-border) 66%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--pp-field) 48%, transparent);
+}
+
+.postprocess-ui .pp-settings-group-title {
+  margin-bottom: 10px;
+  color: var(--pp-text);
+  font-size: 0.74rem;
+  font-weight: 750;
+  letter-spacing: -0.01em;
+}
+
+.postprocess-ui .pp-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
+  align-items: end;
+  gap: 10px;
+}
+
+.postprocess-ui .pp-settings-field {
+  min-width: 0;
+}
+
+.postprocess-ui .pp-settings-field-label {
+  min-height: 2.5em;
+  margin-bottom: 5px;
+  color: var(--text2, #999);
+  font-size: 0.7rem;
+  line-height: 1.25;
+}
+
+.postprocess-ui .pp-settings-field > .input,
+.postprocess-ui .pp-settings-field > .select {
+  width: 100% !important;
+}
+
+.postprocess-ui .pp-settings-switch {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  padding: 9px 10px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--pp-panel) 64%, transparent);
+}
+
+.postprocess-ui .pp-settings-switch-copy {
+  min-width: 0;
+}
+
+.postprocess-ui .pp-settings-switch-title {
+  color: var(--pp-text);
+  font-size: 0.73rem;
+  font-weight: 650;
+}
+
+.postprocess-ui .pp-settings-switch .pp-hint {
+  margin-top: 3px !important;
+}
+
 .postprocess-ui .input,
 .postprocess-ui .select,
 .postprocess-ui input[type="text"],
@@ -8378,26 +8449,6 @@
                             </div>
 
                             <div class="pp-card">
-                                <div class="pp-switch-line">
-                                    <div>
-                                        <div style="font-size:0.88rem; font-weight:600;">저신뢰 얼굴 재검출</div>
-                                        <div class="pp-hint">주 검출기(v9c, 640)의 최고 신뢰도가 0.01 미만이면 BGR 채널본과 RGB -20°/+20° 회전본으로 다시 검출합니다. 그래도 회복되지 않을 때만 v8m(960)을 사용합니다. 회전은 검출에만 쓰며 최종 이미지와 캐릭터 임베딩은 원본 RGB를 유지합니다.</div>
-                                    </div>
-                                    <label class="switch"><input type="checkbox" id="pp-bubble-face-fallback" onchange="collectPpBubbleSettings(); renderPostprocessPreview();"><span class="slider"></span></label>
-                                </div>
-                            </div>
-
-                            <div class="pp-card">
-                                <div class="pp-switch-line">
-                                    <div>
-                                        <div style="font-size:0.88rem; font-weight:600;">긴 대사 말풍선 형태</div>
-                                        <div class="pp-hint">대사(speech)가 5줄 이상일 때 텍스트는 그대로 두고, 말풍선 외곽선을 위/아래 두 타원이 허리에서 맞물린 한 덩어리로 그립니다. 생각·박스 말풍선에는 적용하지 않습니다.</div>
-                                    </div>
-                                    <label class="switch"><input type="checkbox" id="pp-bubble-speech-split" onchange="collectPpBubbleSettings(); renderPostprocessPreview();"><span class="slider"></span></label>
-                                </div>
-                            </div>
-
-                            <div class="pp-card">
                                 <div class="pp-card-title">폰트 · 텍스트</div>
                                 <div class="pp-field-inline">
                                     <div style="flex:2;">
@@ -8410,6 +8461,10 @@
                                             </label>
                                             <button type="button" class="btn" style="padding:4px 10px; font-size:0.72rem;" onclick="ppDeleteFont()" title="선택한 업로드 폰트 삭제(번들/기본은 삭제 불가)">삭제</button>
                                         </div>
+                                    </div>
+                                    <div style="flex:1;">
+                                        <div style="font-size:0.7rem; color:var(--text2,#999);">최소 글자 크기(px)</div>
+                                        <input id="pp-bubble-min-font-size" type="number" class="input" min="0" max="400" step="1" oninput="renderPostprocessPreview()" title="실제 말풍선 글자가 내려갈 수 있는 최소 크기입니다. 0이면 캔버스 크기에 맞춰 자동 결정합니다.">
                                     </div>
                                     <div style="flex:1;">
                                         <div style="font-size:0.7rem; color:var(--text2,#999);">글자 확대 상한(x)</div>
@@ -8427,37 +8482,60 @@
                                     <div><div style="font-size:0.7rem; color:var(--text2,#999);">말풍선 배경</div><input id="pp-bubble-fill" type="color" style="width:48px;height:28px;" oninput="renderPostprocessPreview()"></div>
                                     <div><div style="font-size:0.7rem; color:var(--text2,#999);">테두리색</div><input id="pp-bubble-border" type="color" style="width:48px;height:28px;" oninput="renderPostprocessPreview()"></div>
                                 </div>
-                                <div class="pp-hint">폰트는 fonts/ 폴더(배포 제외)에 보관. 기본은 시스템 폰트, Noto Sans KR Medium은 최초 선택 시 자동 다운로드. 자간·행간·가로 비율은 텍스트 기하(줄바꿈/풍선폭)에도 동일 반영됩니다.</div>
+                                <div class="pp-hint">최소 글자 크기는 실제 합성의 하한이며 0이면 캔버스 기준 자동입니다. 폰트는 fonts/ 폴더(배포 제외)에 보관. 자간·행간·가로 비율은 텍스트 기하(줄바꿈/풍선폭)에도 동일 반영됩니다.</div>
                             </div>
 
                             <div class="pp-card pp-card-advanced">
                                 <div class="pp-card-title">말풍선 형상</div>
-                                <div class="pp-field-inline">
-                                    <div><div style="font-size:0.7rem; color:var(--text2,#999);">테두리 두께</div><input id="pp-bubble-border-width" type="number" class="input" style="width:70px;" step="0.5" oninput="renderPostprocessPreview()" title="수학적 말풍선(구름/유기형 등)의 테두리 두께"></div>
-                                    <div><div style="font-size:0.7rem; color:var(--text2,#999);">SVG 외곽 두께 (impact)</div><input id="pp-bubble-svg-border-width" type="number" class="input" style="width:70px;" min="0" step="0.5" oninput="renderPostprocessPreview()" title="impact(burst) 말풍선 외곽 두께(px). 비우면 SVG 사전정의 두께(outer/inner 간격) 사용"></div>
-                                    <div><div style="font-size:0.7rem; color:var(--text2,#999);">여백 — 모델 자동</div><input id="pp-bubble-padding" type="number" class="input" style="width:70px;" disabled title="선택된 버블 종류에 맞춰 레이아웃 ONNX가 자동 결정합니다"></div>
-                                    <div><div style="font-size:0.7rem; color:var(--text2,#999);">코믹 모서리 크기</div><input id="pp-bubble-radius" type="number" class="input" style="width:70px;" min="0" oninput="renderPostprocessPreview()"></div>
-                                </div>
-                                <div class="pp-field-inline" style="margin-top:6px;">
-                                    <div><div style="font-size:0.7rem; color:var(--text2,#999);">꼬리 생성 기준 (얼굴 크기 배)</div><input id="pp-bubble-tail-threshold" type="number" class="input" style="width:90px;" min="0" max="5" step="0.1" oninput="renderPostprocessPreview()" title="풍선과 얼굴 경계의 거리가 얼굴 최대 크기×이 값 이내일 때만 꼬리를 만듭니다. 0이면 꼬리를 끕니다."></div>
-                                    <div><div style="font-size:0.7rem; color:var(--text2,#999);">생각 형상(풍선 타입 없을 때)</div><select id="pp-bubble-thought-shape" class="select" style="width:130px;" onchange="renderPostprocessPreview()"><option value="cloud">구름형</option><option value="box">생각 박스</option></select></div>
-                                    <div><div style="font-size:0.7rem; color:var(--text2,#999);">가로·세로 비율 — 모델 자동</div><input id="pp-bubble-max-width-ratio" type="number" class="input" style="width:70px;" step="0.05" disabled title="텍스트와 버블 종류에 맞춰 레이아웃 ONNX가 자동 결정합니다"></div>
-                                </div>
-                                <div class="pp-field-inline" style="margin-top:6px;">
-                                    <div><div style="font-size:0.7rem; color:var(--text2,#999);">외곽선 스타일</div><select id="pp-bubble-shape" class="select" style="width:130px;" onchange="renderPostprocessPreview()" title="legacy=기존 타원/코믹, organic=저주파 굴곡 유기형(대사에만 적용)"><option value="legacy">기본(legacy)</option><option value="organic">유기형(organic)</option></select></div>
-                                    <div><div style="font-size:0.7rem; color:var(--text2,#999);">꼬리 두께 배율</div><input id="pp-bubble-tail-width-scale" type="number" class="input" style="width:70px;" min="0.2" max="3.0" step="0.1" oninput="renderPostprocessPreview()" title="자동 산정된 꼬리 두께에 곱할 배율. 1.0=기본, 1.5=50% 두껍게."></div>
-                                    <div><div style="font-size:0.7rem; color:var(--text2,#999);">꼬리 최대 길이 (px)</div><input id="pp-bubble-tail-max-length" type="number" class="input" style="width:70px;" min="0" max="2000" step="1" oninput="renderPostprocessPreview()" title="꼬리가 발화자 얼굴까지 도달하지 못하게 최대 길이를 픽셀로 제한합니다. 0=제한 없음(얼굴까지 도달). 예: 120=최대 120px."></div>
-                                    <div><div style="font-size:0.7rem; color:var(--text2,#999);">유기형 굴곡 강도</div><input id="pp-bubble-organic-wobble" type="number" class="input" style="width:70px;" min="0.02" max="0.30" step="0.005" oninput="renderPostprocessPreview()" title="유기형 외곽선 굴곡. 긴 대사는 0.045, 짧은 대사는 0.060 권장. 0.10 이상은 과장 표현. organic일 때만 적용."></div>
-                                </div>
-                                <div class="pp-field-inline" style="margin-top:6px;">
-                                    <div><div style="font-size:0.7rem; color:var(--text2,#999);">대사 불투명도(0~1)</div><input id="pp-bubble-speech-opacity" type="number" class="input" style="width:70px;" step="0.1" min="0" max="1" oninput="renderPostprocessPreview()"></div>
-                                    <div><div style="font-size:0.7rem; color:var(--text2,#999);">생각 불투명도(0~1)</div><input id="pp-bubble-thought-opacity" type="number" class="input" style="width:70px;" step="0.1" min="0" max="1" oninput="renderPostprocessPreview()"></div>
-                                    <div><div style="font-size:0.7rem; color:var(--text2,#999);">매칭 임계치</div><input id="pp-bubble-match-thres" type="number" class="input" style="width:70px;" min="0" max="1" step="0.05" oninput="renderPostprocessPreview()" title="NAME 캐릭터 임베딩과 감지 얼굴의 코사인 유사도가 이 값 이상일 때만 배정합니다."></div>
-                                </div>
-                                <div class="pp-field-inline" style="margin-top:6px;">
-                                    <div><div style="font-size:0.7rem; color:var(--text2,#999);">캐릭터당 얼굴 후보</div><input id="pp-bubble-face-candidates-per-character" type="number" class="input" style="width:80px;" min="1" max="32" step="1" oninput="renderPostprocessPreview()" title="고유 NAME 수×이 값만큼 YOLO 후보를 확보합니다. 전체 후보는 최대 64개입니다."></div>
-                                    <div><div style="font-size:0.7rem; color:var(--text2,#999);">외형 보정 가중치</div><input id="pp-bubble-appearance-weight" type="number" class="input" style="width:80px;" min="0" max="2" step="0.05" oninput="renderPostprocessPreview()" title="CLIP 얼굴 유사도에 이미지 명도·채도 분포를 결합하는 가중치입니다. 0이면 외형 보정을 끕니다."></div>
-                                    <div><div style="font-size:0.7rem; color:var(--text2,#999);">배정 모호성 기준</div><input id="pp-bubble-ambiguity-margin" type="number" class="input" style="width:80px;" min="0" max="0.2" step="0.005" oninput="renderPostprocessPreview()" title="최적 배정과 차선 배정의 평균 점수 차이가 이 값보다 작으면 잘못된 꼬리를 막기 위해 미배정합니다. 0이면 검사를 끕니다."></div>
+                                <div class="pp-settings-groups">
+                                    <section class="pp-settings-group">
+                                        <div class="pp-settings-group-title">기본 형상</div>
+                                        <div class="pp-settings-grid">
+                                            <div class="pp-settings-field"><div class="pp-settings-field-label">외곽선 스타일</div><select id="pp-bubble-shape" class="select" onchange="renderPostprocessPreview()" title="legacy=기존 타원/코믹, organic=저주파 굴곡 유기형(대사에만 적용)"><option value="legacy">기본(legacy)</option><option value="organic">유기형(organic)</option></select></div>
+                                            <div class="pp-settings-field"><div class="pp-settings-field-label">테두리 두께</div><input id="pp-bubble-border-width" type="number" class="input" step="0.5" oninput="renderPostprocessPreview()" title="수학적 말풍선(구름/유기형 등)의 테두리 두께"></div>
+                                            <div class="pp-settings-field"><div class="pp-settings-field-label">SVG 외곽 두께 (impact)</div><input id="pp-bubble-svg-border-width" type="number" class="input" min="0" step="0.5" oninput="renderPostprocessPreview()" title="impact(burst) 말풍선 외곽 두께(px). 비우면 SVG 사전정의 두께(outer/inner 간격) 사용"></div>
+                                            <div class="pp-settings-field"><div class="pp-settings-field-label">코믹 모서리 크기</div><input id="pp-bubble-radius" type="number" class="input" min="0" oninput="renderPostprocessPreview()"></div>
+                                            <div class="pp-settings-field"><div class="pp-settings-field-label">유기형 굴곡 강도</div><input id="pp-bubble-organic-wobble" type="number" class="input" min="0.02" max="0.30" step="0.005" oninput="renderPostprocessPreview()" title="유기형 외곽선 굴곡. 긴 대사는 0.045, 짧은 대사는 0.060 권장. organic일 때만 적용."></div>
+                                            <div class="pp-settings-field"><div class="pp-settings-field-label">여백 — 모델 자동</div><input id="pp-bubble-padding" type="number" class="input" disabled title="선택된 버블 종류에 맞춰 레이아웃 ONNX가 자동 결정합니다"></div>
+                                            <div class="pp-settings-field"><div class="pp-settings-field-label">가로·세로 비율 — 모델 자동</div><input id="pp-bubble-max-width-ratio" type="number" class="input" step="0.05" disabled title="텍스트와 버블 종류에 맞춰 레이아웃 ONNX가 자동 결정합니다"></div>
+                                        </div>
+                                    </section>
+
+                                    <section class="pp-settings-group">
+                                        <div class="pp-settings-group-title">꼬리 설정</div>
+                                        <div class="pp-settings-grid">
+                                            <div class="pp-settings-field"><div class="pp-settings-field-label">생성 기준 (얼굴 크기 배)</div><input id="pp-bubble-tail-threshold" type="number" class="input" min="0" max="5" step="0.1" oninput="renderPostprocessPreview()" title="풍선과 얼굴 경계의 거리가 얼굴 최대 크기×이 값 이내일 때만 꼬리를 만듭니다. 0이면 꼬리를 끕니다."></div>
+                                            <div class="pp-settings-field"><div class="pp-settings-field-label">두께 배율</div><input id="pp-bubble-tail-width-scale" type="number" class="input" min="0.2" max="3.0" step="0.1" oninput="renderPostprocessPreview()" title="자동 산정된 꼬리 두께에 곱할 배율. 1.0=기본, 1.5=50% 두껍게."></div>
+                                            <div class="pp-settings-field"><div class="pp-settings-field-label">최대 길이 (px)</div><input id="pp-bubble-tail-max-length" type="number" class="input" min="0" max="2000" step="1" oninput="renderPostprocessPreview()" title="꼬리가 발화자 얼굴까지 도달하지 못하게 최대 길이를 픽셀로 제한합니다. 0=제한 없음."></div>
+                                        </div>
+                                    </section>
+
+                                    <section class="pp-settings-group">
+                                        <div class="pp-settings-group-title">표현 및 투명도</div>
+                                        <div class="pp-settings-grid">
+                                            <div class="pp-settings-field"><div class="pp-settings-field-label">생각 형상<br>(풍선 타입 없을 때)</div><select id="pp-bubble-thought-shape" class="select" onchange="renderPostprocessPreview()"><option value="cloud">구름형</option><option value="box">생각 박스</option></select></div>
+                                            <div class="pp-settings-field"><div class="pp-settings-field-label">대사 불투명도 (0~1)</div><input id="pp-bubble-speech-opacity" type="number" class="input" step="0.1" min="0" max="1" oninput="renderPostprocessPreview()"></div>
+                                            <div class="pp-settings-field"><div class="pp-settings-field-label">생각 불투명도 (0~1)</div><input id="pp-bubble-thought-opacity" type="number" class="input" step="0.1" min="0" max="1" oninput="renderPostprocessPreview()"></div>
+                                            <div class="pp-settings-switch">
+                                                <div class="pp-settings-switch-copy"><div class="pp-settings-switch-title">긴 대사 말풍선 형태</div><div class="pp-hint">대사가 5줄 이상이면 외곽선을 위·아래 두 타원이 맞물린 한 덩어리로 그립니다.</div></div>
+                                                <label class="switch"><input type="checkbox" id="pp-bubble-speech-split" onchange="collectPpBubbleSettings(); renderPostprocessPreview();"><span class="slider"></span></label>
+                                            </div>
+                                        </div>
+                                    </section>
+
+                                    <section class="pp-settings-group">
+                                        <div class="pp-settings-group-title">얼굴 매칭</div>
+                                        <div class="pp-settings-grid">
+                                            <div class="pp-settings-field"><div class="pp-settings-field-label">매칭 임계치</div><input id="pp-bubble-match-thres" type="number" class="input" min="0" max="1" step="0.05" oninput="renderPostprocessPreview()" title="NAME 캐릭터 임베딩과 감지 얼굴의 코사인 유사도가 이 값 이상일 때만 배정합니다."></div>
+                                            <div class="pp-settings-field"><div class="pp-settings-field-label">캐릭터당 얼굴 후보</div><input id="pp-bubble-face-candidates-per-character" type="number" class="input" min="1" max="32" step="1" oninput="renderPostprocessPreview()" title="고유 NAME 수×이 값만큼 YOLO 후보를 확보합니다. 전체 후보는 최대 64개입니다."></div>
+                                            <div class="pp-settings-field"><div class="pp-settings-field-label">외형 보정 가중치</div><input id="pp-bubble-appearance-weight" type="number" class="input" min="0" max="2" step="0.05" oninput="renderPostprocessPreview()" title="CLIP 얼굴 유사도에 이미지 명도·채도 분포를 결합하는 가중치입니다. 0이면 외형 보정을 끕니다."></div>
+                                            <div class="pp-settings-field"><div class="pp-settings-field-label">배정 모호성 기준</div><input id="pp-bubble-ambiguity-margin" type="number" class="input" min="0" max="0.2" step="0.005" oninput="renderPostprocessPreview()" title="최적 배정과 차선 배정의 평균 점수 차이가 이 값보다 작으면 잘못된 꼬리를 막기 위해 미배정합니다. 0이면 검사를 끕니다."></div>
+                                            <div class="pp-settings-switch">
+                                                <div class="pp-settings-switch-copy"><div class="pp-settings-switch-title">저신뢰 얼굴 재검출</div><div class="pp-hint">주 검출 결과가 불확실하면 채널·회전 변형과 보조 검출기로 다시 확인합니다.</div></div>
+                                                <label class="switch"><input type="checkbox" id="pp-bubble-face-fallback" onchange="collectPpBubbleSettings(); renderPostprocessPreview();"><span class="slider"></span></label>
+                                            </div>
+                                        </div>
+                                    </section>
                                 </div>
                                 <div class="pp-hint">대사는 레이아웃 모델이 타원형/코믹 각진형을 자동 선택합니다. 얼굴 입력은 정사각형으로 표준화하며, 확장 후보에서 거대 중첩 오검출을 제거한 뒤 CLIP+외형 점수로 전역 1:1 배정합니다.</div>
                             </div>
@@ -8476,10 +8554,11 @@
                                 </div>
                                 <textarea id="pp-bubble-preview-speak" class="input" rows="2" style="width:100%; font-family:monospace; resize:vertical; margin-top:6px;" placeholder='NAME: "대사"&#10;NAME: (생각)' oninput="renderPostprocessPreview()">akane: "안녕하세요! 말풍선 테스트입니다."</textarea>
                                 <div class="pp-field-inline" style="margin-top:6px; gap:12px;">
+                                    <label style="font-size:0.72rem; color:var(--text2,#999); display:flex; align-items:center; gap:5px;"><input id="pp-bubble-preview-min-font" type="checkbox" onchange="renderPostprocessPreview()"> 최소 글자 크기로</label>
                                     <label style="font-size:0.72rem; color:var(--text2,#999); display:flex; align-items:center; gap:5px;"><input id="pp-bubble-debug-mask" type="checkbox" onchange="renderPostprocessPreview()"> 배경/보호 마스크</label>
                                     <label style="font-size:0.72rem; color:var(--text2,#999); display:flex; align-items:center; gap:5px;"><input id="pp-bubble-debug-candidates" type="checkbox" onchange="renderPostprocessPreview()"> 후보 위치·연결선 (최대 20)</label>
                                 </div>
-                                <div class="pp-hint">NAME: 발화 형식. 같은 NAME의 대사/생각은 한 명으로 세며, 모든 배정에 임베딩 매칭 임계치를 적용합니다. 마스크와 후보 가이드는 이 미리보기에만 표시됩니다.</div>
+                                <div class="pp-hint">‘최소 글자 크기로’는 설정한 하한의 실제 크기를 확인하는 미리보기 전용 옵션입니다. NAME: 발화 형식. 마스크와 후보 가이드도 미리보기에만 표시됩니다.</div>
                             </div>
                         </div>
                     </div>
@@ -27299,6 +27378,7 @@
                     font_id: 'system',
                     font_path: '',
                     font_size: 36,
+                    min_font_size: 0,
                     letter_spacing: -0.03,
                     line_height_ratio: 1.15,
                     text_width_scale: 1.0,
@@ -28146,6 +28226,11 @@
             if (base.letter_spacing == null || isNaN(Number(base.letter_spacing))) base.letter_spacing = -0.03;
             if (base.line_height_ratio == null || isNaN(Number(base.line_height_ratio))) base.line_height_ratio = 1.15;
             if (base.text_width_scale == null || isNaN(Number(base.text_width_scale))) base.text_width_scale = 1.0;
+            if (base.min_font_size == null || isNaN(Number(base.min_font_size))) {
+                base.min_font_size = 0;
+            } else {
+                base.min_font_size = Math.max(0, Math.min(400, Math.round(Number(base.min_font_size))));
+            }
             if (base.bubble_shape !== 'organic') base.bubble_shape = 'legacy';
             if (base.tail_width_scale == null || isNaN(Number(base.tail_width_scale))) base.tail_width_scale = 1.0;
             if (base.tail_max_length == null || isNaN(Number(base.tail_max_length))) base.tail_max_length = 0.0;
@@ -28275,6 +28360,7 @@
             document.getElementById('pp-bubble-enabled').checked = !!b.enabled;
             ppPopulateFontDropdown(b.font_id || 'system');  // 비동기 목록 로드
             set('pp-bubble-font-size', b.font_size ?? 36);
+            set('pp-bubble-min-font-size', b.min_font_size ?? 0);
             set('pp-bubble-font-scale', b.layout_font_scale ?? 2.0);
             set('pp-bubble-letter-spacing', b.letter_spacing ?? -0.03);
             set('pp-bubble-line-height', b.line_height_ratio ?? 1.15);
@@ -28308,6 +28394,8 @@
             if (_speechSplitEl) _speechSplitEl.checked = (b.speech_split !== false);
             const debugMask = document.getElementById('pp-bubble-debug-mask');
             const debugCandidates = document.getElementById('pp-bubble-debug-candidates');
+            const previewMinFont = document.getElementById('pp-bubble-preview-min-font');
+            if (previewMinFont) previewMinFont.checked = false;
             if (debugMask) debugMask.checked = false;
             if (debugCandidates) debugCandidates.checked = false;
             ppClearBase();  // 베이스는 세션 전용(저장 안 함)
@@ -28322,6 +28410,7 @@
             b.font_id = fontSel ? (fontSel.value || 'system') : 'system';
             b.font_path = '';  // 드롭박스 기반 전환. font_id 가 서버에서 경로로 해석.
             b.font_size = _ppNum('pp-bubble-font-size', 36, 4, 400);
+            b.min_font_size = Math.round(_ppNum('pp-bubble-min-font-size', 0, 0, 400));
             b.layout_font_scale = _ppNum('pp-bubble-font-scale', 2.0, 1.0, 4.0);
             b.letter_spacing = _ppNum('pp-bubble-letter-spacing', -0.03, -0.08, 0.02);
             b.line_height_ratio = _ppNum('pp-bubble-line-height', 1.15, 1.05, 1.30);
@@ -28381,6 +28470,7 @@
                     bot_name: (typeof ppCurrentBot !== 'undefined' && ppCurrentBot) ? ppCurrentBot : '',
                     profile: (typeof _illustSettingsProfile !== 'undefined' && _illustSettingsProfile) ? _illustSettingsProfile : 'solo',
                     font_id: b.font_id, font_path: b.font_path, font_size: b.font_size,
+                    min_font_size: b.min_font_size,
                     letter_spacing: b.letter_spacing, line_height_ratio: b.line_height_ratio,
                     text_width_scale: b.text_width_scale,
                     layout_font_scale: b.layout_font_scale,
@@ -28400,6 +28490,7 @@
                     cpu_threads: b.cpu_threads,
                     face_fallback: b.face_fallback,
                     speech_split: b.speech_split,
+                    preview_force_min_font_size: !!document.getElementById('pp-bubble-preview-min-font')?.checked,
                     preview_debug_mask: !!document.getElementById('pp-bubble-debug-mask')?.checked,
                     preview_debug_candidates: !!document.getElementById('pp-bubble-debug-candidates')?.checked,
                 };

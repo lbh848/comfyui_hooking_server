@@ -2138,6 +2138,7 @@ def _load_word_replacements(bot_name: str) -> dict:
                 return data
         except Exception as e:
             print(f"[BOT_MODE] word_replacements 로드 실패: {e}")
+            traceback.print_exc()
     return {"rules": []}
 
 
@@ -2295,7 +2296,10 @@ def _save_postprocess_bubble(bot_name: str, bubble: dict):
     if not bot:
         raise ValueError(f"봇을 찾을 수 없음: {bot_name}")
     _backup_bot_json()
-    from modes.postprocess import normalize_layout_font_scale
+    from modes.postprocess import (
+        normalize_layout_font_scale,
+        normalize_min_font_size,
+    )
     from modes.onnx_execution import normalize_cpu_threads, normalize_device_key
     clean = dict(bubble or {})
     # 폐기된 말풍선 옵션은 기존 클라이언트가 보내더라도 다시 저장하지 않는다.
@@ -2304,6 +2308,7 @@ def _save_postprocess_bubble(bot_name: str, bubble: dict):
     clean["layout_font_scale"] = normalize_layout_font_scale(
         clean.get("layout_font_scale", 2.0)
     )
+    clean["min_font_size"] = normalize_min_font_size(clean.get("min_font_size", 0))
     # 자간/행간/가로축소/폰트id 정규화(범위 클램프)
     try:
         clean["letter_spacing"] = max(-0.10, min(0.05, float(clean.get("letter_spacing", -0.03))))

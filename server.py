@@ -954,13 +954,110 @@ def _apply_remove_rule(text: str, rule: dict) -> tuple:
     return _apply_remove_word_rule(text, rule)
 
 
-def apply_word_replacements(positive: str, negative: str, bot_name: str) -> tuple:
-    """봇의 단어 기반 규칙(치환/제거)을 프롬프트에 적용한다."""
+def _load_word_rules_snapshot(bot_name: str) -> list[dict]:
+    """요청 전체에서 재사용할 봇 단어 규칙의 독립 복사본을 만든다."""
     if not bot_name:
-        return positive, negative
+        return []
     from modes.bot_mode import _load_word_replacements
     data = _load_word_replacements(bot_name)
     rules = data.get("rules", [])
+    if not isinstance(rules, list):
+        print(
+            f"[WORD_RULE] 규칙 스냅샷 생성 실패 - rules가 리스트가 아님: "
+            f"bot={bot_name!r}, type={type(rules).__name__}"
+        )
+        return []
+    return copy.deepcopy(rules)
+
+
+def _capture_illustration_runtime_snapshot(config: dict | None = None) -> dict:
+    """삽화 요청 시작 시 설정·선택 봇·단어 규칙을 하나의 값으로 고정한다."""
+    config_snapshot = copy.deepcopy(app_config if config is None else config)
+    bot_name = str(config_snapshot.get("bot_selected") or "")
+    provider = str(
+        config_snapshot.get("illustration_provider", "comfy") or "comfy"
+    ).strip().lower()
+    if not bot_name:
+        provider = "comfy"
+    if provider not in ("comfy", "chansub"):
+        print(
+            f"[ILLUST] 런타임 스냅샷의 공급자가 올바르지 않음: "
+            f"provider={provider!r}, comfy 사용"
+        )
+        provider = "comfy"
+
+    workflow_type = str(
+        config_snapshot.get("chansub_workflow_type", "anima") or "anima"
+    ).strip().lower()
+    if workflow_type not in ("anima", "sdxl"):
+        print(
+            f"[ILLUST] 런타임 스냅샷의 챈섭 워크플로우가 올바르지 않음: "
+            f"workflow={workflow_type!r}, anima 사용"
+        )
+        workflow_type = "anima"
+
+    rules = _load_word_rules_snapshot(bot_name)
+    toggles = copy.deepcopy(config_snapshot.get("illustration_context_toggles") or {})
+    snapshot = {
+        "bot_name": bot_name,
+        "provider": provider,
+        "chansub_workflow_type": workflow_type,
+        "clamp_enabled": bool(config_snapshot.get("clamp_enabled", False)),
+        "clamp_value": config_snapshot.get("clamp_value", 1.2),
+        "illustration_context_toggles": toggles,
+        "word_rules": rules,
+    }
+    print(
+        f"[ILLUST] 런타임 스냅샷 생성: bot={bot_name!r}, provider={provider}, "
+        f"call1_parallel={toggles.get('call1_backtranslate_max_concurrency')!r}, "
+        f"word_rules={len(rules)}"
+    )
+    return snapshot
+
+
+def _take_prompt_runtime_snapshot(prompt_id: str) -> dict:
+    """컨텍스트 큐가 넘긴 스냅샷을 소비하거나 현재 설정에서 새로 만든다."""
+    prompt_entry = prompts.get(prompt_id)
+    queued_snapshot = None
+    if isinstance(prompt_entry, dict):
+        queued_snapshot = prompt_entry.pop("_illustration_runtime_snapshot", None)
+    if queued_snapshot is None:
+        return _capture_illustration_runtime_snapshot()
+    if not isinstance(queued_snapshot, dict):
+        print(
+            f"[ILLUST] 큐 런타임 스냅샷 형식 오류: prompt={prompt_id}, "
+            f"type={type(queued_snapshot).__name__}; 현재 설정으로 다시 생성"
+        )
+        return _capture_illustration_runtime_snapshot()
+    snapshot = copy.deepcopy(queued_snapshot)
+    rules = snapshot.get("word_rules")
+    if not isinstance(rules, list):
+        print(
+            f"[ILLUST] 큐 단어 규칙 스냅샷 형식 오류: prompt={prompt_id}, "
+            f"type={type(rules).__name__}; 선택 봇 규칙을 다시 로드"
+        )
+        snapshot["word_rules"] = _load_word_rules_snapshot(
+            str(snapshot.get("bot_name") or "")
+        )
+    print(
+        f"[ILLUST] 큐 런타임 스냅샷 사용: prompt={prompt_id}, "
+        f"bot={snapshot.get('bot_name')!r}, provider={snapshot.get('provider')!r}, "
+        f"word_rules={len(snapshot.get('word_rules') or [])}"
+    )
+    return snapshot
+
+
+def apply_word_replacements(
+    positive: str,
+    negative: str,
+    bot_name: str,
+    rules: list[dict] | None = None,
+) -> tuple:
+    """봇의 단어 기반 규칙(치환/제거)을 프롬프트에 적용한다."""
+    if not bot_name:
+        return positive, negative
+    if rules is None:
+        rules = _load_word_rules_snapshot(bot_name)
     if not rules:
         return positive, negative
     positive, negative, applied = _apply_prompt_word_rules(positive, negative, rules)
@@ -969,13 +1066,16 @@ def apply_word_replacements(positive: str, negative: str, bot_name: str) -> tupl
     return positive, negative
 
 
-def apply_raw_prompt_word_replacements(raw_prompt: str, bot_name: str) -> str:
+def apply_raw_prompt_word_replacements(
+    raw_prompt: str,
+    bot_name: str,
+    rules: list[dict] | None = None,
+) -> str:
     """삽화 RAW 프롬프트에 섹션 범위를 지키며 단어 규칙을 선적용한다."""
     if not bot_name:
         return raw_prompt
-    from modes.bot_mode import _load_word_replacements
-    data = _load_word_replacements(bot_name)
-    rules = data.get("rules", [])
+    if rules is None:
+        rules = _load_word_rules_snapshot(bot_name)
     if not rules:
         return raw_prompt
     transformed, applied = _apply_raw_prompt_word_rules(raw_prompt, rules)
@@ -984,7 +1084,11 @@ def apply_raw_prompt_word_replacements(raw_prompt: str, bot_name: str) -> str:
     return transformed
 
 
-def apply_insert_word_rules(positive: str, bot_name: str) -> str:
+def apply_insert_word_rules(
+    positive: str,
+    bot_name: str,
+    rules: list[dict] | None = None,
+) -> str:
     """삽화 빌드 후 최종 positive의 품질([ANIMA_QUALITY]/[SDXL_QUALITY]) 뒤에
     삽입 규칙(단어가 없으면 강제 삽입)을 후처리로 적용한다.
 
@@ -993,8 +1097,8 @@ def apply_insert_word_rules(positive: str, bot_name: str) -> str:
     """
     if not bot_name or not positive:
         return positive
-    from modes.bot_mode import _load_word_replacements
-    rules = _load_word_replacements(bot_name).get("rules", [])
+    if rules is None:
+        rules = _load_word_rules_snapshot(bot_name)
     if not rules:
         return positive
     positive, applied = _apply_insert_word_rules(positive, rules)
@@ -1003,7 +1107,12 @@ def apply_insert_word_rules(positive: str, bot_name: str) -> str:
     return positive
 
 
-def apply_char_tag_override_to_bot(bot: dict, bot_name: str, trigger_text: str) -> dict:
+def apply_char_tag_override_to_bot(
+    bot: dict,
+    bot_name: str,
+    trigger_text: str,
+    rules: list[dict] | None = None,
+) -> dict:
     """캐릭터 눈 제거 / 얼굴 치환 특수 규칙을 빌드 직전 변수 상에서만 적용한다.
 
     bot (bot.json 원본)은 훼손하지 않고, characters 만 규칙 적용된 복사본으로
@@ -1013,8 +1122,8 @@ def apply_char_tag_override_to_bot(bot: dict, bot_name: str, trigger_text: str) 
     """
     if not bot_name or not bot:
         return bot
-    from modes.bot_mode import _load_word_replacements
-    rules = _load_word_replacements(bot_name).get("rules", [])
+    if rules is None:
+        rules = _load_word_rules_snapshot(bot_name)
     if not rules:
         return bot
     characters = bot.get("characters", [])
@@ -2226,11 +2335,22 @@ def _resolve_deferred_speak_text(prompt_id: str, descriptor: dict) -> str:
     entry = prompts.get(prompt_id) or {}
     state = entry.get("_deferred_finalize") or {}
     bot_name = str(state.get("bot_name") or "")
+    word_rules = state.get("word_rules")
+    if not isinstance(word_rules, list):
+        print(
+            f"[ILLUST_CONTEXT:POSTPROCESS] 단어 규칙 스냅샷이 없어 다시 로드: "
+            f"prompt={prompt_id}, bot={bot_name!r}"
+        )
+        word_rules = None
     raw_positive = str(descriptor.get("raw_positive") or "")
     if not bot_name or not raw_positive:
         return original_speak
     try:
-        transformed_raw = apply_raw_prompt_word_replacements(raw_positive, bot_name)
+        transformed_raw = apply_raw_prompt_word_replacements(
+            raw_positive,
+            bot_name,
+            word_rules,
+        )
         transformed_speak = str(
             IllustPromptBuilder().parse_sections(transformed_raw).get("speak") or ""
         )
@@ -2374,13 +2494,16 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
     regen_slot = raw_body.get("illustration_regenerate_slot")
 
     try:
+        runtime_snapshot = _take_prompt_runtime_snapshot(prompt_id)
+        word_rules_snapshot = copy.deepcopy(runtime_snapshot.get("word_rules") or [])
+
         # 프롬프트 추출
         positive = extract_prompts_by_title(incoming_prompt, "긍정프롬프트") or ""
         negative = extract_prompts_by_title(incoming_prompt, "부정프롬프트") or ""
 
         # 가중치 클램프 적용
-        if app_config.get("clamp_enabled", False):
-            clamp_val = app_config.get("clamp_value", 1.2)
+        if runtime_snapshot.get("clamp_enabled", False):
+            clamp_val = runtime_snapshot.get("clamp_value", 1.2)
             original_positive = positive
             original_negative = negative
             positive = clamp_weights(positive, clamp_val)
@@ -2389,10 +2512,10 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                 print(f"[CLAMP] 가중치 클램프 적용 (clamp={clamp_val})")
 
         # 단어 기반 규칙 적용 / 삽화 모드 프롬프트 빌딩
-        bot_name = app_config.get("bot_selected", "")
+        bot_name = str(runtime_snapshot.get("bot_name") or "")
         illustration_provider = str(
             raw_body.get("illustration_provider")
-            or app_config.get("illustration_provider", "comfy")
+            or runtime_snapshot.get("provider", "comfy")
             or "comfy"
         ).strip().lower()
         if not bot_name:
@@ -2405,7 +2528,7 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
             print(f"[ILLUST] 알 수 없는 공급자 {illustration_provider!r}, comfy로 폴백")
             illustration_provider = "comfy"
         chansub_workflow_type = str(
-            app_config.get("chansub_workflow_type", "anima") or "anima"
+            runtime_snapshot.get("chansub_workflow_type", "anima") or "anima"
         ).strip().lower()
         if chansub_workflow_type not in ("anima", "sdxl"):
             print(
@@ -2426,7 +2549,11 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
 
             # 1. 원본 섹션은 로그용으로 보존하고, 실제 처리는 규칙 적용 후 RAW만 사용한다.
             parsed_raw_sections = builder.parse_sections(raw_positive)
-            word_replaced_raw = apply_raw_prompt_word_replacements(raw_positive, bot_name)
+            word_replaced_raw = apply_raw_prompt_word_replacements(
+                raw_positive,
+                bot_name,
+                word_rules_snapshot,
+            )
 
             # 2. 선처리된 RAW 파싱 (lb_extra 전달 → 치환된 NAME 기반 CHAR 이름 삽입)
             from modes.bot_mode import _load_lb_extra as _load_lb_extra_local
@@ -2487,6 +2614,7 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                         supplement_replaced,
                         tags,
                         settings,
+                        insert_rules=word_rules_snapshot,
                     )
                     positive = chansub_built["positive"]
                     negative = chansub_built["negative"]
@@ -2494,6 +2622,11 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                     generation_height = chansub_built["height"]
                     chansub_quality_tag_start = chansub_built["quality_tag_start"]
                     chansub_quality_tag_count = chansub_built["quality_tag_count"]
+                    if chansub_built.get("applied_insert_rules", 0) > 0:
+                        print(
+                            f"[WORD_RULE] 챈섭 삽입 규칙 적용: bot={bot_name}, "
+                            f"{chansub_built['applied_insert_rules']}개 규칙"
+                        )
                     print(
                         f"[ILLUST:CHANSUB] Comfy 프롬프트 빌드 완료: "
                         f"profile={'group' if is_multi else 'solo'}, "
@@ -2525,7 +2658,10 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                         setup_replaced, char_replaced, supplement_replaced,
                     ])
                     _bot_for_build = apply_char_tag_override_to_bot(
-                        bot, bot_name, _char_rule_trigger_text
+                        bot,
+                        bot_name,
+                        _char_rule_trigger_text,
+                        word_rules_snapshot,
                     )
                     positive = builder.build_positive_prompt(
                         setup_replaced, char_replaced, supplement_replaced,
@@ -2533,7 +2669,11 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                     )
                     negative = builder.build_negative_prompt(tags, settings, detected, _bot_for_build)
                     # 품질 뒤 강제 삽입 규칙(ANIMA/SDXL) 후처리
-                    positive = apply_insert_word_rules(positive, bot_name)
+                    positive = apply_insert_word_rules(
+                        positive,
+                        bot_name,
+                        word_rules_snapshot,
+                    )
 
                 # 4-1. 인스턴스 LoRA 사용 횟수 증가 (V1/챈섭은 LoRA 미사용 → 제외)
                 from modes.instance_lora_mode import increment_usage as _increment_instance_lora_usage
@@ -2574,11 +2714,21 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
             else:
                 print(f"[ILLUST] 봇을 찾을 수 없음: {bot_name}, RAW 선처리 결과를 사용")
                 positive = word_replaced_raw
-                negative = apply_word_replacements("", negative, bot_name)[1]
+                negative = apply_word_replacements(
+                    "",
+                    negative,
+                    bot_name,
+                    word_rules_snapshot,
+                )[1]
         else:
             # V1(ILXL/UPSCALE) 통과 또는 bot 미선택: illust 빌딩 없이 단어 치환만 적용
             if bot_name:
-                positive, negative = apply_word_replacements(positive, negative, bot_name)
+                positive, negative = apply_word_replacements(
+                    positive,
+                    negative,
+                    bot_name,
+                    word_rules_snapshot,
+                )
 
         print(f"[INFO] 긍정: {positive[:80]}...")
         print(f"[INFO] 부정: {negative[:80]}...")
@@ -2640,6 +2790,7 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                 "negative": negative,
                 "generation_time": elapsed_time,
                 "bot_name": _backup_bot_name,
+                "word_rules": copy.deepcopy(word_rules_snapshot),
                 "gen_method": _gen_method,
                 "provider": illustration_provider,
                 "generation_params": copy.deepcopy(_generation_params),
@@ -2863,18 +3014,12 @@ async def process_illustration_context_queue_item(item) -> dict:
     session_id = str(payload.get("session_id") or "")
     prompt_data = params.get("prompt_data") or {}
     raw_body = params.get("raw_body") or {}
-    active_bot = str(app_config.get("bot_selected") or "")
-    illustration_provider_snapshot = str(
-        app_config.get("illustration_provider", "comfy") or "comfy"
-    ).strip().lower()
-    if not active_bot:
-        illustration_provider_snapshot = "comfy"
-    if illustration_provider_snapshot not in ("comfy", "chansub"):
-        print(
-            f"[ILLUST_CONTEXT] 알 수 없는 공급자 스냅샷: "
-            f"{illustration_provider_snapshot!r}, comfy 사용"
-        )
-        illustration_provider_snapshot = "comfy"
+    runtime_snapshot = _capture_illustration_runtime_snapshot()
+    active_bot = str(runtime_snapshot.get("bot_name") or "")
+    illustration_provider_snapshot = str(runtime_snapshot.get("provider") or "comfy")
+    illust_toggles = copy.deepcopy(
+        runtime_snapshot.get("illustration_context_toggles") or {}
+    )
 
     child_pairs = []
     all_child_pairs = []
@@ -2958,6 +3103,7 @@ async def process_illustration_context_queue_item(item) -> dict:
             "save_node_id": find_save_image_node(child_prompt),
             "image_bytes": None,
             "timestamp": time.time(),
+            "_illustration_runtime_snapshot": copy.deepcopy(runtime_snapshot),
         }
         child_raw_body = {
             "prompt": child_prompt,
@@ -3084,7 +3230,6 @@ async def process_illustration_context_queue_item(item) -> dict:
             backtranslate_names = build_bot_character_names(active_bot)
             # 후처리 모드(bubble→manga / vn→speak)가 CALL3 대사 프롬프트를 자동 결정한다.
             # call3_prompt_mode는 봇별 후처리 모드를 진실 소스로 삼아 덮어쓴다(전역 토글은 UI 힌트용).
-            illust_toggles = dict(app_config.get("illustration_context_toggles") or {})
             try:
                 from modes.bot_mode import _get_postprocess_mode
                 _pp_mode = _get_postprocess_mode(active_bot)
@@ -5677,6 +5822,7 @@ async def handle_api_postprocess_preview(request: web.Request) -> web.Response:
                 "font_id": body.get("font_id", "") or "",
                 "font_path": body.get("font_path", ""),
                 "font_size": body.get("font_size", 36) or 36,
+                "min_font_size": body.get("min_font_size", 0),
                 "letter_spacing": body.get("letter_spacing", 0.0),
                 "line_height_ratio": body.get("line_height_ratio", None),
                 "text_width_scale": body.get("text_width_scale", 1.0),
@@ -5714,6 +5860,7 @@ async def handle_api_postprocess_preview(request: web.Request) -> web.Response:
                 # 존재하지 않으므로 마스크/후보 가이드가 결과물에 들어갈 수 없다.
                 "preview_debug_mask": bool(body.get("preview_debug_mask", False)),
                 "preview_debug_candidates": bool(body.get("preview_debug_candidates", False)),
+                "preview_force_min_font_size": bool(body.get("preview_force_min_font_size", False)),
             }
             composed = compose_bubble(base_bytes, speak, bubble_settings, bot_name)
             return web.Response(body=composed, content_type="image/png")

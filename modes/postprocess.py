@@ -2281,6 +2281,20 @@ def normalize_layout_font_scale(value, default: float = 2.0) -> float:
     return max(1.0, min(4.0, scale))
 
 
+def normalize_min_font_size(value, default: int = 0) -> int:
+    """말풍선 최소 글자 크기를 0(자동)~400px 범위로 정규화한다."""
+    try:
+        size = int(round(float(value)))
+    except (TypeError, ValueError, OverflowError):
+        print(
+            f"[POSTPROCESS] ⚠ min_font_size 변환 실패({value!r}), "
+            f"기본값 {default} 사용"
+        )
+        traceback.print_exc()
+        size = int(default)
+    return max(0, min(400, size))
+
+
 def _default_bubble() -> dict:
     """봇별 postprocess_bubble 기본값 (말풍선 모드)."""
     return {
@@ -2288,6 +2302,7 @@ def _default_bubble() -> dict:
         "font_id": "system",              # 폰트 드롭박스 식별자. system=시스템 폰트
         "font_path": "",                  # 하위호환: 빈 값=시스템 기본 폰트(font_id 우선)
         "font_size": 36,                  # 텍스트 폰트 px
+        "min_font_size": 0,               # 최소 글자 크기 px. 0=캔버스 기준 자동
         "letter_spacing": -0.03,          # 자간(em, font_size 대비). 음수=글자가 붙음. -0.04~-0.02 권장
         "line_height_ratio": 1.15,        # 행간(글자 크기 배수). 줄 전체 높이=font_size×이 값. 1.10~1.20 권장
         "text_width_scale": 1.0,           # 글자 가로 축소비(0.94~0.97 권장). 1.0=축소 없음
@@ -2446,6 +2461,7 @@ def get_bubble_settings(config: dict, bot_name: str = "") -> Optional[dict]:
         "font_id": font_id,
         "font_path": font_path,
         "font_size": int(bb.get("font_size", 36) or 36),
+        "min_font_size": normalize_min_font_size(bb.get("min_font_size", 0)),
         "letter_spacing": float(bb.get("letter_spacing", -0.03) if bb.get("letter_spacing", -0.03) is not None else -0.03),
         "line_height_ratio": float(bb.get("line_height_ratio", 1.15) if bb.get("line_height_ratio", 1.15) is not None else 1.15),
         "text_width_scale": float(bb.get("text_width_scale", 1.0) if bb.get("text_width_scale", 1.0) is not None else 1.0),

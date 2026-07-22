@@ -215,6 +215,98 @@ def _word_present_in_region(region: str, word: str) -> bool:
     return False
 
 
+def _split_top_level_tags(text: str) -> list[str]:
+    """괄호 안과 이스케이프된 쉼표를 보존하면서 최상위 태그만 분리한다."""
+    tags = []
+    current = []
+    stack = []
+    closing_for = {"(": ")", "[": "]", "{": "}"}
+    escaped = False
+
+    for char in text:
+        if escaped:
+            current.append(char)
+            escaped = False
+            continue
+        if char == "\\":
+            current.append(char)
+            escaped = True
+            continue
+        if char in closing_for:
+            stack.append(closing_for[char])
+            current.append(char)
+            continue
+        if stack and char == stack[-1]:
+            stack.pop()
+            current.append(char)
+            continue
+        if char == "," and not stack:
+            tag = "".join(current).strip()
+            if tag:
+                tags.append(tag)
+            current = []
+            continue
+        current.append(char)
+
+    tag = "".join(current).strip()
+    if tag:
+        tags.append(tag)
+    return tags
+
+
+def apply_flat_insert_rules(
+    positive: str,
+    rules: list[dict],
+    quality_tag_start: int,
+    quality_tag_count: int,
+) -> tuple[str, int, int]:
+    """챈섭의 평탄한 positive에서 품질 태그 바로 뒤에 삽입 규칙을 적용한다.
+
+    반환값은 ``(positive, 적용된 규칙 수, 추가된 태그 수)``다. 추가된 태그
+    수는 챈섭 재시도 시 품질 영역 경계를 함께 갱신하는 데 사용한다.
+    """
+    if not positive:
+        return positive, 0, 0
+
+    tags = _split_top_level_tags(positive)
+    quality_start = min(max(0, int(quality_tag_start)), len(tags))
+    insertion_index = min(
+        quality_start + max(0, int(quality_tag_count)),
+        len(tags),
+    )
+    applied_rule_count = 0
+    inserted_tag_count = 0
+
+    for rule in rules:
+        if not rule.get("enabled", True):
+            continue
+        if (rule.get("type") or "replace").strip().lower() != "insert":
+            continue
+
+        word = (rule.get("word") or rule.get("source") or "").strip()
+        if not word:
+            print("[WORD_RULE] 챈섭 삽입 규칙에 word가 없어 스킵합니다.")
+            continue
+
+        word_tags = _split_top_level_tags(word)
+        if not word_tags:
+            print(f"[WORD_RULE] 챈섭 삽입 규칙을 태그로 분리할 수 없어 스킵합니다: word={word!r}")
+            continue
+
+        existing_cores = {_tag_core(tag) for tag in tags}
+        if all(_tag_core(tag) in existing_cores for tag in word_tags):
+            print(f"[WORD_RULE] 삽입 스킵(이미 존재): word={word!r}, 영역=CHANSUB")
+            continue
+
+        tags[insertion_index:insertion_index] = word_tags
+        insertion_index += len(word_tags)
+        inserted_tag_count += len(word_tags)
+        applied_rule_count += 1
+        print(f"[WORD_RULE] 삽입 적용: word={word!r}, 영역=CHANSUB")
+
+    return ", ".join(tags), applied_rule_count, inserted_tag_count
+
+
 # 품질 섹션 헤더 + 그 직후 한 줄(태그 리스트)을 매칭
 _ANIMA_QUALITY_LINE_RE = re.compile(r"(\[ANIMA_QUALITY\]\n)([^\n]*)", re.IGNORECASE)
 _SDXL_QUALITY_LINE_RE = re.compile(r"(\[SDXL_QUALITY\]\n)([^\n]*)", re.IGNORECASE)

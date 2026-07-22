@@ -27,7 +27,7 @@ from modes.bubble_predictor import (
     select_candidate,
     select_relaxed_candidate,
 )
-from modes.postprocess import normalize_layout_font_scale
+from modes.postprocess import normalize_layout_font_scale, normalize_min_font_size
 from modes.bubble_render import (
     _apply_unanchored_fallbacks,
     _draw_diagonal_split_bubble,
@@ -46,6 +46,7 @@ from modes.bubble_render import (
     _place_unanchored_body,
     _protected_face_box,
     _resolve_layout_font_scale,
+    _resolve_min_font_size,
     _tail_within_threshold,
     _tail_side,
 )
@@ -149,6 +150,13 @@ class BubblePlacementTest(unittest.TestCase):
         self.assertEqual(normalize_layout_font_scale(0.2), 1.0)
         self.assertEqual(_resolve_layout_font_scale({"layout_font_scale": "3.5"}), 3.5)
         self.assertEqual(_resolve_layout_font_scale({"layout_font_scale": 99}), 4.0)
+
+    def test_min_font_size_is_normalized_and_zero_means_auto(self):
+        self.assertEqual(normalize_min_font_size(24.6), 25)
+        self.assertEqual(normalize_min_font_size(-10), 0)
+        self.assertEqual(normalize_min_font_size(999), 400)
+        self.assertIsNone(_resolve_min_font_size({"min_font_size": 0}))
+        self.assertEqual(_resolve_min_font_size({"min_font_size": "28"}), 28)
 
     def test_face_protection_adds_safety_margin(self):
         protected = _protected_face_box((100, 100, 160, 160), (500, 500))
@@ -401,6 +409,34 @@ class BubblePlacementTest(unittest.TestCase):
         base, _ = choose_layout(text, (1056, 1536))
         selected, _ = choose_scaled_layout(text, (1056, 1536), font_scale=1.5)
         self.assertLessEqual(selected.font_size, int(base.font_size * 1.5))
+
+    def test_scaled_layout_respects_user_minimum_font_size(self):
+        selected, _ = choose_scaled_layout(
+            "잠깐… 이게 정말 맞는 선택일까? 조금 더 생각해 보자…",
+            (1056, 1536),
+            font_scale=1.0,
+            min_font_size=44,
+        )
+        self.assertGreaterEqual(selected.font_size, 44)
+
+    def test_preview_can_force_exact_minimum_font_size(self):
+        selected, _ = choose_scaled_layout(
+            "최소 크기 확인",
+            (1056, 1536),
+            font_scale=4.0,
+            min_font_size=44,
+            force_min_font_size=True,
+        )
+        self.assertEqual(selected.font_size, 44)
+
+    def test_preview_uses_canvas_minimum_when_setting_is_automatic(self):
+        selected, _ = choose_scaled_layout(
+            "자동 최소 크기 확인",
+            (1056, 1536),
+            font_scale=4.0,
+            force_min_font_size=True,
+        )
+        self.assertEqual(selected.font_size, 19)
 
     def test_force_shape_cloud_overrides_model_choice(self):
         # force_shape="cloud"면 모델 기본 선택과 무관하게 항상 cloud가 나온다.

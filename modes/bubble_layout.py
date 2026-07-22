@@ -990,6 +990,8 @@ def choose_scaled_layout(
     font_path: str | os.PathLike | None = None,
     *,
     font_scale: float = 2.0,
+    min_font_size: int | None = None,
+    force_min_font_size: bool = False,
     force_shape: str | None = None,
     allowed_shapes: tuple[str, ...] | None = None,
     max_lines: int = 7,
@@ -1007,15 +1009,43 @@ def choose_scaled_layout(
     크기 주변에서 줄바꿈과 몸통 치수를 다시 계산한다. 정확한 배율이 캔버스에
     들어가지 않으면 10%씩 낮춰 가장 큰 ``fits=True`` 후보를 사용한다.
 
+    ``min_font_size``는 자동 레이아웃이 내려갈 수 있는 실제 하한이다. 0/None은
+    캔버스 기준 자동 하한을 유지한다. ``force_min_font_size``는 미리보기에서
+    하한의 실제 시각 크기를 확인할 때만 사용하며 확대 재레이아웃을 건너뛴다.
+
     ``force_shape``를 주면 모델이 고를 형상을 해당 종류(예: "cloud")로 강제한다.
     thought 대사(괄호 ``()`` 감싸짐)를 항상 구름으로 그릴 때 사용한다.
     """
+    resolved_min_font_size = int(min_font_size) if min_font_size else None
+    if force_min_font_size:
+        if resolved_min_font_size is None:
+            base_size = min(int(canvas_size[0]), int(canvas_size[1]))
+            resolved_min_font_size = max(12, round(base_size * 0.018))
+        return choose_layout(
+            text,
+            canvas_size,
+            font_path,
+            shape_hint=force_shape,
+            allowed_shapes=allowed_shapes,
+            min_font_size=resolved_min_font_size,
+            max_font_size=resolved_min_font_size,
+            max_lines=max_lines,
+            top_k=top_k,
+            onnx_device=onnx_device,
+            cpu_threads=cpu_threads,
+            font_id=font_id,
+            letter_spacing=letter_spacing,
+            text_width_scale=text_width_scale,
+            line_height_ratio=line_height_ratio,
+        )
+
     base, base_top = choose_layout(
         text,
         canvas_size,
         font_path,
         shape_hint=force_shape,
         allowed_shapes=allowed_shapes,
+        min_font_size=resolved_min_font_size,
         max_lines=max_lines,
         top_k=top_k,
         onnx_device=onnx_device,
