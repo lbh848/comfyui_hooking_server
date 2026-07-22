@@ -1871,6 +1871,16 @@ _CALL_TASK_KEYS = {
     "MULTI-CHAR-MASK": "illustration_multi_char_mask",
 }
 
+# CALL1/2/2-FIX/3 각 LLM 호출을 큐 서브태스크로 표시하기 위한 그룹 정의.
+# 역번역(CALL1-BACKTRANSLATE)/다중캐릭터마스크(MULTI-CHAR-MASK)는 병렬 청크용 wrapper가
+# index/total을 직접 주입하므로 여기서 제외한다.
+_CALL_QUEUE_SUBTASK_GROUPS = {
+    "CALL1": ("call1", "CALL1 컨텍스트 보강"),
+    "CALL2": ("call2", "CALL2 장면/태그 빌드"),
+    "CALL2-FIX": ("call2_fix", "CALL2-FIX TOON 교정"),
+    "CALL3": ("call3", "CALL3 대사 빌드"),
+}
+
 
 async def _call_pipeline_llm(
     call_name: str,
@@ -1916,9 +1926,27 @@ async def _call_pipeline_llm(
     }
     history_logged = False
     terminal_notified = False
+
+    async def _notify(event: dict):
+        # stream_notify 이벤트에 큐 서브태스크 그룹을 주입한다.
+        # 역번역/다중캐릭터마스크 wrapper가 이미 queue_subtask를 넣은 경우 유지한다.
+        if not stream_notify:
+            return
+        if "queue_subtask" not in event:
+            base = call_name.split()[0] if call_name else ""
+            grp = _CALL_QUEUE_SUBTASK_GROUPS.get(base)
+            if grp:
+                event["queue_subtask"] = {
+                    "group_id": grp[0],
+                    "group_label": grp[1],
+                    "index": 1,
+                    "total": 1,
+                }
+        await stream_notify(event)
+
     try:
         if stream_notify:
-            await stream_notify({
+            await _notify({
                 "type": "start", "call_name": call_name, "model": model, "text": "",
             })
         call_kwargs = {}
@@ -1930,14 +1958,14 @@ async def _call_pipeline_llm(
         if not result or str(result).startswith("[LLM 실패]"):
             print(f"[ILLUST_CONTEXT:{call_name}] LLM 호출 실패: {result}")
             if stream_notify:
-                await stream_notify({"type": "error", "call_name": call_name, "error": str(result)})
+                await _notify({"type": "error", "call_name": call_name, "error": str(result)})
                 terminal_notified = True
             raise RuntimeError(str(result or f"빈 {call_name} 응답"))
         elapsed = time.time() - started
         tokens = max(1, len(str(result)) // 3)
         prompt_tokens = llm_service._approx_input_tokens(messages)
         if stream_notify:
-            await stream_notify({
+            await _notify({
                 "type": "done",
                 "call_name": call_name,
                 "model": model,
@@ -1964,7 +1992,7 @@ async def _call_pipeline_llm(
     except Exception as e:
         if stream_notify and not terminal_notified:
             try:
-                await stream_notify({
+                await _notify({
                     "type": "error",
                     "call_name": call_name,
                     "error": str(e),
