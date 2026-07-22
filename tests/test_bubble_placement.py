@@ -31,22 +31,26 @@ from modes.postprocess import normalize_layout_font_scale, normalize_min_font_si
 from modes.bubble_render import (
     _apply_unanchored_fallbacks,
     _draw_diagonal_split_bubble,
+    _draw_impact_svg_burst,
     _draw_layout_bubble,
     _draw_preview_debug,
     _ellipse_intersects_box,
     _ellipse_pair_neck_width,
     _estimate_diagonal_split_sizes,
+    _evaluate_burst_candidate_variants,
     _face_candidate_limit,
     _face_detection_candidate_limit,
     _filter_nested_face_candidates,
     _is_single_speaker_thought,
     _draw_speech,
     _place_body,
+    _place_burst_body,
     _place_diagonal_split_bodies,
     _place_unanchored_body,
     _protected_face_box,
     _resolve_layout_font_scale,
     _resolve_min_font_size,
+    _select_burst_candidate_variant,
     _tail_within_threshold,
     _tail_side,
 )
@@ -637,6 +641,133 @@ class BubblePlacementTest(unittest.TestCase):
         self.assertIsNotNone(chosen)
         self.assertEqual(chosen["center"], (130.0, 75.0))
         self.assertFalse(_overlaps(chosen["rect"], face))
+
+    def test_burst_rejects_body_safe_candidate_when_actual_outer_hits_face(self):
+        inner = [(0, 0), (100, 0), (100, 100), (0, 100)]
+        unsafe_outer = [(-100, -100), (200, -100), (200, 200), (-100, 200)]
+        variants = [("unsafe", unsafe_outer, inner, (0, 0, 100, 100))]
+        face = (130, 70, 160, 100)
+        candidates = [
+            {"center": (100, 85), "confidence": 0.9, "source": "onnx"},
+            {"center": (300, 200), "confidence": 0.1, "source": "onnx"},
+        ]
+
+        # 기존 rect 판정만 보면 첫 후보(80,70,120,100)는 얼굴과 겹치지 않는다.
+        self.assertFalse(_overlaps((80, 70, 120, 100), face))
+        evaluated = _evaluate_burst_candidate_variants(
+            candidates,
+            (40, 30),
+            face,
+            (400, 400),
+            variants,
+            forbidden_boxes=[face],
+            protected_foreground_mask=np.zeros((400, 400), dtype=np.uint8),
+        )
+        chosen = _select_burst_candidate_variant(evaluated)
+
+        near = next(record for record in evaluated if record["center"] == (100.0, 85.0))
+        self.assertEqual(near["reason"], "face_overlap")
+        self.assertIsNotNone(chosen)
+        self.assertEqual(chosen["center"], (300.0, 200.0))
+        self.assertGreater(chosen["distance"], 0.0)
+
+    def test_burst_joint_selection_keeps_only_face_safe_variant(self):
+        inner = [(0, 0), (100, 0), (100, 100), (0, 100)]
+        unsafe_outer = [(-100, -100), (200, -100), (200, 200), (-100, 200)]
+        safe_outer = list(inner)
+        variants = [
+            ("unsafe", unsafe_outer, inner, (0, 0, 100, 100)),
+            ("safe", safe_outer, inner, (0, 0, 100, 100)),
+        ]
+        face = (130, 70, 160, 100)
+        evaluated = _evaluate_burst_candidate_variants(
+            [{"center": (100, 85), "confidence": 0.9, "source": "onnx"}],
+            (40, 30),
+            face,
+            (240, 200),
+            variants,
+            forbidden_boxes=[face],
+            protected_foreground_mask=np.zeros((200, 240), dtype=np.uint8),
+        )
+        chosen = _select_burst_candidate_variant(evaluated)
+
+        reasons = {record["impact_variant_id"]: record["reason"] for record in evaluated}
+        self.assertEqual(reasons["unsafe"], "face_overlap")
+        self.assertEqual(reasons["safe"], "valid")
+        self.assertEqual(chosen["impact_variant_id"], "safe")
+
+    def test_burst_rejects_actual_outer_canvas_overflow_even_when_body_fits(self):
+        inner = [(0, 0), (100, 0), (100, 100), (0, 100)]
+        wide_outer = [(-100, -100), (200, -100), (200, 200), (-100, 200)]
+        evaluated = _evaluate_burst_candidate_variants(
+            [{"center": (50, 50), "confidence": 0.9}],
+            (40, 30),
+            None,
+            (240, 200),
+            [("wide", wide_outer, inner, (0, 0, 100, 100))],
+        )
+
+        self.assertEqual(evaluated[0]["rect"], (30.0, 35.0, 70.0, 65.0))
+        self.assertEqual(evaluated[0]["reason"], "canvas_overflow")
+
+    def test_burst_foreground_ratio_uses_actual_outer_not_body_rect(self):
+        inner = [(0, 0), (100, 0), (100, 100), (0, 100)]
+        wide_outer = [(-100, -100), (200, -100), (200, 200), (-100, 200)]
+        foreground = np.zeros((200, 240), dtype=np.uint8)
+        foreground[:, 145:180] = 1
+        evaluated = _evaluate_burst_candidate_variants(
+            [{"center": (100, 85), "confidence": 0.9}],
+            (40, 30),
+            None,
+            (240, 200),
+            [("wide", wide_outer, inner, (0, 0, 100, 100))],
+            protected_foreground_mask=foreground,
+        )
+
+        # body rect(80..120)는 전부 배경이지만 실제 외곽(22..178)은 전경 띠를 덮는다.
+        self.assertEqual(background_ratio(foreground, evaluated[0]["rect"]), 1.0)
+        self.assertEqual(evaluated[0]["reason"], "foreground_overlap")
+        self.assertLess(evaluated[0]["background_ratio"], 0.90)
+
+    def test_burst_uses_full_grid_when_onnx_outer_is_unsafe(self):
+        inner = [(0, 0), (100, 0), (100, 100), (0, 100)]
+        unsafe_outer = [(-100, -100), (200, -100), (200, 200), (-100, 200)]
+        variants = [("wide", unsafe_outer, inner, (0, 0, 100, 100))]
+        face = (130, 70, 160, 100)
+        chosen, evaluated = _place_burst_body(
+            [{"center": (100, 85), "confidence": 0.9, "source": "onnx"}],
+            (40, 30),
+            face,
+            (400, 400),
+            forbidden_boxes=[face],
+            protected_foreground_mask=np.zeros((400, 400), dtype=np.uint8),
+            grid_candidates=[{"center": (300, 200), "confidence": 0.0, "source": "grid"}],
+            variants=variants,
+        )
+
+        self.assertGreaterEqual(len(evaluated), 2)
+        self.assertIsNotNone(chosen)
+        self.assertEqual(chosen["selection_phase"], "grid")
+        self.assertEqual(chosen["center"], (300.0, 200.0))
+
+    def test_preselected_burst_variant_is_reused_by_renderer(self):
+        inner = [(0, 0), (100, 0), (100, 100), (0, 100)]
+        variant = ("locked", list(inner), inner, (0, 0, 100, 100))
+        overlay = Image.new("RGBA", (240, 200), (0, 0, 0, 0))
+
+        with patch(
+            "modes.bubble_render._select_impact_variant",
+            side_effect=AssertionError("배치 단계에서 고정한 변종을 다시 선택하면 안 됨"),
+        ):
+            _draw_impact_svg_burst(
+                overlay,
+                (80, 70, 120, 100),
+                (255, 255, 255, 255),
+                (0, 0, 0, 255),
+                impact_variant=variant,
+            )
+
+        self.assertGreater(int(np.count_nonzero(np.asarray(overlay)[..., 3])), 0)
 
     def test_candidate_covering_face_is_rejected(self):
         face = (100, 100, 160, 160)

@@ -1411,6 +1411,466 @@ def _poly_area(poly):
     return abs(s) * 0.5
 
 
+def _polygon_bbox(poly):
+    """폴리곤 점열의 ``xyxy`` 바운딩 박스를 반환한다."""
+    if not poly:
+        return None
+    return (
+        min(float(point[0]) for point in poly),
+        min(float(point[1]) for point in poly),
+        max(float(point[0]) for point in poly),
+        max(float(point[1]) for point in poly),
+    )
+
+
+def _point_on_segment(point, start, end, epsilon=1e-7):
+    px, py = [float(value) for value in point]
+    ax, ay = [float(value) for value in start]
+    bx, by = [float(value) for value in end]
+    cross = (px - ax) * (by - ay) - (py - ay) * (bx - ax)
+    if abs(cross) > epsilon:
+        return False
+    return (
+        min(ax, bx) - epsilon <= px <= max(ax, bx) + epsilon
+        and min(ay, by) - epsilon <= py <= max(ay, by) + epsilon
+    )
+
+
+def _point_in_polygon(point, polygon):
+    """경계점을 포함해 point가 비볼록 polygon 내부인지 판정한다."""
+    if len(polygon or ()) < 3:
+        return False
+    px, py = [float(value) for value in point]
+    inside = False
+    previous = polygon[-1]
+    for current in polygon:
+        if _point_on_segment((px, py), previous, current):
+            return True
+        x1, y1 = [float(value) for value in previous]
+        x2, y2 = [float(value) for value in current]
+        if (y1 > py) != (y2 > py):
+            crossing_x = (x2 - x1) * (py - y1) / (y2 - y1) + x1
+            if px < crossing_x:
+                inside = not inside
+        previous = current
+    return inside
+
+
+def _segments_intersect(a1, a2, b1, b2, epsilon=1e-7):
+    """두 닫힌 선분의 교차 여부를 반환한다."""
+    def orientation(p, q, r):
+        value = (
+            (float(q[1]) - float(p[1])) * (float(r[0]) - float(q[0]))
+            - (float(q[0]) - float(p[0])) * (float(r[1]) - float(q[1]))
+        )
+        if abs(value) <= epsilon:
+            return 0
+        return 1 if value > 0 else 2
+
+    o1 = orientation(a1, a2, b1)
+    o2 = orientation(a1, a2, b2)
+    o3 = orientation(b1, b2, a1)
+    o4 = orientation(b1, b2, a2)
+    if o1 != o2 and o3 != o4:
+        return True
+    return (
+        (o1 == 0 and _point_on_segment(b1, a1, a2, epsilon))
+        or (o2 == 0 and _point_on_segment(b2, a1, a2, epsilon))
+        or (o3 == 0 and _point_on_segment(a1, b1, b2, epsilon))
+        or (o4 == 0 and _point_on_segment(a2, b1, b2, epsilon))
+    )
+
+
+def _polygon_intersects_rect(polygon, rect, gap=0.0):
+    """실제 비볼록 polygon이 여백을 적용한 rect와 닿거나 겹치는지 판정한다."""
+    if len(polygon or ()) < 3:
+        return False
+    gap = max(0.0, float(gap))
+    x1, y1, x2, y2 = [float(value) for value in rect]
+    x1 -= gap
+    y1 -= gap
+    x2 += gap
+    y2 += gap
+    poly_bbox = _polygon_bbox(polygon)
+    if poly_bbox is None or (
+        poly_bbox[2] < x1
+        or x2 < poly_bbox[0]
+        or poly_bbox[3] < y1
+        or y2 < poly_bbox[1]
+    ):
+        return False
+
+    corners = ((x1, y1), (x2, y1), (x2, y2), (x1, y2))
+    if any(x1 <= float(px) <= x2 and y1 <= float(py) <= y2 for px, py in polygon):
+        return True
+    if any(_point_in_polygon(corner, polygon) for corner in corners):
+        return True
+
+    rect_edges = tuple(zip(corners, corners[1:] + corners[:1]))
+    polygon_edges = zip(polygon, polygon[1:] + polygon[:1])
+    return any(
+        _segments_intersect(poly_start, poly_end, rect_start, rect_end)
+        for poly_start, poly_end in polygon_edges
+        for rect_start, rect_end in rect_edges
+    )
+
+
+def _point_segment_distance(point, start, end):
+    px, py = [float(value) for value in point]
+    ax, ay = [float(value) for value in start]
+    bx, by = [float(value) for value in end]
+    dx, dy = bx - ax, by - ay
+    length_sq = dx * dx + dy * dy
+    if length_sq <= 1e-12:
+        return math.hypot(px - ax, py - ay)
+    ratio = max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / length_sq))
+    return math.hypot(px - (ax + ratio * dx), py - (ay + ratio * dy))
+
+
+def _polygon_rect_distance(polygon, rect):
+    """비볼록 polygon과 rect 사이의 실제 최단 거리를 반환한다."""
+    if _polygon_intersects_rect(polygon, rect):
+        return 0.0
+    x1, y1, x2, y2 = [float(value) for value in rect]
+    corners = ((x1, y1), (x2, y1), (x2, y2), (x1, y2))
+    rect_edges = tuple(zip(corners, corners[1:] + corners[:1]))
+    polygon_edges = tuple(zip(polygon, polygon[1:] + polygon[:1]))
+    distances = [
+        _point_segment_distance(point, edge_start, edge_end)
+        for point in polygon
+        for edge_start, edge_end in rect_edges
+    ]
+    distances.extend(
+        _point_segment_distance(corner, edge_start, edge_end)
+        for corner in corners
+        for edge_start, edge_end in polygon_edges
+    )
+    return min(distances, default=float("inf"))
+
+
+def _polygon_background_ratio(protected_foreground_mask, polygon, canvas_size):
+    """실제 burst 외곽 polygon 내부에서 배경 픽셀이 차지하는 비율을 반환한다."""
+    if protected_foreground_mask is None:
+        return 1.0
+    mask = np.asarray(protected_foreground_mask)
+    canvas_w, canvas_h = [int(value) for value in canvas_size]
+    expected_shape = (canvas_h, canvas_w)
+    if mask.ndim != 2 or mask.shape != expected_shape:
+        print(
+            f"[BUBBLE_RENDER] burst foreground 마스크 shape 불일치: "
+            f"shape={mask.shape}, expected={expected_shape}"
+        )
+        return 0.0
+
+    bbox = _polygon_bbox(polygon)
+    if bbox is None:
+        print("[BUBBLE_RENDER] burst 배경 비율 계산 실패: 빈 외곽 polygon")
+        return 0.0
+    left = max(0, min(canvas_w, int(math.floor(bbox[0]))))
+    top = max(0, min(canvas_h, int(math.floor(bbox[1]))))
+    right = max(0, min(canvas_w, int(math.ceil(bbox[2])) + 1))
+    bottom = max(0, min(canvas_h, int(math.ceil(bbox[3])) + 1))
+    if right <= left or bottom <= top:
+        print(f"[BUBBLE_RENDER] burst 배경 비율 계산 실패: canvas 밖 bbox={bbox}")
+        return 0.0
+
+    local = Image.new("L", (right - left, bottom - top), 0)
+    ImageDraw.Draw(local).polygon(
+        [(float(x) - left, float(y) - top) for x, y in polygon],
+        fill=255,
+    )
+    polygon_pixels = np.asarray(local) != 0
+    total = int(np.count_nonzero(polygon_pixels))
+    if total <= 0:
+        print(f"[BUBBLE_RENDER] burst 배경 비율 계산 실패: raster polygon 0px, bbox={bbox}")
+        return 0.0
+    foreground = mask[top:bottom, left:right] != 0
+    foreground_pixels = int(np.count_nonzero(polygon_pixels & foreground))
+    return max(0.0, min(1.0, 1.0 - foreground_pixels / total))
+
+
+def _inner_polygon_rect_coverage(inner_polygon, rect):
+    """변환된 burst 내부 흰 영역이 텍스트 rect를 덮는 픽셀 비율을 반환한다."""
+    x1, y1, x2, y2 = [float(value) for value in rect]
+    left = int(math.floor(x1))
+    top = int(math.floor(y1))
+    right = int(math.ceil(x2)) + 1
+    bottom = int(math.ceil(y2)) + 1
+    if right <= left or bottom <= top:
+        return 0.0
+    local = Image.new("L", (right - left, bottom - top), 0)
+    ImageDraw.Draw(local).polygon(
+        [(float(x) - left, float(y) - top) for x, y in inner_polygon],
+        fill=255,
+    )
+    pixels = np.asarray(local) != 0
+    return float(np.count_nonzero(pixels)) / max(1, pixels.size)
+
+
+def _evaluate_burst_candidate_variants(
+    candidates,
+    body_size,
+    face_box,
+    canvas_size,
+    variants,
+    *,
+    forbidden_boxes=(),
+    occupied_boxes=(),
+    protected_foreground_mask=None,
+    min_background_ratio=0.90,
+    margin=0,
+):
+    """후보 위치×burst 변종을 실제 렌더 외곽으로 평가한다.
+
+    텍스트 몸통 rect가 아니라 ``_impact_variant_transform``으로 얻은 최종 외곽
+    polygon을 캔버스·보호 얼굴·기존 풍선·foreground 조건에 사용한다.
+    """
+    from modes.bubble_predictor import _clamped_rect
+
+    canvas_w, canvas_h = [float(value) for value in canvas_size]
+    body_w, body_h = [float(value) for value in body_size]
+    # 모든 후보는 같은 body_size를 사용하므로 변종별 회전·스케일은 동일하다.
+    # 비용이 큰 최적 회전 탐색을 변종당 한 번만 수행하고 후보마다 평행이동한다.
+    prototype_rect = (0.0, 0.0, body_w, body_h)
+    prepared_variants = []
+    for variant in variants or ():
+        vid, outer, inner, inner_bbox = variant
+        try:
+            prototype_outer, prototype_inner = _impact_variant_transform(
+                outer,
+                inner,
+                inner_bbox,
+                prototype_rect,
+                salt=vid,
+            )
+        except Exception as e:
+            print(
+                f"[BUBBLE_RENDER] burst 변종 사전 변환 실패: "
+                f"variant={vid}, body={body_size}, error={e}"
+            )
+            traceback.print_exc()
+            continue
+        prepared_variants.append((variant, prototype_outer, prototype_inner))
+    if not prepared_variants:
+        print(f"[BUBBLE_RENDER] burst 후보 평가 실패: 사전 변환 가능한 변종 없음, body={body_size}")
+        return []
+
+    evaluated = []
+    seen = set()
+    for candidate in candidates or ():
+        center = candidate.get("center")
+        try:
+            valid_center = bool(center) and all(math.isfinite(float(value)) for value in center)
+        except Exception as e:
+            print(f"[BUBBLE_RENDER] burst 후보 중심 검사 실패({center!r}): {e}")
+            traceback.print_exc()
+            valid_center = False
+        if not valid_center:
+            print(f"[BUBBLE_RENDER] burst의 잘못된 후보 중심 제외: {center}")
+            continue
+        rect = _clamped_rect(center, body_size, canvas_size, margin)
+        if rect is None:
+            continue
+        corrected_center = _rect_center(rect)
+        source = str(candidate.get("source") or "onnx")
+        confidence = float(candidate.get("confidence", 0.0) or 0.0)
+
+        for variant, prototype_outer, prototype_inner in prepared_variants:
+            vid, outer, inner, inner_bbox = variant
+            key = (
+                tuple(round(float(value), 3) for value in rect),
+                str(vid),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            record = dict(candidate)
+            record.update({
+                "rect": rect,
+                "center": corrected_center,
+                "source": source,
+                "confidence": confidence,
+                "impact_variant": variant,
+                "impact_variant_id": str(vid),
+                "valid": False,
+                "reason": "unknown",
+            })
+            offset_x, offset_y = float(rect[0]), float(rect[1])
+            outer_polygon = [
+                (float(x) + offset_x, float(y) + offset_y)
+                for x, y in prototype_outer
+            ]
+            inner_polygon = [
+                (float(x) + offset_x, float(y) + offset_y)
+                for x, y in prototype_inner
+            ]
+
+            outer_bbox = _polygon_bbox(outer_polygon)
+            record["outer_polygon"] = outer_polygon
+            record["outer_bbox"] = outer_bbox
+            if outer_bbox is None or not outer_polygon:
+                print(f"[BUBBLE_RENDER] burst 외곽이 비어 있음: variant={vid}, rect={rect}")
+                record["reason"] = "empty_polygon"
+                evaluated.append(record)
+                continue
+            if any(
+                float(x) < 0.0 or float(x) > canvas_w
+                or float(y) < 0.0 or float(y) > canvas_h
+                for x, y in outer_polygon
+            ):
+                record["reason"] = "canvas_overflow"
+                evaluated.append(record)
+                continue
+            if any(_polygon_intersects_rect(outer_polygon, box, gap=2.0) for box in forbidden_boxes):
+                record["reason"] = "face_overlap"
+                evaluated.append(record)
+                continue
+            if any(_polygon_intersects_rect(outer_polygon, box, gap=4.0) for box in occupied_boxes):
+                record["reason"] = "bubble_overlap"
+                evaluated.append(record)
+                continue
+
+            bg_ratio = _polygon_background_ratio(
+                protected_foreground_mask,
+                outer_polygon,
+                canvas_size,
+            )
+            record["background_ratio"] = bg_ratio
+            if bg_ratio + 1e-9 < float(min_background_ratio):
+                record["reason"] = "foreground_overlap"
+                evaluated.append(record)
+                continue
+
+            if face_box is not None:
+                distance = _polygon_rect_distance(outer_polygon, face_box)
+                anchor = _face_anchor_toward(face_box, corrected_center)
+            else:
+                distance = math.hypot(
+                    corrected_center[0] - canvas_w / 2.0,
+                    corrected_center[1] - canvas_h / 2.0,
+                )
+                anchor = corrected_center
+            record.update({
+                "anchor": anchor,
+                "distance": distance,
+                "inner_coverage": _inner_polygon_rect_coverage(inner_polygon, rect),
+                "outer_area": _poly_area(outer_polygon),
+                "valid": True,
+                "reason": "valid",
+            })
+            evaluated.append(record)
+    return evaluated
+
+
+def _select_burst_candidate_variant(evaluated, *, log_prefix="ONNX"):
+    """안전한 실제 외곽 조합 중 배경→얼굴 거리→신뢰도 순으로 고른다."""
+    valid = [record for record in evaluated or () if record.get("valid")]
+    if not valid:
+        reasons = {}
+        for record in evaluated or ():
+            reason = str(record.get("reason") or "unknown")
+            reasons[reason] = reasons.get(reason, 0) + 1
+        print(f"[BUBBLE_RENDER] burst {log_prefix} 안전 조합 없음: reasons={reasons}")
+        return None
+    chosen = min(
+        valid,
+        key=lambda record: (
+            -float(record.get("background_ratio", 0.0)),
+            float(record.get("distance", float("inf"))),
+            -float(record.get("confidence", 0.0)),
+            -float(record.get("inner_coverage", 0.0)),
+            float(record.get("outer_area", float("inf"))),
+            str(record.get("impact_variant_id") or ""),
+            tuple(float(value) for value in record.get("rect", ())),
+        ),
+    )
+    return dict(chosen)
+
+
+def _place_burst_body(
+    onnx_candidates,
+    body_size,
+    face_box,
+    canvas_size,
+    *,
+    forbidden_boxes=(),
+    occupied_boxes=(),
+    protected_foreground_mask=None,
+    min_background_ratio=0.90,
+    grid_candidates=None,
+    variants=None,
+):
+    """ONNX 후보에서 안전한 burst 조합을 찾고, 실패하면 전체 격자를 탐색한다."""
+    variants = variants if variants is not None else _load_impact_svgs()
+    if not variants:
+        outer, inner, inner_bbox = _load_impact_svg()
+        if outer and inner and inner_bbox:
+            variants = [("impact_balloon_fallback", outer, inner, inner_bbox)]
+        else:
+            print("[BUBBLE_RENDER] burst 배치 평가 불가: 사용할 SVG 변종 없음")
+            return None, []
+
+    all_evaluated = []
+    if onnx_candidates:
+        evaluated = _evaluate_burst_candidate_variants(
+            onnx_candidates,
+            body_size,
+            face_box,
+            canvas_size,
+            variants,
+            forbidden_boxes=forbidden_boxes,
+            occupied_boxes=occupied_boxes,
+            protected_foreground_mask=protected_foreground_mask,
+            min_background_ratio=min_background_ratio,
+        )
+        all_evaluated.extend(evaluated)
+        chosen = _select_burst_candidate_variant(evaluated, log_prefix="ONNX")
+        if chosen is not None:
+            chosen["selection_phase"] = "onnx"
+            return chosen, all_evaluated
+
+    if grid_candidates is None:
+        from modes.bubble_predictor import generate_grid_candidates
+
+        if face_box is None:
+            canvas_w, canvas_h = [float(value) for value in canvas_size]
+            grid_face_box = (
+                canvas_w / 2.0,
+                canvas_h / 2.0,
+                canvas_w / 2.0,
+                canvas_h / 2.0,
+            )
+        else:
+            grid_face_box = face_box
+        grid_candidates = generate_grid_candidates(
+            body_size,
+            grid_face_box,
+            canvas_size,
+            margin=0,
+        )
+    evaluated = _evaluate_burst_candidate_variants(
+        grid_candidates,
+        body_size,
+        face_box,
+        canvas_size,
+        variants,
+        forbidden_boxes=forbidden_boxes,
+        occupied_boxes=occupied_boxes,
+        protected_foreground_mask=protected_foreground_mask,
+        min_background_ratio=min_background_ratio,
+    )
+    all_evaluated.extend(evaluated)
+    chosen = _select_burst_candidate_variant(evaluated, log_prefix="전체 격자")
+    if chosen is None:
+        print(
+            f"[BUBBLE_RENDER] 실제 burst 외곽을 안전하게 배치할 공간 없음: "
+            f"body={body_size}, canvas={canvas_size}"
+        )
+        return None, all_evaluated
+    chosen["selection_phase"] = "grid"
+    return chosen, all_evaluated
+
+
 def _impact_variant_transform(outer, inner, inner_bbox, rect, salt=""):
     """단일 변종을 rect(텍스트 박스) cover 스케일 + 최적 회전각으로 배치하는
     변환함수 _tr 와 (outer_poly, inner_poly) 변환 결과를 반환.
@@ -1861,12 +2321,23 @@ def _optimal_burst_angle(inner_pts, bcx, bcy, rect, scale, salt=""):
     return best_theta
 
 
-def _draw_impact_svg_burst(overlay, rect, fill, border, with_tail=False, face_box=None, seed=0, svg_border_w=0):
+def _draw_impact_svg_burst(
+    overlay,
+    rect,
+    fill,
+    border,
+    with_tail=False,
+    face_box=None,
+    seed=0,
+    svg_border_w=0,
+    impact_variant=None,
+):
     """벡터 impact_balloon.svg 를 rect(텍스트 박스)를 감싸도록 배치해 합성.
 
-    modes/impact_balloons/ 변종 중 rect/canvas 에 가장 적합한 것을 점수로 자동
-    선택(_select_impact_variant)한다. 레지스트리가 없으면 단일 impact_balloon.svg
-    로 폴백. 선택된 변종의 내부 path bbox 가 rect 를 cover 하도록(더 큰 쪽 기준)
+    배치 단계에서 실제 외곽으로 검증한 ``impact_variant``가 있으면 그대로 사용해
+    평가와 실제 렌더를 일치시킨다. 직접 호출 등 사전 선택값이 없을 때만 기존
+    결정론적 선택으로 폴백한다. 레지스트리가 없으면 단일 impact_balloon.svg로
+    폴백. 선택된 변종의 내부 path bbox 가 rect 를 cover 하도록(더 큰 쪽 기준)
     등비 스케일하고 중앙 정렬한 뒤, rect 중심 기준으로 회전시킨다. 회전 각도는
     rect 와 내부(흰) 영역의 겹침이 최대가 되는 각도(_optimal_burst_angle)를 써서
     텍스트 박스를 흰 영역이 최대한 덮도록(테두리에 가려지는 글자 최소화) 배치한다.
@@ -1878,7 +2349,9 @@ def _draw_impact_svg_burst(overlay, rect, fill, border, with_tail=False, face_bo
     SVG 사전정의 두께를 유지한다. border_w(수학적 말풍선용)와는 분리된 파라미터.
     SVG burst 는 꼬리가 없으므로 with_tail 도 무시.
     """
-    variant = _select_impact_variant(rect, overlay.size, face_box=face_box, seed=seed)
+    variant = impact_variant
+    if variant is None:
+        variant = _select_impact_variant(rect, overlay.size, face_box=face_box, seed=seed)
     if variant is not None:
         vid, outer, inner, inner_bbox = variant
     else:
@@ -2757,6 +3230,7 @@ def _draw_layout_bubble(
     halo_px=0,
     face_box=None,
     svg_border_w=0,
+    impact_variant=None,
 ):
     """레이아웃 결과를 타원/코믹/구름/무라운드 박스로 그린다.
 
@@ -2801,10 +3275,21 @@ def _draw_layout_bubble(
             _draw_impact_svg_burst(
                 padded_overlay, padded_rect, fill, border, with_tail,
                 face_box=padded_face_box, seed=seed, svg_border_w=svg_border_w,
+                impact_variant=impact_variant,
             )
             overlay.alpha_composite(padded_overlay.crop((pad, pad, pad + bw_, pad + bh_)))
             return
-        _draw_impact_svg_burst(overlay, rect, fill, border, with_tail, face_box=face_box, seed=seed, svg_border_w=svg_border_w)
+        _draw_impact_svg_burst(
+            overlay,
+            rect,
+            fill,
+            border,
+            with_tail,
+            face_box=face_box,
+            seed=seed,
+            svg_border_w=svg_border_w,
+            impact_variant=impact_variant,
+        )
         return
     if shape == "whisper":
         _draw_whisper(
@@ -3033,7 +3518,16 @@ def _draw_preview_debug(image, protected_foreground_mask, candidates, show_mask,
                 center,
             )[0]
             draw.line([anchor, center], fill=color, width=line_width)
-            draw.rectangle(rect, outline=color, width=line_width)
+            outer_polygon = item.get("outer_polygon")
+            if outer_polygon:
+                draw.line(
+                    list(outer_polygon) + [outer_polygon[0]],
+                    fill=color,
+                    width=line_width,
+                    joint="curve",
+                )
+            else:
+                draw.rectangle(rect, outline=color, width=line_width)
             dot_r = max(2, line_width + 1)
             draw.ellipse([center[0] - dot_r, center[1] - dot_r, center[0] + dot_r, center[1] + dot_r], fill=color)
             draw.text(
@@ -3447,11 +3941,56 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
         evaluated = None
         chosen = None
         used_fallback = False
+        impact_variant = None
+        burst_outer_bbox = None
         if diagonal_split is not None:
             # 꼬리 제한 판정은 합쳐진 두 몸통 중 화자와 실제 외곽 거리가 가까운 몸통 기준.
             rect = diagonal_split["tail_rect"]
             anchor = diagonal_split["anchor"]
             used_fallback = True
+        elif render_shape == "burst":
+            burst_onnx_candidates = []
+            if box is not None:
+                box_key = tuple(float(value) for value in box)
+                if box_key not in candidate_cache:
+                    candidate_cache[box_key] = predict_for_face_candidates(
+                        page_rgb,
+                        box,
+                        top_k=48,
+                        device=onnx_device,
+                        cpu_threads=cpu_threads,
+                    )
+                burst_onnx_candidates = candidate_cache[box_key]
+            chosen, evaluated = _place_burst_body(
+                burst_onnx_candidates,
+                (body_w, body_h),
+                box,
+                (canvas_w, canvas_h),
+                forbidden_boxes=all_boxes,
+                occupied_boxes=placed_boxes,
+                protected_foreground_mask=protected_foreground_mask,
+            )
+            if chosen is None:
+                print(
+                    f"[BUBBLE_RENDER] 안전한 burst 외곽 배치 실패 - 스킵: "
+                    f"speaker={seg.get('speaker')}"
+                )
+                continue
+            rect = chosen["rect"]
+            anchor = chosen["anchor"]
+            impact_variant = chosen["impact_variant"]
+            burst_outer_bbox = chosen["outer_bbox"]
+            used_fallback = chosen.get("selection_phase") == "grid"
+            print(
+                f"[BUBBLE_RENDER] burst 실제 외곽 조합 선택: "
+                f"speaker={seg.get('speaker')}, "
+                f"source={chosen.get('selection_phase')}, "
+                f"variant={chosen.get('impact_variant_id')}, "
+                f"center={chosen.get('center')}, "
+                f"outer_bbox={tuple(round(float(value), 1) for value in burst_outer_bbox)}, "
+                f"background={chosen.get('background_ratio', 1.0):.3f}, "
+                f"face_distance={chosen.get('distance', 0.0):.1f}"
+            )
         elif unanchored_fallback:
             background_placement = _place_unanchored_body(
                 body_w,
@@ -3588,7 +4127,15 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
                     continue
                 record = dict(item)
                 record["face_box"] = box
-                if chosen is not None and record.get("rect") == chosen.get("rect"):
+                same_choice = (
+                    chosen is not None
+                    and record.get("rect") == chosen.get("rect")
+                    and (
+                        render_shape != "burst"
+                        or record.get("impact_variant_id") == chosen.get("impact_variant_id")
+                    )
+                )
+                if same_choice:
                     if chosen.get("relaxed"):
                         record.update(chosen)
                         record["face_box"] = box
@@ -3754,6 +4301,7 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
             halo_px=bubble_halo_px,
             face_box=box,
             svg_border_w=svg_border_w,
+            impact_variant=impact_variant,
         )
 
         # trembling: SVG의 `))` 한 쌍을 3곳에 복제하고, 각 위치의 타원 접선에 맞춰
@@ -3821,7 +4369,7 @@ def compose_bubble(image_bytes, speak_text, settings, bot_name):
             f"tail_w_scale={tail_width_scale:.2f}, "
             f"match={m.get('sim')}, fits={layout.fits}"
         )
-        placed_boxes.append(rect)
+        placed_boxes.append(burst_outer_bbox if burst_outer_bbox is not None else rect)
         drawn += 1
 
     print(f"[BUBBLE_RENDER] 말풍선 {drawn}/{len(matched)}건 렌더 완료")
