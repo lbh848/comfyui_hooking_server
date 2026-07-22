@@ -1924,9 +1924,13 @@ def _draw_impact_svg_burst(overlay, rect, fill, border, with_tail=False, face_bo
             mask = Image.new("L", overlay.size, 0)
             ImageDraw.Draw(mask).polygon([_tr(p) for p in outer], fill=255)
             eroded = mask.filter(ImageFilter.MinFilter(outline_w * 2 + 1))
-            fill_layer = Image.new("RGBA", overlay.size, fill)
-            fill_layer.putalpha(eroded)
-            layer.alpha_composite(fill_layer)
+            # 몸통(테두리 안쪽)은 fill 알파(speech_op 투명도)로 덮어써야 반투명이
+            # 캔버스에까지 이어진다. putalpha(eroded) 는 알파를 0/255 이진으로 교체해
+            # 투명도를 지우고, fill_layer 를 alpha_composite 하면 불투명 테두리 위에
+            # 섞여 다시 알파 255 가 된다. 대신 layer.paste(fill, mask=eroded) 는
+            # path B(draw.polygon(fill=fill)) 처럼 fill 알파를 그대로 덮어쓴다
+            # (_composite_union_mask 의 overlay.paste(fill, mask=mask) 와 동일).
+            layer.paste(fill, mask=eroded)
     else:
         draw.polygon([_tr(p) for p in inner], fill=fill)
     overlay.alpha_composite(layer)
@@ -2767,6 +2771,26 @@ def _draw_layout_bubble(
     if shape == "burst":
         # 벡터 impact_balloon.svg 를 rect 를 감싸도록 합성. 꼬리 없음.
         # face_box(화자)를 넘겨 씬마다 가장 적합한 변종을 선택(화자 얼굴 안 가림).
+        # 캔버스 가장자리에 닿으면 일반 대사(ellipse/comic)와 동일한 패딩-크롭으로
+        # 별 가시가 프레임에서 딱 잘리지 않고 깔끔히 빠지도록 한다(미리보기=실제).
+        pad = _bubble_edge_pad(rect, border_w)
+        if _rect_near_canvas_edge(rect, overlay.size, pad):
+            bw_, bh_ = overlay.size
+            padded_size = (bw_ + 2 * pad, bh_ + 2 * pad)
+            padded_rect = [rect[0], rect[1], rect[2] + 2 * pad, rect[3] + 2 * pad]
+            padded_face_box = None
+            if face_box is not None:
+                padded_face_box = (
+                    face_box[0] + pad, face_box[1] + pad,
+                    face_box[2] + pad, face_box[3] + pad,
+                )
+            padded_overlay = Image.new("RGBA", padded_size, (0, 0, 0, 0))
+            _draw_impact_svg_burst(
+                padded_overlay, padded_rect, fill, border, with_tail,
+                face_box=padded_face_box, seed=seed, svg_border_w=svg_border_w,
+            )
+            overlay.alpha_composite(padded_overlay.crop((pad, pad, pad + bw_, pad + bh_)))
+            return
         _draw_impact_svg_burst(overlay, rect, fill, border, with_tail, face_box=face_box, seed=seed, svg_border_w=svg_border_w)
         return
     if shape == "whisper":
