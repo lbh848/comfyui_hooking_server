@@ -8216,34 +8216,38 @@
                                     <span class="pp-label">1인 테마</span>
                                     <div class="pp-field-inline">
                                         <select id="pp-vn-theme-single" class="select" style="flex:1;" onchange="collectPpVnSettings(); renderPostprocessPreview()">
-                                            <option value="sky">하늘색 / 은색 (프리코네)</option>
-                                            <option value="ivory">아이보리 / 금색</option>
-                                            <option value="lavender">연보라 / 핑크</option>
-                                            <option value="black">검정 / 은회색</option>
-                                            <option value="gray">회색 / 밝은 글자</option>
-                                            <option value="classic">기존 검정 바</option>
-                                        </select>
-                                    </div>
-                                </div>
-                                <div class="pp-row">
-                                    <span class="pp-label">2인 테마</span>
-                                    <div class="pp-field-inline">
-                                        <select id="pp-vn-theme-dual" class="select" style="flex:1;" onchange="collectPpVnSettings(); renderPostprocessPreview()">
-                                            <optgroup label="일반 2인 배치">
+                                            <optgroup label="프리코네 테마">
                                                 <option value="sky">하늘색 / 은색</option>
                                                 <option value="ivory">아이보리 / 금색</option>
                                                 <option value="lavender">연보라 / 핑크</option>
                                                 <option value="black">검정 / 은회색</option>
                                                 <option value="gray">회색 / 밝은 글자</option>
-                                                <option value="classic">기존 검정 바</option>
                                             </optgroup>
-                                            <optgroup label="좌측 대각선 썸네일">
-                                                <option value="sky_diagonal">하늘색 / 은색</option>
-                                                <option value="ivory_diagonal">아이보리 / 금색</option>
-                                                <option value="lavender_diagonal">연보라 / 핑크</option>
-                                                <option value="black_diagonal">검정 / 은회색</option>
-                                                <option value="gray_diagonal">회색 / 밝은 글자</option>
-                                                <option value="classic_diagonal">기존 검정 바</option>
+                                            <optgroup label="심플 테마">
+                                                <option value="classic">검정 심플</option>
+                                            </optgroup>
+                                            <optgroup label="소녀전선 테마">
+                                                <option value="gfl">검정 / 노랑</option>
+                                            </optgroup>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="pp-row">
+                                    <span class="pp-label">2인+ 테마</span>
+                                    <div class="pp-field-inline">
+                                        <select id="pp-vn-theme-dual" class="select" style="flex:1;" onchange="collectPpVnSettings(); renderPostprocessPreview()">
+                                            <optgroup label="심플 배치">
+                                                <option value="classic_simple">심플 테마 — 검정 심플</option>
+                                                <option value="gfl_simple">소녀전선 테마 — 검정 / 노랑</option>
+                                            </optgroup>
+                                            <optgroup label="블럭형 2인 배치">
+                                                <option value="sky">프리코네 — 하늘색 / 은색</option>
+                                                <option value="ivory">프리코네 — 아이보리 / 금색</option>
+                                                <option value="lavender">프리코네 — 연보라 / 핑크</option>
+                                                <option value="black">프리코네 — 검정 / 은회색</option>
+                                                <option value="gray">프리코네 — 회색 / 밝은 글자</option>
+                                                <option value="classic">심플 테마 — 검정 심플</option>
+                                                <option value="gfl">소녀전선 테마 — 검정 / 노랑</option>
                                             </optgroup>
                                         </select>
                                     </div>
@@ -8285,9 +8289,9 @@
                                 </div>
                             </div>
 
-                            <!-- 대사 / 다중 인물 스타일 -->
+                            <!-- 대사 스타일 -->
                             <div class="pp-card">
-                                <div class="pp-card-title">대사 · 다중 인물</div>
+                                <div class="pp-card-title">대사 스타일</div>
                                 <div class="pp-switch-line">
                                     <div>
                                         <div style="font-size:0.82rem;">대사 색상화 (발화자 머리색)</div>
@@ -8298,16 +8302,6 @@
                                         <span class="toggle-slider"></span>
                                     </label>
                                 </div>
-                                <div class="pp-row" style="margin-top:10px;">
-                                    <span class="pp-label">일반 테마 다중 배치</span>
-                                    <div class="pp-field-inline">
-                                        <select id="pp-vn-multi-speaker-layout" class="select" style="flex:1;" onchange="collectPpVnSettings(); renderPostprocessPreview()">
-                                            <option value="split">인물 1 좌측·상단 / 인물 2 우측·하단</option>
-                                            <option value="stack">대사별 박스 쌓기</option>
-                                        </select>
-                                    </div>
-                                </div>
-                                <div class="pp-hint" style="margin-top:6px;">좌측 대각선은 위의 테마에서 색상별로 선택합니다. 박스 쌓기는 실제 대사 높이만큼 캔버스를 늘리며, 대각선·분리 모드는 3명 이상이면 박스 쌓기로 자동 전환합니다.</div>
                             </div>
 
                             <!-- 감정 -->
@@ -8354,6 +8348,16 @@
                                             <span class="toggle-slider"></span>
                                         </label>
                                     </div>
+                                    <div class="pp-row" style="margin-bottom:8px;">
+                                        <span class="pp-label">2인+ 썸네일 형태</span>
+                                        <div class="pp-field-inline">
+                                            <select id="pp-vn-multi-face-mode" class="select" style="flex:1;" onchange="collectPpVnSettings(); renderPostprocessPreview()">
+                                                <option value="both">둘 다</option>
+                                                <option value="first">첫 번째 발화자만</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                    <div class="pp-hint" style="margin:0 0 8px;">3명 이상일 때도 둘 다는 앞의 두 발화자 썸네일을 표시합니다.</div>
                                     <div class="pp-field-inline">
                                         <div style="flex:1;">
                                             <div style="font-size:0.7rem; color:var(--text2, #999); margin-bottom:2px;">FACE_CROP_TOP<br><span style="opacity:0.8;">(1.0=검출박스 그대로)</span></div>
@@ -27354,7 +27358,6 @@
                     name_color: false,
                     dialogue_color: false,
                     text_outline_width: -1,
-                    multi_speaker_layout: 'split',
                     name_replace: {},
                     name_replace_enabled: true,
                     strip_emotion: false,
@@ -27368,9 +27371,10 @@
                     face_best_only: false,
                     face_device: 'auto',
                     face_cpu_threads: 0,
+                    multi_face_mode: 'both',
                     theme: 'sky',
                     theme_single: 'sky',
-                    theme_dual: 'sky_diagonal',
+                    theme_dual: 'sky',
                     opacity: 100,
                 },
                 bubble: {
@@ -27446,21 +27450,24 @@
             if (typeof base.face_best_only !== 'boolean') base.face_best_only = false;
             if (typeof base.face_device !== 'string') base.face_device = 'auto';
             if (!Number.isInteger(base.face_cpu_threads) || base.face_cpu_threads < 0) base.face_cpu_threads = 0;
-            const _vnThemeBases = ['sky', 'ivory', 'lavender', 'black', 'gray', 'classic'];
+            const _vnThemeBases = ['sky', 'ivory', 'lavender', 'black', 'gray', 'classic', 'gfl'];
             const _legacyTheme = (typeof source.theme === 'string') ? source.theme : 'sky';
-            const _legacyBase = _legacyTheme.endsWith('_diagonal')
-                ? _legacyTheme.slice(0, -'_diagonal'.length) : _legacyTheme;
+            const _stripLegacyThemeSuffix = value => {
+                if (value.endsWith('_diagonal')) return value.slice(0, -'_diagonal'.length);
+                if (value.endsWith('_simple')) return value.slice(0, -'_simple'.length);
+                return value;
+            };
+            const _legacyBase = _stripLegacyThemeSuffix(_legacyTheme);
             const _safeLegacyBase = _vnThemeBases.includes(_legacyBase) ? _legacyBase : 'sky';
             base.theme_single = (typeof source.theme_single === 'string' && _vnThemeBases.includes(source.theme_single))
                 ? source.theme_single : _safeLegacyBase;
-            const _dualThemes = [
-                ..._vnThemeBases,
-                ..._vnThemeBases.map(theme => theme + '_diagonal'),
-            ];
-            const _legacyDual = _legacyTheme.endsWith('_diagonal')
-                ? _legacyTheme : _safeLegacyBase + '_diagonal';
-            base.theme_dual = (typeof source.theme_dual === 'string' && _dualThemes.includes(source.theme_dual))
-                ? source.theme_dual : _legacyDual;
+            const _dualRaw = (typeof source.theme_dual === 'string')
+                ? source.theme_dual : _safeLegacyBase;
+            const _dualBase = _stripLegacyThemeSuffix(_dualRaw);
+            const _safeDualBase = _vnThemeBases.includes(_dualBase) ? _dualBase : 'sky';
+            base.theme_dual = (
+                _dualRaw.endsWith('_simple') && ['classic', 'gfl'].includes(_safeDualBase)
+            ) ? _safeDualBase + '_simple' : _safeDualBase;
             // theme은 구버전 호환용으로 1인 선택값을 유지한다.
             base.theme = base.theme_single;
             if (typeof base.opacity !== 'number') base.opacity = 100;
@@ -27469,12 +27476,9 @@
             if (typeof base.dialogue_color !== 'boolean') base.dialogue_color = false;
             if (!Number.isInteger(base.text_outline_width)) base.text_outline_width = -1;
             base.text_outline_width = Math.min(12, Math.max(-1, base.text_outline_width));
-            // 구버전의 배치형 diagonal 설정을 같은 팔레트의 테마 변형으로 이관.
-            if (base.multi_speaker_layout === 'diagonal') {
-                base.theme_dual = _safeLegacyBase + '_diagonal';
-                base.multi_speaker_layout = 'split';
-            }
-            if (!['split', 'stack'].includes(base.multi_speaker_layout)) base.multi_speaker_layout = 'split';
+            if (!['both', 'first'].includes(base.multi_face_mode)) base.multi_face_mode = 'both';
+            // 구버전 다중 배치 값은 신규 설정을 저장할 때 제거한다.
+            delete base.multi_speaker_layout;
             if (!Array.isArray(base.emotion_rows)) base.emotion_rows = [];
             if (typeof base.emotion_total !== 'number') base.emotion_total = 0;
             return base;
@@ -27498,8 +27502,6 @@
             if (_dialogueColor) _dialogueColor.checked = !!vn.dialogue_color;
             const _textOutlineWidth = document.getElementById('pp-vn-text-outline-width');
             if (_textOutlineWidth) _textOutlineWidth.value = String(vn.text_outline_width ?? -1);
-            const _multiLayout = document.getElementById('pp-vn-multi-speaker-layout');
-            if (_multiLayout) _multiLayout.value = vn.multi_speaker_layout || 'split';
             document.getElementById('pp-vn-name-replace-enabled').checked = !!vn.name_replace_enabled;
             document.getElementById('pp-vn-strip-emotion').checked = !!vn.strip_emotion;
             const _pfx = document.getElementById('pp-vn-prefix');
@@ -27520,10 +27522,12 @@
             if (_fdevice) _fdevice.value = vn.face_device || 'auto';
             const _fthreads = document.getElementById('pp-vn-face-cpu-threads');
             if (_fthreads) _fthreads.value = String(vn.face_cpu_threads ?? 0);
+            const _multiFaceMode = document.getElementById('pp-vn-multi-face-mode');
+            if (_multiFaceMode) _multiFaceMode.value = vn.multi_face_mode || 'both';
             const _themeSingle = document.getElementById('pp-vn-theme-single');
             if (_themeSingle) _themeSingle.value = vn.theme_single || 'sky';
             const _themeDual = document.getElementById('pp-vn-theme-dual');
-            if (_themeDual) _themeDual.value = vn.theme_dual || 'sky_diagonal';
+            if (_themeDual) _themeDual.value = vn.theme_dual || 'sky';
             const _opa = document.getElementById('pp-vn-opacity');
             if (_opa) {
                 _opa.value = (vn.opacity === undefined ? 100 : vn.opacity);
@@ -28085,8 +28089,7 @@
             const _textOutlineWidthRaw = _textOutlineWidthEl ? parseInt(_textOutlineWidthEl.value, 10) : -1;
             vn.text_outline_width = Number.isInteger(_textOutlineWidthRaw)
                 ? Math.min(12, Math.max(-1, _textOutlineWidthRaw)) : -1;
-            const _multiLayoutEl = document.getElementById('pp-vn-multi-speaker-layout');
-            vn.multi_speaker_layout = _multiLayoutEl ? (_multiLayoutEl.value || 'split') : 'split';
+            delete vn.multi_speaker_layout;
             vn.name_replace_enabled = document.getElementById('pp-vn-name-replace-enabled').checked;
             vn.strip_emotion = document.getElementById('pp-vn-strip-emotion').checked;
             const _pfxEl = document.getElementById('pp-vn-prefix');
@@ -28111,10 +28114,12 @@
             const _fctEl = document.getElementById('pp-vn-face-cpu-threads');
             const _fctRaw = _fctEl ? parseInt(_fctEl.value, 10) : 0;
             vn.face_cpu_threads = Number.isInteger(_fctRaw) && _fctRaw >= 0 ? _fctRaw : 0;
+            const _multiFaceModeEl = document.getElementById('pp-vn-multi-face-mode');
+            vn.multi_face_mode = _multiFaceModeEl ? (_multiFaceModeEl.value || 'both') : 'both';
             const _themeSingleEl = document.getElementById('pp-vn-theme-single');
             vn.theme_single = _themeSingleEl ? (_themeSingleEl.value || 'sky') : (vn.theme_single || 'sky');
             const _themeDualEl = document.getElementById('pp-vn-theme-dual');
-            vn.theme_dual = _themeDualEl ? (_themeDualEl.value || 'sky_diagonal') : (vn.theme_dual || 'sky_diagonal');
+            vn.theme_dual = _themeDualEl ? (_themeDualEl.value || 'sky') : (vn.theme_dual || 'sky');
             vn.theme = vn.theme_single;  // 구버전 호환
             const _opaEl = document.getElementById('pp-vn-opacity');
             const _opaRaw = _opaEl ? parseFloat(_opaEl.value) : NaN;
@@ -28155,7 +28160,6 @@
                             name_color: vn.name_color,
                             dialogue_color: vn.dialogue_color,
                             text_outline_width: vn.text_outline_width ?? -1,
-                            multi_speaker_layout: vn.multi_speaker_layout || 'split',
                             name_replace: vn.name_replace || {},
                             name_replace_enabled: vn.name_replace_enabled,
                             strip_emotion: vn.strip_emotion,
@@ -28168,9 +28172,10 @@
                             face_best_only: vn.face_best_only === true,
                             face_device: vn.face_device || 'auto',
                             face_cpu_threads: vn.face_cpu_threads || 0,
+                            multi_face_mode: vn.multi_face_mode || 'both',
                             theme: vn.theme_single || 'sky',
                             theme_single: vn.theme_single || 'sky',
-                            theme_dual: vn.theme_dual || 'sky_diagonal',
+                            theme_dual: vn.theme_dual || 'sky',
                             opacity: vn.opacity,
                             speak: document.getElementById('pp-vn-preview-speak').value,
                             // 현재 편집 중인 삽화 프로필의 저장된 HRF 설정을 서버가 읽어

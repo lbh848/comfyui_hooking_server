@@ -71,7 +71,7 @@ OVERLAY_COLOR = (0, 0, 0)  # overlay 모드의 반투명 검은 바 (alpha는 �
 
 # ─── 대사창 테마 팔레트(프리코네 스타일 카드) ──────────────
 # 각 키는 compose_postprocess 의 카드 렌더러가 사용하는 색 모음.
-# classic 은 기존 검정 바 렌더링 경로를 그대로 쓴다(아래 색 미사용).
+# classic 은 기존 검정 심플 렌더링 경로를 그대로 쓴다(아래 색 미사용).
 # fill_top/fill_bottom: 카드 배경 세로 그라데이션, outer: 외곽 은색 프레임,
 # outer2: 외곽 아래쪽 끝색, accent: 이너 얇은 포인트선/장식, name/emotion/body: 글자색,
 # header: 이름표 반투명 배경, divider: 이름표 아래 구분선,
@@ -122,38 +122,59 @@ VN_THEMES = {
         "shadow": (16, 16, 22), "backdrop_top": (30, 30, 36), "backdrop_bottom": (12, 12, 16),
         "face_frame": (96, 98, 106),
     },
-    "classic": None,  # 기존 검정 바 렌더링 사용(팔레트 없음)
+    "gfl": {
+        "fill_top": (34, 34, 30), "fill_bottom": (10, 10, 8),
+        "outer": (246, 205, 50), "outer2": (154, 119, 12),
+        "accent": (255, 220, 54),
+        "name": (255, 221, 62), "emotion": (255, 239, 166), "body": (244, 244, 236),
+        "header": (18, 18, 14, 232), "divider": (224, 186, 38),
+        "shadow": (0, 0, 0), "backdrop_top": (24, 24, 20), "backdrop_bottom": (3, 3, 2),
+        "face_frame": (246, 205, 50),
+    },
+    "classic": None,  # 기존 검정 심플 렌더링 사용(팔레트 없음)
 }
 VN_THEME_DEFAULT = "sky"
-VN_DIAGONAL_THEME_SUFFIX = "_diagonal"
+VN_SIMPLE_THEME_SUFFIX = "_simple"
+VN_LEGACY_DIAGONAL_THEME_SUFFIX = "_diagonal"
+VN_SIMPLE_THEME_BASES = {"classic", "gfl"}
 
 
 def _resolve_vn_theme(theme_value) -> tuple:
-    """(팔레트 테마 키, 좌측 대각선 변형 여부)를 반환한다."""
+    """(팔레트 테마 키, 심플 다중 배치 여부)를 반환한다.
+
+    구버전의 ``*_diagonal`` 값은 가장 가까운 신규 배치인 블럭형으로
+    해석한다. 1인 렌더링에서는 두 번째 반환값을 사용하지 않는다.
+    """
     theme = str(theme_value or VN_THEME_DEFAULT).strip().lower()
-    diagonal = theme.endswith(VN_DIAGONAL_THEME_SUFFIX)
-    palette_theme = (
-        theme[:-len(VN_DIAGONAL_THEME_SUFFIX)] if diagonal else theme
-    )
+    simple = theme.endswith(VN_SIMPLE_THEME_SUFFIX)
+    if simple:
+        palette_theme = theme[:-len(VN_SIMPLE_THEME_SUFFIX)]
+    elif theme.endswith(VN_LEGACY_DIAGONAL_THEME_SUFFIX):
+        palette_theme = theme[:-len(VN_LEGACY_DIAGONAL_THEME_SUFFIX)]
+    else:
+        palette_theme = theme
     if palette_theme not in VN_THEMES:
         print(
             f"[POSTPROCESS] 알 수 없는 VN 테마({theme!r}), "
             f"{VN_THEME_DEFAULT!r} 사용"
         )
         palette_theme = VN_THEME_DEFAULT
-    return palette_theme, diagonal
+        simple = False
+    elif simple and palette_theme not in VN_SIMPLE_THEME_BASES:
+        print(
+            f"[POSTPROCESS] 심플 배치를 지원하지 않는 VN 테마({theme!r}), "
+            "같은 색상의 블럭형 사용"
+        )
+        simple = False
+    return palette_theme, simple
 
 
 def _select_vn_theme(settings: dict, speaker_count: int) -> tuple:
-    """발화자 수에 따라 독립 저장된 1인/2인 테마를 선택한다."""
+    """발화자 수에 따라 독립 저장된 1인/2인+ 테마를 선택한다."""
     legacy_theme = str(settings.get("theme", VN_THEME_DEFAULT) or VN_THEME_DEFAULT)
-    legacy_base, legacy_diagonal = _resolve_vn_theme(legacy_theme)
+    legacy_base, legacy_simple = _resolve_vn_theme(legacy_theme)
     if speaker_count >= 2:
-        fallback = (
-            legacy_theme
-            if legacy_diagonal
-            else legacy_base + VN_DIAGONAL_THEME_SUFFIX
-        )
+        fallback = legacy_base + (VN_SIMPLE_THEME_SUFFIX if legacy_simple else "")
         selected = settings.get("theme_dual", fallback)
     else:
         selected = settings.get("theme_single", legacy_base)
@@ -872,7 +893,7 @@ def _prepare_face_images(segments: list, settings: dict, bot_name: str,
                 traceback.print_exc()
             speaker_key = speaker.casefold()
             result[(speaker_key, emotion.casefold())] = face_img
-            # 대각선/분리/단일 모드는 해당 발화자의 첫 감정 이미지를 대표 썸네일로 사용.
+            # 다중/단일 모드는 해당 발화자의 첫 감정 이미지를 대표 썸네일로 사용.
             result.setdefault(speaker_key, face_img)
         except Exception as e:
             print(
@@ -1029,17 +1050,17 @@ def _draw_colorized_text(draw, xy, text: str, font, fill,
 
 
 def _multi_palette(pal):
-    """classic 모드에도 다중 카드 렌더러가 쓸 수 있는 팔레트를 제공한다."""
+    """검정 심플 모드에도 다중 렌더러가 쓸 수 있는 팔레트를 제공한다."""
     if pal is not None:
         return pal
     return {
-        "fill_top": (28, 28, 32), "fill_bottom": (6, 6, 8),
-        "outer": (118, 132, 176), "outer2": (52, 62, 92),
-        "accent": (144, 168, 255),
+        "fill_top": (26, 26, 28), "fill_bottom": (5, 5, 6),
+        "outer": (168, 170, 176), "outer2": (68, 70, 76),
+        "accent": (208, 210, 216),
         "name": (255, 255, 255), "emotion": (255, 216, 106),
-        "body": (240, 240, 240), "divider": (92, 104, 142),
+        "body": (240, 240, 240), "divider": (112, 114, 120),
         "shadow": (0, 0, 0), "backdrop_top": (12, 12, 16),
-        "backdrop_bottom": (0, 0, 0), "face_frame": (176, 192, 238),
+        "backdrop_bottom": (0, 0, 0), "face_frame": (190, 192, 198),
     }
 
 
@@ -1333,21 +1354,38 @@ def _render_multi_dialogue(img, layout, pal, settings, segments, speakers,
                            strip_emotion, font, name_font, emotion_font,
                            line_height, img_w, img_h, use_name_color,
                            use_dialogue_color, bot_name, mode):
-    """대각선/분리/대사별 쌓기 다중 인물 레이아웃을 렌더링한다."""
+    """심플/블럭형의 공유 영역에 발화자별 행을 렌더링한다.
+
+    대사마다 별도 박스를 만들지 않는다. 3명 이상도 같은 공유 영역을
+    확장해 표시하며, 썸네일은 설정에 따라 첫 발화자 또는 앞의 두 발화자만
+    사용한다.
+    """
     try:
+        if mode not in ("simple", "block"):
+            print(f"[POSTPROCESS] 알 수 없는 2인+ 배치({mode!r}), block 사용")
+            mode = "block"
+
         theme = _multi_palette(pal)
         base_h = max(40, int(layout["bar_h"]))
         outer_x = max(14, int(img_w * 0.025))
-        outer_y = max(20, int(base_h * 0.14))
-        panel_gap = max(8, int(base_h * 0.05))
+        outer_y = max(16, int(base_h * 0.12))
         pad = max(10, int(base_h * 0.08))
-        card_w = img_w - outer_x * 2
-        if card_w < 120:
-            print(f"[POSTPROCESS] 다중 카드 폭 부족: img_w={img_w}, card_w={card_w}")
+        divider_gap = max(8, int(base_h * 0.05))
+        area_w = img_w - outer_x * 2
+        if area_w < 120:
+            print(f"[POSTPROCESS] 2인+ 영역 폭 부족: img_w={img_w}, area_w={area_w}")
             return _to_output_bytes(img)
+
         face_enabled = bool(settings.get("face_enabled", True))
+        multi_face_mode = str(settings.get("multi_face_mode", "both") or "both").strip().lower()
+        if multi_face_mode not in ("both", "first"):
+            print(
+                f"[POSTPROCESS] multi_face_mode 값 오류({multi_face_mode!r}), "
+                "both 사용"
+            )
+            multi_face_mode = "both"
+        face_limit = 1 if multi_face_mode == "first" else 2
         face_side = max(48, min(int(base_h * 0.68), int(img_w * 0.22)))
-        stack_face_side = max(42, min(int(base_h * 0.40), int(img_w * 0.12)))
         header_h = max(getattr(name_font, "size", 12) + 8, line_height)
         segment_gap = max(4, line_height // 3)
         header_gap = max(6, line_height // 3)
@@ -1357,83 +1395,59 @@ def _render_multi_dialogue(img, layout, pal, settings, segments, speakers,
         outline_width = normalize_text_outline_width(
             settings.get("text_outline_width", -1)
         )
-        measure_draw = ImageDraw.Draw(Image.new("RGBA", (max(1, img_w), 32), (0, 0, 0, 0)))
+        measure_draw = ImageDraw.Draw(
+            Image.new("RGBA", (max(1, img_w), 32), (0, 0, 0, 0))
+        )
 
-        if mode not in ("diagonal", "split", "stack"):
-            print(f"[POSTPROCESS] 알 수 없는 다중 인물 배치({mode!r}), diagonal 사용")
-            mode = "diagonal"
-        if len(speakers) > 2 and mode != "stack":
-            print(
-                f"[POSTPROCESS] {len(speakers)}명은 {mode} 배치 한계를 초과 - "
-                f"대사별 박스 쌓기로 자동 전환"
-            )
-            mode = "stack"
-
-        specs = []
-        if mode == "diagonal":
-            show_faces = face_enabled and len(speakers) >= 2
-            content_w = card_w - pad * 2 - (face_side + pad if show_faces else 0)
-            body_h = _segments_height(
-                measure_draw, segments, font, content_w, line_height, segment_gap,
-            )
-            card_h = max(
-                pad + header_h + header_gap + body_h + pad,
-                pad + (face_side if show_faces else 0) + pad,
-            )
-            specs.append({"kind": "diagonal", "height": card_h, "content_w": content_w})
-        elif mode == "split":
-            first_key = speakers[0].casefold()
-            second_key = speakers[1].casefold()
-            first_segments = [
+        rows = []
+        for index, speaker in enumerate(speakers):
+            speaker_key = speaker.casefold()
+            speaker_segments = [
                 seg for seg in segments
-                if not seg.get("speaker") or str(seg.get("speaker")).casefold() == first_key
+                if str(seg.get("speaker") or "").casefold() == speaker_key
+                or (index == 0 and not seg.get("speaker"))
             ]
-            second_segments = [
-                seg for seg in segments
-                if str(seg.get("speaker") or "").casefold() == second_key
-            ]
-            content_w = card_w - pad * 3 - (face_side if face_enabled else 0)
-            first_body_h = _segments_height(
-                measure_draw, first_segments, font, content_w, line_height, segment_gap,
-            )
-            second_body_h = _segments_height(
-                measure_draw, second_segments, font, content_w, line_height, segment_gap,
-            )
-            face_requirement = face_side if face_enabled else 0
-            first_inner_h = max(face_requirement, header_h + header_gap + first_body_h)
-            second_inner_h = max(face_requirement, header_h + header_gap + second_body_h)
-            first_zone_h = pad + first_inner_h + pad
-            second_zone_h = pad + second_inner_h + pad
-            specs.append({
-                "kind": "split", "height": first_zone_h + panel_gap + second_zone_h,
-                "content_w": content_w, "first_segments": first_segments,
-                "second_segments": second_segments, "first_zone_h": first_zone_h,
-                "second_zone_h": second_zone_h,
-            })
-        else:
-            for seg in segments:
-                speaker = str(seg.get("speaker") or "").strip()
-                show_face = bool(face_enabled and speaker)
-                content_w = card_w - pad * 2 - (stack_face_side + pad if show_face else 0)
-                body_h = _segments_height(
-                    measure_draw, [seg], font, content_w, line_height, segment_gap,
+            if not speaker_segments:
+                print(
+                    f"[POSTPROCESS] 발화자 행에 표시할 대사 없음: "
+                    f"speaker={speaker!r}, index={index}"
                 )
-                header_space = header_h + header_gap if speaker else 0
-                inner_h = max(stack_face_side if show_face else 0, header_space + body_h)
-                specs.append({
-                    "kind": "stack", "height": pad + inner_h + pad,
-                    "content_w": content_w, "segment": seg,
-                    "show_face": show_face,
-                })
+                continue
+            show_face = bool(face_enabled and index < face_limit)
+            content_w = area_w - pad * 2 - (face_side + pad if show_face else 0)
+            content_w = max(40, content_w)
+            body_h = _segments_height(
+                measure_draw, speaker_segments, font, content_w,
+                line_height, segment_gap,
+            )
+            inner_h = max(
+                face_side if show_face else 0,
+                header_h + header_gap + body_h,
+            )
+            rows.append({
+                "speaker": speaker,
+                "segments": speaker_segments,
+                "show_face": show_face,
+                "content_w": content_w,
+                "height": pad + inner_h + pad,
+                "index": index,
+            })
 
-        cards_h = sum(int(spec["height"]) for spec in specs)
-        cards_h += panel_gap * max(0, len(specs) - 1)
-        required_area_h = cards_h + outer_y * 2
+        if not rows:
+            print(
+                f"[POSTPROCESS] 2인+ 렌더링 행 생성 실패: "
+                f"speakers={speakers!r}, segments={len(segments)}"
+            )
+            return _to_output_bytes(img)
+
+        content_h = sum(int(row["height"]) for row in rows)
+        content_h += divider_gap * max(0, len(rows) - 1)
+        required_area_h = content_h + outer_y * 2
         placement = layout.get("placement", "extend")
         if placement == "overlay" and required_area_h > img_h:
             print(
-                f"[POSTPROCESS] 오버레이에 다중 카드가 맞지 않음(required={required_area_h}, "
-                f"img_h={img_h}) - 잘림 방지를 위해 하단 확장으로 전환"
+                f"[POSTPROCESS] 오버레이에 2인+ 영역이 맞지 않음"
+                f"(required={required_area_h}, img_h={img_h}) - 하단 확장 사용"
             )
             placement = "extend"
 
@@ -1450,11 +1464,12 @@ def _render_multi_dialogue(img, layout, pal, settings, segments, speakers,
         else:
             canvas_h = img_h
             canvas = img.copy()
-            area_h = max(base_h, required_area_h)
-            top = max(0, img_h - area_h)
+            top = max(0, img_h - required_area_h)
             overlay = Image.new("RGBA", (img_w, img_h), (0, 0, 0, 0))
+            overlay_fill = _rgba(theme["backdrop_bottom"])
             ImageDraw.Draw(overlay).rectangle(
-                [(0, top), (img_w, img_h)], fill=(0, 0, 0, 150),
+                [(0, top), (img_w, img_h)],
+                fill=overlay_fill[:3] + (180,),
             )
             canvas = Image.alpha_composite(canvas, overlay)
             first_y = top + outer_y
@@ -1465,161 +1480,97 @@ def _render_multi_dialogue(img, layout, pal, settings, segments, speakers,
             print(f"[POSTPROCESS] opacity 변환 실패({settings.get('opacity')!r}), 100 사용")
             opacity = 1.0
 
+        area_rect = (outer_x, first_y, img_w - outer_x, first_y + content_h)
+        if mode == "block":
+            _draw_multi_panel(canvas, area_rect, pal, opacity)
+        else:
+            simple_draw = ImageDraw.Draw(canvas)
+            accent_width = max(2, min(5, base_h // 32))
+            simple_draw.line(
+                [(outer_x, first_y), (img_w - outer_x, first_y)],
+                fill=_rgba(theme["accent"]), width=accent_width,
+            )
+            simple_draw.line(
+                [(outer_x, first_y + content_h),
+                 (img_w - outer_x, first_y + content_h)],
+                fill=_rgba(theme["divider"]), width=max(1, accent_width - 1),
+            )
+
+        draw = ImageDraw.Draw(canvas)
+        x1, _y1, x2, _y2 = area_rect
         current_y = first_y
-        speaker_index = {speaker.casefold(): index for index, speaker in enumerate(speakers)}
-        for spec in specs:
-            card_h = int(spec["height"])
-            rect = (outer_x, current_y, img_w - outer_x, current_y + card_h)
-            _draw_multi_panel(canvas, rect, pal, opacity)
-            draw = ImageDraw.Draw(canvas)
-            x1, y1, x2, y2 = rect
+        for row_number, row in enumerate(rows):
+            speaker = row["speaker"]
+            speaker_segments = row["segments"]
+            row_h = int(row["height"])
+            content_y = current_y + pad
+            face_on_left = (int(row["index"]) % 2 == 0)
+            show_face = bool(row["show_face"])
 
-            if spec["kind"] == "diagonal":
-                show_faces = face_enabled and len(speakers) >= 2
-                content_x = x1 + pad + (face_side + pad if show_faces else 0)
-                _draw_combined_header(
-                    draw, content_x, y1 + pad, speakers[:2], name_replace,
-                    use_name_replace, use_name_color, bot_name, name_font, name_fill,
-                    outline_width,
-                )
-                _draw_segment_group(
-                    draw, content_x, y1 + pad + header_h + header_gap,
-                    segments, font, spec["content_w"], line_height, segment_gap,
-                    body_fill, use_dialogue_color, bot_name, outline_width,
-                )
-                if show_faces:
-                    fx = x1 + pad
-                    fy = y1 + (card_h - face_side) // 2
-                    _paste_diagonal_faces(
-                        canvas,
-                        face_images.get(speakers[0].casefold()),
-                        face_images.get(speakers[1].casefold()),
-                        (fx, fy, fx + face_side, fy + face_side), pal,
-                    )
-
-            elif spec["kind"] == "split":
-                first_speaker, second_speaker = speakers[0], speakers[1]
-                first_content_y = y1 + pad
-                first_face_x = x1 + pad
-                first_text_x = first_face_x + (face_side + pad if face_enabled else 0)
-                if face_enabled:
-                    _paste_face_slot(
-                        canvas, face_images.get(first_speaker.casefold()),
-                        (first_face_x, first_content_y,
-                         first_face_x + face_side, first_content_y + face_side), pal,
-                    )
-                first_emo = ""
-                first_seg = next((s for s in spec["first_segments"] if s.get("speaker")), None)
-                if strip_emotion and first_seg:
-                    first_emo = (first_seg.get("emotion") or "").lstrip("#").strip()
-                _draw_speaker_header(
-                    draw, first_text_x, first_content_y, first_speaker,
-                    name_replace, use_name_replace, use_name_color, bot_name,
-                    name_font, emotion_font, first_emo, name_fill, emotion_fill,
-                    outline_width,
-                )
-                _draw_segment_group(
-                    draw, first_text_x, first_content_y + header_h + header_gap,
-                    spec["first_segments"], font, spec["content_w"], line_height,
-                    segment_gap, body_fill, use_dialogue_color, bot_name,
-                    outline_width,
-                )
-
-                divider_y = y1 + spec["first_zone_h"] + panel_gap // 2
-                draw.line(
-                    [(x1 + pad, divider_y), (x2 - pad, divider_y)],
-                    fill=_rgba(theme["divider"]), width=2,
-                )
-                second_content_y = y1 + spec["first_zone_h"] + panel_gap + pad
-                second_face_x = x2 - pad - face_side
-                if face_enabled:
-                    _paste_face_slot(
-                        canvas, face_images.get(second_speaker.casefold()),
-                        (second_face_x, second_content_y,
-                         second_face_x + face_side, second_content_y + face_side), pal,
-                    )
-                second_seg = next((s for s in spec["second_segments"] if s.get("speaker")), None)
-                second_emo = ""
-                if strip_emotion and second_seg:
-                    second_emo = (second_seg.get("emotion") or "").lstrip("#").strip()
-                second_block_w = _speaker_group_width(
-                    draw, second_speaker, spec["second_segments"],
-                    name_replace, use_name_replace, name_font, emotion_font,
-                    second_emo, font, spec["content_w"], outline_width,
-                )
-                # 글은 좌측 정렬을 유지하되, 블록의 우측 끝을 우측 썸네일 바로
-                # 옆에 붙인다. 짧은 이름/대사가 카드 맨 왼쪽에 고립되지 않는다.
-                second_text_x = max(
-                    x1 + pad,
-                    second_face_x - pad - second_block_w,
-                ) if face_enabled else x1 + pad
-                _draw_speaker_header(
-                    draw, second_text_x, second_content_y, second_speaker,
-                    name_replace, use_name_replace, use_name_color, bot_name,
-                    name_font, emotion_font, second_emo, name_fill, emotion_fill,
-                    outline_width,
-                )
-                _draw_segment_group(
-                    draw, second_text_x, second_content_y + header_h + header_gap,
-                    spec["second_segments"], font, spec["content_w"], line_height,
-                    segment_gap, body_fill, use_dialogue_color, bot_name,
-                    outline_width,
-                )
-
+            if face_on_left:
+                if show_face:
+                    face_x = x1 + pad
+                    text_x = face_x + face_side + pad
+                else:
+                    face_x = None
+                    text_x = x1 + pad
             else:
-                seg = spec["segment"]
-                speaker = str(seg.get("speaker") or "").strip()
-                index = speaker_index.get(speaker.casefold(), 0) if speaker else 0
-                face_on_left = (index % 2 == 0)
-                content_x = x1 + pad
-                if spec["show_face"]:
-                    if face_on_left:
-                        fx = x1 + pad
-                        content_x = fx + stack_face_side + pad
-                    else:
-                        fx = x2 - pad - stack_face_side
-                    fy = y1 + (card_h - stack_face_side) // 2
-                    face_emotion = (
-                        (seg.get("emotion") or "").lstrip("#").strip().casefold()
-                        if strip_emotion else ""
-                    )
-                    face_for_segment = (
-                        face_images.get((speaker.casefold(), face_emotion))
-                        or face_images.get(speaker.casefold())
-                    )
-                    _paste_face_slot(
-                        canvas, face_for_segment,
-                        (fx, fy, fx + stack_face_side, fy + stack_face_side), pal,
-                    )
-                body_y = y1 + pad
-                if speaker:
-                    emotion = (
-                        (seg.get("emotion") or "").lstrip("#").strip()
-                        if strip_emotion else ""
-                    )
-                    _draw_speaker_header(
-                        draw, content_x, body_y, speaker, name_replace,
-                        use_name_replace, use_name_color, bot_name, name_font,
-                        emotion_font, emotion, name_fill, emotion_fill,
-                        outline_width,
-                    )
-                    body_y += header_h + header_gap
-                _draw_segment_group(
-                    draw, content_x, body_y, [seg], font, spec["content_w"],
-                    line_height, segment_gap, body_fill, use_dialogue_color, bot_name,
-                    outline_width,
+                face_x = x2 - pad - face_side if show_face else None
+                text_right = face_x - pad if show_face else x2 - pad
+                block_w = _speaker_group_width(
+                    draw, speaker, speaker_segments, name_replace,
+                    use_name_replace, name_font, emotion_font, "", font,
+                    row["content_w"], outline_width,
                 )
+                text_x = max(x1 + pad, text_right - block_w)
 
-            current_y += card_h + panel_gap
+            if show_face and face_x is not None:
+                face_y = current_y + (row_h - face_side) // 2
+                _paste_face_slot(
+                    canvas, face_images.get(speaker.casefold()),
+                    (face_x, face_y, face_x + face_side, face_y + face_side), pal,
+                )
+                draw = ImageDraw.Draw(canvas)
+
+            first_segment = next(
+                (seg for seg in speaker_segments if seg.get("speaker")), None
+            )
+            emotion = (
+                (first_segment.get("emotion") or "").lstrip("#").strip()
+                if strip_emotion and first_segment else ""
+            )
+            _draw_speaker_header(
+                draw, text_x, content_y, speaker, name_replace,
+                use_name_replace, use_name_color, bot_name, name_font,
+                emotion_font, emotion, name_fill, emotion_fill, outline_width,
+            )
+            _draw_segment_group(
+                draw, text_x, content_y + header_h + header_gap,
+                speaker_segments, font, row["content_w"], line_height,
+                segment_gap, body_fill, use_dialogue_color, bot_name,
+                outline_width,
+            )
+
+            current_y += row_h
+            if row_number < len(rows) - 1:
+                divider_y = current_y + divider_gap // 2
+                inset = pad if mode == "block" else max(pad, int(area_w * 0.06))
+                draw.line(
+                    [(x1 + inset, divider_y), (x2 - inset, divider_y)],
+                    fill=_rgba(theme["divider"]),
+                    width=2 if mode == "block" else 1,
+                )
+                current_y += divider_gap
 
         print(
-            f"[POSTPROCESS] 다중 대사 렌더링 완료: mode={mode}, speakers={len(speakers)}, "
+            f"[POSTPROCESS] 2인+ 대사 렌더링 완료: mode={mode}, "
+            f"speakers={len(speakers)}, faces={multi_face_mode}, "
             f"segments={len(segments)}, output={img_w}x{canvas_h}"
         )
         return _to_output_bytes(canvas)
     except Exception as e:
         print(
-            f"[POSTPROCESS] 다중 대사 렌더링 실패: mode={mode}, "
+            f"[POSTPROCESS] 2인+ 대사 렌더링 실패: mode={mode}, "
             f"speakers={speakers!r}, error={e}"
         )
         traceback.print_exc()
@@ -1742,15 +1693,6 @@ def compose_postprocess(image_bytes: bytes, speak_text: str,
     text_outline_width = normalize_text_outline_width(
         settings.get("text_outline_width", -1)
     )
-    multi_speaker_layout = str(
-        settings.get("multi_speaker_layout", "split") or "split"
-    ).strip().lower()
-    if multi_speaker_layout not in ("diagonal", "split", "stack"):
-        print(
-            f"[POSTPROCESS] multi_speaker_layout 값 오류({multi_speaker_layout!r}), "
-            "split 사용"
-        )
-        multi_speaker_layout = "split"
     strip_emotion = bool(settings.get("strip_emotion", False))
 
     segments = parse_speak(speak_text, strip_emotion=strip_emotion)
@@ -1762,9 +1704,7 @@ def compose_postprocess(image_bytes: bytes, speak_text: str,
     # --- 얼굴 이미지 준비 (구조화된 각 발화자 기준) ---
     face_enabled = bool(settings.get("face_enabled", True))
     speakers = _speaker_order(segments)
-    palette_theme_key, diagonal_theme = _select_vn_theme(settings, len(speakers))
-    if diagonal_theme and multi_speaker_layout != "stack":
-        multi_speaker_layout = "diagonal"
+    palette_theme_key, simple_multi_theme = _select_vn_theme(settings, len(speakers))
     first_speaker_seg = next((s for s in segments if s.get("speaker")), None)
     face_images = _prepare_face_images(
         segments, settings, bot_name, max(128, int(bar_h)),
@@ -1806,18 +1746,14 @@ def compose_postprocess(image_bytes: bytes, speak_text: str,
     except Exception:
         line_height = int(font_size * (1.45 if palette else 1.3))
 
-    # 대사별 쌓기는 발화자 수와 무관하게 대사가 2개 이상이면 적용한다.
-    # 대각선/분리 모드는 구조화된 발화자가 2명 이상일 때 적용한다.
-    use_structured_layout = (
-        (multi_speaker_layout == "stack" and len(segments) > 1)
-        or (multi_speaker_layout in ("diagonal", "split") and len(speakers) >= 2)
-    )
-    if use_structured_layout:
+    # 2명 이상은 대사별 박스를 쌓지 않고 선택한 공유 영역에 함께 렌더링한다.
+    if len(speakers) >= 2:
+        multi_mode = "simple" if simple_multi_theme else "block"
         return _render_multi_dialogue(
             img, layout, palette, settings, segments, speakers, face_images,
             name_replace, use_name_replace, strip_emotion, font, name_font,
             emotion_font, line_height, img_w, img_h, use_name_color,
-            use_dialogue_color, bot_name, multi_speaker_layout,
+            use_dialogue_color, bot_name, multi_mode,
         )
 
     layout = _fit_single_extend_layout(
@@ -1835,7 +1771,7 @@ def compose_postprocess(image_bytes: bytes, speak_text: str,
                             img_w, img_h, use_name_color, use_dialogue_color,
                             text_outline_width, bot_name)
 
-    # ===== classic: 기존 검정 바 렌더링 =====
+    # ===== classic: 검정 심플 렌더링 =====
     if layout["placement"] == "extend":
         canvas = Image.new("RGBA", (layout["canvas_w"], layout["canvas_h"]),
                            BAR_COLOR + (255,))
@@ -2232,7 +2168,6 @@ def _default_vn() -> dict:
         "name_color": False,
         "dialogue_color": False,      # 발화자 머리색으로 대사 색상화(배경은 자동)
         "text_outline_width": -1,     # 색상 글자 외곽 배경 px. -1=자동, 0=없음
-        "multi_speaker_layout": "split",     # split | stack (diagonal은 테마 변형)
         "name_replace": {},
         "name_replace_enabled": True,
         "strip_emotion": False,
@@ -2246,28 +2181,43 @@ def _default_vn() -> dict:
         "face_best_only": False,       # True면 CONF 무시, 검출 박스 중 최고 신뢰도 강제 사용
         "face_device": "auto",         # 자동 | cpu | cuda0 | dml0
         "face_cpu_threads": 0,         # CPU intra-op 스레드. 0=ONNX Runtime 자동
-        "theme": VN_THEME_DEFAULT,     # 대사창 색 테마(sky/ivory/lavender/black/gray/classic)
+        "multi_face_mode": "both",     # 2인+ 썸네일: both | first
+        "theme": VN_THEME_DEFAULT,     # 구버전 호환용 1인 테마
         "theme_single": VN_THEME_DEFAULT,  # 1인 테마 팔레트
-        "theme_dual": f"{VN_THEME_DEFAULT}{VN_DIAGONAL_THEME_SUFFIX}",  # 2인 대각선 테마
+        "theme_dual": VN_THEME_DEFAULT,  # 2인+ 테마. *_simple은 무블럭 배치
         "opacity": 100,                # 카드 배경 반투명도(0~100). 100=불투명. 글자/얼굴은 그대로
     }
 
 
 def _merge_vn_defaults(stored: Optional[dict]) -> dict:
-    """누락 필드를 채우고 구형 단일 theme 값을 1인/2인 테마로 이관한다."""
+    """누락 필드를 채우고 구형 테마/배치 값을 신규 구조로 이관한다."""
     source = stored if isinstance(stored, dict) else {}
     merged = _default_vn()
     merged.update(source)
     legacy_theme = str(source.get("theme", VN_THEME_DEFAULT) or VN_THEME_DEFAULT)
-    legacy_base, legacy_diagonal = _resolve_vn_theme(legacy_theme)
+    legacy_base, legacy_simple = _resolve_vn_theme(legacy_theme)
     if "theme_single" not in source:
         merged["theme_single"] = legacy_base
     if "theme_dual" not in source:
-        merged["theme_dual"] = (
-            legacy_theme
-            if legacy_diagonal
-            else legacy_base + VN_DIAGONAL_THEME_SUFFIX
+        merged["theme_dual"] = legacy_base + (
+            VN_SIMPLE_THEME_SUFFIX if legacy_simple else ""
         )
+    else:
+        dual_base, dual_simple = _resolve_vn_theme(source.get("theme_dual"))
+        merged["theme_dual"] = dual_base + (
+            VN_SIMPLE_THEME_SUFFIX if dual_simple else ""
+        )
+    multi_face_mode = str(source.get("multi_face_mode", "both") or "both").strip().lower()
+    if multi_face_mode not in ("both", "first"):
+        print(
+            f"[POSTPROCESS] 저장된 multi_face_mode 값 오류({multi_face_mode!r}), "
+            "both 사용"
+        )
+        multi_face_mode = "both"
+    merged["multi_face_mode"] = multi_face_mode
+    # multi_speaker_layout은 구버전 로드 호환용으로 읽기만 하며 신규 설정에는
+    # 포함하지 않는다. stack/diagonal/split 모두 블럭형 테마로 이관된다.
+    merged.pop("multi_speaker_layout", None)
     return merged
 
 
@@ -2393,9 +2343,6 @@ def get_vn_settings(config: dict, bot_name: str = "") -> Optional[dict]:
         "text_outline_width": normalize_text_outline_width(
             vn.get("text_outline_width", -1)
         ),
-        "multi_speaker_layout": str(
-            vn.get("multi_speaker_layout", "split") or "split"
-        ),
         "name_replace": vn.get("name_replace") or {},
         "name_replace_enabled": bool(vn.get("name_replace_enabled", True)),
         "strip_emotion": bool(vn.get("strip_emotion", False)),
@@ -2408,16 +2355,14 @@ def get_vn_settings(config: dict, bot_name: str = "") -> Optional[dict]:
         "face_best_only": bool(vn.get("face_best_only", False)),
         "face_device": normalize_device_key(vn.get("face_device", "auto")),
         "face_cpu_threads": normalize_cpu_threads(vn.get("face_cpu_threads", 0)),
+        "multi_face_mode": str(vn.get("multi_face_mode", "both") or "both"),
         "theme": str(vn.get("theme", VN_THEME_DEFAULT) or VN_THEME_DEFAULT),
         "theme_single": str(
             vn.get("theme_single", vn.get("theme", VN_THEME_DEFAULT))
             or VN_THEME_DEFAULT
         ),
         "theme_dual": str(
-            vn.get(
-                "theme_dual",
-                f"{VN_THEME_DEFAULT}{VN_DIAGONAL_THEME_SUFFIX}",
-            ) or f"{VN_THEME_DEFAULT}{VN_DIAGONAL_THEME_SUFFIX}"
+            vn.get("theme_dual", VN_THEME_DEFAULT) or VN_THEME_DEFAULT
         ),
         "opacity": int(vn.get("opacity", 100) if vn.get("opacity", 100) is not None else 100),
     }

@@ -5691,7 +5691,6 @@ async def handle_api_postprocess_preview(request: web.Request) -> web.Response:
             "name_color": bool(body.get("name_color", False)),
             "dialogue_color": bool(body.get("dialogue_color", False)),
             "text_outline_width": body.get("text_outline_width", -1),
-            "multi_speaker_layout": body.get("multi_speaker_layout", "split") or "split",
             "name_replace": body.get("name_replace") or {},
             "name_replace_enabled": bool(body.get("name_replace_enabled", True)),
             "strip_emotion": bool(body.get("strip_emotion", False)),
@@ -5704,9 +5703,10 @@ async def handle_api_postprocess_preview(request: web.Request) -> web.Response:
             "face_best_only": bool(body.get("face_best_only", False)),
             "face_device": body.get("face_device", "auto"),
             "face_cpu_threads": body.get("face_cpu_threads", 0),
+            "multi_face_mode": body.get("multi_face_mode", "both") or "both",
             "theme": body.get("theme", "sky"),
             "theme_single": body.get("theme_single", body.get("theme", "sky")),
-            "theme_dual": body.get("theme_dual", "sky_diagonal"),
+            "theme_dual": body.get("theme_dual", "sky"),
             "opacity": body.get("opacity", 100),
         }
         speak = body.get("speak", "") or ""
