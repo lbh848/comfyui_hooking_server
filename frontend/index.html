@@ -49586,12 +49586,12 @@
 
         // ─── 일괄 설정 모달 ──────────────────────────────────
         let bulkDropdownValues = {};
-        function updateBulkStrengthControl(prefix) {
-            const checkbox = document.getElementById(`bulk-${prefix}-strength-check`);
-            const range = document.getElementById(`bulk-${prefix}-strength`);
-            const control = document.getElementById(`bulk-${prefix}-strength-control`);
+        function updateBulkStrengthControl(prefix, suffix = 'strength') {
+            const checkbox = document.getElementById(`bulk-${prefix}-${suffix}-check`);
+            const range = document.getElementById(`bulk-${prefix}-${suffix}`);
+            const control = document.getElementById(`bulk-${prefix}-${suffix}-control`);
             if (!checkbox || !range || !control) {
-                console.error('[BATCH] 일괄 강도 컨트롤을 찾지 못했습니다:', prefix);
+                console.error('[BATCH] 일괄 컨트롤을 찾지 못했습니다:', prefix, suffix);
                 return;
             }
             const enabled = checkbox.checked;
@@ -49806,13 +49806,18 @@
                                 <option value="off">모두 OFF</option>
                             </select>
                         </div>
-                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
-                            <label style="font-size:0.8rem; min-width:fit-content;">업스케일링 비율:</label>
-                            <input type="range" id="bulk-hrf-size" min="1" max="3" step="0.05" value="2.0" style="flex:1; cursor:pointer;">
-                            <span id="bulk-hrf-size-val" style="font-size:0.75rem; min-width:28px; text-align:right;">2.0</span>
-                            <label style="font-size:0.75rem; display:flex; align-items:center; gap:4px; cursor:pointer;">
-                                <input type="checkbox" id="bulk-hrf-size-check"> 적용
-                            </label>
+                        <div class="batch-bulk-strength-row" style="margin-bottom:6px;">
+                            <div class="batch-bulk-apply-switch">
+                                <span>업스케일링 비율</span>
+                                <label class="toggle-switch sm">
+                                    <input type="checkbox" id="bulk-hrf-size-check" onchange="updateBulkStrengthControl('hrf','size')">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                            <div class="batch-bulk-strength-control inactive" id="bulk-hrf-size-control">
+                                <input type="range" id="bulk-hrf-size" min="1" max="3" step="0.05" value="2.0" disabled>
+                                <span id="bulk-hrf-size-val" style="font-size:0.75rem; min-width:28px;">2.0</span>
+                            </div>
                         </div>
                         <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
                             <label style="font-size:0.8rem;">HRF RESTORE SIZE:</label>
@@ -49932,13 +49937,18 @@
                                 <option value="off">모두 OFF</option>
                             </select>
                         </div>
-                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
-                            <label style="font-size:0.8rem; min-width:fit-content;">업스케일링 비율:</label>
-                            <input type="range" id="bulk-hrf-size" min="1" max="3" step="0.05" value="2.0" style="flex:1; cursor:pointer;">
-                            <span id="bulk-hrf-size-val" style="font-size:0.75rem; min-width:28px; text-align:right;">2.0</span>
-                            <label style="font-size:0.75rem; display:flex; align-items:center; gap:4px; cursor:pointer;">
-                                <input type="checkbox" id="bulk-hrf-size-check"> 적용
-                            </label>
+                        <div class="batch-bulk-strength-row" style="margin-bottom:6px;">
+                            <div class="batch-bulk-apply-switch">
+                                <span>업스케일링 비율</span>
+                                <label class="toggle-switch sm">
+                                    <input type="checkbox" id="bulk-hrf-size-check" onchange="updateBulkStrengthControl('hrf','size')">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                            <div class="batch-bulk-strength-control inactive" id="bulk-hrf-size-control">
+                                <input type="range" id="bulk-hrf-size" min="1" max="3" step="0.05" value="2.0" disabled>
+                                <span id="bulk-hrf-size-val" style="font-size:0.75rem; min-width:28px;">2.0</span>
+                            </div>
                         </div>
                         <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
                             <label style="font-size:0.8rem;">RESTORE SIZE:</label>
@@ -49993,6 +50003,7 @@
             overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
             updateBulkStrengthControl('ref');
             updateBulkStrengthControl('style-ref');
+            updateBulkStrengthControl('hrf', 'size');
 
             document.getElementById('bulk-ref-strength').addEventListener('input', function() {
                 document.getElementById('bulk-ref-strength-val').textContent = this.value;
