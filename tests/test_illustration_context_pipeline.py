@@ -610,8 +610,10 @@ def test_backtranslation_slot_protection_round_trips_exact_markers():
 
     assert "[Slot" not in protected
     assert pipeline._PROTECTED_SLOT_TOKEN_RE.findall(protected) == [
-        token for token, _marker in markers
+        "__SLOT_0__",
+        "__SLOT_1__",
     ]
+    assert [token for token, _marker in markers] == ["__SLOT_0__", "__SLOT_1__"]
     restored, valid, reason = pipeline._restore_slot_markers(protected, markers)
     assert valid is True
     assert reason == ""
@@ -770,7 +772,7 @@ async def test_backtranslation_protected_slot_mismatch_falls_back_to_original_ch
         token = pipeline._PROTECTED_SLOT_TOKEN_RE.findall(
             messages[-1]["content"]
         )[0]
-        return "Scene.\n\n" + token.replace("_0000__", "_0001__")
+        return "Scene.\n\n" + token.replace("_0__", "_1__")
 
     monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
     translated, statuses = await pipeline.backtranslate_current_context(
@@ -1517,7 +1519,7 @@ scenes[1]:
     call1_text = "\n".join(message["content"] for message in calls[0])
     call2_text = "\n".join(message["content"] for message in calls[1])
     assert "[Slot 0]" not in call1_text
-    assert "__LB_ILLUST_SLOT_" not in call1_text
+    assert "__SLOT_" not in call1_text
     assert "[Visual Content #01]" in call2_text
     assert "[Slot 0]" in call2_text
     assert "[Position]첫 문장.[/Position]" in call2_text

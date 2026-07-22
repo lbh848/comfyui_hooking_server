@@ -8,7 +8,6 @@ RisuAI는 Comfy history에 이미지가 여러 장 있어도 첫 장만 소비�
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import os
 import re
@@ -1055,19 +1054,16 @@ def insert_slots(text: str) -> str:
 
 
 _SLOT_MARKER_RE = re.compile(r"\[Slot\s+(\d+)\]")
-_PROTECTED_SLOT_TOKEN_RE = re.compile(
-    r"__LB_ILLUST_SLOT_[0-9A-F]{12}_[0-9]{4}__"
-)
+_PROTECTED_SLOT_TOKEN_RE = re.compile(r"__SLOT_[0-9]+__")
 
 
 def _protect_slot_markers(text: str) -> tuple[str, list[tuple[str, str]]]:
     """LLM이 슬롯을 구조 태그로 해석하지 않도록 불투명 토큰으로 치환한다."""
     source = str(text or "")
-    nonce = hashlib.sha256(source.encode("utf-8")).hexdigest()[:12].upper()
     protected_markers: list[tuple[str, str]] = []
 
     def replace(match: re.Match) -> str:
-        token = f"__LB_ILLUST_SLOT_{nonce}_{len(protected_markers):04d}__"
+        token = f"__SLOT_{len(protected_markers)}__"
         protected_markers.append((token, match.group(0)))
         return token
 
@@ -2055,7 +2051,7 @@ async def backtranslate_current_context(
                 "content": (
                     f"[Current Response Chunk {index}/{len(chunks)}]\n"
                     "Return only the English translation of the chunk body below.\n\n"
-                    "Tokens shaped like __LB_ILLUST_SLOT_...__ are server-protected "
+                    "Tokens shaped like __SLOT_0__ are server-protected "
                     "slot markers. Copy every token exactly once and in the same order.\n\n"
                     + protected_chunk
                 ),
