@@ -6003,6 +6003,11 @@ async def handle_api_postprocess_preview(request: web.Request) -> web.Response:
             except Exception as e:
                 print(f"[POSTPROCESS_PREVIEW] ⚠ base 이미지 디코딩 실패, 더미 사용: {e}")
                 base_bytes = None
+        # 백업에서 불러온 실제 베이스 이미지 여부. 더미(보라색 배경)와 구분한다.
+        # 백업 이미지는 이미 HRF까지 포함된 최종 결과물이므로 아래 HRF 변환을 건너뛰고
+        # 원본 사이즈를 그대로 미리보기에 사용한다. 더미일 때만 HRF를 적용해
+        # 실제 생성 결과의 최종 사이즈를 재현한다.
+        has_real_base = base_bytes is not None
         if base_bytes is None:
             # 저장된 img_w/img_h로 더미 생성 (없으면 표준 삽화 비율 832x1216)
             from PIL import Image as _PILImage
@@ -6042,7 +6047,22 @@ async def handle_api_postprocess_preview(request: web.Request) -> web.Response:
                 hrf_size = 1.0
             hrf_restore = bool(_is.get("hrf_restore_size", False))
 
-            if illustration_provider == "chansub" and hrf_apply:
+            if has_real_base:
+                # 백업 베이스: 이미 최종 사이즈이므로 HRF 재적용(이중 확대) 금지.
+                # 미리보기 사이즈 = 백업 이미지 원본 사이즈.
+                try:
+                    _rb = Image.open(BytesIO(base_bytes))
+                    print(
+                        f"[POSTPROCESS_PREVIEW] 백업 베이스 사용 — HRF 변환 건너뜀"
+                        f"(백업 이미지는 최종 사이즈): {_rb.size[0]}x{_rb.size[1]} "
+                        f"(profile={profile})"
+                    )
+                except Exception:
+                    print(
+                        f"[POSTPROCESS_PREVIEW] 백업 베이스 사용 — HRF 변환 건너뜀 "
+                        f"(profile={profile})"
+                    )
+            elif illustration_provider == "chansub" and hrf_apply:
                 print(
                     f"[POSTPROCESS_PREVIEW] 챈섭 공급자이므로 HRF 업스케일 무시: "
                     f"size={hrf_size}, restore={hrf_restore}, profile={profile}"
