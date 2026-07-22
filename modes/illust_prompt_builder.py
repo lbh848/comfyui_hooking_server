@@ -14,6 +14,7 @@ IllustPromptBuilder - 삽화 모드 프롬프트 빌더
 
 import json
 import re
+import traceback
 from collections import deque
 import time
 
@@ -25,6 +26,49 @@ _illust_build_logs: deque = deque(maxlen=20)
 def get_illust_logs() -> list:
     """삽화 프롬프트 생성 로그 목록 반환."""
     return list(_illust_build_logs)
+
+
+def sync_multi_char_shared_tags(positive: str) -> str:
+    """최종 ANIMA artist/quality 줄을 MULTI_CHAR 공통 조립 자료와 동기화한다."""
+    if not positive or "[MULTI_CHAR]" not in positive:
+        return positive
+    try:
+        multi_match = re.search(r"(?m)(^\[MULTI_CHAR\]\r?\n)([^\r\n]*)", positive)
+        if not multi_match:
+            raise ValueError("MULTI_CHAR 블록을 찾지 못했습니다")
+        payload = json.loads(multi_match.group(2))
+        if not isinstance(payload, dict) or not payload.get("enable"):
+            return positive
+
+        def section_line(name: str) -> str:
+            match = re.search(
+                rf"(?m)^\[{re.escape(name)}\]\r?\n([^\r\n]*)",
+                positive,
+            )
+            return match.group(1).strip() if match else ""
+
+        background_prompt = str(payload.get("background_prompt") or "").strip()
+        if not background_prompt:
+            raise ValueError("MULTI_CHAR.background_prompt가 비어 있습니다")
+        shared_before = [
+            value
+            for value in (
+                section_line("ANIMA_ARTIST"),
+                section_line("ANIMA_QUALITY"),
+                background_prompt,
+            )
+            if value
+        ]
+        payload["shared_tag"] = {
+            "before_char": shared_before,
+            "after_char": [],
+        }
+        replacement = multi_match.group(1) + json.dumps(payload, ensure_ascii=False)
+        return positive[:multi_match.start()] + replacement + positive[multi_match.end():]
+    except Exception as exc:
+        print(f"[MULTI_CHAR:PROMPT] 최종 artist/quality 동기화 실패: error={exc}")
+        traceback.print_exc()
+        raise
 
 
 def log_illust_build(raw_positive: str, word_replaced_raw: str,
@@ -383,7 +427,8 @@ class IllustPromptBuilder:
         bot: dict,
         tags: dict,
         settings: dict,
-        bot_name: str
+        bot_name: str,
+        multi_char_context: dict | None = None,
     ) -> str:
         """최종 긍정 프롬프트 빌드.
 
@@ -399,6 +444,8 @@ class IllustPromptBuilder:
 
         # ─── 감지된 캐릭터의 LoRA/트리거워드 정보 수집 ───
         anima_triggers = []
+        anima_triggers_by_char = {name: [] for name in detected_chars}
+        anima_shared_triggers = []
         sdxl_triggers = []
         anima_loras = []
         sdxl_loras = []
@@ -418,10 +465,13 @@ class IllustPromptBuilder:
                 if base == "anima":
                     if trigger not in anima_triggers:
                         anima_triggers.append(trigger)
+                    if trigger not in anima_triggers_by_char[char_name]:
+                        anima_triggers_by_char[char_name].append(trigger)
                     anima_loras.append({
                         "lora_path": lora_path,
                         "str": strength,
-                        "BASE": "anima"
+                        "BASE": "anima",
+                        "CHAR": char_name,
                     })
                 elif base == "sdxl":
                     if trigger not in sdxl_triggers:
@@ -429,7 +479,8 @@ class IllustPromptBuilder:
                     sdxl_loras.append({
                         "lora_path": lora_path,
                         "str": strength,
-                        "BASE": "sdxl"
+                        "BASE": "sdxl",
+                        "CHAR": char_name,
                     })
 
             # face_loras 수집
@@ -458,6 +509,8 @@ class IllustPromptBuilder:
                 if sbase == "anima":
                     if strigger and strigger not in anima_triggers:
                         anima_triggers.append(strigger)
+                    if strigger and strigger not in anima_shared_triggers:
+                        anima_shared_triggers.append(strigger)
                 elif sbase == "sdxl":
                     if strigger and strigger not in sdxl_triggers:
                         sdxl_triggers.append(strigger)
@@ -624,6 +677,83 @@ class IllustPromptBuilder:
                                                          whitelist=whitelist, blacklist=blacklist)
         positive += "\n[CHAR_FACE_TAG_INFORM]"
         positive += "\n" + json.dumps(face_tag_data, ensure_ascii=False)
+
+        # MULTI_CHAR: Regional Conditioning이 캐릭터별 프롬프트를 동일한 조립
+        # 순서(트리거→아티스트→품질→setup→캐릭터→supplement)로 재현할 자료.
+        multi_payload = {
+            "enable": False,
+            "char_num": len(detected_chars),
+            "char_inform": [],
+            "char_name_list": list(detected_chars),
+            "char_trigger_list": [],
+            "background_trigger_list": [],
+            "background_prompt": "",
+            "mask_fingerprint": "",
+            "shared_tag": {"before_char": [], "after_char": []},
+        }
+        if isinstance(multi_char_context, dict) and multi_char_context.get("enable"):
+            ordered_names = [
+                str(name or "").strip()
+                for name in (multi_char_context.get("char_name_list") or [])
+            ]
+            char_inform = [
+                str(value or "").strip()
+                for value in (multi_char_context.get("char_inform") or [])
+            ]
+            background_prompt = str(
+                multi_char_context.get("background_prompt") or ""
+            ).strip()
+            mask_fingerprint = str(
+                multi_char_context.get("mask_fingerprint") or ""
+            ).strip()
+            if (
+                len(ordered_names) >= 2
+                and ordered_names == list(detected_chars)
+                and len(char_inform) == len(ordered_names)
+                and all(char_inform)
+                and background_prompt
+                and mask_fingerprint
+            ):
+                shared_before = list(anima_artist_parts) + list(anima_quality_parts)
+                # CALL2의 setup/char/supplement가 서로 섞여 있어도 마스크 LLM이
+                # 의미 기준으로 분리한 배경만 setup 위치에 넣는다. 원문을 다시
+                # 더하면 캐릭터 복장/자세가 전역으로 새므로 사용하지 않는다.
+                shared_before.append(background_prompt)
+                shared_after = []
+                multi_payload = {
+                    "enable": True,
+                    "char_num": len(ordered_names),
+                    "char_inform": char_inform,
+                    "char_name_list": ordered_names,
+                    "char_trigger_list": [
+                        list(dict.fromkeys(
+                            str(trigger).strip()
+                            for trigger in (
+                                anima_triggers_by_char.get(name, [])
+                                + anima_shared_triggers
+                            )
+                            if str(trigger).strip()
+                        ))
+                        for name in ordered_names
+                    ],
+                    "background_trigger_list": list(anima_shared_triggers),
+                    "background_prompt": background_prompt,
+                    "mask_fingerprint": mask_fingerprint,
+                    "shared_tag": {
+                        "before_char": shared_before,
+                        "after_char": shared_after,
+                    },
+                }
+            else:
+                print(
+                    f"[MULTI_CHAR:PROMPT] 컨텍스트 불일치로 비활성화: "
+                    f"detected={detected_chars}, ordered={ordered_names}, "
+                    f"char_inform={len(char_inform)}, "
+                    f"background_len={len(background_prompt)}, "
+                    f"mask_fingerprint={bool(mask_fingerprint)}"
+                )
+        positive += "\n[MULTI_CHAR]"
+        positive += "\n" + json.dumps(multi_payload, ensure_ascii=False)
 
         # HRF
         hrf_activate = settings.get("hrf_activate", False)

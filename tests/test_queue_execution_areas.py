@@ -118,3 +118,39 @@ async def test_queue_subtask_failure_keeps_error_on_child():
     assert subtask["started_at"] is not None
     assert subtask["completed_at"] is not None
     assert subtask["error"] == "번역 API 실패"
+
+
+@pytest.mark.asyncio
+async def test_multi_char_mask_is_prepared_at_illustration_execution_time(monkeypatch, tmp_path):
+    from modes import multi_char_mask
+
+    manager = QueueManager()
+    events = []
+    input_dir = tmp_path / "input"
+    input_dir.mkdir()
+    manager.get_config = lambda: {"comfy_input_dir": str(input_dir)}
+
+    def fake_prepare(comfy_input_dir, context, mask_location):
+        events.append(("mask", comfy_input_dir, context["enable"], mask_location))
+        return str(input_dir / "region_mask" / "region_mask.png")
+
+    async def fake_process(prompt_id, prompt_data, raw_body, queue_progress_callback=None):
+        events.append(("process", prompt_id))
+
+    monkeypatch.setattr(multi_char_mask, "prepare_region_mask", fake_prepare)
+    manager.process_prompt_full = fake_process
+    item = _item("illustration", {
+        "prompt_id": "prompt-id",
+        "prompt_data": {},
+        "raw_body": {
+            "illustration_multi_char": {
+                "enable": True,
+                "mask_location": "region_mask",
+            }
+        },
+    })
+
+    result = await manager._handle_illustration(item)
+
+    assert [event[0] for event in events] == ["mask", "process"]
+    assert result == {"success": True, "prompt_id": "prompt-id"}

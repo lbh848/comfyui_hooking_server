@@ -1417,6 +1417,92 @@ def test_build_raw_prompt_uses_v1_or_v3_input_shape():
 
 
 @pytest.mark.asyncio
+async def test_multi_char_layout_reorders_call2_characters_left_to_right(monkeypatch):
+    descriptor = {
+        "kind": "scene",
+        "slot": 4,
+        "camera": "wide shot",
+        "scene": "two characters talking",
+        "supplement": "soft light",
+        "speak": 'Right: "hello"',
+        "characters": [
+            {"name": "Right", "positive": "green hair", "position": "on the right"},
+            {"name": "Left", "positive": "red hair", "position": "on the left"},
+        ],
+    }
+    calls = []
+
+    async def fake_call(call_name, messages, stream_notify=None, result_validator=None, json_mode=False):
+        calls.append((call_name, messages, json_mode))
+        result = """{
+          "background_prompt": "wide shot, classroom, soft light",
+          "regions": [
+            {"name":"Right","character_prompt":"green hair, waving","x":0.55,"y":0.1,"width":0.4,"height":0.8},
+            {"name":"Left","character_prompt":"red hair, listening","x":0.05,"y":0.1,"width":0.4,"height":0.8}
+          ]
+        }"""
+        assert result_validator(result)[0] is True
+        return result
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_call)
+
+    await pipeline.calculate_multi_char_layouts(
+        [descriptor],
+        "Return layout JSON",
+        positive_note="cinematic color grading",
+    )
+
+    assert calls[0][0].startswith("MULTI-CHAR-MASK slot=4")
+    assert calls[0][2] is True
+    assert json.loads(calls[0][1][1]["content"])["positive_note"] == (
+        "cinematic color grading"
+    )
+    assert [character["name"] for character in descriptor["characters"]] == ["Left", "Right"]
+    assert descriptor["multi_char_layout"]["character_order"] == ["Left", "Right"]
+    assert descriptor["multi_char_layout"]["background_prompt"] == (
+        "wide shot, classroom, soft light"
+    )
+    assert [
+        region["character_prompt"]
+        for region in descriptor["multi_char_layout"]["regions"]
+    ] == ["red hair, listening", "green hair, waving"]
+
+
+@pytest.mark.asyncio
+async def test_multi_char_layout_rejects_unseparated_prompt(monkeypatch):
+    descriptor = {
+        "kind": "scene",
+        "slot": 5,
+        "camera": "wide shot",
+        "scene": "rooftop",
+        "supplement": "blue hour",
+        "characters": [
+            {"name": "Left", "positive": "grey hair, coat"},
+            {"name": "Right", "positive": "black hair, crop top"},
+        ],
+    }
+
+    async def fake_call(call_name, messages, stream_notify=None, result_validator=None, json_mode=False):
+        result = """{
+          "regions": [
+            {"name":"Left","x":0.0,"y":0.0,"width":0.5,"height":1.0},
+            {"name":"Right","x":0.5,"y":0.0,"width":0.5,"height":1.0}
+          ]
+        }"""
+        valid, reason = result_validator(result)
+        assert valid is False
+        assert "background_prompt" in reason
+        return result
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_call)
+
+    await pipeline.calculate_multi_char_layouts([descriptor], "Return separated JSON")
+
+    assert "multi_char_layout" not in descriptor
+    assert "background_prompt" in descriptor["multi_char_layout_error"]
+
+
+@pytest.mark.asyncio
 async def test_pipeline_llm_records_success_in_lighbd_history(monkeypatch):
     records = []
     events = []

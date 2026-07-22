@@ -19,7 +19,7 @@ from urllib.parse import quote
 
 import yaml
 
-from modes import lighbd_service, llm_service
+from modes import lighbd_service, llm_service, multi_char_mask
 
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -48,6 +48,7 @@ PROMPT_FILES = {
     # 끝에 추가로 주입한다(일반 작업에 노출 안 됨).
     "call3_manga_nsfw": "manga_nsfw.txt",
     "call2_fix": "repair.txt",
+    "multi_char_mask": "multi_char_mask.txt",
 }
 
 DEFAULT_TOGGLES = {
@@ -1867,6 +1868,7 @@ _CALL_TASK_KEYS = {
     "CALL2": "illustration_call2",
     "CALL2-FIX": "illustration_call2_fix",
     "CALL3": "illustration_call3",
+    "MULTI-CHAR-MASK": "illustration_multi_char_mask",
 }
 
 
@@ -1875,6 +1877,7 @@ async def _call_pipeline_llm(
     messages: list[dict],
     stream_notify=None,
     result_validator=None,
+    json_mode: bool = False,
 ) -> str:
     """삽화 CALL1/2/3 의 LLM 호출. 외부 API 분기(illustration_callN task_key)를 경유한다.
 
@@ -1885,6 +1888,8 @@ async def _call_pipeline_llm(
     task_key = _CALL_TASK_KEYS.get(call_name)
     if task_key is None and call_name.startswith("CALL1-BACKTRANSLATE"):
         task_key = _CALL_TASK_KEYS["CALL1-BACKTRANSLATE"]
+    if task_key is None and call_name.startswith("MULTI-CHAR-MASK"):
+        task_key = _CALL_TASK_KEYS["MULTI-CHAR-MASK"]
     if task_key is None:
         print(
             f"[ILLUST_CONTEXT:{call_name}] 등록되지 않은 CALL 이름, "
@@ -1916,14 +1921,12 @@ async def _call_pipeline_llm(
             await stream_notify({
                 "type": "start", "call_name": call_name, "model": model, "text": "",
             })
-        if result_validator is None:
-            result = await llm_service.callLLMTask(task_key, messages)
-        else:
-            result = await llm_service.callLLMTask(
-                task_key,
-                messages,
-                result_validator=result_validator,
-            )
+        call_kwargs = {}
+        if result_validator is not None:
+            call_kwargs["result_validator"] = result_validator
+        if json_mode:
+            call_kwargs["json_mode"] = True
+        result = await llm_service.callLLMTask(task_key, messages, **call_kwargs)
         if not result or str(result).startswith("[LLM 실패]"):
             print(f"[ILLUST_CONTEXT:{call_name}] LLM 호출 실패: {result}")
             if stream_notify:
@@ -1984,6 +1987,151 @@ async def _call_pipeline_llm(
         print(f"[ILLUST_CONTEXT:{call_name}] 호출 예외: {e}")
         traceback.print_exc()
         raise
+
+
+def _parse_multi_char_layout_response(text: str, expected_names: list[str]) -> dict:
+    source = str(text or "").strip()
+    if not source:
+        raise ValueError("마스크 레이아웃 응답이 비어 있습니다")
+    if source.startswith("```"):
+        source = re.sub(r"^```(?:json)?\s*", "", source, flags=re.I)
+        source = re.sub(r"\s*```$", "", source)
+    object_start = source.find("{")
+    if object_start < 0:
+        raise ValueError("마스크 레이아웃 응답에 JSON object가 없습니다")
+    try:
+        value, _end = json.JSONDecoder().raw_decode(source[object_start:])
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"마스크 레이아웃 JSON 파싱 실패: {exc}") from exc
+    return multi_char_mask.validate_multi_char_layout(
+        value,
+        expected_names,
+        require_prompt_separation=True,
+    )
+
+
+async def calculate_multi_char_layouts(
+    descriptors: list[dict],
+    prompt_template: str,
+    stream_notify=None,
+    positive_note: str = "",
+) -> None:
+    """CALL3 뒤 2~3인 장면의 영역과 배경/캐릭터 프롬프트를 병렬 계산한다."""
+    targets = []
+    for descriptor in descriptors:
+        characters = [
+            character
+            for character in (descriptor.get("characters") or [])
+            if isinstance(character, dict) and str(character.get("name") or "").strip()
+        ]
+        if len(characters) > len(multi_char_mask.MASK_CHANNELS):
+            descriptor["multi_char_layout_error"] = (
+                f"Regional RGB 마스크는 최대 {len(multi_char_mask.MASK_CHANNELS)}명까지 지원합니다: "
+                f"actual={len(characters)}"
+            )
+            print(
+                f"[ILLUST_CONTEXT:MULTI_CHAR] 캐릭터 수 초과로 해당 슬롯 제외: "
+                f"slot={descriptor.get('slot')}, characters={len(characters)}"
+            )
+        elif len(characters) >= 2:
+            targets.append((descriptor, characters))
+    if not targets:
+        return
+
+    system_prompt = str(prompt_template or "").strip()
+    if not system_prompt:
+        error = "multi_char_mask.txt 프롬프트가 비어 있습니다"
+        print(f"[ILLUST_CONTEXT:MULTI_CHAR] 레이아웃 계산 불가: {error}")
+        for descriptor, _characters in targets:
+            descriptor["multi_char_layout_error"] = error
+        return
+
+    async def calculate_one(index: int, descriptor: dict, characters: list[dict]) -> None:
+        expected_names = [str(character.get("name") or "").strip() for character in characters]
+        slot = descriptor.get("slot")
+        scene_payload = {
+            "slot": slot,
+            "camera": str(descriptor.get("camera") or ""),
+            "scene": str(descriptor.get("scene") or ""),
+            "supplement": str(descriptor.get("supplement") or ""),
+            "speak": str(descriptor.get("speak") or ""),
+            "characters": [{
+                "name": str(character.get("name") or ""),
+                "position_hint": str(character.get("position") or ""),
+                "visual_tags": str(character.get("positive") or ""),
+            } for character in characters],
+        }
+        clean_positive_note = str(positive_note or "").strip()
+        if clean_positive_note:
+            scene_payload["positive_note"] = clean_positive_note
+        messages = [{
+            "role": "system",
+            "content": system_prompt,
+        }, {
+            "role": "user",
+            "content": json.dumps(scene_payload, ensure_ascii=False),
+        }]
+
+        def validate_result(result: str):
+            try:
+                _parse_multi_char_layout_response(result, expected_names)
+                return True, ""
+            except Exception as exc:
+                print(
+                    f"[ILLUST_CONTEXT:MULTI_CHAR] 레이아웃 응답 검증 실패: "
+                    f"slot={slot}, names={expected_names}, error={exc}"
+                )
+                traceback.print_exc()
+                return False, str(exc)
+
+        layout_stream_notify = None
+        if stream_notify:
+            async def layout_stream_notify(event: dict):
+                payload = dict(event)
+                payload["queue_subtask"] = {
+                    "group_id": "multi_char_mask",
+                    "group_label": "다중 캐릭터 마스크",
+                    "index": index,
+                    "total": len(targets),
+                }
+                await stream_notify(payload)
+
+        try:
+            result = await _call_pipeline_llm(
+                f"MULTI-CHAR-MASK slot={slot}",
+                messages,
+                layout_stream_notify,
+                result_validator=validate_result,
+                json_mode=True,
+            )
+            layout = _parse_multi_char_layout_response(result, expected_names)
+            by_name = {
+                str(character.get("name") or "").strip().casefold(): character
+                for character in characters
+            }
+            descriptor["characters"] = [
+                by_name[name.casefold()]
+                for name in layout["character_order"]
+            ]
+            descriptor["multi_char_layout"] = layout
+            descriptor.pop("multi_char_layout_error", None)
+            print(
+                f"[ILLUST_CONTEXT:MULTI_CHAR] 레이아웃 계산 완료: "
+                f"slot={slot}, order={layout['character_order']}"
+            )
+        except Exception as exc:
+            descriptor.pop("multi_char_layout", None)
+            descriptor["multi_char_layout_error"] = str(exc)
+            print(
+                f"[ILLUST_CONTEXT:MULTI_CHAR] 레이아웃 계산 실패(해당 슬롯만 제외): "
+                f"slot={slot}, names={expected_names}, error={exc}"
+            )
+            traceback.print_exc()
+
+    await asyncio.gather(*(
+        calculate_one(index, descriptor, characters)
+        for index, (descriptor, characters) in enumerate(targets, start=1)
+    ))
 
 
 async def backtranslate_current_context(
@@ -2252,6 +2400,7 @@ async def build_from_context(
     extra_costume: str = "",
     extra_names: str = "",
     backtranslate_names: str = "",
+    enable_multi_char_layout: bool = False,
 ) -> dict:
     toggles = merged_toggles(toggles)
     prompts = load_prompt_files()
@@ -2540,6 +2689,23 @@ async def build_from_context(
         )
     else:
         print("[ILLUST_CONTEXT:CALL3] 토글로 비활성화되었거나 SPEAK이 꺼져 있음")
+
+    # 다중 캐릭터 영역 계산은 이미지에 대사가 필요한 CALL3까지 끝난 뒤 수행한다.
+    # 서버는 이 동안 CALL2에서 확정된 단일 캐릭터 이미지를 이미 GPU 큐에서 처리한다.
+    if enable_multi_char_layout:
+        if progress:
+            multi_count = sum(
+                1 for descriptor in descriptors
+                if len(descriptor.get("characters") or []) >= 2
+            )
+            if multi_count:
+                await progress(66, "multi_char_mask", f"다중 캐릭터 마스크 {multi_count}개 계산")
+        await calculate_multi_char_layouts(
+            descriptors,
+            prompts.get("multi_char_mask", ""),
+            stream_notify=stream_notify,
+            positive_note=str(toggles.get("positive_note") or ""),
+        )
 
     if progress:
         await progress(68, "raw_build", f"RAW 프롬프트 {len(descriptors)}개 생성")

@@ -1,9 +1,11 @@
+import json
 import unittest
 
 from modes.illust_prompt_builder import (
     IllustPromptBuilder,
     get_illust_logs,
     log_illust_build,
+    sync_multi_char_shared_tags,
 )
 from modes.postprocess import parse_speak
 from modes.word_rules import (
@@ -154,6 +156,127 @@ class RawPromptWordRulesTest(unittest.TestCase):
         )
 
         self.assertEqual(get_illust_logs()[-1]["word_replaced_raw"], "[NAME]\nalice")
+
+    def test_multi_char_block_preserves_per_region_assembly_order(self):
+        bot = {
+            "characters": [
+                {
+                    "name": "Left",
+                    "gender_tag": "1girl",
+                    "loras_group": [{
+                        "source": "asset",
+                        "lora_path": "left.safetensors",
+                        "trigger": "left trigger",
+                        "BASE": "anima",
+                    }],
+                    "style_loras": [{
+                        "source": "style",
+                        "lora_path": "shared-style.safetensors",
+                        "trigger": "shared style trigger",
+                        "BASE": "anima",
+                    }],
+                },
+                {
+                    "name": "Right",
+                    "gender_tag": "1girl",
+                    "loras_group": [{
+                        "source": "asset",
+                        "lora_path": "right.safetensors",
+                        "trigger": "right trigger",
+                        "BASE": "anima",
+                    }],
+                },
+            ]
+        }
+        tags = {
+            "artist_presets": {"artist": ["artist tag"]},
+            "quality_presets": {"quality": ["quality tag"]},
+        }
+        settings = {
+            "anima_artist_preset": "artist",
+            "anima_quality_preset": "quality",
+        }
+
+        positive = IllustPromptBuilder().build_positive_prompt(
+            "shared setup",
+            "combined character tags",
+            "shared supplement",
+            ["Left", "Right"],
+            bot,
+            tags,
+            settings,
+            "test-bot",
+            multi_char_context={
+                "enable": True,
+                "char_name_list": ["Left", "Right"],
+                "char_inform": ["left tags", "right tags"],
+                "background_prompt": "clean shared background",
+                "mask_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            },
+        )
+
+        block = positive.split("[MULTI_CHAR]\n", 1)[1].split("\n[HRF_ACTIVATE]", 1)[0]
+        payload = json.loads(block)
+        self.assertTrue(payload["enable"])
+        self.assertEqual(payload["char_name_list"], ["Left", "Right"])
+        self.assertEqual(
+            payload["char_trigger_list"],
+            [
+                ["left trigger", "shared style trigger"],
+                ["right trigger", "shared style trigger"],
+            ],
+        )
+        self.assertEqual(
+            payload["shared_tag"],
+            {
+                "before_char": [
+                    "artist tag",
+                    "quality tag",
+                    "clean shared background",
+                ],
+                "after_char": [],
+            },
+        )
+        self.assertEqual(payload["background_prompt"], "clean shared background")
+        self.assertEqual(payload["background_trigger_list"], ["shared style trigger"])
+        self.assertEqual(
+            payload["mask_fingerprint"],
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        )
+        self.assertEqual(payload["char_inform"], ["left tags", "right tags"])
+
+        lora_block = positive.split("[LORA_DATA]\n", 1)[1].split(
+            "\n[FACE_LORA_ACTIVATE]", 1
+        )[0]
+        lora_payload = json.loads(lora_block)
+        self.assertEqual(
+            [
+                (entry["lora_path"], entry["BASE"], entry["CHAR"])
+                for entry in lora_payload["list"]
+            ],
+            [
+                ("SOYA_CHAR_LORA\\left.safetensors", "anima", "Left"),
+                ("SOYA_CHAR_LORA\\right.safetensors", "anima", "Right"),
+            ],
+        )
+
+        inserted_positive, applied = apply_insert_rules(
+            positive,
+            [{"type": "insert", "word": "forced quality", "enabled": True}],
+        )
+        self.assertEqual(applied, 1)
+        synced = sync_multi_char_shared_tags(inserted_positive)
+        synced_payload = json.loads(
+            synced.split("[MULTI_CHAR]\n", 1)[1].split("\n[HRF_ACTIVATE]", 1)[0]
+        )
+        self.assertEqual(
+            synced_payload["shared_tag"]["before_char"],
+            [
+                "artist tag",
+                "quality tag, forced quality",
+                "clean shared background",
+            ],
+        )
 
     def test_spaced_speaker_name_is_replaced_without_touching_dialogue(self):
         rules = [{

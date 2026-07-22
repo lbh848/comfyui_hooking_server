@@ -675,6 +675,32 @@ class QueueManager:
         prompt_data = params.get("prompt_data", {})
         raw_body = params.get("raw_body", {})
 
+        # 큐 적재 시점이 아니라 이 GPU 항목이 실제 실행되는 순간에만 공유 폴더를
+        # 비우고 마스크를 쓴다. GPU 큐가 직렬이라 다음 항목이 덮어쓸 수 없다.
+        multi_char_context = raw_body.get("illustration_multi_char") or {}
+        if isinstance(multi_char_context, dict) and multi_char_context.get("enable"):
+            try:
+                from modes.multi_char_mask import prepare_region_mask
+
+                config = self.get_config() if self.get_config else {}
+                comfy_input_dir = str((config or {}).get("comfy_input_dir") or "")
+                prepared_path = prepare_region_mask(
+                    comfy_input_dir,
+                    multi_char_context,
+                    mask_location=str(multi_char_context.get("mask_location") or "region_mask"),
+                )
+                print(
+                    f"[QUEUE:MULTI_CHAR] 실행 직전 마스크 배치 완료: "
+                    f"item={item.id}, path={prepared_path}"
+                )
+            except Exception as e:
+                print(
+                    f"[QUEUE:MULTI_CHAR] 실행 직전 마스크 배치 실패: "
+                    f"item={item.id}, error={e}"
+                )
+                traceback.print_exc()
+                raise
+
         async def _on_illust_progress(value, max_value):
             await self._notify_progress(item, {
                 "phase": "generating",

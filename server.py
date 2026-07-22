@@ -63,7 +63,12 @@ from modes.bot_mode import data_patcher
 from modes.bot_mode import handle_get_illust_settings, handle_update_illust_settings, handle_auto_group_prompt, handle_get_positive_rules, handle_save_positive_rules, handle_get_auto_face_tag_prompt, handle_set_auto_face_tag_prompt, handle_auto_classify_face_tags, handle_get_auto_face_tag_test_image, handle_llm_batch_enqueue, handle_get_lb_extra_refine_prompt, handle_set_lb_extra_refine_prompt, handle_lb_extra_refine
 from modes.instance_lora_mode import handle_get_auto_lora_prompt, handle_set_auto_lora_prompt, handle_auto_refine_enqueue, handle_resolve_gender_tag, handle_get_bot_test_setup_prompt, handle_set_bot_test_setup_prompt
 from modes import embedding_service
-from modes.illust_prompt_builder import IllustPromptBuilder, log_illust_build, get_illust_logs
+from modes.illust_prompt_builder import (
+    IllustPromptBuilder,
+    get_illust_logs,
+    log_illust_build,
+    sync_multi_char_shared_tags,
+)
 from modes.chansub_prompt_builder import ChansubPromptBuilder, build_v1_prompt
 from modes.word_rules import (
     apply_prompt_rules as _apply_prompt_word_rules,
@@ -74,6 +79,7 @@ from modes.word_rules import (
 )
 from modes import chansub_service
 from modes import illustration_context_pipeline
+from modes import multi_char_mask
 import importlib.util
 
 # ─── 설정 ───────────────────────────────────────────────
@@ -229,6 +235,7 @@ DEFAULT_CONFIG = {
         "illustration_call2":      _llm_route_defaults(),  # 본문(장면/태그 TOON 빌드)
         "illustration_call2_fix":  _llm_route_defaults(),  # CALL2 파싱 실패 시 TOON 교정(repair.txt)
         "illustration_call3":      _llm_route_defaults(),  # 대사 생성(speak/manga)
+        "illustration_multi_char_mask": _llm_route_defaults(json_mode=True),  # CALL3 뒤 캐릭터별 정규화 영역 계산
     },
     "llm_max_concurrency": 1,         # LLM계열 큐 아이템(태그 정제/얼굴 태그 분류) 동시 처리 수. 1=순차(현행 동작). GPU/ComfyUI 작업과 무관.
     "embedding_provider": "voyage",  # 임베딩 프로바이더: voyage / custom
@@ -2541,6 +2548,24 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
         chansub_quality_tag_start = 0
         chansub_quality_tag_count = 0
         _speak_text = ""  # [SPEAK] 섹션 원문 (후처리 합성용)
+        queued_multi_char = raw_body.get("illustration_multi_char") or {}
+        multi_char_requested = (
+            isinstance(queued_multi_char, dict)
+            and bool(queued_multi_char.get("enable"))
+        )
+        if multi_char_requested and (
+            not bot_name
+            or illustration_provider != "comfy"
+            or prompt_format != "v3"
+            or llm_prompt_edit.detect_v1_format(positive)
+        ):
+            error = (
+                "다중 캐릭터 Regional 프롬프트 조건이 맞지 않습니다: "
+                f"bot={bot_name!r}, provider={illustration_provider!r}, "
+                f"prompt_format={prompt_format!r}"
+            )
+            print(f"[MULTI_CHAR:PROMPT] {error}")
+            raise RuntimeError(error)
         if bot_name and not llm_prompt_edit.detect_v1_format(positive):
             # 삽화 빌딩 분기: V3([NAME]/[SETUP]/[CHAR]/[SUPPLEMENT]) 입력만 처리.
             # V1([ILXL]/[UPSCALE]) 입력은 illust 빌딩을 타지 않고 밑 else 에서 통과시킨다.
@@ -2591,6 +2616,120 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                     detection_sections = [setup_replaced, char_replaced, supplement_replaced]
                     detected = builder.detect_characters(detection_sections, char_names)
                 print(f"[ILLUST] 감지된 캐릭터: {detected} (방식: {'NAME 정확매칭' if sections.get('name') else '폴백 스캔'})")
+
+                multi_char_prompt_context = None
+                if multi_char_requested:
+                    try:
+                        queued_characters = [
+                            character
+                            for character in (queued_multi_char.get("characters") or [])
+                            if isinstance(character, dict)
+                        ]
+                        queued_names = [
+                            str(character.get("name") or "").strip()
+                            for character in queued_characters
+                        ]
+                        layout = multi_char_mask.validate_multi_char_layout(
+                            queued_multi_char.get("layout"),
+                            queued_names,
+                            require_prompt_separation=True,
+                        )
+                        ordered_names = list(layout["character_order"])
+                        declared_order = [
+                            str(name or "").strip()
+                            for name in (queued_multi_char.get("character_order") or [])
+                        ]
+                        if [name.casefold() for name in declared_order] != [
+                            name.casefold() for name in ordered_names
+                        ]:
+                            raise ValueError(
+                                f"큐 캐릭터 순서와 레이아웃 순서가 다릅니다: "
+                                f"declared={declared_order}, layout={ordered_names}"
+                            )
+
+                        detected_by_name = {name.casefold(): name for name in detected}
+                        if set(detected_by_name) != {name.casefold() for name in ordered_names}:
+                            raise ValueError(
+                                f"RAW 감지 캐릭터와 마스크 캐릭터가 다릅니다: "
+                                f"detected={detected}, mask={ordered_names}"
+                            )
+                        # 이후 CHAR_LIST/캐시/LoRA/얼굴 태그까지 모두 마스크의 왼쪽→오른쪽 순서.
+                        detected = [detected_by_name[name.casefold()] for name in ordered_names]
+
+                        queued_by_name = {
+                            str(character.get("name") or "").strip().casefold(): character
+                            for character in queued_characters
+                        }
+                        region_by_name = {
+                            str(region.get("name") or "").strip().casefold(): region
+                            for region in layout["regions"]
+                        }
+                        separated_background_raw = (
+                            f"[SETUP]\n{str(layout.get('background_prompt') or '').strip()}"
+                        )
+                        separated_background_replaced = apply_raw_prompt_word_replacements(
+                            separated_background_raw,
+                            bot_name,
+                            word_rules_snapshot,
+                        )
+                        separated_background_sections = builder.parse_sections(
+                            separated_background_replaced
+                        )
+                        separated_background_prompt = str(
+                            separated_background_sections.get("setup") or ""
+                        ).strip()
+                        if not separated_background_prompt:
+                            raise ValueError("배경 분리 프롬프트가 단어 규칙 처리 후 비어 있습니다")
+                        char_inform = []
+                        for name in ordered_names:
+                            character = queued_by_name.get(name.casefold())
+                            if character is None:
+                                raise ValueError(f"큐에서 캐릭터 태그를 찾지 못했습니다: {name!r}")
+                            region = region_by_name.get(name.casefold())
+                            if region is None:
+                                raise ValueError(f"레이아웃에서 캐릭터 분리 프롬프트를 찾지 못했습니다: {name!r}")
+                            separated_character_prompt = str(
+                                region.get("character_prompt") or ""
+                            ).strip()
+                            if not separated_character_prompt:
+                                raise ValueError(f"캐릭터별 분리 프롬프트가 비어 있습니다: {name!r}")
+                            per_char_raw = (
+                                f"[NAME]\n{name}\n"
+                                f"[CHAR]\n{separated_character_prompt}"
+                            )
+                            per_char_replaced = apply_raw_prompt_word_replacements(
+                                per_char_raw,
+                                bot_name,
+                                word_rules_snapshot,
+                            )
+                            per_char_sections = builder.parse_sections(
+                                per_char_replaced,
+                                lb_extra=lb_extra_data,
+                                characters=characters_for_parse,
+                            )
+                            tags_for_character = str(per_char_sections.get("char") or "").strip()
+                            if not tags_for_character:
+                                raise ValueError(f"캐릭터별 태그가 비어 있습니다: {name!r}")
+                            char_inform.append(tags_for_character)
+                        multi_char_prompt_context = {
+                            "enable": True,
+                            "char_name_list": list(detected),
+                            "char_inform": char_inform,
+                            "background_prompt": separated_background_prompt,
+                            "mask_fingerprint": multi_char_mask.layout_fingerprint(layout),
+                        }
+                        print(
+                            f"[MULTI_CHAR:PROMPT] 배경/캐릭터 분리 및 왼쪽→오른쪽 준비 완료: "
+                            f"order={detected}, "
+                            f"background_len={len(multi_char_prompt_context['background_prompt'])}"
+                        )
+                    except Exception as e:
+                        print(
+                            f"[MULTI_CHAR:PROMPT] 큐 컨텍스트 검증/캐릭터별 태그 처리 실패: "
+                            f"prompt={prompt_id}, error={e}"
+                        )
+                        traceback.print_exc()
+                        raise
 
                 # 4. 캐릭터 수에 따라 solo/group 프로필 선택
                 tags = asset_mode._tags
@@ -2665,7 +2804,8 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                     )
                     positive = builder.build_positive_prompt(
                         setup_replaced, char_replaced, supplement_replaced,
-                        detected, _bot_for_build, tags, settings, bot_name
+                        detected, _bot_for_build, tags, settings, bot_name,
+                        multi_char_context=multi_char_prompt_context,
                     )
                     negative = builder.build_negative_prompt(tags, settings, detected, _bot_for_build)
                     # 품질 뒤 강제 삽입 규칙(ANIMA/SDXL) 후처리
@@ -2674,6 +2814,8 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                         bot_name,
                         word_rules_snapshot,
                     )
+                    if multi_char_prompt_context:
+                        positive = sync_multi_char_shared_tags(positive)
 
                 # 4-1. 인스턴스 LoRA 사용 횟수 증가 (V1/챈섭은 LoRA 미사용 → 제외)
                 from modes.instance_lora_mode import increment_usage as _increment_instance_lora_usage
@@ -2712,6 +2854,10 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                     context=str(raw_body.get("illustration_context") or ""),
                 )
             else:
+                if multi_char_requested:
+                    error = f"다중 캐릭터 프롬프트를 조립할 봇을 찾지 못했습니다: {bot_name!r}"
+                    print(f"[MULTI_CHAR:PROMPT] {error}")
+                    raise RuntimeError(error)
                 print(f"[ILLUST] 봇을 찾을 수 없음: {bot_name}, RAW 선처리 결과를 사용")
                 positive = word_replaced_raw
                 negative = apply_word_replacements(
@@ -3027,6 +3173,37 @@ async def process_illustration_context_queue_item(item) -> dict:
     early_dispatch = False
     raw_items = []
 
+    def _is_multi_char_descriptor(descriptor: dict, prompt_format: str) -> bool:
+        if illustration_provider_snapshot != "comfy":
+            return False
+        if str(prompt_format or "").strip().lower() != "v3":
+            return False
+        characters = [
+            character
+            for character in (descriptor.get("characters") or [])
+            if isinstance(character, dict) and str(character.get("name") or "").strip()
+        ]
+        return len(characters) >= 2
+
+    def _multi_char_queue_context(descriptor: dict, prompt_format: str) -> dict | None:
+        if not _is_multi_char_descriptor(descriptor, prompt_format):
+            return None
+        layout = descriptor.get("multi_char_layout")
+        if not isinstance(layout, dict):
+            return None
+        characters = copy.deepcopy(descriptor.get("characters") or [])
+        order = list(layout.get("character_order") or [])
+        background_prompt = str(layout.get("background_prompt") or "").strip()
+        return {
+            "enable": True,
+            "char_num": len(characters),
+            "characters": characters,
+            "character_order": order,
+            "background_prompt": background_prompt,
+            "layout": copy.deepcopy(layout),
+            "mask_location": "region_mask",
+        }
+
     async def progress(
         value: float,
         phase: str,
@@ -3078,6 +3255,7 @@ async def process_illustration_context_queue_item(item) -> dict:
         prompt_format,
         *,
         defer_postprocess,
+        queue_priority=None,
     ):
         child_id = str(uuid.uuid4())
         child_prompt = copy.deepcopy(prompt_data)
@@ -3116,6 +3294,11 @@ async def process_illustration_context_queue_item(item) -> dict:
             "illustration_provider": illustration_provider_snapshot,
             "illustration_defer_postprocess": bool(defer_postprocess),
         }
+        multi_char_context = _multi_char_queue_context(descriptor, prompt_format)
+        if multi_char_context:
+            child_raw_body["illustration_multi_char"] = multi_char_context
+        if queue_priority is None:
+            queue_priority = 1 if multi_char_context else 0
         try:
             child_item = await queue_manager.add_item(
                 "illustration",
@@ -3126,7 +3309,7 @@ async def process_illustration_context_queue_item(item) -> dict:
                     "raw_body": child_raw_body,
                     "provider": illustration_provider_snapshot,
                 },
-                priority=0,
+                priority=int(queue_priority),
             )
         except Exception as e:
             print(
@@ -3253,15 +3436,25 @@ async def process_illustration_context_queue_item(item) -> dict:
                     f"session={session_id}, images={total_count}, "
                     f"provider={illustration_provider_snapshot}"
                 )
+                preliminary_format = call2_built.get("prompt_format", "v3")
                 for index, descriptor in enumerate(preliminary_items, start=1):
-                    child_pairs.append(await _enqueue_child(
-                        descriptor,
-                        index,
-                        total_count,
-                        call2_built.get("context", ""),
-                        call2_built.get("prompt_format", "v3"),
-                        defer_postprocess=True,
-                    ))
+                    if _is_multi_char_descriptor(descriptor, preliminary_format):
+                        child_pairs.append(None)
+                        print(
+                            f"[ILLUST_CONTEXT:MULTI_CHAR] CALL2 다중 장면 후순위 보류: "
+                            f"session={session_id}, slot={descriptor.get('slot')}, "
+                            f"characters={len(descriptor.get('characters') or [])}"
+                        )
+                    else:
+                        child_pairs.append(await _enqueue_child(
+                            descriptor,
+                            index,
+                            total_count,
+                            call2_built.get("context", ""),
+                            preliminary_format,
+                            defer_postprocess=True,
+                            queue_priority=0,
+                        ))
 
             built = await illustration_context_pipeline.build_from_context(
                 payload,
@@ -3273,6 +3466,10 @@ async def process_illustration_context_queue_item(item) -> dict:
                 extra_costume=extra_costume,
                 extra_names=extra_names,
                 backtranslate_names=backtranslate_names,
+                enable_multi_char_layout=(
+                    illustration_provider_snapshot == "comfy"
+                    and str(illust_toggles.get("prompt_format") or "v3").strip().lower() == "v3"
+                ),
             )
             raw_items = built.get("items") or []
             if not raw_items:
@@ -3292,6 +3489,33 @@ async def process_illustration_context_queue_item(item) -> dict:
                     f"session={session_id}, early={early_descriptor_slots}, final={final_slots}"
                 )
                 raise RuntimeError("CALL2 조기 등록 결과와 CALL3 최종 슬롯 순서가 다릅니다")
+
+            # CALL3 뒤 레이아웃 계산이 끝난 다중 장면만 priority=1로 등록한다.
+            # 레이아웃 실패는 다른 슬롯을 취소하지 않고 해당 자리의 최종 실패로 남긴다.
+            for index, pair in enumerate(child_pairs, start=1):
+                if pair is not None:
+                    continue
+                descriptor = raw_items[index - 1]
+                layout_error = str(descriptor.get("multi_char_layout_error") or "").strip()
+                if layout_error or not isinstance(descriptor.get("multi_char_layout"), dict):
+                    if not layout_error:
+                        layout_error = "다중 캐릭터 마스크 레이아웃이 생성되지 않았습니다"
+                        descriptor["multi_char_layout_error"] = layout_error
+                    print(
+                        f"[ILLUST_CONTEXT:MULTI_CHAR] 후순위 큐 등록 제외: "
+                        f"session={session_id}, slot={descriptor.get('slot')}, "
+                        f"error={layout_error}"
+                    )
+                    continue
+                child_pairs[index - 1] = await _enqueue_child(
+                    descriptor,
+                    index,
+                    len(raw_items),
+                    built.get("context", ""),
+                    built.get("prompt_format", "v3"),
+                    defer_postprocess=False,
+                    queue_priority=1,
+                )
 
         if not early_dispatch:
             await progress(70, "enqueue", f"이미지 {len(raw_items)}장 큐 등록", 0, len(raw_items))
@@ -3313,12 +3537,37 @@ async def process_illustration_context_queue_item(item) -> dict:
                 len(raw_items),
             )
 
-        total = len(child_pairs)
+        total = len(raw_items)
         await progress(72, "generating", f"이미지 0/{total} 완료", 0, total)
         images: list[bytes | None] = [None] * total
         to_retry: list[tuple[int, dict]] = []  # (raw_items 인덱스, descriptor)
+        failures: list[dict] = []
         success_count = 0
-        for idx, (child_id, child_item) in enumerate(child_pairs):
+        for idx, pair in enumerate(child_pairs):
+            if pair is None:
+                descriptor = raw_items[idx]
+                fail_reason = str(
+                    descriptor.get("multi_char_layout_error")
+                    or "다중 캐릭터 마스크 레이아웃 준비 실패"
+                )
+                print(
+                    f"[ILLUST_CONTEXT:MULTI_CHAR] 레이아웃 실패 슬롯 제외: "
+                    f"slot={descriptor.get('slot')}, error={fail_reason}"
+                )
+                failures.append({
+                    "slot": descriptor.get("slot"),
+                    "error": fail_reason,
+                })
+                completed = idx + 1
+                await progress(
+                    72 + (completed / total) * 20,
+                    "generating",
+                    f"성공 {success_count}/{total}장 · 생성/후처리 {completed}/{total}",
+                    success_count,
+                    total,
+                )
+                continue
+            child_id, child_item = pair
             image_bytes, fail_reason, cancelled = await _collect_final_child(
                 child_id,
                 child_item,
@@ -3345,7 +3594,6 @@ async def process_illustration_context_queue_item(item) -> dict:
             )
 
         # ─── 2차: 1차 실패 슬롯을 새 하위 큐 아이템으로 1회 재등록(이미지 교체 시도).
-        failures: list[dict] = []
         if to_retry:
             print(f"[ILLUST_CONTEXT] 1차 실패 {len(to_retry)}건 재시도 시작: session={session_id}")
             await progress(
@@ -3363,7 +3611,13 @@ async def process_illustration_context_queue_item(item) -> dict:
                     len(raw_items),
                     built.get("context", ""),
                     built.get("prompt_format", "v3"),
-                    defer_postprocess=early_dispatch,
+                    defer_postprocess=(
+                        early_dispatch
+                        and not _is_multi_char_descriptor(
+                            descriptor,
+                            built.get("prompt_format", "v3"),
+                        )
+                    ),
                 )
                 retry_pairs.append((idx, descriptor, retry_id, retry_item))
 

@@ -387,6 +387,136 @@ async def test_context_queue_keeps_generating_until_call3_returns(tmp_path, monk
 
 
 @pytest.mark.asyncio
+async def test_context_queue_defers_multi_character_scene_until_layout_is_ready(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(pipeline, "SESSION_DIR", str(tmp_path / "sessions"))
+    session_id = "risu_" + ("c" * 64)
+    original_prompt_id = "mixed-multi-original"
+    pipeline.create_session(session_id, "")
+    server.prompts[original_prompt_id] = {
+        "status": "running",
+        "prompt": {},
+        "outputs": {},
+        "filename": None,
+        "save_node_id": "9",
+        "image_bytes": None,
+    }
+
+    single = {
+        "kind": "scene",
+        "slot": 0,
+        "characters": [{"name": "Solo", "positive": "solo tags"}],
+        "raw_positive": "single positive",
+        "raw_negative": "single negative",
+    }
+    multi_preliminary = {
+        "kind": "scene",
+        "slot": 1,
+        "characters": [
+            {"name": "Left", "positive": "left tags"},
+            {"name": "Right", "positive": "right tags"},
+        ],
+        "raw_positive": "multi preliminary",
+        "raw_negative": "multi negative",
+    }
+    multi_final = {
+        **multi_preliminary,
+        "raw_positive": "multi final",
+        "multi_char_layout": {
+            "background_prompt": "shared clean background",
+            "character_order": ["Left", "Right"],
+            "regions": [
+                {
+                    "name": "Left", "character_prompt": "left clean tags",
+                    "x": 0.0, "y": 0.0, "width": 0.55, "height": 1.0,
+                },
+                {
+                    "name": "Right", "character_prompt": "right clean tags",
+                    "x": 0.45, "y": 0.0, "width": 0.55, "height": 1.0,
+                },
+            ],
+        },
+    }
+    enqueue_log = []
+    child_prompt_ids = []
+
+    async def fake_build(*args, on_call2_ready=None, **kwargs):
+        assert kwargs["enable_multi_char_layout"] is True
+        await on_call2_ready({
+            "context": "context",
+            "prompt_format": "v3",
+            "items": [single, multi_preliminary],
+        })
+        # CALL2 직후에는 단일 캐릭터만 큐에 들어간다.
+        assert [entry[0] for entry in enqueue_log] == [0]
+        return {
+            "context": "context",
+            "prompt_format": "v3",
+            "items": [single, multi_final],
+        }
+
+    async def fake_add_item(item_type, label, params, priority=10, **kwargs):
+        child_id = params["prompt_id"]
+        child_prompt_ids.append(child_id)
+        raw = params["raw_body"]
+        enqueue_log.append((
+            priority,
+            raw.get("illustration_multi_char"),
+            raw["illustration_defer_postprocess"],
+        ))
+        future = asyncio.get_running_loop().create_future()
+        queue_item = SimpleNamespace(status="completed", completion_future=future)
+        server.prompts[child_id]["image_bytes"] = f"image-priority-{priority}".encode()
+        future.set_result({"success": True})
+        return queue_item
+
+    async def fake_complete_prompt(prompt_id, save_node_id, filename):
+        server.prompts[prompt_id]["status"] = "completed"
+
+    async def ignore_progress(*args, **kwargs):
+        return None
+
+    monkeypatch.setitem(server.app_config, "bot_selected", "")
+    monkeypatch.setitem(server.app_config, "illustration_provider", "comfy")
+    monkeypatch.setitem(server.app_config, "illustration_context_toggles", {"prompt_format": "v3"})
+    monkeypatch.setattr(pipeline, "build_from_context", fake_build)
+    monkeypatch.setattr(server.queue_manager, "add_item", fake_add_item)
+    monkeypatch.setattr(server.queue_manager, "_notify_progress", ignore_progress)
+    monkeypatch.setattr(server, "set_prompt_by_title", lambda *args, **kwargs: True)
+    monkeypatch.setattr(server, "complete_prompt_from_reschedule", fake_complete_prompt)
+    monkeypatch.setattr(server, "build_active_lb_extra", lambda *args: "")
+    monkeypatch.setattr(server, "build_lb_extra_costume", lambda *args: "")
+    monkeypatch.setattr(server, "build_lb_extra_names", lambda *args: "")
+    monkeypatch.setattr(server, "build_bot_character_names", lambda *args: "")
+
+    parent_item = SimpleNamespace(params={
+        "prompt_id": original_prompt_id,
+        "payload": {"session_id": session_id, "chats": []},
+        "prompt_data": {},
+        "raw_body": {},
+    })
+
+    try:
+        result = await server.process_illustration_context_queue_item(parent_item)
+
+        assert [entry[0] for entry in enqueue_log] == [0, 1]
+        assert enqueue_log[0][1] is None
+        assert enqueue_log[0][2] is True
+        assert enqueue_log[1][1]["enable"] is True
+        assert enqueue_log[1][1]["character_order"] == ["Left", "Right"]
+        assert enqueue_log[1][1]["background_prompt"] == "shared clean background"
+        assert enqueue_log[1][2] is False
+        assert result["count"] == 2
+    finally:
+        pipeline._SESSIONS.pop(session_id, None)
+        pipeline._LOOKUP_KEYS.pop("c" * 24, None)
+        server.prompts.pop(original_prompt_id, None)
+        for child_prompt_id in child_prompt_ids:
+            server.prompts.pop(child_prompt_id, None)
+
+
+@pytest.mark.asyncio
 async def test_context_queue_retries_at_tail_and_returns_partial_success(
     tmp_path, monkeypatch
 ):

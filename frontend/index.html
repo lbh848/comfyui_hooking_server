@@ -15592,6 +15592,7 @@
             { key: 'illustration_call2',       label: '삽화 CALL2 (본문)',             kind: '텍스트' },
             { key: 'illustration_call2_fix',   label: '삽화 CALL2-FIX (TOON 교정)',    kind: '텍스트' },
             { key: 'illustration_call3',       label: '삽화 CALL3 (대사 생성)',         kind: '텍스트' },
+            { key: 'illustration_multi_char_mask', label: '삽화 다중 캐릭터 마스크',    kind: 'JSON' },
         ];
 
         function llmRouteNumber(value, fallback, integer = false) {
@@ -15640,8 +15641,9 @@
                 if (fbTarget !== 'llm1' && fbTarget !== 'llm2' && fbTarget !== 'llm3') {
                     fbTarget = entry.fallback ? (legacyFallback[primary] || 'none') : 'none';
                 }
-                // JSON 토글은 edit_illustration_prompt 에만. 기존 설정에 키가 없으면 기본 ON.
-                const supportsJson = t.key === 'edit_illustration_prompt';
+                // 구조화 응답 작업은 JSON response_format 토글을 제공한다.
+                const supportsJson = t.key === 'edit_illustration_prompt'
+                    || t.key === 'illustration_multi_char_mask';
                 const jsonMode = supportsJson ? (entry.json_mode !== undefined ? !!entry.json_mode : true) : null;
                 const retryDelay = llmRouteNumber(entry.retry_delay_sec, 0);
                 const maxRetries = llmRouteNumber(entry.max_retries, 0, true);
