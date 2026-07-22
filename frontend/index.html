@@ -3783,6 +3783,15 @@
         .at-model-legend { display: flex; flex-wrap: wrap; gap: 5px; padding: 7px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface2); color: var(--text2); font-size: 0.63rem; line-height: 1.4; }
         .at-model-option-group { display: grid; gap: 7px; padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: color-mix(in srgb, var(--surface2) 72%, var(--surface)); }
         .at-model-option-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--text); font-size: 0.7rem; font-weight: 750; }
+        .workflow-mode-control { min-width: 0; transition: opacity 0.15s, filter 0.15s, background 0.15s; }
+        .workflow-mode-control.is-unavailable { opacity: 0.42; filter: grayscale(0.8); pointer-events: none; user-select: none; }
+        .workflow-mode-control.is-unavailable input,
+        .workflow-mode-control.is-unavailable select,
+        .workflow-mode-control.is-unavailable textarea,
+        .workflow-mode-control.is-unavailable button,
+        .workflow-mode-control.is-unavailable .custom-select { cursor: not-allowed !important; }
+        .workflow-mode-reason { display: inline-flex; align-items: center; margin-left: 4px; padding: 1px 5px; border: 1px solid var(--border); border-radius: 999px; color: var(--text2); background: var(--surface2); font-size: 0.56rem; font-weight: 700; white-space: nowrap; }
+        .workflow-mode-legend { display: flex; flex-wrap: wrap; gap: 5px; padding: 7px 8px; margin-bottom: 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface2); color: var(--text2); font-size: 0.63rem; line-height: 1.4; }
         .at-fill-lora-list { display: grid; gap: 5px; margin-top: 5px; }
         .at-fill-lora-item { display: grid; grid-template-columns: minmax(0, 1fr) 70px 24px; gap: 5px; align-items: center; padding: 6px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface2); }
         .at-fill-lora-name { min-width: 0; overflow: hidden; color: var(--text); font-size: 0.66rem; text-overflow: ellipsis; white-space: nowrap; }
@@ -5442,9 +5451,9 @@
                     </div>
                     </div>
 
-                    <!-- ANIMA 아티스트 프리셋 섹션 (ANIMA 모드에서만 표시) -->
-                    <div id="anima-artist-preset-section" style="display:none; background:rgba(233,30,99,0.12); border-radius:8px; padding:10px; margin-bottom:8px; border:1px dashed rgba(233,30,99,0.4);">
-                    <div class="section-title">ANIMA 아티스트 프리셋</div>
+                    <!-- ANIMA 아티스트 프리셋 섹션 -->
+                    <div id="anima-artist-preset-section" class="workflow-mode-control" data-workflow-availability="anima" style="background:rgba(233,30,99,0.12); border-radius:8px; padding:10px; margin-bottom:8px; border:1px dashed rgba(233,30,99,0.4);">
+                    <div class="section-title">ANIMA 아티스트 프리셋 <span class="workflow-mode-reason">ANIMA 전용</span></div>
                     <div style="margin-bottom:6px;">
                         <div id="anima-artist-preset-select-container"></div>
                         <div style="display:flex; gap:4px; margin-top:3px;">
@@ -5460,9 +5469,9 @@
                     </div>
                     </div>
 
-                    <!-- ANIMA 품질 태그 섹션 (ANIMA 모드에서만 표시) -->
-                    <div id="anima-quality-section" style="display:none; background:rgba(255,152,0,0.08); border-radius:8px; padding:10px; margin-bottom:8px; border:1px dashed rgba(255,152,0,0.4);">
-                    <div class="section-title">ANIMA 품질 태그</div>
+                    <!-- ANIMA 품질 태그 섹션 -->
+                    <div id="anima-quality-section" class="workflow-mode-control" data-workflow-availability="anima" style="background:rgba(255,152,0,0.08); border-radius:8px; padding:10px; margin-bottom:8px; border:1px dashed rgba(255,152,0,0.4);">
+                    <div class="section-title">ANIMA 품질 태그 <span class="workflow-mode-reason">ANIMA 전용</span></div>
                     <div style="margin-bottom:6px;">
                         <div id="anima-quality-preset-select-container"></div>
                         <div style="display:flex; gap:4px; margin-top:3px;">
@@ -5479,9 +5488,9 @@
                     </div>
                     </div>
 
-                    <!-- ANIMA 부정 태그 섹션 (ANIMA 모드에서만 표시) -->
-                    <div id="anima-negative-section" style="display:none; background:rgba(255,87,34,0.06); border-radius:8px; padding:10px; margin-bottom:8px; border:1px dashed rgba(255,87,34,0.35);">
-                    <div class="section-title">ANIMA 부정 태그</div>
+                    <!-- ANIMA 부정 태그 섹션 -->
+                    <div id="anima-negative-section" class="workflow-mode-control" data-workflow-availability="anima" style="background:rgba(255,87,34,0.06); border-radius:8px; padding:10px; margin-bottom:8px; border:1px dashed rgba(255,87,34,0.35);">
+                    <div class="section-title">ANIMA 부정 태그 <span class="workflow-mode-reason">ANIMA 전용</span></div>
                     <div style="margin-bottom:6px;">
                         <div id="anima-negative-preset-select-container"></div>
                         <div style="display:flex; gap:4px; margin-top:3px;">
@@ -5621,10 +5630,10 @@
                     </div>
 
                     <!-- Face LoRA 섹션 (ANIMA 전용) -->
-                    <div id="asset-face-lora-wrapper" style="display:none;">
+                    <div id="asset-face-lora-wrapper" class="workflow-mode-control" data-workflow-availability="anima">
                     <div style="background:rgba(76,175,80,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
                         <div style="display:flex; align-items:center; gap:8px;">
-                            <div class="section-title" style="margin-bottom:0;">Face LoRA</div>
+                            <div class="section-title" style="margin-bottom:0;">Face LoRA <span class="workflow-mode-reason">ANIMA 전용</span></div>
                             <label class="toggle-switch">
                                 <input type="checkbox" id="asset-face-lora-toggle" onchange="onAssetFaceLoraToggle()">
                                 <span class="toggle-slider"></span>
@@ -5657,9 +5666,9 @@
                     </div>
 
                     <!-- 포즈 섹션 -->
-                    <div id="asset-pose-container" style="background:rgba(0,188,212,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
+                    <div id="asset-pose-container" class="workflow-mode-control" data-workflow-availability="regular" style="background:rgba(0,188,212,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
                         <div style="display:flex; align-items:center; gap:8px;">
-                            <div class="section-title" style="margin-bottom:0;">포즈</div>
+                            <div class="section-title" style="margin-bottom:0;">포즈 <span class="workflow-mode-reason">일반 전용</span></div>
                             <label class="toggle-switch">
                                 <input type="checkbox" id="asset-pose-toggle" onchange="onAssetPoseToggle()">
                                 <span class="toggle-slider"></span>
@@ -5682,7 +5691,8 @@
                     </div>
 
                     <!-- SDXL 모드용 HRF + 디테일러 토글 -->
-                    <div id="asset-sdxl-options-wrapper" style="display:none;">
+                    <div id="asset-sdxl-options-wrapper" class="workflow-mode-control" data-workflow-availability="regular">
+                        <div class="workflow-mode-legend"><strong>일반 워크플로우 전용</strong><span>ANIMA에서는 아래 옵션이 적용되지 않습니다.</span></div>
                         <div style="display:flex; flex-direction:column; gap:6px; margin-bottom:8px;">
                             <div style="display:flex; align-items:center; gap:6px; padding:6px 8px; background:var(--surface2); border-radius:6px; border:1px solid var(--border);">
                                 <span style="font-size:0.8rem;">HIRES FIX</span>
@@ -5728,7 +5738,8 @@
                     </div>
 
                     <!-- ANIMA 모드용 HRF + 디테일러 -->
-                    <div id="asset-anima-options-wrapper" style="display:none;">
+                    <div id="asset-anima-options-wrapper" class="workflow-mode-control" data-workflow-availability="anima">
+                    <div class="workflow-mode-legend"><strong>ANIMA 전용</strong><span>일반 워크플로우에서는 아래 옵션이 적용되지 않습니다.</span></div>
                     <!-- HIRES FIX -->
                     <div style="background:var(--surface2); border-radius:8px; padding:10px; margin-bottom:8px; border:1px solid var(--border);">
                         <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
@@ -5805,9 +5816,9 @@
                     </div>
 
                     <!-- Seed (ANIMA 전용) -->
-                    <div id="asset-seed-wrapper" style="display:none;">
+                    <div id="asset-seed-wrapper" class="workflow-mode-control" data-workflow-availability="anima">
                     <div style="margin-bottom:8px;">
-                        <div style="font-size:0.75rem; color:var(--text-muted); margin-bottom:3px;">Seed</div>
+                        <div style="font-size:0.75rem; color:var(--text-muted); margin-bottom:3px;">Seed <span class="workflow-mode-reason">ANIMA 전용</span></div>
                         <div style="display:flex; gap:4px; align-items:center;">
                             <input type="number" id="asset-seed-input" value="-1" style="flex:1; padding:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:4px; font-size:0.8rem;" title="-1: 랜덤, 0 이상: 고정">
                             <button onclick="document.getElementById('asset-seed-input').value=Math.floor(Math.random()*4294967295)" style="padding:4px 8px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:4px; cursor:pointer; font-size:0.7rem;" title="랜덤 Seed 생성">&#127922;</button>
@@ -43718,15 +43729,38 @@
             }).catch(() => {});
         }
 
-        // ─── ANIMA UI 가시성/포즈 제어 ───────────────────────────
+        function setWorkflowModeAvailability(container, available) {
+            if (!container) return;
+            container.classList.toggle('is-unavailable', !available);
+            container.setAttribute('aria-disabled', available ? 'false' : 'true');
+            if (available) container.removeAttribute('inert');
+            else container.setAttribute('inert', '');
+            container.querySelectorAll('input, select, textarea, button').forEach(control => {
+                if (!available) {
+                    if (!control.hasAttribute('data-workflow-was-disabled')) {
+                        control.dataset.workflowWasDisabled = control.disabled ? 'true' : 'false';
+                    }
+                    control.disabled = true;
+                } else if (control.hasAttribute('data-workflow-was-disabled')) {
+                    control.disabled = control.dataset.workflowWasDisabled === 'true';
+                    delete control.dataset.workflowWasDisabled;
+                }
+            });
+        }
+
+        function applyWorkflowModeAvailability(root, isAnima = currentConfig?.asset_workflow_type === 'anima') {
+            if (!root) return;
+            root.querySelectorAll('[data-workflow-availability]').forEach(container => {
+                const availability = container.dataset.workflowAvailability;
+                const available = availability === 'anima' ? isAnima : availability === 'regular' ? !isAnima : true;
+                setWorkflowModeAvailability(container, available);
+            });
+        }
+
+        // ─── ANIMA UI 활성화/비활성화 및 포즈 제어 ─────────────────
         function updateAnimaUIVisibility() {
             const isAnima = currentConfig?.asset_workflow_type === 'anima';
-            const animaSection = document.getElementById('anima-artist-preset-section');
-            if (animaSection) animaSection.style.display = isAnima ? 'block' : 'none';
-            const animaQualitySection = document.getElementById('anima-quality-section');
-            if (animaQualitySection) animaQualitySection.style.display = isAnima ? 'block' : 'none';
-            const animaNegSection = document.getElementById('anima-negative-section');
-            if (animaNegSection) animaNegSection.style.display = isAnima ? 'block' : 'none';
+            applyWorkflowModeAvailability(document, isAnima);
             // ANIMA 모드에서 기존 섹션 라벨 변경
             const qualitySection = document.getElementById('asset-quality-tags')?.closest('div[style*="rgba(76,175,80"]');
             if (qualitySection) {
@@ -43738,15 +43772,6 @@
                 const title = negSection.querySelector('.section-title');
                 if (title) title.textContent = isAnima ? 'SDXL 부정 태그' : '부정 태그';
             }
-            // 에셋 생성 패널 SDXL/ANIMA 분기
-            const sdxlWrapper = document.getElementById('asset-sdxl-options-wrapper');
-            const animaWrapper = document.getElementById('asset-anima-options-wrapper');
-            const faceLoraWrapper = document.getElementById('asset-face-lora-wrapper');
-            const seedWrapper = document.getElementById('asset-seed-wrapper');
-            if (sdxlWrapper) sdxlWrapper.style.display = isAnima ? 'none' : 'block';
-            if (animaWrapper) animaWrapper.style.display = isAnima ? 'block' : 'none';
-            if (faceLoraWrapper) faceLoraWrapper.style.display = isAnima ? 'block' : 'none';
-            if (seedWrapper) seedWrapper.style.display = isAnima ? 'block' : 'none';
             updatePoseForWorkflowType();
             // EP HRF 모드 드롭다운 표시 동기화
             const epHrfMode = document.getElementById('ep-hrf-mode');
@@ -43760,19 +43785,8 @@
             const isAnima = currentConfig?.asset_workflow_type === 'anima';
             const poseContainer = document.getElementById('asset-pose-container');
             const poseToggle = document.getElementById('asset-pose-toggle');
-            if (isAnima) {
-                poseToggle.checked = false;
-                poseToggle.disabled = true;
-                poseContainer.style.opacity = '0.4';
-                poseContainer.style.pointerEvents = 'none';
-                document.getElementById('asset-pose-status').textContent = 'OFF';
-                document.getElementById('asset-pose-status').className = 'toggle-status off';
-                document.getElementById('asset-pose-section').style.display = 'none';
-            } else {
-                poseToggle.disabled = false;
-                poseContainer.style.opacity = '1';
-                poseContainer.style.pointerEvents = 'auto';
-            }
+            setWorkflowModeAvailability(poseContainer, !isAnima);
+            if (poseToggle) document.getElementById('asset-pose-section').style.display = poseToggle.checked ? 'block' : 'none';
         }
 
         // ─── 자연어 프리셋 ────────────────────────────────────
@@ -50490,9 +50504,9 @@
                             <div><div class="batch-field-label">캐릭터 부정(optional)</div>${cnSel}</div>
                             <div><div class="batch-field-label">부정 태그 프리셋</div>${negSel}</div>
                             <div><div class="batch-field-label">아티스트 프리셋</div>${artistSel}</div>
-                            ${isAnima ? `<div id="bulk-anima-artist-row"><div class="batch-field-label">ANIMA 아티스트 프리셋</div>${animaArtistSel}</div>` : ''}
-                            ${isAnima ? `<div id="bulk-anima-quality-row"><div class="batch-field-label">ANIMA 품질 프리셋</div>${animaQualitySel}</div>` : ''}
-                            ${isAnima ? `<div id="bulk-anima-negative-row"><div class="batch-field-label">ANIMA 부정 태그</div>${animaNegSel}</div>` : ''}
+                            <div id="bulk-anima-artist-row" class="workflow-mode-control" data-workflow-availability="anima"><div class="batch-field-label">ANIMA 아티스트 프리셋 <span class="workflow-mode-reason">ANIMA 전용</span></div>${animaArtistSel}</div>
+                            <div id="bulk-anima-quality-row" class="workflow-mode-control" data-workflow-availability="anima"><div class="batch-field-label">ANIMA 품질 프리셋 <span class="workflow-mode-reason">ANIMA 전용</span></div>${animaQualitySel}</div>
+                            <div id="bulk-anima-negative-row" class="workflow-mode-control" data-workflow-availability="anima"><div class="batch-field-label">ANIMA 부정 태그 <span class="workflow-mode-reason">ANIMA 전용</span></div>${animaNegSel}</div>
                             <div><div class="batch-field-label">자연어 프리셋</div>${nlSel}</div>
                         </div>
                     </section>
@@ -50599,9 +50613,8 @@
                         <button onclick="openBulkStyleLoraPicker()" style="font-size:0.75rem; padding:4px 10px; border:1px dashed var(--border); background:var(--surface2); color:var(--text-secondary); border-radius:4px; cursor:pointer; width:100%;">+ Style LoRA 추가</button>
                     </div>
 
-                    ${isAnima ? `
-                    <div class="batch-bulk-section">
-                        <div class="batch-bulk-section-title">Face LoRA</div>
+                    <div class="batch-bulk-section workflow-mode-control" data-workflow-availability="anima">
+                        <div class="batch-bulk-section-title">Face LoRA <span class="workflow-mode-reason">ANIMA 전용</span></div>
                         <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
                             <label style="font-size:0.8rem;">적용 여부:</label>
                             <select id="bulk-face-lora-action" class="batch-select" style="width:auto; min-width:120px;">
@@ -50613,7 +50626,6 @@
                         <div id="bulk-face-lora-list" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(120px, 1fr)); gap:6px; margin-bottom:6px;"></div>
                         <button onclick="openBulkFaceLoraPicker()" style="font-size:0.75rem; padding:4px 10px; border:1px dashed var(--border); background:var(--surface2); color:var(--text-secondary); border-radius:4px; cursor:pointer; width:100%;">+ Face LoRA 추가</button>
                     </div>
-                    ` : ''}
 
                     <div class="batch-bulk-section">
                         <div class="batch-bulk-section-title">이미지 사이즈</div>
@@ -50628,7 +50640,6 @@
                         </div>
                     </div>
 
-                    ${isAnima ? `
                     <div class="batch-bulk-section">
                         <div class="batch-bulk-section-title">디테일러</div>
                         <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
@@ -50639,8 +50650,8 @@
                                 <option value="off">모두 OFF</option>
                             </select>
                         </div>
-                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
-                            <label style="font-size:0.8rem;">HRF ANIMA:</label>
+                        <div class="workflow-mode-control" data-workflow-availability="anima" style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+                            <label style="font-size:0.8rem;">HRF ANIMA: <span class="workflow-mode-reason">ANIMA 전용</span></label>
                             <select id="bulk-hrf-anima-action" class="batch-select" style="width:auto; min-width:120px;">
                                 <option value="">변경 안함</option>
                                 <option value="on">모두 ON</option>
@@ -50700,40 +50711,41 @@
                                 <option value="off">모두 OFF</option>
                             </select>
                         </div>
-                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
-                            <label style="font-size:0.8rem;">ANIMA FD:</label>
+                        <div class="workflow-mode-control" data-workflow-availability="anima" style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+                            <label style="font-size:0.8rem;">ANIMA FD: <span class="workflow-mode-reason">ANIMA 전용</span></label>
                             <select id="bulk-anima-fd-action" class="batch-select" style="width:auto; min-width:120px;">
                                 <option value="">변경 안함</option>
                                 <option value="on">모두 ON</option>
                                 <option value="off">모두 OFF</option>
                             </select>
                         </div>
-                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
-                            <label style="font-size:0.8rem;">ANIMA HD:</label>
+                        <div class="workflow-mode-control" data-workflow-availability="anima" style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+                            <label style="font-size:0.8rem;">ANIMA HD: <span class="workflow-mode-reason">ANIMA 전용</span></label>
                             <select id="bulk-anima-hd-action" class="batch-select" style="width:auto; min-width:120px;">
                                 <option value="">변경 안함</option>
                                 <option value="on">모두 ON</option>
                                 <option value="off">모두 OFF</option>
                             </select>
                         </div>
-                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
-                            <label style="font-size:0.8rem;">ANIMA ED:</label>
+                        <div class="workflow-mode-control" data-workflow-availability="anima" style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+                            <label style="font-size:0.8rem;">ANIMA ED: <span class="workflow-mode-reason">ANIMA 전용</span></label>
                             <select id="bulk-anima-ed-action" class="batch-select" style="width:auto; min-width:120px;">
                                 <option value="">변경 안함</option>
                                 <option value="on">모두 ON</option>
                                 <option value="off">모두 OFF</option>
                             </select>
                         </div>
-                        <div style="display:flex; gap:8px; align-items:center; margin-bottom:6px;">
+                        <div class="workflow-mode-control" data-workflow-availability="anima" style="display:flex; gap:8px; align-items:center; margin-bottom:6px;">
                             <span class="illust-chip label-chip" style="background:rgba(76,175,80,0.15); color:#81c784; border:1px solid rgba(76,175,80,0.35);">FD / ED 시 고정 사이즈</span>
+                            <span class="workflow-mode-reason">ANIMA 전용</span>
                             <input type="number" id="bulk-face-lora-upscale" min="0" step="1" placeholder="사용안함" style="width:80px; padding:3px 4px; border:1px solid var(--border); background:var(--surface); color:var(--text); border-radius:4px; font-size:0.8rem; text-align:center;">
                             <label style="font-size:0.75rem; display:flex; align-items:center; gap:4px; cursor:pointer;"><input type="checkbox" id="bulk-face-lora-upscale-check"> 적용</label>
                             <span style="font-size:0.65rem; color:var(--text-muted);">비움 = 사용안함</span>
                         </div>
                     </div>
 
-                    <div class="batch-bulk-section">
-                        <div class="batch-bulk-section-title">디테일러 옵션</div>
+                    <div class="batch-bulk-section workflow-mode-control" data-workflow-availability="anima">
+                        <div class="batch-bulk-section-title">디테일러 옵션 <span class="workflow-mode-reason">ANIMA 전용</span></div>
                         <div style="display:flex; gap:8px; align-items:center; margin-bottom:6px;">
                             <label style="font-size:0.8rem;">FACE_CROP TOP:</label>
                             <input type="number" id="bulk-face-crop-top" value="2.5" step="0.1" style="width:60px; padding:3px 4px; border:1px solid var(--border); background:var(--surface); color:var(--text); border-radius:4px; font-size:0.8rem; text-align:center;">
@@ -50759,80 +50771,14 @@
                         </div>
                     </div>
 
-                    <div class="batch-bulk-section">
-                        <div class="batch-bulk-section-title">Seed</div>
+                    <div class="batch-bulk-section workflow-mode-control" data-workflow-availability="anima">
+                        <div class="batch-bulk-section-title">Seed <span class="workflow-mode-reason">ANIMA 전용</span></div>
                         <div style="display:flex; gap:8px; align-items:center;">
                             <label style="font-size:0.8rem;">Seed:</label>
                             <input type="number" id="bulk-seed" value="-1" style="width:100px; padding:3px 4px; border:1px solid var(--border); background:var(--surface); color:var(--text); border-radius:4px; font-size:0.8rem; text-align:center;">
                             <label style="font-size:0.75rem; display:flex; align-items:center; gap:4px; cursor:pointer;"><input type="checkbox" id="bulk-seed-check"> 적용</label>
                         </div>
                     </div>
-                    ` : `
-                    <div class="batch-bulk-section">
-                        <div class="batch-bulk-section-title">디테일러</div>
-                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
-                            <label style="font-size:0.8rem;">HIRES FIX:</label>
-                            <select id="bulk-hrf-sdxl-action" class="batch-select" style="width:auto; min-width:120px;">
-                                <option value="">변경 안함</option>
-                                <option value="on">모두 ON</option>
-                                <option value="off">모두 OFF</option>
-                            </select>
-                        </div>
-                        <div class="batch-bulk-strength-row" style="margin-bottom:6px;">
-                            <div class="batch-bulk-apply-switch">
-                                <span>업스케일링 비율</span>
-                                <label class="toggle-switch sm">
-                                    <input type="checkbox" id="bulk-hrf-size-check" onchange="updateBulkStrengthControl('hrf','size')">
-                                    <span class="toggle-slider"></span>
-                                </label>
-                            </div>
-                            <div class="batch-bulk-strength-control inactive" id="bulk-hrf-size-control">
-                                <input type="range" id="bulk-hrf-size" min="1" max="3" step="0.05" value="2.0" disabled>
-                                <span id="bulk-hrf-size-val" style="font-size:0.75rem; min-width:28px;">2.0</span>
-                            </div>
-                        </div>
-                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
-                            <label style="font-size:0.8rem;">RESTORE SIZE:</label>
-                            <select id="bulk-hrf-restore-size-action" class="batch-select" style="width:auto; min-width:120px;">
-                                <option value="">변경 안함</option>
-                                <option value="on">모두 ON</option>
-                                <option value="off">모두 OFF</option>
-                            </select>
-                        </div>
-                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
-                            <label style="font-size:0.8rem;">CONTROL NET:</label>
-                            <select id="bulk-hrf-control-net-action" class="batch-select" style="width:auto; min-width:120px;">
-                                <option value="">변경 안함</option>
-                                <option value="on">모두 ON</option>
-                                <option value="off">모두 OFF</option>
-                            </select>
-                        </div>
-                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
-                            <label style="font-size:0.8rem;">페이스 디테일러:</label>
-                            <select id="bulk-sdxl-fd-action" class="batch-select" style="width:auto; min-width:120px;">
-                                <option value="">변경 안함</option>
-                                <option value="on">모두 ON</option>
-                                <option value="off">모두 OFF</option>
-                            </select>
-                        </div>
-                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
-                            <label style="font-size:0.8rem;">핸드 디테일러:</label>
-                            <select id="bulk-sdxl-hd-action" class="batch-select" style="width:auto; min-width:120px;">
-                                <option value="">변경 안함</option>
-                                <option value="on">모두 ON</option>
-                                <option value="off">모두 OFF</option>
-                            </select>
-                        </div>
-                        <div style="display:flex; align-items:center; gap:8px;">
-                            <label style="font-size:0.8rem;">눈 디테일러:</label>
-                            <select id="bulk-sdxl-ed-action" class="batch-select" style="width:auto; min-width:120px;">
-                                <option value="">변경 안함</option>
-                                <option value="on">모두 ON</option>
-                                <option value="off">모두 OFF</option>
-                            </select>
-                        </div>
-                    </div>
-                    `}
                     </div>
 
                     <div class="batch-bulk-footer">
@@ -50955,6 +50901,7 @@
             renderBulkStyleLoraList();
             renderBulkFaceTagChips();
             syncBulkFaceTagsInput();
+            applyWorkflowModeAvailability(overlay, isAnima);
         }
 
         function bindBulkEditDropdownEvents(scope) {
@@ -51314,7 +51261,6 @@
                 anima_negative_preset: bulkDropdownValues.anima_negative_preset || '',
                 natural_language_preset: bulkDropdownValues.natural_language_preset || '',
             };
-            const isAnima = currentConfig?.asset_workflow_type === 'anima';
             const refAction = document.getElementById('bulk-ref-action').value;
             const refStrengthCheck = document.getElementById('bulk-ref-strength-check').checked;
             const refStrength = parseFloat(document.getElementById('bulk-ref-strength').value);
@@ -51363,7 +51309,6 @@
                 if (fields.anima_quality_preset) slot.anima_quality_preset = fields.anima_quality_preset;
                 if (fields.anima_negative_preset) slot.anima_negative_preset = fields.anima_negative_preset;
                 if (fields.natural_language_preset) slot.natural_language_preset = fields.natural_language_preset;
-                if (isAnima) slot.pose_enabled = false;
                 if (refAction === 'on') slot.ref_enabled = true;
                 if (refAction === 'off') { slot.ref_enabled = false; slot.ref_images = []; slot.ref_preview_url = ''; slot.ref_dir = ''; }
                 if (refStrengthCheck) slot.ref_strength = refStrength;
@@ -51472,6 +51417,7 @@
                 div.className = 'batch-slot';
                 div.innerHTML = buildBatchSlotHTML(slot, idx);
                 container.appendChild(div);
+                applyWorkflowModeAvailability(div);
             });
             container.querySelectorAll('.batch-slot').forEach((slotEl, idx) => {
                 bindBatchSlotEvents(slotEl, idx);
@@ -51547,9 +51493,9 @@
                         <div class="batch-field-group"><div class="batch-field-label">캐릭터 부정(optional)</div>${cnSel}</div>
                         <div class="batch-field-group"><div class="batch-field-label">부정 태그</div>${negSel}</div>
                         <div class="batch-field-group"><div class="batch-field-label">아티스트 프리셋</div>${artistSel}</div>
-                        ${isAnima ? `<div class="batch-field-group"><div class="batch-field-label">ANIMA 아티스트 프리셋</div>${animaArtistSel}</div>` : ''}
-                        ${isAnima ? `<div class="batch-field-group"><div class="batch-field-label">ANIMA 품질 프리셋</div>${animaQualitySel}</div>` : ''}
-                        ${isAnima ? `<div class="batch-field-group"><div class="batch-field-label">ANIMA 부정 태그</div>${animaNegSel}</div>` : ''}
+                        <div class="batch-field-group workflow-mode-control" data-workflow-availability="anima"><div class="batch-field-label">ANIMA 아티스트 프리셋 <span class="workflow-mode-reason">ANIMA 전용</span></div>${animaArtistSel}</div>
+                        <div class="batch-field-group workflow-mode-control" data-workflow-availability="anima"><div class="batch-field-label">ANIMA 품질 프리셋 <span class="workflow-mode-reason">ANIMA 전용</span></div>${animaQualitySel}</div>
+                        <div class="batch-field-group workflow-mode-control" data-workflow-availability="anima"><div class="batch-field-label">ANIMA 부정 태그 <span class="workflow-mode-reason">ANIMA 전용</span></div>${animaNegSel}</div>
                         <div class="batch-field-group"><div class="batch-field-label">자연어</div>${nlSel}</div>
                     </div>
                 </section>
@@ -51650,9 +51596,9 @@
                     </div>
                 </div>
 
-                ${isAnima ? `
+                <div class="workflow-mode-control" data-workflow-availability="anima">
                 <div class="batch-toggle-row" style="background:rgba(76,175,80,0.08); border-radius:4px; padding:2px 6px;">
-                    <label>Face LoRA</label>
+                    <label>Face LoRA <span class="workflow-mode-reason">ANIMA 전용</span></label>
                     <label class="toggle-switch"><input type="checkbox" data-field="face_lora_enabled" ${slot.face_lora_enabled ? 'checked' : ''}><span class="toggle-slider"></span></label>
                 </div>
                 <div class="batch-face-lora-section" style="display:${slot.face_lora_enabled ? 'block' : 'none'}; margin-bottom:4px;">
@@ -51683,7 +51629,7 @@
                         `).join('')}
                     </div>
                 </div>
-                ` : ''}
+                </div>
 
                 <div class="batch-toggle-row" style="background:rgba(76,175,80,0.08); border-radius:4px; padding:2px 6px;">
                     <label>Style LoRA</label>
@@ -51727,14 +51673,16 @@
                     <span class="batch-slot-section-hint">출력 · 디테일러</span>
                 </div>
                 <div class="batch-slot-option-stack">
-                <div class="batch-toggle-row" ${isAnima ? 'style="opacity:0.4; pointer-events:none;"' : ''}>
-                    <label>포즈</label>
-                    <label class="toggle-switch"><input type="checkbox" data-field="pose_enabled" ${isAnima ? 'disabled' : ''} ${slot.pose_enabled ? 'checked' : ''}><span class="toggle-slider"></span></label>
+                <div class="workflow-mode-control" data-workflow-availability="regular">
+                <div class="batch-toggle-row">
+                    <label>포즈 <span class="workflow-mode-reason">일반 전용</span></label>
+                    <label class="toggle-switch"><input type="checkbox" data-field="pose_enabled" ${slot.pose_enabled ? 'checked' : ''}><span class="toggle-slider"></span></label>
                 </div>
-                <div class="batch-pose-select-row" style="display:${!isAnima && slot.pose_enabled ? 'block' : 'none'};">
+                <div class="batch-pose-select-row" style="display:${slot.pose_enabled ? 'block' : 'none'};">
                     <div class="batch-pose-selected-display" onclick="openBatchPosePicker(${idx})">
                         ${slot.pose_id ? `<img src="/api/pose_mode/poses/${encodeURIComponent(slot.pose_id)}/image" loading="lazy"><span>${escapeHtml(slot.pose_id)}</span>` : '<span class="placeholder">클릭하여 포즈 선택</span>'}
                     </div>
+                </div>
                 </div>
 
                 <div style="display:flex; gap:6px; align-items:center;">
@@ -51744,11 +51692,10 @@
                     <input type="number" data-field="img_h" value="${slot.img_h || 1024}" min="256" max="4096" step="8" style="width:60px; padding:3px 4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:4px; font-size:0.75rem; text-align:center;">
                 </div>
 
-                ${isAnima ? `
                 <div class="batch-toggle-row">
                     <label>HIRES FIX</label>
                     <label style="display:flex; align-items:center; gap:3px; font-size:0.7rem; cursor:pointer;"><input type="checkbox" data-field="hrf_sdxl" ${slot.hrf_sdxl ? 'checked' : ''}> SDXL</label>
-                    <label style="display:flex; align-items:center; gap:3px; font-size:0.7rem; cursor:pointer;"><input type="checkbox" data-field="hrf_anima" ${slot.hrf_anima ? 'checked' : ''}> ANIMA</label>
+                    <label class="workflow-mode-control" data-workflow-availability="anima" style="display:flex; align-items:center; gap:3px; font-size:0.7rem; cursor:pointer;"><input type="checkbox" data-field="hrf_anima" ${slot.hrf_anima ? 'checked' : ''}> ANIMA <span class="workflow-mode-reason">ANIMA 전용</span></label>
                 </div>
                 <div style="display:flex; flex-direction:column; gap:4px; padding:4px 6px; background:var(--surface2); border-radius:4px; border:1px solid var(--border);">
                     <div style="display:flex; align-items:center; gap:6px;">
@@ -51771,19 +51718,19 @@
                     <label style="display:flex; align-items:center; gap:3px; font-size:0.7rem; cursor:pointer;"><input type="checkbox" data-field="sdxl_hd_enabled" ${slot.sdxl_hd_enabled ? 'checked' : ''}> HD</label>
                     <label style="display:flex; align-items:center; gap:3px; font-size:0.7rem; cursor:pointer;"><input type="checkbox" data-field="sdxl_ed_enabled" ${slot.sdxl_ed_enabled ? 'checked' : ''}> ED</label>
                 </div>
-                <div style="display:flex; gap:6px;">
+                <div class="workflow-mode-control" data-workflow-availability="anima" style="display:flex; gap:6px;">
                     <span class="illust-section-chip anima">ANIMA</span>
                     <label style="display:flex; align-items:center; gap:3px; font-size:0.7rem; cursor:pointer;"><input type="checkbox" data-field="anima_fd_enabled" ${slot.anima_fd_enabled ? 'checked' : ''}> FD</label>
                     <label style="display:flex; align-items:center; gap:3px; font-size:0.7rem; cursor:pointer;"><input type="checkbox" data-field="anima_hd_enabled" ${slot.anima_hd_enabled ? 'checked' : ''}> HD</label>
                     <label style="display:flex; align-items:center; gap:3px; font-size:0.7rem; cursor:pointer;"><input type="checkbox" data-field="anima_ed_enabled" ${slot.anima_ed_enabled ? 'checked' : ''}> ED</label>
                 </div>
-                <div style="display:flex; gap:6px; align-items:center; margin-top:3px;">
-                    <span class="illust-chip label-chip" style="background:rgba(76,175,80,0.15); color:#81c784; border:1px solid rgba(76,175,80,0.35);">FD / ED 시 고정 사이즈</span>
+                <div class="workflow-mode-control" data-workflow-availability="anima" style="display:flex; gap:6px; align-items:center; margin-top:3px;">
+                    <span class="illust-chip label-chip" style="background:rgba(76,175,80,0.15); color:#81c784; border:1px solid rgba(76,175,80,0.35);">FD / ED 시 고정 사이즈</span><span class="workflow-mode-reason">ANIMA 전용</span>
                     <input type="number" data-field="face_lora_upscale_size" value="${slot.face_lora_upscale_size ?? ''}" min="0" step="1" placeholder="사용안함" style="width:60px; padding:2px 4px; border-radius:4px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-size:0.65rem; text-align:center;">
                     <span style="font-size:0.6rem; color:var(--text-muted);">비움 = 사용안함</span>
                 </div>
-                <div style="padding:4px 6px; background:var(--surface2); border-radius:4px; border:1px solid var(--border);">
-                    <div style="font-size:0.65rem; color:var(--text-secondary); margin-bottom:3px;">FACE CROP</div>
+                <div class="workflow-mode-control" data-workflow-availability="anima" style="padding:4px 6px; background:var(--surface2); border-radius:4px; border:1px solid var(--border);">
+                    <div style="font-size:0.65rem; color:var(--text-secondary); margin-bottom:3px;">FACE CROP <span class="workflow-mode-reason">ANIMA 전용</span></div>
                     <div style="display:flex; gap:6px; align-items:center; margin-bottom:4px;">
                         <span style="font-size:0.6rem; color:var(--text-muted);">TOP</span>
                         <input type="number" data-field="face_crop_top" value="${slot.face_crop_top ?? 2.5}" step="0.1" style="width:50px; padding:2px 3px; border:1px solid var(--border); background:var(--surface); color:var(--text); border-radius:3px; font-size:0.7rem; text-align:center;">
@@ -51807,45 +51754,12 @@
                         <input type="text" data-field="eye_tags" value="${escapeHtml(slot.eye_tags || '')}" placeholder="eye tags" style="flex:1; padding:2px 4px; border:1px solid var(--border); background:var(--surface); color:var(--text); border-radius:3px; font-size:0.7rem;">
                     </div>
                 </div>
-                <div style="display:flex; gap:4px; align-items:center;">
-                    <span style="font-size:0.7rem; color:var(--text-muted);">Seed</span>
+                <div class="workflow-mode-control" data-workflow-availability="anima" style="display:flex; gap:4px; align-items:center;">
+                    <span style="font-size:0.7rem; color:var(--text-muted);">Seed <span class="workflow-mode-reason">ANIMA 전용</span></span>
                     <input type="number" data-field="seed" value="${slot.seed ?? -1}" style="flex:1; padding:3px 4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:4px; font-size:0.75rem;">
                     <button onclick="const f=this.parentElement.querySelector('[data-field=seed]'); f.value=Math.floor(Math.random()*4294967295);" style="padding:2px 6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:3px; cursor:pointer; font-size:0.65rem;" title="랜덤">&#127922;</button>
                     <button onclick="this.parentElement.querySelector('[data-field=seed]').value=-1;" style="padding:2px 6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:3px; cursor:pointer; font-size:0.65rem;" title="랜덤 초기화">&#128260;</button>
                 </div>
-                ` : `
-                <div class="batch-toggle-row">
-                    <label>HIRES FIX</label>
-                    <label class="toggle-switch"><input type="checkbox" data-field="hrf_sdxl" ${slot.hrf_sdxl ? 'checked' : ''}><span class="toggle-slider"></span></label>
-                </div>
-                <div style="display:flex; flex-direction:column; gap:4px; padding:4px 6px; background:var(--surface2); border-radius:4px; border:1px solid var(--border);">
-                    <div style="display:flex; align-items:center; gap:6px;">
-                        <span style="font-size:0.7rem; color:var(--text-secondary); min-width:fit-content;">업스케일 비율</span>
-                        <input type="range" data-field="hrf_size" min="1" max="3" step="0.05" value="${slot.hrf_size || 2.0}" style="flex:1; cursor:pointer;">
-                        <span class="batch-hrf-size-val" style="font-size:0.7rem; min-width:24px; text-align:right;">${slot.hrf_size || 2.0}</span>
-                    </div>
-                    <div class="batch-toggle-row" style="padding:0; background:none;">
-                        <label style="font-size:0.7rem;">RESTORE SIZE</label>
-                        <label class="toggle-switch"><input type="checkbox" data-field="hrf_restore_size" ${slot.hrf_restore_size !== false ? 'checked' : ''}><span class="toggle-slider"></span></label>
-                    </div>
-                    <div class="batch-toggle-row" style="padding:0; background:none;">
-                        <label style="font-size:0.7rem;">CONTROL NET</label>
-                        <label class="toggle-switch"><input type="checkbox" data-field="hrf_control_net" ${slot.hrf_control_net ? 'checked' : ''}><span class="toggle-slider"></span></label>
-                    </div>
-                </div>
-                <div class="batch-toggle-row">
-                    <label>페이스 디테일러</label>
-                    <label class="toggle-switch"><input type="checkbox" data-field="sdxl_fd_enabled" ${slot.sdxl_fd_enabled ? 'checked' : ''}><span class="toggle-slider"></span></label>
-                </div>
-                <div class="batch-toggle-row">
-                    <label>핸드 디테일러</label>
-                    <label class="toggle-switch"><input type="checkbox" data-field="sdxl_hd_enabled" ${slot.sdxl_hd_enabled ? 'checked' : ''}><span class="toggle-slider"></span></label>
-                </div>
-                <div class="batch-toggle-row">
-                    <label>눈 디테일러</label>
-                    <label class="toggle-switch"><input type="checkbox" data-field="sdxl_ed_enabled" ${slot.sdxl_ed_enabled ? 'checked' : ''}><span class="toggle-slider"></span></label>
-                </div>
-                `}
                 </div>
                 </section>
 
