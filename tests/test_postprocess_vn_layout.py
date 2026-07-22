@@ -349,5 +349,88 @@ class PostprocessVnLayoutTests(unittest.TestCase):
         self.assertIsNone(ImageChops.difference(source, original_area).getbbox())
 
 
+    def test_classic_overlay_opacity_lightens_bar(self):
+        """1인 검정 심플(classic) overlay 모드는 opacity 슬라이더를 반영해야 한다.
+
+        회귀: 예전에는 overlay 알파가 170으로 고정돼 opacity를 무시했다.
+        opacity가 낮을수록 바가 얇아져 원본 이미지가 더 비쳐야 한다.
+        """
+        text = 'alice: "반투명도가 이미지에 반영되어야 합니다."'
+        full = Image.open(io.BytesIO(compose_postprocess(
+            _image_bytes(),
+            text,
+            _settings(theme_single="classic", theme="classic", placement="overlay", opacity=100),
+        ))).convert("RGB")
+        half = Image.open(io.BytesIO(compose_postprocess(
+            _image_bytes(),
+            text,
+            _settings(theme_single="classic", theme="classic", placement="overlay", opacity=50),
+        ))).convert("RGB")
+
+        # 바 영역(하단)을 비교: opacity=50이 100보다 원본(밝은 회색)이 더 비쳐 밝아야 한다.
+        from PIL import ImageStat
+        bar_box = (0, full.height - 80, full.width, full.height)
+        full_mean = ImageStat.Stat(full.crop(bar_box).convert("L")).mean[0]
+        half_mean = ImageStat.Stat(half.crop(bar_box).convert("L")).mean[0]
+        self.assertGreater(half_mean, full_mean,
+                            f"opacity=50 바가 100보다 밝아야 함(half={half_mean}, full={full_mean})")
+
+    def test_classic_extend_unchanged_by_opacity(self):
+        """1인 검정 심플 extend 모드는 검정 위 검정이라 opacity와 무관하게 동일해야 한다."""
+        text = 'alice: "extend는 opacity와 무관합니다."'
+        base = compose_postprocess(
+            _image_bytes(),
+            text,
+            _settings(theme_single="classic", theme="classic", placement="extend", opacity=100),
+        )
+        low = compose_postprocess(
+            _image_bytes(),
+            text,
+            _settings(theme_single="classic", theme="classic", placement="extend", opacity=30),
+        )
+        self.assertEqual(base, low)
+
+
+    def test_devil_gradient_bottom_is_darkest(self):
+        """소악마(devil) 패널은 하단이 완전 어둡(255), 상단이 50%(128) 그라데이션.
+        따라서 opacity=100일 때 패널 하단이 상단보다 어두워야 한다."""
+        from PIL import ImageStat
+        rendered = Image.open(io.BytesIO(compose_postprocess(
+            _image_bytes(),
+            'alice: "하단이 상단보다 어두워야 합니다."',
+            _settings(theme_single="devil", theme="devil", placement="overlay",
+                      face_enabled=False, opacity=100),
+        ))).convert("RGB")
+        w, h = rendered.size
+        left_stripe = (0, 0, 40, h)  # 외곽선 없는 좌측 깨끗한 그라데이션 영역
+        top_band = rendered.crop((0, h - 100, 40, h - 80)).convert("L")
+        bot_band = rendered.crop((0, h - 25, 40, h)).convert("L")
+        top_mean = ImageStat.Stat(top_band).mean[0]
+        bot_mean = ImageStat.Stat(bot_band).mean[0]
+        self.assertLess(bot_mean, top_mean,
+                        f"devil 하단({bot_mean})이 상단({top_mean})보다 어두워야 함")
+
+    def test_devil_opacity_scales_gradient_uniformly(self):
+        """사용자 opacity는 devil 그라데이션 전체에 동등 곱해져 하단도 옅어진다."""
+        from PIL import ImageStat
+        full = Image.open(io.BytesIO(compose_postprocess(
+            _image_bytes(),
+            'alice: "opacity 100."',
+            _settings(theme_single="devil", theme="devil", placement="overlay",
+                      face_enabled=False, opacity=100),
+        ))).convert("RGB")
+        half = Image.open(io.BytesIO(compose_postprocess(
+            _image_bytes(),
+            'alice: "opacity 50."',
+            _settings(theme_single="devil", theme="devil", placement="overlay",
+                      face_enabled=False, opacity=50),
+        ))).convert("RGB")
+        h = full.size[1]
+        full_bot = ImageStat.Stat(full.crop((0, h - 25, 40, h)).convert("L")).mean[0]
+        half_bot = ImageStat.Stat(half.crop((0, h - 25, 40, h)).convert("L")).mean[0]
+        self.assertGreater(half_bot, full_bot,
+                           f"opacity=50 하단({half_bot})이 100({full_bot})보다 밝아야(옅어야) 함")
+
+
 if __name__ == "__main__":
     unittest.main()

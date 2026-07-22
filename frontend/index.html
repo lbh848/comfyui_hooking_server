@@ -3664,6 +3664,7 @@
         .pm-library-title { font-weight: 720; font-size: 0.9rem; }
         .pm-library-count { margin-top: 3px; color: var(--text2); font-size: 0.7rem; }
         .pm-library-controls { display: grid; gap: 8px; }
+        .pm-category-tabs.pm-library-category-tabs { margin-bottom: 0; }
         .pm-field, .pm-form-group { margin-bottom: 13px; }
         .pm-field label, .pm-form-group label { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 6px; font-weight: 650; font-size: 0.78rem; }
         .pm-field-hint { color: var(--text2); font-size: 0.68rem; font-weight: 400; }
@@ -6750,7 +6751,7 @@
                                         <button class="pm-btn pm-btn-primary" onclick="pmStartCreate()" title="현재 카테고리에 새 프리셋 추가">＋ 새로 만들기</button>
                                     </div>
                                     <div class="pm-library-controls">
-                                        <select class="pm-input" id="pm-library-category" onchange="pmManagerCategoryChanged()" aria-label="프리셋 카테고리"></select>
+                                        <div class="pm-category-tabs pm-library-category-tabs" id="pm-library-categories" role="tablist" aria-label="프리셋 카테고리"></div>
                                         <input class="pm-input" type="search" id="pm-library-search" placeholder="이름이나 값 검색" oninput="pmRenderLibrary()">
                                         <div class="pm-filter-row" id="pm-library-filters">
                                             <button class="pm-filter-btn active" data-filter="all" onclick="pmSetLibraryFilter('all')">전체</button>
@@ -6860,7 +6861,7 @@
                                         <div class="pm-section-head">
                                             <div>
                                                 <div class="pm-section-title">에셋 사용 추적</div>
-                                                <div class="pm-section-note" id="pm-track-note">저장된 프리셋을 선택하면 사용 중인 에셋을 찾을 수 있습니다.</div>
+                                                <div class="pm-section-note" id="pm-track-note">기존 프리셋과 비교에서 비교 대상을 선택하면 사용 중인 에셋을 찾을 수 있습니다.</div>
                                             </div>
                                             <div class="pm-track-head-actions">
                                                 <button class="pm-btn pm-btn-quiet" id="pm-btn-clear" onclick="pmClearTraceResults()" style="display:none;">결과 지우기</button>
@@ -8401,14 +8402,12 @@
                                             <optgroup label="심플 테마">
                                                 <option value="classic">검정 심플</option>
                                             </optgroup>
-                                            <optgroup label="소녀전선 테마">
+                                            <optgroup label="전술 테마">
                                                 <option value="gfl">전술 HUD · 청록 / 주황</option>
+                                                <option value="nikke">사선 프레임 · 검정 / 청록</option>
                                             </optgroup>
                                             <optgroup label="소악마 테마">
                                                 <option value="devil">하단 그라데이션 · 검정 / 주황</option>
-                                            </optgroup>
-                                            <optgroup label="니케 테마">
-                                                <option value="nikke">사선 프레임 · 검정 / 청록</option>
                                             </optgroup>
                                         </select>
                                     </div>
@@ -8419,9 +8418,9 @@
                                         <select id="pp-vn-theme-dual" class="select" style="flex:1;" onchange="collectPpVnSettings(); renderPostprocessPreview()">
                                             <optgroup label="심플 배치">
                                                 <option value="classic_simple">심플 테마 — 검정 심플</option>
-                                                <option value="gfl_simple">소녀전선 — 전술 HUD</option>
+                                                <option value="gfl_simple">전술 — 전술 HUD</option>
                                                 <option value="devil_simple">소악마 — 하단 그라데이션</option>
-                                                <option value="nikke_simple">니케 — 사선 프레임</option>
+                                                <option value="nikke_simple">전술 — 사선 프레임</option>
                                             </optgroup>
                                             <optgroup label="블럭형 2인 배치">
                                                 <option value="sky">프리코네 — 하늘색 / 은색</option>
@@ -8430,7 +8429,7 @@
                                                 <option value="black">프리코네 — 검정 / 은회색</option>
                                                 <option value="gray">프리코네 — 회색 / 밝은 글자</option>
                                                 <option value="classic">심플 테마 — 검정 심플</option>
-                                                <option value="gfl">소녀전선 — 전술 HUD</option>
+                                                <option value="gfl">전술 — 전술 HUD</option>
                                             </optgroup>
                                         </select>
                                     </div>
@@ -53286,7 +53285,7 @@
                     hidden[category] = hiddenValue && typeof hiddenValue === 'object' && !Array.isArray(hiddenValue) ? hiddenValue : {};
                 }
                 pmData = { active, hidden };
-                pmPopulateCategoryOptions();
+                pmRenderLibraryCategoryTabs();
 
                 if (pmSelectedPreset && !pmEditorDirty) {
                     const fresh = pmFindEntry(pmSelectedPreset.category, pmSelectedPreset.name, pmSelectedPreset.state);
@@ -53314,17 +53313,20 @@
             }
         }
 
-        function pmPopulateCategoryOptions() {
-            const select = document.getElementById('pm-library-category');
-            if (!select) return;
-            select.replaceChildren();
+        function pmRenderLibraryCategoryTabs() {
+            const container = document.getElementById('pm-library-categories');
+            if (!container) return;
+            container.replaceChildren();
             for (const [category, label] of Object.entries(PM_CATEGORIES)) {
-                const option = document.createElement('option');
-                option.value = category;
-                option.textContent = label;
-                select.appendChild(option);
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.className = `pm-category-tab${category === pmManagerCategory ? ' active' : ''}`;
+                button.textContent = label;
+                button.setAttribute('role', 'tab');
+                button.setAttribute('aria-selected', category === pmManagerCategory ? 'true' : 'false');
+                button.onclick = () => pmManagerCategoryChanged(category);
+                container.appendChild(button);
             }
-            select.value = pmManagerCategory;
         }
 
         function pmRenderToolbarStats() {
@@ -53356,11 +53358,10 @@
             pmRenderLibrary();
         }
 
-        function pmManagerCategoryChanged() {
-            const select = document.getElementById('pm-library-category');
-            const nextCategory = select.value;
+        function pmManagerCategoryChanged(nextCategory) {
+            if (!Object.prototype.hasOwnProperty.call(PM_CATEGORIES, nextCategory) || nextCategory === pmManagerCategory) return;
             if (pmEditorDirty && !confirm('저장하지 않은 입력 내용이 있습니다. 카테고리를 변경할까요?')) {
-                select.value = pmManagerCategory;
+                pmRenderLibraryCategoryTabs();
                 return;
             }
             pmManagerCategory = nextCategory;
@@ -53369,8 +53370,7 @@
 
         function pmRenderLibrary() {
             if (!pmData) return;
-            const select = document.getElementById('pm-library-category');
-            if (select) select.value = pmManagerCategory;
+            pmRenderLibraryCategoryTabs();
             const query = (document.getElementById('pm-library-search').value || '').trim().toLocaleLowerCase();
             const allEntries = pmGetEntries(pmManagerCategory);
             const entries = allEntries.filter(entry => {
@@ -53457,7 +53457,6 @@
             pmCompareTargetPinned = false;
             pmConflictPreset = null;
             pmEditorDirty = false;
-            document.getElementById('pm-library-category').value = category;
             document.getElementById('pm-editor-name').value = name;
             document.getElementById('pm-editor-content').value = pmValueToText(entry.value, category);
             pmClearTraceResults();
@@ -53649,6 +53648,8 @@
             pmCompareTargetPinned = true;
             const target = pmGetEntries(pmManagerCategory).find(entry => pmEntryKey(entry) === pmCompareTargetKey) || null;
             pmRenderComparisonPanels(target, pmParseDraftValue());
+            pmClearTraceResults();
+            pmUpdateTrackState();
         }
 
         function pmRenderComparisonPanels(target, draftValue) {
@@ -53908,18 +53909,21 @@
         }
 
         // ─── 에셋 사용 추적 ────────────────────────────────
+        function pmGetCompareTarget() {
+            if (!pmCompareTargetKey) return null;
+            return pmGetEntries(pmManagerCategory).find(entry => pmEntryKey(entry) === pmCompareTargetKey) || null;
+        }
+
         function pmUpdateTrackState() {
             const button = document.getElementById('pm-btn-trace');
             const note = document.getElementById('pm-track-note');
-            if (!pmSelectedPreset) {
+            const target = pmGetCompareTarget();
+            if (!target) {
                 button.disabled = true;
-                note.textContent = '저장된 프리셋을 선택하면 사용 중인 에셋을 찾을 수 있습니다.';
-            } else if (pmEditorDirty) {
-                button.disabled = true;
-                note.textContent = '현재 변경사항을 저장하거나 취소한 뒤 추적할 수 있습니다.';
+                note.textContent = '기존 프리셋과 비교에서 비교 대상을 선택하면 사용 중인 에셋을 찾을 수 있습니다.';
             } else {
                 button.disabled = false;
-                note.textContent = `'${pmSelectedPreset.name}' 값이 포함된 이미지 프롬프트를 검색합니다.`;
+                note.textContent = `비교 대상 '${target.name}' 값이 포함된 이미지 프롬프트를 검색합니다.`;
             }
         }
 
@@ -53933,14 +53937,15 @@
         }
 
         async function pmTraceSearch() {
-            if (!pmSelectedPreset || pmEditorDirty) {
-                showToast('저장된 프리셋을 선택하고 변경사항을 먼저 저장해주세요', 'error');
+            const selected = pmGetCompareTarget();
+            if (!selected) {
+                console.error('[PM] 추적할 비교 대상 프리셋이 선택되지 않음:', { category: pmManagerCategory, key: pmCompareTargetKey });
+                showToast('기존 프리셋과 비교에서 비교 대상을 선택해주세요', 'error');
                 return;
             }
             if (pmTraceAbortController) pmTraceAbortController.abort();
             const traceController = new AbortController();
             pmTraceAbortController = traceController;
-            const selected = { ...pmSelectedPreset };
             const results = document.getElementById('pm-trace-results');
             results.innerHTML = '<div class="pm-empty">추적을 준비하고 있습니다...</div>';
             document.getElementById('pm-btn-clear').style.display = 'none';

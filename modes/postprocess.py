@@ -1562,10 +1562,13 @@ def _render_unified_theme_dialogue(
                 fill=(244, 163, 77, 235),
             )
         elif style == "devil":
+            # 하단 그라데이션(어두운 보라→검정)은 유지하되 기준 알파를 강하게:
+            # 상단 50%(128) · 하단 완전(255). 사용자 opacity(0~100→0~1)는
+            # 이 기준값 전체에 동등하게 곱해져, 낮출수록 그라데이션이 균등하게 옅어진다.
             gradient = _vertical_gradient(
                 (max(1, x2 - x1), max(1, y2 - y1)),
-                (10, 8, 12, int(110 * opacity)),
-                (0, 0, 0, int(242 * opacity)),
+                (10, 8, 12, int(128 * opacity)),
+                (0, 0, 0, int(255 * opacity)),
             )
             panel_layer.alpha_composite(gradient, (x1, y1))
             panel_draw = ImageDraw.Draw(panel_layer)
@@ -2148,6 +2151,18 @@ def compose_postprocess(image_bytes: bytes, speak_text: str,
                             text_outline_width, bot_name)
 
     # ===== classic: 검정 심플 렌더링 =====
+    # 카드 배경 반투명도(0~100). 100=불투명. 2인+ classic_simple 경로
+    # (_render_unified_theme_dialogue)와 동일 공식으로 적용.
+    # - overlay: 바가 이미지 위에 덮이므로 opacity 슬라이더가 이미지 비치는 정도로 반영됨.
+    # - extend(기본): 바 아래 스트립도 순수 검정이라 검정 위 검정이 되어 opacity 적용이
+    #   시각적으로 의미 없음(2인+ 경과 동일한 구조적 한계). 100=불투명 검정으로 둔다.
+    try:
+        _classic_opacity = float(settings.get("opacity", 100)) / 100.0
+    except (TypeError, ValueError):
+        print(f"[POSTPROCESS] classic opacity 변환 실패({settings.get('opacity')!r}), 100 사용")
+        _classic_opacity = 1.0
+    _classic_opacity = max(0.0, min(1.0, _classic_opacity))
+
     if layout["placement"] == "extend":
         canvas = Image.new("RGBA", (layout["canvas_w"], layout["canvas_h"]),
                            BAR_COLOR + (255,))
@@ -2158,7 +2173,7 @@ def compose_postprocess(image_bytes: bytes, speak_text: str,
         overlay = Image.new("RGBA", (img_w, img_h), (0, 0, 0, 0))
         od = ImageDraw.Draw(overlay)
         od.rectangle([(0, layout["bar_y"]), (img_w, img_h)],
-                     fill=OVERLAY_COLOR + (170,))
+                     fill=OVERLAY_COLOR + (int(178 * _classic_opacity),))
         canvas = Image.alpha_composite(canvas, overlay)
         draw = ImageDraw.Draw(canvas)
 
