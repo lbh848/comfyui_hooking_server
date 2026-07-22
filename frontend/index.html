@@ -1841,6 +1841,117 @@
         .settings-tab-panel { display: none; }
         .settings-tab-panel.active { display: block; }
 
+        /* 에셋 워크플로우 선택 */
+        .asset-workflow-config {
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+            margin-bottom: 18px;
+        }
+        .asset-workflow-selector {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) minmax(220px, 280px);
+            align-items: center;
+            gap: 18px;
+            padding: 14px 16px;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: color-mix(in srgb, var(--surface2) 55%, var(--surface));
+        }
+        .asset-workflow-selector-copy .title {
+            margin-bottom: 3px;
+            font-size: 0.9rem;
+            font-weight: 700;
+        }
+        .asset-workflow-selector-copy .desc {
+            color: var(--text2);
+            font-size: 0.75rem;
+            line-height: 1.45;
+        }
+        .asset-workflow-type-select {
+            width: 100%;
+            min-height: 40px;
+            padding: 8px 34px 8px 12px;
+            border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+            border-radius: 8px;
+            background: var(--surface);
+            color: var(--text);
+            font-size: 0.84rem;
+            font-weight: 650;
+            cursor: pointer;
+            outline: none;
+        }
+        .asset-workflow-type-select:focus {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
+        }
+        .asset-workflow-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 12px;
+        }
+        .asset-workflow-card {
+            position: relative;
+            min-width: 0;
+            padding: 14px;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: var(--surface);
+            transition: border-color 0.18s, background 0.18s, opacity 0.18s, box-shadow 0.18s;
+        }
+        .asset-workflow-card.active {
+            border-color: color-mix(in srgb, var(--accent) 68%, var(--border));
+            background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+            box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 15%, transparent);
+        }
+        .asset-workflow-card.inactive {
+            opacity: 0.5;
+            background: color-mix(in srgb, var(--surface2) 45%, var(--surface));
+        }
+        .asset-workflow-card-head {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 10px;
+            margin-bottom: 12px;
+        }
+        .asset-workflow-card-title {
+            font-size: 0.84rem;
+            font-weight: 700;
+        }
+        .asset-workflow-card-desc {
+            margin-top: 3px;
+            color: var(--text2);
+            font-size: 0.7rem;
+            line-height: 1.4;
+        }
+        .asset-workflow-status {
+            flex: 0 0 auto;
+            padding: 3px 7px;
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            color: var(--text2);
+            background: var(--surface2);
+            font-size: 0.64rem;
+            font-weight: 700;
+            letter-spacing: 0.02em;
+        }
+        .asset-workflow-card.active .asset-workflow-status {
+            border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+            color: var(--accent);
+            background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+        }
+        .asset-workflow-card .form-group { margin-bottom: 0; }
+        .asset-workflow-card input:disabled {
+            cursor: not-allowed;
+            color: var(--text2);
+        }
+
+        @media (max-width: 760px) {
+            .asset-workflow-selector,
+            .asset-workflow-grid { grid-template-columns: 1fr; }
+        }
+
         /* 슬라이더 */
         .quality-slider {
             width: 150px;
@@ -3780,13 +3891,81 @@
         }
 
         /* ─── 그림 일괄생성 탭 ─── */
+        .batch-toolbar {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border);
+            background: color-mix(in srgb, var(--surface2) 72%, var(--surface));
+            flex-wrap: wrap;
+        }
+        .batch-toolbar-brand {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-right: 2px;
+        }
+        .batch-toolbar-title { font-size: 0.9rem; font-weight: 750; }
+        .batch-slot-count {
+            min-width: 24px;
+            padding: 2px 7px;
+            border-radius: 999px;
+            background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+            color: var(--accent);
+            font-size: 0.68rem;
+            font-weight: 750;
+            text-align: center;
+        }
+        .batch-toolbar-group {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            flex-wrap: wrap;
+        }
+        .batch-toolbar-group.primary-actions { margin-left: auto; }
+        .batch-toolbar-label { color: var(--text2); font-size: 0.76rem; }
+        .batch-toolbar select,
+        .batch-toolbar input[type="number"] {
+            min-height: 34px;
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            background: var(--surface);
+            color: var(--text);
+        }
+        .batch-toolbar select { min-width: 170px; max-width: 260px; padding: 5px 9px; }
+        .batch-toolbar input[type="number"] { width: 58px; padding: 5px 7px; text-align: center; }
+        .batch-toolbar-btn {
+            min-height: 34px;
+            padding: 6px 10px;
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            background: var(--surface);
+            color: var(--text);
+            font-size: 0.76rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: border-color 0.15s, background 0.15s, color 0.15s, transform 0.15s;
+        }
+        .batch-toolbar-btn:hover {
+            border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+            background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+            transform: translateY(-1px);
+        }
+        .batch-toolbar-btn.primary { border-color: var(--accent); background: var(--accent); color: #fff; }
+        .batch-toolbar-btn.danger { border-color: var(--error); background: var(--error); color: #fff; }
+        .batch-toolbar-btn.start { min-width: 92px; padding-inline: 16px; }
         .batch-chain-container {
             display: flex;
-            gap: 16px;
-            padding: 16px;
+            gap: 20px;
+            padding: 20px;
             overflow-x: auto;
             align-items: stretch;
             min-height: 300px;
+            background:
+                linear-gradient(90deg, color-mix(in srgb, var(--accent) 3%, transparent), transparent 22%),
+                var(--bg);
+            scroll-padding-inline: 20px;
         }
         .batch-empty-state {
             display: flex;
@@ -3809,73 +3988,126 @@
         }
         .batch-add-first-btn:hover { background: rgba(66,133,244,0.18); transform: scale(1.05); }
         .batch-slot {
-            flex: 0 0 440px;
+            flex: 0 0 520px;
             background: var(--surface);
-            border: 1px solid var(--border);
-            border-radius: 10px;
+            border: 1px solid color-mix(in srgb, var(--border) 88%, var(--accent));
+            border-radius: 12px;
             display: flex;
             flex-direction: column;
             position: relative;
             overflow: visible;
             min-height: 0;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+            transition: border-color 0.18s, box-shadow 0.18s;
+        }
+        .batch-slot:hover {
+            border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.17);
         }
         .batch-slot-actions {
-            position: absolute;
-            top: 50%;
-            right: -28px;
-            transform: translateY(-50%);
             display: flex;
-            flex-direction: column;
-            gap: 4px;
+            align-items: center;
+            gap: 5px;
         }
         .batch-slot-action-btn {
-            width: 24px; height: 24px;
-            border-radius: 50%;
-            border: 1.5px solid var(--border);
-            background: var(--surface2);
-            color: var(--text-secondary);
-            font-size: 0.85rem;
+            min-height: 28px;
+            padding: 4px 8px;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            background: var(--surface);
+            color: var(--text2);
+            font-size: 0.68rem;
+            font-weight: 650;
             cursor: pointer;
-            display: flex; align-items: center; justify-content: center;
+            display: inline-flex; align-items: center; justify-content: center; gap: 4px;
             transition: all 0.15s;
             line-height: 1;
         }
         .batch-slot-action-btn:hover { border-color: var(--accent); color: var(--accent); background: rgba(66,133,244,0.08); }
         .batch-slot-action-btn.dup:hover { border-color: #4CAF50; color: #4CAF50; background: rgba(76,175,80,0.08); }
+        .batch-slot-action-btn.remove:hover { border-color: var(--error); color: var(--error); background: color-mix(in srgb, var(--error) 9%, transparent); }
         .batch-slot-header {
             display: flex;
             align-items: center;
             justify-content: space-between;
-            padding: 8px 12px;
-            background: var(--surface2);
-            border-radius: 10px 10px 0 0;
+            gap: 12px;
+            padding: 11px 12px;
+            background: color-mix(in srgb, var(--surface2) 72%, var(--surface));
+            border-radius: 12px 12px 0 0;
             border-bottom: 1px solid var(--border);
         }
-        .batch-slot-title { font-size: 0.85rem; font-weight: 600; }
-        .batch-slot-remove {
-            background: none; border: none; color: var(--error); cursor: pointer;
-            font-size: 1rem; padding: 0 4px; line-height: 1;
+        .batch-slot-heading { display: flex; align-items: center; gap: 9px; min-width: 0; }
+        .batch-slot-number {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 34px;
+            height: 34px;
+            flex: 0 0 34px;
+            border-radius: 9px;
+            background: color-mix(in srgb, var(--accent) 15%, var(--surface));
+            color: var(--accent);
+            font-size: 0.78rem;
+            font-weight: 800;
+        }
+        .batch-slot-kicker { color: var(--text2); font-size: 0.6rem; font-weight: 700; letter-spacing: 0.1em; }
+        .batch-slot-title-row { display: flex; align-items: center; gap: 7px; margin-top: 1px; }
+        .batch-slot-title { font-size: 0.86rem; font-weight: 750; }
+        .batch-slot-mode {
+            padding: 2px 6px;
+            border-radius: 999px;
+            background: color-mix(in srgb, #64b5f6 16%, var(--surface));
+            color: #64b5f6;
+            font-size: 0.58rem;
+            font-weight: 750;
+        }
+        .batch-slot-mode.anima {
+            background: color-mix(in srgb, #ab7cff 16%, var(--surface));
+            color: #bf9cff;
         }
         .batch-slot-body {
-            padding: 12px 14px;
+            padding: 13px;
             display: flex;
             flex-direction: column;
-            gap: 7px;
+            gap: 11px;
             overflow-y: auto;
             flex: 1;
             min-height: 0;
         }
-        .batch-field-group { display: flex; flex-direction: column; gap: 2px; }
-        .batch-field-label { font-size: 0.7rem; color: var(--text-secondary); }
+        .batch-slot-section {
+            padding: 11px;
+            border: 1px solid var(--border);
+            border-radius: 9px;
+            background: color-mix(in srgb, var(--surface2) 34%, var(--surface));
+        }
+        .batch-slot-section-title {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            margin-bottom: 9px;
+            color: var(--text);
+            font-size: 0.73rem;
+            font-weight: 750;
+        }
+        .batch-slot-section-hint { color: var(--text2); font-size: 0.62rem; font-weight: 500; }
+        .batch-slot-fields-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 8px 9px;
+        }
+        .batch-slot-option-stack { display: flex; flex-direction: column; gap: 7px; }
+        .batch-field-group { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+        .batch-field-label { font-size: 0.68rem; color: var(--text-secondary); }
         .batch-select {
-            width: 100%; padding: 5px 8px; border: 1px solid var(--border);
-            background: var(--surface2); color: var(--text); border-radius: 4px; font-size: 0.8rem;
+            width: 100%; min-height: 34px; padding: 6px 8px; border: 1px solid var(--border);
+            background: var(--surface2); color: var(--text); border-radius: 6px; font-size: 0.78rem;
         }
         /* ── Custom searchable dropdown (batch slot only) ── */
         .custom-select {
             position: relative;
-            width: 100%; padding: 5px 8px; border: 1px solid var(--border);
-            background: var(--surface2); color: var(--text); border-radius: 4px; font-size: 0.8rem;
+            width: 100%; min-height: 34px; padding: 6px 8px; border: 1px solid var(--border);
+            background: var(--surface2); color: var(--text); border-radius: 6px; font-size: 0.78rem;
             cursor: pointer; user-select: none; box-sizing: border-box;
         }
         .custom-select:hover { border-color: var(--accent); }
@@ -3915,10 +4147,10 @@
         .custom-select-option.hidden { display: none; }
         .batch-toggle-row {
             display: flex; align-items: center; gap: 8px;
-            padding: 6px 10px;
-            background: var(--surface2); border-radius: 6px;
+            padding: 7px 9px;
+            background: var(--surface2); border-radius: 7px;
             border: 1px solid var(--border);
-            min-height: 36px; overflow: visible;
+            min-height: 38px; overflow: visible;
         }
         .batch-toggle-row label { font-size: 0.78rem; flex: 1; }
         .batch-pose-select-row { }
@@ -3979,6 +4211,170 @@
             transition: all 0.2s;
         }
         .batch-chain-plus:hover { border-color: var(--accent); color: var(--accent); background: rgba(66,133,244,0.08); }
+        .batch-cache-btn {
+            width: 100%;
+            min-height: 34px;
+            padding: 6px 10px;
+            border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+            border-radius: 7px;
+            background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+            color: var(--text);
+            cursor: pointer;
+            font-size: 0.73rem;
+            font-weight: 650;
+        }
+        .batch-cache-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+        /* ── 일괄 설정 모달 ── */
+        .batch-bulk-overlay {
+            position: fixed;
+            inset: 0;
+            z-index: 10000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            background: rgba(0, 0, 0, 0.68);
+            backdrop-filter: blur(3px);
+        }
+        .batch-bulk-dialog {
+            display: flex;
+            flex-direction: column;
+            width: min(900px, calc(100vw - 32px));
+            max-height: min(88vh, 920px);
+            overflow: hidden;
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            background: var(--surface);
+            box-shadow: 0 24px 70px rgba(0, 0, 0, 0.42);
+        }
+        .batch-bulk-header {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 14px;
+            padding: 16px 18px 13px;
+            border-bottom: 1px solid var(--border);
+            background: color-mix(in srgb, var(--surface2) 65%, var(--surface));
+        }
+        .batch-bulk-title { margin: 0; font-size: 1rem; }
+        .batch-bulk-subtitle { margin-top: 4px; color: var(--text2); font-size: 0.72rem; line-height: 1.45; }
+        .batch-bulk-close {
+            width: 30px;
+            height: 30px;
+            flex: 0 0 30px;
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            background: var(--surface);
+            color: var(--text2);
+            cursor: pointer;
+            font-size: 1rem;
+        }
+        .batch-bulk-close:hover { border-color: var(--error); color: var(--error); }
+        .batch-bulk-scroll {
+            flex: 1;
+            min-height: 0;
+            overflow-y: auto;
+            padding: 14px 16px 18px;
+        }
+        .batch-bulk-section {
+            margin-bottom: 12px;
+            padding: 13px;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: color-mix(in srgb, var(--surface2) 36%, var(--surface));
+        }
+        .batch-bulk-section-title {
+            margin-bottom: 10px;
+            color: var(--text);
+            font-size: 0.78rem;
+            font-weight: 750;
+        }
+        .batch-bulk-preset-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 9px 12px;
+        }
+        .batch-bulk-adapter-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 12px;
+        }
+        .batch-bulk-adapter-grid .batch-bulk-section { min-width: 0; }
+        .batch-bulk-control-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-height: 34px;
+            margin-bottom: 7px;
+        }
+        .batch-bulk-control-label { min-width: 58px; color: var(--text2); font-size: 0.73rem; }
+        .batch-bulk-strength-row {
+            display: flex;
+            align-items: center;
+            gap: 9px;
+            padding: 8px 9px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface);
+        }
+        .batch-bulk-strength-control {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            flex: 1;
+            min-width: 0;
+            transition: opacity 0.15s;
+        }
+        .batch-bulk-strength-control.inactive { opacity: 0.38; }
+        .batch-bulk-strength-control input[type="range"] { flex: 1; min-width: 60px; cursor: pointer; }
+        .batch-bulk-strength-control input[type="range"]:disabled { cursor: not-allowed; }
+        .batch-bulk-apply-switch {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            flex: 0 0 auto;
+            color: var(--text2);
+            font-size: 0.68rem;
+            font-weight: 650;
+            cursor: pointer;
+        }
+        .batch-bulk-apply-switch input { accent-color: var(--accent); cursor: pointer; }
+        .batch-bulk-footer {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 12px 18px;
+            border-top: 1px solid var(--border);
+            background: color-mix(in srgb, var(--surface2) 62%, var(--surface));
+        }
+        .batch-bulk-footer-note { color: var(--text2); font-size: 0.7rem; }
+        .batch-bulk-apply-btn {
+            min-width: 160px;
+            min-height: 38px;
+            padding: 7px 14px;
+            border: none;
+            border-radius: 8px;
+            background: var(--accent);
+            color: #fff;
+            cursor: pointer;
+            font-size: 0.82rem;
+            font-weight: 750;
+        }
+
+        @media (max-width: 760px) {
+            .batch-toolbar-group.primary-actions { width: 100%; margin-left: 0; }
+            .batch-slot { flex-basis: calc(100vw - 44px); }
+            .batch-slot-fields-grid,
+            .batch-bulk-preset-grid,
+            .batch-bulk-adapter-grid { grid-template-columns: 1fr; }
+            .batch-slot-action-btn span { display: none; }
+            .batch-bulk-overlay { padding: 8px; }
+            .batch-bulk-dialog { width: calc(100vw - 16px); max-height: 94vh; }
+            .batch-bulk-footer-note { display: none; }
+            .batch-bulk-apply-btn { width: 100%; }
+        }
 
         /* ── 표정 프로필 생성 (오토매치 내부 뷰) ── */
         .ep-main {
@@ -4530,7 +4926,7 @@
                                 <button onclick="removeSelectedBotCharacter()" style="flex:1; background:var(--error); color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">삭제</button>
                             </div>
                             <button onclick="openBotBatchAddModal()" style="width:100%; margin-top:4px; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">일괄추가</button>
-                            <button onclick="openBotAssetCharImportModal()" style="width:100%; margin-top:4px; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">에셋에서 캐릭터 가져오기</button>
+                            <button onclick="openBotAssetCharImportModal()" disabled style="width:100%; margin-top:4px; background:var(--surface2); color:var(--text2); border:1px solid var(--border); padding:4px 8px; border-radius:4px; cursor:not-allowed; font-size:0.75rem; opacity:0.5;">에셋에서 캐릭터 가져오기</button>
                         </div>
                         <div style="background:rgba(76,175,80,0.08); border-radius:8px; padding:10px; margin-top:8px;">
                             <div class="section-title">태그 분석</div>
@@ -5480,22 +5876,30 @@
 
         <!-- 그림 일괄생성 탭 -->
         <div id="tab-batch-content" class="tab-content">
-            <div class="batch-toolbar" style="display:flex; align-items:center; gap:10px; padding:10px 12px; background:var(--surface2); border-bottom:1px solid var(--border); flex-wrap:wrap;">
-                <span style="font-weight:600; font-size:0.9rem;">체인 프리셋:</span>
-                <select id="batch-preset-select" onchange="loadBatchPreset()" style="flex:1; min-width:140px; max-width:260px;">
-                    <option value="">-- 프리셋 선택 --</option>
-                </select>
-                <button onclick="saveBatchPreset()" style="background:var(--accent); color:#fff; border:none; padding:4px 10px; border-radius:4px; cursor:pointer; font-size:0.8rem;">저장</button>
-                <button onclick="deleteBatchPreset()" style="background:var(--error); color:#fff; border:none; padding:4px 10px; border-radius:4px; cursor:pointer; font-size:0.8rem;">삭제</button>
-                <button onclick="openBatchBulkEdit()" style="background:var(--accent); color:#fff; border:none; padding:4px 10px; border-radius:4px; cursor:pointer; font-size:0.8rem; font-weight:600;">일괄 설정</button>
-                <button onclick="exportChainShare()" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:4px 10px; border-radius:4px; cursor:pointer; font-size:0.8rem;">공유</button>
-                <button onclick="importChainShare()" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:4px 10px; border-radius:4px; cursor:pointer; font-size:0.8rem;">로드</button>
-                <button onclick="openAppendChainModal()" title="현재 체인 뒤에 다른 체인 프리셋을 이어붙입니다" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:4px 10px; border-radius:4px; cursor:pointer; font-size:0.8rem;">🔗 이어붙이기</button>
-                <div style="margin-left:auto; display:flex; align-items:center; gap:8px;">
-                    <span style="font-size:0.85rem;">반복:</span>
-                    <input type="number" id="batch-repeat-count" value="1" min="1" max="100" style="width:55px; padding:4px 6px; border:1px solid var(--border); background:var(--surface); color:var(--text); border-radius:4px; text-align:center; font-size:0.85rem;" title="체인 반복 횟수">
-                    <button id="batch-start-btn" onclick="startBatchGeneration()" style="background:var(--accent); color:#fff; border:none; padding:6px 18px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">시작</button>
-                    <button id="batch-stop-btn" onclick="stopBatchGeneration()" style="background:#e55; color:#fff; border:none; padding:6px 14px; border-radius:6px; cursor:pointer; font-size:0.85rem; display:none;">중단</button>
+            <div class="batch-toolbar">
+                <div class="batch-toolbar-brand">
+                    <span class="batch-toolbar-title">체인 구성</span>
+                    <span class="batch-slot-count" id="batch-slot-count">0</span>
+                </div>
+                <div class="batch-toolbar-group">
+                    <label class="batch-toolbar-label" for="batch-preset-select">프리셋</label>
+                    <select id="batch-preset-select" onchange="loadBatchPreset()">
+                        <option value="">-- 프리셋 선택 --</option>
+                    </select>
+                    <button class="batch-toolbar-btn primary" onclick="saveBatchPreset()">저장</button>
+                    <button class="batch-toolbar-btn danger" onclick="deleteBatchPreset()">삭제</button>
+                </div>
+                <div class="batch-toolbar-group">
+                    <button class="batch-toolbar-btn primary" onclick="openBatchBulkEdit()">일괄 설정</button>
+                    <button class="batch-toolbar-btn" onclick="exportChainShare()">공유</button>
+                    <button class="batch-toolbar-btn" onclick="importChainShare()">로드</button>
+                    <button class="batch-toolbar-btn" onclick="openAppendChainModal()" title="현재 체인 뒤에 다른 체인 프리셋을 이어붙입니다">🔗 이어붙이기</button>
+                </div>
+                <div class="batch-toolbar-group primary-actions">
+                    <label class="batch-toolbar-label" for="batch-repeat-count">반복</label>
+                    <input type="number" id="batch-repeat-count" value="1" min="1" max="100" title="체인 반복 횟수">
+                    <button class="batch-toolbar-btn primary start" id="batch-start-btn" onclick="startBatchGeneration()">생성 시작</button>
+                    <button class="batch-toolbar-btn danger" id="batch-stop-btn" onclick="stopBatchGeneration()" style="display:none;">중단</button>
                 </div>
             </div>
             <div class="batch-progress-bar" id="batch-progress-bar" style="display:none; height:4px; background:var(--surface2);">
@@ -5505,7 +5909,8 @@
             <div id="batch-chain-container" class="batch-chain-container" style="flex:1;">
                 <div id="batch-empty-state" class="batch-empty-state">
                     <button class="batch-add-first-btn" onclick="addBatchChainSlot()">+</button>
-                    <div style="margin-top:8px; color:var(--text-secondary); font-size:0.8rem;">클릭하여 체인 슬롯 추가</div>
+                    <div style="margin-top:12px; color:var(--text); font-size:0.86rem; font-weight:650;">첫 체인 슬롯 만들기</div>
+                    <div style="margin-top:4px; color:var(--text-secondary); font-size:0.72rem;">슬롯마다 서로 다른 프롬프트와 생성 옵션을 설정할 수 있습니다</div>
                 </div>
             </div>
         </div>
@@ -9609,59 +10014,59 @@
 
                 <!-- Tab 4: 에셋 관련 설정 -->
                 <div class="settings-tab-panel" id="settings-tab-asset">
-                    <!-- 에셋 워크플로우 타입 선택 -->
-                    <div class="setting-row">
-                        <div class="setting-label">
-                            <div class="title">에셋 워크플로우 타입</div>
-                            <div class="desc">일반 / ANIMA 워크플로우 중 선택</div>
+                    <div class="asset-workflow-config">
+                        <div class="asset-workflow-selector">
+                            <div class="asset-workflow-selector-copy">
+                                <div class="title">에셋 생성에 사용할 워크플로우</div>
+                                <div class="desc">선택한 워크플로우만 활성화되며, 아래 두 파일 경로는 항상 확인할 수 있습니다.</div>
+                            </div>
+                            <select id="setting-workflow-type-select" class="asset-workflow-type-select"
+                                    onchange="onWorkflowTypeChange(this.value)" aria-label="에셋 워크플로우 선택">
+                                <option value="regular">일반 에셋 생성 워크플로우</option>
+                                <option value="anima">ANIMA 에셋 생성 워크플로우</option>
+                            </select>
                         </div>
-                        <div class="setting-control" style="display:flex; align-items:center; gap:16px;">
-                            <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
-                                <input type="radio" name="workflow-type" id="setting-workflow-type-regular" value="regular" checked
-                                       onchange="onWorkflowTypeChange('regular')">
-                                <span>일반</span>
-                            </label>
-                            <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
-                                <input type="radio" name="workflow-type" id="setting-workflow-type-anima" value="anima"
-                                       onchange="onWorkflowTypeChange('anima')">
-                                <span>ANIMA</span>
-                            </label>
-                        </div>
-                    </div>
 
-                    <!-- 에셋 생성 모드 -->
-                    <div class="setting-row">
-                        <div class="setting-label">
-                            <div class="title">🎨 에셋 생성 워크플로우</div>
-                            <div class="desc">에셋 이미지 생성에 사용할 워크플로우 파일 (공통설정 탭 베이스 경로 공유)</div>
-                        </div>
-                    </div>
-                    <div class="form-group" style="margin-top: -8px;">
-                        <div class="autocomplete-wrapper">
-                            <input type="text" id="setting-asset-workflow-filename" placeholder="예: 에셋생성워크플로우.json"
-                                   oninput="onAssetFilenameInput(this.value)" onfocus="onAssetFilenameInput(this.value)">
-                            <div class="autocomplete-list" id="asset-workflow-autocomplete"></div>
-                        </div>
-                        <div class="hint">공통설정 탭의 '베이스 경로'에서 검색됩니다</div>
-                    </div>
-                    <input type="hidden" id="setting-asset-workflow-source-path">
+                        <div class="asset-workflow-grid">
+                            <section class="asset-workflow-card active" id="setting-regular-workflow-card">
+                                <div class="asset-workflow-card-head">
+                                    <div>
+                                        <div class="asset-workflow-card-title">🎨 일반 에셋 생성 워크플로우</div>
+                                        <div class="asset-workflow-card-desc">일반 에셋 이미지 생성에 사용하는 JSON 파일</div>
+                                    </div>
+                                    <span class="asset-workflow-status" id="setting-regular-workflow-status">현재 사용</span>
+                                </div>
+                                <div class="form-group">
+                                    <div class="autocomplete-wrapper">
+                                        <input type="text" id="setting-asset-workflow-filename" placeholder="예: 에셋생성워크플로우.json"
+                                               oninput="onAssetFilenameInput(this.value)" onfocus="onAssetFilenameInput(this.value)">
+                                        <div class="autocomplete-list" id="asset-workflow-autocomplete"></div>
+                                    </div>
+                                    <div class="hint">공통설정 탭의 '베이스 경로'에서 검색됩니다</div>
+                                </div>
+                                <input type="hidden" id="setting-asset-workflow-source-path">
+                            </section>
 
-                    <!-- ANIMA 에셋 생성 워크플로우 -->
-                    <div class="setting-row" id="setting-anima-workflow-row" style="display:none;">
-                        <div class="setting-label">
-                            <div class="title">🔧 ANIMA 에셋 생성 워크플로우</div>
-                            <div class="desc">ANIMA 모드 에셋 이미지 생성에 사용할 워크플로우 파일 (공통설정 탭 베이스 경로 공유)</div>
+                            <section class="asset-workflow-card inactive" id="setting-anima-workflow-card">
+                                <div class="asset-workflow-card-head">
+                                    <div>
+                                        <div class="asset-workflow-card-title">🔧 ANIMA 에셋 생성 워크플로우</div>
+                                        <div class="asset-workflow-card-desc">ANIMA 에셋 이미지 생성에 사용하는 JSON 파일</div>
+                                    </div>
+                                    <span class="asset-workflow-status" id="setting-anima-workflow-status">비활성</span>
+                                </div>
+                                <div class="form-group">
+                                    <div class="autocomplete-wrapper">
+                                        <input type="text" id="setting-anima-asset-workflow-filename" placeholder="예: ANIMA에셋생성워크플로우.json"
+                                               oninput="onAnimaAssetFilenameInput(this.value)" onfocus="onAnimaAssetFilenameInput(this.value)" disabled>
+                                        <div class="autocomplete-list" id="anima-asset-workflow-autocomplete"></div>
+                                    </div>
+                                    <div class="hint">공통설정 탭의 '베이스 경로'에서 검색됩니다</div>
+                                </div>
+                                <input type="hidden" id="setting-anima-asset-workflow-source-path">
+                            </section>
                         </div>
                     </div>
-                    <div class="form-group" id="setting-anima-workflow-form" style="display:none; margin-top:-8px;">
-                        <div class="autocomplete-wrapper">
-                            <input type="text" id="setting-anima-asset-workflow-filename" placeholder="예: ANIMA에셋생성워크플로우.json"
-                                   oninput="onAnimaAssetFilenameInput(this.value)" onfocus="onAnimaAssetFilenameInput(this.value)">
-                            <div class="autocomplete-list" id="anima-asset-workflow-autocomplete"></div>
-                        </div>
-                        <div class="hint">공통설정 탭의 '베이스 경로'에서 검색됩니다</div>
-                    </div>
-                    <input type="hidden" id="setting-anima-asset-workflow-source-path">
 
                     <!-- 스마트 매치용 태그 분석 모드 -->
                     <div class="setting-row">
@@ -12262,8 +12667,7 @@
 
             // 워크플로우 타입
             const workflowType = currentConfig.asset_workflow_type || 'regular';
-            document.getElementById('setting-workflow-type-regular').checked = (workflowType === 'regular');
-            document.getElementById('setting-workflow-type-anima').checked = (workflowType === 'anima');
+            document.getElementById('setting-workflow-type-select').value = workflowType;
             onWorkflowTypeChange(workflowType);
 
             // 태그 분석 모드
@@ -13061,7 +13465,7 @@
                 enhance_prompt_file: document.getElementById('setting-enhance-prompt-file').value,
                 asset_workflow_source_path: document.getElementById('setting-asset-workflow-source-path').value,
                 anima_asset_workflow_source_path: document.getElementById('setting-anima-asset-workflow-source-path').value,
-                asset_workflow_type: document.getElementById('setting-workflow-type-anima').checked ? 'anima' : 'regular',
+                asset_workflow_type: document.getElementById('setting-workflow-type-select').value,
                 tag_analysis_workflow_source_path: document.getElementById('setting-tag-analysis-workflow-source-path').value,
                 asset_tag_analysis_workflow_source_path: document.getElementById('setting-asset-tag-analysis-workflow-source-path').value,
                 use_builtin_tagger: document.getElementById('setting-use-builtin-tagger').checked,
@@ -15533,8 +15937,25 @@
         // 에셋 워크플로우 타입 변경
         function onWorkflowTypeChange(type) {
             const isAnima = type === 'anima';
-            document.getElementById('setting-anima-workflow-row').style.display = isAnima ? 'flex' : 'none';
-            document.getElementById('setting-anima-workflow-form').style.display = isAnima ? 'block' : 'none';
+            const typeSelect = document.getElementById('setting-workflow-type-select');
+            const regularCard = document.getElementById('setting-regular-workflow-card');
+            const animaCard = document.getElementById('setting-anima-workflow-card');
+            const regularInput = document.getElementById('setting-asset-workflow-filename');
+            const animaInput = document.getElementById('setting-anima-asset-workflow-filename');
+            const regularStatus = document.getElementById('setting-regular-workflow-status');
+            const animaStatus = document.getElementById('setting-anima-workflow-status');
+
+            if (typeSelect) typeSelect.value = isAnima ? 'anima' : 'regular';
+            regularCard?.classList.toggle('active', !isAnima);
+            regularCard?.classList.toggle('inactive', isAnima);
+            animaCard?.classList.toggle('active', isAnima);
+            animaCard?.classList.toggle('inactive', !isAnima);
+            if (regularInput) regularInput.disabled = isAnima;
+            if (animaInput) animaInput.disabled = !isAnima;
+            if (regularStatus) regularStatus.textContent = isAnima ? '비활성' : '현재 사용';
+            if (animaStatus) animaStatus.textContent = isAnima ? '현재 사용' : '비활성';
+            document.getElementById('asset-workflow-autocomplete')?.classList.remove('visible');
+            document.getElementById('anima-asset-workflow-autocomplete')?.classList.remove('visible');
             // currentConfig와 ANIMA UI 즉시 동기화
             if (currentConfig) currentConfig.asset_workflow_type = type;
             updateAnimaUIVisibility();
@@ -35608,7 +36029,9 @@
                             <button id="btn-detail-upload" style="width:100%; background:var(--accent); color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">업로드</button>
                             <button id="btn-detail-import" style="width:100%; background:var(--accent); color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">에셋 가져오기</button>
                             <button id="btn-detail-rename" style="width:100%; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">이름 변경</button>
+                            <button id="btn-detail-analyze" style="width:100%; background:#1B5E20; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem; margin-top:2px;">일괄 태그 분석</button>
                         </div>
+                        <div id="bot-detail-analyze-status" style="font-size:0.7rem; color:var(--text2); margin-top:4px; display:none;"></div>
                     </div>
                 `;
                 sidebar.insertBefore(div, sidebar.firstChild);
@@ -35619,6 +36042,8 @@
             document.getElementById('btn-detail-upload').onclick = () => openBotImageUpload(charName);
             document.getElementById('btn-detail-import').onclick = () => openBotAssetImport(charName);
             document.getElementById('btn-detail-rename').onclick = () => renameBotCharacter(charName);
+            const detailAnalyzeBtn = document.getElementById('btn-detail-analyze');
+            if (detailAnalyzeBtn) detailAnalyzeBtn.onclick = () => botDetailBatchAnalyze();
 
             // 이미지 로드
             await loadBotCharDetailImages(charName);
@@ -36684,6 +37109,38 @@
                 console.error('[BOT] 프리뷰 로드 오류:', e);
                 showToast('이미지 목록 로드 실패', 'error');
                 status.style.display = 'none';
+            }
+        }
+
+        // 상세 사이드바: 현재 캐릭터 대표 이미지 일괄 태그 분석
+        async function botDetailBatchAnalyze() {
+            if (!botCurrentBot) { showToast('봇을 먼저 선택하세요', 'error'); return; }
+            const charName = botCurrentChar;
+            if (!charName) { showToast('캐릭터가 선택되지 않았습니다', 'error'); return; }
+            const status = document.getElementById('bot-detail-analyze-status');
+            const btn = document.getElementById('btn-detail-analyze');
+            if (btn) { btn.disabled = true; btn.textContent = '분석 준비 중...'; }
+            if (status) { status.style.display = 'block'; status.textContent = '대표 이미지 목록 로드 중...'; }
+            try {
+                const prevResp = await fetch(`/api/bot_mode/rep_preview?bot=${encodeURIComponent(botCurrentBot)}&character=${encodeURIComponent(charName)}`);
+                if (!prevResp.ok) {
+                    const errText = await prevResp.text().catch(() => '');
+                    console.error('[BOT] 상세 일괄 분석 프리뷰 로드 실패:', prevResp.status, errText);
+                    showToast(`이미지 목록 로드 실패 (HTTP ${prevResp.status})`, 'error');
+                    if (status) status.style.display = 'none';
+                    return;
+                }
+                const prevData = await prevResp.json();
+                if (prevData.error) { showToast(prevData.error, 'error'); if (status) status.style.display = 'none'; return; }
+                const images = prevData.images || [];
+                if (images.length === 0) { showToast('대표 이미지가 없습니다', 'error'); if (status) status.style.display = 'none'; return; }
+                botShowAnalyzeModal(images, charName, status);
+            } catch (e) {
+                console.error('[BOT] 상세 일괄 분석 프리뷰 로드 오류:', e);
+                showToast('이미지 목록 로드 실패', 'error');
+                if (status) status.style.display = 'none';
+            } finally {
+                if (btn) { btn.disabled = false; btn.textContent = '일괄 태그 분석'; }
             }
         }
 
@@ -49129,6 +49586,19 @@
 
         // ─── 일괄 설정 모달 ──────────────────────────────────
         let bulkDropdownValues = {};
+        function updateBulkStrengthControl(prefix) {
+            const checkbox = document.getElementById(`bulk-${prefix}-strength-check`);
+            const range = document.getElementById(`bulk-${prefix}-strength`);
+            const control = document.getElementById(`bulk-${prefix}-strength-control`);
+            if (!checkbox || !range || !control) {
+                console.error('[BATCH] 일괄 강도 컨트롤을 찾지 못했습니다:', prefix);
+                return;
+            }
+            const enabled = checkbox.checked;
+            range.disabled = !enabled;
+            control.classList.toggle('inactive', !enabled);
+        }
+
         function openBatchBulkEdit() {
             if (batchChains.length === 0) { showToast('슬롯이 없습니다', 'error'); return; }
             if (!assetTags) { showToast('태그 데이터를 먼저 로드하세요', 'error'); return; }
@@ -49155,42 +49625,50 @@
 
             const overlay = document.createElement('div');
             overlay.id = 'batch-bulk-overlay';
-            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10000; display:flex; align-items:center; justify-content:center;';
+            overlay.className = 'batch-bulk-overlay';
             overlay.innerHTML = `
-                <div style="background:var(--surface); border-radius:12px; padding:20px; max-width:500px; width:90%; max-height:80vh; display:flex; flex-direction:column; gap:12px;">
-                    <div style="display:flex; justify-content:space-between; align-items:center; flex-shrink:0;">
-                        <h3 style="margin:0;">일괄 설정</h3>
-                        <button onclick="document.getElementById('batch-bulk-overlay').remove()" style="background:none; border:none; color:var(--text); font-size:1.2rem; cursor:pointer;">x</button>
+                <div class="batch-bulk-dialog" role="dialog" aria-modal="true" aria-labelledby="batch-bulk-title">
+                    <div class="batch-bulk-header">
+                        <div>
+                            <h3 class="batch-bulk-title" id="batch-bulk-title">에셋 일괄 생성 설정</h3>
+                            <div class="batch-bulk-subtitle">변경할 항목만 선택해 모든 체인 슬롯에 한 번에 적용합니다. '변경 안함'은 슬롯별 현재 값을 그대로 유지합니다.</div>
+                        </div>
+                        <button class="batch-bulk-close" onclick="document.getElementById('batch-bulk-overlay').remove()" aria-label="닫기">×</button>
                     </div>
-                    <div style="font-size:0.75rem; color:var(--text-secondary); flex-shrink:0;">선택한 항목만 모든 슬롯에 일괄 적용됩니다. '-- 변경 안함 --'은 기존 값을 유지합니다.</div>
-                    <div style="overflow-y:auto; flex:1; min-height:0;">
+                    <div class="batch-bulk-scroll">
 
-                    <div><div class="batch-field-label">캐릭터</div>${charSel}</div>
-                    <div><div class="batch-field-label">외모</div>${appSel}</div>
-                    <div><div class="batch-field-label">복장</div>${outfitSel}</div>
-                    <div><div class="batch-field-label">표정</div>${exprSel}</div>
-                    <div><div class="batch-field-label">구도/기타 태그</div>${compSel}</div>
-                    <div><div class="batch-field-label">품질 태그 프리셋</div>${qualSel}</div>
-                    <div><div class="batch-field-label">캐릭터 부정(optional)</div>${cnSel}</div>
-                    <div><div class="batch-field-label">부정 태그 프리셋</div>${negSel}</div>
-                    <div><div class="batch-field-label">아티스트 프리셋</div>${artistSel}</div>
-                    ${isAnima ? `<div id="bulk-anima-artist-row"><div class="batch-field-label">ANIMA 아티스트 프리셋</div>${animaArtistSel}</div>` : ''}
-                    ${isAnima ? `<div id="bulk-anima-quality-row"><div class="batch-field-label">ANIMA 품질 프리셋</div>${animaQualitySel}</div>` : ''}
-                    ${isAnima ? `<div id="bulk-anima-negative-row"><div class="batch-field-label">ANIMA 부정 태그</div>${animaNegSel}</div>` : ''}
-                    <div><div class="batch-field-label">자연어 프리셋</div>${nlSel}</div>
+                    <section class="batch-bulk-section">
+                        <div class="batch-bulk-section-title">프롬프트 프리셋</div>
+                        <div class="batch-bulk-preset-grid">
+                            <div><div class="batch-field-label">캐릭터</div>${charSel}</div>
+                            <div><div class="batch-field-label">외모</div>${appSel}</div>
+                            <div><div class="batch-field-label">복장</div>${outfitSel}</div>
+                            <div><div class="batch-field-label">표정</div>${exprSel}</div>
+                            <div><div class="batch-field-label">구도/기타 태그</div>${compSel}</div>
+                            <div><div class="batch-field-label">품질 태그 프리셋</div>${qualSel}</div>
+                            <div><div class="batch-field-label">캐릭터 부정(optional)</div>${cnSel}</div>
+                            <div><div class="batch-field-label">부정 태그 프리셋</div>${negSel}</div>
+                            <div><div class="batch-field-label">아티스트 프리셋</div>${artistSel}</div>
+                            ${isAnima ? `<div id="bulk-anima-artist-row"><div class="batch-field-label">ANIMA 아티스트 프리셋</div>${animaArtistSel}</div>` : ''}
+                            ${isAnima ? `<div id="bulk-anima-quality-row"><div class="batch-field-label">ANIMA 품질 프리셋</div>${animaQualitySel}</div>` : ''}
+                            ${isAnima ? `<div id="bulk-anima-negative-row"><div class="batch-field-label">ANIMA 부정 태그</div>${animaNegSel}</div>` : ''}
+                            <div><div class="batch-field-label">자연어 프리셋</div>${nlSel}</div>
+                        </div>
+                    </section>
 
-                    <div style="border-top:1px solid var(--border); padding-top:10px;">
-                        <div class="batch-field-label" style="margin-bottom:6px;">FACE-IPAdapter 일괄 설정</div>
-                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
-                            <label style="font-size:0.8rem;">적용 여부:</label>
+                    <div class="batch-bulk-adapter-grid">
+                    <section class="batch-bulk-section">
+                        <div class="batch-bulk-section-title">FACE-IPAdapter</div>
+                        <div class="batch-bulk-control-row">
+                            <label class="batch-bulk-control-label">사용 상태</label>
                             <select id="bulk-ref-action" class="batch-select" style="width:auto; min-width:120px;">
                                 <option value="">변경 안함</option>
                                 <option value="on">모두 ON</option>
                                 <option value="off">모두 OFF</option>
                             </select>
                         </div>
-                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
-                            <label style="font-size:0.8rem;">이미지:</label>
+                        <div class="batch-bulk-control-row">
+                            <label class="batch-bulk-control-label">참조 이미지</label>
                             <button id="bulk-ref-upload-btn" style="font-size:0.75rem; padding:3px 8px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:4px; cursor:pointer;">파일 선택</button>
                             <button id="bulk-ref-gallery-btn" type="button" style="font-size:0.75rem; padding:3px 8px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:4px; cursor:pointer;">에셋에서 선택</button>
                             <span id="bulk-ref-file-name" style="font-size:0.7rem; color:var(--text-secondary);">미선택</span>
@@ -49199,26 +49677,33 @@
                         <div id="bulk-ref-preview" style="display:none; margin-bottom:6px;">
                             <div id="bulk-ref-preview-grid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(50px, 1fr)); gap:4px;"></div>
                         </div>
-                        <div style="display:flex; align-items:center; gap:8px;">
-                            <label style="font-size:0.8rem;">강도:</label>
-                            <input type="range" id="bulk-ref-strength" min="0" max="1" step="0.01" value="0.55" style="flex:1; cursor:pointer;">
-                            <span id="bulk-ref-strength-val" style="font-size:0.75rem; min-width:28px;">0.55</span>
-                            <label style="font-size:0.75rem; color:var(--text-secondary);"><input type="checkbox" id="bulk-ref-strength-check"> 강도도 변경</label>
+                        <div class="batch-bulk-strength-row">
+                            <div class="batch-bulk-apply-switch">
+                                <span>강도 적용</span>
+                                <label class="toggle-switch sm">
+                                    <input type="checkbox" id="bulk-ref-strength-check" onchange="updateBulkStrengthControl('ref')">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                            <div class="batch-bulk-strength-control inactive" id="bulk-ref-strength-control">
+                                <input type="range" id="bulk-ref-strength" min="0" max="1" step="0.01" value="0.55" disabled>
+                                <span id="bulk-ref-strength-val" style="font-size:0.75rem; min-width:28px;">0.55</span>
+                            </div>
                         </div>
-                    </div>
+                    </section>
 
-                    <div style="border-top:1px solid var(--border); padding-top:10px;">
-                        <div class="batch-field-label" style="margin-bottom:6px;">IPAdapter 일괄 설정</div>
-                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
-                            <label style="font-size:0.8rem;">적용 여부:</label>
+                    <section class="batch-bulk-section">
+                        <div class="batch-bulk-section-title">IPAdapter</div>
+                        <div class="batch-bulk-control-row">
+                            <label class="batch-bulk-control-label">사용 상태</label>
                             <select id="bulk-style-ref-action" class="batch-select" style="width:auto; min-width:120px;">
                                 <option value="">변경 안함</option>
                                 <option value="on">모두 ON</option>
                                 <option value="off">모두 OFF</option>
                             </select>
                         </div>
-                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
-                            <label style="font-size:0.8rem;">이미지:</label>
+                        <div class="batch-bulk-control-row">
+                            <label class="batch-bulk-control-label">참조 이미지</label>
                             <button id="bulk-style-ref-upload-btn" style="font-size:0.75rem; padding:3px 8px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:4px; cursor:pointer;">파일 선택</button>
                             <button id="bulk-style-ref-gallery-btn" type="button" style="font-size:0.75rem; padding:3px 8px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:4px; cursor:pointer;">에셋에서 선택</button>
                             <span id="bulk-style-ref-file-name" style="font-size:0.7rem; color:var(--text-secondary);">미선택</span>
@@ -49227,16 +49712,24 @@
                         <div id="bulk-style-ref-preview" style="display:none; margin-bottom:6px;">
                             <div id="bulk-style-ref-preview-grid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(50px, 1fr)); gap:4px;"></div>
                         </div>
-                        <div style="display:flex; align-items:center; gap:8px;">
-                            <label style="font-size:0.8rem;">강도:</label>
-                            <input type="range" id="bulk-style-ref-strength" min="0" max="1" step="0.01" value="0.55" style="flex:1; cursor:pointer;">
-                            <span id="bulk-style-ref-strength-val" style="font-size:0.75rem; min-width:28px;">0.55</span>
-                            <label style="font-size:0.75rem; color:var(--text-secondary);"><input type="checkbox" id="bulk-style-ref-strength-check"> 강도도 변경</label>
+                        <div class="batch-bulk-strength-row">
+                            <div class="batch-bulk-apply-switch">
+                                <span>강도 적용</span>
+                                <label class="toggle-switch sm">
+                                    <input type="checkbox" id="bulk-style-ref-strength-check" onchange="updateBulkStrengthControl('style-ref')">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                            <div class="batch-bulk-strength-control inactive" id="bulk-style-ref-strength-control">
+                                <input type="range" id="bulk-style-ref-strength" min="0" max="1" step="0.01" value="0.55" disabled>
+                                <span id="bulk-style-ref-strength-val" style="font-size:0.75rem; min-width:28px;">0.55</span>
+                            </div>
                         </div>
+                    </section>
                     </div>
 
-                    <div style="border-top:1px solid var(--border); padding-top:10px;">
-                        <div class="batch-field-label" style="margin-bottom:6px;">LoRA 일괄 설정</div>
+                    <div class="batch-bulk-section">
+                        <div class="batch-bulk-section-title">LoRA</div>
                         <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
                             <label style="font-size:0.8rem;">적용 여부:</label>
                             <select id="bulk-lora-action" class="batch-select" style="width:auto; min-width:120px;">
@@ -49250,8 +49743,8 @@
                         <button onclick="openBulkLoraPicker()" style="font-size:0.75rem; padding:4px 10px; border:1px dashed var(--border); background:var(--surface2); color:var(--text-secondary); border-radius:4px; cursor:pointer; width:100%;">+ LoRA 추가</button>
                     </div>
 
-                    <div style="border-top:1px solid var(--border); padding-top:10px;">
-                        <div class="batch-field-label" style="margin-bottom:6px;">Style(그림체) LoRA 일괄 설정</div>
+                    <div class="batch-bulk-section">
+                        <div class="batch-bulk-section-title">Style(그림체) LoRA</div>
                         <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
                             <label style="font-size:0.8rem;">적용 여부:</label>
                             <select id="bulk-style-lora-action" class="batch-select" style="width:auto; min-width:120px;">
@@ -49266,8 +49759,8 @@
                     </div>
 
                     ${isAnima ? `
-                    <div style="border-top:1px solid var(--border); padding-top:10px;">
-                        <div class="batch-field-label" style="margin-bottom:6px;">Face LoRA 일괄 설정</div>
+                    <div class="batch-bulk-section">
+                        <div class="batch-bulk-section-title">Face LoRA</div>
                         <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
                             <label style="font-size:0.8rem;">적용 여부:</label>
                             <select id="bulk-face-lora-action" class="batch-select" style="width:auto; min-width:120px;">
@@ -49281,8 +49774,8 @@
                     </div>
                     ` : ''}
 
-                    <div style="border-top:1px solid var(--border); padding-top:10px;">
-                        <div class="batch-field-label" style="margin-bottom:6px;">이미지 사이즈 일괄 설정</div>
+                    <div class="batch-bulk-section">
+                        <div class="batch-bulk-section-title">이미지 사이즈</div>
                         <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
                             <label style="font-size:0.8rem; min-width:fit-content;">IMG_W:</label>
                             <input type="number" id="bulk-img-w" value="700" min="256" max="4096" step="8" style="width:70px; padding:3px 4px; border:1px solid var(--border); background:var(--surface); color:var(--text); border-radius:4px; font-size:0.8rem; text-align:center;">
@@ -49295,8 +49788,8 @@
                     </div>
 
                     ${isAnima ? `
-                    <div style="border-top:1px solid var(--border); padding-top:10px;">
-                        <div class="batch-field-label" style="margin-bottom:6px;">디테일러 일괄 설정</div>
+                    <div class="batch-bulk-section">
+                        <div class="batch-bulk-section-title">디테일러</div>
                         <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
                             <label style="font-size:0.8rem;">HRF SDXL:</label>
                             <select id="bulk-hrf-sdxl-action" class="batch-select" style="width:auto; min-width:120px;">
@@ -49393,8 +49886,8 @@
                         </div>
                     </div>
 
-                    <div style="border-top:1px solid var(--border); padding-top:10px;">
-                        <div class="batch-field-label" style="margin-bottom:6px;">디테일러 옵션 일괄 설정</div>
+                    <div class="batch-bulk-section">
+                        <div class="batch-bulk-section-title">디테일러 옵션</div>
                         <div style="display:flex; gap:8px; align-items:center; margin-bottom:6px;">
                             <label style="font-size:0.8rem;">FACE_CROP TOP:</label>
                             <input type="number" id="bulk-face-crop-top" value="2.5" step="0.1" style="width:60px; padding:3px 4px; border:1px solid var(--border); background:var(--surface); color:var(--text); border-radius:4px; font-size:0.8rem; text-align:center;">
@@ -49420,8 +49913,8 @@
                         </div>
                     </div>
 
-                    <div style="border-top:1px solid var(--border); padding-top:10px;">
-                        <div class="batch-field-label" style="margin-bottom:6px;">Seed 일괄 설정</div>
+                    <div class="batch-bulk-section">
+                        <div class="batch-bulk-section-title">Seed</div>
                         <div style="display:flex; gap:8px; align-items:center;">
                             <label style="font-size:0.8rem;">Seed:</label>
                             <input type="number" id="bulk-seed" value="-1" style="width:100px; padding:3px 4px; border:1px solid var(--border); background:var(--surface); color:var(--text); border-radius:4px; font-size:0.8rem; text-align:center;">
@@ -49429,8 +49922,8 @@
                         </div>
                     </div>
                     ` : `
-                    <div style="border-top:1px solid var(--border); padding-top:10px;">
-                        <div class="batch-field-label" style="margin-bottom:6px;">디테일러 일괄 설정</div>
+                    <div class="batch-bulk-section">
+                        <div class="batch-bulk-section-title">디테일러</div>
                         <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
                             <label style="font-size:0.8rem;">HIRES FIX:</label>
                             <select id="bulk-hrf-sdxl-action" class="batch-select" style="width:auto; min-width:120px;">
@@ -49491,10 +49984,15 @@
                     `}
                     </div>
 
-                    <button onclick="applyBatchBulkEdit()" style="flex-shrink:0; background:var(--accent); color:#fff; border:none; padding:8px; border-radius:6px; cursor:pointer; font-size:0.9rem; font-weight:600; margin-top:4px;">적용 (${batchChains.length}개 슬롯)</button>
+                    <div class="batch-bulk-footer">
+                        <span class="batch-bulk-footer-note">활성화한 값만 기존 슬롯 설정을 덮어씁니다.</span>
+                        <button class="batch-bulk-apply-btn" onclick="applyBatchBulkEdit()">${batchChains.length}개 슬롯에 적용</button>
+                    </div>
                 </div>`;
             document.body.appendChild(overlay);
             overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+            updateBulkStrengthControl('ref');
+            updateBulkStrengthControl('style-ref');
 
             document.getElementById('bulk-ref-strength').addEventListener('input', function() {
                 document.getElementById('bulk-ref-strength-val').textContent = this.value;
@@ -50104,7 +50602,10 @@
         function renderBatchChain() {
             const container = document.getElementById('batch-chain-container');
             const empty = document.getElementById('batch-empty-state');
+            const slotCount = document.getElementById('batch-slot-count');
             const prevScroll = container.scrollLeft;
+
+            if (slotCount) slotCount.textContent = batchChains.length;
 
             container.querySelectorAll('.batch-slot').forEach(el => el.remove());
 
@@ -50117,12 +50618,7 @@
             batchChains.forEach((slot, idx) => {
                 const div = document.createElement('div');
                 div.className = 'batch-slot';
-                div.style.cssText = `flex: 0 0 440px; margin-right: 32px;`;
-                div.innerHTML = buildBatchSlotHTML(slot, idx) + `
-                    <div class="batch-slot-actions">
-                        <button class="batch-slot-action-btn dup" title="이 슬롯 복제" onclick="duplicateBatchSlot(${idx})">+</button>
-                        <button class="batch-slot-action-btn" title="새 빈 슬롯 추가" onclick="addBatchChainSlot()">☐</button>
-                    </div>`;
+                div.innerHTML = buildBatchSlotHTML(slot, idx);
                 container.appendChild(div);
             });
             container.querySelectorAll('.batch-slot').forEach((slotEl, idx) => {
@@ -50167,24 +50663,51 @@
 
             return `
             <div class="batch-slot-header">
-                <span class="batch-slot-title">#${idx + 1}</span>
-                <button class="batch-slot-remove" onclick="removeBatchChainSlot(${idx})">&times;</button>
+                <div class="batch-slot-heading">
+                    <span class="batch-slot-number">${String(idx + 1).padStart(2, '0')}</span>
+                    <div>
+                        <div class="batch-slot-kicker">CHAIN SLOT</div>
+                        <div class="batch-slot-title-row">
+                            <span class="batch-slot-title">#${idx + 1}</span>
+                            <span class="batch-slot-mode ${isAnima ? 'anima' : ''}">${isAnima ? 'ANIMA' : '일반'}</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="batch-slot-actions">
+                    <button class="batch-slot-action-btn dup" title="이 슬롯 복제" onclick="duplicateBatchSlot(${idx})">⧉ <span>복제</span></button>
+                    <button class="batch-slot-action-btn" title="새 빈 슬롯을 체인 끝에 추가" onclick="addBatchChainSlot()">＋ <span>추가</span></button>
+                    <button class="batch-slot-action-btn remove" title="이 슬롯 삭제" onclick="removeBatchChainSlot(${idx})">× <span>삭제</span></button>
+                </div>
             </div>
             <div class="batch-slot-body">
-                <div class="batch-field-group"><div class="batch-field-label">캐릭터</div>${charSel}</div>
-                <div class="batch-field-group"><div class="batch-field-label">외모</div>${appSel}</div>
-                <div class="batch-field-group"><div class="batch-field-label">복장</div>${outfitSel}</div>
-                <div class="batch-field-group"><div class="batch-field-label">표정</div>${exprSel}</div>
-                <div class="batch-field-group"><div class="batch-field-label">구도/기타 태그</div>${compSel}</div>
-                <div class="batch-field-group"><div class="batch-field-label">품질 태그</div>${qualSel}</div>
-                <div class="batch-field-group"><div class="batch-field-label">캐릭터 부정(optional)</div>${cnSel}</div>
-                <div class="batch-field-group"><div class="batch-field-label">부정 태그</div>${negSel}</div>
-                <div class="batch-field-group"><div class="batch-field-label">아티스트 프리셋</div>${artistSel}</div>
-                ${isAnima ? `<div class="batch-field-group"><div class="batch-field-label">ANIMA 아티스트 프리셋</div>${animaArtistSel}</div>` : ''}
-                ${isAnima ? `<div class="batch-field-group"><div class="batch-field-label">ANIMA 품질 프리셋</div>${animaQualitySel}</div>` : ''}
-                ${isAnima ? `<div class="batch-field-group"><div class="batch-field-label">ANIMA 부정 태그</div>${animaNegSel}</div>` : ''}
-                <div class="batch-field-group"><div class="batch-field-label">자연어</div>${nlSel}</div>
+                <section class="batch-slot-section">
+                    <div class="batch-slot-section-title">
+                        <span>프롬프트 구성</span>
+                        <span class="batch-slot-section-hint">슬롯별 프리셋</span>
+                    </div>
+                    <div class="batch-slot-fields-grid">
+                        <div class="batch-field-group"><div class="batch-field-label">캐릭터</div>${charSel}</div>
+                        <div class="batch-field-group"><div class="batch-field-label">외모</div>${appSel}</div>
+                        <div class="batch-field-group"><div class="batch-field-label">복장</div>${outfitSel}</div>
+                        <div class="batch-field-group"><div class="batch-field-label">표정</div>${exprSel}</div>
+                        <div class="batch-field-group"><div class="batch-field-label">구도/기타 태그</div>${compSel}</div>
+                        <div class="batch-field-group"><div class="batch-field-label">품질 태그</div>${qualSel}</div>
+                        <div class="batch-field-group"><div class="batch-field-label">캐릭터 부정(optional)</div>${cnSel}</div>
+                        <div class="batch-field-group"><div class="batch-field-label">부정 태그</div>${negSel}</div>
+                        <div class="batch-field-group"><div class="batch-field-label">아티스트 프리셋</div>${artistSel}</div>
+                        ${isAnima ? `<div class="batch-field-group"><div class="batch-field-label">ANIMA 아티스트 프리셋</div>${animaArtistSel}</div>` : ''}
+                        ${isAnima ? `<div class="batch-field-group"><div class="batch-field-label">ANIMA 품질 프리셋</div>${animaQualitySel}</div>` : ''}
+                        ${isAnima ? `<div class="batch-field-group"><div class="batch-field-label">ANIMA 부정 태그</div>${animaNegSel}</div>` : ''}
+                        <div class="batch-field-group"><div class="batch-field-label">자연어</div>${nlSel}</div>
+                    </div>
+                </section>
 
+                <section class="batch-slot-section">
+                <div class="batch-slot-section-title">
+                    <span>참조 이미지</span>
+                    <span class="batch-slot-section-hint">Adapter</span>
+                </div>
+                <div class="batch-slot-option-stack">
                 <div class="batch-toggle-row">
                     <label>FACE-IPAdapter</label>
                     <label class="toggle-switch"><input type="checkbox" data-field="ref_enabled" ${slot.ref_enabled ? 'checked' : ''}><span class="toggle-slider"></span></label>
@@ -50232,7 +50755,15 @@
                         <span style="opacity:0.7;">📁</span> <span class="batch-style-ref-folder-hash-text"></span>
                     </div>
                 </div>
+                </div>
+                </section>
 
+                <section class="batch-slot-section">
+                <div class="batch-slot-section-title">
+                    <span>LoRA</span>
+                    <span class="batch-slot-section-hint">모델 보정</span>
+                </div>
+                <div class="batch-slot-option-stack">
                 <div class="batch-toggle-row" style="background:rgba(76,175,80,0.08); border-radius:4px; padding:2px 6px;">
                     <label>LoRA</label>
                     <label class="toggle-switch"><input type="checkbox" data-field="lora_enabled" ${slot.lora_enabled ? 'checked' : ''}><span class="toggle-slider"></span></label>
@@ -50335,7 +50866,15 @@
                         `).join('')}
                     </div>
                 </div>
+                </div>
+                </section>
 
+                <section class="batch-slot-section">
+                <div class="batch-slot-section-title">
+                    <span>생성 옵션</span>
+                    <span class="batch-slot-section-hint">출력 · 디테일러</span>
+                </div>
+                <div class="batch-slot-option-stack">
                 <div class="batch-toggle-row" ${isAnima ? 'style="opacity:0.4; pointer-events:none;"' : ''}>
                     <label>포즈</label>
                     <label class="toggle-switch"><input type="checkbox" data-field="pose_enabled" ${isAnima ? 'disabled' : ''} ${slot.pose_enabled ? 'checked' : ''}><span class="toggle-slider"></span></label>
@@ -50455,17 +50994,25 @@
                     <label class="toggle-switch"><input type="checkbox" data-field="sdxl_ed_enabled" ${slot.sdxl_ed_enabled ? 'checked' : ''}><span class="toggle-slider"></span></label>
                 </div>
                 `}
+                </div>
+                </section>
 
-                <button onclick="loadCachedSettingsToSlot(${idx})" style="width:100%; padding:5px; border:none; background:var(--error); color:#fff; border-radius:4px; cursor:pointer; font-size:0.75rem; font-weight:600; margin-top:6px;">에셋 생성에 저장된 캐시 가져오기</button>
+                <button class="batch-cache-btn" onclick="loadCachedSettingsToSlot(${idx})">에셋 생성의 저장된 설정 불러오기</button>
 
+                <section class="batch-slot-section">
+                    <div class="batch-slot-section-title">
+                        <span>프롬프트 미리보기</span>
+                        <span class="batch-slot-section-hint">클릭하여 펼치기</span>
+                    </div>
                 <div class="batch-prompt-preview-wrap">
-                    <div class="batch-field-label" style="cursor:pointer; user-select:none; margin-bottom:4px;" onclick="toggleBatchPreview(this)">프롬프트 미리보기 ▼</div>
+                    <div class="batch-field-label" style="cursor:pointer; user-select:none; margin-bottom:4px;" onclick="toggleBatchPreview(this)">긍정 프롬프트 ▼</div>
                     <div class="batch-prompt-preview collapsed" data-preview>${previewBatchSlotPrompt(slot)}</div>
                 </div>
                 <div class="batch-prompt-preview-wrap">
                     <div class="batch-field-label" style="cursor:pointer; user-select:none; margin-bottom:4px; color:var(--error);" onclick="toggleBatchPreview(this)">부정 프롬프트 미리보기 ▼</div>
                     <div class="batch-prompt-preview collapsed" data-negative-preview>${escapeHtml(previewBatchSlotNegativePrompt(slot))}</div>
                 </div>
+                </section>
             </div>`;
         }
 
