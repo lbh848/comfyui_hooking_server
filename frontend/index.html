@@ -27255,7 +27255,13 @@
             const chansubOn = providerToggle
                 ? !!providerToggle.checked
                 : String((currentConfig && currentConfig.illustration_provider) || 'comfy').toLowerCase() === 'chansub';
-            if (chansubOn) fmt = 'chansub';
+            if (chansubOn) {
+                fmt = 'chansub';
+            } else if (fmt === 'chansub') {
+                // 공급자는 Comfy인데 이전 챈섭 포맷 값만 남은 경우 실제 생성 경로는
+                // V3로 동작한다. 포맷 셀렉트가 없는 백업 탭에서도 같은 유효값을 표시한다.
+                fmt = 'v3';
+            }
             if (fmt === 'v1') return 'V1';
             if (fmt === 'chansub') return '챈섭';
             return 'V3';
@@ -38502,6 +38508,14 @@
                 chansubOn = String(
                     (typeof currentConfig !== 'undefined' && currentConfig && currentConfig.illustration_provider) || 'comfy'
                 ).toLowerCase() === 'chansub';
+            }
+            // 챈섭에서 Comfy로 돌아온 뒤 저장값만 chansub으로 남아 있을 수 있다.
+            // config.json은 자동 수정하지 않고 프론트의 작업 상태만 실제 V3 경로에 맞춘다.
+            if (!chansubOn
+                    && typeof _illustrationContextToggles !== 'undefined'
+                    && _illustrationContextToggles
+                    && String(_illustrationContextToggles.prompt_format || '').toLowerCase() === 'chansub') {
+                _illustrationContextToggles.prompt_format = 'v3';
             }
             // prompt_format 셀렉트는 삽화 프롬프트 생성 모달이 열려야 DOM에 생성된다.
             // 모달을 열지 않은 상태에서도 상단 칩이 챈섭 전환을 즉시 반영하도록
