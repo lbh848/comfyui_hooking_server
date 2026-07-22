@@ -154,3 +154,69 @@ async def test_multi_char_mask_is_prepared_at_illustration_execution_time(monkey
 
     assert [event[0] for event in events] == ["mask", "process"]
     assert result == {"success": True, "prompt_id": "prompt-id"}
+
+
+async def _run_process_loop_with_fake_pipeline(manager):
+    """_process_loop를 돌리되 _run_item_pipeline을 즉시 완료 처리하는 stub로 교체.
+    어떤 GPU 항목이 실제로 실행 차례가 됐는지 executed 리스트로 관찰한다."""
+    executed = []
+
+    async def fake_run(item, is_gpu):
+        item.status = "processing"
+        executed.append(item.id)
+        item.status = "completed"
+
+    manager._run_item_pipeline = fake_run
+    await manager._process_loop()
+    return executed
+
+
+@pytest.mark.asyncio
+async def test_multi_char_illustration_not_blocked_by_parent_llm_build():
+    """회귀: illustration_llm_build(priority 0, processing)가 다중 캐릭터 삽화
+    (priority 1, pending)를 블록해 교착에 빠지지 않아야 한다.
+
+    부모 llm_build가 자식 multi-char 완료를 await 중인데 multi-char이 부모 때문에
+    실행되지 못하면 다중 캐릭터 큐가 시작 직전에 멈추는 교착이 발생한다.
+    priority < 10 고순위 티어 상호 면제로 이 순환 대기를 끊어야 한다.
+    """
+    manager = QueueManager()
+    manager.get_config = lambda: {}
+
+    llm_build = QueueItem(
+        id="build", type="illustration_llm_build", label="build", priority=0
+    )
+    llm_build.status = "processing"
+    multi = QueueItem(id="multi", type="illustration", label="multi", priority=1)
+    manager.items = [llm_build, multi]
+
+    executed = await _run_process_loop_with_fake_pipeline(manager)
+
+    assert executed == ["multi"]
+
+
+@pytest.mark.asyncio
+async def test_refine_still_blocks_training_under_priority_ten():
+    """회귀 보호: priority >= 10 의존성(refine → training)은 고순위 면제 밖이라
+    블로킹 검사가 그대로 유지돼야 한다. 면제가 10 미만에만 적용되는지 확인.
+    """
+    manager = QueueManager()
+    manager.get_config = lambda: {
+        "queue_type_order": {
+            "instance_lora_analysis": 4,
+            "instance_lora_training": 5,
+        }
+    }
+
+    refine = QueueItem(
+        id="refine", type="instance_lora_prompt_refine", label="refine", priority=10
+    )
+    refine.status = "processing"
+    training = QueueItem(
+        id="train", type="instance_lora_training", label="train", priority=10
+    )
+    manager.items = [refine, training]
+
+    executed = await _run_process_loop_with_fake_pipeline(manager)
+
+    assert executed == []

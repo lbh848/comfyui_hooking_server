@@ -516,11 +516,22 @@ class QueueManager:
                 # 순서 보존: 더 높은 우선순위 작업이 pending/processing 중이면
                 # (예: analysis → refine → training 의존성) 그것이 끝날 때까지 대기.
                 next_key = self._sort_key(next_item)
-                blocking = any(
-                    self._sort_key(i) < next_key
-                    for i in self.items
-                    if i.status in ("pending", "processing") and i is not next_item
-                )
+
+                # 고순위(illustration 계열, priority < 10)끼리는 서로 블록하지 않는다.
+                # illustration_llm_build(priority 0)가 CALL3 뒤 적재한 다중 캐릭터 자식
+                # 삽화(priority 1)를 블록하면, 부모가 자식 완료를 await하는 순환 대기
+                # (교착)가 발생해 다중 캐릭터 큐가 시작 직전에 멈춘다.
+                # refine(10) → training(10) 등 priority >= 10 의존성은 면제 밖이라 유지.
+                _HIGH_TIER = 10
+
+                def _is_blocker(i):
+                    if i is next_item or i.status not in ("pending", "processing"):
+                        return False
+                    if next_item.priority < _HIGH_TIER and i.priority < _HIGH_TIER:
+                        return False
+                    return self._sort_key(i) < next_key
+
+                blocking = any(_is_blocker(i) for i in self.items)
                 if blocking:
                     break  # 블록 해제는 완료 시 _run_item_pipeline 이 _process_loop를 재점검
                 self.current_item = next_item
