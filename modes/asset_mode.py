@@ -2493,46 +2493,181 @@ class AssetMode:
             tags.append(tag)
         return tags
 
-    # ─── 프리셋매니징: 일괄 삽입 ────────────────────────────
-    def batch_insert_preset(self, category: str, name: str, tags_text: str) -> dict:
-        """쉼표 구분 태그 문자열을 리스트로 파싱하여 tags.json에 저장. natural_language_presets는 단일 텍스트로 저장."""
+    # ─── 프리셋매니징: 추가 / 수정 ─────────────────────────
+    def _parse_managed_preset_value(self, category: str, tags_text: str):
+        """관리 화면 입력값을 저장 형식으로 변환한다. 실패 시 (None, error)를 반환한다."""
+        if category == "natural_language_presets":
+            text = (tags_text or "").strip()
+            if not text:
+                print("[ASSET_MODE] save_managed_preset: 텍스트가 비어있음")
+                return None, "텍스트를 입력해주세요."
+            return text, None
+
+        tags = self._split_tags_preserving_parens(tags_text or "")
+        if not tags:
+            print("[ASSET_MODE] save_managed_preset: 태그가 비어있음")
+            return None, "태그를 입력해주세요."
+        return tags, None
+
+    def save_managed_preset(
+        self,
+        category: str,
+        name: str,
+        tags_text: str,
+        operation: str = "create",
+        original_name: str = "",
+        target_state: str = "active",
+    ) -> dict:
+        """프리셋을 충돌 검사 후 생성하거나 활성/숨김 위치에서 명시적으로 수정한다."""
         if category not in PRESET_MGMT_CATEGORIES:
-            print(f"[ASSET_MODE] batch_insert_preset: 지원하지 않는 카테고리 '{category}'")
+            print(f"[ASSET_MODE] save_managed_preset: 지원하지 않는 카테고리 '{category}'")
             return {"success": False, "error": f"지원하지 않는 카테고리: {category}"}
 
-        if not name or not name.strip():
-            print("[ASSET_MODE] batch_insert_preset: 이름이 비어있음")
-            return {"success": False, "error": "이름을 입력해주세요."}
+        operation = (operation or "").strip().lower()
+        if operation not in {"create", "update"}:
+            print(f"[ASSET_MODE] save_managed_preset: 지원하지 않는 작업 '{operation}'")
+            return {"success": False, "error": f"지원하지 않는 작업: {operation}"}
 
-        name = name.strip()
+        name = (name or "").strip()
+        if not name:
+            print("[ASSET_MODE] save_managed_preset: 이름이 비어있음")
+            return {"success": False, "error": "이름을 입력해주세요."}
 
         cat_data = self._tags.setdefault(category, {})
         if not isinstance(cat_data, dict):
-            print(f"[ASSET_MODE] batch_insert_preset: 카테고리 '{category}'가 dict가 아님")
+            print(f"[ASSET_MODE] save_managed_preset: 카테고리 '{category}'가 dict가 아님")
             return {"success": False, "error": f"카테고리 '{category}' 구조 오류"}
 
-        # natural_language_presets는 단일 텍스트로 저장
-        if category == "natural_language_presets":
-            text = tags_text.strip()
-            if not text:
-                print("[ASSET_MODE] batch_insert_preset: 텍스트가 비어있음")
-                return {"success": False, "error": "텍스트를 입력해주세요."}
-            cat_data[name] = text
+        hidden = self.load_hidden_tags()
+        hidden_cat = hidden.get(category, {})
+        if not isinstance(hidden_cat, dict):
+            print(f"[ASSET_MODE] save_managed_preset: 숨김 카테고리 '{category}'가 dict가 아님")
+            return {"success": False, "error": f"숨김 카테고리 '{category}' 구조 오류"}
+
+        value, value_error = self._parse_managed_preset_value(category, tags_text)
+        if value_error:
+            return {"success": False, "error": value_error}
+
+        active_exists = name in cat_data
+        hidden_exists = name in hidden_cat
+
+        if operation == "create":
+            if active_exists or hidden_exists:
+                conflict_state = "hidden" if hidden_exists and not active_exists else "active"
+                state_label = "숨김" if conflict_state == "hidden" else "활성"
+                print(
+                    f"[ASSET_MODE] save_managed_preset: 신규 이름 충돌 "
+                    f"category={category}, name={name!r}, state={conflict_state}"
+                )
+                return {
+                    "success": False,
+                    "error": f"'{name}' 이름의 {state_label} 프리셋이 이미 존재합니다.",
+                    "conflict": True,
+                    "conflict_state": conflict_state,
+                }
+
+            cat_data[name] = value
             self.save_tags()
-            self._log("preset_batch_inserted", {"category": category, "name": name, "count": len(text)})
-            return {"success": True, "name": name, "count": len(text)}
+            count = len(value)
+            self._log("preset_created", {"category": category, "name": name, "count": count})
+            print(f"[ASSET_MODE] save_managed_preset: 신규 저장 완료 ({category}/{name}, count={count})")
+            return {
+                "success": True,
+                "operation": "create",
+                "state": "active",
+                "name": name,
+                "count": count,
+            }
 
-        # 기타 카테고리: 괄호 내부 쉼표를 보존하며 파싱
-        tags = self._split_tags_preserving_parens(tags_text)
-        if not tags:
-            print("[ASSET_MODE] batch_insert_preset: 태그가 비어있음")
-            return {"success": False, "error": "태그를 입력해주세요."}
+        original_name = (original_name or "").strip()
+        if not original_name:
+            print("[ASSET_MODE] save_managed_preset: 수정할 기존 이름이 비어있음")
+            return {"success": False, "error": "수정할 프리셋 이름이 비어있습니다."}
+        if target_state not in {"active", "hidden"}:
+            print(f"[ASSET_MODE] save_managed_preset: 잘못된 대상 상태 '{target_state}'")
+            return {"success": False, "error": f"잘못된 프리셋 상태: {target_state}"}
 
-        cat_data[name] = tags
-        self.save_tags()
+        source = cat_data if target_state == "active" else hidden_cat
+        if original_name not in source:
+            print(
+                f"[ASSET_MODE] save_managed_preset: 수정 대상 없음 "
+                f"category={category}, name={original_name!r}, state={target_state}"
+            )
+            return {"success": False, "error": f"수정할 프리셋 '{original_name}'을(를) 찾을 수 없습니다."}
 
-        self._log("preset_batch_inserted", {"category": category, "name": name, "count": len(tags)})
-        return {"success": True, "name": name, "count": len(tags)}
+        if name != original_name and (name in cat_data or name in hidden_cat):
+            conflict_state = "active" if name in cat_data else "hidden"
+            state_label = "활성" if conflict_state == "active" else "숨김"
+            print(
+                f"[ASSET_MODE] save_managed_preset: 수정 이름 충돌 "
+                f"category={category}, old={original_name!r}, new={name!r}, state={conflict_state}"
+            )
+            return {
+                "success": False,
+                "error": f"'{name}' 이름의 {state_label} 프리셋이 이미 존재합니다.",
+                "conflict": True,
+                "conflict_state": conflict_state,
+            }
+
+        # dict 순서를 유지하면서 이름과 값을 한 번에 교체한다.
+        updated_source = {}
+        for key, old_value in source.items():
+            if key == original_name:
+                updated_source[name] = value
+            else:
+                updated_source[key] = old_value
+
+        if target_state == "active":
+            self._tags[category] = updated_source
+        else:
+            hidden[category] = updated_source
+
+        ref_count = 0
+        if name != original_name:
+            ref_field = self._PRESET_REF_FIELD.get(category)
+            if ref_field:
+                characters = self._tags.get("characters", {})
+                for character in characters.values():
+                    if isinstance(character, dict) and character.get(ref_field) == original_name:
+                        character[ref_field] = name
+                        ref_count += 1
+
+        # 숨김 값 수정은 hidden_tags만, 활성 값 또는 참조 이름 수정은 tags를 저장한다.
+        if target_state == "active" or ref_count > 0:
+            self.save_tags()
+        if target_state == "hidden":
+            self.save_hidden_tags(hidden)
+
+        count = len(value)
+        self._log("preset_updated", {
+            "category": category,
+            "old": original_name,
+            "name": name,
+            "state": target_state,
+            "count": count,
+            "ref_updated": ref_count,
+        })
+        print(
+            f"[ASSET_MODE] save_managed_preset: 수정 완료 "
+            f"({category}/{original_name} -> {name}, state={target_state}, count={count}, refs={ref_count})"
+        )
+        return {
+            "success": True,
+            "operation": "update",
+            "state": target_state,
+            "name": name,
+            "count": count,
+            "ref_updated": ref_count,
+        }
+
+    def batch_insert_preset(self, category: str, name: str, tags_text: str) -> dict:
+        """이전 호출 호환용 신규 추가. 같은 이름은 덮어쓰지 않는다."""
+        return self.save_managed_preset(
+            category=category,
+            name=name,
+            tags_text=tags_text,
+            operation="create",
+        )
 
     # ─── 프리셋매니징: 에셋 추적 ────────────────────────────
     def _get_preset_tags_raw(self, category: str, name: str) -> Optional[list]:

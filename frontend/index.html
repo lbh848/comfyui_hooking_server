@@ -3632,59 +3632,151 @@
         .at-empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1; color: var(--text2); font-size: 0.9rem; padding: 40px 20px; }
 
         /* ─── 프리셋매니징 탭 (pm-*) ─── */
-        .pm-container { display: flex; flex-direction: column; height: calc(100vh - 100px); overflow: hidden; }
-        .pm-toolbar { display: flex; align-items: center; gap: 10px; padding: 6px 8px; background: var(--surface2); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+        .pm-container { display: flex; flex-direction: column; height: calc(100vh - 100px); min-height: 620px; overflow: hidden; background: color-mix(in srgb, var(--bg) 92%, var(--surface)); }
+        .pm-toolbar { min-height: 68px; display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 11px 18px; background: linear-gradient(135deg, color-mix(in srgb, var(--surface2) 82%, var(--surface)), color-mix(in srgb, var(--surface) 94%, var(--accent) 6%)); border-bottom: 1px solid var(--border); }
+        .pm-brand { display: flex; align-items: center; gap: 11px; min-width: 0; }
+        .pm-brand-mark { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 12px; color: #fff; font-size: 1rem; font-weight: 800; background: linear-gradient(145deg, var(--accent), var(--accent2)); box-shadow: 0 7px 18px color-mix(in srgb, var(--accent) 28%, transparent); }
+        .pm-brand-title { font-size: 0.98rem; font-weight: 750; letter-spacing: -0.01em; }
+        .pm-brand-subtitle { margin-top: 2px; color: var(--text2); font-size: 0.72rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .pm-toolbar-actions { display: flex; align-items: center; gap: 8px; }
+        .pm-toolbar-stat { display: inline-flex; align-items: center; gap: 5px; padding: 5px 9px; border: 1px solid var(--border); border-radius: 999px; color: var(--text2); background: color-mix(in srgb, var(--surface) 82%, transparent); font-size: 0.72rem; white-space: nowrap; }
+        .pm-toolbar-stat strong { color: var(--text); }
         .pm-body { display: flex; flex: 1; min-height: 0; overflow: hidden; }
-        .pm-sidebar { width: 48px; display: flex; flex-direction: column; align-items: center; padding-top: 2px; background: var(--surface2); border-right: 1px solid var(--border); flex-shrink: 0; height: 100%; }
-        .pm-sidebar-btn { width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; border-radius: 6px; cursor: pointer; font-size: 1.1rem; border: none; background: transparent; color: var(--text2); transition: all 0.15s; margin-bottom: 4px; position: relative; }
-        .pm-sidebar-btn:hover { background: rgba(66,133,244,0.08); color: var(--text); }
-        .pm-sidebar-btn.active { background: var(--accent); color: #fff; }
-        .pm-sidebar-btn .pm-sidebar-tooltip { display: none; position: absolute; left: 44px; top: 50%; transform: translateY(-50%); background: var(--surface); border: 1px solid var(--border); padding: 4px 10px; border-radius: 4px; font-size: 0.78rem; white-space: nowrap; z-index: 10; color: var(--text); box-shadow: 0 2px 8px rgba(0,0,0,0.2); }
-        .pm-sidebar-btn:hover .pm-sidebar-tooltip { display: block; }
-        .pm-main { flex: 1; overflow: hidden; display: flex; flex-direction: column; min-width: 0; }
+        .pm-sidebar { width: 164px; display: flex; flex-direction: column; gap: 6px; padding: 12px 10px; background: color-mix(in srgb, var(--surface2) 68%, var(--surface)); border-right: 1px solid var(--border); flex-shrink: 0; }
+        .pm-sidebar-btn { min-height: 42px; display: flex; align-items: center; gap: 10px; padding: 0 12px; border-radius: 9px; cursor: pointer; border: 1px solid transparent; background: transparent; color: var(--text2); font-size: 0.82rem; font-weight: 650; text-align: left; transition: background 0.15s, border-color 0.15s, color 0.15s; }
+        .pm-sidebar-btn:hover { background: color-mix(in srgb, var(--accent) 9%, transparent); color: var(--text); }
+        .pm-sidebar-btn.active { background: color-mix(in srgb, var(--accent) 17%, var(--surface)); border-color: color-mix(in srgb, var(--accent) 48%, var(--border)); color: var(--text); }
+        .pm-sidebar-icon { width: 22px; height: 22px; display: grid; place-items: center; border-radius: 7px; background: color-mix(in srgb, var(--surface2) 72%, transparent); font-size: 0.78rem; flex: 0 0 auto; }
+        .pm-sidebar-btn.active .pm-sidebar-icon { background: var(--accent); color: #fff; }
+        .pm-main { flex: 1; min-width: 0; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
         .pm-main > div { flex: 1; min-height: 0; }
         #tab-smart-asset-content.active { margin: -20px -24px; }
         #tab-preset-mgmt-content.active { margin: -40px 0; }
-        
-        .pm-view { padding: 4px; overflow-y: auto; overflow-x: hidden; }
-        .pm-section { background: var(--surface2); border-radius: 8px; padding: 14px; margin-bottom: 14px; }
-        .pm-section-title { font-weight: 600; font-size: 0.95rem; margin-bottom: 10px; display: flex; align-items: center; gap: 6px; }
-        .pm-category-tabs { display: flex; gap: 4px; margin-bottom: 12px; flex-wrap: wrap; }
-        .pm-category-tab { padding: 5px 12px; border-radius: 5px; border: 1px solid var(--border); background: var(--surface2); color: var(--text2); font-size: 0.8rem; cursor: pointer; transition: all 0.15s; }
-        .pm-category-tab:hover { background: var(--surface); }
-        .pm-category-tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
-        .pm-card-grid { display: flex; flex-wrap: wrap; gap: 8px; overflow-x: hidden; }
-        .pm-card { min-width: 120px; max-width: 220px; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; background: var(--surface); cursor: pointer; transition: all 0.15s; display: flex; align-items: center; gap: 8px; }
-        .pm-card:hover { border-color: rgba(66,133,244,0.4); }
-        .pm-card.selected { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(66,133,244,0.3); }
-        .pm-card.hidden-card { opacity: 0.55; border-style: dashed; }
-        .pm-card input[type="checkbox"] { margin: 0; flex-shrink: 0; }
-        .pm-card-name { font-weight: 600; font-size: 0.85rem; word-break: break-word; flex: 1; }
-        .pm-card-count { font-size: 0.7rem; color: var(--text2); }
-        .pm-tag-highlight { background: rgba(255, 200, 0, 0.3); border-radius: 2px; padding: 0 2px; }
-        .pm-btn-row { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
-        .pm-btn { padding: 5px 14px; border-radius: 5px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: 0.85rem; cursor: pointer; transition: all 0.15s; }
-        .pm-btn:hover { background: var(--surface); }
-        .pm-btn-primary { background: var(--accent); color: #fff; border-color: var(--accent); }
-        .pm-btn-primary:hover { opacity: 0.9; }
-        .pm-btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
-        .pm-btn-danger { background: #d32f2f; color: #fff; border-color: #d32f2f; }
-        .pm-btn-danger:hover { opacity: 0.85; }
-        .pm-form-group { margin-bottom: 12px; }
-        .pm-form-group label { display: block; font-weight: 600; font-size: 0.85rem; margin-bottom: 4px; }
-        .pm-form-group select, .pm-form-group input, .pm-form-group textarea { width: 100%; padding: 6px 10px; border: 1px solid var(--border); border-radius: 5px; background: var(--surface); color: var(--text); font-size: 0.85rem; }
-        .pm-form-group textarea { min-height: 80px; resize: vertical; font-family: inherit; }
-        .pm-tags-preview { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
-        .pm-tag-chip { display: inline-block; background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 2px 8px; font-size: 0.75rem; color: var(--text2); white-space: nowrap; }
 
-        /* 추적 모달 */
-        .pm-trace-row { display: flex; gap: 12px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 8px; background: var(--surface2); }
-        .pm-trace-img { max-width: 200px; max-height: 260px; object-fit: contain; border-radius: 6px; flex-shrink: 0; background: var(--surface); }
-        .pm-trace-prompt { flex: 1; min-width: 0; font-size: 0.8rem; line-height: 1.5; overflow-y: auto; max-height: 120px; word-break: break-word; }
-        .pm-trace-info { font-size: 0.75rem; color: var(--text2); margin-bottom: 4px; }
-        .pm-trace-tags { font-size: 0.7rem; color: var(--text2); margin-top: 8px; }
-        .pm-trace-tags span { display: inline-block; background: var(--surface); border: 1px solid var(--border); border-radius: 3px; padding: 1px 6px; margin: 1px; }
-        .pm-trace-empty { text-align: center; color: var(--text2); padding: 40px 20px; font-size: 0.9rem; }
+        .pm-view { overflow-y: auto; overflow-x: hidden; }
+        .pm-section { background: color-mix(in srgb, var(--surface2) 56%, var(--surface)); border: 1px solid var(--border); border-radius: 12px; padding: 15px; }
+        .pm-section-title { font-weight: 700; font-size: 0.92rem; display: flex; align-items: center; gap: 7px; }
+        .pm-section-note { margin-top: 3px; color: var(--text2); font-size: 0.72rem; line-height: 1.45; }
+        .pm-section-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 13px; }
+        .pm-manage-shell { height: 100%; display: flex; min-width: 0; min-height: 0; }
+        .pm-library { width: clamp(280px, 26vw, 350px); flex: 0 0 auto; display: flex; flex-direction: column; min-height: 0; padding: 15px; border-right: 1px solid var(--border); background: color-mix(in srgb, var(--surface) 88%, transparent); }
+        .pm-library-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+        .pm-library-title { font-weight: 720; font-size: 0.9rem; }
+        .pm-library-count { margin-top: 3px; color: var(--text2); font-size: 0.7rem; }
+        .pm-library-controls { display: grid; gap: 8px; }
+        .pm-field, .pm-form-group { margin-bottom: 13px; }
+        .pm-field label, .pm-form-group label { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 6px; font-weight: 650; font-size: 0.78rem; }
+        .pm-field-hint { color: var(--text2); font-size: 0.68rem; font-weight: 400; }
+        .pm-input, .pm-field select, .pm-field input, .pm-field textarea, .pm-form-group select, .pm-form-group input, .pm-form-group textarea { width: 100%; border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; background: color-mix(in srgb, var(--bg) 76%, var(--surface)); color: var(--text); font: inherit; font-size: 0.8rem; outline: none; transition: border-color 0.15s, box-shadow 0.15s; }
+        .pm-field textarea, .pm-form-group textarea { min-height: 138px; resize: vertical; line-height: 1.55; }
+        .pm-input:focus, .pm-field select:focus, .pm-field input:focus, .pm-field textarea:focus { border-color: color-mix(in srgb, var(--accent) 72%, var(--border)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 13%, transparent); }
+        .pm-filter-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; }
+        .pm-filter-btn { min-height: 31px; border: 1px solid var(--border); border-radius: 7px; background: transparent; color: var(--text2); cursor: pointer; font-size: 0.7rem; }
+        .pm-filter-btn:hover { color: var(--text); background: var(--surface2); }
+        .pm-filter-btn.active { color: var(--text); border-color: color-mix(in srgb, var(--accent) 48%, var(--border)); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+        .pm-library-list { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; margin: 11px -3px 0 0; padding-right: 5px; }
+        .pm-library-item { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px 10px; padding: 10px 11px; border: 1px solid var(--border); border-radius: 9px; background: color-mix(in srgb, var(--surface) 92%, transparent); color: var(--text); cursor: pointer; text-align: left; transition: border-color 0.15s, background 0.15s, transform 0.15s; }
+        .pm-library-item:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); background: color-mix(in srgb, var(--accent) 7%, var(--surface)); transform: translateY(-1px); }
+        .pm-library-item.selected { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 13%, var(--surface)); box-shadow: inset 3px 0 0 var(--accent); }
+        .pm-library-name { overflow: hidden; text-overflow: ellipsis; font-size: 0.79rem; font-weight: 650; white-space: nowrap; }
+        .pm-library-meta { color: var(--text2); font-size: 0.66rem; }
+        .pm-library-preview { grid-column: 1 / -1; overflow: hidden; color: var(--text2); font-size: 0.67rem; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+        .pm-state-badge, .pm-mode-badge { display: inline-flex; align-items: center; width: fit-content; padding: 3px 7px; border-radius: 999px; border: 1px solid color-mix(in srgb, var(--success) 35%, var(--border)); color: color-mix(in srgb, var(--success) 70%, var(--text)); background: color-mix(in srgb, var(--success) 10%, transparent); font-size: 0.64rem; font-weight: 650; white-space: nowrap; }
+        .pm-state-badge.hidden, .pm-mode-badge.hidden { border-color: var(--border); color: var(--text2); background: color-mix(in srgb, var(--surface2) 65%, transparent); }
+        .pm-mode-badge.create { border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); color: color-mix(in srgb, var(--accent) 76%, var(--text)); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+        .pm-empty { display: grid; place-items: center; min-height: 130px; padding: 20px; border: 1px dashed var(--border); border-radius: 10px; color: var(--text2); font-size: 0.76rem; text-align: center; line-height: 1.6; }
+        .pm-workspace { flex: 1; min-width: 0; min-height: 0; overflow-y: auto; padding: 17px; }
+        .pm-workspace-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; margin-bottom: 14px; }
+        .pm-workspace-title { font-size: 1.05rem; font-weight: 750; }
+        .pm-workspace-context { margin-top: 4px; color: var(--text2); font-size: 0.72rem; }
+        .pm-editor-grid { display: grid; grid-template-columns: minmax(300px, 0.94fr) minmax(340px, 1.06fr); gap: 13px; align-items: start; }
+        .pm-preview-box { min-height: 42px; max-height: 118px; overflow-y: auto; display: flex; flex-wrap: wrap; align-content: flex-start; gap: 5px; padding: 9px; border: 1px dashed var(--border); border-radius: 8px; background: color-mix(in srgb, var(--bg) 72%, transparent); }
+        .pm-preview-empty { color: var(--text2); font-size: 0.7rem; }
+        .pm-tags-preview { display: flex; flex-wrap: wrap; gap: 5px; }
+        .pm-tag-chip { display: inline-block; max-width: 100%; padding: 3px 7px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text2); font-size: 0.68rem; overflow-wrap: anywhere; }
+        .pm-tag-chip.common { border-color: color-mix(in srgb, #4aa3ff 45%, var(--border)); color: color-mix(in srgb, #4aa3ff 70%, var(--text)); background: color-mix(in srgb, #4aa3ff 10%, transparent); }
+        .pm-tag-chip.added { border-color: color-mix(in srgb, var(--success) 45%, var(--border)); color: color-mix(in srgb, var(--success) 72%, var(--text)); background: color-mix(in srgb, var(--success) 10%, transparent); }
+        .pm-tag-chip.removed { border-color: color-mix(in srgb, var(--error) 38%, var(--border)); color: color-mix(in srgb, var(--error) 67%, var(--text)); background: color-mix(in srgb, var(--error) 9%, transparent); }
+        .pm-compare-status { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; margin-bottom: 11px; }
+        .pm-status-card { padding: 9px 10px; border: 1px solid var(--border); border-radius: 8px; background: color-mix(in srgb, var(--surface) 78%, transparent); }
+        .pm-status-label { color: var(--text2); font-size: 0.64rem; }
+        .pm-status-value { margin-top: 3px; font-size: 0.75rem; font-weight: 650; line-height: 1.35; }
+        .pm-status-value.ok { color: color-mix(in srgb, var(--success) 76%, var(--text)); }
+        .pm-status-value.warn { color: color-mix(in srgb, #ffb020 76%, var(--text)); }
+        .pm-status-value.danger { color: color-mix(in srgb, var(--error) 76%, var(--text)); }
+        .pm-compare-target-row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+        .pm-compare-target-row label { flex: 0 0 auto; color: var(--text2); font-size: 0.7rem; }
+        .pm-compare-target-row select { flex: 1; min-width: 0; }
+        .pm-compare-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+        .pm-compare-column { min-width: 0; padding: 9px; border: 1px solid var(--border); border-radius: 8px; background: color-mix(in srgb, var(--bg) 73%, transparent); }
+        .pm-compare-column-title { display: flex; justify-content: space-between; gap: 7px; margin-bottom: 7px; color: var(--text2); font-size: 0.67rem; }
+        .pm-compare-content { min-height: 73px; max-height: 165px; overflow-y: auto; display: flex; flex-wrap: wrap; align-content: flex-start; gap: 5px; font-size: 0.72rem; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+        .pm-compare-legend { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 9px; color: var(--text2); font-size: 0.64rem; }
+        .pm-legend-dot { width: 7px; height: 7px; display: inline-block; margin-right: 4px; border-radius: 50%; background: var(--text2); }
+        .pm-legend-dot.common { background: #4aa3ff; }
+        .pm-legend-dot.added { background: var(--success); }
+        .pm-legend-dot.removed { background: var(--error); }
+        .pm-inline-alert { display: none; align-items: center; justify-content: space-between; gap: 10px; margin: 9px 0 0; padding: 8px 10px; border: 1px solid color-mix(in srgb, var(--error) 45%, var(--border)); border-radius: 8px; background: color-mix(in srgb, var(--error) 9%, transparent); color: color-mix(in srgb, var(--error) 74%, var(--text)); font-size: 0.7rem; }
+        .pm-inline-alert.visible { display: flex; }
+        .pm-action-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
+        .pm-action-note { color: var(--text2); font-size: 0.68rem; }
+        .pm-btn-row { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+        .pm-btn { min-height: 34px; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--border); background: color-mix(in srgb, var(--surface2) 58%, var(--surface)); color: var(--text); font-size: 0.76rem; font-weight: 600; cursor: pointer; transition: filter 0.15s, transform 0.15s, background 0.15s; }
+        .pm-btn:hover { filter: brightness(1.08); transform: translateY(-1px); }
+        .pm-btn:disabled { opacity: 0.42; cursor: not-allowed; filter: none; transform: none; }
+        .pm-btn-primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+        .pm-btn-quiet { background: transparent; }
+        .pm-btn-danger { background: color-mix(in srgb, var(--error) 82%, #7b1b1b); color: #fff; border-color: var(--error); }
+        .pm-track-section { margin-top: 13px; }
+        .pm-track-head-actions { display: flex; align-items: center; gap: 7px; }
+        .pm-progress { display: none; margin-bottom: 12px; }
+        .pm-progress.visible { display: block; }
+        .pm-progress-copy { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 5px; color: var(--text2); font-size: 0.68rem; }
+        .pm-progress-track { height: 5px; overflow: hidden; border-radius: 999px; background: color-mix(in srgb, var(--bg) 72%, var(--surface)); }
+        .pm-progress-bar { height: 100%; width: 0; border-radius: inherit; background: linear-gradient(90deg, var(--accent), #ff8b9d); transition: width 0.2s ease; }
+        .pm-trace-results { display: grid; gap: 8px; }
+        .pm-trace-summary { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 9px 10px; border: 1px solid var(--border); border-radius: 8px; color: var(--text2); background: color-mix(in srgb, var(--surface) 75%, transparent); font-size: 0.7rem; }
+        .pm-trace-row { display: grid; grid-template-columns: 148px minmax(0, 1fr); gap: 12px; padding: 10px; border: 1px solid var(--border); border-radius: 10px; background: color-mix(in srgb, var(--surface) 80%, transparent); }
+        .pm-trace-img { width: 148px; height: 112px; object-fit: contain; border-radius: 7px; background: color-mix(in srgb, var(--bg) 82%, var(--surface)); }
+        .pm-trace-prompt { min-width: 0; max-height: 95px; overflow-y: auto; word-break: break-word; font-size: 0.72rem; line-height: 1.55; }
+        .pm-trace-info { margin-bottom: 5px; color: var(--text2); font-size: 0.67rem; }
+        .pm-tag-highlight { padding: 0 2px; border-radius: 3px; background: color-mix(in srgb, #ffd54f 30%, transparent); color: var(--text); }
+        .pm-trace-empty { padding: 30px 20px; border: 1px dashed var(--border); border-radius: 10px; color: var(--text2); text-align: center; font-size: 0.76rem; }
+        .pm-hide-view { padding: 17px; }
+        .pm-category-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 13px; }
+        .pm-category-tab { padding: 6px 10px; border-radius: 7px; border: 1px solid var(--border); background: color-mix(in srgb, var(--surface) 84%, transparent); color: var(--text2); font-size: 0.72rem; cursor: pointer; }
+        .pm-category-tab:hover { color: var(--text); }
+        .pm-category-tab.active { background: color-mix(in srgb, var(--accent) 16%, var(--surface)); color: var(--text); border-color: color-mix(in srgb, var(--accent) 50%, var(--border)); }
+        .pm-hide-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px; }
+        .pm-hide-panel { min-width: 0; }
+        .pm-hide-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+        .pm-hide-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 7px; max-height: calc(100vh - 285px); overflow-y: auto; padding-right: 3px; }
+        .pm-card { min-width: 0; border: 1px solid var(--border); border-radius: 9px; padding: 10px; background: color-mix(in srgb, var(--surface) 84%, transparent); cursor: pointer; transition: border-color 0.15s, background 0.15s; display: flex; align-items: flex-start; gap: 8px; }
+        .pm-card:hover { border-color: color-mix(in srgb, var(--accent) 42%, var(--border)); }
+        .pm-card.selected { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 9%, var(--surface)); }
+        .pm-card.hidden-card { border-style: dashed; }
+        .pm-card input[type="checkbox"] { margin-top: 2px; flex-shrink: 0; accent-color: var(--accent); }
+        .pm-card-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-weight: 650; font-size: 0.76rem; white-space: nowrap; }
+        .pm-card-count { margin-top: 3px; color: var(--text2); font-size: 0.65rem; }
+
+        @media (max-width: 1120px) {
+            .pm-sidebar { width: 58px; align-items: stretch; padding-inline: 8px; }
+            .pm-sidebar-btn { justify-content: center; padding: 0; }
+            .pm-sidebar-label { display: none; }
+            .pm-editor-grid { grid-template-columns: 1fr; }
+        }
+        @media (max-width: 780px) {
+            .pm-container { min-height: 560px; }
+            .pm-toolbar { padding-inline: 12px; }
+            .pm-brand-subtitle, .pm-toolbar-stat { display: none; }
+            .pm-sidebar { width: 48px; padding-inline: 5px; }
+            .pm-manage-shell { display: block; overflow-y: auto; }
+            .pm-library { width: 100%; height: 310px; border-right: none; border-bottom: 1px solid var(--border); }
+            .pm-workspace { overflow: visible; }
+            .pm-hide-grid, .pm-compare-columns { grid-template-columns: 1fr; }
+            .pm-trace-row { grid-template-columns: 94px minmax(0, 1fr); }
+            .pm-trace-img { width: 94px; height: 94px; }
+        }
 
         /* ─── 그림 일괄생성 탭 ─── */
         .batch-chain-container {
@@ -6622,126 +6714,209 @@
         <div id="tab-preset-mgmt-content" class="tab-content">
             <div class="pm-container">
                 <div class="pm-toolbar">
-                    <span style="font-weight:600; font-size:0.9rem;">프리셋매니징</span>
+                    <div class="pm-brand">
+                        <div class="pm-brand-mark">P</div>
+                        <div style="min-width:0;">
+                            <div class="pm-brand-title">프리셋 매니징</div>
+                            <div class="pm-brand-subtitle">추가, 비교, 수정, 사용 추적을 한 화면에서 관리합니다.</div>
+                        </div>
+                    </div>
+                    <div class="pm-toolbar-actions">
+                        <span class="pm-toolbar-stat" id="pm-toolbar-stat">활성 <strong>0</strong> · 숨김 <strong>0</strong></span>
+                        <button class="pm-btn pm-btn-quiet" onclick="pmLoadData()" title="프리셋 데이터 새로고침">↻ 새로고침</button>
+                    </div>
                 </div>
                 <div class="pm-body">
                     <div class="pm-sidebar">
-                        <button class="pm-sidebar-btn active" id="pm-sidebar-hide" onclick="pmSwitchView('hide')">
-                            👁
-                            <span class="pm-sidebar-tooltip">숨김 관리</span>
+                        <button class="pm-sidebar-btn active" id="pm-sidebar-manage" onclick="pmSwitchView('manage')">
+                            <span class="pm-sidebar-icon">◆</span>
+                            <span class="pm-sidebar-label">프리셋 편집</span>
                         </button>
-                        <button class="pm-sidebar-btn" id="pm-sidebar-batch" onclick="pmSwitchView('batch')">
-                            ➕
-                            <span class="pm-sidebar-tooltip">일괄 추가</span>
-                        </button>
-                        <button class="pm-sidebar-btn" id="pm-sidebar-trace" onclick="pmSwitchView('trace')">
-                            🔍
-                            <span class="pm-sidebar-tooltip">조회/추적/수정</span>
+                        <button class="pm-sidebar-btn" id="pm-sidebar-hide" onclick="pmSwitchView('hide')">
+                            <span class="pm-sidebar-icon">◐</span>
+                            <span class="pm-sidebar-label">숨김 관리</span>
                         </button>
                     </div>
                     <div class="pm-main">
-                        <!-- View 1: 숨김 관리 -->
-                        <div id="pm-view-hide" class="pm-view">
-                            <div class="pm-category-tabs" id="pm-hide-categories"></div>
-                            <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px;">
-                                <span style="font-size:0.8rem; color:var(--text2);">활성 프리셋</span>
-                                <button class="pm-btn pm-btn-primary" onclick="pmBatchHide()" id="pm-btn-hide" disabled>선택 숨기기</button>
-                            </div>
-                            <div class="pm-card-grid" id="pm-hide-active-grid"></div>
-                            <div style="display:flex; align-items:center; gap:8px; margin: 16px 0 10px;">
-                                <span style="font-size:0.8rem; color:var(--text2);">숨김 프리셋</span>
-                                <button class="pm-btn" onclick="pmBatchRestore()" id="pm-btn-restore" disabled>선택 복원</button>
-                            </div>
-                            <div class="pm-card-grid" id="pm-hide-hidden-grid"></div>
-                        </div>
-
-                        <!-- View 2: 일괄 삽입 -->
-                        <div id="pm-view-batch" class="pm-view" style="display:none;">
-                            <div class="pm-section">
-                                <div class="pm-section-title">새 프리셋 일괄 추가</div>
-                                <div class="pm-form-group">
-                                    <label>카테고리</label>
-                                    <select id="pm-batch-category" onchange="pmBatchCategoryChanged()">
-                                        <option value="appearances">외모 (appearances)</option>
-                                        <option value="outfits">복장 (outfits)</option>
-                                        <option value="expressions">표정 (expressions)</option>
-                                        <option value="composition_presets">구도 프리셋</option>
-                                        <option value="artist_presets">아티스트 프리셋</option>
-                                        <option value="quality_presets">품질 프리셋</option>
-                                        <option value="natural_language_presets">자연어 프리셋</option>
-                                        <option value="character_negative_presets">캐릭터 네거티브 프리셋</option>
-                                        <option value="negative_presets">네거티브 프리셋</option>
-                                    </select>
-                                </div>
-                                <div class="pm-form-group">
-                                    <label>프리셋 이름</label>
-                                    <input type="text" id="pm-batch-name" placeholder="예: 기본 외모">
-                                </div>
-                                <div class="pm-form-group">
-                                    <label id="pm-batch-tags-label">태그 (쉼표로 구분)</label>
-                                    <textarea id="pm-batch-tags" placeholder="tag1, tag2, tag3, ..."></textarea>
-                                </div>
-                                <div class="pm-tags-preview" id="pm-batch-preview"></div>
-                                <div class="pm-btn-row">
-                                    <button class="pm-btn pm-btn-primary" onclick="pmBatchInsert()">추가</button>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- View 3: 조회/추적/수정 -->
-                        <div id="pm-view-trace" class="pm-view" style="display:none;">
-                            <div class="pm-section">
-                                <div class="pm-section-title">에셋 사용 추적</div>
-                                <div class="pm-form-group">
-                                    <label>카테고리</label>
-                                    <select id="pm-trace-category" onchange="pmUpdateTraceNames()">
-                                        <option value="appearances">외모 (appearances)</option>
-                                        <option value="outfits">복장 (outfits)</option>
-                                        <option value="expressions">표정 (expressions)</option>
-                                        <option value="composition_presets">구도 프리셋</option>
-                                        <option value="artist_presets">아티스트 프리셋</option>
-                                        <option value="quality_presets">품질 프리셋</option>
-                                        <option value="natural_language_presets">자연어 프리셋</option>
-                                        <option value="character_negative_presets">캐릭터 네거티브 프리셋</option>
-                                        <option value="negative_presets">네거티브 프리셋</option>
-                                    </select>
-                                </div>
-                                <div class="pm-form-group">
-                                    <label>프리셋</label>
-                                    <select id="pm-trace-name" onchange="pmLoadPresetContent()"></select>
-                                </div>
-                                <div class="pm-form-group" id="pm-edit-group" style="display:none;">
-                                    <label id="pm-edit-label">태그 (쉼표로 구분)</label>
-                                    <textarea id="pm-edit-content" placeholder="tag1, tag2, tag3, ..."></textarea>
-                                </div>
-                                <div class="pm-form-group" id="pm-rename-group" style="display:none;">
-                                    <label>이름 변경</label>
-                                    <div style="display:flex; gap:6px;">
-                                        <input type="text" id="pm-rename-input" placeholder="새 이름" style="flex:1;">
-                                        <button class="pm-btn" onclick="pmRenamePreset()">이름 변경</button>
+                        <!-- 통합 추가 / 조회 / 수정 / 추적 -->
+                        <div id="pm-view-manage" class="pm-view">
+                            <div class="pm-manage-shell">
+                                <aside class="pm-library">
+                                    <div class="pm-library-head">
+                                        <div>
+                                            <div class="pm-library-title">프리셋 라이브러리</div>
+                                            <div class="pm-library-count" id="pm-library-count">데이터를 불러오는 중...</div>
+                                        </div>
+                                        <button class="pm-btn pm-btn-primary" onclick="pmStartCreate()" title="현재 카테고리에 새 프리셋 추가">＋ 새로 만들기</button>
                                     </div>
-                                </div>
-                                <div class="pm-btn-row">
-                                    <button class="pm-btn pm-btn-primary" onclick="pmTraceSearch()">추적 실행</button>
-                                    <button class="pm-btn" id="pm-btn-save" onclick="pmSavePresetContent()" disabled style="display:none;">저장</button>
-                                    <button class="pm-btn" id="pm-btn-clear" onclick="pmClearTraceResults()" style="display:none;">초기화</button>
-                                </div>
+                                    <div class="pm-library-controls">
+                                        <select class="pm-input" id="pm-library-category" onchange="pmManagerCategoryChanged()" aria-label="프리셋 카테고리"></select>
+                                        <input class="pm-input" type="search" id="pm-library-search" placeholder="이름이나 값 검색" oninput="pmRenderLibrary()">
+                                        <div class="pm-filter-row" id="pm-library-filters">
+                                            <button class="pm-filter-btn active" data-filter="all" onclick="pmSetLibraryFilter('all')">전체</button>
+                                            <button class="pm-filter-btn" data-filter="active" onclick="pmSetLibraryFilter('active')">활성</button>
+                                            <button class="pm-filter-btn" data-filter="hidden" onclick="pmSetLibraryFilter('hidden')">숨김</button>
+                                        </div>
+                                    </div>
+                                    <div class="pm-library-list" id="pm-library-list"></div>
+                                </aside>
+
+                                <main class="pm-workspace">
+                                    <div class="pm-workspace-head">
+                                        <div>
+                                            <div class="pm-workspace-title" id="pm-editor-title">새 프리셋 만들기</div>
+                                            <div class="pm-workspace-context" id="pm-editor-context">왼쪽 목록을 선택해 수정하거나 새 프리셋을 추가하세요.</div>
+                                        </div>
+                                        <span class="pm-mode-badge create" id="pm-editor-mode-badge">신규</span>
+                                    </div>
+
+                                    <div class="pm-editor-grid">
+                                        <section class="pm-section">
+                                            <div class="pm-section-head">
+                                                <div>
+                                                    <div class="pm-section-title">프리셋 내용</div>
+                                                    <div class="pm-section-note">이름과 값을 입력하면 오른쪽에서 기존 프리셋과 즉시 비교합니다.</div>
+                                                </div>
+                                            </div>
+                                            <div class="pm-field">
+                                                <label for="pm-editor-name">
+                                                    프리셋 이름
+                                                    <span class="pm-field-hint">활성·숨김 이름을 모두 검사</span>
+                                                </label>
+                                                <input id="pm-editor-name" type="text" placeholder="예: 기본 외모" autocomplete="off" oninput="pmEditorChanged()">
+                                                <div class="pm-inline-alert" id="pm-name-conflict">
+                                                    <span id="pm-name-conflict-text">같은 이름이 이미 있습니다.</span>
+                                                    <button class="pm-btn pm-btn-quiet" id="pm-conflict-open" onclick="pmOpenConflictPreset()">기존 항목 열기</button>
+                                                </div>
+                                            </div>
+                                            <div class="pm-field">
+                                                <label for="pm-editor-content">
+                                                    <span id="pm-editor-content-label">태그</span>
+                                                    <span class="pm-field-hint" id="pm-editor-content-hint">쉼표로 구분 · 괄호 안 쉼표 유지</span>
+                                                </label>
+                                                <textarea id="pm-editor-content" placeholder="tag1, tag2, tag3, ..." oninput="pmEditorChanged()"></textarea>
+                                            </div>
+                                            <div class="pm-field" style="margin-bottom:0;">
+                                                <label>입력 미리보기 <span class="pm-field-hint" id="pm-preview-count">0개</span></label>
+                                                <div class="pm-preview-box" id="pm-editor-preview">
+                                                    <span class="pm-preview-empty">입력한 태그가 여기에 표시됩니다.</span>
+                                                </div>
+                                            </div>
+                                            <div class="pm-action-bar">
+                                                <span class="pm-action-note" id="pm-save-note">새 프리셋은 활성 상태로 추가됩니다.</span>
+                                                <div class="pm-btn-row">
+                                                    <button class="pm-btn pm-btn-quiet" id="pm-reset-editor" onclick="pmResetEditor()">입력 초기화</button>
+                                                    <button class="pm-btn pm-btn-primary" id="pm-btn-save" onclick="pmSaveManagedPreset()" disabled>새 프리셋 추가</button>
+                                                </div>
+                                            </div>
+                                        </section>
+
+                                        <section class="pm-section">
+                                            <div class="pm-section-head">
+                                                <div>
+                                                    <div class="pm-section-title">기존 프리셋과 비교</div>
+                                                    <div class="pm-section-note">이름 충돌, 동일 값, 공통 태그를 저장 전에 확인할 수 있습니다.</div>
+                                                </div>
+                                            </div>
+                                            <div class="pm-compare-status">
+                                                <div class="pm-status-card">
+                                                    <div class="pm-status-label">이름 비교</div>
+                                                    <div class="pm-status-value" id="pm-compare-name-status">이름을 입력하세요</div>
+                                                </div>
+                                                <div class="pm-status-card">
+                                                    <div class="pm-status-label">값 비교</div>
+                                                    <div class="pm-status-value" id="pm-compare-value-status">값을 입력하세요</div>
+                                                </div>
+                                            </div>
+                                            <div class="pm-compare-target-row">
+                                                <label for="pm-compare-target">비교 대상</label>
+                                                <select class="pm-input" id="pm-compare-target" onchange="pmCompareTargetChanged()"></select>
+                                            </div>
+                                            <div class="pm-compare-columns">
+                                                <div class="pm-compare-column">
+                                                    <div class="pm-compare-column-title">
+                                                        <span>기존 값</span>
+                                                        <span id="pm-compare-existing-count">0개</span>
+                                                    </div>
+                                                    <div class="pm-compare-content" id="pm-compare-existing"></div>
+                                                </div>
+                                                <div class="pm-compare-column">
+                                                    <div class="pm-compare-column-title">
+                                                        <span>현재 입력값</span>
+                                                        <span id="pm-compare-draft-count">0개</span>
+                                                    </div>
+                                                    <div class="pm-compare-content" id="pm-compare-draft"></div>
+                                                </div>
+                                            </div>
+                                            <div class="pm-compare-legend" id="pm-compare-legend">
+                                                <span><i class="pm-legend-dot common"></i>공통</span>
+                                                <span><i class="pm-legend-dot removed"></i>기존에만 있음</span>
+                                                <span><i class="pm-legend-dot added"></i>입력값에만 있음</span>
+                                            </div>
+                                        </section>
+                                    </div>
+
+                                    <section class="pm-section pm-track-section">
+                                        <div class="pm-section-head">
+                                            <div>
+                                                <div class="pm-section-title">에셋 사용 추적</div>
+                                                <div class="pm-section-note" id="pm-track-note">저장된 프리셋을 선택하면 사용 중인 에셋을 찾을 수 있습니다.</div>
+                                            </div>
+                                            <div class="pm-track-head-actions">
+                                                <button class="pm-btn pm-btn-quiet" id="pm-btn-clear" onclick="pmClearTraceResults()" style="display:none;">결과 지우기</button>
+                                                <button class="pm-btn" id="pm-btn-trace" onclick="pmTraceSearch()" disabled>사용 에셋 찾기</button>
+                                            </div>
+                                        </div>
+                                        <div class="pm-progress" id="pm-trace-progress">
+                                            <div class="pm-progress-copy">
+                                                <span id="pm-trace-progress-text">추적 준비 중...</span>
+                                                <span id="pm-trace-progress-count">0 / 0</span>
+                                            </div>
+                                            <div class="pm-progress-track"><div class="pm-progress-bar" id="pm-trace-progress-bar"></div></div>
+                                        </div>
+                                        <div class="pm-trace-results" id="pm-trace-results">
+                                            <div class="pm-empty">아직 추적 결과가 없습니다.</div>
+                                        </div>
+                                    </section>
+                                </main>
                             </div>
-                            <div id="pm-trace-results" style="margin-top: 16px;"></div>
+                        </div>
+
+                        <!-- 숨김 관리 -->
+                        <div id="pm-view-hide" class="pm-view pm-hide-view" style="display:none;">
+                            <div class="pm-workspace-head">
+                                <div>
+                                    <div class="pm-workspace-title">숨김 프리셋 관리</div>
+                                    <div class="pm-workspace-context">사용 목록에서 제외할 프리셋을 숨기거나 다시 복원합니다.</div>
+                                </div>
+                                <input class="pm-input" id="pm-hide-search" type="search" placeholder="현재 카테고리 검색" oninput="pmRenderHideView()" style="width:min(280px, 42vw);">
+                            </div>
+                            <div class="pm-category-tabs" id="pm-hide-categories"></div>
+                            <div class="pm-hide-grid">
+                                <section class="pm-section pm-hide-panel">
+                                    <div class="pm-hide-panel-head">
+                                        <div>
+                                            <div class="pm-section-title">활성 프리셋</div>
+                                            <div class="pm-section-note" id="pm-hide-active-count">0개</div>
+                                        </div>
+                                        <button class="pm-btn pm-btn-primary" onclick="pmBatchHide()" id="pm-btn-hide" disabled>선택 숨기기</button>
+                                    </div>
+                                    <div class="pm-hide-list" id="pm-hide-active-grid"></div>
+                                </section>
+                                <section class="pm-section pm-hide-panel">
+                                    <div class="pm-hide-panel-head">
+                                        <div>
+                                            <div class="pm-section-title">숨김 프리셋</div>
+                                            <div class="pm-section-note" id="pm-hide-hidden-count">0개</div>
+                                        </div>
+                                        <button class="pm-btn" onclick="pmBatchRestore()" id="pm-btn-restore" disabled>선택 복원</button>
+                                    </div>
+                                    <div class="pm-hide-list" id="pm-hide-hidden-grid"></div>
+                                </section>
+                            </div>
                         </div>
                     </div>
                 </div>
-            </div>
-        </div>
-
-        <!-- 프리셋 추적 결과 모달 -->
-        <div class="modal" id="pm-trace-modal" onclick="if (event.target === this) pmCloseTraceModal()">
-            <div class="modal-content" style="max-width:900px;">
-                <div class="modal-header">
-                    <h2 id="pm-trace-modal-title">추적 결과</h2>
-                    <button class="modal-close" onclick="pmCloseTraceModal()">&times;</button>
-                </div>
-                <div id="pm-trace-modal-body" style="padding:16px; max-height:70vh; overflow-y:auto;"></div>
             </div>
         </div>
 
@@ -52980,9 +53155,18 @@
         // ═══════════════════════════════════════════════════
 
         let pmData = null; // { active: {...}, hidden: {...} }
+        let pmCurrentView = 'manage';
         let pmCurrentCategory = 'appearances';
+        let pmManagerCategory = 'appearances';
+        let pmLibraryFilter = 'all';
+        let pmSelectedPreset = null; // { category, name, state, value }
+        let pmCompareTargetKey = '';
+        let pmCompareTargetPinned = false;
+        let pmConflictPreset = null;
+        let pmEditorDirty = false;
         let pmSelectedActive = new Set();
         let pmSelectedHidden = new Set();
+        let pmTraceAbortController = null;
 
         const PM_CATEGORIES = {
             appearances: '외모',
@@ -52996,143 +53180,704 @@
             negative_presets: '네거티브 프리셋',
         };
 
-        async function pmLoadData() {
-            try {
-                const [tagsResp, hiddenResp] = await Promise.all([
-                    fetch('/api/asset_mode/tags'),
-                    fetch('/api/asset_mode/hidden_tags'),
-                ]);
-                const tags = await tagsResp.json();
-                const hiddenData = await hiddenResp.json();
+        function pmEscapeHtml(value) {
+            const node = document.createElement('div');
+            node.textContent = value == null ? '' : String(value);
+            return node.innerHTML;
+        }
 
-                // active: 관리 대상 카테고리만 추출
+        function pmEntryKey(entry) {
+            return `${entry.state}|${encodeURIComponent(entry.name)}`;
+        }
+
+        function pmGetEntries(category = pmManagerCategory) {
+            if (!pmData) return [];
+            const entries = [];
+            const active = pmData.active[category] || {};
+            const hidden = pmData.hidden[category] || {};
+            for (const [name, value] of Object.entries(active)) {
+                entries.push({ category, name, value, state: 'active' });
+            }
+            for (const [name, value] of Object.entries(hidden)) {
+                entries.push({ category, name, value, state: 'hidden' });
+            }
+            return entries.sort((a, b) => {
+                if (a.state !== b.state) return a.state === 'active' ? -1 : 1;
+                return a.name.localeCompare(b.name, 'ko', { numeric: true, sensitivity: 'base' });
+            });
+        }
+
+        function pmFindEntry(category, name, state) {
+            return pmGetEntries(category).find(entry => entry.name === name && entry.state === state) || null;
+        }
+
+        function pmIsNaturalLanguage(category = pmManagerCategory) {
+            return category === 'natural_language_presets';
+        }
+
+        function pmValueToText(value, category = pmManagerCategory) {
+            if (pmIsNaturalLanguage(category)) {
+                return typeof value === 'string' ? value : (Array.isArray(value) ? value.join(', ') : '');
+            }
+            return Array.isArray(value) ? value.join(', ') : (typeof value === 'string' ? value : '');
+        }
+
+        function pmValueCount(value, category = pmManagerCategory) {
+            if (pmIsNaturalLanguage(category)) return pmValueToText(value, category).length;
+            if (Array.isArray(value)) return value.length;
+            return value ? 1 : 0;
+        }
+
+        function pmValueCountLabel(value, category = pmManagerCategory) {
+            const count = pmValueCount(value, category);
+            return pmIsNaturalLanguage(category) ? `${count}자` : `${count}개 태그`;
+        }
+
+        function pmParseDraftValue() {
+            const content = (document.getElementById('pm-editor-content').value || '').trim();
+            return pmIsNaturalLanguage() ? content : splitTagsPreservingParens(content);
+        }
+
+        function pmTagKey(value) {
+            return String(value == null ? '' : value).trim().toLocaleLowerCase();
+        }
+
+        function pmTagSet(value) {
+            const values = Array.isArray(value) ? value : (value ? [value] : []);
+            return new Set(values.map(pmTagKey).filter(Boolean));
+        }
+
+        function pmValuesEqual(category, left, right) {
+            if (pmIsNaturalLanguage(category)) {
+                return pmValueToText(left, category).trim() === pmValueToText(right, category).trim();
+            }
+            const leftSet = pmTagSet(left);
+            const rightSet = pmTagSet(right);
+            if (leftSet.size !== rightSet.size) return false;
+            return Array.from(leftSet).every(tag => rightSet.has(tag));
+        }
+
+        function pmOverlapInfo(left, right) {
+            const leftSet = pmTagSet(left);
+            const rightSet = pmTagSet(right);
+            let common = 0;
+            for (const tag of leftSet) {
+                if (rightSet.has(tag)) common++;
+            }
+            const denominator = Math.max(leftSet.size, rightSet.size, 1);
+            return { common, ratio: common / denominator, leftCount: leftSet.size, rightCount: rightSet.size };
+        }
+
+        async function pmLoadData() {
+            const libraryList = document.getElementById('pm-library-list');
+            if (libraryList && !pmData) {
+                libraryList.innerHTML = '<div class="pm-empty">프리셋 데이터를 불러오는 중...</div>';
+            }
+            try {
+                const response = await fetch('/api/asset_mode/hidden_tags');
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const payload = await response.json();
                 const active = {};
-                for (const cat of Object.keys(PM_CATEGORIES)) {
-                    active[cat] = tags[cat] || {};
+                const hidden = {};
+                for (const category of Object.keys(PM_CATEGORIES)) {
+                    const activeValue = payload.active && payload.active[category];
+                    const hiddenValue = payload.hidden && payload.hidden[category];
+                    active[category] = activeValue && typeof activeValue === 'object' && !Array.isArray(activeValue) ? activeValue : {};
+                    hidden[category] = hiddenValue && typeof hiddenValue === 'object' && !Array.isArray(hiddenValue) ? hiddenValue : {};
                 }
-                pmData = { active, hidden: hiddenData.hidden || hiddenData };
+                pmData = { active, hidden };
+                pmPopulateCategoryOptions();
+
+                if (pmSelectedPreset && !pmEditorDirty) {
+                    const fresh = pmFindEntry(pmSelectedPreset.category, pmSelectedPreset.name, pmSelectedPreset.state);
+                    if (fresh) {
+                        pmSelectedPreset = { ...fresh };
+                        document.getElementById('pm-editor-name').value = fresh.name;
+                        document.getElementById('pm-editor-content').value = pmValueToText(fresh.value, fresh.category);
+                    } else {
+                        pmSelectedPreset = null;
+                        pmCompareTargetKey = '';
+                        pmCompareTargetPinned = false;
+                        document.getElementById('pm-editor-name').value = '';
+                        document.getElementById('pm-editor-content').value = '';
+                    }
+                }
+
+                pmRenderToolbarStats();
+                pmRenderLibrary();
                 pmRenderHideView();
-            } catch (e) {
-                console.error('[PM] 데이터 로드 실패:', e);
+                pmRenderEditorState();
+            } catch (error) {
+                console.error('[PM] 데이터 로드 실패:', error);
                 showToast('프리셋 데이터 로드 실패', 'error');
+                if (libraryList) libraryList.innerHTML = '<div class="pm-empty">데이터를 불러오지 못했습니다.<br>새로고침 후 다시 시도해주세요.</div>';
             }
         }
 
+        function pmPopulateCategoryOptions() {
+            const select = document.getElementById('pm-library-category');
+            if (!select) return;
+            select.replaceChildren();
+            for (const [category, label] of Object.entries(PM_CATEGORIES)) {
+                const option = document.createElement('option');
+                option.value = category;
+                option.textContent = label;
+                select.appendChild(option);
+            }
+            select.value = pmManagerCategory;
+        }
+
+        function pmRenderToolbarStats() {
+            if (!pmData) return;
+            let activeCount = 0;
+            let hiddenCount = 0;
+            for (const category of Object.keys(PM_CATEGORIES)) {
+                activeCount += Object.keys(pmData.active[category] || {}).length;
+                hiddenCount += Object.keys(pmData.hidden[category] || {}).length;
+            }
+            document.getElementById('pm-toolbar-stat').innerHTML = `활성 <strong>${activeCount}</strong> · 숨김 <strong>${hiddenCount}</strong>`;
+        }
+
         function pmSwitchView(view) {
-            // sidebar 버튼 활성화
-            document.querySelectorAll('.pm-sidebar-btn').forEach(b => b.classList.remove('active'));
-            document.getElementById('pm-sidebar-' + view).classList.add('active');
-            // 뷰 전환
-            document.getElementById('pm-view-hide').style.display = view === 'hide' ? '' : 'none';
-            document.getElementById('pm-view-batch').style.display = view === 'batch' ? '' : 'none';
-            document.getElementById('pm-view-trace').style.display = view === 'trace' ? '' : 'none';
-            // 뷰 초기화
-            if (view === 'hide' && pmData) pmRenderHideView();
-            if (view === 'trace') pmUpdateTraceNames();
+            pmCurrentView = view === 'hide' ? 'hide' : 'manage';
+            document.querySelectorAll('.pm-sidebar-btn').forEach(button => button.classList.remove('active'));
+            document.getElementById(`pm-sidebar-${pmCurrentView}`).classList.add('active');
+            document.getElementById('pm-view-manage').style.display = pmCurrentView === 'manage' ? '' : 'none';
+            document.getElementById('pm-view-hide').style.display = pmCurrentView === 'hide' ? '' : 'none';
+            if (pmCurrentView === 'hide') pmRenderHideView();
+            else pmRenderLibrary();
+        }
+
+        function pmSetLibraryFilter(filter) {
+            pmLibraryFilter = ['all', 'active', 'hidden'].includes(filter) ? filter : 'all';
+            document.querySelectorAll('#pm-library-filters .pm-filter-btn').forEach(button => {
+                button.classList.toggle('active', button.dataset.filter === pmLibraryFilter);
+            });
+            pmRenderLibrary();
+        }
+
+        function pmManagerCategoryChanged() {
+            const select = document.getElementById('pm-library-category');
+            const nextCategory = select.value;
+            if (pmEditorDirty && !confirm('저장하지 않은 입력 내용이 있습니다. 카테고리를 변경할까요?')) {
+                select.value = pmManagerCategory;
+                return;
+            }
+            pmManagerCategory = nextCategory;
+            pmStartCreate(true);
+        }
+
+        function pmRenderLibrary() {
+            if (!pmData) return;
+            const select = document.getElementById('pm-library-category');
+            if (select) select.value = pmManagerCategory;
+            const query = (document.getElementById('pm-library-search').value || '').trim().toLocaleLowerCase();
+            const allEntries = pmGetEntries(pmManagerCategory);
+            const entries = allEntries.filter(entry => {
+                if (pmLibraryFilter !== 'all' && entry.state !== pmLibraryFilter) return false;
+                if (!query) return true;
+                return entry.name.toLocaleLowerCase().includes(query)
+                    || pmValueToText(entry.value, entry.category).toLocaleLowerCase().includes(query);
+            });
+
+            const activeCount = allEntries.filter(entry => entry.state === 'active').length;
+            const hiddenCount = allEntries.length - activeCount;
+            document.getElementById('pm-library-count').textContent = `${allEntries.length}개 · 활성 ${activeCount} · 숨김 ${hiddenCount}`;
+
+            const list = document.getElementById('pm-library-list');
+            list.replaceChildren();
+            if (entries.length === 0) {
+                const empty = document.createElement('div');
+                empty.className = 'pm-empty';
+                empty.textContent = query ? '검색 조건에 맞는 프리셋이 없습니다.' : '이 카테고리에 프리셋이 없습니다.';
+                list.appendChild(empty);
+                return;
+            }
+
+            for (const entry of entries) {
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.className = 'pm-library-item';
+                if (pmSelectedPreset
+                    && pmSelectedPreset.category === entry.category
+                    && pmSelectedPreset.name === entry.name
+                    && pmSelectedPreset.state === entry.state) {
+                    button.classList.add('selected');
+                }
+                button.onclick = () => pmSelectPreset(entry.category, entry.name, entry.state);
+
+                const name = document.createElement('span');
+                name.className = 'pm-library-name';
+                name.textContent = entry.name;
+                name.title = entry.name;
+
+                const state = document.createElement('span');
+                state.className = `pm-state-badge${entry.state === 'hidden' ? ' hidden' : ''}`;
+                state.textContent = entry.state === 'hidden' ? '숨김' : '활성';
+
+                const meta = document.createElement('span');
+                meta.className = 'pm-library-meta';
+                meta.textContent = pmValueCountLabel(entry.value, entry.category);
+
+                const preview = document.createElement('span');
+                preview.className = 'pm-library-preview';
+                preview.textContent = pmValueToText(entry.value, entry.category) || '값 없음';
+
+                button.append(name, state, meta, preview);
+                list.appendChild(button);
+            }
+        }
+
+        function pmStartCreate(force = false) {
+            if (!force && pmEditorDirty && !confirm('저장하지 않은 입력 내용을 지우고 새 프리셋을 만들까요?')) return;
+            pmSelectedPreset = null;
+            pmCompareTargetKey = '';
+            pmCompareTargetPinned = false;
+            pmConflictPreset = null;
+            pmEditorDirty = false;
+            document.getElementById('pm-editor-name').value = '';
+            document.getElementById('pm-editor-content').value = '';
+            pmClearTraceResults();
+            pmRenderEditorState();
+            pmRenderLibrary();
+            document.getElementById('pm-editor-name').focus();
+        }
+
+        function pmSelectPreset(category, name, state, force = false) {
+            if (!force && pmEditorDirty && !confirm('저장하지 않은 입력 내용이 있습니다. 다른 프리셋을 열까요?')) return;
+            const entry = pmFindEntry(category, name, state);
+            if (!entry) {
+                console.error('[PM] 선택할 프리셋을 찾을 수 없음:', { category, name, state });
+                showToast('선택한 프리셋을 찾을 수 없습니다', 'error');
+                return;
+            }
+            pmManagerCategory = category;
+            pmSelectedPreset = { ...entry };
+            pmCompareTargetKey = pmEntryKey(entry);
+            pmCompareTargetPinned = false;
+            pmConflictPreset = null;
+            pmEditorDirty = false;
+            document.getElementById('pm-library-category').value = category;
+            document.getElementById('pm-editor-name').value = name;
+            document.getElementById('pm-editor-content').value = pmValueToText(entry.value, category);
+            pmClearTraceResults();
+            pmRenderEditorState();
+            pmRenderLibrary();
+        }
+
+        function pmRenderEditorState() {
+            const isEditing = Boolean(pmSelectedPreset);
+            const isNaturalLanguage = pmIsNaturalLanguage();
+            const badge = document.getElementById('pm-editor-mode-badge');
+            const contentLabel = document.getElementById('pm-editor-content-label');
+            const contentHint = document.getElementById('pm-editor-content-hint');
+            const content = document.getElementById('pm-editor-content');
+
+            document.getElementById('pm-editor-title').textContent = isEditing ? pmSelectedPreset.name : '새 프리셋 만들기';
+            document.getElementById('pm-editor-context').textContent = isEditing
+                ? `${PM_CATEGORIES[pmManagerCategory]} · ${pmSelectedPreset.state === 'hidden' ? '숨김 상태' : '활성 상태'} · 이름과 내용을 함께 수정할 수 있습니다.`
+                : `${PM_CATEGORIES[pmManagerCategory]} 카테고리에 활성 프리셋을 추가합니다.`;
+            badge.textContent = isEditing ? (pmSelectedPreset.state === 'hidden' ? '숨김 편집' : '활성 편집') : '신규';
+            badge.className = `pm-mode-badge${isEditing ? (pmSelectedPreset.state === 'hidden' ? ' hidden' : '') : ' create'}`;
+
+            contentLabel.textContent = isNaturalLanguage ? '자연어 텍스트' : '태그';
+            contentHint.textContent = isNaturalLanguage ? '원문 그대로 저장' : '쉼표로 구분 · 괄호 안 쉼표 유지';
+            content.placeholder = isNaturalLanguage ? '자연어 텍스트를 입력하세요...' : 'tag1, tag2, tag3, ...';
+            document.getElementById('pm-reset-editor').textContent = isEditing ? '변경 취소' : '입력 초기화';
+            document.getElementById('pm-btn-save').textContent = isEditing ? '변경사항 저장' : '새 프리셋 추가';
+            document.getElementById('pm-save-note').textContent = isEditing
+                ? `${pmSelectedPreset.state === 'hidden' ? '숨김 위치' : '활성 위치'}에서 이름과 값을 갱신합니다.`
+                : '새 프리셋은 활성 상태로 추가됩니다.';
+            pmEditorChanged();
+        }
+
+        function pmEditorChanged() {
+            const name = (document.getElementById('pm-editor-name').value || '').trim();
+            const draftValue = pmParseDraftValue();
+            if (pmSelectedPreset) {
+                pmEditorDirty = name !== pmSelectedPreset.name
+                    || !pmValuesEqual(pmManagerCategory, draftValue, pmSelectedPreset.value);
+            } else {
+                pmEditorDirty = Boolean(name || pmValueCount(draftValue, pmManagerCategory));
+            }
+            pmRenderEditorPreview(draftValue);
+            pmRenderComparison(draftValue);
+            pmUpdateTrackState();
+        }
+
+        function pmRenderEditorPreview(draftValue) {
+            const preview = document.getElementById('pm-editor-preview');
+            preview.replaceChildren();
+            const count = pmValueCount(draftValue, pmManagerCategory);
+            document.getElementById('pm-preview-count').textContent = pmIsNaturalLanguage() ? `${count}자` : `${count}개`;
+            if (!count) {
+                const empty = document.createElement('span');
+                empty.className = 'pm-preview-empty';
+                empty.textContent = pmIsNaturalLanguage() ? '입력한 텍스트가 여기에 표시됩니다.' : '입력한 태그가 여기에 표시됩니다.';
+                preview.appendChild(empty);
+                return;
+            }
+            const values = pmIsNaturalLanguage() ? [draftValue] : draftValue;
+            for (const value of values) {
+                const chip = document.createElement('span');
+                chip.className = 'pm-tag-chip';
+                chip.style.whiteSpace = pmIsNaturalLanguage() ? 'pre-wrap' : '';
+                chip.textContent = value;
+                preview.appendChild(chip);
+            }
+        }
+
+        function pmIsCurrentSelection(entry) {
+            return Boolean(pmSelectedPreset
+                && pmSelectedPreset.category === entry.category
+                && pmSelectedPreset.name === entry.name
+                && pmSelectedPreset.state === entry.state);
+        }
+
+        function pmRenderComparison(draftValue = pmParseDraftValue()) {
+            const entries = pmGetEntries(pmManagerCategory);
+            const name = (document.getElementById('pm-editor-name').value || '').trim();
+            const draftCount = pmValueCount(draftValue, pmManagerCategory);
+            const nameStatus = document.getElementById('pm-compare-name-status');
+            const valueStatus = document.getElementById('pm-compare-value-status');
+            const conflictAlert = document.getElementById('pm-name-conflict');
+
+            const nameConflicts = entries.filter(entry => entry.name === name && !pmIsCurrentSelection(entry));
+            const caseVariants = name
+                ? entries.filter(entry => entry.name !== name && entry.name.toLocaleLowerCase() === name.toLocaleLowerCase())
+                : [];
+            pmConflictPreset = nameConflicts[0] || null;
+
+            nameStatus.className = 'pm-status-value';
+            if (!name) {
+                nameStatus.textContent = '이름을 입력하세요';
+            } else if (pmConflictPreset) {
+                nameStatus.textContent = `동일 이름 · ${pmConflictPreset.state === 'hidden' ? '숨김' : '활성'}`;
+                nameStatus.classList.add('danger');
+            } else if (caseVariants.length > 0) {
+                nameStatus.textContent = `대소문자만 다른 이름 ${caseVariants.length}개`;
+                nameStatus.classList.add('warn');
+            } else if (pmSelectedPreset && name === pmSelectedPreset.name) {
+                nameStatus.textContent = '현재 이름 · 충돌 없음';
+                nameStatus.classList.add('ok');
+            } else {
+                nameStatus.textContent = '사용 가능한 이름';
+                nameStatus.classList.add('ok');
+            }
+
+            conflictAlert.classList.toggle('visible', Boolean(pmConflictPreset));
+            if (pmConflictPreset) {
+                document.getElementById('pm-name-conflict-text').textContent = `같은 이름의 ${pmConflictPreset.state === 'hidden' ? '숨김' : '활성'} 프리셋이 있습니다. 신규 저장은 차단됩니다.`;
+            }
+
+            const comparableEntries = entries.filter(entry => !pmIsCurrentSelection(entry));
+            const equalValues = draftCount
+                ? comparableEntries.filter(entry => pmValuesEqual(pmManagerCategory, entry.value, draftValue))
+                : [];
+            let bestOverlap = null;
+            if (draftCount && !pmIsNaturalLanguage()) {
+                for (const entry of comparableEntries) {
+                    const overlap = pmOverlapInfo(entry.value, draftValue);
+                    if (!bestOverlap || overlap.ratio > bestOverlap.overlap.ratio) bestOverlap = { entry, overlap };
+                }
+            }
+
+            valueStatus.className = 'pm-status-value';
+            if (!draftCount) {
+                valueStatus.textContent = '값을 입력하세요';
+            } else if (equalValues.length > 0) {
+                valueStatus.textContent = `동일 값 ${equalValues.length}개 · ${equalValues[0].name}`;
+                valueStatus.classList.add('warn');
+            } else if (pmSelectedPreset && pmValuesEqual(pmManagerCategory, pmSelectedPreset.value, draftValue)) {
+                valueStatus.textContent = '기존 값과 동일 · 변경 없음';
+                valueStatus.classList.add('ok');
+            } else if (bestOverlap && bestOverlap.overlap.common > 0) {
+                const percent = Math.round(bestOverlap.overlap.ratio * 100);
+                valueStatus.textContent = `${bestOverlap.entry.name}과 ${bestOverlap.overlap.common}개 공통 (${percent}%)`;
+            } else {
+                valueStatus.textContent = '동일하거나 겹치는 값 없음';
+                valueStatus.classList.add('ok');
+            }
+
+            const targetSelect = document.getElementById('pm-compare-target');
+            const previousTarget = pmCompareTargetKey;
+            targetSelect.replaceChildren();
+            if (entries.length === 0) {
+                const option = document.createElement('option');
+                option.value = '';
+                option.textContent = '비교할 기존 프리셋 없음';
+                targetSelect.appendChild(option);
+                targetSelect.disabled = true;
+                pmCompareTargetKey = '';
+                pmRenderComparisonPanels(null, draftValue);
+            } else {
+                targetSelect.disabled = false;
+                for (const entry of entries) {
+                    const option = document.createElement('option');
+                    option.value = pmEntryKey(entry);
+                    option.textContent = `${entry.name} · ${entry.state === 'hidden' ? '숨김' : '활성'}`;
+                    targetSelect.appendChild(option);
+                }
+                const availableKeys = new Set(entries.map(pmEntryKey));
+                if (pmCompareTargetPinned && previousTarget && availableKeys.has(previousTarget)) {
+                    pmCompareTargetKey = previousTarget;
+                } else if (pmConflictPreset) {
+                    pmCompareTargetKey = pmEntryKey(pmConflictPreset);
+                } else if (equalValues.length > 0) {
+                    pmCompareTargetKey = pmEntryKey(equalValues[0]);
+                } else if (pmSelectedPreset) {
+                    pmCompareTargetKey = pmEntryKey(pmSelectedPreset);
+                } else if (bestOverlap && bestOverlap.overlap.common > 0) {
+                    pmCompareTargetKey = pmEntryKey(bestOverlap.entry);
+                } else if (previousTarget && availableKeys.has(previousTarget)) {
+                    pmCompareTargetKey = previousTarget;
+                } else {
+                    pmCompareTargetKey = pmEntryKey(entries[0]);
+                }
+                targetSelect.value = pmCompareTargetKey;
+                const target = entries.find(entry => pmEntryKey(entry) === pmCompareTargetKey) || entries[0];
+                pmRenderComparisonPanels(target, draftValue);
+            }
+
+            const saveButton = document.getElementById('pm-btn-save');
+            const valid = Boolean(name && draftCount);
+            saveButton.disabled = !valid || Boolean(pmConflictPreset) || (Boolean(pmSelectedPreset) && !pmEditorDirty);
+        }
+
+        function pmCompareTargetChanged() {
+            pmCompareTargetKey = document.getElementById('pm-compare-target').value;
+            pmCompareTargetPinned = true;
+            const target = pmGetEntries(pmManagerCategory).find(entry => pmEntryKey(entry) === pmCompareTargetKey) || null;
+            pmRenderComparisonPanels(target, pmParseDraftValue());
+        }
+
+        function pmRenderComparisonPanels(target, draftValue) {
+            const existingBox = document.getElementById('pm-compare-existing');
+            const draftBox = document.getElementById('pm-compare-draft');
+            document.getElementById('pm-compare-legend').style.display = pmIsNaturalLanguage() ? 'none' : 'flex';
+            existingBox.replaceChildren();
+            draftBox.replaceChildren();
+            const existingValue = target ? target.value : (pmIsNaturalLanguage() ? '' : []);
+            const existingCount = pmValueCount(existingValue, pmManagerCategory);
+            const draftCount = pmValueCount(draftValue, pmManagerCategory);
+            document.getElementById('pm-compare-existing-count').textContent = pmIsNaturalLanguage() ? `${existingCount}자` : `${existingCount}개`;
+            document.getElementById('pm-compare-draft-count').textContent = pmIsNaturalLanguage() ? `${draftCount}자` : `${draftCount}개`;
+
+            if (pmIsNaturalLanguage()) {
+                existingBox.textContent = target ? pmValueToText(existingValue, pmManagerCategory) : '비교할 기존 값이 없습니다.';
+                draftBox.textContent = draftValue || '현재 입력값이 없습니다.';
+                return;
+            }
+
+            const existingTags = Array.isArray(existingValue) ? existingValue : (existingValue ? [existingValue] : []);
+            const draftTags = Array.isArray(draftValue) ? draftValue : (draftValue ? [draftValue] : []);
+            const existingSet = pmTagSet(existingTags);
+            const draftSet = pmTagSet(draftTags);
+            pmAppendCompareTags(existingBox, existingTags, tag => draftSet.has(pmTagKey(tag)) ? 'common' : 'removed', '비교할 기존 값이 없습니다.');
+            pmAppendCompareTags(draftBox, draftTags, tag => existingSet.has(pmTagKey(tag)) ? 'common' : 'added', '현재 입력값이 없습니다.');
+        }
+
+        function pmAppendCompareTags(container, tags, classForTag, emptyText) {
+            if (!tags.length) {
+                const empty = document.createElement('span');
+                empty.className = 'pm-preview-empty';
+                empty.textContent = emptyText;
+                container.appendChild(empty);
+                return;
+            }
+            for (const tag of tags) {
+                const chip = document.createElement('span');
+                chip.className = `pm-tag-chip ${classForTag(tag)}`;
+                chip.textContent = tag;
+                container.appendChild(chip);
+            }
+        }
+
+        function pmOpenConflictPreset() {
+            if (!pmConflictPreset) return;
+            pmSelectPreset(pmConflictPreset.category, pmConflictPreset.name, pmConflictPreset.state, true);
+        }
+
+        function pmResetEditor() {
+            if (pmSelectedPreset) {
+                document.getElementById('pm-editor-name').value = pmSelectedPreset.name;
+                document.getElementById('pm-editor-content').value = pmValueToText(pmSelectedPreset.value, pmSelectedPreset.category);
+                pmCompareTargetKey = pmEntryKey(pmSelectedPreset);
+                pmCompareTargetPinned = false;
+                pmEditorDirty = false;
+                pmRenderEditorState();
+            } else {
+                pmStartCreate(true);
+            }
+        }
+
+        async function pmSaveManagedPreset() {
+            const name = (document.getElementById('pm-editor-name').value || '').trim();
+            const content = (document.getElementById('pm-editor-content').value || '').trim();
+            const operation = pmSelectedPreset ? 'update' : 'create';
+            if (!name) {
+                showToast('프리셋 이름을 입력해주세요', 'error');
+                return;
+            }
+            if (!content) {
+                showToast(pmIsNaturalLanguage() ? '텍스트를 입력해주세요' : '태그를 입력해주세요', 'error');
+                return;
+            }
+            if (pmConflictPreset) {
+                showToast('같은 이름의 프리셋이 있어 저장할 수 없습니다', 'error');
+                return;
+            }
+            if (pmSelectedPreset && name !== pmSelectedPreset.name) {
+                const confirmed = confirm(`프리셋 이름과 내용을 함께 변경할까요?\n'${pmSelectedPreset.name}' → '${name}'`);
+                if (!confirmed) return;
+            }
+
+            const button = document.getElementById('pm-btn-save');
+            const originalText = button.textContent;
+            let saved = false;
+            button.disabled = true;
+            button.textContent = '저장 중...';
+            try {
+                const response = await fetch('/api/asset_mode/tags', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        action: 'save_managed_preset',
+                        category: pmManagerCategory,
+                        name,
+                        tags_text: content,
+                        operation,
+                        original_name: pmSelectedPreset ? pmSelectedPreset.name : '',
+                        target_state: pmSelectedPreset ? pmSelectedPreset.state : 'active',
+                    }),
+                });
+                const data = await response.json();
+                if (!response.ok || !data.success) {
+                    console.error('[PM] 프리셋 저장 실패:', data);
+                    showToast(data.error || '프리셋 저장 실패', 'error');
+                    return;
+                }
+
+                const countLabel = pmIsNaturalLanguage() ? `${data.count}자` : `${data.count}개 태그`;
+                const referenceNote = data.ref_updated ? ` · 참조 ${data.ref_updated}건 갱신` : '';
+                showToast(`${operation === 'create' ? '추가' : '수정'} 완료 · ${countLabel}${referenceNote}`, 'success');
+                pmEditorDirty = false;
+                await pmLoadData();
+                if (assetTags) loadAssetData();
+                pmSelectPreset(pmManagerCategory, data.name, data.state || 'active', true);
+                saved = true;
+            } catch (error) {
+                console.error('[PM] 프리셋 저장 중 오류:', error);
+                showToast('프리셋 저장 중 오류가 발생했습니다', 'error');
+            } finally {
+                if (!saved) button.textContent = originalText;
+                pmEditorChanged();
+            }
         }
 
         // ─── 숨김 관리 ────────────────────────────────────
         function pmRenderHideView() {
             if (!pmData) return;
-            // 카테고리 탭
-            const catContainer = document.getElementById('pm-hide-categories');
-            catContainer.innerHTML = '';
-            for (const [cat, label] of Object.entries(PM_CATEGORIES)) {
-                const btn = document.createElement('button');
-                btn.className = 'pm-category-tab' + (cat === pmCurrentCategory ? ' active' : '');
-                btn.textContent = label;
-                btn.onclick = () => { pmCurrentCategory = cat; pmSelectedActive.clear(); pmSelectedHidden.clear(); pmRenderHideView(); };
-                catContainer.appendChild(btn);
+            const categoryTabs = document.getElementById('pm-hide-categories');
+            categoryTabs.replaceChildren();
+            for (const [category, label] of Object.entries(PM_CATEGORIES)) {
+                const button = document.createElement('button');
+                button.className = `pm-category-tab${category === pmCurrentCategory ? ' active' : ''}`;
+                button.textContent = label;
+                button.onclick = () => {
+                    pmCurrentCategory = category;
+                    pmSelectedActive.clear();
+                    pmSelectedHidden.clear();
+                    pmRenderHideView();
+                };
+                categoryTabs.appendChild(button);
             }
 
-            const activeItems = pmData.active[pmCurrentCategory] || {};
-            const hiddenItems = (pmData.hidden && pmData.hidden[pmCurrentCategory]) || {};
+            const query = (document.getElementById('pm-hide-search').value || '').trim().toLocaleLowerCase();
+            const activeItems = Object.entries(pmData.active[pmCurrentCategory] || {})
+                .filter(([name, value]) => !query || name.toLocaleLowerCase().includes(query) || pmValueToText(value, pmCurrentCategory).toLocaleLowerCase().includes(query));
+            const hiddenItems = Object.entries(pmData.hidden[pmCurrentCategory] || {})
+                .filter(([name, value]) => !query || name.toLocaleLowerCase().includes(query) || pmValueToText(value, pmCurrentCategory).toLocaleLowerCase().includes(query));
 
-            // 활성 카드
-            const activeGrid = document.getElementById('pm-hide-active-grid');
-            activeGrid.innerHTML = '';
-            if (Object.keys(activeItems).length === 0) {
-                activeGrid.innerHTML = '<div style="color:var(--text2); font-size:0.8rem; padding:8px;">활성 프리셋이 없습니다.</div>';
-            } else {
-                for (const [name, tags] of Object.entries(activeItems)) {
-                    const card = document.createElement('div');
-                    card.className = 'pm-card' + (pmSelectedActive.has(name) ? ' selected' : '');
-                    const tagArr = Array.isArray(tags) ? tags : [];
-                    const isText = typeof tags === 'string';
-                    const countText = isText ? `${tags.length}자` : `${tagArr.length}개 태그`;
-                    card.innerHTML = `<input type="checkbox" ${pmSelectedActive.has(name) ? 'checked' : ''} onchange="pmToggleActive('${name.replace(/'/g, "\\'")}', this.checked)">
-                        <div style="flex:1; min-width:0;">
-                            <div class="pm-card-name">${name}</div>
-                            <div class="pm-card-count">${countText}</div>
-                        </div>`;
-                    card.onclick = (e) => { if (e.target.tagName !== 'INPUT') { pmToggleActive(name, !pmSelectedActive.has(name)); pmRenderHideView(); } };
-                    activeGrid.appendChild(card);
-                }
-            }
-
-            // 숨김 카드
-            const hiddenGrid = document.getElementById('pm-hide-hidden-grid');
-            hiddenGrid.innerHTML = '';
-            if (Object.keys(hiddenItems).length === 0) {
-                hiddenGrid.innerHTML = '<div style="color:var(--text2); font-size:0.8rem; padding:8px;">숨김 프리셋이 없습니다.</div>';
-            } else {
-                for (const [name, tags] of Object.entries(hiddenItems)) {
-                    const card = document.createElement('div');
-                    card.className = 'pm-card hidden-card' + (pmSelectedHidden.has(name) ? ' selected' : '');
-                    const tagArr = Array.isArray(tags) ? tags : [];
-                    const isText = typeof tags === 'string';
-                    const countText = isText ? `${tags.length}자` : `${tagArr.length}개 태그`;
-                    card.innerHTML = `<input type="checkbox" ${pmSelectedHidden.has(name) ? 'checked' : ''} onchange="pmToggleHidden('${name.replace(/'/g, "\\'")}', this.checked)">
-                        <div style="flex:1; min-width:0;">
-                            <div class="pm-card-name">${name}</div>
-                            <div class="pm-card-count">${countText}</div>
-                        </div>`;
-                    card.onclick = (e) => { if (e.target.tagName !== 'INPUT') { pmToggleHidden(name, !pmSelectedHidden.has(name)); pmRenderHideView(); } };
-                    hiddenGrid.appendChild(card);
-                }
-            }
-
-            // 버튼 상태
+            document.getElementById('pm-hide-active-count').textContent = `${activeItems.length}개 표시 · ${pmSelectedActive.size}개 선택`;
+            document.getElementById('pm-hide-hidden-count').textContent = `${hiddenItems.length}개 표시 · ${pmSelectedHidden.size}개 선택`;
+            pmRenderHideCards('pm-hide-active-grid', activeItems, 'active');
+            pmRenderHideCards('pm-hide-hidden-grid', hiddenItems, 'hidden');
             document.getElementById('pm-btn-hide').disabled = pmSelectedActive.size === 0;
             document.getElementById('pm-btn-restore').disabled = pmSelectedHidden.size === 0;
         }
 
-        function pmToggleActive(name, checked) {
-            if (checked) pmSelectedActive.add(name); else pmSelectedActive.delete(name);
-            document.getElementById('pm-btn-hide').disabled = pmSelectedActive.size === 0;
+        function pmRenderHideCards(containerId, items, state) {
+            const container = document.getElementById(containerId);
+            const selected = state === 'active' ? pmSelectedActive : pmSelectedHidden;
+            container.replaceChildren();
+            if (items.length === 0) {
+                const empty = document.createElement('div');
+                empty.className = 'pm-empty';
+                empty.textContent = state === 'active' ? '표시할 활성 프리셋이 없습니다.' : '표시할 숨김 프리셋이 없습니다.';
+                container.appendChild(empty);
+                return;
+            }
+            for (const [name, value] of items) {
+                const card = document.createElement('div');
+                card.className = `pm-card${selected.has(name) ? ' selected' : ''}${state === 'hidden' ? ' hidden-card' : ''}`;
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.checked = selected.has(name);
+                checkbox.setAttribute('aria-label', `${name} 선택`);
+                checkbox.onchange = () => pmToggleHideSelection(state, name, checkbox.checked);
+
+                const copy = document.createElement('div');
+                copy.style.minWidth = '0';
+                copy.style.flex = '1';
+                const nameNode = document.createElement('div');
+                nameNode.className = 'pm-card-name';
+                nameNode.textContent = name;
+                nameNode.title = name;
+                const countNode = document.createElement('div');
+                countNode.className = 'pm-card-count';
+                countNode.textContent = pmValueCountLabel(value, pmCurrentCategory);
+                copy.append(nameNode, countNode);
+                card.append(checkbox, copy);
+                card.onclick = event => {
+                    if (event.target === checkbox) return;
+                    checkbox.checked = !checkbox.checked;
+                    pmToggleHideSelection(state, name, checkbox.checked);
+                };
+                container.appendChild(card);
+            }
         }
 
-        function pmToggleHidden(name, checked) {
-            if (checked) pmSelectedHidden.add(name); else pmSelectedHidden.delete(name);
-            document.getElementById('pm-btn-restore').disabled = pmSelectedHidden.size === 0;
+        function pmToggleHideSelection(state, name, checked) {
+            const selected = state === 'active' ? pmSelectedActive : pmSelectedHidden;
+            if (checked) selected.add(name);
+            else selected.delete(name);
+            pmRenderHideView();
         }
 
         async function pmBatchHide() {
             if (pmSelectedActive.size === 0) return;
             const names = Array.from(pmSelectedActive);
             try {
-                const resp = await fetch('/api/asset_mode/tags', {
+                const response = await fetch('/api/asset_mode/tags', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ action: 'hide_presets_batch', category: pmCurrentCategory, names }),
                 });
-                const data = await resp.json();
-                if (data.success) {
-                    const failed = (data.results || []).filter(r => !r.success);
-                    if (failed.length > 0) {
-                        showToast(`${names.length - failed.length}개 숨김, ${failed.length}개 실패`, 'error');
-                    } else {
-                        showToast(`${names.length}개 프리셋 숨김 처리`, 'success');
-                    }
-                    pmSelectedActive.clear();
-                    await pmLoadData();
-                    if (assetTags) loadAssetData(); // 다른 탭 데이터 갱신
-                } else {
-                    showToast(data.error || '숨김 실패', 'error');
+                const data = await response.json();
+                if (!response.ok || !data.success) {
+                    console.error('[PM] 숨김 처리 실패:', data);
+                    showToast(data.error || '숨김 처리 실패', 'error');
+                    return;
                 }
-            } catch (e) {
-                console.error('[PM] 숨김 실패:', e);
-                showToast('숨김 처리 중 오류 발생', 'error');
+                const failed = (data.results || []).filter(result => !result.success);
+                showToast(failed.length ? `${names.length - failed.length}개 숨김 · ${failed.length}개 실패` : `${names.length}개 프리셋 숨김 처리`, failed.length ? 'error' : 'success');
+                pmSelectedActive.clear();
+                await pmLoadData();
+                if (assetTags) loadAssetData();
+            } catch (error) {
+                console.error('[PM] 숨김 처리 중 오류:', error);
+                showToast('숨김 처리 중 오류가 발생했습니다', 'error');
             }
         }
 
@@ -53140,388 +53885,203 @@
             if (pmSelectedHidden.size === 0) return;
             const names = Array.from(pmSelectedHidden);
             try {
-                const resp = await fetch('/api/asset_mode/tags', {
+                const response = await fetch('/api/asset_mode/tags', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ action: 'restore_presets_batch', category: pmCurrentCategory, names }),
                 });
-                const data = await resp.json();
-                if (data.success) {
-                    const failed = (data.results || []).filter(r => !r.success);
-                    if (failed.length > 0) {
-                        showToast(`${names.length - failed.length}개 복원, ${failed.length}개 실패`, 'error');
-                    } else {
-                        showToast(`${names.length}개 프리셋 복원`, 'success');
-                    }
-                    pmSelectedHidden.clear();
-                    await pmLoadData();
-                    if (assetTags) loadAssetData();
-                } else {
+                const data = await response.json();
+                if (!response.ok || !data.success) {
+                    console.error('[PM] 복원 처리 실패:', data);
                     showToast(data.error || '복원 실패', 'error');
+                    return;
                 }
-            } catch (e) {
-                console.error('[PM] 복원 실패:', e);
-                showToast('복원 중 오류 발생', 'error');
+                const failed = (data.results || []).filter(result => !result.success);
+                showToast(failed.length ? `${names.length - failed.length}개 복원 · ${failed.length}개 실패` : `${names.length}개 프리셋 복원`, failed.length ? 'error' : 'success');
+                pmSelectedHidden.clear();
+                await pmLoadData();
+                if (assetTags) loadAssetData();
+            } catch (error) {
+                console.error('[PM] 복원 처리 중 오류:', error);
+                showToast('복원 중 오류가 발생했습니다', 'error');
             }
         }
 
-        // ─── 일괄 삽입 ────────────────────────────────────
-        // 카테고리 변경 시 라벨/placeholder 동적 전환
-        function pmBatchCategoryChanged() {
-            const cat = document.getElementById('pm-batch-category').value;
-            const label = document.getElementById('pm-batch-tags-label');
-            const textarea = document.getElementById('pm-batch-tags');
-            if (cat === 'natural_language_presets') {
-                label.textContent = '텍스트';
-                textarea.placeholder = '자연어 텍스트를 입력하세요...';
+        // ─── 에셋 사용 추적 ────────────────────────────────
+        function pmUpdateTrackState() {
+            const button = document.getElementById('pm-btn-trace');
+            const note = document.getElementById('pm-track-note');
+            if (!pmSelectedPreset) {
+                button.disabled = true;
+                note.textContent = '저장된 프리셋을 선택하면 사용 중인 에셋을 찾을 수 있습니다.';
+            } else if (pmEditorDirty) {
+                button.disabled = true;
+                note.textContent = '현재 변경사항을 저장하거나 취소한 뒤 추적할 수 있습니다.';
             } else {
-                label.textContent = '태그 (쉼표로 구분)';
-                textarea.placeholder = 'tag1, tag2, tag3, ...';
-            }
-            document.getElementById('pm-batch-preview').innerHTML = '';
-        }
-        // 태그 미리보기 (textarea 입력 시)
-        document.getElementById('pm-batch-tags').addEventListener('input', function() {
-            const cat = document.getElementById('pm-batch-category').value;
-            const preview = document.getElementById('pm-batch-preview');
-            if (cat === 'natural_language_presets') {
-                preview.innerHTML = this.value.trim() ? `<span class="pm-tag-chip" style="white-space:normal;">${this.value.trim()}</span>` : '';
-            } else {
-                const tags = splitTagsPreservingParens(this.value);
-                preview.innerHTML = tags.map(t => `<span class="pm-tag-chip">${t}</span>`).join('');
-            }
-        });
-
-        async function pmBatchInsert() {
-            const category = document.getElementById('pm-batch-category').value;
-            const name = document.getElementById('pm-batch-name').value;
-            const tagsText = document.getElementById('pm-batch-tags').value;
-            if (!name.trim()) { showToast('이름을 입력해주세요', 'error'); return; }
-            const isNL = category === 'natural_language_presets';
-            if (!tagsText.trim()) { showToast(isNL ? '텍스트를 입력해주세요' : '태그를 입력해주세요', 'error'); return; }
-
-            try {
-                const resp = await fetch('/api/asset_mode/tags', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ action: 'batch_insert_preset', category, name, tags_text: tagsText }),
-                });
-                const data = await resp.json();
-                if (data.success) {
-                    const countLabel = isNL ? `${data.count}자` : `${data.count}개 태그`;
-                    showToast(`'${name}' 프리셋 추가 완료 (${countLabel})`, 'success');
-                    document.getElementById('pm-batch-name').value = '';
-                    document.getElementById('pm-batch-tags').value = '';
-                    document.getElementById('pm-batch-preview').innerHTML = '';
-                    await pmLoadData();
-                    if (assetTags) loadAssetData();
-                } else {
-                    showToast(data.error || '추가 실패', 'error');
-                }
-            } catch (e) {
-                console.error('[PM] 일괄 삽입 실패:', e);
-                showToast('삽입 중 오류 발생', 'error');
+                button.disabled = false;
+                note.textContent = `'${pmSelectedPreset.name}' 값이 포함된 이미지 프롬프트를 검색합니다.`;
             }
         }
 
-        // ─── 조회/추적/수정 ────────────────────────────────────
-        function pmUpdateTraceNames() {
-            const category = document.getElementById('pm-trace-category').value;
-            const select = document.getElementById('pm-trace-name');
-            select.innerHTML = '';
-
-            // 활성 + 숨김 모두 표시
-            const items = {};
-            if (pmData) {
-                Object.assign(items, pmData.active[category] || {});
-                if (pmData.hidden) Object.assign(items, pmData.hidden[category] || {});
-            } else if (assetTags) {
-                Object.assign(items, assetTags[category] || {});
-            }
-
-            if (Object.keys(items).length === 0) {
-                select.innerHTML = '<option value="">프리셋 없음</option>';
-                document.getElementById('pm-edit-group').style.display = 'none';
-                document.getElementById('pm-rename-group').style.display = 'none';
-                document.getElementById('pm-btn-save').style.display = 'none';
-                return;
-            }
-            for (const name of Object.keys(items)) {
-                const opt = document.createElement('option');
-                opt.value = name;
-                opt.textContent = name;
-                select.appendChild(opt);
-            }
-            pmLoadPresetContent();
-        }
-
-        function pmLoadPresetContent() {
-            const category = document.getElementById('pm-trace-category').value;
-            const name = document.getElementById('pm-trace-name').value;
-            const editGroup = document.getElementById('pm-edit-group');
-            const editLabel = document.getElementById('pm-edit-label');
-            const editContent = document.getElementById('pm-edit-content');
-            const btnSave = document.getElementById('pm-btn-save');
-
-            if (!name) {
-                editGroup.style.display = 'none';
-                document.getElementById('pm-rename-group').style.display = 'none';
-                btnSave.style.display = 'none';
-                return;
-            }
-
-            // 프리셋 데이터 찾기
-            const items = {};
-            if (pmData) {
-                Object.assign(items, pmData.active[category] || {});
-                if (pmData.hidden) Object.assign(items, pmData.hidden[category] || {});
-            }
-
-            const value = items[name];
-            const isNL = category === 'natural_language_presets';
-
-            if (isNL) {
-                editLabel.textContent = '텍스트';
-                editContent.placeholder = '자연어 텍스트를 입력하세요...';
-                editContent.value = typeof value === 'string' ? value : (Array.isArray(value) ? value.join(', ') : '');
-            } else {
-                editLabel.textContent = '태그 (쉼표로 구분)';
-                editContent.placeholder = 'tag1, tag2, tag3, ...';
-                editContent.value = Array.isArray(value) ? value.join(', ') : (typeof value === 'string' ? value : '');
-            }
-
-            editGroup.style.display = '';
-            btnSave.style.display = '';
-            btnSave.disabled = true;
-
-            // 이름 변경 입력란 표시 + 현재 이름으로 채움
-            const renameGroup = document.getElementById('pm-rename-group');
-            const renameInput = document.getElementById('pm-rename-input');
-            renameGroup.style.display = '';
-            renameInput.value = name;
-        }
-
-        // 내용 변경 시 저장 버튼 활성화
-        document.getElementById('pm-edit-content').addEventListener('input', function() {
-            document.getElementById('pm-btn-save').disabled = false;
-        });
-
-        async function pmSavePresetContent() {
-            const category = document.getElementById('pm-trace-category').value;
-            const name = document.getElementById('pm-trace-name').value;
-            const content = document.getElementById('pm-edit-content').value.trim();
-            if (!name) { showToast('프리셋을 선택해주세요', 'error'); return; }
-            if (!content) { showToast('내용을 입력해주세요', 'error'); return; }
-
-            const isNL = category === 'natural_language_presets';
-
-            try {
-                const resp = await fetch('/api/asset_mode/tags', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        action: 'batch_insert_preset',
-                        category,
-                        name,
-                        tags_text: content,
-                    }),
-                });
-                const data = await resp.json();
-                if (data.success) {
-                    showToast(`'${name}' 프리셋 수정 완료`, 'success');
-                    document.getElementById('pm-btn-save').disabled = true;
-                    await pmLoadData();
-                    if (assetTags) loadAssetData();
-                } else {
-                    showToast(data.error || '수정 실패', 'error');
-                }
-            } catch (e) {
-                console.error('[PM] 프리셋 수정 실패:', e);
-                showToast('수정 중 오류 발생', 'error');
-            }
-        }
-
-        async function pmRenamePreset() {
-            const category = document.getElementById('pm-trace-category').value;
-            const select = document.getElementById('pm-trace-name');
-            const oldName = select.value;
-            const newName = (document.getElementById('pm-rename-input').value || '').trim();
-            if (!oldName) { showToast('프리셋을 선택해주세요', 'error'); return; }
-            if (!newName) { showToast('새 이름을 입력해주세요', 'error'); return; }
-            if (newName === oldName) { showToast('새 이름이 현재 이름과 같습니다', 'error'); return; }
-
-            if (!confirm(`프리셋 이름을 변경할까요?\n'${oldName}' → '${newName}'`)) return;
-
-            try {
-                const resp = await fetch('/api/asset_mode/tags', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        action: 'rename_preset',
-                        category,
-                        old_name: oldName,
-                        new_name: newName,
-                    }),
-                });
-                const data = await resp.json();
-                if (data.success) {
-                    const refNote = (typeof data.ref_updated === 'number' && data.ref_updated > 0)
-                        ? ` (참조 ${data.ref_updated}건 갱신)` : '';
-                    showToast(`'${oldName}' → '${newName}' 변경 완료${refNote}`, 'success');
-                    await pmLoadData();
-                    // 선택을 새 이름으로 유지
-                    if (assetTags) loadAssetData();
-                    pmUpdateTraceNames();
-                    select.value = newName;
-                    pmLoadPresetContent();
-                } else {
-                    showToast(data.error || '이름 변경 실패', 'error');
-                }
-            } catch (e) {
-                console.error('[PM] 이름 변경 실패:', e);
-                showToast('이름 변경 중 오류 발생', 'error');
-            }
-        }
-
-        let pmTraceEs = null;
-
-        function pmBuildTraceRow(item, presetTags) {
-            const imgUrl = `/api/asset_mode/characters/${encodeURIComponent(item.character)}/outfits/${encodeURIComponent(item.outfit)}/expressions/${encodeURIComponent(item.expression)}/images/${encodeURIComponent(item.image_file)}`;
-            const posText = pmHighlightTags((item.positive || ''), presetTags);
-            const negText = pmHighlightTags((item.negative || ''), presetTags);
-            const matchCount = item.match_count || 0;
-            const totalTags = (presetTags || []).filter(t => t).length;
-            const matchLabel = totalTags > 1 ? `<span style="font-size:0.7rem; color:var(--accent); margin-left:6px;">${matchCount}/${totalTags} 일치</span>` : '';
-
-            return `<div class="pm-trace-row">
-                <img class="pm-trace-img" src="${imgUrl}" onerror="this.style.display='none'" loading="lazy">
-                <div style="flex:1; min-width:0;">
-                    <div class="pm-trace-info">${item.character} / ${item.outfit} / ${item.expression}${matchLabel}</div>
-                    <div class="pm-trace-prompt">${posText}</div>
-                    ${negText ? `<div style="margin-top:4px;"><span style="color:var(--error); font-size:0.7rem;">NEG:</span> ${negText}</div>` : ''}
-                </div>
-            </div>`;
+        function pmSetTraceProgress(scanned, total, found = 0) {
+            const progress = document.getElementById('pm-trace-progress');
+            progress.classList.add('visible');
+            const percent = total > 0 ? Math.min(100, Math.round((scanned / total) * 100)) : 0;
+            document.getElementById('pm-trace-progress-text').textContent = found > 0 ? `에셋 추적 중 · ${found}개 발견` : '에셋 추적 중';
+            document.getElementById('pm-trace-progress-count').textContent = `${scanned} / ${total}`;
+            document.getElementById('pm-trace-progress-bar').style.width = `${percent}%`;
         }
 
         async function pmTraceSearch() {
-            const category = document.getElementById('pm-trace-category').value;
-            const name = document.getElementById('pm-trace-name').value;
-            if (!name) { showToast('프리셋을 선택해주세요', 'error'); return; }
-
-            if (pmTraceEs) { pmTraceEs.close(); pmTraceEs = null; }
-
-            const container = document.getElementById('pm-trace-results');
-            container.innerHTML = '<div style="text-align:center; padding:20px; color:var(--text2);">추적 준비 중...</div>';
+            if (!pmSelectedPreset || pmEditorDirty) {
+                showToast('저장된 프리셋을 선택하고 변경사항을 먼저 저장해주세요', 'error');
+                return;
+            }
+            if (pmTraceAbortController) pmTraceAbortController.abort();
+            const traceController = new AbortController();
+            pmTraceAbortController = traceController;
+            const selected = { ...pmSelectedPreset };
+            const results = document.getElementById('pm-trace-results');
+            results.innerHTML = '<div class="pm-empty">추적을 준비하고 있습니다...</div>';
             document.getElementById('pm-btn-clear').style.display = 'none';
+            pmSetTraceProgress(0, 0, 0);
 
             try {
-                const resp = await fetch('/api/asset_mode/trace_stream', {
+                const response = await fetch('/api/asset_mode/trace_stream', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ category, name }),
+                    body: JSON.stringify({ category: selected.category, name: selected.name }),
+                    signal: traceController.signal,
                 });
+                if (!response.ok || !response.body) throw new Error(`추적 요청 실패: HTTP ${response.status}`);
 
-                if (!resp.ok) {
-                    showToast('추적 요청 실패', 'error');
-                    container.innerHTML = '';
-                    return;
-                }
-
-                const reader = resp.body.getReader();
+                const reader = response.body.getReader();
                 const decoder = new TextDecoder();
                 let buffer = '';
-                let presetTags = [];
+                let eventType = '';
                 let total = 0;
-                let matchRows = [];
-                let currentEventType = '';
+                let presetTags = [];
+                const matchRows = [];
+                let completed = false;
 
                 while (true) {
                     const { done, value } = await reader.read();
                     if (done) break;
-
                     buffer += decoder.decode(value, { stream: true });
                     const lines = buffer.split('\n');
                     buffer = lines.pop();
 
-                    for (const line of lines) {
+                    for (const rawLine of lines) {
+                        const line = rawLine.replace(/\r$/, '');
                         if (line.startsWith('event: ')) {
-                            currentEventType = line.slice(7).trim();
-                        } else if (line.startsWith('data: ')) {
-                            let data;
-                            try { data = JSON.parse(line.slice(6)); } catch(e) { continue; }
-
-                            if (currentEventType === 'start') {
-                                total = data.total || 0;
-                                presetTags = data.preset_tags || [];
-                                container.innerHTML = `<div style="text-align:center; padding:20px; color:var(--text2);">추적 중... 0/${total}</div>`;
-                            } else if (currentEventType === 'progress') {
-                                const scanned = data.scanned || 0;
-                                const t = data.total || total;
-                                const found = data.found || 0;
-                                const foundLabel = found > 0 ? ` (발견: ${found})` : '';
-                                container.innerHTML = `<div style="text-align:center; padding:20px; color:var(--text2);">추적 중... ${scanned}/${t}${foundLabel}</div>`;
-                            } else if (currentEventType === 'match') {
-                                matchRows.push(pmBuildTraceRow(data, presetTags));
-                            } else if (currentEventType === 'done') {
-                                pmFinalizeTraceResults(matchRows, presetTags, data.total_found || 0);
-                            } else if (currentEventType === 'error') {
-                                showToast(data.error || '추적 실패', 'error');
-                                container.innerHTML = '';
-                            }
-                            currentEventType = '';
+                            eventType = line.slice(7).trim();
+                            continue;
                         }
+                        if (!line.startsWith('data: ')) continue;
+                        let data;
+                        try {
+                            data = JSON.parse(line.slice(6));
+                        } catch (error) {
+                            console.error('[PM] 추적 응답 JSON 파싱 실패:', error, line);
+                            eventType = '';
+                            continue;
+                        }
+
+                        if (eventType === 'start') {
+                            total = data.total || 0;
+                            presetTags = data.preset_tags || [];
+                            pmSetTraceProgress(0, total, 0);
+                        } else if (eventType === 'progress') {
+                            pmSetTraceProgress(data.scanned || 0, data.total || total, data.found || 0);
+                        } else if (eventType === 'match') {
+                            matchRows.push(pmBuildTraceRow(data, presetTags));
+                        } else if (eventType === 'done') {
+                            completed = true;
+                            pmSetTraceProgress(total, total, data.total_found || matchRows.length);
+                            pmFinalizeTraceResults(matchRows, presetTags, data.total_found || 0);
+                        } else if (eventType === 'error') {
+                            throw new Error(data.error || '추적 처리 실패');
+                        }
+                        eventType = '';
                     }
                 }
-            } catch (e) {
-                console.error('[PM] 추적 실패:', e);
-                showToast('추적 중 오류 발생', 'error');
-                container.innerHTML = '';
+
+                if (!completed) {
+                    console.error('[PM] 추적 스트림이 완료 이벤트 없이 종료됨:', selected);
+                    pmFinalizeTraceResults(matchRows, presetTags, matchRows.length);
+                }
+            } catch (error) {
+                if (error.name === 'AbortError') return;
+                console.error('[PM] 추적 실패:', error);
+                showToast(error.message || '추적 중 오류가 발생했습니다', 'error');
+                results.innerHTML = '<div class="pm-trace-empty">추적에 실패했습니다. 잠시 후 다시 시도해주세요.</div>';
+            } finally {
+                if (pmTraceAbortController === traceController) {
+                    document.getElementById('pm-trace-progress').classList.remove('visible');
+                    pmTraceAbortController = null;
+                }
             }
         }
 
-        function pmFinalizeTraceResults(matchRows, presetTags, totalFound) {
-            const container = document.getElementById('pm-trace-results');
-
-            if (matchRows.length === 0) {
-                container.innerHTML = `<div class="pm-trace-empty">사용된 에셋을 찾을 수 없습니다.</div>`;
-                document.getElementById('pm-btn-clear').style.display = 'none';
-                return;
-            }
-
-            document.getElementById('pm-btn-clear').style.display = '';
-
-            let html = `<div class="pm-section" style="margin-bottom:12px;">
-                <div style="font-size:0.8rem; color:var(--text2); margin-bottom:4px;">검색 태그:</div>
-                <div class="pm-tags-preview">${(presetTags || []).map(t => `<span class="pm-tag-chip">${t}</span>`).join('')}</div>
-                <div style="font-size:0.8rem; color:var(--text2); margin-top:8px;">${totalFound || matchRows.length}개 에셋 발견</div>
+        function pmBuildTraceRow(item, presetTags) {
+            const imageUrl = `/api/asset_mode/characters/${encodeURIComponent(item.character || '')}/outfits/${encodeURIComponent(item.outfit || '')}/expressions/${encodeURIComponent(item.expression || '')}/images/${encodeURIComponent(item.image_file || '')}`;
+            const positive = pmHighlightTags(item.positive || '', presetTags);
+            const negative = pmHighlightTags(item.negative || '', presetTags);
+            const matchCount = item.match_count || 0;
+            const totalTags = (presetTags || []).filter(Boolean).length;
+            const matchLabel = totalTags > 1 ? ` · ${matchCount}/${totalTags} 일치` : '';
+            return `<div class="pm-trace-row">
+                <img class="pm-trace-img" src="${pmEscapeHtml(imageUrl)}" alt="" onerror="this.style.display='none'" loading="lazy">
+                <div style="min-width:0;">
+                    <div class="pm-trace-info">${pmEscapeHtml(item.character || '')} / ${pmEscapeHtml(item.outfit || '')} / ${pmEscapeHtml(item.expression || '')}${pmEscapeHtml(matchLabel)}</div>
+                    <div class="pm-trace-prompt">${positive}</div>
+                    ${negative ? `<div class="pm-trace-prompt" style="margin-top:5px;"><span style="color:var(--error); font-size:0.65rem;">NEG</span> ${negative}</div>` : ''}
+                </div>
             </div>`;
-
-            html += matchRows.join('');
-            container.innerHTML = html;
         }
-
 
         function pmHighlightTags(text, tags) {
-            if (!text || !tags || tags.length === 0) return text || '';
-            let result = text;
-            for (const tag of tags) {
-                if (!tag) continue;
-                // 대소문자 구분 없이 하이라이트
-                const regex = new RegExp(`(${tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
-                result = result.replace(regex, '<span class="pm-tag-highlight">$1</span>');
+            const source = String(text || '');
+            const usableTags = (tags || []).map(tag => String(tag || '')).filter(Boolean).sort((a, b) => b.length - a.length);
+            if (!source || usableTags.length === 0) return pmEscapeHtml(source);
+            const pattern = usableTags.map(tag => tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+            const regex = new RegExp(pattern, 'gi');
+            let result = '';
+            let cursor = 0;
+            for (const match of source.matchAll(regex)) {
+                const index = match.index == null ? cursor : match.index;
+                result += pmEscapeHtml(source.slice(cursor, index));
+                result += `<span class="pm-tag-highlight">${pmEscapeHtml(match[0])}</span>`;
+                cursor = index + match[0].length;
             }
+            result += pmEscapeHtml(source.slice(cursor));
             return result;
         }
 
-        function pmCloseTraceModal() {
-            document.getElementById('pm-trace-modal').style.display = 'none';
+        function pmFinalizeTraceResults(matchRows, presetTags, totalFound) {
+            const results = document.getElementById('pm-trace-results');
+            document.getElementById('pm-btn-clear').style.display = '';
+            if (matchRows.length === 0) {
+                results.innerHTML = '<div class="pm-trace-empty">이 프리셋 값이 사용된 에셋을 찾지 못했습니다.</div>';
+                return;
+            }
+            const tags = (presetTags || []).map(tag => `<span class="pm-tag-chip">${pmEscapeHtml(tag)}</span>`).join('');
+            results.innerHTML = `<div class="pm-trace-summary">
+                <span><strong style="color:var(--text);">${totalFound || matchRows.length}개</strong> 에셋 발견</span>
+                <span class="pm-tags-preview">${tags}</span>
+            </div>${matchRows.join('')}`;
         }
 
         function pmClearTraceResults() {
-            document.getElementById('pm-trace-results').innerHTML = '';
+            if (pmTraceAbortController) {
+                pmTraceAbortController.abort();
+                pmTraceAbortController = null;
+            }
+            document.getElementById('pm-trace-progress').classList.remove('visible');
+            document.getElementById('pm-trace-progress-bar').style.width = '0';
             document.getElementById('pm-btn-clear').style.display = 'none';
+            document.getElementById('pm-trace-results').innerHTML = '<div class="pm-empty">아직 추적 결과가 없습니다.</div>';
         }
-
         // IL_RATE(학습률) 추천값 표 데이터: [스텝, 학습률, 기본값여부]
         const IL_RATE_RECOMMEND = [
             [50, 0.000500, true], [100, 0.000480], [200, 0.000442], [300, 0.000408, false, 0.0003],

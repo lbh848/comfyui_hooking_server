@@ -8754,6 +8754,15 @@ async def handle_api_asset_mode_tags_post(request: web.Request) -> web.Response:
         elif action == "batch_insert_preset":
             result = asset_mode.batch_insert_preset(
                 body.get("category", ""), body.get("name", ""), body.get("tags_text", ""))
+        elif action == "save_managed_preset":
+            result = asset_mode.save_managed_preset(
+                category=body.get("category", ""),
+                name=body.get("name", ""),
+                tags_text=body.get("tags_text", ""),
+                operation=body.get("operation", "create"),
+                original_name=body.get("original_name", ""),
+                target_state=body.get("target_state", "active"),
+            )
         elif action == "rename_preset":
             result = asset_mode.rename_preset(
                 body.get("category", ""), body.get("old_name", ""), body.get("new_name", ""))
@@ -8772,6 +8781,8 @@ async def handle_api_asset_mode_tags_post(request: web.Request) -> web.Response:
 
         return web.json_response(result)
     except Exception as e:
+        print(f"[ASSET_MODE] 태그 API 처리 실패: action={locals().get('action', '')!r}, error={e}")
+        traceback.print_exc()
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 async def handle_api_asset_mode_trace_stream(request: web.Request) -> web.StreamResponse:
