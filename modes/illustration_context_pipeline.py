@@ -19,7 +19,7 @@ from urllib.parse import quote
 
 import yaml
 
-from modes import lighbd_service, llm_service, multi_char_mask
+from modes import lighbd_service, llm_service, multi_char_mask, postprocess
 
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -2695,6 +2695,10 @@ async def build_from_context(
                     selected_slots,
                 ),
             )
+        # CALL3가 닫는 따옴표/괄호 안 끝에 #감정을 붙여 내보낸 줄을 교정한다.
+        # parse_speak_output이 #감정을 닫는 구분자 바깥에서만 인식하므로, 출력 직후
+        # 무조건 한 번 훑어 안쪽 끝 #감정을 바깥으로 옮긴다(감정 토글과 무관).
+        call3_output = postprocess.postprocess_call3_emotion_placement(call3_output)
         speak_map = parse_speak_output(
             call3_output,
             max_entries_per_scene=2 if call3_prompt_mode == "speak" else None,

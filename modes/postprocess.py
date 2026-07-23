@@ -217,6 +217,44 @@ _FONT_CANDIDATES = [
 _EMOTION_SUFFIX_RE = re.compile(r'\s+(#\S.*?)\s*$', re.UNICODE)
 
 
+# CALL3가 닫는 따옴표/괄호 "안" 끝에 #감정을 붙여 내보낸 줄을 교정하는 정규식.
+# parse_speak()는 닫는 구분자 바깥의 #감정만 인식하므로, 안쪽 끝 #감정을 닫는
+# 구분자 뒤로 옮겨 정상 파싱되게 한다. 이미 바깥에 #감정이 있으면 줄이 구분자로
+# 끝나지 않으므로 이 정규식에 걸리지 않아 원본이 보존된다.
+# 인용 부호 문자 집합은 parse_speak()의 _QUOTE_CHARS와 동일하게 둔다.
+_INNER_EMOTION_SPEECH_RE = re.compile(
+    r'^(\s*[^:\r\n]+?\s*:\s*)(?P<open>["«»“”„‟])(?P<inner>.*)(?P<close>["«»“”„‟])(\s*)$',
+    re.UNICODE,
+)
+_INNER_EMOTION_THOUGHT_NAMED_RE = re.compile(
+    r'^(\s*[^:\r\n]+?\s*:\s*)\((?P<inner>.*)\)(\s*)$',
+    re.UNICODE,
+)
+_INNER_EMOTION_THOUGHT_BARE_RE = re.compile(
+    r'^\s*\((?P<inner>.*)\)(\s*)$',
+    re.UNICODE,
+)
+
+# 닫는 따옴표/괄호 바깥에 #감정이 공백 없이 붙은 줄(예: NAME: "대사"#affection,
+# NAME: (생각)#thought)을 교정하는 정규식. parse_speak()은 닫는 구분자 뒤 '\s+#'
+# 만 감정으로 인식하므로, 구분자와 #사이에 공백이 없으면 감정이 본문으로 먹힌다.
+# 닫는 구분자 직후 '#' 이 나오면 그 #부터 줄 끝까지를 감정으로 취급해 공백을 끼운다.
+# 이미 공백이 있는 정상 형태(close #emotion)는 close 다음이 '#'이 아니라 ' '라
+# 이 정규식에 걸리지 않아 원본이 보존된다.
+_OUTSIDE_NOSPACE_SPEECH_RE = re.compile(
+    r'^(\s*[^:\r\n]+?\s*:\s*)(?P<open>["«»“”„‟])(?P<inner>.*)(?P<close>["«»“”„‟])#(?P<emotion>\S.*?)\s*$',
+    re.UNICODE,
+)
+_OUTSIDE_NOSPACE_THOUGHT_NAMED_RE = re.compile(
+    r'^(\s*[^:\r\n]+?\s*:\s*)\((?P<inner>.*)\)#(?P<emotion>\S.*?)\s*$',
+    re.UNICODE,
+)
+_OUTSIDE_NOSPACE_THOUGHT_BARE_RE = re.compile(
+    r'^\s*\((?P<inner>.*)\)#(?P<emotion>\S.*?)\s*$',
+    re.UNICODE,
+)
+
+
 # CALL3(manga)가 내보내는 고정 말풍선 타입 라벨. 줄 끝 '#라벨'이 이 중 하나면
 # 감정(emotion)이 아니라 balloon_type 으로 분류한다. 키워드로 문맥을 추론하는 것이
 # 아니라 LLM이 정해진 프로토콜로 출력하는 라벨을 역직렬화하는 구조화 파싱이다.
@@ -243,6 +281,113 @@ def _split_emotion_suffix(line: str) -> tuple:
     emotion = m.group(1)
     core = line[:m.start()].rstrip()
     return core, emotion
+
+
+def _split_inner_trailing_emotion(inner: str) -> tuple:
+    """따옴표/괄호 안 본문 끝에 붙은 #감정을 (본문, '#감정')으로 분리.
+
+    _split_emotion_suffix 와 달리 #앞 공백을 요구하지 않아 무공백 부착도 잡는다:
+      '대사#affection', '대사 #affection', '대사 #happy smile' 모두 분리.
+    마지막 # 위치에서 줄 끝까지를 감정으로 취급하므로, 중간 # 는 본문에 남는다
+    ('#해시 얘기 #affection' -> 본문 '#해시 얘기', 감정 '#affection').
+    본문이 빈 경우(본문 전체가 단일 #태그)는 분리하지 않고 (inner, None) 반환.
+    """
+    idx = inner.rfind('#')
+    if idx <= 0:
+        return inner, None
+    emotion = inner[idx:].strip()
+    core = inner[:idx].rstrip()
+    if not core or not emotion:
+        return inner, None
+    return core, emotion
+
+
+def _fix_call3_line_emotion_placement(line: str) -> str | None:
+    """닫는 따옴표/괄호 안/바깥에 #감정이 잘못 붙은 줄을 교정해 반환.
+
+    교정이 필요 없거나 매칭 불가한 줄은 None 을 반환해 호출자가 원본을 유지하게 한다.
+    1) 안쪽 끝(공백 유무 무관):  NAME: "대사#affection"  ->  NAME: "대사" #affection
+       - 발화/생각(NAME)/독백 모두. 중간 # 는 마지막 # 이전 본문에 보존.
+    2) 바깥 무공백:  NAME: "대사"#affection  ->  NAME: "대사" #affection
+       - 닫는 구분자 직후 공백 없이 #가 오면 #앞에 공백을 끼운다.
+    이미 정상(닫는 구분자 + 공백 + #감정)이거나 #감정이 없으면 원본 유지(None).
+    """
+    if not line.strip():
+        return None
+
+    # 1) 닫는 구분자 안 끝에 #감정이 붙은 줄: 바깥으로 옮긴다(공백 유무 무관).
+    # 발화: NAME: "..."
+    m = _INNER_EMOTION_SPEECH_RE.match(line)
+    if m:
+        core, emotion = _split_inner_trailing_emotion(m.group("inner"))
+        if emotion is None:
+            return None
+        return f"{m.group(1)}{m.group('open')}{core}{m.group('close')} {emotion}"
+
+    # 생각(NAME 있음): NAME: (...)
+    m = _INNER_EMOTION_THOUGHT_NAMED_RE.match(line)
+    if m:
+        core, emotion = _split_inner_trailing_emotion(m.group("inner"))
+        if emotion is None:
+            return None
+        return f"{m.group(1)}({core}) {emotion}"
+
+    # 생각(독백): (...)
+    m = _INNER_EMOTION_THOUGHT_BARE_RE.match(line)
+    if m:
+        core, emotion = _split_inner_trailing_emotion(m.group("inner"))
+        if emotion is None:
+            return None
+        return f"({core}) {emotion}"
+
+    # 2) 닫는 구분자 바깥에 #감정이 공백 없이 붙은 줄: #앞에 공백을 끼운다.
+    m = _OUTSIDE_NOSPACE_SPEECH_RE.match(line)
+    if m:
+        return f"{m.group(1)}{m.group('open')}{m.group('inner')}{m.group('close')} #{m.group('emotion')}"
+
+    m = _OUTSIDE_NOSPACE_THOUGHT_NAMED_RE.match(line)
+    if m:
+        return f"{m.group(1)}({m.group('inner')}) #{m.group('emotion')}"
+
+    m = _OUTSIDE_NOSPACE_THOUGHT_BARE_RE.match(line)
+    if m:
+        return f"({m.group('inner')}) #{m.group('emotion')}"
+
+    return None
+
+
+def postprocess_call3_emotion_placement(text: str) -> str:
+    """CALL3 출력 중 #감정 위치가 잘못된 줄을 교정한다.
+
+    parse_speak() 가 #감정을 '닫는 구분자 바깥 + #앞 공백'에서만 인식하기 때문에,
+    LLM이 다음 형태로 내보내면 감정이 본문으로 먹혀 표정 매칭/말풍선에 전달되지 않는다.
+      - 안쪽 끝:        NAME: "대사 #affection" / NAME: "대사#affection"
+      - 바깥 무공백:    NAME: "대사"#affection
+    이 함수는 CALL3 원문 전체를 줄 단위로 훑어:
+      - 안쪽 끝 #감정(공백 유무 무관)을 닫는 구분자 뒤로 옮기고,
+      - 바깥 무공백 #감정에 #앞 공백을 끼운다.
+    교정 대상이 없으면 원본을 그대로 반환한다.
+
+    감정 토글과 무관하게 CALL3 출력 직후 항상 호출한다. 토글이 꺼져 있으면 CALL3가
+    #감정 자체를 붙이지 않으므로 이 함수가 매칭할 대상도 없어 no-op 가 된다.
+    """
+    if not text:
+        return text
+    src = str(text)
+    out_lines: list[str] = []
+    changed = 0
+    for raw_line in src.splitlines():
+        new_line = _fix_call3_line_emotion_placement(raw_line.rstrip())
+        if new_line is None:
+            out_lines.append(raw_line)
+            continue
+        print(f"[ILLUST_CONTEXT:CALL3] 감정 위치 교정: {raw_line.rstrip()!r} -> {new_line!r}")
+        out_lines.append(new_line)
+        changed += 1
+    if not changed:
+        return src
+    print(f"[ILLUST_CONTEXT:CALL3] 감정 위치 교정 완료: {changed}줄")
+    return "\n".join(out_lines)
 
 
 def parse_speak(speak_text: str, strip_emotion: bool = False) -> list:
