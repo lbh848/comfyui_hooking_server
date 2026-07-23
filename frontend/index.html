@@ -10846,7 +10846,7 @@
                             <div>
                                 <h6>ComfyUI 요청 URL 입력</h6>
                                 <p><strong>ComfyUI 요청 URL</strong> 항목에 발급받은 HTTPS 주소를 입력해주세요.</p>
-                                <div class="sg-field"><div class="lab">ComfyUI 요청 URL</div><div class="val">https://발급받은-주소.example.com</div></div>
+                                <div class="sg-field"><div class="lab">ComfyUI 요청 URL</div><div class="val" id="sg-val-comfy">https://발급받은-주소.example.com</div></div>
                             </div>
                         </div>
                         <div class="sg-step">
@@ -10889,7 +10889,7 @@
                             <div>
                                 <h6>서버 HTTPS 주소 입력</h6>
                                 <p><strong>서버 HTTPS 주소</strong>에 앞에서 사용한 발급 주소를 동일하게 입력해주세요.</p>
-                                <div class="sg-field"><div class="lab">서버 HTTPS 주소</div><div class="val">https://발급받은-주소.example.com</div></div>
+                                <div class="sg-field"><div class="lab">서버 HTTPS 주소</div><div class="val" id="sg-val-server">https://발급받은-주소.example.com</div></div>
                                 <p style="margin-top:10px;">주소를 입력한 뒤 <strong>저장 및 연결 확인</strong> 버튼을 눌러 정상적으로 연결되는지 확인하세요.</p>
                             </div>
                         </div>
@@ -11572,6 +11572,14 @@
             const regenBtn = document.getElementById('share-regen-btn');
             const stopBtn = document.getElementById('share-stop-btn');
             if (!box) return;
+            // 가이드의 "발급받은 주소" 자리(ComfyUI 요청 URL / 서버 HTTPS 주소)를
+            // 실제 발급 주소로 채운다. 미발급 시 플레이스홀더를 유지.
+            const guidePlaceholder = 'https://발급받은-주소.example.com';
+            const guideVal = (tunnelActive && tunnelUrl) ? tunnelUrl : guidePlaceholder;
+            const sgComfy = document.getElementById('sg-val-comfy');
+            const sgServer = document.getElementById('sg-val-server');
+            if (sgComfy) sgComfy.textContent = guideVal;
+            if (sgServer) sgServer.textContent = guideVal;
             if (tunnelActive && tunnelUrl) {
                 box.textContent = tunnelUrl;
                 box.classList.remove('empty');
