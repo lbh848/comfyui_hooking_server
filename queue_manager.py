@@ -564,16 +564,28 @@ class QueueManager:
         if is_gpu:
             self.current_item = None
         was_illustration = item.type == "illustration"
-        # 완료 알림 후 잠시 유지
+        # 완료 알림 후 잠시 유지 — 완료 항목을 UI에 2초간 띄운 뒤 삭제(프룬)하되,
+        # 백그라운드로 지연시켜 다음 큐가 즉시 시작되도록 한다(파이프라인은 블록하지 않음).
         await self._notify_queue_updated()
-        await asyncio.sleep(2.0)
-        self.items = [i for i in self.items if i.status in ("pending", "processing")]
-        await self._notify_queue_updated()
+        asyncio.ensure_future(self._deferred_prune(item))
         # 삽화 완료 후: 새 삽화 들어오면 즉시, 아니면 10초 대기 후 다음 작업
         if is_gpu and was_illustration:
             await self._wait_after_illustration()
         # 어떤 아이템이 완료되면 우선순위 블록이 풀렸을 수 있으니 메인 루프 재점검
         asyncio.ensure_future(self._process_loop())
+
+    async def _deferred_prune(self, item: QueueItem):
+        """완료/실패/취소 항목을 UI에 2초간 띄운 뒤 리스트에서 삭제한다.
+        _run_item_pipeline의 다음 큐 시작을 막지 않도록 백그라운드에서 실행된다.
+        asyncio는 단일 스레드이므로 self.items 필터링은 다른 코루틴과 원자적으로,
+        pending/processing 항목은 항상 보존되어 실행 중인 다음 큐에 영향을 주지 않는다."""
+        try:
+            await asyncio.sleep(2.0)
+            self.items = [i for i in self.items if i.status in ("pending", "processing")]
+            await self._notify_queue_updated()
+        except Exception as e:
+            print(f"[QUEUE] 지연 프룬 실패: item={getattr(item, 'id', '')}, error={e}")
+            traceback.print_exc()
 
     # ─── LLM 워커풀 ─────────────────────────────────────────
 
