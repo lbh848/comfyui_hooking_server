@@ -9760,6 +9760,23 @@ async def _tunnel_cleanup(app):
     _tunnel_process = None
     _tunnel_url = None
 
+# ─── 공유 모달 연결 가이드 이미지 서빙 ──────────────────
+# frontend/guide 폴더의 img1.jpg, img2.jpg 만 브라우저에 노출한다.
+# (요구사항/ 폴더는 git 추적 대상이 아니므로 커밋되는 frontend/ 아래에 둔다.)
+_GUIDE_IMG_DIR = os.path.join(FRONTEND_DIR, "guide")
+_GUIDE_IMG_ALLOWED = {"img1.jpg", "img2.jpg"}
+
+async def handle_api_guide_img(request: web.Request) -> web.Response:
+    name = request.match_info.get("filename", "")
+    if name not in _GUIDE_IMG_ALLOWED:
+        print(f"[GUIDE_IMG] 거부된 파일명: {name!r}")
+        return web.Response(text="not found", status=404)
+    path = os.path.join(_GUIDE_IMG_DIR, name)
+    if not os.path.exists(path):
+        print(f"[GUIDE_IMG] 파일 없음: {path}")
+        return web.Response(text="not found", status=404)
+    return web.FileResponse(path, headers={"Cache-Control": "no-cache"})
+
 # 에셋 생성 모드 API 라우트
 _asset_analyze_cancel = False
 
@@ -10521,6 +10538,8 @@ app.router.add_post("/api/chain_presets/delete", handle_api_chain_presets_delete
 app.router.add_post("/api/tunnel/start", handle_api_tunnel_start)
 app.router.add_get("/api/tunnel/status", handle_api_tunnel_status)
 app.router.add_post("/api/tunnel/stop", handle_api_tunnel_stop)
+# 공유 모달 가이드 이미지
+app.router.add_get("/api/guide/img/{filename}", handle_api_guide_img)
 
 
 # ─── LoRA 매니징 API ─────────────────────────────────────

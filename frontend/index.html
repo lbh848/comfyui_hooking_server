@@ -878,14 +878,293 @@
             opacity: 0.6;
             cursor: wait;
         }
-        .tunnel-sub-btn {
-            display: none;
-            font-size: 0.8rem;
-            padding: 6px 10px;
-            cursor: pointer;
+
+        /* ─── 공유 모달 ─── */
+        #share-modal .modal-content {
+            max-width: 920px;
         }
-        .tunnel-sub-btn.visible {
+        .share-issue-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            align-items: center;
+        }
+        .share-url-box {
+            flex: 1 1 320px;
+            min-width: 0;
+            padding: 10px 12px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--bg);
+            color: var(--text);
+            font-family: ui-monospace, Menlo, monospace;
+            font-size: 0.85rem;
+            white-space: nowrap;
+            overflow-x: auto;
+            user-select: all;
+        }
+        .share-url-box.empty {
+            color: var(--text2);
+            font-style: italic;
+            user-select: none;
+        }
+        .share-btn {
+            padding: 8px 14px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface2);
+            color: var(--text);
+            cursor: pointer;
+            font-size: 0.85rem;
+            white-space: nowrap;
+        }
+        .share-btn:hover:not(:disabled) {
+            border-color: var(--accent);
+        }
+        .share-btn:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+        }
+        .share-btn.primary {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: #fff;
+            font-weight: 600;
+        }
+        .share-btn.danger {
+            border-color: var(--error);
+            color: var(--error);
+        }
+        .share-status {
+            margin-top: 8px;
+            font-size: 0.8rem;
+            color: var(--text2);
+        }
+        .share-guide {
+            margin-top: 22px;
+            border-top: 1px solid var(--border);
+            padding-top: 20px;
+        }
+        .share-guide h3.sg-title {
+            margin: 0 0 4px;
+            font-size: 1.15rem;
+            letter-spacing: -0.02em;
+        }
+        .share-guide p.sg-desc {
+            margin: 0 0 16px;
+            color: var(--text2);
+            font-size: 0.88rem;
+        }
+        .sg-section {
+            margin-top: 18px;
+            padding: 18px;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            background: var(--surface2);
+        }
+        .sg-section-head {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            margin-bottom: 14px;
+        }
+        .sg-num {
+            flex: 0 0 auto;
+            width: 34px;
+            height: 34px;
+            display: grid;
+            place-items: center;
+            border-radius: 9px;
+            background: var(--accent);
+            color: #fff;
+            font-weight: 800;
+            font-size: 0.9rem;
+        }
+        .sg-section h4 {
+            margin: 0 0 3px;
+            font-size: 1rem;
+        }
+        .sg-section .sg-sub {
+            margin: 0;
+            color: var(--text2);
+            font-size: 0.84rem;
+        }
+        .sg-card {
+            padding: 14px;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: var(--bg);
+            margin-bottom: 10px;
+        }
+        .sg-card .sg-tag {
             display: inline-block;
+            margin-bottom: 7px;
+            padding: 3px 8px;
+            border-radius: 999px;
+            color: var(--success);
+            background: rgba(76, 175, 80, 0.12);
+            font-size: 0.72rem;
+            font-weight: 700;
+        }
+        .sg-card h5 {
+            margin: 0 0 6px;
+            font-size: 0.92rem;
+        }
+        .sg-card p {
+            margin: 0 0 8px;
+            color: var(--text2);
+            font-size: 0.82rem;
+        }
+        .sg-link {
+            display: block;
+            padding: 9px 11px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface);
+            color: var(--accent);
+            font-size: 0.78rem;
+            word-break: break-all;
+        }
+        .sg-step {
+            display: grid;
+            grid-template-columns: 30px 1fr;
+            gap: 12px;
+            padding: 12px 13px;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: var(--bg);
+            margin-bottom: 8px;
+        }
+        .sg-step-idx {
+            width: 26px;
+            height: 26px;
+            display: grid;
+            place-items: center;
+            border-radius: 7px;
+            background: rgba(233, 69, 96, 0.14);
+            color: var(--accent);
+            font-size: 0.78rem;
+            font-weight: 800;
+        }
+        .sg-step h6 {
+            margin: 1px 0 3px;
+            font-size: 0.9rem;
+        }
+        .sg-step p {
+            margin: 0;
+            color: var(--text2);
+            font-size: 0.82rem;
+        }
+        .sg-path {
+            display: inline-flex;
+            flex-wrap: wrap;
+            gap: 5px;
+            margin-top: 6px;
+        }
+        .sg-path span {
+            padding: 3px 7px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: var(--surface);
+            font-size: 0.76rem;
+        }
+        .sg-path b {
+            align-self: center;
+            color: var(--text2);
+            font-size: 0.7rem;
+        }
+        .sg-field {
+            display: grid;
+            grid-template-columns: 170px 1fr;
+            margin-top: 10px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            overflow: hidden;
+            background: var(--surface);
+        }
+        .sg-field .lab {
+            padding: 10px 12px;
+            color: var(--text2);
+            font-size: 0.8rem;
+            background: rgba(255, 255, 255, 0.02);
+        }
+        .sg-field .val {
+            padding: 10px 12px;
+            border-left: 1px solid var(--border);
+            font-size: 0.8rem;
+            word-break: break-all;
+        }
+        .sg-notice {
+            margin-top: 12px;
+            padding: 11px 13px;
+            border-left: 3px solid var(--warn);
+            border-radius: 0 8px 8px 0;
+            background: rgba(255, 152, 0, 0.08);
+            color: #e6d9bf;
+            font-size: 0.82rem;
+        }
+        .sg-img {
+            width: 100%;
+            max-height: 360px;
+            object-fit: contain;
+            margin-top: 12px;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: var(--bg);
+        }
+        .sg-wf-label {
+            display: block;
+            margin: 10px 0 6px;
+            color: var(--text2);
+            font-size: 0.8rem;
+        }
+        .sg-wf {
+            width: 100%;
+            min-height: 200px;
+            resize: vertical;
+            padding: 12px;
+            border: 1px solid var(--border);
+            border-radius: 9px;
+            background: var(--bg);
+            color: #d9e0eb;
+            font-family: ui-monospace, Menlo, monospace;
+            font-size: 0.76rem;
+            line-height: 1.5;
+        }
+        .sg-checklist {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 8px;
+            margin-top: 12px;
+        }
+        .sg-check-item {
+            position: relative;
+            padding: 11px 11px 11px 38px;
+            border: 1px solid var(--border);
+            border-radius: 9px;
+            background: var(--bg);
+            color: var(--text2);
+            font-size: 0.82rem;
+        }
+        .sg-check-item::before {
+            content: "✓";
+            position: absolute;
+            left: 10px;
+            top: 10px;
+            width: 20px;
+            height: 20px;
+            display: grid;
+            place-items: center;
+            border-radius: 6px;
+            color: var(--success);
+            background: rgba(76, 175, 80, 0.12);
+            font-size: 0.72rem;
+            font-weight: 900;
+        }
+        @media (max-width: 620px) {
+            .sg-field { grid-template-columns: 1fr; }
+            .sg-field .val { border-left: 0; border-top: 1px solid var(--border); }
+            .sg-checklist { grid-template-columns: 1fr; }
         }
 
         /* ─── 설정 모달 ─── */
@@ -4799,9 +5078,7 @@
                 <span id="lighbd-window-badge" style="position:absolute; top:-2px; right:-4px; min-width:14px; height:14px; background:#00bcd4; border-radius:7px; font-size:0.6rem; color:#fff; display:none; align-items:center; justify-content:center; padding:0 3px;"></span>
             </button>
             <button onclick="openSettingsModal()">⚙️ 설정</button>
-            <button id="tunnel-btn" onclick="toggleTunnel()">🔗 공유</button>
-            <button id="tunnel-copy-btn" class="tunnel-sub-btn" onclick="copyTunnelUrl()">📋 링크 복사</button>
-            <button id="tunnel-regen-btn" class="tunnel-sub-btn" onclick="regenTunnel()">🔄 재생성</button>
+            <button id="tunnel-btn" onclick="openShareModal()">🔗 공유</button>
             <button onclick="reloadWorkflow()">📂 삽화 워크플로우 가져오기</button>
             <button onclick="toggleBatchMode()" id="batch-mode-btn">🔄 삽화 배치모드: <span id="batch-mode-status">OFF</span></button>
             <button onclick="manualRestoreDraw()" id="restore-manual-btn" style="display:none;">🖌️ 삽화 수동 그리기</button>
@@ -10495,6 +10772,375 @@
         </div>
     </div>
 
+    <!-- 공유 및 연결 가이드 모달 -->
+    <div class="modal" id="share-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>🔗 공유 및 연결 가이드</h2>
+                <button class="modal-close" onclick="closeShareModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <!-- 주소 발급 영역 -->
+                <div class="share-issue-row">
+                    <div class="share-url-box empty" id="share-url-box">발급 전</div>
+                    <button class="share-btn primary" id="share-issue-btn" onclick="issueTunnelUrl()">주소 발급</button>
+                    <button class="share-btn" id="share-copy-btn" onclick="copyTunnelUrl()" disabled>복사</button>
+                    <button class="share-btn" id="share-regen-btn" onclick="regenTunnelUrl()" disabled>재발급</button>
+                    <button class="share-btn danger" id="share-stop-btn" onclick="stopTunnelUrl()" disabled>연결 종료</button>
+                </div>
+                <div class="share-status" id="share-status"></div>
+
+                <!-- 연결 가이드 -->
+                <div class="share-guide">
+                    <h3 class="sg-title">개조 삽화 모듈 설치 및 연결 가이드</h3>
+                    <p class="sg-desc">RisuAI에서 개조 삽화 모듈과 Soya Comfy 플러그인을 사용하기 위한 설정 순서입니다. 다운로드부터 ComfyUI 주소 연결까지 차례대로 진행해주세요.</p>
+
+                    <div class="sg-section">
+                        <div class="sg-section-head">
+                            <div class="sg-num">1</div>
+                            <div>
+                                <h4>모듈과 플러그인 다운로드</h4>
+                                <p class="sg-sub">각 주소에서 필요한 파일을 내려받은 뒤 RisuAI에서 활성화합니다.</p>
+                            </div>
+                        </div>
+                        <div class="sg-card">
+                            <span class="sg-tag">V3 폴더</span>
+                            <h5>개조 삽화 모듈 및 플러그인</h5>
+                            <p>아래 Proton Drive 주소에 들어간 뒤 <strong>V3 폴더</strong>의 파일을 다운로드해주세요.</p>
+                            <a class="sg-link" href="https://drive.proton.me/urls/VCVXPXN18M#pU3alCDwURvh" target="_blank" rel="noopener noreferrer">https://drive.proton.me/urls/VCVXPXN18M#pU3alCDwURvh</a>
+                        </div>
+                        <div class="sg-card">
+                            <span class="sg-tag">V3.4.1</span>
+                            <h5>원본 라이트보드 백엔드</h5>
+                            <p>소개 글에서 <strong>V3.4.1 백엔드만</strong> 다운로드해주세요. 프론트엔드는 필요하지 않습니다.</p>
+                            <a class="sg-link" href="https://arca.live/b/characterai/161380443" target="_blank" rel="noopener noreferrer">https://arca.live/b/characterai/161380443</a>
+                        </div>
+                        <div class="sg-notice">다운로드한 모듈과 플러그인을 RisuAI에 등록한 뒤, 설정에서 모두 켜져 있는지 먼저 확인해주세요.</div>
+                    </div>
+
+                    <div class="sg-section">
+                        <div class="sg-section-head">
+                            <div class="sg-num">2</div>
+                            <div>
+                                <h4>RisuAI 이미지 생성 설정</h4>
+                                <p class="sg-sub">기타봇의 이미지 생성 메뉴에서 ComfyUI 연결 정보를 입력합니다.</p>
+                            </div>
+                        </div>
+                        <div class="sg-step">
+                            <div class="sg-step-idx">2</div>
+                            <div>
+                                <h6>이미지 생성 메뉴로 이동</h6>
+                                <p>RisuAI 설정에서 다음 순서로 들어가세요.</p>
+                                <div class="sg-path"><span>기타봇</span><b>›</b><span>이미지 생성</span></div>
+                            </div>
+                        </div>
+                        <div class="sg-step">
+                            <div class="sg-step-idx">3</div>
+                            <div>
+                                <h6>이미지 생성 공급자 선택</h6>
+                                <p>이미지 생성 공급자를 <strong>Comfy</strong>로 설정해주세요.</p>
+                            </div>
+                        </div>
+                        <div class="sg-step">
+                            <div class="sg-step-idx">4</div>
+                            <div>
+                                <h6>ComfyUI 요청 URL 입력</h6>
+                                <p><strong>ComfyUI 요청 URL</strong> 항목에 발급받은 HTTPS 주소를 입력해주세요.</p>
+                                <div class="sg-field"><div class="lab">ComfyUI 요청 URL</div><div class="val">https://발급받은-주소.example.com</div></div>
+                            </div>
+                        </div>
+                        <div class="sg-step">
+                            <div class="sg-step-idx">5</div>
+                            <div>
+                                <h6>Workflow 입력</h6>
+                                <p>아래 Workflow JSON을 복사해서 붙여넣으세요. 이미 입력했다면 이 단계는 건너뛰어도 됩니다.</p>
+                                <label class="sg-wf-label" for="share-workflow-textarea">Workflow JSON</label>
+                                <textarea class="sg-wf" id="share-workflow-textarea" readonly spellcheck="false"></textarea>
+                            </div>
+                        </div>
+                        <div class="sg-step">
+                            <div class="sg-step-idx">6</div>
+                            <div>
+                                <h6>Timeout 늘리기</h6>
+                                <p>이미지 생성 시간이 길어질 수 있으므로 Timeout을 <strong>12000</strong> 정도로 넉넉하게 설정해주세요.</p>
+                                <div class="sg-field"><div class="lab">Timeout</div><div class="val">12000</div></div>
+                            </div>
+                        </div>
+                        <img class="sg-img" src="/api/guide/img/img1.jpg" alt="RisuAI 이미지 생성 설정 화면" />
+                    </div>
+
+                    <div class="sg-section">
+                        <div class="sg-section-head">
+                            <div class="sg-num">3</div>
+                            <div>
+                                <h4>Soya Comfy 플러그인 연결</h4>
+                                <p class="sg-sub">플러그인 설정에서도 같은 서버 주소를 입력하고 연결 상태를 확인합니다.</p>
+                            </div>
+                        </div>
+                        <div class="sg-step">
+                            <div class="sg-step-idx">8</div>
+                            <div>
+                                <h6>Soya Comfy 플러그인 열기</h6>
+                                <p>RisuAI의 플러그인 목록에서 <strong>Soya Comfy</strong> 플러그인 설정 화면으로 들어가세요.</p>
+                            </div>
+                        </div>
+                        <div class="sg-step">
+                            <div class="sg-step-idx">9</div>
+                            <div>
+                                <h6>서버 HTTPS 주소 입력</h6>
+                                <p><strong>서버 HTTPS 주소</strong>에 앞에서 사용한 발급 주소를 동일하게 입력해주세요.</p>
+                                <div class="sg-field"><div class="lab">서버 HTTPS 주소</div><div class="val">https://발급받은-주소.example.com</div></div>
+                                <p style="margin-top:10px;">주소를 입력한 뒤 <strong>저장 및 연결 확인</strong> 버튼을 눌러 정상적으로 연결되는지 확인하세요.</p>
+                            </div>
+                        </div>
+                        <img class="sg-img" src="/api/guide/img/img2.jpg" alt="Soya Comfy 플러그인 연결 설정 화면" />
+                        <div class="sg-checklist">
+                            <div class="sg-check-item">모듈과 플러그인이 활성화되어 있음</div>
+                            <div class="sg-check-item">이미지 공급자가 Comfy로 설정됨</div>
+                            <div class="sg-check-item">두 설정에 같은 HTTPS 주소가 입력됨</div>
+                            <div class="sg-check-item">저장 및 연결 확인이 성공함</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 공유 모달에 표시할 Workflow JSON (raw) -->
+    <script type="application/json" id="share-workflow-data">{
+  "39": {
+    "inputs": {
+      "clip_name": "qwen_3_06b_base.safetensors",
+      "type": "stable_diffusion",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": { "title": "CLIP 로드" }
+  },
+  "40": {
+    "inputs": { "vae_name": "qwen_image_vae.safetensors" },
+    "class_type": "VAELoader",
+    "_meta": { "title": "VAE 로드" }
+  },
+  "45": {
+    "inputs": { "text": ["125", 0], "clip": ["39", 0] },
+    "class_type": "CLIPTextEncode",
+    "_meta": { "title": "아니마 긍정 프롬프트" }
+  },
+  "46": {
+    "inputs": { "unet_name": "anima-preview.safetensors", "weight_dtype": "default" },
+    "class_type": "UNETLoader",
+    "_meta": { "title": "확산 모델 로드" }
+  },
+  "47": {
+    "inputs": { "shift": 8, "model": ["386", 0] },
+    "class_type": "ModelSamplingAuraFlow",
+    "_meta": { "title": "모델 샘플링 (AuraFlow)" }
+  },
+  "63": {
+    "inputs": { "samples": ["179:81", 0], "vae": ["40", 0] },
+    "class_type": "VAEDecode",
+    "_meta": { "title": "VAE 디코드" }
+  },
+  "67": {
+    "inputs": { "ckpt_name": "rinFlanimeIllustrious_v30.safetensors" },
+    "class_type": "CheckpointLoaderSimple",
+    "_meta": { "title": "IL 체크포인트 로드" }
+  },
+  "68": {
+    "inputs": { "lora_name": "dmd2_sdxl_4step_lora.safetensors", "strength_model": 1, "model": ["67", 0] },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": { "title": "IL 4step 고속 로라 로드" }
+  },
+  "70": {
+    "inputs": {
+      "text": "worst quality, bad quality, username, signature, long neck, twitter username, text, watermark, logo,(colored_sclera:1.3), ",
+      "clip": ["67", 1]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": { "title": "IL 부정 프롬프트" }
+  },
+  "79": {
+    "inputs": { "samples": ["80", 0], "vae": ["67", 2] },
+    "class_type": "VAEDecode",
+    "_meta": { "title": "VAE 디코드" }
+  },
+  "80": {
+    "inputs": {
+      "seed": ["291", 0],
+      "steps": 5,
+      "cfg": 1.7,
+      "sampler_name": "lcm",
+      "scheduler": "simple",
+      "denoise": 0.2,
+      "model": ["184", 0],
+      "positive": ["91", 0],
+      "negative": ["70", 0],
+      "latent_image": ["82", 0]
+    },
+    "class_type": "KSampler",
+    "_meta": { "title": "KSampler" }
+  },
+  "82": {
+    "inputs": { "pixels": ["283:15", 0], "vae": ["67", 2] },
+    "class_type": "VAEEncode",
+    "_meta": { "title": "VAE 인코드" }
+  },
+  "87": {
+    "inputs": { "text": ["126", 0], "clip": ["39", 0] },
+    "class_type": "CLIPTextEncode",
+    "_meta": { "title": "아니마 부정 프롬프트" }
+  },
+  "91": {
+    "inputs": { "text": ["416", 0], "clip": ["67", 1] },
+    "class_type": "CLIPTextEncode",
+    "_meta": { "title": "IL 긍정 프롬프트" }
+  },
+  "94": {
+    "inputs": { "upscale_model": ["95", 0], "image": ["63", 0] },
+    "class_type": "ImageUpscaleWithModel",
+    "_meta": { "title": "모델을 사용한 이미지 확대" }
+  },
+  "95": {
+    "inputs": { "model_name": "2x-AnimeSharpV4_Fast_RCAN_PU.safetensors" },
+    "class_type": "UpscaleModelLoader",
+    "_meta": { "title": "업스케일 모델 로드" }
+  },
+  "120": {
+    "inputs": { "lora_name": "anima_preview_rdbt_finetuned_cfg_distilled_v0.12.safetensors", "strength_model": 1, "model": ["46", 0] },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": { "title": "아니마 고속 로라 로드" }
+  },
+  "125": {
+    "inputs": { "value": "{{risu_prompt}}" },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": { "title": "긍정프롬프트" }
+  },
+  "126": {
+    "inputs": { "value": "{{risu_neg}}" },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": { "title": "부정프롬프트" }
+  },
+  "182": {
+    "inputs": { "upscale_method": "nearest-exact", "scale_by": 0.75, "samples": ["180:2", 0] },
+    "class_type": "LatentUpscaleBy",
+    "_meta": { "title": "잠재 데이터 크기 배율 조정" }
+  },
+  "184": {
+    "inputs": { "lora_name": "Detailed anime style.safetensors", "strength_model": 0.3, "model": ["68", 0] },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": { "title": "IL 4step 고속 로라 로드" }
+  },
+  "290": {
+    "inputs": { "seed": -1 },
+    "class_type": "Seed (rgthree)",
+    "_meta": { "title": "Seed (rgthree)" }
+  },
+  "291": {
+    "inputs": { "seed": -1 },
+    "class_type": "Seed (rgthree)",
+    "_meta": { "title": "Seed (rgthree)" }
+  },
+  "386": {
+    "inputs": { "lora_name": "kieed-anima-lokr-000018.safetensors", "strength_model": 0.3, "model": ["120", 0] },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": { "title": "아니마 고속 로라 로드" }
+  },
+  "404": {
+    "inputs": { "filename_prefix": "risuAI2026-02-23/02-23", "images": ["79", 0] },
+    "class_type": "SaveImage",
+    "_meta": { "title": "이미지 저장" }
+  },
+  "414": {
+    "inputs": {
+      "model": "wd-vit-tagger-v3",
+      "threshold": 0.35,
+      "character_threshold": 0.6,
+      "replace_underscore": false,
+      "trailing_comma": false,
+      "exclude_tags": "solo",
+      "image": ["94", 0]
+    },
+    "class_type": "WD14Tagger|pysssss",
+    "_meta": { "title": "WD14 Tagger 🐍" }
+  },
+  "415": {
+    "inputs": { "value": "linear hatching,(thick lineart:1.7), high contrast, pastel colors, chromatic aberration,  masterpiece, best quality, very aesthetic, highres, high detail, best illustration, novel illustration, 2d," },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": { "title": "베이스 긍정 프롬" }
+  },
+  "416": {
+    "inputs": { "delimiter": " ", "string1": ["415", 0], "string2": ["414", 0] },
+    "class_type": "JoinStrings",
+    "_meta": { "title": "Join Strings" }
+  },
+  "180:1": {
+    "inputs": { "width": 1024, "height": 1024, "batch_size": 1 },
+    "class_type": "EmptyLatentImage",
+    "_meta": { "title": "빈 잠재 이미지" }
+  },
+  "180:2": {
+    "inputs": { "rotation": "none", "samples": ["180:1", 0] },
+    "class_type": "LatentRotate",
+    "_meta": { "title": "잠재 데이터 연산 (회전)" }
+  },
+  "179:80": {
+    "inputs": { "sampler_name": "er_sde" },
+    "class_type": "KSamplerSelect",
+    "_meta": { "title": "KSampler (선택)" }
+  },
+  "179:109": {
+    "inputs": { "scheduler": "simple", "steps": 16, "denoise": 1, "model": ["47", 0] },
+    "class_type": "BasicScheduler",
+    "_meta": { "title": "기본 스케줄러" }
+  },
+  "179:81": {
+    "inputs": {
+      "noise": ["179:86", 0],
+      "guider": ["179:110", 0],
+      "sampler": ["179:80", 0],
+      "sigmas": ["179:109", 0],
+      "latent_image": ["182", 0]
+    },
+    "class_type": "SamplerCustomAdvanced",
+    "_meta": { "title": "고급 사용자 정의 샘플러" }
+  },
+  "179:110": {
+    "inputs": {
+      "cfg": 2,
+      "start_percent": 0,
+      "end_percent": 1,
+      "model": ["47", 0],
+      "positive": ["45", 0],
+      "negative": ["87", 0]
+    },
+    "class_type": "ScheduledCFGGuidance",
+    "_meta": { "title": "Scheduled CFG Guidance" }
+  },
+  "179:86": {
+    "inputs": { "noise_seed": ["290", 0] },
+    "class_type": "RandomNoise",
+    "_meta": { "title": "무작위 노이즈" }
+  },
+  "283:15": {
+    "inputs": {
+      "fragment_shader": "#version 300 es\nprecision highp float;\n\nuniform sampler2D u_image0;\nuniform float u_float0; // temperature (-100 to 100)\nuniform float u_float1; // tint (-100 to 100)\nuniform float u_float2; // vibrance (-100 to 100)\nuniform float u_float3; // saturation (-100 to 100)\n\nin vec2 v_texCoord;\nout vec4 fragColor;\n\nconst float INPUT_SCALE = 0.01;\nconst float TEMP_TINT_PRIMARY = 0.3;\nconst float TEMP_TINT_SECONDARY = 0.15;\nconst float VIBRANCE_BOOST = 2.0;\nconst float SATURATION_BOOST = 2.0;\nconst float SKIN_PROTECTION = 0.5;\nconst float EPSILON = 0.001;\nconst vec3 LUMA_WEIGHTS = vec3(0.299, 0.587, 0.114);\n\nvoid main() {\n    vec4 tex = texture(u_image0, v_texCoord);\n    vec3 color = tex.rgb;\n    \n    // Scale inputs: -100/100 → -1/1\n    float temperature = u_float0 * INPUT_SCALE;\n    float tint = u_float1 * INPUT_SCALE;\n    float vibrance = u_float2 * INPUT_SCALE;\n    float saturation = u_float3 * INPUT_SCALE;\n    \n    // Temperature (warm/cool): positive = warm, negative = cool\n    color.r += temperature * TEMP_TINT_PRIMARY;\n    color.b -= temperature * TEMP_TINT_PRIMARY;\n    \n    // Tint (green/magenta): positive = green, negative = magenta\n    color.g += tint * TEMP_TINT_PRIMARY;\n    color.r -= tint * TEMP_TINT_SECONDARY;\n    color.b -= tint * TEMP_TINT_SECONDARY;\n    \n    // Single clamp after temperature/tint\n    color = clamp(color, 0.0, 1.0);\n    \n    // Vibrance with skin protection\n    if (vibrance != 0.0) {\n        float maxC = max(color.r, max(color.g, color.b));\n        float minC = min(color.r, min(color.g, color.b));\n        float sat = maxC - minC;\n        float gray = dot(color, LUMA_WEIGHTS);\n        \n        if (vibrance < 0.0) {\n            // Desaturate: -100 → gray\n            color = mix(vec3(gray), color, 1.0 + vibrance);\n        } else {\n            // Boost less saturated colors more\n            float vibranceAmt = vibrance * (1.0 - sat);\n            \n            // Branchless skin tone protection\n            float isWarmTone = step(color.b, color.g) * step(color.g, color.r);\n            float warmth = (color.r - color.b) / max(maxC, EPSILON);\n            float skinTone = isWarmTone * warmth * sat * (1.0 - sat);\n            vibranceAmt *= (1.0 - skinTone * SKIN_PROTECTION);\n            \n            color = mix(vec3(gray), color, 1.0 + vibranceAmt * VIBRANCE_BOOST);\n        }\n    }\n    \n    // Saturation\n    if (saturation != 0.0) {\n        float gray = dot(color, LUMA_WEIGHTS);\n        float satMix = saturation < 0.0\n            ? 1.0 + saturation                      // -100 → gray\n            : 1.0 + saturation * SATURATION_BOOST;  // +100 → 3x boost\n        color = mix(vec3(gray), color, satMix);\n    }\n    \n    fragColor = vec4(clamp(color, 0.0, 1.0), tex.a);\n}",
+      "size_mode": "from_input",
+      "images.image0": ["94", 0],
+      "floats.u_float0": ["283:4", 0],
+      "floats.u_float1": ["283:5", 0],
+      "floats.u_float2": ["283:6", 0],
+      "floats.u_float3": ["283:7", 0]
+    },
+    "class_type": "GLSLShader",
+    "_meta": { "title": "GLSL Shader" }
+  },
+  "283:6": { "inputs": { "value": 20 }, "class_type": "PrimitiveFloat", "_meta": { "title": "Vibrance" } },
+  "283:7": { "inputs": { "value": 20 }, "class_type": "PrimitiveFloat", "_meta": { "title": "Saturation" } },
+  "283:5": { "inputs": { "value": 0 }, "class_type": "PrimitiveFloat", "_meta": { "title": "Tint" } },
+  "283:4": { "inputs": { "value": 0 }, "class_type": "PrimitiveFloat", "_meta": { "title": "Temperature" } }
+}</script>
+
     <!-- 통합 큐 모달 -->
     <div class="modal" id="queue-modal">
         <div class="modal-content queue-modal-content">
@@ -10886,84 +11532,162 @@
         // 이 Promise를 공유하므로 시작 직후 탭을 눌러도 동일 요청의 완료를 기다린다.
         loadCurrentConfig().catch(() => {});
 
-        // ─── 터널 공유 ──────────────────────────────────────
+        // ─── 터널 공유 (공유 모달) ──────────────────────────
         let tunnelActive = false;
         let tunnelUrl = null;
 
-        // 페이지 로드 시 터널 상태 복원 (1회성)
-        (async () => {
+        // Workflow JSON 을 모달 textarea 에 예쁘게 채운다 (1회).
+        (function _fillShareWorkflow() {
+            try {
+                const raw = document.getElementById('share-workflow-data').textContent.trim();
+                const ta = document.getElementById('share-workflow-textarea');
+                if (!raw || !ta) return;
+                const obj = JSON.parse(raw);
+                ta.value = JSON.stringify(obj, null, 2);
+            } catch (e) {
+                console.error('[SHARE] workflow JSON 파싱 실패', e);
+                const ta = document.getElementById('share-workflow-textarea');
+                if (ta) ta.value = 'Workflow JSON 파싱 실패: ' + (e && e.message || e);
+            }
+        })();
+
+        // 메인 공유 버튼 라벨/스타일 동기화
+        function _syncTunnelBtn() {
+            const btn = document.getElementById('tunnel-btn');
+            if (!btn) return;
+            if (tunnelActive) {
+                btn.textContent = '🔗 공유 중';
+                btn.classList.add('tunnel-active');
+            } else {
+                btn.textContent = '🔗 공유';
+                btn.classList.remove('tunnel-active');
+            }
+        }
+
+        // 모달 내 발급 영역 UI 갱신
+        function _renderShareState() {
+            const box = document.getElementById('share-url-box');
+            const issueBtn = document.getElementById('share-issue-btn');
+            const copyBtn = document.getElementById('share-copy-btn');
+            const regenBtn = document.getElementById('share-regen-btn');
+            const stopBtn = document.getElementById('share-stop-btn');
+            if (!box) return;
+            if (tunnelActive && tunnelUrl) {
+                box.textContent = tunnelUrl;
+                box.classList.remove('empty');
+                if (issueBtn) issueBtn.disabled = true;
+                if (copyBtn) copyBtn.disabled = false;
+                if (regenBtn) regenBtn.disabled = false;
+                if (stopBtn) stopBtn.disabled = false;
+            } else {
+                box.textContent = '발급 전';
+                box.classList.add('empty');
+                if (issueBtn) issueBtn.disabled = false;
+                if (copyBtn) copyBtn.disabled = true;
+                if (regenBtn) regenBtn.disabled = true;
+                if (stopBtn) stopBtn.disabled = true;
+            }
+        }
+
+        // 서버 상태 조회 → 변수/버튼 동기화
+        async function _refreshTunnelStatus() {
             try {
                 const res = await fetchJSON('/api/tunnel/status');
                 if (res.status === 'running' && res.url) {
                     tunnelActive = true;
                     tunnelUrl = res.url;
-                    const btn = document.getElementById('tunnel-btn');
-                    if (btn) {
-                        btn.textContent = '🔗 공유 중';
-                        btn.classList.add('tunnel-active');
-                    }
-                    _tunnelBtns(true);
+                } else {
+                    tunnelActive = false;
+                    tunnelUrl = null;
                 }
-            } catch (e) {}
-        })();
-
-        function _tunnelBtns(show) {
-            document.getElementById('tunnel-copy-btn').classList.toggle('visible', show);
-            document.getElementById('tunnel-regen-btn').classList.toggle('visible', show);
-        }
-
-        async function toggleTunnel() {
-            const btn = document.getElementById('tunnel-btn');
-            if (tunnelActive) {
-                // 끄기
-                try { await fetch('/api/tunnel/stop', {method:'POST'}); } catch(e) {}
+            } catch (e) {
                 tunnelActive = false;
                 tunnelUrl = null;
-                btn.textContent = '🔗 공유';
-                btn.classList.remove('tunnel-active');
-                _tunnelBtns(false);
-                return;
             }
-            // 켜기
-            btn.textContent = '⏳ 연결 중...';
-            btn.classList.add('tunnel-loading');
-            btn.disabled = true;
+            _syncTunnelBtn();
+            _renderShareState();
+        }
+
+        // 페이지 로드 시 터널 상태 복원 (버튼 라벨만)
+        (async () => { await _refreshTunnelStatus(); })();
+
+        function openShareModal() {
+            document.getElementById('share-modal').classList.add('visible');
+            // 모달을 열 때마다 서버 상태를 새로고침 — 발급 주소가 유지되어 표시됨.
+            _refreshTunnelStatus();
+        }
+        function closeShareModal() {
+            document.getElementById('share-modal').classList.remove('visible');
+        }
+
+        function _setShareStatus(msg, isError) {
+            const el = document.getElementById('share-status');
+            if (!el) return;
+            el.textContent = msg || '';
+            el.style.color = isError ? 'var(--error)' : 'var(--text2)';
+        }
+
+        async function issueTunnelUrl() {
+            const issueBtn = document.getElementById('share-issue-btn');
+            if (issueBtn) { issueBtn.disabled = true; issueBtn.textContent = '발급 중...'; }
+            _setShareStatus('터널 연결 중... (최대 20초)');
             try {
                 const res = await fetch('/api/tunnel/start', {method:'POST'});
                 const data = await res.json();
-                if (data.url) {
+                if (data && data.url) {
                     tunnelActive = true;
                     tunnelUrl = data.url;
-                    btn.textContent = '🔗 공유 중';
-                    btn.classList.remove('tunnel-loading');
-                    btn.classList.add('tunnel-active');
-                    _tunnelBtns(true);
+                    _syncTunnelBtn();
+                    _renderShareState();
+                    _setShareStatus('공유 주소가 발급되었습니다.');
                     showToast('공유 링크가 생성되었습니다!', 'success');
                 } else {
-                    throw new Error(data.error || '터널 시작 실패');
+                    throw new Error((data && data.error) || '터널 시작 실패');
                 }
-            } catch(e) {
-                btn.textContent = '🔗 공유';
-                btn.classList.remove('tunnel-loading');
-                showToast('공유 연결 실패: ' + e.message, 'error');
+            } catch (e) {
+                _setShareStatus('공유 연결 실패: ' + (e && e.message || e), true);
+                showToast('공유 연결 실패: ' + (e && e.message || e), 'error');
+            } finally {
+                if (issueBtn) { issueBtn.textContent = '주소 발급'; }
+                _renderShareState();
             }
-            btn.disabled = false;
         }
 
         function copyTunnelUrl() {
-            if (!tunnelUrl) return;
+            if (!tunnelUrl) { showToast('복사할 주소가 없습니다.', 'error'); return; }
             navigator.clipboard.writeText(tunnelUrl).then(() => {
                 showToast('공유 주소가 복사되었습니다!', 'success');
+            }).catch((e) => {
+                showToast('복사 실패: ' + (e && e.message || e), 'error');
             });
         }
 
-        async function regenTunnel() {
+        async function regenTunnelUrl() {
             // 끄고 바로 다시 켜기
+            const regenBtn = document.getElementById('share-regen-btn');
+            if (regenBtn) { regenBtn.disabled = true; regenBtn.textContent = '재발급 중...'; }
+            _setShareStatus('재발급 중... 기존 연결을 종료하고 다시 엽니다.');
             try { await fetch('/api/tunnel/stop', {method:'POST'}); } catch(e) {}
             tunnelActive = false;
             tunnelUrl = null;
-            _tunnelBtns(false);
-            await toggleTunnel();
+            _renderShareState();
+            await issueTunnelUrl();
+            if (regenBtn) { regenBtn.textContent = '재발급'; }
+            _renderShareState();
+        }
+
+        async function stopTunnelUrl() {
+            const stopBtn = document.getElementById('share-stop-btn');
+            if (stopBtn) { stopBtn.disabled = true; stopBtn.textContent = '종료 중...'; }
+            try { await fetch('/api/tunnel/stop', {method:'POST'}); } catch(e) {}
+            tunnelActive = false;
+            tunnelUrl = null;
+            _syncTunnelBtn();
+            _renderShareState();
+            _setShareStatus('연결이 종료되었습니다.');
+            showToast('공유 연결을 종료했습니다.', 'info');
+            if (stopBtn) { stopBtn.textContent = '연결 종료'; }
+            _renderShareState();
         }
 
         // ─── WebSocket 연결 ───
