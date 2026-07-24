@@ -219,6 +219,7 @@ DEFAULT_CONFIG = {
     "llm_stream": False,              # LLM1 실제 API 스트리밍
     "llm_stream2": False,             # LLM2 실제 API 스트리밍
     "llm_stream3": False,             # LLM3 실제 API 스트리밍
+    "llm_stream_idle_timeout_seconds": 90.0,  # 0=비활성, 그 외 10~3600초
     # 작업별 LLM1/LLM2/LLM3 라우팅 및 메인/폴백 재시도 정책(외부 API 분기 탭).
     "llm_routing": {
         "extract_outfit":          _llm_route_defaults(fallback=True),
@@ -1631,6 +1632,34 @@ async def wait_for_real_comfy(ws, real_prompt_id: str, progress_callback=None, t
     return None
 
 
+def extract_execution_error(status_info: dict) -> str:
+    """ComfyUI history status.messages 에서 execution_error 항목을 찾아
+    핵심 필드(node_id/node_type/exception_message/exception_type)를
+    잘리지 않는 문자열로 반환. 없으면 빈 문자열."""
+    if not isinstance(status_info, dict):
+        return ""
+    messages = status_info.get("messages", [])
+    if not isinstance(messages, list):
+        return ""
+    for entry in messages:
+        if not isinstance(entry, list) or len(entry) < 2:
+            continue
+        if entry[0] != "execution_error":
+            continue
+        d = entry[1] if isinstance(entry[1], dict) else {}
+        node_id = d.get("node_id") or d.get("node") or "?"
+        node_type = d.get("node_type", "?")
+        exc_msg = d.get("exception_message") or ""
+        exc_type = d.get("exception_type") or ""
+        parts = [f"node {node_id} ({node_type})"]
+        if exc_msg:
+            parts.append(f"exception_message={exc_msg}")
+        if exc_type:
+            parts.append(f"exception_type={exc_type}")
+        return " | execution_error: " + " ".join(parts)
+    return ""
+
+
 async def fetch_real_history(real_prompt_id: str, port: int | None = None) -> dict:
     target_port = port if port is not None else REAL_COMFY_PORT
     url = f"http://{REAL_COMFY_HOST}:{target_port}/history/{real_prompt_id}"
@@ -1780,9 +1809,12 @@ async def generate_image_with_prompt(
         err_detail = ""
         if node_errors:
             err_detail += f" | node_errors: {json.dumps(node_errors, ensure_ascii=False)}"
+        exec_err = extract_execution_error(status_info)
+        if exec_err:
+            err_detail += exec_err
         if status_info:
-            err_detail += f" | status: {json.dumps(status_info, ensure_ascii=False)[:300]}"
-        print(f"[GEN] 이미지 미출력 — 출력 노드: {out_info} | status: {json.dumps(status_info, ensure_ascii=False)[:500]}")
+            err_detail += f" | status: {json.dumps(status_info, ensure_ascii=False)}"
+        print(f"[GEN] 이미지 미출력 — 출력 노드: {out_info} | exec_err={exec_err or '(없음)'} | status: {json.dumps(status_info, ensure_ascii=False)}")
         return None, f"ComfyUI에서 이미지 결과를 얻지 못함 (출력 노드: {out_info}){err_detail}"
 
     first_img = real_images[0]
@@ -1910,9 +1942,12 @@ async def submit_workflow_to_comfy(workflow_api: dict, progress_callback=None) -
             err_detail = ""
             if node_errors:
                 err_detail += f" | node_errors: {json.dumps(node_errors, ensure_ascii=False)}"
+            exec_err = extract_execution_error(status_info)
+            if exec_err:
+                err_detail += exec_err
             if status_info:
-                err_detail += f" | status: {json.dumps(status_info, ensure_ascii=False)[:300]}"
-            print(f"[ASSET] 이미지 미출력 — 출력 노드: {out_info} | status: {json.dumps(status_info, ensure_ascii=False)[:500]}")
+                err_detail += f" | status: {json.dumps(status_info, ensure_ascii=False)}"
+            print(f"[ASSET] 이미지 미출력 — 출력 노드: {out_info} | exec_err={exec_err or '(없음)'} | status: {json.dumps(status_info, ensure_ascii=False)}")
             return None, f"ComfyUI에서 이미지 결과를 얻지 못함 (출력 노드: {out_info}){err_detail}"
 
         first_img = real_images[0]
@@ -4659,6 +4694,45 @@ async def handle_api_lighbd_vertex_key(request: web.Request) -> web.Response:
         tb = traceback.format_exc()
         print(f"[LIGHBD] vertex_key error: {e}\n{tb}")
         return web.json_response({"error": str(e)}, status=500)
+
+
+async def handle_api_llm_streams(request: web.Request) -> web.Response:
+    """활성 실제 LLM 스트림 스냅샷. 프론트 WS 재연결 시 유령 상태를 제거한다."""
+    try:
+        return web.json_response({"streams": llm_service.get_active_streams()})
+    except Exception as e:
+        print(f"[LLM_STREAM_API] 활성 스트림 조회 실패: {type(e).__name__}: {e}")
+        traceback.print_exc()
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def handle_api_llm_stream_control(request: web.Request) -> web.Response:
+    """활성 스트림에 cancel/retry/use_partial 제어를 요청한다."""
+    stream_id = str(request.match_info.get("stream_id", "") or "").strip()
+    if not stream_id:
+        print("[LLM_STREAM_API] 제어 요청 거부: stream_id가 비어 있음")
+        return web.json_response({"success": False, "error": "stream_id가 필요합니다."}, status=400)
+    try:
+        body = await request.json()
+        action = str((body or {}).get("action", "") or "").strip().lower()
+        success, message = llm_service.request_stream_control(stream_id, action)
+        if not success:
+            return web.json_response({"success": False, "error": message}, status=404 if "찾을" in message else 400)
+        return web.json_response({"success": True, "stream_id": stream_id, "action": message})
+    except (json.JSONDecodeError, TypeError, ValueError) as e:
+        print(
+            f"[LLM_STREAM_API] 제어 요청 body 파싱 실패: "
+            f"stream_id={stream_id}, error={type(e).__name__}: {e}"
+        )
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=400)
+    except Exception as e:
+        print(
+            f"[LLM_STREAM_API] 제어 요청 실패: stream_id={stream_id}, "
+            f"error={type(e).__name__}: {e}"
+        )
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
 
 
 async def handle_api_lighbd_session(request: web.Request) -> web.Response:
@@ -7788,6 +7862,33 @@ async def handle_api_config(request: web.Request) -> web.Response:
                     )
                 body["chansub_retry_delay_sec"] = chansub_retry_delay_sec
 
+            if "llm_stream_idle_timeout_seconds" in body:
+                raw_idle_timeout = body.get("llm_stream_idle_timeout_seconds")
+                try:
+                    if isinstance(raw_idle_timeout, bool):
+                        raise TypeError("bool은 허용되지 않음")
+                    idle_timeout = float(raw_idle_timeout)
+                except (TypeError, ValueError) as e:
+                    print(
+                        f"[CONFIG] LLM 스트림 무응답 제한 저장 거부: "
+                        f"value={raw_idle_timeout!r}, error={e}"
+                    )
+                    traceback.print_exc()
+                    return web.json_response(
+                        {"error": "LLM 스트림 무응답 제한은 0 또는 10~3600초 숫자여야 합니다."},
+                        status=400,
+                    )
+                if idle_timeout != 0 and not 10 <= idle_timeout <= 3600:
+                    print(
+                        f"[CONFIG] LLM 스트림 무응답 제한 범위 오류: "
+                        f"value={idle_timeout}"
+                    )
+                    return web.json_response(
+                        {"error": "LLM 스트림 무응답 제한은 0 또는 10~3600초여야 합니다."},
+                        status=400,
+                    )
+                body["llm_stream_idle_timeout_seconds"] = idle_timeout
+
             # 설정 업데이트
             for key in body:
                 if key in DEFAULT_CONFIG:
@@ -7904,6 +8005,7 @@ async def handle_api_config(request: web.Request) -> web.Response:
                 "llm_stream": app_config.get("llm_stream", False),
                 "llm_stream2": app_config.get("llm_stream2", False),
                 "llm_stream3": app_config.get("llm_stream3", False),
+                "llm_stream_idle_timeout_seconds": app_config.get("llm_stream_idle_timeout_seconds", 90.0),
                 "llm_routing": app_config.get("llm_routing", {}),
             })
 
@@ -8535,6 +8637,8 @@ app.router.add_delete(
 app.router.add_post("/api/llm/vertex_key", handle_api_lighbd_vertex_key)
 app.router.add_get("/api/llm/vertex_key", handle_api_lighbd_vertex_key)
 app.router.add_delete("/api/llm/vertex_key", handle_api_lighbd_vertex_key)
+app.router.add_get("/api/llm/streams", handle_api_llm_streams)
+app.router.add_post("/api/llm/streams/{stream_id}/control", handle_api_llm_stream_control)
 app.router.add_post("/api/llm/keys", handle_api_llm_keys)
 app.router.add_get("/api/llm/keys", handle_api_llm_keys)
 app.router.add_delete("/api/llm/keys", handle_api_llm_keys)
@@ -14215,6 +14319,7 @@ async def on_startup(app):
         "llm_stream": app_config.get("llm_stream", False),
         "llm_stream2": app_config.get("llm_stream2", False),
         "llm_stream3": app_config.get("llm_stream3", False),
+        "llm_stream_idle_timeout_seconds": app_config.get("llm_stream_idle_timeout_seconds", 90.0),
         "llm_routing": app_config.get("llm_routing", {}),
     })
     # API 키는 config.json 이 아닌 key/llm_keys.json 에서 로드

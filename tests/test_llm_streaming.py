@@ -21,6 +21,7 @@ def _test_config():
         "llm_stream": False,
         "llm_stream2": False,
         "llm_stream3": False,
+        "llm_stream_idle_timeout_seconds": 90,
         "llm_routing": {},
     })
     return config
@@ -401,3 +402,215 @@ async def test_llm3_stream_api_yields_provider_deltas_without_buffering(monkeypa
 
     assert [event["type"] for event in events] == ["start", "delta", "delta", "done"]
     assert "".join(event.get("text", "") for event in events if event["type"] == "delta") == "안녕"
+
+
+async def _wait_for_active_stream(predicate=lambda _stream: True):
+    for _ in range(200):
+        streams = llm_service.get_active_streams()
+        if streams and predicate(streams[0]):
+            return streams[0]
+        await asyncio.sleep(0)
+    raise AssertionError("활성 스트림이 제한 시간 안에 등록되지 않음")
+
+
+@pytest.mark.asyncio
+async def test_active_stream_snapshot_tracks_partial_text_and_cleans_up(monkeypatch):
+    config = _test_config()
+    config["llm_stream"] = True
+    monkeypatch.setattr(llm_service, "_current_config", config)
+    llm_service._active_streams.clear()
+    release = asyncio.Event()
+
+    async def controlled_stream(messages, service, model):
+        yield {"type": "start", "service": service, "model": model}
+        yield {"type": "delta", "text": "부분", "elapsed": 0.1, "ttft": 0.1}
+        await release.wait()
+        yield {
+            "type": "done",
+            "text": "부분 완료",
+            "completion_tokens": 2,
+            "elapsed": 0.2,
+            "tps": 10.0,
+            "ttft": 0.1,
+        }
+
+    monkeypatch.setattr(llm_service, "_dispatch_stream", controlled_stream)
+    task = asyncio.create_task(
+        llm_service.callLLM([{"role": "user", "content": "hello"}])
+    )
+    snapshot = await _wait_for_active_stream(lambda stream: stream["text"] == "부분")
+
+    assert snapshot["active"] is True
+    assert snapshot["llm_slot"] == "llm1"
+    assert snapshot["text"] == "부분"
+    assert not any(key.startswith("_") for key in snapshot)
+
+    release.set()
+    assert await task == "부분 완료"
+    assert llm_service.get_active_streams() == []
+
+
+@pytest.mark.asyncio
+async def test_manual_retry_closes_old_stream_and_starts_new_stream(monkeypatch):
+    config = _test_config()
+    config["llm_stream"] = True
+    monkeypatch.setattr(llm_service, "_current_config", config)
+    llm_service._active_streams.clear()
+    attempts = 0
+    events = []
+
+    async def retryable_stream(messages, service, model):
+        nonlocal attempts
+        attempts += 1
+        yield {"type": "start", "service": service, "model": model}
+        if attempts == 1:
+            yield {"type": "delta", "text": "이전 부분", "elapsed": 0.1, "ttft": 0.1}
+            await asyncio.Future()
+        yield {"type": "delta", "text": "재시도 완료", "elapsed": 0.1, "ttft": 0.1}
+        yield {
+            "type": "done",
+            "text": "재시도 완료",
+            "completion_tokens": 2,
+            "elapsed": 0.2,
+            "tps": 10.0,
+            "ttft": 0.1,
+        }
+
+    async def notify(event):
+        events.append(event)
+
+    monkeypatch.setattr(llm_service, "_dispatch_stream", retryable_stream)
+    monkeypatch.setattr(llm_service, "_stream_notify_func", notify)
+    task = asyncio.create_task(
+        llm_service.callLLM([{"role": "user", "content": "hello"}])
+    )
+    first = await _wait_for_active_stream(lambda stream: stream["text"] == "이전 부분")
+
+    assert llm_service.request_stream_control(first["stream_id"], "retry") == (True, "retry")
+    assert await task == "재시도 완료"
+    assert attempts == 2
+    assert llm_service.get_active_streams() == []
+    cancelled = [event for event in events if event["type"] == "cancelled"]
+    assert len(cancelled) == 1
+    assert cancelled[0]["reason"] == "retry"
+    assert len({event["stream_id"] for event in events}) == 2
+
+
+@pytest.mark.asyncio
+async def test_use_partial_requires_and_passes_task_validator(monkeypatch):
+    config = _test_config()
+    config["llm_stream"] = True
+    config["llm_routing"] = {
+        "unit_task": {
+            "primary": "llm1",
+            "fallback": False,
+            "max_retries": 0,
+            "retry_delay_sec": 0,
+        }
+    }
+    monkeypatch.setattr(llm_service, "_current_config", config)
+    llm_service._active_streams.clear()
+
+    async def partial_stream(messages, service, model):
+        yield {"type": "start", "service": service, "model": model}
+        yield {"type": "delta", "text": "검증 가능한 부분", "elapsed": 0.1, "ttft": 0.1}
+        await asyncio.Future()
+
+    monkeypatch.setattr(llm_service, "_dispatch_stream", partial_stream)
+    task = asyncio.create_task(
+        llm_service.callLLMTask(
+            "unit_task",
+            [{"role": "user", "content": "hello"}],
+            result_validator=lambda value: (value.startswith("검증 가능한"), "형식 오류"),
+        )
+    )
+    stream = await _wait_for_active_stream(
+        lambda item: item["text"] == "검증 가능한 부분"
+    )
+
+    assert llm_service.request_stream_control(stream["stream_id"], "use_partial") == (
+        True,
+        "use_partial",
+    )
+    result = await task
+    assert result == "검증 가능한 부분"
+    assert isinstance(result, llm_service.PartialStreamText)
+    assert llm_service.get_active_streams() == []
+
+
+@pytest.mark.asyncio
+async def test_idle_timeout_ends_stream_and_preserves_partial_in_error_event(monkeypatch):
+    config = _test_config()
+    config["llm_stream"] = True
+    monkeypatch.setattr(llm_service, "_current_config", config)
+    monkeypatch.setattr(llm_service, "_stream_idle_timeout_seconds", lambda: 0.01)
+    llm_service._active_streams.clear()
+    events = []
+
+    async def stalled_stream(messages, service, model):
+        yield {"type": "start", "service": service, "model": model}
+        yield {"type": "delta", "text": "남은 부분", "elapsed": 0.1, "ttft": 0.1}
+        await asyncio.Future()
+
+    async def notify(event):
+        events.append(event)
+
+    monkeypatch.setattr(llm_service, "_dispatch_stream", stalled_stream)
+    monkeypatch.setattr(llm_service, "_stream_notify_func", notify)
+
+    result = await llm_service.callLLM([{"role": "user", "content": "hello"}])
+
+    assert result.startswith("[LLM 실패]")
+    timeout_event = next(event for event in events if event.get("termination_reason") == "idle_timeout")
+    assert timeout_event["partial_text"] == "남은 부분"
+    assert llm_service.get_active_streams() == []
+
+
+@pytest.mark.asyncio
+async def test_openai_compat_finish_reason_ends_without_done_sentinel(monkeypatch):
+    config = _test_config()
+    monkeypatch.setattr(llm_service, "_current_config", config)
+    consumed_lines = []
+
+    class FakeResponse:
+        status_code = 200
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def aiter_lines(self):
+            lines = [
+                'data: {"choices":[{"delta":{"content":"완료"},"finish_reason":null}]}',
+                'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}',
+            ]
+            for line in lines:
+                consumed_lines.append(line)
+                yield line
+            raise AssertionError("finish_reason 뒤의 연결 종료를 기다리면 안 됨")
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        def stream(self, *args, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr(llm_service.httpx, "AsyncClient", lambda **kwargs: FakeClient())
+    events = [
+        event
+        async for event in llm_service._stream_openai_compat(
+            [{"role": "user", "content": "hello"}],
+            "model-1",
+            "https://example.invalid/v1/chat/completions",
+        )
+    ]
+
+    assert [event["type"] for event in events] == ["start", "delta", "done"]
+    assert events[-1]["text"] == "완료"
+    assert len(consumed_lines) == 2

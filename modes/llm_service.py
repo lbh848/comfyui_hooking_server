@@ -19,6 +19,7 @@ import os
 import time
 import traceback
 import uuid
+from contextlib import suppress
 from contextvars import ContextVar
 import aiohttp
 import httpx
@@ -463,6 +464,7 @@ _current_config = _ContextConfig({
     "llm_stream": False,              # LLM1 실제 API 스트리밍
     "llm_stream2": False,             # LLM2 실제 API 스트리밍
     "llm_stream3": False,             # LLM3 실제 API 스트리밍
+    "llm_stream_idle_timeout_seconds": 90.0,  # 0=비활성, 그 외 10~3600초
     # 작업별 LLM1/LLM2/LLM3 라우팅과 메인/폴백 재시도 정책(외부 API 분기).
     # 실제 기본값은 server.py 의 DEFAULT_CONFIG 에서 update_config 로 내려온다.
     "llm_routing": {},
@@ -1699,12 +1701,22 @@ def _routing_retry_policy(task_key: str) -> dict:
 
 def _validate_routed_result(task_key: str, phase: str, result, result_validator=None):
     """호출 결과와 선택적 업무별 검증 결과를 (성공 여부, 사유)로 반환한다."""
+    if isinstance(result, ManualCancelledText):
+        # 사용자의 명시적 중지는 라우팅 재시도로 되살리지 않는다. 상위 파이프라인이
+        # [LLM 실패] 결과를 받아 현재 작업을 종료하도록 성공적으로 전달한다.
+        return True, ""
     if _is_llm_failed(result):
         if result is None:
             return False, "응답이 None임"
         if isinstance(result, str) and not result.strip():
             return False, "응답이 비어 있음"
         return False, str(result)[:300]
+    if isinstance(result, PartialStreamText) and result_validator is None:
+        print(
+            f"[LLM_ROUTE] 부분 응답 사용 거부: task={task_key}, phase={phase}, "
+            "업무 검증기가 없음"
+        )
+        return False, "부분 응답을 검증할 업무 검증기가 없음"
     if result_validator is None:
         return True, ""
 
@@ -2158,8 +2170,177 @@ async def callLLMVisionTask(
 #   {"type": "delta",  "text": str, "elapsed": float, "ttft": float}
 #   {"type": "done",   "text": str, "completion_tokens": int, "elapsed": float, "tps": float, "ttft": float|None}
 #   {"type": "error",  "error": str}
+#   {"type": "cancelled", "reason": str, "partial_text": str}
 
-_STREAM_TIMEOUT = httpx.Timeout(connect=15.0, read=None, write=15.0, pool=15.0)
+class PartialStreamText(str):
+    """사용자가 명시적으로 선택한 미완료 스트림 텍스트.
+
+    작업별 result_validator가 없는 라우팅에서는 안전성을 위해 성공으로 인정하지 않는다.
+    """
+
+
+class ManualCancelledText(str):
+    """수동 중지 결과. 라우팅의 자동 재시도를 막고 상위 호출자에게 실패를 전달한다."""
+
+
+_active_streams: dict[str, dict] = {}
+
+
+def _stream_idle_timeout_seconds() -> float:
+    raw = _current_config.get("llm_stream_idle_timeout_seconds", 90.0)
+    try:
+        value = float(raw)
+    except (TypeError, ValueError) as e:
+        print(
+            f"[LLM_STREAM] 무응답 제한 설정 파싱 실패: value={raw!r}, "
+            f"error={type(e).__name__}: {e}; 90초 사용"
+        )
+        traceback.print_exc()
+        return 90.0
+    if value == 0:
+        return 0.0
+    if not 10 <= value <= 3600:
+        print(f"[LLM_STREAM] 무응답 제한 범위 오류: value={value}; 90초 사용")
+        return 90.0
+    return value
+
+
+def _stream_http_timeout() -> httpx.Timeout:
+    idle_timeout = _stream_idle_timeout_seconds()
+    return httpx.Timeout(
+        connect=15.0,
+        read=idle_timeout if idle_timeout > 0 else None,
+        write=15.0,
+        pool=15.0,
+    )
+
+
+def _public_stream_state(record: dict) -> dict:
+    return {
+        key: value
+        for key, value in record.items()
+        if not key.startswith("_")
+    }
+
+
+def get_active_streams() -> list[dict]:
+    """프론트 재연결 동기화용 활성 스트림 스냅샷."""
+    return [
+        _public_stream_state(record)
+        for record in sorted(
+            _active_streams.values(),
+            key=lambda item: float(item.get("started_at", 0.0)),
+        )
+    ]
+
+
+def request_stream_control(stream_id: str, action: str) -> tuple[bool, str]:
+    """활성 스트림에 cancel/retry/use_partial 제어를 요청한다."""
+    record = _active_streams.get(str(stream_id or ""))
+    if record is None:
+        print(f"[LLM_STREAM] 제어 요청 실패: 활성 스트림 없음 stream_id={stream_id!r}")
+        return False, "활성 스트림을 찾을 수 없습니다."
+    normalized = str(action or "").strip().lower()
+    if normalized not in ("cancel", "retry", "use_partial"):
+        print(
+            f"[LLM_STREAM] 제어 요청 거부: stream_id={stream_id}, "
+            f"action={action!r}"
+        )
+        return False, "action은 cancel, retry, use_partial 중 하나여야 합니다."
+    control_event = record.get("_control_event")
+    if not isinstance(control_event, asyncio.Event):
+        print(f"[LLM_STREAM] 제어 이벤트 누락: stream_id={stream_id}")
+        return False, "스트림 제어 상태가 손상되었습니다."
+    if control_event.is_set():
+        print(
+            f"[LLM_STREAM] 중복 제어 요청 거부: stream_id={stream_id}, "
+            f"pending_action={record.get('_control_action')!r}, action={normalized}"
+        )
+        return False, "이미 스트림 제어 요청을 처리 중입니다."
+    record["_control_action"] = normalized
+    control_event.set()
+    print(
+        f"[LLM_STREAM] 제어 요청 접수: stream_id={stream_id}, action={normalized}, "
+        f"partial_len={len(str(record.get('text', '') or ''))}"
+    )
+    return True, normalized
+
+
+def _register_active_stream(
+    stream_id: str,
+    service: str,
+    model: str,
+    llm_slot: str,
+    metadata: dict,
+) -> dict:
+    now = time.time()
+    record = {
+        "stream_id": stream_id,
+        "service": service,
+        "model": model,
+        "llm_slot": llm_slot,
+        "task_key": str(metadata.get("task_key", "") or ""),
+        "call_name": str(metadata.get("call_name", "") or ""),
+        "active": True,
+        "status": "시작",
+        "text": "",
+        "completion_tokens": 0,
+        "prompt_tokens": 0,
+        "elapsed": 0.0,
+        "tps": 0.0,
+        "ttft": None,
+        "started_at": now,
+        "last_event_at": now,
+        "_control_event": asyncio.Event(),
+        "_control_action": "",
+    }
+    _active_streams[stream_id] = record
+    return record
+
+
+async def _close_stream_iterator(iterator) -> None:
+    close = getattr(iterator, "aclose", None)
+    if close is None:
+        return
+    try:
+        await close()
+    except Exception as e:
+        print(f"[LLM_STREAM] 스트림 iterator 종료 실패: {type(e).__name__}: {e}")
+        traceback.print_exc()
+
+
+async def _next_controlled_stream_event(iterator, record: dict):
+    """다음 provider 이벤트, 수동 제어, idle timeout 중 먼저 발생한 결과를 반환."""
+    next_task = asyncio.ensure_future(iterator.__anext__())
+    control_task = asyncio.ensure_future(record["_control_event"].wait())
+    idle_timeout = _stream_idle_timeout_seconds()
+    try:
+        done, _pending = await asyncio.wait(
+            {next_task, control_task},
+            timeout=idle_timeout if idle_timeout > 0 else None,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if not done:
+            next_task.cancel()
+            with suppress(asyncio.CancelledError, StopAsyncIteration):
+                await next_task
+            return "idle", idle_timeout
+        if control_task in done:
+            next_task.cancel()
+            with suppress(asyncio.CancelledError, StopAsyncIteration):
+                await next_task
+            return "control", str(record.get("_control_action", "") or "cancel")
+        try:
+            return "event", next_task.result()
+        except StopAsyncIteration:
+            return "eof", None
+    finally:
+        for task in (next_task, control_task):
+            if not task.done():
+                task.cancel()
+        for task in (next_task, control_task):
+            with suppress(asyncio.CancelledError, StopAsyncIteration):
+                await task
 
 
 async def _emit_stream_event(event: dict) -> None:
@@ -2183,12 +2364,8 @@ async def _stream_call_to_text(messages: list, service: str, model: str, llm_slo
     기존 callLLM/callLLM2/callLLM3 호출자는 문자열 반환 계약을 그대로 유지한다.
     따라서 설정 토글을 켜도 customprompt와 작업 큐 코드는 수정 없이 동작한다.
     """
-    stream_id = uuid.uuid4().hex
     metadata = dict(_stream_metadata_ctx.get() or {})
     metadata["llm_slot"] = llm_slot
-    final_text = ""
-    error_msg = ""
-    done_seen = False
 
     if _stream_notify_func is None:
         print(
@@ -2196,49 +2373,184 @@ async def _stream_call_to_text(messages: list, service: str, model: str, llm_slo
             f"slot={llm_slot} service={service} model={model}"
         )
 
-    try:
-        async for event in _dispatch_stream(messages, service, model):
-            event_type = event.get("type")
-            payload = {
+    while True:
+        stream_id = uuid.uuid4().hex
+        record = _register_active_stream(stream_id, service, model, llm_slot, metadata)
+        iterator = _dispatch_stream(messages, service, model).__aiter__()
+        partial_parts: list[str] = []
+        final_text = ""
+        error_msg = ""
+        done_seen = False
+        retry_requested = False
+
+        try:
+            while True:
+                outcome, value = await _next_controlled_stream_event(iterator, record)
+                if outcome == "eof":
+                    break
+                if outcome == "idle":
+                    error_msg = (
+                        f"{service} stream 무응답 제한 초과: {float(value):g}초 "
+                        f"(partial_len={len(''.join(partial_parts))})"
+                    )
+                    print(
+                        f"[LLM_STREAM] {error_msg}: stream_id={stream_id}, "
+                        f"slot={llm_slot}, model={model}"
+                    )
+                    await _emit_stream_event({
+                        **metadata,
+                        "type": "error",
+                        "error": error_msg,
+                        "termination_reason": "idle_timeout",
+                        "partial_text": "".join(partial_parts),
+                        "service": service,
+                        "model": model,
+                        "stream_id": stream_id,
+                        "llm_slot": llm_slot,
+                    })
+                    break
+                if outcome == "control":
+                    action = str(value or "cancel")
+                    partial_text = "".join(partial_parts)
+                    if action == "use_partial" and partial_text:
+                        elapsed = max(0.0, time.time() - float(record["started_at"]))
+                        tokens = _approx_tokens(partial_text)
+                        await _emit_stream_event({
+                            **metadata,
+                            "type": "done",
+                            "text": partial_text,
+                            "partial": True,
+                            "termination_reason": "manual_partial",
+                            "completion_tokens": tokens,
+                            "prompt_tokens": _approx_input_tokens(messages),
+                            "elapsed": elapsed,
+                            "tps": tokens / elapsed if elapsed > 0 else 0.0,
+                            "ttft": record.get("ttft"),
+                            "service": service,
+                            "model": model,
+                            "stream_id": stream_id,
+                            "llm_slot": llm_slot,
+                        })
+                        print(
+                            f"[LLM_STREAM] 부분 응답 사용 요청: stream_id={stream_id}, "
+                            f"partial_len={len(partial_text)}"
+                        )
+                        return PartialStreamText(partial_text)
+                    if action == "use_partial":
+                        action = "cancel"
+                        error_msg = "부분 응답이 비어 있어 사용할 수 없습니다"
+                        print(f"[LLM_STREAM] {error_msg}: stream_id={stream_id}")
+                    await _emit_stream_event({
+                        **metadata,
+                        "type": "cancelled",
+                        "reason": action,
+                        "error": error_msg,
+                        "partial_text": partial_text,
+                        "service": service,
+                        "model": model,
+                        "stream_id": stream_id,
+                        "llm_slot": llm_slot,
+                    })
+                    if action == "retry":
+                        retry_requested = True
+                        print(
+                            f"[LLM_STREAM] 수동 재시도 시작: old_stream_id={stream_id}, "
+                            f"slot={llm_slot}, partial_len={len(partial_text)}"
+                        )
+                    else:
+                        reason = error_msg or f"{service} stream 사용자가 중지함"
+                        return ManualCancelledText(f"[LLM 실패] {reason}")
+                    break
+
+                event = value
+                event_type = event.get("type")
+                payload = {
+                    **metadata,
+                    **event,
+                    "stream_id": stream_id,
+                    "llm_slot": llm_slot,
+                }
+                if event_type == "delta":
+                    delta_text = str(event.get("text", "") or "")
+                    if delta_text:
+                        partial_parts.append(delta_text)
+                    record["text"] = "".join(partial_parts)
+                    record["status"] = "스트리밍"
+                elif event_type == "done":
+                    done_seen = True
+                    final_text = str(event.get("text", "") or "")
+                    record["text"] = final_text or "".join(partial_parts)
+                    record["status"] = "완료"
+                elif event_type == "error":
+                    error_msg = str(event.get("error", "") or "알 수 없는 스트리밍 오류")
+                    record["status"] = "오류"
+                for source_key, target_key in (
+                    ("completion_tokens", "completion_tokens"),
+                    ("prompt_tokens", "prompt_tokens"),
+                    ("elapsed", "elapsed"),
+                    ("tps", "tps"),
+                    ("ttft", "ttft"),
+                ):
+                    if event.get(source_key) is not None:
+                        record[target_key] = event[source_key]
+                record["last_event_at"] = time.time()
+                await _emit_stream_event(payload)
+                if event_type in ("done", "error"):
+                    break
+        except asyncio.CancelledError:
+            print(
+                f"[LLM_STREAM] 상위 작업 취소 전파: stream_id={stream_id}, "
+                f"slot={llm_slot}, service={service}, model={model}"
+            )
+            await _emit_stream_event({
                 **metadata,
-                **event,
+                "type": "cancelled",
+                "reason": "parent_cancelled",
+                "partial_text": "".join(partial_parts),
+                "service": service,
+                "model": model,
                 "stream_id": stream_id,
                 "llm_slot": llm_slot,
-            }
-            await _emit_stream_event(payload)
-            if event_type == "done":
-                done_seen = True
-                final_text = str(event.get("text", "") or "")
-            elif event_type == "error":
-                error_msg = str(event.get("error", "") or "알 수 없는 스트리밍 오류")
-    except Exception as e:
-        error_msg = f"{service} stream 소비 예외: {e}"
-        print(f"[LLM_STREAM] {error_msg}")
-        traceback.print_exc()
-        await _emit_stream_event({
-            **metadata,
-            "type": "error",
-            "error": error_msg,
-            "service": service,
-            "model": model,
-            "stream_id": stream_id,
-            "llm_slot": llm_slot,
-        })
+            })
+            raise
+        except Exception as e:
+            error_msg = f"{service} stream 소비 예외: {e}"
+            print(
+                f"[LLM_STREAM] {error_msg}: stream_id={stream_id}, "
+                f"partial_len={len(''.join(partial_parts))}"
+            )
+            traceback.print_exc()
+            await _emit_stream_event({
+                **metadata,
+                "type": "error",
+                "error": error_msg,
+                "partial_text": "".join(partial_parts),
+                "service": service,
+                "model": model,
+                "stream_id": stream_id,
+                "llm_slot": llm_slot,
+            })
+        finally:
+            record["active"] = False
+            await _close_stream_iterator(iterator)
+            _active_streams.pop(stream_id, None)
 
-    if done_seen and final_text:
-        return final_text
-    if error_msg:
+        if retry_requested:
+            continue
+        if done_seen and final_text:
+            return final_text
+        if error_msg:
+            print(
+                f"[LLM_STREAM] 호출 실패: slot={llm_slot} service={service} "
+                f"model={model} error={error_msg}"
+            )
+            return f"[LLM 실패] {error_msg}"
+
         print(
-            f"[LLM_STREAM] 호출 실패: slot={llm_slot} service={service} "
-            f"model={model} error={error_msg}"
+            f"[LLM_STREAM] 빈 응답: slot={llm_slot} service={service} "
+            f"model={model} done_seen={done_seen}"
         )
-        return f"[LLM 실패] {error_msg}"
-
-    print(
-        f"[LLM_STREAM] 빈 응답: slot={llm_slot} service={service} "
-        f"model={model} done_seen={done_seen}"
-    )
-    return f"[LLM 실패] {service} 스트리밍 응답이 비어 있습니다"
+        return f"[LLM 실패] {service} 스트리밍 응답이 비어 있습니다"
 
 
 def _approx_tokens(text: str) -> int:
@@ -2318,7 +2630,7 @@ async def _stream_openai_compat(messages: list, model: str, url: str,
     yield {"type": "start", "service": service, "model": model}
 
     try:
-        async with httpx.AsyncClient(timeout=_STREAM_TIMEOUT) as client:
+        async with httpx.AsyncClient(timeout=_stream_http_timeout()) as client:
             async with client.stream("POST", norm_url, json=body, headers=headers) as response:
                 if response.status_code != 200:
                     err_bytes = await response.aread()
@@ -2351,7 +2663,8 @@ async def _stream_openai_compat(messages: list, model: str, url: str,
 
                     choices = chunk.get("choices") or []
                     if choices:
-                        delta = choices[0].get("delta", {}) or {}
+                        choice = choices[0]
+                        delta = choice.get("delta", {}) or {}
                         text = delta.get("content") or ""
                         if text:
                             if ttft is None:
@@ -2359,6 +2672,13 @@ async def _stream_openai_compat(messages: list, model: str, url: str,
                             accumulated.append(text)
                             elapsed = time.time() - t0
                             yield {"type": "delta", "text": text, "elapsed": elapsed, "ttft": ttft}
+                        finish_reason = choice.get("finish_reason")
+                        if finish_reason is not None:
+                            _llm_log(
+                                f"{service} stream finish_reason 종료: "
+                                f"reason={finish_reason}, chars={len(''.join(accumulated))}"
+                            )
+                            break
 
         full = "".join(accumulated)
         elapsed = time.time() - t0
@@ -2428,7 +2748,7 @@ async def _stream_copilot(messages: list, model: str):
     yield {"type": "start", "service": "copilot", "model": model}
 
     try:
-        async with httpx.AsyncClient(timeout=_STREAM_TIMEOUT) as client:
+        async with httpx.AsyncClient(timeout=_stream_http_timeout()) as client:
             async with client.stream("POST", url, json=body, headers=headers) as response:
                 if response.status_code != 200:
                     err_bytes = await response.aread()
@@ -2456,13 +2776,21 @@ async def _stream_copilot(messages: list, model: str):
                             prompt_tokens = pt
                     choices = chunk.get("choices") or []
                     if choices:
-                        delta = choices[0].get("delta", {}) or {}
+                        choice = choices[0]
+                        delta = choice.get("delta", {}) or {}
                         text = delta.get("content") or ""
                         if text:
                             if ttft is None:
                                 ttft = time.time() - t0
                             accumulated.append(text)
                             yield {"type": "delta", "text": text, "elapsed": time.time() - t0, "ttft": ttft}
+                        finish_reason = choice.get("finish_reason")
+                        if finish_reason is not None:
+                            _llm_log(
+                                f"copilot stream finish_reason 종료: "
+                                f"reason={finish_reason}, chars={len(''.join(accumulated))}"
+                            )
+                            break
 
         full = "".join(accumulated)
         elapsed = time.time() - t0
@@ -2515,7 +2843,7 @@ async def _stream_gemini(messages: list, model: str):
     yield {"type": "start", "service": "gemini", "model": model}
 
     try:
-        async with httpx.AsyncClient(timeout=_STREAM_TIMEOUT) as client:
+        async with httpx.AsyncClient(timeout=_stream_http_timeout()) as client:
             async with client.stream("POST", url, json=body,
                                        headers={"Content-Type": "application/json", "Accept": "text/event-stream"}) as response:
                 if response.status_code != 200:
@@ -2543,13 +2871,21 @@ async def _stream_gemini(messages: list, model: str):
                         prompt_tokens = md["promptTokenCount"]
                     candidates = chunk.get("candidates") or []
                     if candidates:
-                        parts = candidates[0].get("content", {}).get("parts", []) or []
+                        candidate = candidates[0]
+                        parts = candidate.get("content", {}).get("parts", []) or []
                         text = "".join(p.get("text", "") for p in parts if isinstance(p, dict))
                         if text:
                             if ttft is None:
                                 ttft = time.time() - t0
                             accumulated.append(text)
                             yield {"type": "delta", "text": text, "elapsed": time.time() - t0, "ttft": ttft}
+                        finish_reason = candidate.get("finishReason")
+                        if finish_reason:
+                            _llm_log(
+                                f"gemini stream finishReason 종료: "
+                                f"reason={finish_reason}, chars={len(''.join(accumulated))}"
+                            )
+                            break
 
         full = "".join(accumulated)
         elapsed = time.time() - t0
@@ -2610,7 +2946,7 @@ async def _stream_claude(messages: list, model: str):
     yield {"type": "start", "service": "claude", "model": model}
 
     try:
-        async with httpx.AsyncClient(timeout=_STREAM_TIMEOUT) as client:
+        async with httpx.AsyncClient(timeout=_stream_http_timeout()) as client:
             async with client.stream("POST", url, json=body, headers=headers) as response:
                 if response.status_code != 200:
                     err_bytes = await response.aread()
@@ -2654,6 +2990,12 @@ async def _stream_claude(messages: list, model: str):
                             completion_tokens = usage["output_tokens"]
                         if usage.get("input_tokens"):
                             prompt_tokens = usage["input_tokens"]
+                    elif cur_event == "message_stop":
+                        _llm_log(
+                            f"claude stream message_stop 종료: "
+                            f"chars={len(''.join(accumulated))}"
+                        )
+                        break
 
         full = "".join(accumulated)
         elapsed = time.time() - t0
@@ -2727,7 +3069,11 @@ async def _stream_vertex_sdk(messages: list, model: str):
 
     try:
         while True:
-            kind, payload = await queue.get()
+            idle_timeout = _stream_idle_timeout_seconds()
+            if idle_timeout > 0:
+                kind, payload = await asyncio.wait_for(queue.get(), timeout=idle_timeout)
+            else:
+                kind, payload = await queue.get()
             if kind == "done":
                 break
             if kind == "error":
@@ -2754,6 +3100,17 @@ async def _stream_vertex_sdk(messages: list, model: str):
             "elapsed": elapsed,
             "tps": tps,
             "ttft": ttft,
+        }
+    except asyncio.TimeoutError:
+        idle_timeout = _stream_idle_timeout_seconds()
+        error_msg = f"vertex stream 무응답 제한 초과: {idle_timeout:g}초"
+        _llm_log(error_msg)
+        print(f"[LLM_STREAM] {error_msg}")
+        yield {
+            "type": "error",
+            "error": error_msg,
+            "termination_reason": "idle_timeout",
+            "partial_text": "".join(accumulated),
         }
     except Exception as e:
         _llm_log(f"vertex stream 예외: {e}")

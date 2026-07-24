@@ -5211,10 +5211,14 @@
         .lighbd-live-card-status.st-run { color: #80deea; background: rgba(0,188,212,0.16); }
         .lighbd-live-card-status.st-done { color: #a5d6a7; background: rgba(76,175,80,0.16); }
         .lighbd-live-card-status.st-error { color: #ff6b6b; background: rgba(255,107,107,0.16); }
+        .lighbd-live-card-actions { display: flex; gap: 4px; margin-left: auto; flex-shrink: 0; }
+        .lighbd-live-card-actions button { border: 1px solid var(--border); border-radius: 5px; padding: 2px 6px; background: var(--surface1); color: var(--text2); font-size: 0.62rem; cursor: pointer; }
+        .lighbd-live-card-actions button:hover { color: #fff; border-color: rgba(0,188,212,.55); background: rgba(0,188,212,.16); }
+        .lighbd-live-card-actions button:disabled { opacity: .45; cursor: default; }
         .lighbd-live-card-stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; padding: 8px 12px; font-family: monospace; font-size: 0.68rem; color: var(--text2); }
         .lighbd-live-card-stats span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .lighbd-live-card-stats strong { color: var(--text); font-weight: 600; }
-        .lighbd-live-card-out { margin: 0; padding: 9px 12px; max-height: 180px; overflow: auto; color: var(--text); font-family: monospace; font-size: 0.74rem; line-height: 1.45; white-space: pre-wrap; word-break: break-word; background: rgba(0,0,0,0.18); }
+        .lighbd-live-card-out { margin: 0; padding: 9px 12px; max-height: 180px; overflow: auto; overflow-anchor: none; color: var(--text); font-family: monospace; font-size: 0.74rem; line-height: 1.45; white-space: pre-wrap; word-break: break-word; background: rgba(0,0,0,0.18); }
         @media (max-width: 680px) {
             .lighbd-live-shell { width: 100%; height: 92vh; }
             .lighbd-live-card-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -10216,6 +10220,17 @@
                         </div>
                     </div>
 
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="title">스트림 무응답 제한(초)</div>
+                            <div class="desc">새 스트림 이벤트가 이 시간 동안 오지 않으면 연결을 정리합니다. 0은 제한 비활성화, 그 외에는 10~3600초입니다.</div>
+                        </div>
+                        <div class="setting-control">
+                            <input type="number" id="setting-llm-stream-idle-timeout" min="0" max="3600" step="1"
+                                   style="width: 92px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: .85rem;">
+                        </div>
+                    </div>
+
                     </div>
 
                     <div class="external-api-group">
@@ -11891,6 +11906,8 @@
                 fetch('/api/queue/status').then(r => r.json()).then(data => {
                     handleQueueUpdated(data);
                 }).catch(e => console.error('[QUEUE] 초기 상태 로드 실패:', e));
+                // WS가 끊긴 동안 종료된 스트림을 서버 스냅샷과 대조해 유령 카드를 제거한다.
+                syncLighbdActiveStreams();
             };
             
             frontendWs.onmessage = function(event) {
@@ -13646,6 +13663,8 @@
             if (chansubRetryDelayEl) chansubRetryDelayEl.value = (currentConfig.chansub_retry_delay_sec ?? 3.0);
             const llmConcEl = document.getElementById('setting-llm-max-concurrency');
             if (llmConcEl) llmConcEl.value = (currentConfig.llm_max_concurrency ?? 1);
+            const llmStreamIdleTimeoutEl = document.getElementById('setting-llm-stream-idle-timeout');
+            if (llmStreamIdleTimeoutEl) llmStreamIdleTimeoutEl.value = (currentConfig.llm_stream_idle_timeout_seconds ?? 90);
             const llmPresetEl = document.getElementById('setting-llm-reasoning-preset');
             if (llmPresetEl) llmPresetEl.value = currentConfig.llm_reasoning_preset || 'auto';
             const llmEffortEl = document.getElementById('setting-llm-reasoning-effort');
@@ -14590,6 +14609,7 @@
                 debug_workflow_source_path: document.getElementById('setting-debug-workflow-source-path').value,
                 queue_type_order: currentConfig.queue_type_order || {},
                 llm_max_concurrency: parseInt(document.getElementById('setting-llm-max-concurrency').value) || 1,
+                llm_stream_idle_timeout_seconds: Number(document.getElementById('setting-llm-stream-idle-timeout').value),
             };
 
             try {
@@ -15694,6 +15714,82 @@
             }
         }
 
+        async function syncLighbdActiveStreams() {
+            try {
+                const response = await fetch('/api/llm/streams');
+                const payload = await response.json();
+                if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+                const streams = Array.isArray(payload.streams) ? payload.streams : [];
+                const serverIds = new Set(streams.map(item => String(item.stream_id || '')).filter(Boolean));
+
+                // 서버에 없는 활성 항목은 WS 단절 중 이미 끝난 스트림이므로 제거한다.
+                for (const [id, state] of _lighbdLlmStreams) {
+                    if (id !== 'legacy' && state.active && !serverIds.has(id)) {
+                        _lighbdLlmStreams.delete(id);
+                    }
+                }
+
+                for (const item of streams) {
+                    const id = String(item.stream_id || '');
+                    if (!id) {
+                        console.error('[LB_STREAM] 활성 스트림 스냅샷에 stream_id가 없습니다:', item);
+                        continue;
+                    }
+                    const state = _lighbdLlmStreams.get(id) || _createLighbdStreamState(id);
+                    state.active = true;
+                    state.slot = item.llm_slot || state.slot;
+                    state.callName = item.call_name || item.task_key || state.callName;
+                    state.model = item.model || state.model;
+                    state.status = item.status || ((state.callName ? state.callName + ' · ' : '') + '스트리밍');
+                    state.output = String(item.text || '');
+                    state.tokens = Number(item.completion_tokens ?? Math.floor(state.output.length / 3));
+                    state.promptTokens = Number(item.prompt_tokens ?? 0);
+                    state.elapsed = Number(item.elapsed ?? 0);
+                    state.tps = Number(item.tps ?? 0);
+                    state.ttft = item.ttft == null ? null : Number(item.ttft);
+                    state.hasDelta = state.output.length > 0;
+                    if (item.started_at) state._startedAt = Number(item.started_at) * 1000;
+                    _lighbdLlmStreams.set(id, state);
+                }
+
+                if (!_lighbdSelectedStreamId || !_lighbdLlmStreams.has(_lighbdSelectedStreamId)) {
+                    const nextActive = [..._lighbdLlmStreams.values()].reverse().find(state => state.active);
+                    _lighbdSelectedStreamId = nextActive ? nextActive.id : null;
+                }
+                _trimLighbdStreamStates();
+                _updateLighbdWindowBadge();
+                if (_lighbdSelectedStreamId) {
+                    _renderLighbdStreamState(_lighbdLlmStreams.get(_lighbdSelectedStreamId));
+                }
+                if (_lighbdLiveModalOpen) _renderLighbdLiveModal();
+            } catch (error) {
+                console.error('[LB_STREAM] 활성 스트림 동기화 실패:', error);
+            }
+        }
+
+        async function _controlLighbdStream(streamId, action) {
+            if (!streamId || streamId === 'legacy') {
+                console.error('[LB_STREAM] 제어할 수 없는 레거시 스트림:', streamId, action);
+                showToast('이 스트림은 서버 제어 ID가 없어 조작할 수 없습니다.', 'error');
+                return;
+            }
+            try {
+                const response = await fetch(`/api/llm/streams/${encodeURIComponent(streamId)}/control`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action }),
+                });
+                const payload = await response.json();
+                if (!response.ok || !payload.success) throw new Error(payload.error || `HTTP ${response.status}`);
+                const labels = { retry: '재시도', use_partial: '현재 내용 사용', cancel: '중지' };
+                showToast(`LLM 스트림 ${labels[action] || action} 요청을 보냈습니다.`, 'info');
+            } catch (error) {
+                console.error('[LB_STREAM] 스트림 제어 실패:', streamId, action, error);
+                showToast('LLM 스트림 제어 실패: ' + error.message, 'error');
+                await syncLighbdActiveStreams();
+            }
+        }
+
         function handleLighbdLlmStream(data) {
             if (!data || typeof data !== 'object') {
                 console.error('[LB_STREAM] 잘못된 이벤트:', data);
@@ -15749,6 +15845,12 @@
                 state.output += (state.output ? '\n' : '') + '[ERROR] ' + errMsg;
                 state.status = (state.callName ? state.callName + ' · ' : '') + '오류';
                 showToast('LB LLM 오류: ' + errMsg, 'error');
+            } else if (t === 'cancelled') {
+                state.active = false;
+                if (data.partial_text) state.output = String(data.partial_text);
+                const reason = data.reason || 'cancel';
+                state.status = (state.callName ? state.callName + ' · ' : '')
+                    + (reason === 'retry' ? '재시도 전환' : '중지');
             } else {
                 console.error('[LB_STREAM] 알 수 없는 이벤트 타입:', data);
                 return;
@@ -15758,7 +15860,7 @@
             _trimLighbdStreamStates();
             _updateLighbdWindowBadge();
             const selectedEvent = _lighbdSelectedStreamId === streamId;
-            if (selectedEvent && !state.active && (t === 'done' || t === 'error')) {
+            if (selectedEvent && !state.active && (t === 'done' || t === 'error' || t === 'cancelled')) {
                 const nextActive = [..._lighbdLlmStreams.values()].reverse().find(s => s.active);
                 if (nextActive) _lighbdSelectedStreamId = nextActive.id;
             }
@@ -15796,7 +15898,7 @@
                     <div class="lighbd-modal-head">
                         <div class="lighbd-modal-title" id="lighbd-live-title">
                             🔴 LB · LLM 라이브
-                            <div class="lighbd-modal-subtitle">응답이 실제 스트리밍 중인 항목만 실시간으로 표시합니다. 완료된 항목은 즉시 사라집니다.</div>
+                            <div class="lighbd-modal-subtitle">서버에서 실제로 활성인 LLM 스트림을 표시합니다. 완료된 항목은 즉시 사라집니다.</div>
                         </div>
                         <button class="lighbd-modal-close" onclick="closeLighbdLiveModal()" aria-label="닫기">✕</button>
                     </div>
@@ -15812,12 +15914,13 @@
             _lighbdLiveModalOpen = true;
             _lighbdLiveCards = new Map();
             _renderLighbdLiveModal();
+            syncLighbdActiveStreams();
             // 활성 스트림 경과/tps를 실시간으로 갱신 (이벤트가 없어도 흐르는 시간 표시)
             _lighbdLiveTickTimer = setInterval(() => {
                 if (!_lighbdLiveModalOpen) return;
                 let hasActive = false;
                 for (const s of _lighbdLlmStreams.values()) {
-                    if (!s.active || !s.hasDelta) continue;
+                    if (!s.active) continue;
                     hasActive = true;
                     if (s._startedAt) {
                         const live = (Date.now() - s._startedAt) / 1000;
@@ -15852,6 +15955,11 @@
                     <span class="lighbd-live-card-slot"></span>
                     <span class="lighbd-live-card-title"></span>
                     <span class="lighbd-live-card-status st-run"></span>
+                    <div class="lighbd-live-card-actions">
+                        <button type="button" class="act-retry" title="현재 연결을 끊고 같은 요청을 새 스트림으로 재시도">재시도</button>
+                        <button type="button" class="act-partial" title="현재까지 받은 내용을 결과로 사용">현재 내용 사용</button>
+                        <button type="button" class="act-cancel" title="현재 스트림 중지">중지</button>
+                    </div>
                 </div>
                 <div class="lighbd-live-card-stats">
                     <span>모델: <strong class="f-model">-</strong></span>
@@ -15861,7 +15969,7 @@
                     <span><strong class="f-tps">0.0</strong> t/s · TTFT <strong class="f-ttft">-</strong></span>
                 </div>
                 <pre class="lighbd-live-card-out">-</pre>`;
-            return {
+            const card = {
                 root,
                 slot: root.querySelector('.lighbd-live-card-slot'),
                 title: root.querySelector('.lighbd-live-card-title'),
@@ -15873,8 +15981,15 @@
                 fTps: root.querySelector('.f-tps'),
                 fTtft: root.querySelector('.f-ttft'),
                 out: root.querySelector('.lighbd-live-card-out'),
+                retry: root.querySelector('.act-retry'),
+                partial: root.querySelector('.act-partial'),
+                cancel: root.querySelector('.act-cancel'),
                 lastOutput: null,
             };
+            card.retry.addEventListener('click', () => _controlLighbdStream(state.id, 'retry'));
+            card.partial.addEventListener('click', () => _controlLighbdStream(state.id, 'use_partial'));
+            card.cancel.addEventListener('click', () => _controlLighbdStream(state.id, 'cancel'));
+            return card;
         }
 
         function _renderLighbdLiveModal() {
@@ -15882,10 +15997,10 @@
             const summary = document.getElementById('lighbd-live-summary');
             if (!list || !summary) return;
 
-            // start만 받은 항목과 완료/오류 항목은 제외하고, 실제 delta가 흐르는
-            // 최신 스트림만 최대 20개 표시한다.
+            // 서버에서 실제 활성 상태인 최신 스트림만 최대 20개 표시한다.
+            // 아직 첫 delta가 오지 않은 항목도 중지/재시도할 수 있도록 포함한다.
             const streaming = [..._lighbdLlmStreams.values()]
-                .filter(s => s.active && s.hasDelta);
+                .filter(s => s.active);
             const ordered = streaming.slice(-_LIGHTBD_LIVE_MAX_CARDS);
 
             // 요약
@@ -15907,17 +16022,13 @@
             const empty = list.querySelector('.lighbd-live-empty');
             if (empty) empty.remove();
 
-            let prevEl = null;
             for (const state of ordered) {
                 let card = _lighbdLiveCards.get(state.id);
                 if (!card) {
                     card = _buildLighbdLiveCard(state);
                     _lighbdLiveCards.set(state.id, card);
+                    list.appendChild(card.root);
                 }
-                // 정렬 순서대로 배치
-                if (prevEl) prevEl.after(card.root);
-                else list.prepend(card.root);
-                prevEl = card.root;
 
                 // 필드 갱신
                 const slotLabel = state.slot ? state.slot.toUpperCase() : 'LLM';
@@ -15933,14 +16044,21 @@
                 card.fTtft.textContent = state.ttft == null ? '-' : Math.round(state.ttft * 1000) + 'ms';
                 card.root.classList.toggle('is-active', !!state.active);
                 card.root.classList.toggle('is-error', !state.active && !!(state.status && state.status.includes('오류')));
+                const controlsDisabled = !state.active || state.id === 'legacy';
+                card.retry.disabled = controlsDisabled;
+                card.cancel.disabled = controlsDisabled;
+                card.partial.disabled = controlsDisabled || !state.output;
 
-                // 출력은 변경된 경우만 갱신(스크롤 유지)
+                // DOM을 다시 삽입하지 않고, 카드 내부 pre를 매 렌더마다 하단에 고정한다.
                 const outText = state.output || '-';
                 if (card.lastOutput !== outText) {
                     card.out.textContent = outText;
                     card.lastOutput = outText;
-                    if (state.active) card.out.scrollTop = card.out.scrollHeight;
                 }
+                card.out.scrollTop = card.out.scrollHeight;
+                requestAnimationFrame(() => {
+                    if (card.out.isConnected) card.out.scrollTop = card.out.scrollHeight;
+                });
             }
         }
 
