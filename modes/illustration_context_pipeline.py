@@ -56,6 +56,9 @@ PROMPT_FILES = {
 DEFAULT_TOGGLES = {
     "call1_backtranslate_enabled": False,
     "call1_backtranslate_max_concurrency": 4,
+    "call1_backtranslate_slow_retry_enabled": False,
+    "call1_backtranslate_slow_retry_remaining": 1,
+    "call1_backtranslate_slow_retry_progress_threshold": 50,
     "call1_backtranslate_failure_strategy": "fallback",
     "call1_enabled": True,
     "call1_context_turns": 5,
@@ -256,6 +259,14 @@ def merged_toggles(value: dict | None) -> dict:
             1,
             min(16, int(out["call1_backtranslate_max_concurrency"])),
         )
+        out["call1_backtranslate_slow_retry_remaining"] = max(
+            1,
+            min(16, int(out["call1_backtranslate_slow_retry_remaining"])),
+        )
+        out["call1_backtranslate_slow_retry_progress_threshold"] = max(
+            1,
+            min(99, int(out["call1_backtranslate_slow_retry_progress_threshold"])),
+        )
         out["call1_context_turns"] = max(0, min(30, int(out["call1_context_turns"])))
         # call2/call3 전용 키가 없거나 무효하면 call1 값으로 폴백(하위호환).
         for _ck in ("call2_context_turns", "call3_context_turns"):
@@ -281,6 +292,12 @@ def merged_toggles(value: dict | None) -> dict:
         out.update({
             "call1_backtranslate_max_concurrency": DEFAULT_TOGGLES[
                 "call1_backtranslate_max_concurrency"
+            ],
+            "call1_backtranslate_slow_retry_remaining": DEFAULT_TOGGLES[
+                "call1_backtranslate_slow_retry_remaining"
+            ],
+            "call1_backtranslate_slow_retry_progress_threshold": DEFAULT_TOGGLES[
+                "call1_backtranslate_slow_retry_progress_threshold"
             ],
             "call1_context_turns": DEFAULT_TOGGLES["call1_context_turns"],
             "call2_context_turns": DEFAULT_TOGGLES["call2_context_turns"],
@@ -2489,6 +2506,7 @@ async def _call_pipeline_llm(
     stream_notify=None,
     result_validator=None,
     json_mode: bool = False,
+    stream_observer=None,
 ) -> str:
     """삽화 CALL1/2/3 의 LLM 호출. 외부 API 분기(illustration_callN task_key)를 경유한다.
 
@@ -2555,6 +2573,8 @@ async def _call_pipeline_llm(
             call_kwargs["result_validator"] = result_validator
         if json_mode:
             call_kwargs["json_mode"] = True
+        if stream_observer is not None:
+            call_kwargs["stream_observer"] = stream_observer
         result = await llm_service.callLLMTask(task_key, messages, **call_kwargs)
         if not result or str(result).startswith("[LLM 실패]"):
             print(f"[ILLUST_CONTEXT:{call_name}] LLM 호출 실패: {result}")
@@ -2770,8 +2790,11 @@ async def backtranslate_current_context(
     max_concurrency: int,
     failure_strategy: str = "fallback",
     stream_notify=None,
+    slow_retry_enabled: bool = False,
+    slow_retry_remaining: int = 1,
+    slow_retry_progress_threshold: int = 50,
 ) -> tuple[str, list[dict]]:
-    """current context만 영어로 병렬 역번역하고 선택된 실패 전략을 적용한다."""
+    """current context를 병렬 역번역하고 느린 꼬리 요청은 선택적으로 복제한다."""
     strategy = str(failure_strategy or "").strip().lower()
     if strategy not in ("fallback", "retry_abort"):
         print(
@@ -2784,6 +2807,36 @@ async def backtranslate_current_context(
     if not chunks:
         print("[ILLUST_CONTEXT:BACKTRANSLATE] 번역할 청크가 없어 원문 사용")
         return str(source or ""), []
+
+    try:
+        parsed_concurrency = max(1, min(16, int(max_concurrency)))
+        remaining_limit = max(1, min(16, int(slow_retry_remaining)))
+        progress_threshold = max(
+            1,
+            min(99, int(slow_retry_progress_threshold)),
+        )
+    except (TypeError, ValueError) as e:
+        print(
+            f"[ILLUST_CONTEXT:BACKTRANSLATE_HEDGE] 느린 요청 재시도 설정 파싱 실패: "
+            f"max_concurrency={max_concurrency!r}, remaining={slow_retry_remaining!r}, "
+            f"threshold={slow_retry_progress_threshold!r}, error={e}; "
+            "기본값 concurrency=1, remaining=1, threshold=50 사용"
+        )
+        traceback.print_exc()
+        parsed_concurrency = 1
+        remaining_limit = 1
+        progress_threshold = 50
+    slow_retry_active = bool(slow_retry_enabled) and parsed_concurrency >= 2 and len(chunks) >= 2
+    if slow_retry_enabled and parsed_concurrency < 2:
+        print(
+            "[ILLUST_CONTEXT:BACKTRANSLATE_HEDGE] 최대 병렬 개수가 2 미만이라 "
+            f"느린 요청 재시도를 비활성화함: max_concurrency={parsed_concurrency}"
+        )
+    elif slow_retry_enabled and len(chunks) < 2:
+        print(
+            "[ILLUST_CONTEXT:BACKTRANSLATE_HEDGE] 실제 역번역 청크가 2개 미만이라 "
+            f"느린 요청 재시도를 건너뜀: chunks={len(chunks)}"
+        )
 
     template = str(prompt or "").strip()
     if not template:
@@ -2807,7 +2860,34 @@ async def backtranslate_current_context(
             "이름 사전 없이 번역 계속"
         )
 
-    async def translate_one(index: int, chunk: str) -> tuple[str, dict]:
+    states = {
+        index: {
+            "tasks": set(),
+            "duplicate_started": False,
+            "hedge_evaluated": False,
+            "failure_reasons": [],
+            "failure_attempts": 0,
+            "progress": {
+                "primary": {
+                    "streaming": False,
+                    "stream_id": "",
+                    "partial_length": 0,
+                },
+                "duplicate": {
+                    "streaming": False,
+                    "stream_id": "",
+                    "partial_length": 0,
+                },
+            },
+        }
+        for index in range(1, len(chunks) + 1)
+    }
+
+    async def run_translation_attempt(
+        index: int,
+        chunk: str,
+        attempt_kind: str,
+    ) -> dict:
         system_prompt = template
         replacements = {
             "{character_names}": names or "(none)",
@@ -2865,6 +2945,8 @@ async def backtranslate_current_context(
             return valid, reason
 
         call_name = f"CALL1-BACKTRANSLATE {index}/{len(chunks)}"
+        if attempt_kind == "duplicate":
+            call_name += " [느리다고? 다시해!]"
         chunk_stream_notify = None
         if stream_notify:
             async def chunk_stream_notify(event: dict):
@@ -2876,98 +2958,293 @@ async def backtranslate_current_context(
                     "total": len(chunks),
                 }
                 await stream_notify(payload)
+
+        attempt_progress = states[index]["progress"][attempt_kind]
+
+        def observe_stream(event: dict) -> None:
+            event_type = str(event.get("type") or "")
+            if event_type == "request_mode":
+                attempt_progress["streaming"] = bool(event.get("streaming"))
+                attempt_progress["stream_id"] = ""
+                attempt_progress["partial_length"] = 0
+                return
+            stream_id = str(event.get("stream_id") or "")
+            if event_type == "stream_open" or (
+                stream_id and stream_id != attempt_progress["stream_id"]
+            ):
+                attempt_progress["stream_id"] = stream_id
+                attempt_progress["partial_length"] = 0
+            attempt_progress["streaming"] = True
+            try:
+                if event.get("partial_length") is not None:
+                    attempt_progress["partial_length"] = max(
+                        0,
+                        int(event["partial_length"]),
+                    )
+                elif event.get("partial_text") is not None:
+                    attempt_progress["partial_length"] = len(
+                        str(event.get("partial_text") or "")
+                    )
+            except (TypeError, ValueError) as e:
+                print(
+                    f"[ILLUST_CONTEXT:BACKTRANSLATE_HEDGE] 스트림 출력 길이 파싱 실패: "
+                    f"chunk={index}/{len(chunks)}, attempt={attempt_kind}, "
+                    f"value={event.get('partial_length')!r}, error={e}"
+                )
+                traceback.print_exc()
+
         try:
+            call_kwargs = {"result_validator": _validate_translation}
+            if slow_retry_active:
+                call_kwargs["stream_observer"] = observe_stream
             translated = await _call_pipeline_llm(
                 call_name,
                 messages,
                 chunk_stream_notify,
-                result_validator=_validate_translation,
+                **call_kwargs,
             )
+        except asyncio.CancelledError:
+            print(
+                f"[ILLUST_CONTEXT:BACKTRANSLATE_HEDGE] 선착순에서 밀린 요청 취소: "
+                f"chunk={index}/{len(chunks)}, attempt={attempt_kind}"
+            )
+            raise
         except Exception as e:
             last_reason = f"call_failed: {e}"
             print(
                 f"[ILLUST_CONTEXT:BACKTRANSLATE] 청크 호출 실패: "
                 f"strategy={strategy}, chunk={index}/{len(chunks)}, "
-                f"input_len={len(chunk)}, error={e}"
+                f"attempt={attempt_kind}, input_len={len(chunk)}, error={e}"
             )
             traceback.print_exc()
         else:
             restored, valid, reason = _restore_and_validate(translated)
             if valid:
-                return restored.strip(), {
-                    "index": index,
-                    "status": "translated",
+                return {
+                    "ok": True,
+                    "text": restored.strip(),
                     "reason": "",
-                    "attempts": max(1, validation_attempts),
+                    "validation_attempts": max(1, validation_attempts),
+                    "attempt_kind": attempt_kind,
+                    "completed_at": time.monotonic(),
                 }
             last_reason = reason
             print(
                 f"[ILLUST_CONTEXT:BACKTRANSLATE] 청크 최종 응답 실패: "
                 f"strategy={strategy}, chunk={index}/{len(chunks)}, "
-                f"input_len={len(chunk)}, output_len={len(str(translated or ''))}, "
-                f"reason={reason}"
+                f"attempt={attempt_kind}, input_len={len(chunk)}, "
+                f"output_len={len(str(translated or ''))}, reason={reason}"
             )
-
-        if strict:
-            raise RuntimeError(
-                f"청크 {index}/{len(chunks)}가 설정된 라우팅 재시도 후에도 실패했습니다: "
-                f"{last_reason}"
-            )
-        print(
-            f"[ILLUST_CONTEXT:BACKTRANSLATE] 실패 청크 원문 폴백: "
-            f"chunk={index}/{len(chunks)}, reason={last_reason}"
-        )
-        return chunk.strip(), {
-            "index": index,
-            "status": "fallback",
+        return {
+            "ok": False,
+            "text": "",
             "reason": last_reason,
-            "attempts": max(1, validation_attempts),
+            "validation_attempts": max(1, validation_attempts),
+            "attempt_kind": attempt_kind,
+            "completed_at": time.monotonic(),
         }
 
-    gathered = await asyncio.gather(*(
-        translate_one(index, chunk)
-        for index, chunk in enumerate(chunks, start=1)
-    ), return_exceptions=True)
-    cancellations = [
-        result for result in gathered if isinstance(result, asyncio.CancelledError)
-    ]
-    if cancellations:
-        print(
-            f"[ILLUST_CONTEXT:BACKTRANSLATE] 병렬 역번역 취소됨: "
-            f"cancelled={len(cancellations)}/{len(chunks)}"
+    pending: set[asyncio.Task] = set()
+    task_metadata: dict[asyncio.Task, tuple[int, str]] = {}
+    resolved: dict[int, dict] = {}
+
+    def start_attempt(index: int, attempt_kind: str) -> None:
+        task = asyncio.create_task(
+            run_translation_attempt(index, chunks[index - 1], attempt_kind)
         )
-        raise cancellations[0]
-    failures = [
-        (index, result)
-        for index, result in enumerate(gathered, start=1)
-        if isinstance(result, Exception)
+        pending.add(task)
+        task_metadata[task] = (index, attempt_kind)
+        states[index]["tasks"].add(task)
+
+    for chunk_index in range(1, len(chunks) + 1):
+        start_attempt(chunk_index, "primary")
+
+    try:
+        while pending:
+            done, waiting = await asyncio.wait(
+                pending,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            pending = set(waiting)
+            completed_results = []
+            for task in done:
+                index, attempt_kind = task_metadata.pop(task)
+                states[index]["tasks"].discard(task)
+                try:
+                    outcome = task.result()
+                except asyncio.CancelledError:
+                    continue
+                except Exception as e:
+                    print(
+                        f"[ILLUST_CONTEXT:BACKTRANSLATE] 청크 작업 예외: "
+                        f"chunk={index}/{len(chunks)}, attempt={attempt_kind}, error={e}"
+                    )
+                    traceback.print_exception(type(e), e, e.__traceback__)
+                    outcome = {
+                        "ok": False,
+                        "text": "",
+                        "reason": f"unexpected_error: {e}",
+                        "validation_attempts": 1,
+                        "attempt_kind": attempt_kind,
+                        "completed_at": time.monotonic(),
+                    }
+                completed_results.append((float(outcome["completed_at"]), index, outcome))
+
+            # 같은 이벤트 루프 틱에서 둘 다 끝났다면 실제 완료 시각이 빠른 결과를 먼저 쓴다.
+            for _completed_at, index, outcome in sorted(completed_results):
+                state = states[index]
+                if index in resolved:
+                    print(
+                        f"[ILLUST_CONTEXT:BACKTRANSLATE_HEDGE] 중복 완료 결과 폐기: "
+                        f"chunk={index}/{len(chunks)}, attempt={outcome['attempt_kind']}"
+                    )
+                    continue
+                if outcome["ok"]:
+                    status = {
+                        "index": index,
+                        "status": "translated",
+                        "reason": "",
+                        "attempts": outcome["validation_attempts"],
+                    }
+                    if state["duplicate_started"]:
+                        status.update({
+                            "hedged": True,
+                            "winner": outcome["attempt_kind"],
+                            "requests": 2,
+                        })
+                    resolved[index] = {"text": outcome["text"], "status": status}
+                    for sibling in list(state["tasks"]):
+                        if not sibling.done():
+                            sibling.cancel()
+                    continue
+                state["failure_reasons"].append(outcome["reason"])
+                state["failure_attempts"] += outcome["validation_attempts"]
+
+            # 더 기다릴 같은 청크 요청이 없으면 기존 엄격/원문 폴백 정책으로 마감한다.
+            for index, state in states.items():
+                if index in resolved or any(not task.done() for task in state["tasks"]):
+                    continue
+                last_reason = state["failure_reasons"][-1] if state["failure_reasons"] else "unknown_failure"
+                if strict:
+                    error = RuntimeError(
+                        f"청크 {index}/{len(chunks)}가 설정된 라우팅 재시도 후에도 "
+                        f"실패했습니다: {last_reason}"
+                    )
+                    resolved[index] = {"error": error}
+                else:
+                    print(
+                        f"[ILLUST_CONTEXT:BACKTRANSLATE] 실패 청크 원문 폴백: "
+                        f"chunk={index}/{len(chunks)}, reason={last_reason}"
+                    )
+                    resolved[index] = {
+                        "text": chunks[index - 1].strip(),
+                        "status": {
+                            "index": index,
+                            "status": "fallback",
+                            "reason": last_reason,
+                            "attempts": max(1, state["failure_attempts"]),
+                        },
+                    }
+
+            unresolved = [
+                index for index in range(1, len(chunks) + 1)
+                if index not in resolved
+            ]
+            if (
+                slow_retry_active
+                and resolved
+                and unresolved
+                and len(unresolved) <= remaining_limit
+                and not any(result.get("error") for result in resolved.values())
+            ):
+                completed_ratios = [
+                    len(str(result.get("text") or ""))
+                    / max(1, len(chunks[index - 1].strip()))
+                    for index, result in resolved.items()
+                    if result.get("status", {}).get("status") == "translated"
+                ]
+                average_ratio = (
+                    sum(completed_ratios) / len(completed_ratios)
+                    if completed_ratios else None
+                )
+                for index in unresolved:
+                    state = states[index]
+                    if state["hedge_evaluated"]:
+                        continue
+                    state["hedge_evaluated"] = True
+                    primary_progress = state["progress"]["primary"]
+                    streaming = bool(primary_progress["streaming"])
+                    partial_length = int(primary_progress["partial_length"])
+                    if streaming and average_ratio is not None:
+                        expected_length = max(
+                            1.0,
+                            len(chunks[index - 1].strip()) * average_ratio,
+                        )
+                        estimated_progress = min(
+                            99.0,
+                            partial_length / expected_length * 100.0,
+                        )
+                    else:
+                        # 비스트리밍은 중간 출력 자체를 알 수 없다. 사용자 설정대로
+                        # 보수적으로 0%로 보며, 완료 청크가 없어 보정 불가한 경우도 같다.
+                        estimated_progress = 0.0
+                    should_duplicate = (
+                        not streaming or estimated_progress < progress_threshold
+                    )
+                    if should_duplicate:
+                        state["duplicate_started"] = True
+                        mode = "streaming" if streaming else "non_streaming"
+                        print(
+                            f"[ILLUST_CONTEXT:BACKTRANSLATE_HEDGE] 중복 요청 시작: "
+                            f"chunk={index}/{len(chunks)}, remaining={len(unresolved)}, "
+                            f"mode={mode}, estimated_progress={estimated_progress:.1f}%, "
+                            f"threshold={progress_threshold}%"
+                        )
+                        start_attempt(index, "duplicate")
+                    else:
+                        print(
+                            f"[ILLUST_CONTEXT:BACKTRANSLATE_HEDGE] 진행률 기준을 넘어 "
+                            f"중복 요청하지 않음: chunk={index}/{len(chunks)}, "
+                            f"estimated_progress={estimated_progress:.1f}%, "
+                            f"threshold={progress_threshold}%"
+                        )
+    except asyncio.CancelledError:
+        print(
+            f"[ILLUST_CONTEXT:BACKTRANSLATE] 병렬 역번역 상위 작업 취소: "
+            f"pending={len(pending)}/{len(chunks)}"
+        )
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
+        raise
+    except Exception as e:
+        print(f"[ILLUST_CONTEXT:BACKTRANSLATE] 병렬 역번역 조정 예외: {e}")
+        traceback.print_exc()
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
+        raise
+
+    strict_failures = [
+        (index, result["error"])
+        for index, result in sorted(resolved.items())
+        if result.get("error") is not None
     ]
-    if failures:
-        for index, error in failures:
+    if strict_failures:
+        for index, error in strict_failures:
             print(
                 f"[ILLUST_CONTEXT:BACKTRANSLATE] 청크 처리 예외: "
                 f"strategy={strategy}, chunk={index}/{len(chunks)}, error={error}"
             )
             traceback.print_exception(type(error), error, error.__traceback__)
-        if strict:
-            raise RuntimeError(
-                f"CALL1 역번역 엄격 전략 실패: "
-                f"{len(failures)}/{len(chunks)}개 청크 실패"
-            ) from failures[0][1]
-        for index, error in failures:
-            gathered[index - 1] = (
-                chunks[index - 1].strip(),
-                {
-                    "index": index,
-                    "status": "fallback",
-                    "reason": f"unexpected_error: {error}",
-                    "attempts": 1,
-                },
-            )
+        raise RuntimeError(
+            f"CALL1 역번역 엄격 전략 실패: "
+            f"{len(strict_failures)}/{len(chunks)}개 청크 실패"
+        ) from strict_failures[0][1]
 
-    results = gathered
-    translated_chunks = [value for value, _status in results]
-    statuses = [status for _value, status in results]
+    results = [resolved[index] for index in range(1, len(chunks) + 1)]
+    translated_chunks = [result["text"] for result in results]
+    statuses = [result["status"] for result in results]
     translated_count = sum(1 for status in statuses if status["status"] == "translated")
     fallback_count = len(statuses) - translated_count
     print(
@@ -3060,6 +3337,15 @@ async def build_from_context(
             int(toggles["call1_backtranslate_max_concurrency"]),
             failure_strategy=backtranslation_failure_strategy,
             stream_notify=stream_notify,
+            slow_retry_enabled=bool(
+                toggles["call1_backtranslate_slow_retry_enabled"]
+            ),
+            slow_retry_remaining=int(
+                toggles["call1_backtranslate_slow_retry_remaining"]
+            ),
+            slow_retry_progress_threshold=int(
+                toggles["call1_backtranslate_slow_retry_progress_threshold"]
+            ),
         )
         backtranslated_narrative = remove_slot_markers(slotted)
         if not backtranslated_narrative:

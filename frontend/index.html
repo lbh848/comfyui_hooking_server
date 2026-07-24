@@ -1680,6 +1680,53 @@
             font-weight: 600;
             line-height: 1.45;
         }
+        .illust-settings .illust-setting-label-line {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .illust-settings .illust-setting-tooltip {
+            position: relative;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 17px;
+            height: 17px;
+            border: 1px solid var(--illust-border-subtle);
+            border-radius: 50%;
+            background: var(--illust-input);
+            color: var(--text2);
+            font-size: 11px;
+            font-weight: 800;
+            line-height: 1;
+            cursor: help;
+            outline: none;
+        }
+        .illust-settings .illust-setting-tooltip-bubble {
+            position: absolute;
+            z-index: 30;
+            top: calc(100% + 8px);
+            left: 0;
+            display: none;
+            width: min(390px, 72vw);
+            padding: 11px 12px;
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            background: var(--surface2);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.24);
+            color: var(--text);
+            font-size: 12px;
+            font-weight: 400;
+            line-height: 1.55;
+            white-space: normal;
+            word-break: keep-all;
+            overflow-wrap: break-word;
+        }
+        .illust-settings .illust-setting-tooltip:hover .illust-setting-tooltip-bubble,
+        .illust-settings .illust-setting-tooltip:focus .illust-setting-tooltip-bubble,
+        .illust-settings .illust-setting-tooltip:focus-within .illust-setting-tooltip-bubble {
+            display: block;
+        }
         .illust-settings .illust-setting-help {
             display: block;
             margin-top: 3px;
@@ -41100,6 +41147,14 @@
                 fields: [
                     {key: 'call1_backtranslate_max_concurrency', label: '최대 병렬 개수', type: 'number', min: 1, max: 16, help: '슬롯 여러 개를 균등하게 묶어 동시에 요청할 최대 청크 수입니다.', dependsOn: ['call1_backtranslate_enabled']},
                     {
+                        key: 'call1_backtranslate_slow_retry_enabled', label: '느리다고? 다시해!', type: 'toggle',
+                        help: '일부 역번역만 뒤처질 때 같은 내용을 한 번 더 요청해 먼저 끝난 결과를 사용합니다.',
+                        tooltip: '여러 역번역 중 설정한 N개 이하만 남았을 때, 남은 요청의 번역 출력 길이를 먼저 끝난 청크들과 비교해 진행률을 추정합니다. 추정 진행률이 X% 미만이면 같은 내용을 한 번 더 요청하고, 먼저 정상 완료된 결과만 사용하며 나머지는 취소하거나 폐기합니다. 특정 요청이 유난히 느릴 때 대기 시간을 줄일 수 있지만 중복 호출만큼 비용과 사용량이 늘 수 있습니다. 진행률은 추정치입니다. 비스트리밍 LLM은 중간 진행률을 알 수 없어 0%로 간주하며, N개 이하만 남는 순간 무조건 중복 요청합니다. 최대 병렬 개수가 2 이상일 때만 사용할 수 있습니다.',
+                        dependsOn: ['call1_backtranslate_enabled'], requiresMin: {key: 'call1_backtranslate_max_concurrency', value: 2}, lockToggle: true,
+                    },
+                    {key: 'call1_backtranslate_slow_retry_remaining', label: '재요청할 남은 개수 (N)', type: 'number', min: 1, max: 16, help: '실행 중인 역번역이 이 개수 이하로 남았을 때 느린 요청을 검사합니다.', dependsOn: ['call1_backtranslate_enabled', 'call1_backtranslate_slow_retry_enabled'], requiresMin: {key: 'call1_backtranslate_max_concurrency', value: 2}},
+                    {key: 'call1_backtranslate_slow_retry_progress_threshold', label: '진행률 기준 (X%)', type: 'number', min: 1, max: 99, help: '남은 요청의 추정 진행률이 이 값보다 낮으면 중복 요청합니다.', dependsOn: ['call1_backtranslate_enabled', 'call1_backtranslate_slow_retry_enabled'], requiresMin: {key: 'call1_backtranslate_max_concurrency', value: 2}},
+                    {
                         key: 'call1_backtranslate_failure_strategy', label: '실패 처리 전략', type: 'select', stacked: true,
                         help: '엄격 검증은 실패 청크를 한 번 더 요청한 뒤 다시 실패하면 전체 삽화 파이프라인을 중단합니다. 원문 사용은 실패 청크만 원문으로 대체합니다.',
                         dependsOn: ['call1_backtranslate_enabled'],
@@ -41193,12 +41248,23 @@
             const help = field.help
                 ? `<span class="illust-setting-help">${escapeHtml(field.help)}</span>`
                 : '';
+            const tooltip = field.tooltip
+                ? `<span class="illust-setting-tooltip" tabindex="0" aria-label="도움말">?<span class="illust-setting-tooltip-bubble" role="tooltip">${escapeHtml(field.tooltip)}</span></span>`
+                : '';
+            const label = `<span class="illust-setting-label-line"><span class="illust-setting-label">${escapeHtml(field.label)}</span>${tooltip}</span>`;
+            const dependencyAttr = field.dependsOn?.length
+                ? ` data-illust-depends="${field.dependsOn.join(',')}"`
+                : '';
+            const minAttr = field.requiresMin
+                ? ` data-illust-min-key="${escapeHtml(field.requiresMin.key)}" data-illust-min-value="${escapeHtml(String(field.requiresMin.value))}"`
+                : '';
+            const lockToggleAttr = field.lockToggle ? ' data-illust-lock-toggle="true"' : '';
             if (field.type === 'toggle') {
                 const checked = value ? 'checked' : '';
                 return `
-                    <div class="${rowClasses.join(' ')}">
+                    <div class="${rowClasses.join(' ')}"${dependencyAttr}${minAttr}${lockToggleAttr}>
                         <div class="illust-setting-copy">
-                            <span class="illust-setting-label">${escapeHtml(field.label)}</span>
+                            ${label}
                             ${help}
                         </div>
                         <div class="illust-setting-control">
@@ -41213,9 +41279,6 @@
                     </div>`;
             }
 
-            const dependencyAttr = field.dependsOn?.length
-                ? ` data-illust-depends="${field.dependsOn.join(',')}"`
-                : '';
             const inputId = `illust-setting-${field.key}`;
             const placeholder = field.placeholder
                 ? ` placeholder="${escapeHtml(field.placeholder)}"`
@@ -41231,9 +41294,9 @@
                 control = `<input id="${inputId}" data-illust-toggle="${field.key}" class="illust-setting-input" type="${field.type}" value="${escapeHtml(value ?? '')}"${min}${max}${placeholder}>`;
             }
             return `
-                <div class="${rowClasses.join(' ')}"${dependencyAttr}>
+                <div class="${rowClasses.join(' ')}"${dependencyAttr}${minAttr}${lockToggleAttr}>
                     <label class="illust-setting-copy" for="${inputId}">
-                        <span class="illust-setting-label">${escapeHtml(field.label)}</span>
+                        ${label}
                         ${help}
                     </label>
                     <div class="illust-setting-control">${control}</div>
@@ -41403,13 +41466,20 @@
                 console.error('[ILLUST_CONTEXT] 종속 옵션을 갱신할 생성 설정 루트가 없습니다.');
                 return;
             }
-            body.querySelectorAll('[data-illust-depends]').forEach(wrapper => {
+            body.querySelectorAll('[data-illust-depends], [data-illust-min-key]').forEach(wrapper => {
                 const dependencies = String(wrapper.dataset.illustDepends || '').split(',').filter(Boolean);
-                const enabled = dependencies.every(key => Boolean(_illustrationContextToggles[key]));
+                const dependenciesEnabled = dependencies.every(key => Boolean(_illustrationContextToggles[key]));
+                const minKey = String(wrapper.dataset.illustMinKey || '');
+                const minValue = Number(wrapper.dataset.illustMinValue || 0);
+                const minControl = minKey ? body.querySelector(`[data-illust-toggle="${minKey}"]`) : null;
+                const actualMinValue = minControl ? Number(minControl.value) : Number(_illustrationContextToggles[minKey]);
+                const minimumEnabled = !minKey || (Number.isFinite(actualMinValue) && actualMinValue >= minValue);
+                const enabled = dependenciesEnabled && minimumEnabled;
                 wrapper.classList.toggle('is-locked', !enabled);
                 wrapper.querySelectorAll('input, select, textarea').forEach(control => {
                     // 슬라이드 토글은 잠금 대상에 넣지 않는다. 항상 다시 켤 수 있어야 한다.
-                    if (control.type !== 'checkbox') control.disabled = !enabled;
+                    const lockToggle = wrapper.dataset.illustLockToggle === 'true';
+                    if (control.type !== 'checkbox' || lockToggle) control.disabled = !enabled;
                 });
             });
             body.querySelectorAll('.illust-settings-dependent').forEach(subpanel => {

@@ -13,6 +13,7 @@ customprompt/ 폴더의 스크립트에서 callLLM 함수를 import하여 사용
 
 import asyncio
 import datetime
+import inspect
 import json
 import math
 import os
@@ -914,9 +915,31 @@ _response_format_ctx: ContextVar = ContextVar("llm_response_format", default=Non
 # ContextVar 이므로 여러 LLM 큐 작업이 동시에 실행되어도 메타데이터가 섞이지 않는다.
 _stream_metadata_ctx: ContextVar = ContextVar("llm_stream_metadata", default=None)
 
+# 특정 상위 호출자가 해당 요청의 실제 스트리밍 출력량을 관찰하기 위한 콜백.
+# 전역 프론트 알림과 달리 ContextVar로 요청별 격리되며, 비스트리밍 호출에서는
+# 이벤트가 발생하지 않는다.
+_stream_observer_ctx: ContextVar = ContextVar("llm_stream_observer", default=None)
+
 # server.py가 등록하는 비동기 프론트엔드 알림 콜백.
 # llm_service가 server를 직접 import하지 않게 하여 순환 import를 피한다.
 _stream_notify_func = None
+
+
+async def _emit_request_stream_observer(event: dict) -> None:
+    """현재 요청에 등록된 스트림 관찰자에게 이벤트를 안전하게 전달한다."""
+    observer = _stream_observer_ctx.get()
+    if observer is None:
+        return
+    try:
+        result = observer(dict(event))
+        if inspect.isawaitable(result):
+            await result
+    except Exception as e:
+        print(
+            f"[LLM_STREAM] 요청별 스트림 관찰자 실행 실패: "
+            f"error={type(e).__name__}: {e}, event_type={event.get('type')!r}"
+        )
+        traceback.print_exc()
 
 
 def set_stream_notify_func(callback):
@@ -1877,6 +1900,7 @@ async def callLLMTask(
     model: str = None,
     json_mode: bool = False,
     result_validator=None,
+    stream_observer=None,
 ) -> str:
     """
     작업별 라우팅 텍스트 LLM 호출.
@@ -1897,7 +1921,15 @@ async def callLLMTask(
             "call_name": task_key,
             "llm_slot": slot,
         })
+        observer_token = _stream_observer_ctx.set(stream_observer)
         try:
+            stream_key = "llm_stream" if slot == "llm1" else f"llm_stream{slot[-1]}"
+            await _emit_request_stream_observer({
+                "type": "request_mode",
+                "task_key": task_key,
+                "llm_slot": slot,
+                "streaming": bool(_base_config_get(stream_key, False)),
+            })
             return await _call_routed_text_slot(
                 slot,
                 messages,
@@ -1905,6 +1937,7 @@ async def callLLMTask(
                 json_mode=eff_json,
             )
         finally:
+            _stream_observer_ctx.reset(observer_token)
             _stream_metadata_ctx.reset(meta_token)
 
     retry_policy = _routing_retry_policy(task_key)
@@ -2376,6 +2409,16 @@ async def _stream_call_to_text(messages: list, service: str, model: str, llm_slo
     while True:
         stream_id = uuid.uuid4().hex
         record = _register_active_stream(stream_id, service, model, llm_slot, metadata)
+        await _emit_request_stream_observer({
+            **metadata,
+            "type": "stream_open",
+            "service": service,
+            "model": model,
+            "stream_id": stream_id,
+            "llm_slot": llm_slot,
+            "partial_text": "",
+            "partial_length": 0,
+        })
         iterator = _dispatch_stream(messages, service, model).__aiter__()
         partial_parts: list[str] = []
         final_text = ""
@@ -2494,6 +2537,9 @@ async def _stream_call_to_text(messages: list, service: str, model: str, llm_slo
                     if event.get(source_key) is not None:
                         record[target_key] = event[source_key]
                 record["last_event_at"] = time.time()
+                payload["partial_text"] = str(record.get("text", "") or "")
+                payload["partial_length"] = len(payload["partial_text"])
+                await _emit_request_stream_observer(payload)
                 await _emit_stream_event(payload)
                 if event_type in ("done", "error"):
                     break

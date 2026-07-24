@@ -125,6 +125,70 @@ async def test_task_stream_event_contains_task_metadata(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_task_stream_observer_receives_request_local_partial_lengths(monkeypatch):
+    config = _test_config()
+    config["llm_stream"] = True
+    config["llm_routing"] = {
+        "unit_task": {"primary": "llm1", "fallback_target": None}
+    }
+    monkeypatch.setattr(llm_service, "_current_config", config)
+    monkeypatch.setattr(llm_service, "_dispatch_stream", _fake_stream)
+
+    async def notify(_event):
+        return None
+
+    monkeypatch.setattr(llm_service, "_stream_notify_func", notify)
+    observed = []
+
+    result = await llm_service.callLLMTask(
+        "unit_task",
+        [{"role": "user", "content": "hello"}],
+        stream_observer=observed.append,
+    )
+
+    assert result == "안녕"
+    assert observed[0]["type"] == "request_mode"
+    assert observed[0]["streaming"] is True
+    assert observed[1]["type"] == "stream_open"
+    assert [
+        event["partial_length"]
+        for event in observed
+        if event["type"] == "delta"
+    ] == [1, 2]
+    assert observed[-1]["type"] == "done"
+    assert observed[-1]["partial_text"] == "안녕"
+
+
+@pytest.mark.asyncio
+async def test_task_stream_observer_marks_non_streaming_request_without_partial_events(monkeypatch):
+    config = _test_config()
+    config["llm_routing"] = {
+        "unit_task": {"primary": "llm1", "fallback_target": None}
+    }
+    monkeypatch.setattr(llm_service, "_current_config", config)
+
+    async def dispatch(_messages, _service, _model):
+        return "완료"
+
+    monkeypatch.setattr(llm_service, "_dispatch", dispatch)
+    observed = []
+
+    result = await llm_service.callLLMTask(
+        "unit_task",
+        [{"role": "user", "content": "hello"}],
+        stream_observer=observed.append,
+    )
+
+    assert result == "완료"
+    assert observed == [{
+        "type": "request_mode",
+        "task_key": "unit_task",
+        "llm_slot": "llm1",
+        "streaming": False,
+    }]
+
+
+@pytest.mark.asyncio
 async def test_task_retries_none_empty_and_whitespace_responses(monkeypatch):
     config = _test_config()
     config["llm_routing"] = {
