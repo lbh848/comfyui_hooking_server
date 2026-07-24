@@ -171,7 +171,7 @@ def test_call2_plan_uses_anchor_mapping_and_ignores_model_slot_number():
     }
 
 
-def test_scene_plan_wardrobe_snapshot_applies_events_only_through_anchor():
+def test_scene_plan_wardrobe_snapshot_uses_plan_over_tracked_timeline():
     plans = [{
         "plan_id": "S001",
         "slot": 0,
@@ -188,7 +188,7 @@ def test_scene_plan_wardrobe_snapshot_applies_events_only_through_anchor():
         "source_segments": ["C003"],
         "characters": ["Hana"],
         "planned_outfits": {
-            "Hana": {"body_state": "clothed", "worn": ["red coat"], "removed": []},
+            "Hana": {"body_state": "topless", "worn": [], "removed": ["red coat"]},
         },
     }]
     state_before = {
@@ -220,19 +220,19 @@ def test_scene_plan_wardrobe_snapshot_applies_events_only_through_anchor():
 
     assert bound[0]["wardrobe_snapshot"]["Hana"] == {
         "body_state": "clothed",
-        "worn": ["blue dress"],
+        "worn": ["red coat"],
         "removed": [],
     }
     assert bound[1]["wardrobe_snapshot"]["Hana"] == {
         "body_state": "topless",
         "worn": [],
-        "removed": ["blue dress"],
+        "removed": ["red coat"],
     }
-    assert bound[0]["wardrobe_sources"]["Hana"] == "call1_timeline"
-    assert bound[1]["wardrobe_sources"]["Hana"] == "call1_timeline"
+    assert bound[0]["wardrobe_sources"]["Hana"] == "call2_plan"
+    assert bound[1]["wardrobe_sources"]["Hana"] == "call2_plan"
 
 
-def test_scene_plan_carries_first_plan_outfit_until_call1_event_changes_it():
+def test_scene_plan_uses_each_outfit_decided_by_global_plan():
     plans = [{
         "plan_id": "S001",
         "slot": 0,
@@ -261,9 +261,9 @@ def test_scene_plan_carries_first_plan_outfit_until_call1_event_changes_it():
     )
 
     assert bound[0]["wardrobe_snapshot"]["Hana"]["worn"] == ["red coat"]
-    assert bound[1]["wardrobe_snapshot"]["Hana"]["worn"] == ["red coat"]
-    assert bound[0]["wardrobe_sources"]["Hana"] == "call2_plan_initial"
-    assert bound[1]["wardrobe_sources"]["Hana"] == "call2_plan_carried"
+    assert bound[1]["wardrobe_snapshot"]["Hana"]["worn"] == ["blue dress"]
+    assert bound[0]["wardrobe_sources"]["Hana"] == "call2_plan"
+    assert bound[1]["wardrobe_sources"]["Hana"] == "call2_plan"
 
 
 def test_call2_detail_assigns_plan_ids_from_validated_slots():
@@ -304,7 +304,86 @@ def test_call2_detail_rejects_wardrobe_different_from_plan_snapshot():
     )
 
     assert descriptors == []
-    assert "권위 복장 불일치" in reason
+    assert "권위 복장 충돌" in reason
+
+
+def test_call2_detail_accepts_superset_and_normalizes_to_plan_snapshot():
+    detail_output = _toon_for_slots([4]).replace(
+        "worn: [school uniform]",
+        "worn: [school uniform, red scarf]",
+    )
+    descriptors, reason = pipeline._parse_call2_detail_output(
+        detail_output,
+        pipeline.merged_toggles({"key_visual": False}),
+        [4],
+        ["S021"],
+        "TEST-CALL2-DETAIL-WARDROBE-SUPERSET",
+        {
+            4: {
+                "Hana": {
+                    "body_state": "clothed",
+                    "worn": ["school uniform"],
+                    "removed": [],
+                },
+            },
+        },
+    )
+
+    assert reason == ""
+    assert descriptors[0]["characters"][0]["outfit_state"] == {
+        "body_state": "clothed",
+        "worn": ["school uniform"],
+        "removed": [],
+    }
+
+
+@pytest.mark.asyncio
+async def test_call2_detail_wardrobe_conflict_retries_only_that_shard(monkeypatch, capsys):
+    call_names = []
+    initial = _toon_for_slots([4])
+    corrected = initial.replace("school uniform", "blue dress")
+
+    async def fake_pipeline_call(call_name, messages, *args, **kwargs):
+        call_names.append(call_name)
+        if "WARDROBE-CORRECTION" in call_name:
+            return corrected
+        return initial
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
+    descriptors, raw_outputs = await pipeline._run_parallel_call2_details(
+        scene_plan=[{
+            "plan_id": "S001",
+            "slot": 4,
+            "anchor_segment": "C001",
+            "source_segments": ["C001"],
+            "characters": ["Hana"],
+            "scene_brief": "Hana in a blue dress",
+            "wardrobe_snapshot": {
+                "Hana": {
+                    "body_state": "clothed",
+                    "worn": ["blue dress"],
+                    "removed": [],
+                },
+            },
+        }],
+        keyvis_descriptor=None,
+        call2_context_messages=[{"role": "system", "content": "Build detail."}],
+        call2_format="Return TOON.",
+        toggles=pipeline.merged_toggles({
+            "key_visual": False,
+            "call2_parallel_max_concurrency": 1,
+            "call2_parallel_slow_retry_enabled": False,
+        }),
+        stream_notify=None,
+    )
+
+    assert call_names == [
+        "CALL2-DETAIL 1/1",
+        "CALL2-DETAIL 1/1 [WARDROBE-CORRECTION]",
+    ]
+    assert len(raw_outputs) == 1
+    assert descriptors[0]["characters"][0]["outfit_state"]["worn"] == ["blue dress"]
+    assert "권위 복장 충돌 작업만 교정 재호출" in capsys.readouterr().out
 
 
 @pytest.mark.asyncio

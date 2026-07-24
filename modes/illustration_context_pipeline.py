@@ -1676,6 +1676,37 @@ def _outfit_states_equal(left, right) -> bool:
     )
 
 
+def _outfit_contract_conflict(expected, actual) -> str:
+    """Return a structural PLAN/DETAIL wardrobe conflict without tag heuristics."""
+    expected_state = _normalize_outfit_state(expected)
+    actual_state = _normalize_outfit_state(actual)
+    if (
+        expected_state["body_state"] != "unknown"
+        and actual_state["body_state"] != expected_state["body_state"]
+    ):
+        return (
+            f"body_state expected={expected_state['body_state']!r}, "
+            f"actual={actual_state['body_state']!r}"
+        )
+
+    actual_worn = {item.casefold() for item in actual_state["worn"]}
+    missing_worn = [
+        item for item in expected_state["worn"]
+        if item.casefold() not in actual_worn
+    ]
+    if missing_worn:
+        return f"PLAN worn 누락={missing_worn}"
+
+    actual_removed = {item.casefold() for item in actual_state["removed"]}
+    missing_removed = [
+        item for item in expected_state["removed"]
+        if item.casefold() not in actual_removed
+    ]
+    if missing_removed:
+        return f"PLAN removed 누락={missing_removed}"
+    return ""
+
+
 def _character_state(states: dict, name: str) -> dict:
     folded = str(name or "").strip().casefold()
     for key, value in (states or {}).items():
@@ -1698,13 +1729,13 @@ def bind_scene_plan_wardrobes(
 ) -> list[dict]:
     """Freeze one server-authoritative wardrobe snapshot per planned scene.
 
-    Tracked state plus CALL1 events wins.  Only when the tracked state is still
-    unknown may CALL2-PLAN provide the initial semantic snapshot; DETAIL never
-    gets to revise either source.
+    CALL2-PLAN sees the complete narrative and decides the scene-local outfit.
+    CALL1's tracked timeline is a fallback only when PLAN leaves that character
+    unknown. DETAIL may describe the frozen snapshot but never replace it.
     """
     rank = {str(segment_id): index for index, segment_id in enumerate(segment_order)}
     normalized_plan = []
-    plan_initial_outfits: dict[str, dict] = {}
+    resolved_outfits: dict[str, dict] = {}
     for plan_index, raw_plan in enumerate(scene_plan, start=1):
         plan = deepcopy(raw_plan)
         anchor_segment = str(plan.get("anchor_segment") or "").strip()
@@ -1748,13 +1779,26 @@ def bind_scene_plan_wardrobes(
         wardrobe_snapshot = {}
         wardrobe_sources = {}
         for name in plan_names:
+            folded_name = name.casefold()
+            proposal = next((
+                value
+                for proposal_name, value in planned_outfits.items()
+                if str(proposal_name).casefold() == folded_name
+            ), {})
+            planned_outfit = _normalize_outfit_state(proposal)
             tracked = _character_state(states_at_scene, name)
             tracked_outfit = _normalize_outfit_state(
                 tracked.get("current_wardrobe") if isinstance(tracked, dict) else {}
             )
-            if _outfit_state_is_known(tracked_outfit):
+            if _outfit_state_is_known(planned_outfit):
+                outfit = planned_outfit
+                source = "call2_plan"
+            elif _outfit_state_is_known(tracked_outfit):
                 outfit = tracked_outfit
-                source = "call1_timeline"
+                source = "call1_timeline_fallback"
+            elif folded_name in resolved_outfits:
+                outfit = deepcopy(resolved_outfits[folded_name])
+                source = "call2_plan_carried"
             else:
                 last_visual = (
                     tracked.get("last_visual_reference")
@@ -1766,26 +1810,15 @@ def bind_scene_plan_wardrobes(
                     outfit = visual_outfit
                     source = "tracked_last_visual"
                 else:
-                    folded_name = name.casefold()
-                    if folded_name in plan_initial_outfits:
-                        outfit = deepcopy(plan_initial_outfits[folded_name])
-                        source = "call2_plan_carried"
-                    else:
-                        proposal = next((
-                            value
-                            for proposal_name, value in planned_outfits.items()
-                            if str(proposal_name).casefold() == folded_name
-                        ), {})
-                        outfit = _normalize_outfit_state(proposal)
-                        source = "call2_plan_initial"
-                        plan_initial_outfits[folded_name] = deepcopy(outfit)
-                        if not _outfit_state_is_known(outfit):
-                            print(
-                                f"[ILLUST_CONTEXT:CALL2_PLAN] 추적·PLAN 복장 상태가 모두 unknown: "
-                                f"plan={plan_index}, anchor={anchor_segment}, character={name}"
-                            )
+                    outfit = planned_outfit
+                    source = "unknown"
+                    print(
+                        f"[ILLUST_CONTEXT:CALL2_PLAN] PLAN·추적 복장 상태가 모두 unknown: "
+                        f"plan={plan_index}, anchor={anchor_segment}, character={name}"
+                    )
             wardrobe_snapshot[name] = outfit
             wardrobe_sources[name] = source
+            resolved_outfits[folded_name] = deepcopy(outfit)
 
         plan["wardrobe_snapshot"] = wardrobe_snapshot
         plan["wardrobe_sources"] = wardrobe_sources
@@ -2864,14 +2897,28 @@ def _parse_call2_detail_output(
             for folded, (expected_name, expected_outfit) in expected_by_name.items():
                 character = actual_by_name[folded]
                 actual_outfit = character.get("outfit_state")
-                if not _outfit_states_equal(actual_outfit, expected_outfit):
+                conflict = _outfit_contract_conflict(expected_outfit, actual_outfit)
+                if conflict:
                     return [], (
-                        f"CALL2-DETAIL 권위 복장 불일치: slot={slot}, "
+                        f"CALL2-DETAIL 권위 복장 충돌: slot={slot}, "
                         f"character={expected_name}, expected={expected_outfit}, "
-                        f"actual={_normalize_outfit_state(actual_outfit)}"
+                        f"actual={_normalize_outfit_state(actual_outfit)}, reason={conflict}"
                     )
-                # 목록 순서나 대소문자가 흔들려도 서버가 확정한 표현을 보존한다.
-                character["outfit_state"] = deepcopy(expected_outfit)
+                normalized_actual = _normalize_outfit_state(actual_outfit)
+                if not _outfit_states_equal(normalized_actual, expected_outfit):
+                    print(
+                        f"[ILLUST_CONTEXT:CALL2_DETAIL] DETAIL 추가 복장 항목을 "
+                        f"PLAN 스냅샷으로 정규화: slot={slot}, character={expected_name}, "
+                        f"expected={expected_outfit}, actual={normalized_actual}"
+                    )
+                # PLAN이 unknown이면 DETAIL의 구체화를 보존하고, 그 외에는 서버가
+                # PLAN 표현으로 정규화해 후속 히스토리도 같은 상태를 보게 한다.
+                character["outfit_state"] = (
+                    deepcopy(normalized_actual)
+                    if expected_outfit["body_state"] == "unknown"
+                    and not _outfit_state_is_known(expected_outfit)
+                    else deepcopy(expected_outfit)
+                )
     return [by_slot[slot] for slot in assigned_slots], ""
 
 
@@ -3014,6 +3061,51 @@ async def _run_parallel_call2_details(
             f"CALL2-DETAIL-{index}",
             assigned_wardrobes_by_slot,
         )
+        if not descriptors and str(reason).startswith("CALL2-DETAIL 권위 복장 충돌"):
+            print(
+                f"[ILLUST_CONTEXT:CALL2_DETAIL] 권위 복장 충돌 작업만 교정 재호출: "
+                f"job={index}/{total}, slots={assigned_slots}, reason={reason}"
+            )
+            correction_messages = deepcopy(messages)
+            correction_messages.extend([{
+                "role": "assistant",
+                "content": str(raw_output or ""),
+            }, {
+                "role": "user",
+                "content": (
+                    "Your previous DETAIL output conflicts with the authoritative PLAN wardrobe. "
+                    "Rewrite the complete <lb-xnai> scenes for this shard once. Preserve the assigned "
+                    "visual beats, slots, camera intent, actions, and plan order. For every named "
+                    "character, keep body_state exactly equal to the snapshot, include every PLAN worn "
+                    "and removed item in outfit_state, and make visible attire tags consistent with it. "
+                    "You may add scene-supported logical items, but never omit or move a PLAN item "
+                    "between worn and removed. Return only the corrected <lb-xnai> block.\n\n"
+                    "# AUTHORITATIVE WARDROBE BY SLOT\n"
+                    + json.dumps(assigned_wardrobes_by_slot, ensure_ascii=False, indent=2)
+                    + "\n\n# PREVIOUS VALIDATION ERROR\n"
+                    + str(reason)
+                ),
+            }])
+            correction_name = f"CALL2-DETAIL {index}/{total} [WARDROBE-CORRECTION]"
+            raw_output = await _call_pipeline_llm(
+                correction_name,
+                _normalize_messages(correction_messages),
+                job_stream_notify,
+                result_validator=validate,
+            )
+            descriptors, reason = _parse_call2_detail_output(
+                raw_output,
+                toggles,
+                assigned_slots,
+                assigned_plan_ids,
+                f"CALL2-DETAIL-{index}-WARDROBE-CORRECTION",
+                assigned_wardrobes_by_slot,
+            )
+            if not descriptors:
+                print(
+                    f"[ILLUST_CONTEXT:CALL2_DETAIL] 복장 교정 재호출 후에도 실패: "
+                    f"job={index}/{total}, slots={assigned_slots}, reason={reason}"
+                )
         if not descriptors:
             raise ValueError(reason or f"CALL2-DETAIL {index}/{total} 파싱 실패")
         return {"raw": raw_output, "descriptors": descriptors}
@@ -5516,8 +5608,9 @@ async def build_from_context(
                     "anchor_segment must be one exact Cxxx ID from the authoritative map and must also "
                     "appear in source_segments. For every scene character, decide the complete logical "
                     "outfit_state at anchor_segment after applying only earlier CURRENT WARDROBE EVENT "
-                    "entries. The server may replace it with stronger tracked state and will freeze the "
-                    "result for DETAIL. Use semantic context and common sense for visual-beat and outfit "
+                    "entries. This PLAN outfit becomes authoritative; tracked state is used only when "
+                    "PLAN returns unknown. The server freezes the result for DETAIL. Use semantic context "
+                    "and common sense for visual-beat and outfit "
                     "selection; do not use keyword rules.\n\n"
                     "# AUTHORITATIVE SEGMENT-SLOT MAP (server-owned; never copy Cxxx digits as slot)\n"
                     + json.dumps(call2_segment_slots, ensure_ascii=False)
