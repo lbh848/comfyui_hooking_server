@@ -538,7 +538,7 @@ async def run_auto_refine_lora_prompt(
                 print(f"[INSTANCE_LORA] auto_refine_lora_prompt 완료: positive 길이={len(parsed['positive'])}")
                 return {"success": True, "data": parsed}
             last_err = f"LLM 응답을 JSON으로 파싱하지 못했습니다. raw: {raw[:300]}"
-            print(f"[INSTANCE_LORA] LLM 응답 JSON 파싱 실패(라우팅 재시도 소진). raw={raw[:500]}")
+            print(f"[INSTANCE_LORA] LLM 응답 JSON 파싱 실패(라우팅 재시도 소진). raw={raw}")
         else:
             last_err = last_err or f"LLM 호출 실패: {raw or '빈 응답'}"
             print(f"[INSTANCE_LORA] LLM 호출 실패(라우팅 재시도 소진): {raw}")
@@ -672,7 +672,7 @@ async def run_auto_refine_test_setup(
                 print(f"[INSTANCE_LORA] run_auto_refine_test_setup 완료: positive 길이={len(parsed['positive'])}")
                 return {"success": True, "data": parsed}
             last_err = f"LLM 응답을 JSON으로 파싱하지 못했습니다. raw: {raw[:300]}"
-            print(f"[INSTANCE_LORA] LLM 응답 JSON 파싱 실패(라우팅 재시도 소진). raw={raw[:500]}")
+            print(f"[INSTANCE_LORA] LLM 응답 JSON 파싱 실패(라우팅 재시도 소진). raw={raw}")
         else:
             last_err = last_err or f"LLM 호출 실패: {raw or '빈 응답'}"
             print(f"[INSTANCE_LORA] LLM 호출 실패(라우팅 재시도 소진): {raw}")

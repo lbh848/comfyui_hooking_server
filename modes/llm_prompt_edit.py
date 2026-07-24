@@ -597,7 +597,7 @@ def parse_llm_json(raw: str):
     first = text.find("{")
     last = text.rfind("}")
     if first == -1 or last == -1 or last <= first:
-        print(f"[LLM_EDIT] parse_llm_json: JSON 객체를 찾을 수 없음 (raw 앞 200자: {text[:200]!r})")
+        print(f"[LLM_EDIT] parse_llm_json: JSON 객체를 찾을 수 없음 (raw: {text!r})")
         return None
 
     slice_ = text[first:last + 1]

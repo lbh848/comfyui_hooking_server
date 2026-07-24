@@ -744,7 +744,7 @@ async def convert_workflow_via_endpoint(workflow_json: dict):
             async with session.post(url, json=workflow_json) as resp:
                 if resp.status != 200:
                     err = await resp.text()
-                    print(f"[WORKFLOW] ✗ 변환 실패 (HTTP {resp.status}): {err[:300]}")
+                    print(f"[WORKFLOW] ✗ 변환 실패 (HTTP {resp.status}): {err}")
                     return None, f"HTTP {resp.status}: {err[:200]}"
                 api_format = await resp.json()
                 print(f"[WORKFLOW] ✓ 변환 완료: {len(api_format)} 노드")
@@ -1480,7 +1480,7 @@ async def submit_to_real_comfy(prompt_data: dict, port: int | None = None, clien
             try:
                 result = json.loads(raw)
             except json.JSONDecodeError:
-                print(f"[PROXY] ← status={resp.status}, non-JSON response: {raw[:500]}")
+                print(f"[PROXY] ← status={resp.status}, non-JSON response: {raw}")
                 raise RuntimeError(
                     f"ComfyUI returned non-JSON (status={resp.status}, "
                     f"content-type={resp.content_type}): {raw[:300]}"
@@ -1744,8 +1744,8 @@ async def generate_image_with_prompt(
         print("[DEBUG] ══════════════════════════════════════════════════════")
         print(f"[DEBUG] 디버깅 모드 활성화 - ComfyUI 전송 생략")
         print(f"[DEBUG] 포트: {illust_port}")
-        print(f"[DEBUG] Positive: {positive[:500]}")
-        print(f"[DEBUG] Negative: {negative[:500]}")
+        print(f"[DEBUG] Positive: {positive}")
+        print(f"[DEBUG] Negative: {negative}")
         print(f"[DEBUG] 워크플로우 노드 수: {len(risu_prompt) if risu_prompt else 0}")
         # 주요 노드 값 로그
         if risu_prompt:
@@ -1753,7 +1753,7 @@ async def generate_image_with_prompt(
                 cls = node.get("class_type", "") if isinstance(node, dict) else ""
                 if "sampler" in cls.lower() or "clip" in cls.lower() or "text" in cls.lower():
                     inputs = node.get("inputs", {}) if isinstance(node, dict) else {}
-                    print(f"[DEBUG]   노드 {nid} ({cls}): {json.dumps(inputs, ensure_ascii=False)[:300]}")
+                    print(f"[DEBUG]   노드 {nid} ({cls}): {json.dumps(inputs, ensure_ascii=False)}")
         print("[DEBUG] ══════════════════════════════════════════════════════")
         return None, "디버깅 모드: ComfyUI 전송 생략됨"
 
@@ -2151,7 +2151,7 @@ async def _run_data_patch_utility(bot_name: str, char_name: str) -> dict:
 
     settings = _load_patch_settings(bot_name)
     prompt_text = build_utility_prompt(bot_name, char_name, settings)
-    print(f"[DATA_PATCH_UTILITY] 실행: {char_name} | 프롬프트: {prompt_text[:80]}...")
+    print(f"[DATA_PATCH_UTILITY] 실행: {char_name} | 프롬프트: {prompt_text}")
 
     wf = copy.deepcopy(wf_api)
     for nid, ninfo in wf.items():
@@ -2274,7 +2274,7 @@ async def _do_restore_workflow():
             print("[RESTORE] 빈 프롬프트 - 스킵")
             return
 
-        print(f"[RESTORE] 워크플로우 복원 실행: positive='{positive[:50]}...'")
+        print(f"[RESTORE] 워크플로우 복원 실행: positive='{positive}'")
         img_bytes, error = await generate_image_with_prompt(positive, negative)
         if img_bytes:
             print(f"[RESTORE] 복원 완료 (이미지 {len(img_bytes):,}B)")
@@ -2912,8 +2912,8 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                     word_rules_snapshot,
                 )
 
-        print(f"[INFO] 긍정: {positive[:80]}...")
-        print(f"[INFO] 부정: {negative[:80]}...")
+        print(f"[INFO] 긍정: {positive}")
+        print(f"[INFO] 부정: {negative}")
         log_to_file("proxy.log", f"positive: {positive}")
         log_to_file("proxy.log", f"negative: {negative}")
 
@@ -5203,7 +5203,7 @@ async def handle_prompt(request: web.Request) -> web.Response:
             illustration_context_pipeline.REGENERATE_PREFIX,
             illustration_context_pipeline.PROMPT_BATCH_PREFIX,
         )):
-            print(f"[ILLUST_CONTEXT] transport marker는 있으나 payload가 유효하지 않음: {incoming_positive[:240]!r}")
+            print(f"[ILLUST_CONTEXT] transport marker는 있으나 payload가 유효하지 않음: {incoming_positive!r}")
             return web.json_response({"error": "invalid illustration context payload"}, status=400)
 
         # 배치 모드 재전송 예약 확인 (batch_mode의 scheduled_batch 우선)
@@ -5539,7 +5539,7 @@ async def handle_frontend_ws(request: web.Request) -> web.WebSocketResponse:
                         else:
                             print(f"[FE-WS] ⚠️ pong from unknown client={client_id[:8]} (dict에서 사라짐)")
                 except Exception as e:
-                    print(f"[FE-WS] msg parse err client={client_id[:8]}: {e} raw={msg.data[:80]}")
+                    print(f"[FE-WS] msg parse err client={client_id[:8]}: {e} raw={msg.data}")
             elif msg.type == aiohttp.WSMsgType.CLOSE:
                 print(f"[FE-WS] CLOSE msg client={client_id[:8]}")
                 break
@@ -6632,7 +6632,7 @@ async def handle_api_postprocess_emotion_sources(request: web.Request) -> web.Re
 
         empty_chars = [c for c, n in per_char_count.items() if n == 0]
         if empty_chars:
-            print(f"[POSTPROCESS_EMOTION_SOURCES] ⚡ 이미지 없는 캐릭터 {len(empty_chars)}/{len(char_names)}: {empty_chars[:10]}")
+            print(f"[POSTPROCESS_EMOTION_SOURCES] ⚡ 이미지 없는 캐릭터 {len(empty_chars)}/{len(char_names)}: {empty_chars}")
         print(f"[POSTPROCESS_EMOTION_SOURCES] 완료: bot={bot_name!r}, 캐릭터={len(char_names)}, 파일명={len(items)}")
         return web.json_response({"items": items, "count": len(items), "per_char_count": per_char_count})
     except Exception as e:
@@ -6764,7 +6764,7 @@ async def handle_api_regenerate(request: web.Request) -> web.Response:
         src_provider, src_generation_params = _read_backup_generation(backup_name)
 
         print(f"[REGEN] 재생성 큐 등록: {backup_name}")
-        print(f"[REGEN] 긍정: {positive[:60]}...")
+        print(f"[REGEN] 긍정: {positive}")
 
         item = await queue_manager.add_item(
             "regenerate",
@@ -6995,8 +6995,8 @@ async def handle_api_reschedule_with_modified_prompt(request: web.Request) -> we
         src_provider, src_generation_params = _read_backup_generation(backup_name)
 
         print(f"[RESCHEDULE_MOD] 수정 재생성 큐 등록: {backup_name}")
-        print(f"[RESCHEDULE_MOD] Modified positive: {modified_positive[:60]}...")
-        print(f"[RESCHEDULE_MOD] Modified negative: {modified_negative[:60]}...")
+        print(f"[RESCHEDULE_MOD] Modified positive: {modified_positive}")
+        print(f"[RESCHEDULE_MOD] Modified negative: {modified_negative}")
 
         item = await queue_manager.add_item(
             "regenerate",
@@ -7317,7 +7317,7 @@ async def handle_api_llm_edit_prompt(request: web.Request) -> web.Response:
             reassembled_negative = negative
         plan_text = (scene.get("plan", "") or "장면 태그를 수정했습니다.") + fallback_note
 
-        print(f"[LLM_EDIT] 완료 name={backup_name} plan={plan_text[:80]!r}")
+        print(f"[LLM_EDIT] 완료 name={backup_name} plan={plan_text!r}")
         return web.json_response({
             "plan": plan_text,
             "positive": reassembled,
@@ -7773,7 +7773,7 @@ async def handle_api_config(request: web.Request) -> web.Response:
                 try:
                     parsed_custom_body = json.loads(raw_custom_body)
                 except json.JSONDecodeError as e:
-                    print(f"[CONFIG] {custom_body_key} JSON 파싱 실패: {e}; 입력={raw_custom_body[:300]!r}")
+                    print(f"[CONFIG] {custom_body_key} JSON 파싱 실패: {e}; 입력={raw_custom_body!r}")
                     traceback.print_exc()
                     return web.json_response(
                         {"error": f"{custom_body_key} JSON 오류: {e}"},
@@ -8132,7 +8132,7 @@ async def handle_api_restore_manual_draw(request: web.Request) -> web.Response:
             ))
         else:
             # bot 미선택: 기존 restore_manual 큐
-            print(f"[RESTORE_MANUAL] 수동 그리기 큐 등록: positive='{positive[:50]}...'")
+            print(f"[RESTORE_MANUAL] 수동 그리기 큐 등록: positive='{positive}'")
             _label = f"수동그리기: {positive[:40]}..."
             asyncio.create_task(queue_manager.add_item(
                 "restore_manual", _label,
@@ -8820,7 +8820,7 @@ async def handle_api_text_output_post(request: web.Request) -> web.Response:
             "timestamp": datetime.datetime.now().isoformat(),
         }
         text_outputs[node_title] = entry
-        print(f"[TEXT_OUTPUT] 수신: node_title='{node_title}', text={text[:100]}...")
+        print(f"[TEXT_OUTPUT] 수신: node_title='{node_title}', text={text}")
         log_to_file("text_output.log", f"node_title='{node_title}', node_id={node_id}, text_len={len(text)}")
         await notify_frontend("text_output", entry)
         return web.json_response({"status": "ok"})
@@ -11378,7 +11378,7 @@ async def _monitor_lora_training(prompt_id: str):
                         # md_soya_progress 커스텀 메시지 → 프론트엔드에 전달
                         if msg_type == "md_soya_progress":
                             phase = msg_data.get("phase", "")
-                            print(f"[LORA_MONITOR] phase={phase}, data={json.dumps(msg_data, ensure_ascii=False)[:200]}")
+                            print(f"[LORA_MONITOR] phase={phase}, data={json.dumps(msg_data, ensure_ascii=False)}")
                             await notify_frontend("lora_training_progress", msg_data)
                             # all_complete이면 모니터링 종료
                             if phase == "all_complete":
@@ -12293,7 +12293,7 @@ async def _monitor_bot_lora_training(prompt_id, bot_name, project_name, current_
                         msg_data = data.get("data", {})
                         # 모든 메시지 타입 로깅 (디버그)
                         if msg_type not in ("status",):
-                            print(f"[BOT_LORA_MONITOR] 수신: type={msg_type}, data={json.dumps(msg_data, ensure_ascii=False)[:200]}")
+                            print(f"[BOT_LORA_MONITOR] 수신: type={msg_type}, data={json.dumps(msg_data, ensure_ascii=False)}")
                         if msg_type == "md_soya_progress":
                             msg_data.update({"bot_name": bot_name, "project_name": project_name, "character": current_char, "char_index": current_idx, "total_chars": len(characters_to_train)})
                             await notify_frontend("bot_lora_training_progress", msg_data)

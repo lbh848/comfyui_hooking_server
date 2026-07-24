@@ -201,7 +201,7 @@ class BatchMode:
         request = batch.requests[i]
         try:
             request.status = "processing"
-            print(f"[BATCH] 이미지 생성: {batch.batch_id}[{i}] - {request.positive[:50]}...")
+            print(f"[BATCH] 이미지 생성: {batch.batch_id}[{i}] - {request.positive}")
             self._log("request_processing", {"batch_id": batch.batch_id, "index": i})
 
             # 이미지 생성
@@ -519,7 +519,7 @@ class BatchMode:
                     break
 
         if matched_request is None:
-            print(f"[BATCH] 일치하는 예약 이미지 없음 (요청 프롬프트: {incoming_normalized[:50]}...)")
+            print(f"[BATCH] 일치하는 예약 이미지 없음 (요청 프롬프트: {incoming_normalized})")
             return None
 
         matched_request.is_sent = True

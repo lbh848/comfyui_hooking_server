@@ -273,7 +273,7 @@ class AssetToolMode:
                 if resp.status != 200:
                     text = await resp.text()
                     self._log("upload_fail", {"status": resp.status, "body": text[:200]})
-                    print(f"[ASSET_TOOL] 이미지 업로드 실패 ({slot_label}): status={resp.status}, body={text[:200]}")
+                    print(f"[ASSET_TOOL] 이미지 업로드 실패 ({slot_label}): status={resp.status}, body={text}")
                     return {"success": False, "error": f"ComfyUI 업로드 실패 ({resp.status})"}
                 result = await resp.json()
                 comfy_name = result.get("name", filename)
@@ -324,7 +324,7 @@ class AssetToolMode:
                     real_prompt_id, submit_result = await submit_to_real_comfy(workflow)
                     node_errors = submit_result.get("node_errors", {})
                     if node_errors:
-                        print(f"[ASSET_TOOL] 워크플로우 node_errors ({slot_label}): {json.dumps(node_errors, ensure_ascii=False)[:500]}")
+                        print(f"[ASSET_TOOL] 워크플로우 node_errors ({slot_label}): {json.dumps(node_errors, ensure_ascii=False)}")
                     print(f"[ASSET_TOOL] 워크플로우 제출됨 ({slot_label}): prompt_id={real_prompt_id}")
                     total_steps = count_ksampler_total_steps(workflow)
                     ws_result = await wait_for_real_comfy(real_ws, real_prompt_id,
@@ -360,7 +360,7 @@ class AssetToolMode:
                     if text:
                         tags = [t.strip() for t in text.replace("\n", ",").split(",") if t.strip()]
                         analyzed_tags.extend(tags)
-                        print(f"[ASSET_TOOL] text_output '{target_key}' ({slot_label}): {len(tags)}개 태그 = {tags[:10]}...")
+                        print(f"[ASSET_TOOL] text_output '{target_key}' ({slot_label}): {len(tags)}개 태그 = {tags}")
             if analyzed_tags:
                 break
             await asyncio.sleep(poll_interval)

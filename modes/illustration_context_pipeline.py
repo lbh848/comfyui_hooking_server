@@ -345,7 +345,7 @@ def _json_after_prefix(positive: str, prefix: str) -> dict | None:
             return None
         return value
     except Exception as e:
-        print(f"[ILLUST_CONTEXT] {prefix} JSON 파싱 실패: {e}; raw={raw[:240]!r}")
+        print(f"[ILLUST_CONTEXT] {prefix} JSON 파싱 실패: {e}; raw={raw!r}")
         traceback.print_exc()
         return None
 
@@ -1055,7 +1055,7 @@ def _json_object_from_text(text: str) -> dict | None:
             return None
         return value
     except Exception as e:
-        print(f"[ILLUST_CONTEXT:CALL1] 구조화 JSON 파싱 실패: {e}; raw={source[:800]!r}")
+        print(f"[ILLUST_CONTEXT:CALL1] 구조화 JSON 파싱 실패: {e}; raw={source!r}")
         traceback.print_exc()
         return None
 
@@ -1589,7 +1589,7 @@ def _splice_enhancements(body: str, output: str) -> str:
         else:
             pos += len(anchor)
         if pos < 0:
-            print(f"[ILLUST_CONTEXT:CALL1] 삽입 위치를 찾지 못함: {anchor[:120]!r}")
+            print(f"[ILLUST_CONTEXT:CALL1] 삽입 위치를 찾지 못함: {anchor!r}")
             continue
         result = result[:pos] + "\n\n" + insertion + result[pos:]
         offset += 1
@@ -1984,7 +1984,7 @@ def render_call2_prompt(text: str, toggles: dict, history: str = "") -> str:
             table = json.loads(match.group(1))
             return str(table.get(str(match.group(2)).strip(), ""))
         except Exception as e:
-            print(f"[ILLUST_CONTEXT] dictelement 렌더 실패: {e}; expr={match.group(0)[:160]!r}")
+            print(f"[ILLUST_CONTEXT] dictelement 렌더 실패: {e}; expr={match.group(0)!r}")
             traceback.print_exc()
             return ""
 
@@ -1993,7 +1993,7 @@ def render_call2_prompt(text: str, toggles: dict, history: str = "") -> str:
     # Risu에만 존재하는 잔여 매크로는 LLM으로 보내지 않고 로그에 남긴다.
     leftovers = re.findall(r"\{\{[^\n]{0,240}?\}\}", text)
     if leftovers:
-        print(f"[ILLUST_CONTEXT] 렌더 후 잔여 Risu 매크로 {len(leftovers)}개 제거: {leftovers[:8]}")
+        print(f"[ILLUST_CONTEXT] 렌더 후 잔여 Risu 매크로 {len(leftovers)}개 제거: {leftovers}")
         text = re.sub(r"\{\{[^\n]*?\}\}", "", text)
     # scene_mode == "auto" 면 장면 수에 대한 서버 제한을 일절 붙이지 않고
     # lb-xnai(call2)에 완전히 맡긴다(템플릿의 scene.quantity 도 3으로 무력화됨).
@@ -2099,7 +2099,7 @@ def parse_toon_plan(text: str, toggles: dict, source: str = "CALL2") -> list[dic
     try:
         data = yaml.safe_load(_normalize_toon(inner))
     except Exception as e:
-        print(f"[ILLUST_CONTEXT:{source}] TOON/YAML 파싱 실패: {e}\n{inner[:1000]}")
+        print(f"[ILLUST_CONTEXT:{source}] TOON/YAML 파싱 실패: {e}\n{inner}")
         traceback.print_exc()
         return []
     if not isinstance(data, dict):

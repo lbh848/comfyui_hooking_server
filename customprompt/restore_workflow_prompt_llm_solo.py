@@ -361,5 +361,5 @@ async def run(char_name: str | None = None, situation: str | None = None) -> dic
         f"[SUPPLEMENT]\n{supplement}"
     )
 
-    print(f"[RESTORE_LLM_SOLO] 생성 완료: 캐릭터={char_name!r}, setup={setup[:40]!r}")
+    print(f"[RESTORE_LLM_SOLO] 생성 완료: 캐릭터={char_name!r}, setup={setup!r}")
     return {"positive": positive, "negative": _NEGATIVE}

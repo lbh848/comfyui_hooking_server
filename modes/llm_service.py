@@ -581,7 +581,7 @@ def _parse_custom_body(custom_body, source: str = "custom body") -> dict:
     try:
         parsed = json.loads(custom_body)
     except json.JSONDecodeError as e:
-        print(f"[LLM_SERVICE] {source} JSON 파싱 실패: {e}; 입력={custom_body[:300]!r}")
+        print(f"[LLM_SERVICE] {source} JSON 파싱 실패: {e}; 입력={custom_body!r}")
         traceback.print_exc()
         return {}
     if not isinstance(parsed, dict):
