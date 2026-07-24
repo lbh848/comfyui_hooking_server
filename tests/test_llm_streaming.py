@@ -125,6 +125,39 @@ async def test_task_stream_event_contains_task_metadata(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_task_stream_inherits_pipeline_display_call_name(monkeypatch):
+    config = _test_config()
+    config["llm_stream2"] = True
+    config["llm_routing"] = {
+        "illustration_call2": {"primary": "llm2", "fallback_target": None}
+    }
+    monkeypatch.setattr(llm_service, "_current_config", config)
+    monkeypatch.setattr(llm_service, "_dispatch_stream", _fake_stream)
+    events = []
+
+    async def notify(event):
+        events.append(event)
+
+    monkeypatch.setattr(llm_service, "_stream_notify_func", notify)
+    token = llm_service._stream_metadata_ctx.set({
+        "task_key": "illustration_call2",
+        "call_name": "CALL2-PLAN",
+    })
+    try:
+        result = await llm_service.callLLMTask(
+            "illustration_call2",
+            [{"role": "user", "content": "hello"}],
+        )
+    finally:
+        llm_service._stream_metadata_ctx.reset(token)
+
+    assert result == "안녕"
+    assert events
+    assert all(event["task_key"] == "illustration_call2" for event in events)
+    assert all(event["call_name"] == "CALL2-PLAN" for event in events)
+
+
+@pytest.mark.asyncio
 async def test_task_stream_observer_receives_request_local_partial_lengths(monkeypatch):
     config = _test_config()
     config["llm_stream"] = True

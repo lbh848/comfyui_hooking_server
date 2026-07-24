@@ -111,6 +111,161 @@ def test_call2_plan_selects_global_slots_and_builds_key_visual():
     assert plan["keyvis_descriptor"]["slot"] == -1
 
 
+def test_segment_slot_map_binds_segments_to_following_server_slot():
+    slotted = (
+        "첫 문단.\n\n[Slot 0]\n\n"
+        "둘째 문단.\n\n세부 문단.\n\n[Slot 1]\n\n"
+        "마지막 문단."
+    )
+    _rendered, segments = pipeline._segment_current_context(
+        pipeline.remove_slot_markers(slotted)
+    )
+
+    mapping, annotated, reason = pipeline.build_segment_slot_map(slotted, segments)
+
+    assert reason == ""
+    assert mapping == {"C001": 0, "C002": 1, "C003": 1, "C004": 1}
+    assert "[C001 slot=0]" in annotated
+    assert "[C004 slot=1]" in annotated
+
+
+def test_call2_plan_uses_anchor_mapping_and_ignores_model_slot_number():
+    slotted = "첫 문단.\n\n[Slot 0]\n\n둘째 문단.\n\n[Slot 1]"
+    raw = json.dumps({
+        "scene_plan": [{
+            "plan_id": "raw-plan",
+            "slot": 67,
+            "anchor_segment": "C002",
+            "source_segments": ["C002"],
+            "characters": [{
+                "name": "Hana",
+                "outfit_state": {
+                    "body_state": "clothed",
+                    "worn": ["blue dress"],
+                    "removed": [],
+                },
+            }],
+            "scene_brief": "둘째 문단의 장면",
+        }],
+        "keyvis": None,
+    }, ensure_ascii=False)
+
+    plan, reason = pipeline.parse_call2_plan(
+        raw,
+        pipeline.merged_toggles({
+            "scene_min": 1,
+            "scene_max": 1,
+            "key_visual": False,
+        }),
+        slotted,
+        segment_slot_map={"C001": 0, "C002": 1},
+    )
+
+    assert reason == ""
+    assert plan["scene_plan"][0]["anchor_segment"] == "C002"
+    assert plan["scene_plan"][0]["slot"] == 1
+    assert plan["scene_plan"][0]["planned_outfits"]["Hana"] == {
+        "body_state": "clothed",
+        "worn": ["blue dress"],
+        "removed": [],
+    }
+
+
+def test_scene_plan_wardrobe_snapshot_applies_events_only_through_anchor():
+    plans = [{
+        "plan_id": "S001",
+        "slot": 0,
+        "anchor_segment": "C001",
+        "source_segments": ["C001"],
+        "characters": ["Hana"],
+        "planned_outfits": {
+            "Hana": {"body_state": "clothed", "worn": ["red coat"], "removed": []},
+        },
+    }, {
+        "plan_id": "S002",
+        "slot": 1,
+        "anchor_segment": "C003",
+        "source_segments": ["C003"],
+        "characters": ["Hana"],
+        "planned_outfits": {
+            "Hana": {"body_state": "clothed", "worn": ["red coat"], "removed": []},
+        },
+    }]
+    state_before = {
+        "hana": {
+            "canonical_name": "Hana",
+            "current_wardrobe": {
+                "body_state": "clothed",
+                "worn": ["blue dress"],
+                "removed": [],
+            },
+        },
+    }
+    events = [{
+        "segment_id": "C003",
+        "character": "Hana",
+        "operation": "remove",
+        "items": ["blue dress"],
+        "state_after": "topless",
+    }]
+
+    bound = pipeline.bind_scene_plan_wardrobes(
+        plans,
+        ["C001", "C002", "C003"],
+        state_before,
+        [{"name": "Hana", "confidence": 1.0}],
+        events,
+        "message-1",
+    )
+
+    assert bound[0]["wardrobe_snapshot"]["Hana"] == {
+        "body_state": "clothed",
+        "worn": ["blue dress"],
+        "removed": [],
+    }
+    assert bound[1]["wardrobe_snapshot"]["Hana"] == {
+        "body_state": "topless",
+        "worn": [],
+        "removed": ["blue dress"],
+    }
+    assert bound[0]["wardrobe_sources"]["Hana"] == "call1_timeline"
+    assert bound[1]["wardrobe_sources"]["Hana"] == "call1_timeline"
+
+
+def test_scene_plan_carries_first_plan_outfit_until_call1_event_changes_it():
+    plans = [{
+        "plan_id": "S001",
+        "slot": 0,
+        "anchor_segment": "C001",
+        "characters": ["Hana"],
+        "planned_outfits": {
+            "Hana": {"body_state": "clothed", "worn": ["red coat"], "removed": []},
+        },
+    }, {
+        "plan_id": "S002",
+        "slot": 1,
+        "anchor_segment": "C002",
+        "characters": ["Hana"],
+        "planned_outfits": {
+            "Hana": {"body_state": "clothed", "worn": ["blue dress"], "removed": []},
+        },
+    }]
+
+    bound = pipeline.bind_scene_plan_wardrobes(
+        plans,
+        ["C001", "C002"],
+        {},
+        [{"name": "Hana", "confidence": 1.0}],
+        [],
+        "message-1",
+    )
+
+    assert bound[0]["wardrobe_snapshot"]["Hana"]["worn"] == ["red coat"]
+    assert bound[1]["wardrobe_snapshot"]["Hana"]["worn"] == ["red coat"]
+    assert bound[0]["wardrobe_sources"]["Hana"] == "call2_plan_initial"
+    assert bound[1]["wardrobe_sources"]["Hana"] == "call2_plan_carried"
+
+
 def test_call2_detail_assigns_plan_ids_from_validated_slots():
     output_without_plan_ids = re.sub(
         r"\n\s+plan_id:\s*[^\r\n]+",
@@ -128,6 +283,28 @@ def test_call2_detail_assigns_plan_ids_from_validated_slots():
     assert reason == ""
     assert [item["slot"] for item in descriptors] == [4, 9]
     assert [item["plan_id"] for item in descriptors] == ["S021", "S022"]
+
+
+def test_call2_detail_rejects_wardrobe_different_from_plan_snapshot():
+    descriptors, reason = pipeline._parse_call2_detail_output(
+        _toon_for_slots([4]),
+        pipeline.merged_toggles({"key_visual": False}),
+        [4],
+        ["S021"],
+        "TEST-CALL2-DETAIL-WARDROBE",
+        {
+            4: {
+                "Hana": {
+                    "body_state": "clothed",
+                    "worn": ["blue dress"],
+                    "removed": [],
+                },
+            },
+        },
+    )
+
+    assert descriptors == []
+    assert "권위 복장 불일치" in reason
 
 
 @pytest.mark.asyncio
@@ -274,9 +451,16 @@ async def test_call1_segments_and_call2_details_run_in_parallel_batches(monkeypa
                 "scene_plan": [
                     {
                         "plan_id": f"S{slot + 1:03d}",
-                        "slot": slot,
+                        "anchor_segment": f"C{slot + 1:03d}",
                         "source_segments": [f"C{slot + 1:03d}"],
-                        "characters": ["Hana"],
+                        "characters": [{
+                            "name": "Hana",
+                            "outfit_state": {
+                                "body_state": "clothed",
+                                "worn": ["school uniform"],
+                                "removed": [],
+                            },
+                        }],
                         "scene_brief": f"Hana scene {slot}",
                     }
                     for slot in range(9)
@@ -360,7 +544,8 @@ async def test_call1_segments_and_call2_details_run_in_parallel_batches(monkeypa
     assert [item["plan_id"] for item in reparsed[1:]] == [
         f"S{index:03d}" for index in range(1, 10)
     ]
-    assert sum(name.startswith("illustration_call2") for name in call_names) >= 4
+    assert "CALL2-PLAN" in call_names
+    assert sum(name.startswith("CALL2-DETAIL") for name in call_names) >= 3
 
 
 def test_descriptor_slots_trust_call2_with_light_sanitization():
@@ -2380,12 +2565,16 @@ async def test_pipeline_llm_records_failure_in_lighbd_history(monkeypatch):
 @pytest.mark.asyncio
 async def test_pipeline_llm_records_cancelled_hedge_in_lighbd_history(monkeypatch):
     records = []
+    events = []
     call_started = asyncio.Event()
     messages = [{"role": "user", "content": "slow scene"}]
 
     async def fake_call(task_key, actual_messages, **kwargs):
         call_started.set()
         await asyncio.Future()
+
+    async def fake_notify(event):
+        events.append(event)
 
     monkeypatch.setattr(pipeline.llm_service, "callLLMTask", fake_call)
     monkeypatch.setattr(pipeline.lighbd_service, "_log_lighbd_history", records.append)
@@ -2394,6 +2583,7 @@ async def test_pipeline_llm_records_cancelled_hedge_in_lighbd_history(monkeypatc
         pipeline._call_pipeline_llm(
             "CALL1-BACKTRANSLATE 2/2",
             messages,
+            fake_notify,
             history_id="hedge-loser-id",
         )
     )
@@ -2406,6 +2596,7 @@ async def test_pipeline_llm_records_cancelled_hedge_in_lighbd_history(monkeypatc
     assert records[0]["history_id"] == "hedge-loser-id"
     assert records[0]["status"] == "cancelled"
     assert "패배" in records[0]["error"]
+    assert [event["type"] for event in events] == ["start", "cancelled"]
 
 
 def test_lighbd_history_records_are_updated_by_history_id_with_backup(
@@ -2554,6 +2745,119 @@ def test_call1_structured_assignments_preserve_slot_markers():
     assert "Hana enters" in slotted
     assert "Hana's blue dress" in slotted
     assert re.findall(r"\[Slot\s+\d+\]", slotted) == ["[Slot 0]", "[Slot 1]"]
+
+
+def test_call1_recoverable_item_errors_do_not_require_balanced_fallback():
+    current = "Sena enters the room.\n\nKai waits by the door."
+    _rendered, segments = pipeline._segment_current_context(current)
+    analysis = pipeline.parse_call1_analysis(
+        json.dumps({
+            "reference_assignments": [{
+                "segment_id": "C001",
+                "surface": "Sen\u0430",
+                "canonical_name": "Sena",
+                "replacement": "Sena",
+                "confidence": 0.99,
+            }],
+            "history_characters": [],
+            "current_characters": [{"name": "Kai", "confidence": 0.99}],
+            "wardrobe_events": [{
+                "segment_id": "C002",
+                "character": "Kai",
+                "operation": "remove",
+                "items": ["coat"],
+                "evidence": "Kai removes his coat.",
+                "confidence": 0.99,
+            }],
+            "unresolved_references": [],
+        }),
+        current,
+        segments,
+        "Sena, Kai",
+    )
+
+    assert analysis is not None
+    assert analysis["fallback_required"] is False
+    assert analysis["fallback_errors"] == []
+    assert analysis["reference_assignments"] == []
+    assert analysis["wardrobe_events"] == []
+    assert {item["name"] for item in analysis["current_characters"]} == {"Sena", "Kai"}
+    assert any("지칭 원문 불일치로 폐기" in item for item in analysis["validation_warnings"])
+    assert any("복장 변경 근거 불일치로 폐기" in item for item in analysis["validation_warnings"])
+    assert any("서버가 보완: Sena" in item for item in analysis["validation_warnings"])
+
+
+def test_call1_unresolved_reference_still_requires_balanced_fallback():
+    current = "Kai waits by the door."
+    _rendered, segments = pipeline._segment_current_context(current)
+    analysis = pipeline.parse_call1_analysis(
+        json.dumps({
+            "reference_assignments": [],
+            "history_characters": [],
+            "current_characters": [{"name": "Kai", "confidence": 0.99}],
+            "wardrobe_events": [],
+            "unresolved_references": [{
+                "segment_id": "C001",
+                "surface": "someone",
+            }],
+        }),
+        current,
+        segments,
+        "Kai",
+    )
+
+    assert analysis is not None
+    assert analysis["fallback_required"] is True
+    assert analysis["fallback_errors"] == ["미해결 지칭 1건"]
+
+
+def test_call1_shard_scope_violations_are_warnings_but_conflicts_are_fatal():
+    outside_value = {
+        "assigned_segment_ids": ["C001"],
+        "value": {
+            "reference_assignments": [{
+                "segment_id": "C002",
+                "surface": "she",
+                "canonical_name": "Hana",
+            }],
+            "history_characters": [],
+            "current_characters": [{"name": "Hana", "confidence": 0.99}],
+            "wardrobe_events": [],
+            "unresolved_references": [],
+        },
+    }
+    _merged, warnings, fallback_errors = pipeline._merge_call1_shard_values(
+        [outside_value],
+        ["C001", "C002"],
+    )
+    assert any("담당 밖 지칭 할당 폐기" in item for item in warnings)
+    assert fallback_errors == []
+
+    conflict_value = {
+        "assigned_segment_ids": ["C001"],
+        "value": {
+            **outside_value["value"],
+            "reference_assignments": [
+                {
+                    "segment_id": "C001",
+                    "surface": "she",
+                    "occurrence": 1,
+                    "canonical_name": "Hana",
+                },
+                {
+                    "segment_id": "C001",
+                    "surface": "she",
+                    "occurrence": 1,
+                    "canonical_name": "Mina",
+                },
+            ],
+        },
+    }
+    _merged, _warnings, fallback_errors = pipeline._merge_call1_shard_values(
+        [conflict_value],
+        ["C001"],
+    )
+    assert any("지칭 충돌" in item for item in fallback_errors)
 
 
 def test_call3_scene_selection_contains_bounded_upper_and_lower_windows():

@@ -69,3 +69,9 @@ def test_lighbd_history_distinguishes_slow_retry_winner_and_loser():
     assert "label: '승리'" in FRONTEND
     assert "label: '패배'" in FRONTEND
     assert "illust-setting-tooltip-bubble" in FRONTEND
+
+
+def test_lighbd_live_uses_only_real_stream_ids_and_prunes_legacy_ghosts():
+    assert ".filter(s => s.active && s.id !== 'legacy')" in FRONTEND
+    assert "if (state.active && !serverIds.has(id))" in FRONTEND
+    assert "if (id !== 'legacy' && state.active && !serverIds.has(id))" not in FRONTEND

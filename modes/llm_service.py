@@ -1916,9 +1916,10 @@ async def callLLMTask(
     rj = entry.get("json_mode", None)
     eff_json = (bool(rj) if rj is not None else json_mode)
     async def _invoke(slot: str) -> str:
+        parent_metadata = dict(_stream_metadata_ctx.get() or {})
         meta_token = _stream_metadata_ctx.set({
             "task_key": task_key,
-            "call_name": task_key,
+            "call_name": str(parent_metadata.get("call_name") or task_key),
             "llm_slot": slot,
         })
         observer_token = _stream_observer_ctx.set(stream_observer)

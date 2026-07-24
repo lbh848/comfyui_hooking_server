@@ -5328,7 +5328,10 @@
             <button onclick="reloadWorkflow()">📂 삽화 워크플로우 가져오기</button>
             <button onclick="toggleBatchMode()" id="batch-mode-btn">🔄 삽화 배치모드: <span id="batch-mode-status">OFF</span></button>
             <button onclick="manualRestoreDraw()" id="restore-manual-btn" style="display:none;">🖌️ 삽화 수동 그리기</button>
-            <button onclick="reconnectFrontendWs()" id="ws-reconnect-btn" title="WS 재연결">🔌 WS 재연결</button>
+            <button onclick="reconnectFrontendWs()" id="ws-reconnect-btn" title="WS 재연결" style="display:inline-flex; align-items:center; gap:6px;">
+                <span id="ws-status-led" title="WS 미연결" style="width:9px; height:9px; border-radius:50%; background:#e53935; box-shadow:0 0 4px rgba(229,57,53,0.7); flex:0 0 auto; transition:background .2s, box-shadow .2s;"></span>
+                🔌 WS 재연결
+            </button>
             <button onclick="openModeLogModal()">📋 모드 로그</button>
 
         </div>
@@ -11957,6 +11960,30 @@
 
         // ─── WebSocket 연결 ───
         let _wsReconnectTimer = null;
+        // WS 연결 상태 LED: 파란불=연결됨, 빨간불=끊김, 노란불=연결/닫기 진행 중
+        function updateWsStatusLed() {
+            const led = document.getElementById('ws-status-led');
+            if (!led) return;
+            const st = frontendWs ? frontendWs.readyState : null;
+            // 0=CONNECTING, 1=OPEN, 2=CLOSING, 3=CLOSED
+            if (st === 1) {
+                led.style.background = '#1e88e5';
+                led.style.boxShadow = '0 0 4px rgba(30,136,229,0.8)';
+                led.title = 'WS 연결됨';
+            } else if (st === 0 || st === 2) {
+                led.style.background = '#fbc02d';
+                led.style.boxShadow = '0 0 4px rgba(251,192,45,0.8)';
+                led.title = st === 0 ? 'WS 연결 중' : 'WS 닫는 중';
+            } else {
+                led.style.background = '#e53935';
+                led.style.boxShadow = '0 0 4px rgba(229,57,53,0.7)';
+                led.title = 'WS 미연결';
+            }
+        }
+        // CONNECTING/CLOSING 등 이벤트 없이 상태가 바뀌는 구간도 잡기 위한 주기 점검
+        if (!window._wsStatusLedTimer) {
+            window._wsStatusLedTimer = setInterval(updateWsStatusLed, 1000);
+        }
         function _scheduleWsReconnect(delay) {
             // 이미 재연결 예약 중이면 중복 잡지 않는다(onclose/onerror 양쪽에서 호출되므로).
             if (_wsReconnectTimer) return;
@@ -11976,11 +12003,13 @@
             }
 
             frontendWs = new WebSocket(wsUrl);
+            updateWsStatusLed();
 
             frontendWs.onopen = function() {
                 // 연결 성공 시 대기 중 재연결 타이머 정리
                 if (_wsReconnectTimer) { clearTimeout(_wsReconnectTimer); _wsReconnectTimer = null; }
                 console.log('[Frontend WS] 연결됨');
+                updateWsStatusLed();
                 // 연결 시 큐 상태 동기화
                 fetch('/api/queue/status').then(r => r.json()).then(data => {
                     handleQueueUpdated(data);
@@ -12242,11 +12271,13 @@
             
             frontendWs.onclose = function() {
                 console.log('[Frontend WS] 연결 종료, 자동 재연결 예정');
+                updateWsStatusLed();
                 _scheduleWsReconnect(2000);
             };
 
             frontendWs.onerror = function(error) {
                 console.error('[Frontend WS] 에러:', error);
+                updateWsStatusLed();
                 // 일부 환경에서는 onerror만 발생하고 onclose가 오지 않아
                 // 자동 재연결이 안 걸릴 수 있어, 명시적으로 close 하여 onclose(재연결) 경로를 태운다.
                 try { frontendWs.close(); } catch(e) {}
@@ -15217,10 +15248,26 @@
             if (restoreManualBtn) restoreManualBtn.style.display = restoreManualOn ? '' : 'none';
         }
 
+        function _setWsReconnectBtnLabel(label) {
+            const btn = document.getElementById('ws-reconnect-btn');
+            if (!btn) return;
+            // LED span은 첫 번째 자식으로 유지하고 텍스트 라벨만 교체
+            const led = btn.querySelector('#ws-status-led');
+            btn.textContent = '';
+            if (led) btn.appendChild(led);
+            else {
+                const fresh = document.createElement('span');
+                fresh.id = 'ws-status-led';
+                fresh.style.cssText = 'width:9px; height:9px; border-radius:50%; background:#e53935; box-shadow:0 0 4px rgba(229,57,53,0.7); flex:0 0 auto; transition:background .2s, box-shadow .2s;';
+                btn.appendChild(fresh);
+            }
+            btn.appendChild(document.createTextNode(' ' + label));
+            updateWsStatusLed();
+        }
         async function reconnectFrontendWs() {
             const btn = document.getElementById('ws-reconnect-btn');
             btn.disabled = true;
-            btn.textContent = '🔌 연결 중...';
+            _setWsReconnectBtnLabel('🔌 연결 중...');
             try {
                 if (frontendWs) {
                     try { frontendWs.onclose = null; frontendWs.close(); } catch(e) {}
@@ -15236,7 +15283,7 @@
                 showToast(`WS 재연결 오류: ${e.message}`, 'error');
             } finally {
                 btn.disabled = false;
-                btn.textContent = '🔌 WS 재연결';
+                _setWsReconnectBtnLabel('🔌 WS 재연결');
             }
         }
 
@@ -15738,7 +15785,9 @@
         }
 
         function _updateLighbdWindowBadge() {
-            const activeCount = [..._lighbdLlmStreams.values()].filter(s => s.active).length;
+            // stream_id 없는 pipeline lifecycle(legacy)는 실제 provider 스트림이 아니다.
+            const activeCount = [..._lighbdLlmStreams.values()]
+                .filter(s => s.active && s.id !== 'legacy').length;
             const badge = document.getElementById('lighbd-window-badge');
             if (!badge) return;
             badge.textContent = String(activeCount);
@@ -15802,8 +15851,10 @@
                 const serverIds = new Set(streams.map(item => String(item.stream_id || '')).filter(Boolean));
 
                 // 서버에 없는 활성 항목은 WS 단절 중 이미 끝난 스트림이므로 제거한다.
+                // legacy도 예외로 남기지 않는다. terminal 이벤트를 한 번 놓치면 영구
+                // 활성 카드가 되는 원인이므로 서버 스냅샷을 최종 권위로 사용한다.
                 for (const [id, state] of _lighbdLlmStreams) {
-                    if (id !== 'legacy' && state.active && !serverIds.has(id)) {
+                    if (state.active && !serverIds.has(id)) {
                         _lighbdLlmStreams.delete(id);
                     }
                 }
@@ -16079,7 +16130,7 @@
             // 서버에서 실제 활성 상태인 최신 스트림만 최대 20개 표시한다.
             // 아직 첫 delta가 오지 않은 항목도 중지/재시도할 수 있도록 포함한다.
             const streaming = [..._lighbdLlmStreams.values()]
-                .filter(s => s.active);
+                .filter(s => s.active && s.id !== 'legacy');
             const ordered = streaming.slice(-_LIGHTBD_LIVE_MAX_CARDS);
 
             // 요약

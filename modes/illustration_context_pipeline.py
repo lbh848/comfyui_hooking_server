@@ -1209,7 +1209,8 @@ def parse_call1_analysis(
     if raw is None:
         return None
     canonical = _canonical_name_map(character_names)
-    errors = []
+    warnings = []
+    fallback_errors = []
 
     def normalize_name(value) -> str:
         name = str(value or "").strip()
@@ -1236,15 +1237,16 @@ def parse_call1_analysis(
             confidence = 0.0
         if not name or name.casefold() in current_names:
             continue
+        if confidence < 0.70:
+            warnings.append(f"현재 캐릭터 신뢰도 낮아 폐기: {name}={confidence:.2f}")
+            continue
         current_names.add(name.casefold())
         current_characters.append({"name": name, "confidence": confidence})
-        if confidence < 0.70:
-            errors.append(f"현재 캐릭터 신뢰도 낮음: {name}={confidence:.2f}")
 
     assignments = []
     for index, item in enumerate(raw.get("reference_assignments") or [], start=1):
         if not isinstance(item, dict):
-            errors.append(f"지칭 할당 형식 오류: index={index}")
+            warnings.append(f"지칭 할당 형식 오류로 폐기: index={index}")
             continue
         segment_id = str(item.get("segment_id") or "").strip()
         surface = str(item.get("surface") or "")
@@ -1257,20 +1259,26 @@ def parse_call1_analysis(
             occurrence = 1
             confidence = 0.0
         if segment_id not in segments or not surface or not name:
-            errors.append(
-                f"지칭 할당 필수값 오류: index={index}, segment={segment_id!r}, "
+            warnings.append(
+                f"지칭 할당 필수값 오류로 폐기: index={index}, segment={segment_id!r}, "
                 f"surface={surface!r}, name={name!r}"
             )
             continue
         if surface not in str(segments[segment_id].get("text") or ""):
-            errors.append(f"지칭 원문 불일치: segment={segment_id}, surface={surface!r}")
+            warnings.append(
+                f"지칭 원문 불일치로 폐기: segment={segment_id}, surface={surface!r}"
+            )
             continue
         if canonical and name.casefold() not in canonical:
-            errors.append(f"정식 이름 목록 밖 지칭 대상: {name}")
+            warnings.append(f"정식 이름 목록 밖 지칭 할당으로 폐기: {name}")
+            continue
         if name.casefold() not in replacement.casefold():
             replacement = name
         if confidence < 0.70:
-            errors.append(f"지칭 할당 신뢰도 낮음: {segment_id}/{surface}={confidence:.2f}")
+            warnings.append(
+                f"지칭 할당 신뢰도 낮아 폐기: {segment_id}/{surface}={confidence:.2f}"
+            )
+            continue
         assignments.append({
             "ref_id": f"REF_{len(assignments) + 1:03d}",
             "segment_id": segment_id,
@@ -1288,14 +1296,14 @@ def parse_call1_analysis(
         if _contains_canonical_name(current_context, name) and folded not in current_names:
             current_names.add(folded)
             current_characters.append({"name": name, "confidence": 1.0})
-            errors.append(f"CALL1이 원문 정식 이름을 누락해 서버가 보완: {name}")
+            warnings.append(f"CALL1이 원문 정식 이름을 누락해 서버가 보완: {name}")
 
     history_names = {name.casefold() for name in history_characters}
     for folded, name in canonical.items():
         if _contains_canonical_name(history_context, name) and folded not in history_names:
             history_names.add(folded)
             history_characters.append(name)
-            errors.append(f"CALL1이 과거 히스토리 정식 이름을 누락해 서버가 보완: {name}")
+            warnings.append(f"CALL1이 과거 히스토리 정식 이름을 누락해 서버가 보완: {name}")
 
     wardrobe_events = []
     changing_operations = {
@@ -1305,7 +1313,7 @@ def parse_call1_analysis(
     }
     for index, item in enumerate(raw.get("wardrobe_events") or [], start=1):
         if not isinstance(item, dict):
-            errors.append(f"복장 사건 형식 오류: index={index}")
+            warnings.append(f"복장 사건 형식 오류로 폐기: index={index}")
             continue
         segment_id = str(item.get("segment_id") or "").strip()
         name = normalize_name(item.get("character") or item.get("name"))
@@ -1320,7 +1328,7 @@ def parse_call1_analysis(
         except Exception:
             confidence = 0.0
         if not name:
-            errors.append(f"복장 사건 캐릭터 없음: index={index}")
+            warnings.append(f"복장 사건 캐릭터 없어 폐기: index={index}")
             continue
         if operation in changing_operations:
             segment_text = str((segments.get(segment_id) or {}).get("text") or "")
@@ -1329,13 +1337,16 @@ def parse_call1_analysis(
                 or not evidence
                 or _normalize_analysis_text(evidence) not in _normalize_analysis_text(segment_text)
             ):
-                errors.append(
-                    f"복장 변경 근거 불일치: character={name}, operation={operation}, "
+                warnings.append(
+                    f"복장 변경 근거 불일치로 폐기: character={name}, operation={operation}, "
                     f"segment={segment_id!r}"
                 )
                 continue
         if confidence < 0.70:
-            errors.append(f"복장 사건 신뢰도 낮음: {name}/{operation}={confidence:.2f}")
+            warnings.append(
+                f"복장 사건 신뢰도 낮아 폐기: {name}/{operation}={confidence:.2f}"
+            )
+            continue
         wardrobe_events.append({
             "segment_id": segment_id,
             "character": name,
@@ -1351,9 +1362,9 @@ def parse_call1_analysis(
         unresolved = [unresolved]
     unresolved = [deepcopy(item) for item in unresolved if item not in (None, "", {})]
     if unresolved:
-        errors.append(f"미해결 지칭 {len(unresolved)}건")
+        fallback_errors.append(f"미해결 지칭 {len(unresolved)}건")
     if character_names.strip() and not current_characters:
-        errors.append("현재 캐릭터 목록이 비어 있음")
+        fallback_errors.append("현재 캐릭터 목록이 비어 있음")
 
     return {
         "reference_assignments": assignments,
@@ -1361,8 +1372,11 @@ def parse_call1_analysis(
         "current_characters": current_characters,
         "wardrobe_events": wardrobe_events,
         "unresolved_references": unresolved,
-        "validation_errors": errors,
-        "fallback_required": bool(errors),
+        "validation_warnings": warnings,
+        "fallback_errors": fallback_errors,
+        # 기존 소비자를 위해 한 목록도 유지하되, 폴백 여부는 치명 오류만 결정한다.
+        "validation_errors": warnings + fallback_errors,
+        "fallback_required": bool(fallback_errors),
     }
 
 
@@ -1607,6 +1621,183 @@ def apply_wardrobe_events(
     return states
 
 
+_OUTFIT_BODY_STATES = {
+    "clothed", "partial", "nude", "topless", "bottomless",
+    "underwear_only", "unknown",
+}
+
+
+def _normalize_outfit_state(value) -> dict:
+    """Normalize a logical wardrobe snapshot without interpreting prose tags."""
+    raw = value if isinstance(value, dict) else {}
+    body_state = str(raw.get("body_state") or "unknown").strip().lower()
+    if body_state not in _OUTFIT_BODY_STATES:
+        body_state = "unknown"
+
+    def normalized_items(field: str) -> list[str]:
+        items = raw.get(field) or []
+        if not isinstance(items, list):
+            items = [items]
+        result = []
+        seen = set()
+        for item in items:
+            text = str(item or "").strip()
+            folded = text.casefold()
+            if text and folded not in seen:
+                seen.add(folded)
+                result.append(text)
+        return result
+
+    return {
+        "body_state": body_state,
+        "worn": normalized_items("worn"),
+        "removed": normalized_items("removed"),
+    }
+
+
+def _outfit_state_is_known(value) -> bool:
+    state = _normalize_outfit_state(value)
+    return bool(
+        state["body_state"] != "unknown"
+        or state["worn"]
+        or state["removed"]
+    )
+
+
+def _outfit_states_equal(left, right) -> bool:
+    left_state = _normalize_outfit_state(left)
+    right_state = _normalize_outfit_state(right)
+    return (
+        left_state["body_state"] == right_state["body_state"]
+        and {item.casefold() for item in left_state["worn"]}
+        == {item.casefold() for item in right_state["worn"]}
+        and {item.casefold() for item in left_state["removed"]}
+        == {item.casefold() for item in right_state["removed"]}
+    )
+
+
+def _character_state(states: dict, name: str) -> dict:
+    folded = str(name or "").strip().casefold()
+    for key, value in (states or {}).items():
+        if not isinstance(value, dict):
+            continue
+        canonical = str(value.get("canonical_name") or key).strip()
+        if canonical.casefold() == folded:
+            return value
+    return {}
+
+
+def bind_scene_plan_wardrobes(
+    scene_plan: list[dict],
+    segment_order: list[str],
+    state_before: dict,
+    current_characters: list[dict],
+    wardrobe_events: list[dict],
+    current_message_id: str,
+    selected_reference: str = "",
+) -> list[dict]:
+    """Freeze one server-authoritative wardrobe snapshot per planned scene.
+
+    Tracked state plus CALL1 events wins.  Only when the tracked state is still
+    unknown may CALL2-PLAN provide the initial semantic snapshot; DETAIL never
+    gets to revise either source.
+    """
+    rank = {str(segment_id): index for index, segment_id in enumerate(segment_order)}
+    normalized_plan = []
+    plan_initial_outfits: dict[str, dict] = {}
+    for plan_index, raw_plan in enumerate(scene_plan, start=1):
+        plan = deepcopy(raw_plan)
+        anchor_segment = str(plan.get("anchor_segment") or "").strip()
+        if anchor_segment not in rank:
+            print(
+                f"[ILLUST_CONTEXT:CALL2_PLAN] 복장 스냅샷 기준 segment 없음: "
+                f"plan={plan_index}, anchor={anchor_segment!r}, "
+                f"segments={list(rank)}"
+            )
+            raise ValueError(
+                f"scene_plan[{plan_index}] 복장 기준 segment 없음: {anchor_segment!r}"
+            )
+
+        applicable_events = []
+        for event in wardrobe_events or []:
+            event_segment = str(event.get("segment_id") or "").strip()
+            if event_segment not in rank:
+                print(
+                    f"[ILLUST_CONTEXT:CALL2_PLAN] 복장 이벤트 segment를 찾지 못해 "
+                    f"장면 스냅샷에서 제외: anchor={anchor_segment}, "
+                    f"event_segment={event_segment!r}, event={event!r}"
+                )
+                continue
+            if rank[event_segment] <= rank[anchor_segment]:
+                applicable_events.append(event)
+
+        plan_names = [str(name or "").strip() for name in plan.get("characters") or []]
+        plan_names = [name for name in plan_names if name]
+        all_current = list(current_characters or []) + [
+            {"name": name, "confidence": 1.0}
+            for name in plan_names
+        ]
+        states_at_scene = apply_wardrobe_events(
+            state_before,
+            all_current,
+            applicable_events,
+            current_message_id,
+            selected_reference=selected_reference,
+        )
+        planned_outfits = plan.get("planned_outfits") or {}
+        wardrobe_snapshot = {}
+        wardrobe_sources = {}
+        for name in plan_names:
+            tracked = _character_state(states_at_scene, name)
+            tracked_outfit = _normalize_outfit_state(
+                tracked.get("current_wardrobe") if isinstance(tracked, dict) else {}
+            )
+            if _outfit_state_is_known(tracked_outfit):
+                outfit = tracked_outfit
+                source = "call1_timeline"
+            else:
+                last_visual = (
+                    tracked.get("last_visual_reference")
+                    if isinstance(tracked, dict)
+                    else {}
+                ) or {}
+                visual_outfit = _normalize_outfit_state(last_visual.get("outfit_state"))
+                if _outfit_state_is_known(visual_outfit):
+                    outfit = visual_outfit
+                    source = "tracked_last_visual"
+                else:
+                    folded_name = name.casefold()
+                    if folded_name in plan_initial_outfits:
+                        outfit = deepcopy(plan_initial_outfits[folded_name])
+                        source = "call2_plan_carried"
+                    else:
+                        proposal = next((
+                            value
+                            for proposal_name, value in planned_outfits.items()
+                            if str(proposal_name).casefold() == folded_name
+                        ), {})
+                        outfit = _normalize_outfit_state(proposal)
+                        source = "call2_plan_initial"
+                        plan_initial_outfits[folded_name] = deepcopy(outfit)
+                        if not _outfit_state_is_known(outfit):
+                            print(
+                                f"[ILLUST_CONTEXT:CALL2_PLAN] 추적·PLAN 복장 상태가 모두 unknown: "
+                                f"plan={plan_index}, anchor={anchor_segment}, character={name}"
+                            )
+            wardrobe_snapshot[name] = outfit
+            wardrobe_sources[name] = source
+
+        plan["wardrobe_snapshot"] = wardrobe_snapshot
+        plan["wardrobe_sources"] = wardrobe_sources
+        normalized_plan.append(plan)
+
+    print(
+        f"[ILLUST_CONTEXT:CALL2_PLAN] 장면별 복장 스냅샷 확정: "
+        f"plans={[(item.get('plan_id'), item.get('anchor_segment'), item.get('slot'), item.get('wardrobe_sources')) for item in normalized_plan]}"
+    )
+    return normalized_plan
+
+
 def _last_visual_by_character(descriptors: list[dict]) -> dict:
     result = {}
     ordered = sorted(
@@ -1808,6 +1999,110 @@ def _find_position_span(
     if not match:
         return None
     return start_offset + match.start(), start_offset + match.end()
+
+
+def build_segment_slot_map(
+    slotted_context: str,
+    segments: dict[str, dict],
+) -> tuple[dict[str, int], str, str]:
+    """Bind every Cxxx segment to its server-owned insertion slot.
+
+    A slot marker is the insertion boundary immediately after the preceding
+    prose.  Therefore each segment uses the first following marker; only text
+    after the final marker falls back to that last marker.  CALL2 never derives
+    a slot number from the numeric part of a segment ID.
+    """
+    source = str(slotted_context or "")
+    markers = list(_SLOT_MARKER_RE.finditer(source))
+    if not markers:
+        reason = "segment-slot 매핑 대상에 Slot 마커가 없음"
+        print(f"[ILLUST_CONTEXT:CALL2_PLAN] {reason}")
+        return {}, "", reason
+    if not segments:
+        reason = "segment-slot 매핑 대상 segment가 없음"
+        print(f"[ILLUST_CONTEXT:CALL2_PLAN] {reason}")
+        return {}, "", reason
+
+    projected, source_indexes = _slotless_projection_with_source_indexes(source)
+    _rendered_projection, projected_segments = _segment_current_context(projected)
+    requested_items = list(segments.items())
+    projected_items = list(projected_segments.items())
+    spans: list[tuple[str, int, int, str]] = []
+
+    if len(requested_items) == len(projected_items):
+        for (segment_id, segment), (_projected_id, projected_segment) in zip(
+            requested_items,
+            projected_items,
+        ):
+            spans.append((
+                str(segment_id),
+                int(projected_segment["start"]),
+                int(projected_segment["end"]),
+                str(segment.get("text") or ""),
+            ))
+    else:
+        print(
+            f"[ILLUST_CONTEXT:CALL2_PLAN] 슬롯 투영 segment 수가 달라 "
+            f"순차 본문 앵커로 매핑: requested={len(requested_items)}, "
+            f"projected={len(projected_items)}"
+        )
+        projection_cursor = 0
+        for segment_id, segment in requested_items:
+            text = str(segment.get("text") or "")
+            span = _find_position_span(projected, text, projection_cursor)
+            if span is None:
+                reason = (
+                    f"segment-slot 본문 위치를 찾지 못함: segment={segment_id}, "
+                    f"cursor={projection_cursor}, text={text!r}"
+                )
+                print(f"[ILLUST_CONTEXT:CALL2_PLAN] {reason}")
+                return {}, "", reason
+            start, end = span
+            spans.append((str(segment_id), start, end, text))
+            projection_cursor = end
+
+    mapping: dict[str, int] = {}
+    rendered = []
+    for segment_id, projected_start, projected_end, text in spans:
+        if (
+            projected_start < 0
+            or projected_end <= projected_start
+            or projected_end > len(source_indexes)
+        ):
+            reason = (
+                f"segment-slot 투영 범위 오류: segment={segment_id}, "
+                f"span=({projected_start},{projected_end}), "
+                f"projection_length={len(source_indexes)}"
+            )
+            print(f"[ILLUST_CONTEXT:CALL2_PLAN] {reason}")
+            return {}, "", reason
+        source_start = source_indexes[projected_start]
+        source_end = source_indexes[projected_end - 1] + 1
+        following = next(
+            (marker for marker in markers if marker.start() >= source_end),
+            None,
+        )
+        preceding = next(
+            (marker for marker in reversed(markers) if marker.end() <= source_start),
+            None,
+        )
+        marker = following or preceding
+        if marker is None:
+            reason = (
+                f"segment 주변 Slot 마커를 찾지 못함: segment={segment_id}, "
+                f"source_span=({source_start},{source_end})"
+            )
+            print(f"[ILLUST_CONTEXT:CALL2_PLAN] {reason}")
+            return {}, "", reason
+        slot = int(marker.group(1))
+        mapping[segment_id] = slot
+        rendered.append(f"[{segment_id} slot={slot}]\n{text}")
+
+    print(
+        f"[ILLUST_CONTEXT:CALL2_PLAN] segment-slot 권위 매핑 생성: "
+        f"segments={len(mapping)}, slots={sorted(set(mapping.values()))}"
+    )
+    return mapping, "\n\n".join(rendered), ""
 
 
 def _merge_call1_output_into_slotted(
@@ -2247,6 +2542,7 @@ def parse_call2_plan(
     toggles: dict,
     target_slotted: str,
     *,
+    segment_slot_map: dict[str, int] | None = None,
     log_errors: bool = True,
 ) -> tuple[dict | None, str]:
     """Parse a global CALL2 plan or recognize a legacy complete TOON response."""
@@ -2298,14 +2594,70 @@ def parse_call2_plan(
             if log_errors:
                 print(f"[ILLUST_CONTEXT:CALL2_PLAN] {reason}: item={item!r}")
             return None, reason
-        try:
-            slot = int(item.get("slot"))
-        except Exception as e:
-            reason = f"scene_plan[{index}] slot 파싱 실패: {e}"
-            if log_errors:
-                print(f"[ILLUST_CONTEXT:CALL2_PLAN] {reason}: item={item!r}")
-                traceback.print_exc()
-            return None, reason
+        source_segments = item.get("source_segments") or []
+        if not isinstance(source_segments, list):
+            source_segments = [source_segments]
+        source_segments = [
+            str(value).strip() for value in source_segments if str(value).strip()
+        ]
+        anchor_segment = str(item.get("anchor_segment") or "").strip()
+        if segment_slot_map is not None:
+            if not anchor_segment:
+                reason = f"scene_plan[{index}] anchor_segment가 비어 있음"
+                if log_errors:
+                    print(f"[ILLUST_CONTEXT:CALL2_PLAN] {reason}: item={item!r}")
+                return None, reason
+            if anchor_segment not in segment_slot_map:
+                reason = (
+                    f"scene_plan[{index}] 매핑 밖 anchor_segment: "
+                    f"anchor={anchor_segment!r}"
+                )
+                if log_errors:
+                    print(
+                        f"[ILLUST_CONTEXT:CALL2_PLAN] {reason}, "
+                        f"mapped_segments={list(segment_slot_map)}"
+                    )
+                return None, reason
+            unknown_segments = [
+                value for value in source_segments if value not in segment_slot_map
+            ]
+            if unknown_segments:
+                reason = (
+                    f"scene_plan[{index}] 매핑 밖 source_segments: "
+                    f"segments={unknown_segments}"
+                )
+                if log_errors:
+                    print(f"[ILLUST_CONTEXT:CALL2_PLAN] {reason}")
+                return None, reason
+            if anchor_segment not in source_segments:
+                reason = (
+                    f"scene_plan[{index}] anchor_segment가 source_segments에 없음: "
+                    f"anchor={anchor_segment!r}, source_segments={source_segments}"
+                )
+                if log_errors:
+                    print(f"[ILLUST_CONTEXT:CALL2_PLAN] {reason}")
+                return None, reason
+            slot = int(segment_slot_map[anchor_segment])
+            if item.get("slot") not in (None, ""):
+                try:
+                    model_slot = int(item.get("slot"))
+                except Exception:
+                    model_slot = None
+                if model_slot != slot and log_errors:
+                    print(
+                        f"[ILLUST_CONTEXT:CALL2_PLAN] 모델 slot을 무시하고 "
+                        f"anchor 권위 매핑 사용: plan={index}, model_slot={item.get('slot')!r}, "
+                        f"anchor={anchor_segment}, server_slot={slot}"
+                    )
+        else:
+            try:
+                slot = int(item.get("slot"))
+            except Exception as e:
+                reason = f"scene_plan[{index}] slot 파싱 실패: {e}"
+                if log_errors:
+                    print(f"[ILLUST_CONTEXT:CALL2_PLAN] {reason}: item={item!r}")
+                    traceback.print_exc()
+                return None, reason
         if slot not in candidate_set:
             reason = f"scene_plan[{index}] 후보 밖 slot: slot={slot}, candidates={candidates}"
             if log_errors:
@@ -2317,15 +2669,60 @@ def parse_call2_plan(
                 print(f"[ILLUST_CONTEXT:CALL2_PLAN] {reason}")
             return None, reason
         seen_slots.add(slot)
-        source_segments = item.get("source_segments") or []
-        if not isinstance(source_segments, list):
-            source_segments = [source_segments]
         characters = item.get("characters") or []
         if not isinstance(characters, list):
             characters = [characters]
-        normalized_characters = [
-            str(value).strip() for value in characters if str(value).strip()
-        ]
+        normalized_characters = []
+        planned_outfits = {}
+        for character_index, value in enumerate(characters, start=1):
+            if isinstance(value, dict):
+                name = str(value.get("name") or "").strip()
+                raw_outfit = value.get("outfit_state")
+                if segment_slot_map is not None:
+                    if not isinstance(raw_outfit, dict):
+                        reason = (
+                            f"scene_plan[{index}].characters[{character_index}] "
+                            f"outfit_state가 object가 아님"
+                        )
+                        if log_errors:
+                            print(f"[ILLUST_CONTEXT:CALL2_PLAN] {reason}: item={value!r}")
+                        return None, reason
+                    body_state = str(raw_outfit.get("body_state") or "").strip().lower()
+                    if body_state not in _OUTFIT_BODY_STATES:
+                        reason = (
+                            f"scene_plan[{index}].characters[{character_index}] "
+                            f"body_state 오류: {body_state!r}"
+                        )
+                        if log_errors:
+                            print(f"[ILLUST_CONTEXT:CALL2_PLAN] {reason}")
+                        return None, reason
+                    if not isinstance(raw_outfit.get("worn", []), list) or not isinstance(
+                        raw_outfit.get("removed", []),
+                        list,
+                    ):
+                        reason = (
+                            f"scene_plan[{index}].characters[{character_index}] "
+                            "worn/removed가 list가 아님"
+                        )
+                        if log_errors:
+                            print(f"[ILLUST_CONTEXT:CALL2_PLAN] {reason}")
+                        return None, reason
+                if name:
+                    planned_outfits[name] = _normalize_outfit_state(raw_outfit)
+            else:
+                name = str(value or "").strip()
+                if segment_slot_map is not None:
+                    reason = (
+                        f"scene_plan[{index}].characters[{character_index}]가 "
+                        "name/outfit_state object가 아님"
+                    )
+                    if log_errors:
+                        print(f"[ILLUST_CONTEXT:CALL2_PLAN] {reason}: item={value!r}")
+                    return None, reason
+            if name and name.casefold() not in {
+                existing.casefold() for existing in normalized_characters
+            }:
+                normalized_characters.append(name)
         scene_brief = str(item.get("scene_brief") or "").strip()
         if not normalized_characters or not scene_brief:
             reason = (
@@ -2338,8 +2735,10 @@ def parse_call2_plan(
         scene_plan.append({
             "plan_id": str(item.get("plan_id") or f"S{index:03d}").strip() or f"S{index:03d}",
             "slot": slot,
-            "source_segments": [str(value).strip() for value in source_segments if str(value).strip()],
+            "anchor_segment": anchor_segment,
+            "source_segments": source_segments,
             "characters": normalized_characters,
+            "planned_outfits": planned_outfits,
             "scene_brief": scene_brief,
         })
 
@@ -2399,6 +2798,7 @@ def _parse_call2_detail_output(
     assigned_slots: list[int],
     assigned_plan_ids: list[str],
     source: str,
+    assigned_wardrobes_by_slot: dict[int, dict[str, dict]] | None = None,
 ) -> tuple[list[dict], str]:
     local_toggles = deepcopy(toggles)
     local_toggles.update({
@@ -2443,6 +2843,35 @@ def _parse_call2_detail_output(
         # plan_id는 모델 출력 계약이 아니라 서버 내부 식별자다. 검증을 통과한
         # 고유 slot을 신뢰하고 전역 PLAN에서 확정한 값을 항상 주입한다.
         item["plan_id"] = plan_id_by_slot[slot]
+        expected_wardrobes = (assigned_wardrobes_by_slot or {}).get(slot) or {}
+        if expected_wardrobes:
+            expected_by_name = {
+                str(name).strip().casefold(): (str(name).strip(), _normalize_outfit_state(outfit))
+                for name, outfit in expected_wardrobes.items()
+                if str(name).strip()
+            }
+            actual_by_name = {
+                str(character.get("name") or "").strip().casefold(): character
+                for character in item.get("characters") or []
+                if str(character.get("name") or "").strip()
+            }
+            if set(actual_by_name) != set(expected_by_name):
+                return [], (
+                    f"CALL2-DETAIL PLAN 캐릭터 불일치: slot={slot}, "
+                    f"expected={[value[0] for value in expected_by_name.values()]}, "
+                    f"actual={[character.get('name') for character in actual_by_name.values()]}"
+                )
+            for folded, (expected_name, expected_outfit) in expected_by_name.items():
+                character = actual_by_name[folded]
+                actual_outfit = character.get("outfit_state")
+                if not _outfit_states_equal(actual_outfit, expected_outfit):
+                    return [], (
+                        f"CALL2-DETAIL 권위 복장 불일치: slot={slot}, "
+                        f"character={expected_name}, expected={expected_outfit}, "
+                        f"actual={_normalize_outfit_state(actual_outfit)}"
+                    )
+                # 목록 순서나 대소문자가 흔들려도 서버가 확정한 표현을 보존한다.
+                character["outfit_state"] = deepcopy(expected_outfit)
     return [by_slot[slot] for slot in assigned_slots], ""
 
 
@@ -2524,6 +2953,10 @@ async def _run_parallel_call2_details(
         plans = list(job["plans"])
         assigned_slots = [int(item["slot"]) for item in plans]
         assigned_plan_ids = [str(item["plan_id"]) for item in plans]
+        assigned_wardrobes_by_slot = {
+            int(item["slot"]): deepcopy(item.get("wardrobe_snapshot") or {})
+            for item in plans
+        }
         messages = deepcopy(call2_context_messages)
         if messages and messages[0].get("role") == "system":
             messages[0]["content"] = str(messages[0].get("content") or "") + (
@@ -2540,8 +2973,11 @@ async def _run_parallel_call2_details(
                 "# ASSIGNED GLOBAL SCENE PLAN\n"
                 + json.dumps(plans, ensure_ascii=False, indent=2)
                 + "\n\nExpand each plan into complete Danbooru-style character tags, camera, scene, "
-                "outfit_state, and supplement. Copy slot exactly into every scene object and preserve "
-                "plan order. The server assigns plan_id from the validated slot.\n\n"
+                "outfit_state, and supplement. wardrobe_snapshot is authoritative: copy each named "
+                "character's body_state, worn, and removed values exactly, and make visible attire tags "
+                "consistent with that snapshot. Never infer, replace, or advance wardrobe state in DETAIL. "
+                "Copy slot exactly into every scene object and preserve plan order. The server assigns "
+                "plan_id from the validated slot.\n\n"
                 "# OUTPUT FORMAT\n"
                 + call2_format
                 + "\n\nReturn one <lb-xnai> block containing scenes only. Omit keyvis."
@@ -2555,6 +2991,7 @@ async def _run_parallel_call2_details(
                 assigned_slots,
                 assigned_plan_ids,
                 f"CALL2-DETAIL-{index}-RETRY-CHECK",
+                assigned_wardrobes_by_slot,
             )
             return bool(parsed), reason or "CALL2-DETAIL 파싱 실패"
 
@@ -2575,6 +3012,7 @@ async def _run_parallel_call2_details(
             assigned_slots,
             assigned_plan_ids,
             f"CALL2-DETAIL-{index}",
+            assigned_wardrobes_by_slot,
         )
         if not descriptors:
             raise ValueError(reason or f"CALL2-DETAIL {index}/{total} 파싱 실패")
@@ -3048,7 +3486,14 @@ async def _call_pipeline_llm(
             call_kwargs["json_mode"] = True
         if stream_observer is not None:
             call_kwargs["stream_observer"] = stream_observer
-        result = await llm_service.callLLMTask(task_key, messages, **call_kwargs)
+        stream_metadata_token = llm_service._stream_metadata_ctx.set({
+            "task_key": task_key,
+            "call_name": call_name,
+        })
+        try:
+            result = await llm_service.callLLMTask(task_key, messages, **call_kwargs)
+        finally:
+            llm_service._stream_metadata_ctx.reset(stream_metadata_token)
         if not result or str(result).startswith("[LLM 실패]"):
             print(f"[ILLUST_CONTEXT:{call_name}] LLM 호출 실패: {result}")
             if stream_notify:
@@ -3084,6 +3529,20 @@ async def _call_pipeline_llm(
         history_logged = True
         return str(result)
     except asyncio.CancelledError:
+        if stream_notify and not terminal_notified:
+            try:
+                await _notify({
+                    "type": "cancelled",
+                    "call_name": call_name,
+                    "reason": "parent_cancelled",
+                })
+                terminal_notified = True
+            except Exception as notify_error:
+                print(
+                    f"[ILLUST_CONTEXT:{call_name}] 취소 스트림 알림 실패: "
+                    f"{notify_error}"
+                )
+                traceback.print_exc()
         if history_id and not history_logged:
             elapsed = time.time() - started
             history_record.update({
@@ -3503,7 +3962,7 @@ async def _run_parallel_pipeline_jobs(
 def _merge_call1_shard_values(
     shard_values: list[dict],
     segment_order: list[str],
-) -> tuple[dict, list[str]]:
+) -> tuple[dict, list[str], list[str]]:
     """Merge disjoint CALL1 shard JSON without semantic keyword inference."""
     merged = {
         "reference_assignments": [],
@@ -3512,7 +3971,8 @@ def _merge_call1_shard_values(
         "wardrobe_events": [],
         "unresolved_references": [],
     }
-    errors = []
+    warnings = []
+    fallback_errors = []
     history_seen = set()
     current_by_name: dict[str, dict] = {}
     assignment_by_key: dict[tuple, dict] = {}
@@ -3550,12 +4010,12 @@ def _merge_call1_shard_values(
 
         for item in raw.get("reference_assignments") or []:
             if not isinstance(item, dict):
-                errors.append(f"CALL1 shard {shard_index} 지칭 할당 형식 오류")
+                warnings.append(f"CALL1 shard {shard_index} 지칭 할당 형식 오류로 폐기")
                 continue
             segment_id = str(item.get("segment_id") or "").strip()
             if segment_id not in assigned_ids:
-                errors.append(
-                    f"CALL1 shard {shard_index} 담당 밖 지칭 할당: segment={segment_id!r}"
+                warnings.append(
+                    f"CALL1 shard {shard_index} 담당 밖 지칭 할당 폐기: segment={segment_id!r}"
                 )
                 continue
             key = (
@@ -3567,18 +4027,18 @@ def _merge_call1_shard_values(
             if previous is not None and str(previous.get("canonical_name") or "").casefold() != str(
                 item.get("canonical_name") or item.get("name") or ""
             ).casefold():
-                errors.append(f"CALL1 shard 지칭 충돌: key={key!r}")
+                fallback_errors.append(f"CALL1 shard 지칭 충돌: key={key!r}")
                 continue
             assignment_by_key[key] = deepcopy(item)
 
         for item in raw.get("wardrobe_events") or []:
             if not isinstance(item, dict):
-                errors.append(f"CALL1 shard {shard_index} 복장 이벤트 형식 오류")
+                warnings.append(f"CALL1 shard {shard_index} 복장 이벤트 형식 오류로 폐기")
                 continue
             segment_id = str(item.get("segment_id") or "").strip()
             if segment_id and segment_id not in assigned_ids:
-                errors.append(
-                    f"CALL1 shard {shard_index} 담당 밖 복장 이벤트: segment={segment_id!r}"
+                warnings.append(
+                    f"CALL1 shard {shard_index} 담당 밖 복장 이벤트 폐기: segment={segment_id!r}"
                 )
                 continue
             key = json.dumps(item, ensure_ascii=False, sort_keys=True)
@@ -3591,8 +4051,8 @@ def _merge_call1_shard_values(
                 continue
             segment_id = str(item.get("segment_id") or "").strip()
             if segment_id and segment_id not in assigned_ids:
-                errors.append(
-                    f"CALL1 shard {shard_index} 담당 밖 미해결 지칭: segment={segment_id!r}"
+                warnings.append(
+                    f"CALL1 shard {shard_index} 담당 밖 미해결 지칭 폐기: segment={segment_id!r}"
                 )
                 continue
             key = json.dumps(item, ensure_ascii=False, sort_keys=True)
@@ -3615,7 +4075,7 @@ def _merge_call1_shard_values(
             len(segment_rank),
         )
     )
-    return merged, errors
+    return merged, warnings, fallback_errors
 
 
 async def _run_parallel_call1_analysis(
@@ -3626,7 +4086,7 @@ async def _run_parallel_call1_analysis(
     history_text: str,
     toggles: dict,
     stream_notify,
-) -> tuple[str, list[str]]:
+) -> tuple[str, list[str], list[str]]:
     segment_ids = list(current_segments)
     max_concurrency = int(toggles["call1_parallel_max_concurrency"])
     # 작업 수 = 동시 호출 LLM 수. segment를 max_concurrency개 작업에 서사 순서대로
@@ -3739,8 +4199,11 @@ async def _run_parallel_call1_analysis(
         stream_notify=stream_notify,
         invoke=invoke,
     )
-    merged, merge_errors = _merge_call1_shard_values(shard_values, segment_ids)
-    return json.dumps(merged, ensure_ascii=False), merge_errors
+    merged, merge_warnings, merge_fallback_errors = _merge_call1_shard_values(
+        shard_values,
+        segment_ids,
+    )
+    return json.dumps(merged, ensure_ascii=False), merge_warnings, merge_fallback_errors
 
 
 def _parse_multi_char_layout_response(text: str, expected_names: list[str]) -> dict:
@@ -4685,14 +5148,19 @@ async def build_from_context(
         )
         history_text = _history_messages_text(context_slice)
         parallel_call1_used = False
-        parallel_merge_errors: list[str] = []
+        parallel_merge_warnings: list[str] = []
+        parallel_merge_fallback_errors: list[str] = []
         should_parallel_call1 = (
             bool(toggles.get("call1_parallel_enabled"))
             and len(current_segments) > 1
         )
         if should_parallel_call1:
             try:
-                call1_output, parallel_merge_errors = await _run_parallel_call1_analysis(
+                (
+                    call1_output,
+                    parallel_merge_warnings,
+                    parallel_merge_fallback_errors,
+                ) = await _run_parallel_call1_analysis(
                     call1_system=call1_system,
                     segmented_current=segmented_current,
                     current_segments=current_segments,
@@ -4747,12 +5215,24 @@ async def build_from_context(
                 )
             else:
                 call1_result = parsed_call1
-                if parallel_merge_errors:
-                    parsed_call1["validation_errors"].extend(parallel_merge_errors)
+                if parallel_merge_warnings:
+                    parsed_call1["validation_warnings"].extend(parallel_merge_warnings)
+                    parsed_call1["validation_errors"].extend(parallel_merge_warnings)
+                    print(
+                        f"[ILLUST_CONTEXT:CALL1_PARALLEL] shard 병합 경고(개별 항목 폐기): "
+                        f"warnings={parallel_merge_warnings}"
+                    )
+                if parallel_merge_fallback_errors:
+                    parsed_call1["fallback_errors"].extend(
+                        parallel_merge_fallback_errors
+                    )
+                    parsed_call1["validation_errors"].extend(
+                        parallel_merge_fallback_errors
+                    )
                     parsed_call1["fallback_required"] = True
                     print(
-                        f"[ILLUST_CONTEXT:CALL1_PARALLEL] shard 병합 검증 오류: "
-                        f"errors={parallel_merge_errors}"
+                        f"[ILLUST_CONTEXT:CALL1_PARALLEL] shard 병합 치명 오류: "
+                        f"errors={parallel_merge_fallback_errors}"
                     )
                 wardrobe_events = list(parsed_call1.get("wardrobe_events") or [])
                 resolved_current, assignment_errors, reference_variables = apply_reference_assignments(
@@ -4761,16 +5241,23 @@ async def build_from_context(
                     parsed_call1.get("reference_assignments") or [],
                 )
                 if assignment_errors:
+                    parsed_call1["validation_warnings"].extend(assignment_errors)
                     parsed_call1["validation_errors"].extend(assignment_errors)
-                    parsed_call1["fallback_required"] = True
                     print(
-                        f"[ILLUST_CONTEXT:CALL1] 지칭 치환 검증 실패: errors={assignment_errors}"
+                        f"[ILLUST_CONTEXT:CALL1] 지칭 치환 경고(개별 항목 폐기): "
+                        f"warnings={assignment_errors}"
                     )
                 balanced_fallback = bool(parsed_call1.get("fallback_required"))
+                validation_warnings = parsed_call1.get("validation_warnings") or []
+                if validation_warnings:
+                    print(
+                        f"[ILLUST_CONTEXT:CALL1] 복구 가능한 검증 경고: "
+                        f"warnings={validation_warnings}"
+                    )
                 if balanced_fallback:
                     print(
                         f"[ILLUST_CONTEXT:CALL1] 균형형 폴백 조건 감지: "
-                        f"errors={parsed_call1.get('validation_errors') or []}"
+                        f"errors={parsed_call1.get('fallback_errors') or []}"
                     )
                 enhanced = resolved_current
                 slotted, slotted_assignment_errors = apply_reference_assignments_to_slotted(
@@ -4779,12 +5266,13 @@ async def build_from_context(
                     parsed_call1.get("reference_assignments") or [],
                 )
                 if slotted_assignment_errors:
+                    parsed_call1["validation_warnings"].extend(
+                        slotted_assignment_errors
+                    )
                     parsed_call1["validation_errors"].extend(slotted_assignment_errors)
-                    parsed_call1["fallback_required"] = True
-                    balanced_fallback = True
                     print(
-                        f"[ILLUST_CONTEXT:CALL1] 슬롯 보존 지칭 치환 실패: "
-                        f"errors={slotted_assignment_errors}"
+                        f"[ILLUST_CONTEXT:CALL1] 슬롯 보존 지칭 치환 경고: "
+                        f"warnings={slotted_assignment_errors}"
                     )
         else:
             enhanced = _splice_enhancements(enhanced, call1_output)
@@ -4954,7 +5442,14 @@ async def build_from_context(
                 await progress(31, "call2_plan", "CALL2 전역 장면·키비주얼 계획")
             candidates = candidate_slots(original_slotted)
             plan_messages = deepcopy(call2_context_messages)
-            call2_segment_map, _call2_segments = _segment_current_context(enhanced)
+            _call2_segment_text, _call2_segments = _segment_current_context(enhanced)
+            (
+                call2_segment_slots,
+                call2_segment_map,
+                segment_slot_reason,
+            ) = build_segment_slot_map(slotted, _call2_segments)
+            if not call2_segment_slots:
+                raise ValueError(segment_slot_reason or "CALL2 segment-slot 권위 매핑 실패")
             if plan_messages and plan_messages[0].get("role") == "system":
                 plan_messages[0]["content"] = str(plan_messages[0].get("content") or "") + (
                     "\n\n# CALL2-PLAN override\n"
@@ -4983,8 +5478,9 @@ async def build_from_context(
                     "# GLOBAL CALL2 PLAN\n"
                     f"Candidate slots in narrative order: {json.dumps(candidates)}\n"
                     + scene_count_rule
-                    + " Each selected slot must be unique and must belong to the candidate list. "
-                    "Select at most one scene per semantic visual beat.\n"
+                    + " Select at most one scene per semantic visual beat. Do not invent or output a "
+                    "slot number. Select exactly one anchor_segment for each scene; the server derives "
+                    "the unique slot from the authoritative mapping below.\n"
                     + keyvis_rule
                     + "\n\n# GLOBAL SELECTION POLICY\n"
                     + call2_thoughts
@@ -4995,9 +5491,16 @@ async def build_from_context(
                     '  "scene_plan": [\n'
                     "    {\n"
                     '      "plan_id": "S001",\n'
-                    '      "slot": 0,\n'
+                    '      "anchor_segment": "C001",\n'
                     '      "source_segments": ["C001"],\n'
-                    '      "characters": ["canonical name"],\n'
+                    '      "characters": [{\n'
+                    '        "name": "canonical name",\n'
+                    '        "outfit_state": {\n'
+                    '          "body_state": "clothed|partial|nude|topless|bottomless|underwear_only|unknown",\n'
+                    '          "worn": ["complete logical garment or accessory"],\n'
+                    '          "removed": ["established removed garment"]\n'
+                    "        }\n"
+                    "      }],\n"
                     '      "scene_brief": "objective visual moment to expand"\n'
                     "    }\n"
                     "  ],\n"
@@ -5010,8 +5513,15 @@ async def build_from_context(
                     '    "supplement": "..."\n'
                     "  }\n"
                     "}\n\n"
-                    "Use semantic context and common sense for visual-beat selection; do not use keyword rules.\n\n"
-                    "# SERVER SEGMENT MAP\n"
+                    "anchor_segment must be one exact Cxxx ID from the authoritative map and must also "
+                    "appear in source_segments. For every scene character, decide the complete logical "
+                    "outfit_state at anchor_segment after applying only earlier CURRENT WARDROBE EVENT "
+                    "entries. The server may replace it with stronger tracked state and will freeze the "
+                    "result for DETAIL. Use semantic context and common sense for visual-beat and outfit "
+                    "selection; do not use keyword rules.\n\n"
+                    "# AUTHORITATIVE SEGMENT-SLOT MAP (server-owned; never copy Cxxx digits as slot)\n"
+                    + json.dumps(call2_segment_slots, ensure_ascii=False)
+                    + "\n\n# SERVER SEGMENT MAP\n"
                     + call2_segment_map
                 ),
             })
@@ -5021,6 +5531,7 @@ async def build_from_context(
                     result,
                     toggles,
                     original_slotted,
+                    segment_slot_map=call2_segment_slots,
                     log_errors=False,
                 )
                 return bool(plan), reason or "CALL2-PLAN 파싱 실패"
@@ -5036,6 +5547,7 @@ async def build_from_context(
                 call2_plan_output,
                 toggles,
                 original_slotted,
+                segment_slot_map=call2_segment_slots,
             )
             if parsed_plan is None:
                 raise ValueError(plan_reason or "CALL2-PLAN 파싱 실패")
@@ -5047,6 +5559,15 @@ async def build_from_context(
                     "기존 단일 CALL2 결과로 수용"
                 )
             else:
+                parsed_plan["scene_plan"] = bind_scene_plan_wardrobes(
+                    list(parsed_plan["scene_plan"]),
+                    list(_call2_segments),
+                    selected_states,
+                    call1_result.get("current_characters") or [],
+                    wardrobe_events,
+                    str((persistent_history or {}).get("current_message_id") or ""),
+                    selected_reference=call2_reference,
+                )
                 parallel_stage = "CALL2-DETAIL"
                 if progress:
                     await progress(
