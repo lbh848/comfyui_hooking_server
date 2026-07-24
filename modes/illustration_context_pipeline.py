@@ -65,8 +65,27 @@ DEFAULT_TOGGLES = {
     "call1_backtranslate_slow_retry_condition_operator": "and",
     "call1_backtranslate_failure_strategy": "fallback",
     "call1_enabled": True,
+    "call1_parallel_enabled": True,
+    "call1_parallel_chunk_size": 3,
+    "call1_parallel_max_concurrency": 3,
+    "call1_parallel_slow_retry_enabled": False,
+    "call1_parallel_slow_retry_remaining": 1,
+    "call1_parallel_slow_retry_progress_enabled": True,
+    "call1_parallel_slow_retry_progress_threshold": 50,
+    "call1_parallel_slow_retry_tps_enabled": False,
+    "call1_parallel_slow_retry_tps_threshold": 5.0,
+    "call1_parallel_slow_retry_condition_operator": "and",
     "call1_context_turns": 5,
     "call2_context_turns": 5,
+    "call2_parallel_enabled": True,
+    "call2_parallel_max_concurrency": 3,
+    "call2_parallel_slow_retry_enabled": False,
+    "call2_parallel_slow_retry_remaining": 1,
+    "call2_parallel_slow_retry_progress_enabled": True,
+    "call2_parallel_slow_retry_progress_threshold": 50,
+    "call2_parallel_slow_retry_tps_enabled": False,
+    "call2_parallel_slow_retry_tps_threshold": 5.0,
+    "call2_parallel_slow_retry_condition_operator": "and",
     "call3_context_turns": 5,
     "call3_enabled": True,
     "speak_enabled": True,
@@ -268,6 +287,19 @@ def merged_toggles(value: dict | None) -> dict:
         )
         condition_operator = "and"
     out["call1_backtranslate_slow_retry_condition_operator"] = condition_operator
+    for prefix, label in (
+        ("call1_parallel", "CALL1 병렬"),
+        ("call2_parallel", "CALL2 병렬"),
+    ):
+        operator_key = f"{prefix}_slow_retry_condition_operator"
+        condition_operator = str(out.get(operator_key) or "").strip().lower()
+        if condition_operator not in ("and", "or"):
+            print(
+                f"[ILLUST_CONTEXT:{label}] 지원하지 않는 느린 요청 조건 결합 방식 "
+                f"{condition_operator!r}, and 사용"
+            )
+            condition_operator = "and"
+        out[operator_key] = condition_operator
     try:
         out["call1_backtranslate_max_concurrency"] = max(
             1,
@@ -285,6 +317,27 @@ def merged_toggles(value: dict | None) -> dict:
             0.1,
             min(1000.0, float(out["call1_backtranslate_slow_retry_tps_threshold"])),
         )
+        out["call1_parallel_chunk_size"] = max(
+            1,
+            min(16, int(out["call1_parallel_chunk_size"])),
+        )
+        for prefix in ("call1_parallel", "call2_parallel"):
+            out[f"{prefix}_max_concurrency"] = max(
+                1,
+                min(16, int(out[f"{prefix}_max_concurrency"])),
+            )
+            out[f"{prefix}_slow_retry_remaining"] = max(
+                1,
+                min(16, int(out[f"{prefix}_slow_retry_remaining"])),
+            )
+            out[f"{prefix}_slow_retry_progress_threshold"] = max(
+                1,
+                min(99, int(out[f"{prefix}_slow_retry_progress_threshold"])),
+            )
+            out[f"{prefix}_slow_retry_tps_threshold"] = max(
+                0.1,
+                min(1000.0, float(out[f"{prefix}_slow_retry_tps_threshold"])),
+            )
         out["call1_context_turns"] = max(0, min(30, int(out["call1_context_turns"])))
         # call2/call3 전용 키가 없거나 무효하면 call1 값으로 폴백(하위호환).
         for _ck in ("call2_context_turns", "call3_context_turns"):
@@ -320,6 +373,31 @@ def merged_toggles(value: dict | None) -> dict:
             "call1_backtranslate_slow_retry_tps_threshold": DEFAULT_TOGGLES[
                 "call1_backtranslate_slow_retry_tps_threshold"
             ],
+            "call1_parallel_chunk_size": DEFAULT_TOGGLES["call1_parallel_chunk_size"],
+            "call1_parallel_max_concurrency": DEFAULT_TOGGLES[
+                "call1_parallel_max_concurrency"
+            ],
+            "call1_parallel_slow_retry_remaining": DEFAULT_TOGGLES[
+                "call1_parallel_slow_retry_remaining"
+            ],
+            "call1_parallel_slow_retry_progress_threshold": DEFAULT_TOGGLES[
+                "call1_parallel_slow_retry_progress_threshold"
+            ],
+            "call1_parallel_slow_retry_tps_threshold": DEFAULT_TOGGLES[
+                "call1_parallel_slow_retry_tps_threshold"
+            ],
+            "call2_parallel_max_concurrency": DEFAULT_TOGGLES[
+                "call2_parallel_max_concurrency"
+            ],
+            "call2_parallel_slow_retry_remaining": DEFAULT_TOGGLES[
+                "call2_parallel_slow_retry_remaining"
+            ],
+            "call2_parallel_slow_retry_progress_threshold": DEFAULT_TOGGLES[
+                "call2_parallel_slow_retry_progress_threshold"
+            ],
+            "call2_parallel_slow_retry_tps_threshold": DEFAULT_TOGGLES[
+                "call2_parallel_slow_retry_tps_threshold"
+            ],
             "call1_context_turns": DEFAULT_TOGGLES["call1_context_turns"],
             "call2_context_turns": DEFAULT_TOGGLES["call2_context_turns"],
             "call3_context_turns": DEFAULT_TOGGLES["call3_context_turns"],
@@ -328,6 +406,9 @@ def merged_toggles(value: dict | None) -> dict:
             "scene_min": DEFAULT_TOGGLES["scene_min"],
             "scene_max": DEFAULT_TOGGLES["scene_max"],
         })
+    # 예전 UI에서 저장한 고정 배치 크기는 더 이상 사용하지 않는다. CALL2-PLAN이
+    # 선택한 전체 장면 수를 최대 동시 요청 수에 맞춰 자동 분배한다.
+    out.pop("call2_parallel_batch_size", None)
     return out
 
 
@@ -2116,6 +2197,7 @@ def _descriptor(raw: dict, kind: str, fallback_slot: int) -> dict:
         slot_value = fallback_slot
     return {
         "kind": kind,
+        "plan_id": str(raw.get("plan_id") or "").strip(),
         "slot": slot_value,
         "camera": str(raw.get("camera") or "").strip(),
         "scene": str(raw.get("scene") or "").strip(),
@@ -2161,6 +2243,362 @@ def parse_toon_plan(text: str, toggles: dict, source: str = "CALL2") -> list[dic
     if not out:
         print(f"[ILLUST_CONTEXT:{source}] 유효한 keyvis/scene 결과가 없음")
     return out
+
+
+def parse_call2_plan(
+    text: str,
+    toggles: dict,
+    target_slotted: str,
+    *,
+    log_errors: bool = True,
+) -> tuple[dict | None, str]:
+    """Parse a global CALL2 plan or recognize a legacy complete TOON response."""
+    source = str(text or "").strip()
+    if not source:
+        reason = "CALL2-PLAN 응답이 비어 있음"
+        if log_errors:
+            print(f"[ILLUST_CONTEXT:CALL2_PLAN] {reason}")
+        return None, reason
+
+    if re.search(r"<lb[-_]xnai|\[TOON\]", source, re.I):
+        descriptors = parse_toon_plan(source, toggles, "CALL2-PLAN-LEGACY")
+        if descriptors:
+            return {
+                "mode": "legacy",
+                "descriptors": descriptors,
+                "scene_plan": [],
+                "keyvis_descriptor": None,
+            }, ""
+
+    object_start = source.find("{")
+    object_end = source.rfind("}")
+    if object_start < 0 or object_end <= object_start:
+        reason = "CALL2-PLAN JSON object를 찾지 못함"
+        if log_errors:
+            print(f"[ILLUST_CONTEXT:CALL2_PLAN] {reason}: raw={source!r}")
+        return None, reason
+    try:
+        raw = json.loads(source[object_start:object_end + 1])
+    except Exception as e:
+        reason = f"CALL2-PLAN JSON 파싱 실패: {e}"
+        if log_errors:
+            print(f"[ILLUST_CONTEXT:CALL2_PLAN] {reason}: raw={source!r}")
+            traceback.print_exc()
+        return None, reason
+    if not isinstance(raw, dict):
+        reason = f"CALL2-PLAN 루트가 object가 아님: {type(raw).__name__}"
+        if log_errors:
+            print(f"[ILLUST_CONTEXT:CALL2_PLAN] {reason}")
+        return None, reason
+
+    candidates = candidate_slots(target_slotted)
+    candidate_set = set(candidates)
+    scene_plan = []
+    seen_slots = set()
+    for index, item in enumerate(raw.get("scene_plan") or [], start=1):
+        if not isinstance(item, dict):
+            reason = f"scene_plan[{index}]가 object가 아님"
+            if log_errors:
+                print(f"[ILLUST_CONTEXT:CALL2_PLAN] {reason}: item={item!r}")
+            return None, reason
+        try:
+            slot = int(item.get("slot"))
+        except Exception as e:
+            reason = f"scene_plan[{index}] slot 파싱 실패: {e}"
+            if log_errors:
+                print(f"[ILLUST_CONTEXT:CALL2_PLAN] {reason}: item={item!r}")
+                traceback.print_exc()
+            return None, reason
+        if slot not in candidate_set:
+            reason = f"scene_plan[{index}] 후보 밖 slot: slot={slot}, candidates={candidates}"
+            if log_errors:
+                print(f"[ILLUST_CONTEXT:CALL2_PLAN] {reason}")
+            return None, reason
+        if slot in seen_slots:
+            reason = f"scene_plan 중복 slot: {slot}"
+            if log_errors:
+                print(f"[ILLUST_CONTEXT:CALL2_PLAN] {reason}")
+            return None, reason
+        seen_slots.add(slot)
+        source_segments = item.get("source_segments") or []
+        if not isinstance(source_segments, list):
+            source_segments = [source_segments]
+        characters = item.get("characters") or []
+        if not isinstance(characters, list):
+            characters = [characters]
+        normalized_characters = [
+            str(value).strip() for value in characters if str(value).strip()
+        ]
+        scene_brief = str(item.get("scene_brief") or "").strip()
+        if not normalized_characters or not scene_brief:
+            reason = (
+                f"scene_plan[{index}] characters 또는 scene_brief가 비어 있음: "
+                f"characters={normalized_characters}, brief={scene_brief!r}"
+            )
+            if log_errors:
+                print(f"[ILLUST_CONTEXT:CALL2_PLAN] {reason}")
+            return None, reason
+        scene_plan.append({
+            "plan_id": str(item.get("plan_id") or f"S{index:03d}").strip() or f"S{index:03d}",
+            "slot": slot,
+            "source_segments": [str(value).strip() for value in source_segments if str(value).strip()],
+            "characters": normalized_characters,
+            "scene_brief": scene_brief,
+        })
+
+    if not scene_plan:
+        reason = "CALL2-PLAN이 장면을 선택하지 않음"
+        if log_errors:
+            print(f"[ILLUST_CONTEXT:CALL2_PLAN] {reason}")
+        return None, reason
+    scene_plan.sort(key=lambda item: candidates.index(item["slot"]))
+    for index, item in enumerate(scene_plan, start=1):
+        item["plan_id"] = f"S{index:03d}"
+
+    if str(toggles.get("scene_mode")) != "auto":
+        minimum = min(int(toggles["scene_min"]), len(candidates))
+        maximum = min(int(toggles["scene_max"]), len(candidates))
+        if not minimum <= len(scene_plan) <= maximum:
+            reason = (
+                f"CALL2-PLAN 장면 수 범위 위반: count={len(scene_plan)}, "
+                f"required={minimum}..{maximum}"
+            )
+            if log_errors:
+                print(f"[ILLUST_CONTEXT:CALL2_PLAN] {reason}")
+            return None, reason
+
+    keyvis_descriptor = None
+    raw_keyvis = raw.get("keyvis")
+    if toggles.get("key_visual"):
+        if not isinstance(raw_keyvis, dict):
+            reason = "CALL2-PLAN keyvis가 없거나 object가 아님"
+            if log_errors:
+                print(f"[ILLUST_CONTEXT:CALL2_PLAN] {reason}")
+            return None, reason
+        keyvis_descriptor = _descriptor(raw_keyvis, "keyvis", -1)
+        if (
+            not keyvis_descriptor.get("camera")
+            or not keyvis_descriptor.get("scene")
+            or not keyvis_descriptor.get("characters")
+        ):
+            reason = "CALL2-PLAN keyvis 필수 camera/scene/characters가 비어 있음"
+            if log_errors:
+                print(f"[ILLUST_CONTEXT:CALL2_PLAN] {reason}")
+            return None, reason
+    elif isinstance(raw_keyvis, dict):
+        print("[ILLUST_CONTEXT:CALL2_PLAN] Key Visual 비활성인데 keyvis가 반환되어 폐기")
+
+    return {
+        "mode": "plan",
+        "scene_plan": scene_plan,
+        "keyvis_descriptor": keyvis_descriptor,
+        "descriptors": [],
+    }, ""
+
+
+def _parse_call2_detail_output(
+    text: str,
+    toggles: dict,
+    assigned_slots: list[int],
+    assigned_plan_ids: list[str],
+    source: str,
+) -> tuple[list[dict], str]:
+    local_toggles = deepcopy(toggles)
+    local_toggles.update({
+        "key_visual": False,
+        "scene_mode": "manual",
+        "scene_min": len(assigned_slots),
+        "scene_max": len(assigned_slots),
+    })
+    descriptors = [
+        item
+        for item in parse_toon_plan(text, local_toggles, source)
+        if str(item.get("kind") or "") == "scene"
+    ]
+    actual_slots = []
+    for item in descriptors:
+        if (
+            not str(item.get("camera") or "").strip()
+            or not str(item.get("scene") or "").strip()
+            or not (item.get("characters") or [])
+        ):
+            return [], f"CALL2-DETAIL 필수 camera/scene/characters가 비어 있음: item={item!r}"
+        try:
+            actual_slots.append(int(item.get("slot")))
+        except Exception:
+            return [], f"CALL2-DETAIL slot 파싱 실패: item={item!r}"
+    if len(actual_slots) != len(assigned_slots):
+        return [], (
+            f"CALL2-DETAIL 장면 수 불일치: assigned={assigned_slots}, actual={actual_slots}"
+        )
+    if len(set(actual_slots)) != len(actual_slots) or set(actual_slots) != set(assigned_slots):
+        return [], (
+            f"CALL2-DETAIL slot 불일치: assigned={assigned_slots}, actual={actual_slots}"
+        )
+    actual_plan_ids = [str(item.get("plan_id") or "").strip() for item in descriptors]
+    if actual_plan_ids != assigned_plan_ids:
+        return [], (
+            f"CALL2-DETAIL plan_id 불일치: assigned={assigned_plan_ids}, "
+            f"actual={actual_plan_ids}"
+        )
+    by_slot = {int(item["slot"]): item for item in descriptors}
+    return [by_slot[slot] for slot in assigned_slots], ""
+
+
+def descriptors_to_toon(descriptors: list[dict]) -> str:
+    """Serialize merged PLAN/DETAIL descriptors into one diagnostic CALL2 block."""
+    data: dict[str, object] = {"scenes": []}
+    for descriptor in descriptors:
+        raw = {
+            "camera": str(descriptor.get("camera") or ""),
+            "characters": deepcopy(descriptor.get("characters") or []),
+            "scene": str(descriptor.get("scene") or ""),
+            "supplement": str(descriptor.get("supplement") or ""),
+        }
+        if str(descriptor.get("kind") or "") == "keyvis":
+            data["keyvis"] = raw
+        else:
+            if str(descriptor.get("plan_id") or "").strip():
+                raw["plan_id"] = str(descriptor["plan_id"]).strip()
+            raw["slot"] = int(descriptor.get("slot") or 0)
+            data["scenes"].append(raw)
+    body = yaml.safe_dump(
+        data,
+        allow_unicode=True,
+        sort_keys=False,
+        default_flow_style=False,
+    ).strip()
+    return f"<lb-xnai>\n{body}\n</lb-xnai>"
+
+
+def _balanced_call2_scene_plan_batches(
+    scene_plan: list[dict],
+    max_concurrency: int,
+) -> list[list[dict]]:
+    """PLAN 결과를 가능한 DETAIL 작업 수에 서사 순서대로 균등 분배한다."""
+    if not scene_plan:
+        return []
+    worker_count = min(max(1, int(max_concurrency)), len(scene_plan))
+    base_size, larger_worker_count = divmod(len(scene_plan), worker_count)
+    batch_sizes = [
+        base_size + (1 if index < larger_worker_count else 0)
+        for index in range(worker_count)
+    ]
+    batches = []
+    cursor = 0
+    for batch_size in batch_sizes:
+        batches.append(scene_plan[cursor:cursor + batch_size])
+        cursor += batch_size
+    return batches
+
+
+async def _run_parallel_call2_details(
+    *,
+    scene_plan: list[dict],
+    keyvis_descriptor: dict | None,
+    call2_context_messages: list[dict],
+    call2_format: str,
+    toggles: dict,
+    stream_notify,
+) -> tuple[list[dict], list[str]]:
+    max_concurrency = int(toggles["call2_parallel_max_concurrency"])
+    batches = _balanced_call2_scene_plan_batches(scene_plan, max_concurrency)
+    jobs = [{"plans": batch, "weight": len(batch)} for batch in batches]
+    distribution = [len(batch) for batch in batches]
+    print(
+        f"[ILLUST_CONTEXT:CALL2_DETAIL] 상세 장면 배치 준비: "
+        f"selected_scenes={len(scene_plan)}, workers={len(jobs)}, "
+        f"distribution={distribution}"
+    )
+
+    async def invoke(
+        job,
+        index,
+        total,
+        attempt_kind,
+        stream_observer,
+        history_id,
+        job_stream_notify,
+    ):
+        plans = list(job["plans"])
+        assigned_slots = [int(item["slot"]) for item in plans]
+        assigned_plan_ids = [str(item["plan_id"]) for item in plans]
+        messages = deepcopy(call2_context_messages)
+        if messages and messages[0].get("role") == "system":
+            messages[0]["content"] = str(messages[0].get("content") or "") + (
+                "\n\n# Parallel CALL2-DETAIL override\n"
+                f"The global planner already selected the visual beats. Output exactly {len(plans)} "
+                f"scenes for assigned slots {assigned_slots}. Do not select, add, remove, or move a scene. "
+                "Omit keyvis completely. This shard-specific rule overrides global scene-count and "
+                "key-visual requirements above."
+            )
+        messages.extend([{
+            "role": "user",
+            "content": (
+                "# ASSIGNED GLOBAL SCENE PLAN\n"
+                + json.dumps(plans, ensure_ascii=False, indent=2)
+                + "\n\nExpand each plan into complete Danbooru-style character tags, camera, scene, "
+                "outfit_state, and supplement. Copy plan_id and slot exactly into every scene object, "
+                "and preserve plan order.\n\n"
+                "# OUTPUT FORMAT\n"
+                + call2_format
+                + "\n\nReturn one <lb-xnai> block containing scenes only. Omit keyvis."
+            ),
+        }])
+
+        def validate(result):
+            parsed, reason = _parse_call2_detail_output(
+                result,
+                toggles,
+                assigned_slots,
+                assigned_plan_ids,
+                f"CALL2-DETAIL-{index}-RETRY-CHECK",
+            )
+            return bool(parsed), reason or "CALL2-DETAIL 파싱 실패"
+
+        call_name = f"CALL2-DETAIL {index}/{total}"
+        if attempt_kind == "duplicate":
+            call_name += " [느리다고? 다시해!]"
+        raw_output = await _call_pipeline_llm(
+            call_name,
+            _normalize_messages(messages),
+            job_stream_notify,
+            result_validator=validate,
+            stream_observer=stream_observer,
+            history_id=history_id,
+        )
+        descriptors, reason = _parse_call2_detail_output(
+            raw_output,
+            toggles,
+            assigned_slots,
+            assigned_plan_ids,
+            f"CALL2-DETAIL-{index}",
+        )
+        if not descriptors:
+            raise ValueError(reason or f"CALL2-DETAIL {index}/{total} 파싱 실패")
+        return {"raw": raw_output, "descriptors": descriptors}
+
+    results = await _run_parallel_pipeline_jobs(
+        jobs,
+        group_id="CALL2_DETAIL",
+        group_label="CALL2 상세 장면",
+        max_concurrency=max_concurrency,
+        slow_retry_enabled=bool(toggles["call2_parallel_slow_retry_enabled"]),
+        slow_retry_remaining=int(toggles["call2_parallel_slow_retry_remaining"]),
+        slow_retry_progress_enabled=bool(toggles["call2_parallel_slow_retry_progress_enabled"]),
+        slow_retry_progress_threshold=int(toggles["call2_parallel_slow_retry_progress_threshold"]),
+        slow_retry_tps_enabled=bool(toggles["call2_parallel_slow_retry_tps_enabled"]),
+        slow_retry_tps_threshold=float(toggles["call2_parallel_slow_retry_tps_threshold"]),
+        slow_retry_condition_operator=str(toggles["call2_parallel_slow_retry_condition_operator"]),
+        stream_notify=stream_notify,
+        invoke=invoke,
+    )
+    descriptors = [deepcopy(keyvis_descriptor)] if keyvis_descriptor else []
+    raw_outputs = []
+    for result in results:
+        descriptors.extend(result.get("descriptors") or [])
+        raw_outputs.append(str(result.get("raw") or ""))
+    return descriptors, raw_outputs
 
 
 def candidate_slots(target_slotted: str) -> list[int]:
@@ -2539,6 +2977,13 @@ async def _call_pipeline_llm(
     task_key = _CALL_TASK_KEYS.get(call_name)
     if task_key is None and call_name.startswith("CALL1-BACKTRANSLATE"):
         task_key = _CALL_TASK_KEYS["CALL1-BACKTRANSLATE"]
+    if task_key is None and call_name.startswith("CALL1 "):
+        task_key = _CALL_TASK_KEYS["CALL1"]
+    if task_key is None and (
+        call_name.startswith("CALL2-PLAN")
+        or call_name.startswith("CALL2-DETAIL")
+    ):
+        task_key = _CALL_TASK_KEYS["CALL2"]
     if task_key is None and call_name.startswith("MULTI-CHAR-MASK"):
         task_key = _CALL_TASK_KEYS["MULTI-CHAR-MASK"]
     if task_key is None:
@@ -2675,6 +3120,610 @@ async def _call_pipeline_llm(
         print(f"[ILLUST_CONTEXT:{call_name}] 호출 예외: {e}")
         traceback.print_exc()
         raise
+
+
+async def _run_parallel_pipeline_jobs(
+    jobs: list[dict],
+    *,
+    group_id: str,
+    group_label: str,
+    max_concurrency: int,
+    slow_retry_enabled: bool,
+    slow_retry_remaining: int,
+    slow_retry_progress_enabled: bool,
+    slow_retry_progress_threshold: int,
+    slow_retry_tps_enabled: bool,
+    slow_retry_tps_threshold: float,
+    slow_retry_condition_operator: str,
+    stream_notify,
+    invoke,
+) -> list[dict]:
+    """Run ordered LLM jobs with a shared cap and translation-style tail hedging."""
+    if not jobs:
+        print(f"[ILLUST_CONTEXT:{group_id}] 실행할 병렬 작업이 비어 있음")
+        return []
+
+    concurrency = max(1, min(16, int(max_concurrency)))
+    remaining_limit = max(1, min(16, int(slow_retry_remaining)))
+    progress_threshold = max(1, min(99, int(slow_retry_progress_threshold)))
+    tps_threshold = max(0.1, min(1000.0, float(slow_retry_tps_threshold)))
+    operator = str(slow_retry_condition_operator or "and").strip().lower()
+    if operator not in ("and", "or"):
+        print(
+            f"[ILLUST_CONTEXT:{group_id}_HEDGE] 조건 결합 방식이 무효함: "
+            f"value={slow_retry_condition_operator!r}; and 사용"
+        )
+        operator = "and"
+    hedge_active = bool(slow_retry_enabled) and concurrency >= 2 and len(jobs) >= 2
+    if slow_retry_enabled and not hedge_active:
+        print(
+            f"[ILLUST_CONTEXT:{group_id}_HEDGE] 느린 요청 재시도 비활성: "
+            f"jobs={len(jobs)}, max_concurrency={concurrency}"
+        )
+
+    semaphore = asyncio.Semaphore(concurrency)
+    states: dict[int, dict] = {}
+    for index, job in enumerate(jobs, start=1):
+        states[index] = {
+            "job": job,
+            "tasks": set(),
+            "duplicate_started": False,
+            "hedge_evaluated": False,
+            "failure_reasons": [],
+            "attempt_outcomes": {},
+            "race_result": None,
+            "history_ids": {
+                "primary": uuid.uuid4().hex if hedge_active else "",
+                "duplicate": "",
+            },
+            "progress": {
+                kind: {
+                    "streaming": False,
+                    "stream_id": "",
+                    "partial_length": 0,
+                    "started_at": 0.0,
+                }
+                for kind in ("primary", "duplicate")
+            },
+        }
+
+    async def run_attempt(index: int, attempt_kind: str) -> dict:
+        state = states[index]
+        job = state["job"]
+        attempt_progress = state["progress"][attempt_kind]
+
+        def observe_stream(event: dict) -> None:
+            event_type = str(event.get("type") or "")
+            if event_type == "request_mode":
+                attempt_progress["streaming"] = bool(event.get("streaming"))
+                attempt_progress["stream_id"] = ""
+                attempt_progress["partial_length"] = 0
+                return
+            stream_id = str(event.get("stream_id") or "")
+            if event_type == "stream_open" or (
+                stream_id and stream_id != attempt_progress["stream_id"]
+            ):
+                attempt_progress["stream_id"] = stream_id
+                attempt_progress["partial_length"] = 0
+            attempt_progress["streaming"] = True
+            try:
+                if event.get("partial_length") is not None:
+                    attempt_progress["partial_length"] = max(
+                        0,
+                        int(event["partial_length"]),
+                    )
+                elif event.get("partial_text") is not None:
+                    attempt_progress["partial_length"] = len(
+                        str(event.get("partial_text") or "")
+                    )
+            except (TypeError, ValueError) as e:
+                print(
+                    f"[ILLUST_CONTEXT:{group_id}_HEDGE] 스트림 길이 파싱 실패: "
+                    f"job={index}/{len(jobs)}, attempt={attempt_kind}, error={e}"
+                )
+                traceback.print_exc()
+
+        job_stream_notify = None
+        if stream_notify:
+            async def job_stream_notify(event: dict):
+                payload = dict(event)
+                payload["queue_subtask"] = {
+                    "group_id": group_id.lower(),
+                    "group_label": group_label,
+                    "index": index,
+                    "total": len(jobs),
+                }
+                await stream_notify(payload)
+
+        try:
+            async with semaphore:
+                attempt_progress["started_at"] = time.monotonic()
+                value = await invoke(
+                    job,
+                    index,
+                    len(jobs),
+                    attempt_kind,
+                    observe_stream if hedge_active else None,
+                    state["history_ids"][attempt_kind],
+                    job_stream_notify,
+                )
+            raw = str(value.get("raw") or "") if isinstance(value, dict) else str(value or "")
+            return {
+                "ok": True,
+                "value": value,
+                "raw": raw,
+                "output_length": len(raw),
+                "attempt_kind": attempt_kind,
+                "completed_at": time.monotonic(),
+            }
+        except asyncio.CancelledError:
+            print(
+                f"[ILLUST_CONTEXT:{group_id}_HEDGE] 선착순에서 밀린 요청 취소: "
+                f"job={index}/{len(jobs)}, attempt={attempt_kind}"
+            )
+            raise
+        except Exception as e:
+            print(
+                f"[ILLUST_CONTEXT:{group_id}] 병렬 작업 호출 실패: "
+                f"job={index}/{len(jobs)}, attempt={attempt_kind}, error={e}"
+            )
+            traceback.print_exc()
+            return {
+                "ok": False,
+                "value": None,
+                "raw": "",
+                "output_length": 0,
+                "reason": str(e),
+                "attempt_kind": attempt_kind,
+                "completed_at": time.monotonic(),
+            }
+
+    pending: set[asyncio.Task] = set()
+    task_metadata: dict[asyncio.Task, tuple[int, str]] = {}
+    resolved: dict[int, dict] = {}
+    failed: dict[int, str] = {}
+
+    def start_attempt(index: int, attempt_kind: str) -> None:
+        task = asyncio.create_task(run_attempt(index, attempt_kind))
+        pending.add(task)
+        task_metadata[task] = (index, attempt_kind)
+        states[index]["tasks"].add(task)
+
+    for job_index in range(1, len(jobs) + 1):
+        start_attempt(job_index, "primary")
+
+    try:
+        while pending:
+            done, waiting = await asyncio.wait(
+                pending,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            pending = set(waiting)
+            completed = []
+            for task in done:
+                index, attempt_kind = task_metadata.pop(task)
+                states[index]["tasks"].discard(task)
+                try:
+                    outcome = task.result()
+                except asyncio.CancelledError:
+                    continue
+                except Exception as e:
+                    print(
+                        f"[ILLUST_CONTEXT:{group_id}] 병렬 작업 예외: "
+                        f"job={index}/{len(jobs)}, attempt={attempt_kind}, error={e}"
+                    )
+                    traceback.print_exception(type(e), e, e.__traceback__)
+                    outcome = {
+                        "ok": False,
+                        "reason": f"unexpected_error: {e}",
+                        "attempt_kind": attempt_kind,
+                        "completed_at": time.monotonic(),
+                    }
+                completed.append((float(outcome["completed_at"]), index, outcome))
+
+            for _completed_at, index, outcome in sorted(completed):
+                state = states[index]
+                state["attempt_outcomes"][outcome["attempt_kind"]] = outcome
+                if index in resolved:
+                    print(
+                        f"[ILLUST_CONTEXT:{group_id}_HEDGE] 중복 완료 결과 폐기: "
+                        f"job={index}/{len(jobs)}, attempt={outcome['attempt_kind']}"
+                    )
+                    continue
+                if outcome.get("ok"):
+                    resolved[index] = outcome
+                    if state["duplicate_started"]:
+                        winner = outcome["attempt_kind"]
+                        loser = "duplicate" if winner == "primary" else "primary"
+                        loser_progress = state["progress"][loser]
+                        elapsed = max(
+                            0.001,
+                            time.monotonic() - float(loser_progress.get("started_at") or 0.0),
+                        ) if loser_progress.get("started_at") else 0.0
+                        state["race_result"] = {
+                            "winner": winner,
+                            "loser": loser,
+                            "loser_progress": round(min(
+                                99.0,
+                                int(loser_progress.get("partial_length") or 0)
+                                / max(1, int(outcome.get("output_length") or 1))
+                                * 100.0,
+                            ), 1),
+                            "loser_streaming": bool(loser_progress.get("streaming")),
+                            "loser_elapsed": elapsed,
+                        }
+                    for sibling in list(state["tasks"]):
+                        if not sibling.done():
+                            sibling.cancel()
+                    continue
+                state["failure_reasons"].append(str(outcome.get("reason") or "unknown_failure"))
+
+            for index, state in states.items():
+                if index in resolved or index in failed or state["tasks"]:
+                    continue
+                failed[index] = state["failure_reasons"][-1] if state["failure_reasons"] else "unknown_failure"
+
+            unresolved = [
+                index
+                for index in range(1, len(jobs) + 1)
+                if index not in resolved and index not in failed
+            ]
+            if hedge_active and resolved and 0 < len(unresolved) <= remaining_limit:
+                resolved_units = [
+                    max(1, int(states[index]["job"].get("weight") or 1))
+                    for index in resolved
+                ]
+                resolved_lengths = [
+                    max(1, int(resolved[index].get("output_length") or 1))
+                    for index in resolved
+                ]
+                chars_per_unit = sum(resolved_lengths) / max(1, sum(resolved_units))
+                for index in unresolved:
+                    state = states[index]
+                    if state["hedge_evaluated"]:
+                        continue
+                    primary_progress = state["progress"]["primary"]
+                    if not primary_progress.get("started_at"):
+                        continue
+                    state["hedge_evaluated"] = True
+                    expected_length = max(
+                        1.0,
+                        chars_per_unit * max(1, int(state["job"].get("weight") or 1)),
+                    )
+                    partial_length = int(primary_progress.get("partial_length") or 0)
+                    streaming = bool(primary_progress.get("streaming"))
+                    estimated_progress = min(
+                        99.0,
+                        partial_length / expected_length * 100.0,
+                    ) if streaming else 0.0
+                    elapsed = max(
+                        0.001,
+                        time.monotonic() - float(primary_progress["started_at"]),
+                    )
+                    estimated_tps = (partial_length / 3.0) / elapsed if streaming else 0.0
+                    conditions = []
+                    if slow_retry_progress_enabled:
+                        conditions.append(("progress", estimated_progress < progress_threshold))
+                    if slow_retry_tps_enabled:
+                        conditions.append(("tps", estimated_tps < tps_threshold))
+                    if not conditions:
+                        should_duplicate = False
+                    elif operator == "or":
+                        should_duplicate = any(result for _name, result in conditions)
+                    else:
+                        should_duplicate = all(result for _name, result in conditions)
+                    condition_text = ", ".join(
+                        f"{name}={'met' if result else 'not_met'}"
+                        for name, result in conditions
+                    ) or "none_enabled"
+                    if should_duplicate:
+                        state["duplicate_started"] = True
+                        state["history_ids"]["duplicate"] = uuid.uuid4().hex
+                        print(
+                            f"[ILLUST_CONTEXT:{group_id}_HEDGE] 느리다고? 다시해! "
+                            f"job={index}/{len(jobs)}, remaining={len(unresolved)}, "
+                            f"progress={estimated_progress:.1f}%, tps={estimated_tps:.1f}, "
+                            f"operator={operator.upper()}, conditions={condition_text}"
+                        )
+                        start_attempt(index, "duplicate")
+                    else:
+                        print(
+                            f"[ILLUST_CONTEXT:{group_id}_HEDGE] 느린 요청 조건 불충족: "
+                            f"job={index}/{len(jobs)}, progress={estimated_progress:.1f}%, "
+                            f"tps={estimated_tps:.1f}, conditions={condition_text}"
+                        )
+    except asyncio.CancelledError:
+        print(f"[ILLUST_CONTEXT:{group_id}] 병렬 조정 상위 작업 취소: pending={len(pending)}")
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
+        raise
+    except Exception as e:
+        print(f"[ILLUST_CONTEXT:{group_id}] 병렬 조정 예외: {e}")
+        traceback.print_exc()
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
+        raise
+
+    history_updates = {}
+    for index, state in states.items():
+        if not state["duplicate_started"]:
+            continue
+        race = state.get("race_result")
+        for attempt_kind, role_label in (("primary", "원본"), ("duplicate", "느리다고? 다시해!")):
+            history_id = state["history_ids"].get(attempt_kind, "")
+            if not history_id or not state["progress"][attempt_kind].get("started_at"):
+                continue
+            if race and attempt_kind == race["winner"]:
+                history_updates[history_id] = {
+                    "call_name": f"{group_label} {index}/{len(jobs)} [{role_label} · 승리]",
+                    "status": "race_won",
+                    "race_outcome": "winner",
+                }
+            elif race and attempt_kind == race["loser"]:
+                history_updates[history_id] = {
+                    "call_name": f"{group_label} {index}/{len(jobs)} [{role_label} · 패배]",
+                    "status": "race_lost",
+                    "race_outcome": "loser",
+                    "race_progress": float(race["loser_progress"]),
+                    "race_streaming": bool(race["loser_streaming"]),
+                    "race_elapsed": round(float(race["loser_elapsed"]), 3),
+                }
+            else:
+                history_updates[history_id] = {
+                    "call_name": f"{group_label} {index}/{len(jobs)} [{role_label} · 경주 실패]",
+                    "race_outcome": "failed",
+                }
+    if history_updates:
+        lighbd_service._update_lighbd_history_records(history_updates)
+
+    if failed:
+        for index, reason in sorted(failed.items()):
+            print(
+                f"[ILLUST_CONTEXT:{group_id}] 병렬 작업 최종 실패: "
+                f"job={index}/{len(jobs)}, reason={reason}"
+            )
+        raise RuntimeError(
+            f"{group_label} 병렬 작업 {len(failed)}/{len(jobs)}개 실패: "
+            + "; ".join(f"{index}={reason}" for index, reason in sorted(failed.items()))
+        )
+
+    print(
+        f"[ILLUST_CONTEXT:{group_id}] 병렬 작업 완료: "
+        f"jobs={len(jobs)}, max_concurrency={concurrency}"
+    )
+    return [resolved[index]["value"] for index in range(1, len(jobs) + 1)]
+
+
+def _merge_call1_shard_values(
+    shard_values: list[dict],
+    segment_order: list[str],
+) -> tuple[dict, list[str]]:
+    """Merge disjoint CALL1 shard JSON without semantic keyword inference."""
+    merged = {
+        "reference_assignments": [],
+        "history_characters": [],
+        "current_characters": [],
+        "wardrobe_events": [],
+        "unresolved_references": [],
+    }
+    errors = []
+    history_seen = set()
+    current_by_name: dict[str, dict] = {}
+    assignment_by_key: dict[tuple, dict] = {}
+    wardrobe_seen = set()
+    unresolved_seen = set()
+    segment_rank = {segment_id: index for index, segment_id in enumerate(segment_order)}
+
+    for shard_index, value in enumerate(shard_values, start=1):
+        assigned_ids = set(value.get("assigned_segment_ids") or [])
+        raw = value.get("value") if isinstance(value.get("value"), dict) else {}
+
+        for item in raw.get("history_characters") or []:
+            name = str(item.get("name") if isinstance(item, dict) else item or "").strip()
+            folded = name.casefold()
+            if name and folded not in history_seen:
+                history_seen.add(folded)
+                merged["history_characters"].append(name)
+
+        for item in raw.get("current_characters") or []:
+            if isinstance(item, dict):
+                name = str(item.get("name") or "").strip()
+                try:
+                    confidence = max(0.0, min(1.0, float(item.get("confidence", 1.0))))
+                except (TypeError, ValueError):
+                    confidence = 0.0
+            else:
+                name = str(item or "").strip()
+                confidence = 1.0
+            if not name:
+                continue
+            folded = name.casefold()
+            previous = current_by_name.get(folded)
+            if previous is None or confidence > float(previous.get("confidence") or 0.0):
+                current_by_name[folded] = {"name": name, "confidence": confidence}
+
+        for item in raw.get("reference_assignments") or []:
+            if not isinstance(item, dict):
+                errors.append(f"CALL1 shard {shard_index} 지칭 할당 형식 오류")
+                continue
+            segment_id = str(item.get("segment_id") or "").strip()
+            if segment_id not in assigned_ids:
+                errors.append(
+                    f"CALL1 shard {shard_index} 담당 밖 지칭 할당: segment={segment_id!r}"
+                )
+                continue
+            key = (
+                segment_id,
+                str(item.get("surface") or ""),
+                int(item.get("occurrence") or 1),
+            )
+            previous = assignment_by_key.get(key)
+            if previous is not None and str(previous.get("canonical_name") or "").casefold() != str(
+                item.get("canonical_name") or item.get("name") or ""
+            ).casefold():
+                errors.append(f"CALL1 shard 지칭 충돌: key={key!r}")
+                continue
+            assignment_by_key[key] = deepcopy(item)
+
+        for item in raw.get("wardrobe_events") or []:
+            if not isinstance(item, dict):
+                errors.append(f"CALL1 shard {shard_index} 복장 이벤트 형식 오류")
+                continue
+            segment_id = str(item.get("segment_id") or "").strip()
+            if segment_id and segment_id not in assigned_ids:
+                errors.append(
+                    f"CALL1 shard {shard_index} 담당 밖 복장 이벤트: segment={segment_id!r}"
+                )
+                continue
+            key = json.dumps(item, ensure_ascii=False, sort_keys=True)
+            if key not in wardrobe_seen:
+                wardrobe_seen.add(key)
+                merged["wardrobe_events"].append(deepcopy(item))
+
+        for item in raw.get("unresolved_references") or []:
+            if not isinstance(item, dict):
+                continue
+            segment_id = str(item.get("segment_id") or "").strip()
+            if segment_id and segment_id not in assigned_ids:
+                errors.append(
+                    f"CALL1 shard {shard_index} 담당 밖 미해결 지칭: segment={segment_id!r}"
+                )
+                continue
+            key = json.dumps(item, ensure_ascii=False, sort_keys=True)
+            if key not in unresolved_seen:
+                unresolved_seen.add(key)
+                merged["unresolved_references"].append(deepcopy(item))
+
+    merged["current_characters"] = list(current_by_name.values())
+    merged["reference_assignments"] = sorted(
+        assignment_by_key.values(),
+        key=lambda item: (
+            segment_rank.get(str(item.get("segment_id") or ""), len(segment_rank)),
+            str(item.get("surface") or ""),
+            int(item.get("occurrence") or 1),
+        ),
+    )
+    merged["wardrobe_events"].sort(
+        key=lambda item: segment_rank.get(
+            str(item.get("segment_id") or ""),
+            len(segment_rank),
+        )
+    )
+    return merged, errors
+
+
+async def _run_parallel_call1_analysis(
+    *,
+    call1_system: str,
+    segmented_current: str,
+    current_segments: dict[str, dict],
+    history_text: str,
+    toggles: dict,
+    stream_notify,
+) -> tuple[str, list[str]]:
+    segment_ids = list(current_segments)
+    chunk_size = int(toggles["call1_parallel_chunk_size"])
+    chunks = [segment_ids[index:index + chunk_size] for index in range(0, len(segment_ids), chunk_size)]
+    jobs = [
+        {
+            "assigned_segment_ids": chunk,
+            "weight": len(chunk),
+        }
+        for chunk in chunks
+    ]
+    print(
+        f"[ILLUST_CONTEXT:CALL1_PARALLEL] 분석 청크 준비: "
+        f"segments={len(segment_ids)}, chunk_size={chunk_size}, jobs={len(jobs)}"
+    )
+
+    async def invoke(
+        job,
+        index,
+        total,
+        attempt_kind,
+        stream_observer,
+        history_id,
+        job_stream_notify,
+    ):
+        assigned = list(job["assigned_segment_ids"])
+        shard_instruction = (
+            "\n\n# Parallel shard contract\n"
+            f"This is shard {index}/{total}. Read the full context for discourse understanding, "
+            "but emit reference_assignments, wardrobe_events, and unresolved_references only "
+            f"for these assigned segment IDs: {json.dumps(assigned, ensure_ascii=False)}.\n"
+            "history_characters and current_characters may contain the complete names needed "
+            "to understand those assigned segments. Return one JSON object using the existing schema."
+        )
+        messages = _normalize_messages([
+            {"role": "system", "content": call1_system + shard_instruction},
+            {
+                "role": "user",
+                "content": (
+                    "# PAST HISTORY\n"
+                    + (history_text or "(empty)")
+                    + "\n\n# FULL CURRENT CONTEXT SEGMENTS\n"
+                    + segmented_current
+                    + "\n\n# ASSIGNED SEGMENT IDS\n"
+                    + json.dumps(assigned, ensure_ascii=False)
+                ),
+            },
+        ])
+
+        def validate(result):
+            raw = _json_object_from_text(result)
+            if raw is None:
+                return False, "CALL1 shard JSON object 없음"
+            for key in (
+                "reference_assignments",
+                "history_characters",
+                "current_characters",
+                "wardrobe_events",
+                "unresolved_references",
+            ):
+                if not isinstance(raw.get(key, []), list):
+                    return False, f"CALL1 shard {key}가 list가 아님"
+            return True, ""
+
+        call_name = f"CALL1 {index}/{total}"
+        if attempt_kind == "duplicate":
+            call_name += " [느리다고? 다시해!]"
+        raw_output = await _call_pipeline_llm(
+            call_name,
+            messages,
+            job_stream_notify,
+            result_validator=validate,
+            json_mode=True,
+            stream_observer=stream_observer,
+            history_id=history_id,
+        )
+        raw_value = _json_object_from_text(raw_output)
+        if raw_value is None:
+            raise ValueError(f"CALL1 shard {index}/{total} JSON 파싱 실패")
+        return {
+            "raw": raw_output,
+            "value": raw_value,
+            "assigned_segment_ids": assigned,
+        }
+
+    shard_values = await _run_parallel_pipeline_jobs(
+        jobs,
+        group_id="CALL1_PARALLEL",
+        group_label="CALL1 병렬 분석",
+        max_concurrency=int(toggles["call1_parallel_max_concurrency"]),
+        slow_retry_enabled=bool(toggles["call1_parallel_slow_retry_enabled"]),
+        slow_retry_remaining=int(toggles["call1_parallel_slow_retry_remaining"]),
+        slow_retry_progress_enabled=bool(toggles["call1_parallel_slow_retry_progress_enabled"]),
+        slow_retry_progress_threshold=int(toggles["call1_parallel_slow_retry_progress_threshold"]),
+        slow_retry_tps_enabled=bool(toggles["call1_parallel_slow_retry_tps_enabled"]),
+        slow_retry_tps_threshold=float(toggles["call1_parallel_slow_retry_tps_threshold"]),
+        slow_retry_condition_operator=str(toggles["call1_parallel_slow_retry_condition_operator"]),
+        stream_notify=stream_notify,
+        invoke=invoke,
+    )
+    merged, merge_errors = _merge_call1_shard_values(shard_values, segment_ids)
+    return json.dumps(merged, ensure_ascii=False), merge_errors
 
 
 def _parse_multi_char_layout_response(text: str, expected_names: list[str]) -> dict:
@@ -3617,31 +4666,62 @@ async def build_from_context(
                 indent=2,
             ),
         )
-        call1_messages = [{"role": "system", "content": call1_system}]
-        if persistent_history:
-            call1_messages.append({
-                "role": "user",
-                "content": (
-                    "# PAST HISTORY\n"
-                    + (_history_messages_text(context_slice) or "(empty)")
-                    + "\n\n# CURRENT CONTEXT SEGMENTS\n"
-                    + segmented_current
-                ),
-            })
-        else:
-            call1_messages.extend({
-                "role": "assistant" if item["role"] == "char" else "user",
-                "content": _strip_nodes(item["data"]),
-            } for item in context_slice)
-            call1_messages.append({"role": "user", "content": "---\n[Current Response]\n" + enhanced})
-        call1_output = await _call_pipeline_llm("CALL1", _normalize_messages(call1_messages), stream_notify)
-        if persistent_history:
+        history_text = _history_messages_text(context_slice)
+        parallel_call1_used = False
+        parallel_merge_errors: list[str] = []
+        should_parallel_call1 = (
+            bool(toggles.get("call1_parallel_enabled"))
+            and len(current_segments) > int(toggles["call1_parallel_chunk_size"])
+        )
+        if should_parallel_call1:
+            try:
+                call1_output, parallel_merge_errors = await _run_parallel_call1_analysis(
+                    call1_system=call1_system,
+                    segmented_current=segmented_current,
+                    current_segments=current_segments,
+                    history_text=history_text,
+                    toggles=toggles,
+                    stream_notify=stream_notify,
+                )
+                parallel_call1_used = True
+            except Exception as e:
+                print(
+                    f"[ILLUST_CONTEXT:CALL1_PARALLEL] 병렬 분석 실패로 단일 CALL1 폴백: "
+                    f"segments={len(current_segments)}, error={e}"
+                )
+                traceback.print_exc()
+
+        if not parallel_call1_used:
+            call1_messages = [{"role": "system", "content": call1_system}]
+            if persistent_history:
+                call1_messages.append({
+                    "role": "user",
+                    "content": (
+                        "# PAST HISTORY\n"
+                        + (history_text or "(empty)")
+                        + "\n\n# CURRENT CONTEXT SEGMENTS\n"
+                        + segmented_current
+                    ),
+                })
+            else:
+                call1_messages.extend({
+                    "role": "assistant" if item["role"] == "char" else "user",
+                    "content": _strip_nodes(item["data"]),
+                } for item in context_slice)
+                call1_messages.append({"role": "user", "content": "---\n[Current Response]\n" + enhanced})
+            call1_output = await _call_pipeline_llm(
+                "CALL1",
+                _normalize_messages(call1_messages),
+                stream_notify,
+            )
+
+        if persistent_history or parallel_call1_used:
             parsed_call1 = parse_call1_analysis(
                 call1_output,
                 enhanced,
                 current_segments,
                 str(backtranslate_names or extra_names or ""),
-                history_context=_history_messages_text(context_slice),
+                history_context=history_text,
             )
             if parsed_call1 is None:
                 balanced_fallback = True
@@ -3650,6 +4730,13 @@ async def build_from_context(
                 )
             else:
                 call1_result = parsed_call1
+                if parallel_merge_errors:
+                    parsed_call1["validation_errors"].extend(parallel_merge_errors)
+                    parsed_call1["fallback_required"] = True
+                    print(
+                        f"[ILLUST_CONTEXT:CALL1_PARALLEL] shard 병합 검증 오류: "
+                        f"errors={parallel_merge_errors}"
+                    )
                 wardrobe_events = list(parsed_call1.get("wardrobe_events") or [])
                 resolved_current, assignment_errors, reference_variables = apply_reference_assignments(
                     enhanced,
@@ -3829,6 +4916,7 @@ async def build_from_context(
                 "content": _strip_nodes(item["data"]),
             })
     call2_messages.append({"role": "user", "content": "[Last log entry]\n" + slotted})
+    call2_context_messages = deepcopy(call2_messages)
     call2_messages.append({
         "role": "user",
         "content": "# Output instructions\n\n" + call2_thoughts + "\n\n" + prompts.get("call2_format", ""),
@@ -3836,16 +4924,148 @@ async def build_from_context(
     if prompts.get("call2_prefill", "").strip():
         call2_messages.append({"role": "assistant", "content": prompts["call2_prefill"]})
     call2_messages.append({"role": "user", "content": "Return the final <lb-xnai> TOON block only after your analysis."})
-    call2_output = await _call_pipeline_llm(
-        "CALL2",
-        _normalize_messages(call2_messages),
-        stream_notify,
-        result_validator=lambda result: (
-            bool(parse_toon_plan(result, toggles, "CALL2-RETRY-CHECK")),
-            "CALL2 TOON 파싱 실패",
-        ),
-    )
-    descriptors = parse_toon_plan(call2_output, toggles, "CALL2")
+    call2_output = ""
+    call2_plan_output = ""
+    call2_detail_outputs: list[str] = []
+    descriptors = []
+    if toggles.get("call2_parallel_enabled"):
+        try:
+            if progress:
+                await progress(31, "call2_plan", "CALL2 전역 장면·키비주얼 계획")
+            candidates = candidate_slots(original_slotted)
+            plan_messages = deepcopy(call2_context_messages)
+            call2_segment_map, _call2_segments = _segment_current_context(enhanced)
+            if plan_messages and plan_messages[0].get("role") == "system":
+                plan_messages[0]["content"] = str(plan_messages[0].get("content") or "") + (
+                    "\n\n# CALL2-PLAN override\n"
+                    "Select visual beats globally from the full last log entry before any parallel detail "
+                    "work begins. Return compact JSON only. Do not return <lb-xnai>. The scene_plan is a "
+                    "binding assignment: detail workers may describe it but may not select different scenes. "
+                    "When Key Visual is enabled, generate its complete final camera/characters/tags/scene/"
+                    "supplement object here so no fourth parallel key-visual call is needed."
+                )
+            if str(toggles.get("scene_mode")) == "auto":
+                scene_count_rule = (
+                    f"Choose the appropriate count from the {len(candidates)} available slots."
+                )
+            else:
+                minimum = min(int(toggles["scene_min"]), len(candidates))
+                maximum = min(int(toggles["scene_max"]), len(candidates))
+                scene_count_rule = f"Choose between {minimum} and {maximum} scenes."
+            keyvis_rule = (
+                "Return one complete keyvis object."
+                if toggles.get("key_visual")
+                else "Return keyvis as null."
+            )
+            plan_messages.append({
+                "role": "user",
+                "content": (
+                    "# GLOBAL CALL2 PLAN\n"
+                    f"Candidate slots in narrative order: {json.dumps(candidates)}\n"
+                    + scene_count_rule
+                    + " Each selected slot must be unique and must belong to the candidate list. "
+                    "Select at most one scene per semantic visual beat.\n"
+                    + keyvis_rule
+                    + "\n\n# GLOBAL SELECTION POLICY\n"
+                    + call2_thoughts
+                    + "\n\nApply the policy above while planning, but the final-response JSON-only "
+                    "contract below overrides any draft-output wording in that policy."
+                    + "\n\nReturn this JSON schema only:\n"
+                    "{\n"
+                    '  "scene_plan": [\n'
+                    "    {\n"
+                    '      "plan_id": "S001",\n'
+                    '      "slot": 0,\n'
+                    '      "source_segments": ["C001"],\n'
+                    '      "characters": ["canonical name"],\n'
+                    '      "scene_brief": "objective visual moment to expand"\n'
+                    "    }\n"
+                    "  ],\n"
+                    '  "keyvis": {\n'
+                    '    "camera": "...",\n'
+                    '    "characters": [{"positive":"...","negative":"...","name":"...",'
+                    '"position":"...","outfit_state":{"body_state":"clothed",'
+                    '"worn":[],"removed":[]}}],\n'
+                    '    "scene": "...",\n'
+                    '    "supplement": "..."\n'
+                    "  }\n"
+                    "}\n\n"
+                    "Use semantic context and common sense for visual-beat selection; do not use keyword rules.\n\n"
+                    "# SERVER SEGMENT MAP\n"
+                    + call2_segment_map
+                ),
+            })
+
+            def validate_plan(result):
+                plan, reason = parse_call2_plan(
+                    result,
+                    toggles,
+                    original_slotted,
+                    log_errors=False,
+                )
+                return bool(plan), reason or "CALL2-PLAN 파싱 실패"
+
+            call2_plan_output = await _call_pipeline_llm(
+                "CALL2-PLAN",
+                _normalize_messages(plan_messages),
+                stream_notify,
+                result_validator=validate_plan,
+                json_mode=True,
+            )
+            parsed_plan, plan_reason = parse_call2_plan(
+                call2_plan_output,
+                toggles,
+                original_slotted,
+            )
+            if parsed_plan is None:
+                raise ValueError(plan_reason or "CALL2-PLAN 파싱 실패")
+            if parsed_plan["mode"] == "legacy":
+                descriptors = list(parsed_plan.get("descriptors") or [])
+                call2_output = call2_plan_output
+                print(
+                    "[ILLUST_CONTEXT:CALL2_PLAN] 모델이 완성 TOON을 반환해 "
+                    "기존 단일 CALL2 결과로 수용"
+                )
+            else:
+                if progress:
+                    await progress(
+                        36,
+                        "call2_detail",
+                        f"CALL2 상세 장면 {len(parsed_plan['scene_plan'])}개 병렬 생성",
+                    )
+                descriptors, call2_detail_outputs = await _run_parallel_call2_details(
+                    scene_plan=list(parsed_plan["scene_plan"]),
+                    keyvis_descriptor=parsed_plan.get("keyvis_descriptor"),
+                    call2_context_messages=call2_context_messages,
+                    call2_format=prompts.get("call2_format", ""),
+                    toggles=toggles,
+                    stream_notify=stream_notify,
+                )
+                call2_output = descriptors_to_toon(descriptors)
+        except asyncio.CancelledError:
+            print("[ILLUST_CONTEXT:CALL2_PARALLEL] 상위 작업 취소로 병렬 CALL2 중단")
+            raise
+        except Exception as e:
+            print(
+                f"[ILLUST_CONTEXT:CALL2_PARALLEL] 병렬 CALL2 실패로 단일 CALL2 폴백: {e}"
+            )
+            traceback.print_exc()
+            call2_output = ""
+            call2_plan_output = ""
+            call2_detail_outputs = []
+            descriptors = []
+
+    if not descriptors:
+        call2_output = await _call_pipeline_llm(
+            "CALL2",
+            _normalize_messages(call2_messages),
+            stream_notify,
+            result_validator=lambda result: (
+                bool(parse_toon_plan(result, toggles, "CALL2-RETRY-CHECK")),
+                "CALL2 TOON 파싱 실패",
+            ),
+        )
+        descriptors = parse_toon_plan(call2_output, toggles, "CALL2")
 
     # Optimized CALL1 path deliberately sends only selected character details.  If
     # CALL2 nevertheless emits another named character, retry once with the
@@ -4161,6 +5381,8 @@ async def build_from_context(
         "wardrobe_events": wardrobe_events,
         "balanced_fallback_used": balanced_fallback,
         "call2_output": call2_output,
+        "call2_plan_output": call2_plan_output,
+        "call2_detail_outputs": call2_detail_outputs,
         "call2_fix_output": call2_fix_output,
         "call3_output": call3_output,
         "call3_initial_output": call3_initial_output,

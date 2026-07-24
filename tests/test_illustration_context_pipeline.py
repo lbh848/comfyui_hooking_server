@@ -12,6 +12,27 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from modes import illustration_context_pipeline as pipeline
 
 
+def _toon_for_slots(slots):
+    rows = []
+    for slot in slots:
+        rows.append(
+            "  - camera: medium shot\n"
+            "    characters[1]:\n"
+            "      - name: Hana\n"
+            "        positive: 1girl, black hair\n"
+            "        negative: lowres\n"
+            "        outfit_state:\n"
+            "          body_state: clothed\n"
+            "          worn: [school uniform]\n"
+            "          removed: []\n"
+            "    scene: classroom\n"
+            f"    plan_id: S{slot + 1:03d}\n"
+            f"    slot: {slot}\n"
+            "    supplement: daylight"
+        )
+    return "<lb-xnai>\nscenes[%d]:\n%s\n</lb-xnai>" % (len(slots), "\n".join(rows))
+
+
 def test_context_and_result_transport_markers():
     session_id = "session_12345678"
     context_payload = {
@@ -40,6 +61,239 @@ def test_context_and_result_transport_markers():
     assert pipeline.parse_regenerate_request(
         pipeline.REGENERATE_PREFIX + "\n" + json.dumps({"session_id": session_id, "slot": 0})
     ) == {"session_id": session_id, "slot": 0}
+
+
+def test_call2_plan_selects_global_slots_and_builds_key_visual():
+    slotted = "\n\n".join(
+        ["첫 문단."]
+        + [f"[Slot {index}]\n\n문단 {index + 2}." for index in range(5)]
+    )
+    raw = json.dumps({
+        "scene_plan": [
+            {
+                "plan_id": f"raw-{index}",
+                "slot": index,
+                "source_segments": [f"C{index + 1:03d}"],
+                "characters": ["Hana"],
+                "scene_brief": f"장면 {index}",
+            }
+            for index in range(5)
+        ],
+        "keyvis": {
+            "camera": "full body",
+            "characters": [{
+                "name": "Hana",
+                "positive": "1girl, black hair",
+                "negative": "lowres",
+                "outfit_state": {
+                    "body_state": "clothed",
+                    "worn": ["school uniform"],
+                    "removed": [],
+                },
+            }],
+            "scene": "classroom",
+            "supplement": "daylight",
+        },
+    }, ensure_ascii=False)
+
+    plan, reason = pipeline.parse_call2_plan(
+        raw,
+        pipeline.merged_toggles({"scene_min": 5, "scene_max": 5}),
+        slotted,
+    )
+
+    assert reason == ""
+    assert [item["plan_id"] for item in plan["scene_plan"]] == [
+        "S001", "S002", "S003", "S004", "S005"
+    ]
+    assert [item["slot"] for item in plan["scene_plan"]] == [0, 1, 2, 3, 4]
+    assert plan["keyvis_descriptor"]["kind"] == "keyvis"
+    assert plan["keyvis_descriptor"]["slot"] == -1
+
+
+@pytest.mark.asyncio
+async def test_parallel_job_tail_hedge_uses_shared_concurrency_and_duplicate_wins(monkeypatch):
+    active = 0
+    max_active = 0
+    attempts = []
+    history_updates = []
+
+    async def invoke(job, index, total, attempt_kind, observer, history_id, notify):
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        attempts.append((index, attempt_kind))
+        try:
+            if index < 3 or attempt_kind == "duplicate":
+                await asyncio.sleep(0.01)
+            else:
+                await asyncio.sleep(0.3)
+            return {"raw": f"job-{index}-{attempt_kind}", "winner": attempt_kind}
+        finally:
+            active -= 1
+
+    monkeypatch.setattr(
+        pipeline.lighbd_service,
+        "_update_lighbd_history_records",
+        history_updates.append,
+    )
+    results = await pipeline._run_parallel_pipeline_jobs(
+        [{"weight": 1}, {"weight": 1}, {"weight": 1}],
+        group_id="TEST_HEDGE",
+        group_label="테스트 경주",
+        max_concurrency=3,
+        slow_retry_enabled=True,
+        slow_retry_remaining=1,
+        slow_retry_progress_enabled=True,
+        slow_retry_progress_threshold=50,
+        slow_retry_tps_enabled=False,
+        slow_retry_tps_threshold=5.0,
+        slow_retry_condition_operator="and",
+        stream_notify=None,
+        invoke=invoke,
+    )
+
+    assert max_active <= 3
+    assert (3, "duplicate") in attempts
+    assert results[2]["winner"] == "duplicate"
+    assert history_updates
+    assert {item["status"] for item in history_updates[0].values()} == {
+        "race_won", "race_lost"
+    }
+
+
+@pytest.mark.asyncio
+async def test_call1_segments_and_call2_details_run_in_parallel_batches(monkeypatch):
+    paragraphs = [f"Hana paragraph {index}." for index in range(10)]
+    narrative = "\n\n".join(paragraphs)
+    target_slotted = pipeline.insert_slots(narrative)
+    call1_active = 0
+    call1_max_active = 0
+    detail_active = 0
+    detail_max_active = 0
+    call_names = []
+
+    async def fake_call(task_key, messages, **kwargs):
+        nonlocal call1_active, call1_max_active, detail_active, detail_max_active
+        text = "\n".join(str(message.get("content") or "") for message in messages)
+        metadata = pipeline.llm_service._stream_metadata_ctx.get({})
+        call_names.append(str(metadata.get("call_name") or task_key))
+        if task_key == "illustration_call1":
+            call1_active += 1
+            call1_max_active = max(call1_max_active, call1_active)
+            try:
+                await asyncio.sleep(0.02)
+                assigned_match = re.search(
+                    r"# ASSIGNED SEGMENT IDS\s*(\[[^\n]+\])",
+                    text,
+                )
+                assert assigned_match
+                assigned = json.loads(assigned_match.group(1))
+                return json.dumps({
+                    "reference_assignments": [],
+                    "history_characters": [],
+                    "current_characters": [{"name": "Hana", "confidence": 0.99}],
+                    "wardrobe_events": [],
+                    "unresolved_references": [],
+                    "assigned": assigned,
+                })
+            finally:
+                call1_active -= 1
+
+        assert task_key == "illustration_call2"
+        if "# GLOBAL CALL2 PLAN" in text:
+            return json.dumps({
+                "scene_plan": [
+                    {
+                        "plan_id": f"S{slot + 1:03d}",
+                        "slot": slot,
+                        "source_segments": [f"C{slot + 1:03d}"],
+                        "characters": ["Hana"],
+                        "scene_brief": f"Hana scene {slot}",
+                    }
+                    for slot in range(9)
+                ],
+                "keyvis": {
+                    "camera": "full body",
+                    "characters": [{
+                        "name": "Hana",
+                        "positive": "1girl, black hair, school uniform",
+                        "negative": "lowres",
+                        "outfit_state": {
+                            "body_state": "clothed",
+                            "worn": ["school uniform"],
+                            "removed": [],
+                        },
+                    }],
+                    "scene": "classroom",
+                    "supplement": "daylight",
+                },
+            })
+        assert "# ASSIGNED GLOBAL SCENE PLAN" in text
+        plan_match = re.search(
+            r"# ASSIGNED GLOBAL SCENE PLAN\s*(\[[\s\S]*?\])\s*\n\nExpand each plan",
+            text,
+        )
+        assert plan_match
+        plans = json.loads(plan_match.group(1))
+        detail_active += 1
+        detail_max_active = max(detail_max_active, detail_active)
+        try:
+            await asyncio.sleep(0.02)
+            return _toon_for_slots([int(item["slot"]) for item in plans])
+        finally:
+            detail_active -= 1
+
+    monkeypatch.setattr(pipeline.llm_service, "callLLMTask", fake_call)
+    result = await pipeline.build_from_context(
+        {
+            "session_id": "parallel_call1_call2_test",
+            "target_slotted": target_slotted,
+            "chats": [
+                {"role": "user", "data": "Continue."},
+                {"role": "char", "data": narrative},
+            ],
+        },
+        {
+            "call1_parallel_enabled": True,
+            "call1_parallel_chunk_size": 3,
+            "call1_parallel_max_concurrency": 3,
+            "call2_parallel_enabled": True,
+            "call2_parallel_max_concurrency": 3,
+            "scene_min": 9,
+            "scene_max": 9,
+            "key_visual": True,
+            "call3_enabled": False,
+            "speak_enabled": False,
+        },
+        "### Hana\n-default_outfit\nschool uniform",
+        extra_costume="### Hana\n-default_outfit\nschool uniform",
+        extra_names="Hana",
+        backtranslate_names="Hana",
+        history_plan={
+            "state_before": {},
+            "call1_history": [],
+            "call2_fallback_history": [],
+            "record_before": {"last_pipeline": {}},
+        },
+    )
+
+    assert call1_max_active == 3
+    assert detail_max_active == 3
+    assert len(result["call2_detail_outputs"]) == 3
+    assert len(result["items"]) == 10
+    assert result["items"][0]["kind"] == "keyvis"
+    assert [item["slot"] for item in result["items"][1:]] == list(range(9))
+    reparsed = pipeline.parse_toon_plan(
+        result["call2_output"],
+        pipeline.merged_toggles({"scene_min": 9, "scene_max": 9}),
+        "TEST-MERGED-CALL2",
+    )
+    assert len(reparsed) == 10
+    assert [item["plan_id"] for item in reparsed[1:]] == [
+        f"S{index:03d}" for index in range(1, 10)
+    ]
+    assert sum(name.startswith("illustration_call2") for name in call_names) >= 4
 
 
 def test_descriptor_slots_trust_call2_with_light_sanitization():
@@ -621,12 +875,60 @@ def test_backtranslation_defaults_and_concurrency_clamp():
     assert pipeline.merged_toggles({
         "call1_backtranslate_slow_retry_condition_operator": "xor",
     })["call1_backtranslate_slow_retry_condition_operator"] == "and"
+
+
+def test_call1_call2_parallel_defaults_and_clamps():
+    defaults = pipeline.merged_toggles({})
+    for prefix in ("call1_parallel", "call2_parallel"):
+        assert defaults[f"{prefix}_enabled"] is True
+        assert defaults[f"{prefix}_max_concurrency"] == 3
+        assert defaults[f"{prefix}_slow_retry_enabled"] is False
+        assert defaults[f"{prefix}_slow_retry_remaining"] == 1
+        assert defaults[f"{prefix}_slow_retry_progress_enabled"] is True
+        assert defaults[f"{prefix}_slow_retry_progress_threshold"] == 50
+        assert defaults[f"{prefix}_slow_retry_tps_enabled"] is False
+        assert defaults[f"{prefix}_slow_retry_tps_threshold"] == 5.0
+        assert defaults[f"{prefix}_slow_retry_condition_operator"] == "and"
+    assert defaults["call1_parallel_chunk_size"] == 3
+    assert "call2_parallel_batch_size" not in defaults
+
+    clamped = pipeline.merged_toggles({
+        "call1_parallel_chunk_size": 0,
+        "call1_parallel_max_concurrency": 99,
+        "call1_parallel_slow_retry_remaining": 0,
+        "call2_parallel_batch_size": 99,
+        "call2_parallel_max_concurrency": 0,
+        "call2_parallel_slow_retry_progress_threshold": 100,
+        "call2_parallel_slow_retry_tps_threshold": 0,
+        "call2_parallel_slow_retry_condition_operator": "xor",
+    })
+    assert clamped["call1_parallel_chunk_size"] == 1
+    assert clamped["call1_parallel_max_concurrency"] == 16
+    assert clamped["call1_parallel_slow_retry_remaining"] == 1
+    assert "call2_parallel_batch_size" not in clamped
+    assert clamped["call2_parallel_max_concurrency"] == 1
+    assert clamped["call2_parallel_slow_retry_progress_threshold"] == 99
+    assert clamped["call2_parallel_slow_retry_tps_threshold"] == 0.1
+    assert clamped["call2_parallel_slow_retry_condition_operator"] == "and"
     assert pipeline.merged_toggles({
         "call1_backtranslate_failure_strategy": "retry_abort",
     })["call1_backtranslate_failure_strategy"] == "retry_abort"
     assert pipeline.merged_toggles({
         "call1_backtranslate_failure_strategy": "unknown",
     })["call1_backtranslate_failure_strategy"] == "fallback"
+
+
+def test_call2_plan_batches_balance_across_available_detail_workers():
+    scene_plan = [{"slot": index} for index in range(1, 12)]
+    batches = pipeline._balanced_call2_scene_plan_batches(scene_plan, 3)
+    assert [len(batch) for batch in batches] == [4, 4, 3]
+    assert [item["slot"] for batch in batches for item in batch] == list(range(1, 12))
+
+    eight_scene_batches = pipeline._balanced_call2_scene_plan_batches(scene_plan[:8], 3)
+    assert [len(batch) for batch in eight_scene_batches] == [3, 3, 2]
+
+    two_scene_batches = pipeline._balanced_call2_scene_plan_batches(scene_plan[:2], 3)
+    assert [len(batch) for batch in two_scene_batches] == [1, 1]
 
 
 def test_backtranslation_chunks_balance_contiguous_slot_groups():

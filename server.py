@@ -195,8 +195,27 @@ DEFAULT_CONFIG = {
         "call1_backtranslate_slow_retry_condition_operator": "and",
         "call1_backtranslate_failure_strategy": "fallback",
         "call1_enabled": True,
+        "call1_parallel_enabled": True,
+        "call1_parallel_chunk_size": 3,
+        "call1_parallel_max_concurrency": 3,
+        "call1_parallel_slow_retry_enabled": False,
+        "call1_parallel_slow_retry_remaining": 1,
+        "call1_parallel_slow_retry_progress_enabled": True,
+        "call1_parallel_slow_retry_progress_threshold": 50,
+        "call1_parallel_slow_retry_tps_enabled": False,
+        "call1_parallel_slow_retry_tps_threshold": 5.0,
+        "call1_parallel_slow_retry_condition_operator": "and",
         "call1_context_turns": 5,
         "call2_context_turns": 5,
+        "call2_parallel_enabled": True,
+        "call2_parallel_max_concurrency": 3,
+        "call2_parallel_slow_retry_enabled": False,
+        "call2_parallel_slow_retry_remaining": 1,
+        "call2_parallel_slow_retry_progress_enabled": True,
+        "call2_parallel_slow_retry_progress_threshold": 50,
+        "call2_parallel_slow_retry_tps_enabled": False,
+        "call2_parallel_slow_retry_tps_threshold": 5.0,
+        "call2_parallel_slow_retry_condition_operator": "and",
         "call3_context_turns": 5,
         "call3_enabled": True,
         "speak_enabled": True,
@@ -1013,7 +1032,9 @@ def _capture_illustration_runtime_snapshot(config: dict | None = None) -> dict:
         workflow_type = "anima"
 
     rules = _load_word_rules_snapshot(bot_name)
-    toggles = copy.deepcopy(config_snapshot.get("illustration_context_toggles") or {})
+    toggles = illustration_context_pipeline.merged_toggles(
+        copy.deepcopy(config_snapshot.get("illustration_context_toggles") or {})
+    )
     snapshot = {
         "bot_name": bot_name,
         "provider": provider,
@@ -1025,7 +1046,9 @@ def _capture_illustration_runtime_snapshot(config: dict | None = None) -> dict:
     }
     print(
         f"[ILLUST] 런타임 스냅샷 생성: bot={bot_name!r}, provider={provider}, "
-        f"call1_parallel={toggles.get('call1_backtranslate_max_concurrency')!r}, "
+        f"backtranslate_parallel={toggles.get('call1_backtranslate_max_concurrency')!r}, "
+        f"call1_parallel={toggles.get('call1_parallel_max_concurrency')!r}, "
+        f"call2_parallel={toggles.get('call2_parallel_max_concurrency')!r}, "
         f"word_rules={len(rules)}"
     )
     return snapshot
@@ -3933,7 +3956,7 @@ async def handle_api_illustration_context_bridge_health(request: web.Request) ->
         "prompt_batch": True,
         "short_slot_manifest": True,
         "lookup_key_length": 24,
-        "progress_phases": ["call1", "call2", "call3", "enqueue", "generating", "retrying", "regenerating", "ready", "error"],
+        "progress_phases": ["call1", "call2", "call2_plan", "call2_detail", "call3", "enqueue", "generating", "retrying", "regenerating", "ready", "error"],
     })
 
 
