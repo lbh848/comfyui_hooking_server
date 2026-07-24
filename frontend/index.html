@@ -1646,6 +1646,34 @@
         .illust-settings .illust-settings-panel-body {
             min-width: 0;
         }
+        .illust-settings .illust-call-stage-notes {
+            display: grid;
+            gap: 10px;
+            padding: 16px 18px 18px;
+        }
+        .illust-settings .illust-call-stage-note {
+            display: grid;
+            grid-template-columns: minmax(130px, 180px) minmax(0, 1fr);
+            gap: 14px;
+            padding: 12px 14px;
+            border: 1px solid var(--illust-border-subtle);
+            border-radius: 7px;
+            background: var(--illust-panel-muted);
+        }
+        .illust-settings .illust-call-stage-note-label {
+            color: var(--text);
+            font-size: 12.5px;
+            font-weight: 700;
+            line-height: 1.45;
+        }
+        .illust-settings .illust-call-stage-note-text {
+            min-width: 0;
+            color: var(--text2);
+            font-size: 12.5px;
+            line-height: 1.5;
+            word-break: keep-all;
+            overflow-wrap: break-word;
+        }
         .illust-settings .illust-setting-row {
             display: grid;
             grid-template-columns: minmax(260px, 1fr) minmax(180px, 280px);
@@ -1955,6 +1983,10 @@
             }
             .illust-settings .illust-settings-info {
                 margin-bottom: 12px;
+            }
+            .illust-settings .illust-call-stage-note {
+                grid-template-columns: minmax(0, 1fr);
+                gap: 4px;
             }
             .illust-settings .illust-setting-row {
                 grid-template-columns: minmax(0, 1fr);
@@ -41141,37 +41173,36 @@
         const ILLUSTRATION_CONTEXT_TOGGLE_GROUPS = [
             {
                 key: 'pipeline', title: '파이프라인',
-                description: '인물·복장 분석과 대사 생성 단계, 최종 RAW 프롬프트 출력 구조를 설정합니다. 히스토리 글자수는 채팅 히스토리 탭에서 관리합니다.',
+                description: '삽화 프롬프트 파이프라인에서 실행할 단계를 설정합니다. 각 Call의 세부 옵션은 해당 Call 탭에서 관리합니다.',
                 fields: [
                     {key: 'call1_backtranslate_enabled', label: 'CALL1 역번역', type: 'toggle', help: 'CALL1 컨텍스트 보강 전에 현재 응답을 영어로 역번역합니다.'},
                     {key: 'call1_enabled', label: 'CALL1 인물·복장 분석', type: 'toggle', help: '히스토리와 현재 context에서 캐릭터, 지칭 대상, 복장 변화 사건을 구조화합니다.'},
                     {key: 'call3_enabled', label: 'CALL3 대사 생성', type: 'toggle', help: 'CALL3 대사(speak/manga) 생성을 켭니다. CALL2 파싱 실패 시 CALL2-FIX 교정은 항상 동작합니다.'},
-                    {
-                        key: 'prompt_format', label: '프롬프트 입력 형식', type: 'select', stacked: true,
-                        help: '후속 처리기가 해석할 RAW 프롬프트 구조를 선택합니다. 챈섭 공급자가 켜져 있으면 챈섭으로 고정됩니다.',
-                        options: [
-                            {value: 'v1', label: 'V1 — 삽화 모드 비활성화 형식 ([ILXL] / [UPSCALE])'},
-                            {value: 'v3', label: 'V3 — 삽화 모드 활성화 형식 ([SETUP] / [CHAR] / [SUPPLEMENT])'},
-                            {value: 'chansub', label: '챈섭 — Comfy POSITIVE/NEGATIVE (챈섭 공급자 전용)'},
-                        ],
-                    },
-                    {key: 'positive_note', label: '긍정 프롬프트 추가', type: 'textarea', help: '모든 장면의 긍정 프롬프트에 덧붙일 내용을 입력합니다.', stacked: true},
-                    {key: 'negative_note', label: '부정 프롬프트 추가', type: 'textarea', help: '모든 장면의 부정 프롬프트에 덧붙일 내용을 입력합니다.', stacked: true},
                 ],
             },
             {
-                key: 'backtranslation', title: '역번역 설정',
-                description: '현재 응답만 영어로 번역해 이후 삽화 CALL이 상황을 인식할 때 사용합니다. 과거 대화는 번역 대상이 아닙니다.',
+                key: 'backtranslation', title: 'CALL1 역번역',
+                description: 'CALL1 분석 직전에 현재 응답만 영어로 번역하는 단계입니다. 과거 대화는 번역 대상이 아닙니다.',
                 fields: [
                     {key: 'call1_backtranslate_max_concurrency', label: '최대 병렬 개수', type: 'number', min: 1, max: 16, help: '슬롯 여러 개를 균등하게 묶어 동시에 요청할 최대 청크 수입니다.', dependsOn: ['call1_backtranslate_enabled']},
                     {
                         key: 'call1_backtranslate_slow_retry_enabled', label: '느리다고? 다시해!', type: 'toggle',
                         help: '일부 역번역만 뒤처질 때 같은 내용을 한 번 더 요청해 먼저 끝난 결과를 사용합니다.',
-                        tooltip: '여러 역번역 중 설정한 N개 이하만 남았을 때, 남은 요청의 번역 출력 길이를 먼저 끝난 청크들과 비교해 진행률을 추정합니다. 추정 진행률이 X% 미만이면 같은 내용을 한 번 더 요청하고, 먼저 정상 완료된 결과만 사용하며 나머지는 취소하거나 폐기합니다. 특정 요청이 유난히 느릴 때 대기 시간을 줄일 수 있지만 중복 호출만큼 비용과 사용량이 늘 수 있습니다. 진행률은 추정치입니다. 비스트리밍 LLM은 중간 진행률을 알 수 없어 0%로 간주하며, N개 이하만 남는 순간 무조건 중복 요청합니다. 최대 병렬 개수가 2 이상일 때만 사용할 수 있습니다.',
+                        tooltip: '여러 역번역 중 설정한 N개 이하만 남았을 때 활성화된 진행률/TPS 조건을 평가합니다. AND는 활성 조건을 모두, OR는 하나 이상 만족할 때 같은 내용을 한 번 더 요청합니다. 먼저 정상 완료된 결과만 사용하며 나머지는 취소하거나 폐기합니다. 특정 요청이 유난히 느릴 때 대기 시간을 줄일 수 있지만 중복 호출만큼 비용과 사용량이 늘 수 있습니다. 비스트리밍 LLM은 중간 진행률을 알 수 없어 0%로 간주하고 TPS도 0으로 간주합니다. 최대 병렬 개수가 2 이상일 때만 사용할 수 있습니다.',
                         dependsOn: ['call1_backtranslate_enabled'], requiresMin: {key: 'call1_backtranslate_max_concurrency', value: 2}, lockToggle: true,
                     },
                     {key: 'call1_backtranslate_slow_retry_remaining', label: '재요청할 남은 개수 (N)', type: 'number', min: 1, max: 16, help: '실행 중인 역번역이 이 개수 이하로 남았을 때 느린 요청을 검사합니다.', dependsOn: ['call1_backtranslate_enabled', 'call1_backtranslate_slow_retry_enabled'], requiresMin: {key: 'call1_backtranslate_max_concurrency', value: 2}},
-                    {key: 'call1_backtranslate_slow_retry_progress_threshold', label: '진행률 기준 (X%)', type: 'number', min: 1, max: 99, help: '남은 요청의 추정 진행률이 이 값보다 낮으면 중복 요청합니다.', dependsOn: ['call1_backtranslate_enabled', 'call1_backtranslate_slow_retry_enabled'], requiresMin: {key: 'call1_backtranslate_max_concurrency', value: 2}},
+                    {key: 'call1_backtranslate_slow_retry_progress_enabled', label: '진행률 조건 사용', type: 'toggle', help: '남은 요청의 추정 진행률을 재요청 판정에 사용합니다.', dependsOn: ['call1_backtranslate_enabled', 'call1_backtranslate_slow_retry_enabled'], requiresMin: {key: 'call1_backtranslate_max_concurrency', value: 2}},
+                    {key: 'call1_backtranslate_slow_retry_progress_threshold', label: '진행률 기준 (X%)', type: 'number', min: 1, max: 99, help: '추정 진행률이 이 값보다 낮으면 진행률 조건을 만족합니다.', dependsOn: ['call1_backtranslate_enabled', 'call1_backtranslate_slow_retry_enabled', 'call1_backtranslate_slow_retry_progress_enabled'], requiresMin: {key: 'call1_backtranslate_max_concurrency', value: 2}},
+                    {key: 'call1_backtranslate_slow_retry_tps_enabled', label: 'TPS 조건 사용', type: 'toggle', help: '현재까지의 추정 초당 출력 토큰 수를 재요청 판정에 사용합니다.', dependsOn: ['call1_backtranslate_enabled', 'call1_backtranslate_slow_retry_enabled'], requiresMin: {key: 'call1_backtranslate_max_concurrency', value: 2}},
+                    {key: 'call1_backtranslate_slow_retry_tps_threshold', label: 'TPS 기준', type: 'number', min: 0.1, max: 1000, step: 0.1, help: '추정 TPS가 이 값보다 낮으면 TPS 조건을 만족합니다.', dependsOn: ['call1_backtranslate_enabled', 'call1_backtranslate_slow_retry_enabled', 'call1_backtranslate_slow_retry_tps_enabled'], requiresMin: {key: 'call1_backtranslate_max_concurrency', value: 2}},
+                    {
+                        key: 'call1_backtranslate_slow_retry_condition_operator', label: '조건 결합 방식', type: 'select',
+                        help: 'AND는 켜진 조건을 모두 만족해야 하며, OR는 켜진 조건 중 하나만 만족해도 재요청합니다. 조건을 모두 끄면 재요청하지 않습니다.',
+                        options: [{value: 'and', label: 'AND — 모두 만족'}, {value: 'or', label: 'OR — 하나 이상 만족'}],
+                        dependsOn: ['call1_backtranslate_enabled', 'call1_backtranslate_slow_retry_enabled'],
+                        requiresMin: {key: 'call1_backtranslate_max_concurrency', value: 2},
+                    },
                     {
                         key: 'call1_backtranslate_failure_strategy', label: '실패 처리 전략', type: 'select', stacked: true,
                         help: '엄격 검증은 실패 청크를 한 번 더 요청한 뒤 다시 실패하면 전체 삽화 파이프라인을 중단합니다. 원문 사용은 실패 청크만 원문으로 대체합니다.',
@@ -41184,32 +41215,27 @@
                 ],
             },
             {
-                key: 'dialogue', title: '대사',
-                description: '장면별 대사 생성 프롬프트와 출력 언어를 설정합니다.',
-                fields: [
-                    {key: 'speak_enabled', label: '장면별 SPEAK 생성', type: 'toggle', help: '각 장면에 표시할 대사를 생성합니다.'},
-                    {
-                        key: 'call3_prompt_mode', label: 'CALL3 대사 프롬프트', type: 'select',
-                        help: '후처리 설정(대사 모드=Speak / 말풍선 모드=Manga)에 따라 자동 지정됩니다. 나머지 항목은 회색으로 선택 불가.',
-                        options: [{value: 'speak', label: 'Speak'}, {value: 'manga', label: 'Manga'}],
-                        dependsOn: ['call3_enabled', 'speak_enabled'],
-                    },
-                    {key: 'speak_emotion_enabled', label: 'SPEAK 감정 태그', type: 'toggle', help: '생성된 대사에 감정 태그를 덧붙입니다.'},
-                    {key: 'speak_language', label: 'SPEAK 언어', type: 'select', help: '생성할 장면 대사의 언어를 선택합니다.', options: ['한국어', '영어', '일어', '중어'], dependsOn: ['call3_enabled', 'speak_enabled']},
-                    {key: 'speak_emotions', label: '허용 감정', type: 'text', help: '감정 이름을 세미콜론(;)으로 구분해 입력합니다.', placeholder: '기쁨; 분노; 당황; 슬픔', dependsOn: ['call3_enabled', 'speak_enabled', 'speak_emotion_enabled']},
+                key: 'call1', title: 'CALL1 분석',
+                description: '역번역 다음에 인물, 지칭 대상과 복장 변화 타임라인을 구조화하는 일반 CALL1 단계입니다.',
+                fields: [],
+                callInfo: [
+                    {label: '실행 여부', text: '파이프라인의 CALL1 인물·복장 분석 토글에서 설정합니다.'},
+                    {label: '프롬프트', text: 'Call 프롬프트 탭의 enhance.txt (CALL1 분석)에서 편집합니다.'},
+                    {label: 'LLM과 재시도', text: '외부 API 분기의 삽화 CALL1 (전처리)에서 설정합니다.'},
+                    {label: '히스토리 범위', text: '채팅 히스토리 탭의 CALL1 히스토리 글자수에서 설정합니다.'},
                 ],
             },
             {
-                key: 'scene', title: '장면 구성',
-                description: '생성할 장면 수와 장면별 표현 범위를 지정합니다.',
+                key: 'call2', title: 'CALL2 장면 생성',
+                description: 'CALL2가 선택하고 묘사할 장면 수, 캐릭터, 연출 및 컨텍스트 범위를 설정합니다.',
                 fields: [
-                    {key: 'nsfw', label: 'NSFW 태깅', type: 'toggle', help: '성인 장면용 태깅 지침을 허용합니다.'},
-                    {key: 'supplement', label: 'SUPPLEMENT 생성', type: 'toggle', help: '효과와 보조 묘사 섹션을 생성합니다.'},
-                    {key: 'key_visual', label: 'Key Visual 생성', type: 'toggle', help: '슬롯 장면 외에 대표 이미지를 생성합니다.'},
+                    {key: 'nsfw', label: 'NSFW 태깅', type: 'toggle', help: 'CALL2에 성인 장면용 태깅 지침을 허용합니다. Manga 대사 모드의 버블 타입에도 함께 반영됩니다.'},
+                    {key: 'supplement', label: 'SUPPLEMENT 생성', type: 'toggle', help: 'CALL2가 효과와 보조 묘사 섹션을 생성하도록 합니다.'},
+                    {key: 'key_visual', label: 'Key Visual 생성', type: 'toggle', help: 'CALL2가 슬롯 장면 외에 대표 이미지를 생성하도록 합니다.'},
                     {key: 'character_limit', label: '이미지당 최대 캐릭터', type: 'select', help: '한 이미지에 함께 배치할 캐릭터 수입니다.', options: [1, 2, 3]},
                     {
                         key: 'scene_mode', label: 'Scene 수 결정', type: 'select',
-                        help: '수동 지정: 최소/최대로 범위를 강제합니다. lb-xnai에 맡김: call2가 문맥에 따라 자율 결정(서버 제한 없음).',
+                        help: '수동 지정은 최소/최대 범위를 강제하고, lb-xnai에 맡김은 CALL2가 문맥에 따라 자율 결정합니다.',
                         options: [
                             {value: 'manual', label: '수동 지정'},
                             {value: 'auto', label: 'lb-xnai에 맡김'},
@@ -41217,29 +41243,72 @@
                     },
                     {key: 'scene_min', label: '최소 Scene 수', type: 'select', help: '장면 수의 하한입니다. 이보다 적게 생성하지 않도록 유도합니다.', options: [1, 3, 5, 7, 9, 11, 13, 15]},
                     {key: 'scene_max', label: '최대 Scene 수', type: 'select', help: '장면 수의 상한입니다. 이 개수를 초과하면 잘라냅니다.', options: [1, 3, 5, 7, 9, 11, 13, 15]},
+                    {key: 'context_history', label: 'lb.extra 외형 이력 사용', type: 'toggle', help: 'CALL2가 저장된 캐릭터 외형과 복장 정보를 참조하도록 합니다.'},
+                    {key: 'focus', label: '집중 캐릭터', type: 'text', help: 'CALL2가 우선할 캐릭터입니다. 비워 두면 대화 문맥에서 결정합니다.'},
+                    {key: 'direction', label: '우선 연출 지시', type: 'textarea', help: 'CALL2에 이번 생성에서 특별히 강조할 연출을 전달합니다.', stacked: true},
                 ],
             },
             {
-                key: 'context', title: '컨텍스트와 연출',
-                description: '캐릭터 외형 이력과 이번 생성에서 우선할 연출을 전달합니다.',
-                fields: [
-                    {key: 'context_history', label: 'lb.extra 외형 이력 사용', type: 'toggle', help: '저장된 캐릭터 외형과 복장 정보를 참조합니다.'},
-                    {key: 'focus', label: '집중 캐릭터', type: 'text', help: '비워 두면 대화 문맥에서 결정합니다.'},
-                    {key: 'direction', label: '우선 연출 지시', type: 'textarea', help: '이번 생성에서 특별히 강조할 연출을 입력합니다.', stacked: true},
+                key: 'call2_fix', title: 'CALL2-FIX',
+                description: 'CALL2 결과를 TOON으로 파싱하지 못했을 때만 자동 실행되는 복구 호출입니다.',
+                fields: [],
+                callInfo: [
+                    {label: '실행 조건', text: 'CALL2 TOON 파싱 실패 시 자동으로 교정 단계에 진입합니다. 별도 ON/OFF는 두지 않습니다.'},
+                    {label: '프롬프트', text: 'Call 프롬프트 탭의 repair.txt (CALL2-FIX TOON 교정)에서 편집합니다.'},
+                    {label: 'LLM과 재시도', text: '외부 API 분기의 삽화 CALL2-FIX (TOON 교정)에서 설정합니다.'},
+                    {label: '실패 결과', text: 'CALL2-FIX 이후에도 파싱하지 못하면 해당 삽화 프롬프트 파이프라인을 중단합니다.'},
                 ],
             },
             {
-                key: 'compatibility', title: '호환성',
-                description: 'Comfy 입력에서 캐릭터 프롬프트를 나누는 방식을 설정합니다.',
+                key: 'call3', title: 'CALL3 대사',
+                description: 'CALL2가 선택한 장면에 대해 CALL3가 생성할 대사 형식과 언어를 설정합니다.',
                 fields: [
-                    {key: 'compat_comfy', label: 'Comfy 호환', type: 'toggle', help: 'Comfy용 캐릭터 분리 옵션을 적용합니다.'},
+                    {key: 'speak_enabled', label: '장면별 SPEAK 생성', type: 'toggle', help: 'CALL3가 각 장면에 표시할 대사를 생성합니다.', dependsOn: ['call3_enabled']},
                     {
-                        key: 'compat_character_divider', label: '캐릭터 구분', type: 'select', help: '캐릭터 프롬프트 사이의 구분 방식을 선택합니다.', dependsOn: ['compat_comfy'],
-                        options: [{value: 'newline', label: '빈 줄'}, {value: 'pipe', label: '파이프 ( | )'}],
+                        key: 'call3_prompt_mode', label: 'CALL3 대사 프롬프트', type: 'select',
+                        help: '후처리 설정(대사 모드=Speak / 말풍선 모드=Manga)에 따라 자동 지정됩니다. 나머지 항목은 회색으로 선택 불가.',
+                        options: [{value: 'speak', label: 'Speak'}, {value: 'manga', label: 'Manga'}],
+                        dependsOn: ['call3_enabled', 'speak_enabled'],
                     },
+                    {key: 'speak_emotion_enabled', label: 'SPEAK 감정 태그', type: 'toggle', help: 'CALL3가 생성한 Speak 대사에 감정 태그를 덧붙입니다.', dependsOn: ['call3_enabled', 'speak_enabled']},
+                    {key: 'speak_language', label: 'SPEAK 언어', type: 'select', help: 'CALL3가 생성할 장면 대사의 언어를 선택합니다.', options: ['한국어', '영어', '일어', '중어'], dependsOn: ['call3_enabled', 'speak_enabled']},
+                    {key: 'speak_emotions', label: '허용 감정', type: 'text', help: '감정 이름을 세미콜론(;)으로 구분해 입력합니다.', placeholder: '기쁨; 분노; 당황; 슬픔', dependsOn: ['call3_enabled', 'speak_enabled', 'speak_emotion_enabled']},
+                ],
+            },
+            {
+                key: 'multi_char_mask', title: 'MULTI-CHAR-MASK',
+                description: 'CALL2가 선택한 다중 캐릭터 장면의 영역과 배경·캐릭터 프롬프트를 분리하는 후속 호출입니다.',
+                fields: [],
+                callInfo: [
+                    {label: '실행 조건', text: 'Comfy 공급자와 V3 형식에서 한 장면에 캐릭터가 2~3명일 때 자동 실행됩니다.'},
+                    {label: '처리 위치', text: 'CALL3 처리 다음에 다중 캐릭터 장면별로 병렬 실행됩니다.'},
+                    {label: '프롬프트', text: 'prompts/lighbd/multi_char_mask.txt를 사용하며 긍정 프롬프트 추가 메모도 함께 전달됩니다. 현재 Call 프롬프트 탭에는 별도 편집란이 없습니다.'},
+                    {label: 'LLM과 재시도', text: '외부 API 분기의 삽화 다중 캐릭터 마스크에서 설정합니다.'},
+                ],
+            },
+            {
+                key: 'output', title: '최종 프롬프트',
+                description: 'CALL2/CALL3 결과를 이미지 생성용 RAW 프롬프트로 조립하는 방식을 설정합니다.',
+                fields: [
+                    {
+                        key: 'prompt_format', label: '프롬프트 입력 형식', type: 'select', stacked: true,
+                        help: '후속 처리기가 해석할 RAW 프롬프트 구조를 선택합니다. 챈섭 공급자가 켜져 있으면 챈섭으로 고정됩니다.',
+                        options: [
+                            {value: 'v1', label: 'V1 — 삽화 모드 비활성화 형식 ([ILXL] / [UPSCALE])'},
+                            {value: 'v3', label: 'V3 — 삽화 모드 활성화 형식 ([SETUP] / [CHAR] / [SUPPLEMENT])'},
+                            {value: 'chansub', label: '챈섭 — Comfy POSITIVE/NEGATIVE (챈섭 공급자 전용)'},
+                        ],
+                    },
+                    {key: 'positive_note', label: '긍정 프롬프트 추가', type: 'textarea', help: '모든 장면의 최종 긍정 프롬프트에 덧붙일 내용을 입력합니다.', stacked: true},
+                    {key: 'negative_note', label: '부정 프롬프트 추가', type: 'textarea', help: '모든 장면의 최종 부정 프롬프트에 덧붙일 내용을 입력합니다.', stacked: true},
+                    {key: 'compat_comfy', label: 'Comfy 호환', type: 'toggle', help: 'CALL2 지시와 최종 조립에 Comfy용 캐릭터 분리 옵션을 적용합니다.'},
                     {
                         key: 'compat_character_prompt', label: '캐릭터 프롬프트', type: 'select', help: '캐릭터별 프롬프트를 분리할지 선택합니다.', dependsOn: ['compat_comfy'],
                         options: [{value: 'separate', label: '분리'}, {value: 'normal', label: '일반'}],
+                    },
+                    {
+                        key: 'compat_character_divider', label: '캐릭터 구분', type: 'select', help: '최종 캐릭터 프롬프트 사이의 구분 방식을 선택합니다.', dependsOn: ['compat_comfy'],
+                        options: [{value: 'newline', label: '빈 줄'}, {value: 'pipe', label: '파이프 ( | )'}],
                     },
                 ],
             },
@@ -41309,7 +41378,8 @@
             } else {
                 const min = field.min !== undefined ? ` min="${field.min}"` : '';
                 const max = field.max !== undefined ? ` max="${field.max}"` : '';
-                control = `<input id="${inputId}" data-illust-toggle="${field.key}" class="illust-setting-input" type="${field.type}" value="${escapeHtml(value ?? '')}"${min}${max}${placeholder}>`;
+                const step = field.step !== undefined ? ` step="${field.step}"` : '';
+                control = `<input id="${inputId}" data-illust-toggle="${field.key}" class="illust-setting-input" type="${field.type}" value="${escapeHtml(value ?? '')}"${min}${max}${step}${placeholder}>`;
             }
             return `
                 <div class="${rowClasses.join(' ')}"${dependencyAttr}${minAttr}${lockToggleAttr}>
@@ -41322,23 +41392,39 @@
         }
 
         function _renderIllustrationSettingsGroupFields(group) {
-            if (group.key === 'pipeline') {
+            if (Array.isArray(group.callInfo) && group.callInfo.length) {
                 return `
-                    ${group.fields.slice(0, 3).map(field => _renderIllustrationContextField(field)).join('')}
-                    <h4 class="illust-settings-subheading">프롬프트 출력</h4>
-                    ${_renderIllustrationContextField(group.fields[3])}
-                    <div class="illust-settings-paired" aria-label="프롬프트 추가 메모">
-                        ${group.fields.slice(4).map(field => _renderIllustrationContextField(field)).join('')}
+                    <div class="illust-call-stage-notes">
+                        ${group.callInfo.map(item => `
+                            <div class="illust-call-stage-note">
+                                <div class="illust-call-stage-note-label">${escapeHtml(item.label)}</div>
+                                <div class="illust-call-stage-note-text">${escapeHtml(item.text)}</div>
+                            </div>`).join('')}
                     </div>`;
             }
-            if (group.key === 'dialogue') {
+            if (group.key === 'pipeline') {
+                return group.fields.map(field => _renderIllustrationContextField(field)).join('');
+            }
+            if (group.key === 'backtranslation') {
+                return `
+                    ${_renderIllustrationContextField(group.fields[0])}
+                    ${_renderIllustrationContextField(group.fields[1])}
+                    <div class="illust-settings-dependent" aria-label="느린 역번역 재요청 세부 옵션">
+                        ${_renderIllustrationContextField(group.fields[2])}
+                        <h4 class="illust-settings-subheading">재요청 판정 조건</h4>
+                        ${group.fields.slice(3, 8).map(field => _renderIllustrationContextField(field)).join('')}
+                    </div>
+                    <h4 class="illust-settings-subheading">역번역 실패 처리</h4>
+                    ${_renderIllustrationContextField(group.fields[8])}`;
+            }
+            if (group.key === 'call3') {
                 return `
                     ${_renderIllustrationContextField(group.fields[0])}
                     <div class="illust-settings-dependent" aria-label="장면별 SPEAK 생성 세부 옵션">
                         ${group.fields.slice(1).map(field => _renderIllustrationContextField(field)).join('')}
                     </div>`;
             }
-            if (group.key === 'scene') {
+            if (group.key === 'call2') {
                 return `
                     ${group.fields.slice(0, 3).map(field => _renderIllustrationContextField(field)).join('')}
                     <h4 class="illust-settings-subheading">장면 제한</h4>
@@ -41347,13 +41433,21 @@
                     <div class="illust-settings-paired" data-illust-scene-manual aria-label="수동 Scene 수 범위">
                         ${_renderIllustrationContextField(group.fields[5], {compact: true})}
                         ${_renderIllustrationContextField(group.fields[6], {compact: true})}
-                    </div>`;
+                    </div>
+                    <h4 class="illust-settings-subheading">컨텍스트와 연출</h4>
+                    ${group.fields.slice(7).map(field => _renderIllustrationContextField(field)).join('')}`;
             }
-            if (group.key === 'compatibility') {
+            if (group.key === 'output') {
                 return `
                     ${_renderIllustrationContextField(group.fields[0])}
+                    <h4 class="illust-settings-subheading">프롬프트 추가 메모</h4>
+                    <div class="illust-settings-paired" aria-label="프롬프트 추가 메모">
+                        ${group.fields.slice(1, 3).map(field => _renderIllustrationContextField(field)).join('')}
+                    </div>
+                    <h4 class="illust-settings-subheading">Comfy 출력 호환</h4>
+                    ${_renderIllustrationContextField(group.fields[3])}
                     <div class="illust-settings-dependent" aria-label="Comfy 호환 세부 옵션">
-                        ${group.fields.slice(1).map(field => _renderIllustrationContextField(field)).join('')}
+                        ${group.fields.slice(4).map(field => _renderIllustrationContextField(field)).join('')}
                     </div>`;
             }
             return group.fields.map(field => _renderIllustrationContextField(field)).join('');

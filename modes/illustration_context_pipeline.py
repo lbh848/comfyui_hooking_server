@@ -58,7 +58,11 @@ DEFAULT_TOGGLES = {
     "call1_backtranslate_max_concurrency": 4,
     "call1_backtranslate_slow_retry_enabled": False,
     "call1_backtranslate_slow_retry_remaining": 1,
+    "call1_backtranslate_slow_retry_progress_enabled": True,
     "call1_backtranslate_slow_retry_progress_threshold": 50,
+    "call1_backtranslate_slow_retry_tps_enabled": False,
+    "call1_backtranslate_slow_retry_tps_threshold": 5.0,
+    "call1_backtranslate_slow_retry_condition_operator": "and",
     "call1_backtranslate_failure_strategy": "fallback",
     "call1_enabled": True,
     "call1_context_turns": 5,
@@ -254,6 +258,16 @@ def merged_toggles(value: dict | None) -> dict:
         )
         failure_strategy = "fallback"
     out["call1_backtranslate_failure_strategy"] = failure_strategy
+    condition_operator = str(
+        out.get("call1_backtranslate_slow_retry_condition_operator") or ""
+    ).strip().lower()
+    if condition_operator not in ("and", "or"):
+        print(
+            f"[ILLUST_CONTEXT:BACKTRANSLATE] 지원하지 않는 느린 요청 조건 결합 방식 "
+            f"{condition_operator!r}, and 사용"
+        )
+        condition_operator = "and"
+    out["call1_backtranslate_slow_retry_condition_operator"] = condition_operator
     try:
         out["call1_backtranslate_max_concurrency"] = max(
             1,
@@ -266,6 +280,10 @@ def merged_toggles(value: dict | None) -> dict:
         out["call1_backtranslate_slow_retry_progress_threshold"] = max(
             1,
             min(99, int(out["call1_backtranslate_slow_retry_progress_threshold"])),
+        )
+        out["call1_backtranslate_slow_retry_tps_threshold"] = max(
+            0.1,
+            min(1000.0, float(out["call1_backtranslate_slow_retry_tps_threshold"])),
         )
         out["call1_context_turns"] = max(0, min(30, int(out["call1_context_turns"])))
         # call2/call3 전용 키가 없거나 무효하면 call1 값으로 폴백(하위호환).
@@ -298,6 +316,9 @@ def merged_toggles(value: dict | None) -> dict:
             ],
             "call1_backtranslate_slow_retry_progress_threshold": DEFAULT_TOGGLES[
                 "call1_backtranslate_slow_retry_progress_threshold"
+            ],
+            "call1_backtranslate_slow_retry_tps_threshold": DEFAULT_TOGGLES[
+                "call1_backtranslate_slow_retry_tps_threshold"
             ],
             "call1_context_turns": DEFAULT_TOGGLES["call1_context_turns"],
             "call2_context_turns": DEFAULT_TOGGLES["call2_context_turns"],
@@ -2813,7 +2834,11 @@ async def backtranslate_current_context(
     stream_notify=None,
     slow_retry_enabled: bool = False,
     slow_retry_remaining: int = 1,
+    slow_retry_progress_enabled: bool = True,
     slow_retry_progress_threshold: int = 50,
+    slow_retry_tps_enabled: bool = False,
+    slow_retry_tps_threshold: float = 5.0,
+    slow_retry_condition_operator: str = "and",
 ) -> tuple[str, list[dict]]:
     """current context를 병렬 역번역하고 느린 꼬리 요청은 선택적으로 복제한다."""
     strategy = str(failure_strategy or "").strip().lower()
@@ -2836,17 +2861,31 @@ async def backtranslate_current_context(
             1,
             min(99, int(slow_retry_progress_threshold)),
         )
+        tps_threshold = max(
+            0.1,
+            min(1000.0, float(slow_retry_tps_threshold)),
+        )
     except (TypeError, ValueError) as e:
         print(
             f"[ILLUST_CONTEXT:BACKTRANSLATE_HEDGE] 느린 요청 재시도 설정 파싱 실패: "
             f"max_concurrency={max_concurrency!r}, remaining={slow_retry_remaining!r}, "
-            f"threshold={slow_retry_progress_threshold!r}, error={e}; "
-            "기본값 concurrency=1, remaining=1, threshold=50 사용"
+            f"progress_threshold={slow_retry_progress_threshold!r}, "
+            f"tps_threshold={slow_retry_tps_threshold!r}, error={e}; "
+            "기본값 concurrency=1, remaining=1, progress_threshold=50, "
+            "tps_threshold=5.0 사용"
         )
         traceback.print_exc()
         parsed_concurrency = 1
         remaining_limit = 1
         progress_threshold = 50
+        tps_threshold = 5.0
+    condition_operator = str(slow_retry_condition_operator or "").strip().lower()
+    if condition_operator not in ("and", "or"):
+        print(
+            f"[ILLUST_CONTEXT:BACKTRANSLATE_HEDGE] 조건 결합 방식이 무효함: "
+            f"value={slow_retry_condition_operator!r}; and 사용"
+        )
+        condition_operator = "and"
     slow_retry_active = bool(slow_retry_enabled) and parsed_concurrency >= 2 and len(chunks) >= 2
     if slow_retry_enabled and parsed_concurrency < 2:
         print(
@@ -2899,11 +2938,13 @@ async def backtranslate_current_context(
                     "streaming": False,
                     "stream_id": "",
                     "partial_length": 0,
+                    "started_at": 0.0,
                 },
                 "duplicate": {
                     "streaming": False,
                     "stream_id": "",
                     "partial_length": 0,
+                    "started_at": 0.0,
                 },
             },
         }
@@ -2987,6 +3028,7 @@ async def backtranslate_current_context(
                 await stream_notify(payload)
 
         attempt_progress = states[index]["progress"][attempt_kind]
+        attempt_progress["started_at"] = time.monotonic()
 
         def observe_stream(event: dict) -> None:
             event_type = str(event.get("type") or "")
@@ -3258,9 +3300,37 @@ async def backtranslate_current_context(
                         # 비스트리밍은 중간 출력 자체를 알 수 없다. 사용자 설정대로
                         # 보수적으로 0%로 보며, 완료 청크가 없어 보정 불가한 경우도 같다.
                         estimated_progress = 0.0
-                    should_duplicate = (
-                        not streaming or estimated_progress < progress_threshold
+                    started_at = float(primary_progress.get("started_at") or 0.0)
+                    elapsed = max(
+                        0.001,
+                        time.monotonic() - started_at,
+                    ) if started_at > 0 else 0.0
+                    estimated_tps = (
+                        (partial_length / 3.0) / elapsed
+                        if streaming and elapsed > 0
+                        else 0.0
                     )
+                    condition_results = []
+                    if bool(slow_retry_progress_enabled):
+                        condition_results.append((
+                            "progress",
+                            estimated_progress < progress_threshold,
+                        ))
+                    if bool(slow_retry_tps_enabled):
+                        condition_results.append((
+                            "tps",
+                            estimated_tps < tps_threshold,
+                        ))
+                    if not condition_results:
+                        should_duplicate = False
+                    elif condition_operator == "or":
+                        should_duplicate = any(result for _name, result in condition_results)
+                    else:
+                        should_duplicate = all(result for _name, result in condition_results)
+                    conditions_text = ", ".join(
+                        f"{name}={'met' if result else 'not_met'}"
+                        for name, result in condition_results
+                    ) or "none_enabled"
                     if should_duplicate:
                         state["duplicate_started"] = True
                         state["history_ids"]["duplicate"] = uuid.uuid4().hex
@@ -3269,15 +3339,23 @@ async def backtranslate_current_context(
                             f"[ILLUST_CONTEXT:BACKTRANSLATE_HEDGE] 중복 요청 시작: "
                             f"chunk={index}/{len(chunks)}, remaining={len(unresolved)}, "
                             f"mode={mode}, estimated_progress={estimated_progress:.1f}%, "
-                            f"threshold={progress_threshold}%"
+                            f"progress_threshold={progress_threshold}%, "
+                            f"estimated_tps={estimated_tps:.1f}, "
+                            f"tps_threshold={tps_threshold:g}, "
+                            f"operator={condition_operator.upper()}, "
+                            f"conditions={conditions_text}"
                         )
                         start_attempt(index, "duplicate")
                     else:
                         print(
-                            f"[ILLUST_CONTEXT:BACKTRANSLATE_HEDGE] 진행률 기준을 넘어 "
+                            f"[ILLUST_CONTEXT:BACKTRANSLATE_HEDGE] 활성 조건을 만족하지 않아 "
                             f"중복 요청하지 않음: chunk={index}/{len(chunks)}, "
                             f"estimated_progress={estimated_progress:.1f}%, "
-                            f"threshold={progress_threshold}%"
+                            f"progress_threshold={progress_threshold}%, "
+                            f"estimated_tps={estimated_tps:.1f}, "
+                            f"tps_threshold={tps_threshold:g}, "
+                            f"operator={condition_operator.upper()}, "
+                            f"conditions={conditions_text}"
                         )
     except asyncio.CancelledError:
         print(
@@ -3467,8 +3545,20 @@ async def build_from_context(
             slow_retry_remaining=int(
                 toggles["call1_backtranslate_slow_retry_remaining"]
             ),
+            slow_retry_progress_enabled=bool(
+                toggles["call1_backtranslate_slow_retry_progress_enabled"]
+            ),
             slow_retry_progress_threshold=int(
                 toggles["call1_backtranslate_slow_retry_progress_threshold"]
+            ),
+            slow_retry_tps_enabled=bool(
+                toggles["call1_backtranslate_slow_retry_tps_enabled"]
+            ),
+            slow_retry_tps_threshold=float(
+                toggles["call1_backtranslate_slow_retry_tps_threshold"]
+            ),
+            slow_retry_condition_operator=str(
+                toggles["call1_backtranslate_slow_retry_condition_operator"]
             ),
         )
         backtranslated_narrative = remove_slot_markers(slotted)

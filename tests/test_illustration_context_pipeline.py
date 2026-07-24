@@ -583,7 +583,11 @@ def test_backtranslation_defaults_and_concurrency_clamp():
     assert defaults["call1_backtranslate_max_concurrency"] == 4
     assert defaults["call1_backtranslate_slow_retry_enabled"] is False
     assert defaults["call1_backtranslate_slow_retry_remaining"] == 1
+    assert defaults["call1_backtranslate_slow_retry_progress_enabled"] is True
     assert defaults["call1_backtranslate_slow_retry_progress_threshold"] == 50
+    assert defaults["call1_backtranslate_slow_retry_tps_enabled"] is False
+    assert defaults["call1_backtranslate_slow_retry_tps_threshold"] == 5.0
+    assert defaults["call1_backtranslate_slow_retry_condition_operator"] == "and"
     assert defaults["call1_backtranslate_failure_strategy"] == "fallback"
     assert pipeline.merged_toggles({
         "call1_backtranslate_max_concurrency": 0,
@@ -605,6 +609,18 @@ def test_backtranslation_defaults_and_concurrency_clamp():
     assert pipeline.merged_toggles({
         "call1_backtranslate_slow_retry_progress_threshold": 0,
     })["call1_backtranslate_slow_retry_progress_threshold"] == 1
+    assert pipeline.merged_toggles({
+        "call1_backtranslate_slow_retry_tps_threshold": 0,
+    })["call1_backtranslate_slow_retry_tps_threshold"] == 0.1
+    assert pipeline.merged_toggles({
+        "call1_backtranslate_slow_retry_tps_threshold": 5000,
+    })["call1_backtranslate_slow_retry_tps_threshold"] == 1000.0
+    assert pipeline.merged_toggles({
+        "call1_backtranslate_slow_retry_condition_operator": "OR",
+    })["call1_backtranslate_slow_retry_condition_operator"] == "or"
+    assert pipeline.merged_toggles({
+        "call1_backtranslate_slow_retry_condition_operator": "xor",
+    })["call1_backtranslate_slow_retry_condition_operator"] == "and"
     assert pipeline.merged_toggles({
         "call1_backtranslate_failure_strategy": "retry_abort",
     })["call1_backtranslate_failure_strategy"] == "retry_abort"
@@ -1113,6 +1129,160 @@ async def test_backtranslation_slow_retry_duplicates_stream_below_threshold(monk
         and update["status"] == "race_lost"
         for update in history_updates.values()
     )
+
+
+@pytest.mark.asyncio
+async def test_backtranslation_slow_retry_and_requires_progress_and_tps(monkeypatch):
+    source = "빠른 문장.\n\n[Slot 0]\n\n느린 문장.\n\n[Slot 1]"
+    calls = []
+
+    async def fake_pipeline_call(
+        call_name,
+        messages,
+        stream_notify=None,
+        result_validator=None,
+        stream_observer=None,
+        history_id="",
+    ):
+        calls.append(call_name)
+        index = int(re.search(r"BACKTRANSLATE (\d+)/", call_name).group(1))
+        token = pipeline._PROTECTED_SLOT_TOKEN_RE.findall(
+            messages[-1]["content"]
+        )[0]
+        if index == 1:
+            await asyncio.sleep(0.02)
+            return f"Fast sentence.\n\n{token}"
+        if "느리다고? 다시해!" in call_name:
+            return f"Unexpected duplicate.\n\n{token}"
+        assert stream_observer is not None
+        stream_observer({
+            "type": "stream_open",
+            "stream_id": "and-primary",
+            "partial_length": 0,
+        })
+        stream_observer({
+            "type": "delta",
+            "stream_id": "and-primary",
+            "partial_length": 1,
+        })
+        await asyncio.sleep(0.04)
+        return f"Primary completes.\n\n{token}"
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
+    translated, statuses = await pipeline.backtranslate_current_context(
+        source,
+        "Translate. {character_names}",
+        "Hana",
+        2,
+        slow_retry_enabled=True,
+        slow_retry_remaining=1,
+        slow_retry_progress_enabled=True,
+        slow_retry_progress_threshold=50,
+        slow_retry_tps_enabled=True,
+        slow_retry_tps_threshold=1,
+        slow_retry_condition_operator="and",
+    )
+
+    assert "Primary completes." in translated
+    assert len(calls) == 2
+    assert "hedged" not in statuses[1]
+
+
+@pytest.mark.asyncio
+async def test_backtranslation_slow_retry_or_accepts_progress_or_tps(monkeypatch):
+    source = "빠른 문장.\n\n[Slot 0]\n\n느린 문장.\n\n[Slot 1]"
+    calls = []
+
+    async def fake_pipeline_call(
+        call_name,
+        messages,
+        stream_notify=None,
+        result_validator=None,
+        stream_observer=None,
+        history_id="",
+    ):
+        calls.append(call_name)
+        index = int(re.search(r"BACKTRANSLATE (\d+)/", call_name).group(1))
+        token = pipeline._PROTECTED_SLOT_TOKEN_RE.findall(
+            messages[-1]["content"]
+        )[0]
+        if index == 1:
+            await asyncio.sleep(0.02)
+            return f"Fast sentence.\n\n{token}"
+        if "느리다고? 다시해!" in call_name:
+            return f"OR duplicate wins.\n\n{token}"
+        assert stream_observer is not None
+        stream_observer({
+            "type": "stream_open",
+            "stream_id": "or-primary",
+            "partial_length": 0,
+        })
+        stream_observer({
+            "type": "delta",
+            "stream_id": "or-primary",
+            "partial_length": 1,
+        })
+        await asyncio.Future()
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
+    translated, statuses = await pipeline.backtranslate_current_context(
+        source,
+        "Translate. {character_names}",
+        "Hana",
+        2,
+        slow_retry_enabled=True,
+        slow_retry_remaining=1,
+        slow_retry_progress_enabled=True,
+        slow_retry_progress_threshold=50,
+        slow_retry_tps_enabled=True,
+        slow_retry_tps_threshold=1,
+        slow_retry_condition_operator="or",
+    )
+
+    assert "OR duplicate wins." in translated
+    assert len(calls) == 3
+    assert statuses[1]["hedged"] is True
+
+
+@pytest.mark.asyncio
+async def test_backtranslation_slow_retry_does_nothing_when_all_conditions_are_off(monkeypatch):
+    source = "빠른 문장.\n\n[Slot 0]\n\n느린 문장.\n\n[Slot 1]"
+    calls = []
+
+    async def fake_pipeline_call(
+        call_name,
+        messages,
+        stream_notify=None,
+        result_validator=None,
+        stream_observer=None,
+        history_id="",
+    ):
+        calls.append(call_name)
+        index = int(re.search(r"BACKTRANSLATE (\d+)/", call_name).group(1))
+        token = pipeline._PROTECTED_SLOT_TOKEN_RE.findall(
+            messages[-1]["content"]
+        )[0]
+        if index == 1:
+            return f"Fast sentence.\n\n{token}"
+        await asyncio.sleep(0.01)
+        return f"Primary completes.\n\n{token}"
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
+    translated, statuses = await pipeline.backtranslate_current_context(
+        source,
+        "Translate. {character_names}",
+        "Hana",
+        2,
+        slow_retry_enabled=True,
+        slow_retry_remaining=1,
+        slow_retry_progress_enabled=False,
+        slow_retry_tps_enabled=False,
+        slow_retry_condition_operator="or",
+    )
+
+    assert "Primary completes." in translated
+    assert len(calls) == 2
+    assert "hedged" not in statuses[1]
 
 
 def test_call3_dialogue_prompt_selects_speak_or_manga_and_scopes_emotions():
